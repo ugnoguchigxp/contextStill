@@ -1,0 +1,26 @@
+services:
+  memory-router-db:
+    image: pgvector/pgvector:pg16
+    container_name: memory-router-db
+    restart: unless-stopped
+    ports:
+      - '127.0.0.1:7889:5432'
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: memory_router
+    volumes:
+      - memory_router_pgdata:/var/lib/postgresql/data
+    command:
+      - 'postgres'
+      - '-c'
+      - 'shared_buffers=256MB'
+      - '-c'
+      - 'work_mem=16MB'
+      - '-c'
+      - 'maintenance_work_mem=128MB'
+      - '-c'
+      - 'max_connections=20'
+
+volumes:
+  memory_router_pgdata:
