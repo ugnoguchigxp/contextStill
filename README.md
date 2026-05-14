@@ -1,18 +1,19 @@
 # memory-router
 
 `memory-router` は、コーディングエージェント向けのローカルファースト Context Compiler です。  
-`knowledge` / `sources` / `code index` から、作業目的に合わせた最小コンテキストを組み立てます。
+`knowledge` / `sources` / `activity`（Vibe Memory + Artifacts）から、作業目的に合わせた最小コンテキストを組み立てます。
 
 ## 主要機能
 
 - Context Compile（CLI / MCP / API）
+  - `sources/source_fragments` を根拠ソースとして検索し、Context Pack には `sourceRefs` を付与します
 - Knowledge 管理（作成・編集・削除）
 - Source 管理（このリポジトリ配下 `./wiki` を運用）
   - フォルダ作成・リネーム・削除
   - ページ作成・編集・削除
   - Git 履歴表示・コミット差分表示
   - `markdown-wysiwyg-editor` による Markdown 編集
-- Code Symbol 管理（作成・編集・削除）
+- Artifact Symbol 管理（作成・閲覧）
 - Graph 可視化
 - Doctor 診断
 
@@ -102,8 +103,16 @@ bun run doctor
 - `GET/PUT/DELETE /api/sources/pages/*`
 - `GET /api/sources/history/*`
 - `GET /api/sources/diff/*?from=...&to=...`
-- `GET/POST/PUT/DELETE /api/code/symbols`
+- `GET/POST /api/activity`
+- `GET/DELETE /api/activity/:id`
+- `GET /api/artifacts`
+- `GET /api/artifacts/symbols`
 - `GET /api/graph`
+
+`POST /api/activity` は vibe memory の本文に加えて `diff` または `artifacts[]` を受け取れます。
+unified diff はファイル単位の artifact に分解され、TypeScript/JavaScript の主要シンボルは
+`artifact_symbols` に自動登録されます。`memory_search` は vibe 本文だけでなく artifact 本文、
+diff、symbol 名も検索対象にします。
 
 ## MCP
 
@@ -116,6 +125,12 @@ bun run start:mcp
 公開ツール:
 
 - `context_compile`
+- `record_vibe_memory`: `content` に加えて `diff` / `artifacts[]` を受け取り、
+  vibe memory、AI artifact、artifact symbol を同一トランザクションで保存します。
+- `memory_search`: vibe memory と関連 artifact/symbol を検索します。
+- `memory_fetch`: vibe memory と関連 artifact/symbol をまとめて取得します。
+- `initial_instructions`
+- `doctor`
 
 ## テスト
 

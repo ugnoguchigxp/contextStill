@@ -37,10 +37,10 @@ export function renderContextPackMarkdown(pack: ContextPack): string {
 
   lines.push("## Source Refs");
   lines.push("");
-  if (pack.evidenceRefs.length === 0) {
+  if (pack.sourceRefs.length === 0) {
     lines.push("- none");
   } else {
-    for (const ref of pack.evidenceRefs) {
+    for (const ref of pack.sourceRefs) {
       lines.push(`- ${ref}`);
     }
   }

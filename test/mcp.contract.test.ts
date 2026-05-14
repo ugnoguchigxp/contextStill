@@ -95,7 +95,7 @@ describeDb("mcp contract", () => {
         section: "rules",
         score: 0.7,
         rankingReason: "contract",
-        evidenceRefs: ["file:///docs/rule.md#line:1-2"],
+        sourceRefs: ["file:///docs/rule.md#line:1-2"],
       },
     ]);
 

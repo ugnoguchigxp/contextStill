@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { registerEvidenceFromText } from "../src/modules/evidence/evidence.service.js";
 import { upsertKnowledgeFromSource } from "../src/modules/knowledge/knowledge.repository.js";
+import { upsertSourceDocument } from "../src/modules/sources/source.repository.js";
 import {
   closeIntegrationDb,
   ensureDbIntegrationReady,
@@ -48,12 +48,12 @@ describeDb("cli compile e2e", () => {
       title: "CLI rule",
       body: "cli compile goal",
     });
-    await registerEvidenceFromText({
+    await upsertSourceDocument({
       sourceKind: "markdown",
-      uri: "file:///cli/evidence.md",
-      contentHash: "cli-evidence-hash",
-      text: "cli compile goal evidence",
-      locator: "line:1-1",
+      uri: "file:///cli/source.md",
+      title: "CLI source",
+      contentHash: "cli-source-hash",
+      body: "cli compile goal source",
     });
 
     const run = spawnSync(

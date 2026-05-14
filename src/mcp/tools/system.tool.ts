@@ -2,7 +2,8 @@ import { runDoctor } from "../../modules/doctor/doctor.service.js";
 
 export const initialInstructionsTool = {
   name: "initial_instructions",
-  description: "Get the minimum operational rules for Agent-First knowledge management (Gnosis compatible).",
+  description:
+    "Get the minimum operational rules for Agent-First knowledge management (Gnosis compatible).",
   inputSchema: {
     type: "object",
     properties: {},

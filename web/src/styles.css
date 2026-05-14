@@ -1,8 +1,8 @@
 @import "tailwindcss";
 @import "tw-animate-css";
-@source "../../node_modules/markdown-wysiwyg-editor/dist/*.js";
 @import "markdown-wysiwyg-editor/theme";
 @import "markdown-wysiwyg-editor/style";
+@source "../../node_modules/markdown-wysiwyg-editor/dist/*.js";
 
 @custom-variant dark (&:is(.dark *));
 
@@ -548,10 +548,18 @@
   background: var(--destructive-muted);
 }
 
-.vibe-type-action { border-left: 4px solid var(--blue-500); }
-.vibe-type-chat { border-left: 4px solid var(--emerald-500); }
-.vibe-type-observation { border-left: 4px solid var(--amber-500); }
-.vibe-type-system { border-left: 4px solid var(--slate-500); }
+.vibe-type-action {
+  border-left: 4px solid var(--blue-500);
+}
+.vibe-type-chat {
+  border-left: 4px solid var(--emerald-500);
+}
+.vibe-type-observation {
+  border-left: 4px solid var(--amber-500);
+}
+.vibe-type-system {
+  border-left: 4px solid var(--slate-500);
+}
 
 .activity-empty-view {
   flex: 1;

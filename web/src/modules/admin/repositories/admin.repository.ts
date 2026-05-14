@@ -45,10 +45,11 @@ export type VibeMemory = {
 
 export type AiArtifact = {
   id: string;
-  vibeMemoryId: string | null;
-  artifactType: string;
-  filePath: string | null;
+  vibeMemoryId: string;
+  filePath: string;
   content: string;
+  diff: string | null;
+  language: string | null;
   metadata?: Record<string, unknown>;
   createdAt: string;
 };
@@ -58,11 +59,12 @@ export type ArtifactSymbol = {
   artifactId: string;
   symbolName: string;
   symbolKind: string;
+  content: string;
   signature: string | null;
-  content: string | null;
   startLine: number | null;
   endLine: number | null;
   metadata?: Record<string, unknown>;
+  createdAt: string;
   updatedAt: string;
 };
 
@@ -303,60 +305,6 @@ export async function deleteSourceFragment(id: string): Promise<void> {
   throw new Error("source fragment API is disabled");
 }
 
-// Legacy compatibility for the old Evidence page. New UI should use Source APIs.
-export type EvidenceSource = SourceDocument;
-export type EvidenceFragment = SourceFragment;
-export type EvidenceSourceWriteInput = {
-  sourceKind: string;
-  uri: string;
-  title?: string | null;
-  contentHash?: string;
-  metadata?: Record<string, unknown>;
-};
-export type EvidenceFragmentWriteInput = SourceFragmentWriteInput;
-
-export async function fetchEvidenceSources(limit = 80): Promise<EvidenceSource[]> {
-  const json = await getJson<{ sources: EvidenceSource[] }>(`/api/evidence/sources?limit=${limit}`);
-  return json.sources;
-}
-
-export async function createEvidenceSource(input: EvidenceSourceWriteInput): Promise<void> {
-  await requestJson("/api/evidence/sources", "POST", input);
-}
-
-export async function updateEvidenceSource(
-  id: string,
-  input: EvidenceSourceWriteInput,
-): Promise<void> {
-  await requestJson(`/api/evidence/sources/${id}`, "PUT", input);
-}
-
-export async function deleteEvidenceSource(id: string): Promise<void> {
-  await requestJson(`/api/evidence/sources/${id}`, "DELETE");
-}
-
-export async function fetchEvidenceFragments(limit = 80): Promise<EvidenceFragment[]> {
-  const json = await getJson<{ fragments: EvidenceFragment[] }>(
-    `/api/evidence/fragments?limit=${limit}`,
-  );
-  return json.fragments;
-}
-
-export async function createEvidenceFragment(input: EvidenceFragmentWriteInput): Promise<void> {
-  await requestJson("/api/evidence/fragments", "POST", input);
-}
-
-export async function updateEvidenceFragment(
-  id: string,
-  input: EvidenceFragmentWriteInput,
-): Promise<void> {
-  await requestJson(`/api/evidence/fragments/${id}`, "PUT", input);
-}
-
-export async function deleteEvidenceFragment(id: string): Promise<void> {
-  await requestJson(`/api/evidence/fragments/${id}`, "DELETE");
-}
-
 export async function fetchVibeMemories(limit = 120): Promise<VibeMemory[]> {
   const json = await getJson<{ memories: VibeMemory[] }>(`/api/activity?limit=${limit}`);
   return json.memories;
@@ -372,7 +320,9 @@ export async function fetchAiArtifacts(limit = 100): Promise<AiArtifact[]> {
 }
 
 export async function fetchArtifactSymbols(limit = 120): Promise<ArtifactSymbol[]> {
-  const json = await getJson<{ symbols: ArtifactSymbol[] }>(`/api/artifacts/symbols?limit=${limit}`);
+  const json = await getJson<{ symbols: ArtifactSymbol[] }>(
+    `/api/artifacts/symbols?limit=${limit}`,
+  );
   return json.symbols;
 }
 

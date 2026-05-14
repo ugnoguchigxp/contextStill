@@ -24,7 +24,7 @@ describe("schema contracts", () => {
       examples: [],
       codeContext: [],
       warnings: [],
-      evidenceRefs: [],
+      sourceRefs: [],
       diagnostics: { degradedReasons: [], retrievalStats: {} },
     });
 

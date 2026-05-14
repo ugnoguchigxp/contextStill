@@ -9,8 +9,8 @@ import {
   type ContextPackItem,
   contextPackSchema,
 } from "../../shared/schemas/context-pack.schema.js";
-import { retrieveEvidence } from "../evidence/evidence.service.js";
 import { retrieveKnowledge } from "../knowledge/knowledge.service.js";
+import { retrieveSources } from "../sources/source-retrieval.service.js";
 import { insertCompileRun, insertContextPackItems } from "./context-compiler.repository.js";
 import { renderContextPackMarkdown } from "./pack-renderer.js";
 import { rankAndDedupe } from "./ranking.service.js";
@@ -56,7 +56,7 @@ function truncateForBudget(content: string, maxTokens: number): string {
   return `${content.slice(0, Math.max(1, maxChars - 3))}...`;
 }
 
-function scoreEvidenceOverlap(text: string, candidateText: string): number {
+function scoreSourceOverlap(text: string, candidateText: string): number {
   const baseTokens = text
     .toLowerCase()
     .split(/[^a-z0-9_\u3040-\u30ff\u4e00-\u9faf]+/g)
@@ -71,11 +71,11 @@ function scoreEvidenceOverlap(text: string, candidateText: string): number {
   return overlap;
 }
 
-function formatEvidenceRef(sourceUri: string, locator: string): string {
+function formatSourceRef(sourceUri: string, locator: string): string {
   return `${sourceUri}#${locator}`;
 }
 
-function buildFallbackEvidenceRef(params: {
+function buildFallbackSourceRef(params: {
   runId: string;
   retrievalMode: RetrievalMode;
   degradedReasons: string[];
@@ -83,24 +83,24 @@ function buildFallbackEvidenceRef(params: {
   const reason =
     params.degradedReasons.find((item) => item.startsWith("NO_")) ??
     params.degradedReasons[0] ??
-    "NO_EVIDENCE_MATCH";
+    "NO_SOURCE_MATCH";
   return `memory-router://packs/run/${params.runId}#${params.retrievalMode}:${reason}`;
 }
 
-function selectEvidenceRefsForKnowledge(
+function selectSourceRefsForKnowledge(
   item: { type: string; title: string; content: string },
-  evidenceItems: Array<{ sourceUri: string; locator: string; content: string; score: number }>,
+  sourceItems: Array<{ sourceUri: string; locator: string; content: string; score: number }>,
 ): string[] {
-  if (evidenceItems.length === 0) return [];
-  const scored = evidenceItems
-    .map((evidenceItem) => {
-      const overlap = scoreEvidenceOverlap(
+  if (sourceItems.length === 0) return [];
+  const scored = sourceItems
+    .map((sourceItem) => {
+      const overlap = scoreSourceOverlap(
         `${item.title}\n${item.content}`,
-        `${evidenceItem.sourceUri}\n${evidenceItem.content}`,
+        `${sourceItem.sourceUri}\n${sourceItem.content}`,
       );
       return {
-        ref: formatEvidenceRef(evidenceItem.sourceUri, evidenceItem.locator),
-        score: evidenceItem.score + overlap * 0.05,
+        ref: formatSourceRef(sourceItem.sourceUri, sourceItem.locator),
+        score: sourceItem.score + overlap * 0.05,
         overlap,
       };
     })
@@ -112,8 +112,8 @@ function selectEvidenceRefsForKnowledge(
     .map((entry) => entry.ref);
   if (overlapRefs.length > 0) return [...new Set(overlapRefs)];
 
-  const evidenceRequiredTypes = new Set(["fact", "decision", "risk", "lesson", "example"]);
-  if (evidenceRequiredTypes.has(item.type)) {
+  const sourceRequiredTypes = new Set(["fact", "decision", "risk", "lesson", "example"]);
+  if (sourceRequiredTypes.has(item.type)) {
     return [scored[0].ref];
   }
   return [];
@@ -130,7 +130,7 @@ function applySectionTokenBudget(
   let usedTokens = 0;
   for (const item of items) {
     const itemCost = estimateTokens(
-      `${item.title}\n${item.content}\n${item.rankingReason}\n${item.evidenceRefs.join("\n")}`,
+      `${item.title}\n${item.content}\n${item.rankingReason}\n${item.sourceRefs.join("\n")}`,
     );
     if (usedTokens + itemCost <= maxTokens) {
       selected.push(item);
@@ -153,12 +153,12 @@ function buildMinimalTasks(retrievalMode: RetrievalMode): string[] {
       return [
         "Inspect active rules, risks, and relevant examples",
         "Check touched files against known constraints",
-        "Verify evidence refs for each review claim",
+        "Verify source refs for each review claim",
         "Summarize findings with concrete next actions",
       ];
     case "debug_context":
       return [
-        "Inspect failure-related evidence and code context first",
+        "Inspect failure-related source material and code context first",
         "Narrow root cause candidates before editing",
         "Apply smallest fix aligned with known procedures",
         "Run targeted verification for the failing path",
@@ -174,19 +174,19 @@ function buildMinimalTasks(retrievalMode: RetrievalMode): string[] {
       return [
         "Inspect the selected procedure/skill candidates",
         "Execute only the necessary commands and checks",
-        "Capture evidence refs for each operational claim",
+        "Capture source refs for each operational claim",
         "Report result and follow-up verification steps",
       ];
     case "learning_context":
       return [
-        "Review candidate/trial knowledge with evidence traceability",
+        "Review candidate/trial knowledge with source traceability",
         "Separate stable guidance from temporary observations",
         "Promote only verifiable items to stronger lifecycle states",
         "Record why each promotion/rejection decision was made",
       ];
     default:
       return [
-        "Inspect relevant knowledge and evidence",
+        "Inspect relevant knowledge and source material",
         "Apply active rules and procedures only",
         "Implement smallest safe change set",
         "Run focused verification for touched behavior",
@@ -200,7 +200,7 @@ function toKnowledgePackItem(item: {
   title: string;
   body: string;
   score: number;
-  evidenceRefs: string[];
+  sourceRefs: string[];
 }): ContextPackItem {
   const section =
     item.type === "skill" || item.type === "procedure"
@@ -217,8 +217,23 @@ function toKnowledgePackItem(item: {
     content: item.body,
     score: item.score,
     rankingReason: "ranked by full-text/vector score with status filter",
-    evidenceRefs: item.evidenceRefs,
+    sourceRefs: item.sourceRefs,
   };
+}
+
+function buildCodeContextItems(files: string[] | undefined): ContextPackItem[] {
+  const uniqueFiles = [...new Set((files ?? []).map((file) => file.trim()).filter(Boolean))];
+  return uniqueFiles.map((filePath, index) => ({
+    id: `file_hint:${filePath}`,
+    itemKind: "file_hint",
+    itemId: filePath,
+    section: "code_context",
+    title: filePath,
+    content: filePath,
+    score: Math.max(0.1, 1 - index * 0.05),
+    rankingReason: "provided in compile input files",
+    sourceRefs: [],
+  }));
 }
 
 export async function compileContextPack(rawInput: unknown): Promise<{
@@ -229,15 +244,12 @@ export async function compileContextPack(rawInput: unknown): Promise<{
   const retrievalMode = resolveRetrievalMode(input);
   const tokenBudget = input.tokenBudget ?? config.defaultTokenBudget;
 
-  const [knowledge, evidence] = await Promise.all([
+  const [knowledge, sourceContext] = await Promise.all([
     retrieveKnowledge(input, { retrievalMode }),
-    retrieveEvidence(input, { retrievalMode }),
+    retrieveSources(input, { retrievalMode }),
   ]);
 
-  const degradedReasons = [
-    ...knowledge.degradedReasons,
-    ...evidence.degradedReasons,
-  ];
+  const degradedReasons = [...knowledge.degradedReasons, ...sourceContext.degradedReasons];
 
   const rankedKnowledge = rankAndDedupe(
     knowledge.items.map((item) => ({
@@ -259,9 +271,9 @@ export async function compileContextPack(rawInput: unknown): Promise<{
       title: item.title,
       body: item.content,
       score: item.score,
-      evidenceRefs: selectEvidenceRefsForKnowledge(
+      sourceRefs: selectSourceRefsForKnowledge(
         { type: (item as { type: string }).type, title: item.title, content: item.content },
-        evidence.items,
+        sourceContext.items,
       ),
     }),
   );
@@ -278,11 +290,16 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     packItems.filter((item) => item.section === "examples"),
     Math.floor(tokenBudget * sectionRatios.examples),
   );
+  const budgetedCodeContext = applySectionTokenBudget(
+    buildCodeContextItems(input.files),
+    Math.floor(tokenBudget * sectionRatios.codeContext),
+  );
 
   const budgetDropDetected =
     budgetedRules.dropped ||
     budgetedSkills.dropped ||
-    budgetedExamples.dropped;
+    budgetedExamples.dropped ||
+    budgetedCodeContext.dropped;
   if (budgetDropDetected) {
     degradedReasons.push("TOKEN_BUDGET_SECTION_LIMIT_REACHED");
   }
@@ -291,12 +308,13 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     ...budgetedRules.items,
     ...budgetedSkills.items,
     ...budgetedExamples.items,
+    ...budgetedCodeContext.items,
   ];
-  const itemEvidenceRefs = selectedPackItems.flatMap((item) => item.evidenceRefs);
-  const evidenceRefsCandidate = [
+  const itemSourceRefs = selectedPackItems.flatMap((item) => item.sourceRefs);
+  const sourceRefsCandidate = [
     ...new Set([
-      ...itemEvidenceRefs,
-      ...evidence.items.map((item) => formatEvidenceRef(item.sourceUri, item.locator)),
+      ...itemSourceRefs,
+      ...sourceContext.items.map((item) => formatSourceRef(item.sourceUri, item.locator)),
     ]),
   ];
   const hardFailureCount = degradedReasons.filter((reason) => reason.endsWith("_FAILED")).length;
@@ -322,14 +340,14 @@ export async function compileContextPack(rawInput: unknown): Promise<{
       section: item.section,
       score: item.score,
       rankingReason: item.rankingReason,
-      evidenceRefs: item.evidenceRefs,
+      sourceRefs: item.sourceRefs,
     })),
   );
 
-  const evidenceRefs =
-    evidenceRefsCandidate.length > 0
-      ? evidenceRefsCandidate
-      : [buildFallbackEvidenceRef({ runId, retrievalMode, degradedReasons })];
+  const sourceRefs =
+    sourceRefsCandidate.length > 0
+      ? sourceRefsCandidate
+      : [buildFallbackSourceRef({ runId, retrievalMode, degradedReasons })];
 
   const pack = contextPackSchema.parse({
     runId,
@@ -341,18 +359,18 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     rules: budgetedRules.items,
     skills: budgetedSkills.items,
     examples: budgetedExamples.items,
-    codeContext: [],
+    codeContext: budgetedCodeContext.items,
     warnings: [
       "Do not promote candidate/draft knowledge into instructions automatically.",
-      "Keep evidence refs attached to factual claims.",
+      "Keep source refs attached to factual claims.",
       ...(budgetDropDetected ? ["Token budget section caps trimmed lower-ranked items."] : []),
     ],
-    evidenceRefs,
+    sourceRefs,
     diagnostics: {
       degradedReasons,
       retrievalStats: {
         knowledge: knowledge.stats,
-        evidence: evidence.stats,
+        sources: sourceContext.stats,
         tokenBudget,
       },
     },

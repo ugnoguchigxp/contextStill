@@ -1,11 +1,28 @@
 import { z } from "zod";
 import {
-  recordActivity,
+  recordActivityWithArtifacts,
   retrieveActivityContext,
 } from "../../modules/activity/activity.service.js";
 import { db } from "../../db/client.js";
-import { vibeMemories } from "../../db/schema.js";
-import { eq } from "drizzle-orm";
+import { aiArtifacts, artifactSymbols, vibeMemories } from "../../db/schema.js";
+import { desc, eq, inArray } from "drizzle-orm";
+import { recordActivityInputSchema } from "../../shared/schemas/activity.schema.js";
+
+const memorySearchArgsSchema = z.object({
+  query: z.string().trim().min(1),
+  sessionId: z.string().optional(),
+  limit: z.number().int().positive().optional(),
+});
+
+const memoryFetchArgsSchema = z.object({
+  id: z.string().min(1),
+  start: z.number().int().nonnegative().optional(),
+  end: z.number().int().nonnegative().optional(),
+  maxChars: z.number().int().positive().optional(),
+  query: z.string().trim().optional(),
+});
+
+const recordVibeMemoryArgsSchema = recordActivityInputSchema;
 
 export const memorySearchTool = {
   name: "memory_search",
@@ -19,11 +36,12 @@ export const memorySearchTool = {
     },
     required: ["query"],
   },
-  handler: async (args: any) => {
+  handler: async (args: unknown) => {
+    const parsed = memorySearchArgsSchema.parse(args);
     const results = await retrieveActivityContext({
-      query: args.query,
-      sessionId: args.sessionId,
-      limit: args.limit,
+      query: parsed.query,
+      sessionId: parsed.sessionId,
+      limit: parsed.limit,
     });
     return {
       content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
@@ -33,7 +51,8 @@ export const memorySearchTool = {
 
 export const memoryFetchTool = {
   name: "memory_fetch",
-  description: "Fetch a specific vibe memory with optional range or search context (Gnosis compatible).",
+  description:
+    "Fetch a specific vibe memory with optional range or search context (Gnosis compatible).",
   inputSchema: {
     type: "object",
     properties: {
@@ -45,20 +64,35 @@ export const memoryFetchTool = {
     },
     required: ["id"],
   },
-  handler: async (args: any) => {
-    const [memory] = await db.select().from(vibeMemories).where(eq(vibeMemories.id, args.id));
+  handler: async (args: unknown) => {
+    const parsed = memoryFetchArgsSchema.parse(args);
+    const [memory] = await db.select().from(vibeMemories).where(eq(vibeMemories.id, parsed.id));
     if (!memory) {
       return { content: [{ type: "text", text: "Memory not found." }], isError: true };
     }
+    const artifacts = await db
+      .select()
+      .from(aiArtifacts)
+      .where(eq(aiArtifacts.vibeMemoryId, memory.id))
+      .orderBy(desc(aiArtifacts.createdAt));
+    const artifactIds = artifacts.map((artifact) => artifact.id);
+    const symbols =
+      artifactIds.length > 0
+        ? await db
+            .select()
+            .from(artifactSymbols)
+            .where(inArray(artifactSymbols.artifactId, artifactIds))
+            .orderBy(desc(artifactSymbols.updatedAt))
+        : [];
 
     let text = memory.content;
-    const start = args.start ?? 0;
-    const end = args.end ?? text.length;
+    const start = parsed.start ?? 0;
+    const end = parsed.end ?? text.length;
 
-    if (args.query) {
-      const index = text.toLowerCase().indexOf(args.query.toLowerCase());
+    if (parsed.query) {
+      const index = text.toLowerCase().indexOf(parsed.query.toLowerCase());
       if (index !== -1) {
-        const half = (args.maxChars ?? 1000) / 2;
+        const half = (parsed.maxChars ?? 1000) / 2;
         text = text.slice(Math.max(0, index - half), index + half);
       } else {
         text = text.slice(start, end);
@@ -67,15 +101,26 @@ export const memoryFetchTool = {
       text = text.slice(start, end);
     }
 
-    if (args.maxChars && text.length > args.maxChars) {
-      text = text.slice(0, args.maxChars);
+    if (parsed.maxChars && text.length > parsed.maxChars) {
+      text = text.slice(0, parsed.maxChars);
     }
 
     return {
       content: [
         {
           type: "text",
-          text: JSON.stringify({ ...memory, content: text }, null, 2),
+          text: JSON.stringify(
+            {
+              ...memory,
+              content: text,
+              artifacts: artifacts.map((artifact) => ({
+                ...artifact,
+                symbols: symbols.filter((symbol) => symbol.artifactId === artifact.id),
+              })),
+            },
+            null,
+            2,
+          ),
         },
       ],
     };
@@ -96,18 +141,58 @@ export const recordVibeMemoryTool = {
         default: "chat",
       },
       metadata: { type: "object", description: "Optional metadata." },
+      diff: {
+        type: "string",
+        description: "Optional unified diff. Changed files are stored as AI artifacts.",
+      },
+      artifacts: {
+        type: "array",
+        description: "Optional explicit artifacts with content, diff, language, and symbols.",
+        items: {
+          type: "object",
+          properties: {
+            filePath: { type: "string" },
+            content: { type: "string" },
+            diff: { type: "string" },
+            language: { type: "string" },
+            metadata: { type: "object" },
+            symbols: {
+              type: "array",
+              items: {
+                type: "object",
+                properties: {
+                  symbolName: { type: "string" },
+                  symbolKind: { type: "string" },
+                  content: { type: "string" },
+                  signature: { type: "string" },
+                  startLine: { type: "number" },
+                  endLine: { type: "number" },
+                  metadata: { type: "object" },
+                },
+                required: ["symbolName", "symbolKind"],
+              },
+            },
+          },
+          required: ["filePath"],
+        },
+      },
     },
     required: ["sessionId", "content"],
   },
-  handler: async (args: any) => {
-    const result = await recordActivity({
-      sessionId: args.sessionId,
-      content: args.content,
-      memoryType: args.memoryType,
-      metadata: args.metadata,
-    });
+  handler: async (args: unknown) => {
+    const parsed = recordVibeMemoryArgsSchema.parse(args);
+    const result = await recordActivityWithArtifacts(parsed);
+    const symbolCount = result.artifacts.reduce(
+      (count, artifact) => count + artifact.symbols.length,
+      0,
+    );
     return {
-      content: [{ type: "text", text: `Vibe memory recorded with ID: ${result.id}` }],
+      content: [
+        {
+          type: "text",
+          text: `Vibe memory recorded with ID: ${result.memory.id} (artifacts: ${result.artifacts.length}, symbols: ${symbolCount})`,
+        },
+      ],
     };
   },
 };

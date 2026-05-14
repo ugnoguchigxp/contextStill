@@ -49,12 +49,6 @@ const sourcesRoute = createRoute({
   component: SourcesPage,
 });
 
-const evidenceAliasRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/evidence",
-  component: SourcesPage,
-});
-
 const activityRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/activity",
@@ -84,7 +78,6 @@ const routeTree = rootRoute.addChildren([
   compileRoute,
   knowledgeRoute,
   sourcesRoute,
-  evidenceAliasRoute,
   activityRoute,
   artifactsRoute,
   graphRoute,

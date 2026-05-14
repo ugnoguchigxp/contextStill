@@ -6,14 +6,17 @@ import {
   listRecentCompileRuns,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
 import {
-  insertEvidenceFragment,
-  searchEvidence,
-  upsertEvidenceSource,
-} from "../src/modules/evidence/evidence.repository.js";
-import {
   searchKnowledge,
   upsertKnowledgeFromSource,
 } from "../src/modules/knowledge/knowledge.repository.js";
+import {
+  searchSourceContent,
+  upsertSourceDocument,
+} from "../src/modules/sources/source.repository.js";
+import {
+  recordActivityWithArtifacts,
+  retrieveActivityContext,
+} from "../src/modules/activity/activity.service.js";
 import {
   closeIntegrationDb,
   ensureDbIntegrationReady,
@@ -44,7 +47,7 @@ describeDb("repositories integration", () => {
       status: "active",
       scope: "repo",
       title: "Repository Integration Rule",
-      body: "Always keep evidence refs attached to factual claims.",
+      body: "Always keep source refs attached to factual claims.",
     });
 
     const draftId = await upsertKnowledgeFromSource({
@@ -76,23 +79,19 @@ describeDb("repositories integration", () => {
     expect(withDrafts.some((item) => item.id === draftId)).toBe(true);
   });
 
-  test("evidence source/fragment upsert and search works", async () => {
-    const sourceId = await upsertEvidenceSource({
+  test("source document upsert creates searchable source content", async () => {
+    const sourceId = await upsertSourceDocument({
       sourceKind: "markdown",
-      uri: "file:///docs/evidence.md",
-      title: "Evidence",
-      contentHash: "evidence-hash-1",
-    });
-    await insertEvidenceFragment({
-      sourceId,
-      locator: "line:1-5",
-      content: "compile command failed because vector extension was missing.",
+      uri: "file:///docs/source.md",
+      title: "Source",
+      contentHash: "source-hash-1",
+      body: "compile command failed because vector extension was missing.",
     });
 
-    const hits = await searchEvidence("vector extension", 5);
+    const hits = await searchSourceContent("vector extension", 5);
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0]?.sourceId).toBe(sourceId);
-    expect(hits[0]?.sourceUri).toBe("file:///docs/evidence.md");
+    expect(hits[0]?.sourceUri).toBe("file:///docs/source.md");
   });
 
   test("compile run and context pack items are persisted and retrievable", async () => {
@@ -102,7 +101,7 @@ describeDb("repositories integration", () => {
       input: { goal: "integration run", intent: "review" },
       retrievalMode: "review_context",
       status: "degraded",
-      degradedReasons: ["NO_EVIDENCE_MATCH"],
+      degradedReasons: ["NO_SOURCE_MATCH"],
       tokenBudget: 2048,
     });
 
@@ -113,7 +112,7 @@ describeDb("repositories integration", () => {
         section: "rules",
         score: 0.9,
         rankingReason: "integration test",
-        evidenceRefs: ["file:///docs/evidence.md#line:1-5"],
+        sourceRefs: ["file:///docs/source.md#line:1-5"],
       },
       {
         itemKind: "skill",
@@ -121,7 +120,7 @@ describeDb("repositories integration", () => {
         section: "skills",
         score: 0.8,
         rankingReason: "integration test",
-        evidenceRefs: [],
+        sourceRefs: [],
       },
     ]);
 
@@ -133,6 +132,42 @@ describeDb("repositories integration", () => {
     expect(snapshot).not.toBeNull();
     expect(snapshot?.items.length).toBe(2);
     expect(snapshot?.items[0]?.section).toBe("rules");
-    expect(snapshot?.items[0]?.evidenceRefs.length).toBeGreaterThan(0);
+    expect(snapshot?.items[0]?.sourceRefs.length).toBeGreaterThan(0);
+  });
+
+  test("activity recording persists vibe memory artifacts and extracted symbols", async () => {
+    const result = await recordActivityWithArtifacts({
+      sessionId: "integration-artifact-session",
+      content: "AI generated repository diff",
+      memoryType: "action",
+      diff: `diff --git a/src/integration.ts b/src/integration.ts
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/integration.ts
+@@ -0,0 +1,5 @@
++export function integrationValue(): number {
++  return 7;
++}
++
++export const integrationName = "memory-router";
+`,
+    });
+
+    expect(result.memory.sessionId).toBe("integration-artifact-session");
+    expect(result.artifacts).toHaveLength(1);
+    expect(result.artifacts[0]?.vibeMemoryId).toBe(result.memory.id);
+    expect(result.artifacts[0]?.filePath).toBe("src/integration.ts");
+    expect(
+      result.artifacts[0]?.symbols.some((symbol) => symbol.symbolName === "integrationValue"),
+    ).toBe(true);
+    expect(result.artifacts[0]?.symbols.some((symbol) => symbol.startLine === 1)).toBe(true);
+
+    const hits = await retrieveActivityContext({
+      query: "integrationValue",
+      sessionId: "integration-artifact-session",
+      limit: 5,
+    });
+    expect(hits.some((hit) => hit.id === result.memory.id)).toBe(true);
   });
 });

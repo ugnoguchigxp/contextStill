@@ -2,8 +2,8 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:tes
 import { sql } from "drizzle-orm";
 import { getDb } from "../src/db/index.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
-import { registerEvidenceFromText } from "../src/modules/evidence/evidence.service.js";
 import { upsertKnowledgeFromSource } from "../src/modules/knowledge/knowledge.repository.js";
+import { upsertSourceDocument } from "../src/modules/sources/source.repository.js";
 import {
   closeIntegrationDb,
   ensureDbIntegrationReady,
@@ -26,7 +26,7 @@ describeDb("context compiler integration", () => {
     await closeIntegrationDb();
   });
 
-  test("applies section token budget and keeps evidence refs on selected items", async () => {
+  test("applies section token budget and keeps source refs on selected items", async () => {
     for (let i = 0; i < 6; i += 1) {
       await upsertKnowledgeFromSource({
         sourceUri: `file:///knowledge/fact-${i}.md`,
@@ -35,16 +35,16 @@ describeDb("context compiler integration", () => {
         status: "active",
         scope: "repo",
         title: `Budget Fact ${i}`,
-        body: `budget scenario integration evidence linkage repeated content ${"x".repeat(400)}`,
+        body: `budget scenario integration source linkage repeated content ${"x".repeat(400)}`,
       });
     }
 
-    await registerEvidenceFromText({
+    await upsertSourceDocument({
       sourceKind: "markdown",
-      uri: "file:///evidence/budget.md",
-      contentHash: "budget-evidence-hash",
-      text: "budget scenario integration evidence linkage proof",
-      locator: "line:1-3",
+      uri: "file:///sources/budget.md",
+      title: "Budget Source",
+      contentHash: "budget-source-hash",
+      body: "budget scenario integration source linkage proof",
     });
 
     const { pack } = await compileContextPack({
@@ -56,7 +56,7 @@ describeDb("context compiler integration", () => {
     expect(pack.diagnostics.degradedReasons).toContain("TOKEN_BUDGET_SECTION_LIMIT_REACHED");
     expect(pack.rules.length).toBeGreaterThan(0);
     expect(pack.rules.length).toBeLessThan(6);
-    expect(pack.rules.some((item) => item.evidenceRefs.length > 0)).toBe(true);
+    expect(pack.rules.some((item) => item.sourceRefs.length > 0)).toBe(true);
   });
 
   test("distinguishes no-match degraded reasons from retrieval failures", async () => {
@@ -66,25 +66,25 @@ describeDb("context compiler integration", () => {
       queryEmbedding: new Array(384).fill(0),
     });
     expect(noMatch.pack.diagnostics.degradedReasons).toContain("NO_ACTIVE_KNOWLEDGE_MATCH");
-    expect(noMatch.pack.diagnostics.degradedReasons).toContain("NO_EVIDENCE_MATCH");
+    expect(noMatch.pack.diagnostics.degradedReasons).toContain("NO_SOURCE_MATCH");
     expect(
       noMatch.pack.diagnostics.degradedReasons.some((reason) => reason.endsWith("_FAILED")),
     ).toBe(false);
-    expect(noMatch.pack.evidenceRefs.length).toBeGreaterThan(0);
-    expect(noMatch.pack.evidenceRefs[0]?.startsWith("memory-router://packs/run/")).toBe(true);
+    expect(noMatch.pack.sourceRefs.length).toBeGreaterThan(0);
+    expect(noMatch.pack.sourceRefs[0]?.startsWith("memory-router://packs/run/")).toBe(true);
 
     const db = getDb();
-    await db.execute(sql`alter table evidence_fragments rename to evidence_fragments_tmp`);
+    await db.execute(sql`alter table source_fragments rename to source_fragments_tmp`);
     try {
       const failure = await compileContextPack({
         goal: "still-unmatched-goal",
         intent: "edit",
         queryEmbedding: new Array(384).fill(0),
       });
-      expect(failure.pack.diagnostics.degradedReasons).toContain("EVIDENCE_SEARCH_FAILED");
-      expect(failure.pack.diagnostics.degradedReasons).not.toContain("NO_EVIDENCE_MATCH");
+      expect(failure.pack.diagnostics.degradedReasons).toContain("SOURCE_SEARCH_FAILED");
+      expect(failure.pack.diagnostics.degradedReasons).not.toContain("NO_SOURCE_MATCH");
     } finally {
-      await db.execute(sql`alter table evidence_fragments_tmp rename to evidence_fragments`);
+      await db.execute(sql`alter table source_fragments_tmp rename to source_fragments`);
     }
   });
 

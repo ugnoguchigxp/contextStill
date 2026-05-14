@@ -34,10 +34,10 @@ export async function insertContextPackItems(
   items: Array<{
     itemKind: string;
     itemId: string;
-    section: "rules" | "skills" | "examples" | "code_context" | "warnings" | "evidence";
+    section: "rules" | "skills" | "examples" | "code_context" | "warnings";
     score: number;
     rankingReason: string;
-    evidenceRefs: string[];
+    sourceRefs: string[];
   }>,
 ): Promise<void> {
   if (items.length === 0) return;
@@ -50,7 +50,7 @@ export async function insertContextPackItems(
       section: item.section,
       score: item.score,
       rankingReason: item.rankingReason,
-      evidenceRefs: item.evidenceRefs,
+      sourceRefs: item.sourceRefs,
     })),
   );
 }
@@ -73,7 +73,7 @@ export type CompileRunSnapshot = {
     section: string;
     score: number;
     rankingReason: string;
-    evidenceRefs: string[];
+    sourceRefs: string[];
   }>;
 };
 
@@ -128,7 +128,7 @@ export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSn
       section: contextPackItems.section,
       score: contextPackItems.score,
       rankingReason: contextPackItems.rankingReason,
-      evidenceRefs: contextPackItems.evidenceRefs,
+      sourceRefs: contextPackItems.sourceRefs,
     })
     .from(contextPackItems)
     .where(eq(contextPackItems.runId, runId))
@@ -150,7 +150,7 @@ export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSn
       section: row.section,
       score: row.score,
       rankingReason: row.rankingReason,
-      evidenceRefs: Array.isArray(row.evidenceRefs) ? (row.evidenceRefs as string[]) : [],
+      sourceRefs: Array.isArray(row.sourceRefs) ? (row.sourceRefs as string[]) : [],
     })),
   };
 }

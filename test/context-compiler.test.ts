@@ -31,7 +31,7 @@ describe("context compiler helpers", () => {
       examples: [],
       codeContext: [],
       warnings: [],
-      evidenceRefs: [],
+      sourceRefs: [],
       diagnostics: { degradedReasons: [], retrievalStats: {} },
     });
 

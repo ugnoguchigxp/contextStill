@@ -7,13 +7,19 @@ import { embeddingHealth } from "../embedding/embedding.service.js";
 
 const requiredTables = [
   "knowledge_items",
-  "evidence_sources",
-  "evidence_fragments",
+  "sources",
+  "source_fragments",
+  "knowledge_source_links",
+  "vibe_memories",
+  "ai_artifacts",
+  "artifact_symbols",
+  "knowledge_activity_links",
   "relations",
   "context_compile_runs",
   "context_pack_items",
-  "code_symbols",
 ] as const;
+
+const requiredTableSqlList = requiredTables.map((tableName) => `'${tableName}'`).join(", ");
 
 type DoctorOptions = {
   windowSize?: number;
@@ -93,13 +99,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
       from information_schema.tables
       where table_schema = 'public'
         and table_name in (
-          'knowledge_items',
-          'evidence_sources',
-          'evidence_fragments',
-          'relations',
-          'context_compile_runs',
-          'context_pack_items',
-          'code_symbols'
+          ${sql.raw(requiredTableSqlList)}
         )
     `);
     existingTables = (result.rows as Array<{ table_name: string }>).map((row) => row.table_name);

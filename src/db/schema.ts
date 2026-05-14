@@ -78,9 +78,11 @@ export const aiArtifacts = pgTable(
   "ai_artifacts",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    vibeMemoryId: uuid("vibe_memory_id").references(() => vibeMemories.id, {
-      onDelete: "cascade",
-    }),
+    vibeMemoryId: uuid("vibe_memory_id")
+      .references(() => vibeMemories.id, {
+        onDelete: "cascade",
+      })
+      .notNull(),
     filePath: text("file_path").notNull(),
     content: text("content").notNull(),
     diff: text("diff"),
@@ -103,13 +105,18 @@ export const artifactSymbols = pgTable(
       .notNull(),
     symbolName: text("symbol_name").notNull(),
     symbolKind: text("symbol_kind").notNull(),
+    content: text("content").notNull().default(""),
     signature: text("signature"),
+    startLine: integer("start_line"),
+    endLine: integer("end_line"),
     metadata: jsonb("metadata").default({}).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => ({
     artifactIdIdx: index("artifact_symbols_artifact_id_idx").on(table.artifactId),
     nameKindIdx: index("artifact_symbols_name_kind_idx").on(table.symbolName, table.symbolKind),
+    lineRangeIdx: index("artifact_symbols_line_range_idx").on(table.startLine, table.endLine),
   }),
 );
 
@@ -139,6 +146,10 @@ export const knowledgeActivityLinks = pgTable(
       "knowledge_activity_links_link_type_check",
       sql`${table.linkType} IN (${sql.raw(toSqlList(activityLinkTypeValues))})`,
     ),
+    targetCheck: check(
+      "knowledge_activity_links_target_check",
+      sql`${table.vibeMemoryId} IS NOT NULL OR ${table.aiArtifactId} IS NOT NULL`,
+    ),
   }),
 );
 
@@ -162,7 +173,6 @@ export const packSectionValues = [
   "examples",
   "code_context",
   "warnings",
-  "evidence",
 ] as const;
 
 const toSqlList = (values: readonly string[]): string =>
@@ -210,59 +220,6 @@ export const knowledgeItems = pgTable(
     scopeCheck: check(
       "knowledge_items_scope_check",
       sql`${table.scope} IN (${sql.raw(toSqlList(scopeValues))})`,
-    ),
-  }),
-);
-
-export const evidenceSources = pgTable(
-  "evidence_sources",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    sourceKind: text("source_kind").notNull(),
-    uri: text("uri").notNull(),
-    title: text("title"),
-    contentHash: text("content_hash").notNull(),
-    metadata: jsonb("metadata").default({}).notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
-  },
-  (table) => ({
-    kindIdx: index("evidence_sources_kind_idx").on(table.sourceKind),
-    uriIdx: index("evidence_sources_uri_idx").on(table.uri),
-    uriHashIdx: index("evidence_sources_uri_hash_idx").on(table.uri, table.contentHash),
-    sourceKindCheck: check(
-      "evidence_sources_source_kind_check",
-      sql`${table.sourceKind} IN (${sql.raw(toSqlList(sourceKindValues))})`,
-    ),
-  }),
-);
-
-export const evidenceFragments = pgTable(
-  "evidence_fragments",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    sourceId: uuid("source_id")
-      .references(() => evidenceSources.id, { onDelete: "cascade" })
-      .notNull(),
-    locator: text("locator").notNull(),
-    content: text("content").notNull(),
-    embedding: vector("embedding", { dimensions: config.embeddingDimension }),
-    metadata: jsonb("metadata").default({}).notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (table) => ({
-    sourceIdIdx: index("evidence_fragments_source_id_idx").on(table.sourceId),
-    sourceLocatorIdx: index("evidence_fragments_source_locator_idx").on(
-      table.sourceId,
-      table.locator,
-    ),
-    contentFtsIdx: index("evidence_fragments_content_fts_idx").using(
-      "gin",
-      sql`to_tsvector('simple', ${table.content})`,
-    ),
-    embeddingHnswIdx: index("evidence_fragments_embedding_hnsw_idx").using(
-      "hnsw",
-      table.embedding.op("vector_cosine_ops"),
     ),
   }),
 );
@@ -415,7 +372,7 @@ export const contextPackItems = pgTable(
     section: text("section").notNull(),
     score: real("score").default(0).notNull(),
     rankingReason: text("ranking_reason").notNull(),
-    evidenceRefs: jsonb("evidence_refs").notNull().default([]),
+    sourceRefs: jsonb("source_refs").notNull().default([]),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => ({
@@ -427,4 +384,3 @@ export const contextPackItems = pgTable(
     ),
   }),
 );
-

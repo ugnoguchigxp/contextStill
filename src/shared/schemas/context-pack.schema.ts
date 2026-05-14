@@ -9,7 +9,6 @@ export const contextPackSectionSchema = z.enum([
   "examples",
   "code_context",
   "warnings",
-  "evidence",
 ]);
 
 export const contextPackItemSchema = z.object({
@@ -21,7 +20,7 @@ export const contextPackItemSchema = z.object({
   content: z.string().min(1),
   score: z.number(),
   rankingReason: z.string().min(1),
-  evidenceRefs: z.array(z.string()).default([]),
+  sourceRefs: z.array(z.string()).default([]),
 });
 
 export const contextPackSchema = z.object({
@@ -36,7 +35,7 @@ export const contextPackSchema = z.object({
   examples: z.array(contextPackItemSchema),
   codeContext: z.array(contextPackItemSchema),
   warnings: z.array(z.string()),
-  evidenceRefs: z.array(z.string()),
+  sourceRefs: z.array(z.string()),
   diagnostics: z.object({
     degradedReasons: z.array(z.string()),
     retrievalStats: z.record(z.unknown()),

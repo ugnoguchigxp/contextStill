@@ -1,6 +1,6 @@
-import { desc, eq, ilike, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "../../db/client.js";
-import { vibeMemories } from "../../db/schema.js";
+import { aiArtifacts, artifactSymbols, vibeMemories } from "../../db/schema.js";
 
 export type VibeMemorySeed = {
   sessionId: string;
@@ -30,6 +30,9 @@ export async function searchVibeMemories(params: {
   sessionId?: string;
 }) {
   const query = params.query.trim();
+  if (!query) {
+    return [];
+  }
   const filters = [];
 
   if (params.sessionId) {
@@ -40,6 +43,27 @@ export async function searchVibeMemories(params: {
   const searchFilters = [
     sql`to_tsvector('simple', ${vibeMemories.content}) @@ plainto_tsquery('simple', ${query})`,
     ilike(vibeMemories.content, `%${query}%`),
+    sql`exists (
+      select 1
+      from ${aiArtifacts}
+      where ${aiArtifacts.vibeMemoryId} = ${vibeMemories.id}
+        and (
+          to_tsvector('simple', ${aiArtifacts.content}) @@ plainto_tsquery('simple', ${query})
+          or ${aiArtifacts.filePath} ilike ${`%${query}%`}
+          or coalesce(${aiArtifacts.diff}, '') ilike ${`%${query}%`}
+        )
+    )`,
+    sql`exists (
+      select 1
+      from ${aiArtifacts}
+      join ${artifactSymbols} on ${artifactSymbols.artifactId} = ${aiArtifacts.id}
+      where ${aiArtifacts.vibeMemoryId} = ${vibeMemories.id}
+        and (
+          ${artifactSymbols.symbolName} ilike ${`%${query}%`}
+          or ${artifactSymbols.symbolKind} ilike ${`%${query}%`}
+          or to_tsvector('simple', ${artifactSymbols.content}) @@ plainto_tsquery('simple', ${query})
+        )
+    )`,
   ];
 
   const results = await db
@@ -53,8 +77,12 @@ export async function searchVibeMemories(params: {
       score: sql<number>`ts_rank_cd(to_tsvector('simple', ${vibeMemories.content}), plainto_tsquery('simple', ${query}))`,
     })
     .from(vibeMemories)
-    .where(or(...searchFilters))
-    .orderBy(desc(sql`ts_rank_cd(to_tsvector('simple', ${vibeMemories.content}), plainto_tsquery('simple', ${query}))`))
+    .where(and(...filters, or(...searchFilters)))
+    .orderBy(
+      desc(
+        sql`ts_rank_cd(to_tsvector('simple', ${vibeMemories.content}), plainto_tsquery('simple', ${query}))`,
+      ),
+    )
     .limit(params.limit);
 
   return results;

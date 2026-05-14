@@ -3,13 +3,19 @@ import { closeDbPool, getDb } from "../../src/db/index.js";
 
 const requiredTables = [
   "knowledge_items",
-  "evidence_sources",
-  "evidence_fragments",
+  "sources",
+  "source_fragments",
+  "knowledge_source_links",
+  "vibe_memories",
+  "ai_artifacts",
+  "artifact_symbols",
+  "knowledge_activity_links",
   "relations",
   "context_compile_runs",
   "context_pack_items",
-  "code_symbols",
 ] as const;
+
+const requiredTableSqlList = requiredTables.map((tableName) => `'${tableName}'`).join(", ");
 
 export function isDbIntegrationEnabled(): boolean {
   return process.env.MEMORY_ROUTER_RUN_DB_TESTS === "1";
@@ -24,13 +30,7 @@ export async function ensureDbIntegrationReady(): Promise<void> {
     from information_schema.tables
     where table_schema = 'public'
       and table_name in (
-        'knowledge_items',
-        'evidence_sources',
-        'evidence_fragments',
-        'relations',
-        'context_compile_runs',
-        'context_pack_items',
-        'code_symbols'
+        ${sql.raw(requiredTableSqlList)}
       )
   `);
   const existing = (result.rows as Array<{ table_name: string }>).map((row) => row.table_name);
@@ -48,11 +48,15 @@ export async function truncateIntegrationTables(): Promise<void> {
     truncate table
       context_pack_items,
       context_compile_runs,
+      knowledge_activity_links,
+      artifact_symbols,
+      ai_artifacts,
+      vibe_memories,
+      knowledge_source_links,
+      source_fragments,
+      sources,
       relations,
-      evidence_fragments,
-      evidence_sources,
-      knowledge_items,
-      code_symbols
+      knowledge_items
     restart identity cascade
   `);
 }

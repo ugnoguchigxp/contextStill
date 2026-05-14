@@ -15,6 +15,20 @@
       "when": 1747200000000,
       "tag": "0001_source_distillation",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1778757607000,
+      "tag": "0002_activity_artifacts",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1778760607533,
+      "tag": "0003_drop_legacy_evidence",
+      "breakpoints": true
     }
   ]
 }

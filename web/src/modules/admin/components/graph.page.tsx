@@ -7,7 +7,7 @@ import { fetchGraphSnapshot, type GraphNode } from "../repositories/admin.reposi
 const nodeColors: Record<GraphNode["kind"], string> = {
   knowledge: "#14b8a6",
   source: "#f59e0b",
-  code: "#60a5fa",
+  activity: "#60a5fa",
 };
 
 type PositionedNode = GraphNode & { x: number; y: number };
@@ -19,7 +19,7 @@ function layoutNodes(nodes: GraphNode[]): PositionedNode[] {
   const radius = 145;
   return nodes.map((node, index) => {
     const angle = (index / nodes.length) * Math.PI * 2 - Math.PI / 2;
-    const laneOffset = node.kind === "knowledge" ? -28 : node.kind === "code" ? 28 : 0;
+    const laneOffset = node.kind === "knowledge" ? -28 : node.kind === "activity" ? 28 : 0;
     return {
       ...node,
       x: centerX + Math.cos(angle) * (radius + laneOffset),
@@ -47,7 +47,7 @@ export function GraphPage() {
       <section className="page-heading">
         <div>
           <h1>Graph</h1>
-          <p>Knowledge、Source、Code Symbolを構造ノードとして眺めます。</p>
+          <p>Knowledge、Source、Vibe Memory を構造ノードとして眺めます。</p>
         </div>
       </section>
 
@@ -125,8 +125,8 @@ export function GraphPage() {
                 <strong>{graph.data?.stats.sourceCount ?? 0}</strong>
               </div>
               <div>
-                <span>Code</span>
-                <strong>{graph.data?.stats.codeSymbolCount ?? 0}</strong>
+                <span>Vibe Memory</span>
+                <strong>{graph.data?.stats.activityCount ?? 0}</strong>
               </div>
               <div>
                 <span>Relations</span>

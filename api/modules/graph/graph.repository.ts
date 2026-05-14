@@ -1,12 +1,6 @@
 import { desc } from "drizzle-orm";
 import { db } from "../../../src/db/index.js";
-import {
-  evidenceSources,
-  knowledgeItems,
-  relations,
-  sources,
-  vibeMemories,
-} from "../../../src/db/schema.js";
+import { knowledgeItems, relations, sources, vibeMemories } from "../../../src/db/schema.js";
 
 export type GraphNode = {
   id: string;
@@ -26,7 +20,6 @@ export type GraphEdge = {
 };
 
 function normalizeKind(kind: string): "knowledge" | "source" | "activity" | string {
-  if (kind === "evidence") return "source";
   if (kind === "vibe_memory") return "activity";
   return kind;
 }
@@ -41,65 +34,53 @@ export async function buildGraphSnapshot(limit: number): Promise<{
     relationCount: number;
   };
 }> {
-  const [knowledgeRows, sourceRows, legacySourceRows, memoryRows, relationRows] = await Promise.all(
-    [
-      db
-        .select({
-          id: knowledgeItems.id,
-          title: knowledgeItems.title,
-          type: knowledgeItems.type,
-          status: knowledgeItems.status,
-          importance: knowledgeItems.importance,
-          metadata: knowledgeItems.metadata,
-        })
-        .from(knowledgeItems)
-        .orderBy(desc(knowledgeItems.importance), desc(knowledgeItems.updatedAt))
-        .limit(limit),
-      db
-        .select({
-          id: sources.id,
-          uri: sources.uri,
-          title: sources.title,
-          sourceKind: sources.sourceKind,
-        })
-        .from(sources)
-        .orderBy(desc(sources.updatedAt))
-        .limit(limit),
-      db
-        .select({
-          id: evidenceSources.id,
-          uri: evidenceSources.uri,
-          title: evidenceSources.title,
-          sourceKind: evidenceSources.sourceKind,
-        })
-        .from(evidenceSources)
-        .orderBy(desc(evidenceSources.updatedAt))
-        .limit(limit),
-      db
-        .select({
-          id: vibeMemories.id,
-          sessionId: vibeMemories.sessionId,
-          content: vibeMemories.content,
-          memoryType: vibeMemories.memoryType,
-        })
-        .from(vibeMemories)
-        .orderBy(desc(vibeMemories.createdAt))
-        .limit(limit),
-      db
-        .select({
-          id: relations.id,
-          sourceKind: relations.sourceKind,
-          sourceId: relations.sourceId,
-          targetKind: relations.targetKind,
-          targetId: relations.targetId,
-          relationType: relations.relationType,
-          confidence: relations.confidence,
-        })
-        .from(relations)
-        .orderBy(desc(relations.createdAt))
-        .limit(limit * 2),
-    ],
-  );
+  const [knowledgeRows, sourceRows, memoryRows, relationRows] = await Promise.all([
+    db
+      .select({
+        id: knowledgeItems.id,
+        title: knowledgeItems.title,
+        type: knowledgeItems.type,
+        status: knowledgeItems.status,
+        importance: knowledgeItems.importance,
+        metadata: knowledgeItems.metadata,
+      })
+      .from(knowledgeItems)
+      .orderBy(desc(knowledgeItems.importance), desc(knowledgeItems.updatedAt))
+      .limit(limit),
+    db
+      .select({
+        id: sources.id,
+        uri: sources.uri,
+        title: sources.title,
+        sourceKind: sources.sourceKind,
+      })
+      .from(sources)
+      .orderBy(desc(sources.updatedAt))
+      .limit(limit),
+    db
+      .select({
+        id: vibeMemories.id,
+        sessionId: vibeMemories.sessionId,
+        content: vibeMemories.content,
+        memoryType: vibeMemories.memoryType,
+      })
+      .from(vibeMemories)
+      .orderBy(desc(vibeMemories.createdAt))
+      .limit(limit),
+    db
+      .select({
+        id: relations.id,
+        sourceKind: relations.sourceKind,
+        sourceId: relations.sourceId,
+        targetKind: relations.targetKind,
+        targetId: relations.targetId,
+        relationType: relations.relationType,
+        confidence: relations.confidence,
+      })
+      .from(relations)
+      .orderBy(desc(relations.createdAt))
+      .limit(limit * 2),
+  ]);
 
   const nodeCandidates: GraphNode[] = [
     ...knowledgeRows.map((row) => ({
@@ -111,14 +92,6 @@ export async function buildGraphSnapshot(limit: number): Promise<{
       weight: Math.max(0.2, Number(row.importance) || 0.5),
     })),
     ...sourceRows.map((row) => ({
-      id: `source:${row.id}`,
-      label: row.title || row.uri.split("/").at(-1) || row.uri,
-      kind: "source" as const,
-      group: row.sourceKind,
-      detail: row.uri,
-      weight: 0.45,
-    })),
-    ...legacySourceRows.map((row) => ({
       id: `source:${row.id}`,
       label: row.title || row.uri.split("/").at(-1) || row.uri,
       kind: "source" as const,
@@ -159,7 +132,7 @@ export async function buildGraphSnapshot(limit: number): Promise<{
     edges,
     stats: {
       knowledgeCount: knowledgeRows.length,
-      sourceCount: sourceRows.length + legacySourceRows.length,
+      sourceCount: sourceRows.length,
       activityCount: memoryRows.length,
       relationCount: edges.length,
     },

@@ -43,8 +43,7 @@ export const config = {
     process.env.MEMORY_ROUTER_LOCAL_LLM_EMBEDDING_MODEL_DIR ||
     path.resolve(process.cwd(), "../local-llm/embedding/models/multilingual-e5-small"),
   sourceContentRoot:
-    process.env.MEMORY_ROUTER_SOURCE_CONTENT_ROOT ||
-    path.resolve(process.cwd(), "wiki"),
+    process.env.MEMORY_ROUTER_SOURCE_CONTENT_ROOT || path.resolve(process.cwd(), "wiki"),
   defaultTokenBudget: Math.max(
     256,
     envNumber(process.env.MEMORY_ROUTER_DEFAULT_TOKEN_BUDGET, 3000),
