@@ -9,7 +9,6 @@ import {
   type ContextPackItem,
   contextPackSchema,
 } from "../../shared/schemas/context-pack.schema.js";
-import { retrieveCodeContext } from "../code-index/code-index.service.js";
 import { retrieveEvidence } from "../evidence/evidence.service.js";
 import { retrieveKnowledge } from "../knowledge/knowledge.service.js";
 import { insertCompileRun, insertContextPackItems } from "./context-compiler.repository.js";
@@ -234,12 +233,10 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     retrieveKnowledge(input, { retrievalMode }),
     retrieveEvidence(input, { retrievalMode }),
   ]);
-  const codeContext = await retrieveCodeContext(input, { retrievalMode });
 
   const degradedReasons = [
     ...knowledge.degradedReasons,
     ...evidence.degradedReasons,
-    ...codeContext.degradedReasons,
   ];
 
   const rankedKnowledge = rankAndDedupe(
@@ -281,16 +278,11 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     packItems.filter((item) => item.section === "examples"),
     Math.floor(tokenBudget * sectionRatios.examples),
   );
-  const budgetedCodeContext = applySectionTokenBudget(
-    codeContext.items,
-    Math.floor(tokenBudget * sectionRatios.codeContext),
-  );
 
   const budgetDropDetected =
     budgetedRules.dropped ||
     budgetedSkills.dropped ||
-    budgetedExamples.dropped ||
-    budgetedCodeContext.dropped;
+    budgetedExamples.dropped;
   if (budgetDropDetected) {
     degradedReasons.push("TOKEN_BUDGET_SECTION_LIMIT_REACHED");
   }
@@ -299,7 +291,6 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     ...budgetedRules.items,
     ...budgetedSkills.items,
     ...budgetedExamples.items,
-    ...budgetedCodeContext.items,
   ];
   const itemEvidenceRefs = selectedPackItems.flatMap((item) => item.evidenceRefs);
   const evidenceRefsCandidate = [
@@ -350,14 +341,11 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     rules: budgetedRules.items,
     skills: budgetedSkills.items,
     examples: budgetedExamples.items,
-    codeContext: budgetedCodeContext.items,
+    codeContext: [],
     warnings: [
       "Do not promote candidate/draft knowledge into instructions automatically.",
       "Keep evidence refs attached to factual claims.",
       ...(budgetDropDetected ? ["Token budget section caps trimmed lower-ranked items."] : []),
-      ...(codeContext.items.length === 0
-        ? ["No code symbol context found; compile used only knowledge/evidence layers."]
-        : []),
     ],
     evidenceRefs,
     diagnostics: {
@@ -365,7 +353,6 @@ export async function compileContextPack(rawInput: unknown): Promise<{
       retrievalStats: {
         knowledge: knowledge.stats,
         evidence: evidence.stats,
-        codeContext: codeContext.stats,
         tokenBudget,
       },
     },

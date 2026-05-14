@@ -6,7 +6,8 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { AppShell } from "./modules/admin/components/app-shell";
-import { CodeIndexPage } from "./modules/admin/components/code-index.page";
+import { ActivityPage } from "./modules/admin/components/activity.page";
+import { ArtifactsPage } from "./modules/admin/components/artifacts.page";
 import { DoctorPage } from "./modules/admin/components/doctor.page";
 import { GraphPage } from "./modules/admin/components/graph.page";
 import { KnowledgePage } from "./modules/admin/components/knowledge.page";
@@ -54,10 +55,16 @@ const evidenceAliasRoute = createRoute({
   component: SourcesPage,
 });
 
-const codeRoute = createRoute({
+const activityRoute = createRoute({
   getParentRoute: () => rootRoute,
-  path: "/code",
-  component: CodeIndexPage,
+  path: "/activity",
+  component: ActivityPage,
+});
+
+const artifactsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/artifacts",
+  component: ArtifactsPage,
 });
 
 const graphRoute = createRoute({
@@ -78,7 +85,8 @@ const routeTree = rootRoute.addChildren([
   knowledgeRoute,
   sourcesRoute,
   evidenceAliasRoute,
-  codeRoute,
+  activityRoute,
+  artifactsRoute,
   graphRoute,
   doctorRoute,
 ]);

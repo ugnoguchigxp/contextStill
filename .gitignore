@@ -8,3 +8,4 @@ dist-web/
 coverage/
 playwright-report/
 test-results/
+wiki/

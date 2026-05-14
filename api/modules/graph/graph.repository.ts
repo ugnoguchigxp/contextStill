@@ -1,17 +1,17 @@
 import { desc } from "drizzle-orm";
 import { db } from "../../../src/db/index.js";
 import {
-  codeSymbols,
   evidenceSources,
   knowledgeItems,
   relations,
   sources,
+  vibeMemories,
 } from "../../../src/db/schema.js";
 
 export type GraphNode = {
   id: string;
   label: string;
-  kind: "knowledge" | "source" | "code";
+  kind: "knowledge" | "source" | "activity";
   group: string;
   detail: string;
   weight: number;
@@ -25,8 +25,9 @@ export type GraphEdge = {
   weight: number;
 };
 
-function normalizeKind(kind: string): "knowledge" | "source" | "code" | string {
+function normalizeKind(kind: string): "knowledge" | "source" | "activity" | string {
   if (kind === "evidence") return "source";
+  if (kind === "vibe_memory") return "activity";
   return kind;
 }
 
@@ -36,11 +37,11 @@ export async function buildGraphSnapshot(limit: number): Promise<{
   stats: {
     knowledgeCount: number;
     sourceCount: number;
-    codeSymbolCount: number;
+    activityCount: number;
     relationCount: number;
   };
 }> {
-  const [knowledgeRows, sourceRows, legacySourceRows, symbolRows, relationRows] = await Promise.all(
+  const [knowledgeRows, sourceRows, legacySourceRows, memoryRows, relationRows] = await Promise.all(
     [
       db
         .select({
@@ -76,13 +77,13 @@ export async function buildGraphSnapshot(limit: number): Promise<{
         .limit(limit),
       db
         .select({
-          id: codeSymbols.id,
-          filePath: codeSymbols.filePath,
-          symbolName: codeSymbols.symbolName,
-          symbolKind: codeSymbols.symbolKind,
+          id: vibeMemories.id,
+          sessionId: vibeMemories.sessionId,
+          content: vibeMemories.content,
+          memoryType: vibeMemories.memoryType,
         })
-        .from(codeSymbols)
-        .orderBy(desc(codeSymbols.updatedAt))
+        .from(vibeMemories)
+        .orderBy(desc(vibeMemories.createdAt))
         .limit(limit),
       db
         .select({
@@ -125,13 +126,13 @@ export async function buildGraphSnapshot(limit: number): Promise<{
       detail: row.uri,
       weight: 0.45,
     })),
-    ...symbolRows.map((row) => ({
-      id: `code:${row.id}`,
-      label: row.symbolName,
-      kind: "code" as const,
-      group: row.symbolKind,
-      detail: row.filePath,
-      weight: 0.55,
+    ...memoryRows.map((row) => ({
+      id: `activity:${row.id}`,
+      label: row.content.slice(0, 32),
+      kind: "activity" as const,
+      group: row.memoryType,
+      detail: `Session: ${row.sessionId}`,
+      weight: 0.5,
     })),
   ];
 
@@ -159,7 +160,7 @@ export async function buildGraphSnapshot(limit: number): Promise<{
     stats: {
       knowledgeCount: knowledgeRows.length,
       sourceCount: sourceRows.length + legacySourceRows.length,
-      codeSymbolCount: symbolRows.length,
+      activityCount: memoryRows.length,
       relationCount: edges.length,
     },
   };

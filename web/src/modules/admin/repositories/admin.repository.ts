@@ -34,16 +34,34 @@ export type SourceFragment = {
   createdAt: string;
 };
 
-export type CodeSymbol = {
+export type VibeMemory = {
   id: string;
-  repoPath: string;
-  filePath: string;
+  sessionId: string;
+  content: string;
+  memoryType: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type AiArtifact = {
+  id: string;
+  vibeMemoryId: string | null;
+  artifactType: string;
+  filePath: string | null;
+  content: string;
+  metadata?: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type ArtifactSymbol = {
+  id: string;
+  artifactId: string;
   symbolName: string;
   symbolKind: string;
   signature: string | null;
+  content: string | null;
   startLine: number | null;
   endLine: number | null;
-  active: boolean;
   metadata?: Record<string, unknown>;
   updatedAt: string;
 };
@@ -64,7 +82,6 @@ export type SourceFragmentWriteInput = {
   content: string;
   metadata?: Record<string, unknown>;
 };
-export type CodeSymbolWriteInput = Omit<CodeSymbol, "id" | "updatedAt">;
 
 export type DoctorReport = {
   status: "ok" | "degraded" | "failed";
@@ -89,7 +106,7 @@ export type DoctorReport = {
 export type GraphNode = {
   id: string;
   label: string;
-  kind: "knowledge" | "source" | "code";
+  kind: "knowledge" | "source" | "activity";
   group: string;
   detail: string;
   weight: number;
@@ -109,7 +126,7 @@ export type GraphSnapshot = {
   stats: {
     knowledgeCount: number;
     sourceCount: number;
-    codeSymbolCount: number;
+    activityCount: number;
     relationCount: number;
   };
 };
@@ -340,21 +357,23 @@ export async function deleteEvidenceFragment(id: string): Promise<void> {
   await requestJson(`/api/evidence/fragments/${id}`, "DELETE");
 }
 
-export async function fetchCodeSymbols(limit = 120): Promise<CodeSymbol[]> {
-  const json = await getJson<{ symbols: CodeSymbol[] }>(`/api/code/symbols?limit=${limit}`);
+export async function fetchVibeMemories(limit = 120): Promise<VibeMemory[]> {
+  const json = await getJson<{ memories: VibeMemory[] }>(`/api/activity?limit=${limit}`);
+  return json.memories;
+}
+
+export async function deleteVibeMemory(id: string): Promise<void> {
+  await requestJson(`/api/activity/${id}`, "DELETE");
+}
+
+export async function fetchAiArtifacts(limit = 100): Promise<AiArtifact[]> {
+  const json = await getJson<{ artifacts: AiArtifact[] }>(`/api/artifacts?limit=${limit}`);
+  return json.artifacts;
+}
+
+export async function fetchArtifactSymbols(limit = 120): Promise<ArtifactSymbol[]> {
+  const json = await getJson<{ symbols: ArtifactSymbol[] }>(`/api/artifacts/symbols?limit=${limit}`);
   return json.symbols;
-}
-
-export async function createCodeSymbol(input: CodeSymbolWriteInput): Promise<void> {
-  await requestJson("/api/code/symbols", "POST", input);
-}
-
-export async function updateCodeSymbol(id: string, input: CodeSymbolWriteInput): Promise<void> {
-  await requestJson(`/api/code/symbols/${id}`, "PUT", input);
-}
-
-export async function deleteCodeSymbol(id: string): Promise<void> {
-  await requestJson(`/api/code/symbols/${id}`, "DELETE");
 }
 
 export async function fetchDoctorReport(): Promise<DoctorReport> {

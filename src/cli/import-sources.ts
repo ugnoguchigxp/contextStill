@@ -3,7 +3,7 @@ import { closeDbPool } from "../db/index.js";
 import { importMarkdownDirectory } from "../modules/sources/markdown-importer.service.js";
 
 async function main(): Promise<void> {
-  const argPath = process.argv[2] || path.resolve(process.cwd(), "../wiki/wiki-knowledge/pages");
+  const argPath = process.argv[2] || path.resolve(process.cwd(), "wiki/pages");
   const rootPath = path.resolve(argPath);
   const result = await importMarkdownDirectory(rootPath);
 

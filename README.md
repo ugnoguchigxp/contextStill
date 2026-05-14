@@ -7,7 +7,7 @@
 
 - Context Compile（CLI / MCP / API）
 - Knowledge 管理（作成・編集・削除）
-- Source 管理（`../wiki` 相当の運用を内包）
+- Source 管理（このリポジトリ配下 `./wiki` を運用）
   - フォルダ作成・リネーム・削除
   - ページ作成・編集・削除
   - Git 履歴表示・コミット差分表示
@@ -18,13 +18,14 @@
 
 ## Source 管理の前提
 
-- 既定のコンテンツルートは `../wiki/wiki-knowledge`
+- 既定のコンテンツルートは `./wiki`
 - 配下の `pages/` をソース本体として扱います
 - ルートに `.git` が無ければ自動初期化し、ページ操作時に commit します
+- `wiki/` はこのプロジェクトで `gitignore` され、独立リポジトリとして運用できます
 
 設定で切り替える場合:
 
-- `MEMORY_ROUTER_SOURCE_CONTENT_ROOT=/abs/path/to/wiki-knowledge`
+- `MEMORY_ROUTER_SOURCE_CONTENT_ROOT=/abs/path/to/wiki`
 
 ## 必要環境
 
@@ -62,7 +63,7 @@ Markdown 一括取り込み（sources + knowledge）:
 
 ```bash
 bun run import:markdown ./docs
-bun run import:sources ../wiki/wiki-knowledge/pages
+bun run import:sources ./wiki/pages
 ```
 
 Doctor:

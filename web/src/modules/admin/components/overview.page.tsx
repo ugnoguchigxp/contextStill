@@ -2,11 +2,11 @@ import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
-  fetchCodeSymbols,
   fetchDoctorReport,
   fetchGraphSnapshot,
   fetchKnowledgeItems,
   fetchSources,
+  fetchVibeMemories,
 } from "../repositories/admin.repository";
 
 function Metric({
@@ -35,7 +35,10 @@ export function OverviewPage() {
     queryKey: ["sources", 80],
     queryFn: () => fetchSources(),
   });
-  const code = useQuery({ queryKey: ["code-symbols", 120], queryFn: () => fetchCodeSymbols() });
+  const activities = useQuery({
+    queryKey: ["vibe-memories", 120],
+    queryFn: () => fetchVibeMemories(),
+  });
   const graph = useQuery({ queryKey: ["graph", 120], queryFn: () => fetchGraphSnapshot() });
   const doctor = useQuery({ queryKey: ["doctor"], queryFn: () => fetchDoctorReport() });
 
@@ -46,7 +49,7 @@ export function OverviewPage() {
       <section className="page-heading">
         <div>
           <h1>Overview</h1>
-          <p>Context pack生成に必要な知識、ソース、コード構造、診断状態を確認します。</p>
+          <p>Context pack生成に必要な知識、ソース、エージェント活動、診断状態を確認します。</p>
         </div>
         <Badge
           variant={status === "ok" ? "success" : status === "failed" ? "destructive" : "warning"}
@@ -62,7 +65,11 @@ export function OverviewPage() {
           hint="rules / skills / facts"
         />
         <Metric label="Sources" value={sources.data?.length ?? "-"} hint="documents" />
-        <Metric label="Code Symbols" value={code.data?.length ?? "-"} hint="indexed symbols" />
+        <Metric
+          label="Vibe Memory"
+          value={activities.data?.length ?? "-"}
+          hint="agent session history"
+        />
         <Metric
           label="Graph Nodes"
           value={graph.data?.nodes.length ?? "-"}
