@@ -25,6 +25,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { useCompilePack, useCompileRuns } from "../hooks/context-compiler.hooks";
 import type {
   CompileIntent,
+  CompilePackItem,
   CompileMode,
   CompileRunSummary,
 } from "../repositories/context-compiler.repository";
@@ -63,6 +64,27 @@ const columns = [
   }),
 ];
 
+function PackSection({ title, items }: { title: string; items: CompilePackItem[] }) {
+  if (items.length === 0) return null;
+  return (
+    <section className="compile-result-section">
+      <h3>{title}</h3>
+      <div className="compile-result-list">
+        {items.map((item) => (
+          <article key={item.id} className="compile-result-item">
+            <div className="compile-result-item-header">
+              <strong>{item.title}</strong>
+              <Badge variant="secondary">{item.itemKind}</Badge>
+            </div>
+            <p>{item.content}</p>
+            <span>{item.rankingReason}</span>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export function ContextCompilerPage() {
   const { register, handleSubmit, formState } = useForm<FormValues>({
     defaultValues: {
@@ -82,9 +104,9 @@ export function ContextCompilerPage() {
     getCoreRowModel: getCoreRowModel(),
   });
 
-  const compileResult = useMemo(
-    () => (compile.data ? JSON.stringify(compile.data, null, 2) : ""),
-    [compile.data],
+  const degradedReasons = useMemo(
+    () => compile.data?.diagnostics.degradedReasons ?? [],
+    [compile.data?.diagnostics.degradedReasons],
   );
 
   const onSubmit = handleSubmit(async (values) => {
@@ -112,7 +134,7 @@ export function ContextCompilerPage() {
         <CardHeader>
           <CardTitle>Compile</CardTitle>
           <CardDescription>
-            Generate a context pack from current knowledge, sources, and code context.
+            Generate a context pack from rules, procedures, wiki search, and code hints.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -156,7 +178,7 @@ export function ContextCompilerPage() {
             </div>
             <Label htmlFor="includeDraft" className="flex items-center gap-2">
               <Checkbox id="includeDraft" {...register("includeDraft")} />
-              include draft knowledge
+              include draft rules / procedures
             </Label>
             <div className="flex items-center gap-3">
               <Button type="submit" disabled={compile.isPending || formState.isSubmitting}>
@@ -210,11 +232,50 @@ export function ContextCompilerPage() {
       <Card>
         <CardHeader>
           <CardTitle>Last Compile Result</CardTitle>
-          <CardDescription>JSON response from the latest compile action.</CardDescription>
+          <CardDescription>Effective pack used by the agent-facing workflow.</CardDescription>
         </CardHeader>
         <CardContent>
-          {compileResult ? (
-            <pre className="bg-muted overflow-auto rounded-lg p-3 text-xs">{compileResult}</pre>
+          {compile.data ? (
+            <div className="compile-result">
+              <div className="compile-result-summary">
+                <Badge
+                  variant={
+                    compile.data.status === "ok"
+                      ? "success"
+                      : compile.data.status === "failed"
+                        ? "destructive"
+                        : "warning"
+                  }
+                >
+                  {compile.data.status}
+                </Badge>
+                <span>{compile.data.retrievalMode}</span>
+                <span>{compile.data.intent}</span>
+              </div>
+              <PackSection title="Rules" items={compile.data.rules} />
+              <PackSection title="Procedures" items={compile.data.procedures} />
+              <PackSection title="Code Context" items={compile.data.codeContext} />
+              {compile.data.minimalTasks.length > 0 ? (
+                <section className="compile-result-section">
+                  <h3>Minimal Tasks</h3>
+                  <ul>
+                    {compile.data.minimalTasks.map((task) => (
+                      <li key={task}>{task}</li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+              {compile.data.warnings.length > 0 || degradedReasons.length > 0 ? (
+                <section className="compile-result-section">
+                  <h3>Warnings</h3>
+                  <ul>
+                    {[...compile.data.warnings, ...degradedReasons].map((warning) => (
+                      <li key={warning}>{warning}</li>
+                    ))}
+                  </ul>
+                </section>
+              ) : null}
+            </div>
           ) : (
             <p className="text-muted-foreground text-sm">No compile result yet.</p>
           )}

@@ -59,11 +59,7 @@ export function OverviewPage() {
       </section>
 
       <section className="metric-grid">
-        <Metric
-          label="Knowledge"
-          value={knowledge.data?.length ?? "-"}
-          hint="rules / procedures / facts"
-        />
+        <Metric label="Knowledge" value={knowledge.data?.length ?? "-"} hint="rules / procedures" />
         <Metric label="Sources" value={sources.data?.items.length ?? "-"} hint="wiki pages" />
         <Metric
           label="Vibe Memory"

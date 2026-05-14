@@ -1,6 +1,8 @@
+export type KnowledgeType = "rule" | "procedure";
+
 export type KnowledgeItem = {
   id: string;
-  type: string;
+  type: KnowledgeType | string;
   status: string;
   scope: string;
   title: string;
@@ -37,7 +39,9 @@ export type AgentDiffEntry = {
   updatedAt: string;
 };
 
-export type KnowledgeWriteInput = Omit<KnowledgeItem, "id" | "updatedAt">;
+export type KnowledgeWriteInput = Omit<KnowledgeItem, "id" | "type" | "updatedAt"> & {
+  type: KnowledgeType;
+};
 
 export type DoctorReport = {
   status: "ok" | "degraded" | "failed";

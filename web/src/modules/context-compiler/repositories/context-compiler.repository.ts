@@ -25,7 +25,33 @@ export type CompileRunSummary = {
   createdAt: string;
 };
 
-export async function compilePack(input: CompileRequest): Promise<Record<string, unknown>> {
+export type CompilePackItem = {
+  id: string;
+  itemKind: string;
+  title: string;
+  content: string;
+  score: number;
+  rankingReason: string;
+};
+
+export type CompilePack = {
+  runId: string;
+  goal: string;
+  intent: string;
+  retrievalMode: string;
+  status: "ok" | "degraded" | "failed";
+  minimalTasks: string[];
+  rules: CompilePackItem[];
+  procedures: CompilePackItem[];
+  codeContext: CompilePackItem[];
+  warnings: string[];
+  diagnostics: {
+    degradedReasons: string[];
+    retrievalStats: Record<string, unknown>;
+  };
+};
+
+export async function compilePack(input: CompileRequest): Promise<CompilePack> {
   const response = await fetch("/api/context/compile", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -34,7 +60,7 @@ export async function compilePack(input: CompileRequest): Promise<Record<string,
   if (!response.ok) {
     throw new Error(`Compile failed: ${response.status}`);
   }
-  const json = (await response.json()) as { pack: Record<string, unknown> };
+  const json = (await response.json()) as { pack: CompilePack };
   return json.pack;
 }
 

@@ -19,12 +19,15 @@ import {
   deleteKnowledgeItem,
   fetchKnowledgeItems,
   type KnowledgeItem,
+  type KnowledgeType,
   type KnowledgeWriteInput,
   updateKnowledgeItem,
 } from "../repositories/admin.repository";
 
+const knowledgeTypes: KnowledgeType[] = ["rule", "procedure"];
+
 const emptyForm: KnowledgeWriteInput = {
-  type: "fact",
+  type: "rule",
   status: "draft",
   scope: "repo",
   title: "",
@@ -33,6 +36,9 @@ const emptyForm: KnowledgeWriteInput = {
   importance: 0.7,
   metadata: {},
 };
+
+const normalizeKnowledgeType = (type: string): KnowledgeType =>
+  knowledgeTypes.includes(type as KnowledgeType) ? (type as KnowledgeType) : "rule";
 
 export function KnowledgePage() {
   const queryClient = useQueryClient();
@@ -68,7 +74,7 @@ export function KnowledgePage() {
   const edit = (item: KnowledgeItem) => {
     setEditingId(item.id);
     setForm({
-      type: item.type,
+      type: normalizeKnowledgeType(item.type),
       status: item.status,
       scope: item.scope,
       title: item.title,
@@ -84,7 +90,7 @@ export function KnowledgePage() {
       <section className="page-heading">
         <div>
           <h1>Knowledge</h1>
-          <p>Context packへ入る蒸留済み知識とlifecycle状態を管理します。</p>
+          <p>エージェントの行動に効く rule / procedure と lifecycle 状態を管理します。</p>
         </div>
       </section>
 
@@ -103,9 +109,9 @@ export function KnowledgePage() {
           <div className="form-grid">
             <Select
               value={form.type}
-              onChange={(event) => setForm({ ...form, type: event.target.value })}
+              onChange={(event) => setForm({ ...form, type: event.target.value as KnowledgeType })}
             >
-              {["fact", "rule", "procedure", "lesson"].map((type) => (
+              {knowledgeTypes.map((type) => (
                 <option key={type} value={type}>
                   {type}
                 </option>
@@ -182,7 +188,13 @@ export function KnowledgePage() {
                     <strong>{item.title}</strong>
                     <p className="row-subtext">{item.body.slice(0, 140)}</p>
                   </TableCell>
-                  <TableCell>{item.type}</TableCell>
+                  <TableCell>
+                    {knowledgeTypes.includes(item.type as KnowledgeType) ? (
+                      item.type
+                    ) : (
+                      <Badge variant="warning">legacy: {item.type}</Badge>
+                    )}
+                  </TableCell>
                   <TableCell>
                     <Badge variant={item.status === "active" ? "success" : "secondary"}>
                       {item.status}
