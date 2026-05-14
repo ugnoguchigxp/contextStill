@@ -4,6 +4,7 @@ import { knowledgeItems } from "../../db/schema.js";
 import type {
   KnowledgeSearchInput,
   KnowledgeStatus,
+  KnowledgeItem,
 } from "../../shared/schemas/knowledge.schema.js";
 
 export type KnowledgeSearchResult = {
@@ -20,9 +21,9 @@ export type KnowledgeSearchResult = {
 export type UpsertKnowledgeFromSourceParams = {
   sourceUri: string;
   contentHash: string;
-  type: "fact" | "decision" | "rule" | "procedure" | "skill" | "risk" | "lesson" | "example";
-  status: "candidate" | "draft" | "trial" | "active" | "deprecated" | "rejected";
-  scope: "user" | "repo" | "workspace" | "org" | "global";
+  type: KnowledgeItem["type"];
+  status: KnowledgeStatus;
+  scope: KnowledgeItem["scope"];
   title: string;
   body: string;
   confidence?: number;

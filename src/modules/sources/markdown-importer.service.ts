@@ -17,27 +17,11 @@ type FrontmatterParseResult = {
   body: string;
 };
 
-const knowledgeTypeValues = new Set([
-  "fact",
-  "decision",
-  "rule",
-  "procedure",
-  "skill",
-  "risk",
-  "lesson",
-  "example",
-]);
+const knowledgeTypeValues = new Set(["fact", "rule", "procedure", "lesson"]);
 
-const knowledgeStatusValues = new Set([
-  "candidate",
-  "draft",
-  "trial",
-  "active",
-  "deprecated",
-  "rejected",
-]);
+const knowledgeStatusValues = new Set(["draft", "active", "deprecated"]);
 
-const scopeValues = new Set(["user", "repo", "workspace", "org", "global"]);
+const scopeValues = new Set(["repo", "global"]);
 
 function parseFrontmatter(markdown: string): FrontmatterParseResult {
   if (!markdown.startsWith("---\n")) {
@@ -78,24 +62,12 @@ function clamp01(value: number, fallback: number): number {
 
 function inferKnowledgeType(input: { frontmatterType?: string; title: string; body: string }):
   | "fact"
-  | "decision"
   | "rule"
   | "procedure"
-  | "skill"
-  | "risk"
-  | "lesson"
-  | "example" {
+  | "lesson" {
   const explicitType = input.frontmatterType?.toLowerCase();
   if (explicitType && knowledgeTypeValues.has(explicitType)) {
-    return explicitType as
-      | "fact"
-      | "decision"
-      | "rule"
-      | "procedure"
-      | "skill"
-      | "risk"
-      | "lesson"
-      | "example";
+    return explicitType as "fact" | "rule" | "procedure" | "lesson";
   }
 
   const signal = `${input.title}\n${input.body}`.toLowerCase();
@@ -117,8 +89,14 @@ function inferKnowledgeType(input: { frontmatterType?: string; title: string; bo
   ) {
     return "rule";
   }
-  if (signal.includes("example") || signal.includes("事例")) {
-    return "example";
+  if (
+    signal.includes("example") ||
+    signal.includes("事例") ||
+    signal.includes("risk") ||
+    signal.includes("失敗") ||
+    signal.includes("lesson")
+  ) {
+    return "lesson";
   }
   return "fact";
 }
@@ -167,7 +145,7 @@ export async function importMarkdownDirectory(rootDir: string): Promise<Markdown
     const importance = clamp01(Number(frontmatter.importance), 0.7);
 
     const sourceId = await upsertSourceDocument({
-      sourceKind: "markdown",
+      sourceKind: "wiki",
       uri: filePath,
       title: frontmatter.title ?? inferredTitle,
       body: content,
@@ -183,22 +161,14 @@ export async function importMarkdownDirectory(rootDir: string): Promise<Markdown
       body: body.trim().slice(0, 5000),
       type: knowledgeType,
       status: knowledgeStatusValues.has(knowledgeStatus)
-        ? (knowledgeStatus as
-            | "candidate"
-            | "draft"
-            | "trial"
-            | "active"
-            | "deprecated"
-            | "rejected")
+        ? (knowledgeStatus as "draft" | "active" | "deprecated")
         : "draft",
-      scope: scopeValues.has(knowledgeScope)
-        ? (knowledgeScope as "user" | "repo" | "workspace" | "org" | "global")
-        : "repo",
+      scope: scopeValues.has(knowledgeScope) ? (knowledgeScope as "repo" | "global") : "repo",
       confidence,
       importance,
       metadata: {
         importedAt: new Date().toISOString(),
-        sourceKind: "markdown",
+        sourceKind: "wiki",
       },
     });
 

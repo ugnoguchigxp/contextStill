@@ -5,8 +5,8 @@ export const contextPackStatusSchema = z.enum(["ok", "degraded", "failed"]);
 
 export const contextPackSectionSchema = z.enum([
   "rules",
-  "skills",
-  "examples",
+  "procedures",
+  "lessons",
   "code_context",
   "warnings",
 ]);
@@ -31,8 +31,8 @@ export const contextPackSchema = z.object({
   status: contextPackStatusSchema,
   minimalTasks: z.array(z.string()),
   rules: z.array(contextPackItemSchema),
-  skills: z.array(contextPackItemSchema),
-  examples: z.array(contextPackItemSchema),
+  procedures: z.array(contextPackItemSchema),
+  lessons: z.array(contextPackItemSchema),
   codeContext: z.array(contextPackItemSchema),
   warnings: z.array(z.string()),
   sourceRefs: z.array(z.string()),

@@ -33,7 +33,7 @@ type FormValues = {
   goal: string;
   intent: CompileIntent;
   retrievalMode: "" | CompileMode;
-  includeTrial: boolean;
+  includeDraft: boolean;
   filesCsv: string;
 };
 
@@ -69,7 +69,7 @@ export function ContextCompilerPage() {
       goal: "",
       intent: "edit",
       retrievalMode: "",
-      includeTrial: false,
+      includeDraft: false,
       filesCsv: "",
     },
   });
@@ -96,7 +96,7 @@ export function ContextCompilerPage() {
       goal: values.goal,
       intent: values.intent,
       retrievalMode: values.retrievalMode || undefined,
-      includeTrial: values.includeTrial,
+      includeDraft: values.includeDraft,
       files: files.length > 0 ? files : undefined,
     });
   });
@@ -145,7 +145,7 @@ export function ContextCompilerPage() {
                   <option value="review_context">review_context</option>
                   <option value="debug_context">debug_context</option>
                   <option value="architecture_context">architecture_context</option>
-                  <option value="skill_context">skill_context</option>
+                  <option value="procedure_context">procedure_context</option>
                   <option value="learning_context">learning_context</option>
                 </Select>
               </div>
@@ -154,9 +154,9 @@ export function ContextCompilerPage() {
               <Label htmlFor="files">Files (comma-separated)</Label>
               <Input id="files" placeholder="src/a.ts,src/b.ts" {...register("filesCsv")} />
             </div>
-            <Label htmlFor="includeTrial" className="flex items-center gap-2">
-              <Checkbox id="includeTrial" {...register("includeTrial")} />
-              include trial knowledge
+            <Label htmlFor="includeDraft" className="flex items-center gap-2">
+              <Checkbox id="includeDraft" {...register("includeDraft")} />
+              include draft knowledge
             </Label>
             <div className="flex items-center gap-3">
               <Button type="submit" disabled={compile.isPending || formState.isSubmitting}>

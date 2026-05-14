@@ -25,8 +25,8 @@ const retrievalModeByIntent: Record<CompileInput["intent"], RetrievalMode> = {
 
 const sectionRatios = {
   rules: 0.32,
-  skills: 0.28,
-  examples: 0.2,
+  procedures: 0.28,
+  lessons: 0.2,
   codeContext: 0.2,
 } as const;
 
@@ -41,7 +41,7 @@ function resolveRetrievalMode(input: CompileInput): RetrievalMode {
     goal.includes("手順") ||
     goal.includes("コマンド")
   ) {
-    return "skill_context";
+    return "procedure_context";
   }
   return retrievalModeByIntent[input.intent];
 }
@@ -112,7 +112,7 @@ function selectSourceRefsForKnowledge(
     .map((entry) => entry.ref);
   if (overlapRefs.length > 0) return [...new Set(overlapRefs)];
 
-  const sourceRequiredTypes = new Set(["fact", "decision", "risk", "lesson", "example"]);
+  const sourceRequiredTypes = new Set(["fact", "lesson"]);
   if (sourceRequiredTypes.has(item.type)) {
     return [scored[0].ref];
   }
@@ -151,7 +151,7 @@ function buildMinimalTasks(retrievalMode: RetrievalMode): string[] {
   switch (retrievalMode) {
     case "review_context":
       return [
-        "Inspect active rules, risks, and relevant examples",
+        "Inspect active rules, lessons, and relevant source material",
         "Check touched files against known constraints",
         "Verify source refs for each review claim",
         "Summarize findings with concrete next actions",
@@ -165,24 +165,24 @@ function buildMinimalTasks(retrievalMode: RetrievalMode): string[] {
       ];
     case "architecture_context":
       return [
-        "Inspect prior decisions and architecture constraints",
+        "Inspect prior rules and architecture constraints",
         "Compare candidate design against known trade-offs",
         "List affected symbols/files and compatibility risks",
         "Propose implementation boundaries and validations",
       ];
-    case "skill_context":
+    case "procedure_context":
       return [
-        "Inspect the selected procedure/skill candidates",
+        "Inspect the selected procedure candidates",
         "Execute only the necessary commands and checks",
         "Capture source refs for each operational claim",
         "Report result and follow-up verification steps",
       ];
     case "learning_context":
       return [
-        "Review candidate/trial knowledge with source traceability",
+        "Review draft knowledge with source traceability",
         "Separate stable guidance from temporary observations",
-        "Promote only verifiable items to stronger lifecycle states",
-        "Record why each promotion/rejection decision was made",
+        "Promote only verifiable items to active state",
+        "Record why each promotion or deprecation decision was made",
       ];
     default:
       return [
@@ -203,11 +203,7 @@ function toKnowledgePackItem(item: {
   sourceRefs: string[];
 }): ContextPackItem {
   const section =
-    item.type === "skill" || item.type === "procedure"
-      ? "skills"
-      : item.type === "example"
-        ? "examples"
-        : "rules";
+    item.type === "procedure" ? "procedures" : item.type === "lesson" ? "lessons" : "rules";
   return {
     id: `knowledge:${item.id}`,
     itemKind: item.type,
@@ -282,13 +278,13 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     packItems.filter((item) => item.section === "rules"),
     Math.floor(tokenBudget * sectionRatios.rules),
   );
-  const budgetedSkills = applySectionTokenBudget(
-    packItems.filter((item) => item.section === "skills"),
-    Math.floor(tokenBudget * sectionRatios.skills),
+  const budgetedProcedures = applySectionTokenBudget(
+    packItems.filter((item) => item.section === "procedures"),
+    Math.floor(tokenBudget * sectionRatios.procedures),
   );
-  const budgetedExamples = applySectionTokenBudget(
-    packItems.filter((item) => item.section === "examples"),
-    Math.floor(tokenBudget * sectionRatios.examples),
+  const budgetedLessons = applySectionTokenBudget(
+    packItems.filter((item) => item.section === "lessons"),
+    Math.floor(tokenBudget * sectionRatios.lessons),
   );
   const budgetedCodeContext = applySectionTokenBudget(
     buildCodeContextItems(input.files),
@@ -297,8 +293,8 @@ export async function compileContextPack(rawInput: unknown): Promise<{
 
   const budgetDropDetected =
     budgetedRules.dropped ||
-    budgetedSkills.dropped ||
-    budgetedExamples.dropped ||
+    budgetedProcedures.dropped ||
+    budgetedLessons.dropped ||
     budgetedCodeContext.dropped;
   if (budgetDropDetected) {
     degradedReasons.push("TOKEN_BUDGET_SECTION_LIMIT_REACHED");
@@ -306,8 +302,8 @@ export async function compileContextPack(rawInput: unknown): Promise<{
 
   const selectedPackItems = [
     ...budgetedRules.items,
-    ...budgetedSkills.items,
-    ...budgetedExamples.items,
+    ...budgetedProcedures.items,
+    ...budgetedLessons.items,
     ...budgetedCodeContext.items,
   ];
   const itemSourceRefs = selectedPackItems.flatMap((item) => item.sourceRefs);
@@ -357,11 +353,11 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     status,
     minimalTasks,
     rules: budgetedRules.items,
-    skills: budgetedSkills.items,
-    examples: budgetedExamples.items,
+    procedures: budgetedProcedures.items,
+    lessons: budgetedLessons.items,
     codeContext: budgetedCodeContext.items,
     warnings: [
-      "Do not promote candidate/draft knowledge into instructions automatically.",
+      "Do not promote draft knowledge into instructions automatically.",
       "Keep source refs attached to factual claims.",
       ...(budgetDropDetected ? ["Token budget section caps trimmed lower-ranked items."] : []),
     ],

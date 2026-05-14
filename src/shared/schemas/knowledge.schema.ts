@@ -1,26 +1,10 @@
 import { z } from "zod";
 
-export const knowledgeTypeSchema = z.enum([
-  "fact",
-  "decision",
-  "rule",
-  "procedure",
-  "skill",
-  "risk",
-  "lesson",
-  "example",
-]);
+export const knowledgeTypeSchema = z.enum(["fact", "rule", "procedure", "lesson"]);
 
-export const knowledgeStatusSchema = z.enum([
-  "candidate",
-  "draft",
-  "trial",
-  "active",
-  "deprecated",
-  "rejected",
-]);
+export const knowledgeStatusSchema = z.enum(["draft", "active", "deprecated"]);
 
-export const scopeSchema = z.enum(["user", "repo", "workspace", "org", "global"]);
+export const scopeSchema = z.enum(["repo", "global"]);
 
 export const knowledgeItemSchema = z.object({
   id: z.string().uuid(),

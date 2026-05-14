@@ -1,5 +1,5 @@
 import type { ToolEntry } from "../registry.js";
-import { memoryFetchTool, memorySearchTool, recordVibeMemoryTool } from "./activity.tool.js";
+import { memoryFetchTool, memorySearchTool, recordVibeMemoryTool } from "./memory.tool.js";
 import { contextCompileTool } from "./context-compile.tool.js";
 import { doctorTool, initialInstructionsTool } from "./system.tool.js";
 

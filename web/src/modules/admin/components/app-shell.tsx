@@ -5,8 +5,8 @@ const navItems = [
   { to: "/compile", label: "Compile" },
   { to: "/knowledge", label: "Knowledge" },
   { to: "/sources", label: "Sources" },
-  { to: "/activity", label: "Vibe Memory" },
-  { to: "/artifacts", label: "Artifacts" },
+  { to: "/vibe-memory", label: "Vibe Memory" },
+  { to: "/agent-diffs", label: "Agent Diffs" },
   { to: "/graph", label: "Graph" },
   { to: "/doctor", label: "Doctor" },
 ] as const;

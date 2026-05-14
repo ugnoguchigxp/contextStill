@@ -34,7 +34,7 @@ export async function insertContextPackItems(
   items: Array<{
     itemKind: string;
     itemId: string;
-    section: "rules" | "skills" | "examples" | "code_context" | "warnings";
+    section: "rules" | "procedures" | "lessons" | "code_context" | "warnings";
     score: number;
     rankingReason: string;
     sourceRefs: string[];

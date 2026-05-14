@@ -1,6 +1,6 @@
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "../../db/client.js";
-import { aiArtifacts, artifactSymbols, vibeMemories } from "../../db/schema.js";
+import { agentDiffEntries, vibeMemories } from "../../db/schema.js";
 
 export type VibeMemorySeed = {
   sessionId: string;
@@ -45,23 +45,14 @@ export async function searchVibeMemories(params: {
     ilike(vibeMemories.content, `%${query}%`),
     sql`exists (
       select 1
-      from ${aiArtifacts}
-      where ${aiArtifacts.vibeMemoryId} = ${vibeMemories.id}
+      from ${agentDiffEntries}
+      where ${agentDiffEntries.vibeMemoryId} = ${vibeMemories.id}
         and (
-          to_tsvector('simple', ${aiArtifacts.content}) @@ plainto_tsquery('simple', ${query})
-          or ${aiArtifacts.filePath} ilike ${`%${query}%`}
-          or coalesce(${aiArtifacts.diff}, '') ilike ${`%${query}%`}
-        )
-    )`,
-    sql`exists (
-      select 1
-      from ${aiArtifacts}
-      join ${artifactSymbols} on ${artifactSymbols.artifactId} = ${aiArtifacts.id}
-      where ${aiArtifacts.vibeMemoryId} = ${vibeMemories.id}
-        and (
-          ${artifactSymbols.symbolName} ilike ${`%${query}%`}
-          or ${artifactSymbols.symbolKind} ilike ${`%${query}%`}
-          or to_tsvector('simple', ${artifactSymbols.content}) @@ plainto_tsquery('simple', ${query})
+          ${agentDiffEntries.filePath} ilike ${`%${query}%`}
+          or ${agentDiffEntries.diffHunk} ilike ${`%${query}%`}
+          or coalesce(${agentDiffEntries.symbolName}, '') ilike ${`%${query}%`}
+          or coalesce(${agentDiffEntries.symbolKind}, '') ilike ${`%${query}%`}
+          or coalesce(${agentDiffEntries.signature}, '') ilike ${`%${query}%`}
         )
     )`,
   ];

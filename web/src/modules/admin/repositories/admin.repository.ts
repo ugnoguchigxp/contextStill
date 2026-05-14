@@ -11,29 +11,6 @@ export type KnowledgeItem = {
   updatedAt: string;
 };
 
-export type SourceDocument = {
-  id: string;
-  sourceKind: string;
-  uri: string;
-  title: string | null;
-  body?: string;
-  contentHash?: string;
-  metadata?: Record<string, unknown>;
-  updatedAt: string;
-  lastIndexedAt?: string | null;
-};
-
-export type SourceFragment = {
-  id: string;
-  sourceId: string;
-  sourceUri: string;
-  locator: string;
-  heading?: string | null;
-  content: string;
-  metadata?: Record<string, unknown>;
-  createdAt: string;
-};
-
 export type VibeMemory = {
   id: string;
   sessionId: string;
@@ -43,23 +20,15 @@ export type VibeMemory = {
   createdAt: string;
 };
 
-export type AiArtifact = {
+export type AgentDiffEntry = {
   id: string;
   vibeMemoryId: string;
   filePath: string;
-  content: string;
-  diff: string | null;
+  diffHunk: string;
+  changeType: string | null;
   language: string | null;
-  metadata?: Record<string, unknown>;
-  createdAt: string;
-};
-
-export type ArtifactSymbol = {
-  id: string;
-  artifactId: string;
-  symbolName: string;
-  symbolKind: string;
-  content: string;
+  symbolName: string | null;
+  symbolKind: string | null;
   signature: string | null;
   startLine: number | null;
   endLine: number | null;
@@ -69,21 +38,6 @@ export type ArtifactSymbol = {
 };
 
 export type KnowledgeWriteInput = Omit<KnowledgeItem, "id" | "updatedAt">;
-export type SourceWriteInput = {
-  sourceKind: string;
-  uri: string;
-  title?: string | null;
-  body: string;
-  contentHash?: string;
-  metadata?: Record<string, unknown>;
-};
-export type SourceFragmentWriteInput = {
-  sourceId: string;
-  locator: string;
-  heading?: string | null;
-  content: string;
-  metadata?: Record<string, unknown>;
-};
 
 export type DoctorReport = {
   status: "ok" | "degraded" | "failed";
@@ -108,7 +62,7 @@ export type DoctorReport = {
 export type GraphNode = {
   id: string;
   label: string;
-  kind: "knowledge" | "source" | "activity";
+  kind: "knowledge" | "source" | "vibe_memory";
   group: string;
   detail: string;
   weight: number;
@@ -128,7 +82,7 @@ export type GraphSnapshot = {
   stats: {
     knowledgeCount: number;
     sourceCount: number;
-    activityCount: number;
+    vibeMemoryCount: number;
     relationCount: number;
   };
 };
@@ -249,81 +203,18 @@ export async function deleteKnowledgeItem(id: string): Promise<void> {
   await requestJson(`/api/knowledge/${id}`, "DELETE");
 }
 
-export async function fetchSources(limit = 80): Promise<SourceDocument[]> {
-  const json = await getJson<SourceTreeResponse>("/api/sources/tree");
-  return json.items.slice(0, limit).map((item) => ({
-    id: item.path,
-    sourceKind: "markdown",
-    uri: item.path,
-    title: item.title,
-    body: undefined,
-    contentHash: undefined,
-    metadata: {},
-    updatedAt: item.updatedAt,
-    lastIndexedAt: undefined,
-  }));
-}
-
-export async function createSource(input: SourceWriteInput): Promise<void> {
-  await createSourcePage({
-    slug: input.uri.replace(/\.md$/i, ""),
-    title: input.title?.trim() || input.uri,
-    body: input.body,
-    meta: input.metadata,
-  });
-}
-
-export async function updateSource(id: string, input: SourceWriteInput): Promise<void> {
-  await updateSourcePage(id.replace(/\.md$/i, ""), {
-    slug: input.uri.replace(/\.md$/i, ""),
-    title: input.title?.trim() || input.uri,
-    body: input.body,
-    meta: input.metadata,
-  });
-}
-
-export async function deleteSource(id: string): Promise<void> {
-  await deleteSourcePage(id.replace(/\.md$/i, ""));
-}
-
-export async function fetchSourceFragments(limit = 80): Promise<SourceFragment[]> {
-  return [];
-}
-
-export async function createSourceFragment(input: SourceFragmentWriteInput): Promise<void> {
-  throw new Error("source fragment API is disabled");
-}
-
-export async function updateSourceFragment(
-  id: string,
-  input: SourceFragmentWriteInput,
-): Promise<void> {
-  throw new Error("source fragment API is disabled");
-}
-
-export async function deleteSourceFragment(id: string): Promise<void> {
-  throw new Error("source fragment API is disabled");
-}
-
 export async function fetchVibeMemories(limit = 120): Promise<VibeMemory[]> {
-  const json = await getJson<{ memories: VibeMemory[] }>(`/api/activity?limit=${limit}`);
+  const json = await getJson<{ memories: VibeMemory[] }>(`/api/vibe-memory?limit=${limit}`);
   return json.memories;
 }
 
 export async function deleteVibeMemory(id: string): Promise<void> {
-  await requestJson(`/api/activity/${id}`, "DELETE");
+  await requestJson(`/api/vibe-memory/${id}`, "DELETE");
 }
 
-export async function fetchAiArtifacts(limit = 100): Promise<AiArtifact[]> {
-  const json = await getJson<{ artifacts: AiArtifact[] }>(`/api/artifacts?limit=${limit}`);
-  return json.artifacts;
-}
-
-export async function fetchArtifactSymbols(limit = 120): Promise<ArtifactSymbol[]> {
-  const json = await getJson<{ symbols: ArtifactSymbol[] }>(
-    `/api/artifacts/symbols?limit=${limit}`,
-  );
-  return json.symbols;
+export async function fetchAgentDiffEntries(limit = 120): Promise<AgentDiffEntry[]> {
+  const json = await getJson<{ entries: AgentDiffEntry[] }>(`/api/agent-diffs?limit=${limit}`);
+  return json.entries;
 }
 
 export async function fetchDoctorReport(): Promise<DoctorReport> {

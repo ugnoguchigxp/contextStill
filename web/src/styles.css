@@ -365,8 +365,8 @@
   }
 }
 
-/* Activity (Vibe Memory) Layout */
-.activity-layout {
+/* Vibe Memory Layout */
+.vibe-layout {
   display: grid;
   grid-template-columns: 280px 1fr;
   height: calc(100vh - 64px); /* Subtract nav height */
@@ -375,7 +375,7 @@
   margin: -2rem; /* Negate page-stack padding */
 }
 
-.activity-sidebar {
+.vibe-sidebar {
   border-right: 1px solid var(--border);
   background: var(--card-muted);
   display: flex;
@@ -443,14 +443,14 @@
   color: var(--muted-foreground);
 }
 
-.activity-main {
+.vibe-main {
   display: flex;
   flex-direction: column;
   overflow: hidden;
   background: var(--background);
 }
 
-.activity-content-header {
+.vibe-content-header {
   padding: 1.5rem 2rem;
   border-bottom: 1px solid var(--border);
   background: var(--background-blur);
@@ -561,7 +561,7 @@
   border-left: 4px solid var(--slate-500);
 }
 
-.activity-empty-view {
+.vibe-empty-view {
   flex: 1;
   display: flex;
   align-items: center;
@@ -570,7 +570,7 @@
   font-size: 0.9rem;
 }
 
-/* Artifacts / Code Symbols Styles */
+/* Agent Diff / Code Symbol Styles */
 .header-meta {
   margin-top: 0.75rem;
   font-size: 0.8rem;
@@ -591,7 +591,7 @@
   color: var(--primary);
 }
 
-.artifact-card {
+.diff-card {
   background: var(--card);
   border: 1px solid var(--border);
   border-radius: var(--radius);
@@ -636,7 +636,7 @@
   color: var(--foreground);
 }
 
-.vibe-artifact-link {
+.vibe-diff-link {
   margin-top: 0.75rem;
   display: flex;
   gap: 0.5rem;

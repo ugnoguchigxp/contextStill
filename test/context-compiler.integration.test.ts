@@ -40,7 +40,7 @@ describeDb("context compiler integration", () => {
     }
 
     await upsertSourceDocument({
-      sourceKind: "markdown",
+      sourceKind: "wiki",
       uri: "file:///sources/budget.md",
       title: "Budget Source",
       contentHash: "budget-source-hash",
@@ -88,15 +88,15 @@ describeDb("context compiler integration", () => {
     }
   });
 
-  test("skill_context prioritizes skill/procedure knowledge types", async () => {
+  test("procedure_context prioritizes procedure knowledge types", async () => {
     await upsertKnowledgeFromSource({
-      sourceUri: "file:///knowledge/skill.md",
-      contentHash: "skill-hash",
-      type: "skill",
+      sourceUri: "file:///knowledge/procedure.md",
+      contentHash: "procedure-hash",
+      type: "procedure",
       status: "active",
       scope: "repo",
       title: "Deploy runbook",
-      body: "runbook skill context command sequence",
+      body: "runbook procedure context command sequence",
     });
     await upsertKnowledgeFromSource({
       sourceUri: "file:///knowledge/rule.md",
@@ -105,31 +105,22 @@ describeDb("context compiler integration", () => {
       status: "active",
       scope: "repo",
       title: "Deploy rule",
-      body: "runbook skill context command sequence",
+      body: "runbook procedure context command sequence",
     });
 
     const { pack } = await compileContextPack({
-      goal: "runbook skill context command",
+      goal: "runbook procedure context command",
       intent: "edit",
-      retrievalMode: "skill_context",
+      retrievalMode: "procedure_context",
       tokenBudget: 4000,
     });
 
-    expect(pack.retrievalMode).toBe("skill_context");
-    expect(pack.skills.length).toBeGreaterThan(0);
+    expect(pack.retrievalMode).toBe("procedure_context");
+    expect(pack.procedures.length).toBeGreaterThan(0);
     expect(pack.rules.length).toBe(0);
   });
 
-  test("includeTrial adds trial only and does not include draft", async () => {
-    await upsertKnowledgeFromSource({
-      sourceUri: "file:///knowledge/trial-proc.md",
-      contentHash: "trial-proc-hash",
-      type: "procedure",
-      status: "trial",
-      scope: "repo",
-      title: "Trial Procedure",
-      body: "trial-mode command sequence",
-    });
+  test("includeDraft includes draft procedures when requested", async () => {
     await upsertKnowledgeFromSource({
       sourceUri: "file:///knowledge/draft-proc.md",
       contentHash: "draft-proc-hash",
@@ -137,24 +128,24 @@ describeDb("context compiler integration", () => {
       status: "draft",
       scope: "repo",
       title: "Draft Procedure",
-      body: "trial-mode command sequence",
+      body: "draft-mode command sequence",
     });
 
-    const withoutTrial = await compileContextPack({
-      goal: "trial-mode command sequence",
-      retrievalMode: "skill_context",
-      includeTrial: false,
+    const withoutDraft = await compileContextPack({
+      goal: "draft-mode command sequence",
+      retrievalMode: "procedure_context",
+      includeDraft: false,
     });
-    expect(withoutTrial.pack.skills.some((item) => item.title === "Trial Procedure")).toBe(false);
-    expect(withoutTrial.pack.skills.some((item) => item.title === "Draft Procedure")).toBe(false);
+    expect(withoutDraft.pack.procedures.some((item) => item.title === "Draft Procedure")).toBe(
+      false,
+    );
 
-    const withTrial = await compileContextPack({
-      goal: "trial-mode command sequence",
-      retrievalMode: "skill_context",
-      includeTrial: true,
+    const withDraft = await compileContextPack({
+      goal: "draft-mode command sequence",
+      retrievalMode: "procedure_context",
+      includeDraft: true,
     });
-    expect(withTrial.pack.skills.some((item) => item.title === "Trial Procedure")).toBe(true);
-    expect(withTrial.pack.skills.some((item) => item.title === "Draft Procedure")).toBe(false);
+    expect(withDraft.pack.procedures.some((item) => item.title === "Draft Procedure")).toBe(true);
   });
 
   test("builds code_context from input file hints when symbol index is empty", async () => {

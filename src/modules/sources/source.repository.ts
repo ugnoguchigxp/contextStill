@@ -4,7 +4,7 @@ import { db } from "../../db/index.js";
 import { sourceFragments, sources } from "../../db/schema.js";
 import { embedOne } from "../embedding/embedding.service.js";
 
-export type SourceKind = "markdown" | "session" | "tool_output" | "git" | "web" | "manual";
+export type SourceKind = "wiki";
 
 type UpsertSourceParams = {
   sourceKind: SourceKind;
@@ -156,18 +156,19 @@ export async function searchSourceContent(
 
   const fragmentRankExpr = sql<number>`
     ts_rank_cd(
-      to_tsvector('simple', concat_ws(' ', ${sourceFragments.heading}, ${sourceFragments.content})),
+      to_tsvector('simple', concat_ws(' ', ${sourceFragments.heading}, ${sourceFragments.content}, ${sourceFragments.metadata}::text)),
       plainto_tsquery('simple', ${trimmedQuery})
     )
   `;
   const fragmentTextMatchExpr = sql<boolean>`
-    to_tsvector('simple', concat_ws(' ', ${sourceFragments.heading}, ${sourceFragments.content}))
+    to_tsvector('simple', concat_ws(' ', ${sourceFragments.heading}, ${sourceFragments.content}, ${sourceFragments.metadata}::text))
     @@ plainto_tsquery('simple', ${trimmedQuery})
   `;
   const fragmentConditions = [
     or(
       ilike(sourceFragments.content, `%${trimmedQuery}%`),
       ilike(sourceFragments.heading, `%${trimmedQuery}%`),
+      sql`${sourceFragments.metadata}::text ilike ${`%${trimmedQuery}%`}`,
       fragmentTextMatchExpr,
     ),
   ];
@@ -193,12 +194,12 @@ export async function searchSourceContent(
 
   const sourceRankExpr = sql<number>`
     ts_rank_cd(
-      to_tsvector('simple', concat_ws(' ', ${sources.title}, ${sources.uri}, ${sources.body})),
+      to_tsvector('simple', concat_ws(' ', ${sources.title}, ${sources.uri}, ${sources.body}, ${sources.metadata}::text)),
       plainto_tsquery('simple', ${trimmedQuery})
     )
   `;
   const sourceTextMatchExpr = sql<boolean>`
-    to_tsvector('simple', concat_ws(' ', ${sources.title}, ${sources.uri}, ${sources.body}))
+    to_tsvector('simple', concat_ws(' ', ${sources.title}, ${sources.uri}, ${sources.body}, ${sources.metadata}::text))
     @@ plainto_tsquery('simple', ${trimmedQuery})
   `;
   const sourceConditions = [
@@ -206,6 +207,7 @@ export async function searchSourceContent(
       ilike(sources.title, `%${trimmedQuery}%`),
       ilike(sources.uri, `%${trimmedQuery}%`),
       ilike(sources.body, `%${trimmedQuery}%`),
+      sql`${sources.metadata}::text ilike ${`%${trimmedQuery}%`}`,
       sourceTextMatchExpr,
     ),
   ];

@@ -49,7 +49,7 @@ describeDb("cli compile e2e", () => {
       body: "cli compile goal",
     });
     await upsertSourceDocument({
-      sourceKind: "markdown",
+      sourceKind: "wiki",
       uri: "file:///cli/source.md",
       title: "CLI source",
       contentHash: "cli-source-hash",
@@ -81,16 +81,7 @@ describeDb("cli compile e2e", () => {
     expect(typeof parsed.diagnostics).toBe("object");
   });
 
-  test("compile accepts includeTrial/files/tokenBudget flags", async () => {
-    await upsertKnowledgeFromSource({
-      sourceUri: "file:///cli/trial-proc.md",
-      contentHash: "cli-trial-proc-hash",
-      type: "procedure",
-      status: "trial",
-      scope: "repo",
-      title: "CLI Trial Procedure",
-      body: "trial-mode command sequence",
-    });
+  test("compile accepts includeDraft/files/tokenBudget flags", async () => {
     await upsertKnowledgeFromSource({
       sourceUri: "file:///cli/draft-proc.md",
       contentHash: "cli-draft-proc-hash",
@@ -98,7 +89,7 @@ describeDb("cli compile e2e", () => {
       status: "draft",
       scope: "repo",
       title: "CLI Draft Procedure",
-      body: "trial-mode command sequence",
+      body: "draft-mode command sequence",
     });
 
     const run = spawnSync(
@@ -107,10 +98,10 @@ describeDb("cli compile e2e", () => {
         "run",
         "src/cli/compile.ts",
         "--goal",
-        "trial-mode command sequence",
+        "draft-mode command sequence",
         "--retrieval-mode",
-        "skill_context",
-        "--include-trial",
+        "procedure_context",
+        "--include-draft",
         "true",
         "--file",
         "src/modules/context-compiler/context-compiler.service.ts",
@@ -130,13 +121,12 @@ describeDb("cli compile e2e", () => {
 
     expect(run.status).toBe(0);
     const parsed = parsePackJson(run.stdout) as {
-      skills?: Array<{ title?: string }>;
+      procedures?: Array<{ title?: string }>;
       codeContext?: Array<{ itemKind?: string; content?: string }>;
       diagnostics?: { retrievalStats?: { tokenBudget?: number } };
     };
 
-    expect(parsed.skills?.some((item) => item.title === "CLI Trial Procedure")).toBe(true);
-    expect(parsed.skills?.some((item) => item.title === "CLI Draft Procedure")).toBe(false);
+    expect(parsed.procedures?.some((item) => item.title === "CLI Draft Procedure")).toBe(true);
     expect(
       parsed.codeContext?.some(
         (item) =>

@@ -105,19 +105,17 @@ export function KnowledgePage() {
               value={form.type}
               onChange={(event) => setForm({ ...form, type: event.target.value })}
             >
-              {["fact", "decision", "rule", "procedure", "skill", "risk", "lesson", "example"].map(
-                (type) => (
-                  <option key={type} value={type}>
-                    {type}
-                  </option>
-                ),
-              )}
+              {["fact", "rule", "procedure", "lesson"].map((type) => (
+                <option key={type} value={type}>
+                  {type}
+                </option>
+              ))}
             </Select>
             <Select
               value={form.status}
               onChange={(event) => setForm({ ...form, status: event.target.value })}
             >
-              {["candidate", "draft", "trial", "active", "deprecated", "rejected"].map((status) => (
+              {["draft", "active", "deprecated"].map((status) => (
                 <option key={status} value={status}>
                   {status}
                 </option>
@@ -127,7 +125,7 @@ export function KnowledgePage() {
               value={form.scope}
               onChange={(event) => setForm({ ...form, scope: event.target.value })}
             >
-              {["user", "repo", "workspace", "org", "global"].map((scope) => (
+              {["repo", "global"].map((scope) => (
                 <option key={scope} value={scope}>
                   {scope}
                 </option>

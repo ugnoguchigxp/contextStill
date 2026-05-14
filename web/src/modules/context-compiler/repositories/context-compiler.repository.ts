@@ -4,14 +4,14 @@ export type CompileMode =
   | "review_context"
   | "debug_context"
   | "architecture_context"
-  | "skill_context"
+  | "procedure_context"
   | "learning_context";
 
 export type CompileRequest = {
   goal: string;
   intent: CompileIntent;
   retrievalMode?: CompileMode;
-  includeTrial?: boolean;
+  includeDraft?: boolean;
   files?: string[];
 };
 

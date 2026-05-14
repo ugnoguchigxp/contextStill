@@ -75,13 +75,13 @@ async function main(): Promise<void> {
       [
         'Usage: bun run compile --goal "your task goal"',
         "[--intent edit]",
-        "[--retrieval-mode skill_context]",
+        "[--retrieval-mode procedure_context]",
         "[--repo-path /path/to/repo]",
         "[--files fileA.ts,fileB.ts | --file fileA.ts --file fileB.ts]",
         "[--change-types backend,api]",
         "[--technologies bun,typescript]",
         "[--token-budget 3000]",
-        "[--include-trial true|false]",
+        "[--include-draft true|false]",
         '[--query-embedding "[0.1,0.2,...]" | --query-embedding 0.1,0.2,...]',
         "[--json]",
       ].join(" "),
@@ -98,14 +98,14 @@ async function main(): Promise<void> {
   const changeTypes = parseCsvArgs([...readArgs("--change-types"), ...readArgs("--change-type")]);
   const technologies = parseCsvArgs([...readArgs("--technologies"), ...readArgs("--technology")]);
   const tokenBudget = parseNumber(readArg("--token-budget"));
-  const includeTrial = parseBoolean(readArg("--include-trial"));
+  const includeDraft = parseBoolean(readArg("--include-draft"));
   const queryEmbedding = parseEmbedding(readArg("--query-embedding"));
   const asJson = process.argv.includes("--json");
 
   const compileInput: CompileInput = {
     goal,
     intent,
-    includeTrial: includeTrial ?? false,
+    includeDraft: includeDraft ?? false,
     ...(retrievalMode ? { retrievalMode } : {}),
     ...(repoPath ? { repoPath } : {}),
     ...(files.length > 0 ? { files } : {}),

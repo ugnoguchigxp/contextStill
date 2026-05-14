@@ -5,7 +5,7 @@ import {
   fetchDoctorReport,
   fetchGraphSnapshot,
   fetchKnowledgeItems,
-  fetchSources,
+  fetchPageTree,
   fetchVibeMemories,
 } from "../repositories/admin.repository";
 
@@ -32,10 +32,10 @@ function Metric({
 export function OverviewPage() {
   const knowledge = useQuery({ queryKey: ["knowledge", 80], queryFn: () => fetchKnowledgeItems() });
   const sources = useQuery({
-    queryKey: ["sources", 80],
-    queryFn: () => fetchSources(),
+    queryKey: ["page-tree"],
+    queryFn: () => fetchPageTree(),
   });
-  const activities = useQuery({
+  const vibeMemories = useQuery({
     queryKey: ["vibe-memories", 120],
     queryFn: () => fetchVibeMemories(),
   });
@@ -49,7 +49,7 @@ export function OverviewPage() {
       <section className="page-heading">
         <div>
           <h1>Overview</h1>
-          <p>Context pack生成に必要な知識、ソース、エージェント活動、診断状態を確認します。</p>
+          <p>Context pack生成に必要な知識、ソース、vibe memory、診断状態を確認します。</p>
         </div>
         <Badge
           variant={status === "ok" ? "success" : status === "failed" ? "destructive" : "warning"}
@@ -62,12 +62,12 @@ export function OverviewPage() {
         <Metric
           label="Knowledge"
           value={knowledge.data?.length ?? "-"}
-          hint="rules / skills / facts"
+          hint="rules / procedures / facts"
         />
-        <Metric label="Sources" value={sources.data?.length ?? "-"} hint="documents" />
+        <Metric label="Sources" value={sources.data?.items.length ?? "-"} hint="wiki pages" />
         <Metric
           label="Vibe Memory"
-          value={activities.data?.length ?? "-"}
+          value={vibeMemories.data?.length ?? "-"}
           hint="agent session history"
         />
         <Metric

@@ -14,9 +14,9 @@ import {
   upsertSourceDocument,
 } from "../src/modules/sources/source.repository.js";
 import {
-  recordActivityWithArtifacts,
-  retrieveActivityContext,
-} from "../src/modules/activity/activity.service.js";
+  recordVibeMemoryWithDiffEntries,
+  retrieveVibeMemoryContext,
+} from "../src/modules/vibe-memory/vibe-memory.service.js";
 import {
   closeIntegrationDb,
   ensureDbIntegrationReady,
@@ -53,7 +53,7 @@ describeDb("repositories integration", () => {
     const draftId = await upsertKnowledgeFromSource({
       sourceUri: "file:///draft.md",
       contentHash: "hash-draft",
-      type: "skill",
+      type: "procedure",
       status: "draft",
       scope: "repo",
       title: "Repository Integration Skill",
@@ -73,7 +73,7 @@ describeDb("repositories integration", () => {
       query: "integration",
       limit: 10,
       status: "active",
-      statuses: ["active", "trial", "draft"],
+      statuses: ["active", "draft"],
     });
     expect(withDrafts.some((item) => item.id === activeId)).toBe(true);
     expect(withDrafts.some((item) => item.id === draftId)).toBe(true);
@@ -81,17 +81,21 @@ describeDb("repositories integration", () => {
 
   test("source document upsert creates searchable source content", async () => {
     const sourceId = await upsertSourceDocument({
-      sourceKind: "markdown",
+      sourceKind: "wiki",
       uri: "file:///docs/source.md",
       title: "Source",
       contentHash: "source-hash-1",
       body: "compile command failed because vector extension was missing.",
+      metadata: { tags: ["vector-runtime", "operations"] },
     });
 
     const hits = await searchSourceContent("vector extension", 5);
     expect(hits.length).toBeGreaterThan(0);
     expect(hits[0]?.sourceId).toBe(sourceId);
     expect(hits[0]?.sourceUri).toBe("file:///docs/source.md");
+
+    const tagHits = await searchSourceContent("vector-runtime", 5);
+    expect(tagHits.some((hit) => hit.sourceId === sourceId)).toBe(true);
   });
 
   test("compile run and context pack items are persisted and retrievable", async () => {
@@ -115,9 +119,9 @@ describeDb("repositories integration", () => {
         sourceRefs: ["file:///docs/source.md#line:1-5"],
       },
       {
-        itemKind: "skill",
-        itemId: "skill-1",
-        section: "skills",
+        itemKind: "procedure",
+        itemId: "procedure-1",
+        section: "procedures",
         score: 0.8,
         rankingReason: "integration test",
         sourceRefs: [],
@@ -135,9 +139,9 @@ describeDb("repositories integration", () => {
     expect(snapshot?.items[0]?.sourceRefs.length).toBeGreaterThan(0);
   });
 
-  test("activity recording persists vibe memory artifacts and extracted symbols", async () => {
-    const result = await recordActivityWithArtifacts({
-      sessionId: "integration-artifact-session",
+  test("vibe memory recording persists agent diffs and extracted symbols", async () => {
+    const result = await recordVibeMemoryWithDiffEntries({
+      sessionId: "integration-agent-diff-session",
       content: "AI generated repository diff",
       memoryType: "action",
       diff: `diff --git a/src/integration.ts b/src/integration.ts
@@ -154,18 +158,16 @@ index 0000000..1111111
 `,
     });
 
-    expect(result.memory.sessionId).toBe("integration-artifact-session");
-    expect(result.artifacts).toHaveLength(1);
-    expect(result.artifacts[0]?.vibeMemoryId).toBe(result.memory.id);
-    expect(result.artifacts[0]?.filePath).toBe("src/integration.ts");
-    expect(
-      result.artifacts[0]?.symbols.some((symbol) => symbol.symbolName === "integrationValue"),
-    ).toBe(true);
-    expect(result.artifacts[0]?.symbols.some((symbol) => symbol.startLine === 1)).toBe(true);
+    expect(result.memory.sessionId).toBe("integration-agent-diff-session");
+    expect(result.diffEntries.length).toBeGreaterThan(0);
+    expect(result.diffEntries[0]?.vibeMemoryId).toBe(result.memory.id);
+    expect(result.diffEntries[0]?.filePath).toBe("src/integration.ts");
+    expect(result.diffEntries.some((entry) => entry.symbolName === "integrationValue")).toBe(true);
+    expect(result.diffEntries.some((entry) => entry.startLine === 1)).toBe(true);
 
-    const hits = await retrieveActivityContext({
+    const hits = await retrieveVibeMemoryContext({
       query: "integrationValue",
-      sessionId: "integration-artifact-session",
+      sessionId: "integration-agent-diff-session",
       limit: 5,
     });
     expect(hits.some((hit) => hit.id === result.memory.id)).toBe(true);

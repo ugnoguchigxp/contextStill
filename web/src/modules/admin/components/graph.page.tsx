@@ -7,7 +7,7 @@ import { fetchGraphSnapshot, type GraphNode } from "../repositories/admin.reposi
 const nodeColors: Record<GraphNode["kind"], string> = {
   knowledge: "#14b8a6",
   source: "#f59e0b",
-  activity: "#60a5fa",
+  vibe_memory: "#60a5fa",
 };
 
 type PositionedNode = GraphNode & { x: number; y: number };
@@ -19,7 +19,7 @@ function layoutNodes(nodes: GraphNode[]): PositionedNode[] {
   const radius = 145;
   return nodes.map((node, index) => {
     const angle = (index / nodes.length) * Math.PI * 2 - Math.PI / 2;
-    const laneOffset = node.kind === "knowledge" ? -28 : node.kind === "activity" ? 28 : 0;
+    const laneOffset = node.kind === "knowledge" ? -28 : node.kind === "vibe_memory" ? 28 : 0;
     return {
       ...node,
       x: centerX + Math.cos(angle) * (radius + laneOffset),
@@ -126,7 +126,7 @@ export function GraphPage() {
               </div>
               <div>
                 <span>Vibe Memory</span>
-                <strong>{graph.data?.stats.activityCount ?? 0}</strong>
+                <strong>{graph.data?.stats.vibeMemoryCount ?? 0}</strong>
               </div>
               <div>
                 <span>Relations</span>

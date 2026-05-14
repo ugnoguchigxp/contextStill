@@ -1,39 +1,42 @@
 # memory-router
 
 `memory-router` は、コーディングエージェント向けのローカルファースト Context Compiler です。  
-`knowledge` / `sources` / `activity`（Vibe Memory + Artifacts）から、作業目的に合わせた最小コンテキストを組み立てます。
+入力元は `wiki`、会話ログは `vibe_memory`、会話ログ内の編集差分は `agent_diff` として扱い、作業目的に必要な最小コンテキストを組み立てます。
+
+## データモデル
+
+- `sources`: このプロジェクト配下の `./wiki` そのもの。人間が編集する Markdown はここに集約します。
+- `source_fragments`: wiki ページ検索と `sourceRefs` 解決のための内部インデックスです。UI/API の入力口ではありません。
+- `knowledge_items`: wiki から蒸留された知識です。`type` は `fact / rule / procedure / lesson`、`status` は `draft / active / deprecated`、`scope` は `repo / global` だけを使います。
+- `vibe_memories`: LLM との会話ログです。
+- `agent_diff_entries`: `vibe_memories` に含まれる編集差分です。file content は保存せず、`diff_hunk` と抽出できた symbol 列を保存します。
 
 ## 主要機能
 
 - Context Compile（CLI / MCP / API）
-  - `sources/source_fragments` を根拠ソースとして検索し、Context Pack には `sourceRefs` を付与します
 - Knowledge 管理（作成・編集・削除）
-- Source 管理（このリポジトリ配下 `./wiki` を運用）
-  - フォルダ作成・リネーム・削除
-  - ページ作成・編集・削除
-  - Git 履歴表示・コミット差分表示
-  - `markdown-wysiwyg-editor` による Markdown 編集
-- Artifact Symbol 管理（作成・閲覧）
+- Wiki 管理（フォルダ、ページ、Git 履歴、diff、Markdown WYSIWYG）
+- Vibe Memory 閲覧、削除
+- Agent Diff / Symbol 閲覧
 - Graph 可視化
 - Doctor 診断
 
-## Source 管理の前提
+## Wiki 管理
 
-- 既定のコンテンツルートは `./wiki`
-- 配下の `pages/` をソース本体として扱います
-- ルートに `.git` が無ければ自動初期化し、ページ操作時に commit します
-- `wiki/` はこのプロジェクトで `gitignore` され、独立リポジトリとして運用できます
+既定のコンテンツルートは `./wiki` です。`wiki/` はこのプロジェクト側では gitignore され、独立した Git リポジトリとして運用できます。ルートに `.git` が無ければ自動初期化され、ページ操作時に commit します。
 
 設定で切り替える場合:
 
-- `MEMORY_ROUTER_SOURCE_CONTENT_ROOT=/abs/path/to/wiki`
-
-## 必要環境
-
-- Bun 1.3+
-- Docker（PostgreSQL + pgvector 起動用）
+```bash
+MEMORY_ROUTER_SOURCE_CONTENT_ROOT=/abs/path/to/wiki
+```
 
 ## セットアップ
+
+必要環境:
+
+- Bun 1.3+
+- Docker（PostgreSQL + pgvector）
 
 ```bash
 docker compose up -d
@@ -54,31 +57,18 @@ bun run dev
 
 ## CLI
 
-Context Pack 生成:
-
 ```bash
 bun run compile --goal "fix context compiler" --intent edit --json
-```
-
-Markdown 一括取り込み（sources + knowledge）:
-
-```bash
-bun run import:markdown ./docs
-bun run import:sources ./wiki/pages
-```
-
-Doctor:
-
-```bash
+bun run import:wiki ./wiki/pages
 bun run doctor
 ```
 
 ## Embedding
 
-既定は sibling repo `../local-llm/embedding` を参照します。
+既定では sibling repo `../local-llm/embedding` の embedding 実装を参照します。
 
-- daemon 優先 (`MEMORY_ROUTER_EMBEDDING_DAEMON_URL`)
-- fallback: Python CLI (`MEMORY_ROUTER_LOCAL_LLM_EMBEDDING_PYTHON -m e5embed.cli`)
+- daemon 優先: `MEMORY_ROUTER_EMBEDDING_DAEMON_URL`
+- fallback: Python CLI: `MEMORY_ROUTER_LOCAL_LLM_EMBEDDING_PYTHON -m e5embed.cli`
 
 主要設定:
 
@@ -91,7 +81,6 @@ bun run doctor
 
 主要エンドポイント:
 
-- `GET /api/health`
 - `POST /api/context/compile`
 - `GET /api/context/runs`
 - `GET /api/doctor`
@@ -103,20 +92,14 @@ bun run doctor
 - `GET/PUT/DELETE /api/sources/pages/*`
 - `GET /api/sources/history/*`
 - `GET /api/sources/diff/*?from=...&to=...`
-- `GET/POST /api/activity`
-- `GET/DELETE /api/activity/:id`
-- `GET /api/artifacts`
-- `GET /api/artifacts/symbols`
+- `GET/POST /api/vibe-memory`
+- `GET/DELETE /api/vibe-memory/:id`
+- `GET /api/agent-diffs`
 - `GET /api/graph`
 
-`POST /api/activity` は vibe memory の本文に加えて `diff` または `artifacts[]` を受け取れます。
-unified diff はファイル単位の artifact に分解され、TypeScript/JavaScript の主要シンボルは
-`artifact_symbols` に自動登録されます。`memory_search` は vibe 本文だけでなく artifact 本文、
-diff、symbol 名も検索対象にします。
+`POST /api/vibe-memory` は vibe memory の本文に加えて `diff` または `agentDiffs[]` を受け取れます。unified diff は `agent_diff_entries` に分解され、TypeScript/JavaScript の主要シンボルは同じテーブルの symbol 列に保存されます。
 
 ## MCP
-
-起動:
 
 ```bash
 bun run start:mcp
@@ -124,13 +107,14 @@ bun run start:mcp
 
 公開ツール:
 
-- `context_compile`
-- `record_vibe_memory`: `content` に加えて `diff` / `artifacts[]` を受け取り、
-  vibe memory、AI artifact、artifact symbol を同一トランザクションで保存します。
-- `memory_search`: vibe memory と関連 artifact/symbol を検索します。
-- `memory_fetch`: vibe memory と関連 artifact/symbol をまとめて取得します。
 - `initial_instructions`
+- `context_compile`
+- `record_vibe_memory`
+- `memory_search`
+- `memory_fetch`
 - `doctor`
+
+`record_vibe_memory` は `content` に加えて `diff` / `agentDiffs[]` を受け取り、`vibe_memories` と `agent_diff_entries` を同一トランザクションで保存します。
 
 ## テスト
 
@@ -140,9 +124,9 @@ bun run test:integration
 bun run test:e2e
 ```
 
-## ドキュメント
+## 今後の改善計画
 
-- [docs/initial-implementation-plan.md](/Users/y.noguchi/Code/memoryRouter/docs/initial-implementation-plan.md)
-- [docs/deferred-tasks-resumption-plan.md](/Users/y.noguchi/Code/memoryRouter/docs/deferred-tasks-resumption-plan.md)
-- [docs/source-distillation-migration-plan.md](/Users/y.noguchi/Code/memoryRouter/docs/source-distillation-migration-plan.md)
-- [docs/improvement-plan.md](/Users/y.noguchi/Code/memoryRouter/docs/improvement-plan.md)
+1. `initial_instructions` を強化し、作業開始時の取得、実装後の記録、wiki からの蒸留までの標準ループをさらに明文化する。
+2. `record_vibe_memory` の終了時フローを自動化し、Git diff から `agent_diff_entries` を確実に登録できる補助コマンドを追加する。
+3. `agent_diff_entries` から knowledge 化候補を抽出するバッチを追加し、wiki と knowledge の差分レビューを UI で確認できるようにする。
+4. Doctor に degraded 回復動線を追加し、DB migration 未適用、embedding 不通、wiki Git 不整合を UI から切り分けやすくする。

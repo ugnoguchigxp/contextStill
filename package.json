@@ -14,6 +14,7 @@
     "preview:web": "vite preview",
     "compile": "bun run src/cli/compile.ts",
     "import:markdown": "bun run src/cli/import-markdown.ts",
+    "import:wiki": "bun run src/cli/import-sources.ts",
     "import:sources": "bun run src/cli/import-sources.ts",
     "doctor": "bun run src/cli/doctor.ts",
     "db:generate": "drizzle-kit generate",
@@ -27,7 +28,7 @@
     "test": "bun run test:unit",
     "test:ui": "vitest run",
     "test:e2e": "playwright test",
-    "test:unit": "bun test test/repositories.test.ts test/markdown-importer.test.ts test/context-compiler.test.ts test/activity-artifacts.test.ts",
+    "test:unit": "bun test test/repositories.test.ts test/markdown-importer.test.ts test/context-compiler.test.ts test/agent-diff-ingestion.test.ts",
     "test:integration": "MEMORY_ROUTER_RUN_DB_TESTS=1 bun test --timeout=30000 --max-concurrency=1 test/*.integration.test.ts test/*.e2e.test.ts test/mcp.contract.test.ts",
     "test:all": "bun run test:unit && bun run test:integration",
     "verify": "bun run typecheck && bun run lint && bun run format:check && bun run test:unit && bun run build:web"

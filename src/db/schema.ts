@@ -1,6 +1,5 @@
 import { sql } from "drizzle-orm";
 import {
-  boolean,
   check,
   index,
   integer,
@@ -14,40 +13,13 @@ import {
 } from "drizzle-orm/pg-core";
 import { config } from "../config.js";
 
-export const knowledgeTypeValues = [
-  "fact",
-  "decision",
-  "rule",
-  "procedure",
-  "skill",
-  "risk",
-  "lesson",
-  "example",
-] as const;
+export const knowledgeTypeValues = ["fact", "rule", "procedure", "lesson"] as const;
 
-export const knowledgeStatusValues = [
-  "candidate",
-  "draft",
-  "trial",
-  "active",
-  "deprecated",
-  "rejected",
-] as const;
+export const knowledgeStatusValues = ["draft", "active", "deprecated"] as const;
 
-export const scopeValues = ["user", "repo", "workspace", "org", "global"] as const;
+export const scopeValues = ["repo", "global"] as const;
 
-export const sourceKindValues = [
-  "markdown",
-  "session",
-  "tool_output",
-  "git",
-  "web",
-  "manual",
-  "vibe_memory",
-  "ai_artifact",
-] as const;
-
-export const activityLinkTypeValues = ["derived_from", "implemented_in"] as const;
+export const sourceKindValues = ["wiki"] as const;
 
 export const vibeMemories = pgTable(
   "vibe_memories",
@@ -74,8 +46,8 @@ export const vibeMemories = pgTable(
   }),
 );
 
-export const aiArtifacts = pgTable(
-  "ai_artifacts",
+export const agentDiffEntries = pgTable(
+  "agent_diff_entries",
   {
     id: uuid("id").primaryKey().defaultRandom(),
     vibeMemoryId: uuid("vibe_memory_id")
@@ -84,28 +56,11 @@ export const aiArtifacts = pgTable(
       })
       .notNull(),
     filePath: text("file_path").notNull(),
-    content: text("content").notNull(),
-    diff: text("diff"),
+    diffHunk: text("diff_hunk").notNull(),
+    changeType: text("change_type"),
     language: text("language"),
-    metadata: jsonb("metadata").default({}).notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (table) => ({
-    vibeMemoryIdIdx: index("ai_artifacts_vibe_memory_id_idx").on(table.vibeMemoryId),
-    filePathIdx: index("ai_artifacts_file_path_idx").on(table.filePath),
-  }),
-);
-
-export const artifactSymbols = pgTable(
-  "artifact_symbols",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    artifactId: uuid("artifact_id")
-      .references(() => aiArtifacts.id, { onDelete: "cascade" })
-      .notNull(),
-    symbolName: text("symbol_name").notNull(),
-    symbolKind: text("symbol_kind").notNull(),
-    content: text("content").notNull().default(""),
+    symbolName: text("symbol_name"),
+    symbolKind: text("symbol_kind"),
     signature: text("signature"),
     startLine: integer("start_line"),
     endLine: integer("end_line"),
@@ -114,42 +69,10 @@ export const artifactSymbols = pgTable(
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => ({
-    artifactIdIdx: index("artifact_symbols_artifact_id_idx").on(table.artifactId),
-    nameKindIdx: index("artifact_symbols_name_kind_idx").on(table.symbolName, table.symbolKind),
-    lineRangeIdx: index("artifact_symbols_line_range_idx").on(table.startLine, table.endLine),
-  }),
-);
-
-export const knowledgeActivityLinks = pgTable(
-  "knowledge_activity_links",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    knowledgeId: uuid("knowledge_id")
-      .references(() => knowledgeItems.id, { onDelete: "cascade" })
-      .notNull(),
-    vibeMemoryId: uuid("vibe_memory_id").references(() => vibeMemories.id, {
-      onDelete: "cascade",
-    }),
-    aiArtifactId: uuid("ai_artifact_id").references(() => aiArtifacts.id, {
-      onDelete: "cascade",
-    }),
-    linkType: text("link_type").notNull().default("derived_from"),
-    confidence: real("confidence").default(0.5).notNull(),
-    metadata: jsonb("metadata").default({}).notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (table) => ({
-    knowledgeIdx: index("knowledge_activity_links_knowledge_idx").on(table.knowledgeId),
-    vibeMemoryIdx: index("knowledge_activity_links_vibe_memory_idx").on(table.vibeMemoryId),
-    aiArtifactIdx: index("knowledge_activity_links_ai_artifact_idx").on(table.aiArtifactId),
-    linkTypeCheck: check(
-      "knowledge_activity_links_link_type_check",
-      sql`${table.linkType} IN (${sql.raw(toSqlList(activityLinkTypeValues))})`,
-    ),
-    targetCheck: check(
-      "knowledge_activity_links_target_check",
-      sql`${table.vibeMemoryId} IS NOT NULL OR ${table.aiArtifactId} IS NOT NULL`,
-    ),
+    vibeMemoryIdIdx: index("agent_diff_entries_vibe_memory_id_idx").on(table.vibeMemoryId),
+    filePathIdx: index("agent_diff_entries_file_path_idx").on(table.filePath),
+    symbolIdx: index("agent_diff_entries_symbol_idx").on(table.symbolName, table.symbolKind),
+    lineRangeIdx: index("agent_diff_entries_line_range_idx").on(table.startLine, table.endLine),
   }),
 );
 
@@ -169,8 +92,8 @@ export const runStatusValues = ["ok", "degraded", "failed"] as const;
 
 export const packSectionValues = [
   "rules",
-  "skills",
-  "examples",
+  "procedures",
+  "lessons",
   "code_context",
   "warnings",
 ] as const;
@@ -203,7 +126,7 @@ export const knowledgeItems = pgTable(
     typeStatusIdx: index("knowledge_items_type_status_idx").on(table.type, table.status),
     titleBodyFtsIdx: index("knowledge_items_title_body_fts_idx").using(
       "gin",
-      sql`to_tsvector('simple', concat_ws(' ', ${table.title}, ${table.body}))`,
+      sql`to_tsvector('simple', coalesce(${table.title}, '') || ' ' || coalesce(${table.body}, ''))`,
     ),
     embeddingHnswIdx: index("knowledge_items_embedding_hnsw_idx").using(
       "hnsw",

@@ -3,12 +3,12 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import {
   deleteVibeMemory,
+  fetchAgentDiffEntries,
   fetchVibeMemories,
-  fetchAiArtifacts,
 } from "../repositories/admin.repository";
 import { Link } from "@tanstack/react-router";
 
-export function ActivityPage() {
+export function VibeMemoryPage() {
   const queryClient = useQueryClient();
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
@@ -17,9 +17,9 @@ export function ActivityPage() {
     queryFn: () => fetchVibeMemories(200),
   });
 
-  const artifacts = useQuery({
-    queryKey: ["ai-artifacts"],
-    queryFn: () => fetchAiArtifacts(),
+  const diffEntries = useQuery({
+    queryKey: ["agent-diffs"],
+    queryFn: () => fetchAgentDiffEntries(),
   });
 
   const remove = useMutation({
@@ -29,7 +29,7 @@ export function ActivityPage() {
     },
   });
 
-  // Group by session and sort by latest activity
+  // Group by session and sort by latest vibe memory.
   const sessionMap =
     memories.data?.reduce(
       (acc, m) => {
@@ -57,9 +57,9 @@ export function ActivityPage() {
     : [];
 
   return (
-    <div className="activity-layout">
+    <div className="vibe-layout">
       {/* Sidebar: Session List */}
-      <aside className="activity-sidebar">
+      <aside className="vibe-sidebar">
         <div className="sidebar-header">
           <h2>Vibe Sessions</h2>
         </div>
@@ -86,10 +86,10 @@ export function ActivityPage() {
       </aside>
 
       {/* Main Content: Vibe History */}
-      <main className="activity-main">
+      <main className="vibe-main">
         {activeSessionId ? (
           <>
-            <header className="activity-content-header">
+            <header className="vibe-content-header">
               <div className="header-title">
                 <h1>Vibe Session: {activeSessionId}</h1>
                 <Badge variant="outline">{activeMemories.length} records</Badge>
@@ -105,13 +105,13 @@ export function ActivityPage() {
                     <span className="vibe-timestamp">{new Date(m.createdAt).toLocaleString()}</span>
                   </div>
                   <div className="vibe-card-body">{m.content}</div>
-                  {artifacts.data
-                    ?.filter((a) => a.vibeMemoryId === m.id)
-                    .map((a) => (
-                      <div key={a.id} className="vibe-artifact-link">
-                        <Link to="/artifacts" search={{ id: a.id }}>
+                  {diffEntries.data
+                    ?.filter((entry) => entry.vibeMemoryId === m.id)
+                    .map((entry) => (
+                      <div key={entry.id} className="vibe-diff-link">
+                        <Link to="/agent-diffs" search={{ id: entry.id }}>
                           <Badge variant="outline" className="cursor-pointer hover:bg-accent">
-                            Artifact: {a.filePath || "artifact"}
+                            Agent Diff: {entry.symbolName ?? entry.filePath}
                           </Badge>
                         </Link>
                       </div>
@@ -134,7 +134,7 @@ export function ActivityPage() {
             </div>
           </>
         ) : (
-          <div className="activity-empty-view">
+          <div className="vibe-empty-view">
             <p>セッションを選択してください</p>
           </div>
         )}

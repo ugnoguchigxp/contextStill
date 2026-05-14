@@ -5,7 +5,7 @@ import { knowledgeItems, relations, sources, vibeMemories } from "../../../src/d
 export type GraphNode = {
   id: string;
   label: string;
-  kind: "knowledge" | "source" | "activity";
+  kind: "knowledge" | "source" | "vibe_memory";
   group: string;
   detail: string;
   weight: number;
@@ -19,8 +19,7 @@ export type GraphEdge = {
   weight: number;
 };
 
-function normalizeKind(kind: string): "knowledge" | "source" | "activity" | string {
-  if (kind === "vibe_memory") return "activity";
+function normalizeKind(kind: string): "knowledge" | "source" | "vibe_memory" | string {
   return kind;
 }
 
@@ -30,7 +29,7 @@ export async function buildGraphSnapshot(limit: number): Promise<{
   stats: {
     knowledgeCount: number;
     sourceCount: number;
-    activityCount: number;
+    vibeMemoryCount: number;
     relationCount: number;
   };
 }> {
@@ -100,9 +99,9 @@ export async function buildGraphSnapshot(limit: number): Promise<{
       weight: 0.45,
     })),
     ...memoryRows.map((row) => ({
-      id: `activity:${row.id}`,
+      id: `vibe_memory:${row.id}`,
       label: row.content.slice(0, 32),
-      kind: "activity" as const,
+      kind: "vibe_memory" as const,
       group: row.memoryType,
       detail: `Session: ${row.sessionId}`,
       weight: 0.5,
@@ -133,7 +132,7 @@ export async function buildGraphSnapshot(limit: number): Promise<{
     stats: {
       knowledgeCount: knowledgeRows.length,
       sourceCount: sourceRows.length,
-      activityCount: memoryRows.length,
+      vibeMemoryCount: memoryRows.length,
       relationCount: edges.length,
     },
   };

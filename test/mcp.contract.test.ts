@@ -42,7 +42,7 @@ describeDb("mcp contract", () => {
         "review_context",
         "debug_context",
         "architecture_context",
-        "skill_context",
+        "procedure_context",
         "learning_context",
       ],
     });

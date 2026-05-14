@@ -111,6 +111,20 @@ const makeExcerpt = (body: string, query: string): string => {
   return compact.slice(start, end);
 };
 
+const searchableMetaText = (meta: Record<string, unknown>): string => {
+  const tags = meta.tags;
+  if (Array.isArray(tags)) {
+    return tags
+      .map((tag) => String(tag).trim())
+      .filter(Boolean)
+      .join(" ");
+  }
+  if (typeof tags === "string") {
+    return tags;
+  }
+  return "";
+};
+
 export const sourcesRouter = new Hono()
   .get("/health", async (c) => {
     await ensureSourceRuntime();
@@ -144,11 +158,13 @@ export const sourcesRouter = new Hono()
     for (const item of tree) {
       const page = await readPage(config.sourceContentRoot, item.slug);
       if (!page) continue;
-      const haystack = `${page.slug}\n${page.title}\n${page.body}`.toLowerCase();
+      const metaText = searchableMetaText(page.meta);
+      const searchableText = `${page.slug}\n${page.title}\n${metaText}\n${page.body}`;
+      const haystack = searchableText.toLowerCase();
       if (!haystack.includes(queryLower)) continue;
       hits.push({
         slug: page.slug,
-        excerpt: makeExcerpt(page.body, query),
+        excerpt: makeExcerpt(searchableText, query),
       });
       if (hits.length >= 40) break;
     }
@@ -163,7 +179,7 @@ export const sourcesRouter = new Hono()
       const page = await readPage(config.sourceContentRoot, item.slug);
       if (!page) continue;
       await upsertSourceDocument({
-        sourceKind: "markdown",
+        sourceKind: "wiki",
         uri: page.path,
         title: page.title,
         body: page.body,
@@ -299,7 +315,7 @@ export const sourcesRouter = new Hono()
       return c.json({ message: "Page save verification failed" }, 500);
     }
     await upsertSourceDocument({
-      sourceKind: "markdown",
+      sourceKind: "wiki",
       uri: savedPage.path,
       title: savedPage.title,
       body: savedPage.body,
@@ -357,7 +373,7 @@ export const sourcesRouter = new Hono()
       return c.json({ message: "Page save verification failed", slug: targetSlug }, 500);
     }
     await upsertSourceDocument({
-      sourceKind: "markdown",
+      sourceKind: "wiki",
       uri: savedPage.path,
       title: savedPage.title,
       body: savedPage.body,

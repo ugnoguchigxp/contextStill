@@ -1,12 +1,12 @@
 import { z } from "zod";
 import {
-  recordActivityWithArtifacts,
-  retrieveActivityContext,
-} from "../../modules/activity/activity.service.js";
+  recordVibeMemoryWithDiffEntries,
+  retrieveVibeMemoryContext,
+} from "../../modules/vibe-memory/vibe-memory.service.js";
 import { db } from "../../db/client.js";
-import { aiArtifacts, artifactSymbols, vibeMemories } from "../../db/schema.js";
-import { desc, eq, inArray } from "drizzle-orm";
-import { recordActivityInputSchema } from "../../shared/schemas/activity.schema.js";
+import { agentDiffEntries, vibeMemories } from "../../db/schema.js";
+import { desc, eq } from "drizzle-orm";
+import { recordVibeMemoryInputSchema } from "../../shared/schemas/vibe-memory.schema.js";
 
 const memorySearchArgsSchema = z.object({
   query: z.string().trim().min(1),
@@ -22,11 +22,11 @@ const memoryFetchArgsSchema = z.object({
   query: z.string().trim().optional(),
 });
 
-const recordVibeMemoryArgsSchema = recordActivityInputSchema;
+const recordVibeMemoryArgsSchema = recordVibeMemoryInputSchema;
 
 export const memorySearchTool = {
   name: "memory_search",
-  description: "Search for past agent activities and vibe memories (Gnosis compatible).",
+  description: "Search past vibe memories and captured agent diffs (Gnosis compatible).",
   inputSchema: {
     type: "object",
     properties: {
@@ -38,7 +38,7 @@ export const memorySearchTool = {
   },
   handler: async (args: unknown) => {
     const parsed = memorySearchArgsSchema.parse(args);
-    const results = await retrieveActivityContext({
+    const results = await retrieveVibeMemoryContext({
       query: parsed.query,
       sessionId: parsed.sessionId,
       limit: parsed.limit,
@@ -70,20 +70,11 @@ export const memoryFetchTool = {
     if (!memory) {
       return { content: [{ type: "text", text: "Memory not found." }], isError: true };
     }
-    const artifacts = await db
+    const diffEntries = await db
       .select()
-      .from(aiArtifacts)
-      .where(eq(aiArtifacts.vibeMemoryId, memory.id))
-      .orderBy(desc(aiArtifacts.createdAt));
-    const artifactIds = artifacts.map((artifact) => artifact.id);
-    const symbols =
-      artifactIds.length > 0
-        ? await db
-            .select()
-            .from(artifactSymbols)
-            .where(inArray(artifactSymbols.artifactId, artifactIds))
-            .orderBy(desc(artifactSymbols.updatedAt))
-        : [];
+      .from(agentDiffEntries)
+      .where(eq(agentDiffEntries.vibeMemoryId, memory.id))
+      .orderBy(desc(agentDiffEntries.createdAt));
 
     let text = memory.content;
     const start = parsed.start ?? 0;
@@ -113,10 +104,7 @@ export const memoryFetchTool = {
             {
               ...memory,
               content: text,
-              artifacts: artifacts.map((artifact) => ({
-                ...artifact,
-                symbols: symbols.filter((symbol) => symbol.artifactId === artifact.id),
-              })),
+              agentDiffs: diffEntries,
             },
             null,
             2,
@@ -129,7 +117,7 @@ export const memoryFetchTool = {
 
 export const recordVibeMemoryTool = {
   name: "record_vibe_memory",
-  description: "Record agent activity/vibe memory to the database (Gnosis compatible).",
+  description: "Record a vibe memory and optional agent diff entries to the database.",
   inputSchema: {
     type: "object",
     properties: {
@@ -143,35 +131,26 @@ export const recordVibeMemoryTool = {
       metadata: { type: "object", description: "Optional metadata." },
       diff: {
         type: "string",
-        description: "Optional unified diff. Changed files are stored as AI artifacts.",
+        description:
+          "Optional unified diff. Changed hunks are stored as agent_diff entries and symbolized when possible.",
       },
-      artifacts: {
+      agentDiffs: {
         type: "array",
-        description: "Optional explicit artifacts with content, diff, language, and symbols.",
+        description: "Optional explicit diff entries with optional symbol columns.",
         items: {
           type: "object",
           properties: {
             filePath: { type: "string" },
-            content: { type: "string" },
+            diffHunk: { type: "string" },
             diff: { type: "string" },
+            changeType: { type: "string" },
             language: { type: "string" },
+            symbolName: { type: "string" },
+            symbolKind: { type: "string" },
+            signature: { type: "string" },
+            startLine: { type: "number" },
+            endLine: { type: "number" },
             metadata: { type: "object" },
-            symbols: {
-              type: "array",
-              items: {
-                type: "object",
-                properties: {
-                  symbolName: { type: "string" },
-                  symbolKind: { type: "string" },
-                  content: { type: "string" },
-                  signature: { type: "string" },
-                  startLine: { type: "number" },
-                  endLine: { type: "number" },
-                  metadata: { type: "object" },
-                },
-                required: ["symbolName", "symbolKind"],
-              },
-            },
           },
           required: ["filePath"],
         },
@@ -181,16 +160,13 @@ export const recordVibeMemoryTool = {
   },
   handler: async (args: unknown) => {
     const parsed = recordVibeMemoryArgsSchema.parse(args);
-    const result = await recordActivityWithArtifacts(parsed);
-    const symbolCount = result.artifacts.reduce(
-      (count, artifact) => count + artifact.symbols.length,
-      0,
-    );
+    const result = await recordVibeMemoryWithDiffEntries(parsed);
+    const symbolCount = result.diffEntries.filter((entry) => entry.symbolName).length;
     return {
       content: [
         {
           type: "text",
-          text: `Vibe memory recorded with ID: ${result.memory.id} (artifacts: ${result.artifacts.length}, symbols: ${symbolCount})`,
+          text: `Vibe memory recorded with ID: ${result.memory.id} (agentDiffs: ${result.diffEntries.length}, symbols: ${symbolCount})`,
         },
       ],
     };

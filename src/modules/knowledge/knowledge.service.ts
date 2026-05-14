@@ -1,6 +1,9 @@
 import { config } from "../../config.js";
 import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
-import { knowledgeSearchInputSchema } from "../../shared/schemas/knowledge.schema.js";
+import {
+  knowledgeSearchInputSchema,
+  type KnowledgeStatus,
+} from "../../shared/schemas/knowledge.schema.js";
 import { embedOne } from "../embedding/embedding.service.js";
 import { resolveKnowledgeSearchStatuses } from "../lifecycle/lifecycle.service.js";
 import {
@@ -26,19 +29,17 @@ export type KnowledgeRetrievalResult = {
 
 function getKnowledgeRetrievalProfile(retrievalMode: RetrievalMode): {
   limit: number;
-  types?: Array<
-    "fact" | "decision" | "rule" | "procedure" | "skill" | "risk" | "lesson" | "example"
-  >;
+  types?: Array<"fact" | "rule" | "procedure" | "lesson">;
 } {
   switch (retrievalMode) {
     case "review_context":
-      return { limit: 12, types: ["rule", "risk", "decision", "example"] };
+      return { limit: 12, types: ["rule", "fact", "lesson"] };
     case "debug_context":
-      return { limit: 14, types: ["risk", "lesson", "procedure", "example", "rule"] };
+      return { limit: 14, types: ["lesson", "procedure", "rule"] };
     case "architecture_context":
-      return { limit: 12, types: ["decision", "rule", "fact"] };
-    case "skill_context":
-      return { limit: 10, types: ["skill", "procedure"] };
+      return { limit: 12, types: ["rule", "fact"] };
+    case "procedure_context":
+      return { limit: 10, types: ["procedure"] };
     case "learning_context":
       return { limit: 15 };
     default:
@@ -57,7 +58,7 @@ export async function retrieveKnowledge(
   const vectorFailed = { value: false };
   const statuses = resolveKnowledgeSearchStatuses({
     retrievalMode: options.retrievalMode,
-    includeTrial: input.includeTrial,
+    includeDraft: input.includeDraft,
   });
 
   const textInput = knowledgeSearchInputSchema.parse({
@@ -137,9 +138,9 @@ export async function registerKnowledgeFromMarkdown(params: {
   contentHash: string;
   title: string;
   body: string;
-  type?: "fact" | "decision" | "rule" | "procedure" | "skill" | "risk" | "lesson" | "example";
-  status?: "candidate" | "draft" | "trial" | "active" | "deprecated" | "rejected";
-  scope?: "user" | "repo" | "workspace" | "org" | "global";
+  type?: "fact" | "rule" | "procedure" | "lesson";
+  status?: KnowledgeStatus;
+  scope?: "repo" | "global";
   confidence?: number;
   importance?: number;
   metadata?: Record<string, unknown>;

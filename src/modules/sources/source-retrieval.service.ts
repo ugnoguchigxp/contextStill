@@ -27,17 +27,17 @@ function getSourceRetrievalProfile(retrievalMode: RetrievalMode): {
 } {
   switch (retrievalMode) {
     case "review_context":
-      return { limit: 10, sourceKinds: ["markdown", "manual", "session", "tool_output"] };
+      return { limit: 10 };
     case "debug_context":
-      return { limit: 12, sourceKinds: ["session", "tool_output", "git", "markdown"] };
+      return { limit: 12 };
     case "architecture_context":
-      return { limit: 10, sourceKinds: ["markdown", "manual", "web", "git"] };
-    case "skill_context":
-      return { limit: 10, sourceKinds: ["manual", "markdown", "tool_output"] };
+      return { limit: 10 };
+    case "procedure_context":
+      return { limit: 10 };
     case "learning_context":
       return { limit: 10 };
     default:
-      return { limit: 8, sourceKinds: ["markdown", "manual", "git"] };
+      return { limit: 8 };
   }
 }
 

@@ -2,12 +2,9 @@ import type { RetrievalMode } from "../../shared/schemas/compile.schema.js";
 import type { KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
 
 const knowledgeLifecycleTransitions: Record<KnowledgeStatus, KnowledgeStatus[]> = {
-  candidate: ["draft", "rejected"],
-  draft: ["trial", "rejected", "deprecated"],
-  trial: ["active", "deprecated", "rejected"],
+  draft: ["active", "deprecated"],
   active: ["deprecated"],
-  deprecated: ["active", "rejected"],
-  rejected: ["candidate"],
+  deprecated: ["active"],
 };
 
 export function canTransitionKnowledgeStatus(from: KnowledgeStatus, to: KnowledgeStatus): boolean {
@@ -16,13 +13,13 @@ export function canTransitionKnowledgeStatus(from: KnowledgeStatus, to: Knowledg
 
 export function resolveKnowledgeSearchStatuses(params: {
   retrievalMode: RetrievalMode;
-  includeTrial: boolean;
+  includeDraft: boolean;
 }): KnowledgeStatus[] {
   if (params.retrievalMode === "learning_context") {
-    return ["active", "trial", "draft", "candidate"];
+    return ["active", "draft"];
   }
-  if (params.includeTrial) {
-    return ["active", "trial"];
+  if (params.includeDraft) {
+    return ["active", "draft"];
   }
   return ["active"];
 }
