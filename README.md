@@ -9,6 +9,8 @@ Local-first context compiler for coding agents.
 - PostgreSQL + pgvector storage
 - Domain schema with Drizzle + Zod
 - Context compiler (`context_compile`) with retrieval modes
+- Hono API (integrated with Vite dev server)
+- React UI with TanStack Query / Router / Table and React Hook Form
 - CLI tools:
   - compile
   - import-markdown
@@ -16,11 +18,6 @@ Local-first context compiler for coding agents.
 - MCP server:
   - tool: `context_compile`
   - resources: summary / runs / latest pack / doctor health
-
-Not included yet:
-
-- Frontend UI
-- Hono HTTP API layer
 
 ## Requirements
 
@@ -52,6 +49,15 @@ bun run db:migrate
 ```bash
 bun run verify
 ```
+
+5. Start integrated frontend + backend dev server (single command):
+
+```bash
+bun run dev
+```
+
+Open [http://localhost:5173](http://localhost:5173).  
+API is available under `/api/*` on the same origin (for example `/api/health`).
 
 ## CLI Usage
 
@@ -90,7 +96,13 @@ bun run doctor
 Start MCP stdio server:
 
 ```bash
-bun run start
+bun run start:mcp
+```
+
+Start standalone HTTP API server:
+
+```bash
+bun run start:api
 ```
 
 ## Testing
@@ -111,6 +123,18 @@ bun run test:integration
 
 ```bash
 bun run test:all
+```
+
+- UI unit tests (Vitest):
+
+```bash
+bun run test:ui
+```
+
+- E2E tests (Playwright):
+
+```bash
+bun run test:e2e
 ```
 
 ## Docs

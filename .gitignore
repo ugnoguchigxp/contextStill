@@ -4,4 +4,7 @@ node_modules/
 *.log
 tsconfig.tsbuildinfo
 dist/
+dist-web/
 coverage/
+playwright-report/
+test-results/

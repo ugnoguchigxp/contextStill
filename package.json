@@ -6,7 +6,12 @@
   "type": "module",
   "packageManager": "bun@1.3.12",
   "scripts": {
-    "start": "bun run src/index.ts",
+    "dev": "vite",
+    "start": "bun run start:mcp",
+    "start:mcp": "bun run src/index.ts",
+    "start:api": "bun run api/index.ts",
+    "build:web": "vite build",
+    "preview:web": "vite preview",
     "compile": "bun run src/cli/compile.ts",
     "import:markdown": "bun run src/cli/import-markdown.ts",
     "doctor": "bun run src/cli/doctor.ts",
@@ -15,26 +20,50 @@
     "db:push": "drizzle-kit push",
     "db:seed": "bun run src/db/seed.ts",
     "typecheck": "tsc --noEmit",
-    "lint": "biome check .",
+    "lint": "biome lint .",
     "format": "biome format --write .",
+    "format:check": "biome format .",
     "test": "bun run test:unit",
+    "test:ui": "vitest run",
+    "test:e2e": "playwright test",
     "test:unit": "bun test test/repositories.test.ts test/markdown-importer.test.ts test/context-compiler.test.ts",
     "test:integration": "MEMORY_ROUTER_RUN_DB_TESTS=1 bun test test/*.integration.test.ts test/*.e2e.test.ts test/mcp.contract.test.ts",
     "test:all": "bun run test:unit && bun run test:integration",
-    "verify": "bun run typecheck && bun run lint && bun run test"
+    "verify": "bun run typecheck && bun run lint && bun run format:check && bun run test:unit"
   },
   "dependencies": {
+    "@hono/node-server": "2.0.2",
+    "@hono/zod-validator": "0.8.0",
     "@modelcontextprotocol/sdk": "^1.29.0",
+    "@tanstack/react-query": "5.100.10",
+    "@tanstack/react-router": "1.169.2",
+    "@tanstack/react-table": "8.21.3",
     "dotenv": "^17.2.3",
     "drizzle-orm": "^0.45.2",
+    "hono": "4.12.18",
     "pg": "^8.16.3",
+    "react": "19.2.6",
+    "react-dom": "19.2.6",
+    "react-hook-form": "7.75.0",
     "zod": "^3.25.76"
   },
   "devDependencies": {
     "@biomejs/biome": "^1.9.4",
+    "@hono/vite-dev-server": "0.25.3",
+    "@playwright/test": "1.60.0",
     "@types/pg": "^8.20.0",
+    "@types/react": "19.2.14",
+    "@types/react-dom": "19.2.3",
+    "@vitejs/plugin-react": "6.0.1",
     "bun-types": "1.3.12",
     "drizzle-kit": "^0.31.10",
-    "typescript": "^6.0.2"
+    "typescript": "^6.0.2",
+    "vite": "8.0.12",
+    "vitest": "4.1.6"
+  },
+  "overrides": {
+    "@tanstack/react-router": "1.169.2",
+    "@tanstack/router-core": "1.169.2",
+    "@tanstack/history": "1.161.6"
   }
 }
