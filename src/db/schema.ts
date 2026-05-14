@@ -43,7 +43,104 @@ export const sourceKindValues = [
   "git",
   "web",
   "manual",
+  "vibe_memory",
+  "ai_artifact",
 ] as const;
+
+export const activityLinkTypeValues = ["derived_from", "implemented_in"] as const;
+
+export const vibeMemories = pgTable(
+  "vibe_memories",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sessionId: text("session_id").notNull(),
+    content: text("content").notNull(),
+    memoryType: text("memory_type").notNull().default("chat"),
+    embedding: vector("embedding", { dimensions: config.embeddingDimension }),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    sessionIdIdx: index("vibe_memories_session_id_idx").on(table.sessionId),
+    memoryTypeIdx: index("vibe_memories_memory_type_idx").on(table.memoryType),
+    contentFtsIdx: index("vibe_memories_content_fts_idx").using(
+      "gin",
+      sql`to_tsvector('simple', ${table.content})`,
+    ),
+    embeddingHnswIdx: index("vibe_memories_embedding_hnsw_idx").using(
+      "hnsw",
+      table.embedding.op("vector_cosine_ops"),
+    ),
+  }),
+);
+
+export const aiArtifacts = pgTable(
+  "ai_artifacts",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    vibeMemoryId: uuid("vibe_memory_id").references(() => vibeMemories.id, {
+      onDelete: "cascade",
+    }),
+    filePath: text("file_path").notNull(),
+    content: text("content").notNull(),
+    diff: text("diff"),
+    language: text("language"),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    vibeMemoryIdIdx: index("ai_artifacts_vibe_memory_id_idx").on(table.vibeMemoryId),
+    filePathIdx: index("ai_artifacts_file_path_idx").on(table.filePath),
+  }),
+);
+
+export const artifactSymbols = pgTable(
+  "artifact_symbols",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    artifactId: uuid("artifact_id")
+      .references(() => aiArtifacts.id, { onDelete: "cascade" })
+      .notNull(),
+    symbolName: text("symbol_name").notNull(),
+    symbolKind: text("symbol_kind").notNull(),
+    signature: text("signature"),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    artifactIdIdx: index("artifact_symbols_artifact_id_idx").on(table.artifactId),
+    nameKindIdx: index("artifact_symbols_name_kind_idx").on(table.symbolName, table.symbolKind),
+  }),
+);
+
+export const knowledgeActivityLinks = pgTable(
+  "knowledge_activity_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    knowledgeId: uuid("knowledge_id")
+      .references(() => knowledgeItems.id, { onDelete: "cascade" })
+      .notNull(),
+    vibeMemoryId: uuid("vibe_memory_id").references(() => vibeMemories.id, {
+      onDelete: "cascade",
+    }),
+    aiArtifactId: uuid("ai_artifact_id").references(() => aiArtifacts.id, {
+      onDelete: "cascade",
+    }),
+    linkType: text("link_type").notNull().default("derived_from"),
+    confidence: real("confidence").default(0.5).notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    knowledgeIdx: index("knowledge_activity_links_knowledge_idx").on(table.knowledgeId),
+    vibeMemoryIdx: index("knowledge_activity_links_vibe_memory_idx").on(table.vibeMemoryId),
+    aiArtifactIdx: index("knowledge_activity_links_ai_artifact_idx").on(table.aiArtifactId),
+    linkTypeCheck: check(
+      "knowledge_activity_links_link_type_check",
+      sql`${table.linkType} IN (${sql.raw(toSqlList(activityLinkTypeValues))})`,
+    ),
+  }),
+);
 
 export const relationTypeValues = [
   "supports",
@@ -54,6 +151,8 @@ export const relationTypeValues = [
   "mentions",
   "impacts",
 ] as const;
+
+export const sourceLinkTypeValues = ["derived_from"] as const;
 
 export const runStatusValues = ["ok", "degraded", "failed"] as const;
 
@@ -168,6 +267,94 @@ export const evidenceFragments = pgTable(
   }),
 );
 
+export const sources = pgTable(
+  "sources",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceKind: text("source_kind").notNull(),
+    uri: text("uri").notNull(),
+    title: text("title"),
+    body: text("body").notNull(),
+    contentHash: text("content_hash").notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    lastIndexedAt: timestamp("last_indexed_at"),
+  },
+  (table) => ({
+    kindIdx: index("sources_kind_idx").on(table.sourceKind),
+    uriIdx: index("sources_uri_idx").on(table.uri),
+    uriHashIdx: index("sources_uri_hash_idx").on(table.uri, table.contentHash),
+    sourceKindCheck: check(
+      "sources_source_kind_check",
+      sql`${table.sourceKind} IN (${sql.raw(toSqlList(sourceKindValues))})`,
+    ),
+    bodyFtsIdx: index("sources_body_fts_idx").using(
+      "gin",
+      sql`to_tsvector('simple', ${table.body})`,
+    ),
+  }),
+);
+
+export const sourceFragments = pgTable(
+  "source_fragments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceId: uuid("source_id")
+      .references(() => sources.id, { onDelete: "cascade" })
+      .notNull(),
+    locator: text("locator").notNull(),
+    heading: text("heading"),
+    content: text("content").notNull(),
+    embedding: vector("embedding", { dimensions: config.embeddingDimension }),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    sourceIdIdx: index("source_fragments_source_id_idx").on(table.sourceId),
+    sourceLocatorIdx: index("source_fragments_source_locator_idx").on(
+      table.sourceId,
+      table.locator,
+    ),
+    contentFtsIdx: index("source_fragments_content_fts_idx").using(
+      "gin",
+      sql`to_tsvector('simple', ${table.content})`,
+    ),
+    embeddingHnswIdx: index("source_fragments_embedding_hnsw_idx").using(
+      "hnsw",
+      table.embedding.op("vector_cosine_ops"),
+    ),
+  }),
+);
+
+export const knowledgeSourceLinks = pgTable(
+  "knowledge_source_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    knowledgeId: uuid("knowledge_id")
+      .references(() => knowledgeItems.id, { onDelete: "cascade" })
+      .notNull(),
+    sourceFragmentId: uuid("source_fragment_id")
+      .references(() => sourceFragments.id, { onDelete: "cascade" })
+      .notNull(),
+    linkType: text("link_type").notNull().default("derived_from"),
+    confidence: real("confidence").default(0.5).notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    knowledgeIdx: index("knowledge_source_links_knowledge_idx").on(table.knowledgeId),
+    sourceFragmentIdx: index("knowledge_source_links_source_fragment_idx").on(
+      table.sourceFragmentId,
+    ),
+    linkTypeIdx: index("knowledge_source_links_link_type_idx").on(table.linkType),
+    linkTypeCheck: check(
+      "knowledge_source_links_link_type_check",
+      sql`${table.linkType} IN (${sql.raw(toSqlList(sourceLinkTypeValues))})`,
+    ),
+  }),
+);
+
 export const relations = pgTable(
   "relations",
   {
@@ -241,30 +428,3 @@ export const contextPackItems = pgTable(
   }),
 );
 
-export const codeSymbols = pgTable(
-  "code_symbols",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    repoPath: text("repo_path").notNull(),
-    filePath: text("file_path").notNull(),
-    symbolName: text("symbol_name").notNull(),
-    symbolKind: text("symbol_kind").notNull(),
-    signature: text("signature"),
-    startLine: integer("start_line"),
-    endLine: integer("end_line"),
-    metadata: jsonb("metadata").default({}).notNull(),
-    embedding: vector("embedding", { dimensions: config.embeddingDimension }),
-    active: boolean("active").default(true).notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
-  },
-  (table) => ({
-    repoFileIdx: index("code_symbols_repo_file_idx").on(table.repoPath, table.filePath),
-    nameKindIdx: index("code_symbols_name_kind_idx").on(table.symbolName, table.symbolKind),
-    activeIdx: index("code_symbols_active_idx").on(table.active),
-    embeddingHnswIdx: index("code_symbols_embedding_hnsw_idx").using(
-      "hnsw",
-      table.embedding.op("vector_cosine_ops"),
-    ),
-  }),
-);

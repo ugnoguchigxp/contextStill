@@ -4,7 +4,7 @@
 
 ## 目的
 
-この文書は、`memory-router` で最初に手掛ける実装単位を定義する。`plan.md` は全体方向性を示す構想書であり、本書は最初の capability を実装できる粒度まで落とす。
+この文書は、`memory-router` で最初に手掛ける実装単位を定義する。現在は初期実装の運用基準として扱い、今後の追加改善は `docs/improvement-plan.md` に分離して管理する。
 
 最初の目標は、薄い MVP を急ぐことではない。PostgreSQL / pgvector 上にゼロベースのデータ定義を作り、Markdown source から evidence と knowledge を登録し、`context_compile` が根拠付きの context pack を返せる foundation を確実に作る。
 
@@ -135,6 +135,7 @@ memory-router/
       time.ts
   docs/
     initial-implementation-plan.md
+    improvement-plan.md
   test/
     context-compiler.test.ts
     markdown-importer.test.ts

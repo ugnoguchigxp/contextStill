@@ -1,12 +1,15 @@
 import path from "node:path";
+import { config } from "../../config.js";
 import type { CompileInput } from "../../shared/schemas/compile.schema.js";
 import type { RetrievalMode } from "../../shared/schemas/compile.schema.js";
+import { embedOne } from "../embedding/embedding.service.js";
 import { evidenceSearchInputSchema } from "../../shared/schemas/evidence.schema.js";
 import {
   type EvidenceSearchResult,
   insertEvidenceFragment,
   searchEvidence,
   upsertEvidenceSource,
+  vectorSearchEvidence,
 } from "./evidence.repository.js";
 
 export type EvidenceRetrievalResult = {
@@ -14,7 +17,10 @@ export type EvidenceRetrievalResult = {
   degradedReasons: string[];
   stats: {
     hitCount: number;
+    textHitCount: number;
+    vectorHitCount: number;
     searchFailed: boolean;
+    embeddingStatus: "generated" | "unavailable" | "disabled" | "provided";
   };
 };
 
@@ -64,10 +70,14 @@ export async function retrieveEvidence(
     sourceKinds: profile.sourceKinds,
   });
   let items: EvidenceSearchResult[] = [];
+  let textHits: EvidenceSearchResult[] = [];
+  let vectorHits: EvidenceSearchResult[] = [];
   let searchFailed = false;
+  let embeddingStatus: EvidenceRetrievalResult["stats"]["embeddingStatus"] = "disabled";
   const degradedReasons: string[] = [];
   try {
     const baseHits = await searchEvidence(params.query, params.limit, params.sourceKinds);
+    textHits = baseHits;
     const pathHints = (input.files ?? [])
       .map((filePath) => path.basename(filePath))
       .filter((hint) => hint.length >= 3);
@@ -77,10 +87,23 @@ export async function retrieveEvidence(
         Math.max(3, Math.floor(params.limit / 2)),
         params.sourceKinds,
       );
-      items = mergeEvidenceHits(baseHits, hintHits, params.limit);
+      textHits = mergeEvidenceHits(baseHits, hintHits, params.limit);
     } else {
-      items = baseHits;
+      textHits = baseHits;
     }
+
+    if (config.enableVectorSearch) {
+      try {
+        const queryEmbedding = input.queryEmbedding ?? (await embedOne(input.goal, "query"));
+        embeddingStatus = input.queryEmbedding ? "provided" : "generated";
+        vectorHits = await vectorSearchEvidence(queryEmbedding, params.limit, params.sourceKinds);
+      } catch {
+        embeddingStatus = "unavailable";
+        degradedReasons.push("EVIDENCE_QUERY_EMBEDDING_UNAVAILABLE");
+      }
+    }
+
+    items = mergeEvidenceHits(textHits, vectorHits, params.limit);
   } catch {
     searchFailed = true;
     degradedReasons.push("EVIDENCE_SEARCH_FAILED");
@@ -91,7 +114,13 @@ export async function retrieveEvidence(
   return {
     items,
     degradedReasons,
-    stats: { hitCount: items.length, searchFailed },
+    stats: {
+      hitCount: items.length,
+      textHitCount: textHits.length,
+      vectorHitCount: vectorHits.length,
+      searchFailed,
+      embeddingStatus,
+    },
   };
 }
 
@@ -104,6 +133,12 @@ export async function registerEvidenceFromText(params: {
   locator?: string;
   metadata?: Record<string, unknown>;
 }): Promise<{ sourceId: string; fragmentId: string }> {
+  let embedding: number[] | undefined;
+  try {
+    embedding = await embedOne(params.text, "passage");
+  } catch {
+    embedding = undefined;
+  }
   const sourceId = await upsertEvidenceSource({
     sourceKind: params.sourceKind,
     uri: params.uri,
@@ -117,6 +152,7 @@ export async function registerEvidenceFromText(params: {
     locator: params.locator ?? "full",
     content: params.text,
     metadata: params.metadata,
+    embedding,
   });
 
   return { sourceId, fragmentId };

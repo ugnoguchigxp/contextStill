@@ -58,7 +58,7 @@ function buildSummaryText(): string {
     "- tool: context_compile",
     "- retrieval modes: task_context, review_context, debug_context, architecture_context, skill_context, learning_context",
     "- instructions are selected from active knowledge by default",
-    "- evidence refs are stored per selected pack item and at pack-level",
+    "- source refs are stored per selected pack item and at pack-level",
   ].join("\n");
 }
 

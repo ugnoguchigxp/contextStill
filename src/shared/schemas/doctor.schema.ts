@@ -14,6 +14,22 @@ export const doctorReportSchema = z.object({
   vector: z.object({
     installed: z.boolean(),
   }),
+  embedding: z.object({
+    configured: z.boolean(),
+    provider: z.string(),
+    daemon: z.object({
+      url: z.string(),
+      reachable: z.boolean(),
+      error: z.string().optional(),
+    }),
+    cli: z.object({
+      python: z.string(),
+      root: z.string(),
+      modelDir: z.string(),
+      usable: z.boolean(),
+      error: z.string().optional(),
+    }),
+  }),
   tables: z.object({
     expected: z.array(z.string()),
     existing: z.array(z.string()),

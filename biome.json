@@ -16,6 +16,6 @@
     "enabled": true
   },
   "files": {
-    "ignore": ["drizzle/meta/**"]
+    "ignore": ["drizzle/meta/**", "dist-web/**"]
   }
 }

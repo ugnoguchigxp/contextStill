@@ -1,143 +1,132 @@
 # memory-router
 
-Local-first context compiler for coding agents.
+`memory-router` は、コーディングエージェント向けのローカルファースト Context Compiler です。  
+`knowledge` / `sources` / `code index` から、作業目的に合わせた最小コンテキストを組み立てます。
 
-`memory-router` compiles a minimal context pack from knowledge, evidence, and code index before an agent acts.
+## 主要機能
 
-## Current Scope
+- Context Compile（CLI / MCP / API）
+- Knowledge 管理（作成・編集・削除）
+- Source 管理（`../wiki` 相当の運用を内包）
+  - フォルダ作成・リネーム・削除
+  - ページ作成・編集・削除
+  - Git 履歴表示・コミット差分表示
+  - `markdown-wysiwyg-editor` による Markdown 編集
+- Code Symbol 管理（作成・編集・削除）
+- Graph 可視化
+- Doctor 診断
 
-- PostgreSQL + pgvector storage
-- Domain schema with Drizzle + Zod
-- Context compiler (`context_compile`) with retrieval modes
-- Hono API (integrated with Vite dev server)
-- React UI with TanStack Query / Router / Table and React Hook Form
-- CLI tools:
-  - compile
-  - import-markdown
-  - doctor
-- MCP server:
-  - tool: `context_compile`
-  - resources: summary / runs / latest pack / doctor health
+## Source 管理の前提
 
-## Requirements
+- 既定のコンテンツルートは `../wiki/wiki-knowledge`
+- 配下の `pages/` をソース本体として扱います
+- ルートに `.git` が無ければ自動初期化し、ページ操作時に commit します
+
+設定で切り替える場合:
+
+- `MEMORY_ROUTER_SOURCE_CONTENT_ROOT=/abs/path/to/wiki-knowledge`
+
+## 必要環境
 
 - Bun 1.3+
-- Docker (for local PostgreSQL/pgvector)
+- Docker（PostgreSQL + pgvector 起動用）
 
-## Quick Start
-
-1. Start database container:
+## セットアップ
 
 ```bash
 docker compose up -d
-```
-
-2. Copy env file:
-
-```bash
 cp .env.example .env
-```
-
-3. Run migration:
-
-```bash
+bun install
 bun run db:migrate
-```
-
-4. Verify baseline:
-
-```bash
 bun run verify
 ```
 
-5. Start integrated frontend + backend dev server (single command):
+開発起動:
 
 ```bash
 bun run dev
 ```
 
-Open [http://localhost:5173](http://localhost:5173).  
-API is available under `/api/*` on the same origin (for example `/api/health`).
+- UI: [http://localhost:5173](http://localhost:5173)
+- API: 同一 origin の `/api/*`
 
-## CLI Usage
+## CLI
 
-Compile context pack as JSON:
+Context Pack 生成:
 
 ```bash
 bun run compile --goal "fix context compiler" --intent edit --json
 ```
 
-Main options:
-
-- `--retrieval-mode task_context|review_context|debug_context|architecture_context|skill_context|learning_context`
-- `--repo-path /abs/path`
-- `--file path/to/file.ts` (repeatable)
-- `--files a.ts,b.ts`
-- `--change-type backend` / `--change-types backend,api`
-- `--technology bun` / `--technologies bun,typescript`
-- `--token-budget 3000`
-- `--include-trial true|false`
-- `--query-embedding "[0.1,0.2,...]"` or `--query-embedding 0.1,0.2,...`
-
-Import markdown knowledge/evidence:
+Markdown 一括取り込み（sources + knowledge）:
 
 ```bash
 bun run import:markdown ./docs
+bun run import:sources ../wiki/wiki-knowledge/pages
 ```
 
-Run doctor report:
+Doctor:
 
 ```bash
 bun run doctor
 ```
 
-## MCP Server
+## Embedding
 
-Start MCP stdio server:
+既定は sibling repo `../local-llm/embedding` を参照します。
+
+- daemon 優先 (`MEMORY_ROUTER_EMBEDDING_DAEMON_URL`)
+- fallback: Python CLI (`MEMORY_ROUTER_LOCAL_LLM_EMBEDDING_PYTHON -m e5embed.cli`)
+
+主要設定:
+
+- `MEMORY_ROUTER_EMBEDDING_PROVIDER=auto|daemon|cli|disabled`
+- `MEMORY_ROUTER_LOCAL_LLM_EMBEDDING_ROOT`
+- `MEMORY_ROUTER_LOCAL_LLM_EMBEDDING_PYTHON`
+- `MEMORY_ROUTER_LOCAL_LLM_EMBEDDING_MODEL_DIR`
+
+## API
+
+主要エンドポイント:
+
+- `GET /api/health`
+- `POST /api/context/compile`
+- `GET /api/context/runs`
+- `GET /api/doctor`
+- `GET/POST/PUT/DELETE /api/knowledge`
+- `GET /api/sources/tree`
+- `GET/POST /api/sources/folders`
+- `PUT/DELETE /api/sources/folders/*`
+- `GET/POST /api/sources/pages`
+- `GET/PUT/DELETE /api/sources/pages/*`
+- `GET /api/sources/history/*`
+- `GET /api/sources/diff/*?from=...&to=...`
+- `GET/POST/PUT/DELETE /api/code/symbols`
+- `GET /api/graph`
+
+## MCP
+
+起動:
 
 ```bash
 bun run start:mcp
 ```
 
-Start standalone HTTP API server:
+公開ツール:
+
+- `context_compile`
+
+## テスト
 
 ```bash
-bun run start:api
-```
-
-## Testing
-
-- Unit tests:
-
-```bash
-bun run test:unit
-```
-
-- Integration tests (DB required):
-
-```bash
+bun run verify
 bun run test:integration
-```
-
-- Full:
-
-```bash
-bun run test:all
-```
-
-- UI unit tests (Vitest):
-
-```bash
-bun run test:ui
-```
-
-- E2E tests (Playwright):
-
-```bash
 bun run test:e2e
 ```
 
-## Docs
+## ドキュメント
 
-- Directional plan: `plan.md`
-- Implementation baseline: `docs/initial-implementation-plan.md`
+- [docs/initial-implementation-plan.md](/Users/y.noguchi/Code/memoryRouter/docs/initial-implementation-plan.md)
+- [docs/deferred-tasks-resumption-plan.md](/Users/y.noguchi/Code/memoryRouter/docs/deferred-tasks-resumption-plan.md)
+- [docs/source-distillation-migration-plan.md](/Users/y.noguchi/Code/memoryRouter/docs/source-distillation-migration-plan.md)
+- [docs/improvement-plan.md](/Users/y.noguchi/Code/memoryRouter/docs/improvement-plan.md)

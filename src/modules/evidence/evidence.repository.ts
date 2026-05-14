@@ -50,6 +50,7 @@ export async function insertEvidenceFragment(params: {
   locator: string;
   content: string;
   metadata?: Record<string, unknown>;
+  embedding?: number[];
 }): Promise<string> {
   const [inserted] = await db
     .insert(evidenceFragments)
@@ -58,10 +59,41 @@ export async function insertEvidenceFragment(params: {
       locator: params.locator,
       content: params.content,
       metadata: params.metadata ?? {},
+      embedding: params.embedding,
     })
     .returning({ id: evidenceFragments.id });
 
   return inserted.id;
+}
+
+export async function vectorSearchEvidence(
+  embedding: number[],
+  limit: number,
+  sourceKinds?: Array<"markdown" | "session" | "tool_output" | "git" | "web" | "manual">,
+): Promise<EvidenceSearchResult[]> {
+  const embeddingStr = JSON.stringify(embedding);
+  const similarity = sql<number>`1 - (${evidenceFragments.embedding} <=> ${embeddingStr}::vector)`;
+  const conditions = [sql`${evidenceFragments.embedding} IS NOT NULL`];
+  if (sourceKinds && sourceKinds.length > 0) {
+    conditions.push(inArray(evidenceSources.sourceKind, sourceKinds));
+  }
+
+  const rows = await db
+    .select({
+      id: evidenceFragments.id,
+      sourceId: evidenceFragments.sourceId,
+      sourceUri: evidenceSources.uri,
+      locator: evidenceFragments.locator,
+      content: evidenceFragments.content,
+      score: similarity,
+    })
+    .from(evidenceFragments)
+    .innerJoin(evidenceSources, eq(evidenceSources.id, evidenceFragments.sourceId))
+    .where(and(...conditions))
+    .orderBy(desc(similarity), desc(evidenceFragments.createdAt))
+    .limit(limit);
+
+  return rows.map((row) => ({ ...row, score: finiteOrZero(row.score) }));
 }
 
 export async function searchEvidence(

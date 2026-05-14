@@ -12,7 +12,7 @@ async function main(): Promise<void> {
       {
         rootPath,
         importedFiles: result.importedFiles,
-        importedFragments: result.importedFragments,
+        importedSources: result.importedSources,
         importedKnowledge: result.importedKnowledge,
         skippedFiles: result.skippedFiles,
       },

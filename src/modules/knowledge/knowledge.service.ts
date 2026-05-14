@@ -1,6 +1,7 @@
 import { config } from "../../config.js";
 import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
 import { knowledgeSearchInputSchema } from "../../shared/schemas/knowledge.schema.js";
+import { embedOne } from "../embedding/embedding.service.js";
 import { resolveKnowledgeSearchStatuses } from "../lifecycle/lifecycle.service.js";
 import {
   type KnowledgeSearchResult,
@@ -18,6 +19,8 @@ export type KnowledgeRetrievalResult = {
     mergedCount: number;
     textFailed: boolean;
     vectorFailed: boolean;
+    embeddingStatus: "provided" | "generated" | "unavailable" | "disabled";
+    embeddingProvider?: string;
   };
 };
 
@@ -74,16 +77,30 @@ export async function retrieveKnowledge(
   }
 
   let vectorHits: KnowledgeSearchResult[] = [];
+  let queryEmbedding = input.queryEmbedding;
+  let embeddingStatus: KnowledgeRetrievalResult["stats"]["embeddingStatus"] =
+    queryEmbedding && queryEmbedding.length > 0 ? "provided" : "disabled";
+  let embeddingProvider: string | undefined;
   if (config.enableVectorSearch) {
-    if (input.queryEmbedding && input.queryEmbedding.length > 0) {
+    if (!queryEmbedding || queryEmbedding.length === 0) {
       try {
-        vectorHits = await vectorSearchKnowledge(input.queryEmbedding, limit, statuses);
+        const generated = await embedOne(input.goal, "query");
+        queryEmbedding = generated;
+        embeddingStatus = "generated";
+        embeddingProvider = config.embeddingProvider;
+      } catch {
+        embeddingStatus = "unavailable";
+        degradedReasons.push("QUERY_EMBEDDING_UNAVAILABLE");
+      }
+    }
+
+    if (queryEmbedding && queryEmbedding.length > 0) {
+      try {
+        vectorHits = await vectorSearchKnowledge(queryEmbedding, limit, statuses);
       } catch {
         vectorFailed.value = true;
         degradedReasons.push("KNOWLEDGE_VECTOR_SEARCH_FAILED");
       }
-    } else {
-      degradedReasons.push("VECTOR_EMBEDDING_NOT_PROVIDED");
     }
   }
 
@@ -109,6 +126,8 @@ export async function retrieveKnowledge(
       mergedCount: merged.length,
       textFailed: textFailed.value,
       vectorFailed: vectorFailed.value,
+      embeddingStatus,
+      embeddingProvider,
     },
   };
 }
@@ -125,6 +144,12 @@ export async function registerKnowledgeFromMarkdown(params: {
   importance?: number;
   metadata?: Record<string, unknown>;
 }): Promise<string> {
+  let embedding: number[] | undefined;
+  try {
+    embedding = await embedOne(`${params.title}\n${params.body}`, "passage");
+  } catch {
+    embedding = undefined;
+  }
   return upsertKnowledgeFromSource({
     sourceUri: params.sourceUri,
     contentHash: params.contentHash,
@@ -136,5 +161,6 @@ export async function registerKnowledgeFromMarkdown(params: {
     confidence: params.confidence,
     importance: params.importance,
     metadata: params.metadata,
+    embedding,
   });
 }

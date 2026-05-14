@@ -1,15 +1,15 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { registerEvidenceFromText } from "../evidence/evidence.service.js";
 import { registerKnowledgeFromMarkdown } from "../knowledge/knowledge.service.js";
+import { upsertSourceDocument } from "./source.repository.js";
 
 type MarkdownImportResult = {
   importedFiles: number;
-  importedFragments: number;
+  importedSources: number;
   importedKnowledge: number;
   skippedFiles: number;
-  files: Array<{ path: string; sourceId: string; fragmentId: string; knowledgeId: string }>;
+  files: Array<{ path: string; sourceId: string; knowledgeId: string }>;
 };
 
 type FrontmatterParseResult = {
@@ -140,7 +140,7 @@ export async function importMarkdownDirectory(rootDir: string): Promise<Markdown
   const markdownFiles = await collectMarkdownFiles(rootDir);
   const results: MarkdownImportResult = {
     importedFiles: 0,
-    importedFragments: 0,
+    importedSources: 0,
     importedKnowledge: 0,
     skippedFiles: 0,
     files: [],
@@ -166,13 +166,12 @@ export async function importMarkdownDirectory(rootDir: string): Promise<Markdown
     const confidence = clamp01(Number(frontmatter.confidence), 0.7);
     const importance = clamp01(Number(frontmatter.importance), 0.7);
 
-    const { sourceId, fragmentId } = await registerEvidenceFromText({
+    const sourceId = await upsertSourceDocument({
       sourceKind: "markdown",
       uri: filePath,
-      title: path.basename(filePath),
+      title: frontmatter.title ?? inferredTitle,
+      body: content,
       contentHash: hash,
-      text: content,
-      locator: "full",
       metadata: {
         importedAt: new Date().toISOString(),
       },
@@ -204,9 +203,9 @@ export async function importMarkdownDirectory(rootDir: string): Promise<Markdown
     });
 
     results.importedFiles += 1;
-    results.importedFragments += 1;
+    results.importedSources += 1;
     results.importedKnowledge += 1;
-    results.files.push({ path: filePath, sourceId, fragmentId, knowledgeId });
+    results.files.push({ path: filePath, sourceId, knowledgeId });
   }
 
   return results;

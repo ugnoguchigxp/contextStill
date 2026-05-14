@@ -3,6 +3,7 @@ import { config } from "../../config.js";
 import { getDb } from "../../db/index.js";
 import { type DoctorReport, doctorReportSchema } from "../../shared/schemas/doctor.schema.js";
 import { listRecentCompileRuns } from "../context-compiler/context-compiler.repository.js";
+import { embeddingHealth } from "../embedding/embedding.service.js";
 
 const requiredTables = [
   "knowledge_items",
@@ -40,6 +41,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
 
   const reasons: string[] = [];
   const startedAt = Date.now();
+  const embedding = await embeddingHealth();
 
   try {
     await db.execute(sql`select 1 as ok`);
@@ -54,6 +56,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
         error: error instanceof Error ? error.message : String(error),
       },
       vector: { installed: false },
+      embedding,
       tables: { expected: [...requiredTables], existing: [], missing: [...requiredTables] },
       runs: {
         windowSize: options.windowSize,
@@ -109,6 +112,10 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
     reasons.push("MISSING_REQUIRED_TABLES");
   }
 
+  if (embedding.configured && !embedding.daemon.reachable && !embedding.cli.usable) {
+    reasons.push("EMBEDDING_PROVIDER_UNAVAILABLE");
+  }
+
   let totalRuns = 0;
   let degradedRuns = 0;
   let degradedRate = 0;
@@ -160,6 +167,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
     vector: {
       installed: vectorInstalled,
     },
+    embedding,
     tables: {
       expected: [...requiredTables],
       existing: existingTables,

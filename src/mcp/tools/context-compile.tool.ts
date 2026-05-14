@@ -4,7 +4,8 @@ import type { ToolEntry } from "../registry.js";
 
 export const contextCompileTool: ToolEntry = {
   name: "context_compile",
-  description: "Compile minimal context pack from knowledge, evidence, and retrieval stats.",
+  description:
+    "Compile minimal context pack from knowledge, source references, and retrieval stats.",
   inputSchema: {
     type: "object",
     properties: {

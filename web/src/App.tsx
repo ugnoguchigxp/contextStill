@@ -3,9 +3,15 @@ import {
   createRootRouteWithContext,
   createRoute,
   createRouter,
-  Outlet,
   RouterProvider,
 } from "@tanstack/react-router";
+import { AppShell } from "./modules/admin/components/app-shell";
+import { CodeIndexPage } from "./modules/admin/components/code-index.page";
+import { DoctorPage } from "./modules/admin/components/doctor.page";
+import { GraphPage } from "./modules/admin/components/graph.page";
+import { KnowledgePage } from "./modules/admin/components/knowledge.page";
+import { OverviewPage } from "./modules/admin/components/overview.page";
+import { SourcesPage } from "./modules/admin/components/sources.page";
 import { ContextCompilerPage } from "./modules/context-compiler/components/context-compiler.page";
 
 type RouterContext = {
@@ -15,20 +21,67 @@ type RouterContext = {
 const queryClient = new QueryClient();
 
 const rootRoute = createRootRouteWithContext<RouterContext>()({
-  component: () => (
-    <main>
-      <Outlet />
-    </main>
-  ),
+  component: AppShell,
 });
 
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
+  component: OverviewPage,
+});
+
+const compileRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/compile",
   component: ContextCompilerPage,
 });
 
-const routeTree = rootRoute.addChildren([indexRoute]);
+const knowledgeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/knowledge",
+  component: KnowledgePage,
+});
+
+const sourcesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/sources",
+  component: SourcesPage,
+});
+
+const evidenceAliasRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/evidence",
+  component: SourcesPage,
+});
+
+const codeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/code",
+  component: CodeIndexPage,
+});
+
+const graphRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/graph",
+  component: GraphPage,
+});
+
+const doctorRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/doctor",
+  component: DoctorPage,
+});
+
+const routeTree = rootRoute.addChildren([
+  indexRoute,
+  compileRoute,
+  knowledgeRoute,
+  sourcesRoute,
+  evidenceAliasRoute,
+  codeRoute,
+  graphRoute,
+  doctorRoute,
+]);
 
 const router = createRouter({
   routeTree,

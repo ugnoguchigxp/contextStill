@@ -28,6 +28,7 @@ export type UpsertKnowledgeFromSourceParams = {
   confidence?: number;
   importance?: number;
   metadata?: Record<string, unknown>;
+  embedding?: number[];
 };
 
 function finiteOrZero(value: unknown): number {
@@ -121,6 +122,7 @@ export async function upsertKnowledgeFromSource(
         confidence: params.confidence ?? 0.5,
         importance: params.importance ?? 0.5,
         metadata,
+        embedding: params.embedding,
         updatedAt: new Date(),
       })
       .where(eq(knowledgeItems.id, existing.id));
@@ -138,6 +140,7 @@ export async function upsertKnowledgeFromSource(
       confidence: params.confidence ?? 0.5,
       importance: params.importance ?? 0.5,
       metadata,
+      embedding: params.embedding,
     })
     .returning({ id: knowledgeItems.id });
 

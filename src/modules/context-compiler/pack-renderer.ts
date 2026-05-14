@@ -35,7 +35,7 @@ export function renderContextPackMarkdown(pack: ContextPack): string {
   renderSection("Examples", pack.examples);
   renderSection("Code Context", pack.codeContext);
 
-  lines.push("## Evidence Refs");
+  lines.push("## Source Refs");
   lines.push("");
   if (pack.evidenceRefs.length === 0) {
     lines.push("- none");
