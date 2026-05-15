@@ -1,4 +1,4 @@
-import { config } from "../../config.js";
+import { groupedConfig } from "../../config.js";
 import type { LlmHealthStatus, LlmProvider, LlmProviderName } from "./llm-provider.js";
 import { createAzureOpenAiProvider } from "./providers/azure-openai.provider.js";
 import { createBedrockProvider } from "./providers/bedrock.provider.js";
@@ -33,8 +33,8 @@ function buildProvider(provider: LlmProviderName, timeoutMs: number): LlmProvide
 }
 
 export function getAgenticLlmProviders(
-  providerSetting: AgenticCompileProvider = config.agenticCompileProvider,
-  timeoutMs = config.agenticCompileTimeoutMs,
+  providerSetting: AgenticCompileProvider = groupedConfig.agenticCompile.provider,
+  timeoutMs = groupedConfig.agenticCompile.timeoutMs,
 ): LlmProvider[] {
   return resolveProviderOrder(providerSetting).map((providerName) =>
     buildProvider(providerName, timeoutMs),
@@ -42,7 +42,7 @@ export function getAgenticLlmProviders(
 }
 
 export async function checkAgenticLlmHealth(
-  providerSetting: AgenticCompileProvider = config.agenticCompileProvider,
+  providerSetting: AgenticCompileProvider = groupedConfig.agenticCompile.provider,
   timeoutMs = 5000,
 ): Promise<AgenticLlmHealthStatus> {
   const fallbackOrder = resolveProviderOrder(providerSetting);

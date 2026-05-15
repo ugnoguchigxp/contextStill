@@ -1,6 +1,11 @@
 import { describe, expect, test, vi, beforeEach } from "vitest";
 import { memorySearchTool, memoryFetchTool } from "../src/mcp/tools/memory.tool.js";
-import { searchKnowledgeTool, registerKnowledgeTool } from "../src/mcp/tools/knowledge.tool.js";
+import {
+  listKnowledgeTool,
+  registerKnowledgeTool,
+  searchKnowledgeTool,
+  updateKnowledgeTool,
+} from "../src/mcp/tools/knowledge.tool.js";
 import { contextCompileTool } from "../src/mcp/tools/context-compile.tool.js";
 import { initialInstructionsTool, doctorTool } from "../src/mcp/tools/system.tool.js";
 import { retrieveVibeMemoryContext } from "../src/modules/vibe-memory/vibe-memory.service.js";
@@ -12,6 +17,10 @@ import { compileContextPack } from "../src/modules/context-compiler/context-comp
 import { runDoctor } from "../src/modules/doctor/doctor.service.js";
 import { embedOne } from "../src/modules/embedding/embedding.service.js";
 import { vectorSearchKnowledge } from "../src/modules/knowledge/knowledge.repository.js";
+import {
+  listKnowledgeItems,
+  updateKnowledgeItem,
+} from "../api/modules/knowledge/knowledge.repository.js";
 
 const { mockDb } = vi.hoisted(() => {
   return {
@@ -21,8 +30,10 @@ const { mockDb } = vi.hoisted(() => {
       where: vi.fn().mockImplementation(() => {
         return Object.assign(Promise.resolve([]), {
           orderBy: vi.fn().mockResolvedValue([]),
+          limit: vi.fn().mockResolvedValue([]),
         });
       }),
+      limit: vi.fn().mockResolvedValue([]),
     },
   };
 });
@@ -33,6 +44,7 @@ vi.mock("../src/modules/context-compiler/context-compiler.service.js");
 vi.mock("../src/modules/doctor/doctor.service.js");
 vi.mock("../src/modules/embedding/embedding.service.js");
 vi.mock("../src/modules/knowledge/knowledge.repository.js");
+vi.mock("../api/modules/knowledge/knowledge.repository.js");
 
 vi.mock("../src/db/client.js", () => ({
   db: mockDb,
@@ -55,7 +67,7 @@ describe("MCP Tools Handlers", () => {
         limit: 5,
         sessionId: undefined,
       });
-      expect(JSON.parse(response.content[0].text)).toEqual(mockResults);
+      expect(JSON.parse(response.content[0].text)).toEqual({ items: mockResults });
     });
 
     test("throws if query is missing", async () => {
@@ -163,6 +175,68 @@ describe("MCP Tools Handlers", () => {
 
       expect(registerKnowledgeFromMarkdown).not.toHaveBeenCalled();
       expect(response.content[0].text).toContain("Registration skipped");
+    });
+  });
+
+  describe("list_knowledge", () => {
+    test("lists knowledge with filters", async () => {
+      vi.mocked(listKnowledgeItems).mockResolvedValue([
+        {
+          id: "k-1",
+          title: "Rule",
+          status: "draft",
+        },
+      ] as unknown as never);
+
+      const response = await listKnowledgeTool.handler({ status: "draft", limit: 20 });
+      const data = JSON.parse(response.content[0].text);
+      expect(data.count).toBe(1);
+      expect(data.items[0].id).toBe("k-1");
+      expect(listKnowledgeItems).toHaveBeenCalledWith({
+        status: "draft",
+        limit: 20,
+      });
+    });
+  });
+
+  describe("update_knowledge", () => {
+    test("updates knowledge with merged fields", async () => {
+      vi.mocked(mockDb.where).mockImplementationOnce(() => {
+        return {
+          limit: vi.fn().mockResolvedValue([
+            {
+              id: "k-1",
+              type: "rule",
+              status: "draft",
+              scope: "repo",
+              title: "Old title",
+              body: "Old body",
+              confidence: 70,
+              importance: 70,
+              metadata: { a: 1 },
+            },
+          ]),
+        } as unknown as never;
+      });
+      vi.mocked(updateKnowledgeItem).mockResolvedValue({ id: "k-1" } as unknown as never);
+
+      const response = await updateKnowledgeTool.handler({
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        status: "active",
+        title: "New title",
+        metadata: { b: 2 },
+      });
+      const data = JSON.parse(response.content[0].text);
+      expect(data.id).toBe("550e8400-e29b-41d4-a716-446655440000");
+      expect(data.status).toBe("active");
+      expect(updateKnowledgeItem).toHaveBeenCalledWith(
+        "550e8400-e29b-41d4-a716-446655440000",
+        expect.objectContaining({
+          status: "active",
+          title: "New title",
+          metadata: { a: 1, b: 2 },
+        }),
+      );
     });
   });
 

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
-import { config } from "../../config.js";
+import { groupedConfig } from "../../config.js";
 import { toUnitKnowledgeScore } from "../../lib/score-scale.js";
+import { checkKnowledgeDuplicate } from "../../lib/knowledge-dedup.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import {
   type DistilledKnowledgeCandidate,
@@ -14,6 +15,7 @@ import {
   type DistillationMessage,
   type DistillationModelRequest,
   callLocalLlmCompletionForDistillation,
+  resolveDistillationModel,
 } from "../distillation/distillation-runtime.service.js";
 import { embedOne } from "../embedding/embedding.service.js";
 import { upsertKnowledgeFromSource } from "../knowledge/knowledge.repository.js";
@@ -93,7 +95,7 @@ export function buildSourceDistillationMessages(params: {
   fragment: SourceFragmentForDistillation;
   maxInputChars?: number;
 }): DistillationMessage[] {
-  const maxInputChars = params.maxInputChars ?? config.sourceDistillationMaxInputChars;
+  const maxInputChars = params.maxInputChars ?? groupedConfig.sourceDistillation.maxInputChars;
   const input = truncate(
     [
       `sourceKind: ${params.fragment.sourceKind}`,
@@ -146,6 +148,7 @@ async function parseDistillationCandidatesWithRepair(params: {
   messages: DistillationMessage[];
   modelClient: SourceDistillationModelClient;
   maxTokens: number;
+  model: string;
 }): Promise<{ candidates: DistilledKnowledgeCandidate[]; repaired: boolean }> {
   try {
     return {
@@ -154,7 +157,7 @@ async function parseDistillationCandidatesWithRepair(params: {
     };
   } catch (initialError) {
     const repairResponse = await params.modelClient({
-      model: config.localLlmModel,
+      model: params.model,
       messages: [
         ...params.messages,
         {
@@ -216,6 +219,7 @@ async function recordRun(params: {
   knowledgeIds: string[];
   error?: string;
   inputHash: string;
+  model: string;
   toolEvents?: DistillationCompletionResult["toolEvents"];
   metadata?: Record<string, unknown>;
 }) {
@@ -227,8 +231,8 @@ async function recordRun(params: {
     knowledgeIds: params.knowledgeIds,
     error: params.error,
     inputHash: params.inputHash,
-    promptVersion: config.sourceDistillationPromptVersion,
-    model: config.localLlmModel,
+    promptVersion: groupedConfig.sourceDistillation.promptVersion,
+    model: params.model,
     toolEvents: params.toolEvents ?? [],
     metadata: {
       sourceId: params.fragment.sourceId,
@@ -251,6 +255,7 @@ export async function distillSources(
   options: DistillSourcesOptions = {},
 ): Promise<DistillSourcesSummary> {
   const apply = Boolean(options.apply);
+  const distillationModel = resolveDistillationModel();
   const modelClient = options.modelClient ?? callLocalLlmCompletionForDistillation;
   const embedder = options.embedder ?? defaultEmbedder;
   await recordAuditLogSafe({
@@ -258,9 +263,9 @@ export async function distillSources(
     actor: "system",
     payload: {
       apply,
-      model: config.localLlmModel,
-      promptVersion: config.sourceDistillationPromptVersion,
-      limit: options.limit ?? config.sourceDistillationBatchSize,
+      model: distillationModel,
+      promptVersion: groupedConfig.sourceDistillation.promptVersion,
+      limit: options.limit ?? groupedConfig.sourceDistillation.batchSize,
       includeProcessed: Boolean(options.includeProcessed),
       sourceKind: options.sourceKind ?? null,
       uri: options.uri ?? null,
@@ -270,8 +275,8 @@ export async function distillSources(
   const results: DistilledSourceResult[] = [];
   try {
     const fragments = await listSourceFragmentsForDistillation({
-      limit: options.limit ?? config.sourceDistillationBatchSize,
-      promptVersion: config.sourceDistillationPromptVersion,
+      limit: options.limit ?? groupedConfig.sourceDistillation.batchSize,
+      promptVersion: groupedConfig.sourceDistillation.promptVersion,
       includeProcessed: options.includeProcessed,
       sourceKind: options.sourceKind,
       uri: options.uri,
@@ -283,16 +288,17 @@ export async function distillSources(
       try {
         const completion = normalizeDistillationModelResult(
           await modelClient({
-            model: config.localLlmModel,
+            model: distillationModel,
             messages,
-            maxTokens: config.sourceDistillationMaxOutputTokens,
+            maxTokens: groupedConfig.sourceDistillation.maxOutputTokens,
           }),
         );
         const { candidates, repaired } = await parseDistillationCandidatesWithRepair({
           rawResponse: completion.content,
           messages,
           modelClient,
-          maxTokens: config.sourceDistillationMaxOutputTokens,
+          maxTokens: groupedConfig.sourceDistillation.maxOutputTokens,
+          model: distillationModel,
         });
         const scoreGate = filterDistillationCandidatesByScore(candidates, {
           toolEvents: completion.toolEvents,
@@ -307,6 +313,7 @@ export async function distillSources(
             candidateCount: 0,
             knowledgeIds: [],
             inputHash,
+            model: distillationModel,
             toolEvents: completion.toolEvents,
             metadata: {
               reason:
@@ -346,13 +353,39 @@ export async function distillSources(
             )
           : [];
         const knowledgeIds: string[] = [];
+        let dedupSkippedCount = 0;
 
         if (apply) {
           for (const [index, candidate] of acceptedCandidates.entries()) {
+            const embedding = embeddings[index];
+            // 蒸留前に重複チェック（閾値は MCP より少し緩め: 0.92）
+            const dedupResult = await checkKnowledgeDuplicate(candidate.title, candidate.body, {
+              bodySimilarityThreshold: 0.92,
+              topK: 5,
+              embedding,
+            });
+            if (dedupResult.isDuplicate) {
+              // 重複時: 既存アイテムにソースリンクのみ追記（新規挿入はスキップ）
+              await linkKnowledgeToSourceFragment({
+                knowledgeId: dedupResult.existingId,
+                sourceFragmentId: fragment.id,
+                confidence: toUnitKnowledgeScore(candidate.confidence, 70),
+                metadata: {
+                  source: "source_distillation",
+                  promptVersion: groupedConfig.sourceDistillation.promptVersion,
+                  inputHash,
+                  dedupMerged: true,
+                  dedupReason: dedupResult.reason,
+                },
+              });
+              knowledgeIds.push(dedupResult.existingId);
+              dedupSkippedCount++;
+              continue;
+            }
             const knowledgeId = await upsertKnowledgeFromSource({
               sourceUri: `source-fragment://${fragment.id}`,
               contentHash: knowledgeContentHash({
-                promptVersion: config.sourceDistillationPromptVersion,
+                promptVersion: groupedConfig.sourceDistillation.promptVersion,
                 inputHash,
                 candidate,
               }),
@@ -383,8 +416,8 @@ export async function distillSources(
                     ? fragment.sourceMetadata.repoKey
                     : undefined,
                 inputHash,
-                distillationModel: config.localLlmModel,
-                promptVersion: config.sourceDistillationPromptVersion,
+                distillationModel,
+                promptVersion: groupedConfig.sourceDistillation.promptVersion,
                 candidateIndex: index,
                 distillationScore: candidate.score,
                 distillationScoreThreshold: scoreGate.threshold,
@@ -400,7 +433,7 @@ export async function distillSources(
               confidence: toUnitKnowledgeScore(candidate.confidence, 70),
               metadata: {
                 source: "source_distillation",
-                promptVersion: config.sourceDistillationPromptVersion,
+                promptVersion: groupedConfig.sourceDistillation.promptVersion,
                 inputHash,
               },
             });
@@ -415,11 +448,13 @@ export async function distillSources(
           candidateCount: acceptedCandidates.length,
           knowledgeIds,
           inputHash,
+          model: distillationModel,
           toolEvents: completion.toolEvents,
           metadata: {
             jsonRepaired: repaired,
             rawCandidateCount: candidates.length,
             acceptedCandidateCount: acceptedCandidates.length,
+            dedupSkippedCount,
             scoreThreshold: scoreGate.threshold,
             rejectedLowScoreCount: scoreGate.rejectedLowScore.length,
             rejectedLowScoreCandidates: summarizeRejectedCandidates(scoreGate.rejectedLowScore),
@@ -450,6 +485,7 @@ export async function distillSources(
           knowledgeIds: [],
           error: message,
           inputHash,
+          model: distillationModel,
           metadata: {
             error: message,
           },
@@ -474,8 +510,8 @@ export async function distillSources(
     const summary: DistillSourcesSummary = {
       ok: failed === 0,
       apply,
-      model: config.localLlmModel,
-      promptVersion: config.sourceDistillationPromptVersion,
+      model: distillationModel,
+      promptVersion: groupedConfig.sourceDistillation.promptVersion,
       processed: results.length,
       skipped,
       failed,
@@ -529,8 +565,8 @@ export async function distillSources(
       payload: {
         ok: false,
         apply,
-        model: config.localLlmModel,
-        promptVersion: config.sourceDistillationPromptVersion,
+        model: distillationModel,
+        promptVersion: groupedConfig.sourceDistillation.promptVersion,
         processed: results.length,
         error: message,
       },

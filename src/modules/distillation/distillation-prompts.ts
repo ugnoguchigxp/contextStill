@@ -1,9 +1,9 @@
-import { config } from "../../config.js";
+import { groupedConfig } from "../../config.js";
 
 export type DistillationSourceKind = "vibe_memory" | "wiki";
 
 function commonSystemLines(): string[] {
-  const minCandidateScore = config.distillationMinCandidateScore.toFixed(2);
+  const minCandidateScore = groupedConfig.distillationTools.minCandidateScore.toFixed(2);
   return [
     "あなたは coding-agent の証拠を compile-ready knowledge に蒸留する。",
     "出力は会話要約、ドキュメント要約、changelog、メモではない。",

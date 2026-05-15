@@ -10,7 +10,7 @@ import * as candidatesUtil from "../src/modules/distillation/distillation-candid
 import * as promptsUtil from "../src/modules/distillation/distillation-prompts.js";
 import * as runtime from "../src/modules/distillation/distillation-runtime.service.js";
 import * as embedding from "../src/modules/embedding/embedding.service.js";
-import { config } from "../src/config.js";
+import { groupedConfig } from "../src/config.js";
 
 vi.mock("../src/modules/sources/distillation.repository.js");
 vi.mock("../src/modules/knowledge/knowledge.repository.js");
@@ -19,7 +19,7 @@ vi.mock("../src/modules/distillation/distillation-prompts.js");
 vi.mock("../src/modules/distillation/distillation-runtime.service.js");
 vi.mock("../src/modules/embedding/embedding.service.js");
 vi.mock("../src/config.js", () => ({
-  config: {
+  groupedConfig: {
     sourceDistillationBatchSize: 5,
     sourceDistillationPromptVersion: "v1",
     localLlmModel: "test-model",

@@ -8,7 +8,7 @@ import {
 } from "./graph.repository.js";
 
 const graphQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(300).default(80),
+  limit: z.coerce.number().int().min(1).max(1000).default(200),
   status: z.enum(["current", "active", "draft", "deprecated", "all"]).default("current"),
   view: z.enum(["relation", "semantic"]).default("relation"),
   relationAxes: z.string().default("session,project"),

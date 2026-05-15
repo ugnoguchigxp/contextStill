@@ -1,6 +1,6 @@
 import { beforeAll, beforeEach, describe, expect, test, afterAll } from "vitest";
 import { eq, sql } from "drizzle-orm";
-import { config } from "../src/config.js";
+import { groupedConfig } from "../src/config.js";
 import { getDb } from "../src/db/index.js";
 import { knowledgeItems, vibeMemoryDistillationRuns } from "../src/db/schema.js";
 import { distillVibeMemories } from "../src/modules/vibe-memory/distillation.service.js";
@@ -15,7 +15,9 @@ import {
 const describeDb = isDbIntegrationEnabled() ? describe : describe.skip;
 
 function testEmbedding(): number[] {
-  return Array.from({ length: config.embeddingDimension }, (_, index) => (index === 0 ? 1 : 0));
+  return Array.from({ length: groupedConfig.embedding.dimension }, (_, index) =>
+    index === 0 ? 1 : 0,
+  );
 }
 
 describeDb("vibe memory distillation integration", () => {

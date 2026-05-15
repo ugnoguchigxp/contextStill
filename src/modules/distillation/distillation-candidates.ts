@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { config } from "../../config.js";
+import { groupedConfig } from "../../config.js";
 import { normalizeKnowledgeScore } from "../../lib/score-scale.js";
 import type { KnowledgeItem } from "../../shared/schemas/knowledge.schema.js";
 import type { DistillationToolResult } from "./distillation-tools.service.js";
@@ -96,7 +96,10 @@ export function parseDistillationCandidateList(text: string): DistilledKnowledge
 }
 
 export function parseDistillationCandidates(text: string): DistilledKnowledgeCandidate[] {
-  return parseDistillationCandidateList(text).slice(0, config.distillationMaxCandidates);
+  return parseDistillationCandidateList(text).slice(
+    0,
+    groupedConfig.distillationTools.maxCandidates,
+  );
 }
 
 function hasUrl(value: unknown): boolean {
@@ -133,7 +136,7 @@ export function filterDistillationCandidatesByScore(
   candidates: DistilledKnowledgeCandidate[],
   options: { toolEvents?: DistillationToolResult[] } = {},
 ): DistillationScoreGateResult {
-  const threshold = config.distillationMinCandidateScore;
+  const threshold = groupedConfig.distillationTools.minCandidateScore;
   const rejectedInvalidEvidence = candidates.filter(
     (candidate) => !hasValidExternalEvidence(candidate, options.toolEvents),
   );
@@ -142,7 +145,7 @@ export function filterDistillationCandidatesByScore(
     .filter(
       (candidate) => candidate.score >= threshold && !invalidKeys.has(candidateKey(candidate)),
     )
-    .slice(0, config.distillationMaxCandidates);
+    .slice(0, groupedConfig.distillationTools.maxCandidates);
   const rejectedLowScore = candidates.filter(
     (candidate) => candidate.score < threshold && !invalidKeys.has(candidateKey(candidate)),
   );

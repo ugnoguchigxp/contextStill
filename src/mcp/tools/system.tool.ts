@@ -7,6 +7,7 @@ function buildInitialInstructionsText(): string {
     "- まず `context_compile` を呼び、主導線として使う。",
     "- `memory_search` / `memory_fetch` は必要根拠の確認時だけ使う。",
     "- `search_knowledge` は raw 候補確認用。通常は `context_compile` を優先する。",
+    "- draft backlog の整理や status 更新が必要な場合は `list_knowledge` / `update_knowledge` を使う。",
     "- 毎回の長文ルール再出力はしない。必要最小限のみ返す。",
     "- 作業中に再利用可能なルールや手順を発見・確立した場合は、`register_knowledge` を使って積極的に知識ベースへ登録する。",
     "- `context_compile` の結果が `degraded` / `failed` の場合や、期待した情報が得られない場合は `doctor` を呼び、システム状態（DB/同期/Embedding）を確認する。",
@@ -15,6 +16,7 @@ function buildInitialInstructionsText(): string {
     "- `context_compile`: 作業前の最小コンテキスト生成（主導線）。",
     "- `search_knowledge`: knowledge 候補の直接検索（補助）。",
     "- `register_knowledge`: 新しいルールや手順（スキル）の登録。",
+    "- `list_knowledge` / `update_knowledge`: backlog 一覧と status/本文の更新（運用補助）。",
     "- `memory_search` / `memory_fetch`: 過去会話・差分の参照（補助）。",
     "- `doctor`: DB / embedding / automation / run health の診断。",
   ].join("\n");

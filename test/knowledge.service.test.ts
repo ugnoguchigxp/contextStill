@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { config } from "../src/config.js";
+import { groupedConfig } from "../src/config.js";
 import * as embedding from "../src/modules/embedding/embedding.service.js";
 import * as repo from "../src/modules/knowledge/knowledge.repository.js";
 import {
@@ -11,7 +11,7 @@ import {
 vi.mock("../src/modules/knowledge/knowledge.repository.js");
 vi.mock("../src/modules/embedding/embedding.service.js");
 vi.mock("../src/config.js", () => ({
-  config: {
+  groupedConfig: {
     enableVectorSearch: true,
     embeddingProvider: "openai",
   },
@@ -20,7 +20,7 @@ vi.mock("../src/config.js", () => ({
 describe("Knowledge Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    config.enableVectorSearch = true;
+    groupedConfig.compile.enableVectorSearch = true;
   });
 
   test("retrieveKnowledge uses correct profile based on mode", async () => {
@@ -35,7 +35,7 @@ describe("Knowledge Service", () => {
   });
 
   test("executeKnowledgeSearch falls back to global search if scoped search is empty", async () => {
-    config.enableVectorSearch = false; // Disable to simplify mock counting
+    groupedConfig.compile.enableVectorSearch = false; // Disable to simplify mock counting
     let calls = 0;
     vi.mocked(repo.searchKnowledge).mockImplementation(async () => {
       calls += 1;
@@ -59,7 +59,7 @@ describe("Knowledge Service", () => {
   });
 
   test("marks degraded reason when legacy metadata fallback is used for scoped repo results", async () => {
-    config.enableVectorSearch = false;
+    groupedConfig.compile.enableVectorSearch = false;
     let calls = 0;
     vi.mocked(repo.searchKnowledge).mockImplementation(async () => {
       calls += 1;

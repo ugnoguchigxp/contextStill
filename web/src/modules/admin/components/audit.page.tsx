@@ -178,7 +178,9 @@ export function AuditLogsPage() {
                   {headerGroup.headers.map((header) => (
                     <TableHead
                       key={header.id}
-                      className={header.column.getCanSort() ? "cursor-pointer select-none px-6" : "px-6"}
+                      className={
+                        header.column.getCanSort() ? "cursor-pointer select-none px-6" : "px-6"
+                      }
                       onClick={header.column.getToggleSortingHandler()}
                     >
                       <div className="flex items-center gap-2">
@@ -203,7 +205,10 @@ export function AuditLogsPage() {
                     className="cursor-pointer transition-colors hover:bg-muted/40 group"
                   >
                     {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id} className="py-2.5 px-6 text-xs border-b border-muted/30">
+                      <TableCell
+                        key={cell.id}
+                        className="py-2.5 px-6 text-xs border-b border-muted/30"
+                      >
                         {flexRender(cell.column.columnDef.cell, cell.getContext())}
                       </TableCell>
                     ))}
@@ -211,7 +216,10 @@ export function AuditLogsPage() {
                 ))
               ) : (
                 <TableRow>
-                  <TableCell colSpan={4} className="h-32 text-center text-sm text-muted-foreground italic">
+                  <TableCell
+                    colSpan={4}
+                    className="h-32 text-center text-sm text-muted-foreground italic"
+                  >
                     No matching audit events found.
                   </TableCell>
                 </TableRow>
@@ -229,7 +237,10 @@ export function AuditLogsPage() {
               size="sm"
               className="h-8 w-8 p-0"
               disabled={!canPrev}
-              onClick={(e) => { e.stopPropagation(); setPage(page - 1); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setPage(page - 1);
+              }}
             >
               <ChevronLeft className="h-4 w-4" />
             </Button>
@@ -238,7 +249,10 @@ export function AuditLogsPage() {
               size="sm"
               className="h-8 w-8 p-0"
               disabled={!canNext}
-              onClick={(e) => { e.stopPropagation(); setPage(page + 1); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                setPage(page + 1);
+              }}
             >
               <ChevronRight className="h-4 w-4" />
             </Button>
@@ -248,23 +262,27 @@ export function AuditLogsPage() {
 
       {/* Inline Modal for Payload Detail */}
       {selectedLog && (
-        <div 
+        <div
           className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
-          onClick={() => setSelectedLog(null)}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget) {
+              setSelectedLog(null);
+            }
+          }}
         >
-          <div 
+          <div
             className="w-full max-w-3xl max-h-[85vh] flex flex-col bg-card border shadow-2xl rounded-xl overflow-hidden animate-in zoom-in-95 duration-200"
-            onClick={(e) => e.stopPropagation()}
+            onMouseDown={(event) => event.stopPropagation()}
           >
             <div className="flex items-center justify-between px-6 py-4 border-b bg-muted/30">
               <div className="flex items-center gap-3">
                 <Badge>{selectedLog.eventType}</Badge>
                 <span className="text-sm font-semibold">Event Detail</span>
               </div>
-              <Button 
-                variant="ghost" 
-                size="sm" 
-                className="h-8 w-8 p-0 rounded-full" 
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-8 w-8 p-0 rounded-full"
                 onClick={() => setSelectedLog(null)}
               >
                 ✕
@@ -273,16 +291,22 @@ export function AuditLogsPage() {
             <div className="flex-1 overflow-auto p-6 space-y-4">
               <div className="grid grid-cols-2 gap-4 text-xs bg-muted/20 p-4 rounded-lg border border-muted">
                 <div>
-                  <span className="text-muted-foreground block mb-1 font-bold uppercase tracking-tighter">Actor</span>
+                  <span className="text-muted-foreground block mb-1 font-bold uppercase tracking-tighter">
+                    Actor
+                  </span>
                   <span className="font-semibold">{selectedLog.actor}</span>
                 </div>
                 <div>
-                  <span className="text-muted-foreground block mb-1 font-bold uppercase tracking-tighter">Created At</span>
+                  <span className="text-muted-foreground block mb-1 font-bold uppercase tracking-tighter">
+                    Created At
+                  </span>
                   <span className="font-semibold">{formatAuditDate(selectedLog.createdAt)}</span>
                 </div>
               </div>
               <div className="space-y-2">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Raw Payload</span>
+                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                  Raw Payload
+                </span>
                 <pre className="rounded-lg bg-zinc-950 text-zinc-100 p-5 text-[11px] leading-relaxed font-mono overflow-auto border border-white/10 shadow-inner">
                   {JSON.stringify(selectedLog.payload, null, 2)}
                 </pre>

@@ -1,5 +1,5 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
-import { config } from "../../config.js";
+import { groupedConfig } from "../../config.js";
 import { db } from "../../db/client.js";
 import { agentDiffEntries, vibeMemories, vibeMemoryDistillationRuns } from "../../db/schema.js";
 import { syncStates } from "../../db/schema.js";
@@ -38,7 +38,7 @@ export async function listVibeMemoriesForDistillation(params: {
       where ${vibeMemoryDistillationRuns.vibeMemoryId} = ${vibeMemories.id}
         and ${vibeMemoryDistillationRuns.promptVersion} = ${params.promptVersion}
         and ${vibeMemoryDistillationRuns.status} = 'failed'
-        and ${vibeMemoryDistillationRuns.updatedAt} > now() - (${config.distillationFailureRetryDelaySeconds} * interval '1 second')
+        and ${vibeMemoryDistillationRuns.updatedAt} > now() - (${groupedConfig.distillationTools.failureRetryDelaySeconds} * interval '1 second')
     )`);
   }
 

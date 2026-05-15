@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { eq, sql } from "drizzle-orm";
-import { config } from "../src/config.js";
+import { groupedConfig } from "../src/config.js";
 import { getDb } from "../src/db/index.js";
 import { knowledgeItems, knowledgeSourceLinks, sourceDistillationRuns } from "../src/db/schema.js";
 import { distillSources } from "../src/modules/sources/distillation.service.js";
@@ -15,7 +15,9 @@ import {
 const describeDb = isDbIntegrationEnabled() ? describe : describe.skip;
 
 function testEmbedding(): number[] {
-  return Array.from({ length: config.embeddingDimension }, (_, index) => (index === 0 ? 1 : 0));
+  return Array.from({ length: groupedConfig.embedding.dimension }, (_, index) =>
+    index === 0 ? 1 : 0,
+  );
 }
 
 describeDb("source distillation integration", () => {

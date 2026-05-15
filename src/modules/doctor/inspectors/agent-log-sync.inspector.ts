@@ -1,5 +1,5 @@
 import { inArray } from "drizzle-orm";
-import { config } from "../../../config.js";
+import { groupedConfig } from "../../../config.js";
 import { getDb } from "../../../db/index.js";
 import { syncStates } from "../../../db/schema.js";
 import type { DoctorReport } from "../../../shared/schemas/doctor.schema.js";
@@ -20,11 +20,11 @@ export async function inspectAgentLogSync({
   canQueryDb,
   syncStatesTableAvailable,
 }: AgentLogSyncInspectorOptions): Promise<DoctorReport["agentLogSync"]> {
-  const codexSessionDirExists = await pathExists(config.codexSessionDir);
-  const codexArchivedSessionDirExists = await pathExists(config.codexArchivedSessionDir);
-  const antigravityConfigured = config.antigravityLogDir.trim().length > 0;
+  const codexSessionDirExists = await pathExists(groupedConfig.codex.sessionDir);
+  const codexArchivedSessionDirExists = await pathExists(groupedConfig.codex.archivedSessionDir);
+  const antigravityConfigured = groupedConfig.antigravity.logDir.trim().length > 0;
   const antigravityExists = antigravityConfigured
-    ? await pathExists(config.antigravityLogDir)
+    ? await pathExists(groupedConfig.antigravity.logDir)
     : false;
   const launchAgent = await inspectLaunchAgent("com.memory-router.agent-log-sync");
   const states: DoctorReport["agentLogSync"]["states"] = [];
@@ -71,13 +71,13 @@ export async function inspectAgentLogSync({
 
   return {
     codex: {
-      sessionDir: config.codexSessionDir,
+      sessionDir: groupedConfig.codex.sessionDir,
       sessionDirExists: codexSessionDirExists,
-      archivedSessionDir: config.codexArchivedSessionDir,
+      archivedSessionDir: groupedConfig.codex.archivedSessionDir,
       archivedSessionDirExists: codexArchivedSessionDirExists,
     },
     antigravity: {
-      logDir: config.antigravityLogDir,
+      logDir: groupedConfig.antigravity.logDir,
       configured: antigravityConfigured,
       exists: antigravityExists,
     },

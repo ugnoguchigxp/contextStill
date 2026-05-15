@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
-import { config } from "../../config.js";
+import { groupedConfig } from "../../config.js";
 import { db } from "../../db/client.js";
 import { agentDiffEntries, syncStates, vibeMemories } from "../../db/schema.js";
 import {
@@ -69,8 +69,8 @@ const sources: AgentLogSource[] = [
 
 export function chunkMessages(
   messages: ChatMessage[],
-  maxMessages = config.agentLogMaxMessagesPerChunk,
-  maxChars = config.agentLogMaxCharsPerChunk,
+  maxMessages = groupedConfig.agentLogSync.maxMessagesPerChunk,
+  maxChars = groupedConfig.agentLogSync.maxCharsPerChunk,
 ): ChatMessage[][] {
   const chunks: ChatMessage[][] = [];
   let current: ChatMessage[] = [];

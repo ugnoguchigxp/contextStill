@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { config } from "../src/config.js";
+import { groupedConfig } from "../src/config.js";
 import {
   agenticRefine,
   type AgenticCandidate,
@@ -13,49 +13,49 @@ global.fetch = mockFetch as any;
 
 describe("agentic-refine.service", () => {
   const originalConfig = {
-    agenticCompileEnabled: config.agenticCompileEnabled,
-    agenticCompileProvider: config.agenticCompileProvider,
-    azureOpenAiApiKey: config.azureOpenAiApiKey,
-    azureOpenAiApiBaseUrl: config.azureOpenAiApiBaseUrl,
-    azureOpenAiApiPath: config.azureOpenAiApiPath,
-    azureOpenAiModel: config.azureOpenAiModel,
-    azureOpenAiApiVersion: config.azureOpenAiApiVersion,
-    localLlmApiBaseUrl: config.localLlmApiBaseUrl,
-    localLlmApiKey: config.localLlmApiKey,
-    localLlmModel: config.localLlmModel,
-    bedrockModel: config.bedrockModel,
-    bedrockRegion: config.bedrockRegion,
+    agenticCompileEnabled: groupedConfig.agenticCompile.enabled,
+    agenticCompileProvider: groupedConfig.agenticCompile.provider,
+    azureOpenAiApiKey: groupedConfig.azureOpenAi.apiKey,
+    azureOpenAiApiBaseUrl: groupedConfig.azureOpenAi.apiBaseUrl,
+    azureOpenAiApiPath: groupedConfig.azureOpenAi.apiPath,
+    azureOpenAiModel: groupedConfig.azureOpenAi.model,
+    azureOpenAiApiVersion: groupedConfig.azureOpenAi.apiVersion,
+    localLlmApiBaseUrl: groupedConfig.localLlm.apiBaseUrl,
+    localLlmApiKey: groupedConfig.localLlm.apiKey,
+    localLlmModel: groupedConfig.localLlm.model,
+    bedrockModel: groupedConfig.bedrock.model,
+    bedrockRegion: groupedConfig.bedrock.region,
   };
 
   beforeEach(() => {
     mockFetch.mockReset();
-    config.agenticCompileEnabled = true;
-    config.agenticCompileProvider = "azure-openai";
-    config.azureOpenAiApiKey = "test-key";
-    config.azureOpenAiApiBaseUrl = "https://test.openai.azure.com";
-    config.azureOpenAiApiPath = "/openai/deployments";
-    config.azureOpenAiModel = "test-model";
-    config.azureOpenAiApiVersion = "2024-04-01-preview";
-    config.localLlmApiBaseUrl = "http://127.0.0.1:44448";
-    config.localLlmApiKey = "";
-    config.localLlmModel = "gemma-4-e4b-it";
-    config.bedrockModel = "";
-    config.bedrockRegion = "us-east-1";
+    groupedConfig.agenticCompile.enabled = true;
+    groupedConfig.agenticCompile.provider = "azure-openai";
+    groupedConfig.azureOpenAi.apiKey = "test-key";
+    groupedConfig.azureOpenAi.apiBaseUrl = "https://test.openai.azure.com";
+    groupedConfig.azureOpenAi.apiPath = "/openai/deployments";
+    groupedConfig.azureOpenAi.model = "test-model";
+    groupedConfig.azureOpenAi.apiVersion = "2024-04-01-preview";
+    groupedConfig.localLlm.apiBaseUrl = "http://127.0.0.1:44448";
+    groupedConfig.localLlm.apiKey = "";
+    groupedConfig.localLlm.model = "gemma-4-e4b-it";
+    groupedConfig.bedrock.model = "";
+    groupedConfig.bedrock.region = "us-east-1";
   });
 
   afterEach(() => {
-    config.agenticCompileEnabled = originalConfig.agenticCompileEnabled;
-    config.agenticCompileProvider = originalConfig.agenticCompileProvider;
-    config.azureOpenAiApiKey = originalConfig.azureOpenAiApiKey;
-    config.azureOpenAiApiBaseUrl = originalConfig.azureOpenAiApiBaseUrl;
-    config.azureOpenAiApiPath = originalConfig.azureOpenAiApiPath;
-    config.azureOpenAiModel = originalConfig.azureOpenAiModel;
-    config.azureOpenAiApiVersion = originalConfig.azureOpenAiApiVersion;
-    config.localLlmApiBaseUrl = originalConfig.localLlmApiBaseUrl;
-    config.localLlmApiKey = originalConfig.localLlmApiKey;
-    config.localLlmModel = originalConfig.localLlmModel;
-    config.bedrockModel = originalConfig.bedrockModel;
-    config.bedrockRegion = originalConfig.bedrockRegion;
+    groupedConfig.agenticCompile.enabled = originalConfig.agenticCompileEnabled;
+    groupedConfig.agenticCompile.provider = originalConfig.agenticCompileProvider;
+    groupedConfig.azureOpenAi.apiKey = originalConfig.azureOpenAiApiKey;
+    groupedConfig.azureOpenAi.apiBaseUrl = originalConfig.azureOpenAiApiBaseUrl;
+    groupedConfig.azureOpenAi.apiPath = originalConfig.azureOpenAiApiPath;
+    groupedConfig.azureOpenAi.model = originalConfig.azureOpenAiModel;
+    groupedConfig.azureOpenAi.apiVersion = originalConfig.azureOpenAiApiVersion;
+    groupedConfig.localLlm.apiBaseUrl = originalConfig.localLlmApiBaseUrl;
+    groupedConfig.localLlm.apiKey = originalConfig.localLlmApiKey;
+    groupedConfig.localLlm.model = originalConfig.localLlmModel;
+    groupedConfig.bedrock.model = originalConfig.bedrockModel;
+    groupedConfig.bedrock.region = originalConfig.bedrockRegion;
   });
 
   const candidates: AgenticCandidate[] = [
@@ -97,7 +97,7 @@ describe("agentic-refine.service", () => {
 
   describe("agenticRefine", () => {
     it("returns candidates directly if agenticCompileEnabled is false", async () => {
-      config.agenticCompileEnabled = false;
+      groupedConfig.agenticCompile.enabled = false;
       const result = await agenticRefine(candidates, input, "task_context");
       expect(result.agenticUsed).toBe(false);
       expect(result.items).toEqual(candidates);
@@ -105,7 +105,7 @@ describe("agentic-refine.service", () => {
     });
 
     it("returns candidates directly if provider is not configured", async () => {
-      config.azureOpenAiApiKey = "";
+      groupedConfig.azureOpenAi.apiKey = "";
       const result = await agenticRefine(candidates, input, "task_context");
       expect(result.agenticUsed).toBe(false);
       expect(result.error).toBeUndefined();
@@ -231,7 +231,7 @@ describe("agentic-refine.service", () => {
     });
 
     it("falls back from azure-openai to local-llm when provider is auto", async () => {
-      config.agenticCompileProvider = "auto";
+      groupedConfig.agenticCompile.provider = "auto";
 
       mockFetch
         .mockResolvedValueOnce({
@@ -264,7 +264,7 @@ describe("agentic-refine.service", () => {
     });
 
     it("returns aggregate error when all auto providers fail", async () => {
-      config.agenticCompileProvider = "auto";
+      groupedConfig.agenticCompile.provider = "auto";
 
       mockFetch
         .mockResolvedValueOnce({
@@ -288,8 +288,8 @@ describe("agentic-refine.service", () => {
 
   describe("checkAgenticLlmHealth", () => {
     it("returns configured=false when selected provider is not configured", async () => {
-      config.agenticCompileProvider = "azure-openai";
-      config.azureOpenAiApiKey = "";
+      groupedConfig.agenticCompile.provider = "azure-openai";
+      groupedConfig.azureOpenAi.apiKey = "";
 
       const result = await checkAgenticLlmHealth();
       expect(result.providerSetting).toBe("azure-openai");
@@ -299,7 +299,7 @@ describe("agentic-refine.service", () => {
     });
 
     it("returns reachable=true when selected provider responds", async () => {
-      config.agenticCompileProvider = "azure-openai";
+      groupedConfig.agenticCompile.provider = "azure-openai";
 
       mockFetch.mockResolvedValueOnce({
         ok: true,
@@ -315,7 +315,7 @@ describe("agentic-refine.service", () => {
     });
 
     it("auto fallback selects local-llm when azure-openai is unreachable", async () => {
-      config.agenticCompileProvider = "auto";
+      groupedConfig.agenticCompile.provider = "auto";
 
       mockFetch
         .mockResolvedValueOnce({

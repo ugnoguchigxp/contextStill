@@ -12,7 +12,7 @@ import {
   uuid,
   vector,
 } from "drizzle-orm/pg-core";
-import { config } from "../config.js";
+import { groupedConfig } from "../config.js";
 
 export const knowledgeTypeValues = ["rule", "procedure"] as const;
 
@@ -30,7 +30,7 @@ export const vibeMemories = pgTable(
     content: text("content").notNull(),
     memoryType: text("memory_type").notNull().default("chat"),
     dedupeKey: text("dedupe_key"),
-    embedding: vector("embedding", { dimensions: config.embeddingDimension }),
+    embedding: vector("embedding", { dimensions: groupedConfig.embedding.dimension }),
     metadata: jsonb("metadata").default({}).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
@@ -176,7 +176,7 @@ export const knowledgeItems = pgTable(
     appliesTo: jsonb("applies_to").default({}).notNull(),
     confidence: real("confidence").default(70).notNull(),
     importance: real("importance").default(70).notNull(),
-    embedding: vector("embedding", { dimensions: config.embeddingDimension }),
+    embedding: vector("embedding", { dimensions: groupedConfig.embedding.dimension }),
     metadata: jsonb("metadata").default({}).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -255,7 +255,7 @@ export const sourceFragments = pgTable(
     locator: text("locator").notNull(),
     heading: text("heading"),
     content: text("content").notNull(),
-    embedding: vector("embedding", { dimensions: config.embeddingDimension }),
+    embedding: vector("embedding", { dimensions: groupedConfig.embedding.dimension }),
     metadata: jsonb("metadata").default({}).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },

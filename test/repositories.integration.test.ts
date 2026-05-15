@@ -1,5 +1,5 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
-import { config } from "../src/config.js";
+import { groupedConfig } from "../src/config.js";
 import { buildGraphSnapshot } from "../api/modules/graph/graph.repository.js";
 import {
   getCompileRunSnapshot,
@@ -439,13 +439,13 @@ index 0000000..1111111
   });
 
   test("graph semantic view keeps threshold and topK behavior", async () => {
-    const vectorA = Array.from({ length: config.embeddingDimension }, (_, index) =>
+    const vectorA = Array.from({ length: groupedConfig.embedding.dimension }, (_, index) =>
       index === 0 ? 1 : 0,
     );
-    const vectorB = Array.from({ length: config.embeddingDimension }, (_, index) =>
+    const vectorB = Array.from({ length: groupedConfig.embedding.dimension }, (_, index) =>
       index === 0 ? 1 : 0,
     );
-    const vectorC = Array.from({ length: config.embeddingDimension }, (_, index) =>
+    const vectorC = Array.from({ length: groupedConfig.embedding.dimension }, (_, index) =>
       index === 0 ? -1 : 0,
     );
 

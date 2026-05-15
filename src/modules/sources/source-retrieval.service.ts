@@ -1,4 +1,4 @@
-import { config } from "../../config.js";
+import { groupedConfig } from "../../config.js";
 import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
 import { embedOne } from "../embedding/embedding.service.js";
 import {
@@ -119,7 +119,7 @@ export async function retrieveSources(
         textHits = mergedBaseHits;
       }
 
-      if (config.enableVectorSearch) {
+      if (groupedConfig.compile.enableVectorSearch) {
         try {
           const queryEmbedding = input.queryEmbedding ?? (await embedOne(primaryQuery, "query"));
           embeddingStatus = input.queryEmbedding ? "provided" : "generated";

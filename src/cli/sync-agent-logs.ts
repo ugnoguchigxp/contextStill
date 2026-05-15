@@ -1,12 +1,28 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { config } from "../config.js";
+import { groupedConfig } from "../config.js";
 import { closeDbPool } from "../db/index.js";
 import { syncAllAgentLogs } from "../modules/agent-log-sync/sync.service.js";
 
 type LockHandle = {
   release: () => Promise<void>;
 };
+
+type CliOptions = {
+  json: boolean;
+};
+
+function parseArgs(args: string[]): CliOptions {
+  const options: CliOptions = { json: false };
+  for (const arg of args) {
+    if (arg === "--json") {
+      options.json = true;
+      continue;
+    }
+    throw new Error(`Unknown argument: ${arg}`);
+  }
+  return options;
+}
 
 async function acquireLock(lockFile: string, ttlSeconds: number): Promise<LockHandle> {
   await fs.mkdir(path.dirname(lockFile), { recursive: true });
@@ -47,10 +63,14 @@ function hasFsErrorCode(error: unknown, code: string): boolean {
 }
 
 async function main(): Promise<void> {
-  const lock = await acquireLock(config.agentLogSyncLockFile, config.agentLogSyncLockTtlSeconds);
+  const options = parseArgs(process.argv.slice(2));
+  const lock = await acquireLock(
+    groupedConfig.agentLogSync.lockFile,
+    groupedConfig.agentLogSync.lockTtlSeconds,
+  );
   try {
     const summary = await syncAllAgentLogs();
-    console.log(JSON.stringify(summary, null, 2));
+    console.log(options.json ? JSON.stringify(summary, null, 2) : JSON.stringify(summary));
     if (!summary.ok) {
       process.exitCode = 1;
     }

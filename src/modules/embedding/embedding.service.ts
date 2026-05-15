@@ -2,7 +2,7 @@ import { execFile } from "node:child_process";
 import { access } from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
-import { config } from "../../config.js";
+import { groupedConfig } from "../../config.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -17,7 +17,7 @@ type EmbeddingResult = {
 
 export type EmbeddingHealth = {
   configured: boolean;
-  provider: typeof config.embeddingProvider;
+  provider: typeof groupedConfig.embedding.provider;
   daemon: {
     url: string;
     reachable: boolean;
@@ -41,9 +41,9 @@ function validateEmbeddingShape(embeddings: unknown, provider: EmbeddingProvider
       throw new Error(`${provider} embedding row ${rowIndex} is not an array`);
     }
     const vector = row.map((value) => Number(value));
-    if (vector.length !== config.embeddingDimension) {
+    if (vector.length !== groupedConfig.embedding.dimension) {
       throw new Error(
-        `${provider} embedding dimension mismatch: expected ${config.embeddingDimension}, got ${vector.length}`,
+        `${provider} embedding dimension mismatch: expected ${groupedConfig.embedding.dimension}, got ${vector.length}`,
       );
     }
     if (vector.some((value) => !Number.isFinite(value))) {
@@ -56,17 +56,17 @@ function validateEmbeddingShape(embeddings: unknown, provider: EmbeddingProvider
 
 function embeddingHeaders(): HeadersInit {
   const headers: HeadersInit = { "content-type": "application/json" };
-  if (config.embeddingAccessToken.trim()) {
-    headers.Authorization = `Bearer ${config.embeddingAccessToken.trim()}`;
+  if (groupedConfig.embedding.accessToken.trim()) {
+    headers.Authorization = `Bearer ${groupedConfig.embedding.accessToken.trim()}`;
   }
   return headers;
 }
 
 async function embedViaDaemon(texts: string[], type: EmbeddingKind): Promise<EmbeddingResult> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), config.embeddingTimeoutMs);
+  const timer = setTimeout(() => controller.abort(), groupedConfig.embedding.timeoutMs);
   try {
-    const response = await fetch(`${config.embeddingDaemonUrl}/embed`, {
+    const response = await fetch(`${groupedConfig.embedding.daemonUrl}/embed`, {
       method: "POST",
       headers: embeddingHeaders(),
       body: JSON.stringify({
@@ -93,12 +93,12 @@ async function embedViaDaemon(texts: string[], type: EmbeddingKind): Promise<Emb
 }
 
 async function embedViaCli(texts: string[], type: EmbeddingKind): Promise<EmbeddingResult> {
-  const python = config.localLlmEmbeddingPython;
+  const python = groupedConfig.localLlm.embeddingPython;
   const args = [
     "-m",
     "e5embed.cli",
     "--model-dir",
-    config.localLlmEmbeddingModelDir,
+    groupedConfig.localLlm.embeddingModelDir,
     "--type",
     type,
     ...texts.flatMap((text) => ["--text", text]),
@@ -106,17 +106,17 @@ async function embedViaCli(texts: string[], type: EmbeddingKind): Promise<Embedd
   const env = {
     ...process.env,
     PYTHONPATH: [
-      config.localLlmEmbeddingRoot,
-      path.resolve(config.localLlmEmbeddingRoot, ".."),
+      groupedConfig.localLlm.embeddingRoot,
+      path.resolve(groupedConfig.localLlm.embeddingRoot, ".."),
       process.env.PYTHONPATH,
     ]
       .filter(Boolean)
       .join(":"),
   };
   const { stdout } = await execFileAsync(python, args, {
-    cwd: config.localLlmEmbeddingRoot,
+    cwd: groupedConfig.localLlm.embeddingRoot,
     env,
-    timeout: config.embeddingTimeoutMs,
+    timeout: groupedConfig.embedding.timeoutMs,
     maxBuffer: 10 * 1024 * 1024,
   });
   const payload = JSON.parse(stdout) as Array<{ embedding?: unknown; dimension?: unknown }>;
@@ -136,23 +136,26 @@ async function embedTexts(texts: string[], type: EmbeddingKind): Promise<Embeddi
   if (cleanTexts.length === 0) {
     throw new Error("embedding input must include at least one non-empty text");
   }
-  if (config.embeddingProvider === "disabled") {
+  if (groupedConfig.embedding.provider === "disabled") {
     throw new Error("embedding provider is disabled");
   }
 
   const errors: string[] = [];
-  if (config.embeddingProvider === "auto" || config.embeddingProvider === "daemon") {
+  if (
+    groupedConfig.embedding.provider === "auto" ||
+    groupedConfig.embedding.provider === "daemon"
+  ) {
     try {
       return await embedViaDaemon(cleanTexts, type);
     } catch (error) {
       errors.push(`daemon: ${error instanceof Error ? error.message : String(error)}`);
-      if (config.embeddingProvider === "daemon") {
+      if (groupedConfig.embedding.provider === "daemon") {
         throw new Error(errors.join("; "));
       }
     }
   }
 
-  if (config.embeddingProvider === "auto" || config.embeddingProvider === "cli") {
+  if (groupedConfig.embedding.provider === "auto" || groupedConfig.embedding.provider === "cli") {
     try {
       return await embedViaCli(cleanTexts, type);
     } catch (error) {
@@ -174,16 +177,16 @@ export async function embedOne(text: string, type: EmbeddingKind): Promise<numbe
 
 export async function embeddingHealth(): Promise<EmbeddingHealth> {
   const health: EmbeddingHealth = {
-    configured: config.embeddingProvider !== "disabled",
-    provider: config.embeddingProvider,
+    configured: groupedConfig.embedding.provider !== "disabled",
+    provider: groupedConfig.embedding.provider,
     daemon: {
-      url: config.embeddingDaemonUrl,
+      url: groupedConfig.embedding.daemonUrl,
       reachable: false,
     },
     cli: {
-      python: config.localLlmEmbeddingPython,
-      root: config.localLlmEmbeddingRoot,
-      modelDir: config.localLlmEmbeddingModelDir,
+      python: groupedConfig.localLlm.embeddingPython,
+      root: groupedConfig.localLlm.embeddingRoot,
+      modelDir: groupedConfig.localLlm.embeddingModelDir,
       usable: false,
     },
   };
@@ -192,7 +195,7 @@ export async function embeddingHealth(): Promise<EmbeddingHealth> {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 1500);
     try {
-      const response = await fetch(`${config.embeddingDaemonUrl}/health`, {
+      const response = await fetch(`${groupedConfig.embedding.daemonUrl}/health`, {
         signal: controller.signal,
       });
       health.daemon.reachable = response.ok;
@@ -207,9 +210,9 @@ export async function embeddingHealth(): Promise<EmbeddingHealth> {
   }
 
   try {
-    await access(config.localLlmEmbeddingPython);
-    await access(config.localLlmEmbeddingRoot);
-    await access(config.localLlmEmbeddingModelDir);
+    await access(groupedConfig.localLlm.embeddingPython);
+    await access(groupedConfig.localLlm.embeddingRoot);
+    await access(groupedConfig.localLlm.embeddingModelDir);
     health.cli.usable = true;
   } catch (error) {
     health.cli.error = error instanceof Error ? error.message : String(error);

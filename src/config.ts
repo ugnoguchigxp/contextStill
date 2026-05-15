@@ -19,6 +19,7 @@ const envNumber = (value: string | undefined, fallback: number): number => {
 
 type EmbeddingProvider = "auto" | "daemon" | "cli" | "disabled";
 type AgenticCompileProvider = "azure-openai" | "bedrock" | "local-llm" | "auto";
+type DistillationProvider = "local-llm" | "azure-openai" | "bedrock" | "auto";
 
 const parseAgenticCompileProvider = (
   value: string | undefined,
@@ -30,6 +31,23 @@ const parseAgenticCompileProvider = (
     normalized === "azure-openai" ||
     normalized === "bedrock" ||
     normalized === "local-llm" ||
+    normalized === "auto"
+  ) {
+    return normalized;
+  }
+  return fallback;
+};
+
+const parseDistillationProvider = (
+  value: string | undefined,
+  fallback: DistillationProvider,
+): DistillationProvider => {
+  if (value === undefined || value.trim() === "") return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "local-llm" ||
+    normalized === "azure-openai" ||
+    normalized === "bedrock" ||
     normalized === "auto"
   ) {
     return normalized;
@@ -109,6 +127,9 @@ type GroupedConfig = {
     enabled: boolean;
     timeoutMs: number;
     maxTokens: number;
+  };
+  distillation: {
+    provider: DistillationProvider;
   };
   doctor: { freshnessThresholdMinutes: number; degradedRateThreshold: number };
 };
@@ -411,6 +432,12 @@ export const groupedConfig: GroupedConfig = {
       ),
     ),
   },
+  distillation: {
+    provider: parseDistillationProvider(
+      process.env.MEMORY_ROUTER_DISTILLATION_PROVIDER,
+      "local-llm",
+    ),
+  },
   doctor: {
     freshnessThresholdMinutes: Math.max(
       1,
@@ -432,482 +459,4 @@ export const groupedConfig: GroupedConfig = {
   },
 };
 
-type FlatConfig = {
-  databaseUrl: string;
-  embeddingDimension: number;
-  embeddingProvider: EmbeddingProvider;
-  embeddingDaemonUrl: string;
-  embeddingAccessToken: string;
-  embeddingTimeoutMs: number;
-  localLlmEmbeddingRoot: string;
-  localLlmEmbeddingPython: string;
-  localLlmEmbeddingModelDir: string;
-  sourceContentRoot: string;
-  codexSessionDir: string;
-  codexArchivedSessionDir: string;
-  antigravityLogDir: string;
-  agentLogSyncIntervalSeconds: number;
-  agentLogInitialLookbackHours: number;
-  antigravityLogInitialLookbackHours: number;
-  agentLogMaxMessagesPerChunk: number;
-  agentLogMaxCharsPerChunk: number;
-  agentLogSyncLockTtlSeconds: number;
-  agentLogSyncLockFile: string;
-  localLlmApiBaseUrl: string;
-  localLlmApiKey: string;
-  localLlmModel: string;
-  vibeDistillationPromptVersion: string;
-  vibeDistillationBatchSize: number;
-  vibeDistillationMaxInputChars: number;
-  vibeDistillationMaxOutputTokens: number;
-  vibeDistillationTimeoutMs: number;
-  vibeDistillationLockTtlSeconds: number;
-  vibeDistillationLockFile: string;
-  distillationToolMaxRounds: number;
-  distillationToolTimeoutMs: number;
-  distillationToolResultMaxChars: number;
-  distillationSearchResultCount: number;
-  distillationMaxCandidates: number;
-  distillationMinCandidateScore: number;
-  distillationFailureRetryDelaySeconds: number;
-  sourceDistillationPromptVersion: string;
-  sourceDistillationBatchSize: number;
-  sourceDistillationMaxInputChars: number;
-  sourceDistillationMaxOutputTokens: number;
-  sourceDistillationLockTtlSeconds: number;
-  sourceDistillationLockFile: string;
-  defaultTokenBudget: number;
-  enableVectorSearch: boolean;
-  azureOpenAiApiKey: string;
-  azureOpenAiApiBaseUrl: string;
-  azureOpenAiApiPath: string;
-  azureOpenAiApiVersion: string;
-  azureOpenAiModel: string;
-  bedrockModel: string;
-  bedrockRegion: string;
-  bedrockProfile: string;
-  agenticCompileProvider: AgenticCompileProvider;
-  agenticCompileEnabled: boolean;
-  agenticCompileTimeoutMs: number;
-  agenticCompileMaxTokens: number;
-  doctorFreshnessThresholdMinutes: number;
-  doctorDegradedRateThreshold: number;
-};
-
-export const config = {} as FlatConfig;
-
-Object.defineProperties(config, {
-  databaseUrl: {
-    get: () => groupedConfig.database.url,
-    set: (value: string) => {
-      groupedConfig.database.url = value;
-    },
-    enumerable: true,
-  },
-  embeddingDimension: {
-    get: () => groupedConfig.embedding.dimension,
-    set: (value: number) => {
-      groupedConfig.embedding.dimension = value;
-    },
-    enumerable: true,
-  },
-  embeddingProvider: {
-    get: () => groupedConfig.embedding.provider,
-    set: (value: EmbeddingProvider) => {
-      groupedConfig.embedding.provider = value;
-    },
-    enumerable: true,
-  },
-  embeddingDaemonUrl: {
-    get: () => groupedConfig.embedding.daemonUrl,
-    set: (value: string) => {
-      groupedConfig.embedding.daemonUrl = value;
-    },
-    enumerable: true,
-  },
-  embeddingAccessToken: {
-    get: () => groupedConfig.embedding.accessToken,
-    set: (value: string) => {
-      groupedConfig.embedding.accessToken = value;
-    },
-    enumerable: true,
-  },
-  embeddingTimeoutMs: {
-    get: () => groupedConfig.embedding.timeoutMs,
-    set: (value: number) => {
-      groupedConfig.embedding.timeoutMs = value;
-    },
-    enumerable: true,
-  },
-  localLlmEmbeddingRoot: {
-    get: () => groupedConfig.localLlm.embeddingRoot,
-    set: (value: string) => {
-      groupedConfig.localLlm.embeddingRoot = value;
-    },
-    enumerable: true,
-  },
-  localLlmEmbeddingPython: {
-    get: () => groupedConfig.localLlm.embeddingPython,
-    set: (value: string) => {
-      groupedConfig.localLlm.embeddingPython = value;
-    },
-    enumerable: true,
-  },
-  localLlmEmbeddingModelDir: {
-    get: () => groupedConfig.localLlm.embeddingModelDir,
-    set: (value: string) => {
-      groupedConfig.localLlm.embeddingModelDir = value;
-    },
-    enumerable: true,
-  },
-  sourceContentRoot: {
-    get: () => groupedConfig.sourceContent.root,
-    set: (value: string) => {
-      groupedConfig.sourceContent.root = value;
-    },
-    enumerable: true,
-  },
-  codexSessionDir: {
-    get: () => groupedConfig.codex.sessionDir,
-    set: (value: string) => {
-      groupedConfig.codex.sessionDir = value;
-    },
-    enumerable: true,
-  },
-  codexArchivedSessionDir: {
-    get: () => groupedConfig.codex.archivedSessionDir,
-    set: (value: string) => {
-      groupedConfig.codex.archivedSessionDir = value;
-    },
-    enumerable: true,
-  },
-  antigravityLogDir: {
-    get: () => groupedConfig.antigravity.logDir,
-    set: (value: string) => {
-      groupedConfig.antigravity.logDir = value;
-    },
-    enumerable: true,
-  },
-  agentLogSyncIntervalSeconds: {
-    get: () => groupedConfig.agentLogSync.intervalSeconds,
-    set: (value: number) => {
-      groupedConfig.agentLogSync.intervalSeconds = value;
-    },
-    enumerable: true,
-  },
-  agentLogInitialLookbackHours: {
-    get: () => groupedConfig.agentLogSync.initialLookbackHours,
-    set: (value: number) => {
-      groupedConfig.agentLogSync.initialLookbackHours = value;
-    },
-    enumerable: true,
-  },
-  antigravityLogInitialLookbackHours: {
-    get: () => groupedConfig.antigravity.initialLookbackHours,
-    set: (value: number) => {
-      groupedConfig.antigravity.initialLookbackHours = value;
-    },
-    enumerable: true,
-  },
-  agentLogMaxMessagesPerChunk: {
-    get: () => groupedConfig.agentLogSync.maxMessagesPerChunk,
-    set: (value: number) => {
-      groupedConfig.agentLogSync.maxMessagesPerChunk = value;
-    },
-    enumerable: true,
-  },
-  agentLogMaxCharsPerChunk: {
-    get: () => groupedConfig.agentLogSync.maxCharsPerChunk,
-    set: (value: number) => {
-      groupedConfig.agentLogSync.maxCharsPerChunk = value;
-    },
-    enumerable: true,
-  },
-  agentLogSyncLockTtlSeconds: {
-    get: () => groupedConfig.agentLogSync.lockTtlSeconds,
-    set: (value: number) => {
-      groupedConfig.agentLogSync.lockTtlSeconds = value;
-    },
-    enumerable: true,
-  },
-  agentLogSyncLockFile: {
-    get: () => groupedConfig.agentLogSync.lockFile,
-    set: (value: string) => {
-      groupedConfig.agentLogSync.lockFile = value;
-    },
-    enumerable: true,
-  },
-  localLlmApiBaseUrl: {
-    get: () => groupedConfig.localLlm.apiBaseUrl,
-    set: (value: string) => {
-      groupedConfig.localLlm.apiBaseUrl = value;
-    },
-    enumerable: true,
-  },
-  localLlmApiKey: {
-    get: () => groupedConfig.localLlm.apiKey,
-    set: (value: string) => {
-      groupedConfig.localLlm.apiKey = value;
-    },
-    enumerable: true,
-  },
-  localLlmModel: {
-    get: () => groupedConfig.localLlm.model,
-    set: (value: string) => {
-      groupedConfig.localLlm.model = value;
-    },
-    enumerable: true,
-  },
-  vibeDistillationPromptVersion: {
-    get: () => groupedConfig.vibeDistillation.promptVersion,
-    set: (value: string) => {
-      groupedConfig.vibeDistillation.promptVersion = value;
-    },
-    enumerable: true,
-  },
-  vibeDistillationBatchSize: {
-    get: () => groupedConfig.vibeDistillation.batchSize,
-    set: (value: number) => {
-      groupedConfig.vibeDistillation.batchSize = value;
-    },
-    enumerable: true,
-  },
-  vibeDistillationMaxInputChars: {
-    get: () => groupedConfig.vibeDistillation.maxInputChars,
-    set: (value: number) => {
-      groupedConfig.vibeDistillation.maxInputChars = value;
-    },
-    enumerable: true,
-  },
-  vibeDistillationMaxOutputTokens: {
-    get: () => groupedConfig.vibeDistillation.maxOutputTokens,
-    set: (value: number) => {
-      groupedConfig.vibeDistillation.maxOutputTokens = value;
-    },
-    enumerable: true,
-  },
-  vibeDistillationTimeoutMs: {
-    get: () => groupedConfig.vibeDistillation.timeoutMs,
-    set: (value: number) => {
-      groupedConfig.vibeDistillation.timeoutMs = value;
-    },
-    enumerable: true,
-  },
-  vibeDistillationLockTtlSeconds: {
-    get: () => groupedConfig.vibeDistillation.lockTtlSeconds,
-    set: (value: number) => {
-      groupedConfig.vibeDistillation.lockTtlSeconds = value;
-    },
-    enumerable: true,
-  },
-  vibeDistillationLockFile: {
-    get: () => groupedConfig.vibeDistillation.lockFile,
-    set: (value: string) => {
-      groupedConfig.vibeDistillation.lockFile = value;
-    },
-    enumerable: true,
-  },
-  distillationToolMaxRounds: {
-    get: () => groupedConfig.distillationTools.maxRounds,
-    set: (value: number) => {
-      groupedConfig.distillationTools.maxRounds = value;
-    },
-    enumerable: true,
-  },
-  distillationToolTimeoutMs: {
-    get: () => groupedConfig.distillationTools.timeoutMs,
-    set: (value: number) => {
-      groupedConfig.distillationTools.timeoutMs = value;
-    },
-    enumerable: true,
-  },
-  distillationToolResultMaxChars: {
-    get: () => groupedConfig.distillationTools.resultMaxChars,
-    set: (value: number) => {
-      groupedConfig.distillationTools.resultMaxChars = value;
-    },
-    enumerable: true,
-  },
-  distillationSearchResultCount: {
-    get: () => groupedConfig.distillationTools.searchResultCount,
-    set: (value: number) => {
-      groupedConfig.distillationTools.searchResultCount = value;
-    },
-    enumerable: true,
-  },
-  distillationMaxCandidates: {
-    get: () => groupedConfig.distillationTools.maxCandidates,
-    set: (value: number) => {
-      groupedConfig.distillationTools.maxCandidates = value;
-    },
-    enumerable: true,
-  },
-  distillationMinCandidateScore: {
-    get: () => groupedConfig.distillationTools.minCandidateScore,
-    set: (value: number) => {
-      groupedConfig.distillationTools.minCandidateScore = value;
-    },
-    enumerable: true,
-  },
-  distillationFailureRetryDelaySeconds: {
-    get: () => groupedConfig.distillationTools.failureRetryDelaySeconds,
-    set: (value: number) => {
-      groupedConfig.distillationTools.failureRetryDelaySeconds = value;
-    },
-    enumerable: true,
-  },
-  sourceDistillationPromptVersion: {
-    get: () => groupedConfig.sourceDistillation.promptVersion,
-    set: (value: string) => {
-      groupedConfig.sourceDistillation.promptVersion = value;
-    },
-    enumerable: true,
-  },
-  sourceDistillationBatchSize: {
-    get: () => groupedConfig.sourceDistillation.batchSize,
-    set: (value: number) => {
-      groupedConfig.sourceDistillation.batchSize = value;
-    },
-    enumerable: true,
-  },
-  sourceDistillationMaxInputChars: {
-    get: () => groupedConfig.sourceDistillation.maxInputChars,
-    set: (value: number) => {
-      groupedConfig.sourceDistillation.maxInputChars = value;
-    },
-    enumerable: true,
-  },
-  sourceDistillationMaxOutputTokens: {
-    get: () => groupedConfig.sourceDistillation.maxOutputTokens,
-    set: (value: number) => {
-      groupedConfig.sourceDistillation.maxOutputTokens = value;
-    },
-    enumerable: true,
-  },
-  sourceDistillationLockTtlSeconds: {
-    get: () => groupedConfig.sourceDistillation.lockTtlSeconds,
-    set: (value: number) => {
-      groupedConfig.sourceDistillation.lockTtlSeconds = value;
-    },
-    enumerable: true,
-  },
-  sourceDistillationLockFile: {
-    get: () => groupedConfig.sourceDistillation.lockFile,
-    set: (value: string) => {
-      groupedConfig.sourceDistillation.lockFile = value;
-    },
-    enumerable: true,
-  },
-  defaultTokenBudget: {
-    get: () => groupedConfig.compile.defaultTokenBudget,
-    set: (value: number) => {
-      groupedConfig.compile.defaultTokenBudget = value;
-    },
-    enumerable: true,
-  },
-  enableVectorSearch: {
-    get: () => groupedConfig.compile.enableVectorSearch,
-    set: (value: boolean) => {
-      groupedConfig.compile.enableVectorSearch = value;
-    },
-    enumerable: true,
-  },
-  azureOpenAiApiKey: {
-    get: () => groupedConfig.azureOpenAi.apiKey,
-    set: (value: string) => {
-      groupedConfig.azureOpenAi.apiKey = value;
-    },
-    enumerable: true,
-  },
-  azureOpenAiApiBaseUrl: {
-    get: () => groupedConfig.azureOpenAi.apiBaseUrl,
-    set: (value: string) => {
-      groupedConfig.azureOpenAi.apiBaseUrl = value;
-    },
-    enumerable: true,
-  },
-  azureOpenAiApiPath: {
-    get: () => groupedConfig.azureOpenAi.apiPath,
-    set: (value: string) => {
-      groupedConfig.azureOpenAi.apiPath = value;
-    },
-    enumerable: true,
-  },
-  azureOpenAiApiVersion: {
-    get: () => groupedConfig.azureOpenAi.apiVersion,
-    set: (value: string) => {
-      groupedConfig.azureOpenAi.apiVersion = value;
-    },
-    enumerable: true,
-  },
-  azureOpenAiModel: {
-    get: () => groupedConfig.azureOpenAi.model,
-    set: (value: string) => {
-      groupedConfig.azureOpenAi.model = value;
-    },
-    enumerable: true,
-  },
-  bedrockModel: {
-    get: () => groupedConfig.bedrock.model,
-    set: (value: string) => {
-      groupedConfig.bedrock.model = value;
-    },
-    enumerable: true,
-  },
-  bedrockRegion: {
-    get: () => groupedConfig.bedrock.region,
-    set: (value: string) => {
-      groupedConfig.bedrock.region = value;
-    },
-    enumerable: true,
-  },
-  bedrockProfile: {
-    get: () => groupedConfig.bedrock.profile,
-    set: (value: string) => {
-      groupedConfig.bedrock.profile = value;
-    },
-    enumerable: true,
-  },
-  agenticCompileProvider: {
-    get: () => groupedConfig.agenticCompile.provider,
-    set: (value: AgenticCompileProvider) => {
-      groupedConfig.agenticCompile.provider = value;
-    },
-    enumerable: true,
-  },
-  agenticCompileEnabled: {
-    get: () => groupedConfig.agenticCompile.enabled,
-    set: (value: boolean) => {
-      groupedConfig.agenticCompile.enabled = value;
-    },
-    enumerable: true,
-  },
-  agenticCompileTimeoutMs: {
-    get: () => groupedConfig.agenticCompile.timeoutMs,
-    set: (value: number) => {
-      groupedConfig.agenticCompile.timeoutMs = value;
-    },
-    enumerable: true,
-  },
-  agenticCompileMaxTokens: {
-    get: () => groupedConfig.agenticCompile.maxTokens,
-    set: (value: number) => {
-      groupedConfig.agenticCompile.maxTokens = value;
-    },
-    enumerable: true,
-  },
-  doctorFreshnessThresholdMinutes: {
-    get: () => groupedConfig.doctor.freshnessThresholdMinutes,
-    set: (value: number) => {
-      groupedConfig.doctor.freshnessThresholdMinutes = value;
-    },
-    enumerable: true,
-  },
-  doctorDegradedRateThreshold: {
-    get: () => groupedConfig.doctor.degradedRateThreshold,
-    set: (value: number) => {
-      groupedConfig.doctor.degradedRateThreshold = value;
-    },
-    enumerable: true,
-  },
-});
+export type { GroupedConfig, EmbeddingProvider, AgenticCompileProvider, DistillationProvider };

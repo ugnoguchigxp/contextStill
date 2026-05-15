@@ -65,6 +65,7 @@ export type CompileRunSummary = {
   status: "ok" | "degraded" | "failed";
   degradedReasons: string[];
   durationMs: number;
+  cacheKeyDraft?: string | null;
   createdAt: Date;
 };
 
@@ -93,6 +94,7 @@ export async function listRecentCompileRuns(limit = 20): Promise<CompileRunSumma
       id: contextCompileRuns.id,
       goal: contextCompileRuns.goal,
       intent: contextCompileRuns.intent,
+      input: contextCompileRuns.input,
       retrievalMode: contextCompileRuns.retrievalMode,
       status: contextCompileRuns.status,
       degradedReasons: contextCompileRuns.degradedReasons,
@@ -104,6 +106,21 @@ export async function listRecentCompileRuns(limit = 20): Promise<CompileRunSumma
     .limit(normalizedLimit);
 
   return rows.map((row) => ({
+    ...(() => {
+      const input =
+        row.input && typeof row.input === "object" && !Array.isArray(row.input)
+          ? (row.input as Record<string, unknown>)
+          : {};
+      const diagnostics =
+        input._compileDiagnostics &&
+        typeof input._compileDiagnostics === "object" &&
+        !Array.isArray(input._compileDiagnostics)
+          ? (input._compileDiagnostics as Record<string, unknown>)
+          : {};
+      const cacheKeyDraft =
+        typeof diagnostics.cacheKeyDraft === "string" ? diagnostics.cacheKeyDraft : null;
+      return { cacheKeyDraft };
+    })(),
     id: row.id,
     goal: row.goal,
     intent: row.intent,

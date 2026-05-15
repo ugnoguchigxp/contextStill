@@ -1,6 +1,6 @@
 import crypto from "node:crypto";
 import { and, asc, eq, sql } from "drizzle-orm";
-import { config } from "../../config.js";
+import { groupedConfig } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
   knowledgeSourceLinks,
@@ -58,7 +58,7 @@ export async function listSourceFragmentsForDistillation(params: {
         where ${sourceDistillationRuns.sourceFragmentId} = ${sourceFragments.id}
           and ${sourceDistillationRuns.promptVersion} = ${params.promptVersion}
           and ${sourceDistillationRuns.status} = 'failed'
-          and ${sourceDistillationRuns.updatedAt} > now() - (${config.distillationFailureRetryDelaySeconds} * interval '1 second')
+          and ${sourceDistillationRuns.updatedAt} > now() - (${groupedConfig.distillationTools.failureRetryDelaySeconds} * interval '1 second')
       )
     `;
   const rows = await db

@@ -1,6 +1,6 @@
 import { describe, expect, test, vi, beforeEach } from "vitest";
 import { embedOne, embeddingHealth } from "../src/modules/embedding/embedding.service.js";
-import { config } from "../src/config.js";
+import { groupedConfig } from "../src/config.js";
 import { execFile } from "node:child_process";
 import { access } from "node:fs/promises";
 
@@ -11,7 +11,7 @@ vi.mock("node:fs/promises", () => ({
   access: vi.fn(),
 }));
 vi.mock("../src/config.js", () => ({
-  config: {
+  groupedConfig: {
     embeddingProvider: "auto",
     embeddingDaemonUrl: "http://daemon",
     embeddingDimension: 3,
@@ -27,7 +27,7 @@ describe("Embedding Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal("fetch", vi.fn());
-    config.embeddingProvider = "auto";
+    groupedConfig.embedding.provider = "auto";
   });
 
   test("embedOne uses daemon if available", async () => {
@@ -50,9 +50,14 @@ describe("Embedding Service", () => {
     vi.mocked(fetch).mockResolvedValue({ ok: false, status: 500 } as any);
 
     // CLI succeeds
-    vi.mocked(execFile).mockImplementation((cmd, args, opts, cb) => {
-      if (cb) (cb as any)(null, JSON.stringify([{ embedding: [0.4, 0.5, 0.6], dimension: 3 }]), "");
-
+    vi.mocked(execFile).mockImplementation((...callArgs: any[]) => {
+      const cb = callArgs.at(-1);
+      if (typeof cb === "function") {
+        cb(null, {
+          stdout: JSON.stringify([{ embedding: [0.4, 0.5, 0.6], dimension: 3 }]),
+          stderr: "",
+        });
+      }
       return {} as any;
     });
 
@@ -67,8 +72,13 @@ describe("Embedding Service", () => {
     );
   });
 
+  test("embedOne throws when provider is disabled", async () => {
+    groupedConfig.embedding.provider = "disabled";
+    await expect(embedOne("hello", "query")).rejects.toThrow("embedding provider is disabled");
+  });
+
   test("validateEmbeddingShape throws on dimension mismatch", async () => {
-    config.embeddingProvider = "daemon";
+    groupedConfig.embedding.provider = "daemon";
     vi.mocked(fetch).mockResolvedValue({
       ok: true,
       json: () =>
@@ -88,5 +98,19 @@ describe("Embedding Service", () => {
     const health = await embeddingHealth();
     expect(health.daemon.reachable).toBe(true);
     expect(health.cli.usable).toBe(true);
+  });
+
+  test("embedOne includes daemon/cli failures when auto fallback exhausts", async () => {
+    groupedConfig.embedding.provider = "auto";
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 503 } as any);
+    vi.mocked(execFile).mockImplementation((...callArgs: any[]) => {
+      const cb = callArgs.at(-1);
+      if (typeof cb === "function") {
+        cb(new Error("CLI unavailable"), "", "");
+      }
+      return {} as any;
+    });
+
+    await expect(embedOne("hello", "query")).rejects.toThrow(/daemon: HTTP 503; cli:/);
   });
 });

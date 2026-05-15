@@ -1,7 +1,7 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
-import { config } from "../../../src/config.js";
+import { groupedConfig } from "../../../src/config.js";
 import { deleteSourceByUri } from "./sources.repository.js";
 import {
   commitDeleteChange,
@@ -95,8 +95,8 @@ const folderErrorStatus = (error: unknown): 400 | 404 | 409 => {
 };
 
 async function ensureSourceRuntime(): Promise<void> {
-  await ensureContentRoot(config.sourceContentRoot);
-  await ensureGitRepo(config.sourceContentRoot);
+  await ensureContentRoot(groupedConfig.sourceContent.root);
+  await ensureGitRepo(groupedConfig.sourceContent.root);
 }
 
 const makeExcerpt = (body: string, query: string): string => {
@@ -128,7 +128,7 @@ const searchableMetaText = (meta: Record<string, unknown>): string => {
 export const sourcesRouter = new Hono()
   .get("/health", async (c) => {
     await ensureSourceRuntime();
-    const git = await getGitSummary(config.sourceContentRoot);
+    const git = await getGitSummary(groupedConfig.sourceContent.root);
     return c.json({
       app: "memory-router",
       version: "0.1.0",
@@ -138,8 +138,8 @@ export const sourcesRouter = new Hono()
   .get("/tree", async (c) => {
     await ensureSourceRuntime();
     const [items, folders] = await Promise.all([
-      listPages(config.sourceContentRoot),
-      listFolders(config.sourceContentRoot),
+      listPages(groupedConfig.sourceContent.root),
+      listFolders(groupedConfig.sourceContent.root),
     ]);
     return c.json({ items, folders });
   })
@@ -151,12 +151,12 @@ export const sourcesRouter = new Hono()
       return c.json({ items: [] });
     }
 
-    const tree = await listPages(config.sourceContentRoot);
+    const tree = await listPages(groupedConfig.sourceContent.root);
     const hits: Array<{ slug: string; excerpt: string }> = [];
     const queryLower = query.toLowerCase();
 
     for (const item of tree) {
-      const page = await readPage(config.sourceContentRoot, item.slug);
+      const page = await readPage(groupedConfig.sourceContent.root, item.slug);
       if (!page) continue;
       const metaText = searchableMetaText(page.meta);
       const searchableText = `${page.slug}\n${page.title}\n${metaText}\n${page.body}`;
@@ -173,10 +173,10 @@ export const sourcesRouter = new Hono()
   })
   .post("/reindex", async (c) => {
     await ensureSourceRuntime();
-    const pages = await listPages(config.sourceContentRoot);
+    const pages = await listPages(groupedConfig.sourceContent.root);
     let indexed = 0;
     for (const item of pages) {
-      const page = await readPage(config.sourceContentRoot, item.slug);
+      const page = await readPage(groupedConfig.sourceContent.root, item.slug);
       if (!page) continue;
       await upsertSourceDocument({
         sourceKind: "wiki",
@@ -196,16 +196,16 @@ export const sourcesRouter = new Hono()
   })
   .get("/folders", async (c) => {
     await ensureSourceRuntime();
-    const items = await listFolders(config.sourceContentRoot);
+    const items = await listFolders(groupedConfig.sourceContent.root);
     return c.json({ items });
   })
   .post("/folders", zValidator("json", writeFolderSchema), async (c) => {
     await ensureSourceRuntime();
     const payload = c.req.valid("json");
     try {
-      const created = await createFolder(config.sourceContentRoot, payload.path);
+      const created = await createFolder(groupedConfig.sourceContent.root, payload.path);
       const commit = await commitFileChange(
-        config.sourceContentRoot,
+        groupedConfig.sourceContent.root,
         created.keepFilePath,
         `docs(folder): create ${created.path}`,
       );
@@ -228,9 +228,13 @@ export const sourcesRouter = new Hono()
     }
     const payload = c.req.valid("json");
     try {
-      const renamed = await renameFolder(config.sourceContentRoot, folderPath, payload.path);
+      const renamed = await renameFolder(
+        groupedConfig.sourceContent.root,
+        folderPath,
+        payload.path,
+      );
       const commit = await commitPathsChange(
-        config.sourceContentRoot,
+        groupedConfig.sourceContent.root,
         [renamed.oldAbsolutePath, renamed.newAbsolutePath],
         `docs(folder): rename ${renamed.from} to ${renamed.path}`,
       );
@@ -258,9 +262,9 @@ export const sourcesRouter = new Hono()
       return c.json(invalidFolderResponse(folderPath), 400);
     }
     try {
-      const deleted = await deleteFolder(config.sourceContentRoot, folderPath);
+      const deleted = await deleteFolder(groupedConfig.sourceContent.root, folderPath);
       const commit = await commitPathsChange(
-        config.sourceContentRoot,
+        groupedConfig.sourceContent.root,
         [deleted.absolutePath],
         `docs(folder): delete ${deleted.path}`,
       );
@@ -286,7 +290,7 @@ export const sourcesRouter = new Hono()
     if (isInvalidSlug(slug)) {
       return c.json(invalidSlugResponse(slug), 400);
     }
-    const page = await readPage(config.sourceContentRoot, slug);
+    const page = await readPage(groupedConfig.sourceContent.root, slug);
     if (!page) {
       return c.json({ message: "Page not found", slug }, 404);
     }
@@ -295,23 +299,23 @@ export const sourcesRouter = new Hono()
   .post("/pages", zValidator("json", writePageSchema), async (c) => {
     await ensureSourceRuntime();
     const payload = c.req.valid("json");
-    const existing = await readPage(config.sourceContentRoot, payload.slug);
+    const existing = await readPage(groupedConfig.sourceContent.root, payload.slug);
     if (existing) {
       return c.json({ message: "Page already exists", slug: payload.slug }, 409);
     }
     const { path, hash } = await writePage(
-      config.sourceContentRoot,
+      groupedConfig.sourceContent.root,
       payload.slug,
       payload.title,
       payload.body,
       payload.meta ?? {},
     );
     const commit = await commitFileChange(
-      config.sourceContentRoot,
+      groupedConfig.sourceContent.root,
       path,
       `docs(page): create ${payload.slug || "home"}`,
     );
-    const savedPage = await readPage(config.sourceContentRoot, payload.slug);
+    const savedPage = await readPage(groupedConfig.sourceContent.root, payload.slug);
     if (!savedPage) {
       return c.json({ message: "Page save verification failed" }, 500);
     }
@@ -332,14 +336,14 @@ export const sourcesRouter = new Hono()
     if (isInvalidSlug(slug)) {
       return c.json(invalidSlugResponse(slug), 400);
     }
-    const existing = await readPage(config.sourceContentRoot, slug);
+    const existing = await readPage(groupedConfig.sourceContent.root, slug);
     if (!existing) {
       return c.json({ message: "Page not found", slug }, 404);
     }
     const payload = c.req.valid("json");
     const targetSlug = payload.slug ?? slug;
     if (targetSlug !== slug) {
-      const targetExisting = await readPage(config.sourceContentRoot, targetSlug);
+      const targetExisting = await readPage(groupedConfig.sourceContent.root, targetSlug);
       if (targetExisting) {
         return c.json({ message: "Page already exists", slug: targetSlug }, 409);
       }
@@ -347,7 +351,7 @@ export const sourcesRouter = new Hono()
     const title = payload.title ?? existing.title;
     const meta = payload.meta ?? existing.meta;
     const { path, hash } = await writePage(
-      config.sourceContentRoot,
+      groupedConfig.sourceContent.root,
       targetSlug,
       title,
       payload.body,
@@ -357,20 +361,20 @@ export const sourcesRouter = new Hono()
     let commit: string | null;
     if (targetSlug === slug) {
       commit = await commitFileChange(
-        config.sourceContentRoot,
+        groupedConfig.sourceContent.root,
         path,
         payload.commitMessage ?? `docs(page): update ${slug || "home"}`,
       );
     } else {
-      const deletedPath = await deletePage(config.sourceContentRoot, slug);
+      const deletedPath = await deletePage(groupedConfig.sourceContent.root, slug);
       commit = await commitPathsChange(
-        config.sourceContentRoot,
+        groupedConfig.sourceContent.root,
         [path, deletedPath],
         payload.commitMessage ?? `docs(page): rename ${slug || "home"} to ${targetSlug || "home"}`,
       );
       await deleteSourceByUri(existing.path);
     }
-    const savedPage = await readPage(config.sourceContentRoot, targetSlug);
+    const savedPage = await readPage(groupedConfig.sourceContent.root, targetSlug);
     if (!savedPage) {
       return c.json({ message: "Page save verification failed", slug: targetSlug }, 500);
     }
@@ -391,14 +395,14 @@ export const sourcesRouter = new Hono()
     if (isInvalidSlug(slug)) {
       return c.json(invalidSlugResponse(slug), 400);
     }
-    const existing = await readPage(config.sourceContentRoot, slug);
+    const existing = await readPage(groupedConfig.sourceContent.root, slug);
     if (!existing) {
       return c.json({ message: "Page not found", slug }, 404);
     }
     try {
-      const deletedPath = await deletePage(config.sourceContentRoot, slug);
+      const deletedPath = await deletePage(groupedConfig.sourceContent.root, slug);
       const commit = await commitDeleteChange(
-        config.sourceContentRoot,
+        groupedConfig.sourceContent.root,
         deletedPath,
         `docs(page): delete ${slug || "home"}`,
       );
@@ -414,7 +418,7 @@ export const sourcesRouter = new Hono()
     if (isInvalidSlug(slug)) {
       return c.json(invalidSlugResponse(slug), 400);
     }
-    const items = await getPageHistory(config.sourceContentRoot, slug);
+    const items = await getPageHistory(groupedConfig.sourceContent.root, slug);
     return c.json({ slug, items });
   })
   .get("/diff/*", zValidator("query", diffQuerySchema), async (c) => {
@@ -427,6 +431,6 @@ export const sourcesRouter = new Hono()
     if (!from || !to) {
       return c.json({ message: "from and to query are required" }, 400);
     }
-    const diff = await getPageDiff(config.sourceContentRoot, slug, from, to);
+    const diff = await getPageDiff(groupedConfig.sourceContent.root, slug, from, to);
     return c.json({ slug, from, to, diff });
   });

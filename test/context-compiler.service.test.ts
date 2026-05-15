@@ -1,5 +1,5 @@
 import { describe, expect, test, vi, beforeEach, afterAll } from "vitest";
-import { config } from "../src/config.js";
+import { groupedConfig } from "../src/config.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
 import { retrieveKnowledge } from "../src/modules/knowledge/knowledge.service.js";
 import { retrieveSources } from "../src/modules/sources/source-retrieval.service.js";
@@ -16,16 +16,16 @@ vi.mock("../src/modules/context-compiler/pack-renderer.js", () => ({
 }));
 
 describe("Context Compiler Service", () => {
-  const originalAgenticCompileEnabled = config.agenticCompileEnabled;
+  const originalAgenticCompileEnabled = groupedConfig.agenticCompile.enabled;
 
   beforeEach(() => {
     vi.clearAllMocks();
-    config.agenticCompileEnabled = false;
+    groupedConfig.agenticCompile.enabled = false;
     vi.mocked(insertCompileRun).mockResolvedValue("550e8400-e29b-41d4-a716-446655440000");
   });
 
   afterAll(() => {
-    config.agenticCompileEnabled = originalAgenticCompileEnabled;
+    groupedConfig.agenticCompile.enabled = originalAgenticCompileEnabled;
   });
 
   test("compiles a basic pack and resolves procedure mode by keyword", async () => {

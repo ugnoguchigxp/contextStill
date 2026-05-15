@@ -4,6 +4,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/ugnoguchigxp/memoryRouter/actions/workflows/verify.yml"><img alt="verify" src="https://github.com/ugnoguchigxp/memoryRouter/actions/workflows/verify.yml/badge.svg"></a>
+</p>
+
+<p align="center">
   <a href="#quick-start">Quick Start</a> ·
   <a href="#how-it-works">How It Works</a> ·
   <a href="#mcp-integration">MCP Integration</a> ·
@@ -94,26 +98,24 @@
 ### Setup
 
 ```bash
-# 1. Clone and install
 git clone https://github.com/user/memory-router.git
 cd memory-router
 bun install
-
-# 2. Start PostgreSQL with pgvector
 docker compose up -d
-
-# 3. Configure environment
 cp .env.example .env
-# Edit .env if needed (defaults work for local development)
-
-# 4. Run database migrations
 bun run db:migrate
-
-# 5. Verify everything works
-bun run verify
+bun run init:project -- --distill-sources-apply --json
 ```
 
-### Start developing
+`init:project` の出力には次アクション（`compile` / `doctor` / draft review）が含まれます。  
+まずは次のコマンドで動作確認できます。
+
+```bash
+bun run doctor
+bun run compile --goal "このリポジトリの開発フローを把握したい" --intent plan --json
+```
+
+### Start Developing
 
 ```bash
 # Start the dev server (UI + API)
@@ -212,6 +214,8 @@ Add to your MCP client configuration:
 | `context_compile` | Generate context pack for current task | **Primary tool** — call before every task |
 | `search_knowledge` | Raw knowledge candidate inspection | When `context_compile` results need investigation |
 | `register_knowledge` | Register new rules or procedures | When the agent discovers reusable patterns |
+| `list_knowledge` | List draft/active/deprecated backlog | When triaging knowledge lifecycle |
+| `update_knowledge` | Update status/title/body/metadata | When promoting or deprecating knowledge |
 | `memory_search` | Search past conversations and diffs | When looking for specific past context |
 | `memory_fetch` | Fetch a specific memory by ID | When inspecting a specific conversation |
 | `doctor` | System health diagnostics | When compile is degraded/failed |

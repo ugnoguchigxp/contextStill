@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { config } from "../config.js";
+import { groupedConfig } from "../config.js";
 import { closeDbPool } from "../db/index.js";
 import { distillSources } from "../modules/sources/distillation.service.js";
 
@@ -144,8 +144,8 @@ function parseArgs(args: string[]): CliOptions {
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   const lock = await acquireLock(
-    config.sourceDistillationLockFile,
-    config.sourceDistillationLockTtlSeconds,
+    groupedConfig.sourceDistillation.lockFile,
+    groupedConfig.sourceDistillation.lockTtlSeconds,
   );
   try {
     const summary = await distillSources(options);

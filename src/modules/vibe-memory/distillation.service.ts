@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { config } from "../../config.js";
+import { groupedConfig } from "../../config.js";
 import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import {
@@ -14,9 +14,11 @@ import {
   type DistillationMessage,
   type DistillationModelRequest,
   callLocalLlmCompletionForDistillation,
+  resolveDistillationModel,
 } from "../distillation/distillation-runtime.service.js";
 import { embedOne } from "../embedding/embedding.service.js";
 import { upsertKnowledgeFromSource } from "../knowledge/knowledge.repository.js";
+import { checkKnowledgeDuplicate } from "../../lib/knowledge-dedup.js";
 import {
   type AgentDiffEntryForDistillation,
   type VibeMemoryDistillationStatus,
@@ -129,7 +131,7 @@ export function buildVibeMemoryDistillationMessages(params: {
   diffEntries: AgentDiffEntryForDistillation[];
   maxInputChars?: number;
 }): DistillationMessage[] {
-  const maxInputChars = params.maxInputChars ?? config.vibeDistillationMaxInputChars;
+  const maxInputChars = params.maxInputChars ?? groupedConfig.vibeDistillation.maxInputChars;
   const diffBudget = Math.max(
     600,
     Math.floor(maxInputChars / Math.max(1, params.diffEntries.length + 2)),
@@ -201,6 +203,7 @@ async function parseDistillationCandidatesWithRepair(params: {
   messages: DistillationMessage[];
   modelClient: DistillationModelClient;
   maxTokens: number;
+  model: string;
 }): Promise<{ candidates: DistilledKnowledgeCandidate[]; repaired: boolean }> {
   try {
     return {
@@ -209,7 +212,7 @@ async function parseDistillationCandidatesWithRepair(params: {
     };
   } catch (initialError) {
     const repairResponse = await params.modelClient({
-      model: config.localLlmModel,
+      model: params.model,
       messages: [
         ...params.messages,
         {
@@ -288,6 +291,7 @@ async function recordDistillationRun(params: {
   knowledgeIds: string[];
   error?: string;
   inputHash: string;
+  model: string;
   metadata?: Record<string, unknown>;
 }) {
   if (!recordRunEnabled(params.apply)) return;
@@ -298,8 +302,8 @@ async function recordDistillationRun(params: {
     knowledgeIds: params.knowledgeIds,
     error: params.error,
     inputHash: params.inputHash,
-    promptVersion: config.vibeDistillationPromptVersion,
-    model: config.localLlmModel,
+    promptVersion: groupedConfig.vibeDistillation.promptVersion,
+    model: params.model,
     metadata: params.metadata,
   });
 }
@@ -308,6 +312,7 @@ export async function distillVibeMemories(
   options: DistillVibeMemoriesOptions = {},
 ): Promise<DistillVibeMemoriesSummary> {
   const apply = Boolean(options.apply);
+  const distillationModel = resolveDistillationModel();
   const modelClient = options.modelClient ?? callLocalLlmCompletionForDistillation;
   const embedder = options.embedder ?? defaultEmbedder;
   const workspaceRepoPath = normalizeRepoPath(process.cwd());
@@ -317,9 +322,9 @@ export async function distillVibeMemories(
     actor: "system",
     payload: {
       apply,
-      model: config.localLlmModel,
-      promptVersion: config.vibeDistillationPromptVersion,
-      limit: options.limit ?? config.vibeDistillationBatchSize,
+      model: distillationModel,
+      promptVersion: groupedConfig.vibeDistillation.promptVersion,
+      limit: options.limit ?? groupedConfig.vibeDistillation.batchSize,
       includeProcessed: Boolean(options.includeProcessed),
       sessionId: options.sessionId ?? null,
       vibeMemoryIdCount: options.vibeMemoryIds?.length ?? 0,
@@ -329,10 +334,10 @@ export async function distillVibeMemories(
   const results: DistilledVibeMemoryResult[] = [];
   try {
     const memories = await listVibeMemoriesForDistillation({
-      limit: options.limit ?? config.vibeDistillationBatchSize,
+      limit: options.limit ?? groupedConfig.vibeDistillation.batchSize,
       sessionId: options.sessionId,
       vibeMemoryIds: options.vibeMemoryIds,
-      promptVersion: config.vibeDistillationPromptVersion,
+      promptVersion: groupedConfig.vibeDistillation.promptVersion,
       includeProcessed: options.includeProcessed,
     });
     const diffEntries = await listAgentDiffEntriesForVibeMemories(
@@ -357,9 +362,9 @@ export async function distillVibeMemories(
       try {
         const completion = normalizeDistillationModelResult(
           await modelClient({
-            model: config.localLlmModel,
+            model: distillationModel,
             messages,
-            maxTokens: config.vibeDistillationMaxOutputTokens,
+            maxTokens: groupedConfig.vibeDistillation.maxOutputTokens,
           }),
         );
         const rawResponse = completion.content;
@@ -367,7 +372,8 @@ export async function distillVibeMemories(
           rawResponse,
           messages,
           modelClient,
-          maxTokens: config.vibeDistillationMaxOutputTokens,
+          maxTokens: groupedConfig.vibeDistillation.maxOutputTokens,
+          model: distillationModel,
         });
         const scoreGate = filterDistillationCandidatesByScore(candidates, {
           toolEvents: completion.toolEvents,
@@ -383,6 +389,7 @@ export async function distillVibeMemories(
             candidateCount: 0,
             knowledgeIds: [],
             inputHash,
+            model: distillationModel,
             metadata: {
               reason:
                 candidates.length === 0
@@ -421,13 +428,27 @@ export async function distillVibeMemories(
             )
           : [];
         const knowledgeIds: string[] = [];
+        let dedupSkippedCount = 0;
 
         if (apply) {
           for (const [index, candidate] of acceptedCandidates.entries()) {
+            // 蒸留前に重複チェック（閾値は MCP より少し緩め: 0.92）
+            const embedding = embeddings[index];
+            const dedupResult = await checkKnowledgeDuplicate(candidate.title, candidate.body, {
+              bodySimilarityThreshold: 0.92,
+              topK: 5,
+              embedding,
+            });
+            if (dedupResult.isDuplicate) {
+              // 重複の場合は既存 ID を採用し、新規挿入はスキップ
+              knowledgeIds.push(dedupResult.existingId);
+              dedupSkippedCount++;
+              continue;
+            }
             const knowledgeId = await upsertKnowledgeFromSource({
               sourceUri: `vibe-memory://${memory.id}`,
               contentHash: knowledgeContentHash({
-                promptVersion: config.vibeDistillationPromptVersion,
+                promptVersion: groupedConfig.vibeDistillation.promptVersion,
                 inputHash,
                 candidate,
               }),
@@ -450,8 +471,8 @@ export async function distillVibeMemories(
                 repoPath: memoryRepoScope.repoPath,
                 repoKey: memoryRepoScope.repoKey,
                 inputHash,
-                distillationModel: config.localLlmModel,
-                promptVersion: config.vibeDistillationPromptVersion,
+                distillationModel,
+                promptVersion: groupedConfig.vibeDistillation.promptVersion,
                 candidateIndex: index,
                 distillationScore: candidate.score,
                 distillationScoreThreshold: scoreGate.threshold,
@@ -472,12 +493,14 @@ export async function distillVibeMemories(
           candidateCount: acceptedCandidates.length,
           knowledgeIds,
           inputHash,
+          model: distillationModel,
           metadata: {
             sourceSessionId: memory.sessionId,
             diffEntryCount: memoryDiffs.length,
             jsonRepaired: repaired,
             rawCandidateCount: candidates.length,
             acceptedCandidateCount: acceptedCandidates.length,
+            dedupSkippedCount,
             scoreThreshold: scoreGate.threshold,
             rejectedLowScoreCount: rejectedLowScoreCandidates.length,
             rejectedLowScoreCandidates: summarizeRejectedCandidates(rejectedLowScoreCandidates),
@@ -507,6 +530,7 @@ export async function distillVibeMemories(
           knowledgeIds: [],
           error: message,
           inputHash,
+          model: distillationModel,
           metadata: {
             sourceSessionId: memory.sessionId,
             diffEntryCount: memoryDiffs.length,
@@ -532,8 +556,8 @@ export async function distillVibeMemories(
     const summary = {
       ok: failed === 0,
       apply,
-      model: config.localLlmModel,
-      promptVersion: config.vibeDistillationPromptVersion,
+      model: distillationModel,
+      promptVersion: groupedConfig.vibeDistillation.promptVersion,
       processed: results.length,
       skipped,
       failed,
@@ -586,8 +610,8 @@ export async function distillVibeMemories(
       payload: {
         ok: false,
         apply,
-        model: config.localLlmModel,
-        promptVersion: config.vibeDistillationPromptVersion,
+        model: distillationModel,
+        promptVersion: groupedConfig.vibeDistillation.promptVersion,
         processed: results.length,
         error: message,
       },

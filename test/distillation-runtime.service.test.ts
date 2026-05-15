@@ -1,11 +1,24 @@
 import { describe, expect, test, vi, beforeEach } from "vitest";
-import { runDistillationCompletion } from "../src/modules/distillation/distillation-runtime.service.js";
-import { config } from "../src/config.js";
+import {
+  resolveDistillationModel,
+  runDistillationCompletion,
+} from "../src/modules/distillation/distillation-runtime.service.js";
+import { groupedConfig } from "../src/config.js";
 
 vi.mock("../src/config.js", () => ({
-  config: {
+  groupedConfig: {
+    distillationProvider: "local-llm",
     localLlmApiBaseUrl: "http://llm",
     localLlmApiKey: "test-key",
+    localLlmModel: "mock-local-model",
+    azureOpenAiApiKey: "",
+    azureOpenAiApiBaseUrl: "",
+    azureOpenAiApiPath: "/openai/deployments",
+    azureOpenAiApiVersion: "2025-04-01-preview",
+    azureOpenAiModel: "",
+    bedrockRegion: "",
+    bedrockModel: "",
+    bedrockProfile: "",
     vibeDistillationTimeoutMs: 1000,
     distillationToolMaxRounds: 5,
   },
@@ -14,6 +27,14 @@ vi.mock("../src/config.js", () => ({
 describe("Distillation Runtime Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    groupedConfig.distillation.provider = "local-llm";
+    groupedConfig.localLlm.apiBaseUrl = "http://llm";
+    groupedConfig.localLlm.model = "mock-local-model";
+    groupedConfig.azureOpenAi.apiKey = "";
+    groupedConfig.azureOpenAi.apiBaseUrl = "";
+    groupedConfig.azureOpenAi.model = "";
+    groupedConfig.bedrock.region = "";
+    groupedConfig.bedrock.model = "";
   });
 
   test("runDistillationCompletion returns content immediately if no tools", async () => {
@@ -82,7 +103,7 @@ describe("Distillation Runtime Service", () => {
 
     await expect(
       runDistillationCompletion({ model: "test", messages: [], maxTokens: 100 }, { chatClient }),
-    ).rejects.toThrow("local-llm response did not include assistant content");
+    ).rejects.toThrow("distillation response did not include assistant content");
   });
 
   test("callLocalLlmChat performs fetch and parses response", async () => {
@@ -176,5 +197,25 @@ describe("Distillation Runtime Service", () => {
 
     // valid, no-args, with-id should remain (3 total)
     expect(result.messages.find((m) => m.role === "assistant")?.tool_calls).toHaveLength(3);
+  });
+
+  test("resolveDistillationModel uses selected provider model", () => {
+    groupedConfig.distillation.provider = "azure-openai";
+    groupedConfig.azureOpenAi.apiKey = "key";
+    groupedConfig.azureOpenAi.apiBaseUrl = "https://example.openai.azure.com";
+    groupedConfig.azureOpenAi.model = "gpt-5-4-mini";
+
+    expect(resolveDistillationModel()).toBe("gpt-5-4-mini");
+  });
+
+  test("resolveDistillationModel auto picks first configured provider", () => {
+    groupedConfig.distillation.provider = "auto";
+    groupedConfig.localLlm.apiBaseUrl = "";
+    groupedConfig.localLlm.model = "";
+    groupedConfig.azureOpenAi.apiKey = "key";
+    groupedConfig.azureOpenAi.apiBaseUrl = "https://example.openai.azure.com";
+    groupedConfig.azureOpenAi.model = "gpt-5-4-mini";
+
+    expect(resolveDistillationModel()).toBe("gpt-5-4-mini");
   });
 });

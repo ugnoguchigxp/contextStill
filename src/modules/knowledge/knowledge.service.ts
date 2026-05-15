@@ -1,4 +1,4 @@
-import { config } from "../../config.js";
+import { groupedConfig } from "../../config.js";
 import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
 import {
   type KnowledgeItem,
@@ -163,7 +163,7 @@ async function executeKnowledgeSearch(
       appendDegradedReason(degradedReasons, "KNOWLEDGE_TEXT_SEARCH_FAILED");
     }
 
-    if (config.enableVectorSearch) {
+    if (groupedConfig.compile.enableVectorSearch) {
       if (
         (!workingEmbedding || workingEmbedding.length === 0) &&
         params.generateEmbeddingIfMissing
@@ -171,7 +171,7 @@ async function executeKnowledgeSearch(
         try {
           workingEmbedding = await embedOne(params.primaryQuery, "query");
           embeddingStatus = "generated";
-          embeddingProvider = config.embeddingProvider;
+          embeddingProvider = groupedConfig.embedding.provider;
         } catch {
           embeddingStatus = "unavailable";
           appendDegradedReason(degradedReasons, "QUERY_EMBEDDING_UNAVAILABLE");

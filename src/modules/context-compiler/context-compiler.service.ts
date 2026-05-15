@@ -1,5 +1,5 @@
 import crypto from "node:crypto";
-import { config } from "../../config.js";
+import { groupedConfig } from "../../config.js";
 import {
   type CompileInput,
   type CompileErrorKind,
@@ -468,7 +468,7 @@ export async function compileContextPack(rawInput: unknown): Promise<{
   const compileStartedAt = Date.now();
   const input = compileInputSchema.parse(rawInput);
   const retrievalMode = resolveRetrievalMode(input);
-  const tokenBudget = input.tokenBudget ?? config.defaultTokenBudget;
+  const tokenBudget = input.tokenBudget ?? groupedConfig.compile.defaultTokenBudget;
   const normalizedRepoPath = normalizeRepoPath(input.repoPath);
   const normalizedRepoKey = normalizeRepoKey(input.repoPath);
 
@@ -629,7 +629,12 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     goal: input.goal,
     intent: input.intent,
     repoPath: normalizedRepoPath ?? input.repoPath,
-    input: input as unknown as Record<string, unknown>,
+    input: {
+      ...input,
+      _compileDiagnostics: {
+        cacheKeyDraft,
+      },
+    } as unknown as Record<string, unknown>,
     retrievalMode,
     status,
     degradedReasons,
@@ -674,7 +679,9 @@ export async function compileContextPack(rawInput: unknown): Promise<{
       ...(suggestedNextCalls.length > 0
         ? [`推奨される次の MCP コール: ${[...new Set(suggestedNextCalls)].join(", ")}`]
         : []),
-      ...(budgetDropDetected ? ["トークン予算の制限により、優先順位の低い項目がカットされました。"] : []),
+      ...(budgetDropDetected
+        ? ["トークン予算の制限により、優先順位の低い項目がカットされました。"]
+        : []),
     ],
     sourceRefs,
     diagnostics: {

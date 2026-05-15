@@ -1,7 +1,7 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { eq } from "drizzle-orm";
-import { config } from "../config.js";
+import { groupedConfig } from "../config.js";
 import { closeDbPool, getDb } from "../db/index.js";
 import { knowledgeItems, sources } from "../db/schema.js";
 import { normalizeRepoKey, normalizeRepoPath } from "../modules/context-compiler/query-context.js";
@@ -136,7 +136,7 @@ async function main(): Promise<void> {
       throw new Error("initial_instructions response is missing expected heading.");
     }
 
-    const queryEmbedding = new Array(config.embeddingDimension).fill(0);
+    const queryEmbedding = new Array(groupedConfig.embedding.dimension).fill(0);
     const noHit = await client.callTool({
       name: "context_compile",
       arguments: {

@@ -1,4 +1,4 @@
-import { config } from "../../config.js";
+import { groupedConfig } from "../../config.js";
 import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
 import type { KnowledgeItem, KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
 import { getAgenticLlmProviders } from "../llm/agentic-llm.service.js";
@@ -157,7 +157,7 @@ export async function agenticRefine(
   input: CompileInput,
   retrievalMode: RetrievalMode,
 ): Promise<AgenticRefineResult> {
-  if (!config.agenticCompileEnabled) {
+  if (!groupedConfig.agenticCompile.enabled) {
     return { items: candidates, agenticUsed: false };
   }
 
@@ -166,8 +166,8 @@ export async function agenticRefine(
   }
 
   const providers = getAgenticLlmProviders(
-    config.agenticCompileProvider,
-    config.agenticCompileTimeoutMs,
+    groupedConfig.agenticCompile.provider,
+    groupedConfig.agenticCompile.timeoutMs,
   );
   const allowFallback = providers.length > 1;
   const fallbackErrors: string[] = [];
@@ -189,7 +189,7 @@ export async function agenticRefine(
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        maxTokens: config.agenticCompileMaxTokens,
+        maxTokens: groupedConfig.agenticCompile.maxTokens,
         temperature: 0,
         responseFormat: "json",
       });

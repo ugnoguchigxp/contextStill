@@ -42,6 +42,7 @@ type InitProjectSummary = {
     smokeGoal: string;
     repoPath: string;
   };
+  mcpConfigSnippet: string;
   steps: {
     import?: {
       rootPath: string;
@@ -76,6 +77,22 @@ type InitProjectSummary = {
   };
   nextActions: string[];
 };
+
+function buildMcpConfigSnippet(cwd: string): string {
+  return JSON.stringify(
+    {
+      mcpServers: {
+        "memory-router": {
+          command: "bun",
+          args: ["run", "start:mcp"],
+          cwd,
+        },
+      },
+    },
+    null,
+    2,
+  );
+}
 
 const presetKnowledgeByName: Record<CliOptions["presetName"], PresetKnowledge[]> = {
   "typescript-react": [
@@ -287,6 +304,7 @@ async function main(): Promise<void> {
       smokeGoal: options.smokeGoal,
       repoPath: options.repoPath,
     },
+    mcpConfigSnippet: buildMcpConfigSnippet(options.repoPath),
     steps: {},
     nextActions: [],
   };
@@ -349,10 +367,14 @@ async function main(): Promise<void> {
   if (!options.runSmokeCompile) {
     summary.nextActions = [
       '必要なら bun run compile --goal "<your task>" --intent edit --json で smoke を実行する',
+      "bun run doctor でシステム健全性を確認する",
+      "mcpConfigSnippet を MCP クライアント設定へ貼り付ける",
       "Admin UI で新規 draft knowledge を review し、必要なものだけ active に昇格する",
     ];
   } else if (summary.steps.smokeCompile?.ok) {
     summary.nextActions = [
+      "bun run doctor でシステム健全性を確認する",
+      "mcpConfigSnippet を MCP クライアント設定へ貼り付ける",
       "Admin UI で新規 draft knowledge を review し、必要なものだけ active に昇格する",
       "通常運用では import:sources と distill:sources を定期実行する",
     ];
@@ -360,6 +382,8 @@ async function main(): Promise<void> {
     summary.nextActions = [
       "bun run import:sources -- <wiki root>",
       "bun run distill:sources -- --apply",
+      "bun run doctor でシステム健全性を確認する",
+      "mcpConfigSnippet を MCP クライアント設定へ貼り付ける",
       "Admin UI で draft knowledge の根拠を確認して active/deprecated を整理する",
       'bun run compile --goal "<your task>" --intent edit --json',
     ];

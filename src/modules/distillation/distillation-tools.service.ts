@@ -1,6 +1,6 @@
 import net from "node:net";
 import sanitizeHtml from "sanitize-html";
-import { config } from "../../config.js";
+import { groupedConfig } from "../../config.js";
 
 export type DistillationToolDefinition = {
   type: "function";
@@ -52,7 +52,7 @@ export type UrlSafetyResult = { safe: true } | { safe: false; reason: string };
 
 async function fetchWithTimeout(url: URL, init: RequestInit = {}): Promise<Response> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), config.distillationToolTimeoutMs);
+  const timer = setTimeout(() => controller.abort(), groupedConfig.distillationTools.timeoutMs);
   try {
     return await fetch(url, {
       ...init,
@@ -60,7 +60,7 @@ async function fetchWithTimeout(url: URL, init: RequestInit = {}): Promise<Respo
     });
   } catch (error) {
     if (error instanceof Error && error.name === "AbortError") {
-      throw new Error(`request timed out after ${config.distillationToolTimeoutMs}ms`);
+      throw new Error(`request timed out after ${groupedConfig.distillationTools.timeoutMs}ms`);
     }
     throw error;
   } finally {
@@ -109,7 +109,10 @@ export const distillationToolDefinitions: DistillationToolDefinition[] = [
   },
 ];
 
-function truncate(value: string, maxChars = config.distillationToolResultMaxChars): string {
+function truncate(
+  value: string,
+  maxChars = groupedConfig.distillationTools.resultMaxChars,
+): string {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, Math.max(0, maxChars - 24))}\n...[truncated]`;
 }
@@ -258,7 +261,7 @@ function parseDuckDuckGoResults(html: string): SearchResult[] {
     const url = cleanDuckDuckGoUrl(linkMatch[1] ?? "");
     const snippet = snippetMatch ? stripMarkup(snippetMatch[1] ?? "") : undefined;
     if (title && url) results.push({ title, url, snippet });
-    if (results.length >= config.distillationSearchResultCount) break;
+    if (results.length >= groupedConfig.distillationTools.searchResultCount) break;
   }
   return results;
 }
@@ -269,7 +272,7 @@ async function searchWithBrave(query: string): Promise<SearchResult[]> {
 
   const url = new URL("https://api.search.brave.com/res/v1/web/search");
   url.searchParams.set("q", query);
-  url.searchParams.set("count", String(config.distillationSearchResultCount));
+  url.searchParams.set("count", String(groupedConfig.distillationTools.searchResultCount));
   const response = await fetchWithTimeout(url, {
     headers: {
       accept: "application/json",
@@ -289,7 +292,7 @@ async function searchWithBrave(query: string): Promise<SearchResult[]> {
       snippet: typeof result.description === "string" ? stripMarkup(result.description) : undefined,
     }))
     .filter((result) => result.title && result.url)
-    .slice(0, config.distillationSearchResultCount);
+    .slice(0, groupedConfig.distillationTools.searchResultCount);
 }
 
 async function searchWithDuckDuckGo(query: string): Promise<SearchResult[]> {

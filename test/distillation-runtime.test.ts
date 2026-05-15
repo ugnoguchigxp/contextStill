@@ -104,6 +104,6 @@ describe("distillation runtime", () => {
     });
     await expect(
       runDistillationCompletion({ model: "m", messages: [], maxTokens: 10 }, { chatClient }),
-    ).rejects.toThrow("local-llm response did not include assistant content");
+    ).rejects.toThrow("distillation response did not include assistant content");
   });
 });

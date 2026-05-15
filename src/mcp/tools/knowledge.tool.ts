@@ -1,16 +1,32 @@
 import { createHash } from "node:crypto";
+import { eq } from "drizzle-orm";
+import {
+  listKnowledgeItems,
+  updateKnowledgeItem,
+} from "../../../api/modules/knowledge/knowledge.repository.js";
+import { db } from "../../db/index.js";
 import { rankAndDedupe } from "../../modules/context-compiler/ranking.service.js";
-import { embedOne } from "../../modules/embedding/embedding.service.js";
-import { vectorSearchKnowledge } from "../../modules/knowledge/knowledge.repository.js";
+import { canTransitionKnowledgeStatus } from "../../modules/lifecycle/lifecycle.service.js";
 import {
   registerKnowledgeFromMarkdown,
   searchKnowledgeCandidates,
 } from "../../modules/knowledge/knowledge.service.js";
+import { knowledgeItems } from "../../db/schema.js";
+import { checkKnowledgeDuplicate } from "../../lib/knowledge-dedup.js";
+import { normalizeKnowledgeScore } from "../../lib/score-scale.js";
 import {
   knowledgeSearchInputSchema,
+  listKnowledgeInputSchema,
   registerKnowledgeInputSchema,
+  updateKnowledgeInputSchema,
 } from "../../shared/schemas/knowledge.schema.js";
 import type { ToolEntry } from "../registry.js";
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
 
 export const searchKnowledgeTool: ToolEntry = {
   name: "search_knowledge",
@@ -91,34 +107,6 @@ export const searchKnowledgeTool: ToolEntry = {
   },
 };
 
-function calculateContentSimilarity(text1: string, text2: string): number {
-  const s1 = text1.replace(/\s+/g, "").toLowerCase();
-  const s2 = text2.replace(/\s+/g, "").toLowerCase();
-
-  if (s1.length < 2 || s2.length < 2) {
-    return s1 === s2 ? 1 : 0;
-  }
-
-  const getBigrams = (str: string) => {
-    const bigrams = new Set<string>();
-    for (let i = 0; i < str.length - 1; i++) {
-      bigrams.add(str.substring(i, i + 2));
-    }
-    return bigrams;
-  };
-
-  const set1 = getBigrams(s1);
-  const set2 = getBigrams(s2);
-
-  let intersection = 0;
-  for (const bg of set1) {
-    if (set2.has(bg)) intersection++;
-  }
-
-  const union = set1.size + set2.size - intersection;
-  return intersection / union;
-}
-
 export const registerKnowledgeTool: ToolEntry = {
   name: "register_knowledge",
   description:
@@ -141,41 +129,168 @@ export const registerKnowledgeTool: ToolEntry = {
     const parsed = registerKnowledgeInputSchema.parse(args ?? {});
     const contentHash = createHash("sha256").update(parsed.body).digest("hex");
 
-    let embedding: number[] | undefined;
-    try {
-      embedding = await embedOne(`${parsed.title}\n${parsed.body}`, "passage");
-      if (embedding && embedding.length > 0) {
-        const similar = await vectorSearchKnowledge(embedding, 3, [
-          "active",
-          "draft",
-          "deprecated",
-        ]);
-        for (const candidate of similar) {
-          const bodySimilarity = calculateContentSimilarity(parsed.body, candidate.body);
-          if (bodySimilarity > 0.95) {
-            return {
-              content: [
-                {
-                  type: "text",
-                  text: `Registration skipped: Knowledge with identical content already exists (ID: ${candidate.id}, Match: ${(bodySimilarity * 100).toFixed(1)}%).`,
-                },
-              ],
-            };
-          }
-        }
-      }
-    } catch {
-      // Ignore embedding errors here; let registerKnowledgeFromMarkdown handle or skip it
+    // 共通重複チェック（MCP 登録時は厳しめ: 0.95）
+    const dedupResult = await checkKnowledgeDuplicate(parsed.title, parsed.body, {
+      bodySimilarityThreshold: 0.95,
+      topK: 3,
+    });
+    if (dedupResult.isDuplicate) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Registration skipped: Knowledge with identical content already exists (ID: ${dedupResult.existingId}, Match: ${(dedupResult.matchScore * 100).toFixed(1)}%, reason: ${dedupResult.reason}).`,
+          },
+        ],
+      };
     }
 
     const id = await registerKnowledgeFromMarkdown({
       ...parsed,
       sourceUri: "agent://register",
       contentHash,
-      embedding,
     });
     return {
       content: [{ type: "text", text: `Knowledge registered successfully with ID: ${id}` }],
+    };
+  },
+};
+
+export const listKnowledgeTool: ToolEntry = {
+  name: "list_knowledge",
+  description:
+    "List knowledge backlog/items for review. Useful for draft triage or active knowledge inspection.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      limit: { type: "number", default: 50, minimum: 1, maximum: 200 },
+      status: { type: "string", enum: ["draft", "active", "deprecated"] },
+      type: { type: "string", enum: ["rule", "procedure"] },
+      query: { type: "string" },
+    },
+  },
+  handler: async (args) => {
+    const parsed = listKnowledgeInputSchema.parse(args ?? {});
+    const items = await listKnowledgeItems(parsed);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              filters: parsed,
+              count: items.length,
+              items,
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+};
+
+export const updateKnowledgeTool: ToolEntry = {
+  name: "update_knowledge",
+  description:
+    "Update knowledge content/status directly (for example draft -> active or active -> deprecated).",
+  inputSchema: {
+    type: "object",
+    properties: {
+      id: { type: "string", description: "Knowledge UUID" },
+      type: { type: "string", enum: ["rule", "procedure"] },
+      status: { type: "string", enum: ["draft", "active", "deprecated"] },
+      scope: { type: "string", enum: ["repo", "global"] },
+      title: { type: "string" },
+      body: { type: "string" },
+      confidence: { type: "number", minimum: 0, maximum: 100 },
+      importance: { type: "number", minimum: 0, maximum: 100 },
+      metadata: { type: "object" },
+    },
+    required: ["id"],
+  },
+  handler: async (args) => {
+    const parsed = updateKnowledgeInputSchema.parse(args ?? {});
+    const [existing] = await db
+      .select({
+        id: knowledgeItems.id,
+        type: knowledgeItems.type,
+        status: knowledgeItems.status,
+        scope: knowledgeItems.scope,
+        title: knowledgeItems.title,
+        body: knowledgeItems.body,
+        confidence: knowledgeItems.confidence,
+        importance: knowledgeItems.importance,
+        metadata: knowledgeItems.metadata,
+      })
+      .from(knowledgeItems)
+      .where(eq(knowledgeItems.id, parsed.id))
+      .limit(1);
+
+    if (!existing) {
+      return {
+        content: [{ type: "text", text: `Knowledge not found: ${parsed.id}` }],
+        isError: true,
+      };
+    }
+
+    const currentStatus = existing.status as "draft" | "active" | "deprecated";
+    const nextStatus = (parsed.status ?? currentStatus) as "draft" | "active" | "deprecated";
+    if (nextStatus !== currentStatus && !canTransitionKnowledgeStatus(currentStatus, nextStatus)) {
+      return {
+        content: [
+          {
+            type: "text",
+            text: `Invalid status transition: ${currentStatus} -> ${nextStatus}`,
+          },
+        ],
+        isError: true,
+      };
+    }
+
+    const existingMetadata = asRecord(existing.metadata);
+    const merged = {
+      type: parsed.type ?? existing.type,
+      status: nextStatus,
+      scope: parsed.scope ?? existing.scope,
+      title: parsed.title ?? existing.title,
+      body: parsed.body ?? existing.body,
+      confidence: parsed.confidence ?? normalizeKnowledgeScore(existing.confidence, 70),
+      importance: parsed.importance ?? normalizeKnowledgeScore(existing.importance, 70),
+      metadata: parsed.metadata
+        ? {
+            ...existingMetadata,
+            ...parsed.metadata,
+          }
+        : existingMetadata,
+    };
+
+    const updated = await updateKnowledgeItem(parsed.id, merged);
+    if (!updated) {
+      return {
+        content: [{ type: "text", text: `Knowledge not found: ${parsed.id}` }],
+        isError: true,
+      };
+    }
+
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              id: parsed.id,
+              status: merged.status,
+              type: merged.type,
+              scope: merged.scope,
+              updatedFields: Object.keys(parsed).filter((key) => key !== "id"),
+            },
+            null,
+            2,
+          ),
+        },
+      ],
     };
   },
 };

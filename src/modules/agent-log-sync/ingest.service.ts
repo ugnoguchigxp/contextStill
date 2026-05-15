@@ -2,7 +2,7 @@ import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { config } from "../../config.js";
+import { groupedConfig } from "../../config.js";
 
 type ChatRole = "user" | "assistant";
 
@@ -769,7 +769,7 @@ export async function ingestCodexLogsFromRoots(
   roots: string[],
   since?: Date,
   cursor: IngestCursor = {},
-  initialLookbackHours = config.agentLogInitialLookbackHours,
+  initialLookbackHours = groupedConfig.agentLogSync.initialLookbackHours,
 ): Promise<IngestResult> {
   const messages: ChatMessage[] = [];
   const warnings: string[] = [];
@@ -839,7 +839,7 @@ export async function ingestCodexLogs(
   since?: Date,
   cursor: IngestCursor = {},
 ): Promise<IngestResult> {
-  const roots = [config.codexSessionDir, config.codexArchivedSessionDir].filter(
+  const roots = [groupedConfig.codex.sessionDir, groupedConfig.codex.archivedSessionDir].filter(
     (dir) => dir.trim().length > 0,
   );
   if (roots.length === 0)
@@ -947,9 +947,9 @@ export async function ingestAntigravityLogs(
   cursor: IngestCursor = {},
 ): Promise<IngestResult> {
   return ingestAntigravityLogsFromRoot(
-    config.antigravityLogDir,
+    groupedConfig.antigravity.logDir,
     since,
     cursor,
-    config.antigravityLogInitialLookbackHours,
+    groupedConfig.antigravity.initialLookbackHours,
   );
 }

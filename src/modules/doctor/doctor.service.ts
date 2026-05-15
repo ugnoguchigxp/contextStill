@@ -1,4 +1,4 @@
-import { config } from "../../config.js";
+import { groupedConfig } from "../../config.js";
 import { type DoctorReport, doctorReportSchema } from "../../shared/schemas/doctor.schema.js";
 import { requiredTables } from "./doctor.constants.js";
 import type { DoctorOptions, ResolvedDoctorOptions } from "./doctor.types.js";
@@ -17,8 +17,9 @@ function resolveDoctorOptions(rawOptions?: DoctorOptions): ResolvedDoctorOptions
   return {
     windowSize: Math.max(1, rawOptions?.windowSize ?? 20),
     freshnessThresholdMinutes:
-      rawOptions?.freshnessThresholdMinutes ?? config.doctorFreshnessThresholdMinutes,
-    degradedRateThreshold: rawOptions?.degradedRateThreshold ?? config.doctorDegradedRateThreshold,
+      rawOptions?.freshnessThresholdMinutes ?? groupedConfig.doctor.freshnessThresholdMinutes,
+    degradedRateThreshold:
+      rawOptions?.degradedRateThreshold ?? groupedConfig.doctor.degradedRateThreshold,
   };
 }
 
@@ -33,6 +34,7 @@ function createEmptyRuns(options: ResolvedDoctorOptions): DoctorReport["runs"] {
     durationMsAvg: null,
     lastRunAt: null,
     lastRunAgeMinutes: null,
+    lastCacheKeyDraft: null,
     freshnessThresholdMinutes: options.freshnessThresholdMinutes,
     degradedRateThreshold: options.degradedRateThreshold,
   };
@@ -67,11 +69,13 @@ function appendAutomationReasons(
   } else if (!vibeDistillation.launchAgent.loaded) {
     reasons.push("VIBE_DISTILLATION_LAUNCH_AGENT_NOT_LOADED");
   }
+  const vibeDistillationAgeMinutes =
+    vibeDistillation.runs.lastOkRunAgeMinutes ?? vibeDistillation.runs.lastRunAgeMinutes;
   if (!vibeDistillation.runs.lastRunAt) {
     reasons.push("VIBE_DISTILLATION_NEVER_RAN");
   } else if (
-    vibeDistillation.runs.lastRunAgeMinutes !== null &&
-    vibeDistillation.runs.lastRunAgeMinutes > options.freshnessThresholdMinutes
+    typeof vibeDistillationAgeMinutes === "number" &&
+    vibeDistillationAgeMinutes > options.freshnessThresholdMinutes
   ) {
     reasons.push("VIBE_DISTILLATION_STALE");
   }
@@ -81,11 +85,13 @@ function appendAutomationReasons(
   } else if (!sourceDistillation.launchAgent.loaded) {
     reasons.push("SOURCE_DISTILLATION_LAUNCH_AGENT_NOT_LOADED");
   }
+  const sourceDistillationAgeMinutes =
+    sourceDistillation.runs.lastOkRunAgeMinutes ?? sourceDistillation.runs.lastRunAgeMinutes;
   if (!sourceDistillation.runs.lastRunAt) {
     reasons.push("SOURCE_DISTILLATION_NEVER_RAN");
   } else if (
-    sourceDistillation.runs.lastRunAgeMinutes !== null &&
-    sourceDistillation.runs.lastRunAgeMinutes > options.freshnessThresholdMinutes
+    typeof sourceDistillationAgeMinutes === "number" &&
+    sourceDistillationAgeMinutes > options.freshnessThresholdMinutes
   ) {
     reasons.push("SOURCE_DISTILLATION_STALE");
   }
@@ -113,7 +119,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
   }
 
   const embedding = await inspectEmbedding();
-  const agenticLlm = await checkAgenticLlmHealth(config.agenticCompileProvider);
+  const agenticLlm = await checkAgenticLlmHealth(groupedConfig.agenticCompile.provider);
   const database = await inspectDatabase({
     freshnessThresholdMinutes: options.freshnessThresholdMinutes,
   });
@@ -162,9 +168,9 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
     reasons.push("EMBEDDING_PROVIDER_UNAVAILABLE");
   }
 
-  if (config.agenticCompileEnabled && !agenticLlm.configured) {
+  if (groupedConfig.agenticCompile.enabled && !agenticLlm.configured) {
     reasons.push("AGENTIC_LLM_NOT_CONFIGURED");
-  } else if (config.agenticCompileEnabled && !agenticLlm.reachable) {
+  } else if (groupedConfig.agenticCompile.enabled && !agenticLlm.reachable) {
     reasons.push("AGENTIC_LLM_UNREACHABLE");
   }
 

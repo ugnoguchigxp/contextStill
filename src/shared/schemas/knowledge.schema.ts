@@ -47,6 +47,43 @@ export const registerKnowledgeInputSchema = z.object({
   metadata: z.record(z.unknown()).default({}),
 });
 
+export const listKnowledgeInputSchema = z.object({
+  limit: z.number().int().min(1).max(200).default(50),
+  status: knowledgeStatusSchema.optional(),
+  type: knowledgeTypeSchema.optional(),
+  query: z.string().trim().optional(),
+});
+
+const knowledgeUpdatePatchSchema = z.object({
+  type: knowledgeTypeSchema.optional(),
+  status: knowledgeStatusSchema.optional(),
+  scope: scopeSchema.optional(),
+  title: z.string().trim().min(1).optional(),
+  body: z.string().trim().min(1).optional(),
+  confidence: knowledgeScoreSchema.optional(),
+  importance: knowledgeScoreSchema.optional(),
+  metadata: z.record(z.unknown()).optional(),
+});
+
+export const updateKnowledgeInputSchema = z
+  .object({
+    id: z.string().uuid(),
+  })
+  .merge(knowledgeUpdatePatchSchema)
+  .refine(
+    (value) =>
+      value.type !== undefined ||
+      value.status !== undefined ||
+      value.scope !== undefined ||
+      value.title !== undefined ||
+      value.body !== undefined ||
+      value.confidence !== undefined ||
+      value.importance !== undefined ||
+      value.metadata !== undefined,
+    { message: "at least one update field is required" },
+  );
+
 export type KnowledgeItem = z.infer<typeof knowledgeItemSchema>;
 export type KnowledgeSearchInput = z.infer<typeof knowledgeSearchInputSchema>;
 export type KnowledgeStatus = z.infer<typeof knowledgeStatusSchema>;
+export type KnowledgeType = z.infer<typeof knowledgeTypeSchema>;

@@ -1,20 +1,22 @@
 # MCP Tools
 
-`memory-router` の公開 MCP surface は次の 7 ツールです。
+`memory-router` の公開 MCP surface は次の 9 ツールです。
 
 1. `initial_instructions`
 2. `context_compile`
 3. `search_knowledge`
 4. `register_knowledge`
-5. `memory_search`
-6. `memory_fetch`
-7. `doctor`
+5. `list_knowledge`
+6. `update_knowledge`
+7. `memory_search`
+8. `memory_fetch`
+9. `doctor`
 
 ## 推奨フロー
 
 1. `initial_instructions`
 2. `context_compile`
-3. 必要時のみ `search_knowledge` / `memory_search` / `memory_fetch`
+3. 必要時のみ `search_knowledge` / `list_knowledge` / `update_knowledge` / `memory_search` / `memory_fetch`
 4. 実装・検証
 5. `doctor`
 
@@ -47,6 +49,24 @@
 
 - 入力: `title`（必須）, `body`（必須）, `type`（rule/procedure）, `status`, `scope`, `confidence`, `importance`, `metadata`
 - 役割: 新しいルールや手順（スキル）を直接登録。自動的に Embedding が生成されます。デフォルトは `draft` 状態となり、人間のレビュー後に `active` 化されてから `context_compile` で利用可能になります（確信がある場合は `status: "active"` を指定することも可能）。
+
+### `list_knowledge`
+
+- 入力: `limit`, `status`, `type`, `query`
+- 役割: draft backlog や active knowledge 一覧を確認する
+- 出力:
+  - `filters`（適用した条件）
+  - `count`
+  - `items`（knowledge 一覧。`sourceRefs` / `sourceVibeMemoryIds` を含む）
+
+### `update_knowledge`
+
+- 入力: `id`（必須）, `status`, `title`, `body`, `type`, `scope`, `confidence`, `importance`, `metadata`
+- 役割: 既存 knowledge のステータス/内容を更新する
+- 挙動:
+  - `draft -> active -> deprecated` の遷移制約を検証
+  - `metadata` 指定時は既存 metadata にマージ
+  - 更新内容に応じて監査ログ（knowledge updated/status changed）を記録
 
 ### `memory_search`
 

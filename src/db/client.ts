@@ -1,6 +1,6 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pkg from "pg";
-import { config } from "../config.js";
+import { groupedConfig } from "../config.js";
 import * as schema from "./schema.js";
 
 const { Pool } = pkg;
@@ -14,7 +14,7 @@ let database: Database | null = null;
 
 function ensureDatabase(): Database {
   if (!pool) {
-    pool = new Pool({ connectionString: config.databaseUrl });
+    pool = new Pool({ connectionString: groupedConfig.database.url });
   }
   if (!database) {
     database = createDatabase(pool);

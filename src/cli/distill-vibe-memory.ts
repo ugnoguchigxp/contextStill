@@ -1,6 +1,6 @@
 import fs from "node:fs/promises";
 import path from "node:path";
-import { config } from "../config.js";
+import { groupedConfig } from "../config.js";
 import { closeDbPool } from "../db/index.js";
 import { distillVibeMemories } from "../modules/vibe-memory/distillation.service.js";
 
@@ -155,8 +155,8 @@ function parseArgs(args: string[]): CliOptions {
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   const lock = await acquireLock(
-    config.vibeDistillationLockFile,
-    config.vibeDistillationLockTtlSeconds,
+    groupedConfig.vibeDistillation.lockFile,
+    groupedConfig.vibeDistillation.lockTtlSeconds,
   );
   try {
     const summary = await distillVibeMemories(options);

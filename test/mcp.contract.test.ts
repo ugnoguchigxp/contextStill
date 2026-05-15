@@ -67,6 +67,8 @@ describeDb("mcp contract", () => {
       "context_compile",
       "search_knowledge",
       "register_knowledge",
+      "list_knowledge",
+      "update_knowledge",
       "memory_search",
       "memory_fetch",
       "doctor",
