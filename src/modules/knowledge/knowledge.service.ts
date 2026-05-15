@@ -60,6 +60,7 @@ type KnowledgeSearchScope = {
   repoPath?: string;
   repoKey?: string;
   allowGlobalScope?: boolean;
+  scopeMatchMode?: "primary" | "legacy";
 };
 
 type InternalKnowledgeSearchParams = {
@@ -105,7 +106,7 @@ async function executeKnowledgeSearch(
     workingEmbedding && workingEmbedding.length > 0 ? "provided" : "disabled";
   let embeddingProvider: string | undefined;
 
-  const buildSearchInput = (query: string, limit: number) =>
+  const buildSearchInput = (query: string, limit: number, repoPath?: string) =>
     knowledgeSearchInputSchema.parse({
       query,
       limit,
@@ -113,7 +114,7 @@ async function executeKnowledgeSearch(
       statuses: params.statuses,
       status: params.status,
       includeDraft: params.includeDraft,
-      ...(params.repoPath ? { repoPath: params.repoPath } : {}),
+      ...(repoPath ? { repoPath } : {}),
     });
 
   const runScopedSearch = async (
@@ -130,20 +131,29 @@ async function executeKnowledgeSearch(
     let vectorFailed = false;
 
     try {
-      textHits = await searchKnowledge(buildSearchInput(params.primaryQuery, params.limit), {
-        repoPath: scope.repoPath,
-        repoKey: scope.repoKey,
-        allowGlobalScope: scope.allowGlobalScope,
-        types: params.types,
-      });
+      textHits = await searchKnowledge(
+        buildSearchInput(params.primaryQuery, params.limit, scope.repoPath),
+        {
+          repoPath: scope.repoPath,
+          repoKey: scope.repoKey,
+          allowGlobalScope: scope.allowGlobalScope,
+          types: params.types,
+          scopeMatchMode: scope.scopeMatchMode,
+        },
+      );
       if (params.queryText !== params.primaryQuery) {
         const hintHits = await searchKnowledge(
-          buildSearchInput(params.queryText, Math.max(3, Math.floor(params.limit / 2))),
+          buildSearchInput(
+            params.queryText,
+            Math.max(3, Math.floor(params.limit / 2)),
+            scope.repoPath,
+          ),
           {
             repoPath: scope.repoPath,
             repoKey: scope.repoKey,
             allowGlobalScope: scope.allowGlobalScope,
             types: params.types,
+            scopeMatchMode: scope.scopeMatchMode,
           },
         );
         textHits = [...new Map([...textHits, ...hintHits].map((item) => [item.id, item])).values()];
@@ -178,6 +188,7 @@ async function executeKnowledgeSearch(
               repoKey: scope.repoKey,
               allowGlobalScope: scope.allowGlobalScope,
               types: params.types,
+              scopeMatchMode: scope.scopeMatchMode,
             },
           );
         } catch {
@@ -199,12 +210,36 @@ async function executeKnowledgeSearch(
     repoPath: params.repoPath,
     repoKey: params.repoKey,
     allowGlobalScope: true,
+    scopeMatchMode: "primary",
   });
   let merged = mergeKnowledgeHits(
     [...searchResult.textHits, ...searchResult.vectorHits],
     params.limit,
   );
   let repoScopeFallbackUsed = false;
+
+  if (
+    params.scopedSearch &&
+    merged.length === 0 &&
+    !searchResult.textFailed &&
+    !searchResult.vectorFailed
+  ) {
+    const legacyScopedResult = await runScopedSearch({
+      repoPath: params.repoPath,
+      repoKey: params.repoKey,
+      allowGlobalScope: false,
+      scopeMatchMode: "legacy",
+    });
+    const legacyMerged = mergeKnowledgeHits(
+      [...legacyScopedResult.textHits, ...legacyScopedResult.vectorHits],
+      params.limit,
+    );
+    if (legacyMerged.length > 0) {
+      searchResult = legacyScopedResult;
+      merged = legacyMerged;
+      appendDegradedReason(degradedReasons, "KNOWLEDGE_APPLIES_TO_FALLBACK");
+    }
+  }
 
   if (
     params.scopedSearch &&

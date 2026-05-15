@@ -404,6 +404,7 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     suggestedNextCalls.push("memory_search");
   }
   if (
+    degradedReasons.includes("KNOWLEDGE_APPLIES_TO_FALLBACK") ||
     degradedReasons.includes("KNOWLEDGE_REPO_SCOPE_FALLBACK") ||
     degradedReasons.includes("SOURCE_REPO_SCOPE_FALLBACK")
   ) {

@@ -1,255 +1,538 @@
-# memory-router
+<p align="center">
+  <strong>memory-router</strong><br/>
+  <em>Local-first Context Compiler for AI Coding Agents</em>
+</p>
 
-`memory-router` は、コーディングエージェント向けのローカルファースト Context Compiler です。  
-入力元は `wiki`、会話ログは `vibe_memory`、会話ログ内の編集差分は `agent_diff` として扱い、作業目的に必要な最小コンテキストを組み立てます。
+<p align="center">
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="#how-it-works">How It Works</a> ·
+  <a href="#mcp-integration">MCP Integration</a> ·
+  <a href="#cli-reference">CLI</a> ·
+  <a href="#api-reference">API</a> ·
+  <a href="docs/mcp-tools.md">MCP Tool Contract</a>
+</p>
 
-## データモデル
+<p align="center">
+  <a href="README.jp.md">🇯🇵 日本語版 README</a>
+</p>
 
-- `sources`: このプロジェクト配下の `./wiki` そのもの。人間が編集する Markdown はここに集約します。
-- `source_fragments`: wiki ページ検索と `sourceRefs` 解決のための内部インデックスです。UI/API の入力口ではありません。
-- `knowledge_items`: wiki や vibe memory から蒸留された、次回作業の判断・手順に使う知識です。`type` は `rule / procedure`、`status` は `draft / active / deprecated`、`scope` は `repo / global` だけを使います。
-- `vibe_memories`: LLM との自然言語会話ログです。diff 本文は保存しません。
-- `agent_diff_entries`: `vibe_memories` の会話中で発生した編集差分です。file content は保存せず、`diff_hunk` と抽出できた symbol 列を保存します。
-- `vibe_memory_distillation_runs`: vibe memory から knowledge を蒸留した履歴です。処理済み判定、失敗再試行、生成 knowledge id を管理します。
-- `source_distillation_runs` / `source_distillation_evidence`: wiki source fragment から knowledge を蒸留した履歴と、fetch した外部根拠の実行履歴です。
-- `sync_states`: Codex / Antigravity ログ同期の file cursor と最終同期時刻です。
+---
 
-## 主要機能
+## What is memory-router?
 
-- Context Compile（CLI / MCP / API）
-- Knowledge 管理（作成・編集・削除）
-- Wiki 管理（フォルダ、ページ、Git 履歴、diff、Markdown WYSIWYG）
-- Vibe Memory 閲覧、削除
-- Codex / Antigravity 会話ログの増分同期
-- Vibe Memory から `rule / procedure` knowledge を Gemma4 で蒸留し、保存時に embedding 化
-- Wiki source fragment から `rule / procedure` knowledge を Gemma4 で蒸留し、保存時に embedding 化
-- Vibe Memory 内での Agent Diff / Symbol 畳み込み表示
-- Knowledge Graph 可視化（`knowledge_items` の距離と relation を表示し、`vibe_memories` は蒸留元として扱う）
-- Doctor 診断
+**memory-router** is a local-first knowledge engine that distills your coding sessions, wikis, and documentation into reusable **rules** and **procedures**, then compiles just the right context for your AI coding agent — within any token budget.
 
-Distillation の共通 runtime 方針は [docs/distillation-runtime-plan.md](docs/distillation-runtime-plan.md)、Source から Graph を作る方針は [docs/source-graph-flow.md](docs/source-graph-flow.md) にまとめています。Graph の主ノードは `knowledge_items` のままにし、source は蒸留元と根拠として扱います。
-
-## Wiki 管理
-
-既定のコンテンツルートは `./wiki` です。`wiki/` はこのプロジェクト側では gitignore され、独立した Git リポジトリとして運用できます。ルートに `.git` が無ければ自動初期化され、ページ操作時に commit します。
-
-設定で切り替える場合:
-
-```bash
-MEMORY_ROUTER_SOURCE_CONTENT_ROOT=/abs/path/to/wiki
+```
+┌─────────────┐   ┌──────────────┐   ┌──────────────────┐
+│  Wiki / Docs │   │ Agent Logs   │   │  Manual Rules    │
+│  (Markdown)  │   │ (Codex,      │   │  (register_      │
+│              │   │  Antigravity)│   │   knowledge)     │
+└──────┬───────┘   └──────┬───────┘   └────────┬─────────┘
+       │                  │                    │
+       ▼                  ▼                    │
+   import:wiki     sync:agent-logs             │
+       │                  │                    │
+       ▼                  ▼                    │
+┌──────────────────────────────┐               │
+│  Distillation (Local LLM)    │               │
+│  ┌────────┐ ┌─────────────┐  │               │
+│  │ Score  │ │ Tool Loop   │  │               │
+│  │ Gate   │ │ search_web  │  │               │
+│  │ ≥0.75  │ │ fetch_url   │  │               │
+│  └────────┘ └─────────────┘  │               │
+└──────────────┬───────────────┘               │
+               │                               │
+               ▼                               ▼
+        ┌──────────────────────────────────────────┐
+        │         knowledge_items                   │
+        │   type: rule | procedure                  │
+        │   status: draft → active → deprecated     │
+        │   scope: repo | global                    │
+        │   + passage embedding (pgvector)          │
+        └──────────────────┬───────────────────────┘
+                           │
+                           ▼
+                ┌─────────────────────┐
+                │  context_compile    │
+                │  Token budget split │
+                │  rules:45%          │
+                │  procedures:35%     │
+                │  sources:20%        │
+                └─────────┬───────────┘
+                          │
+                          ▼
+                ┌─────────────────────┐
+                │  Context Pack       │
+                │  (Markdown output)  │
+                │  → Agent prompt     │
+                └─────────────────────┘
 ```
 
-## セットアップ
+### Key Differentiators
 
-必要環境:
+| Feature | memory-router | Naive RAG | CLAUDE.md / Cursor Rules |
+|---|---|---|---|
+| Knowledge distillation | ✅ LLM + score gate | ❌ Raw search | ❌ Manual |
+| Evidence / instruction separation | ✅ Full | ❌ Mixed | ❌ Instruction only |
+| External evidence verification | ✅ Tool loop | ❌ | ❌ |
+| Repo-scoped knowledge | ✅ DB-level | △ Namespace | ❌ Global only |
+| Compile quality tracking | ✅ Degraded reasons + run history | ❌ | ❌ |
+| Knowledge lifecycle | ✅ draft/active/deprecated | ❌ | ❌ |
+| MCP standard | ✅ Official SDK | ❌ | ❌ |
 
-- Bun 1.3+
-- Docker（PostgreSQL + pgvector）
+---
+
+## Quick Start
+
+### Prerequisites
+
+- [Bun](https://bun.sh/) 1.3+
+- [Docker](https://www.docker.com/) (for PostgreSQL + pgvector)
+- A local LLM server for distillation (optional, e.g. [local-llm](https://github.com/user/local-llm) with Gemma4)
+- An embedding service (optional, daemon or CLI)
+
+### Setup
 
 ```bash
-docker compose up -d
-cp .env.example .env
+# 1. Clone and install
+git clone https://github.com/user/memory-router.git
+cd memory-router
 bun install
+
+# 2. Start PostgreSQL with pgvector
+docker compose up -d
+
+# 3. Configure environment
+cp .env.example .env
+# Edit .env if needed (defaults work for local development)
+
+# 4. Run database migrations
 bun run db:migrate
+
+# 5. Verify everything works
 bun run verify
 ```
 
-開発起動:
+### Start developing
 
 ```bash
+# Start the dev server (UI + API)
 bun run dev
 ```
 
-- UI: [http://localhost:5173](http://localhost:5173)
-- API: 同一 origin の `/api/*`
+- **UI**: http://localhost:5173
+- **API**: Same origin at `/api/*`
 
-## CLI
+---
+
+## How It Works
+
+memory-router operates as a three-stage pipeline:
+
+### Stage 1: Collect
+
+Ingest raw evidence from multiple sources:
 
 ```bash
-bun run compile --goal "fix context compiler" --intent edit --json
+# Import Markdown documentation
 bun run import:wiki ./wiki/pages
-bun run sync:agent-logs
-bun run distill:vibe-memory -- --apply
-bun run distill:sources -- --apply
-bun run doctor
-```
 
-## Agent Log Sync
-
-Codex と Antigravity の会話ログを `vibe_memories` に継続保存できます。Codex は既定で `~/.codex/sessions` と `~/.codex/archived_sessions` を見ます。Antigravity は既定で `~/.gemini/antigravity/brain` を見ます。別環境では `MEMORY_ROUTER_ANTIGRAVITY_LOG_DIR` で workspace root を明示してください。初回取り込み範囲は `MEMORY_ROUTER_AGENT_LOG_INITIAL_LOOKBACK_HOURS` と `MEMORY_ROUTER_ANTIGRAVITY_LOG_INITIAL_LOOKBACK_HOURS` で調整できます。
-
-一度だけ同期:
-
-```bash
+# Sync agent conversation logs (Codex / Antigravity)
 bun run sync:agent-logs
 ```
 
-macOS LaunchAgent として定期実行:
+### Stage 2: Distill
+
+Convert raw evidence into structured **rules** and **procedures** using a local LLM:
 
 ```bash
-./scripts/setup-automation.sh install
-./scripts/setup-automation.sh load
-./scripts/setup-automation.sh status
-```
-
-ログは `logs/agent-log-sync.log`、多重起動防止 lock は `logs/agent-log-sync.lock` を使います。
-
-## Vibe Memory Distillation
-
-`vibe_memories` と紐づく `agent_diff_entries` から、次回作業で再利用できる `rule / procedure` だけを抽出し、`knowledge_items` に `draft` として保存します。保存時に `${title}\n${body}` を passage embedding 化するため、Graph の semantic edge 距離計算にもそのまま使われます。
-
-既定では local-llm の Gemma4 API を使います。Gemma4 には候補ごとの `score` を出させ、既定しきい値以上の候補だけを提示・保存します。保存前にも同じ score gate を通すため、低品質候補は `knowledge_items` に登録されません。
-
-```bash
-# dry-run: knowledge と run 履歴は保存しない
+# Distill from conversation logs (dry-run first)
 bun run distill:vibe-memory
-
-# apply: draft knowledge と distillation run を保存
 bun run distill:vibe-memory -- --apply
 
-# 対象を絞る
-bun run distill:vibe-memory -- --apply --limit 20 --session-id <session-id>
-```
-
-macOS LaunchAgent として継続実行:
-
-```bash
-./scripts/setup-distillation-automation.sh install
-./scripts/setup-distillation-automation.sh load
-./scripts/setup-distillation-automation.sh status
-```
-
-主要設定:
-
-- `MEMORY_ROUTER_LOCAL_LLM_API_BASE_URL`（既定 `http://127.0.0.1:44448`）
-- `MEMORY_ROUTER_LOCAL_LLM_MODEL`（既定 `gemma-4-e4b-it`）
-- `MEMORY_ROUTER_VIBE_DISTILLATION_BATCH_SIZE`
-- `MEMORY_ROUTER_VIBE_DISTILLATION_MAX_INPUT_CHARS`
-- `MEMORY_ROUTER_VIBE_DISTILLATION_MAX_OUTPUT_TOKENS`
-- `MEMORY_ROUTER_VIBE_DISTILLATION_TIMEOUT_MS`
-- `MEMORY_ROUTER_DISTILLATION_MIN_CANDIDATE_SCORE`（既定 `0.75`）
-- `MEMORY_ROUTER_VIBE_DISTILLATION_INTERVAL_SECONDS`（LaunchAgent の実行間隔）
-
-## Source / Wiki Distillation
-
-`import:wiki` は Markdown を `sources` / `source_fragments` に取り込みます。通常の wiki 本文はそのまま `knowledge_items` には登録せず、`distill:sources` が source fragment を Gemma4 で `rule / procedure` に蒸留します。保存時に `${title}\n${body}` を passage embedding 化し、`knowledge_source_links` で元 fragment と接続します。
-
-Vibe memory と同じ共通 system context、`search_web` / `fetch_content` tool loop、score gate を使います。URL や外部仕様に依存する候補は fetched evidence がない場合に保存前 gate で落とします。
-
-```bash
-# dry-run
+# Distill from wiki/documentation sources
 bun run distill:sources
-
-# apply
 bun run distill:sources -- --apply
-
-# 対象を絞る
-bun run distill:sources -- --apply --limit 20 --source-kind wiki
-bun run distill:sources -- --apply --uri /abs/path/wiki/page.md
 ```
 
-macOS LaunchAgent として継続実行:
+The distillation pipeline:
+1. Sends raw evidence to a local LLM (Gemma4 by default)
+2. LLM can use `search_web` / `fetch_content` tools to verify external claims
+3. Candidates with a score below the threshold (default: 0.75) are rejected
+4. Accepted candidates are saved as `draft` knowledge with passage embeddings
+
+### Stage 3: Compile
+
+Generate a token-budgeted context pack tailored to the current task:
 
 ```bash
-./scripts/setup-source-distillation-automation.sh install
-./scripts/setup-source-distillation-automation.sh load
-./scripts/setup-source-distillation-automation.sh status
+bun run compile --goal "fix the authentication middleware" --intent edit
 ```
 
-主要設定:
+The compiler:
+1. Resolves retrieval mode from intent and goal keywords
+2. Searches knowledge (hybrid: full-text + vector) scoped to the repository
+3. Ranks by weighted score (importance, confidence, source evidence)
+4. Allocates token budget across sections (rules → procedures → sources)
+5. Returns a structured Markdown context pack with diagnostics
 
-- `MEMORY_ROUTER_SOURCE_DISTILLATION_BATCH_SIZE`
-- `MEMORY_ROUTER_SOURCE_DISTILLATION_MAX_INPUT_CHARS`
-- `MEMORY_ROUTER_SOURCE_DISTILLATION_MAX_OUTPUT_TOKENS`
-- `MEMORY_ROUTER_SOURCE_DISTILLATION_INTERVAL_SECONDS`（LaunchAgent の実行間隔）
-- `MEMORY_ROUTER_DISTILLATION_FAILURE_RETRY_DELAY_SECONDS`（failed retry の backoff）
+---
 
-## Embedding
+## MCP Integration
 
-既定では sibling repo `../local-llm/embedding` の embedding 実装を参照します。
+memory-router exposes an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for seamless integration with AI coding agents.
 
-- daemon 優先: `MEMORY_ROUTER_EMBEDDING_DAEMON_URL`
-- fallback: Python CLI: `MEMORY_ROUTER_LOCAL_LLM_EMBEDDING_PYTHON -m e5embed.cli`
-
-主要設定:
-
-- `MEMORY_ROUTER_EMBEDDING_PROVIDER=auto|daemon|cli|disabled`
-- `MEMORY_ROUTER_LOCAL_LLM_EMBEDDING_ROOT`
-- `MEMORY_ROUTER_LOCAL_LLM_EMBEDDING_PYTHON`
-- `MEMORY_ROUTER_LOCAL_LLM_EMBEDDING_MODEL_DIR`
-
-## API
-
-主要エンドポイント:
-
-- `POST /api/context/compile`
-- `GET /api/context/runs`
-- `GET /api/doctor`
-- `GET/POST/PUT/DELETE /api/knowledge`
-- `GET /api/sources/tree`
-- `GET/POST /api/sources/folders`
-- `PUT/DELETE /api/sources/folders/*`
-- `GET/POST /api/sources/pages`
-- `GET/PUT/DELETE /api/sources/pages/*`
-- `GET /api/sources/history/*`
-- `GET /api/sources/diff/*?from=...&to=...`
-- `GET/POST /api/vibe-memory`
-- `GET/DELETE /api/vibe-memory/:id`
-- `GET /api/agent-diffs`
-- `GET /api/graph`
-
-`GET /api/graph` は既定で `active / draft` の `knowledge_items` だけをノードにします。`vibe_memories` は raw transcript として検索・蒸留候補に使い、Graph の主ノードには含めません。`view=relation|semantic`、`relationAxes=session,project`、`status=current|active|draft|deprecated|all` で表示対象を切り替えられます。Relation view の edge は `sourceSessionId` / `repoKey` / `vibe_memories.metadata.projectRoot` から動的に合成され、永続 relation テーブルには依存しません。
-
-`POST /api/vibe-memory` は自然言語の `content` に加えて `diff` または `agentDiffs[]` を受け取れます。`content` に混ざった diff block も保存前に取り除かれ、unified diff は `agent_diff_entries` に分解されます。TypeScript/JavaScript の主要シンボルは同じテーブルの symbol 列に保存されます。
-
-## MCP
+### Starting the MCP server
 
 ```bash
 bun run start:mcp
 ```
 
-公開ツール:
+### Configuring your agent
 
-- `initial_instructions`
-- `initial_instruction`（`initial_instructions` の互換 alias）
-- `context_compile`
-- `search_knowledge`
-- `record_vibe_memory`
-- `memory_search`
-- `memory_fetch`
-- `doctor`
+Add to your MCP client configuration:
 
-標準利用順序:
+```json
+{
+  "mcpServers": {
+    "memory-router": {
+      "command": "bun",
+      "args": ["run", "start:mcp"],
+      "cwd": "/path/to/memory-router"
+    }
+  }
+}
+```
 
-1. `initial_instructions`
-2. `context_compile`
-3. 必要時のみ `search_knowledge` / `memory_search` / `memory_fetch`
-4. 作業後に `record_vibe_memory`
-5. `doctor` で状態確認
+### Available MCP Tools
 
-`record_vibe_memory` は自然言語の `content` に加えて `diff` / `agentDiffs[]` を受け取り、`vibe_memories` と `agent_diff_entries` を同一トランザクションで保存します。diff 本文は `vibe_memories.content` から分離されます。
+| Tool | Purpose | Usage |
+|---|---|---|
+| `initial_instructions` | Operating guidance for the agent | Call once at session start |
+| `context_compile` | Generate context pack for current task | **Primary tool** — call before every task |
+| `search_knowledge` | Raw knowledge candidate inspection | When `context_compile` results need investigation |
+| `register_knowledge` | Register new rules or procedures | When the agent discovers reusable patterns |
+| `memory_search` | Search past conversations and diffs | When looking for specific past context |
+| `memory_fetch` | Fetch a specific memory by ID | When inspecting a specific conversation |
+| `doctor` | System health diagnostics | When compile is degraded/failed |
 
-`context_compile` は `repoPath` を受け取ると repo scoped 検索を優先し、scoped ヒットがない場合のみ degraded reason 付きで fallback します。`search_knowledge` は候補確認用の raw 出力を返し、通常の主導線は `context_compile` のままです。
+### Recommended workflow
 
-詳細な MCP tool contract は [docs/mcp-tools.md](docs/mcp-tools.md) を参照してください。
+```
+1. initial_instructions     → Get operating rules
+2. context_compile          → Get task-specific context (primary)
+3. search_knowledge         → Investigate if needed (supplementary)
+4. ... do the work ...
+5. register_knowledge       → Save reusable discoveries
+6. doctor                   → Check system health if issues arise
+```
 
-## テスト
+For the full MCP tool contract, see [docs/mcp-tools.md](docs/mcp-tools.md).
+
+---
+
+## CLI Reference
+
+| Command | Description |
+|---|---|
+| `bun run init:project` | Run first-time onboarding flow (import, preset, optional distillation, smoke compile) |
+| `bun run compile` | Compile a context pack |
+| `bun run import:wiki <path>` | Import Markdown into sources |
+| `bun run import:markdown <file>` | Import a single Markdown file |
+| `bun run sync:agent-logs` | Sync Codex / Antigravity logs |
+| `bun run distill:vibe-memory` | Distill knowledge from conversations |
+| `bun run distill:sources` | Distill knowledge from wiki sources |
+| `bun run doctor` | Run system diagnostics |
+| `bun run backfill:knowledge-project-context` | Backfill project context on existing knowledge |
+
+### Cold Start Flow
+
+Use `init:project` on a fresh repository to connect the first-run path end-to-end:
 
 ```bash
+# import wiki + seed global preset + smoke compile
+bun run init:project -- --wiki-root ./wiki/pages
+
+# include source distillation (dry-run)
+bun run init:project -- --wiki-root ./wiki/pages --distill-sources
+
+# include source distillation and persist generated draft knowledge
+bun run init:project -- --wiki-root ./wiki/pages --distill-sources-apply
+```
+
+- Global preset entries are stored as `scope: global`.
+- Repo-specific knowledge stays in `scope: repo` through `import:wiki` / `distill:sources`.
+- If smoke compile returns no relevant items, the command prints concrete next actions.
+
+### Examples
+
+```bash
+# Compile with specific intent and JSON output
+bun run compile --goal "fix context compiler" --intent edit --json
+
+# Distill with limits
+bun run distill:vibe-memory -- --apply --limit 20
+bun run distill:vibe-memory -- --apply --session-id <id>
+
+# Distill specific source
+bun run distill:sources -- --apply --uri /path/to/page.md
+bun run distill:sources -- --apply --source-kind wiki --limit 20
+```
+
+---
+
+## API Reference
+
+The REST API serves the Web UI and can be used independently.
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/context/compile` | Compile a context pack |
+| `GET` | `/api/context/runs` | List recent compile runs |
+| `GET` | `/api/doctor` | System health report |
+| `GET` | `/api/knowledge` | List / search knowledge items |
+| `POST` | `/api/knowledge` | Create a knowledge item |
+| `PUT` | `/api/knowledge/:id` | Update a knowledge item |
+| `DELETE` | `/api/knowledge/:id` | Delete a knowledge item |
+| `GET` | `/api/sources/tree` | Wiki source tree |
+| `GET/POST` | `/api/sources/folders` | List / create folders |
+| `PUT/DELETE` | `/api/sources/folders/:id` | Update / delete a folder |
+| `GET/POST` | `/api/sources/pages` | List / create pages |
+| `GET/PUT/DELETE` | `/api/sources/pages/:id` | Get / update / delete a page |
+| `GET` | `/api/sources/history/:id` | Page Git history |
+| `GET` | `/api/sources/diff/:id` | Page diff between commits |
+| `GET/POST` | `/api/vibe-memory` | List / create vibe memories |
+| `GET/DELETE` | `/api/vibe-memory/:id` | Get / delete a memory |
+| `GET` | `/api/agent-diffs` | List agent diff entries |
+| `GET` | `/api/graph` | Knowledge graph data |
+
+Start the API server:
+
+```bash
+bun run start:api
+```
+
+---
+
+## Data Model
+
+memory-router separates **evidence** (raw data) from **instructions** (distilled knowledge):
+
+### Evidence layer
+
+| Table | Description |
+|---|---|
+| `sources` | Wiki content root. Human-authored Markdown lives here. |
+| `source_fragments` | Internal search index for wiki pages. Not a user-facing input. |
+| `vibe_memories` | Natural language conversation logs from AI agents. No diff content. |
+| `agent_diff_entries` | Code diffs from conversations. Stores `diff_hunk` and extracted symbols. |
+
+### Knowledge layer
+
+| Table | Description |
+|---|---|
+| `knowledge_items` | Distilled rules and procedures. `type: rule \| procedure`, `status: draft \| active \| deprecated`, `scope: repo \| global`. |
+| `knowledge_source_links` | Links knowledge back to its source evidence. |
+
+### Processing layer
+
+| Table | Description |
+|---|---|
+| `vibe_memory_distillation_runs` | Distillation history for conversation logs. |
+| `source_distillation_runs` | Distillation history for wiki sources. |
+| `source_distillation_evidence` | External evidence fetched during distillation. |
+| `context_compile_runs` | Compile execution history with diagnostics. |
+| `context_pack_items` | Items selected for each compile run. |
+| `sync_states` | Agent log sync cursors and timestamps. |
+
+---
+
+## Wiki Management
+
+The default content root is `./wiki`. The `wiki/` directory is gitignored from the main repo and operates as an independent Git repository. If no `.git` is present, it is auto-initialized. Page operations automatically commit changes.
+
+```bash
+# Override the wiki location
+MEMORY_ROUTER_SOURCE_CONTENT_ROOT=/path/to/your/wiki
+```
+
+---
+
+## Automation
+
+### Agent Log Sync
+
+Continuously ingest conversation logs from Codex and Antigravity:
+
+```bash
+# One-time sync
+bun run sync:agent-logs
+
+# Install as macOS LaunchAgent
+./scripts/setup-automation.sh install
+./scripts/setup-automation.sh load
+./scripts/setup-automation.sh status
+```
+
+Default log locations:
+- Codex: `~/.codex/sessions` and `~/.codex/archived_sessions`
+- Antigravity: `~/.gemini/antigravity/brain`
+
+### Distillation Automation
+
+Run distillation on a schedule:
+
+```bash
+# Vibe memory distillation
+./scripts/setup-distillation-automation.sh install
+./scripts/setup-distillation-automation.sh load
+
+# Source distillation
+./scripts/setup-source-distillation-automation.sh install
+./scripts/setup-source-distillation-automation.sh load
+```
+
+---
+
+## Embedding
+
+memory-router supports two embedding providers with automatic fallback:
+
+| Provider | Description | Configuration |
+|---|---|---|
+| **daemon** (default) | HTTP API embedding service | `MEMORY_ROUTER_EMBEDDING_DAEMON_URL` |
+| **cli** | Python CLI fallback (`e5embed.cli`) | `MEMORY_ROUTER_LOCAL_LLM_EMBEDDING_*` |
+
+```bash
+# Provider selection
+MEMORY_ROUTER_EMBEDDING_PROVIDER=auto|daemon|cli|disabled
+```
+
+When set to `auto` (default), the daemon is tried first; on failure, the CLI fallback is used.
+
+---
+
+## Testing
+
+```bash
+# Full verification gate (typecheck + lint + format + unit tests + web build)
 bun run verify
+
+# MCP-specific verification
 bun run verify:mcp
-DATABASE_URL=postgres://postgres:postgres@localhost:7889/memory_router_test bun run test:integration
+
+# Integration tests (requires a test database)
+DATABASE_URL=postgres://postgres:postgres@localhost:7889/memory_router_test \
+  bun run test:integration
+
+# End-to-end UI tests
 bun run test:e2e
 ```
 
-`test:integration` は対象 DB のテーブルを truncate するため、通常の `memory_router` DB には実行しません。DB 名に `test` を含む検証用 DB を指定してください。
-`verify:mcp` / `mcp:smoke` / `test:mcp:contract` は `DATABASE_URL` 未指定時に `memory_router_test` を既定で使います。
+> **⚠️ Important**: `test:integration` truncates tables in the target database. Always use a dedicated test database (name should contain `test`).
 
-## 今後の改善計画
+---
 
-Context Compile と MCP 利用導線の詳細な改善計画は [docs/context-compile-mcp-improvement-plan.md](docs/context-compile-mcp-improvement-plan.md) にまとめています。
+## Configuration
 
-1. `context_compile` の source provenance を pack item 第一級情報としてさらに強化する。
-2. `record_vibe_memory` の終了時フローを自動化し、Git diff から `agent_diff_entries` を確実に登録できる補助コマンドを追加する。
-3. 蒸留済み draft knowledge のレビュー UI を強化し、wiki への反映候補と差分確認を扱えるようにする。
-4. Doctor に degraded 回復動線を追加し、DB migration 未適用、embedding 不通、wiki Git 不整合を UI から切り分けやすくする。
+All configuration is done through environment variables. See [`.env.example`](.env.example) for the complete list with defaults.
+
+### Essential
+
+| Variable | Default | Description |
+|---|---|---|
+| `DATABASE_URL` | `postgres://...localhost:7889/memory_router` | PostgreSQL connection string |
+| `MEMORY_ROUTER_SOURCE_CONTENT_ROOT` | `./wiki` | Wiki content directory |
+
+### Embedding
+
+| Variable | Default | Description |
+|---|---|---|
+| `MEMORY_ROUTER_EMBEDDING_PROVIDER` | `auto` | `auto`, `daemon`, `cli`, or `disabled` |
+| `MEMORY_ROUTER_EMBEDDING_DAEMON_URL` | `http://127.0.0.1:44512` | Embedding daemon URL |
+| `MEMORY_ROUTER_EMBEDDING_DIMENSION` | `384` | Embedding vector dimension |
+
+### Distillation (LLM)
+
+| Variable | Default | Description |
+|---|---|---|
+| `MEMORY_ROUTER_LOCAL_LLM_API_BASE_URL` | `http://127.0.0.1:44448` | Local LLM API endpoint |
+| `MEMORY_ROUTER_LOCAL_LLM_MODEL` | `gemma-4-e4b-it` | LLM model name |
+| `MEMORY_ROUTER_DISTILLATION_MIN_CANDIDATE_SCORE` | `0.75` | Minimum score to accept a candidate |
+
+### Agent Log Sync
+
+| Variable | Default | Description |
+|---|---|---|
+| `MEMORY_ROUTER_CODEX_SESSION_DIR` | `~/.codex/sessions` | Codex sessions directory |
+| `MEMORY_ROUTER_ANTIGRAVITY_LOG_DIR` | `~/.gemini/antigravity/brain` | Antigravity logs directory |
+| `MEMORY_ROUTER_AGENT_LOG_SYNC_INTERVAL_SECONDS` | `3600` | Sync interval |
+| `MEMORY_ROUTER_AGENT_LOG_INITIAL_LOOKBACK_HOURS` | `168` | Initial lookback window |
+
+---
+
+## Project Structure
+
+```
+memory-router/
+├── src/
+│   ├── cli/              # CLI commands (compile, sync, distill, doctor, import)
+│   ├── db/               # Drizzle ORM schema + client
+│   ├── mcp/              # MCP server + tool definitions
+│   │   └── tools/        # Tool implementations
+│   ├── modules/
+│   │   ├── context-compiler/   # Core compile engine (ranking, query, budgeting)
+│   │   ├── knowledge/          # Knowledge repository + service
+│   │   ├── vibe-memory/        # Conversation log ingestion + distillation
+│   │   ├── sources/            # Wiki management + source distillation
+│   │   ├── distillation/       # Shared distillation runtime + prompts
+│   │   ├── embedding/          # Embedding service (daemon / CLI)
+│   │   └── doctor/             # System diagnostics
+│   └── shared/schemas/   # Zod validation schemas
+├── api/                  # Hono REST API
+├── web/                  # React frontend (Vite + TanStack)
+├── test/                 # Unit + integration tests
+├── tests/                # E2E tests (Playwright)
+├── wiki/                 # Wiki content (independent Git repo)
+├── drizzle/              # Database migrations
+├── scripts/              # Automation setup scripts
+└── docs/                 # Architecture and planning documents
+```
+
+---
+
+## Documentation
+
+| Document | Description |
+|---|---|
+| [MCP Tool Contract](docs/mcp-tools.md) | Full MCP tool input/output specifications |
+| [Improvement Plan](docs/context-compile-mcp-improvement-plan.md) | Context Compile and MCP improvement roadmap |
+| [Code Review Issues](docs/code-review-issues.md) | Tracked issues with task checklists |
+| [Distillation Runtime](docs/distillation-runtime-plan.md) | Shared distillation architecture |
+
+---
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch (`git checkout -b feature/amazing-feature`)
+3. Run the verification gate before committing:
+   ```bash
+   bun run verify
+   ```
+4. Commit your changes
+5. Push to the branch
+6. Open a Pull Request
+
+### Development tips
+
+- `bun run verify` is the primary quality gate (typecheck → lint → format → unit tests → web build)
+- `test:unit` explicitly lists test files in `package.json` — add new test files there
+- Integration tests require a `memory_router_test` database
+- The `wiki/` directory has its own Git repository
+
+---
+
+## License
+
+MIT

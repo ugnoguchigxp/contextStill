@@ -241,6 +241,52 @@ export function extractUnifiedDiffsFromText(text: string): string {
   return extractAgentDiffContentFromText(text);
 }
 
+const diffExtractionToolNames = new Set([
+  "replace_file_content",
+  "write_to_file",
+  "multi_replace_file_content",
+  "patch_file",
+  "apply_patch",
+]);
+
+function extractAgentDiffsFromToolCalls(messages: ChatMessage[]): Array<{
+  filePath: string;
+  diffHunk: string;
+  changeType: "add" | "modify";
+  metadata: Record<string, unknown>;
+}> {
+  const diffs: Array<{
+    filePath: string;
+    diffHunk: string;
+    changeType: "add" | "modify";
+    metadata: Record<string, unknown>;
+  }> = [];
+  for (const message of messages) {
+    const toolCalls = message.metadata.toolCalls as unknown;
+    if (!Array.isArray(toolCalls)) continue;
+
+    for (const rawToolCall of toolCalls) {
+      if (!rawToolCall || typeof rawToolCall !== "object" || Array.isArray(rawToolCall)) continue;
+      const toolCall = rawToolCall as Record<string, unknown>;
+      const targetFile = getStringMetadata(toolCall, "targetFile");
+      const contentPreview = getStringMetadata(toolCall, "contentPreview");
+      const toolName = getStringMetadata(toolCall, "name") ?? "tool";
+      if (!targetFile || !contentPreview) continue;
+
+      const name = toolName.toLowerCase();
+      if (!diffExtractionToolNames.has(name)) continue;
+
+      diffs.push({
+        filePath: targetFile,
+        diffHunk: contentPreview,
+        changeType: name === "write_to_file" ? "add" : "modify",
+        metadata: { extractedFrom: "agent_tool_call", toolName },
+      });
+    }
+  }
+  return diffs;
+}
+
 function getCheckpointDate(maxObservedMtimeMs: number, since?: Date): Date {
   if (Number.isFinite(maxObservedMtimeMs) && maxObservedMtimeMs > 0) {
     return new Date(maxObservedMtimeMs);
@@ -369,7 +415,12 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
           const rawContent = buildTranscript(chunk);
           const readableContent = buildReadableTranscript(chunk);
           const diff = extractUnifiedDiffsFromText(rawContent);
-          const diffEntries = normalizeAgentDiffEntries({ diff });
+          const toolCallDiffs = extractAgentDiffsFromToolCalls(chunk);
+          const diffEntries = normalizeAgentDiffEntries({
+            diff,
+            agentDiffs: toolCallDiffs,
+          });
+
           const hiddenToolCallCount = chunk.filter((message) => isToolCallMessage(message)).length;
           if (!readableContent.trim() && diffEntries.length === 0 && hiddenToolCallCount === 0) {
             continue;

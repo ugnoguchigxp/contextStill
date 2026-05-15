@@ -19,6 +19,7 @@ export type KnowledgeSearchResult = {
   confidence: number;
   importance: number;
   score: number;
+  appliesTo: Record<string, unknown>;
   metadata: Record<string, unknown>;
   sourceRefs: string[];
   hasSourceLinks: boolean;
@@ -43,6 +44,7 @@ export type KnowledgeSearchOptions = {
   repoKey?: string;
   allowGlobalScope?: boolean;
   types?: KnowledgeItem["type"][];
+  scopeMatchMode?: "primary" | "legacy";
 };
 
 function finiteOrZero(value: unknown): number {
@@ -113,37 +115,39 @@ function buildRepoScopedCondition(options: KnowledgeSearchOptions): SQL | undefi
   const normalized = normalizeRepoScope(options);
   if (!normalized) return undefined;
 
-  const primaryClauses: SQL[] = [];
-  const fallbackClauses: SQL[] = [];
-  if (normalized.allowGlobalScope) {
-    primaryClauses.push(eq(knowledgeItems.scope, "global"));
-  }
-  if (normalized.repoKey) {
-    primaryClauses.push(sql`${knowledgeItems.appliesTo} ->> 'repoKey' = ${normalized.repoKey}`);
-    fallbackClauses.push(sql`${knowledgeItems.metadata} ->> 'repoKey' = ${normalized.repoKey}`);
-    fallbackClauses.push(
-      sql`${knowledgeItems.metadata} ->> 'sourceProject' = ${normalized.repoKey}`,
-    );
-  }
-  if (normalized.repoPath) {
-    primaryClauses.push(sql`${knowledgeItems.appliesTo} ->> 'repoPath' = ${normalized.repoPath}`);
-    fallbackClauses.push(sql`${knowledgeItems.metadata} ->> 'repoPath' = ${normalized.repoPath}`);
-    fallbackClauses.push(
-      sql`${knowledgeItems.metadata} ->> 'sourceUri' ilike ${`${normalized.repoPath}/%`}`,
-    );
-    fallbackClauses.push(
-      sql`${knowledgeItems.metadata} ->> 'sourceDocumentUri' ilike ${`${normalized.repoPath}/%`}`,
-    );
-    const fileUriPrefix = `file://${normalized.repoPath.startsWith("/") ? "" : "/"}${normalized.repoPath}`;
-    fallbackClauses.push(
-      sql`${knowledgeItems.metadata} ->> 'sourceUri' ilike ${`${fileUriPrefix}/%`}`,
-    );
-    fallbackClauses.push(
-      sql`${knowledgeItems.metadata} ->> 'sourceDocumentUri' ilike ${`${fileUriPrefix}/%`}`,
-    );
+  const mode = options.scopeMatchMode ?? "primary";
+  const clauses: SQL[] = [];
+  if (mode === "primary") {
+    if (normalized.allowGlobalScope) {
+      clauses.push(eq(knowledgeItems.scope, "global"));
+    }
+    if (normalized.repoKey) {
+      clauses.push(sql`${knowledgeItems.appliesTo} ->> 'repoKey' = ${normalized.repoKey}`);
+    }
+    if (normalized.repoPath) {
+      clauses.push(sql`${knowledgeItems.appliesTo} ->> 'repoPath' = ${normalized.repoPath}`);
+    }
+  } else {
+    if (normalized.repoKey) {
+      clauses.push(sql`${knowledgeItems.metadata} ->> 'repoKey' = ${normalized.repoKey}`);
+      clauses.push(sql`${knowledgeItems.metadata} ->> 'sourceProject' = ${normalized.repoKey}`);
+    }
+    if (normalized.repoPath) {
+      clauses.push(sql`${knowledgeItems.metadata} ->> 'repoPath' = ${normalized.repoPath}`);
+      clauses.push(
+        sql`${knowledgeItems.metadata} ->> 'sourceUri' ilike ${`${normalized.repoPath}/%`}`,
+      );
+      clauses.push(
+        sql`${knowledgeItems.metadata} ->> 'sourceDocumentUri' ilike ${`${normalized.repoPath}/%`}`,
+      );
+      const fileUriPrefix = `file://${normalized.repoPath.startsWith("/") ? "" : "/"}${normalized.repoPath}`;
+      clauses.push(sql`${knowledgeItems.metadata} ->> 'sourceUri' ilike ${`${fileUriPrefix}/%`}`);
+      clauses.push(
+        sql`${knowledgeItems.metadata} ->> 'sourceDocumentUri' ilike ${`${fileUriPrefix}/%`}`,
+      );
+    }
   }
 
-  const clauses = [...primaryClauses, ...fallbackClauses];
   if (clauses.length === 0) return undefined;
   return clauses.length === 1 ? clauses[0] : or(...clauses);
 }
@@ -244,6 +248,7 @@ export async function searchKnowledge(
       body: knowledgeItems.body,
       confidence: knowledgeItems.confidence,
       importance: knowledgeItems.importance,
+      appliesTo: knowledgeItems.appliesTo,
       metadata: knowledgeItems.metadata,
       score: rankExpr,
     })
@@ -255,6 +260,7 @@ export async function searchKnowledge(
   const sourceRefsByKnowledgeId = await listKnowledgeSourceRefs(rows.map((row) => row.id));
 
   return rows.map((row) => {
+    const appliesTo = asRecord(row.appliesTo);
     const metadata = asRecord(row.metadata);
     const sourceRefs =
       sourceRefsByKnowledgeId.get(row.id) ?? fallbackSourceRefsFromMetadata(metadata);
@@ -268,6 +274,7 @@ export async function searchKnowledge(
       confidence: normalizeKnowledgeScore(row.confidence, 70),
       importance: normalizeKnowledgeScore(row.importance, 70),
       score: finiteOrZero(row.score),
+      appliesTo,
       metadata,
       sourceRefs,
       hasSourceLinks: sourceRefs.length > 0,
@@ -361,6 +368,7 @@ export async function vectorSearchKnowledge(
       body: knowledgeItems.body,
       confidence: knowledgeItems.confidence,
       importance: knowledgeItems.importance,
+      appliesTo: knowledgeItems.appliesTo,
       metadata: knowledgeItems.metadata,
       score: similarity,
     })
@@ -371,6 +379,7 @@ export async function vectorSearchKnowledge(
 
   const sourceRefsByKnowledgeId = await listKnowledgeSourceRefs(rows.map((row) => row.id));
   return rows.map((row) => {
+    const appliesTo = asRecord(row.appliesTo);
     const metadata = asRecord(row.metadata);
     const sourceRefs =
       sourceRefsByKnowledgeId.get(row.id) ?? fallbackSourceRefsFromMetadata(metadata);
@@ -384,6 +393,7 @@ export async function vectorSearchKnowledge(
       confidence: normalizeKnowledgeScore(row.confidence, 70),
       importance: normalizeKnowledgeScore(row.importance, 70),
       score: finiteOrZero(row.score),
+      appliesTo,
       metadata,
       sourceRefs,
       hasSourceLinks: sourceRefs.length > 0,

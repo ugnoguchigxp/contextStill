@@ -42,7 +42,7 @@ memory-router は **ローカルファースト** のツールである。ナレ
 
 ### Issue #1: repo scope 検索条件の正規化と index 整備
 
-- [ ] **完了**
+- [x] **完了**
 
 **概要**
 
@@ -51,9 +51,11 @@ memory-router は **ローカルファースト** のツールである。ナレ
 **現行確認**
 
 - `buildKnowledgeScopeMetadata()` は `repoPath` / `repoKey` を `metadata` と `appliesTo` に正規化しているため、「appliesTo へ書き込まれていない」という指摘は現状では古い
-- `drizzle/0009_source_uri_unique_repo_scope.sql` に既存 `metadata.repoPath` / `metadata.repoKey` を `applies_to` へ反映する backfill がある
-- `knowledge_items` には `type`、`status`、`scope`、FTS、embedding の index はあるが、`applies_to ->> 'repoKey'` / `applies_to ->> 'repoPath'` を直接支える index は未定義
-- `buildRepoScopedCondition()` は互換性のため `metadata` や `sourceUri` 系 fallback を残している
+- `drizzle/0009_source_uri_unique_repo_scope.sql` に加えて `drizzle/0012_applies_to_scope_indexes.sql` でも idempotent backfill を実施している
+- `knowledge_items_applies_to_repo_key_idx` / `knowledge_items_applies_to_repo_path_idx` を追加済み
+- `buildRepoScopedCondition()` は `scopeMatchMode` により `primary(appliesTo/global)` と `legacy(metadata/sourceUri)` を分離し、主経路に fallback を混在させない
+- `search_knowledge` / `context_compile` の共通検索経路で、primary で空振りした場合のみ legacy fallback を実行し、`KNOWLEDGE_APPLIES_TO_FALLBACK` を付与する
+- primary hit が存在する場合は legacy-only item を返さないことを integration test で検証済み
 
 **影響範囲**
 
@@ -100,13 +102,14 @@ memory-router は **ローカルファースト** のツールである。ナレ
 - [context-compiler.service.ts](../src/modules/context-compiler/context-compiler.service.ts) — `compileContextPack`
 - [schema.ts](../src/db/schema.ts) — `knowledgeItems` table / index
 - [0009_source_uri_unique_repo_scope.sql](../drizzle/0009_source_uri_unique_repo_scope.sql) — existing backfill
+- [0012_applies_to_scope_indexes.sql](../drizzle/0012_applies_to_scope_indexes.sql) — idempotent backfill + appliesTo index
 - [context-compile-mcp-improvement-plan.md](./context-compile-mcp-improvement-plan.md) — Phase 1
 
 ---
 
 ### Issue #2: `context-compiler.service.ts` の型キャスト削減
 
-- [ ] **完了**
+- [x] **完了**
 
 **概要**
 
@@ -172,7 +175,7 @@ memory-router は **ローカルファースト** のツールである。ナレ
 
 ### Issue #3: `estimateTokens` の日本語過小評価
 
-- [ ] **完了**
+- [x] **完了**
 
 **概要**
 
@@ -229,7 +232,7 @@ memory-router は **ローカルファースト** のツールである。ナレ
 
 ### Issue #4: `retrieveKnowledge` と `searchKnowledgeCandidates` の検索ロジック重複
 
-- [ ] **完了**
+- [x] **完了**
 
 **概要**
 
@@ -345,7 +348,7 @@ memory-router は **ローカルファースト** のツールである。ナレ
 
 ### Issue #6: `config.ts` のフラット構造
 
-- [ ] **完了**
+- [x] **完了**
 
 **概要**
 
@@ -356,6 +359,9 @@ memory-router は **ローカルファースト** のツールである。ナレ
 - `config.sourceContentRoot`、`config.localLlmModel`、`config.embeddingDimension`、`config.vibeDistillationMaxInputChars` などの参照が API / CLI / modules / tests に広く存在する
 - `package.json` の `verify` は typecheck/lint/format/test/build を通すため、config 分割時の import drift は検出しやすい
 - 一括で nested config に移行すると diff が広がりやすい
+- `groupedConfig` を導入し、`database` / `embedding` / `localLlm` / `compile` / `doctor` などのカテゴリへ整理した
+- 既存の `config.xxx` 参照は `Object.defineProperties` の alias で互換維持しているため、既存の module/test を壊さず段階移行できる
+- `bun run verify` が通ることを確認済み
 
 **影響範囲**
 
@@ -408,7 +414,7 @@ memory-router は **ローカルファースト** のツールである。ナレ
 
 ### Issue #7: `doctor.service.ts` の単一ファイル肥大化
 
-- [ ] **完了**
+- [x] **完了**
 
 **概要**
 
@@ -419,6 +425,9 @@ memory-router は **ローカルファースト** のツールである。ナレ
 - `doctor.service.ts` は required table、MCP tool、options、DB probe、embedding probe、recent compile run、distillation freshness をまとめて扱っている
 - `config.doctorDegradedRateThreshold` など flat config にも依存している
 - 100 行以内という硬い制約は実装目標として不自然。責務が orchestration に限定されていることを重視する
+- `inspectors/` 配下へ `database` / `embedding` / `mcp` / `compile` / `agent-log-sync` / `vibe-distillation` / `source-distillation` を分割した
+- `doctor.service.ts` は options 解決、inspector 呼び出し、reasons/status 集約、schema parse を主責務とする構成へ変更した
+- `bun run verify` と `test/doctor.service.test.ts` が通ることを確認済み
 
 **影響範囲**
 
@@ -474,7 +483,7 @@ memory-router は **ローカルファースト** のツールである。ナレ
 
 ### Issue #8: API ルートのテスト不在
 
-- [ ] **完了**
+- [x] **完了**
 
 **概要**
 
@@ -484,8 +493,9 @@ memory-router は **ローカルファースト** のツールである。ナレ
 
 - API entrypoint は [api/app.ts](../api/app.ts)
 - route は `api/modules/*/*.routes.ts` に分かれている
-- `package.json` の `test:unit` は明示的なテストファイル列挙なので、API test を追加するだけでは `verify` に入らない
-- integration test が DB 前提なら `test:integration` 側へ分ける必要がある
+- `test/api.routes.test.ts` で `Hono app.request()` による契約テストを追加済み
+- `package.json` に `test:unit:api` を追加し、`test:unit` から `vitest` 実行を呼び出す形で `verify` に含めた
+- DB 前提の happy path は `test/api.routes.integration.test.ts` を追加し、`test:integration` で実行される構成にした
 
 **影響範囲**
 
@@ -595,7 +605,7 @@ AI エージェントが作業前に `context_compile` を呼ぶため、compile
 
 ### Issue #13: コールドスタート対策の CLI / import 導線整理
 
-- [ ] **完了**
+- [x] **完了**
 
 **概要**
 
@@ -608,6 +618,9 @@ AI エージェントが作業前に `context_compile` を呼ぶため、compile
 - `src/cli/commands/init.ts` のような commands directory は存在しない
 - `gnosis init --preset=typescript-react` という表現はこの repo には不適切
 - distillation は共通 runtime と、vibe/source それぞれの service に分かれている
+- `src/cli/init-project.ts` を追加し、`bun run init:project` で `import -> global preset seed -> (任意) distill:sources -> smoke compile` を順次実行できるようにした
+- step ごとの失敗境界を `[init-project/<step>]` として返し、CLI 出力で失敗箇所を即時特定できるようにした
+- README に初回導線と、`scope: global` preset / `scope: repo` distillation の分離方針を追記した
 
 **影響範囲**
 
@@ -643,11 +656,13 @@ AI エージェントが作業前に `context_compile` を呼ぶため、compile
 **関連ファイル**
 
 - [package.json](../package.json) — CLI scripts
+- [init-project.ts](../src/cli/init-project.ts)
 - [import-markdown.ts](../src/cli/import-markdown.ts)
 - [import-sources.ts](../src/cli/import-sources.ts)
 - [distill-sources.ts](../src/cli/distill-sources.ts)
 - [distill-vibe-memory.ts](../src/cli/distill-vibe-memory.ts)
 - [backfill-knowledge-project-context.ts](../src/cli/backfill-knowledge-project-context.ts)
+- [README.md](../README.md) — 初回導線
 - [distillation-runtime.service.ts](../src/modules/distillation/distillation-runtime.service.ts)
 - [distillation.service.ts](../src/modules/sources/distillation.service.ts)
 - [distillation.service.ts](../src/modules/vibe-memory/distillation.service.ts)
@@ -949,19 +964,19 @@ Web UI のテストは薄く、Playwright config はあるが主要導線の E2E
 
 | Issue | 優先度 | 対応 Phase | 状態 | 備考 |
 |---|---|---|---|---|
-| #1 repo scope / appliesTo / index | **High** | Phase 1 | 部分実装済み | `appliesTo` 書き込みと既存 backfill はある。残りは index、fallback 整理、回帰テスト |
-| #2 型キャスト | **High** | - | 未着手 | 独立して即着手可能。base `Rankable` を無理に太らせない |
-| #3 estimateTokens | **High** | - | 未着手 | 日本語環境で毎回影響。tokenizer なしなら保守的 heuristic を acceptance にする |
-| #4 検索ロジック重複 | **High** | Phase 1 / 3 | 未着手 | #1 の前に executor を共通化すると安全 |
+| #1 repo scope / appliesTo / index | **High** | Phase 1 | 完了 | `appliesTo` 主経路化、legacy fallback の段階実行、index/migration、回帰テストを反映 |
+| #2 型キャスト | **High** | - | 完了 | `KnowledgeRankable` 導入で `context-compiler.service.ts` の unsafe cast を除去 |
+| #3 estimateTokens | **High** | - | 完了 | CJK を考慮した推定 + token-aware truncation へ置換済み |
+| #4 検索ロジック重複 | **High** | Phase 1 / 3 | 完了 | `executeKnowledgeSearch()` へ text/vector merge と fallback を集約済み |
 | #5 weightedScore 再計算 | Medium | Phase 1 | 完了 | 現行 `rankAndDedupe()` は `{ item, weighted }` を保持済み |
-| #6 config 構造 | Medium | - | 未着手 | 一括 nested 化より互換 alias 付き段階移行が安全 |
-| #7 doctor 分割 | Medium | Phase 4 | 未着手 | 行数目標より inspector 分割と response 互換を重視 |
-| #8 API テスト | Medium | - | 未着手 | `test:unit` は明示列挙なので package script 更新が必要 |
+| #6 config 構造 | Medium | - | 完了 | `groupedConfig` + flat alias 互換で段階移行し verify 通過 |
+| #7 doctor 分割 | Medium | Phase 4 | 完了 | inspector 分割 + orchestration 化で response shape 互換を維持 |
+| #8 API テスト | Medium | - | 完了 | `test:unit:api` と `api.routes` 契約テストを追加し verify/integration に接続済み |
 | #9 旧 relations 削除 | Low | - | 完了 | Graph relation は動的合成に統一 |
 | #10 Web UI テスト | Low | Phase 4 | 未着手 | ローカル運用では後回し可 |
 | #11 SSRF 対策 | Low | Phase 6 | 未着手 | ローカルでも localhost/private deny は有効 |
 | #12 latency / semantic cache | Medium | Phase 5 | 設計不足 | cache 実装前に duration 計測と invalidation 設計が必要 |
-| #13 コールドスタート対策 | Medium | - | 要再設計 | `gnosis init` / `src/cli/commands/*` は不適切。現行 CLI に合わせる |
+| #13 コールドスタート対策 | Medium | - | 完了 | `init:project` を追加し現行 CLI 構成で初回導線を実装 |
 | #14 HITL UI 強化 | Medium | Phase 4 | 要パス修正済み | 対象は admin module の `knowledge.page.tsx` |
 | #15 Agent DX リカバリ | Low | Phase 3 | 要 tool 名修正済み | `context-compile.tool.ts` と現行 tool surface に合わせる |
 
@@ -970,18 +985,10 @@ Web UI のテストは薄く、Playwright config はあるが主要導線の E2E
 ## 推奨実施順序
 
 ```text
-1. Issue #2 (型キャスト)              ← 小さく安全。型の足場を先に直す
-2. Issue #3 (estimateTokens)          ← 日本語 compile 品質の即効改善
-3. Issue #4 (検索 executor 共通化)     ← #1 の repo scope 修正前に重複を潰す
-4. Issue #1 (repo scope / index)      ← appliesTo 主経路、index、fallback 整理
-5. Issue #8 (API 契約テスト)          ← route 変更前後の安全ネットを追加
-6. Issue #6 (config 構造)             ← 互換 alias 付きで段階移行
-7. Issue #7 (doctor inspector 分割)   ← Doctor 拡張前に分解
-8. Issue #13 (cold start 導線)        ← 現行 CLI に合わせて再設計してから実装
-9. Issue #14 (HITL UI 強化)           ← draft 運用が増える前に bulk review を追加
-10. Issue #12 (latency/cache)         ← 実測と invalidation 設計後に実装
-11. Issue #11 (SSRF)                  ← サーバーホスト前には必須。ローカル denylist は早めでも可
-12. Issue #10 / #15                  ← UI 回帰や Agent DX の必要度に応じて段階的に実施
+1. Issue #14 (HITL UI 強化)           ← draft 運用が増える前に bulk review を追加
+2. Issue #12 (latency/cache)          ← 実測と invalidation 設計後に実装
+3. Issue #11 (SSRF)                   ← サーバーホスト前には必須。ローカル denylist は早めでも可
+4. Issue #10 / #15                    ← UI 回帰や Agent DX の必要度に応じて段階的に実施
 ```
 
 ---
@@ -990,18 +997,18 @@ Web UI のテストは薄く、Playwright config はあるが主要導線の E2E
 
 | 優先度 | 件数 | 完了 | 残り |
 |---|---:|---:|---:|
-| High | 4 | 0 | 4 |
-| Medium | 7 | 1 | 6 |
+| High | 4 | 4 | 0 |
+| Medium | 7 | 5 | 2 |
 | Low | 4 | 1 | 3 |
-| **合計** | **15** | **2** | **13** |
+| **合計** | **15** | **10** | **5** |
 
 ---
 
 ## 実装前の注意
 
-- `#1` は「appliesTo 書き込み」自体は済んでいるため、同じ修正を重ねない。残りは index、fallback 整理、test である
+- `#1` は完了済み。新規実装では repo scope 判定の主経路に legacy fallback を再混在させない
 - `#5` は完了済みなので、再実装しない
-- `#13` は memory-router の CLI 名と現行 file layout に合わせる。`gnosis` や `src/cli/commands/*` を使わない
+- `#13` は完了済み。初回導線を拡張する場合も memory-router の CLI 名と現行 file layout を維持し、`gnosis` や `src/cli/commands/*` を持ち込まない
 - `#14` は current UI の admin module を触る。存在しない `web/src/pages/KnowledgePage.tsx` を前提にしない
 - `#15` は存在する tool 名だけを suggestion に出す。`record_vibe_memory` を使うなら別途 tool surface の復活設計が必要
 - `bun run verify` は `test:unit` の対象を明示列挙しているため、新しい unit test を追加したら `package.json` も更新する

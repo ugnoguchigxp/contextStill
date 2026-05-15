@@ -1,9 +1,9 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
-import { runDoctor } from "../src/modules/doctor/doctor.service.js";
-import { getDb } from "../src/db/index.js";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs/promises";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { getDb } from "../src/db/index.js";
 import { getExposedToolEntries } from "../src/mcp/tools/index.js";
+import { runDoctor } from "../src/modules/doctor/doctor.service.js";
 import { embeddingHealth } from "../src/modules/embedding/embedding.service.js";
 
 vi.mock("../src/db/index.js");

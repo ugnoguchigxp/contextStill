@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { sql } from "drizzle-orm";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { getDb } from "../src/db/index.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
 import { upsertKnowledgeFromSource } from "../src/modules/knowledge/knowledge.repository.js";
@@ -227,6 +227,47 @@ describeDb("context compiler integration", () => {
     expect(pack.diagnostics.degradedReasons).not.toContain("KNOWLEDGE_REPO_SCOPE_FALLBACK");
   });
 
+  test("repoPath never mixes draft knowledge from other repos", async () => {
+    await upsertKnowledgeFromSource({
+      sourceUri: "file:///repo-a/rule-draft-safe.md",
+      contentHash: "repo-a-rule-draft-safe-hash",
+      type: "rule",
+      status: "active",
+      scope: "repo",
+      title: "Repo A Active Rule",
+      body: "draft scope guard token",
+      metadata: {
+        repoPath: "/workspace/repo-a",
+        repoKey: "/workspace/repo-a",
+      },
+    });
+    await upsertKnowledgeFromSource({
+      sourceUri: "file:///repo-b/rule-draft-danger.md",
+      contentHash: "repo-b-rule-draft-danger-hash",
+      type: "rule",
+      status: "draft",
+      scope: "repo",
+      title: "Repo B Draft Rule",
+      body: "draft scope guard token",
+      metadata: {
+        repoPath: "/workspace/repo-b",
+        repoKey: "/workspace/repo-b",
+      },
+    });
+
+    const { pack } = await compileContextPack({
+      goal: "draft scope guard token",
+      intent: "edit",
+      repoPath: "/workspace/repo-a",
+      includeDraft: true,
+      tokenBudget: 4000,
+    });
+
+    const titles = pack.rules.map((item) => item.title);
+    expect(titles).toContain("Repo A Active Rule");
+    expect(titles).not.toContain("Repo B Draft Rule");
+  });
+
   test("repoPath fallback is explicit when scoped knowledge is missing", async () => {
     await upsertKnowledgeFromSource({
       sourceUri: "file:///legacy/rule.md",
@@ -246,5 +287,87 @@ describeDb("context compiler integration", () => {
 
     expect(pack.rules.some((item) => item.title === "Legacy Rule")).toBe(true);
     expect(pack.diagnostics.degradedReasons).toContain("KNOWLEDGE_REPO_SCOPE_FALLBACK");
+  });
+
+  test("legacy metadata scope fallback is reported when appliesTo is missing", async () => {
+    const sourceUri = "file:///legacy-metadata/rule.md";
+    await upsertKnowledgeFromSource({
+      sourceUri,
+      contentHash: "legacy-metadata-rule-hash",
+      type: "rule",
+      status: "active",
+      scope: "repo",
+      title: "Legacy Metadata Rule",
+      body: "legacy metadata scope token",
+      metadata: {
+        repoPath: "/workspace/repo-a",
+        repoKey: "/workspace/repo-a",
+      },
+    });
+
+    const db = getDb();
+    await db.execute(sql`
+      UPDATE knowledge_items
+      SET applies_to = '{}'::jsonb
+      WHERE metadata ->> 'sourceUri' = ${sourceUri}
+    `);
+
+    const { pack } = await compileContextPack({
+      goal: "legacy metadata scope token",
+      intent: "edit",
+      repoPath: "/workspace/repo-a",
+    });
+
+    expect(pack.rules.some((item) => item.title === "Legacy Metadata Rule")).toBe(true);
+    expect(pack.diagnostics.degradedReasons).toContain("KNOWLEDGE_APPLIES_TO_FALLBACK");
+    expect(pack.diagnostics.degradedReasons).not.toContain("KNOWLEDGE_REPO_SCOPE_FALLBACK");
+  });
+
+  test("appliesTo primary scope wins when legacy-only match also exists", async () => {
+    const legacySourceUri = "file:///legacy-mixed/rule.md";
+    await upsertKnowledgeFromSource({
+      sourceUri: "file:///repo-a/primary-rule.md",
+      contentHash: "repo-a-primary-rule-hash",
+      type: "rule",
+      status: "active",
+      scope: "repo",
+      title: "Repo A Primary Rule",
+      body: "repo scope priority token",
+      metadata: {
+        repoPath: "/workspace/repo-a",
+        repoKey: "/workspace/repo-a",
+      },
+    });
+    await upsertKnowledgeFromSource({
+      sourceUri: legacySourceUri,
+      contentHash: "repo-a-legacy-rule-hash",
+      type: "rule",
+      status: "active",
+      scope: "repo",
+      title: "Repo A Legacy Metadata Rule",
+      body: "repo scope priority token",
+      metadata: {
+        repoPath: "/workspace/repo-a",
+        repoKey: "/workspace/repo-a",
+      },
+    });
+
+    const db = getDb();
+    await db.execute(sql`
+      UPDATE knowledge_items
+      SET applies_to = '{}'::jsonb
+      WHERE metadata ->> 'sourceUri' = ${legacySourceUri}
+    `);
+
+    const { pack } = await compileContextPack({
+      goal: "repo scope priority token",
+      intent: "edit",
+      repoPath: "/workspace/repo-a",
+    });
+
+    const titles = pack.rules.map((item) => item.title);
+    expect(titles).toContain("Repo A Primary Rule");
+    expect(titles).not.toContain("Repo A Legacy Metadata Rule");
+    expect(pack.diagnostics.degradedReasons).not.toContain("KNOWLEDGE_APPLIES_TO_FALLBACK");
   });
 });

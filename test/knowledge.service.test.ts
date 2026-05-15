@@ -1,12 +1,12 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { config } from "../src/config.js";
+import * as embedding from "../src/modules/embedding/embedding.service.js";
+import * as repo from "../src/modules/knowledge/knowledge.repository.js";
 import {
+  registerKnowledgeFromMarkdown,
   retrieveKnowledge,
   searchKnowledgeCandidates,
-  registerKnowledgeFromMarkdown,
 } from "../src/modules/knowledge/knowledge.service.js";
-import * as repo from "../src/modules/knowledge/knowledge.repository.js";
-import * as embedding from "../src/modules/embedding/embedding.service.js";
-import { config } from "../src/config.js";
 
 vi.mock("../src/modules/knowledge/knowledge.repository.js");
 vi.mock("../src/modules/embedding/embedding.service.js");
@@ -36,18 +36,68 @@ describe("Knowledge Service", () => {
 
   test("executeKnowledgeSearch falls back to global search if scoped search is empty", async () => {
     config.enableVectorSearch = false; // Disable to simplify mock counting
-
-    // Scoped search: textHits (primary) and hintHits (queryText)
-    vi.mocked(repo.searchKnowledge).mockResolvedValueOnce([]);
-    vi.mocked(repo.searchKnowledge).mockResolvedValueOnce([]);
-    // Fallback search: textHits (primary)
-    vi.mocked(repo.searchKnowledge).mockResolvedValueOnce([{ id: "item1", score: 0.9 }] as any);
+    let calls = 0;
+    vi.mocked(repo.searchKnowledge).mockImplementation(async () => {
+      calls += 1;
+      if (calls === 5) {
+        return [{ id: "item1", score: 0.9 }] as any;
+      }
+      return [];
+    });
 
     const input = { goal: "test", repoPath: "my-repo", includeDraft: false } as any;
     const result = await retrieveKnowledge(input, { retrievalMode: "learning_context" });
 
     expect(result.items).toHaveLength(1);
     expect(result.stats.repoScopeFallbackUsed).toBe(true);
+    expect(result.degradedReasons).toContain("KNOWLEDGE_REPO_SCOPE_FALLBACK");
+    expect(result.degradedReasons).not.toContain("KNOWLEDGE_APPLIES_TO_FALLBACK");
+    const unscopedCall = vi.mocked(repo.searchKnowledge).mock.calls[4];
+    expect(unscopedCall?.[0]?.repoPath).toBeUndefined();
+    expect(unscopedCall?.[1]?.repoPath).toBeUndefined();
+    expect(unscopedCall?.[1]?.scopeMatchMode).toBeUndefined();
+  });
+
+  test("marks degraded reason when legacy metadata fallback is used for scoped repo results", async () => {
+    config.enableVectorSearch = false;
+    let calls = 0;
+    vi.mocked(repo.searchKnowledge).mockImplementation(async () => {
+      calls += 1;
+      if (calls === 3) {
+        return [
+          {
+            id: "legacy-item",
+            type: "rule",
+            status: "active",
+            scope: "repo",
+            title: "Legacy Repo Rule",
+            body: "legacy scope token",
+            confidence: 70,
+            importance: 70,
+            score: 0.9,
+            appliesTo: {},
+            metadata: {
+              repoPath: "/workspace/repo-a",
+              repoKey: "/workspace/repo-a",
+            },
+            sourceRefs: [],
+            hasSourceLinks: false,
+          },
+        ] as any;
+      }
+      return [];
+    });
+
+    const result = await retrieveKnowledge(
+      { goal: "legacy scope token", repoPath: "/workspace/repo-a", includeDraft: false } as any,
+      { retrievalMode: "learning_context" },
+    );
+
+    expect(result.stats.repoScopeFallbackUsed).toBe(false);
+    expect(result.degradedReasons).toContain("KNOWLEDGE_APPLIES_TO_FALLBACK");
+    expect(result.degradedReasons).not.toContain("KNOWLEDGE_REPO_SCOPE_FALLBACK");
+    const legacyCall = vi.mocked(repo.searchKnowledge).mock.calls[2];
+    expect(legacyCall?.[1]?.scopeMatchMode).toBe("legacy");
   });
 
   test("registerKnowledgeFromMarkdown generates embedding if missing", async () => {
