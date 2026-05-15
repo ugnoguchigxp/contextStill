@@ -55,6 +55,14 @@ type DistilledSourceResult = {
   knowledgeIds: string[];
   candidates: DistilledKnowledgeCandidate[];
   error?: string;
+  skipReason?: string;
+  jsonRepaired?: boolean;
+  rawCandidateCount?: number;
+  rejectedLowScoreCount?: number;
+  rejectedInvalidEvidenceCount?: number;
+  toolEventCount?: number;
+  responseChars?: number;
+  failureKind?: "llm_call" | "parse_or_repair" | "processing";
 };
 
 export type DistillSourcesSummary = {
@@ -68,6 +76,30 @@ export type DistillSourcesSummary = {
   knowledgeCount: number;
   results: DistilledSourceResult[];
 };
+
+function summarizeCounts(values: Array<string | undefined>): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const value of values) {
+    if (!value) continue;
+    counts[value] = (counts[value] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function classifyFailureKind(
+  message: string,
+  responseChars: number | undefined,
+): "llm_call" | "parse_or_repair" | "processing" {
+  if (responseChars === undefined) return "llm_call";
+  if (
+    message.includes("invalid after JSON repair") ||
+    message.includes("did not contain valid JSON") ||
+    message.includes("did not include assistant content")
+  ) {
+    return "parse_or_repair";
+  }
+  return "processing";
+}
 
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -118,7 +150,7 @@ export function buildSourceDistillationMessages(params: {
       role: "system",
       content: buildDistillationSystemPrompt("wiki", [
         "次の形式の厳密な JSON のみを返すこと:",
-        '{"candidates":[{"type":"rule|procedure","title":"短い日本語タイトル","body":"再利用可能で実行可能な日本語 knowledge","confidence":70,"importance":70,"score":0.0,"rationale":"任意の短い理由","sourceRefs":["source fragment refs"],"evidenceRefs":["fetched URLs when tools are used"]}]}',
+        '{"candidates":[{"type":"rule|procedure","title":"短い日本語タイトル","body":"再利用可能で実行可能な日本語 knowledge","score":0.0}]}',
       ]),
     },
     {
@@ -167,7 +199,7 @@ async function parseDistillationCandidatesWithRepair(params: {
         {
           role: "user",
           content:
-            '前回の応答は不正または不完全な JSON でした。同じ schema で、最大 2 件、score と sourceRefs を含む完全な厳密 JSON のみを返してください。不確実な場合は {"candidates":[]} を返してください。',
+            '前回の応答は不正または不完全な JSON でした。同じ schema で候補は最大 1 件に絞り、type/title/body/score のみを含む厳密 JSON を返してください。不確実な場合は {"candidates":[]} を返してください。',
         },
       ],
       maxTokens: params.maxTokens,
@@ -285,6 +317,7 @@ export async function distillSources(
     for (const fragment of fragments) {
       const inputHash = buildSourceDistillationInputHash(fragment);
       const messages = buildSourceDistillationMessages({ fragment });
+      let responseChars: number | undefined;
       try {
         const completion = normalizeDistillationModelResult(
           await modelClient({
@@ -293,6 +326,7 @@ export async function distillSources(
             maxTokens: groupedConfig.sourceDistillation.maxOutputTokens,
           }),
         );
+        responseChars = completion.content.length;
         const { candidates, repaired } = await parseDistillationCandidatesWithRepair({
           rawResponse: completion.content,
           messages,
@@ -306,6 +340,8 @@ export async function distillSources(
         const acceptedCandidates = scoreGate.accepted;
 
         if (acceptedCandidates.length === 0) {
+          const skipReason =
+            candidates.length === 0 ? "no_rule_or_procedure_candidates" : "all_candidates_rejected";
           await recordRun({
             apply,
             fragment,
@@ -316,10 +352,7 @@ export async function distillSources(
             model: distillationModel,
             toolEvents: completion.toolEvents,
             metadata: {
-              reason:
-                candidates.length === 0
-                  ? "no_rule_or_procedure_candidates"
-                  : "all_candidates_rejected",
+              reason: skipReason,
               jsonRepaired: repaired,
               rawCandidateCount: candidates.length,
               scoreThreshold: scoreGate.threshold,
@@ -330,6 +363,7 @@ export async function distillSources(
                 scoreGate.rejectedInvalidEvidence,
               ),
               toolEventCount: completion.toolEvents.length,
+              responseChars,
             },
           });
           results.push({
@@ -341,6 +375,13 @@ export async function distillSources(
             candidateCount: 0,
             knowledgeIds: [],
             candidates: [],
+            skipReason,
+            jsonRepaired: repaired,
+            rawCandidateCount: candidates.length,
+            rejectedLowScoreCount: scoreGate.rejectedLowScore.length,
+            rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
+            toolEventCount: completion.toolEvents.length,
+            responseChars,
           });
           continue;
         }
@@ -463,6 +504,7 @@ export async function distillSources(
               scoreGate.rejectedInvalidEvidence,
             ),
             toolEventCount: completion.toolEvents.length,
+            responseChars,
           },
         });
         results.push({
@@ -474,9 +516,16 @@ export async function distillSources(
           candidateCount: acceptedCandidates.length,
           knowledgeIds,
           candidates: acceptedCandidates,
+          jsonRepaired: repaired,
+          rawCandidateCount: candidates.length,
+          rejectedLowScoreCount: scoreGate.rejectedLowScore.length,
+          rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
+          toolEventCount: completion.toolEvents.length,
+          responseChars,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const failureKind = classifyFailureKind(message, responseChars);
         await recordRun({
           apply,
           fragment,
@@ -488,6 +537,8 @@ export async function distillSources(
           model: distillationModel,
           metadata: {
             error: message,
+            failureKind,
+            responseChars,
           },
         });
         results.push({
@@ -500,6 +551,8 @@ export async function distillSources(
           knowledgeIds: [],
           candidates: [],
           error: message,
+          responseChars,
+          failureKind,
         });
       }
     }
@@ -531,6 +584,17 @@ export async function distillSources(
         skipped: summary.skipped,
         failed: summary.failed,
         knowledgeCount: summary.knowledgeCount,
+        skipReasonCounts: summarizeCounts(
+          summary.results
+            .filter((result) => result.status === "skipped")
+            .map((result) => result.skipReason),
+        ),
+        failureKindCounts: summarizeCounts(
+          summary.results
+            .filter((result) => result.status === "failed")
+            .map((result) => result.failureKind),
+        ),
+        jsonRepairedCount: summary.results.filter((result) => result.jsonRepaired).length,
         failedFragments: summary.results
           .filter((result) => result.status === "failed")
           .slice(0, 20)
@@ -539,6 +603,23 @@ export async function distillSources(
             sourceUri: result.sourceUri,
             locator: result.locator,
             error: result.error ?? null,
+            failureKind: result.failureKind ?? null,
+            responseChars: result.responseChars ?? null,
+          })),
+        skippedFragments: summary.results
+          .filter((result) => result.status === "skipped")
+          .slice(0, 20)
+          .map((result) => ({
+            sourceFragmentId: result.sourceFragmentId,
+            sourceUri: result.sourceUri,
+            locator: result.locator,
+            reason: result.skipReason ?? null,
+            jsonRepaired: result.jsonRepaired ?? null,
+            rawCandidateCount: result.rawCandidateCount ?? null,
+            rejectedLowScoreCount: result.rejectedLowScoreCount ?? null,
+            rejectedInvalidEvidenceCount: result.rejectedInvalidEvidenceCount ?? null,
+            toolEventCount: result.toolEventCount ?? null,
+            responseChars: result.responseChars ?? null,
           })),
       },
     });

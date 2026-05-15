@@ -185,6 +185,47 @@ describe("agentic-refine.service", () => {
       expect(result.items[0].id).toBe("3");
     });
 
+    it("accepts raw JSON array output as selectedIds fallback", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: '["2","1"]',
+              },
+            },
+          ],
+        }),
+      });
+
+      const result = await agenticRefine(candidates, input, "task_context");
+      expect(result.agenticUsed).toBe(true);
+      expect(result.items).toHaveLength(2);
+      expect(result.items[0]?.id).toBe("2");
+      expect(result.items[1]?.id).toBe("1");
+    });
+
+    it("treats non-string array output as parse failure", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: "[1,2]",
+              },
+            },
+          ],
+        }),
+      });
+
+      const result = await agenticRefine(candidates, input, "task_context");
+      expect(result.agenticUsed).toBe(false);
+      expect(result.error).toBe("AGENTIC_OUTPUT_PARSE_FAILED");
+      expect(result.items).toEqual(candidates);
+    });
+
     it("filters out invalid IDs returned by LLM", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,

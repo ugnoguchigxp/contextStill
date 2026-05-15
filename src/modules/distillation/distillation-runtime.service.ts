@@ -558,7 +558,7 @@ export async function runDistillationCompletion(
       throw new Error(`distillation tool loop exceeded max rounds (${maxToolRounds})`);
     }
 
-    if (typeof response.content === "string" && response.content.trim()) {
+    if (typeof response.content === "string") {
       const finalMessage: DistillationMessage = {
         role: "assistant",
         content: response.content,

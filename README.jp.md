@@ -4,6 +4,10 @@
 </p>
 
 <p align="center">
+  <a href="https://github.com/ugnoguchigxp/memoryRouter/actions/workflows/verify.yml"><img alt="verify" src="https://github.com/ugnoguchigxp/memoryRouter/actions/workflows/verify.yml/badge.svg"></a>
+</p>
+
+<p align="center">
   <a href="#クイックスタート">クイックスタート</a> ·
   <a href="#仕組み">仕組み</a> ·
   <a href="#mcp-連携">MCP 連携</a> ·
@@ -109,8 +113,16 @@ cp .env.example .env
 # 4. データベースマイグレーション
 bun run db:migrate
 
-# 5. 動作確認
-bun run verify
+# 5. プロジェクトの初期化
+bun run init:project -- --distill-sources-apply --json
+```
+
+`init:project` の出力には、次アクション（`compile` / `doctor` / draft review）が含まれます。
+まずは次のコマンドで動作確認できます。
+
+```bash
+bun run doctor
+bun run compile --goal "このリポジトリの開発フローを把握したい" --intent plan --json
 ```
 
 ### 開発サーバーの起動
@@ -211,6 +223,8 @@ MCP クライアントの設定に追加:
 | `context_compile` | タスク用コンテキストパック生成 | **主導線** — 毎タスクの作業前に |
 | `search_knowledge` | knowledge 候補の直接検索 | `context_compile` の結果を深掘りしたい時 |
 | `register_knowledge` | 新しいルールや手順の登録 | 再利用可能なパターンを発見した時 |
+| `list_knowledge` | draft/active/deprecated 一覧の取得 | 知識のライフサイクルを管理したい時 |
+| `update_knowledge` | 状態/タイトル/本文/メタデータの更新 | 知識の昇格や廃止を行いたい時 |
 | `memory_search` | 過去の会話・差分を検索 | 特定の過去コンテキストを探す時 |
 | `memory_fetch` | 特定メモリの詳細取得 | 特定の会話を精査する時 |
 | `doctor` | システム診断 | compile が degraded/failed の時 |
@@ -234,6 +248,7 @@ MCP ツールの完全な入出力仕様は [docs/mcp-tools.md](docs/mcp-tools.m
 
 | コマンド | 説明 |
 |---|---|
+| `bun run init:project` | 初回オンボーディング（インポート、プリセット、蒸留、テストコンパイルを一括実行） |
 | `bun run compile` | コンテキストパックをコンパイル |
 | `bun run import:wiki <path>` | Markdown を sources にインポート |
 | `bun run import:markdown <file>` | 単一 Markdown ファイルをインポート |
@@ -242,6 +257,25 @@ MCP ツールの完全な入出力仕様は [docs/mcp-tools.md](docs/mcp-tools.m
 | `bun run distill:sources` | Wiki ソースから knowledge を蒸留 |
 | `bun run doctor` | システム診断を実行 |
 | `bun run backfill:knowledge-project-context` | 既存 knowledge にプロジェクトコンテキストをバックフィル |
+
+### コールドスタート・フロー
+
+新規リポジトリで `init:project` を使用すると、初期設定から動作確認までを一貫して行えます。
+
+```bash
+# wiki インポート + グローバルプリセット投入 + テストコンパイル
+bun run init:project -- --wiki-root ./wiki/pages
+
+# ソース蒸留を含める (dry-run)
+bun run init:project -- --wiki-root ./wiki/pages --distill-sources
+
+# ソース蒸留を実行し、生成された draft knowledge を保存する
+bun run init:project -- --wiki-root ./wiki/pages --distill-sources-apply
+```
+
+- グローバルプリセットのエントリは `scope: global` として保存されます。
+- リポジトリ固有の知識は `import:wiki` / `distill:sources` を通じて `scope: repo` に保持されます。
+- テストコンパイルで関連アイテムが見つからない場合、具体的な次アクションが表示されます。
 
 ### 使用例
 
@@ -485,9 +519,9 @@ memory-router/
 | ドキュメント | 説明 |
 |---|---|
 | [MCP Tool Contract](docs/mcp-tools.md) | MCP ツールの完全な入出力仕様 |
-| [改善計画](docs/context-compile-mcp-improvement-plan.md) | Context Compile と MCP の改善ロードマップ |
-| [コードレビュー Issue 一覧](docs/code-review-issues.md) | タスクチェックリスト付きの Issue 追跡 |
-| [蒸留ランタイム](docs/distillation-runtime-plan.md) | 共通蒸留アーキテクチャ |
+| [改善計画](docs/improvement-plan.md) | 現在のロードマップと受け入れ基準 |
+| [Context Compile/MCP Plan](docs/context-compile-mcp-improvement-plan.md) | Context Compile と MCP の改善ロードマップ |
+| [Knowledge Value Lifecycle](docs/knowledge-value-lifecycle.md) | 知識のライフサイクル運用ポリシー |
 
 ---
 
@@ -506,7 +540,7 @@ memory-router/
 ### 開発のヒント
 
 - `bun run verify` が品質ゲート（typecheck → lint → format → unit tests → web build）
-- `test:unit` は `package.json` でテストファイルを明示列挙 — 新しいテストファイルを追加したらそこも更新すること
+- `test:unit` は Vitest を介してすべての `test/**/*.test.ts` および `web/src/**/*.test.ts(x)` を実行します（統合/E2Eテストは除外）
 - 統合テストには `memory_router_test` データベースが必要
 - `wiki/` ディレクトリは独自の Git リポジトリを持つ
 

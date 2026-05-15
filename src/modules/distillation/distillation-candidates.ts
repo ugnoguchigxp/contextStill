@@ -12,7 +12,7 @@ const candidateSchema = z.object({
   importance: z.coerce.number().optional(),
   score: z.coerce.number(),
   rationale: z.string().trim().optional(),
-  sourceRefs: z.array(z.union([z.string(), z.record(z.unknown())])).min(1),
+  sourceRefs: z.array(z.union([z.string(), z.record(z.unknown())])).optional(),
   evidenceRefs: z.array(z.union([z.string(), z.record(z.unknown())])).optional(),
 });
 
@@ -60,7 +60,86 @@ function extractJsonPayload(text: string): unknown {
     }
   }
 
+  const recoveredCandidates = recoverCandidatesFromTruncatedJson(text);
+  if (recoveredCandidates.length > 0) {
+    return { candidates: recoveredCandidates };
+  }
+
   throw new Error("distillation response did not contain valid JSON");
+}
+
+function recoverCandidatesFromTruncatedJson(text: string): unknown[] {
+  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const sources = [fenceMatch?.[1], text].filter(
+    (candidate): candidate is string =>
+      typeof candidate === "string" && candidate.trim().length > 0,
+  );
+
+  for (const source of sources) {
+    const keyIndex = source.indexOf('"candidates"');
+    if (keyIndex < 0) continue;
+    const arrayStart = source.indexOf("[", keyIndex);
+    if (arrayStart < 0) continue;
+    const parsedObjects = parseCompleteJsonObjects(source.slice(arrayStart + 1));
+    if (parsedObjects.length > 0) return parsedObjects;
+  }
+
+  return [];
+}
+
+function parseCompleteJsonObjects(text: string): unknown[] {
+  const parsed: unknown[] = [];
+  let depth = 0;
+  let objectStart = -1;
+  let inString = false;
+  let escaped = false;
+
+  for (let index = 0; index < text.length; index += 1) {
+    const char = text[index];
+    if (!char) continue;
+
+    if (inString) {
+      if (escaped) {
+        escaped = false;
+        continue;
+      }
+      if (char === "\\") {
+        escaped = true;
+        continue;
+      }
+      if (char === '"') {
+        inString = false;
+      }
+      continue;
+    }
+
+    if (char === '"') {
+      inString = true;
+      continue;
+    }
+
+    if (char === "{") {
+      if (depth === 0) objectStart = index;
+      depth += 1;
+      continue;
+    }
+
+    if (char === "}") {
+      if (depth <= 0) continue;
+      depth -= 1;
+      if (depth === 0 && objectStart >= 0) {
+        const objectText = text.slice(objectStart, index + 1);
+        try {
+          parsed.push(JSON.parse(objectText));
+        } catch {
+          // Skip malformed object and continue recovering.
+        }
+        objectStart = -1;
+      }
+    }
+  }
+
+  return parsed;
 }
 
 function candidateKey(candidate: DistilledKnowledgeCandidate): string {

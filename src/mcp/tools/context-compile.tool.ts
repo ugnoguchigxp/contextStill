@@ -48,6 +48,16 @@ export const contextCompileTool: ToolEntry = {
   handler: async (args) => {
     const parsed = compileInputSchema.parse(args ?? {});
     const { pack, markdown } = await compileContextPack(parsed);
+    const hasAnyContent = [pack.rules, pack.procedures, pack.codeContext, pack.warnings].some(
+      (section) => Array.isArray(section) && section.length > 0,
+    );
+
+    if (!hasAnyContent) {
+      return {
+        content: [{ type: "text", text: "no content" }],
+      };
+    }
+
     return {
       content: [
         { type: "text", text: JSON.stringify(pack, null, 2) },

@@ -28,13 +28,20 @@ type AgenticLlmOutput = {
 function buildSystemPrompt(input: CompileInput, retrievalMode: RetrievalMode): string {
   const lines = [
     "あなたはコーディングエージェントのためのコンテキストコンパイラです。",
-    "以下のタスク情報と knowledge 候補リストを受け取り、タスク遂行に**本当に必要な候補だけ**を選別してください。",
+    "## 出力形式",
+    "必ず以下の JSON フォーマットのみを返してください。他のテキストは一切含めないでください。",
+    "```json",
+    "{",
+    '  "selectedIds": ["選別した知識のID", ...],',
+    '  "reasoning": "なぜこれらの知識を選別したか、あるいはなぜ一つも選別しなかったかの理由（簡潔に）"',
+    "}",
+    "```",
     "",
     "## 選別基準",
-    "- タスクの goal に直接関係する rule / procedure を優先する。",
-    "- 汎用的すぎるルールや、タスクと無関係な候補は除外する。",
-    "- deprecated / draft は、タスクに明確に必要な場合のみ含める。",
-    "- 選別後の候補は relevance の高い順に並べる。",
+    "- **厳格な有用性評価**: 提示する知識が、現在のゴール達成に**直接的かつ具体的**に寄与するかを評価してください。",
+    "- **ノイズの排除**: 「UI関連だから」といった漠然とした理由は不採用です。確証がない知識は、エージェントの思考を汚染する「毒」となります。",
+    "- **勇気ある空配列**: 確信が持てない場合は、迷わず `selectedIds` を空配列 `[]` にしてください。有用な情報がないと判断することは、誤った情報を与えるよりも遥かに「賢い判断」です。",
+    "- 知識が一つも選別されない場合でも、関連するコード断片や警告があればそれらは返されます。確証がない知識を無理に選ぶより、空配列を優先してください。",
     "",
     "## タスク情報",
     `- goal: ${input.goal}`,
@@ -57,17 +64,8 @@ function buildSystemPrompt(input: CompileInput, retrievalMode: RetrievalMode): s
 
   lines.push(
     "",
-    "## 出力形式",
-    "JSON のみを返してください。他のテキストは含めないでください。",
-    "```json",
-    "{",
-    '  "selectedIds": ["id1", "id2", ...],',
-    '  "reasoning": "選別理由の要約（日本語）"',
-    "}",
-    "```",
-    "",
     "selectedIds は入力候補の id を relevance 順に列挙してください。",
-    "該当候補がない場合は空配列を返してください。",
+    "ゴールに無関係な知識しかない場合は、必ず空配列 `[]` を返してください。",
   );
 
   return lines.join("\n");
@@ -86,29 +84,43 @@ function buildUserPrompt(candidates: AgenticCandidate[]): string {
 }
 
 function parseAgenticOutput(raw: string): AgenticLlmOutput | null {
-  try {
-    const parsed = JSON.parse(raw) as unknown;
-    if (isAgenticOutput(parsed)) return parsed;
-  } catch {
-    const match = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-    if (match?.[1]) {
-      try {
-        const parsed = JSON.parse(match[1].trim()) as unknown;
-        if (isAgenticOutput(parsed)) return parsed;
-      } catch {
-        // fall through
+  const tryParse = (text: string): AgenticLlmOutput | null => {
+    try {
+      const parsed = JSON.parse(text);
+      // Array format fallback
+      if (Array.isArray(parsed)) {
+        if (!parsed.every((item) => typeof item === "string")) {
+          return null;
+        }
+        return { selectedIds: parsed, reasoning: "Converted from array format" };
       }
+      if (isAgenticOutput(parsed)) return parsed;
+    } catch {
+      return null;
     }
+    return null;
+  };
 
-    const braceMatch = raw.match(/\{[\s\S]*"selectedIds"[\s\S]*\}/);
-    if (braceMatch) {
-      try {
-        const parsed = JSON.parse(braceMatch[0]) as unknown;
-        if (isAgenticOutput(parsed)) return parsed;
-      } catch {
-        // fall through
-      }
-    }
+  const direct = tryParse(raw);
+  if (direct) return direct;
+
+  const match = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (match?.[1]) {
+    const wrapped = tryParse(match[1].trim());
+    if (wrapped) return wrapped;
+  }
+
+  const braceMatch = raw.match(/\{[\s\S]*"selectedIds"[\s\S]*\}/);
+  if (braceMatch) {
+    const braced = tryParse(braceMatch[0]);
+    if (braced) return braced;
+  }
+
+  // Last resort: check if it's just a raw JSON array string
+  const arrayMatch = raw.match(/\[[\s\S]*?\]/);
+  if (arrayMatch) {
+    const arrayed = tryParse(arrayMatch[0]);
+    if (arrayed) return arrayed;
   }
 
   return null;
@@ -244,6 +256,7 @@ export async function agenticRefine(
   }
 
   if (fallbackErrors.length > 0) {
+    console.error("[agenticRefine] All providers failed:", fallbackErrors);
     return {
       items: candidates,
       agenticUsed: false,

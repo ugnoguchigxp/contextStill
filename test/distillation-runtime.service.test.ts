@@ -97,15 +97,28 @@ describe("Distillation Runtime Service", () => {
     ).rejects.toThrow("distillation tool loop exceeded max rounds");
   });
 
-  test("throws error if no content and no tools", async () => {
+  test("throws error if content is missing and no tools", async () => {
     const chatClient = vi.fn().mockResolvedValue({
-      content: "",
+      content: null,
       toolCalls: [],
     });
 
     await expect(
       runDistillationCompletion({ model: "test", messages: [], maxTokens: 100 }, { chatClient }),
     ).rejects.toThrow("distillation response did not include assistant content");
+  });
+
+  test("returns empty-string content so caller can attempt JSON repair", async () => {
+    const chatClient = vi.fn().mockResolvedValue({
+      content: "",
+      toolCalls: [],
+    });
+
+    const result = await runDistillationCompletion(
+      { model: "test", messages: [], maxTokens: 100 },
+      { chatClient },
+    );
+    expect(result.content).toBe("");
   });
 
   test("callLocalLlmChat performs fetch and parses response", async () => {

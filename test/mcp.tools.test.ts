@@ -243,13 +243,58 @@ describe("MCP Tools Handlers", () => {
   describe("context_compile", () => {
     test("calls compileContextPack and returns pack and markdown", async () => {
       vi.mocked(compileContextPack).mockResolvedValue({
-        pack: { items: [] },
+        pack: {
+          rules: [{ title: "r", body: "b", sourceRefs: [] }],
+          procedures: [],
+          codeContext: [],
+          warnings: [],
+        },
         markdown: "# Context",
       } as unknown as never);
 
       const response = await contextCompileTool.handler({ goal: "test goal" });
       expect(response.content.length).toBe(2);
       expect(response.content[1].text).toBe("# Context");
+    });
+
+    test("does not crash when section fields are partially missing", async () => {
+      vi.mocked(compileContextPack).mockResolvedValue({
+        pack: {
+          rules: [{ title: "r", body: "b", sourceRefs: [] }],
+          procedures: [],
+        },
+        markdown: "# Context",
+      } as unknown as never);
+
+      const response = await contextCompileTool.handler({ goal: "test goal" });
+      expect(response.content.length).toBe(2);
+      expect(response.content[1].text).toBe("# Context");
+    });
+
+    test("returns pack when only codeContext exists", async () => {
+      vi.mocked(compileContextPack).mockResolvedValue({
+        pack: {
+          rules: [],
+          procedures: [],
+          codeContext: [{ title: "src/app.ts", content: "hint", sourceRefs: [] }],
+          warnings: [],
+        },
+        markdown: "# Context",
+      } as unknown as never);
+
+      const response = await contextCompileTool.handler({ goal: "test goal" });
+      expect(response.content.length).toBe(2);
+      expect(response.content[1].text).toBe("# Context");
+    });
+
+    test("returns no content only when every section is empty", async () => {
+      vi.mocked(compileContextPack).mockResolvedValue({
+        pack: { rules: [], procedures: [], codeContext: [], warnings: [] },
+        markdown: "# Context",
+      } as unknown as never);
+
+      const response = await contextCompileTool.handler({ goal: "test goal" });
+      expect(response.content).toEqual([{ type: "text", text: "no content" }]);
     });
   });
 

@@ -59,6 +59,14 @@ type DistilledVibeMemoryResult = {
   knowledgeIds: string[];
   candidates: DistilledKnowledgeCandidate[];
   error?: string;
+  skipReason?: string;
+  jsonRepaired?: boolean;
+  rawCandidateCount?: number;
+  rejectedLowScoreCount?: number;
+  rejectedInvalidEvidenceCount?: number;
+  toolEventCount?: number;
+  responseChars?: number;
+  failureKind?: "llm_call" | "parse_or_repair" | "processing";
 };
 
 export type DistillVibeMemoriesSummary = {
@@ -72,6 +80,30 @@ export type DistillVibeMemoriesSummary = {
   knowledgeCount: number;
   results: DistilledVibeMemoryResult[];
 };
+
+function summarizeCounts(values: Array<string | undefined>): Record<string, number> {
+  const counts: Record<string, number> = {};
+  for (const value of values) {
+    if (!value) continue;
+    counts[value] = (counts[value] ?? 0) + 1;
+  }
+  return counts;
+}
+
+function classifyFailureKind(
+  message: string,
+  responseChars: number | undefined,
+): "llm_call" | "parse_or_repair" | "processing" {
+  if (responseChars === undefined) return "llm_call";
+  if (
+    message.includes("invalid after JSON repair") ||
+    message.includes("did not contain valid JSON") ||
+    message.includes("did not include assistant content")
+  ) {
+    return "parse_or_repair";
+  }
+  return "processing";
+}
 
 function sha256(value: string): string {
   return crypto.createHash("sha256").update(value).digest("hex");
@@ -160,7 +192,7 @@ export function buildVibeMemoryDistillationMessages(params: {
       role: "system",
       content: buildDistillationSystemPrompt("vibe_memory", [
         "次の形式の厳密な JSON のみを返すこと:",
-        '{"candidates":[{"type":"rule|procedure","title":"短い日本語タイトル","body":"再利用可能で実行可能な日本語 knowledge","confidence":70,"importance":70,"score":0.0,"rationale":"任意の短い理由","sourceRefs":["local evidence refs"],"evidenceRefs":["fetched URLs when tools are used"]}]}',
+        '{"candidates":[{"type":"rule|procedure","title":"短い日本語タイトル","body":"再利用可能で実行可能な日本語 knowledge","score":0.0}]}',
       ]),
     },
     {
@@ -222,7 +254,7 @@ async function parseDistillationCandidatesWithRepair(params: {
         {
           role: "user",
           content:
-            '前回の応答は不正または不完全な JSON でした。同じ schema で、最大 2 件、score と sourceRefs を含む完全な厳密 JSON のみを返してください。不確実な場合は {"candidates":[]} を返してください。',
+            '前回の応答は不正または不完全な JSON でした。同じ schema で候補は最大 1 件に絞り、type/title/body/score のみを含む厳密 JSON を返してください。不確実な場合は {"candidates":[]} を返してください。',
         },
       ],
       maxTokens: params.maxTokens,
@@ -359,6 +391,7 @@ export async function distillVibeMemories(
       const memoryDiffs = diffsByMemoryId.get(memory.id) ?? [];
       const inputHash = buildVibeMemoryInputHash({ memory, diffEntries: memoryDiffs });
       const messages = buildVibeMemoryDistillationMessages({ memory, diffEntries: memoryDiffs });
+      let responseChars: number | undefined;
       try {
         const completion = normalizeDistillationModelResult(
           await modelClient({
@@ -368,6 +401,7 @@ export async function distillVibeMemories(
           }),
         );
         const rawResponse = completion.content;
+        responseChars = rawResponse.length;
         const { candidates, repaired } = await parseDistillationCandidatesWithRepair({
           rawResponse,
           messages,
@@ -382,6 +416,10 @@ export async function distillVibeMemories(
         const rejectedLowScoreCandidates = scoreGate.rejectedLowScore;
 
         if (acceptedCandidates.length === 0) {
+          const skipReason =
+            candidates.length === 0
+              ? "no_rule_or_procedure_candidates"
+              : "all_candidates_below_min_score";
           await recordDistillationRun({
             apply,
             vibeMemoryId: memory.id,
@@ -391,10 +429,7 @@ export async function distillVibeMemories(
             inputHash,
             model: distillationModel,
             metadata: {
-              reason:
-                candidates.length === 0
-                  ? "no_rule_or_procedure_candidates"
-                  : "all_candidates_below_min_score",
+              reason: skipReason,
               sourceSessionId: memory.sessionId,
               jsonRepaired: repaired,
               rawCandidateCount: candidates.length,
@@ -406,6 +441,7 @@ export async function distillVibeMemories(
                 scoreGate.rejectedInvalidEvidence,
               ),
               toolEventCount: completion.toolEvents.length,
+              responseChars,
             },
           });
           results.push({
@@ -416,6 +452,13 @@ export async function distillVibeMemories(
             candidateCount: 0,
             knowledgeIds: [],
             candidates: [],
+            skipReason,
+            jsonRepaired: repaired,
+            rawCandidateCount: candidates.length,
+            rejectedLowScoreCount: rejectedLowScoreCandidates.length,
+            rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
+            toolEventCount: completion.toolEvents.length,
+            responseChars,
           });
           continue;
         }
@@ -509,6 +552,7 @@ export async function distillVibeMemories(
               scoreGate.rejectedInvalidEvidence,
             ),
             toolEventCount: completion.toolEvents.length,
+            responseChars,
           },
         });
         results.push({
@@ -519,9 +563,16 @@ export async function distillVibeMemories(
           candidateCount: acceptedCandidates.length,
           knowledgeIds,
           candidates: acceptedCandidates,
+          jsonRepaired: repaired,
+          rawCandidateCount: candidates.length,
+          rejectedLowScoreCount: rejectedLowScoreCandidates.length,
+          rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
+          toolEventCount: completion.toolEvents.length,
+          responseChars,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const failureKind = classifyFailureKind(message, responseChars);
         await recordDistillationRun({
           apply,
           vibeMemoryId: memory.id,
@@ -534,6 +585,8 @@ export async function distillVibeMemories(
           metadata: {
             sourceSessionId: memory.sessionId,
             diffEntryCount: memoryDiffs.length,
+            failureKind,
+            responseChars,
           },
         });
         results.push({
@@ -545,6 +598,8 @@ export async function distillVibeMemories(
           knowledgeIds: [],
           candidates: [],
           error: message,
+          failureKind,
+          responseChars,
         });
       }
     }
@@ -577,6 +632,17 @@ export async function distillVibeMemories(
         skipped: summary.skipped,
         failed: summary.failed,
         knowledgeCount: summary.knowledgeCount,
+        skipReasonCounts: summarizeCounts(
+          summary.results
+            .filter((result) => result.status === "skipped")
+            .map((result) => result.skipReason),
+        ),
+        failureKindCounts: summarizeCounts(
+          summary.results
+            .filter((result) => result.status === "failed")
+            .map((result) => result.failureKind),
+        ),
+        jsonRepairedCount: summary.results.filter((result) => result.jsonRepaired).length,
         failedMemories: summary.results
           .filter((result) => result.status === "failed")
           .slice(0, 20)
@@ -584,6 +650,22 @@ export async function distillVibeMemories(
             vibeMemoryId: result.vibeMemoryId,
             sessionId: result.sessionId,
             error: result.error ?? null,
+            failureKind: result.failureKind ?? null,
+            responseChars: result.responseChars ?? null,
+          })),
+        skippedMemories: summary.results
+          .filter((result) => result.status === "skipped")
+          .slice(0, 20)
+          .map((result) => ({
+            vibeMemoryId: result.vibeMemoryId,
+            sessionId: result.sessionId,
+            reason: result.skipReason ?? null,
+            jsonRepaired: result.jsonRepaired ?? null,
+            rawCandidateCount: result.rawCandidateCount ?? null,
+            rejectedLowScoreCount: result.rejectedLowScoreCount ?? null,
+            rejectedInvalidEvidenceCount: result.rejectedInvalidEvidenceCount ?? null,
+            toolEventCount: result.toolEventCount ?? null,
+            responseChars: result.responseChars ?? null,
           })),
       },
     });
