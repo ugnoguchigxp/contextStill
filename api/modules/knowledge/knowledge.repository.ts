@@ -1,6 +1,10 @@
 import { and, desc, eq, ilike, inArray } from "drizzle-orm";
 import { db } from "../../../src/db/index.js";
 import { knowledgeItems } from "../../../src/db/schema.js";
+import {
+  auditEventTypes,
+  recordAuditLogSafe,
+} from "../../../src/modules/audit/audit-log.service.js";
 import { embedOne } from "../../../src/modules/embedding/embedding.service.js";
 import { canTransitionKnowledgeStatus } from "../../../src/modules/lifecycle/lifecycle.service.js";
 import type { KnowledgeStatus } from "../../../src/shared/schemas/knowledge.schema.js";
@@ -141,10 +145,34 @@ export async function createKnowledgeItem(input: KnowledgeWriteInput) {
       embedding,
     })
     .returning({ id: knowledgeItems.id });
+  await recordAuditLogSafe({
+    eventType: auditEventTypes.knowledgeCreated,
+    actor: "user",
+    payload: {
+      knowledgeId: inserted.id,
+      type: input.type,
+      status: input.status,
+      scope: input.scope,
+      title: input.title,
+    },
+  });
   return inserted;
 }
 
 export async function updateKnowledgeItem(id: string, input: KnowledgeWriteInput) {
+  const [existing] = await db
+    .select({
+      id: knowledgeItems.id,
+      status: knowledgeItems.status,
+      scope: knowledgeItems.scope,
+      type: knowledgeItems.type,
+      title: knowledgeItems.title,
+    })
+    .from(knowledgeItems)
+    .where(eq(knowledgeItems.id, id))
+    .limit(1);
+  if (!existing) return null;
+
   const confidence = normalizeKnowledgeScore(input.confidence, 70);
   const importance = normalizeKnowledgeScore(input.importance, 70);
   const embedding = await tryEmbedKnowledge(input);
@@ -162,8 +190,33 @@ export async function updateKnowledgeItem(id: string, input: KnowledgeWriteInput
       embedding,
       updatedAt: new Date(),
     })
-    .where(eq(knowledgeItems.id, id))
+    .where(eq(knowledgeItems.id, existing.id))
     .returning({ id: knowledgeItems.id });
+  if (!updated) return null;
+
+  await recordAuditLogSafe({
+    eventType: auditEventTypes.knowledgeUpdated,
+    actor: "user",
+    payload: {
+      knowledgeId: updated.id,
+      type: input.type,
+      status: input.status,
+      scope: input.scope,
+      title: input.title,
+      previousStatus: existing.status,
+    },
+  });
+  if (existing.status !== input.status) {
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.knowledgeStatusChanged,
+      actor: "user",
+      payload: {
+        knowledgeId: updated.id,
+        fromStatus: existing.status,
+        toStatus: input.status,
+      },
+    });
+  }
   return updated ?? null;
 }
 
@@ -172,6 +225,15 @@ export async function deleteKnowledgeItem(id: string) {
     .delete(knowledgeItems)
     .where(eq(knowledgeItems.id, id))
     .returning({ id: knowledgeItems.id });
+  if (deleted) {
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.knowledgeDeleted,
+      actor: "user",
+      payload: {
+        knowledgeId: deleted.id,
+      },
+    });
+  }
   return deleted ?? null;
 }
 
@@ -227,6 +289,17 @@ export async function bulkUpdateKnowledgeStatus(params: {
         updatedAt: new Date(),
       })
       .where(inArray(knowledgeItems.id, result.updatedIds));
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.knowledgeStatusChanged,
+      actor: "user",
+      payload: {
+        targetStatus: params.status,
+        updatedIds: result.updatedIds,
+        unchangedIds: result.unchangedIds,
+        notFoundIds: result.notFoundIds,
+        invalidTransitionIds: result.invalidTransitionIds,
+      },
+    });
   }
 
   return result;

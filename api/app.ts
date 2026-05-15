@@ -2,6 +2,7 @@ import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
 import { agentDiffsRouter } from "./modules/agent-diffs/agent-diffs.routes.js";
+import { auditLogsRouter } from "./modules/audit/audit.routes.js";
 import { contextCompilerRouter } from "./modules/context-compiler/context-compiler.routes.js";
 import { doctorRouter } from "./modules/doctor/doctor.routes.js";
 import { graphRouter } from "./modules/graph/graph.routes.js";
@@ -22,5 +23,6 @@ app.route("/api/sources", sourcesRouter);
 app.route("/api/vibe-memory", vibeMemoryRouter);
 app.route("/api/agent-diffs", agentDiffsRouter);
 app.route("/api/graph", graphRouter);
+app.route("/api/audit-logs", auditLogsRouter);
 
 export default app;

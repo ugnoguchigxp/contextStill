@@ -10,6 +10,7 @@ import { inspectEmbedding } from "./inspectors/embedding.inspector.js";
 import { inspectMcpSurface } from "./inspectors/mcp.inspector.js";
 import { inspectSourceDistillation } from "./inspectors/source-distillation.inspector.js";
 import { inspectVibeDistillation } from "./inspectors/vibe-distillation.inspector.js";
+import { cleanupExpiredAuditLogsSafe } from "../audit/audit-log.service.js";
 import { checkAzureOpenAiHealth } from "../context-compiler/agentic-refine.service.js";
 
 function resolveDoctorOptions(rawOptions?: DoctorOptions): ResolvedDoctorOptions {
@@ -104,6 +105,7 @@ function appendAutomationReasons(
 
 export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorReport> {
   const options = resolveDoctorOptions(rawOptions);
+  await cleanupExpiredAuditLogsSafe({ trigger: "doctor" });
   const reasons: string[] = [];
   const mcp = inspectMcpSurface();
   if (mcp.missingPrimaryTools.length > 0) {

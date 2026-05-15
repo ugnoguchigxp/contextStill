@@ -142,6 +142,28 @@ export const runStatusValues = ["ok", "degraded", "failed"] as const;
 
 export const packSectionValues = ["rules", "procedures", "code_context", "warnings"] as const;
 
+export const auditLogActorValues = ["agent", "user", "system"] as const;
+
+export const auditLogs = pgTable(
+  "audit_logs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    eventType: text("event_type").notNull(),
+    actor: text("actor").notNull(),
+    payload: jsonb("payload").notNull().default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    eventTypeIdx: index("audit_logs_event_type_idx").on(table.eventType),
+    actorIdx: index("audit_logs_actor_idx").on(table.actor),
+    createdAtIdx: index("audit_logs_created_at_idx").on(table.createdAt),
+    actorCheck: check(
+      "audit_logs_actor_check",
+      sql`${table.actor} IN (${sql.raw(toSqlList(auditLogActorValues))})`,
+    ),
+  }),
+);
+
 export const knowledgeItems = pgTable(
   "knowledge_items",
   {

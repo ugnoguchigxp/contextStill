@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { and, desc, eq, ilike, inArray, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { sourceFragments, sources } from "../../db/schema.js";
+import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import { embedOne } from "../embedding/embedding.service.js";
 import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
 
@@ -14,6 +15,7 @@ type UpsertSourceParams = {
   body: string;
   contentHash?: string;
   metadata?: Record<string, unknown>;
+  actor?: "agent" | "user" | "system";
 };
 
 export type SourceSearchResult = {
@@ -124,14 +126,14 @@ async function replaceSourceFragments(params: {
   title?: string | null;
   body: string;
   metadata?: Record<string, unknown>;
-}): Promise<void> {
+}): Promise<number> {
   await db.delete(sourceFragments).where(eq(sourceFragments.sourceId, params.sourceId));
 
   const chunks = chunkSourceDocument({
     title: params.title,
     body: params.body,
   });
-  if (chunks.length === 0) return;
+  if (chunks.length === 0) return 0;
 
   await db.insert(sourceFragments).values(
     await Promise.all(
@@ -145,9 +147,11 @@ async function replaceSourceFragments(params: {
       })),
     ),
   );
+  return chunks.length;
 }
 
 export async function upsertSourceDocument(params: UpsertSourceParams): Promise<string> {
+  const actor = params.actor ?? "system";
   const contentHash =
     params.contentHash ?? defaultHash(`${params.sourceKind}\n${params.uri}\n${params.body}`);
   const existing = await db.query.sources.findFirst({
@@ -168,11 +172,23 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
         updatedAt: new Date(),
       })
       .where(eq(sources.id, existing.id));
-    await replaceSourceFragments({
+    const fragmentCount = await replaceSourceFragments({
       sourceId: existing.id,
       title: params.title,
       body: params.body,
       metadata: params.metadata,
+    });
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.sourceUpdated,
+      actor,
+      payload: {
+        sourceId: existing.id,
+        sourceKind: params.sourceKind,
+        uri: params.uri,
+        title: params.title ?? null,
+        contentHash,
+        fragmentCount,
+      },
     });
     return existing.id;
   }
@@ -188,11 +204,23 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
       metadata: params.metadata ?? {},
     })
     .returning({ id: sources.id });
-  await replaceSourceFragments({
+  const fragmentCount = await replaceSourceFragments({
     sourceId: inserted.id,
     title: params.title,
     body: params.body,
     metadata: params.metadata,
+  });
+  await recordAuditLogSafe({
+    eventType: auditEventTypes.sourceImported,
+    actor,
+    payload: {
+      sourceId: inserted.id,
+      sourceKind: params.sourceKind,
+      uri: params.uri,
+      title: params.title ?? null,
+      contentHash,
+      fragmentCount,
+    },
   });
   return inserted.id;
 }
@@ -216,6 +244,17 @@ export async function deleteStaleSourcesForRoot(params: {
     .delete(sources)
     .where(and(...conditions))
     .returning({ id: sources.id });
+  if (deleted.length > 0) {
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.sourceDeleted,
+      actor: "system",
+      payload: {
+        rootPath: normalizedRootPath,
+        deletedSourceIds: deleted.map((row) => row.id),
+        deletedCount: deleted.length,
+      },
+    });
+  }
   return deleted.length;
 }
 

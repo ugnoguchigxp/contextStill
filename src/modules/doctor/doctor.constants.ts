@@ -1,4 +1,5 @@
 export const requiredTables = [
+  "audit_logs",
   "knowledge_items",
   "sources",
   "source_fragments",

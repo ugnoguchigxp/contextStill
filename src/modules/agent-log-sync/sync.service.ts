@@ -4,6 +4,11 @@ import { config } from "../../config.js";
 import { db } from "../../db/client.js";
 import { agentDiffEntries, syncStates, vibeMemories } from "../../db/schema.js";
 import {
+  auditEventTypes,
+  cleanupExpiredAuditLogsSafe,
+  recordAuditLogSafe,
+} from "../audit/audit-log.service.js";
+import {
   extractAgentDiffContentFromText,
   normalizeAgentDiffEntries,
   stripAgentDiffContentFromText,
@@ -211,17 +216,22 @@ export function buildReadableTranscript(messages: ChatMessage[]): string {
 
 function buildMemorySessionId(sourceId: string, message: ChatMessage): string {
   const sessionId = message.metadata.sessionId;
+  const projectKey =
+    (message.metadata.projectName as string) ||
+    (message.metadata.projectRoot as string) ||
+    "default";
+
   if (typeof sessionId === "string" && sessionId.trim().length > 0) {
-    return `${sourceId}:${sessionId.trim()}`;
+    return `${sourceId}:${projectKey}:${sessionId.trim()}`;
   }
 
   const sessionFile = message.metadata.sessionFile;
   if (typeof sessionFile === "string" && sessionFile.trim().length > 0) {
     const digest = createHash("sha256").update(sessionFile).digest("hex").slice(0, 16);
-    return `${sourceId}:file:${digest}`;
+    return `${sourceId}:${projectKey}:file:${digest}`;
   }
 
-  return `${sourceId}:fallback`;
+  return `${sourceId}:${projectKey}:fallback`;
 }
 
 export function buildDedupeKey(params: {
@@ -341,198 +351,231 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
     insertedDiffs: 0,
     sources: [],
   };
+  await recordAuditLogSafe({
+    eventType: auditEventTypes.syncRunStarted,
+    actor: "system",
+    payload: {
+      sourceIds: sources.map((source) => source.id),
+    },
+  });
 
-  for (const source of sources) {
-    const [state] = await db.select().from(syncStates).where(eq(syncStates.id, source.id));
-    const since = state?.lastSyncedAt ?? undefined;
-    const cursor = normalizeIngestCursor(state?.cursor);
-    const ingestResult = await source.ingest(since, cursor);
+  try {
+    for (const source of sources) {
+      const [state] = await db.select().from(syncStates).where(eq(syncStates.id, source.id));
+      const since = state?.lastSyncedAt ?? undefined;
+      const cursor = normalizeIngestCursor(state?.cursor);
+      const ingestResult = await source.ingest(since, cursor);
 
-    if (!ingestResult.ok) {
-      summary.ok = false;
-      summary.sources.push({
-        id: source.id,
-        label: source.label,
-        ok: false,
-        skipped: Boolean(ingestResult.skipped),
-        checkedFiles: ingestResult.checkedFiles,
-        messages: 0,
-        insertedMemories: 0,
-        insertedDiffs: 0,
-        warnings: ingestResult.warnings,
-        errors: ingestResult.errors,
-        lastSyncedAt: since?.toISOString() ?? null,
-      });
-      continue;
-    }
-
-    const messages = ingestResult.messages.filter((message) => message.content.trim().length > 0);
-    const checkpointDate = getCheckpointDate(ingestResult.maxObservedMtimeMs, since);
-    const sourceMetadata = {
-      checkedFiles: ingestResult.checkedFiles,
-      warnings: ingestResult.warnings,
-      skipped: Boolean(ingestResult.skipped),
-      messageCount: messages.length,
-      syncedAt: new Date().toISOString(),
-    };
-
-    if (ingestResult.skipped) {
-      summary.sources.push({
-        id: source.id,
-        label: source.label,
-        ok: true,
-        skipped: true,
-        checkedFiles: ingestResult.checkedFiles,
-        messages: 0,
-        insertedMemories: 0,
-        insertedDiffs: 0,
-        warnings: ingestResult.warnings,
-        errors: [],
-        lastSyncedAt: since?.toISOString() ?? null,
-      });
-      continue;
-    }
-
-    const messagesBySession = new Map<string, ChatMessage[]>();
-    for (const message of messages) {
-      const memorySessionId = buildMemorySessionId(source.id, message);
-      const bucket = messagesBySession.get(memorySessionId);
-      if (bucket) {
-        bucket.push(message);
-      } else {
-        messagesBySession.set(memorySessionId, [message]);
+      if (!ingestResult.ok) {
+        summary.ok = false;
+        summary.sources.push({
+          id: source.id,
+          label: source.label,
+          ok: false,
+          skipped: Boolean(ingestResult.skipped),
+          checkedFiles: ingestResult.checkedFiles,
+          messages: 0,
+          insertedMemories: 0,
+          insertedDiffs: 0,
+          warnings: ingestResult.warnings,
+          errors: ingestResult.errors,
+          lastSyncedAt: since?.toISOString() ?? null,
+        });
+        continue;
       }
-    }
 
-    let insertedMemories = 0;
-    let insertedDiffs = 0;
+      const messages = ingestResult.messages.filter((message) => message.content.trim().length > 0);
+      const checkpointDate = getCheckpointDate(ingestResult.maxObservedMtimeMs, since);
+      const sourceMetadata = {
+        checkedFiles: ingestResult.checkedFiles,
+        warnings: ingestResult.warnings,
+        skipped: Boolean(ingestResult.skipped),
+        messageCount: messages.length,
+        syncedAt: new Date().toISOString(),
+      };
 
-    await db.transaction(async (tx) => {
-      for (const [memorySessionId, sessionMessages] of messagesBySession.entries()) {
-        const chunks = chunkMessages(sessionMessages);
+      if (ingestResult.skipped) {
+        summary.sources.push({
+          id: source.id,
+          label: source.label,
+          ok: true,
+          skipped: true,
+          checkedFiles: ingestResult.checkedFiles,
+          messages: 0,
+          insertedMemories: 0,
+          insertedDiffs: 0,
+          warnings: ingestResult.warnings,
+          errors: [],
+          lastSyncedAt: since?.toISOString() ?? null,
+        });
+        continue;
+      }
 
-        for (const [chunkIndex, chunk] of chunks.entries()) {
-          const rawContent = buildTranscript(chunk);
-          const readableContent = buildReadableTranscript(chunk);
-          const diff = extractUnifiedDiffsFromText(rawContent);
-          const toolCallDiffs = extractAgentDiffsFromToolCalls(chunk);
-          const diffEntries = normalizeAgentDiffEntries({
-            diff,
-            agentDiffs: toolCallDiffs,
-          });
-
-          const hiddenToolCallCount = chunk.filter((message) => isToolCallMessage(message)).length;
-          if (!readableContent.trim() && diffEntries.length === 0 && hiddenToolCallCount === 0) {
-            continue;
-          }
-          const content =
-            readableContent.trim() ||
-            (diffEntries.length > 0 ? "Agent diff recorded." : "Tool usage recorded.");
-          const dedupeKey = buildDedupeKey({
-            sourceId: source.id,
-            memorySessionId,
-            chunkIndex,
-            content: rawContent,
-          });
-          const [inserted] = await tx
-            .insert(vibeMemories)
-            .values({
-              sessionId: memorySessionId,
-              content,
-              memoryType: "chat",
-              dedupeKey,
-              metadata: {
-                ...mergeMessageMetadata(source, chunk),
-                chunkIndex,
-                dedupeKey,
-                rawContentHash: buildDedupeKey({
-                  sourceId: source.id,
-                  memorySessionId,
-                  chunkIndex,
-                  content: rawContent,
-                }),
-                hiddenToolCallCount,
-                agentDiffCount: diffEntries.length,
-              },
-            })
-            .onConflictDoNothing({
-              target: [vibeMemories.sessionId, vibeMemories.dedupeKey],
-            })
-            .returning({ id: vibeMemories.id });
-
-          if (!inserted) {
-            continue;
-          }
-
-          insertedMemories += 1;
-
-          if (diffEntries.length === 0) continue;
-
-          const insertedEntries = await tx
-            .insert(agentDiffEntries)
-            .values(
-              diffEntries.map((entry) => ({
-                vibeMemoryId: inserted.id,
-                filePath: entry.filePath,
-                diffHunk: entry.diffHunk,
-                changeType: entry.changeType ?? null,
-                language: entry.language ?? null,
-                symbolName: entry.symbolName ?? null,
-                symbolKind: entry.symbolKind ?? null,
-                signature: entry.signature ?? null,
-                startLine: entry.startLine ?? null,
-                endLine: entry.endLine ?? null,
-                metadata: {
-                  ...entry.metadata,
-                  extractedFrom: "agent_log_sync",
-                  dedupeKey,
-                  sourceId: source.id,
-                },
-              })),
-            )
-            .returning({ id: agentDiffEntries.id });
-          insertedDiffs += insertedEntries.length;
+      const messagesBySession = new Map<string, ChatMessage[]>();
+      for (const message of messages) {
+        const memorySessionId = buildMemorySessionId(source.id, message);
+        const bucket = messagesBySession.get(memorySessionId);
+        if (bucket) {
+          bucket.push(message);
+        } else {
+          messagesBySession.set(memorySessionId, [message]);
         }
       }
 
-      const now = new Date();
-      await tx
-        .insert(syncStates)
-        .values({
-          id: source.id,
-          lastSyncedAt: checkpointDate,
-          cursor: ingestResult.cursor,
-          metadata: sourceMetadata,
-          updatedAt: now,
-        })
-        .onConflictDoUpdate({
-          target: syncStates.id,
-          set: {
+      let insertedMemories = 0;
+      let insertedDiffs = 0;
+
+      await db.transaction(async (tx) => {
+        for (const [memorySessionId, sessionMessages] of messagesBySession.entries()) {
+          const chunks = chunkMessages(sessionMessages);
+
+          for (const [chunkIndex, chunk] of chunks.entries()) {
+            const rawContent = buildTranscript(chunk);
+            const readableContent = buildReadableTranscript(chunk);
+            const diff = extractUnifiedDiffsFromText(rawContent);
+            const toolCallDiffs = extractAgentDiffsFromToolCalls(chunk);
+            const diffEntries = normalizeAgentDiffEntries({
+              diff,
+              agentDiffs: toolCallDiffs,
+            });
+
+            const hiddenToolCallCount = chunk.filter((message) =>
+              isToolCallMessage(message),
+            ).length;
+            if (!readableContent.trim() && diffEntries.length === 0 && hiddenToolCallCount === 0) {
+              continue;
+            }
+            const content =
+              readableContent.trim() ||
+              (diffEntries.length > 0 ? "Agent diff recorded." : "Tool usage recorded.");
+            const dedupeKey = buildDedupeKey({
+              sourceId: source.id,
+              memorySessionId,
+              chunkIndex,
+              content: rawContent,
+            });
+            const [inserted] = await tx
+              .insert(vibeMemories)
+              .values({
+                sessionId: memorySessionId,
+                content,
+                memoryType: "chat",
+                dedupeKey,
+                metadata: {
+                  ...mergeMessageMetadata(source, chunk),
+                  chunkIndex,
+                  dedupeKey,
+                  rawContentHash: buildDedupeKey({
+                    sourceId: source.id,
+                    memorySessionId,
+                    chunkIndex,
+                    content: rawContent,
+                  }),
+                  hiddenToolCallCount,
+                  agentDiffCount: diffEntries.length,
+                },
+              })
+              .onConflictDoNothing({
+                target: [vibeMemories.sessionId, vibeMemories.dedupeKey],
+              })
+              .returning({ id: vibeMemories.id });
+
+            if (!inserted) {
+              continue;
+            }
+
+            insertedMemories += 1;
+
+            if (diffEntries.length === 0) continue;
+
+            const insertedEntries = await tx
+              .insert(agentDiffEntries)
+              .values(
+                diffEntries.map((entry) => ({
+                  vibeMemoryId: inserted.id,
+                  filePath: entry.filePath,
+                  diffHunk: entry.diffHunk,
+                  changeType: entry.changeType ?? null,
+                  language: entry.language ?? null,
+                  symbolName: entry.symbolName ?? null,
+                  symbolKind: entry.symbolKind ?? null,
+                  signature: entry.signature ?? null,
+                  startLine: entry.startLine ?? null,
+                  endLine: entry.endLine ?? null,
+                  metadata: {
+                    ...entry.metadata,
+                    extractedFrom: "agent_log_sync",
+                    dedupeKey,
+                    sourceId: source.id,
+                  },
+                })),
+              )
+              .returning({ id: agentDiffEntries.id });
+            insertedDiffs += insertedEntries.length;
+          }
+        }
+
+        const now = new Date();
+        await tx
+          .insert(syncStates)
+          .values({
+            id: source.id,
             lastSyncedAt: checkpointDate,
             cursor: ingestResult.cursor,
             metadata: sourceMetadata,
             updatedAt: now,
-          },
-        });
-    });
+          })
+          .onConflictDoUpdate({
+            target: syncStates.id,
+            set: {
+              lastSyncedAt: checkpointDate,
+              cursor: ingestResult.cursor,
+              metadata: sourceMetadata,
+              updatedAt: now,
+            },
+          });
+      });
 
-    summary.imported += insertedMemories;
-    summary.insertedDiffs += insertedDiffs;
-    summary.sources.push({
-      id: source.id,
-      label: source.label,
-      ok: true,
-      skipped: false,
-      checkedFiles: ingestResult.checkedFiles,
-      messages: messages.length,
-      insertedMemories,
-      insertedDiffs,
-      warnings: ingestResult.warnings,
-      errors: [],
-      lastSyncedAt: checkpointDate.toISOString(),
+      summary.imported += insertedMemories;
+      summary.insertedDiffs += insertedDiffs;
+      summary.sources.push({
+        id: source.id,
+        label: source.label,
+        ok: true,
+        skipped: false,
+        checkedFiles: ingestResult.checkedFiles,
+        messages: messages.length,
+        insertedMemories,
+        insertedDiffs,
+        warnings: ingestResult.warnings,
+        errors: [],
+        lastSyncedAt: checkpointDate.toISOString(),
+      });
+    }
+
+    summary.finishedAt = new Date().toISOString();
+    const cleanup = await cleanupExpiredAuditLogsSafe({ trigger: "sync" });
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.syncRunFinished,
+      actor: "system",
+      payload: {
+        ...summary,
+        cleanup: cleanup ?? null,
+      },
     });
+    return summary;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    summary.ok = false;
+    summary.finishedAt = new Date().toISOString();
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.syncRunFinished,
+      actor: "system",
+      payload: {
+        ...summary,
+        error: message,
+      },
+    });
+    throw error;
   }
-
-  summary.finishedAt = new Date().toISOString();
-  return summary;
 }

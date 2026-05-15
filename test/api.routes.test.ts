@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
+import { auditLogsRouter } from "../api/modules/audit/audit.routes.js";
+import { listAuditLogsForApi } from "../api/modules/audit/audit.repository.js";
 import { contextCompilerRouter } from "../api/modules/context-compiler/context-compiler.routes.js";
 import {
   compilePackForApi,
@@ -41,12 +43,17 @@ vi.mock("../api/modules/knowledge/knowledge.repository.js", () => ({
   updateKnowledgeItem: vi.fn(),
 }));
 
+vi.mock("../api/modules/audit/audit.repository.js", () => ({
+  listAuditLogsForApi: vi.fn(),
+}));
+
 vi.mock("../src/modules/vibe-memory/vibe-memory.service.js", () => ({
   recordVibeMemoryWithDiffEntries: vi.fn(),
 }));
 
 const buildApp = () => {
   const app = new Hono();
+  app.route("/api/audit-logs", auditLogsRouter);
   app.route("/api/context", contextCompilerRouter);
   app.route("/api/doctor", doctorRouter);
   app.route("/api/knowledge", knowledgeRouter);
@@ -193,6 +200,13 @@ const validDoctorReport: DoctorReport = {
 describe("API route contract tests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(listAuditLogsForApi).mockResolvedValue({
+      items: [],
+      total: 0,
+      page: 1,
+      limit: 50,
+      availableEventTypes: [],
+    });
     vi.mocked(compilePackForApi).mockResolvedValue(validPack);
     vi.mocked(listRunsForApi).mockResolvedValue([]);
     vi.mocked(getDoctorReportForApi).mockResolvedValue(validDoctorReport);
@@ -221,6 +235,62 @@ describe("API route contract tests", () => {
       } as never,
       diffEntries: [],
     });
+  });
+
+  test("GET /api/audit-logs rejects invalid query", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/audit-logs?actor=invalid");
+
+    expect(response.status).toBe(400);
+    expect(listAuditLogsForApi).not.toHaveBeenCalled();
+  });
+
+  test("GET /api/audit-logs returns pagination payload", async () => {
+    vi.mocked(listAuditLogsForApi).mockResolvedValueOnce({
+      items: [
+        {
+          id: "550e8400-e29b-41d4-a716-446655440020",
+          eventType: "CONTEXT_COMPILE_RUN",
+          actor: "agent",
+          payload: { runId: "run-1" },
+          createdAt: new Date("2026-05-15T00:00:00.000Z"),
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 20,
+      availableEventTypes: ["CONTEXT_COMPILE_RUN"],
+    });
+
+    const app = buildApp();
+    const response = await app.request("/api/audit-logs?page=1&limit=20");
+    const json = (await response.json()) as {
+      items: Array<{ eventType: string; actor: string }>;
+      availableEventTypes: string[];
+      pagination: {
+        page: number;
+        limit: number;
+        total: number;
+        totalPages: number;
+        hasNextPage: boolean;
+      };
+    };
+
+    expect(response.status).toBe(200);
+    expect(json.items).toHaveLength(1);
+    expect(json.items[0]?.eventType).toBe("CONTEXT_COMPILE_RUN");
+    expect(json.items[0]?.actor).toBe("agent");
+    expect(json.availableEventTypes).toEqual(["CONTEXT_COMPILE_RUN"]);
+    expect(json.pagination).toEqual({
+      page: 1,
+      limit: 20,
+      total: 1,
+      totalPages: 1,
+      hasNextPage: false,
+    });
+    expect(listAuditLogsForApi).toHaveBeenCalledWith(
+      expect.objectContaining({ page: 1, limit: 20 }),
+    );
   });
 
   test("POST /api/context/compile returns 400 for invalid request body", async () => {

@@ -7,6 +7,7 @@ const navItems = [
   { to: "/graph", label: "Graph" },
   { to: "/vibe-memory", label: "Vibe Memory" },
   { to: "/sources", label: "Sources" },
+  { to: "/audit", label: "Audit" },
   { to: "/doctor", label: "Doctor" },
 ] as const;
 
@@ -37,7 +38,8 @@ export function AppShell() {
           pathname.startsWith("/vibe-memory") ||
           pathname.startsWith("/sources") ||
           pathname.startsWith("/graph") ||
-          pathname.startsWith("/knowledge")
+          pathname.startsWith("/knowledge") ||
+          pathname.startsWith("/audit")
             ? "full-width"
             : ""
         }`}

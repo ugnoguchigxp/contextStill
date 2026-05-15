@@ -13,6 +13,7 @@ import {
 } from "../../shared/schemas/context-pack.schema.js";
 import type { KnowledgeItem, KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
 import { normalizeRepoKey, normalizeRepoPath } from "./query-context.js";
+import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import { retrieveKnowledge } from "../knowledge/knowledge.service.js";
 import { retrieveSources } from "../sources/source-retrieval.service.js";
 import {
@@ -691,6 +692,28 @@ export async function compileContextPack(rawInput: unknown): Promise<{
           fileHintCount: errorSignals.files.length,
         },
         suggestedNextCalls: [...new Set(suggestedNextCalls)],
+      },
+    },
+  });
+
+  await recordAuditLogSafe({
+    eventType: auditEventTypes.contextCompileRun,
+    actor: "agent",
+    payload: {
+      runId,
+      goal: input.goal,
+      intent: input.intent,
+      retrievalMode,
+      status,
+      repoPath: normalizedRepoPath ?? null,
+      repoKey: normalizedRepoKey ?? null,
+      degradedReasons,
+      tokenBudget,
+      compileDurationMs,
+      selectedCounts: {
+        rules: budgetedRules.items.length,
+        procedures: budgetedProcedures.items.length,
+        codeContext: budgetedCodeContext.items.length,
       },
     },
   });

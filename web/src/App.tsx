@@ -6,6 +6,7 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { AppShell } from "./modules/admin/components/app-shell";
+import { AuditLogsPage } from "./modules/admin/components/audit.page";
 import { VibeMemoryPage } from "./modules/admin/components/vibe-memory.page";
 import { DoctorPage } from "./modules/admin/components/doctor.page";
 import { GraphPage } from "./modules/admin/components/graph.page";
@@ -66,6 +67,12 @@ const doctorRoute = createRoute({
   component: DoctorPage,
 });
 
+const auditRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/audit",
+  component: AuditLogsPage,
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   compileRoute,
@@ -73,6 +80,7 @@ const routeTree = rootRoute.addChildren([
   graphRoute,
   vibeMemoryRoute,
   sourcesRoute,
+  auditRoute,
   doctorRoute,
 ]);
 

@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { config } from "../../config.js";
 import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
+import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import {
   type DistilledKnowledgeCandidate,
   filterDistillationCandidatesByScore,
@@ -311,71 +312,172 @@ export async function distillVibeMemories(
   const embedder = options.embedder ?? defaultEmbedder;
   const workspaceRepoPath = normalizeRepoPath(process.cwd());
   const workspaceRepoKey = normalizeRepoKey(process.cwd());
-  const memories = await listVibeMemoriesForDistillation({
-    limit: options.limit ?? config.vibeDistillationBatchSize,
-    sessionId: options.sessionId,
-    vibeMemoryIds: options.vibeMemoryIds,
-    promptVersion: config.vibeDistillationPromptVersion,
-    includeProcessed: options.includeProcessed,
+  await recordAuditLogSafe({
+    eventType: auditEventTypes.vibeDistillationRunStarted,
+    actor: "system",
+    payload: {
+      apply,
+      model: config.localLlmModel,
+      promptVersion: config.vibeDistillationPromptVersion,
+      limit: options.limit ?? config.vibeDistillationBatchSize,
+      includeProcessed: Boolean(options.includeProcessed),
+      sessionId: options.sessionId ?? null,
+      vibeMemoryIdCount: options.vibeMemoryIds?.length ?? 0,
+    },
   });
-  const diffEntries = await listAgentDiffEntriesForVibeMemories(
-    memories.map((memory) => memory.id),
-  );
-  const diffsByMemoryId = new Map<string, AgentDiffEntryForDistillation[]>();
-  for (const entry of diffEntries) {
-    const current = diffsByMemoryId.get(entry.vibeMemoryId) ?? [];
-    current.push(entry);
-    diffsByMemoryId.set(entry.vibeMemoryId, current);
-  }
 
   const results: DistilledVibeMemoryResult[] = [];
-
-  for (const memory of memories) {
-    const memoryRepoScope = resolveRepoScopeForMemory({
-      memory,
-      fallbackRepoPath: workspaceRepoPath,
-      fallbackRepoKey: workspaceRepoKey,
+  try {
+    const memories = await listVibeMemoriesForDistillation({
+      limit: options.limit ?? config.vibeDistillationBatchSize,
+      sessionId: options.sessionId,
+      vibeMemoryIds: options.vibeMemoryIds,
+      promptVersion: config.vibeDistillationPromptVersion,
+      includeProcessed: options.includeProcessed,
     });
-    const memoryDiffs = diffsByMemoryId.get(memory.id) ?? [];
-    const inputHash = buildVibeMemoryInputHash({ memory, diffEntries: memoryDiffs });
-    const messages = buildVibeMemoryDistillationMessages({ memory, diffEntries: memoryDiffs });
-    try {
-      const completion = normalizeDistillationModelResult(
-        await modelClient({
-          model: config.localLlmModel,
-          messages,
-          maxTokens: config.vibeDistillationMaxOutputTokens,
-        }),
-      );
-      const rawResponse = completion.content;
-      const { candidates, repaired } = await parseDistillationCandidatesWithRepair({
-        rawResponse,
-        messages,
-        modelClient,
-        maxTokens: config.vibeDistillationMaxOutputTokens,
-      });
-      const scoreGate = filterDistillationCandidatesByScore(candidates, {
-        toolEvents: completion.toolEvents,
-      });
-      const acceptedCandidates = scoreGate.accepted;
-      const rejectedLowScoreCandidates = scoreGate.rejectedLowScore;
+    const diffEntries = await listAgentDiffEntriesForVibeMemories(
+      memories.map((memory) => memory.id),
+    );
+    const diffsByMemoryId = new Map<string, AgentDiffEntryForDistillation[]>();
+    for (const entry of diffEntries) {
+      const current = diffsByMemoryId.get(entry.vibeMemoryId) ?? [];
+      current.push(entry);
+      diffsByMemoryId.set(entry.vibeMemoryId, current);
+    }
 
-      if (acceptedCandidates.length === 0) {
+    for (const memory of memories) {
+      const memoryRepoScope = resolveRepoScopeForMemory({
+        memory,
+        fallbackRepoPath: workspaceRepoPath,
+        fallbackRepoKey: workspaceRepoKey,
+      });
+      const memoryDiffs = diffsByMemoryId.get(memory.id) ?? [];
+      const inputHash = buildVibeMemoryInputHash({ memory, diffEntries: memoryDiffs });
+      const messages = buildVibeMemoryDistillationMessages({ memory, diffEntries: memoryDiffs });
+      try {
+        const completion = normalizeDistillationModelResult(
+          await modelClient({
+            model: config.localLlmModel,
+            messages,
+            maxTokens: config.vibeDistillationMaxOutputTokens,
+          }),
+        );
+        const rawResponse = completion.content;
+        const { candidates, repaired } = await parseDistillationCandidatesWithRepair({
+          rawResponse,
+          messages,
+          modelClient,
+          maxTokens: config.vibeDistillationMaxOutputTokens,
+        });
+        const scoreGate = filterDistillationCandidatesByScore(candidates, {
+          toolEvents: completion.toolEvents,
+        });
+        const acceptedCandidates = scoreGate.accepted;
+        const rejectedLowScoreCandidates = scoreGate.rejectedLowScore;
+
+        if (acceptedCandidates.length === 0) {
+          await recordDistillationRun({
+            apply,
+            vibeMemoryId: memory.id,
+            status: "skipped",
+            candidateCount: 0,
+            knowledgeIds: [],
+            inputHash,
+            metadata: {
+              reason:
+                candidates.length === 0
+                  ? "no_rule_or_procedure_candidates"
+                  : "all_candidates_below_min_score",
+              sourceSessionId: memory.sessionId,
+              jsonRepaired: repaired,
+              rawCandidateCount: candidates.length,
+              scoreThreshold: scoreGate.threshold,
+              rejectedLowScoreCount: rejectedLowScoreCandidates.length,
+              rejectedLowScoreCandidates: summarizeRejectedCandidates(rejectedLowScoreCandidates),
+              rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
+              rejectedInvalidEvidenceCandidates: summarizeRejectedCandidates(
+                scoreGate.rejectedInvalidEvidence,
+              ),
+              toolEventCount: completion.toolEvents.length,
+            },
+          });
+          results.push({
+            vibeMemoryId: memory.id,
+            sessionId: memory.sessionId,
+            status: apply ? "skipped" : "dry_run",
+            inputHash,
+            candidateCount: 0,
+            knowledgeIds: [],
+            candidates: [],
+          });
+          continue;
+        }
+
+        const embeddings = apply
+          ? await Promise.all(
+              acceptedCandidates.map((candidate) =>
+                embedder(`${candidate.title}\n${candidate.body}`),
+              ),
+            )
+          : [];
+        const knowledgeIds: string[] = [];
+
+        if (apply) {
+          for (const [index, candidate] of acceptedCandidates.entries()) {
+            const knowledgeId = await upsertKnowledgeFromSource({
+              sourceUri: `vibe-memory://${memory.id}`,
+              contentHash: knowledgeContentHash({
+                promptVersion: config.vibeDistillationPromptVersion,
+                inputHash,
+                candidate,
+              }),
+              type: candidate.type,
+              status: "draft",
+              scope: "repo",
+              title: candidate.title,
+              body: candidate.body,
+              confidence: candidate.confidence,
+              importance: candidate.importance,
+              embedding: embeddings[index],
+              metadata: {
+                source: "vibe_memory_distillation",
+                sourceKind: "vibe_memory",
+                sourceVibeMemoryIds: [memory.id],
+                sourceSessionId: memory.sessionId,
+                sourceMemoryType: memory.memoryType,
+                sourceCreatedAt: memory.createdAt.toISOString(),
+                sourceContentHash: sha256(memory.content),
+                repoPath: memoryRepoScope.repoPath,
+                repoKey: memoryRepoScope.repoKey,
+                inputHash,
+                distillationModel: config.localLlmModel,
+                promptVersion: config.vibeDistillationPromptVersion,
+                candidateIndex: index,
+                distillationScore: candidate.score,
+                distillationScoreThreshold: scoreGate.threshold,
+                rationale: candidate.rationale,
+                candidateSourceRefs: candidate.sourceRefs,
+                candidateEvidenceRefs: candidate.evidenceRefs,
+                toolEventCount: completion.toolEvents.length,
+              },
+            });
+            knowledgeIds.push(knowledgeId);
+          }
+        }
+
         await recordDistillationRun({
           apply,
           vibeMemoryId: memory.id,
-          status: "skipped",
-          candidateCount: 0,
-          knowledgeIds: [],
+          status: "ok",
+          candidateCount: acceptedCandidates.length,
+          knowledgeIds,
           inputHash,
           metadata: {
-            reason:
-              candidates.length === 0
-                ? "no_rule_or_procedure_candidates"
-                : "all_candidates_below_min_score",
             sourceSessionId: memory.sessionId,
+            diffEntryCount: memoryDiffs.length,
             jsonRepaired: repaired,
             rawCandidateCount: candidates.length,
+            acceptedCandidateCount: acceptedCandidates.length,
             scoreThreshold: scoreGate.threshold,
             rejectedLowScoreCount: rejectedLowScoreCandidates.length,
             rejectedLowScoreCandidates: summarizeRejectedCandidates(rejectedLowScoreCandidates),
@@ -389,155 +491,107 @@ export async function distillVibeMemories(
         results.push({
           vibeMemoryId: memory.id,
           sessionId: memory.sessionId,
-          status: apply ? "skipped" : "dry_run",
+          status: apply ? "ok" : "dry_run",
+          inputHash,
+          candidateCount: acceptedCandidates.length,
+          knowledgeIds,
+          candidates: acceptedCandidates,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await recordDistillationRun({
+          apply,
+          vibeMemoryId: memory.id,
+          status: "failed",
+          candidateCount: 0,
+          knowledgeIds: [],
+          error: message,
+          inputHash,
+          metadata: {
+            sourceSessionId: memory.sessionId,
+            diffEntryCount: memoryDiffs.length,
+          },
+        });
+        results.push({
+          vibeMemoryId: memory.id,
+          sessionId: memory.sessionId,
+          status: "failed",
           inputHash,
           candidateCount: 0,
           knowledgeIds: [],
           candidates: [],
+          error: message,
         });
-        continue;
       }
+    }
 
-      const embeddings = apply
-        ? await Promise.all(
-            acceptedCandidates.map((candidate) =>
-              embedder(`${candidate.title}\n${candidate.body}`),
-            ),
-          )
-        : [];
-      const knowledgeIds: string[] = [];
+    const failed = results.filter((result) => result.status === "failed").length;
+    const skipped = results.filter((result) => result.status === "skipped").length;
+    const knowledgeCount = results.reduce((total, result) => total + result.knowledgeIds.length, 0);
 
-      if (apply) {
-        for (const [index, candidate] of acceptedCandidates.entries()) {
-          const knowledgeId = await upsertKnowledgeFromSource({
-            sourceUri: `vibe-memory://${memory.id}`,
-            contentHash: knowledgeContentHash({
-              promptVersion: config.vibeDistillationPromptVersion,
-              inputHash,
-              candidate,
-            }),
-            type: candidate.type,
-            status: "draft",
-            scope: "repo",
-            title: candidate.title,
-            body: candidate.body,
-            confidence: candidate.confidence,
-            importance: candidate.importance,
-            embedding: embeddings[index],
-            metadata: {
-              source: "vibe_memory_distillation",
-              sourceKind: "vibe_memory",
-              sourceVibeMemoryIds: [memory.id],
-              sourceSessionId: memory.sessionId,
-              sourceMemoryType: memory.memoryType,
-              sourceCreatedAt: memory.createdAt.toISOString(),
-              sourceContentHash: sha256(memory.content),
-              repoPath: memoryRepoScope.repoPath,
-              repoKey: memoryRepoScope.repoKey,
-              inputHash,
-              distillationModel: config.localLlmModel,
-              promptVersion: config.vibeDistillationPromptVersion,
-              candidateIndex: index,
-              distillationScore: candidate.score,
-              distillationScoreThreshold: scoreGate.threshold,
-              rationale: candidate.rationale,
-              candidateSourceRefs: candidate.sourceRefs,
-              candidateEvidenceRefs: candidate.evidenceRefs,
-              toolEventCount: completion.toolEvents.length,
-            },
-          });
-          knowledgeIds.push(knowledgeId);
-        }
-      }
+    const summary = {
+      ok: failed === 0,
+      apply,
+      model: config.localLlmModel,
+      promptVersion: config.vibeDistillationPromptVersion,
+      processed: results.length,
+      skipped,
+      failed,
+      knowledgeCount,
+      results,
+    };
 
-      await recordDistillationRun({
-        apply,
-        vibeMemoryId: memory.id,
-        status: "ok",
-        candidateCount: acceptedCandidates.length,
-        knowledgeIds,
-        inputHash,
-        metadata: {
-          sourceSessionId: memory.sessionId,
-          diffEntryCount: memoryDiffs.length,
-          jsonRepaired: repaired,
-          rawCandidateCount: candidates.length,
-          acceptedCandidateCount: acceptedCandidates.length,
-          scoreThreshold: scoreGate.threshold,
-          rejectedLowScoreCount: rejectedLowScoreCandidates.length,
-          rejectedLowScoreCandidates: summarizeRejectedCandidates(rejectedLowScoreCandidates),
-          rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
-          rejectedInvalidEvidenceCandidates: summarizeRejectedCandidates(
-            scoreGate.rejectedInvalidEvidence,
-          ),
-          toolEventCount: completion.toolEvents.length,
-        },
-      });
-      results.push({
-        vibeMemoryId: memory.id,
-        sessionId: memory.sessionId,
-        status: apply ? "ok" : "dry_run",
-        inputHash,
-        candidateCount: acceptedCandidates.length,
-        knowledgeIds,
-        candidates: acceptedCandidates,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await recordDistillationRun({
-        apply,
-        vibeMemoryId: memory.id,
-        status: "failed",
-        candidateCount: 0,
-        knowledgeIds: [],
-        error: message,
-        inputHash,
-        metadata: {
-          sourceSessionId: memory.sessionId,
-          diffEntryCount: memoryDiffs.length,
-        },
-      });
-      results.push({
-        vibeMemoryId: memory.id,
-        sessionId: memory.sessionId,
-        status: "failed",
-        inputHash,
-        candidateCount: 0,
-        knowledgeIds: [],
-        candidates: [],
-        error: message,
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.vibeDistillationRunFinished,
+      actor: "system",
+      payload: {
+        ok: summary.ok,
+        apply: summary.apply,
+        model: summary.model,
+        promptVersion: summary.promptVersion,
+        processed: summary.processed,
+        skipped: summary.skipped,
+        failed: summary.failed,
+        knowledgeCount: summary.knowledgeCount,
+        failedMemories: summary.results
+          .filter((result) => result.status === "failed")
+          .slice(0, 20)
+          .map((result) => ({
+            vibeMemoryId: result.vibeMemoryId,
+            sessionId: result.sessionId,
+            error: result.error ?? null,
+          })),
+      },
+    });
+
+    if (apply) {
+      await recordVibeMemoryDistillationState({
+        ok: summary.ok,
+        apply: summary.apply,
+        model: summary.model,
+        promptVersion: summary.promptVersion,
+        processed: summary.processed,
+        skipped: summary.skipped,
+        failed: summary.failed,
+        knowledgeCount: summary.knowledgeCount,
       });
     }
-  }
 
-  const failed = results.filter((result) => result.status === "failed").length;
-  const skipped = results.filter((result) => result.status === "skipped").length;
-  const knowledgeCount = results.reduce((total, result) => total + result.knowledgeIds.length, 0);
-
-  const summary = {
-    ok: failed === 0,
-    apply,
-    model: config.localLlmModel,
-    promptVersion: config.vibeDistillationPromptVersion,
-    processed: results.length,
-    skipped,
-    failed,
-    knowledgeCount,
-    results,
-  };
-
-  if (apply) {
-    await recordVibeMemoryDistillationState({
-      ok: summary.ok,
-      apply: summary.apply,
-      model: summary.model,
-      promptVersion: summary.promptVersion,
-      processed: summary.processed,
-      skipped: summary.skipped,
-      failed: summary.failed,
-      knowledgeCount: summary.knowledgeCount,
+    return summary;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.vibeDistillationRunFinished,
+      actor: "system",
+      payload: {
+        ok: false,
+        apply,
+        model: config.localLlmModel,
+        promptVersion: config.vibeDistillationPromptVersion,
+        processed: results.length,
+        error: message,
+      },
     });
+    throw error;
   }
-
-  return summary;
 }

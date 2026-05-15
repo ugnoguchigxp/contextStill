@@ -1,6 +1,7 @@
 import crypto from "node:crypto";
 import { config } from "../../config.js";
 import { toUnitKnowledgeScore } from "../../lib/score-scale.js";
+import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import {
   type DistilledKnowledgeCandidate,
   filterDistillationCandidatesByScore,
@@ -252,53 +253,173 @@ export async function distillSources(
   const apply = Boolean(options.apply);
   const modelClient = options.modelClient ?? callLocalLlmCompletionForDistillation;
   const embedder = options.embedder ?? defaultEmbedder;
-  const fragments = await listSourceFragmentsForDistillation({
-    limit: options.limit ?? config.sourceDistillationBatchSize,
-    promptVersion: config.sourceDistillationPromptVersion,
-    includeProcessed: options.includeProcessed,
-    sourceKind: options.sourceKind,
-    uri: options.uri,
+  await recordAuditLogSafe({
+    eventType: auditEventTypes.sourceDistillationRunStarted,
+    actor: "system",
+    payload: {
+      apply,
+      model: config.localLlmModel,
+      promptVersion: config.sourceDistillationPromptVersion,
+      limit: options.limit ?? config.sourceDistillationBatchSize,
+      includeProcessed: Boolean(options.includeProcessed),
+      sourceKind: options.sourceKind ?? null,
+      uri: options.uri ?? null,
+    },
   });
+
   const results: DistilledSourceResult[] = [];
+  try {
+    const fragments = await listSourceFragmentsForDistillation({
+      limit: options.limit ?? config.sourceDistillationBatchSize,
+      promptVersion: config.sourceDistillationPromptVersion,
+      includeProcessed: options.includeProcessed,
+      sourceKind: options.sourceKind,
+      uri: options.uri,
+    });
 
-  for (const fragment of fragments) {
-    const inputHash = buildSourceDistillationInputHash(fragment);
-    const messages = buildSourceDistillationMessages({ fragment });
-    try {
-      const completion = normalizeDistillationModelResult(
-        await modelClient({
-          model: config.localLlmModel,
+    for (const fragment of fragments) {
+      const inputHash = buildSourceDistillationInputHash(fragment);
+      const messages = buildSourceDistillationMessages({ fragment });
+      try {
+        const completion = normalizeDistillationModelResult(
+          await modelClient({
+            model: config.localLlmModel,
+            messages,
+            maxTokens: config.sourceDistillationMaxOutputTokens,
+          }),
+        );
+        const { candidates, repaired } = await parseDistillationCandidatesWithRepair({
+          rawResponse: completion.content,
           messages,
+          modelClient,
           maxTokens: config.sourceDistillationMaxOutputTokens,
-        }),
-      );
-      const { candidates, repaired } = await parseDistillationCandidatesWithRepair({
-        rawResponse: completion.content,
-        messages,
-        modelClient,
-        maxTokens: config.sourceDistillationMaxOutputTokens,
-      });
-      const scoreGate = filterDistillationCandidatesByScore(candidates, {
-        toolEvents: completion.toolEvents,
-      });
-      const acceptedCandidates = scoreGate.accepted;
+        });
+        const scoreGate = filterDistillationCandidatesByScore(candidates, {
+          toolEvents: completion.toolEvents,
+        });
+        const acceptedCandidates = scoreGate.accepted;
 
-      if (acceptedCandidates.length === 0) {
+        if (acceptedCandidates.length === 0) {
+          await recordRun({
+            apply,
+            fragment,
+            status: "skipped",
+            candidateCount: 0,
+            knowledgeIds: [],
+            inputHash,
+            toolEvents: completion.toolEvents,
+            metadata: {
+              reason:
+                candidates.length === 0
+                  ? "no_rule_or_procedure_candidates"
+                  : "all_candidates_rejected",
+              jsonRepaired: repaired,
+              rawCandidateCount: candidates.length,
+              scoreThreshold: scoreGate.threshold,
+              rejectedLowScoreCount: scoreGate.rejectedLowScore.length,
+              rejectedLowScoreCandidates: summarizeRejectedCandidates(scoreGate.rejectedLowScore),
+              rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
+              rejectedInvalidEvidenceCandidates: summarizeRejectedCandidates(
+                scoreGate.rejectedInvalidEvidence,
+              ),
+              toolEventCount: completion.toolEvents.length,
+            },
+          });
+          results.push({
+            sourceFragmentId: fragment.id,
+            sourceUri: fragment.sourceUri,
+            locator: fragment.locator,
+            status: apply ? "skipped" : "dry_run",
+            inputHash,
+            candidateCount: 0,
+            knowledgeIds: [],
+            candidates: [],
+          });
+          continue;
+        }
+
+        const embeddings = apply
+          ? await Promise.all(
+              acceptedCandidates.map((candidate) =>
+                embedder(`${candidate.title}\n${candidate.body}`),
+              ),
+            )
+          : [];
+        const knowledgeIds: string[] = [];
+
+        if (apply) {
+          for (const [index, candidate] of acceptedCandidates.entries()) {
+            const knowledgeId = await upsertKnowledgeFromSource({
+              sourceUri: `source-fragment://${fragment.id}`,
+              contentHash: knowledgeContentHash({
+                promptVersion: config.sourceDistillationPromptVersion,
+                inputHash,
+                candidate,
+              }),
+              type: candidate.type,
+              status: "draft",
+              scope: "repo",
+              title: candidate.title,
+              body: candidate.body,
+              confidence: candidate.confidence,
+              importance: candidate.importance,
+              embedding: embeddings[index],
+              metadata: {
+                source: "source_distillation",
+                sourceKind: fragment.sourceKind,
+                sourceId: fragment.sourceId,
+                sourceDocumentUri: fragment.sourceUri,
+                sourceTitle: fragment.sourceTitle,
+                sourceContentHash: fragment.sourceContentHash,
+                sourceFragmentId: fragment.id,
+                sourceFragmentLocator: fragment.locator,
+                sourceFragmentHeading: fragment.heading,
+                repoPath:
+                  typeof fragment.sourceMetadata.repoPath === "string"
+                    ? fragment.sourceMetadata.repoPath
+                    : undefined,
+                repoKey:
+                  typeof fragment.sourceMetadata.repoKey === "string"
+                    ? fragment.sourceMetadata.repoKey
+                    : undefined,
+                inputHash,
+                distillationModel: config.localLlmModel,
+                promptVersion: config.sourceDistillationPromptVersion,
+                candidateIndex: index,
+                distillationScore: candidate.score,
+                distillationScoreThreshold: scoreGate.threshold,
+                rationale: candidate.rationale,
+                candidateSourceRefs: candidate.sourceRefs,
+                candidateEvidenceRefs: candidate.evidenceRefs,
+                toolEventCount: completion.toolEvents.length,
+              },
+            });
+            await linkKnowledgeToSourceFragment({
+              knowledgeId,
+              sourceFragmentId: fragment.id,
+              confidence: toUnitKnowledgeScore(candidate.confidence, 70),
+              metadata: {
+                source: "source_distillation",
+                promptVersion: config.sourceDistillationPromptVersion,
+                inputHash,
+              },
+            });
+            knowledgeIds.push(knowledgeId);
+          }
+        }
+
         await recordRun({
           apply,
           fragment,
-          status: "skipped",
-          candidateCount: 0,
-          knowledgeIds: [],
+          status: "ok",
+          candidateCount: acceptedCandidates.length,
+          knowledgeIds,
           inputHash,
           toolEvents: completion.toolEvents,
           metadata: {
-            reason:
-              candidates.length === 0
-                ? "no_rule_or_procedure_candidates"
-                : "all_candidates_rejected",
             jsonRepaired: repaired,
             rawCandidateCount: candidates.length,
+            acceptedCandidateCount: acceptedCandidates.length,
             scoreThreshold: scoreGate.threshold,
             rejectedLowScoreCount: scoreGate.rejectedLowScore.length,
             rejectedLowScoreCandidates: summarizeRejectedCandidates(scoreGate.rejectedLowScore),
@@ -313,172 +434,107 @@ export async function distillSources(
           sourceFragmentId: fragment.id,
           sourceUri: fragment.sourceUri,
           locator: fragment.locator,
-          status: apply ? "skipped" : "dry_run",
+          status: apply ? "ok" : "dry_run",
+          inputHash,
+          candidateCount: acceptedCandidates.length,
+          knowledgeIds,
+          candidates: acceptedCandidates,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        await recordRun({
+          apply,
+          fragment,
+          status: "failed",
+          candidateCount: 0,
+          knowledgeIds: [],
+          error: message,
+          inputHash,
+          metadata: {
+            error: message,
+          },
+        });
+        results.push({
+          sourceFragmentId: fragment.id,
+          sourceUri: fragment.sourceUri,
+          locator: fragment.locator,
+          status: "failed",
           inputHash,
           candidateCount: 0,
           knowledgeIds: [],
           candidates: [],
-        });
-        continue;
-      }
-
-      const embeddings = apply
-        ? await Promise.all(
-            acceptedCandidates.map((candidate) =>
-              embedder(`${candidate.title}\n${candidate.body}`),
-            ),
-          )
-        : [];
-      const knowledgeIds: string[] = [];
-
-      if (apply) {
-        for (const [index, candidate] of acceptedCandidates.entries()) {
-          const knowledgeId = await upsertKnowledgeFromSource({
-            sourceUri: `source-fragment://${fragment.id}`,
-            contentHash: knowledgeContentHash({
-              promptVersion: config.sourceDistillationPromptVersion,
-              inputHash,
-              candidate,
-            }),
-            type: candidate.type,
-            status: "draft",
-            scope: "repo",
-            title: candidate.title,
-            body: candidate.body,
-            confidence: candidate.confidence,
-            importance: candidate.importance,
-            embedding: embeddings[index],
-            metadata: {
-              source: "source_distillation",
-              sourceKind: fragment.sourceKind,
-              sourceId: fragment.sourceId,
-              sourceDocumentUri: fragment.sourceUri,
-              sourceTitle: fragment.sourceTitle,
-              sourceContentHash: fragment.sourceContentHash,
-              sourceFragmentId: fragment.id,
-              sourceFragmentLocator: fragment.locator,
-              sourceFragmentHeading: fragment.heading,
-              repoPath:
-                typeof fragment.sourceMetadata.repoPath === "string"
-                  ? fragment.sourceMetadata.repoPath
-                  : undefined,
-              repoKey:
-                typeof fragment.sourceMetadata.repoKey === "string"
-                  ? fragment.sourceMetadata.repoKey
-                  : undefined,
-              inputHash,
-              distillationModel: config.localLlmModel,
-              promptVersion: config.sourceDistillationPromptVersion,
-              candidateIndex: index,
-              distillationScore: candidate.score,
-              distillationScoreThreshold: scoreGate.threshold,
-              rationale: candidate.rationale,
-              candidateSourceRefs: candidate.sourceRefs,
-              candidateEvidenceRefs: candidate.evidenceRefs,
-              toolEventCount: completion.toolEvents.length,
-            },
-          });
-          await linkKnowledgeToSourceFragment({
-            knowledgeId,
-            sourceFragmentId: fragment.id,
-            confidence: toUnitKnowledgeScore(candidate.confidence, 70),
-            metadata: {
-              source: "source_distillation",
-              promptVersion: config.sourceDistillationPromptVersion,
-              inputHash,
-            },
-          });
-          knowledgeIds.push(knowledgeId);
-        }
-      }
-
-      await recordRun({
-        apply,
-        fragment,
-        status: "ok",
-        candidateCount: acceptedCandidates.length,
-        knowledgeIds,
-        inputHash,
-        toolEvents: completion.toolEvents,
-        metadata: {
-          jsonRepaired: repaired,
-          rawCandidateCount: candidates.length,
-          acceptedCandidateCount: acceptedCandidates.length,
-          scoreThreshold: scoreGate.threshold,
-          rejectedLowScoreCount: scoreGate.rejectedLowScore.length,
-          rejectedLowScoreCandidates: summarizeRejectedCandidates(scoreGate.rejectedLowScore),
-          rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
-          rejectedInvalidEvidenceCandidates: summarizeRejectedCandidates(
-            scoreGate.rejectedInvalidEvidence,
-          ),
-          toolEventCount: completion.toolEvents.length,
-        },
-      });
-      results.push({
-        sourceFragmentId: fragment.id,
-        sourceUri: fragment.sourceUri,
-        locator: fragment.locator,
-        status: apply ? "ok" : "dry_run",
-        inputHash,
-        candidateCount: acceptedCandidates.length,
-        knowledgeIds,
-        candidates: acceptedCandidates,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      await recordRun({
-        apply,
-        fragment,
-        status: "failed",
-        candidateCount: 0,
-        knowledgeIds: [],
-        error: message,
-        inputHash,
-        metadata: {
           error: message,
-        },
-      });
-      results.push({
-        sourceFragmentId: fragment.id,
-        sourceUri: fragment.sourceUri,
-        locator: fragment.locator,
-        status: "failed",
-        inputHash,
-        candidateCount: 0,
-        knowledgeIds: [],
-        candidates: [],
-        error: message,
+        });
+      }
+    }
+
+    const failed = results.filter((result) => result.status === "failed").length;
+    const skipped = results.filter((result) => result.status === "skipped").length;
+    const knowledgeCount = results.reduce((total, result) => total + result.knowledgeIds.length, 0);
+    const summary: DistillSourcesSummary = {
+      ok: failed === 0,
+      apply,
+      model: config.localLlmModel,
+      promptVersion: config.sourceDistillationPromptVersion,
+      processed: results.length,
+      skipped,
+      failed,
+      knowledgeCount,
+      results,
+    };
+
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.sourceDistillationRunFinished,
+      actor: "system",
+      payload: {
+        ok: summary.ok,
+        apply: summary.apply,
+        model: summary.model,
+        promptVersion: summary.promptVersion,
+        processed: summary.processed,
+        skipped: summary.skipped,
+        failed: summary.failed,
+        knowledgeCount: summary.knowledgeCount,
+        failedFragments: summary.results
+          .filter((result) => result.status === "failed")
+          .slice(0, 20)
+          .map((result) => ({
+            sourceFragmentId: result.sourceFragmentId,
+            sourceUri: result.sourceUri,
+            locator: result.locator,
+            error: result.error ?? null,
+          })),
+      },
+    });
+
+    if (apply) {
+      await recordSourceDistillationState({
+        ok: summary.ok,
+        apply: summary.apply,
+        model: summary.model,
+        promptVersion: summary.promptVersion,
+        processed: summary.processed,
+        skipped: summary.skipped,
+        failed: summary.failed,
+        knowledgeCount: summary.knowledgeCount,
       });
     }
-  }
 
-  const failed = results.filter((result) => result.status === "failed").length;
-  const skipped = results.filter((result) => result.status === "skipped").length;
-  const knowledgeCount = results.reduce((total, result) => total + result.knowledgeIds.length, 0);
-  const summary: DistillSourcesSummary = {
-    ok: failed === 0,
-    apply,
-    model: config.localLlmModel,
-    promptVersion: config.sourceDistillationPromptVersion,
-    processed: results.length,
-    skipped,
-    failed,
-    knowledgeCount,
-    results,
-  };
-
-  if (apply) {
-    await recordSourceDistillationState({
-      ok: summary.ok,
-      apply: summary.apply,
-      model: summary.model,
-      promptVersion: summary.promptVersion,
-      processed: summary.processed,
-      skipped: summary.skipped,
-      failed: summary.failed,
-      knowledgeCount: summary.knowledgeCount,
+    return summary;
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.sourceDistillationRunFinished,
+      actor: "system",
+      payload: {
+        ok: false,
+        apply,
+        model: config.localLlmModel,
+        promptVersion: config.sourceDistillationPromptVersion,
+        processed: results.length,
+        error: message,
+      },
     });
+    throw error;
   }
-
-  return summary;
 }

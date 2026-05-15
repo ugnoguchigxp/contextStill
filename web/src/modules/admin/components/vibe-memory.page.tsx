@@ -27,6 +27,9 @@ type ToolCallSummary = {
 type SessionSummary = {
   id: string;
   title: string;
+  firstMessage?: string;
+  projectName: string;
+  startedAt: string;
   sourceLabel: string;
   projectRoot?: string;
   lastCreatedAt: Date;
@@ -102,13 +105,21 @@ export function VibeMemoryPage() {
               title={s.id}
             >
               <div className="session-info">
-                <span className="session-title-label">{s.title}</span>
-                <span className="session-meta">
-                  {s.sourceLabel} · {s.count} vibes
-                </span>
-                {s.projectRoot ? (
-                  <span className="session-project-root">{s.projectRoot}</span>
-                ) : null}
+                <div className="session-project-line">
+                  <span className="session-project-name">
+                    {s.firstMessage || s.projectName || "New Session"}
+                  </span>
+                  <span className="session-time-label">
+                    {formatSessionTimeCompact(s.startedAt)}
+                  </span>
+                </div>
+                <div className="session-meta-line">
+                  <span className="session-meta-project">{s.projectName}</span>
+                  <span>·</span>
+                  <span>{s.sourceLabel}</span>
+                  <span>·</span>
+                  <span>{s.count} vibes</span>
+                </div>
               </div>
             </button>
           ))}
@@ -182,6 +193,10 @@ export function VibeMemoryPage() {
 }
 
 function buildSessionSummary(id: string, items: VibeMemory[]): SessionSummary {
+  const sortedItems = [...items].sort(
+    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+  );
+
   const lastCreatedAt =
     latestMetadataTime(items, "timestamp") ??
     new Date(Math.max(...items.map((item) => new Date(item.createdAt).getTime())));
@@ -193,9 +208,23 @@ function buildSessionSummary(id: string, items: VibeMemory[]): SessionSummary {
   const sourceLabel = firstMetadataString(items, "source") ?? "Agent";
   const startedAt = earliestMetadataTime(items, "sessionStartedAt") ?? firstCreatedAt.toISOString();
 
+  // Find the first user message to use as a title
+  let firstMessage: string | undefined;
+  for (const item of sortedItems) {
+    const turns = parseVibeMemoryTurns(item.content);
+    const userTurn = turns.find((t) => t.role === "user");
+    if (userTurn?.content.trim()) {
+      firstMessage = userTurn.content.trim().slice(0, 100);
+      break;
+    }
+  }
+
   return {
     id,
     title: [projectName, formatSessionTime(startedAt), sourceLabel].join(" / "),
+    firstMessage,
+    projectName,
+    startedAt,
     sourceLabel,
     projectRoot,
     lastCreatedAt,
@@ -240,6 +269,21 @@ function formatSessionTime(value: string): string {
   const hour = String(date.getHours()).padStart(2, "0");
   const minute = String(date.getMinutes()).padStart(2, "0");
   return `${year}/${month}/${day} ${hour}:${minute}`;
+}
+
+function formatSessionTimeCompact(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const now = new Date();
+  const isToday =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+
+  if (isToday) {
+    return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  }
+  return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
 function ChatTranscript({ turns }: { turns: ChatTurn[] }) {

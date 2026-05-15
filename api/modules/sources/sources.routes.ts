@@ -184,6 +184,7 @@ export const sourcesRouter = new Hono()
         title: page.title,
         body: page.body,
         metadata: page.meta,
+        actor: "user",
       });
       indexed += 1;
     }
@@ -321,6 +322,7 @@ export const sourcesRouter = new Hono()
       body: savedPage.body,
       contentHash: hash,
       metadata: savedPage.meta,
+      actor: "user",
     });
     return c.json({ ok: true, slug: savedPage.slug, hash, commit });
   })
@@ -379,6 +381,7 @@ export const sourcesRouter = new Hono()
       body: savedPage.body,
       contentHash: hash,
       metadata: savedPage.meta,
+      actor: "user",
     });
     return c.json({ ok: true, slug: savedPage.slug, hash, commit });
   })

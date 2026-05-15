@@ -261,6 +261,30 @@ export type SourceSearchItem = {
   excerpt: string;
 };
 
+export type AuditLogActor = "agent" | "user" | "system";
+
+export type AuditLogItem = {
+  id: string;
+  eventType: string;
+  actor: AuditLogActor | string;
+  payload: Record<string, unknown>;
+  createdAt: string;
+};
+
+export type AuditLogsPagination = {
+  page: number;
+  limit: number;
+  total: number;
+  totalPages: number;
+  hasNextPage: boolean;
+};
+
+export type AuditLogsResponse = {
+  items: AuditLogItem[];
+  availableEventTypes: string[];
+  pagination: AuditLogsPagination;
+};
+
 export type SourceReindexResponse = {
   ok: true;
   indexed: number;
@@ -470,4 +494,19 @@ export async function searchSourcePages(query: string): Promise<SourceSearchItem
 
 export async function runSourceReindex(): Promise<SourceReindexResponse> {
   return requestJson<SourceReindexResponse>("/api/sources/reindex", "POST");
+}
+
+export async function fetchAuditLogs(input?: {
+  page?: number;
+  limit?: number;
+  eventType?: string;
+  actor?: AuditLogActor | "all";
+}): Promise<AuditLogsResponse> {
+  const query = new URLSearchParams();
+  if (input?.page !== undefined) query.set("page", String(input.page));
+  if (input?.limit !== undefined) query.set("limit", String(input.limit));
+  if (input?.eventType) query.set("eventType", input.eventType);
+  if (input?.actor && input.actor !== "all") query.set("actor", input.actor);
+  const suffix = query.size > 0 ? `?${query.toString()}` : "";
+  return getJson<AuditLogsResponse>(`/api/audit-logs${suffix}`);
 }

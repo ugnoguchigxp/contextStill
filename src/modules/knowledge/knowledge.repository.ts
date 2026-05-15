@@ -7,6 +7,7 @@ import type {
   KnowledgeSearchInput,
   KnowledgeStatus,
 } from "../../shared/schemas/knowledge.schema.js";
+import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
 
 export type KnowledgeSearchResult = {
@@ -167,6 +168,10 @@ function fallbackSourceRefsFromMetadata(metadata: Record<string, unknown>): stri
   return [...refs];
 }
 
+function resolveKnowledgeActor(sourceUri: string): "agent" | "system" {
+  return sourceUri.startsWith("agent://") ? "agent" : "system";
+}
+
 async function listKnowledgeSourceRefs(knowledgeIds: string[]): Promise<Map<string, string[]>> {
   if (knowledgeIds.length === 0) return new Map();
   const rows = await db
@@ -315,6 +320,32 @@ export async function upsertKnowledgeFromSource(
         updatedAt: new Date(),
       })
       .where(eq(knowledgeItems.id, existing.id));
+    const actor = resolveKnowledgeActor(params.sourceUri);
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.knowledgeUpdated,
+      actor,
+      payload: {
+        knowledgeId: existing.id,
+        sourceUri: params.sourceUri,
+        type: params.type,
+        status: params.status,
+        scope: params.scope,
+        title: params.title,
+        previousStatus: existing.status,
+      },
+    });
+    if (existing.status !== params.status) {
+      await recordAuditLogSafe({
+        eventType: auditEventTypes.knowledgeStatusChanged,
+        actor,
+        payload: {
+          knowledgeId: existing.id,
+          sourceUri: params.sourceUri,
+          fromStatus: existing.status,
+          toStatus: params.status,
+        },
+      });
+    }
     return existing.id;
   }
 
@@ -333,6 +364,19 @@ export async function upsertKnowledgeFromSource(
       embedding: params.embedding,
     })
     .returning({ id: knowledgeItems.id });
+
+  await recordAuditLogSafe({
+    eventType: auditEventTypes.knowledgeCreated,
+    actor: resolveKnowledgeActor(params.sourceUri),
+    payload: {
+      knowledgeId: inserted.id,
+      sourceUri: params.sourceUri,
+      type: params.type,
+      status: params.status,
+      scope: params.scope,
+      title: params.title,
+    },
+  });
 
   return inserted.id;
 }
