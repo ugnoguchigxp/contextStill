@@ -42,28 +42,76 @@ async function tryEmbedSourceFragment(content: string): Promise<number[] | undef
   }
 }
 
-async function replaceFullSourceFragment(params: {
+function chunkSourceDocument(params: {
+  title?: string | null;
+  body: string;
+  maxChars?: number;
+}): Array<{ locator: string; heading: string | null; content: string }> {
+  const maxChars = params.maxChars ?? 2500;
+  const lines = params.body.split("\n");
+  const chunks: Array<{ locator: string; heading: string | null; content: string }> = [];
+  let heading = params.title ?? null;
+  let buffer: string[] = [];
+  let index = 1;
+
+  const flush = () => {
+    const content = buffer.join("\n").trim();
+    if (!content) return;
+    chunks.push({
+      locator: `chunk:${String(index).padStart(4, "0")}`,
+      heading,
+      content,
+    });
+    index += 1;
+    buffer = [];
+  };
+
+  for (const line of lines) {
+    const headingMatch = line.match(/^(#{1,6})\s+(.+?)\s*$/);
+    if (headingMatch && buffer.join("\n").trim().length > 0) {
+      flush();
+      heading = headingMatch[2]?.trim() || heading;
+    }
+    buffer.push(line);
+    if (buffer.join("\n").length >= maxChars) {
+      flush();
+    }
+  }
+  flush();
+
+  if (chunks.length === 0) {
+    const content = params.body.trim();
+    return content ? [{ locator: "full", heading: params.title ?? null, content }] : [];
+  }
+  return chunks;
+}
+
+async function replaceSourceFragments(params: {
   sourceId: string;
   title?: string | null;
   body: string;
   metadata?: Record<string, unknown>;
 }): Promise<void> {
-  await db
-    .delete(sourceFragments)
-    .where(and(eq(sourceFragments.sourceId, params.sourceId), eq(sourceFragments.locator, "full")));
+  await db.delete(sourceFragments).where(eq(sourceFragments.sourceId, params.sourceId));
 
-  const content = params.body.trim();
-  if (!content) return;
-
-  const embedding = await tryEmbedSourceFragment(content);
-  await db.insert(sourceFragments).values({
-    sourceId: params.sourceId,
-    locator: "full",
-    heading: params.title ?? null,
-    content,
-    metadata: params.metadata ?? {},
-    embedding,
+  const chunks = chunkSourceDocument({
+    title: params.title,
+    body: params.body,
   });
+  if (chunks.length === 0) return;
+
+  await db.insert(sourceFragments).values(
+    await Promise.all(
+      chunks.map(async (chunk) => ({
+        sourceId: params.sourceId,
+        locator: chunk.locator,
+        heading: chunk.heading,
+        content: chunk.content,
+        metadata: params.metadata ?? {},
+        embedding: await tryEmbedSourceFragment(chunk.content),
+      })),
+    ),
+  );
 }
 
 export async function upsertSourceDocument(params: UpsertSourceParams): Promise<string> {
@@ -86,12 +134,6 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
         updatedAt: new Date(),
       })
       .where(eq(sources.id, existing.id));
-    await replaceFullSourceFragment({
-      sourceId: existing.id,
-      title: params.title,
-      body: params.body,
-      metadata: params.metadata,
-    });
     return existing.id;
   }
 
@@ -106,7 +148,7 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
       metadata: params.metadata ?? {},
     })
     .returning({ id: sources.id });
-  await replaceFullSourceFragment({
+  await replaceSourceFragments({
     sourceId: inserted.id,
     title: params.title,
     body: params.body,

@@ -1,5 +1,7 @@
 import { useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { MarkdownEditor } from "markdown-wysiwyg-editor";
+import mermaid from "mermaid";
 import { Badge } from "@/components/ui/badge";
 import {
   type AgentDiffEntry,
@@ -30,6 +32,8 @@ type SessionSummary = {
   lastCreatedAt: Date;
   count: number;
 };
+
+mermaid.initialize({ startOnLoad: false });
 
 export function VibeMemoryPage() {
   const queryClient = useQueryClient();
@@ -248,7 +252,15 @@ function ChatTranscript({ turns }: { turns: ChatTurn[] }) {
       {turns.map((turn, index) => (
         <div key={`${turn.role}-${index}`} className={`chat-turn chat-turn-${turn.role}`}>
           <span className="chat-turn-role">{getChatRoleLabel(turn.role)}</span>
-          <div className="chat-turn-content">{turn.content}</div>
+          <div className="chat-turn-content">
+            <MarkdownEditor
+              value={turn.content}
+              editable={false}
+              toolbarMode="hidden"
+              enableMermaid
+              mermaidLib={mermaid}
+            />
+          </div>
         </div>
       ))}
     </div>

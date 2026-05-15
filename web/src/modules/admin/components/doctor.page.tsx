@@ -117,6 +117,74 @@ export function DoctorPage() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Vibe Distillation</CardTitle>
+        </CardHeader>
+        <CardContent className="runtime-list">
+          <div>
+            <span>LaunchAgent</span>
+            <strong>
+              {report?.vibeDistillation.launchAgent.loaded
+                ? "loaded"
+                : report?.vibeDistillation.launchAgent.installed
+                  ? "installed"
+                  : "not installed"}
+            </strong>
+          </div>
+          <div>
+            <span>Runs</span>
+            <strong>{report?.vibeDistillation.runs.totalRuns ?? 0}</strong>
+          </div>
+          <div>
+            <span>OK / skipped</span>
+            <strong>
+              {report
+                ? `${report.vibeDistillation.runs.okRuns} / ${report.vibeDistillation.runs.skippedRuns}`
+                : "-"}
+            </strong>
+          </div>
+          <div>
+            <span>Failed</span>
+            <strong>{report?.vibeDistillation.runs.failedRuns ?? 0}</strong>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>Source Distillation</CardTitle>
+        </CardHeader>
+        <CardContent className="runtime-list">
+          <div>
+            <span>LaunchAgent</span>
+            <strong>
+              {report?.sourceDistillation.launchAgent.loaded
+                ? "loaded"
+                : report?.sourceDistillation.launchAgent.installed
+                  ? "installed"
+                  : "not installed"}
+            </strong>
+          </div>
+          <div>
+            <span>Runs</span>
+            <strong>{report?.sourceDistillation.runs.totalRuns ?? 0}</strong>
+          </div>
+          <div>
+            <span>OK / skipped</span>
+            <strong>
+              {report
+                ? `${report.sourceDistillation.runs.okRuns} / ${report.sourceDistillation.runs.skippedRuns}`
+                : "-"}
+            </strong>
+          </div>
+          <div>
+            <span>Failed</span>
+            <strong>{report?.sourceDistillation.runs.failedRuns ?? 0}</strong>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Reasons</CardTitle>
         </CardHeader>
         <CardContent>

@@ -90,6 +90,42 @@ export type DoctorReport = {
     };
     nextActions: string[];
   };
+  vibeDistillation: {
+    launchAgent: {
+      label: string;
+      plistPath: string;
+      installed: boolean;
+      loaded: boolean;
+      state: string | null;
+    };
+    runs: {
+      totalRuns: number;
+      okRuns: number;
+      skippedRuns: number;
+      failedRuns: number;
+      lastRunAt: string | null;
+      lastRunAgeMinutes: number | null;
+    };
+    nextActions: string[];
+  };
+  sourceDistillation: {
+    launchAgent: {
+      label: string;
+      plistPath: string;
+      installed: boolean;
+      loaded: boolean;
+      state: string | null;
+    };
+    runs: {
+      totalRuns: number;
+      okRuns: number;
+      skippedRuns: number;
+      failedRuns: number;
+      lastRunAt: string | null;
+      lastRunAgeMinutes: number | null;
+    };
+    nextActions: string[];
+  };
 };
 
 export type GraphNode = {

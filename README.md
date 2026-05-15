@@ -10,6 +10,8 @@
 - `knowledge_items`: wiki や vibe memory から蒸留された、次回作業の判断・手順に使う知識です。`type` は `rule / procedure`、`status` は `draft / active / deprecated`、`scope` は `repo / global` だけを使います。
 - `vibe_memories`: LLM との自然言語会話ログです。diff 本文は保存しません。
 - `agent_diff_entries`: `vibe_memories` の会話中で発生した編集差分です。file content は保存せず、`diff_hunk` と抽出できた symbol 列を保存します。
+- `vibe_memory_distillation_runs`: vibe memory から knowledge を蒸留した履歴です。処理済み判定、失敗再試行、生成 knowledge id を管理します。
+- `source_distillation_runs` / `source_distillation_evidence`: wiki source fragment から knowledge を蒸留した履歴と、fetch した外部根拠の実行履歴です。
 - `sync_states`: Codex / Antigravity ログ同期の file cursor と最終同期時刻です。
 
 ## 主要機能
@@ -19,9 +21,13 @@
 - Wiki 管理（フォルダ、ページ、Git 履歴、diff、Markdown WYSIWYG）
 - Vibe Memory 閲覧、削除
 - Codex / Antigravity 会話ログの増分同期
+- Vibe Memory から `rule / procedure` knowledge を Gemma4 で蒸留し、保存時に embedding 化
+- Wiki source fragment から `rule / procedure` knowledge を Gemma4 で蒸留し、保存時に embedding 化
 - Vibe Memory 内での Agent Diff / Symbol 畳み込み表示
 - Knowledge Graph 可視化（`knowledge_items` の距離と relation を表示し、`vibe_memories` は蒸留元として扱う）
 - Doctor 診断
+
+Distillation の共通 runtime 方針は [docs/distillation-runtime-plan.md](docs/distillation-runtime-plan.md)、Source から Graph を作る方針は [docs/source-graph-flow.md](docs/source-graph-flow.md) にまとめています。Graph の主ノードは `knowledge_items` のままにし、source は蒸留元と根拠として扱います。
 
 ## Wiki 管理
 
@@ -63,12 +69,14 @@ bun run dev
 bun run compile --goal "fix context compiler" --intent edit --json
 bun run import:wiki ./wiki/pages
 bun run sync:agent-logs
+bun run distill:vibe-memory -- --apply
+bun run distill:sources -- --apply
 bun run doctor
 ```
 
 ## Agent Log Sync
 
-Codex と Antigravity の会話ログを `vibe_memories` に継続保存できます。Codex は既定で `~/.codex/sessions` と `~/.codex/archived_sessions` を見ます。Antigravity は既定で `~/.gemini/antigravity/brain` を見ます。別環境では `MEMORY_ROUTER_ANTIGRAVITY_LOG_DIR` で workspace root を明示してください。
+Codex と Antigravity の会話ログを `vibe_memories` に継続保存できます。Codex は既定で `~/.codex/sessions` と `~/.codex/archived_sessions` を見ます。Antigravity は既定で `~/.gemini/antigravity/brain` を見ます。別環境では `MEMORY_ROUTER_ANTIGRAVITY_LOG_DIR` で workspace root を明示してください。初回取り込み範囲は `MEMORY_ROUTER_AGENT_LOG_INITIAL_LOOKBACK_HOURS` と `MEMORY_ROUTER_ANTIGRAVITY_LOG_INITIAL_LOOKBACK_HOURS` で調整できます。
 
 一度だけ同期:
 
@@ -85,6 +93,76 @@ macOS LaunchAgent として定期実行:
 ```
 
 ログは `logs/agent-log-sync.log`、多重起動防止 lock は `logs/agent-log-sync.lock` を使います。
+
+## Vibe Memory Distillation
+
+`vibe_memories` と紐づく `agent_diff_entries` から、次回作業で再利用できる `rule / procedure` だけを抽出し、`knowledge_items` に `draft` として保存します。保存時に `${title}\n${body}` を passage embedding 化するため、Graph の semantic edge 距離計算にもそのまま使われます。
+
+既定では local-llm の Gemma4 API を使います。Gemma4 には候補ごとの `score` を出させ、既定しきい値以上の候補だけを提示・保存します。保存前にも同じ score gate を通すため、低品質候補は `knowledge_items` に登録されません。
+
+```bash
+# dry-run: knowledge と run 履歴は保存しない
+bun run distill:vibe-memory
+
+# apply: draft knowledge と distillation run を保存
+bun run distill:vibe-memory -- --apply
+
+# 対象を絞る
+bun run distill:vibe-memory -- --apply --limit 20 --session-id <session-id>
+```
+
+macOS LaunchAgent として継続実行:
+
+```bash
+./scripts/setup-distillation-automation.sh install
+./scripts/setup-distillation-automation.sh load
+./scripts/setup-distillation-automation.sh status
+```
+
+主要設定:
+
+- `MEMORY_ROUTER_LOCAL_LLM_API_BASE_URL`（既定 `http://127.0.0.1:44448`）
+- `MEMORY_ROUTER_LOCAL_LLM_MODEL`（既定 `gemma-4-e4b-it`）
+- `MEMORY_ROUTER_VIBE_DISTILLATION_BATCH_SIZE`
+- `MEMORY_ROUTER_VIBE_DISTILLATION_MAX_INPUT_CHARS`
+- `MEMORY_ROUTER_VIBE_DISTILLATION_MAX_OUTPUT_TOKENS`
+- `MEMORY_ROUTER_VIBE_DISTILLATION_TIMEOUT_MS`
+- `MEMORY_ROUTER_DISTILLATION_MIN_CANDIDATE_SCORE`（既定 `0.75`）
+- `MEMORY_ROUTER_VIBE_DISTILLATION_INTERVAL_SECONDS`（LaunchAgent の実行間隔）
+
+## Source / Wiki Distillation
+
+`import:wiki` は Markdown を `sources` / `source_fragments` に取り込みます。通常の wiki 本文はそのまま `knowledge_items` には登録せず、`distill:sources` が source fragment を Gemma4 で `rule / procedure` に蒸留します。保存時に `${title}\n${body}` を passage embedding 化し、`knowledge_source_links` で元 fragment と接続します。
+
+Vibe memory と同じ共通 system context、`search_web` / `fetch_content` tool loop、score gate を使います。URL や外部仕様に依存する候補は fetched evidence がない場合に保存前 gate で落とします。
+
+```bash
+# dry-run
+bun run distill:sources
+
+# apply
+bun run distill:sources -- --apply
+
+# 対象を絞る
+bun run distill:sources -- --apply --limit 20 --source-kind wiki
+bun run distill:sources -- --apply --uri /abs/path/wiki/page.md
+```
+
+macOS LaunchAgent として継続実行:
+
+```bash
+./scripts/setup-source-distillation-automation.sh install
+./scripts/setup-source-distillation-automation.sh load
+./scripts/setup-source-distillation-automation.sh status
+```
+
+主要設定:
+
+- `MEMORY_ROUTER_SOURCE_DISTILLATION_BATCH_SIZE`
+- `MEMORY_ROUTER_SOURCE_DISTILLATION_MAX_INPUT_CHARS`
+- `MEMORY_ROUTER_SOURCE_DISTILLATION_MAX_OUTPUT_TOKENS`
+- `MEMORY_ROUTER_SOURCE_DISTILLATION_INTERVAL_SECONDS`（LaunchAgent の実行間隔）
+- `MEMORY_ROUTER_DISTILLATION_FAILURE_RETRY_DELAY_SECONDS`（failed retry の backoff）
 
 ## Embedding
 
@@ -145,13 +223,15 @@ bun run start:mcp
 
 ```bash
 bun run verify
-bun run test:integration
+DATABASE_URL=postgres://postgres:postgres@localhost:7889/memory_router_test bun run test:integration
 bun run test:e2e
 ```
+
+`test:integration` は対象 DB のテーブルを truncate するため、通常の `memory_router` DB には実行しません。DB 名に `test` を含む検証用 DB を指定してください。
 
 ## 今後の改善計画
 
 1. `initial_instructions` を強化し、作業開始時の取得、実装後の記録、wiki からの蒸留までの標準ループをさらに明文化する。
 2. `record_vibe_memory` の終了時フローを自動化し、Git diff から `agent_diff_entries` を確実に登録できる補助コマンドを追加する。
-3. `agent_diff_entries` から knowledge 化候補を抽出するバッチを追加し、wiki と knowledge の差分レビューを UI で確認できるようにする。
+3. 蒸留済み draft knowledge のレビュー UI を強化し、wiki への反映候補と差分確認を扱えるようにする。
 4. Doctor に degraded 回復動線を追加し、DB migration 未適用、embedding 不通、wiki Git 不整合を UI から切り分けやすくする。

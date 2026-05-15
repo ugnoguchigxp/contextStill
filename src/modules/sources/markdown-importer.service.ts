@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { registerKnowledgeFromMarkdown } from "../knowledge/knowledge.service.js";
 import { upsertSourceDocument } from "./source.repository.js";
 
 type MarkdownImportResult = {
@@ -9,19 +8,13 @@ type MarkdownImportResult = {
   importedSources: number;
   importedKnowledge: number;
   skippedFiles: number;
-  files: Array<{ path: string; sourceId: string; knowledgeId: string }>;
+  files: Array<{ path: string; sourceId: string }>;
 };
 
 type FrontmatterParseResult = {
   frontmatter: Record<string, string>;
   body: string;
 };
-
-const knowledgeTypeValues = new Set(["rule", "procedure"]);
-
-const knowledgeStatusValues = new Set(["draft", "active", "deprecated"]);
-
-const scopeValues = new Set(["repo", "global"]);
 
 function parseFrontmatter(markdown: string): FrontmatterParseResult {
   if (!markdown.startsWith("---\n")) {
@@ -53,43 +46,6 @@ function firstMarkdownHeading(body: string): string | null {
     if (title) return title;
   }
   return null;
-}
-
-function clamp01(value: number, fallback: number): number {
-  if (!Number.isFinite(value)) return fallback;
-  return Math.min(1, Math.max(0, value));
-}
-
-function inferKnowledgeType(input: {
-  frontmatterType?: string;
-  title: string;
-  body: string;
-}): "rule" | "procedure" {
-  const explicitType = input.frontmatterType?.toLowerCase();
-  if (explicitType && knowledgeTypeValues.has(explicitType)) {
-    return explicitType as "rule" | "procedure";
-  }
-
-  const signal = `${input.title}\n${input.body}`.toLowerCase();
-  if (
-    signal.includes("runbook") ||
-    signal.includes("playbook") ||
-    signal.includes("how to") ||
-    signal.includes("手順") ||
-    signal.includes("手続")
-  ) {
-    return "procedure";
-  }
-  if (
-    signal.includes("rule") ||
-    signal.includes("policy") ||
-    signal.includes("must") ||
-    signal.includes("禁止") ||
-    signal.includes("規約")
-  ) {
-    return "rule";
-  }
-  return "rule";
 }
 
 export async function collectMarkdownFiles(rootDir: string): Promise<string[]> {
@@ -125,15 +81,6 @@ export async function importMarkdownDirectory(rootDir: string): Promise<Markdown
     const hash = createHash("sha256").update(content).digest("hex");
     const { frontmatter, body } = parseFrontmatter(content);
     const inferredTitle = firstMarkdownHeading(body) ?? path.basename(filePath, ".md");
-    const knowledgeType = inferKnowledgeType({
-      frontmatterType: frontmatter.type,
-      title: frontmatter.title ?? inferredTitle,
-      body,
-    });
-    const knowledgeStatus = (frontmatter.status?.toLowerCase() ?? "draft").trim();
-    const knowledgeScope = (frontmatter.scope?.toLowerCase() ?? "repo").trim();
-    const confidence = clamp01(Number(frontmatter.confidence), 0.7);
-    const importance = clamp01(Number(frontmatter.importance), 0.7);
 
     const sourceId = await upsertSourceDocument({
       sourceKind: "wiki",
@@ -145,28 +92,10 @@ export async function importMarkdownDirectory(rootDir: string): Promise<Markdown
         importedAt: new Date().toISOString(),
       },
     });
-    const knowledgeId = await registerKnowledgeFromMarkdown({
-      sourceUri: filePath,
-      contentHash: hash,
-      title: frontmatter.title ?? inferredTitle,
-      body: body.trim().slice(0, 5000),
-      type: knowledgeType,
-      status: knowledgeStatusValues.has(knowledgeStatus)
-        ? (knowledgeStatus as "draft" | "active" | "deprecated")
-        : "draft",
-      scope: scopeValues.has(knowledgeScope) ? (knowledgeScope as "repo" | "global") : "repo",
-      confidence,
-      importance,
-      metadata: {
-        importedAt: new Date().toISOString(),
-        sourceKind: "wiki",
-      },
-    });
 
     results.importedFiles += 1;
     results.importedSources += 1;
-    results.importedKnowledge += 1;
-    results.files.push({ path: filePath, sourceId, knowledgeId });
+    results.files.push({ path: filePath, sourceId });
   }
 
   return results;

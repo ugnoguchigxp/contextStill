@@ -2,6 +2,14 @@ import { z } from "zod";
 
 export const doctorStatusSchema = z.enum(["ok", "degraded", "failed"]);
 
+const launchAgentSchema = z.object({
+  label: z.string(),
+  plistPath: z.string(),
+  installed: z.boolean(),
+  loaded: z.boolean(),
+  state: z.string().nullable(),
+});
+
 export const doctorReportSchema = z.object({
   status: doctorStatusSchema,
   checkedAt: z.string().datetime(),
@@ -67,12 +75,30 @@ export const doctorReportSchema = z.object({
         warnings: z.array(z.string()),
       }),
     ),
-    launchAgent: z.object({
-      label: z.string(),
-      plistPath: z.string(),
-      installed: z.boolean(),
-      loaded: z.boolean(),
-      state: z.string().nullable(),
+    launchAgent: launchAgentSchema,
+    nextActions: z.array(z.string()),
+  }),
+  vibeDistillation: z.object({
+    launchAgent: launchAgentSchema,
+    runs: z.object({
+      totalRuns: z.number().int().nonnegative(),
+      okRuns: z.number().int().nonnegative(),
+      skippedRuns: z.number().int().nonnegative(),
+      failedRuns: z.number().int().nonnegative(),
+      lastRunAt: z.string().datetime().nullable(),
+      lastRunAgeMinutes: z.number().nonnegative().nullable(),
+    }),
+    nextActions: z.array(z.string()),
+  }),
+  sourceDistillation: z.object({
+    launchAgent: launchAgentSchema,
+    runs: z.object({
+      totalRuns: z.number().int().nonnegative(),
+      okRuns: z.number().int().nonnegative(),
+      skippedRuns: z.number().int().nonnegative(),
+      failedRuns: z.number().int().nonnegative(),
+      lastRunAt: z.string().datetime().nullable(),
+      lastRunAgeMinutes: z.number().nonnegative().nullable(),
     }),
     nextActions: z.array(z.string()),
   }),

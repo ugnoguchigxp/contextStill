@@ -8,6 +8,9 @@ const requiredTables = [
   "knowledge_source_links",
   "vibe_memories",
   "agent_diff_entries",
+  "vibe_memory_distillation_runs",
+  "source_distillation_runs",
+  "source_distillation_evidence",
   "relations",
   "context_compile_runs",
   "context_pack_items",
@@ -19,7 +22,30 @@ export function isDbIntegrationEnabled(): boolean {
   return process.env.MEMORY_ROUTER_RUN_DB_TESTS === "1";
 }
 
+function isSafeIntegrationDatabase(databaseUrl: string): boolean {
+  try {
+    const url = new URL(databaseUrl);
+    return url.pathname.replace(/^\//, "").includes("test");
+  } catch {
+    return databaseUrl.includes("test");
+  }
+}
+
 export async function ensureDbIntegrationReady(): Promise<void> {
+  const databaseUrl =
+    process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:7889/memory_router";
+  if (
+    !isSafeIntegrationDatabase(databaseUrl) &&
+    process.env.MEMORY_ROUTER_ALLOW_DESTRUCTIVE_DB_TESTS !== "1"
+  ) {
+    throw new Error(
+      [
+        "DB integration tests truncate tables and must not run against the live memory_router database.",
+        "Use a test database whose name includes 'test', or set MEMORY_ROUTER_ALLOW_DESTRUCTIVE_DB_TESTS=1 explicitly.",
+      ].join(" "),
+    );
+  }
+
   const db = getDb();
   await db.execute(sql`select 1 as ok`);
 
@@ -46,6 +72,9 @@ export async function truncateIntegrationTables(): Promise<void> {
     truncate table
       context_pack_items,
       context_compile_runs,
+      source_distillation_evidence,
+      source_distillation_runs,
+      vibe_memory_distillation_runs,
       agent_diff_entries,
       vibe_memories,
       knowledge_source_links,

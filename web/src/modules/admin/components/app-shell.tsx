@@ -32,7 +32,16 @@ export function AppShell() {
           ))}
         </nav>
       </header>
-      <main className="app-content">
+      <main
+        className={`app-content ${
+          pathname.startsWith("/vibe-memory") ||
+          pathname.startsWith("/sources") ||
+          pathname.startsWith("/graph") ||
+          pathname.startsWith("/knowledge")
+            ? "full-width"
+            : ""
+        }`}
+      >
         <Outlet />
       </main>
     </div>

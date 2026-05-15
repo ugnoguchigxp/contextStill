@@ -154,7 +154,7 @@ async function buildSemanticEdges(params: {
     const similarity = finiteOrFallback(row.similarity, 0);
     const sourceCount = edgeCounts.get(row.source_id) ?? 0;
     const targetCount = edgeCounts.get(row.target_id) ?? 0;
-    if (sourceCount >= params.topK && targetCount >= params.topK) {
+    if (sourceCount >= params.topK || targetCount >= params.topK) {
       continue;
     }
 

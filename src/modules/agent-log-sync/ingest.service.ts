@@ -946,5 +946,10 @@ export async function ingestAntigravityLogs(
   since?: Date,
   cursor: IngestCursor = {},
 ): Promise<IngestResult> {
-  return ingestAntigravityLogsFromRoot(config.antigravityLogDir, since, cursor);
+  return ingestAntigravityLogsFromRoot(
+    config.antigravityLogDir,
+    since,
+    cursor,
+    config.antigravityLogInitialLookbackHours,
+  );
 }

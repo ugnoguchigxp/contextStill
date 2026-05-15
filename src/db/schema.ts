@@ -91,6 +91,51 @@ export const agentDiffEntries = pgTable(
   }),
 );
 
+const toSqlList = (values: readonly string[]): string =>
+  values.map((value) => `'${value}'`).join(", ");
+
+export const vibeMemoryDistillationStatusValues = ["ok", "skipped", "failed"] as const;
+
+export const vibeMemoryDistillationRuns = pgTable(
+  "vibe_memory_distillation_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    vibeMemoryId: uuid("vibe_memory_id")
+      .references(() => vibeMemories.id, {
+        onDelete: "cascade",
+      })
+      .notNull(),
+    status: text("status").notNull(),
+    candidateCount: integer("candidate_count").notNull().default(0),
+    knowledgeIds: jsonb("knowledge_ids").default([]).notNull(),
+    error: text("error"),
+    inputHash: text("input_hash").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    model: text("model").notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    vibeMemoryIdIdx: index("vibe_memory_distillation_runs_memory_id_idx").on(table.vibeMemoryId),
+    statusIdx: index("vibe_memory_distillation_runs_status_idx").on(table.status),
+    promptVersionIdx: index("vibe_memory_distillation_runs_prompt_version_idx").on(
+      table.promptVersion,
+    ),
+    memoryPromptHashIdx: uniqueIndex("vibe_memory_distillation_runs_memory_prompt_hash_idx").on(
+      table.vibeMemoryId,
+      table.promptVersion,
+      table.inputHash,
+    ),
+    statusCheck: check(
+      "vibe_memory_distillation_runs_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(vibeMemoryDistillationStatusValues))})`,
+    ),
+  }),
+);
+
+export const sourceDistillationStatusValues = ["ok", "skipped", "failed"] as const;
+
 export const relationTypeValues = [
   "supports",
   "derived_from",
@@ -106,9 +151,6 @@ export const sourceLinkTypeValues = ["derived_from"] as const;
 export const runStatusValues = ["ok", "degraded", "failed"] as const;
 
 export const packSectionValues = ["rules", "procedures", "code_context", "warnings"] as const;
-
-const toSqlList = (values: readonly string[]): string =>
-  values.map((value) => `'${value}'`).join(", ");
 
 export const knowledgeItems = pgTable(
   "knowledge_items",
@@ -241,6 +283,65 @@ export const knowledgeSourceLinks = pgTable(
       "knowledge_source_links_link_type_check",
       sql`${table.linkType} IN (${sql.raw(toSqlList(sourceLinkTypeValues))})`,
     ),
+  }),
+);
+
+export const sourceDistillationRuns = pgTable(
+  "source_distillation_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceFragmentId: uuid("source_fragment_id")
+      .references(() => sourceFragments.id, {
+        onDelete: "cascade",
+      })
+      .notNull(),
+    status: text("status").notNull(),
+    candidateCount: integer("candidate_count").notNull().default(0),
+    knowledgeIds: jsonb("knowledge_ids").default([]).notNull(),
+    error: text("error"),
+    inputHash: text("input_hash").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    model: text("model").notNull(),
+    toolEvents: jsonb("tool_events").default([]).notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    sourceFragmentIdIdx: index("source_distillation_runs_fragment_id_idx").on(
+      table.sourceFragmentId,
+    ),
+    statusIdx: index("source_distillation_runs_status_idx").on(table.status),
+    promptVersionIdx: index("source_distillation_runs_prompt_version_idx").on(table.promptVersion),
+    fragmentPromptHashIdx: uniqueIndex("source_distillation_runs_fragment_prompt_hash_idx").on(
+      table.sourceFragmentId,
+      table.promptVersion,
+      table.inputHash,
+    ),
+    statusCheck: check(
+      "source_distillation_runs_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(sourceDistillationStatusValues))})`,
+    ),
+  }),
+);
+
+export const sourceDistillationEvidence = pgTable(
+  "source_distillation_evidence",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .references(() => sourceDistillationRuns.id, { onDelete: "cascade" })
+      .notNull(),
+    toolName: text("tool_name").notNull(),
+    url: text("url"),
+    ok: integer("ok").notNull().default(0),
+    contentHash: text("content_hash"),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    runIdIdx: index("source_distillation_evidence_run_id_idx").on(table.runId),
+    toolNameIdx: index("source_distillation_evidence_tool_name_idx").on(table.toolName),
   }),
 );
 

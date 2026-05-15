@@ -1022,9 +1022,9 @@ export function SourcesPage() {
 
   return (
     <main className="min-h-screen bg-background text-foreground">
-      <div className="mx-auto flex w-full max-w-[1800px] gap-4 px-4 py-4">
+      <div className="mx-auto flex w-full max-w-full gap-4 px-4 py-4">
         <aside
-          className="flex h-[calc(100vh-2rem)] w-[22rem] shrink-0 flex-col rounded-md border border-border bg-card p-3"
+          className="sticky top-[80px] flex h-[calc(100vh-6rem)] w-[22rem] shrink-0 flex-col rounded-md border border-border bg-card p-3"
           onPointerDown={(event) => {
             if (event.target === event.currentTarget) {
               selectExistingPage("");
@@ -1280,7 +1280,7 @@ export function SourcesPage() {
             <div className="mb-2 text-xs text-muted-foreground">loading page...</div>
           ) : null}
 
-          <div className="h-[calc(100vh-23rem)] min-h-[360px] overflow-hidden rounded-md border border-border">
+          <div className="h-[calc(100vh-14rem)] min-h-[500px] overflow-hidden rounded-md border border-border">
             <MarkdownEditor
               value={draftBody}
               onChange={setDraftBody}
@@ -1294,7 +1294,7 @@ export function SourcesPage() {
           </div>
         </section>
 
-        <aside className="w-96 shrink-0 rounded-md border border-border bg-card p-3">
+        <aside className="sticky top-[80px] h-[calc(100vh-6rem)] w-96 shrink-0 overflow-auto rounded-md border border-border bg-card p-3">
           <h2 className="mb-2 text-sm font-semibold">History & Diff</h2>
 
           <div className="mb-3 max-h-60 space-y-1 overflow-auto rounded-md border border-border p-2">

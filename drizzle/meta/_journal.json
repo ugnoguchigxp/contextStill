@@ -50,6 +50,20 @@
       "when": 1778812258000,
       "tag": "0006_rule_procedure_knowledge",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1778815000000,
+      "tag": "0007_vibe_memory_distillation",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1778817000000,
+      "tag": "0008_source_distillation",
+      "breakpoints": true
     }
   ]
 }
