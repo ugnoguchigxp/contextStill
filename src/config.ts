@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { config as loadEnv } from "dotenv";
+import { APP_CONSTANTS } from "./constants.js";
 
 loadEnv({ quiet: true });
 
@@ -11,7 +12,7 @@ const envBoolean = (value: string | undefined, fallback: boolean): boolean => {
 };
 
 const envNumber = (value: string | undefined, fallback: number): number => {
-  if (!value) return fallback;
+  if (value === undefined || value.trim() === "") return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
 };
@@ -73,6 +74,18 @@ type GroupedConfig = {
     failureRetryDelaySeconds: number;
   };
   compile: { defaultTokenBudget: number; enableVectorSearch: boolean };
+  azureOpenAi: {
+    apiKey: string;
+    apiBaseUrl: string;
+    apiPath: string;
+    apiVersion: string;
+    model: string;
+  };
+  agenticCompile: {
+    enabled: boolean;
+    timeoutMs: number;
+    maxTokens: number;
+  };
   doctor: { freshnessThresholdMinutes: number; degradedRateThreshold: number };
 };
 
@@ -81,7 +94,10 @@ export const groupedConfig: GroupedConfig = {
     url: process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:7889/memory_router",
   },
   embedding: {
-    dimension: Math.max(1, envNumber(process.env.MEMORY_ROUTER_EMBEDDING_DIMENSION, 384)),
+    dimension: Math.max(
+      1,
+      envNumber(process.env.MEMORY_ROUTER_EMBEDDING_DIMENSION, APP_CONSTANTS.embeddingDimension),
+    ),
     provider: (process.env.MEMORY_ROUTER_EMBEDDING_PROVIDER || "auto").trim() as EmbeddingProvider,
     daemonUrl: (process.env.MEMORY_ROUTER_EMBEDDING_DAEMON_URL || "http://127.0.0.1:44512").replace(
       /\/+$/,
@@ -89,7 +105,10 @@ export const groupedConfig: GroupedConfig = {
     ),
     accessToken:
       process.env.MEMORY_ROUTER_EMBEDDING_ACCESS_TOKEN || process.env.LOCAL_LLM_ACCESS_TOKEN || "",
-    timeoutMs: Math.max(500, envNumber(process.env.MEMORY_ROUTER_EMBEDDING_TIMEOUT_MS, 10_000)),
+    timeoutMs: Math.max(
+      500,
+      envNumber(process.env.MEMORY_ROUTER_EMBEDDING_TIMEOUT_MS, APP_CONSTANTS.embeddingTimeoutMs),
+    ),
   },
   localLlm: {
     embeddingRoot:
@@ -125,30 +144,48 @@ export const groupedConfig: GroupedConfig = {
       0,
       envNumber(
         process.env.MEMORY_ROUTER_ANTIGRAVITY_LOG_INITIAL_LOOKBACK_HOURS,
-        envNumber(process.env.MEMORY_ROUTER_AGENT_LOG_INITIAL_LOOKBACK_HOURS, 24),
+        envNumber(
+          process.env.MEMORY_ROUTER_AGENT_LOG_INITIAL_LOOKBACK_HOURS,
+          APP_CONSTANTS.antigravityLogInitialLookbackHours,
+        ),
       ),
     ),
   },
   agentLogSync: {
     intervalSeconds: Math.max(
       60,
-      envNumber(process.env.MEMORY_ROUTER_AGENT_LOG_SYNC_INTERVAL_SECONDS, 3600),
+      envNumber(
+        process.env.MEMORY_ROUTER_AGENT_LOG_SYNC_INTERVAL_SECONDS,
+        APP_CONSTANTS.agentLogSyncIntervalSeconds,
+      ),
     ),
     initialLookbackHours: Math.max(
       0,
-      envNumber(process.env.MEMORY_ROUTER_AGENT_LOG_INITIAL_LOOKBACK_HOURS, 168),
+      envNumber(
+        process.env.MEMORY_ROUTER_AGENT_LOG_INITIAL_LOOKBACK_HOURS,
+        APP_CONSTANTS.agentLogInitialLookbackHours,
+      ),
     ),
     maxMessagesPerChunk: Math.max(
       1,
-      envNumber(process.env.MEMORY_ROUTER_AGENT_LOG_MAX_MESSAGES_PER_CHUNK, 120),
+      envNumber(
+        process.env.MEMORY_ROUTER_AGENT_LOG_MAX_MESSAGES_PER_CHUNK,
+        APP_CONSTANTS.agentLogMaxMessagesPerChunk,
+      ),
     ),
     maxCharsPerChunk: Math.max(
       512,
-      envNumber(process.env.MEMORY_ROUTER_AGENT_LOG_MAX_CHARS_PER_CHUNK, 12000),
+      envNumber(
+        process.env.MEMORY_ROUTER_AGENT_LOG_MAX_CHARS_PER_CHUNK,
+        APP_CONSTANTS.agentLogMaxCharsPerChunk,
+      ),
     ),
     lockTtlSeconds: Math.max(
       60,
-      envNumber(process.env.MEMORY_ROUTER_AGENT_LOG_SYNC_LOCK_TTL_SECONDS, 1800),
+      envNumber(
+        process.env.MEMORY_ROUTER_AGENT_LOG_SYNC_LOCK_TTL_SECONDS,
+        APP_CONSTANTS.agentLogSyncLockTtlSeconds,
+      ),
     ),
     lockFile:
       process.env.MEMORY_ROUTER_AGENT_LOG_SYNC_LOCK_FILE ||
@@ -156,23 +193,42 @@ export const groupedConfig: GroupedConfig = {
   },
   vibeDistillation: {
     promptVersion:
-      process.env.MEMORY_ROUTER_VIBE_DISTILLATION_PROMPT_VERSION || "vibe-memory-rule-procedure-v1",
-    batchSize: Math.max(1, envNumber(process.env.MEMORY_ROUTER_VIBE_DISTILLATION_BATCH_SIZE, 10)),
+      process.env.MEMORY_ROUTER_VIBE_DISTILLATION_PROMPT_VERSION ||
+      APP_CONSTANTS.vibeDistillationPromptVersion,
+    batchSize: Math.max(
+      1,
+      envNumber(
+        process.env.MEMORY_ROUTER_VIBE_DISTILLATION_BATCH_SIZE,
+        APP_CONSTANTS.vibeDistillationBatchSize,
+      ),
+    ),
     maxInputChars: Math.max(
       2048,
-      envNumber(process.env.MEMORY_ROUTER_VIBE_DISTILLATION_MAX_INPUT_CHARS, 12000),
+      envNumber(
+        process.env.MEMORY_ROUTER_VIBE_DISTILLATION_MAX_INPUT_CHARS,
+        APP_CONSTANTS.vibeDistillationMaxInputChars,
+      ),
     ),
     maxOutputTokens: Math.max(
       128,
-      envNumber(process.env.MEMORY_ROUTER_VIBE_DISTILLATION_MAX_OUTPUT_TOKENS, 2048),
+      envNumber(
+        process.env.MEMORY_ROUTER_VIBE_DISTILLATION_MAX_OUTPUT_TOKENS,
+        APP_CONSTANTS.vibeDistillationMaxOutputTokens,
+      ),
     ),
     timeoutMs: Math.max(
       1000,
-      envNumber(process.env.MEMORY_ROUTER_VIBE_DISTILLATION_TIMEOUT_MS, 120_000),
+      envNumber(
+        process.env.MEMORY_ROUTER_VIBE_DISTILLATION_TIMEOUT_MS,
+        APP_CONSTANTS.vibeDistillationTimeoutMs,
+      ),
     ),
     lockTtlSeconds: Math.max(
       60,
-      envNumber(process.env.MEMORY_ROUTER_VIBE_DISTILLATION_LOCK_TTL_SECONDS, 1800),
+      envNumber(
+        process.env.MEMORY_ROUTER_VIBE_DISTILLATION_LOCK_TTL_SECONDS,
+        APP_CONSTANTS.vibeDistillationLockTtlSeconds,
+      ),
     ),
     lockFile:
       process.env.MEMORY_ROUTER_VIBE_DISTILLATION_LOCK_FILE ||
@@ -181,63 +237,164 @@ export const groupedConfig: GroupedConfig = {
   sourceDistillation: {
     promptVersion:
       process.env.MEMORY_ROUTER_SOURCE_DISTILLATION_PROMPT_VERSION ||
-      "source-wiki-rule-procedure-v1",
-    batchSize: Math.max(1, envNumber(process.env.MEMORY_ROUTER_SOURCE_DISTILLATION_BATCH_SIZE, 10)),
+      APP_CONSTANTS.sourceDistillationPromptVersion,
+    batchSize: Math.max(
+      1,
+      envNumber(
+        process.env.MEMORY_ROUTER_SOURCE_DISTILLATION_BATCH_SIZE,
+        APP_CONSTANTS.sourceDistillationBatchSize,
+      ),
+    ),
     maxInputChars: Math.max(
       2048,
-      envNumber(process.env.MEMORY_ROUTER_SOURCE_DISTILLATION_MAX_INPUT_CHARS, 12000),
+      envNumber(
+        process.env.MEMORY_ROUTER_SOURCE_DISTILLATION_MAX_INPUT_CHARS,
+        APP_CONSTANTS.sourceDistillationMaxInputChars,
+      ),
     ),
     maxOutputTokens: Math.max(
       128,
-      envNumber(process.env.MEMORY_ROUTER_SOURCE_DISTILLATION_MAX_OUTPUT_TOKENS, 2048),
+      envNumber(
+        process.env.MEMORY_ROUTER_SOURCE_DISTILLATION_MAX_OUTPUT_TOKENS,
+        APP_CONSTANTS.sourceDistillationMaxOutputTokens,
+      ),
     ),
     lockTtlSeconds: Math.max(
       60,
-      envNumber(process.env.MEMORY_ROUTER_SOURCE_DISTILLATION_LOCK_TTL_SECONDS, 1800),
+      envNumber(
+        process.env.MEMORY_ROUTER_SOURCE_DISTILLATION_LOCK_TTL_SECONDS,
+        APP_CONSTANTS.sourceDistillationLockTtlSeconds,
+      ),
     ),
     lockFile:
       process.env.MEMORY_ROUTER_SOURCE_DISTILLATION_LOCK_FILE ||
       path.resolve(process.cwd(), "logs", "source-distillation.lock"),
   },
   distillationTools: {
-    maxRounds: Math.max(0, envNumber(process.env.MEMORY_ROUTER_DISTILLATION_TOOL_MAX_ROUNDS, 4)),
+    maxRounds: Math.max(
+      0,
+      envNumber(
+        process.env.MEMORY_ROUTER_DISTILLATION_TOOL_MAX_ROUNDS,
+        APP_CONSTANTS.distillationToolMaxRounds,
+      ),
+    ),
     timeoutMs: Math.max(
       1000,
-      envNumber(process.env.MEMORY_ROUTER_DISTILLATION_TOOL_TIMEOUT_MS, 10_000),
+      envNumber(
+        process.env.MEMORY_ROUTER_DISTILLATION_TOOL_TIMEOUT_MS,
+        APP_CONSTANTS.distillationToolTimeoutMs,
+      ),
     ),
     resultMaxChars: Math.max(
-      1000,
-      envNumber(process.env.MEMORY_ROUTER_DISTILLATION_TOOL_RESULT_MAX_CHARS, 6000),
+      512,
+      envNumber(
+        process.env.MEMORY_ROUTER_DISTILLATION_TOOL_RESULT_MAX_CHARS,
+        APP_CONSTANTS.distillationToolResultMaxChars,
+      ),
     ),
     searchResultCount: Math.max(
       1,
-      envNumber(process.env.MEMORY_ROUTER_DISTILLATION_SEARCH_RESULT_COUNT, 3),
+      envNumber(
+        process.env.MEMORY_ROUTER_DISTILLATION_SEARCH_RESULT_COUNT,
+        APP_CONSTANTS.distillationSearchResultCount,
+      ),
     ),
-    maxCandidates: Math.max(1, envNumber(process.env.MEMORY_ROUTER_DISTILLATION_MAX_CANDIDATES, 2)),
+    maxCandidates: Math.max(
+      1,
+      envNumber(
+        process.env.MEMORY_ROUTER_DISTILLATION_MAX_CANDIDATES,
+        APP_CONSTANTS.distillationMaxCandidates,
+      ),
+    ),
     minCandidateScore: Math.min(
       1,
-      Math.max(0, envNumber(process.env.MEMORY_ROUTER_DISTILLATION_MIN_CANDIDATE_SCORE, 0.75)),
+      Math.max(
+        0,
+        envNumber(
+          process.env.MEMORY_ROUTER_DISTILLATION_MIN_CANDIDATE_SCORE,
+          APP_CONSTANTS.distillationMinCandidateScore,
+        ),
+      ),
     ),
     failureRetryDelaySeconds: Math.max(
-      60,
-      envNumber(process.env.MEMORY_ROUTER_DISTILLATION_FAILURE_RETRY_DELAY_SECONDS, 21600),
+      0,
+      envNumber(
+        process.env.MEMORY_ROUTER_DISTILLATION_FAILURE_RETRY_DELAY_SECONDS,
+        APP_CONSTANTS.distillationFailureRetryDelaySeconds,
+      ),
     ),
   },
   compile: {
     defaultTokenBudget: Math.max(
       256,
-      envNumber(process.env.MEMORY_ROUTER_DEFAULT_TOKEN_BUDGET, 3000),
+      envNumber(process.env.MEMORY_ROUTER_DEFAULT_TOKEN_BUDGET, APP_CONSTANTS.defaultTokenBudget),
     ),
-    enableVectorSearch: envBoolean(process.env.MEMORY_ROUTER_ENABLE_VECTOR_SEARCH, true),
+    enableVectorSearch: envBoolean(
+      process.env.MEMORY_ROUTER_ENABLE_VECTOR_SEARCH,
+      APP_CONSTANTS.enableVectorSearch,
+    ),
+  },
+  azureOpenAi: {
+    apiKey:
+      process.env.MEMORY_ROUTER_AZURE_OPENAI_API_KEY ||
+      process.env.AZURE_OPENAI_API_KEY ||
+      process.env.OPENAI_API_KEY ||
+      "",
+    apiBaseUrl: (
+      process.env.MEMORY_ROUTER_AZURE_OPENAI_API_BASE_URL ||
+      process.env.AZURE_OPENAI_API_BASE_URL ||
+      process.env.GNOSIS_REVIEW_LLM_API_BASE_URL ||
+      ""
+    ).replace(/\/+$/, ""),
+    apiPath: process.env.MEMORY_ROUTER_AZURE_OPENAI_API_PATH || "/openai/deployments",
+    apiVersion:
+      process.env.MEMORY_ROUTER_AZURE_OPENAI_API_VERSION ||
+      process.env.AZURE_OPENAI_API_VERSION ||
+      process.env.GNOSIS_REVIEW_LLM_API_VERSION ||
+      "2025-04-01-preview",
+    model:
+      process.env.MEMORY_ROUTER_AZURE_OPENAI_MODEL ||
+      process.env.AZURE_OPENAI_MODEL ||
+      process.env.OPENAI_API_MODEL ||
+      "gpt-4o",
+  },
+  agenticCompile: {
+    enabled: envBoolean(
+      process.env.MEMORY_ROUTER_CONTEXT_COMPILE_AGENTIC_ENABLED,
+      APP_CONSTANTS.agenticCompileEnabled,
+    ),
+    timeoutMs: Math.max(
+      1000,
+      envNumber(
+        process.env.MEMORY_ROUTER_CONTEXT_COMPILE_AGENTIC_TIMEOUT_MS,
+        APP_CONSTANTS.agenticCompileTimeoutMs,
+      ),
+    ),
+    maxTokens: Math.max(
+      256,
+      envNumber(
+        process.env.MEMORY_ROUTER_CONTEXT_COMPILE_AGENTIC_MAX_TOKENS,
+        APP_CONSTANTS.agenticCompileMaxTokens,
+      ),
+    ),
   },
   doctor: {
     freshnessThresholdMinutes: Math.max(
       1,
-      envNumber(process.env.MEMORY_ROUTER_DOCTOR_FRESHNESS_THRESHOLD_MINUTES, 720),
+      envNumber(
+        process.env.MEMORY_ROUTER_DOCTOR_FRESHNESS_THRESHOLD_MINUTES,
+        APP_CONSTANTS.doctorFreshnessThresholdMinutes,
+      ),
     ),
     degradedRateThreshold: Math.min(
       1,
-      Math.max(0, envNumber(process.env.MEMORY_ROUTER_DOCTOR_DEGRADED_RATE_THRESHOLD, 0.5)),
+      Math.max(
+        0,
+        envNumber(
+          process.env.MEMORY_ROUTER_DOCTOR_DEGRADED_RATE_THRESHOLD,
+          APP_CONSTANTS.doctorDegradedRateThreshold,
+        ),
+      ),
     ),
   },
 };
@@ -288,6 +445,14 @@ type FlatConfig = {
   sourceDistillationLockFile: string;
   defaultTokenBudget: number;
   enableVectorSearch: boolean;
+  azureOpenAiApiKey: string;
+  azureOpenAiApiBaseUrl: string;
+  azureOpenAiApiPath: string;
+  azureOpenAiApiVersion: string;
+  azureOpenAiModel: string;
+  agenticCompileEnabled: boolean;
+  agenticCompileTimeoutMs: number;
+  agenticCompileMaxTokens: number;
   doctorFreshnessThresholdMinutes: number;
   doctorDegradedRateThreshold: number;
 };
@@ -607,6 +772,62 @@ Object.defineProperties(config, {
     get: () => groupedConfig.compile.enableVectorSearch,
     set: (value: boolean) => {
       groupedConfig.compile.enableVectorSearch = value;
+    },
+    enumerable: true,
+  },
+  azureOpenAiApiKey: {
+    get: () => groupedConfig.azureOpenAi.apiKey,
+    set: (value: string) => {
+      groupedConfig.azureOpenAi.apiKey = value;
+    },
+    enumerable: true,
+  },
+  azureOpenAiApiBaseUrl: {
+    get: () => groupedConfig.azureOpenAi.apiBaseUrl,
+    set: (value: string) => {
+      groupedConfig.azureOpenAi.apiBaseUrl = value;
+    },
+    enumerable: true,
+  },
+  azureOpenAiApiPath: {
+    get: () => groupedConfig.azureOpenAi.apiPath,
+    set: (value: string) => {
+      groupedConfig.azureOpenAi.apiPath = value;
+    },
+    enumerable: true,
+  },
+  azureOpenAiApiVersion: {
+    get: () => groupedConfig.azureOpenAi.apiVersion,
+    set: (value: string) => {
+      groupedConfig.azureOpenAi.apiVersion = value;
+    },
+    enumerable: true,
+  },
+  azureOpenAiModel: {
+    get: () => groupedConfig.azureOpenAi.model,
+    set: (value: string) => {
+      groupedConfig.azureOpenAi.model = value;
+    },
+    enumerable: true,
+  },
+  agenticCompileEnabled: {
+    get: () => groupedConfig.agenticCompile.enabled,
+    set: (value: boolean) => {
+      groupedConfig.agenticCompile.enabled = value;
+    },
+    enumerable: true,
+  },
+  agenticCompileTimeoutMs: {
+    get: () => groupedConfig.agenticCompile.timeoutMs,
+    set: (value: number) => {
+      groupedConfig.agenticCompile.timeoutMs = value;
+    },
+    enumerable: true,
+  },
+  agenticCompileMaxTokens: {
+    get: () => groupedConfig.agenticCompile.maxTokens,
+    set: (value: number) => {
+      groupedConfig.agenticCompile.maxTokens = value;
     },
     enumerable: true,
   },
