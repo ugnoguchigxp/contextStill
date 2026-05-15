@@ -1,14 +1,15 @@
 import { config } from "../../config.js";
+import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
+import {
+  type KnowledgeItem,
+  type KnowledgeStatus,
+  knowledgeSearchInputSchema,
+} from "../../shared/schemas/knowledge.schema.js";
 import {
   buildRetrievalQueryText,
   normalizeRepoKey,
   normalizeRepoPath,
 } from "../context-compiler/query-context.js";
-import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
-import {
-  knowledgeSearchInputSchema,
-  type KnowledgeStatus,
-} from "../../shared/schemas/knowledge.schema.js";
 import { embedOne } from "../embedding/embedding.service.js";
 import { resolveKnowledgeSearchStatuses } from "../lifecycle/lifecycle.service.js";
 import {
@@ -37,7 +38,7 @@ export type KnowledgeRetrievalResult = {
 
 function getKnowledgeRetrievalProfile(retrievalMode: RetrievalMode): {
   limit: number;
-  types?: Array<"rule" | "procedure">;
+  types?: KnowledgeItem["type"][];
 } {
   switch (retrievalMode) {
     case "review_context":
@@ -55,210 +56,71 @@ function getKnowledgeRetrievalProfile(retrievalMode: RetrievalMode): {
   }
 }
 
-export async function retrieveKnowledge(
-  input: CompileInput,
-  options: { retrievalMode: RetrievalMode },
-): Promise<KnowledgeRetrievalResult> {
-  const profile = getKnowledgeRetrievalProfile(options.retrievalMode);
-  const limit = profile.limit;
-  const degradedReasons: string[] = [];
-  let textFailed = false;
-  let vectorFailed = false;
-  const statuses = resolveKnowledgeSearchStatuses({
-    retrievalMode: options.retrievalMode,
-    includeDraft: input.includeDraft,
-  });
-  const repoPath = normalizeRepoPath(input.repoPath);
-  const repoKey = normalizeRepoKey(input.repoPath);
-  const scopedSearch = Boolean(repoPath || repoKey);
-  const primaryQuery = input.goal.trim();
-  const queryText = buildRetrievalQueryText(input);
+type KnowledgeSearchScope = {
+  repoPath?: string;
+  repoKey?: string;
+  allowGlobalScope?: boolean;
+};
 
-  const textInput = knowledgeSearchInputSchema.parse({
-    query: primaryQuery,
-    limit,
-    types: profile.types,
-    statuses,
-    status: "active",
-    includeDraft: input.includeDraft,
-  });
+type InternalKnowledgeSearchParams = {
+  primaryQuery: string;
+  queryText: string;
+  limit: number;
+  statuses: KnowledgeStatus[];
+  status: KnowledgeStatus;
+  includeDraft: boolean;
+  types?: KnowledgeItem["type"][];
+  repoPath?: string;
+  repoKey?: string;
+  scopedSearch: boolean;
+  queryEmbedding?: number[];
+  generateEmbeddingIfMissing: boolean;
+  noMatchReason: string;
+  repoScopeFallbackReason: string;
+};
 
-  const runSearch = async (scope: {
-    repoPath?: string;
-    repoKey?: string;
-    allowGlobalScope?: boolean;
-  }): Promise<{
-    textHits: KnowledgeSearchResult[];
-    vectorHits: KnowledgeSearchResult[];
-    embeddingStatus: KnowledgeRetrievalResult["stats"]["embeddingStatus"];
-    embeddingProvider?: string;
-    textFailed: boolean;
-    vectorFailed: boolean;
-  }> => {
-    let nextTextHits: KnowledgeSearchResult[] = [];
-    let nextVectorHits: KnowledgeSearchResult[] = [];
-    let queryEmbedding = input.queryEmbedding;
-    let embeddingStatus: KnowledgeRetrievalResult["stats"]["embeddingStatus"] =
-      queryEmbedding && queryEmbedding.length > 0 ? "provided" : "disabled";
-    let embeddingProvider: string | undefined;
-    let nextTextFailed = false;
-    let nextVectorFailed = false;
-
-    try {
-      nextTextHits = await searchKnowledge(textInput, {
-        repoPath: scope.repoPath,
-        repoKey: scope.repoKey,
-        allowGlobalScope: scope.allowGlobalScope,
-        types: profile.types,
-      });
-      if (queryText !== primaryQuery) {
-        const hintHits = await searchKnowledge(
-          {
-            ...textInput,
-            query: queryText,
-            limit: Math.max(3, Math.floor(limit / 2)),
-          },
-          {
-            repoPath: scope.repoPath,
-            repoKey: scope.repoKey,
-            allowGlobalScope: scope.allowGlobalScope,
-            types: profile.types,
-          },
-        );
-        nextTextHits = [
-          ...new Map([...nextTextHits, ...hintHits].map((item) => [item.id, item])).values(),
-        ];
-      }
-    } catch {
-      nextTextFailed = true;
-      degradedReasons.push("KNOWLEDGE_TEXT_SEARCH_FAILED");
+function mergeKnowledgeHits(hits: KnowledgeSearchResult[], limit: number): KnowledgeSearchResult[] {
+  const mergedById = new Map<string, KnowledgeSearchResult>();
+  for (const item of hits) {
+    const existing = mergedById.get(item.id);
+    if (!existing || item.score > existing.score) {
+      mergedById.set(item.id, item);
     }
-
-    if (config.enableVectorSearch) {
-      if (!queryEmbedding || queryEmbedding.length === 0) {
-        try {
-          const generated = await embedOne(primaryQuery, "query");
-          queryEmbedding = generated;
-          embeddingStatus = "generated";
-          embeddingProvider = config.embeddingProvider;
-        } catch {
-          embeddingStatus = "unavailable";
-          degradedReasons.push("QUERY_EMBEDDING_UNAVAILABLE");
-        }
-      }
-
-      if (queryEmbedding && queryEmbedding.length > 0) {
-        try {
-          nextVectorHits = await vectorSearchKnowledge(queryEmbedding, limit, statuses, {
-            repoPath: scope.repoPath,
-            repoKey: scope.repoKey,
-            allowGlobalScope: scope.allowGlobalScope,
-            types: profile.types,
-          });
-        } catch {
-          nextVectorFailed = true;
-          degradedReasons.push("KNOWLEDGE_VECTOR_SEARCH_FAILED");
-        }
-      }
-    }
-    return {
-      textHits: nextTextHits,
-      vectorHits: nextVectorHits,
-      embeddingStatus,
-      embeddingProvider,
-      textFailed: nextTextFailed,
-      vectorFailed: nextVectorFailed,
-    };
-  };
-
-  const mergeHits = (hits: KnowledgeSearchResult[]): KnowledgeSearchResult[] => {
-    const mergedById = new Map<string, KnowledgeSearchResult>();
-    for (const item of hits) {
-      const existing = mergedById.get(item.id);
-      if (!existing || item.score > existing.score) {
-        mergedById.set(item.id, item);
-      }
-    }
-    return [...mergedById.values()].sort((a, b) => b.score - a.score).slice(0, limit);
-  };
-
-  let searchResult = await runSearch({
-    repoPath,
-    repoKey,
-    allowGlobalScope: true,
-  });
-  let merged = mergeHits([...searchResult.textHits, ...searchResult.vectorHits]);
-  let repoScopeFallbackUsed = false;
-
-  if (
-    scopedSearch &&
-    merged.length === 0 &&
-    !searchResult.textFailed &&
-    !searchResult.vectorFailed
-  ) {
-    repoScopeFallbackUsed = true;
-    degradedReasons.push("KNOWLEDGE_REPO_SCOPE_FALLBACK");
-    searchResult = await runSearch({});
-    merged = mergeHits([...searchResult.textHits, ...searchResult.vectorHits]);
   }
-
-  textFailed = searchResult.textFailed;
-  vectorFailed = searchResult.vectorFailed;
-
-  if (merged.length === 0 && !textFailed && !vectorFailed) {
-    degradedReasons.push("NO_ACTIVE_KNOWLEDGE_MATCH");
-  }
-
-  return {
-    items: merged,
-    degradedReasons,
-    stats: {
-      textHitCount: searchResult.textHits.length,
-      vectorHitCount: searchResult.vectorHits.length,
-      mergedCount: merged.length,
-      textFailed,
-      vectorFailed,
-      embeddingStatus: searchResult.embeddingStatus,
-      embeddingProvider: searchResult.embeddingProvider,
-      scopedSearch,
-      repoScopeFallbackUsed,
-      queryText,
-    },
-  };
+  return [...mergedById.values()].sort((a, b) => b.score - a.score).slice(0, limit);
 }
 
-export async function searchKnowledgeCandidates(
-  rawInput: unknown,
-): Promise<KnowledgeRetrievalResult> {
-  const parsed = knowledgeSearchInputSchema.parse(rawInput);
-  const degradedReasons: string[] = [];
-  const statuses =
-    parsed.statuses && parsed.statuses.length > 0
-      ? parsed.statuses
-      : parsed.includeDraft
-        ? (["active", "draft"] as KnowledgeStatus[])
-        : ([parsed.status] as KnowledgeStatus[]);
-  const primaryQuery = parsed.query.trim();
-  const queryText = buildRetrievalQueryText({
-    goal: primaryQuery,
-    repoPath: parsed.repoPath,
-    files: parsed.files,
-    changeTypes: parsed.changeTypes,
-    technologies: parsed.technologies,
-  });
-  const scopedSearch = Boolean(parsed.repoPath);
-  const repoPath = normalizeRepoPath(parsed.repoPath);
-  const repoKey = normalizeRepoKey(parsed.repoPath);
+function appendDegradedReason(reasons: string[], reason: string): void {
+  if (!reasons.includes(reason)) {
+    reasons.push(reason);
+  }
+}
 
-  const runSearch = async (scope: {
-    repoPath?: string;
-    repoKey?: string;
-    allowGlobalScope?: boolean;
-  }): Promise<{
+async function executeKnowledgeSearch(
+  params: InternalKnowledgeSearchParams,
+): Promise<KnowledgeRetrievalResult> {
+  const degradedReasons: string[] = [];
+  let workingEmbedding = params.queryEmbedding;
+  let embeddingStatus: KnowledgeRetrievalResult["stats"]["embeddingStatus"] =
+    workingEmbedding && workingEmbedding.length > 0 ? "provided" : "disabled";
+  let embeddingProvider: string | undefined;
+
+  const buildSearchInput = (query: string, limit: number) =>
+    knowledgeSearchInputSchema.parse({
+      query,
+      limit,
+      types: params.types,
+      statuses: params.statuses,
+      status: params.status,
+      includeDraft: params.includeDraft,
+      ...(params.repoPath ? { repoPath: params.repoPath } : {}),
+    });
+
+  const runScopedSearch = async (
+    scope: KnowledgeSearchScope,
+  ): Promise<{
     textHits: KnowledgeSearchResult[];
     vectorHits: KnowledgeSearchResult[];
-    embeddingStatus: KnowledgeRetrievalResult["stats"]["embeddingStatus"];
-    embeddingProvider?: string;
     textFailed: boolean;
     vectorFailed: boolean;
   }> => {
@@ -266,72 +128,61 @@ export async function searchKnowledgeCandidates(
     let vectorHits: KnowledgeSearchResult[] = [];
     let textFailed = false;
     let vectorFailed = false;
-    let queryEmbedding: number[] | undefined;
-    let embeddingStatus: KnowledgeRetrievalResult["stats"]["embeddingStatus"] = "disabled";
-    let embeddingProvider: string | undefined;
 
     try {
-      textHits = await searchKnowledge(
-        {
-          query: primaryQuery,
-          limit: parsed.limit,
-          types: parsed.types,
-          statuses,
-          status: parsed.status,
-          includeDraft: parsed.includeDraft,
-        },
-        {
-          repoPath: scope.repoPath,
-          repoKey: scope.repoKey,
-          allowGlobalScope: scope.allowGlobalScope,
-          types: parsed.types,
-        },
-      );
-      if (queryText !== primaryQuery) {
+      textHits = await searchKnowledge(buildSearchInput(params.primaryQuery, params.limit), {
+        repoPath: scope.repoPath,
+        repoKey: scope.repoKey,
+        allowGlobalScope: scope.allowGlobalScope,
+        types: params.types,
+      });
+      if (params.queryText !== params.primaryQuery) {
         const hintHits = await searchKnowledge(
-          {
-            query: queryText,
-            limit: Math.max(3, Math.floor(parsed.limit / 2)),
-            types: parsed.types,
-            statuses,
-            status: parsed.status,
-            includeDraft: parsed.includeDraft,
-          },
+          buildSearchInput(params.queryText, Math.max(3, Math.floor(params.limit / 2))),
           {
             repoPath: scope.repoPath,
             repoKey: scope.repoKey,
             allowGlobalScope: scope.allowGlobalScope,
-            types: parsed.types,
+            types: params.types,
           },
         );
         textHits = [...new Map([...textHits, ...hintHits].map((item) => [item.id, item])).values()];
       }
     } catch {
       textFailed = true;
-      degradedReasons.push("KNOWLEDGE_TEXT_SEARCH_FAILED");
+      appendDegradedReason(degradedReasons, "KNOWLEDGE_TEXT_SEARCH_FAILED");
     }
 
     if (config.enableVectorSearch) {
-      try {
-        queryEmbedding = await embedOne(primaryQuery, "query");
-        embeddingStatus = "generated";
-        embeddingProvider = config.embeddingProvider;
-      } catch {
-        embeddingStatus = "unavailable";
-        degradedReasons.push("QUERY_EMBEDDING_UNAVAILABLE");
-      }
-
-      if (queryEmbedding && queryEmbedding.length > 0) {
+      if (
+        (!workingEmbedding || workingEmbedding.length === 0) &&
+        params.generateEmbeddingIfMissing
+      ) {
         try {
-          vectorHits = await vectorSearchKnowledge(queryEmbedding, parsed.limit, statuses, {
-            repoPath: scope.repoPath,
-            repoKey: scope.repoKey,
-            allowGlobalScope: scope.allowGlobalScope,
-            types: parsed.types,
-          });
+          workingEmbedding = await embedOne(params.primaryQuery, "query");
+          embeddingStatus = "generated";
+          embeddingProvider = config.embeddingProvider;
+        } catch {
+          embeddingStatus = "unavailable";
+          appendDegradedReason(degradedReasons, "QUERY_EMBEDDING_UNAVAILABLE");
+        }
+      }
+      if (workingEmbedding && workingEmbedding.length > 0) {
+        try {
+          vectorHits = await vectorSearchKnowledge(
+            workingEmbedding,
+            params.limit,
+            params.statuses,
+            {
+              repoPath: scope.repoPath,
+              repoKey: scope.repoKey,
+              allowGlobalScope: scope.allowGlobalScope,
+              types: params.types,
+            },
+          );
         } catch {
           vectorFailed = true;
-          degradedReasons.push("KNOWLEDGE_VECTOR_SEARCH_FAILED");
+          appendDegradedReason(degradedReasons, "KNOWLEDGE_VECTOR_SEARCH_FAILED");
         }
       }
     }
@@ -339,46 +190,39 @@ export async function searchKnowledgeCandidates(
     return {
       textHits,
       vectorHits,
-      embeddingStatus,
-      embeddingProvider,
       textFailed,
       vectorFailed,
     };
   };
 
-  const mergeHits = (hits: KnowledgeSearchResult[]): KnowledgeSearchResult[] => {
-    const mergedById = new Map<string, KnowledgeSearchResult>();
-    for (const item of hits) {
-      const existing = mergedById.get(item.id);
-      if (!existing || item.score > existing.score) {
-        mergedById.set(item.id, item);
-      }
-    }
-    return [...mergedById.values()].sort((a, b) => b.score - a.score).slice(0, parsed.limit);
-  };
-
-  let searchResult = await runSearch({
-    repoPath,
-    repoKey,
+  let searchResult = await runScopedSearch({
+    repoPath: params.repoPath,
+    repoKey: params.repoKey,
     allowGlobalScope: true,
   });
-  let merged = mergeHits([...searchResult.textHits, ...searchResult.vectorHits]);
+  let merged = mergeKnowledgeHits(
+    [...searchResult.textHits, ...searchResult.vectorHits],
+    params.limit,
+  );
   let repoScopeFallbackUsed = false;
 
   if (
-    scopedSearch &&
+    params.scopedSearch &&
     merged.length === 0 &&
     !searchResult.textFailed &&
     !searchResult.vectorFailed
   ) {
     repoScopeFallbackUsed = true;
-    degradedReasons.push("KNOWLEDGE_REPO_SCOPE_FALLBACK");
-    searchResult = await runSearch({});
-    merged = mergeHits([...searchResult.textHits, ...searchResult.vectorHits]);
+    appendDegradedReason(degradedReasons, params.repoScopeFallbackReason);
+    searchResult = await runScopedSearch({});
+    merged = mergeKnowledgeHits(
+      [...searchResult.textHits, ...searchResult.vectorHits],
+      params.limit,
+    );
   }
 
   if (merged.length === 0 && !searchResult.textFailed && !searchResult.vectorFailed) {
-    degradedReasons.push("NO_ACTIVE_KNOWLEDGE_MATCH");
+    appendDegradedReason(degradedReasons, params.noMatchReason);
   }
 
   return {
@@ -390,13 +234,79 @@ export async function searchKnowledgeCandidates(
       mergedCount: merged.length,
       textFailed: searchResult.textFailed,
       vectorFailed: searchResult.vectorFailed,
-      embeddingStatus: searchResult.embeddingStatus,
-      embeddingProvider: searchResult.embeddingProvider,
-      scopedSearch,
+      embeddingStatus,
+      embeddingProvider,
+      scopedSearch: params.scopedSearch,
       repoScopeFallbackUsed,
-      queryText,
+      queryText: params.queryText,
     },
   };
+}
+
+export async function retrieveKnowledge(
+  input: CompileInput,
+  options: { retrievalMode: RetrievalMode },
+): Promise<KnowledgeRetrievalResult> {
+  const profile = getKnowledgeRetrievalProfile(options.retrievalMode);
+  const statuses = resolveKnowledgeSearchStatuses({
+    retrievalMode: options.retrievalMode,
+    includeDraft: input.includeDraft,
+  });
+  const repoPath = normalizeRepoPath(input.repoPath);
+  const repoKey = normalizeRepoKey(input.repoPath);
+  const scopedSearch = Boolean(repoPath || repoKey);
+  return executeKnowledgeSearch({
+    primaryQuery: input.goal.trim(),
+    queryText: buildRetrievalQueryText(input),
+    limit: profile.limit,
+    statuses,
+    status: "active",
+    includeDraft: input.includeDraft,
+    types: profile.types,
+    repoPath,
+    repoKey,
+    scopedSearch,
+    queryEmbedding: input.queryEmbedding,
+    generateEmbeddingIfMissing: true,
+    noMatchReason: "NO_ACTIVE_KNOWLEDGE_MATCH",
+    repoScopeFallbackReason: "KNOWLEDGE_REPO_SCOPE_FALLBACK",
+  });
+}
+
+export async function searchKnowledgeCandidates(
+  rawInput: unknown,
+): Promise<KnowledgeRetrievalResult> {
+  const parsed = knowledgeSearchInputSchema.parse(rawInput);
+  const statuses =
+    parsed.statuses && parsed.statuses.length > 0
+      ? parsed.statuses
+      : parsed.includeDraft
+        ? (["active", "draft"] as KnowledgeStatus[])
+        : ([parsed.status] as KnowledgeStatus[]);
+  const repoPath = normalizeRepoPath(parsed.repoPath);
+  const repoKey = normalizeRepoKey(parsed.repoPath);
+  const primaryQuery = parsed.query.trim();
+  return executeKnowledgeSearch({
+    primaryQuery,
+    queryText: buildRetrievalQueryText({
+      goal: primaryQuery,
+      repoPath: parsed.repoPath,
+      files: parsed.files,
+      changeTypes: parsed.changeTypes,
+      technologies: parsed.technologies,
+    }),
+    limit: parsed.limit,
+    statuses,
+    status: parsed.status,
+    includeDraft: parsed.includeDraft,
+    types: parsed.types,
+    repoPath,
+    repoKey,
+    scopedSearch: Boolean(repoPath || repoKey),
+    generateEmbeddingIfMissing: true,
+    noMatchReason: "NO_ACTIVE_KNOWLEDGE_MATCH",
+    repoScopeFallbackReason: "KNOWLEDGE_REPO_SCOPE_FALLBACK",
+  });
 }
 
 export async function registerKnowledgeFromMarkdown(params: {

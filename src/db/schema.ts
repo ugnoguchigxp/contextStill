@@ -165,6 +165,12 @@ export const knowledgeItems = pgTable(
     statusIdx: index("knowledge_items_status_idx").on(table.status),
     scopeIdx: index("knowledge_items_scope_idx").on(table.scope),
     typeStatusIdx: index("knowledge_items_type_status_idx").on(table.type, table.status),
+    appliesToRepoKeyIdx: index("knowledge_items_applies_to_repo_key_idx").on(
+      sql`${table.appliesTo} ->> 'repoKey'`,
+    ),
+    appliesToRepoPathIdx: index("knowledge_items_applies_to_repo_path_idx").on(
+      sql`${table.appliesTo} ->> 'repoPath'`,
+    ),
     titleBodyFtsIdx: index("knowledge_items_title_body_fts_idx").using(
       "gin",
       sql`to_tsvector('simple', coalesce(${table.title}, '') || ' ' || coalesce(${table.body}, ''))`,

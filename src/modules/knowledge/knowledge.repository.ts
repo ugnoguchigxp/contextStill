@@ -1,13 +1,13 @@
-import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
+import { type SQL, and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { knowledgeItems, knowledgeSourceLinks, sourceFragments, sources } from "../../db/schema.js";
 import { normalizeKnowledgeScore } from "../../lib/score-scale.js";
-import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
 import type {
+  KnowledgeItem,
   KnowledgeSearchInput,
   KnowledgeStatus,
-  KnowledgeItem,
 } from "../../shared/schemas/knowledge.schema.js";
+import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
 
 export type KnowledgeSearchResult = {
   id: string;
@@ -113,31 +113,37 @@ function buildRepoScopedCondition(options: KnowledgeSearchOptions): SQL | undefi
   const normalized = normalizeRepoScope(options);
   if (!normalized) return undefined;
 
-  const clauses: SQL[] = [];
+  const primaryClauses: SQL[] = [];
+  const fallbackClauses: SQL[] = [];
   if (normalized.allowGlobalScope) {
-    clauses.push(eq(knowledgeItems.scope, "global"));
+    primaryClauses.push(eq(knowledgeItems.scope, "global"));
   }
   if (normalized.repoKey) {
-    clauses.push(sql`${knowledgeItems.appliesTo} ->> 'repoKey' = ${normalized.repoKey}`);
-    clauses.push(sql`${knowledgeItems.metadata} ->> 'repoKey' = ${normalized.repoKey}`);
-    clauses.push(sql`${knowledgeItems.metadata} ->> 'sourceProject' = ${normalized.repoKey}`);
+    primaryClauses.push(sql`${knowledgeItems.appliesTo} ->> 'repoKey' = ${normalized.repoKey}`);
+    fallbackClauses.push(sql`${knowledgeItems.metadata} ->> 'repoKey' = ${normalized.repoKey}`);
+    fallbackClauses.push(
+      sql`${knowledgeItems.metadata} ->> 'sourceProject' = ${normalized.repoKey}`,
+    );
   }
   if (normalized.repoPath) {
-    clauses.push(sql`${knowledgeItems.appliesTo} ->> 'repoPath' = ${normalized.repoPath}`);
-    clauses.push(sql`${knowledgeItems.metadata} ->> 'repoPath' = ${normalized.repoPath}`);
-    clauses.push(
+    primaryClauses.push(sql`${knowledgeItems.appliesTo} ->> 'repoPath' = ${normalized.repoPath}`);
+    fallbackClauses.push(sql`${knowledgeItems.metadata} ->> 'repoPath' = ${normalized.repoPath}`);
+    fallbackClauses.push(
       sql`${knowledgeItems.metadata} ->> 'sourceUri' ilike ${`${normalized.repoPath}/%`}`,
     );
-    clauses.push(
+    fallbackClauses.push(
       sql`${knowledgeItems.metadata} ->> 'sourceDocumentUri' ilike ${`${normalized.repoPath}/%`}`,
     );
     const fileUriPrefix = `file://${normalized.repoPath.startsWith("/") ? "" : "/"}${normalized.repoPath}`;
-    clauses.push(sql`${knowledgeItems.metadata} ->> 'sourceUri' ilike ${`${fileUriPrefix}/%`}`);
-    clauses.push(
+    fallbackClauses.push(
+      sql`${knowledgeItems.metadata} ->> 'sourceUri' ilike ${`${fileUriPrefix}/%`}`,
+    );
+    fallbackClauses.push(
       sql`${knowledgeItems.metadata} ->> 'sourceDocumentUri' ilike ${`${fileUriPrefix}/%`}`,
     );
   }
 
+  const clauses = [...primaryClauses, ...fallbackClauses];
   if (clauses.length === 0) return undefined;
   return clauses.length === 1 ? clauses[0] : or(...clauses);
 }

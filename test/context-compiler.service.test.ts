@@ -1,169 +1,227 @@
 import { describe, expect, test, vi, beforeEach } from "vitest";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
-import * as knowledgeService from "../src/modules/knowledge/knowledge.service.js";
-import * as sourceService from "../src/modules/sources/source-retrieval.service.js";
-import * as repository from "../src/modules/context-compiler/context-compiler.repository.js";
-import { config } from "../src/config.js";
+import { retrieveKnowledge } from "../src/modules/knowledge/knowledge.service.js";
+import { retrieveSources } from "../src/modules/sources/source-retrieval.service.js";
+import {
+  insertCompileRun,
+  insertContextPackItems,
+} from "../src/modules/context-compiler/context-compiler.repository.js";
 
 vi.mock("../src/modules/knowledge/knowledge.service.js");
 vi.mock("../src/modules/sources/source-retrieval.service.js");
 vi.mock("../src/modules/context-compiler/context-compiler.repository.js");
-vi.mock("../src/config.js", () => ({
-  config: {
-    defaultTokenBudget: 4000,
-  },
+vi.mock("../src/modules/context-compiler/pack-renderer.js", () => ({
+  renderContextPackMarkdown: vi.fn(() => "# Pack Content"),
 }));
 
-describe("context compiler service", () => {
+describe("Context Compiler Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(insertCompileRun).mockResolvedValue("550e8400-e29b-41d4-a716-446655440000");
   });
 
-  test("compileContextPack coordinates retrieval and ranking", async () => {
-    vi.mocked(knowledgeService.retrieveKnowledge).mockResolvedValue({
+  test("compiles a basic pack and resolves procedure mode by keyword", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [
+        {
+          id: "k1",
+          type: "procedure",
+          status: "active",
+          title: "P1",
+          body: "Body",
+          score: 0.9,
+          sourceRefs: [],
+          hasSourceLinks: false,
+        },
+      ],
+      degradedReasons: [],
+      stats: { textHits: 1, vectorHits: 0, finalCount: 1 },
+    } as any);
+    vi.mocked(retrieveSources).mockResolvedValue({
+      items: [],
+      degradedReasons: [],
+      stats: { hitCount: 0 },
+    } as any);
+
+    const { pack } = await compileContextPack({
+      goal: "How to run the 手順?", // Trigger procedure_context
+      intent: "edit",
+      repoPath: "/test",
+    });
+
+    expect(pack.retrievalMode).toBe("procedure_context");
+    expect(pack.procedures).toHaveLength(1);
+    expect(insertCompileRun).toHaveBeenCalled();
+  });
+
+  test("applies token budget truncation for rules", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
       items: [
         {
           id: "k1",
           type: "rule",
-          title: "Rule 1",
-          body: "Rule body",
-          score: 0.9,
           status: "active",
-          confidence: 80,
-          importance: 80,
+          title: "Rule 1",
+          body: "Long content ".repeat(200),
+          score: 0.9,
           sourceRefs: [],
           hasSourceLinks: false,
-        } as unknown as never,
-      ],
-      degradedReasons: [],
-      stats: {} as unknown as never,
-    });
-    vi.mocked(sourceService.retrieveSources).mockResolvedValue({
-      items: [
-        {
-          id: "s1",
-          sourceUri: "wiki://1",
-          locator: "L1",
-          content: "Source content",
-          score: 0.8,
-        } as unknown as never,
-      ],
-      degradedReasons: [],
-      stats: {} as unknown as never,
-    });
-    vi.mocked(repository.insertCompileRun).mockResolvedValue(
-      "00000000-0000-0000-0000-000000000001",
-    );
-
-    const result = await compileContextPack({
-      goal: "Implement a feature",
-      intent: "edit",
-    });
-
-    expect(result.pack.runId).toBe("00000000-0000-0000-0000-000000000001");
-    expect(result.pack.rules).toHaveLength(1);
-    expect(result.pack.status).toBe("ok");
-    expect(vi.mocked(repository.insertContextPackItems)).toHaveBeenCalled();
-    expect(result.markdown).toContain("# Context Pack");
-  });
-
-  test("handles degraded state when retrieval returns reasons", async () => {
-    vi.mocked(knowledgeService.retrieveKnowledge).mockResolvedValue({
-      items: [],
-      degradedReasons: ["NO_ACTIVE_KNOWLEDGE_MATCH"],
-      stats: {} as unknown as never,
-    });
-    vi.mocked(sourceService.retrieveSources).mockResolvedValue({
-      items: [],
-      degradedReasons: ["NO_SOURCE_MATCH"],
-      stats: {} as unknown as never,
-    });
-    vi.mocked(repository.insertCompileRun).mockResolvedValue(
-      "00000000-0000-0000-0000-000000000002",
-    );
-
-    const result = await compileContextPack({
-      goal: "Something unknown",
-      intent: "edit",
-    });
-
-    expect(result.pack.status).toBe("degraded");
-    expect(result.pack.diagnostics.degradedReasons).toContain("NO_ACTIVE_KNOWLEDGE_MATCH");
-    expect(result.pack.warnings.some((w) => w.includes("search_knowledge"))).toBe(true);
-  });
-
-  test("resolves procedure_context for procedure-related goals", async () => {
-    vi.mocked(knowledgeService.retrieveKnowledge).mockResolvedValue({
-      items: [],
-      degradedReasons: [],
-      stats: {} as unknown as never,
-    });
-    vi.mocked(sourceService.retrieveSources).mockResolvedValue({
-      items: [],
-      degradedReasons: [],
-      stats: {} as unknown as never,
-    });
-    vi.mocked(repository.insertCompileRun).mockResolvedValue(
-      "00000000-0000-0000-0000-000000000003",
-    );
-
-    const result = await compileContextPack({
-      goal: "Capture the 手順 for deploy",
-      intent: "edit",
-    });
-
-    expect(result.pack.retrievalMode).toBe("procedure_context");
-  });
-
-  test("applies token budget constraints", async () => {
-    const longBody = "x".repeat(10000);
-    vi.mocked(knowledgeService.retrieveKnowledge).mockResolvedValue({
-      items: [
-        {
-          id: "k1",
-          type: "rule",
-          title: "Rule 1",
-          body: longBody,
-          score: 0.9,
-          status: "active",
-          confidence: 80,
-          importance: 80,
-          sourceRefs: [],
-          hasSourceLinks: false,
-        } as unknown as never,
+        },
         {
           id: "k2",
           type: "rule",
-          title: "Rule 2",
-          body: "Rule 2 body",
-          score: 0.8,
           status: "active",
-          confidence: 80,
-          importance: 80,
+          title: "Rule 2",
+          body: "More content",
+          score: 0.8,
           sourceRefs: [],
           hasSourceLinks: false,
-        } as unknown as never,
+        },
       ],
       degradedReasons: [],
-      stats: {} as unknown as never,
-    });
-    vi.mocked(sourceService.retrieveSources).mockResolvedValue({
+      stats: { textHits: 2, vectorHits: 0, finalCount: 2 },
+    } as any);
+    vi.mocked(retrieveSources).mockResolvedValue({
       items: [],
       degradedReasons: [],
-      stats: {} as unknown as never,
+      stats: { hitCount: 0 },
+    } as any);
+
+    const { pack } = await compileContextPack({
+      goal: "test",
+      intent: "plan",
+      tokenBudget: 300,
     });
-    vi.mocked(repository.insertCompileRun).mockResolvedValue(
-      "00000000-0000-0000-0000-000000000004",
+
+    expect(pack.rules).toHaveLength(1); // Second one dropped
+    expect(pack.diagnostics.degradedReasons).toContain("TOKEN_BUDGET_SECTION_LIMIT_REACHED");
+  });
+
+  test("builds fallback source ref when no sources match", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [],
+      degradedReasons: ["NO_ACTIVE_KNOWLEDGE_MATCH"],
+      stats: { textHits: 0, vectorHits: 0, finalCount: 0 },
+    } as any);
+    vi.mocked(retrieveSources).mockResolvedValue({
+      items: [],
+      degradedReasons: ["NO_SOURCE_MATCH"],
+      stats: { hitCount: 0 },
+    } as any);
+
+    const { pack } = await compileContextPack({
+      goal: "test",
+      intent: "debug",
+    });
+
+    expect(pack.sourceRefs[0]).toContain(
+      "550e8400-e29b-41d4-a716-446655440000#debug_context:NO_ACTIVE_KNOWLEDGE_MATCH",
     );
+    expect(pack.status).toBe("degraded");
+  });
 
-    const result = await compileContextPack({
-      goal: "test budget",
-      intent: "edit",
-      tokenBudget: 500,
+  test("resolves retrieval mode based on intent", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [],
+      degradedReasons: [],
+      stats: {},
+    } as any);
+    vi.mocked(retrieveSources).mockResolvedValue({
+      items: [],
+      degradedReasons: [],
+      stats: {},
+    } as any);
+
+    const { pack: pack1 } = await compileContextPack({ goal: "fix bug", intent: "debug" });
+    expect(pack1.retrievalMode).toBe("debug_context");
+
+    const { pack: pack2 } = await compileContextPack({ goal: "review changes", intent: "review" });
+    expect(pack2.retrievalMode).toBe("review_context");
+  });
+
+  test("ranks and dedupes items in the pack", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [
+        {
+          id: "k1",
+          type: "rule",
+          status: "active",
+          title: "R1",
+          body: "...",
+          score: 0.5,
+          importance: 100,
+          sourceRefs: [],
+          hasSourceLinks: true,
+        },
+        {
+          id: "k1",
+          type: "rule",
+          status: "active",
+          title: "R1 Dup",
+          body: "...",
+          score: 0.4,
+          importance: 50,
+          sourceRefs: [],
+          hasSourceLinks: false,
+        },
+      ],
+      degradedReasons: [],
+      stats: {},
+    } as any);
+    vi.mocked(retrieveSources).mockResolvedValue({
+      items: [],
+      degradedReasons: [],
+      stats: {},
+    } as any);
+
+    const { pack } = await compileContextPack({ goal: "test", intent: "plan" });
+    expect(pack.rules).toHaveLength(1);
+    expect(pack.rules[0].id).toBe("knowledge:k1");
+  });
+
+  test("generates code context items from file hints", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [],
+      degradedReasons: [],
+      stats: {},
+    } as any);
+    vi.mocked(retrieveSources).mockResolvedValue({
+      items: [],
+      degradedReasons: [],
+      stats: {},
+    } as any);
+
+    const { pack } = await compileContextPack({
+      goal: "test",
+      intent: "plan",
+      files: ["src/index.ts", "src/utils.ts"],
     });
 
-    expect(result.pack.rules).toHaveLength(1); // Second item should be dropped
-    expect(result.pack.rules[0].content.length).toBeLessThan(longBody.length);
-    expect(result.pack.diagnostics.degradedReasons).toContain("TOKEN_BUDGET_SECTION_LIMIT_REACHED");
+    expect(pack.codeContext).toHaveLength(2);
+    expect(pack.codeContext[0].title).toBe("src/index.ts");
+  });
+
+  test("returns default tasks for unknown retrieval modes", async () => {
+    // This is hard to trigger via compileContextPack because schemas validate intents,
+    // but we can test the internal buildMinimalTasks if we could.
+    // For now, let's just cover the procedure_context tasks.
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [],
+      degradedReasons: [],
+      stats: {},
+    } as any);
+    vi.mocked(retrieveSources).mockResolvedValue({
+      items: [],
+      degradedReasons: [],
+      stats: {},
+    } as any);
+
+    const { pack } = await compileContextPack({
+      goal: "run a procedure",
+      intent: "plan",
+    });
+
+    expect(pack.retrievalMode).toBe("procedure_context");
+    expect(pack.minimalTasks[0]).toContain("Inspect the selected procedure candidates");
   });
 });

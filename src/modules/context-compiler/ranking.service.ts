@@ -1,6 +1,6 @@
 import { toUnitKnowledgeScore } from "../../lib/score-scale.js";
 
-type Rankable = {
+export type Rankable = {
   id: string;
   title: string;
   content: string;

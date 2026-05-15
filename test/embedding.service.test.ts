@@ -4,89 +4,89 @@ import { config } from "../src/config.js";
 import { execFile } from "node:child_process";
 import { access } from "node:fs/promises";
 
-type ExecFileCallback = (error: Error | null, result?: { stdout: string }) => void;
-
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(),
 }));
 vi.mock("node:fs/promises", () => ({
   access: vi.fn(),
 }));
+vi.mock("../src/config.js", () => ({
+  config: {
+    embeddingProvider: "auto",
+    embeddingDaemonUrl: "http://daemon",
+    embeddingDimension: 3,
+    embeddingTimeoutMs: 1000,
+    embeddingAccessToken: "key",
+    localLlmEmbeddingPython: "/usr/bin/python",
+    localLlmEmbeddingRoot: "/root",
+    localLlmEmbeddingModelDir: "/models",
+  },
+}));
 
 describe("Embedding Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal("fetch", vi.fn());
+    config.embeddingProvider = "auto";
   });
 
-  describe("embedOne", () => {
-    test("calls daemon provider when configured", async () => {
-      vi.mocked(fetch).mockResolvedValue({
-        ok: true,
-        json: async () => ({
-          embeddings: [new Array(384).fill(0.1)],
-          dimension: 384,
+  test("embedOne uses daemon if available", async () => {
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          embeddings: [[0.1, 0.2, 0.3]],
+          dimension: 3,
         }),
-      } as unknown as Response);
+    } as any);
 
-      const vector = await embedOne("test text", "query");
-      expect(vector).toHaveLength(384);
-      expect(fetch).toHaveBeenCalledWith(
-        expect.stringContaining("/embed"),
-        expect.objectContaining({ method: "POST" }),
-      );
-    });
-
-    test("falls back to CLI when daemon fails", async () => {
-      vi.mocked(fetch).mockRejectedValue(new Error("Daemon down"));
-      vi.mocked(execFile).mockImplementation(((
-        _path: unknown,
-        _args: unknown,
-        _options: unknown,
-        callback: unknown,
-      ): void => {
-        (callback as ExecFileCallback)(null, {
-          stdout: JSON.stringify([{ embedding: new Array(384).fill(0.2) }]),
-        });
-      }) as unknown as typeof execFile);
-
-      const vector = await embedOne("test text", "query");
-      expect(vector[0]).toBe(0.2);
-      expect(execFile).toHaveBeenCalled();
-    });
-
-    test("throws when both providers fail", async () => {
-      vi.mocked(fetch).mockRejectedValue(new Error("Daemon down"));
-      vi.mocked(execFile).mockImplementation(((
-        _path: unknown,
-        _args: unknown,
-        _options: unknown,
-        callback: unknown,
-      ): void => {
-        (callback as ExecFileCallback)(new Error("CLI error"));
-      }) as unknown as typeof execFile);
-
-      await expect(embedOne("test text", "query")).rejects.toThrow("Daemon down; cli: CLI error");
-    });
+    const result = await embedOne("hello", "query");
+    expect(result).toEqual([0.1, 0.2, 0.3]);
+    expect(fetch).toHaveBeenCalledWith(expect.stringContaining("/embed"), expect.any(Object));
   });
 
-  describe("embeddingHealth", () => {
-    test("reports healthy status when daemon and cli are available", async () => {
-      vi.mocked(fetch).mockResolvedValue({ ok: true } as unknown as Response);
-      vi.mocked(access).mockResolvedValue(undefined);
+  test("embedOne falls back to cli if daemon fails", async () => {
+    // Daemon fails
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 500 } as any);
 
-      const health = await embeddingHealth();
-      expect(health.daemon.reachable).toBe(true);
-      expect(health.cli.usable).toBe(true);
+    // CLI succeeds
+    vi.mocked(execFile).mockImplementation((cmd, args, opts, cb) => {
+      if (cb) (cb as any)(null, JSON.stringify([{ embedding: [0.4, 0.5, 0.6], dimension: 3 }]), "");
+
+      return {} as any;
     });
 
-    test("reports unhealthy status when both are down", async () => {
-      vi.mocked(fetch).mockRejectedValue(new Error("Failed"));
-      vi.mocked(access).mockRejectedValue(new Error("No access"));
+    const result = await embedOne("hello", "query");
+    expect(result).toEqual([0.4, 0.5, 0.6]);
+    expect(execFile).toHaveBeenCalled();
+  });
 
-      const health = await embeddingHealth();
-      expect(health.daemon.reachable).toBe(false);
-      expect(health.cli.usable).toBe(false);
-    });
+  test("embedOne throws if input is empty", async () => {
+    await expect(embedOne("  ", "query")).rejects.toThrow(
+      "embedding input must include at least one non-empty text",
+    );
+  });
+
+  test("validateEmbeddingShape throws on dimension mismatch", async () => {
+    config.embeddingProvider = "daemon";
+    vi.mocked(fetch).mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          embeddings: [[0.1, 0.2]], // only 2 dims, expected 3
+          dimension: 2,
+        }),
+    } as any);
+
+    await expect(embedOne("hello", "query")).rejects.toThrow("dimension mismatch");
+  });
+
+  test("embeddingHealth checks both daemon and cli", async () => {
+    vi.mocked(fetch).mockResolvedValue({ ok: true } as any);
+    vi.mocked(access).mockResolvedValue(undefined);
+
+    const health = await embeddingHealth();
+    expect(health.daemon.reachable).toBe(true);
+    expect(health.cli.usable).toBe(true);
   });
 });

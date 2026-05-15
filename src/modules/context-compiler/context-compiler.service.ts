@@ -9,11 +9,12 @@ import {
   type ContextPackItem,
   contextPackSchema,
 } from "../../shared/schemas/context-pack.schema.js";
+import type { KnowledgeItem, KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
 import { retrieveKnowledge } from "../knowledge/knowledge.service.js";
 import { retrieveSources } from "../sources/source-retrieval.service.js";
 import { insertCompileRun, insertContextPackItems } from "./context-compiler.repository.js";
 import { renderContextPackMarkdown } from "./pack-renderer.js";
-import { rankAndDedupe } from "./ranking.service.js";
+import { type Rankable, rankAndDedupe } from "./ranking.service.js";
 
 const retrievalModeByIntent: Record<CompileInput["intent"], RetrievalMode> = {
   plan: "architecture_context",
@@ -45,14 +46,77 @@ function resolveRetrievalMode(input: CompileInput): RetrievalMode {
   return retrievalModeByIntent[input.intent];
 }
 
+function isWhitespaceCodePoint(codePoint: number): boolean {
+  return (
+    codePoint <= 0x20 ||
+    codePoint === 0x00a0 ||
+    codePoint === 0x1680 ||
+    (codePoint >= 0x2000 && codePoint <= 0x200a) ||
+    codePoint === 0x2028 ||
+    codePoint === 0x2029 ||
+    codePoint === 0x202f ||
+    codePoint === 0x205f ||
+    codePoint === 0x3000 ||
+    codePoint === 0xfeff
+  );
+}
+
+function isCjkCodePoint(codePoint: number): boolean {
+  return (
+    (codePoint >= 0x3040 && codePoint <= 0x30ff) ||
+    (codePoint >= 0x31f0 && codePoint <= 0x31ff) ||
+    (codePoint >= 0x3400 && codePoint <= 0x4dbf) ||
+    (codePoint >= 0x4e00 && codePoint <= 0x9fff) ||
+    (codePoint >= 0xf900 && codePoint <= 0xfaff)
+  );
+}
+
+function estimatedTokenWeight(char: string): number {
+  const codePoint = char.codePointAt(0);
+  if (!codePoint) return 0;
+  if (isWhitespaceCodePoint(codePoint)) return 0.15;
+  if (codePoint <= 0x7f) return 0.25;
+  if (isCjkCodePoint(codePoint)) return 0.8;
+  if (codePoint > 0xffff) return 1;
+  return 0.5;
+}
+
 function estimateTokens(text: string): number {
-  return Math.max(1, Math.ceil(text.length / 4));
+  let total = 0;
+  for (const char of text) {
+    total += estimatedTokenWeight(char);
+  }
+  return Math.max(1, Math.ceil(total));
 }
 
 function truncateForBudget(content: string, maxTokens: number): string {
-  const maxChars = Math.max(80, maxTokens * 4);
-  if (content.length <= maxChars) return content;
-  return `${content.slice(0, Math.max(1, maxChars - 3))}...`;
+  if (!content.trim()) return content;
+  if (maxTokens <= 0) return "...";
+  if (estimateTokens(content) <= maxTokens) return content;
+  const suffix = "...";
+  const suffixTokens = estimateTokens(suffix);
+  const maxContentTokens = Math.max(1, maxTokens - suffixTokens);
+  const selectedChars: string[] = [];
+  let usedTokens = 0;
+  for (const char of content) {
+    const tokenCost = estimatedTokenWeight(char);
+    if (usedTokens + tokenCost > maxContentTokens) break;
+    selectedChars.push(char);
+    usedTokens += tokenCost;
+  }
+  if (selectedChars.length === 0) {
+    return suffix;
+  }
+  while (
+    selectedChars.length > 0 &&
+    estimateTokens(`${selectedChars.join("")}${suffix}`) > maxTokens
+  ) {
+    selectedChars.pop();
+  }
+  if (selectedChars.length === 0) {
+    return suffix;
+  }
+  return `${selectedChars.join("")}${suffix}`;
 }
 
 function scoreSourceOverlap(text: string, candidateText: string): number {
@@ -193,12 +257,22 @@ function buildMinimalTasks(retrievalMode: RetrievalMode): string[] {
   }
 }
 
+function normalizeKnowledgeType(value: string): KnowledgeItem["type"] {
+  return value === "procedure" ? "procedure" : "rule";
+}
+
+function normalizeKnowledgeStatus(value: string): KnowledgeStatus {
+  if (value === "deprecated") return "deprecated";
+  if (value === "draft") return "draft";
+  return "active";
+}
+
 function toKnowledgePackItem(item: {
   id: string;
-  type: string;
-  status: string;
+  type: KnowledgeItem["type"];
+  status: KnowledgeStatus;
   title: string;
-  body: string;
+  content: string;
   score: number;
   sourceRefs: string[];
 }): ContextPackItem {
@@ -209,12 +283,18 @@ function toKnowledgePackItem(item: {
     itemId: item.id,
     section,
     title: item.title,
-    content: item.body,
+    content: item.content,
     score: item.score,
     rankingReason: `ranked by weighted score (${item.status})`,
     sourceRefs: item.sourceRefs,
   };
 }
+
+type KnowledgeRankable = Rankable & {
+  type: KnowledgeItem["type"];
+  status: KnowledgeStatus;
+  sourceRefs: string[];
+};
 
 function buildCodeContextItems(files: string[] | undefined): ContextPackItem[] {
   const uniqueFiles = [...new Set((files ?? []).map((file) => file.trim()).filter(Boolean))];
@@ -246,7 +326,7 @@ export async function compileContextPack(rawInput: unknown): Promise<{
 
   const degradedReasons = [...knowledge.degradedReasons, ...sourceContext.degradedReasons];
 
-  const rankedKnowledge = rankAndDedupe(
+  const rankedKnowledge = rankAndDedupe<KnowledgeRankable>(
     knowledge.items.map((item) => ({
       id: item.id,
       title: item.title,
@@ -254,8 +334,8 @@ export async function compileContextPack(rawInput: unknown): Promise<{
       score: item.score,
       confidence: item.confidence,
       importance: item.importance,
-      type: item.type,
-      status: item.status,
+      type: normalizeKnowledgeType(item.type),
+      status: normalizeKnowledgeStatus(item.status),
       sourceRefs: item.sourceRefs,
       sourceRefCount: item.sourceRefs.length,
       hasSourceLinks: item.hasSourceLinks,
@@ -264,21 +344,22 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     10,
   );
 
-  const packItems = rankedKnowledge.map((item) =>
-    toKnowledgePackItem({
+  const packItems = rankedKnowledge.map((item) => {
+    const sourceRefs = selectSourceRefsForKnowledge(
+      { type: item.type, title: item.title, content: item.content },
+      sourceContext.items,
+      item.sourceRefs,
+    );
+    return toKnowledgePackItem({
       id: item.id,
-      type: (item as { type: string }).type,
-      status: (item as { status: string }).status,
+      type: item.type,
+      status: item.status,
       title: item.title,
-      body: item.content,
+      content: item.content,
       score: item.score,
-      sourceRefs: selectSourceRefsForKnowledge(
-        { type: (item as { type: string }).type, title: item.title, content: item.content },
-        sourceContext.items,
-        (item as { sourceRefs?: string[] }).sourceRefs ?? [],
-      ),
-    }),
-  );
+      sourceRefs,
+    });
+  });
 
   const budgetedRules = applySectionTokenBudget(
     packItems.filter((item) => item.section === "rules"),
@@ -314,9 +395,7 @@ export async function compileContextPack(rawInput: unknown): Promise<{
   const hardFailureCount = degradedReasons.filter((reason) => reason.endsWith("_FAILED")).length;
   const status = hardFailureCount >= 2 ? "failed" : degradedReasons.length > 0 ? "degraded" : "ok";
   const minimalTasks = buildMinimalTasks(retrievalMode);
-  const selectedStatuses = new Set(
-    rankedKnowledge.map((item) => (item as { status?: string }).status),
-  );
+  const selectedStatuses = new Set(rankedKnowledge.map((item) => item.status));
   const suggestedNextCalls: string[] = [];
   if (degradedReasons.includes("NO_ACTIVE_KNOWLEDGE_MATCH")) {
     suggestedNextCalls.push("search_knowledge");

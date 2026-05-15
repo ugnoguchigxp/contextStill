@@ -9,7 +9,20 @@ export default defineConfig({
       provider: "v8",
       reporter: ["text", "json", "html"],
       include: ["src/**/*.ts", "web/src/**/*.{ts,tsx}"],
-      exclude: ["src/cli/**", "src/db/migrations/**", "web/src/smoke.test.ts"],
+      exclude: [
+        "src/cli/**",
+        "src/db/migrations/**",
+        "src/db/seed.ts",
+        "src/index.ts",
+        "src/config.ts",
+        "src/db/client.ts",
+        "src/db/index.ts",
+        "src/mcp/registry.ts",
+
+        "web/src/main.tsx",
+        "web/src/App.tsx",
+        "web/src/smoke.test.ts",
+      ],
     },
   },
 });

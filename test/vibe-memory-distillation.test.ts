@@ -1,18 +1,18 @@
 import { describe, expect, test, vi } from "vitest";
+import * as embeddingService from "../src/modules/embedding/embedding.service.js";
+import * as knowledgeRepo from "../src/modules/knowledge/knowledge.repository.js";
 import type {
   AgentDiffEntryForDistillation,
   VibeMemoryForDistillation,
 } from "../src/modules/vibe-memory/distillation.repository.js";
+import * as distillationRepo from "../src/modules/vibe-memory/distillation.repository.js";
 import {
   buildVibeMemoryDistillationMessages,
   buildVibeMemoryInputHash,
+  distillVibeMemories,
   filterDistillationCandidatesByScore,
   parseDistillationCandidates,
-  distillVibeMemories,
 } from "../src/modules/vibe-memory/distillation.service.js";
-import * as distillationRepo from "../src/modules/vibe-memory/distillation.repository.js";
-import * as knowledgeRepo from "../src/modules/knowledge/knowledge.repository.js";
-import * as embeddingService from "../src/modules/embedding/embedding.service.js";
 
 vi.mock("../src/modules/vibe-memory/distillation.repository.js", () => ({
   listVibeMemoriesForDistillation: vi.fn(),
@@ -170,11 +170,12 @@ describe("vibe memory distillation", () => {
     });
     const prompt = messages.map((message) => message.content).join("\n");
 
-    expect(prompt).toContain("Allowed knowledge types are exactly: rule, procedure");
-    expect(prompt).toContain("Assign confidence and importance as 0 to 100 values");
+    expect(prompt).toContain("知識タイプは rule と procedure のみ");
+    expect(prompt).toContain("confidence と importance は 0 から 100");
     expect(prompt).toContain("score");
-    expect(prompt).toContain("Only emit candidates whose score is at least");
-    expect(prompt).toContain("Do not include below-threshold candidates");
+    expect(prompt).toContain("未満の candidate は出力しない");
+    expect(prompt).toContain("閾値未満の candidate は candidates 配列へ入れず");
+    expect(prompt).toContain("可能な限り日本語");
     expect(prompt).toContain("AGENT_DIFF_ENTRIES");
     expect(prompt).not.toMatch(/\bfact\b/i);
     expect(prompt).not.toMatch(/\blesson\b/i);

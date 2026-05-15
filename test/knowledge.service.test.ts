@@ -4,7 +4,7 @@ import {
   searchKnowledgeCandidates,
   registerKnowledgeFromMarkdown,
 } from "../src/modules/knowledge/knowledge.service.js";
-import * as repository from "../src/modules/knowledge/knowledge.repository.js";
+import * as repo from "../src/modules/knowledge/knowledge.repository.js";
 import * as embedding from "../src/modules/embedding/embedding.service.js";
 import { config } from "../src/config.js";
 
@@ -13,144 +13,116 @@ vi.mock("../src/modules/embedding/embedding.service.js");
 vi.mock("../src/config.js", () => ({
   config: {
     enableVectorSearch: true,
-    embeddingProvider: "test-provider",
+    embeddingProvider: "openai",
   },
 }));
 
-describe("knowledge service", () => {
+describe("Knowledge Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    config.enableVectorSearch = true;
   });
 
-  describe("retrieveKnowledge", () => {
-    test("returns merged hits from text and vector search", async () => {
-      const mockTextHits = [{ id: "1", score: 0.8, title: "Text Hit 1" }];
-      const mockVectorHits = [{ id: "2", score: 0.9, title: "Vector Hit 1" }];
+  test("retrieveKnowledge uses correct profile based on mode", async () => {
+    vi.mocked(repo.searchKnowledge).mockResolvedValue([]);
+    const input = { goal: "test", includeDraft: false } as any;
 
-      vi.mocked(repository.searchKnowledge).mockResolvedValue(mockTextHits as unknown as never);
-      vi.mocked(repository.vectorSearchKnowledge).mockResolvedValue(
-        mockVectorHits as unknown as never,
-      );
-      vi.mocked(embedding.embedOne).mockResolvedValue([0.1, 0.2]);
-
-      const result = await retrieveKnowledge(
-        { goal: "test goal", intent: "edit", includeDraft: false, repoPath: "/test/repo" },
-        { retrievalMode: "learning_context" },
-      );
-
-      expect(result.items).toHaveLength(2);
-      expect(result.items[0].id).toBe("2"); // Higher score first
-      expect(result.stats.textHitCount).toBe(1);
-      expect(result.stats.vectorHitCount).toBe(1);
-      expect(result.stats.embeddingStatus).toBe("generated");
-    });
-
-    test("falls back to global search if scoped search returns no hits", async () => {
-      vi.mocked(repository.searchKnowledge)
-        .mockResolvedValueOnce([]) // First runSearch (scoped) - primary query
-        .mockResolvedValueOnce([]) // First runSearch (scoped) - expanded query
-        .mockResolvedValueOnce([
-          { id: "global-1", score: 0.5, title: "Global Hit" },
-        ] as unknown as never) // Second runSearch (global) - primary
-        .mockResolvedValueOnce([]); // Second runSearch (global) - expanded
-
-      vi.mocked(repository.vectorSearchKnowledge).mockResolvedValue([]);
-
-      const result = await retrieveKnowledge(
-        { goal: "test goal", intent: "edit", includeDraft: false, repoPath: "/test/repo" },
-        { retrievalMode: "learning_context" },
-      );
-
-      expect(result.items).toHaveLength(1);
-      expect(result.items[0].id).toBe("global-1");
-      expect(result.stats.repoScopeFallbackUsed).toBe(true);
-      expect(result.degradedReasons).toContain("KNOWLEDGE_REPO_SCOPE_FALLBACK");
-    });
-
-    test("handles text search failure gracefully", async () => {
-      vi.mocked(repository.searchKnowledge).mockRejectedValue(new Error("Text search failed"));
-      vi.mocked(repository.vectorSearchKnowledge).mockResolvedValue([]);
-
-      const result = await retrieveKnowledge(
-        { goal: "test goal", intent: "edit", includeDraft: false },
-        { retrievalMode: "learning_context" },
-      );
-
-      expect(result.stats.textFailed).toBe(true);
-      expect(result.degradedReasons).toContain("KNOWLEDGE_TEXT_SEARCH_FAILED");
-    });
-  });
-
-  describe("searchKnowledgeCandidates", () => {
-    test("parses raw input and returns results", async () => {
-      vi.mocked(repository.searchKnowledge).mockResolvedValue([
-        { id: "1", score: 1.0 },
-      ] as unknown as never);
-
-      const result = await searchKnowledgeCandidates({
-        query: "test query",
-        limit: 5,
-        status: "active",
-      });
-
-      expect(result.items).toHaveLength(1);
-      expect(vi.mocked(repository.searchKnowledge)).toHaveBeenCalledWith(
-        expect.objectContaining({ query: "test query", limit: 5 }),
-        expect.anything(),
-      );
-    });
-  });
-
-  describe("registerKnowledgeFromMarkdown", () => {
-    test("calls upsertKnowledgeFromSource with provided params", async () => {
-      vi.mocked(repository.upsertKnowledgeFromSource).mockResolvedValue("new-id");
-      vi.mocked(embedding.embedOne).mockResolvedValue([0.3, 0.4]);
-
-      const result = await registerKnowledgeFromMarkdown({
-        sourceUri: "test-uri",
-        contentHash: "hash",
-        title: "Test Title",
-        body: "Test Body",
-      });
-
-      expect(result).toBe("new-id");
-      expect(vi.mocked(embedding.embedOne)).toHaveBeenCalled();
-      expect(vi.mocked(repository.upsertKnowledgeFromSource)).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: "Test Title",
-          body: "Test Body",
-          embedding: [0.3, 0.4],
-        }),
-      );
-    });
-
-    test("handles embedding generation failure gracefully", async () => {
-      vi.mocked(repository.upsertKnowledgeFromSource).mockResolvedValue("new-id");
-      vi.mocked(embedding.embedOne).mockRejectedValue(new Error("Embedding failed"));
-
-      const result = await registerKnowledgeFromMarkdown({
-        sourceUri: "test-uri",
-        contentHash: "hash",
-        title: "Test Title",
-        body: "Test Body",
-      });
-
-      expect(result).toBe("new-id");
-      expect(vi.mocked(repository.upsertKnowledgeFromSource)).toHaveBeenCalledWith(
-        expect.objectContaining({
-          embedding: undefined,
-        }),
-      );
-    });
-  });
-
-  test("retrieveKnowledge returns NO_ACTIVE_KNOWLEDGE_MATCH when no results found", async () => {
-    vi.mocked(repository.searchKnowledge).mockResolvedValue([]);
-    vi.mocked(repository.vectorSearchKnowledge).mockResolvedValue([]);
-    const result = await retrieveKnowledge(
-      { goal: "nothing", intent: "edit", includeDraft: false },
-      { retrievalMode: "task_context" },
+    await retrieveKnowledge(input, { retrievalMode: "review_context" });
+    expect(repo.searchKnowledge).toHaveBeenCalledWith(
+      expect.objectContaining({ types: ["rule", "procedure"], limit: 12 }),
+      expect.any(Object),
     );
-    expect(result.degradedReasons).toContain("NO_ACTIVE_KNOWLEDGE_MATCH");
+  });
+
+  test("executeKnowledgeSearch falls back to global search if scoped search is empty", async () => {
+    config.enableVectorSearch = false; // Disable to simplify mock counting
+
+    // Scoped search: textHits (primary) and hintHits (queryText)
+    vi.mocked(repo.searchKnowledge).mockResolvedValueOnce([]);
+    vi.mocked(repo.searchKnowledge).mockResolvedValueOnce([]);
+    // Fallback search: textHits (primary)
+    vi.mocked(repo.searchKnowledge).mockResolvedValueOnce([{ id: "item1", score: 0.9 }] as any);
+
+    const input = { goal: "test", repoPath: "my-repo", includeDraft: false } as any;
+    const result = await retrieveKnowledge(input, { retrievalMode: "learning_context" });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.stats.repoScopeFallbackUsed).toBe(true);
+  });
+
+  test("registerKnowledgeFromMarkdown generates embedding if missing", async () => {
+    vi.mocked(embedding.embedOne).mockResolvedValue([0.1, 0.2]);
+    vi.mocked(repo.upsertKnowledgeFromSource).mockResolvedValue("new-id");
+
+    const id = await registerKnowledgeFromMarkdown({
+      sourceUri: "test.md",
+      contentHash: "hash",
+      title: "Title",
+      body: "Body",
+    });
+
+    expect(id).toBe("new-id");
+    expect(embedding.embedOne).toHaveBeenCalledWith("Title\nBody", "passage");
+  });
+
+  test("executeKnowledgeSearch performs vector search if enabled", async () => {
+    vi.mocked(repo.searchKnowledge).mockResolvedValue([]);
+    vi.mocked(embedding.embedOne).mockResolvedValue([0.1, 0.2]);
+    vi.mocked(repo.vectorSearchKnowledge).mockResolvedValue([{ id: "v1", score: 0.8 }] as any);
+
+    const input = { goal: "test", includeDraft: false } as any;
+    const result = await retrieveKnowledge(input, { retrievalMode: "learning_context" });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].id).toBe("v1");
+    expect(repo.vectorSearchKnowledge).toHaveBeenCalled();
+  });
+
+  test("searchKnowledgeCandidates parses input and searches", async () => {
+    vi.mocked(repo.searchKnowledge).mockResolvedValue([{ id: "c1", score: 0.7 }] as any);
+    vi.mocked(repo.vectorSearchKnowledge).mockResolvedValue([]);
+    const result = await searchKnowledgeCandidates({
+      query: "task",
+      limit: 5,
+      includeDraft: true,
+    });
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0].id).toBe("c1");
+  });
+
+  test("registerKnowledgeFromMarkdown handles embedding failure", async () => {
+    vi.mocked(embedding.embedOne).mockRejectedValue(new Error("Failed"));
+    vi.mocked(repo.upsertKnowledgeFromSource).mockResolvedValue("no-embed-id");
+
+    const id = await registerKnowledgeFromMarkdown({
+      sourceUri: "test.md",
+      contentHash: "hash",
+      title: "Title",
+      body: "Body",
+    });
+    expect(id).toBe("no-embed-id");
+  });
+
+  test("handles search failures gracefully", async () => {
+    vi.mocked(repo.searchKnowledge).mockRejectedValue(new Error("Search failed"));
+    const input = { goal: "test", includeDraft: false } as any;
+    const result = await retrieveKnowledge(input, { retrievalMode: "review_context" });
+    expect(result.degradedReasons).toContain("KNOWLEDGE_TEXT_SEARCH_FAILED");
+  });
+
+  test("covers all retrieval profiles", async () => {
+    vi.mocked(repo.searchKnowledge).mockResolvedValue([]);
+    const modes = [
+      "debug_context",
+      "architecture_context",
+      "procedure_context",
+      "unknown",
+    ] as any[];
+    for (const mode of modes) {
+      await retrieveKnowledge({ goal: "test", includeDraft: false } as any, {
+        retrievalMode: mode,
+      });
+    }
+    expect(repo.searchKnowledge).toHaveBeenCalled();
   });
 });

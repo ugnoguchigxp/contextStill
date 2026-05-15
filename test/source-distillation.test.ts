@@ -33,11 +33,12 @@ describe("source distillation", () => {
     });
     const prompt = messages.map((message) => message.content).join("\n");
 
-    expect(prompt).toContain("Allowed knowledge types are exactly: rule, procedure");
-    expect(prompt).toContain("Assign confidence and importance as 0 to 100 values");
-    expect(prompt).toContain("Only emit candidates whose score is at least");
+    expect(prompt).toContain("知識タイプは rule と procedure のみ");
+    expect(prompt).toContain("confidence と importance は 0 から 100");
+    expect(prompt).toContain("未満の candidate は出力しない");
     expect(prompt).toContain("search_web");
     expect(prompt).toContain("fetch_content");
+    expect(prompt).toContain("可能な限り日本語");
     expect(prompt).toContain("SOURCE_FRAGMENT_CONTENT");
     expect(prompt).not.toMatch(/\bfact\b/i);
     expect(prompt).not.toMatch(/\blesson\b/i);

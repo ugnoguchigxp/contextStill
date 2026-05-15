@@ -1,0 +1,162 @@
+import { describe, expect, test } from "vitest";
+import {
+  knowledgeSearchInputSchema,
+  registerKnowledgeInputSchema,
+} from "../src/shared/schemas/knowledge.schema.ts";
+import { compileInputSchema } from "../src/shared/schemas/compile.schema.ts";
+import { doctorReportSchema } from "../src/shared/schemas/doctor.schema.ts";
+import { recordVibeMemoryInputSchema } from "../src/shared/schemas/vibe-memory.schema.ts";
+
+describe("Shared Schemas", () => {
+  test("knowledgeSearchInputSchema parses valid input", () => {
+    const input = { query: "test", limit: 10 };
+    expect(knowledgeSearchInputSchema.parse(input)).toEqual(expect.objectContaining(input));
+  });
+
+  test("registerKnowledgeInputSchema parses valid input", () => {
+    const input = { title: "T", body: "B" };
+    expect(registerKnowledgeInputSchema.parse(input)).toEqual(expect.objectContaining(input));
+  });
+
+  test("compileInputSchema parses valid input", () => {
+    const input = { goal: "test" };
+    expect(compileInputSchema.parse(input)).toEqual(expect.objectContaining(input));
+  });
+
+  test("doctorReportSchema parses valid input", () => {
+    const input = {
+      status: "ok",
+      checkedAt: new Date().toISOString(),
+      reasons: [],
+      db: { reachable: true, durationMs: 10 },
+      vector: { installed: true },
+      embedding: {
+        configured: true,
+        provider: "daemon",
+        daemon: { url: "http://llm", reachable: true },
+        cli: { python: "python", root: "/root", modelDir: "/models", usable: true },
+      },
+      tables: { expected: [], existing: [], missing: [] },
+      runs: {
+        windowSize: 10,
+        totalRuns: 0,
+        degradedRuns: 0,
+        degradedRate: 0,
+        lastRunAt: null,
+        lastRunAgeMinutes: null,
+        freshnessThresholdMinutes: 60,
+        degradedRateThreshold: 0.1,
+      },
+      mcp: {
+        exposedTools: [],
+        requiredPrimaryTools: [],
+        missingPrimaryTools: [],
+        staleKnowledgeCount: 0,
+        staleSourceCount: 0,
+        nextActions: [],
+      },
+      agentLogSync: {
+        codex: {
+          sessionDir: "s",
+          sessionDirExists: true,
+          archivedSessionDir: "a",
+          archivedSessionDirExists: true,
+        },
+        antigravity: { logDir: "l", configured: true, exists: true },
+        states: [],
+        launchAgent: { label: "l", plistPath: "p", installed: true, loaded: true, state: "s" },
+        nextActions: [],
+      },
+      vibeDistillation: {
+        launchAgent: { label: "l", plistPath: "p", installed: true, loaded: true, state: "s" },
+        runs: {
+          totalRuns: 0,
+          okRuns: 0,
+          skippedRuns: 0,
+          failedRuns: 0,
+          lastRunAt: null,
+          lastRunAgeMinutes: null,
+        },
+        nextActions: [],
+      },
+      sourceDistillation: {
+        launchAgent: { label: "l", plistPath: "p", installed: true, loaded: true, state: "s" },
+        runs: {
+          totalRuns: 0,
+          okRuns: 0,
+          skippedRuns: 0,
+          failedRuns: 0,
+          lastRunAt: null,
+          lastRunAgeMinutes: null,
+        },
+        nextActions: [],
+      },
+    };
+    expect(doctorReportSchema.parse(input)).toEqual(expect.objectContaining({ status: "ok" }));
+  });
+
+  test("recordVibeMemoryInputSchema parses valid input", () => {
+    const input = {
+      sessionId: "s1",
+      content: "C",
+      memoryType: "chat",
+    };
+    expect(recordVibeMemoryInputSchema.parse(input)).toEqual(expect.objectContaining(input));
+  });
+
+  test("contextPackSchema parses valid input", async () => {
+    const { contextPackSchema } = await import("../src/shared/schemas/context-pack.schema.ts");
+    const input = {
+      runId: "550e8400-e29b-41d4-a716-446655440000",
+      intent: "edit",
+      retrievalMode: "learning_context",
+      status: "ok",
+      goal: "Goal",
+      minimalTasks: [],
+      rules: [],
+      procedures: [],
+      codeContext: [],
+      warnings: [],
+      sourceRefs: [],
+      diagnostics: {
+        degradedReasons: [],
+        retrievalStats: {
+          textHitCount: 0,
+          vectorHitCount: 0,
+          mergedCount: 0,
+          textFailed: false,
+          vectorFailed: false,
+          embeddingStatus: "provided",
+          queryText: "q",
+          scopedSearch: false,
+          repoScopeFallbackUsed: false,
+        },
+      },
+    };
+
+    expect(contextPackSchema.parse(input)).toEqual(
+      expect.objectContaining({ runId: "550e8400-e29b-41d4-a716-446655440000" }),
+    );
+  });
+
+  test("recordVibeMemoryInputSchema transforms and refines diffs", () => {
+    const input = {
+      sessionId: "s1",
+      content: "C",
+      agentDiffs: [
+        { filePath: "a.ts", diff: "some diff" }, // transforms diff to diffHunk
+      ],
+    };
+    const result = recordVibeMemoryInputSchema.parse(input);
+    expect(result.agentDiffs[0].diffHunk).toBe("some diff");
+
+    // refine check (must have content)
+    expect(() =>
+      recordVibeMemoryInputSchema.parse({
+        sessionId: "s1",
+        content: "C",
+        agentDiffs: [{ filePath: "a.ts", diff: " " }],
+      }),
+    ).toThrow("Agent diff entry requires diffHunk or diff");
+  });
+});

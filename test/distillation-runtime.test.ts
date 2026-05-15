@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
 import { buildDistillationSystemPrompt } from "../src/modules/distillation/distillation-prompts.js";
 import {
-  runDistillationCompletion,
   type DistillationChatClient,
   type DistillationToolExecutor,
+  runDistillationCompletion,
 } from "../src/modules/distillation/distillation-runtime.service.js";
 
 describe("distillation runtime", () => {
@@ -68,10 +68,11 @@ describe("distillation runtime", () => {
   test("common system prompt keeps output constrained to compile-ready rule/procedure", () => {
     const prompt = buildDistillationSystemPrompt("vibe_memory");
 
-    expect(prompt).toContain("Allowed knowledge types are exactly: rule, procedure");
+    expect(prompt).toContain("知識タイプは rule と procedure のみ");
     expect(prompt).toContain("context_compile");
     expect(prompt).toContain("search_web");
     expect(prompt).toContain("fetch_content");
+    expect(prompt).toContain("可能な限り日本語");
     expect(prompt).not.toMatch(/\bfact\b/i);
     expect(prompt).not.toMatch(/\blesson\b/i);
   });

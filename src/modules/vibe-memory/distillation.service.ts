@@ -1,25 +1,25 @@
 import crypto from "node:crypto";
 import { config } from "../../config.js";
+import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
 import {
+  type DistilledKnowledgeCandidate,
   filterDistillationCandidatesByScore,
   parseDistillationCandidateList,
   summarizeRejectedCandidates,
-  type DistilledKnowledgeCandidate,
 } from "../distillation/distillation-candidates.js";
 import { buildDistillationSystemPrompt } from "../distillation/distillation-prompts.js";
 import {
-  callLocalLlmCompletionForDistillation,
   type DistillationCompletionResult,
   type DistillationMessage,
   type DistillationModelRequest,
+  callLocalLlmCompletionForDistillation,
 } from "../distillation/distillation-runtime.service.js";
 import { embedOne } from "../embedding/embedding.service.js";
 import { upsertKnowledgeFromSource } from "../knowledge/knowledge.repository.js";
-import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
 import {
   type AgentDiffEntryForDistillation,
-  type VibeMemoryForDistillation,
   type VibeMemoryDistillationStatus,
+  type VibeMemoryForDistillation,
   listAgentDiffEntriesForVibeMemories,
   listVibeMemoriesForDistillation,
   recordVibeMemoryDistillationState,
@@ -156,8 +156,8 @@ export function buildVibeMemoryDistillationMessages(params: {
     {
       role: "system",
       content: buildDistillationSystemPrompt("vibe_memory", [
-        "Return strict JSON only, with this shape:",
-        '{"candidates":[{"type":"rule|procedure","title":"short title","body":"actionable reusable knowledge","confidence":70,"importance":70,"score":0.0,"rationale":"optional short reason","sourceRefs":["local evidence refs"],"evidenceRefs":["fetched URLs when tools are used"]}]}',
+        "次の形式の厳密な JSON のみを返すこと:",
+        '{"candidates":[{"type":"rule|procedure","title":"短い日本語タイトル","body":"再利用可能で実行可能な日本語 knowledge","confidence":70,"importance":70,"score":0.0,"rationale":"任意の短い理由","sourceRefs":["local evidence refs"],"evidenceRefs":["fetched URLs when tools are used"]}]}',
       ]),
     },
     {
@@ -218,7 +218,7 @@ async function parseDistillationCandidatesWithRepair(params: {
         {
           role: "user",
           content:
-            'The previous response was invalid or incomplete JSON. Return complete strict JSON only, with at most two candidates, include score and sourceRefs, and use the same schema. If uncertain, return {"candidates":[]}.',
+            '前回の応答は不正または不完全な JSON でした。同じ schema で、最大 2 件、score と sourceRefs を含む完全な厳密 JSON のみを返してください。不確実な場合は {"candidates":[]} を返してください。',
         },
       ],
       maxTokens: params.maxTokens,
