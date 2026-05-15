@@ -18,6 +18,15 @@ vibeMemoryRouter.get("/", async (c) => {
   return c.json({ memories });
 });
 
+vibeMemoryRouter.get("/:id", async (c) => {
+  const id = c.req.param("id");
+  const [memory] = await db.select().from(vibeMemories).where(eq(vibeMemories.id, id));
+  if (!memory) {
+    return c.json({ error: "Vibe memory not found" }, 404);
+  }
+  return c.json({ memory });
+});
+
 vibeMemoryRouter.post("/", zValidator("json", recordVibeMemoryInputSchema), async (c) => {
   const result = await recordVibeMemoryWithDiffEntries(c.req.valid("json"));
   return c.json(result, 201);

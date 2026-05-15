@@ -122,7 +122,11 @@ export const recordVibeMemoryTool = {
     type: "object",
     properties: {
       sessionId: { type: "string", description: "The current session or task ID." },
-      content: { type: "string", description: "The log message, chat content, or action detail." },
+      content: {
+        type: "string",
+        description:
+          "The natural-language chat log or action detail. Do not duplicate diff content here; embedded diffs are moved to agent_diff entries.",
+      },
       memoryType: {
         type: "string",
         enum: ["chat", "action", "observation", "system"],
@@ -132,7 +136,7 @@ export const recordVibeMemoryTool = {
       diff: {
         type: "string",
         description:
-          "Optional unified diff. Changed hunks are stored as agent_diff entries and symbolized when possible.",
+          "Optional unified diff. Changed hunks are stored only as agent_diff entries and symbolized when possible.",
       },
       agentDiffs: {
         type: "array",

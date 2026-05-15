@@ -2,24 +2,32 @@ import { useMemo, useState } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { fetchGraphSnapshot, type GraphNode } from "../repositories/admin.repository";
+import { Select } from "@/components/ui/select";
+import {
+  fetchGraphSnapshot,
+  type GraphEdgeMode,
+  type GraphNode,
+  type GraphStatusFilter,
+} from "../repositories/admin.repository";
 
-const nodeColors: Record<GraphNode["kind"], string> = {
-  knowledge: "#14b8a6",
-  source: "#f59e0b",
-  vibe_memory: "#60a5fa",
+const nodeColors: Record<string, string> = {
+  rule: "#14b8a6",
+  procedure: "#60a5fa",
 };
 
 type PositionedNode = GraphNode & { x: number; y: number };
 
 function layoutNodes(nodes: GraphNode[]): PositionedNode[] {
   if (nodes.length === 0) return [];
+  if (nodes.length === 1) {
+    return [{ ...nodes[0], x: 380, y: 210 }];
+  }
   const centerX = 380;
   const centerY = 210;
   const radius = 145;
   return nodes.map((node, index) => {
     const angle = (index / nodes.length) * Math.PI * 2 - Math.PI / 2;
-    const laneOffset = node.kind === "knowledge" ? -28 : node.kind === "vibe_memory" ? 28 : 0;
+    const laneOffset = node.group === "rule" ? -28 : 28;
     return {
       ...node,
       x: centerX + Math.cos(angle) * (radius + laneOffset),
@@ -33,28 +41,72 @@ function truncate(value: string, max = 18) {
 }
 
 export function GraphPage() {
+  const [statusFilter, setStatusFilter] = useState<GraphStatusFilter>("current");
+  const [edgeMode, setEdgeMode] = useState<GraphEdgeMode>("both");
   const graph = useQuery({
-    queryKey: ["graph", 160],
-    queryFn: () => fetchGraphSnapshot(160),
+    queryKey: ["graph", 160, statusFilter, edgeMode],
+    queryFn: () =>
+      fetchGraphSnapshot({
+        limit: 160,
+        status: statusFilter,
+        edgeMode,
+      }),
   });
   const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [hoveredId, setHoveredId] = useState<string | null>(null);
   const nodes = useMemo(() => layoutNodes(graph.data?.nodes ?? []), [graph.data?.nodes]);
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const selected = selectedId ? nodeById.get(selectedId) : null;
+  const activeId = selectedId ?? hoveredId;
+  const showAllLabels = nodes.length <= 24;
 
   return (
     <div className="page-stack">
       <section className="page-heading">
         <div>
-          <h1>Graph</h1>
-          <p>Knowledge、Source、Vibe Memory を構造ノードとして眺めます。</p>
+          <h1>Knowledge Graph</h1>
+          <p>蒸留されたKnowledgeの距離と明示relationを確認します。</p>
+        </div>
+        <div className="graph-controls">
+          <label htmlFor="graph-status-filter">
+            <span>Status</span>
+            <Select
+              id="graph-status-filter"
+              value={statusFilter}
+              onChange={(event) => {
+                setSelectedId(null);
+                setStatusFilter(event.target.value as GraphStatusFilter);
+              }}
+            >
+              <option value="current">Current</option>
+              <option value="active">Active</option>
+              <option value="draft">Draft</option>
+              <option value="deprecated">Deprecated</option>
+              <option value="all">All</option>
+            </Select>
+          </label>
+          <label htmlFor="graph-edge-mode">
+            <span>Edges</span>
+            <Select
+              id="graph-edge-mode"
+              value={edgeMode}
+              onChange={(event) => {
+                setSelectedId(null);
+                setEdgeMode(event.target.value as GraphEdgeMode);
+              }}
+            >
+              <option value="both">Semantic + relations</option>
+              <option value="semantic">Semantic only</option>
+              <option value="relations">Relations only</option>
+            </Select>
+          </label>
         </div>
       </section>
 
       <div className="graph-layout">
         <Card>
           <CardHeader>
-            <CardTitle>Structure Map</CardTitle>
+            <CardTitle>Knowledge Distance Map</CardTitle>
           </CardHeader>
           <CardContent>
             <div className="graph-stage">
@@ -71,40 +123,51 @@ export function GraphPage() {
                         y1={source.y}
                         x2={target.x}
                         y2={target.y}
-                        className="graph-edge"
+                        className={`graph-edge ${edge.edgeKind}`}
                         strokeWidth={Math.max(1, edge.weight * 3)}
-                      />
+                      >
+                        <title>{edge.detail}</title>
+                      </line>
                     );
                   })}
                 </g>
                 <g>
-                  {nodes.map((node) => (
-                    <a
-                      key={node.id}
-                      className="graph-node"
-                      href={`#${node.id}`}
-                      aria-label={`select ${node.label}`}
-                      onClick={(event) => {
-                        event.preventDefault();
-                        setSelectedId(node.id);
-                      }}
-                    >
-                      <circle
-                        cx={node.x}
-                        cy={node.y}
-                        r={12 + node.weight * 8}
-                        fill={nodeColors[node.kind]}
-                        opacity={selectedId === node.id ? 1 : 0.82}
-                      />
-                      <text x={node.x} y={node.y + 28} textAnchor="middle">
-                        {truncate(node.label)}
-                      </text>
-                    </a>
-                  ))}
+                  {nodes.map((node) => {
+                    const active = activeId === node.id;
+                    return (
+                      <a
+                        key={node.id}
+                        className={`graph-node ${active ? "active" : ""}`}
+                        href={`#${node.id}`}
+                        aria-label={`select ${node.label}`}
+                        onMouseEnter={() => setHoveredId(node.id)}
+                        onMouseLeave={() => setHoveredId(null)}
+                        onClick={(event) => {
+                          event.preventDefault();
+                          setSelectedId(node.id);
+                        }}
+                      >
+                        <circle
+                          cx={node.x}
+                          cy={node.y}
+                          r={12 + node.weight * 8}
+                          fill={nodeColors[node.group] ?? nodeColors.rule}
+                          opacity={active ? 1 : 0.82}
+                        >
+                          <title>{`${node.label} / ${node.detail}`}</title>
+                        </circle>
+                        {showAllLabels || active ? (
+                          <text x={node.x} y={node.y + 28} textAnchor="middle">
+                            {truncate(node.label)}
+                          </text>
+                        ) : null}
+                      </a>
+                    );
+                  })}
                 </g>
               </svg>
               {nodes.length === 0 ? (
-                <div className="graph-empty">graph nodeはまだありません。</div>
+                <div className="graph-empty">表示できるknowledge nodeはまだありません。</div>
               ) : null}
             </div>
           </CardContent>
@@ -117,21 +180,48 @@ export function GraphPage() {
             </CardHeader>
             <CardContent className="runtime-list">
               <div>
-                <span>Knowledge</span>
-                <strong>{graph.data?.stats.knowledgeCount ?? 0}</strong>
+                <span>Visible knowledge</span>
+                <strong>{graph.data?.stats.visibleKnowledgeCount ?? 0}</strong>
               </div>
               <div>
-                <span>Sources</span>
-                <strong>{graph.data?.stats.sourceCount ?? 0}</strong>
+                <span>Total in filter</span>
+                <strong>{graph.data?.stats.totalKnowledgeCount ?? 0}</strong>
               </div>
               <div>
-                <span>Vibe Memory</span>
-                <strong>{graph.data?.stats.vibeMemoryCount ?? 0}</strong>
+                <span>Embedded</span>
+                <strong>{graph.data?.stats.embeddedKnowledgeCount ?? 0}</strong>
               </div>
               <div>
-                <span>Relations</span>
-                <strong>{graph.data?.stats.relationCount ?? 0}</strong>
+                <span>Semantic edges</span>
+                <strong>{graph.data?.stats.semanticEdgeCount ?? 0}</strong>
               </div>
+              <div>
+                <span>Relation edges</span>
+                <strong>{graph.data?.stats.relationEdgeCount ?? 0}</strong>
+              </div>
+              <div>
+                <span>Source refs</span>
+                <strong>{graph.data?.stats.sourceRefCount ?? 0}</strong>
+              </div>
+            </CardContent>
+          </Card>
+
+          <Card>
+            <CardHeader>
+              <CardTitle>Legend</CardTitle>
+            </CardHeader>
+            <CardContent className="graph-legend">
+              <span>
+                <i className="legend-dot rule" />
+                Rule
+              </span>
+              <span>
+                <i className="legend-dot procedure" />
+                Procedure
+              </span>
+              <span className="row-subtext">
+                Vibe MemoryはGraphノードではなく蒸留元として扱います。
+              </span>
             </CardContent>
           </Card>
 
@@ -142,13 +232,22 @@ export function GraphPage() {
             <CardContent className="selected-node">
               {selected ? (
                 <>
-                  <Badge>{selected.kind}</Badge>
+                  <div className="selected-badges">
+                    <Badge>{selected.group}</Badge>
+                    <Badge variant="outline">{selected.status}</Badge>
+                    <Badge variant={selected.embedded ? "success" : "secondary"}>
+                      {selected.embedded ? "embedded" : "text only"}
+                    </Badge>
+                  </div>
                   <h2>{selected.label}</h2>
-                  <p>{selected.detail}</p>
-                  <span>{selected.group}</span>
+                  <p>{selected.bodyPreview}</p>
+                  <span>
+                    confidence {selected.confidence.toFixed(2)} / importance{" "}
+                    {selected.importance.toFixed(2)}
+                  </span>
                 </>
               ) : (
-                <p className="row-subtext">nodeを選択してください。</p>
+                <p className="row-subtext">knowledge nodeを選択してください。</p>
               )}
             </CardContent>
           </Card>

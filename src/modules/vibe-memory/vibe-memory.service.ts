@@ -10,7 +10,11 @@ import {
   recordVibeMemoryInputSchema,
   type RecordVibeMemoryInput,
 } from "../../shared/schemas/vibe-memory.schema.js";
-import { normalizeAgentDiffEntries } from "./agent-diff-ingestion.service.js";
+import {
+  extractAgentDiffContentFromText,
+  normalizeAgentDiffEntries,
+  stripAgentDiffContentFromText,
+} from "./agent-diff-ingestion.service.js";
 
 export type RecordedVibeMemory = {
   memory: typeof vibeMemories.$inferSelect;
@@ -25,17 +29,23 @@ export async function recordVibeMemoryWithDiffEntries(
   input: RecordVibeMemoryInput,
 ): Promise<RecordedVibeMemory> {
   const parsed = recordVibeMemoryInputSchema.parse(input);
+  const embeddedDiff = extractAgentDiffContentFromText(parsed.content);
   const normalizedEntries = normalizeAgentDiffEntries({
-    diff: parsed.diff,
+    diff: [parsed.diff, embeddedDiff]
+      .filter((diff): diff is string => Boolean(diff?.trim()))
+      .join("\n\n"),
     agentDiffs: parsed.agentDiffs,
   });
+  const content =
+    stripAgentDiffContentFromText(parsed.content) ||
+    (normalizedEntries.length > 0 ? "Agent diff recorded." : parsed.content.trim());
 
   return db.transaction(async (tx) => {
     const [memory] = await tx
       .insert(vibeMemories)
       .values({
         sessionId: parsed.sessionId,
-        content: parsed.content,
+        content,
         memoryType: parsed.memoryType,
         metadata: parsed.metadata,
       })

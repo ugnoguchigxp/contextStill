@@ -1,6 +1,11 @@
+import { execFileSync } from "node:child_process";
+import fs from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { sql } from "drizzle-orm";
 import { config } from "../../config.js";
 import { getDb } from "../../db/index.js";
+import { syncStates } from "../../db/schema.js";
 import { type DoctorReport, doctorReportSchema } from "../../shared/schemas/doctor.schema.js";
 import { listRecentCompileRuns } from "../context-compiler/context-compiler.repository.js";
 import { embeddingHealth } from "../embedding/embedding.service.js";
@@ -15,6 +20,7 @@ const requiredTables = [
   "relations",
   "context_compile_runs",
   "context_pack_items",
+  "sync_states",
 ] as const;
 
 const requiredTableSqlList = requiredTables.map((tableName) => `'${tableName}'`).join(", ");
@@ -34,6 +40,124 @@ function minutesSince(iso: string): number {
   return Math.max(0, deltaMs / 1000 / 60);
 }
 
+async function pathExists(filePath: string): Promise<boolean> {
+  if (!filePath.trim()) return false;
+  try {
+    await fs.access(filePath);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function cursorFileCount(raw: unknown): number {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return 0;
+  return Object.keys(raw).length;
+}
+
+function metadataWarnings(raw: unknown): string[] {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return [];
+  const warnings = (raw as { warnings?: unknown }).warnings;
+  if (!Array.isArray(warnings)) return [];
+  return warnings.filter((warning): warning is string => typeof warning === "string");
+}
+
+function metadataSkipped(raw: unknown): boolean {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
+  return Boolean((raw as { skipped?: unknown }).skipped);
+}
+
+async function inspectLaunchAgent(): Promise<DoctorReport["agentLogSync"]["launchAgent"]> {
+  const label = "com.memory-router.agent-log-sync";
+  const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", `${label}.plist`);
+  const installed = await pathExists(plistPath);
+  let loaded = false;
+  let state: string | null = null;
+
+  if (installed && typeof process.getuid === "function") {
+    try {
+      const output = execFileSync("launchctl", ["print", `gui/${process.getuid()}/${label}`], {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      loaded = true;
+      state = output.match(/state = ([^\n]+)/)?.[1]?.trim() ?? null;
+    } catch {
+      loaded = false;
+    }
+  }
+
+  return { label, plistPath, installed, loaded, state };
+}
+
+async function inspectAgentLogSync(params: {
+  canQueryDb: boolean;
+  syncStatesTableAvailable: boolean;
+}): Promise<DoctorReport["agentLogSync"]> {
+  const codexSessionDirExists = await pathExists(config.codexSessionDir);
+  const codexArchivedSessionDirExists = await pathExists(config.codexArchivedSessionDir);
+  const antigravityConfigured = config.antigravityLogDir.trim().length > 0;
+  const antigravityExists = antigravityConfigured
+    ? await pathExists(config.antigravityLogDir)
+    : false;
+  const launchAgent = await inspectLaunchAgent();
+  const states: DoctorReport["agentLogSync"]["states"] = [];
+
+  if (params.canQueryDb && params.syncStatesTableAvailable) {
+    try {
+      const rows = await getDb().select().from(syncStates);
+      for (const row of rows) {
+        const lastSyncedAt = row.lastSyncedAt?.toISOString() ?? null;
+        states.push({
+          id: row.id,
+          lastSyncedAt,
+          lastSyncedAgeMinutes: lastSyncedAt ? minutesSince(lastSyncedAt) : null,
+          cursorFiles: cursorFileCount(row.cursor),
+          skipped: metadataSkipped(row.metadata),
+          warnings: metadataWarnings(row.metadata),
+        });
+      }
+    } catch {
+      // The caller adds a table/query reason. Keep the doctor report structured.
+    }
+  }
+
+  const nextActions: string[] = [];
+  if (!codexSessionDirExists) {
+    nextActions.push("MEMORY_ROUTER_CODEX_SESSION_DIR を実在する Codex sessions root に設定する");
+  }
+  if (!antigravityConfigured) {
+    nextActions.push("MEMORY_ROUTER_ANTIGRAVITY_LOG_DIR に Antigravity workspace root を設定する");
+  } else if (!antigravityExists) {
+    nextActions.push("MEMORY_ROUTER_ANTIGRAVITY_LOG_DIR のパスを確認する");
+  }
+  if (!states.some((state) => state.id === "codex_logs")) {
+    nextActions.push("bun run sync:agent-logs を実行して Codex ログ同期を初期化する");
+  }
+  if (!launchAgent.installed) {
+    nextActions.push("./scripts/setup-automation.sh install で LaunchAgent を配置する");
+  } else if (!launchAgent.loaded) {
+    nextActions.push("./scripts/setup-automation.sh load で LaunchAgent を読み込む");
+  }
+
+  return {
+    codex: {
+      sessionDir: config.codexSessionDir,
+      sessionDirExists: codexSessionDirExists,
+      archivedSessionDir: config.codexArchivedSessionDir,
+      archivedSessionDirExists: codexArchivedSessionDirExists,
+    },
+    antigravity: {
+      logDir: config.antigravityLogDir,
+      configured: antigravityConfigured,
+      exists: antigravityExists,
+    },
+    states,
+    launchAgent,
+    nextActions,
+  };
+}
+
 export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorReport> {
   const db = getDb();
   const options = {
@@ -50,6 +174,10 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
   try {
     await db.execute(sql`select 1 as ok`);
   } catch (error) {
+    const agentLogSync = await inspectAgentLogSync({
+      canQueryDb: false,
+      syncStatesTableAvailable: false,
+    });
     return doctorReportSchema.parse({
       status: "failed",
       checkedAt: nowIso(),
@@ -72,6 +200,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
         freshnessThresholdMinutes: options.freshnessThresholdMinutes,
         degradedRateThreshold: options.degradedRateThreshold,
       },
+      agentLogSync,
     });
   }
 
@@ -147,6 +276,39 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
     }
   }
 
+  const agentLogSync = await inspectAgentLogSync({
+    canQueryDb: true,
+    syncStatesTableAvailable: !missingTables.includes("sync_states"),
+  });
+
+  if (!agentLogSync.codex.sessionDirExists) {
+    reasons.push("CODEX_SESSION_DIR_MISSING");
+  }
+  if (!agentLogSync.antigravity.configured) {
+    reasons.push("ANTIGRAVITY_LOG_DIR_NOT_CONFIGURED");
+  } else if (!agentLogSync.antigravity.exists) {
+    reasons.push("ANTIGRAVITY_LOG_DIR_MISSING");
+  }
+  if (!agentLogSync.states.some((state) => state.id === "codex_logs")) {
+    reasons.push("AGENT_LOG_SYNC_NEVER_RAN");
+  }
+  if (!agentLogSync.launchAgent.installed) {
+    reasons.push("AGENT_LOG_SYNC_LAUNCH_AGENT_NOT_INSTALLED");
+  } else if (!agentLogSync.launchAgent.loaded) {
+    reasons.push("AGENT_LOG_SYNC_LAUNCH_AGENT_NOT_LOADED");
+  }
+  for (const state of agentLogSync.states) {
+    if (
+      state.lastSyncedAgeMinutes !== null &&
+      state.lastSyncedAgeMinutes > options.freshnessThresholdMinutes
+    ) {
+      reasons.push(`${state.id.toUpperCase()}_SYNC_STALE`);
+    }
+    if (state.warnings.length > 0) {
+      reasons.push(`${state.id.toUpperCase()}_SYNC_WARNINGS`);
+    }
+  }
+
   const status =
     reasons.includes("MISSING_REQUIRED_TABLES") || reasons.includes("REQUIRED_TABLES_CHECK_FAILED")
       ? "failed"
@@ -181,5 +343,6 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
       freshnessThresholdMinutes: options.freshnessThresholdMinutes,
       degradedRateThreshold: options.degradedRateThreshold,
     },
+    agentLogSync,
   });
 }

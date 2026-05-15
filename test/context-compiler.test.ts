@@ -28,7 +28,6 @@ describe("context compiler helpers", () => {
       minimalTasks: ["one"],
       rules: [],
       procedures: [],
-      lessons: [],
       codeContext: [],
       warnings: [],
       sourceRefs: [],

@@ -36,6 +36,20 @@
       "when": 1778763226844,
       "tag": "0004_final_model_alignment",
       "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1778770000000,
+      "tag": "0005_agent_log_sync",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1778812258000,
+      "tag": "0006_rule_procedure_knowledge",
+      "breakpoints": true
     }
   ]
 }

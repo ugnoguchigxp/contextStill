@@ -32,7 +32,6 @@ export function renderContextPackMarkdown(pack: ContextPack): string {
 
   renderSection("Rules", pack.rules);
   renderSection("Procedures", pack.procedures);
-  renderSection("Lessons", pack.lessons);
   renderSection("Code Context", pack.codeContext);
 
   lines.push("## Source Refs");

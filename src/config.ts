@@ -1,4 +1,5 @@
 import { config as loadEnv } from "dotenv";
+import os from "node:os";
 import path from "node:path";
 
 loadEnv({ quiet: true });
@@ -44,6 +45,37 @@ export const config = {
     path.resolve(process.cwd(), "../local-llm/embedding/models/multilingual-e5-small"),
   sourceContentRoot:
     process.env.MEMORY_ROUTER_SOURCE_CONTENT_ROOT || path.resolve(process.cwd(), "wiki"),
+  codexSessionDir:
+    process.env.MEMORY_ROUTER_CODEX_SESSION_DIR || path.join(os.homedir(), ".codex", "sessions"),
+  codexArchivedSessionDir:
+    process.env.MEMORY_ROUTER_CODEX_ARCHIVED_SESSION_DIR ||
+    path.join(os.homedir(), ".codex", "archived_sessions"),
+  antigravityLogDir:
+    process.env.MEMORY_ROUTER_ANTIGRAVITY_LOG_DIR ||
+    path.join(os.homedir(), ".gemini", "antigravity", "brain"),
+  agentLogSyncIntervalSeconds: Math.max(
+    60,
+    envNumber(process.env.MEMORY_ROUTER_AGENT_LOG_SYNC_INTERVAL_SECONDS, 3600),
+  ),
+  agentLogInitialLookbackHours: Math.max(
+    0,
+    envNumber(process.env.MEMORY_ROUTER_AGENT_LOG_INITIAL_LOOKBACK_HOURS, 168),
+  ),
+  agentLogMaxMessagesPerChunk: Math.max(
+    1,
+    envNumber(process.env.MEMORY_ROUTER_AGENT_LOG_MAX_MESSAGES_PER_CHUNK, 120),
+  ),
+  agentLogMaxCharsPerChunk: Math.max(
+    512,
+    envNumber(process.env.MEMORY_ROUTER_AGENT_LOG_MAX_CHARS_PER_CHUNK, 12000),
+  ),
+  agentLogSyncLockTtlSeconds: Math.max(
+    60,
+    envNumber(process.env.MEMORY_ROUTER_AGENT_LOG_SYNC_LOCK_TTL_SECONDS, 1800),
+  ),
+  agentLogSyncLockFile:
+    process.env.MEMORY_ROUTER_AGENT_LOG_SYNC_LOCK_FILE ||
+    path.resolve(process.cwd(), "logs", "agent-log-sync.lock"),
   defaultTokenBudget: Math.max(
     256,
     envNumber(process.env.MEMORY_ROUTER_DEFAULT_TOKEN_BUDGET, 3000),

@@ -24,9 +24,8 @@ const retrievalModeByIntent: Record<CompileInput["intent"], RetrievalMode> = {
 };
 
 const sectionRatios = {
-  rules: 0.32,
-  procedures: 0.28,
-  lessons: 0.2,
+  rules: 0.45,
+  procedures: 0.35,
   codeContext: 0.2,
 } as const;
 
@@ -112,10 +111,6 @@ function selectSourceRefsForKnowledge(
     .map((entry) => entry.ref);
   if (overlapRefs.length > 0) return [...new Set(overlapRefs)];
 
-  const sourceRequiredTypes = new Set(["fact", "lesson"]);
-  if (sourceRequiredTypes.has(item.type)) {
-    return [scored[0].ref];
-  }
   return [];
 }
 
@@ -151,7 +146,7 @@ function buildMinimalTasks(retrievalMode: RetrievalMode): string[] {
   switch (retrievalMode) {
     case "review_context":
       return [
-        "Inspect active rules, lessons, and relevant source material",
+        "Inspect active rules, procedures, and relevant source material",
         "Check touched files against known constraints",
         "Verify source refs for each review claim",
         "Summarize findings with concrete next actions",
@@ -202,8 +197,7 @@ function toKnowledgePackItem(item: {
   score: number;
   sourceRefs: string[];
 }): ContextPackItem {
-  const section =
-    item.type === "procedure" ? "procedures" : item.type === "lesson" ? "lessons" : "rules";
+  const section = item.type === "procedure" ? "procedures" : "rules";
   return {
     id: `knowledge:${item.id}`,
     itemKind: item.type,
@@ -282,20 +276,13 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     packItems.filter((item) => item.section === "procedures"),
     Math.floor(tokenBudget * sectionRatios.procedures),
   );
-  const budgetedLessons = applySectionTokenBudget(
-    packItems.filter((item) => item.section === "lessons"),
-    Math.floor(tokenBudget * sectionRatios.lessons),
-  );
   const budgetedCodeContext = applySectionTokenBudget(
     buildCodeContextItems(input.files),
     Math.floor(tokenBudget * sectionRatios.codeContext),
   );
 
   const budgetDropDetected =
-    budgetedRules.dropped ||
-    budgetedProcedures.dropped ||
-    budgetedLessons.dropped ||
-    budgetedCodeContext.dropped;
+    budgetedRules.dropped || budgetedProcedures.dropped || budgetedCodeContext.dropped;
   if (budgetDropDetected) {
     degradedReasons.push("TOKEN_BUDGET_SECTION_LIMIT_REACHED");
   }
@@ -303,7 +290,6 @@ export async function compileContextPack(rawInput: unknown): Promise<{
   const selectedPackItems = [
     ...budgetedRules.items,
     ...budgetedProcedures.items,
-    ...budgetedLessons.items,
     ...budgetedCodeContext.items,
   ];
   const itemSourceRefs = selectedPackItems.flatMap((item) => item.sourceRefs);
@@ -354,11 +340,10 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     minimalTasks,
     rules: budgetedRules.items,
     procedures: budgetedProcedures.items,
-    lessons: budgetedLessons.items,
     codeContext: budgetedCodeContext.items,
     warnings: [
       "Do not promote draft knowledge into instructions automatically.",
-      "Keep source refs attached to factual claims.",
+      "Keep source refs attached when a rule or procedure depends on source material.",
       ...(budgetDropDetected ? ["Token budget section caps trimmed lower-ranked items."] : []),
     ],
     sourceRefs,

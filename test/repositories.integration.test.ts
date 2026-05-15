@@ -47,7 +47,7 @@ describeDb("repositories integration", () => {
       status: "active",
       scope: "repo",
       title: "Repository Integration Rule",
-      body: "Always keep source refs attached to factual claims.",
+      body: "Always keep source refs attached to source-backed claims.",
     });
 
     const draftId = await upsertKnowledgeFromSource({
@@ -171,5 +171,33 @@ index 0000000..1111111
       limit: 5,
     });
     expect(hits.some((hit) => hit.id === result.memory.id)).toBe(true);
+  });
+
+  test("vibe memory recording moves embedded content diffs into agent_diff_entries", async () => {
+    const result = await recordVibeMemoryWithDiffEntries({
+      sessionId: "integration-embedded-agent-diff-session",
+      content: `差分を作りました。
+
+\`\`\`diff
+diff --git a/src/embedded.ts b/src/embedded.ts
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/src/embedded.ts
+@@ -0,0 +1,3 @@
++export function embeddedValue(): number {
++  return 9;
++}
+\`\`\`
+
+確認してください。`,
+      memoryType: "chat",
+    });
+
+    expect(result.memory.content).toBe("差分を作りました。\n\n確認してください。");
+    expect(result.memory.content).not.toContain("diff --git");
+    expect(result.diffEntries.length).toBeGreaterThan(0);
+    expect(result.diffEntries.some((entry) => entry.filePath === "src/embedded.ts")).toBe(true);
+    expect(result.diffEntries.some((entry) => entry.symbolName === "embeddedValue")).toBe(true);
   });
 });

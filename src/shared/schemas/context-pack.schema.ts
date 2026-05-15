@@ -3,13 +3,7 @@ import { retrievalModeSchema } from "./compile.schema.js";
 
 export const contextPackStatusSchema = z.enum(["ok", "degraded", "failed"]);
 
-export const contextPackSectionSchema = z.enum([
-  "rules",
-  "procedures",
-  "lessons",
-  "code_context",
-  "warnings",
-]);
+export const contextPackSectionSchema = z.enum(["rules", "procedures", "code_context", "warnings"]);
 
 export const contextPackItemSchema = z.object({
   id: z.string().min(1),
@@ -32,7 +26,6 @@ export const contextPackSchema = z.object({
   minimalTasks: z.array(z.string()),
   rules: z.array(contextPackItemSchema),
   procedures: z.array(contextPackItemSchema),
-  lessons: z.array(contextPackItemSchema),
   codeContext: z.array(contextPackItemSchema),
   warnings: z.array(z.string()),
   sourceRefs: z.array(z.string()),

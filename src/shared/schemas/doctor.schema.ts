@@ -45,6 +45,37 @@ export const doctorReportSchema = z.object({
     freshnessThresholdMinutes: z.number().int().positive(),
     degradedRateThreshold: z.number().min(0).max(1),
   }),
+  agentLogSync: z.object({
+    codex: z.object({
+      sessionDir: z.string(),
+      sessionDirExists: z.boolean(),
+      archivedSessionDir: z.string(),
+      archivedSessionDirExists: z.boolean(),
+    }),
+    antigravity: z.object({
+      logDir: z.string(),
+      configured: z.boolean(),
+      exists: z.boolean(),
+    }),
+    states: z.array(
+      z.object({
+        id: z.string(),
+        lastSyncedAt: z.string().datetime().nullable(),
+        lastSyncedAgeMinutes: z.number().nonnegative().nullable(),
+        cursorFiles: z.number().int().nonnegative(),
+        skipped: z.boolean(),
+        warnings: z.array(z.string()),
+      }),
+    ),
+    launchAgent: z.object({
+      label: z.string(),
+      plistPath: z.string(),
+      installed: z.boolean(),
+      loaded: z.boolean(),
+      state: z.string().nullable(),
+    }),
+    nextActions: z.array(z.string()),
+  }),
 });
 
 export type DoctorReport = z.infer<typeof doctorReportSchema>;

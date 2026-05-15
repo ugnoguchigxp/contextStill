@@ -21,7 +21,6 @@ describe("schema contracts", () => {
       minimalTasks: [],
       rules: [],
       procedures: [],
-      lessons: [],
       codeContext: [],
       warnings: [],
       sourceRefs: [],

@@ -1,8 +1,11 @@
 import { describe, expect, test } from "bun:test";
 import {
+  extractAgentDiffContentFromText,
   extractAgentDiffSymbols,
   normalizeAgentDiffEntries,
+  parseApplyPatchAgentDiffs,
   parseUnifiedAgentDiffs,
+  stripAgentDiffContentFromText,
 } from "../src/modules/vibe-memory/agent-diff-ingestion.service.js";
 
 const diff = `diff --git a/src/math.ts b/src/math.ts
@@ -75,5 +78,50 @@ describe("agent diff ingestion", () => {
     const subtract = entries.find((entry) => entry.symbolName === "subtract");
     expect(subtract?.diffHunk).toContain("subtract");
     expect(subtract?.metadata.origin).toBe("explicit");
+  });
+
+  test("parseApplyPatchAgentDiffs extracts file and symbols from apply_patch input", () => {
+    const patch = `*** Begin Patch
+*** Add File: src/hello.ts
++export function hello(name: string): string {
++  return \`hello \${name}\`;
++}
+*** End Patch`;
+
+    const fileDiffs = parseApplyPatchAgentDiffs(patch);
+    expect(fileDiffs).toHaveLength(1);
+    expect(fileDiffs[0]?.filePath).toBe("src/hello.ts");
+    expect(fileDiffs[0]?.changeType).toBe("add");
+
+    const entries = normalizeAgentDiffEntries({ diff: patch });
+    expect(entries.some((entry) => entry.symbolName === "hello")).toBe(true);
+    expect(entries[0]?.metadata.source).toBe("apply_patch");
+  });
+
+  test("extractAgentDiffContentFromText pulls diff blocks from mixed chat text", () => {
+    const mixed = `実装しました。
+
+\`\`\`diff
+${diff}
+\`\`\`
+
+確認してください。`;
+
+    const extracted = extractAgentDiffContentFromText(mixed);
+    expect(extracted).toContain("diff --git");
+    expect(extracted).toContain("src/math.ts");
+  });
+
+  test("stripAgentDiffContentFromText removes diff blocks but keeps natural chat", () => {
+    const stripped = stripAgentDiffContentFromText(`実装しました。
+
+\`\`\`diff
+${diff}
+\`\`\`
+
+確認してください。`);
+
+    expect(stripped).toBe("実装しました。\n\n確認してください。");
+    expect(stripped).not.toContain("diff --git");
   });
 });

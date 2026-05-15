@@ -29,12 +29,12 @@ describeDb("context compiler integration", () => {
   test("applies section token budget and keeps source refs on selected items", async () => {
     for (let i = 0; i < 6; i += 1) {
       await upsertKnowledgeFromSource({
-        sourceUri: `file:///knowledge/fact-${i}.md`,
-        contentHash: `fact-hash-${i}`,
-        type: "fact",
+        sourceUri: `file:///knowledge/rule-${i}.md`,
+        contentHash: `rule-hash-${i}`,
+        type: "rule",
         status: "active",
         scope: "repo",
-        title: `Budget Fact ${i}`,
+        title: `Budget Rule ${i}`,
         body: `budget scenario integration source linkage repeated content ${"x".repeat(400)}`,
       });
     }

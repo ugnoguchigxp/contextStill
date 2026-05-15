@@ -17,7 +17,7 @@ type FrontmatterParseResult = {
   body: string;
 };
 
-const knowledgeTypeValues = new Set(["fact", "rule", "procedure", "lesson"]);
+const knowledgeTypeValues = new Set(["rule", "procedure"]);
 
 const knowledgeStatusValues = new Set(["draft", "active", "deprecated"]);
 
@@ -60,14 +60,14 @@ function clamp01(value: number, fallback: number): number {
   return Math.min(1, Math.max(0, value));
 }
 
-function inferKnowledgeType(input: { frontmatterType?: string; title: string; body: string }):
-  | "fact"
-  | "rule"
-  | "procedure"
-  | "lesson" {
+function inferKnowledgeType(input: {
+  frontmatterType?: string;
+  title: string;
+  body: string;
+}): "rule" | "procedure" {
   const explicitType = input.frontmatterType?.toLowerCase();
   if (explicitType && knowledgeTypeValues.has(explicitType)) {
-    return explicitType as "fact" | "rule" | "procedure" | "lesson";
+    return explicitType as "rule" | "procedure";
   }
 
   const signal = `${input.title}\n${input.body}`.toLowerCase();
@@ -89,16 +89,7 @@ function inferKnowledgeType(input: { frontmatterType?: string; title: string; bo
   ) {
     return "rule";
   }
-  if (
-    signal.includes("example") ||
-    signal.includes("事例") ||
-    signal.includes("risk") ||
-    signal.includes("失敗") ||
-    signal.includes("lesson")
-  ) {
-    return "lesson";
-  }
-  return "fact";
+  return "rule";
 }
 
 export async function collectMarkdownFiles(rootDir: string): Promise<string[]> {

@@ -29,15 +29,15 @@ export type KnowledgeRetrievalResult = {
 
 function getKnowledgeRetrievalProfile(retrievalMode: RetrievalMode): {
   limit: number;
-  types?: Array<"fact" | "rule" | "procedure" | "lesson">;
+  types?: Array<"rule" | "procedure">;
 } {
   switch (retrievalMode) {
     case "review_context":
-      return { limit: 12, types: ["rule", "fact", "lesson"] };
+      return { limit: 12, types: ["rule", "procedure"] };
     case "debug_context":
-      return { limit: 14, types: ["lesson", "procedure", "rule"] };
+      return { limit: 14, types: ["procedure", "rule"] };
     case "architecture_context":
-      return { limit: 12, types: ["rule", "fact"] };
+      return { limit: 12, types: ["rule"] };
     case "procedure_context":
       return { limit: 10, types: ["procedure"] };
     case "learning_context":
@@ -138,7 +138,7 @@ export async function registerKnowledgeFromMarkdown(params: {
   contentHash: string;
   title: string;
   body: string;
-  type?: "fact" | "rule" | "procedure" | "lesson";
+  type?: "rule" | "procedure";
   status?: KnowledgeStatus;
   scope?: "repo" | "global";
   confidence?: number;
@@ -154,7 +154,7 @@ export async function registerKnowledgeFromMarkdown(params: {
   return upsertKnowledgeFromSource({
     sourceUri: params.sourceUri,
     contentHash: params.contentHash,
-    type: params.type ?? "fact",
+    type: params.type ?? "rule",
     status: params.status ?? "draft",
     scope: params.scope ?? "repo",
     title: params.title,

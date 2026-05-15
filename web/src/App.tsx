@@ -6,7 +6,6 @@ import {
   RouterProvider,
 } from "@tanstack/react-router";
 import { AppShell } from "./modules/admin/components/app-shell";
-import { AgentDiffsPage } from "./modules/admin/components/agent-diffs.page";
 import { VibeMemoryPage } from "./modules/admin/components/vibe-memory.page";
 import { DoctorPage } from "./modules/admin/components/doctor.page";
 import { GraphPage } from "./modules/admin/components/graph.page";
@@ -55,12 +54,6 @@ const vibeMemoryRoute = createRoute({
   component: VibeMemoryPage,
 });
 
-const agentDiffsRoute = createRoute({
-  getParentRoute: () => rootRoute,
-  path: "/agent-diffs",
-  component: AgentDiffsPage,
-});
-
 const graphRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/graph",
@@ -77,10 +70,9 @@ const routeTree = rootRoute.addChildren([
   indexRoute,
   compileRoute,
   knowledgeRoute,
-  sourcesRoute,
-  vibeMemoryRoute,
-  agentDiffsRoute,
   graphRoute,
+  vibeMemoryRoute,
+  sourcesRoute,
   doctorRoute,
 ]);
 

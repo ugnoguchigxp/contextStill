@@ -81,6 +81,42 @@ export function DoctorPage() {
 
       <Card>
         <CardHeader>
+          <CardTitle>Agent Log Sync</CardTitle>
+        </CardHeader>
+        <CardContent className="runtime-list">
+          <div>
+            <span>Codex sessions</span>
+            <strong>{report?.agentLogSync.codex.sessionDirExists ? "available" : "missing"}</strong>
+          </div>
+          <div>
+            <span>Antigravity logs</span>
+            <strong>
+              {report?.agentLogSync.antigravity.configured
+                ? report.agentLogSync.antigravity.exists
+                  ? "available"
+                  : "missing"
+                : "not configured"}
+            </strong>
+          </div>
+          <div>
+            <span>LaunchAgent</span>
+            <strong>
+              {report?.agentLogSync.launchAgent.loaded
+                ? "loaded"
+                : report?.agentLogSync.launchAgent.installed
+                  ? "installed"
+                  : "not installed"}
+            </strong>
+          </div>
+          <div>
+            <span>Sync states</span>
+            <strong>{report?.agentLogSync.states.length ?? 0}</strong>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
           <CardTitle>Reasons</CardTitle>
         </CardHeader>
         <CardContent>

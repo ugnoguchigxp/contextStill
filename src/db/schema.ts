@@ -8,12 +8,13 @@ import {
   real,
   text,
   timestamp,
+  uniqueIndex,
   uuid,
   vector,
 } from "drizzle-orm/pg-core";
 import { config } from "../config.js";
 
-export const knowledgeTypeValues = ["fact", "rule", "procedure", "lesson"] as const;
+export const knowledgeTypeValues = ["rule", "procedure"] as const;
 
 export const knowledgeStatusValues = ["draft", "active", "deprecated"] as const;
 
@@ -28,6 +29,7 @@ export const vibeMemories = pgTable(
     sessionId: text("session_id").notNull(),
     content: text("content").notNull(),
     memoryType: text("memory_type").notNull().default("chat"),
+    dedupeKey: text("dedupe_key"),
     embedding: vector("embedding", { dimensions: config.embeddingDimension }),
     metadata: jsonb("metadata").default({}).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -35,6 +37,10 @@ export const vibeMemories = pgTable(
   (table) => ({
     sessionIdIdx: index("vibe_memories_session_id_idx").on(table.sessionId),
     memoryTypeIdx: index("vibe_memories_memory_type_idx").on(table.memoryType),
+    sessionDedupeKeyIdx: uniqueIndex("vibe_memories_session_dedupe_key_idx").on(
+      table.sessionId,
+      table.dedupeKey,
+    ),
     contentFtsIdx: index("vibe_memories_content_fts_idx").using(
       "gin",
       sql`to_tsvector('simple', ${table.content})`,
@@ -45,6 +51,15 @@ export const vibeMemories = pgTable(
     ),
   }),
 );
+
+export const syncStates = pgTable("sync_states", {
+  id: text("id").primaryKey(),
+  lastSyncedAt: timestamp("last_synced_at").defaultNow().notNull(),
+  cursor: jsonb("cursor").default({}).notNull(),
+  metadata: jsonb("metadata").default({}).notNull(),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+  updatedAt: timestamp("updated_at").defaultNow().notNull(),
+});
 
 export const agentDiffEntries = pgTable(
   "agent_diff_entries",
@@ -90,13 +105,7 @@ export const sourceLinkTypeValues = ["derived_from"] as const;
 
 export const runStatusValues = ["ok", "degraded", "failed"] as const;
 
-export const packSectionValues = [
-  "rules",
-  "procedures",
-  "lessons",
-  "code_context",
-  "warnings",
-] as const;
+export const packSectionValues = ["rules", "procedures", "code_context", "warnings"] as const;
 
 const toSqlList = (values: readonly string[]): string =>
   values.map((value) => `'${value}'`).join(", ");

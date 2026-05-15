@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const knowledgeTypeSchema = z.enum(["fact", "rule", "procedure", "lesson"]);
+export const knowledgeTypeSchema = z.enum(["rule", "procedure"]);
 
 export const knowledgeStatusSchema = z.enum(["draft", "active", "deprecated"]);
 

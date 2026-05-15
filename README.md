@@ -7,9 +7,10 @@
 
 - `sources`: このプロジェクト配下の `./wiki` そのもの。人間が編集する Markdown はここに集約します。
 - `source_fragments`: wiki ページ検索と `sourceRefs` 解決のための内部インデックスです。UI/API の入力口ではありません。
-- `knowledge_items`: wiki から蒸留された知識です。`type` は `fact / rule / procedure / lesson`、`status` は `draft / active / deprecated`、`scope` は `repo / global` だけを使います。
-- `vibe_memories`: LLM との会話ログです。
-- `agent_diff_entries`: `vibe_memories` に含まれる編集差分です。file content は保存せず、`diff_hunk` と抽出できた symbol 列を保存します。
+- `knowledge_items`: wiki や vibe memory から蒸留された、次回作業の判断・手順に使う知識です。`type` は `rule / procedure`、`status` は `draft / active / deprecated`、`scope` は `repo / global` だけを使います。
+- `vibe_memories`: LLM との自然言語会話ログです。diff 本文は保存しません。
+- `agent_diff_entries`: `vibe_memories` の会話中で発生した編集差分です。file content は保存せず、`diff_hunk` と抽出できた symbol 列を保存します。
+- `sync_states`: Codex / Antigravity ログ同期の file cursor と最終同期時刻です。
 
 ## 主要機能
 
@@ -17,8 +18,9 @@
 - Knowledge 管理（作成・編集・削除）
 - Wiki 管理（フォルダ、ページ、Git 履歴、diff、Markdown WYSIWYG）
 - Vibe Memory 閲覧、削除
-- Agent Diff / Symbol 閲覧
-- Graph 可視化
+- Codex / Antigravity 会話ログの増分同期
+- Vibe Memory 内での Agent Diff / Symbol 畳み込み表示
+- Knowledge Graph 可視化（`knowledge_items` の距離と relation を表示し、`vibe_memories` は蒸留元として扱う）
 - Doctor 診断
 
 ## Wiki 管理
@@ -60,8 +62,29 @@ bun run dev
 ```bash
 bun run compile --goal "fix context compiler" --intent edit --json
 bun run import:wiki ./wiki/pages
+bun run sync:agent-logs
 bun run doctor
 ```
+
+## Agent Log Sync
+
+Codex と Antigravity の会話ログを `vibe_memories` に継続保存できます。Codex は既定で `~/.codex/sessions` と `~/.codex/archived_sessions` を見ます。Antigravity は既定で `~/.gemini/antigravity/brain` を見ます。別環境では `MEMORY_ROUTER_ANTIGRAVITY_LOG_DIR` で workspace root を明示してください。
+
+一度だけ同期:
+
+```bash
+bun run sync:agent-logs
+```
+
+macOS LaunchAgent として定期実行:
+
+```bash
+./scripts/setup-automation.sh install
+./scripts/setup-automation.sh load
+./scripts/setup-automation.sh status
+```
+
+ログは `logs/agent-log-sync.log`、多重起動防止 lock は `logs/agent-log-sync.lock` を使います。
 
 ## Embedding
 
@@ -97,7 +120,9 @@ bun run doctor
 - `GET /api/agent-diffs`
 - `GET /api/graph`
 
-`POST /api/vibe-memory` は vibe memory の本文に加えて `diff` または `agentDiffs[]` を受け取れます。unified diff は `agent_diff_entries` に分解され、TypeScript/JavaScript の主要シンボルは同じテーブルの symbol 列に保存されます。
+`GET /api/graph` は既定で `active / draft` の `knowledge_items` だけをノードにします。`vibe_memories` は raw transcript として検索・蒸留候補に使い、Graph の主ノードには含めません。`edgeMode=semantic|relations|both`、`status=current|active|draft|deprecated|all` で表示対象を切り替えられます。
+
+`POST /api/vibe-memory` は自然言語の `content` に加えて `diff` または `agentDiffs[]` を受け取れます。`content` に混ざった diff block も保存前に取り除かれ、unified diff は `agent_diff_entries` に分解されます。TypeScript/JavaScript の主要シンボルは同じテーブルの symbol 列に保存されます。
 
 ## MCP
 
@@ -114,7 +139,7 @@ bun run start:mcp
 - `memory_fetch`
 - `doctor`
 
-`record_vibe_memory` は `content` に加えて `diff` / `agentDiffs[]` を受け取り、`vibe_memories` と `agent_diff_entries` を同一トランザクションで保存します。
+`record_vibe_memory` は自然言語の `content` に加えて `diff` / `agentDiffs[]` を受け取り、`vibe_memories` と `agent_diff_entries` を同一トランザクションで保存します。diff 本文は `vibe_memories.content` から分離されます。
 
 ## テスト
 

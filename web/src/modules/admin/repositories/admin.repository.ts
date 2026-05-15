@@ -61,15 +61,49 @@ export type DoctorReport = {
     degradedRate: number;
     lastRunAt: string | null;
   };
+  agentLogSync: {
+    codex: {
+      sessionDir: string;
+      sessionDirExists: boolean;
+      archivedSessionDir: string;
+      archivedSessionDirExists: boolean;
+    };
+    antigravity: {
+      logDir: string;
+      configured: boolean;
+      exists: boolean;
+    };
+    states: Array<{
+      id: string;
+      lastSyncedAt: string | null;
+      lastSyncedAgeMinutes: number | null;
+      cursorFiles: number;
+      skipped: boolean;
+      warnings: string[];
+    }>;
+    launchAgent: {
+      label: string;
+      plistPath: string;
+      installed: boolean;
+      loaded: boolean;
+      state: string | null;
+    };
+    nextActions: string[];
+  };
 };
 
 export type GraphNode = {
   id: string;
   label: string;
-  kind: "knowledge" | "source" | "vibe_memory";
+  kind: "knowledge";
   group: string;
   detail: string;
   weight: number;
+  status: string;
+  confidence: number;
+  importance: number;
+  bodyPreview: string;
+  embedded: boolean;
 };
 
 export type GraphEdge = {
@@ -77,17 +111,25 @@ export type GraphEdge = {
   source: string;
   target: string;
   relationType: string;
+  edgeKind: "relation" | "semantic";
   weight: number;
+  detail: string;
 };
+
+export type GraphStatusFilter = "current" | "active" | "draft" | "deprecated" | "all";
+
+export type GraphEdgeMode = "semantic" | "relations" | "both";
 
 export type GraphSnapshot = {
   nodes: GraphNode[];
   edges: GraphEdge[];
   stats: {
-    knowledgeCount: number;
-    sourceCount: number;
-    vibeMemoryCount: number;
-    relationCount: number;
+    visibleKnowledgeCount: number;
+    totalKnowledgeCount: number;
+    embeddedKnowledgeCount: number;
+    semanticEdgeCount: number;
+    relationEdgeCount: number;
+    sourceRefCount: number;
   };
 };
 
@@ -216,8 +258,15 @@ export async function deleteVibeMemory(id: string): Promise<void> {
   await requestJson(`/api/vibe-memory/${id}`, "DELETE");
 }
 
-export async function fetchAgentDiffEntries(limit = 120): Promise<AgentDiffEntry[]> {
-  const json = await getJson<{ entries: AgentDiffEntry[] }>(`/api/agent-diffs?limit=${limit}`);
+export async function fetchAgentDiffEntries(
+  limit = 120,
+  params?: { id?: string; vibeMemoryId?: string; vibeMemoryIds?: string[] },
+): Promise<AgentDiffEntry[]> {
+  const query = new URLSearchParams({ limit: String(limit) });
+  if (params?.id) query.set("id", params.id);
+  if (params?.vibeMemoryId) query.set("vibeMemoryId", params.vibeMemoryId);
+  if (params?.vibeMemoryIds?.length) query.set("vibeMemoryIds", params.vibeMemoryIds.join(","));
+  const json = await getJson<{ entries: AgentDiffEntry[] }>(`/api/agent-diffs?${query}`);
   return json.entries;
 }
 
@@ -225,8 +274,32 @@ export async function fetchDoctorReport(): Promise<DoctorReport> {
   return getJson<DoctorReport>("/api/doctor");
 }
 
-export async function fetchGraphSnapshot(limit = 120): Promise<GraphSnapshot> {
-  return getJson<GraphSnapshot>(`/api/graph?limit=${limit}`);
+export async function fetchGraphSnapshot(
+  input:
+    | number
+    | {
+        limit?: number;
+        status?: GraphStatusFilter;
+        edgeMode?: GraphEdgeMode;
+        minSimilarity?: number;
+        semanticTopK?: number;
+      } = 120,
+): Promise<GraphSnapshot> {
+  const params = new URLSearchParams();
+  if (typeof input === "number") {
+    params.set("limit", String(input));
+  } else {
+    params.set("limit", String(input.limit ?? 120));
+    if (input.status) params.set("status", input.status);
+    if (input.edgeMode) params.set("edgeMode", input.edgeMode);
+    if (input.minSimilarity !== undefined) {
+      params.set("minSimilarity", String(input.minSimilarity));
+    }
+    if (input.semanticTopK !== undefined) {
+      params.set("semanticTopK", String(input.semanticTopK));
+    }
+  }
+  return getJson<GraphSnapshot>(`/api/graph?${params}`);
 }
 
 export async function fetchSourceTree(): Promise<SourceTreeResponse> {
