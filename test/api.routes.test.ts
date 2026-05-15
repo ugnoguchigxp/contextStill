@@ -96,7 +96,11 @@ const validDoctorReport: DoctorReport = {
       usable: true,
     },
   },
-  azureOpenAi: {
+  agenticLlm: {
+    providerSetting: "azure-openai",
+    selectedProvider: "azure-openai",
+    fallbackOrder: ["azure-openai"],
+    provider: "azure-openai",
     configured: true,
     reachable: true,
     model: "gpt-5-4-mini",

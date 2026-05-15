@@ -223,45 +223,45 @@ function buildMinimalTasks(retrievalMode: RetrievalMode): string[] {
   switch (retrievalMode) {
     case "review_context":
       return [
-        "Inspect active rules, procedures, and relevant source material",
-        "Check touched files against known constraints",
-        "Verify source refs for each review claim",
-        "Summarize findings with concrete next actions",
+        "有効なルール、手順、および関連するソース資料を確認してください",
+        "変更されたファイルが既知の制約に適合しているかチェックしてください",
+        "レビュー結果の各主張についてソース参照を検証してください",
+        "具体的な次のアクションを含めて結果を要約してください",
       ];
     case "debug_context":
       return [
-        "Inspect failure-related source material and code context first",
-        "Narrow root cause candidates before editing",
-        "Apply smallest fix aligned with known procedures",
-        "Run targeted verification for the failing path",
+        "まず、障害に関連するソース資料とコードコンテキストを確認してください",
+        "修正を行う前に、根本原因の候補を絞り込んでください",
+        "既知の手順に沿った、最小限かつ安全な修正を適用してください",
+        "修正したパスに対してピンポイントな検証を実行してください",
       ];
     case "architecture_context":
       return [
-        "Inspect prior rules and architecture constraints",
-        "Compare candidate design against known trade-offs",
-        "List affected symbols/files and compatibility risks",
-        "Propose implementation boundaries and validations",
+        "以前の設計ルールとアーキテクチャ上の制約を確認してください",
+        "候補となる設計を既知のトレードオフと比較検討してください",
+        "影響を受けるシンボル/ファイルと互換性リスクをリストアップしてください",
+        "実装の境界線と検証方法を提案してください",
       ];
     case "procedure_context":
       return [
-        "Inspect the selected procedure candidates",
-        "Execute only the necessary commands and checks",
-        "Capture source refs for each operational claim",
-        "Report result and follow-up verification steps",
+        "選択された手順の候補を確認してください",
+        "必要なコマンドとチェックのみを実行してください",
+        "各操作の根拠としてソース参照を記録してください",
+        "結果と、その後の検証ステップを報告してください",
       ];
     case "learning_context":
       return [
-        "Review draft knowledge with source traceability",
-        "Separate stable guidance from temporary observations",
-        "Promote only verifiable items to active state",
-        "Record why each promotion or deprecation decision was made",
+        "ソースの追跡可能性を維持しつつ、ドラフト知識をレビューしてください",
+        "恒久的なガイダンスと一時的な観察結果を分離してください",
+        "検証可能な項目のみを 'active' 状態に昇格させてください",
+        "昇格または廃止の決定理由を記録してください",
       ];
     default:
       return [
-        "Inspect relevant knowledge and source material",
-        "Apply active rules and procedures only",
-        "Implement smallest safe change set",
-        "Run focused verification for touched behavior",
+        "関連する知識とソース資料を確認してください",
+        "有効なルールと手順のみを適用してください",
+        "最小限で安全な変更セットを実装してください",
+        "変更した箇所の振る舞いに対して集中した検証を行ってください",
       ];
   }
 }
@@ -665,15 +665,16 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     procedures: budgetedProcedures.items,
     codeContext: budgetedCodeContext.items,
     warnings: [
-      "Do not promote draft knowledge into instructions automatically.",
-      "Keep source refs attached when a rule or procedure depends on source material.",
+      "ドラフト状態の知識を自動的に指示に組み込まないでください。必ず検証が必要です。",
+      "ルールや手順がソース資料に依存している場合は、ソース参照を維持してください。",
+      "必ず日本語で回答し、思考プロセスも日本語で行ってください。",
       ...(selectedStatuses.has("draft")
-        ? ["Draft knowledge is included; verify before turning it into stable instructions."]
+        ? ["ドラフト知識が含まれています。安定した指示として採用する前に内容を検証してください。"]
         : []),
       ...(suggestedNextCalls.length > 0
-        ? [`Suggested next MCP calls: ${[...new Set(suggestedNextCalls)].join(", ")}`]
+        ? [`推奨される次の MCP コール: ${[...new Set(suggestedNextCalls)].join(", ")}`]
         : []),
-      ...(budgetDropDetected ? ["Token budget section caps trimmed lower-ranked items."] : []),
+      ...(budgetDropDetected ? ["トークン予算の制限により、優先順位の低い項目がカットされました。"] : []),
     ],
     sourceRefs,
     diagnostics: {

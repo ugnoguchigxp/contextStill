@@ -46,7 +46,7 @@ export function AuditLogsPage() {
   const [limit] = useState(100);
   const [eventTypeFilter, setEventTypeFilter] = useState("all");
   const [actorFilter, setActorFilter] = useState<AuditLogActor | "all">("all");
-  const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
+  const [selectedLog, setSelectedLog] = useState<AuditLogItem | null>(null);
   const [sorting, setSorting] = useState<SortingState>([]);
 
   const auditQuery = useQuery({
@@ -61,16 +61,6 @@ export function AuditLogsPage() {
   });
 
   const items = auditQuery.data?.items ?? [];
-  const selectedLog = useMemo(
-    () => items.find((item) => item.id === selectedLogId) ?? null,
-    [items, selectedLogId],
-  );
-
-  useEffect(() => {
-    if (selectedLogId && !items.some((item) => item.id === selectedLogId)) {
-      setSelectedLogId(null);
-    }
-  }, [items, selectedLogId]);
 
   const columns = useMemo<ColumnDef<AuditLogItem>[]>(
     () => [
@@ -83,7 +73,7 @@ export function AuditLogsPage() {
         accessorKey: "eventType",
         header: "Event Type",
         cell: ({ row }) => (
-          <Badge variant="outline" className="font-mono text-xs">
+          <Badge variant="outline" className="font-mono text-[10px]">
             {row.original.eventType}
           </Badge>
         ),
@@ -92,9 +82,18 @@ export function AuditLogsPage() {
         accessorKey: "actor",
         header: "Actor",
         cell: ({ row }) => (
-          <Badge variant="secondary" className="capitalize">
+          <Badge variant="secondary" className="capitalize text-[10px]">
             {row.original.actor}
           </Badge>
+        ),
+      },
+      {
+        id: "payload",
+        header: "Payload Snippet",
+        cell: ({ row }) => (
+          <span className="row-subtext font-mono text-[10px] opacity-70">
+            {compactJson(row.original.payload, 120)}
+          </span>
         ),
       },
     ],
@@ -118,175 +117,183 @@ export function AuditLogsPage() {
 
   return (
     <div className="flex h-[calc(100vh-64px)] flex-col overflow-hidden bg-background">
-      {/* Fixed Header */}
-      <section className="border-b bg-background px-6 py-4">
-        <div className="flex items-center justify-between">
-          <div>
-            <h1 className="text-xl font-bold tracking-tight">Audit Logs</h1>
-            <p className="text-xs text-muted-foreground">重要アクションの時系列ログ（直近7日間）</p>
+      {/* Full-screen Card Container */}
+      <Card className="flex flex-1 flex-col overflow-hidden rounded-none border-0 shadow-none">
+        <CardHeader className="flex flex-row items-center justify-between space-y-0 py-4 px-6 border-b bg-muted/20">
+          <div className="flex items-center gap-4">
+            <CardTitle className="text-base font-bold">Audit Events</CardTitle>
+            <Badge variant="outline" className="font-mono text-[10px] bg-background">
+              {pagination?.total ?? 0} total
+            </Badge>
           </div>
-          <Badge variant="outline" className="font-mono">
-            {pagination?.total ?? 0} events
-          </Badge>
-        </div>
-      </section>
-
-      <div className="flex flex-1 flex-col overflow-hidden p-6 gap-6">
-        {/* Scrollable Table Section */}
-        <Card className="flex flex-1 flex-col overflow-hidden">
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 py-3 border-b bg-muted/30">
-            <CardTitle className="text-sm font-semibold">Recent Events</CardTitle>
-            <div className="flex items-center gap-4">
-              <div className="flex items-center gap-2 text-sm">
-                <span className="text-[10px] uppercase font-bold text-muted-foreground">
-                  Event Type
-                </span>
-                <Select
-                  aria-label="Event Type"
-                  value={eventTypeFilter}
-                  className="h-7 min-w-[140px] text-xs"
-                  onChange={(event) => {
-                    setEventTypeFilter(event.target.value);
-                    setPage(1);
-                  }}
-                >
-                  <option value="all">All Events</option>
-                  {(auditQuery.data?.availableEventTypes ?? []).map((eventType) => (
-                    <option key={eventType} value={eventType}>
-                      {eventType}
-                    </option>
-                  ))}
-                </Select>
-              </div>
-              <div className="flex items-center gap-2 text-sm">
-                <span className="text-[10px] uppercase font-bold text-muted-foreground">Actor</span>
-                <Select
-                  aria-label="Actor"
-                  value={actorFilter}
-                  className="h-7 min-w-[100px] text-xs"
-                  onChange={(event) => {
-                    setActorFilter(event.target.value as AuditLogActor | "all");
-                    setPage(1);
-                  }}
-                >
-                  {actorOptions.map((actor) => (
-                    <option key={actor} value={actor}>
-                      {actor}
-                    </option>
-                  ))}
-                </Select>
-              </div>
+          <div className="flex items-center gap-6">
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground whitespace-nowrap shrink-0">
+                Event Type
+              </span>
+              <Select
+                aria-label="Event Type"
+                value={eventTypeFilter}
+                className="h-8 min-w-[160px] text-xs bg-background"
+                onChange={(event) => {
+                  setEventTypeFilter(event.target.value);
+                  setPage(1);
+                }}
+              >
+                <option value="all">All Events</option>
+                {(auditQuery.data?.availableEventTypes ?? []).map((eventType) => (
+                  <option key={eventType} value={eventType}>
+                    {eventType}
+                  </option>
+                ))}
+              </Select>
             </div>
-          </CardHeader>
-          <div className="flex-1 overflow-auto">
-            <Table>
-              <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur">
-                {table.getHeaderGroups().map((headerGroup) => (
-                  <TableRow key={headerGroup.id}>
-                    {headerGroup.headers.map((header) => (
-                      <TableHead
-                        key={header.id}
-                        className={header.column.getCanSort() ? "cursor-pointer select-none" : ""}
-                        onClick={header.column.getToggleSortingHandler()}
-                      >
-                        <div className="flex items-center gap-2">
-                          {header.isPlaceholder
-                            ? null
-                            : flexRender(header.column.columnDef.header, header.getContext())}
-                          {header.column.getCanSort() && (
-                            <ArrowUpDown className="h-3 w-3 text-muted-foreground" />
-                          )}
-                        </div>
-                      </TableHead>
+            <div className="flex items-center gap-2 text-sm">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground whitespace-nowrap shrink-0">
+                Actor
+              </span>
+              <Select
+                aria-label="Actor"
+                value={actorFilter}
+                className="h-8 min-w-[110px] text-xs bg-background"
+                onChange={(event) => {
+                  setActorFilter(event.target.value as AuditLogActor | "all");
+                  setPage(1);
+                }}
+              >
+                {actorOptions.map((actor) => (
+                  <option key={actor} value={actor}>
+                    {actor}
+                  </option>
+                ))}
+              </Select>
+            </div>
+          </div>
+        </CardHeader>
+        <div className="flex-1 overflow-auto">
+          <Table>
+            <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b shadow-sm">
+              {table.getHeaderGroups().map((headerGroup) => (
+                <TableRow key={headerGroup.id}>
+                  {headerGroup.headers.map((header) => (
+                    <TableHead
+                      key={header.id}
+                      className={header.column.getCanSort() ? "cursor-pointer select-none px-6" : "px-6"}
+                      onClick={header.column.getToggleSortingHandler()}
+                    >
+                      <div className="flex items-center gap-2">
+                        {header.isPlaceholder
+                          ? null
+                          : flexRender(header.column.columnDef.header, header.getContext())}
+                        {header.column.getCanSort() && (
+                          <ArrowUpDown className="h-3 w-3 text-muted-foreground" />
+                        )}
+                      </div>
+                    </TableHead>
+                  ))}
+                </TableRow>
+              ))}
+            </TableHeader>
+            <TableBody>
+              {table.getRowModel().rows.length > 0 ? (
+                table.getRowModel().rows.map((row) => (
+                  <TableRow
+                    key={row.id}
+                    onClick={() => setSelectedLog(row.original)}
+                    className="cursor-pointer transition-colors hover:bg-muted/40 group"
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell key={cell.id} className="py-2.5 px-6 text-xs border-b border-muted/30">
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </TableCell>
                     ))}
                   </TableRow>
-                ))}
-              </TableHeader>
-              <TableBody>
-                {table.getRowModel().rows.length > 0 ? (
-                  table.getRowModel().rows.map((row) => (
-                    <TableRow
-                      key={row.id}
-                      data-state={row.original.id === selectedLogId ? "selected" : undefined}
-                      onClick={() => setSelectedLogId(row.original.id)}
-                      className="cursor-pointer transition-colors hover:bg-muted/50"
-                    >
-                      {row.getVisibleCells().map((cell) => (
-                        <TableCell key={cell.id} className="py-2 text-xs">
-                          {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                        </TableCell>
-                      ))}
-                    </TableRow>
-                  ))
-                ) : (
-                  <TableRow>
-                    <TableCell
-                      colSpan={4}
-                      className="h-24 text-center text-sm text-muted-foreground"
-                    >
-                      No audit logs found.
-                    </TableCell>
-                  </TableRow>
-                )}
-              </TableBody>
-            </Table>
+                ))
+              ) : (
+                <TableRow>
+                  <TableCell colSpan={4} className="h-32 text-center text-sm text-muted-foreground italic">
+                    No matching audit events found.
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </Table>
+        </div>
+        <div className="border-t bg-muted/5 px-6 py-3 flex items-center justify-between text-xs text-muted-foreground">
+          <span>
+            Showing Page {pagination?.page ?? page} of {Math.max(1, pagination?.totalPages ?? 1)}
+          </span>
+          <div className="flex items-center gap-3">
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 w-8 p-0"
+              disabled={!canPrev}
+              onClick={(e) => { e.stopPropagation(); setPage(page - 1); }}
+            >
+              <ChevronLeft className="h-4 w-4" />
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-8 w-8 p-0"
+              disabled={!canNext}
+              onClick={(e) => { e.stopPropagation(); setPage(page + 1); }}
+            >
+              <ChevronRight className="h-4 w-4" />
+            </Button>
           </div>
-          <div className="border-t bg-muted/10 px-4 py-2 flex items-center justify-between text-xs text-muted-foreground">
-            <span>
-              Page {pagination?.page ?? page} of {Math.max(1, pagination?.totalPages ?? 1)}
-            </span>
-            <div className="flex items-center gap-2">
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 w-7 p-0"
-                disabled={!canPrev}
-                onClick={() => setPage(page - 1)}
+        </div>
+      </Card>
+
+      {/* Inline Modal for Payload Detail */}
+      {selectedLog && (
+        <div 
+          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
+          onClick={() => setSelectedLog(null)}
+        >
+          <div 
+            className="w-full max-w-3xl max-h-[85vh] flex flex-col bg-card border shadow-2xl rounded-xl overflow-hidden animate-in zoom-in-95 duration-200"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="flex items-center justify-between px-6 py-4 border-b bg-muted/30">
+              <div className="flex items-center gap-3">
+                <Badge>{selectedLog.eventType}</Badge>
+                <span className="text-sm font-semibold">Event Detail</span>
+              </div>
+              <Button 
+                variant="ghost" 
+                size="sm" 
+                className="h-8 w-8 p-0 rounded-full" 
+                onClick={() => setSelectedLog(null)}
               >
-                <ChevronLeft className="h-3 w-3" />
-              </Button>
-              <Button
-                variant="outline"
-                size="sm"
-                className="h-7 w-7 p-0"
-                disabled={!canNext}
-                onClick={() => setPage(page + 1)}
-              >
-                <ChevronRight className="h-3 w-3" />
+                ✕
               </Button>
             </div>
-          </div>
-        </Card>
-
-        {/* Fixed Detail Section at Bottom */}
-        <Card className="h-1/3 min-h-[180px] flex flex-col overflow-hidden shrink-0">
-          <CardHeader className="py-2 border-b bg-muted/20">
-            <CardTitle className="text-xs font-semibold uppercase tracking-wider text-muted-foreground">
-              Payload Detail
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="flex-1 overflow-auto p-3">
-            {selectedLog ? (
-              <div className="space-y-3">
-                <div className="flex items-center gap-3 text-[11px] font-medium border-b pb-2">
-                  <Badge variant="outline">{selectedLog.eventType}</Badge>
-                  <span className="text-muted-foreground">|</span>
-                  <span>Actor: {selectedLog.actor}</span>
-                  <span className="text-muted-foreground">|</span>
-                  <span>{formatAuditDate(selectedLog.createdAt)}</span>
+            <div className="flex-1 overflow-auto p-6 space-y-4">
+              <div className="grid grid-cols-2 gap-4 text-xs bg-muted/20 p-4 rounded-lg border border-muted">
+                <div>
+                  <span className="text-muted-foreground block mb-1 font-bold uppercase tracking-tighter">Actor</span>
+                  <span className="font-semibold">{selectedLog.actor}</span>
                 </div>
-                <pre className="rounded-md bg-muted/50 p-4 text-[11px] leading-relaxed font-mono">
+                <div>
+                  <span className="text-muted-foreground block mb-1 font-bold uppercase tracking-tighter">Created At</span>
+                  <span className="font-semibold">{formatAuditDate(selectedLog.createdAt)}</span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">Raw Payload</span>
+                <pre className="rounded-lg bg-zinc-950 text-zinc-100 p-5 text-[11px] leading-relaxed font-mono overflow-auto border border-white/10 shadow-inner">
                   {JSON.stringify(selectedLog.payload, null, 2)}
                 </pre>
               </div>
-            ) : (
-              <div className="flex h-full items-center justify-center text-sm text-muted-foreground italic">
-                イベント行を選択すると詳細を表示します。
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      </div>
+            </div>
+            <div className="px-6 py-3 border-t bg-muted/10 flex justify-end">
+              <Button onClick={() => setSelectedLog(null)}>Close</Button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }

@@ -37,8 +37,13 @@ export const memorySearchTool = {
       sessionId: parsed.sessionId,
       limit: parsed.limit,
     });
+    if (results.length === 0) {
+      return {
+        content: [{ type: "text", text: "no content" }],
+      };
+    }
     return {
-      content: [{ type: "text", text: JSON.stringify(results, null, 2) }],
+      content: [{ type: "text", text: JSON.stringify({ items: results }, null, 2) }],
     };
   },
 };

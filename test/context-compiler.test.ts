@@ -92,8 +92,8 @@ describe("context compiler helpers", () => {
       diagnostics: { degradedReasons: [], retrievalStats: {} },
     });
 
-    expect(markdown.includes("# Context Pack")).toBe(true);
-    expect(markdown.includes("## Rules")).toBe(true);
+    expect(markdown.includes("# コンテキスト・パック")).toBe(true);
+    expect(markdown.includes("## ルール")).toBe(true);
   });
 
   test("normalizeRepoPath resolves file URI input", () => {

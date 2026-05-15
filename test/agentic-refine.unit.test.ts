@@ -1,10 +1,10 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { config } from "../src/config.js";
 import {
   agenticRefine,
-  checkAzureOpenAiHealth,
   type AgenticCandidate,
 } from "../src/modules/context-compiler/agentic-refine.service.js";
-import { config } from "../src/config.js";
+import { checkAgenticLlmHealth } from "../src/modules/llm/agentic-llm.service.js";
 import type { CompileInput } from "../src/shared/schemas/compile.schema.js";
 
 const mockFetch = vi.fn();
@@ -14,27 +14,48 @@ global.fetch = mockFetch as any;
 describe("agentic-refine.service", () => {
   const originalConfig = {
     agenticCompileEnabled: config.agenticCompileEnabled,
+    agenticCompileProvider: config.agenticCompileProvider,
     azureOpenAiApiKey: config.azureOpenAiApiKey,
     azureOpenAiApiBaseUrl: config.azureOpenAiApiBaseUrl,
+    azureOpenAiApiPath: config.azureOpenAiApiPath,
     azureOpenAiModel: config.azureOpenAiModel,
     azureOpenAiApiVersion: config.azureOpenAiApiVersion,
+    localLlmApiBaseUrl: config.localLlmApiBaseUrl,
+    localLlmApiKey: config.localLlmApiKey,
+    localLlmModel: config.localLlmModel,
+    bedrockModel: config.bedrockModel,
+    bedrockRegion: config.bedrockRegion,
   };
 
   beforeEach(() => {
     mockFetch.mockReset();
     config.agenticCompileEnabled = true;
+    config.agenticCompileProvider = "azure-openai";
     config.azureOpenAiApiKey = "test-key";
     config.azureOpenAiApiBaseUrl = "https://test.openai.azure.com";
+    config.azureOpenAiApiPath = "/openai/deployments";
     config.azureOpenAiModel = "test-model";
     config.azureOpenAiApiVersion = "2024-04-01-preview";
+    config.localLlmApiBaseUrl = "http://127.0.0.1:44448";
+    config.localLlmApiKey = "";
+    config.localLlmModel = "gemma-4-e4b-it";
+    config.bedrockModel = "";
+    config.bedrockRegion = "us-east-1";
   });
 
   afterEach(() => {
     config.agenticCompileEnabled = originalConfig.agenticCompileEnabled;
+    config.agenticCompileProvider = originalConfig.agenticCompileProvider;
     config.azureOpenAiApiKey = originalConfig.azureOpenAiApiKey;
     config.azureOpenAiApiBaseUrl = originalConfig.azureOpenAiApiBaseUrl;
+    config.azureOpenAiApiPath = originalConfig.azureOpenAiApiPath;
     config.azureOpenAiModel = originalConfig.azureOpenAiModel;
     config.azureOpenAiApiVersion = originalConfig.azureOpenAiApiVersion;
+    config.localLlmApiBaseUrl = originalConfig.localLlmApiBaseUrl;
+    config.localLlmApiKey = originalConfig.localLlmApiKey;
+    config.localLlmModel = originalConfig.localLlmModel;
+    config.bedrockModel = originalConfig.bedrockModel;
+    config.bedrockRegion = originalConfig.bedrockRegion;
   });
 
   const candidates: AgenticCandidate[] = [
@@ -83,7 +104,7 @@ describe("agentic-refine.service", () => {
       expect(mockFetch).not.toHaveBeenCalled();
     });
 
-    it("returns candidates directly if not fully configured", async () => {
+    it("returns candidates directly if provider is not configured", async () => {
       config.azureOpenAiApiKey = "";
       const result = await agenticRefine(candidates, input, "task_context");
       expect(result.agenticUsed).toBe(false);
@@ -208,57 +229,112 @@ describe("agentic-refine.service", () => {
       expect(result.error).toBe("AGENTIC_EMPTY_SELECTION");
       expect(result.items).toEqual(candidates);
     });
+
+    it("falls back from azure-openai to local-llm when provider is auto", async () => {
+      config.agenticCompileProvider = "auto";
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          text: async () => "server error",
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            choices: [
+              {
+                message: {
+                  content: JSON.stringify({
+                    selectedIds: ["1"],
+                    reasoning: "local selected",
+                  }),
+                },
+              },
+            ],
+          }),
+        });
+
+      const result = await agenticRefine(candidates, input, "task_context");
+      expect(result.agenticUsed).toBe(true);
+      expect(result.items).toHaveLength(1);
+      expect(result.items[0].id).toBe("1");
+      expect(mockFetch).toHaveBeenCalledTimes(2);
+      expect(mockFetch.mock.calls[1][0]).toBe("http://127.0.0.1:44448/v1/chat/completions");
+    });
+
+    it("returns aggregate error when all auto providers fail", async () => {
+      config.agenticCompileProvider = "auto";
+
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          text: async () => "azure down",
+        })
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 503,
+          text: async () => "local down",
+        });
+
+      const result = await agenticRefine(candidates, input, "task_context");
+      expect(result.agenticUsed).toBe(false);
+      expect(result.error).toContain("AGENTIC_REFINE_FAILED");
+      expect(result.error).toContain("azure-openai");
+      expect(result.error).toContain("local-llm");
+    });
   });
 
-  describe("checkAzureOpenAiHealth", () => {
-    it("returns configured=false if API key is missing", async () => {
+  describe("checkAgenticLlmHealth", () => {
+    it("returns configured=false when selected provider is not configured", async () => {
+      config.agenticCompileProvider = "azure-openai";
       config.azureOpenAiApiKey = "";
-      const result = await checkAzureOpenAiHealth();
+
+      const result = await checkAgenticLlmHealth();
+      expect(result.providerSetting).toBe("azure-openai");
       expect(result.configured).toBe(false);
       expect(result.reachable).toBe(false);
-      expect(result.error).toBe("Azure OpenAI is not configured");
+      expect(result.error).toContain("not configured");
     });
 
-    it("returns reachable=true if ping succeeds", async () => {
+    it("returns reachable=true when selected provider responds", async () => {
+      config.agenticCompileProvider = "azure-openai";
+
       mockFetch.mockResolvedValueOnce({
-        status: 200,
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: "pong" }, finish_reason: "stop" }],
+        }),
       });
 
-      const result = await checkAzureOpenAiHealth();
+      const result = await checkAgenticLlmHealth();
       expect(result.configured).toBe(true);
       expect(result.reachable).toBe(true);
-      expect(result.error).toBeUndefined();
+      expect(result.selectedProvider).toBe("azure-openai");
     });
 
-    it("returns reachable=true even for 400 errors (auth/payload errors)", async () => {
-      mockFetch.mockResolvedValueOnce({
-        status: 401,
-      });
+    it("auto fallback selects local-llm when azure-openai is unreachable", async () => {
+      config.agenticCompileProvider = "auto";
 
-      const result = await checkAzureOpenAiHealth();
-      expect(result.configured).toBe(true);
-      expect(result.reachable).toBe(true); // endpoint is reachable, just unauthorized
-      expect(result.error).toBeUndefined();
-    });
+      mockFetch
+        .mockResolvedValueOnce({
+          ok: false,
+          status: 500,
+          text: async () => "azure unavailable",
+        })
+        .mockResolvedValueOnce({
+          ok: true,
+          json: async () => ({
+            choices: [{ message: { content: "pong" }, finish_reason: "stop" }],
+          }),
+        });
 
-    it("returns reachable=false for 500 errors", async () => {
-      mockFetch.mockResolvedValueOnce({
-        status: 502,
-      });
-
-      const result = await checkAzureOpenAiHealth();
-      expect(result.configured).toBe(true);
-      expect(result.reachable).toBe(false);
-      expect(result.error).toBe("HTTP 502");
-    });
-
-    it("returns reachable=false for network errors", async () => {
-      mockFetch.mockRejectedValueOnce(new Error("Network error"));
-
-      const result = await checkAzureOpenAiHealth();
-      expect(result.configured).toBe(true);
-      expect(result.reachable).toBe(false);
-      expect(result.error).toBe("Network error");
+      const result = await checkAgenticLlmHealth();
+      expect(result.providerSetting).toBe("auto");
+      expect(result.selectedProvider).toBe("local-llm");
+      expect(result.provider).toBe("local-llm");
+      expect(result.reachable).toBe(true);
     });
   });
 });

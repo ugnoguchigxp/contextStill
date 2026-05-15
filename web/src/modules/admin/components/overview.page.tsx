@@ -124,11 +124,11 @@ export function OverviewPage() {
             <strong>{doctor.data?.embedding?.cli.usable ? "usable" : "unavailable"}</strong>
           </div>
           <div>
-            <span>Azure OpenAI</span>
+            <span>Agentic LLM</span>
             <strong>
-              {doctor.data?.azureOpenAi?.reachable
+              {doctor.data?.agenticLlm?.reachable
                 ? "reachable"
-                : doctor.data?.azureOpenAi?.configured
+                : doctor.data?.agenticLlm?.configured
                   ? "offline"
                   : "unconfigured"}
             </strong>

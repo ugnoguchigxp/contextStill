@@ -38,7 +38,11 @@ export const doctorReportSchema = z.object({
       error: z.string().optional(),
     }),
   }),
-  azureOpenAi: z.object({
+  agenticLlm: z.object({
+    providerSetting: z.string(),
+    selectedProvider: z.string().optional(),
+    fallbackOrder: z.array(z.string()),
+    provider: z.string(),
     configured: z.boolean(),
     reachable: z.boolean(),
     model: z.string(),

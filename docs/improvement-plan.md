@@ -41,7 +41,7 @@ Agentic Compile で以下の3プロバイダを選択可能にする：
 
 **タスク**
 
-- [ ] `src/modules/llm/` ディレクトリを新設し、プロバイダ抽象を定義する
+- [x] `src/modules/llm/` ディレクトリを新設し、プロバイダ抽象を定義する
   ```typescript
   // src/modules/llm/llm-provider.ts
   export type LlmChatRequest = {
@@ -62,25 +62,25 @@ Agentic Compile で以下の3プロバイダを選択可能にする：
     healthCheck(): Promise<{ reachable: boolean; error?: string }>;
   };
   ```
-- [ ] Azure OpenAI プロバイダを既存コードから抽出する
+- [x] Azure OpenAI プロバイダを既存コードから抽出する
   - `src/modules/llm/providers/azure-openai.provider.ts`
   - `buildAzureOpenAiUrl()`, `callAzureOpenAi()` をそのまま移動
-- [ ] Bedrock プロバイダを新規実装する
+- [x] Bedrock プロバイダを新規実装する
   - `src/modules/llm/providers/bedrock.provider.ts`
   - `@aws-sdk/client-bedrock-runtime` を使用
   - `AWS_PROFILE` / `AWS_REGION` / `MEMORY_ROUTER_BEDROCK_MODEL` で設定
-- [ ] ローカル LLM プロバイダを追加する
+- [x] ローカル LLM プロバイダを追加する
   - `src/modules/llm/providers/local-llm.provider.ts`
   - 既存の `distillation-runtime.service.ts` の `callLocalLlmChat()` を再利用
   - tool_calls は agentic compile では不要なので、chat-only のラッパー
-- [ ] `config.ts` に `agenticCompile.provider` を追加する
+- [x] `config.ts` に `agenticCompile.provider` を追加する
   ```
   MEMORY_ROUTER_CONTEXT_COMPILE_AGENTIC_PROVIDER=azure-openai|bedrock|local-llm|auto
   ```
   - `auto`: Azure → Bedrock → ローカル LLM の順でフォールバック
-- [ ] `agentic-refine.service.ts` を LlmProvider 経由に書き換える
-- [ ] Doctor の `azureOpenAi` セクションを `agenticLlm` に汎化する
-- [ ] `.env.example` を更新する
+- [x] `agentic-refine.service.ts` を LlmProvider 経由に書き換える
+- [x] Doctor の `azureOpenAi` セクションを `agenticLlm` に汎化する
+- [x] `.env.example` を更新する
 
 **設定例**
 
@@ -106,6 +106,8 @@ MEMORY_ROUTER_CONTEXT_COMPILE_AGENTIC_PROVIDER=local-llm
 - Azure OpenAI の既存動作が regression しない
 - Doctor でプロバイダの疎通状態が確認できる
 - `bun run verify` が通る
+
+> 進捗メモ (2026-05-15): `typecheck` と `test:unit` は通過。`verify` は既存変更中の `web/src/modules/admin/components/audit.page.tsx` にある a11y lint エラーで停止。
 
 **関連ファイル**
 

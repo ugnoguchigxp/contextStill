@@ -5,12 +5,14 @@ import { getDb } from "../src/db/index.js";
 import { getExposedToolEntries } from "../src/mcp/tools/index.js";
 import { runDoctor } from "../src/modules/doctor/doctor.service.js";
 import { embeddingHealth } from "../src/modules/embedding/embedding.service.js";
+import { checkAgenticLlmHealth } from "../src/modules/llm/agentic-llm.service.js";
 
 vi.mock("../src/db/index.js");
 vi.mock("node:fs/promises");
 vi.mock("node:child_process");
 vi.mock("../src/mcp/tools/index.js");
 vi.mock("../src/modules/embedding/embedding.service.js");
+vi.mock("../src/modules/llm/agentic-llm.service.js");
 vi.mock("../src/modules/context-compiler/context-compiler.repository.js", () => ({
   listRecentCompileRuns: vi.fn(() => []),
 }));
@@ -34,6 +36,16 @@ describe("Doctor Service", () => {
       { name: "memory_fetch" },
       { name: "doctor" },
     ] as any);
+    vi.mocked(checkAgenticLlmHealth).mockResolvedValue({
+      providerSetting: "azure-openai",
+      selectedProvider: "azure-openai",
+      fallbackOrder: ["azure-openai"],
+      provider: "azure-openai",
+      configured: true,
+      reachable: true,
+      model: "gpt-5-4-mini",
+      endpoint: "https://example.openai.azure.com",
+    });
   });
 
   test("returns failed status when DB is unreachable", async () => {

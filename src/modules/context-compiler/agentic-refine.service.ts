@@ -1,6 +1,7 @@
 import { config } from "../../config.js";
 import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
 import type { KnowledgeItem, KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
+import { getAgenticLlmProviders } from "../llm/agentic-llm.service.js";
 
 export type AgenticCandidate = {
   id: string;
@@ -19,26 +20,10 @@ export type AgenticRefineResult = {
   error?: string;
 };
 
-type AzureOpenAiResponse = {
-  choices?: Array<{
-    message?: { content?: string | null };
-    finish_reason?: string;
-  }>;
-};
-
 type AgenticLlmOutput = {
   selectedIds: string[];
   reasoning?: string;
 };
-
-function buildAzureOpenAiUrl(): string {
-  const { azureOpenAiApiBaseUrl, azureOpenAiApiPath, azureOpenAiModel, azureOpenAiApiVersion } =
-    config;
-  const path = `${azureOpenAiApiPath.replace(/\/+$/, "")}/${encodeURIComponent(
-    azureOpenAiModel,
-  )}/chat/completions?api-version=${encodeURIComponent(azureOpenAiApiVersion)}`;
-  return new URL(path, azureOpenAiApiBaseUrl).toString();
-}
 
 function buildSystemPrompt(input: CompileInput, retrievalMode: RetrievalMode): string {
   const lines = [
@@ -102,11 +87,9 @@ function buildUserPrompt(candidates: AgenticCandidate[]): string {
 
 function parseAgenticOutput(raw: string): AgenticLlmOutput | null {
   try {
-    // Try direct JSON parse first
     const parsed = JSON.parse(raw) as unknown;
     if (isAgenticOutput(parsed)) return parsed;
   } catch {
-    // Try extracting JSON from markdown code block
     const match = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
     if (match?.[1]) {
       try {
@@ -116,7 +99,7 @@ function parseAgenticOutput(raw: string): AgenticLlmOutput | null {
         // fall through
       }
     }
-    // Try finding bare JSON object
+
     const braceMatch = raw.match(/\{[\s\S]*"selectedIds"[\s\S]*\}/);
     if (braceMatch) {
       try {
@@ -127,6 +110,7 @@ function parseAgenticOutput(raw: string): AgenticLlmOutput | null {
       }
     }
   }
+
   return null;
 }
 
@@ -139,59 +123,34 @@ function isAgenticOutput(value: unknown): value is AgenticLlmOutput {
   return true;
 }
 
-function isConfigured(): boolean {
-  return Boolean(
-    config.azureOpenAiApiKey.trim() &&
-      config.azureOpenAiApiBaseUrl.trim() &&
-      config.azureOpenAiModel.trim(),
-  );
+function selectCandidates(
+  candidates: AgenticCandidate[],
+  selectedIds: string[],
+): AgenticCandidate[] {
+  const candidateMap = new Map(candidates.map((item) => [item.id, item]));
+  const selected: AgenticCandidate[] = [];
+
+  for (const id of selectedIds) {
+    const item = candidateMap.get(id);
+    if (item) {
+      selected.push(item);
+      candidateMap.delete(id);
+    }
+  }
+
+  return selected;
 }
 
-async function callAzureOpenAi(systemPrompt: string, userPrompt: string): Promise<string> {
-  const url = buildAzureOpenAiUrl();
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), config.agenticCompileTimeoutMs);
-
-  try {
-    const response = await fetch(url, {
-      method: "POST",
-      headers: {
-        "api-key": config.azureOpenAiApiKey,
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({
-        messages: [
-          { role: "system", content: systemPrompt },
-          { role: "user", content: userPrompt },
-        ],
-        temperature: 0,
-        max_completion_tokens: config.agenticCompileMaxTokens,
-        response_format: { type: "json_object" },
-      }),
-      signal: controller.signal,
-    });
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`Azure OpenAI HTTP ${response.status}: ${body.slice(0, 500)}`);
-    }
-
-    const payload = (await response.json()) as AzureOpenAiResponse;
-    const content = payload.choices?.[0]?.message?.content;
-    if (typeof content !== "string" || !content.trim()) {
-      throw new Error("Azure OpenAI returned empty response");
-    }
-    return content;
-  } finally {
-    clearTimeout(timer);
-  }
+function formatAutoFallbackError(messages: string[]): string {
+  const detail = messages.join(" | ");
+  return `AGENTIC_REFINE_FAILED: ${detail}`;
 }
 
 /**
- * Azure OpenAI を使って knowledge 候補を goal に対して選別・並べ替えする。
+ * LLM を使って knowledge 候補を goal に対して選別・並べ替えする。
  *
- * - agenticCompile が無効 or Azure OpenAI が未設定の場合は入力をそのまま返す
- * - API エラー時は graceful fallback（入力をそのまま返す）
+ * - agenticCompile が無効、または provider が未設定の場合は入力をそのまま返す
+ * - provider エラー時は graceful fallback（入力をそのまま返す）
  */
 export async function agenticRefine(
   candidates: AgenticCandidate[],
@@ -202,114 +161,95 @@ export async function agenticRefine(
     return { items: candidates, agenticUsed: false };
   }
 
-  if (!isConfigured()) {
-    return { items: candidates, agenticUsed: false };
-  }
-
   if (candidates.length === 0) {
     return { items: candidates, agenticUsed: false };
   }
 
-  try {
-    const systemPrompt = buildSystemPrompt(input, retrievalMode);
-    const userPrompt = buildUserPrompt(candidates);
-    const rawResponse = await callAzureOpenAi(systemPrompt, userPrompt);
-    const parsed = parseAgenticOutput(rawResponse);
+  const providers = getAgenticLlmProviders(
+    config.agenticCompileProvider,
+    config.agenticCompileTimeoutMs,
+  );
+  const allowFallback = providers.length > 1;
+  const fallbackErrors: string[] = [];
+  let attempted = 0;
 
-    if (!parsed) {
-      return {
-        items: candidates,
-        agenticUsed: false,
-        error: "AGENTIC_OUTPUT_PARSE_FAILED",
-      };
+  const systemPrompt = buildSystemPrompt(input, retrievalMode);
+  const userPrompt = buildUserPrompt(candidates);
+
+  for (const provider of providers) {
+    if (!provider.isConfigured()) {
+      continue;
     }
 
-    // Re-order candidates based on LLM selection
-    const candidateMap = new Map(candidates.map((item) => [item.id, item]));
-    const selected: AgenticCandidate[] = [];
-    for (const id of parsed.selectedIds) {
-      const item = candidateMap.get(id);
-      if (item) {
-        selected.push(item);
-        candidateMap.delete(id);
+    attempted += 1;
+
+    try {
+      const response = await provider.chat({
+        messages: [
+          { role: "system", content: systemPrompt },
+          { role: "user", content: userPrompt },
+        ],
+        maxTokens: config.agenticCompileMaxTokens,
+        temperature: 0,
+        responseFormat: "json",
+      });
+
+      const parsed = parseAgenticOutput(response.content);
+      if (!parsed) {
+        if (allowFallback) {
+          fallbackErrors.push(`${provider.name}:AGENTIC_OUTPUT_PARSE_FAILED`);
+          continue;
+        }
+        return {
+          items: candidates,
+          agenticUsed: false,
+          error: "AGENTIC_OUTPUT_PARSE_FAILED",
+        };
       }
-    }
 
-    if (selected.length === 0) {
+      const selected = selectCandidates(candidates, parsed.selectedIds);
+      if (selected.length === 0) {
+        if (allowFallback) {
+          fallbackErrors.push(`${provider.name}:AGENTIC_EMPTY_SELECTION`);
+          continue;
+        }
+        return {
+          items: candidates,
+          agenticUsed: false,
+          error: "AGENTIC_EMPTY_SELECTION",
+        };
+      }
+
+      return {
+        items: selected,
+        agenticUsed: true,
+        reasoning: parsed.reasoning,
+      };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      if (allowFallback) {
+        fallbackErrors.push(`${provider.name}:${message}`);
+        continue;
+      }
       return {
         items: candidates,
         agenticUsed: false,
-        error: "AGENTIC_EMPTY_SELECTION",
+        error: `AGENTIC_REFINE_FAILED: ${message}`,
       };
     }
+  }
 
-    return {
-      items: selected,
-      agenticUsed: true,
-      reasoning: parsed.reasoning,
-    };
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
+  if (attempted === 0) {
+    return { items: candidates, agenticUsed: false };
+  }
+
+  if (fallbackErrors.length > 0) {
     return {
       items: candidates,
       agenticUsed: false,
-      error: `AGENTIC_REFINE_FAILED: ${message}`,
+      error: formatAutoFallbackError(fallbackErrors),
     };
   }
-}
 
-/**
- * Azure OpenAI の疎通確認 (doctor 用)
- */
-export async function checkAzureOpenAiHealth(): Promise<{
-  configured: boolean;
-  reachable: boolean;
-  model: string;
-  endpoint: string;
-  error?: string;
-}> {
-  const result = {
-    configured: isConfigured(),
-    reachable: false,
-    model: config.azureOpenAiModel,
-    endpoint: config.azureOpenAiApiBaseUrl,
-  };
-
-  if (!result.configured) {
-    return { ...result, error: "Azure OpenAI is not configured" };
-  }
-
-  try {
-    const url = buildAzureOpenAiUrl();
-    const controller = new AbortController();
-    const timer = setTimeout(() => controller.abort(), 5000);
-    try {
-      const response = await fetch(url, {
-        method: "POST",
-        headers: {
-          "api-key": config.azureOpenAiApiKey,
-          "content-type": "application/json",
-        },
-        body: JSON.stringify({
-          messages: [{ role: "user", content: "ping" }],
-          max_completion_tokens: 1,
-          temperature: 0,
-        }),
-        signal: controller.signal,
-      });
-      // Any response (even 400) means the endpoint is reachable
-      result.reachable = response.status < 500;
-      if (!result.reachable) {
-        return { ...result, error: `HTTP ${response.status}` };
-      }
-    } finally {
-      clearTimeout(timer);
-    }
-    return result;
-  } catch (error) {
-    return {
-      ...result,
-      error: error instanceof Error ? error.message : String(error),
-    };
-  }
+  return { items: candidates, agenticUsed: false };
 }

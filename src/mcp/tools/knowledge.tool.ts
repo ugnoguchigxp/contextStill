@@ -62,6 +62,12 @@ export const searchKnowledgeTool: ToolEntry = {
       metadata: item.metadata,
     }));
 
+    if (ranked.length === 0) {
+      return {
+        content: [{ type: "text", text: "no content" }],
+      };
+    }
+
     return {
       content: [
         {

@@ -18,6 +18,24 @@ const envNumber = (value: string | undefined, fallback: number): number => {
 };
 
 type EmbeddingProvider = "auto" | "daemon" | "cli" | "disabled";
+type AgenticCompileProvider = "azure-openai" | "bedrock" | "local-llm" | "auto";
+
+const parseAgenticCompileProvider = (
+  value: string | undefined,
+  fallback: AgenticCompileProvider,
+): AgenticCompileProvider => {
+  if (value === undefined || value.trim() === "") return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "azure-openai" ||
+    normalized === "bedrock" ||
+    normalized === "local-llm" ||
+    normalized === "auto"
+  ) {
+    return normalized;
+  }
+  return fallback;
+};
 
 type GroupedConfig = {
   database: { url: string };
@@ -81,7 +99,13 @@ type GroupedConfig = {
     apiVersion: string;
     model: string;
   };
+  bedrock: {
+    model: string;
+    region: string;
+    profile: string;
+  };
   agenticCompile: {
+    provider: AgenticCompileProvider;
     enabled: boolean;
     timeoutMs: number;
     maxTokens: number;
@@ -358,7 +382,16 @@ export const groupedConfig: GroupedConfig = {
       process.env.OPENAI_API_MODEL ||
       "gpt-4o",
   },
+  bedrock: {
+    model: process.env.MEMORY_ROUTER_BEDROCK_MODEL || "",
+    region: process.env.MEMORY_ROUTER_BEDROCK_REGION || process.env.AWS_REGION || "us-east-1",
+    profile: process.env.MEMORY_ROUTER_BEDROCK_PROFILE || process.env.AWS_PROFILE || "",
+  },
   agenticCompile: {
+    provider: parseAgenticCompileProvider(
+      process.env.MEMORY_ROUTER_CONTEXT_COMPILE_AGENTIC_PROVIDER,
+      "azure-openai",
+    ),
     enabled: envBoolean(
       process.env.MEMORY_ROUTER_CONTEXT_COMPILE_AGENTIC_ENABLED,
       APP_CONSTANTS.agenticCompileEnabled,
@@ -450,6 +483,10 @@ type FlatConfig = {
   azureOpenAiApiPath: string;
   azureOpenAiApiVersion: string;
   azureOpenAiModel: string;
+  bedrockModel: string;
+  bedrockRegion: string;
+  bedrockProfile: string;
+  agenticCompileProvider: AgenticCompileProvider;
   agenticCompileEnabled: boolean;
   agenticCompileTimeoutMs: number;
   agenticCompileMaxTokens: number;
@@ -807,6 +844,34 @@ Object.defineProperties(config, {
     get: () => groupedConfig.azureOpenAi.model,
     set: (value: string) => {
       groupedConfig.azureOpenAi.model = value;
+    },
+    enumerable: true,
+  },
+  bedrockModel: {
+    get: () => groupedConfig.bedrock.model,
+    set: (value: string) => {
+      groupedConfig.bedrock.model = value;
+    },
+    enumerable: true,
+  },
+  bedrockRegion: {
+    get: () => groupedConfig.bedrock.region,
+    set: (value: string) => {
+      groupedConfig.bedrock.region = value;
+    },
+    enumerable: true,
+  },
+  bedrockProfile: {
+    get: () => groupedConfig.bedrock.profile,
+    set: (value: string) => {
+      groupedConfig.bedrock.profile = value;
+    },
+    enumerable: true,
+  },
+  agenticCompileProvider: {
+    get: () => groupedConfig.agenticCompile.provider,
+    set: (value: AgenticCompileProvider) => {
+      groupedConfig.agenticCompile.provider = value;
     },
     enumerable: true,
   },

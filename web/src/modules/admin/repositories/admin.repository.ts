@@ -67,7 +67,11 @@ export type DoctorReport = {
     daemon: { url: string; reachable: boolean; error?: string };
     cli: { python: string; root: string; modelDir: string; usable: boolean; error?: string };
   };
-  azureOpenAi?: {
+  agenticLlm?: {
+    providerSetting: string;
+    selectedProvider?: string;
+    fallbackOrder: string[];
+    provider: string;
     configured: boolean;
     reachable: boolean;
     model: string;

@@ -230,7 +230,7 @@ describe("Context Compiler Service", () => {
     });
 
     expect(pack.retrievalMode).toBe("procedure_context");
-    expect(pack.minimalTasks[0]).toContain("Inspect the selected procedure candidates");
+    expect(pack.minimalTasks[0]).toContain("選択された手順の候補を確認してください");
   });
 
   test("adds source recovery commands to suggestedNextCalls on source miss", async () => {

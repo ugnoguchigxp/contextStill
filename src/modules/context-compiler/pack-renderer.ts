@@ -2,15 +2,15 @@ import type { ContextPack } from "../../shared/schemas/context-pack.schema.js";
 
 export function renderContextPackMarkdown(pack: ContextPack): string {
   const lines: string[] = [];
-  lines.push("# Context Pack");
+  lines.push("# コンテキスト・パック");
   lines.push("");
-  lines.push(`- Goal: ${pack.goal}`);
-  lines.push(`- Intent: ${pack.intent}`);
-  lines.push(`- Retrieval Mode: ${pack.retrievalMode}`);
-  lines.push(`- Status: ${pack.status}`);
+  lines.push(`- 目的: ${pack.goal}`);
+  lines.push(`- 意図: ${pack.intent}`);
+  lines.push(`- 検索モード: ${pack.retrievalMode}`);
+  lines.push(`- 状態: ${pack.status}`);
   lines.push("");
 
-  lines.push("## Minimal Tasks");
+  lines.push("## 最小タスク");
   lines.push("");
   for (const task of pack.minimalTasks) {
     lines.push(`- ${task}`);
@@ -21,7 +21,7 @@ export function renderContextPackMarkdown(pack: ContextPack): string {
     lines.push(`## ${title}`);
     lines.push("");
     if (items.length === 0) {
-      lines.push("- none");
+      lines.push("- なし");
     } else {
       for (const item of items) {
         lines.push(`- ${item.title} (${item.rankingReason})`);
@@ -30,14 +30,14 @@ export function renderContextPackMarkdown(pack: ContextPack): string {
     lines.push("");
   };
 
-  renderSection("Rules", pack.rules);
-  renderSection("Procedures", pack.procedures);
-  renderSection("File Hints", pack.codeContext);
+  renderSection("ルール", pack.rules);
+  renderSection("手順", pack.procedures);
+  renderSection("ファイル・ヒント", pack.codeContext);
 
-  lines.push("## Relevant Source Evidence");
+  lines.push("## 関連するソース・エビデンス");
   lines.push("");
   if (pack.sourceRefs.length === 0) {
-    lines.push("- none");
+    lines.push("- なし");
   } else {
     for (const ref of pack.sourceRefs) {
       lines.push(`- ${ref}`);
@@ -45,10 +45,10 @@ export function renderContextPackMarkdown(pack: ContextPack): string {
   }
   lines.push("");
 
-  lines.push("## Warnings / Missing Context");
+  lines.push("## 警告 / 不足しているコンテキスト");
   lines.push("");
   if (pack.warnings.length === 0) {
-    lines.push("- none");
+    lines.push("- なし");
   } else {
     for (const warning of pack.warnings) {
       lines.push(`- ${warning}`);
@@ -56,7 +56,7 @@ export function renderContextPackMarkdown(pack: ContextPack): string {
   }
   lines.push("");
 
-  lines.push("## Suggested Next MCP Calls");
+  lines.push("## 推奨される次の MCP コール");
   lines.push("");
   const suggestedNextCalls =
     Array.isArray(pack.diagnostics.retrievalStats.suggestedNextCalls) &&
@@ -64,7 +64,7 @@ export function renderContextPackMarkdown(pack: ContextPack): string {
       ? (pack.diagnostics.retrievalStats.suggestedNextCalls as string[])
       : [];
   if (suggestedNextCalls.length === 0) {
-    lines.push("- none");
+    lines.push("- なし");
   } else {
     for (const call of suggestedNextCalls) {
       lines.push(`- ${call}`);
@@ -72,12 +72,12 @@ export function renderContextPackMarkdown(pack: ContextPack): string {
   }
   lines.push("");
 
-  lines.push("## Diagnostics");
+  lines.push("## 診断情報");
   lines.push("");
   if (pack.diagnostics.degradedReasons.length === 0) {
-    lines.push("- degradedReasons: []");
+    lines.push("- 低下理由: []");
   } else {
-    lines.push(`- degradedReasons: ${pack.diagnostics.degradedReasons.join(", ")}`);
+    lines.push(`- 低下理由: ${pack.diagnostics.degradedReasons.join(", ")}`);
   }
   return lines.join("\n");
 }

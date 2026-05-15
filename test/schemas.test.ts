@@ -36,7 +36,11 @@ describe("Shared Schemas", () => {
         daemon: { url: "http://llm", reachable: true },
         cli: { python: "python", root: "/root", modelDir: "/models", usable: true },
       },
-      azureOpenAi: {
+      agenticLlm: {
+        providerSetting: "auto",
+        selectedProvider: "local-llm",
+        fallbackOrder: ["azure-openai", "bedrock", "local-llm"],
+        provider: "local-llm",
         configured: false,
         reachable: false,
         model: "",

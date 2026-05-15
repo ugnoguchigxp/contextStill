@@ -11,7 +11,7 @@ import { inspectMcpSurface } from "./inspectors/mcp.inspector.js";
 import { inspectSourceDistillation } from "./inspectors/source-distillation.inspector.js";
 import { inspectVibeDistillation } from "./inspectors/vibe-distillation.inspector.js";
 import { cleanupExpiredAuditLogsSafe } from "../audit/audit-log.service.js";
-import { checkAzureOpenAiHealth } from "../context-compiler/agentic-refine.service.js";
+import { checkAgenticLlmHealth } from "../llm/agentic-llm.service.js";
 
 function resolveDoctorOptions(rawOptions?: DoctorOptions): ResolvedDoctorOptions {
   return {
@@ -113,7 +113,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
   }
 
   const embedding = await inspectEmbedding();
-  const azureOpenAi = await checkAzureOpenAiHealth();
+  const agenticLlm = await checkAgenticLlmHealth(config.agenticCompileProvider);
   const database = await inspectDatabase({
     freshnessThresholdMinutes: options.freshnessThresholdMinutes,
   });
@@ -141,7 +141,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
       db: database.db,
       vector: { installed: database.vectorInstalled },
       embedding,
-      azureOpenAi,
+      agenticLlm,
       tables: {
         expected: [...requiredTables],
         existing: database.existingTables,
@@ -162,10 +162,10 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
     reasons.push("EMBEDDING_PROVIDER_UNAVAILABLE");
   }
 
-  if (config.agenticCompileEnabled && !azureOpenAi.configured) {
-    reasons.push("AZURE_OPENAI_NOT_CONFIGURED");
-  } else if (config.agenticCompileEnabled && !azureOpenAi.reachable) {
-    reasons.push("AZURE_OPENAI_UNREACHABLE");
+  if (config.agenticCompileEnabled && !agenticLlm.configured) {
+    reasons.push("AGENTIC_LLM_NOT_CONFIGURED");
+  } else if (config.agenticCompileEnabled && !agenticLlm.reachable) {
+    reasons.push("AGENTIC_LLM_UNREACHABLE");
   }
 
   const compile = await inspectCompileRuns({
@@ -229,7 +229,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
       installed: database.vectorInstalled,
     },
     embedding,
-    azureOpenAi,
+    agenticLlm,
     tables: {
       expected: [...requiredTables],
       existing: database.existingTables,
