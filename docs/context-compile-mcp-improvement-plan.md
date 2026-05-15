@@ -11,9 +11,9 @@
 ```text
 initial_instructions
   -> context_compile(goal, repoPath, files, changeTypes, intent)
-  -> 必要時のみ memory_search / memory_fetch / search_knowledge
+  -> 必要時のみ search_knowledge / list_knowledge / update_knowledge / memory_search / memory_fetch
   -> 作業
-  -> record_vibe_memory(diff と自然文を分離)
+  -> 再利用可能な学びを register_knowledge
   -> doctor で状態確認
 ```
 
@@ -23,7 +23,7 @@ initial_instructions
 
 - `context_compile` MCP tool
 - `memory_search` / `memory_fetch`
-- `record_vibe_memory`
+- `register_knowledge` / `list_knowledge` / `update_knowledge`
 - `doctor`
 - `initial_instructions`
 - `context_compile_runs` / `context_pack_items`
@@ -62,9 +62,11 @@ initial_instructions
 - `initial_instructions`
 - `context_compile`
 - `search_knowledge`
+- `register_knowledge`
+- `list_knowledge`
+- `update_knowledge`
 - `memory_search`
 - `memory_fetch`
-- `record_vibe_memory`
 - `doctor`
 
 既存の `initial_instructions` はあるが、中身を Gnosis 風の短い運用ガイドへ強化する。ユーザー発話にある `initial_instruction` は singular だが、Gnosis 側の実 tool 名は `initial_instructions` なので、この repo でも canonical は plural に揃える。どうしても client 側の typo/alias が必要なら、短期互換 alias を入れる前に public surface の重複コストを評価する。
@@ -83,8 +85,8 @@ initial_instructions
 `memory_search` / `memory_fetch`
 : context 圧縮後に raw conversation の具体根拠が必要な時だけ使う。検索して候補を見て、必要な memory だけ fetch する。
 
-`record_vibe_memory`
-: 作業後、次回も使える rule / procedure / decision / lesson が得られた時だけ記録する。diff は `content` に混ぜず `diff` / `agentDiffs` として保存する。
+`register_knowledge`
+: 作業後、次回も使える rule / procedure が得られた時に登録する。まずは `draft` で登録し、必要に応じて `list_knowledge` / `update_knowledge` で運用する。
 
 `doctor`
 : DB、pgvector、embedding、LaunchAgent、distillation、MCP public surface、recent compile health を確認する。
@@ -186,7 +188,7 @@ initial_instructions
    - 出力は `## 常用ルール` と `## MCPツール種別` の 2 セクションにする。
    - 内容は短く固定する。
    - `context_compile` を主導線として明記する。
-   - `record_vibe_memory` の diff 分離ルールを明記する。
+   - `register_knowledge` / `list_knowledge` / `update_knowledge` の使い分けを明記する。
    - 毎タスク前に長文 rule dump しない。
 
 2. `search_knowledge` tool を追加する。
@@ -308,7 +310,7 @@ initial_instructions
 
 3. 作業後登録の標準化。
    - `initial_instructions` に「verify 後、次回も使える rule/procedure だけ record」方針を入れる。
-   - `record_vibe_memory` は natural content と diff separation を維持する。
+   - 新規知識登録は `register_knowledge` を主導線とし、運用更新は `list_knowledge` / `update_knowledge` に集約する。
 
 受け入れ条件:
 

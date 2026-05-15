@@ -1,16 +1,17 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
+import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
+import { groupedConfig } from "../src/config.js";
 import {
-  distillSources,
-  buildSourceDistillationMessages,
   buildSourceDistillationInputHash,
+  buildSourceDistillationMessages,
+  distillSources,
 } from "../src/modules/sources/distillation.service.js";
-import * as repository from "../src/modules/sources/distillation.repository.js";
-import * as knowledgeRepo from "../src/modules/knowledge/knowledge.repository.js";
 import * as candidatesUtil from "../src/modules/distillation/distillation-candidates.js";
 import * as promptsUtil from "../src/modules/distillation/distillation-prompts.js";
 import * as runtime from "../src/modules/distillation/distillation-runtime.service.js";
 import * as embedding from "../src/modules/embedding/embedding.service.js";
-import { groupedConfig } from "../src/config.js";
+import * as knowledgeRepo from "../src/modules/knowledge/knowledge.repository.js";
+import * as repository from "../src/modules/sources/distillation.repository.js";
+import * as knowledgeDedup from "../src/lib/knowledge-dedup.js";
 
 vi.mock("../src/modules/sources/distillation.repository.js");
 vi.mock("../src/modules/knowledge/knowledge.repository.js");
@@ -18,15 +19,15 @@ vi.mock("../src/modules/distillation/distillation-candidates.js");
 vi.mock("../src/modules/distillation/distillation-prompts.js");
 vi.mock("../src/modules/distillation/distillation-runtime.service.js");
 vi.mock("../src/modules/embedding/embedding.service.js");
-vi.mock("../src/config.js", () => ({
-  groupedConfig: {
-    sourceDistillationBatchSize: 5,
-    sourceDistillationPromptVersion: "v1",
-    localLlmModel: "test-model",
-    sourceDistillationMaxInputChars: 1000,
-    sourceDistillationMaxOutputTokens: 500,
-  },
-}));
+vi.mock("../src/lib/knowledge-dedup.js");
+
+const originalSourceDistillationConfig = {
+  batchSize: groupedConfig.sourceDistillation.batchSize,
+  promptVersion: groupedConfig.sourceDistillation.promptVersion,
+  maxInputChars: groupedConfig.sourceDistillation.maxInputChars,
+  maxOutputTokens: groupedConfig.sourceDistillation.maxOutputTokens,
+};
+const originalLocalLlmModel = groupedConfig.localLlm.model;
 
 describe("sources distillation service", () => {
   const mockFragment = {
@@ -39,11 +40,18 @@ describe("sources distillation service", () => {
     locator: "L1",
     heading: "H1",
     content: "Content of the wiki page",
-    sourceMetadata: { repoPath: "/test/repo" },
+    sourceMetadata: { repoPath: "/test/repo", repoKey: "/test/repo" },
   };
 
   beforeEach(() => {
     vi.clearAllMocks();
+
+    groupedConfig.sourceDistillation.batchSize = 5;
+    groupedConfig.sourceDistillation.promptVersion = "v1";
+    groupedConfig.sourceDistillation.maxInputChars = 1000;
+    groupedConfig.sourceDistillation.maxOutputTokens = 500;
+    groupedConfig.localLlm.model = "test-model";
+
     vi.mocked(repository.listSourceFragmentsForDistillation).mockResolvedValue([
       mockFragment as unknown as never,
     ]);
@@ -55,6 +63,16 @@ describe("sources distillation service", () => {
       rejectedInvalidEvidence: [],
       threshold: 0.5,
     });
+    vi.mocked(knowledgeDedup.checkKnowledgeDuplicate).mockResolvedValue({ isDuplicate: false });
+  });
+
+  afterAll(() => {
+    groupedConfig.sourceDistillation.batchSize = originalSourceDistillationConfig.batchSize;
+    groupedConfig.sourceDistillation.promptVersion = originalSourceDistillationConfig.promptVersion;
+    groupedConfig.sourceDistillation.maxInputChars = originalSourceDistillationConfig.maxInputChars;
+    groupedConfig.sourceDistillation.maxOutputTokens =
+      originalSourceDistillationConfig.maxOutputTokens;
+    groupedConfig.localLlm.model = originalLocalLlmModel;
   });
 
   describe("buildSourceDistillationMessages", () => {
@@ -102,6 +120,7 @@ describe("sources distillation service", () => {
         confidence: 80,
         importance: 80,
         score: 0.9,
+        sourceRefs: ["ref1"],
       };
       const mockCompletion = {
         content: '{"candidates":[...]}',
@@ -161,13 +180,13 @@ describe("sources distillation service", () => {
         .mockImplementationOnce(() => {
           throw new Error("JSON parse error");
         })
-        .mockReturnValueOnce([]); // Repaired
+        .mockReturnValueOnce([]);
 
       const mockModelClient = vi.fn().mockResolvedValue(mockRepairCompletion);
 
       await distillSources({ apply: false, modelClient: mockModelClient });
 
-      expect(mockModelClient).toHaveBeenCalledTimes(2); // Initial + Repair
+      expect(mockModelClient).toHaveBeenCalledTimes(2);
     });
   });
 });

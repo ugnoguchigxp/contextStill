@@ -3,12 +3,13 @@ import { Hono } from "hono";
 import { z } from "zod";
 import {
   buildGraphSnapshot,
+  fetchGraphNodeDetail,
   type GraphRelationAxis,
   type GraphSnapshotParams,
 } from "./graph.repository.js";
 
 const graphQuerySchema = z.object({
-  limit: z.coerce.number().int().min(1).max(1000).default(200),
+  limit: z.coerce.number().int().min(1).max(1000).default(1000),
   status: z.enum(["current", "active", "draft", "deprecated", "all"]).default("current"),
   view: z.enum(["relation", "semantic"]).default("relation"),
   relationAxes: z.string().default("session,project"),
@@ -27,12 +28,21 @@ function parseRelationAxes(input: string): GraphRelationAxis[] {
   return deduped.size > 0 ? [...deduped] : ["session", "project"];
 }
 
-export const graphRouter = new Hono().get("/", zValidator("query", graphQuerySchema), async (c) => {
-  const query = c.req.valid("query");
-  const params: GraphSnapshotParams = {
-    ...query,
-    relationAxes: parseRelationAxes(query.relationAxes),
-  };
-  const graph = await buildGraphSnapshot(params);
-  return c.json(graph);
-});
+export const graphRouter = new Hono()
+  .get("/", zValidator("query", graphQuerySchema), async (c) => {
+    const query = c.req.valid("query");
+    const params: GraphSnapshotParams = {
+      ...query,
+      relationAxes: parseRelationAxes(query.relationAxes),
+    };
+    const graph = await buildGraphSnapshot(params);
+    return c.json(graph);
+  })
+  .get("/nodes/:id", async (c) => {
+    const id = c.req.param("id");
+    const detail = await fetchGraphNodeDetail(id);
+    if (!detail) {
+      return c.json({ error: "Node not found" }, 404);
+    }
+    return c.json(detail);
+  });

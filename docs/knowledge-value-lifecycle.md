@@ -218,7 +218,7 @@ final_score =
 ## 8. 参考
 
 - [Context Compile MCP Improvement Plan](./context-compile-mcp-improvement-plan.md)
-- [Distillation Runtime Plan](./distillation-runtime-plan.md)
+- [Improvement Plan](./improvement-plan.md)
 - `src/modules/context-compiler/ranking.service.ts` — 現在のランキングロジック
 - `src/modules/context-compiler/context-compiler.service.ts` — コンパイル本体
 - `src/db/schema.ts` — `knowledge_items` スキーマ定義

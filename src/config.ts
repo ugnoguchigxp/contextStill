@@ -1,6 +1,12 @@
 import os from "node:os";
 import path from "node:path";
 import { config as loadEnv } from "dotenv";
+import type {
+  AgenticCompileProvider,
+  DistillationProvider,
+  EmbeddingProvider,
+  GroupedConfig,
+} from "./config.types.js";
 import { APP_CONSTANTS } from "./constants.js";
 
 loadEnv({ quiet: true });
@@ -17,9 +23,22 @@ const envNumber = (value: string | undefined, fallback: number): number => {
   return Number.isFinite(parsed) ? parsed : fallback;
 };
 
-type EmbeddingProvider = "auto" | "daemon" | "cli" | "disabled";
-type AgenticCompileProvider = "azure-openai" | "bedrock" | "local-llm" | "auto";
-type DistillationProvider = "local-llm" | "azure-openai" | "bedrock" | "auto";
+const parseEmbeddingProvider = (
+  value: string | undefined,
+  fallback: EmbeddingProvider,
+): EmbeddingProvider => {
+  if (value === undefined || value.trim() === "") return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "auto" ||
+    normalized === "daemon" ||
+    normalized === "cli" ||
+    normalized === "disabled"
+  ) {
+    return normalized;
+  }
+  return fallback;
+};
 
 const parseAgenticCompileProvider = (
   value: string | undefined,
@@ -55,85 +74,6 @@ const parseDistillationProvider = (
   return fallback;
 };
 
-type GroupedConfig = {
-  database: { url: string };
-  embedding: {
-    dimension: number;
-    provider: EmbeddingProvider;
-    daemonUrl: string;
-    accessToken: string;
-    timeoutMs: number;
-  };
-  localLlm: {
-    embeddingRoot: string;
-    embeddingPython: string;
-    embeddingModelDir: string;
-    apiBaseUrl: string;
-    apiKey: string;
-    model: string;
-  };
-  sourceContent: { root: string };
-  codex: { sessionDir: string; archivedSessionDir: string };
-  antigravity: { logDir: string; initialLookbackHours: number };
-  agentLogSync: {
-    intervalSeconds: number;
-    initialLookbackHours: number;
-    maxMessagesPerChunk: number;
-    maxCharsPerChunk: number;
-    lockTtlSeconds: number;
-    lockFile: string;
-  };
-  vibeDistillation: {
-    promptVersion: string;
-    batchSize: number;
-    maxInputChars: number;
-    maxOutputTokens: number;
-    timeoutMs: number;
-    lockTtlSeconds: number;
-    lockFile: string;
-  };
-  sourceDistillation: {
-    promptVersion: string;
-    batchSize: number;
-    maxInputChars: number;
-    maxOutputTokens: number;
-    lockTtlSeconds: number;
-    lockFile: string;
-  };
-  distillationTools: {
-    maxRounds: number;
-    timeoutMs: number;
-    resultMaxChars: number;
-    searchResultCount: number;
-    maxCandidates: number;
-    minCandidateScore: number;
-    failureRetryDelaySeconds: number;
-  };
-  compile: { defaultTokenBudget: number; enableVectorSearch: boolean };
-  azureOpenAi: {
-    apiKey: string;
-    apiBaseUrl: string;
-    apiPath: string;
-    apiVersion: string;
-    model: string;
-  };
-  bedrock: {
-    model: string;
-    region: string;
-    profile: string;
-  };
-  agenticCompile: {
-    provider: AgenticCompileProvider;
-    enabled: boolean;
-    timeoutMs: number;
-    maxTokens: number;
-  };
-  distillation: {
-    provider: DistillationProvider;
-  };
-  doctor: { freshnessThresholdMinutes: number; degradedRateThreshold: number };
-};
-
 export const groupedConfig: GroupedConfig = {
   database: {
     url: process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:7889/memory_router",
@@ -143,7 +83,7 @@ export const groupedConfig: GroupedConfig = {
       1,
       envNumber(process.env.MEMORY_ROUTER_EMBEDDING_DIMENSION, APP_CONSTANTS.embeddingDimension),
     ),
-    provider: (process.env.MEMORY_ROUTER_EMBEDDING_PROVIDER || "auto").trim() as EmbeddingProvider,
+    provider: parseEmbeddingProvider(process.env.MEMORY_ROUTER_EMBEDDING_PROVIDER, "auto"),
     daemonUrl: (process.env.MEMORY_ROUTER_EMBEDDING_DAEMON_URL || "http://127.0.0.1:44512").replace(
       /\/+$/,
       "",

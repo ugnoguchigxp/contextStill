@@ -1,38 +1,40 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
+import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
+import { groupedConfig } from "../src/config.js";
 import {
   resolveDistillationModel,
   runDistillationCompletion,
 } from "../src/modules/distillation/distillation-runtime.service.js";
-import { groupedConfig } from "../src/config.js";
 
-vi.mock("../src/config.js", () => ({
-  groupedConfig: {
-    distillationProvider: "local-llm",
-    localLlmApiBaseUrl: "http://llm",
-    localLlmApiKey: "test-key",
-    localLlmModel: "mock-local-model",
-    azureOpenAiApiKey: "",
-    azureOpenAiApiBaseUrl: "",
-    azureOpenAiApiPath: "/openai/deployments",
-    azureOpenAiApiVersion: "2025-04-01-preview",
-    azureOpenAiModel: "",
-    bedrockRegion: "",
-    bedrockModel: "",
-    bedrockProfile: "",
-    vibeDistillationTimeoutMs: 1000,
-    distillationToolMaxRounds: 5,
-  },
-}));
+const originalConfig = {
+  distillationProvider: groupedConfig.distillation.provider,
+  localLlmApiBaseUrl: groupedConfig.localLlm.apiBaseUrl,
+  localLlmApiKey: groupedConfig.localLlm.apiKey,
+  localLlmModel: groupedConfig.localLlm.model,
+  azureOpenAiApiKey: groupedConfig.azureOpenAi.apiKey,
+  azureOpenAiApiBaseUrl: groupedConfig.azureOpenAi.apiBaseUrl,
+  azureOpenAiApiPath: groupedConfig.azureOpenAi.apiPath,
+  azureOpenAiApiVersion: groupedConfig.azureOpenAi.apiVersion,
+  azureOpenAiModel: groupedConfig.azureOpenAi.model,
+  bedrockRegion: groupedConfig.bedrock.region,
+  bedrockModel: groupedConfig.bedrock.model,
+};
 
 describe("Distillation Runtime Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
+
     groupedConfig.distillation.provider = "local-llm";
     groupedConfig.localLlm.apiBaseUrl = "http://llm";
+    groupedConfig.localLlm.apiKey = "test-key";
     groupedConfig.localLlm.model = "mock-local-model";
+
     groupedConfig.azureOpenAi.apiKey = "";
     groupedConfig.azureOpenAi.apiBaseUrl = "";
+    groupedConfig.azureOpenAi.apiPath = "/openai/deployments";
+    groupedConfig.azureOpenAi.apiVersion = "2025-04-01-preview";
     groupedConfig.azureOpenAi.model = "";
+
     groupedConfig.bedrock.region = "";
     groupedConfig.bedrock.model = "";
   });
@@ -195,7 +197,6 @@ describe("Distillation Runtime Service", () => {
       maxTokens: 50,
     });
 
-    // valid, no-args, with-id should remain (3 total)
     expect(result.messages.find((m) => m.role === "assistant")?.tool_calls).toHaveLength(3);
   });
 
@@ -217,5 +218,19 @@ describe("Distillation Runtime Service", () => {
     groupedConfig.azureOpenAi.model = "gpt-5-4-mini";
 
     expect(resolveDistillationModel()).toBe("gpt-5-4-mini");
+  });
+  afterAll(() => {
+    groupedConfig.distillation.provider = originalConfig.distillationProvider;
+    groupedConfig.localLlm.apiBaseUrl = originalConfig.localLlmApiBaseUrl;
+    groupedConfig.localLlm.apiKey = originalConfig.localLlmApiKey;
+    groupedConfig.localLlm.model = originalConfig.localLlmModel;
+    groupedConfig.azureOpenAi.apiKey = originalConfig.azureOpenAiApiKey;
+    groupedConfig.azureOpenAi.apiBaseUrl = originalConfig.azureOpenAiApiBaseUrl;
+    groupedConfig.azureOpenAi.apiPath = originalConfig.azureOpenAiApiPath;
+    groupedConfig.azureOpenAi.apiVersion = originalConfig.azureOpenAiApiVersion;
+    groupedConfig.azureOpenAi.model = originalConfig.azureOpenAiModel;
+    groupedConfig.bedrock.region = originalConfig.bedrockRegion;
+    groupedConfig.bedrock.model = originalConfig.bedrockModel;
+    vi.unstubAllGlobals();
   });
 });

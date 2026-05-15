@@ -168,6 +168,16 @@ export type GraphNode = {
   label: string;
   kind: "knowledge";
   group: string;
+  weight: number;
+  status: string;
+  embedded: boolean;
+};
+
+export type GraphNodeDetail = {
+  id: string;
+  label: string;
+  kind: "knowledge";
+  group: string;
   detail: string;
   weight: number;
   status: string;
@@ -186,7 +196,6 @@ export type GraphEdge = {
   relationAxis: "semantic" | "session" | "project";
   derived: boolean;
   weight: number;
-  detail: string;
 };
 
 export type GraphStatusFilter = "current" | "active" | "draft" | "deprecated" | "all";
@@ -392,13 +401,13 @@ export async function fetchGraphSnapshot(
         minSimilarity?: number;
         semanticTopK?: number;
         maxContextEdgesPerNode?: number;
-      } = 120,
+      } = 1000,
 ): Promise<GraphSnapshot> {
   const params = new URLSearchParams();
   if (typeof input === "number") {
     params.set("limit", String(input));
   } else {
-    params.set("limit", String(input.limit ?? 120));
+    params.set("limit", String(input.limit ?? 1000));
     if (input.status) params.set("status", input.status);
     if (input.view) params.set("view", input.view);
     if (input.relationAxes && input.relationAxes.length > 0) {
@@ -415,6 +424,14 @@ export async function fetchGraphSnapshot(
     }
   }
   return getJson<GraphSnapshot>(`/api/graph?${params}`);
+}
+
+export async function fetchGraphNodeDetail(rawId: string): Promise<GraphNodeDetail | null> {
+  try {
+    return await getJson<GraphNodeDetail>(`/api/graph/nodes/${encodeURIComponent(rawId)}`);
+  } catch {
+    return null;
+  }
 }
 
 export async function fetchSourceTree(): Promise<SourceTreeResponse> {

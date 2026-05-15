@@ -510,9 +510,9 @@ memory-router/
 | Document | Description |
 |---|---|
 | [MCP Tool Contract](docs/mcp-tools.md) | Full MCP tool input/output specifications |
-| [Improvement Plan](docs/context-compile-mcp-improvement-plan.md) | Context Compile and MCP improvement roadmap |
-| [Code Review Issues](docs/code-review-issues.md) | Tracked issues with task checklists |
-| [Distillation Runtime](docs/distillation-runtime-plan.md) | Shared distillation architecture |
+| [Improvement Plan](docs/improvement-plan.md) | Current implementation roadmap and acceptance criteria |
+| [Context Compile/MCP Plan](docs/context-compile-mcp-improvement-plan.md) | Context Compile and MCP hardening plan |
+| [Knowledge Value Lifecycle](docs/knowledge-value-lifecycle.md) | Knowledge lifecycle operation policy |
 
 ---
 
@@ -531,7 +531,7 @@ memory-router/
 ### Development tips
 
 - `bun run verify` is the primary quality gate (typecheck → lint → format → unit tests → web build)
-- `test:unit` explicitly lists test files in `package.json` — add new test files there
+- `test:unit` runs all `test/**/*.test.ts` and `web/src/**/*.test.ts(x)` via Vitest (integration/e2e tests are excluded)
 - Integration tests require a `memory_router_test` database
 - The `wiki/` directory has its own Git repository
 

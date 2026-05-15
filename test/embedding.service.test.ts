@@ -1,8 +1,8 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
-import { embedOne, embeddingHealth } from "../src/modules/embedding/embedding.service.js";
-import { groupedConfig } from "../src/config.js";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { execFile } from "node:child_process";
 import { access } from "node:fs/promises";
+import { groupedConfig } from "../src/config.js";
+import { embedOne, embeddingHealth } from "../src/modules/embedding/embedding.service.js";
 
 vi.mock("node:child_process", () => ({
   execFile: vi.fn(),
@@ -10,24 +10,49 @@ vi.mock("node:child_process", () => ({
 vi.mock("node:fs/promises", () => ({
   access: vi.fn(),
 }));
-vi.mock("../src/config.js", () => ({
-  groupedConfig: {
-    embeddingProvider: "auto",
-    embeddingDaemonUrl: "http://daemon",
-    embeddingDimension: 3,
-    embeddingTimeoutMs: 1000,
-    embeddingAccessToken: "key",
-    localLlmEmbeddingPython: "/usr/bin/python",
-    localLlmEmbeddingRoot: "/root",
-    localLlmEmbeddingModelDir: "/models",
-  },
-}));
+
+const originalEmbeddingConfig = {
+  provider: groupedConfig.embedding.provider,
+  daemonUrl: groupedConfig.embedding.daemonUrl,
+  accessToken: groupedConfig.embedding.accessToken,
+  timeoutMs: groupedConfig.embedding.timeoutMs,
+  dimension: groupedConfig.embedding.dimension,
+};
+
+const originalLocalLlmEmbeddingConfig = {
+  embeddingPython: groupedConfig.localLlm.embeddingPython,
+  embeddingRoot: groupedConfig.localLlm.embeddingRoot,
+  embeddingModelDir: groupedConfig.localLlm.embeddingModelDir,
+};
 
 describe("Embedding Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.stubGlobal("fetch", vi.fn());
+
     groupedConfig.embedding.provider = "auto";
+    groupedConfig.embedding.daemonUrl = "http://daemon";
+    groupedConfig.embedding.accessToken = "key";
+    groupedConfig.embedding.timeoutMs = 1000;
+    groupedConfig.embedding.dimension = 3;
+
+    groupedConfig.localLlm.embeddingPython = "/usr/bin/python";
+    groupedConfig.localLlm.embeddingRoot = "/root";
+    groupedConfig.localLlm.embeddingModelDir = "/models";
+  });
+
+  afterEach(() => {
+    groupedConfig.embedding.provider = originalEmbeddingConfig.provider;
+    groupedConfig.embedding.daemonUrl = originalEmbeddingConfig.daemonUrl;
+    groupedConfig.embedding.accessToken = originalEmbeddingConfig.accessToken;
+    groupedConfig.embedding.timeoutMs = originalEmbeddingConfig.timeoutMs;
+    groupedConfig.embedding.dimension = originalEmbeddingConfig.dimension;
+
+    groupedConfig.localLlm.embeddingPython = originalLocalLlmEmbeddingConfig.embeddingPython;
+    groupedConfig.localLlm.embeddingRoot = originalLocalLlmEmbeddingConfig.embeddingRoot;
+    groupedConfig.localLlm.embeddingModelDir = originalLocalLlmEmbeddingConfig.embeddingModelDir;
+
+    vi.unstubAllGlobals();
   });
 
   test("embedOne uses daemon if available", async () => {
@@ -38,7 +63,7 @@ describe("Embedding Service", () => {
           embeddings: [[0.1, 0.2, 0.3]],
           dimension: 3,
         }),
-    } as any);
+    } as never);
 
     const result = await embedOne("hello", "query");
     expect(result).toEqual([0.1, 0.2, 0.3]);
@@ -46,11 +71,9 @@ describe("Embedding Service", () => {
   });
 
   test("embedOne falls back to cli if daemon fails", async () => {
-    // Daemon fails
-    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 500 } as any);
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 500 } as never);
 
-    // CLI succeeds
-    vi.mocked(execFile).mockImplementation((...callArgs: any[]) => {
+    vi.mocked(execFile).mockImplementation((...callArgs: unknown[]) => {
       const cb = callArgs.at(-1);
       if (typeof cb === "function") {
         cb(null, {
@@ -58,7 +81,7 @@ describe("Embedding Service", () => {
           stderr: "",
         });
       }
-      return {} as any;
+      return {} as never;
     });
 
     const result = await embedOne("hello", "query");
@@ -83,17 +106,17 @@ describe("Embedding Service", () => {
       ok: true,
       json: () =>
         Promise.resolve({
-          embeddings: [[0.1, 0.2]], // only 2 dims, expected 3
+          embeddings: [[0.1, 0.2]],
           dimension: 2,
         }),
-    } as any);
+    } as never);
 
     await expect(embedOne("hello", "query")).rejects.toThrow("dimension mismatch");
   });
 
   test("embeddingHealth checks both daemon and cli", async () => {
-    vi.mocked(fetch).mockResolvedValue({ ok: true } as any);
-    vi.mocked(access).mockResolvedValue(undefined);
+    vi.mocked(fetch).mockResolvedValue({ ok: true } as never);
+    vi.mocked(access).mockResolvedValue(undefined as never);
 
     const health = await embeddingHealth();
     expect(health.daemon.reachable).toBe(true);
@@ -102,13 +125,13 @@ describe("Embedding Service", () => {
 
   test("embedOne includes daemon/cli failures when auto fallback exhausts", async () => {
     groupedConfig.embedding.provider = "auto";
-    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 503 } as any);
-    vi.mocked(execFile).mockImplementation((...callArgs: any[]) => {
+    vi.mocked(fetch).mockResolvedValue({ ok: false, status: 503 } as never);
+    vi.mocked(execFile).mockImplementation((...callArgs: unknown[]) => {
       const cb = callArgs.at(-1);
       if (typeof cb === "function") {
-        cb(new Error("CLI unavailable"), "", "");
+        cb(new Error("CLI unavailable"));
       }
-      return {} as any;
+      return {} as never;
     });
 
     await expect(embedOne("hello", "query")).rejects.toThrow(/daemon: HTTP 503; cli:/);

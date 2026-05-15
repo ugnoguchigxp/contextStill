@@ -4,7 +4,19 @@ import { knowledgeItems, knowledgeSourceLinks, vibeMemories } from "../../../src
 import { normalizeKnowledgeScore, toUnitKnowledgeScore } from "../../../src/lib/score-scale.js";
 import { normalizeRepoKey } from "../../../src/modules/context-compiler/query-context.js";
 
+/** グラフ表示専用の軽量ノード型（body 等の重いフィールドを除外） */
 export type GraphNode = {
+  id: string;
+  label: string;
+  kind: "knowledge";
+  group: string;
+  weight: number;
+  status: string;
+  embedded: boolean;
+};
+
+/** ノードクリック時に取得する詳細型 */
+export type GraphNodeDetail = {
   id: string;
   label: string;
   kind: "knowledge";
@@ -27,7 +39,6 @@ export type GraphEdge = {
   relationAxis: "semantic" | "session" | "project";
   derived: boolean;
   weight: number;
-  detail: string;
 };
 
 type GraphStatusFilter = "current" | "active" | "draft" | "deprecated" | "all";
@@ -206,7 +217,6 @@ function buildContextEdgesForGroup(params: {
       relationAxis: params.axis,
       derived: true,
       weight: params.weight,
-      detail: params.axis === "session" ? "Same session context" : "Same project context",
     });
   }
 
@@ -373,7 +383,6 @@ async function buildSemanticEdges(params: {
       relationAxis: "semantic",
       derived: true,
       weight: Math.max(0.1, similarity),
-      detail: `${Math.round(similarity * 100)}% semantic similarity`,
     });
     edgeCounts.set(row.source_id, sourceCount + 1);
     edgeCounts.set(row.target_id, targetCount + 1);
@@ -416,10 +425,8 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
       .select({
         id: knowledgeItems.id,
         title: knowledgeItems.title,
-        body: knowledgeItems.body,
         type: knowledgeItems.type,
         status: knowledgeItems.status,
-        confidence: knowledgeItems.confidence,
         importance: knowledgeItems.importance,
         embedded: sql<boolean>`${knowledgeItems.embedding} is not null`,
         appliesTo: knowledgeItems.appliesTo,
@@ -444,12 +451,8 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
       label: row.title,
       kind: "knowledge" as const,
       group: row.type,
-      detail: `${row.type} / ${row.status}`,
       weight: Math.max(0.2, toUnitKnowledgeScore(row.importance, 50)),
       status: row.status,
-      confidence: normalizeKnowledgeScore(row.confidence, 70),
-      importance: normalizeKnowledgeScore(row.importance, 70),
-      bodyPreview: preview(row.body),
       embedded: Boolean(row.embedded),
     })),
   ];
@@ -517,5 +520,39 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
       relationEdgeCount,
       sourceRefCount: finiteOrFallback(sourceRefRows[0]?.sourceRefCount, 0),
     },
+  };
+}
+
+/**
+ * ノードクリック時に詳細を取得する関数。
+ * knowledge: prefix を取り除いた生 ID を受け取る。
+ */
+export async function fetchGraphNodeDetail(rawId: string): Promise<GraphNodeDetail | null> {
+  const row = await db.query.knowledgeItems.findFirst({
+    where: (t, { eq }) => eq(t.id, rawId),
+    columns: {
+      id: true,
+      title: true,
+      body: true,
+      type: true,
+      status: true,
+      confidence: true,
+      importance: true,
+      embedding: false,
+    },
+  });
+  if (!row) return null;
+  return {
+    id: knowledgeNodeId(row.id),
+    label: row.title,
+    kind: "knowledge" as const,
+    group: row.type,
+    detail: `${row.type} / ${row.status}`,
+    weight: Math.max(0.2, toUnitKnowledgeScore(row.importance, 50)),
+    status: row.status,
+    confidence: normalizeKnowledgeScore(row.confidence, 70),
+    importance: normalizeKnowledgeScore(row.importance, 70),
+    bodyPreview: preview(row.body),
+    embedded: false, // クリック時は画面上の embedded 状態を流用するため概算
   };
 }

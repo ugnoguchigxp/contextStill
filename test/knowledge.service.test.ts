@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { groupedConfig } from "../src/config.js";
 import * as embedding from "../src/modules/embedding/embedding.service.js";
 import * as repo from "../src/modules/knowledge/knowledge.repository.js";
@@ -10,12 +10,7 @@ import {
 
 vi.mock("../src/modules/knowledge/knowledge.repository.js");
 vi.mock("../src/modules/embedding/embedding.service.js");
-vi.mock("../src/config.js", () => ({
-  groupedConfig: {
-    enableVectorSearch: true,
-    embeddingProvider: "openai",
-  },
-}));
+const originalEnableVectorSearch = groupedConfig.compile.enableVectorSearch;
 
 describe("Knowledge Service", () => {
   beforeEach(() => {
@@ -174,5 +169,9 @@ describe("Knowledge Service", () => {
       });
     }
     expect(repo.searchKnowledge).toHaveBeenCalled();
+  });
+
+  afterAll(() => {
+    groupedConfig.compile.enableVectorSearch = originalEnableVectorSearch;
   });
 });

@@ -5,9 +5,11 @@ import { Checkbox } from "@/components/ui/checkbox";
 import { Select } from "@/components/ui/select";
 import {
   fetchGraphSnapshot,
+  fetchGraphNodeDetail,
   type GraphEdge,
   type GraphRelationAxis,
   type GraphNode,
+  type GraphNodeDetail,
   type GraphStatusFilter,
   type GraphViewMode,
 } from "../repositories/admin.repository";
@@ -223,14 +225,23 @@ export function GraphPage() {
   const containerRef = useRef<HTMLDivElement>(null);
 
   const graph = useQuery({
-    queryKey: ["graph", 300, statusFilter, viewMode, relationAxes.join(",")],
+    queryKey: ["graph", 1000, statusFilter, viewMode, relationAxes.join(",")],
     queryFn: () =>
       fetchGraphSnapshot({
-        limit: 300,
+        limit: 1000,
         status: statusFilter,
         view: viewMode,
         relationAxes: viewMode === "relation" ? relationAxes : undefined,
       }),
+  });
+
+  // ノードクリック時に詳細を取得
+  const selectedRawId = selectedId ? selectedId.replace(/^knowledge:/, "") : null;
+  const nodeDetail = useQuery<GraphNodeDetail | null>({
+    queryKey: ["graph-node-detail", selectedRawId],
+    queryFn: () => (selectedRawId ? fetchGraphNodeDetail(selectedRawId) : Promise.resolve(null)),
+    enabled: Boolean(selectedRawId),
+    staleTime: 60_000,
   });
 
   const nodes = useMemo(
@@ -238,7 +249,6 @@ export function GraphPage() {
     [graph.data?.nodes, graph.data?.edges],
   );
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
-  const selected = selectedId ? nodeById.get(selectedId) : null;
   const activeId = selectedId ?? hoveredId;
   const totalEdges = graph.data?.edges.length ?? 0;
 
@@ -447,24 +457,62 @@ export function GraphPage() {
       </div>
 
       <div className="graph-overlay-bottom-left">
-        {selected ? (
+        {selectedId ? (
           <div className="graph-selection-card">
-            <div className="flex gap-2 mb-1">
-              <Badge variant="secondary" className="h-4 text-[10px]">
-                {selected.group}
-              </Badge>
-              <Badge variant="outline" className="h-4 border-slate-500 text-[10px] text-slate-100">
-                {selected.status}
-              </Badge>
-              <Badge
-                variant={selected.embedded ? "secondary" : "outline"}
-                className={`h-4 text-[10px] ${selected.embedded ? "" : "border-amber-400 text-amber-200"}`}
-              >
-                {selected.embedded ? "embedded" : "no-embedding"}
-              </Badge>
-            </div>
-            <h3 className="text-sm font-bold truncate">{selected.label}</h3>
-            <p className="text-xs text-muted-foreground line-clamp-2">{selected.bodyPreview}</p>
+            {nodeDetail.isLoading ? (
+              <p className="text-xs text-slate-400">Loading...</p>
+            ) : nodeDetail.data ? (
+              <>
+                <div className="flex gap-2 mb-1">
+                  <Badge variant="secondary" className="h-4 text-[10px]">
+                    {nodeDetail.data.group}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className="h-4 border-slate-500 text-[10px] text-slate-100"
+                  >
+                    {nodeDetail.data.status}
+                  </Badge>
+                  <Badge
+                    variant={nodeDetail.data.embedded ? "secondary" : "outline"}
+                    className={`h-4 text-[10px] ${
+                      nodeById.get(selectedId)?.embedded ? "" : "border-amber-400 text-amber-200"
+                    }`}
+                  >
+                    {nodeById.get(selectedId)?.embedded ? "embedded" : "no-embedding"}
+                  </Badge>
+                </div>
+                <h3 className="text-sm font-bold truncate">{nodeDetail.data.label}</h3>
+                <div className="flex gap-3 text-[10px] text-slate-400 mt-1 mb-1">
+                  <span>confidence: {nodeDetail.data.confidence.toFixed(0)}</span>
+                  <span>importance: {nodeDetail.data.importance.toFixed(0)}</span>
+                </div>
+                <p className="text-xs text-muted-foreground line-clamp-3">
+                  {nodeDetail.data.bodyPreview}
+                </p>
+              </>
+            ) : (
+              // 詳細取得前 or 失敗時は軽量データでフォールバック表示
+              (() => {
+                const node = nodeById.get(selectedId);
+                return node ? (
+                  <>
+                    <div className="flex gap-2 mb-1">
+                      <Badge variant="secondary" className="h-4 text-[10px]">
+                        {node.group}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="h-4 border-slate-500 text-[10px] text-slate-100"
+                      >
+                        {node.status}
+                      </Badge>
+                    </div>
+                    <h3 className="text-sm font-bold truncate">{node.label}</h3>
+                  </>
+                ) : null;
+              })()
+            )}
           </div>
         ) : (
           <div className="graph-selection-hint">Select a node to view details</div>

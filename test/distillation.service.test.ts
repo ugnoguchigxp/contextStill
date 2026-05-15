@@ -9,11 +9,13 @@ import {
 import { upsertKnowledgeFromSource } from "../src/modules/knowledge/knowledge.repository.js";
 import { embedOne } from "../src/modules/embedding/embedding.service.js";
 import { callLocalLlmCompletionForDistillation } from "../src/modules/distillation/distillation-runtime.service.js";
+import { checkKnowledgeDuplicate } from "../src/lib/knowledge-dedup.js";
 
 vi.mock("../src/modules/vibe-memory/distillation.repository.js");
 vi.mock("../src/modules/knowledge/knowledge.repository.js");
 vi.mock("../src/modules/embedding/embedding.service.js");
 vi.mock("../src/modules/distillation/distillation-runtime.service.js");
+vi.mock("../src/lib/knowledge-dedup.js");
 
 describe("Vibe Memory Distillation Service", () => {
   beforeEach(() => {
@@ -31,6 +33,7 @@ describe("Vibe Memory Distillation Service", () => {
       },
     ]);
     vi.mocked(listAgentDiffEntriesForVibeMemories).mockResolvedValue([]);
+    vi.mocked(checkKnowledgeDuplicate).mockResolvedValue({ isDuplicate: false });
   });
 
   test("runs distillation in dry run mode", async () => {
