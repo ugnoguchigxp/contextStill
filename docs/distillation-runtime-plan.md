@@ -96,6 +96,7 @@ A rule is a durable constraint, preference, invariant, or decision.
 A procedure is a reusable sequence of steps, command flow, operational skill, or review checklist.
 
 Each candidate must be small enough to fit inside a compiled context pack.
+Assign confidence and importance as 0 to 100 values (integers preferred).
 Assign each candidate a score from 0 to 1 for overall preservation value.
 Only emit candidates whose score is at least MEMORY_ROUTER_DISTILLATION_MIN_CANDIDATE_SCORE.
 Do not include below-threshold candidates in the candidates array; return an empty candidates array instead.
@@ -135,7 +136,7 @@ Return strict JSON only.
 - `body` は raw evidence の丸写しではない。
 - `sourceRefs` が入力 evidence に対応している。
 - 外部主張を含む candidate は fetched evidence を持つ。
-- `confidence` と `importance` は `0..1` に clamp する。
+- `confidence` と `importance` は `0..100` に clamp する。
 - `score` は `0..1` に clamp し、`MEMORY_ROUTER_DISTILLATION_MIN_CANDIDATE_SCORE` 未満は保存しない。
 - embedding 生成に失敗した candidate は保存しない。
 - rejected candidate は run metadata に残しても `knowledge_items` には保存しない。

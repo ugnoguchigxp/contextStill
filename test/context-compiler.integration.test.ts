@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { sql } from "drizzle-orm";
 import { getDb } from "../src/db/index.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
@@ -160,5 +160,91 @@ describeDb("context compiler integration", () => {
         (item) => item.itemKind === "file_hint" && item.content.includes("src/"),
       ),
     ).toBe(true);
+  });
+
+  test("repoPath scopes knowledge retrieval to same repo and global", async () => {
+    await upsertKnowledgeFromSource({
+      sourceUri: "file:///repo-a/rule.md",
+      contentHash: "repo-a-rule-hash",
+      type: "rule",
+      status: "active",
+      scope: "repo",
+      title: "Repo A Rule",
+      body: "scoped compile token",
+      metadata: {
+        repoPath: "/workspace/repo-a",
+        repoKey: "/workspace/repo-a",
+      },
+    });
+    await upsertKnowledgeFromSource({
+      sourceUri: "file:///repo-b/rule.md",
+      contentHash: "repo-b-rule-hash",
+      type: "rule",
+      status: "active",
+      scope: "repo",
+      title: "Repo B Rule",
+      body: "scoped compile token",
+      metadata: {
+        repoPath: "/workspace/repo-b",
+        repoKey: "/workspace/repo-b",
+      },
+    });
+    await upsertKnowledgeFromSource({
+      sourceUri: "file:///repo-a-archive/rule.md",
+      contentHash: "repo-a-archive-rule-hash",
+      type: "rule",
+      status: "active",
+      scope: "repo",
+      title: "Repo A Archive Rule",
+      body: "scoped compile token",
+      metadata: {
+        repoPath: "/workspace/repo-a-archive",
+        repoKey: "/workspace/repo-a-archive",
+      },
+    });
+    await upsertKnowledgeFromSource({
+      sourceUri: "file:///global/rule.md",
+      contentHash: "global-rule-hash",
+      type: "rule",
+      status: "active",
+      scope: "global",
+      title: "Global Rule",
+      body: "scoped compile token",
+    });
+
+    const { pack } = await compileContextPack({
+      goal: "scoped compile token",
+      intent: "edit",
+      repoPath: "/workspace/repo-a",
+      tokenBudget: 4000,
+    });
+
+    const titles = pack.rules.map((item) => item.title);
+    expect(titles).toContain("Repo A Rule");
+    expect(titles).toContain("Global Rule");
+    expect(titles).not.toContain("Repo B Rule");
+    expect(titles).not.toContain("Repo A Archive Rule");
+    expect(pack.diagnostics.degradedReasons).not.toContain("KNOWLEDGE_REPO_SCOPE_FALLBACK");
+  });
+
+  test("repoPath fallback is explicit when scoped knowledge is missing", async () => {
+    await upsertKnowledgeFromSource({
+      sourceUri: "file:///legacy/rule.md",
+      contentHash: "legacy-rule-hash",
+      type: "rule",
+      status: "active",
+      scope: "repo",
+      title: "Legacy Rule",
+      body: "legacy fallback token",
+    });
+
+    const { pack } = await compileContextPack({
+      goal: "legacy fallback token",
+      intent: "edit",
+      repoPath: "/workspace/repo-a",
+    });
+
+    expect(pack.rules.some((item) => item.title === "Legacy Rule")).toBe(true);
+    expect(pack.diagnostics.degradedReasons).toContain("KNOWLEDGE_REPO_SCOPE_FALLBACK");
   });
 });

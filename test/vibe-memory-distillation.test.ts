@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import type {
   AgentDiffEntryForDistillation,
   VibeMemoryForDistillation,
@@ -56,8 +56,8 @@ describe("vibe memory distillation", () => {
       "type": "rule",
       "title": "Keep generated knowledge in draft",
       "body": "Knowledge distilled from chat should remain draft until a human reviews it.",
-      "confidence": 1.2,
-      "importance": -0.1,
+      "confidence": 120,
+      "importance": -10,
       "score": 0.8,
       "sourceRefs": ["vibe-memory:test"]
     },
@@ -75,7 +75,7 @@ describe("vibe memory distillation", () => {
     expect(candidates[0]).toMatchObject({
       type: "rule",
       title: "Keep generated knowledge in draft",
-      confidence: 1,
+      confidence: 100,
       importance: 0,
       score: 0.8,
     });
@@ -150,6 +150,7 @@ describe("vibe memory distillation", () => {
     const prompt = messages.map((message) => message.content).join("\n");
 
     expect(prompt).toContain("Allowed knowledge types are exactly: rule, procedure");
+    expect(prompt).toContain("Assign confidence and importance as 0 to 100 values");
     expect(prompt).toContain("score");
     expect(prompt).toContain("Only emit candidates whose score is at least");
     expect(prompt).toContain("Do not include below-threshold candidates");

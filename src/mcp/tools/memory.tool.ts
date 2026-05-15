@@ -1,12 +1,8 @@
 import { z } from "zod";
-import {
-  recordVibeMemoryWithDiffEntries,
-  retrieveVibeMemoryContext,
-} from "../../modules/vibe-memory/vibe-memory.service.js";
+import { retrieveVibeMemoryContext } from "../../modules/vibe-memory/vibe-memory.service.js";
 import { db } from "../../db/client.js";
 import { agentDiffEntries, vibeMemories } from "../../db/schema.js";
 import { desc, eq } from "drizzle-orm";
-import { recordVibeMemoryInputSchema } from "../../shared/schemas/vibe-memory.schema.js";
 
 const memorySearchArgsSchema = z.object({
   query: z.string().trim().min(1),
@@ -21,8 +17,6 @@ const memoryFetchArgsSchema = z.object({
   maxChars: z.number().int().positive().optional(),
   query: z.string().trim().optional(),
 });
-
-const recordVibeMemoryArgsSchema = recordVibeMemoryInputSchema;
 
 export const memorySearchTool = {
   name: "memory_search",
@@ -109,68 +103,6 @@ export const memoryFetchTool = {
             null,
             2,
           ),
-        },
-      ],
-    };
-  },
-};
-
-export const recordVibeMemoryTool = {
-  name: "record_vibe_memory",
-  description: "Record a vibe memory and optional agent diff entries to the database.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      sessionId: { type: "string", description: "The current session or task ID." },
-      content: {
-        type: "string",
-        description:
-          "The natural-language chat log or action detail. Do not duplicate diff content here; embedded diffs are moved to agent_diff entries.",
-      },
-      memoryType: {
-        type: "string",
-        enum: ["chat", "action", "observation", "system"],
-        default: "chat",
-      },
-      metadata: { type: "object", description: "Optional metadata." },
-      diff: {
-        type: "string",
-        description:
-          "Optional unified diff. Changed hunks are stored only as agent_diff entries and symbolized when possible.",
-      },
-      agentDiffs: {
-        type: "array",
-        description: "Optional explicit diff entries with optional symbol columns.",
-        items: {
-          type: "object",
-          properties: {
-            filePath: { type: "string" },
-            diffHunk: { type: "string" },
-            diff: { type: "string" },
-            changeType: { type: "string" },
-            language: { type: "string" },
-            symbolName: { type: "string" },
-            symbolKind: { type: "string" },
-            signature: { type: "string" },
-            startLine: { type: "number" },
-            endLine: { type: "number" },
-            metadata: { type: "object" },
-          },
-          required: ["filePath"],
-        },
-      },
-    },
-    required: ["sessionId", "content"],
-  },
-  handler: async (args: unknown) => {
-    const parsed = recordVibeMemoryArgsSchema.parse(args);
-    const result = await recordVibeMemoryWithDiffEntries(parsed);
-    const symbolCount = result.diffEntries.filter((entry) => entry.symbolName).length;
-    return {
-      content: [
-        {
-          type: "text",
-          text: `Vibe memory recorded with ID: ${result.memory.id} (agentDiffs: ${result.diffEntries.length}, symbols: ${symbolCount})`,
         },
       ],
     };

@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import type { SourceFragmentForDistillation } from "../src/modules/sources/distillation.repository.js";
 import {
   buildSourceDistillationInputHash,
@@ -34,6 +34,7 @@ describe("source distillation", () => {
     const prompt = messages.map((message) => message.content).join("\n");
 
     expect(prompt).toContain("Allowed knowledge types are exactly: rule, procedure");
+    expect(prompt).toContain("Assign confidence and importance as 0 to 100 values");
     expect(prompt).toContain("Only emit candidates whose score is at least");
     expect(prompt).toContain("search_web");
     expect(prompt).toContain("fetch_content");

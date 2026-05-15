@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { spawnSync } from "node:child_process";
 import { upsertKnowledgeFromSource } from "../src/modules/knowledge/knowledge.repository.js";
 import { upsertSourceDocument } from "../src/modules/sources/source.repository.js";

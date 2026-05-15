@@ -162,8 +162,8 @@ export const knowledgeItems = pgTable(
     title: text("title").notNull(),
     body: text("body").notNull(),
     appliesTo: jsonb("applies_to").default({}).notNull(),
-    confidence: real("confidence").default(0.5).notNull(),
-    importance: real("importance").default(0.5).notNull(),
+    confidence: real("confidence").default(70).notNull(),
+    importance: real("importance").default(70).notNull(),
     embedding: vector("embedding", { dimensions: config.embeddingDimension }),
     metadata: jsonb("metadata").default({}).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
@@ -214,8 +214,8 @@ export const sources = pgTable(
   },
   (table) => ({
     kindIdx: index("sources_kind_idx").on(table.sourceKind),
-    uriIdx: index("sources_uri_idx").on(table.uri),
-    uriHashIdx: index("sources_uri_hash_idx").on(table.uri, table.contentHash),
+    uriUniqueIdx: uniqueIndex("sources_uri_unique_idx").on(table.uri),
+    contentHashIdx: index("sources_content_hash_idx").on(table.contentHash),
     sourceKindCheck: check(
       "sources_source_kind_check",
       sql`${table.sourceKind} IN (${sql.raw(toSqlList(sourceKindValues))})`,

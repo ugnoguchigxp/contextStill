@@ -32,15 +32,42 @@ export function renderContextPackMarkdown(pack: ContextPack): string {
 
   renderSection("Rules", pack.rules);
   renderSection("Procedures", pack.procedures);
-  renderSection("Code Context", pack.codeContext);
+  renderSection("File Hints", pack.codeContext);
 
-  lines.push("## Source Refs");
+  lines.push("## Relevant Source Evidence");
   lines.push("");
   if (pack.sourceRefs.length === 0) {
     lines.push("- none");
   } else {
     for (const ref of pack.sourceRefs) {
       lines.push(`- ${ref}`);
+    }
+  }
+  lines.push("");
+
+  lines.push("## Warnings / Missing Context");
+  lines.push("");
+  if (pack.warnings.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const warning of pack.warnings) {
+      lines.push(`- ${warning}`);
+    }
+  }
+  lines.push("");
+
+  lines.push("## Suggested Next MCP Calls");
+  lines.push("");
+  const suggestedNextCalls =
+    Array.isArray(pack.diagnostics.retrievalStats.suggestedNextCalls) &&
+    pack.diagnostics.retrievalStats.suggestedNextCalls.every((item) => typeof item === "string")
+      ? (pack.diagnostics.retrievalStats.suggestedNextCalls as string[])
+      : [];
+  if (suggestedNextCalls.length === 0) {
+    lines.push("- none");
+  } else {
+    for (const call of suggestedNextCalls) {
+      lines.push(`- ${call}`);
     }
   }
   lines.push("");

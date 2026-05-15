@@ -6,6 +6,7 @@ import { eq, inArray, sql } from "drizzle-orm";
 import { config } from "../../config.js";
 import { getDb } from "../../db/index.js";
 import { syncStates } from "../../db/schema.js";
+import { getExposedToolEntries } from "../../mcp/tools/index.js";
 import { type DoctorReport, doctorReportSchema } from "../../shared/schemas/doctor.schema.js";
 import { listRecentCompileRuns } from "../context-compiler/context-compiler.repository.js";
 import { embeddingHealth } from "../embedding/embedding.service.js";
@@ -27,6 +28,16 @@ const requiredTables = [
 ] as const;
 
 const requiredTableSqlList = requiredTables.map((tableName) => `'${tableName}'`).join(", ");
+
+const requiredPrimaryMcpTools = [
+  "initial_instructions",
+  "context_compile",
+  "search_knowledge",
+  "register_knowledge",
+  "memory_search",
+  "memory_fetch",
+  "doctor",
+] as const;
 
 type DoctorOptions = {
   windowSize?: number;
@@ -68,6 +79,27 @@ function metadataWarnings(raw: unknown): string[] {
 function metadataSkipped(raw: unknown): boolean {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
   return Boolean((raw as { skipped?: unknown }).skipped);
+}
+
+function inspectMcpSurface(): DoctorReport["mcp"] {
+  const exposedTools = getExposedToolEntries()
+    .map((entry) => entry.name)
+    .sort((a, b) => a.localeCompare(b));
+  const missingPrimaryTools = requiredPrimaryMcpTools.filter(
+    (name) => !exposedTools.includes(name),
+  );
+  const nextActions: string[] = [];
+  if (missingPrimaryTools.length > 0) {
+    nextActions.push(`不足 MCP primary tools を追加する: ${missingPrimaryTools.join(", ")}`);
+  }
+  return {
+    exposedTools,
+    requiredPrimaryTools: [...requiredPrimaryMcpTools],
+    missingPrimaryTools,
+    staleKnowledgeCount: 0,
+    staleSourceCount: 0,
+    nextActions,
+  };
 }
 
 async function inspectLaunchAgent(
@@ -337,6 +369,10 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
   };
 
   const reasons: string[] = [];
+  const mcp = inspectMcpSurface();
+  if (mcp.missingPrimaryTools.length > 0) {
+    reasons.push("MCP_PRIMARY_TOOLS_MISSING");
+  }
   const startedAt = Date.now();
   const embedding = await embeddingHealth();
 
@@ -377,6 +413,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
         freshnessThresholdMinutes: options.freshnessThresholdMinutes,
         degradedRateThreshold: options.degradedRateThreshold,
       },
+      mcp,
       agentLogSync,
       vibeDistillation,
       sourceDistillation,
@@ -420,6 +457,33 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
 
   if (embedding.configured && !embedding.daemon.reachable && !embedding.cli.usable) {
     reasons.push("EMBEDDING_PROVIDER_UNAVAILABLE");
+  }
+
+  let staleKnowledgeCount = 0;
+  let staleSourceCount = 0;
+  if (!missingTables.includes("knowledge_items")) {
+    try {
+      const result = await db.execute(sql`
+        select count(*)::int as count
+        from knowledge_items
+        where status = 'deprecated'
+      `);
+      staleKnowledgeCount = Number((result.rows as Array<{ count?: number }>)[0]?.count ?? 0);
+    } catch {
+      reasons.push("STALE_KNOWLEDGE_COUNT_QUERY_FAILED");
+    }
+  }
+  if (!missingTables.includes("sources")) {
+    try {
+      const result = await db.execute(sql`
+        select count(*)::int as count
+        from sources
+        where updated_at < now() - (${options.freshnessThresholdMinutes} * interval '1 minute')
+      `);
+      staleSourceCount = Number((result.rows as Array<{ count?: number }>)[0]?.count ?? 0);
+    } catch {
+      reasons.push("STALE_SOURCE_COUNT_QUERY_FAILED");
+    }
   }
 
   let totalRuns = 0;
@@ -529,6 +593,21 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
         ? "degraded"
         : "ok";
 
+  const mcpReport: DoctorReport["mcp"] = {
+    ...mcp,
+    staleKnowledgeCount,
+    staleSourceCount,
+    nextActions: [
+      ...mcp.nextActions,
+      ...(staleKnowledgeCount > 0
+        ? [`deprecated knowledge を整理する（count: ${staleKnowledgeCount}）`]
+        : []),
+      ...(staleSourceCount > 0
+        ? [`stale source を再importまたは更新する（count: ${staleSourceCount}）`]
+        : []),
+    ],
+  };
+
   return doctorReportSchema.parse({
     status,
     checkedAt: nowIso(),
@@ -556,6 +635,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
       freshnessThresholdMinutes: options.freshnessThresholdMinutes,
       degradedRateThreshold: options.degradedRateThreshold,
     },
+    mcp: mcpReport,
     agentLogSync,
     vibeDistillation,
     sourceDistillation,

@@ -1,12 +1,15 @@
 import { useMemo, useState, useRef, useEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
+import { Checkbox } from "@/components/ui/checkbox";
 import { Select } from "@/components/ui/select";
 import {
   fetchGraphSnapshot,
-  type GraphEdgeMode,
+  type GraphEdge,
+  type GraphRelationAxis,
   type GraphNode,
   type GraphStatusFilter,
+  type GraphViewMode,
 } from "../repositories/admin.repository";
 
 const nodeColors: Record<string, string> = {
@@ -15,50 +18,270 @@ const nodeColors: Record<string, string> = {
 };
 
 type PositionedNode = GraphNode & { x: number; y: number };
+type Viewport = { width: number; height: number };
+type Transform = { x: number; y: number; scale: number };
+type EdgeLink = {
+  sourceIndex: number;
+  targetIndex: number;
+  edgeKind: GraphEdge["edgeKind"];
+  weight: number;
+};
 
-function layoutNodes(nodes: GraphNode[]): PositionedNode[] {
+function clamp(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function createInitialPositions(nodes: GraphNode[]): PositionedNode[] {
   if (nodes.length === 0) return [];
-
+  const goldenAngle = Math.PI * (3 - Math.sqrt(5));
+  const spacing = 44;
   return nodes.map((node, index) => {
-    const ringIndex = Math.floor(index / 12);
-    const ringPos = index % 12;
-    const ringRadius = 200 + ringIndex * 150;
-    const nodesInRing = Math.min(12, nodes.length - ringIndex * 12);
-    const angle = (ringPos / nodesInRing) * Math.PI * 2 - Math.PI / 2;
-
+    const radius = Math.sqrt(index + 1) * spacing;
+    const angle = index * goldenAngle - Math.PI / 2;
     return {
       ...node,
-      x: Math.cos(angle) * ringRadius,
-      y: Math.sin(angle) * ringRadius,
+      x: Math.cos(angle) * radius,
+      y: Math.sin(angle) * radius,
     };
   });
 }
 
+function layoutNodes(nodes: GraphNode[], edges: GraphEdge[]): PositionedNode[] {
+  if (nodes.length === 0) return [];
+  if (nodes.length === 1) {
+    const [node] = nodes;
+    if (!node) return [];
+    return [{ ...node, x: 0, y: 0 }];
+  }
+
+  const positioned = createInitialPositions(nodes);
+  const nodeIndexById = new Map(positioned.map((node, index) => [node.id, index]));
+  const edgeLinks: EdgeLink[] = [];
+  for (const edge of edges) {
+    const sourceIndex = nodeIndexById.get(edge.source);
+    const targetIndex = nodeIndexById.get(edge.target);
+    if (sourceIndex === undefined || targetIndex === undefined || sourceIndex === targetIndex) {
+      continue;
+    }
+    edgeLinks.push({
+      sourceIndex,
+      targetIndex,
+      edgeKind: edge.edgeKind,
+      weight: edge.weight,
+    });
+  }
+
+  if (edgeLinks.length === 0) {
+    return positioned;
+  }
+
+  const points = positioned.map((node) => ({ x: node.x, y: node.y, vx: 0, vy: 0 }));
+  const forces = points.map(() => ({ x: 0, y: 0 }));
+  const iterations =
+    nodes.length >= 180 ? 70 : nodes.length >= 100 ? 100 : nodes.length >= 60 ? 130 : 170;
+  const repulsionStrength = nodes.length >= 180 ? 3000 : 6000;
+  const gravityStrength = nodes.length >= 180 ? 0.0022 : 0.0018;
+  const damping = 0.84;
+
+  for (let iteration = 0; iteration < iterations; iteration += 1) {
+    for (let i = 0; i < forces.length; i += 1) {
+      const force = forces[i];
+      if (!force) continue;
+      force.x = 0;
+      force.y = 0;
+    }
+
+    for (let i = 0; i < points.length; i += 1) {
+      const a = points[i];
+      const fa = forces[i];
+      if (!a || !fa) continue;
+      for (let j = i + 1; j < points.length; j += 1) {
+        const b = points[j];
+        const fb = forces[j];
+        if (!b || !fb) continue;
+        const dx = b.x - a.x;
+        const dy = b.y - a.y;
+        const distanceSq = dx * dx + dy * dy + 0.01;
+        const distance = Math.sqrt(distanceSq);
+        const strength = repulsionStrength / distanceSq;
+        const fx = (dx / distance) * strength;
+        const fy = (dy / distance) * strength;
+        fa.x -= fx;
+        fa.y -= fy;
+        fb.x += fx;
+        fb.y += fy;
+      }
+    }
+
+    for (const edge of edgeLinks) {
+      const source = points[edge.sourceIndex];
+      const target = points[edge.targetIndex];
+      const sourceForce = forces[edge.sourceIndex];
+      const targetForce = forces[edge.targetIndex];
+      if (!source || !target || !sourceForce || !targetForce) continue;
+      const dx = target.x - source.x;
+      const dy = target.y - source.y;
+      const distance = Math.max(1, Math.sqrt(dx * dx + dy * dy));
+      const targetDistance =
+        edge.edgeKind === "semantic"
+          ? clamp(220 - edge.weight * 160, 70, 220)
+          : edge.edgeKind === "session"
+            ? clamp(200 - edge.weight * 120, 75, 210)
+            : clamp(230 - edge.weight * 120, 90, 240);
+      const springStrength =
+        edge.edgeKind === "semantic" ? 0.055 : edge.edgeKind === "session" ? 0.04 : 0.03;
+      const delta = distance - targetDistance;
+      const fx = (dx / distance) * delta * springStrength;
+      const fy = (dy / distance) * delta * springStrength;
+      sourceForce.x += fx;
+      sourceForce.y += fy;
+      targetForce.x -= fx;
+      targetForce.y -= fy;
+    }
+
+    for (let i = 0; i < points.length; i += 1) {
+      const point = points[i];
+      const force = forces[i];
+      if (!point || !force) continue;
+      force.x -= point.x * gravityStrength;
+      force.y -= point.y * gravityStrength;
+      point.vx = (point.vx + force.x) * damping;
+      point.vy = (point.vy + force.y) * damping;
+      point.x += point.vx;
+      point.y += point.vy;
+    }
+  }
+
+  const center = points.reduce((acc, point) => ({ x: acc.x + point.x, y: acc.y + point.y }), {
+    x: 0,
+    y: 0,
+  });
+  const centerX = center.x / points.length;
+  const centerY = center.y / points.length;
+
+  return positioned.map((node, index) => {
+    const point = points[index];
+    if (!point) return node;
+    return {
+      ...node,
+      x: point.x - centerX,
+      y: point.y - centerY,
+    };
+  });
+}
+
+function computeAutoFitTransform(nodes: PositionedNode[], viewport: Viewport): Transform {
+  if (nodes.length === 0 || viewport.width <= 0 || viewport.height <= 0) {
+    return { x: 0, y: 0, scale: 1 };
+  }
+
+  let minX = Number.POSITIVE_INFINITY;
+  let maxX = Number.NEGATIVE_INFINITY;
+  let minY = Number.POSITIVE_INFINITY;
+  let maxY = Number.NEGATIVE_INFINITY;
+
+  for (const node of nodes) {
+    const nodeRadius = 6 + node.weight * 4;
+    const labelPadX = 64;
+    const labelPadY = 28;
+    minX = Math.min(minX, node.x - nodeRadius - labelPadX);
+    maxX = Math.max(maxX, node.x + nodeRadius + labelPadX);
+    minY = Math.min(minY, node.y - nodeRadius - labelPadY);
+    maxY = Math.max(maxY, node.y + nodeRadius + labelPadY);
+  }
+
+  const graphWidth = Math.max(180, maxX - minX);
+  const graphHeight = Math.max(180, maxY - minY);
+  const horizontalPadding = viewport.width >= 1280 ? 180 : viewport.width >= 900 ? 130 : 80;
+  const verticalPadding = viewport.height >= 820 ? 130 : 90;
+  const availableWidth = Math.max(120, viewport.width - horizontalPadding * 2);
+  const availableHeight = Math.max(120, viewport.height - verticalPadding * 2);
+  const fitScale = Math.min(availableWidth / graphWidth, availableHeight / graphHeight);
+  const scale = clamp(fitScale, 0.2, 1.6);
+
+  const centerX = (minX + maxX) / 2;
+  const centerY = (minY + maxY) / 2;
+  return {
+    x: -centerX * scale,
+    y: -centerY * scale,
+    scale,
+  };
+}
+
 export function GraphPage() {
   const [statusFilter, setStatusFilter] = useState<GraphStatusFilter>("current");
-  const [edgeMode, setEdgeMode] = useState<GraphEdgeMode>("both");
+  const [viewMode, setViewMode] = useState<GraphViewMode>("relation");
+  const [relationAxes, setRelationAxes] = useState<GraphRelationAxis[]>(["session", "project"]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
-  const [transform, setTransform] = useState({ x: 0, y: 0, scale: 1.2 });
+  const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, scale: 1 });
+  const [viewport, setViewport] = useState<Viewport>({ width: 0, height: 0 });
+  const [hasInteracted, setHasInteracted] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const dragStart = useRef({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
 
   const graph = useQuery({
-    queryKey: ["graph", 300, statusFilter, edgeMode],
+    queryKey: ["graph", 300, statusFilter, viewMode, relationAxes.join(",")],
     queryFn: () =>
       fetchGraphSnapshot({
         limit: 300,
         status: statusFilter,
-        edgeMode,
+        view: viewMode,
+        relationAxes: viewMode === "relation" ? relationAxes : undefined,
       }),
   });
 
-  const nodes = useMemo(() => layoutNodes(graph.data?.nodes ?? []), [graph.data?.nodes]);
+  const nodes = useMemo(
+    () => layoutNodes(graph.data?.nodes ?? [], graph.data?.edges ?? []),
+    [graph.data?.nodes, graph.data?.edges],
+  );
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
   const selected = selectedId ? nodeById.get(selectedId) : null;
   const activeId = selectedId ?? hoveredId;
+  const totalEdges = graph.data?.edges.length ?? 0;
+
+  const toggleRelationAxis = (axis: GraphRelationAxis) => {
+    setSelectedId(null);
+    setHoveredId(null);
+    setHasInteracted(false);
+    setRelationAxes((prev) => {
+      const hasAxis = prev.includes(axis);
+      if (hasAxis) {
+        if (prev.length === 1) return prev;
+        return prev.filter((candidate) => candidate !== axis);
+      }
+      const next = [...prev, axis];
+      return next.sort((a, b) => (a === b ? 0 : a === "session" ? -1 : 1));
+    });
+  };
+
+  useEffect(() => {
+    const container = containerRef.current;
+    if (!container) return;
+    const updateViewport = () =>
+      setViewport({
+        width: container.clientWidth,
+        height: container.clientHeight,
+      });
+
+    updateViewport();
+    const observer =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(updateViewport) : undefined;
+    observer?.observe(container);
+    window.addEventListener("resize", updateViewport);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updateViewport);
+    };
+  }, []);
+
+  useEffect(() => {
+    if (hasInteracted) return;
+    if (nodes.length === 0) return;
+    setTransform(computeAutoFitTransform(nodes, viewport));
+  }, [nodes, viewport, hasInteracted]);
 
   useEffect(() => {
     const container = containerRef.current;
@@ -68,9 +291,10 @@ export function GraphPage() {
       e.preventDefault();
       const delta = -e.deltaY;
       const factor = 1.1 ** (delta / 100);
+      setHasInteracted(true);
       setTransform((prev) => ({
         ...prev,
-        scale: Math.max(0.05, Math.min(5, prev.scale * factor)),
+        scale: clamp(prev.scale * factor, 0.1, 5),
       }));
     };
 
@@ -80,6 +304,7 @@ export function GraphPage() {
 
   const onMouseDown = (e: React.MouseEvent) => {
     if (e.button !== 0) return;
+    setHasInteracted(true);
     setIsDragging(true);
     dragStart.current = { x: e.clientX - transform.x, y: e.clientY - transform.y };
   };
@@ -103,6 +328,8 @@ export function GraphPage() {
             value={statusFilter}
             onChange={(event) => {
               setSelectedId(null);
+              setHoveredId(null);
+              setHasInteracted(false);
               setStatusFilter(event.target.value as GraphStatusFilter);
             }}
             className="h-8 text-xs"
@@ -114,17 +341,38 @@ export function GraphPage() {
             <option value="all">All Status</option>
           </Select>
           <Select
-            value={edgeMode}
+            value={viewMode}
             onChange={(event) => {
               setSelectedId(null);
-              setEdgeMode(event.target.value as GraphEdgeMode);
+              setHoveredId(null);
+              setHasInteracted(false);
+              setViewMode(event.target.value as GraphViewMode);
             }}
             className="h-8 text-xs"
           >
-            <option value="both">Both Edges</option>
+            <option value="relation">Relation</option>
             <option value="semantic">Semantic</option>
-            <option value="relations">Relations</option>
           </Select>
+          {viewMode === "relation" ? (
+            <div className="graph-axis-toggles">
+              <label htmlFor="graph-axis-session" className="graph-axis-toggle">
+                <Checkbox
+                  id="graph-axis-session"
+                  checked={relationAxes.includes("session")}
+                  onChange={() => toggleRelationAxis("session")}
+                />
+                <span className="graph-axis-label session">Session</span>
+              </label>
+              <label htmlFor="graph-axis-project" className="graph-axis-toggle">
+                <Checkbox
+                  id="graph-axis-project"
+                  checked={relationAxes.includes("project")}
+                  onChange={() => toggleRelationAxis("project")}
+                />
+                <span className="graph-axis-label project">Project</span>
+              </label>
+            </div>
+          ) : null}
         </div>
       </div>
 
@@ -132,7 +380,7 @@ export function GraphPage() {
         <div className="graph-title-block">
           <h1 className="text-xl font-bold text-white">Knowledge Graph</h1>
           <p className="mb-4 text-xs text-slate-400">
-            蒸留されたKnowledgeの距離と明示relationを確認します。
+            Semantic と Relation（Project / Session）を切り替えて確認します。
           </p>
         </div>
         <div className="graph-legend-overlay">
@@ -144,6 +392,23 @@ export function GraphPage() {
             <span className="legend-dot procedure" />
             <span>Procedure</span>
           </div>
+          <div className="legend-item">
+            <span className="legend-line project" />
+            <span>Project Relation</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-line session" />
+            <span>Session Relation</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-line semantic" />
+            <span>Semantic Edge</span>
+          </div>
+          <p className="graph-legend-note">
+            {viewMode === "semantic"
+              ? "semantic: cosine 類似度（minSimilarity=0.72, topK=3）"
+              : "relation: session/project 軸を同時に表示できます"}
+          </p>
         </div>
       </div>
 
@@ -155,11 +420,29 @@ export function GraphPage() {
           </div>
           <div className="stat-row">
             <span>Edges</span>
-            <strong>
-              {(graph.data?.stats.semanticEdgeCount ?? 0) +
-                (graph.data?.stats.relationEdgeCount ?? 0)}
-            </strong>
+            <strong>{totalEdges}</strong>
           </div>
+          <div className="stat-row">
+            <span>Embedded</span>
+            <strong>{graph.data?.stats.embeddedKnowledgeCount ?? 0}</strong>
+          </div>
+          {viewMode === "semantic" ? (
+            <div className="stat-row graph-stats-subtle">
+              <span>Semantic</span>
+              <strong>{graph.data?.stats.semanticEdgeCount ?? 0}</strong>
+            </div>
+          ) : (
+            <>
+              <div className="stat-row graph-stats-subtle">
+                <span>Session</span>
+                <strong>{graph.data?.stats.sessionEdgeCount ?? 0}</strong>
+              </div>
+              <div className="stat-row graph-stats-subtle">
+                <span>Project</span>
+                <strong>{graph.data?.stats.projectEdgeCount ?? 0}</strong>
+              </div>
+            </>
+          )}
         </div>
       </div>
 
@@ -172,6 +455,12 @@ export function GraphPage() {
               </Badge>
               <Badge variant="outline" className="h-4 border-slate-500 text-[10px] text-slate-100">
                 {selected.status}
+              </Badge>
+              <Badge
+                variant={selected.embedded ? "secondary" : "outline"}
+                className={`h-4 text-[10px] ${selected.embedded ? "" : "border-amber-400 text-amber-200"}`}
+              >
+                {selected.embedded ? "embedded" : "no-embedding"}
               </Badge>
             </div>
             <h3 className="text-sm font-bold truncate">{selected.label}</h3>
@@ -188,6 +477,10 @@ export function GraphPage() {
         onMouseMove={onMouseMove}
         onMouseUp={onMouseUp}
         onMouseLeave={onMouseUp}
+        onDoubleClick={() => {
+          setHasInteracted(false);
+          setTransform(computeAutoFitTransform(nodes, viewport));
+        }}
         style={{ cursor: isDragging ? "grabbing" : "grab" }}
       >
         <svg
@@ -199,73 +492,84 @@ export function GraphPage() {
         >
           <title>Knowledge graph visualization</title>
           <g
-            transform={`translate(${transform.x + (containerRef.current?.clientWidth ?? 0) / 2}, ${transform.y + (containerRef.current?.clientHeight ?? 0) / 2}) scale(${transform.scale})`}
+            transform={`translate(${transform.x + viewport.width / 2}, ${transform.y + viewport.height / 2})`}
           >
-            {/* Edges */}
-            <g>
-              {graph.data?.edges.map((edge) => {
-                const source = nodeById.get(edge.source);
-                const target = nodeById.get(edge.target);
-                if (!source || !target) return null;
-                return (
-                  <line
-                    key={edge.id}
-                    x1={source.x}
-                    y1={source.y}
-                    x2={target.x}
-                    y2={target.y}
-                    className={`graph-edge ${edge.edgeKind}`}
-                    strokeWidth={Math.max(0.5, edge.weight * 2)}
-                    opacity={0.4}
-                  />
-                );
-              })}
-            </g>
-            {/* Nodes: Circles First */}
-            <g>
-              {nodes.map((node) => {
-                const isSelected = selectedId === node.id;
-                return (
-                  <circle
-                    key={`circle-${node.id}`}
-                    cx={node.x}
-                    cy={node.y}
-                    r={6 + node.weight * 4}
-                    fill={nodeColors[node.group] ?? nodeColors.rule}
-                    stroke={isSelected ? "#fff" : "transparent"}
-                    strokeWidth={2}
-                    className="graph-node-circle"
-                    role="button"
-                    tabIndex={0}
-                    aria-label={`Select ${node.label || node.id}`}
-                    onMouseEnter={() => setHoveredId(node.id)}
-                    onMouseLeave={() => setHoveredId(null)}
-                    onClick={() => setSelectedId(node.id)}
-                    onKeyDown={(event) => {
-                      if (event.key !== "Enter" && event.key !== " ") return;
-                      event.preventDefault();
-                      setSelectedId(node.id);
-                    }}
-                  />
-                );
-              })}
-            </g>
-            {/* Labels: Always on Top */}
-            <g pointerEvents="none">
-              {nodes.map((node) => {
-                const active = activeId === node.id;
-                return (
-                  <text
-                    key={`label-${node.id}`}
-                    x={node.x}
-                    y={node.y - (6 + node.weight * 4) - 10}
-                    textAnchor="middle"
-                    className={`graph-node-label ${active ? "active" : ""}`}
-                  >
-                    {node.label || node.id}
-                  </text>
-                );
-              })}
+            <g transform={`scale(${transform.scale})`}>
+              {/* Edges */}
+              <g>
+                {graph.data?.edges.map((edge) => {
+                  const source = nodeById.get(edge.source);
+                  const target = nodeById.get(edge.target);
+                  if (!source || !target) return null;
+                  return (
+                    <line
+                      key={edge.id}
+                      x1={source.x}
+                      y1={source.y}
+                      x2={target.x}
+                      y2={target.y}
+                      className={`graph-edge ${edge.edgeKind}`}
+                      strokeWidth={Math.max(0.5, edge.weight * 2)}
+                      opacity={0.4}
+                    />
+                  );
+                })}
+              </g>
+              {/* Nodes: Circles First */}
+              <g>
+                {nodes.map((node) => {
+                  const isSelected = selectedId === node.id;
+                  const isEmbedded = node.embedded;
+                  return (
+                    <circle
+                      key={`circle-${node.id}`}
+                      cx={node.x}
+                      cy={node.y}
+                      r={6 + node.weight * 4}
+                      fill={nodeColors[node.group] ?? nodeColors.rule}
+                      stroke={
+                        isSelected
+                          ? "#fff"
+                          : isEmbedded
+                            ? "rgba(255, 255, 255, 0.12)"
+                            : "rgba(251, 191, 36, 0.88)"
+                      }
+                      strokeWidth={isSelected ? 2.2 : isEmbedded ? 0.8 : 1.2}
+                      strokeDasharray={isEmbedded ? undefined : "2.5 2"}
+                      opacity={isEmbedded ? 1 : 0.9}
+                      className="graph-node-circle"
+                      role="button"
+                      tabIndex={0}
+                      aria-label={`Select ${node.label || node.id}`}
+                      onMouseEnter={() => setHoveredId(node.id)}
+                      onMouseLeave={() => setHoveredId(null)}
+                      onClick={() => setSelectedId(node.id)}
+                      onKeyDown={(event) => {
+                        if (event.key !== "Enter" && event.key !== " ") return;
+                        event.preventDefault();
+                        setSelectedId(node.id);
+                      }}
+                    />
+                  );
+                })}
+              </g>
+              {/* Labels: Always on Top */}
+              <g pointerEvents="none">
+                {nodes.map((node) => {
+                  const active = activeId === node.id;
+                  return (
+                    <text
+                      key={`label-${node.id}`}
+                      x={node.x}
+                      y={node.y - (6 + node.weight * 4) - 10}
+                      textAnchor="middle"
+                      className={`graph-node-label ${active ? "active" : ""}`}
+                    >
+                      {node.label || node.id}
+                    </text>
+                  );
+                })}
+              </g>
             </g>
           </g>
         </svg>

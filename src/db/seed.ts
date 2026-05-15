@@ -20,8 +20,8 @@ async function main(): Promise<void> {
     title: "Source Traceability",
     body: "Separate distilled instructions from source material and include source refs in context packs.",
     appliesTo: { repos: ["memory-router"] },
-    confidence: 0.95,
-    importance: 0.9,
+    confidence: 95,
+    importance: 90,
   });
 
   console.log("seed inserted");

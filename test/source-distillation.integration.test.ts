@@ -1,4 +1,4 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { config } from "../src/config.js";
 import { getDb } from "../src/db/index.js";
@@ -50,8 +50,8 @@ describeDb("source distillation integration", () => {
               type: "procedure",
               title: "Run verify before commit",
               body: "Before committing implementation work, run the repository verify command and fix failures first.",
-              confidence: 0.9,
-              importance: 0.9,
+              confidence: 90,
+              importance: 90,
               score: 0.95,
               sourceRefs: ["source:/tmp/wiki/verify.md#chunk:0001"],
             },

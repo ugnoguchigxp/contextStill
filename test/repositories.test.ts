@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { compileInputSchema } from "../src/shared/schemas/compile.schema.js";
 import { contextPackSchema } from "../src/shared/schemas/context-pack.schema.js";
 

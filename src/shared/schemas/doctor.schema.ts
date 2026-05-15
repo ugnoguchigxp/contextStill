@@ -53,6 +53,14 @@ export const doctorReportSchema = z.object({
     freshnessThresholdMinutes: z.number().int().positive(),
     degradedRateThreshold: z.number().min(0).max(1),
   }),
+  mcp: z.object({
+    exposedTools: z.array(z.string()),
+    requiredPrimaryTools: z.array(z.string()),
+    missingPrimaryTools: z.array(z.string()),
+    staleKnowledgeCount: z.number().int().nonnegative(),
+    staleSourceCount: z.number().int().nonnegative(),
+    nextActions: z.array(z.string()),
+  }),
   agentLogSync: z.object({
     codex: z.object({
       sessionDir: z.string(),

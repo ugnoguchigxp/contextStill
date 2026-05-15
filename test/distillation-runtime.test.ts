@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, test } from "vitest";
 import { buildDistillationSystemPrompt } from "../src/modules/distillation/distillation-prompts.js";
 import {
   runDistillationCompletion,
@@ -36,7 +36,7 @@ describe("distillation runtime", () => {
       expect(request.messages.some((message) => message.role === "tool")).toBe(true);
       return {
         content:
-          '{"candidates":[{"type":"rule","title":"Use cited docs","body":"Use fetched documentation before preserving external behavior claims.","confidence":0.9,"importance":0.7}]}',
+          '{"candidates":[{"type":"rule","title":"Use cited docs","body":"Use fetched documentation before preserving external behavior claims.","confidence":90,"importance":70}]}',
         finishReason: "stop",
         toolCalls: [],
       };

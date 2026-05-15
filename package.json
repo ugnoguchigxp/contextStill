@@ -19,7 +19,9 @@
     "sync:agent-logs": "bun run src/cli/sync-agent-logs.ts",
     "distill:vibe-memory": "bun run src/cli/distill-vibe-memory.ts",
     "distill:sources": "bun run src/cli/distill-sources.ts",
+    "backfill:knowledge-project-context": "bun run src/cli/backfill-knowledge-project-context.ts",
     "doctor": "bun run src/cli/doctor.ts",
+    "mcp:smoke": "DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@localhost:7889/memory_router_test} bun run src/cli/mcp-smoke.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
@@ -34,7 +36,9 @@
     "test:unit": "bun test test/repositories.test.ts test/markdown-importer.test.ts test/context-compiler.test.ts test/agent-diff-ingestion.test.ts test/agent-log-sync.test.ts test/vibe-memory-distillation.test.ts test/source-distillation.test.ts test/distillation-runtime.test.ts",
     "test:integration": "MEMORY_ROUTER_RUN_DB_TESTS=1 bun test --timeout=30000 --max-concurrency=1 test/*.integration.test.ts test/*.e2e.test.ts test/mcp.contract.test.ts",
     "test:all": "bun run test:unit && bun run test:integration",
-    "verify": "bun run typecheck && bun run lint && bun run format:check && bun run test:unit && bun run build:web"
+    "verify": "bun run typecheck && bun run lint && bun run format:check && bun run test:unit && bun run build:web",
+    "verify:mcp": "DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@localhost:7889/memory_router_test} bun run test:mcp:contract && bun run mcp:smoke && DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@localhost:7889/memory_router_test} bun run doctor",
+    "test:mcp:contract": "DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@localhost:7889/memory_router_test} MEMORY_ROUTER_RUN_DB_TESTS=1 bun test --timeout=30000 --max-concurrency=1 test/mcp.contract.test.ts"
   },
   "dependencies": {
     "@hono/node-server": "2.0.2",
@@ -67,10 +71,11 @@
     "@playwright/test": "1.60.0",
     "@tailwindcss/vite": "4.3.0",
     "@types/pg": "^8.20.0",
-    "@types/sanitize-html": "^2.16.0",
     "@types/react": "19.2.14",
     "@types/react-dom": "19.2.3",
+    "@types/sanitize-html": "^2.16.0",
     "@vitejs/plugin-react": "6.0.1",
+    "@vitest/coverage-v8": "^4.1.6",
     "bun-types": "1.3.12",
     "drizzle-kit": "^0.31.10",
     "tailwindcss": "4.3.0",

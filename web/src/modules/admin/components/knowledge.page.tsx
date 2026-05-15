@@ -58,13 +58,16 @@ const emptyForm: KnowledgeWriteInput = {
   scope: "repo",
   title: "",
   body: "",
-  confidence: 0.7,
-  importance: 0.7,
+  confidence: 70,
+  importance: 70,
   metadata: {},
 };
 
 const normalizeKnowledgeType = (type: string): KnowledgeType =>
   knowledgeTypes.includes(type as KnowledgeType) ? (type as KnowledgeType) : "rule";
+
+const qualityScore = (item: Pick<KnowledgeItem, "importance" | "confidence">): number =>
+  Math.round(item.importance * 0.6 + item.confidence * 0.4);
 
 export function KnowledgePage() {
   const queryClient = useQueryClient();
@@ -73,7 +76,7 @@ export function KnowledgePage() {
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [displayFilter, setDisplayFilter] = useState<string>("all");
-  const [minImportance, setMinImportance] = useState<number>(0);
+  const [minQuality, setMinQuality] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState("");
 
   // TanStack Table states
@@ -89,15 +92,15 @@ export function KnowledgePage() {
     const items = knowledge.data ?? [];
     return items.filter((item) => {
       const statusMatch = displayFilter === "all" || item.status === displayFilter;
-      const importanceMatch = item.importance >= minImportance;
+      const qualityMatch = qualityScore(item) >= minQuality;
       const query = searchQuery.toLowerCase().trim();
       const searchMatch =
         !query ||
         item.title.toLowerCase().includes(query) ||
         item.body.toLowerCase().includes(query);
-      return statusMatch && importanceMatch && searchMatch;
+      return statusMatch && qualityMatch && searchMatch;
     });
-  }, [knowledge.data, displayFilter, minImportance, searchQuery]);
+  }, [knowledge.data, displayFilter, minQuality, searchQuery]);
 
   const save = useMutation({
     mutationFn: () =>
@@ -309,15 +312,20 @@ export function KnowledgePage() {
         },
       },
       {
-        accessorKey: "importance",
-        header: "Score",
+        id: "qualityScore",
+        accessorFn: (item) => qualityScore(item),
+        header: "Quality",
         cell: ({ row }) => {
           const item = row.original;
+          const score = qualityScore(item);
           return (
-            <div className="font-mono text-xs">
-              <span className="text-blue-500">{item.importance.toFixed(2)}</span>
-              <span className="mx-1 text-muted-foreground">/</span>
-              <span className="text-emerald-500">{item.confidence.toFixed(2)}</span>
+            <div className="font-mono text-xs leading-tight">
+              <div className="font-bold text-slate-100">{score}</div>
+              <div className="text-muted-foreground">
+                I:<span className="text-blue-500">{Math.round(item.importance)}</span>
+                {" / "}
+                C:<span className="text-emerald-500">{Math.round(item.confidence)}</span>
+              </div>
             </div>
           );
         },
@@ -417,20 +425,18 @@ export function KnowledgePage() {
           </div>
 
           <div className="flex items-center gap-2 px-3 py-1 bg-muted rounded-lg border border-transparent">
-            <span className="text-[10px] font-bold uppercase text-muted-foreground">
-              Importance
-            </span>
+            <span className="text-[10px] font-bold uppercase text-muted-foreground">Quality</span>
             <select
-              value={minImportance}
-              onChange={(e) => setMinImportance(Number(e.target.value))}
+              value={minQuality}
+              onChange={(e) => setMinQuality(Number(e.target.value))}
               className="bg-transparent text-xs font-medium outline-none cursor-pointer"
             >
-              <option value="0">All Scores</option>
-              <option value="0.3">0.3+</option>
-              <option value="0.5">0.5+</option>
-              <option value="0.7">0.7+</option>
-              <option value="0.8">0.8+</option>
-              <option value="0.9">0.9+</option>
+              <option value="0">All</option>
+              <option value="30">30+</option>
+              <option value="50">50+</option>
+              <option value="70">70+</option>
+              <option value="80">80+</option>
+              <option value="90">90+</option>
             </select>
           </div>
 
@@ -659,17 +665,36 @@ export function KnowledgePage() {
                     htmlFor="knowledge-importance"
                     className="text-xs font-bold uppercase text-muted-foreground"
                   >
-                    Importance (0.0-1.0)
+                    Importance (0-100)
                   </label>
                   <Input
                     id="knowledge-importance"
                     type="number"
                     min="0"
-                    max="1"
-                    step="0.05"
+                    max="100"
+                    step="1"
                     value={form.importance}
                     onChange={(event) =>
                       setForm({ ...form, importance: Number(event.target.value) })
+                    }
+                  />
+                </div>
+                <div className="space-y-1">
+                  <label
+                    htmlFor="knowledge-confidence"
+                    className="text-xs font-bold uppercase text-muted-foreground"
+                  >
+                    Confidence (0-100)
+                  </label>
+                  <Input
+                    id="knowledge-confidence"
+                    type="number"
+                    min="0"
+                    max="100"
+                    step="1"
+                    value={form.confidence}
+                    onChange={(event) =>
+                      setForm({ ...form, confidence: Number(event.target.value) })
                     }
                   />
                 </div>

@@ -15,6 +15,7 @@ async function main(): Promise<void> {
         importedSources: result.importedSources,
         importedKnowledge: result.importedKnowledge,
         skippedFiles: result.skippedFiles,
+        removedSources: result.removedSources,
       },
       null,
       2,

@@ -64,6 +64,20 @@
       "when": 1778817000000,
       "tag": "0008_source_distillation",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1778829000000,
+      "tag": "0009_source_uri_unique_repo_scope",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1778850000000,
+      "tag": "0010_knowledge_score_100_scale",
+      "breakpoints": true
     }
   ]
 }

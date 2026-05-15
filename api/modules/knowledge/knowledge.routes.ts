@@ -22,8 +22,8 @@ const knowledgeWriteSchema = z.object({
   scope: z.enum(scopeValues),
   title: z.string().trim().min(1),
   body: z.string().trim().min(1),
-  confidence: z.number().min(0).max(1).default(0.7),
-  importance: z.number().min(0).max(1).default(0.7),
+  confidence: z.number().min(0).max(100).default(70),
+  importance: z.number().min(0).max(100).default(70),
   metadata: z.record(z.unknown()).default({}),
 });
 

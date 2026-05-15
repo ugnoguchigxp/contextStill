@@ -12,6 +12,7 @@ function commonSystemLines(): string[] {
     "A rule is a durable constraint, preference, invariant, or decision.",
     "A procedure is a reusable sequence of steps, command flow, operational skill, or review checklist.",
     "Each candidate must be small enough to fit inside a compiled context pack.",
+    "Assign confidence and importance as 0 to 100 values (integers preferred).",
     "Emit at most two candidates; if more are possible, choose the most durable and useful ones.",
     "Assign each candidate a score from 0 to 1 for overall preservation value.",
     "The score should reflect durability, actionability, evidence strength, and future reuse value.",

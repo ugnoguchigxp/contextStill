@@ -89,7 +89,11 @@ function buildFallbackSourceRef(params: {
 function selectSourceRefsForKnowledge(
   item: { type: string; title: string; content: string },
   sourceItems: Array<{ sourceUri: string; locator: string; content: string; score: number }>,
+  knownSourceRefs: string[],
 ): string[] {
+  if (knownSourceRefs.length > 0) {
+    return [...new Set(knownSourceRefs)].slice(0, 4);
+  }
   if (sourceItems.length === 0) return [];
   const scored = sourceItems
     .map((sourceItem) => {
@@ -192,6 +196,7 @@ function buildMinimalTasks(retrievalMode: RetrievalMode): string[] {
 function toKnowledgePackItem(item: {
   id: string;
   type: string;
+  status: string;
   title: string;
   body: string;
   score: number;
@@ -206,7 +211,7 @@ function toKnowledgePackItem(item: {
     title: item.title,
     content: item.body,
     score: item.score,
-    rankingReason: "ranked by full-text/vector score with status filter",
+    rankingReason: `ranked by weighted score (${item.status})`,
     sourceRefs: item.sourceRefs,
   };
 }
@@ -250,6 +255,11 @@ export async function compileContextPack(rawInput: unknown): Promise<{
       confidence: item.confidence,
       importance: item.importance,
       type: item.type,
+      status: item.status,
+      sourceRefs: item.sourceRefs,
+      sourceRefCount: item.sourceRefs.length,
+      hasSourceLinks: item.hasSourceLinks,
+      stale: item.status === "deprecated",
     })),
     10,
   );
@@ -258,12 +268,14 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     toKnowledgePackItem({
       id: item.id,
       type: (item as { type: string }).type,
+      status: (item as { status: string }).status,
       title: item.title,
       body: item.content,
       score: item.score,
       sourceRefs: selectSourceRefsForKnowledge(
         { type: (item as { type: string }).type, title: item.title, content: item.content },
         sourceContext.items,
+        (item as { sourceRefs?: string[] }).sourceRefs ?? [],
       ),
     }),
   );
@@ -302,6 +314,33 @@ export async function compileContextPack(rawInput: unknown): Promise<{
   const hardFailureCount = degradedReasons.filter((reason) => reason.endsWith("_FAILED")).length;
   const status = hardFailureCount >= 2 ? "failed" : degradedReasons.length > 0 ? "degraded" : "ok";
   const minimalTasks = buildMinimalTasks(retrievalMode);
+  const selectedStatuses = new Set(
+    rankedKnowledge.map((item) => (item as { status?: string }).status),
+  );
+  const suggestedNextCalls: string[] = [];
+  if (degradedReasons.includes("NO_ACTIVE_KNOWLEDGE_MATCH")) {
+    suggestedNextCalls.push("search_knowledge");
+  }
+  if (degradedReasons.includes("NO_SOURCE_MATCH")) {
+    suggestedNextCalls.push("memory_search");
+  }
+  if (
+    degradedReasons.includes("KNOWLEDGE_REPO_SCOPE_FALLBACK") ||
+    degradedReasons.includes("SOURCE_REPO_SCOPE_FALLBACK")
+  ) {
+    suggestedNextCalls.push("context_compile (retry with explicit repoPath/files)");
+  }
+  if (
+    degradedReasons.some(
+      (r) =>
+        r.endsWith("_FAILED") ||
+        r.includes("UNAVAILABLE") ||
+        r.includes("ERROR") ||
+        r.includes("BUDGET_SECTION_LIMIT_REACHED"),
+    )
+  ) {
+    suggestedNextCalls.push("doctor");
+  }
 
   const runId = await insertCompileRun({
     goal: input.goal,
@@ -344,6 +383,12 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     warnings: [
       "Do not promote draft knowledge into instructions automatically.",
       "Keep source refs attached when a rule or procedure depends on source material.",
+      ...(selectedStatuses.has("draft")
+        ? ["Draft knowledge is included; verify before turning it into stable instructions."]
+        : []),
+      ...(suggestedNextCalls.length > 0
+        ? [`Suggested next MCP calls: ${[...new Set(suggestedNextCalls)].join(", ")}`]
+        : []),
       ...(budgetDropDetected ? ["Token budget section caps trimmed lower-ranked items."] : []),
     ],
     sourceRefs,
@@ -353,6 +398,7 @@ export async function compileContextPack(rawInput: unknown): Promise<{
         knowledge: knowledge.stats,
         sources: sourceContext.stats,
         tokenBudget,
+        suggestedNextCalls: [...new Set(suggestedNextCalls)],
       },
     },
   });

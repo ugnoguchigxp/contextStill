@@ -211,27 +211,45 @@ bun run start:mcp
 公開ツール:
 
 - `initial_instructions`
+- `initial_instruction`（`initial_instructions` の互換 alias）
 - `context_compile`
+- `search_knowledge`
 - `record_vibe_memory`
 - `memory_search`
 - `memory_fetch`
 - `doctor`
 
+標準利用順序:
+
+1. `initial_instructions`
+2. `context_compile`
+3. 必要時のみ `search_knowledge` / `memory_search` / `memory_fetch`
+4. 作業後に `record_vibe_memory`
+5. `doctor` で状態確認
+
 `record_vibe_memory` は自然言語の `content` に加えて `diff` / `agentDiffs[]` を受け取り、`vibe_memories` と `agent_diff_entries` を同一トランザクションで保存します。diff 本文は `vibe_memories.content` から分離されます。
+
+`context_compile` は `repoPath` を受け取ると repo scoped 検索を優先し、scoped ヒットがない場合のみ degraded reason 付きで fallback します。`search_knowledge` は候補確認用の raw 出力を返し、通常の主導線は `context_compile` のままです。
+
+詳細な MCP tool contract は [docs/mcp-tools.md](docs/mcp-tools.md) を参照してください。
 
 ## テスト
 
 ```bash
 bun run verify
+bun run verify:mcp
 DATABASE_URL=postgres://postgres:postgres@localhost:7889/memory_router_test bun run test:integration
 bun run test:e2e
 ```
 
 `test:integration` は対象 DB のテーブルを truncate するため、通常の `memory_router` DB には実行しません。DB 名に `test` を含む検証用 DB を指定してください。
+`verify:mcp` / `mcp:smoke` / `test:mcp:contract` は `DATABASE_URL` 未指定時に `memory_router_test` を既定で使います。
 
 ## 今後の改善計画
 
-1. `initial_instructions` を強化し、作業開始時の取得、実装後の記録、wiki からの蒸留までの標準ループをさらに明文化する。
+Context Compile と MCP 利用導線の詳細な改善計画は [docs/context-compile-mcp-improvement-plan.md](docs/context-compile-mcp-improvement-plan.md) にまとめています。
+
+1. `context_compile` の source provenance を pack item 第一級情報としてさらに強化する。
 2. `record_vibe_memory` の終了時フローを自動化し、Git diff から `agent_diff_entries` を確実に登録できる補助コマンドを追加する。
 3. 蒸留済み draft knowledge のレビュー UI を強化し、wiki への反映候補と差分確認を扱えるようにする。
 4. Doctor に degraded 回復動線を追加し、DB migration 未適用、embedding 不通、wiki Git 不整合を UI から切り分けやすくする。

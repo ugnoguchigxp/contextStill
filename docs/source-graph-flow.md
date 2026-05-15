@@ -91,8 +91,8 @@ flowchart LR
       "type": "rule",
       "title": "Short action-oriented title",
       "body": "One durable rule or one reusable procedure, written for context_compile.",
-      "confidence": 0.78,
-      "importance": 0.7,
+      "confidence": 78,
+      "importance": 70,
       "sourceFragmentIds": ["..."],
       "evidenceRefs": [
         {
@@ -124,7 +124,8 @@ LLM 出力はそのまま保存しない。保存前に機械的に落とす。
 - `sourceFragmentIds` が対象 batch の fragment id に含まれる。
 - 外部 URL を含む candidate は `fetch_content` evidence を持つ。
 - `evidenceRefs` がない candidate は保存しない。
-- `confidence` と `importance` は `0..1` に clamp。
+- `confidence` と `importance` は `0..100` に clamp。
+- `score`（候補保存価値）は `0..1` のまま扱う。
 - 保存時に embedding が失敗した candidate は保存しない。
 
 保存結果:

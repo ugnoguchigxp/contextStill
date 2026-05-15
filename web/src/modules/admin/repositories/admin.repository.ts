@@ -147,14 +147,17 @@ export type GraphEdge = {
   source: string;
   target: string;
   relationType: string;
-  edgeKind: "relation" | "semantic";
+  edgeKind: "semantic" | "session" | "project";
+  relationAxis: "semantic" | "session" | "project";
+  derived: boolean;
   weight: number;
   detail: string;
 };
 
 export type GraphStatusFilter = "current" | "active" | "draft" | "deprecated" | "all";
 
-export type GraphEdgeMode = "semantic" | "relations" | "both";
+export type GraphViewMode = "relation" | "semantic";
+export type GraphRelationAxis = "session" | "project";
 
 export type GraphSnapshot = {
   nodes: GraphNode[];
@@ -164,6 +167,8 @@ export type GraphSnapshot = {
     totalKnowledgeCount: number;
     embeddedKnowledgeCount: number;
     semanticEdgeCount: number;
+    sessionEdgeCount: number;
+    projectEdgeCount: number;
     relationEdgeCount: number;
     sourceRefCount: number;
   };
@@ -316,9 +321,11 @@ export async function fetchGraphSnapshot(
     | {
         limit?: number;
         status?: GraphStatusFilter;
-        edgeMode?: GraphEdgeMode;
+        view?: GraphViewMode;
+        relationAxes?: GraphRelationAxis[];
         minSimilarity?: number;
         semanticTopK?: number;
+        maxContextEdgesPerNode?: number;
       } = 120,
 ): Promise<GraphSnapshot> {
   const params = new URLSearchParams();
@@ -327,12 +334,18 @@ export async function fetchGraphSnapshot(
   } else {
     params.set("limit", String(input.limit ?? 120));
     if (input.status) params.set("status", input.status);
-    if (input.edgeMode) params.set("edgeMode", input.edgeMode);
+    if (input.view) params.set("view", input.view);
+    if (input.relationAxes && input.relationAxes.length > 0) {
+      params.set("relationAxes", input.relationAxes.join(","));
+    }
     if (input.minSimilarity !== undefined) {
       params.set("minSimilarity", String(input.minSimilarity));
     }
     if (input.semanticTopK !== undefined) {
       params.set("semanticTopK", String(input.semanticTopK));
+    }
+    if (input.maxContextEdgesPerNode !== undefined) {
+      params.set("maxContextEdgesPerNode", String(input.maxContextEdgesPerNode));
     }
   }
   return getJson<GraphSnapshot>(`/api/graph?${params}`);

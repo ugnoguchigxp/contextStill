@@ -1,8 +1,9 @@
 import { createHash } from "node:crypto";
-import { and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { sourceFragments, sources } from "../../db/schema.js";
 import { embedOne } from "../embedding/embedding.service.js";
+import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
 
 export type SourceKind = "wiki";
 
@@ -25,6 +26,11 @@ export type SourceSearchResult = {
   score: number;
 };
 
+export type SourceSearchOptions = {
+  repoPath?: string;
+  repoKey?: string;
+};
+
 function defaultHash(input: string): string {
   return createHash("sha256").update(input).digest("hex");
 }
@@ -32,6 +38,33 @@ function defaultHash(input: string): string {
 function finiteOrZero(value: unknown): number {
   const num = Number(value);
   return Number.isFinite(num) ? num : 0;
+}
+
+function buildRepoPathBoundaryClauses(repoPath: string): SQL[] {
+  const normalized = normalizeRepoPath(repoPath) ?? repoPath;
+  const fileUriPrefix = `file://${normalized.startsWith("/") ? "" : "/"}${normalized}`;
+  return [
+    ilike(sources.uri, `${normalized}/%`),
+    ilike(sources.uri, `${fileUriPrefix}/%`),
+    sql`${sources.metadata} ->> 'repoPath' = ${normalized}`,
+    sql`${sources.metadata} ->> 'sourceRootPath' = ${normalized}`,
+  ];
+}
+
+function buildSourceRepoScopedCondition(options?: SourceSearchOptions): SQL | undefined {
+  const repoPath = normalizeRepoPath(options?.repoPath);
+  const repoKey = (options?.repoKey ?? normalizeRepoKey(options?.repoPath))?.trim().toLowerCase();
+  if (!repoPath && !repoKey) return undefined;
+
+  const clauses: SQL[] = [];
+  if (repoPath) {
+    clauses.push(...buildRepoPathBoundaryClauses(repoPath));
+  }
+  if (repoKey) {
+    clauses.push(sql`${sources.metadata} ->> 'repoKey' = ${repoKey}`);
+  }
+  if (clauses.length === 0) return undefined;
+  return clauses.length === 1 ? clauses[0] : or(...clauses);
 }
 
 async function tryEmbedSourceFragment(content: string): Promise<number[] | undefined> {
@@ -118,7 +151,7 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
   const contentHash =
     params.contentHash ?? defaultHash(`${params.sourceKind}\n${params.uri}\n${params.body}`);
   const existing = await db.query.sources.findFirst({
-    where: and(eq(sources.uri, params.uri), eq(sources.contentHash, contentHash)),
+    where: eq(sources.uri, params.uri),
     columns: { id: true },
   });
 
@@ -130,10 +163,17 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
         uri: params.uri,
         title: params.title ?? null,
         body: params.body,
+        contentHash,
         metadata: params.metadata ?? {},
         updatedAt: new Date(),
       })
       .where(eq(sources.id, existing.id));
+    await replaceSourceFragments({
+      sourceId: existing.id,
+      title: params.title,
+      body: params.body,
+      metadata: params.metadata,
+    });
     return existing.id;
   }
 
@@ -157,16 +197,43 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
   return inserted.id;
 }
 
+export async function deleteStaleSourcesForRoot(params: {
+  rootPath: string;
+  keepUris: string[];
+}): Promise<number> {
+  const normalizedRootPath = normalizeRepoPath(params.rootPath) ?? params.rootPath;
+  const normalizedKeepUris = [...new Set(params.keepUris.map((uri) => uri.trim()).filter(Boolean))];
+  const fileUriKeepUris = normalizedKeepUris.map(
+    (uri) => `file://${uri.startsWith("/") ? "" : "/"}${uri}`,
+  );
+  const keepSet = [...new Set([...normalizedKeepUris, ...fileUriKeepUris])];
+
+  const conditions: SQL[] = [or(...buildRepoPathBoundaryClauses(normalizedRootPath)) as SQL];
+  if (keepSet.length > 0) {
+    conditions.push(notInArray(sources.uri, keepSet));
+  }
+  const deleted = await db
+    .delete(sources)
+    .where(and(...conditions))
+    .returning({ id: sources.id });
+  return deleted.length;
+}
+
 export async function vectorSearchSourceContent(
   embedding: number[],
   limit: number,
   sourceKinds?: SourceKind[],
+  options?: SourceSearchOptions,
 ): Promise<SourceSearchResult[]> {
   const embeddingStr = JSON.stringify(embedding);
   const similarity = sql<number>`1 - (${sourceFragments.embedding} <=> ${embeddingStr}::vector)`;
-  const conditions = [sql`${sourceFragments.embedding} IS NOT NULL`];
+  const conditions: SQL[] = [sql`${sourceFragments.embedding} IS NOT NULL`];
   if (sourceKinds && sourceKinds.length > 0) {
     conditions.push(inArray(sources.sourceKind, sourceKinds));
+  }
+  const repoScopedCondition = buildSourceRepoScopedCondition(options);
+  if (repoScopedCondition) {
+    conditions.push(repoScopedCondition);
   }
 
   const rows = await db
@@ -192,6 +259,7 @@ export async function searchSourceContent(
   query: string,
   limit: number,
   sourceKinds?: SourceKind[],
+  options?: SourceSearchOptions,
 ): Promise<SourceSearchResult[]> {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) return [];
@@ -216,6 +284,10 @@ export async function searchSourceContent(
   ];
   if (sourceKinds && sourceKinds.length > 0) {
     fragmentConditions.push(inArray(sources.sourceKind, sourceKinds));
+  }
+  const repoScopedCondition = buildSourceRepoScopedCondition(options);
+  if (repoScopedCondition) {
+    fragmentConditions.push(repoScopedCondition);
   }
 
   const fragmentRows = await db
@@ -255,6 +327,9 @@ export async function searchSourceContent(
   ];
   if (sourceKinds && sourceKinds.length > 0) {
     sourceConditions.push(inArray(sources.sourceKind, sourceKinds));
+  }
+  if (repoScopedCondition) {
+    sourceConditions.push(repoScopedCondition);
   }
 
   const sourceRows = await db

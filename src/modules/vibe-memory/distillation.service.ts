@@ -15,6 +15,7 @@ import {
 } from "../distillation/distillation-runtime.service.js";
 import { embedOne } from "../embedding/embedding.service.js";
 import { upsertKnowledgeFromSource } from "../knowledge/knowledge.repository.js";
+import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
 import {
   type AgentDiffEntryForDistillation,
   type VibeMemoryForDistillation,
@@ -82,6 +83,34 @@ function truncate(value: string, maxChars: number): string {
   return `${value.slice(0, Math.max(0, maxChars - 24))}\n...[truncated]`;
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function valueAsString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function resolveRepoScopeForMemory(params: {
+  memory: VibeMemoryForDistillation;
+  fallbackRepoPath?: string;
+  fallbackRepoKey?: string;
+}): { repoPath?: string; repoKey?: string } {
+  const metadata = asRecord(params.memory.metadata);
+  const metadataRepoPath = valueAsString(metadata.projectRoot) ?? valueAsString(metadata.repoPath);
+  const metadataRepoKey = valueAsString(metadata.repoKey)?.toLowerCase();
+  const repoPath = normalizeRepoPath(metadataRepoPath) ?? params.fallbackRepoPath;
+  const repoKey =
+    normalizeRepoKey(metadataRepoPath) ??
+    metadataRepoKey ??
+    (repoPath ? normalizeRepoKey(repoPath) : undefined) ??
+    params.fallbackRepoKey;
+
+  return { repoPath, repoKey };
+}
+
 function formatAgentDiff(entry: AgentDiffEntryForDistillation, maxDiffChars: number): string {
   const details = [
     `file: ${entry.filePath}`,
@@ -132,7 +161,7 @@ export function buildVibeMemoryDistillationMessages(params: {
       role: "system",
       content: buildDistillationSystemPrompt("vibe_memory", [
         "Return strict JSON only, with this shape:",
-        '{"candidates":[{"type":"rule|procedure","title":"short title","body":"actionable reusable knowledge","confidence":0.0,"importance":0.0,"score":0.0,"rationale":"optional short reason","sourceRefs":["local evidence refs"],"evidenceRefs":["fetched URLs when tools are used"]}]}',
+        '{"candidates":[{"type":"rule|procedure","title":"short title","body":"actionable reusable knowledge","confidence":70,"importance":70,"score":0.0,"rationale":"optional short reason","sourceRefs":["local evidence refs"],"evidenceRefs":["fetched URLs when tools are used"]}]}',
       ]),
     },
     {
@@ -284,6 +313,8 @@ export async function distillVibeMemories(
   const apply = Boolean(options.apply);
   const modelClient = options.modelClient ?? callLocalLlmCompletionForDistillation;
   const embedder = options.embedder ?? defaultEmbedder;
+  const workspaceRepoPath = normalizeRepoPath(process.cwd());
+  const workspaceRepoKey = normalizeRepoKey(process.cwd());
   const memories = await listVibeMemoriesForDistillation({
     limit: options.limit ?? config.vibeDistillationBatchSize,
     sessionId: options.sessionId,
@@ -304,6 +335,11 @@ export async function distillVibeMemories(
   const results: DistilledVibeMemoryResult[] = [];
 
   for (const memory of memories) {
+    const memoryRepoScope = resolveRepoScopeForMemory({
+      memory,
+      fallbackRepoPath: workspaceRepoPath,
+      fallbackRepoKey: workspaceRepoKey,
+    });
     const memoryDiffs = diffsByMemoryId.get(memory.id) ?? [];
     const inputHash = buildVibeMemoryInputHash({ memory, diffEntries: memoryDiffs });
     const messages = buildVibeMemoryDistillationMessages({ memory, diffEntries: memoryDiffs });
@@ -400,6 +436,8 @@ export async function distillVibeMemories(
               sourceMemoryType: memory.memoryType,
               sourceCreatedAt: memory.createdAt.toISOString(),
               sourceContentHash: sha256(memory.content),
+              repoPath: memoryRepoScope.repoPath,
+              repoKey: memoryRepoScope.repoKey,
               inputHash,
               distillationModel: config.localLlmModel,
               promptVersion: config.vibeDistillationPromptVersion,

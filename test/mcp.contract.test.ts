@@ -1,6 +1,9 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { listStaticResources, readStaticResource } from "../src/mcp/server.js";
 import { contextCompileTool } from "../src/mcp/tools/context-compile.tool.js";
+import { searchKnowledgeTool } from "../src/mcp/tools/knowledge.tool.js";
+import { getExposedToolEntries } from "../src/mcp/tools/index.js";
+import { initialInstructionsTool } from "../src/mcp/tools/system.tool.js";
 import {
   insertCompileRun,
   insertContextPackItems,
@@ -45,6 +48,42 @@ describeDb("mcp contract", () => {
         "procedure_context",
         "learning_context",
       ],
+    });
+  });
+
+  test("public tools list contract", () => {
+    const toolNames = getExposedToolEntries().map((tool) => tool.name);
+    expect(toolNames).toEqual([
+      "initial_instructions",
+      "context_compile",
+      "search_knowledge",
+      "register_knowledge",
+      "memory_search",
+      "memory_fetch",
+      "doctor",
+    ]);
+  });
+
+  test("initial_instructions contains usage-first MCP flow", async () => {
+    const response = await initialInstructionsTool.handler();
+    const text = response.content[0]?.text ?? "";
+    expect(text).toContain("## 常用ルール");
+    expect(text).toContain("## MCPツール種別");
+    expect(text).toContain("context_compile");
+    expect(text).toContain("register_knowledge");
+  });
+
+  test("search_knowledge tool input schema contract", () => {
+    expect(searchKnowledgeTool.inputSchema).toMatchObject({
+      type: "object",
+      required: ["query"],
+    });
+    const properties = (searchKnowledgeTool.inputSchema as { properties?: Record<string, unknown> })
+      .properties;
+    expect(properties).toBeTruthy();
+    expect(properties?.statuses).toEqual({
+      type: "array",
+      items: { type: "string", enum: ["draft", "active", "deprecated"] },
     });
   });
 
@@ -121,5 +160,9 @@ describeDb("mcp contract", () => {
         doctorJson.status === "failed",
     ).toBe(true);
     expect(Array.isArray(doctorJson.reasons)).toBe(true);
+    const mcp = doctorJson.mcp as Record<string, unknown>;
+    expect(Array.isArray(mcp?.exposedTools)).toBe(true);
+    expect(Array.isArray(mcp?.requiredPrimaryTools)).toBe(true);
+    expect(Array.isArray(mcp?.missingPrimaryTools)).toBe(true);
   });
 });

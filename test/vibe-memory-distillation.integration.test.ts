@@ -1,4 +1,4 @@
-import { beforeAll, beforeEach, describe, expect, test, afterAll } from "bun:test";
+import { beforeAll, beforeEach, describe, expect, test, afterAll } from "vitest";
 import { eq, sql } from "drizzle-orm";
 import { config } from "../src/config.js";
 import { getDb } from "../src/db/index.js";
@@ -57,8 +57,8 @@ describeDb("vibe memory distillation integration", () => {
               type: "procedure",
               title: "Review distilled knowledge before activation",
               body: "When vibe memory is distilled into knowledge, save it as draft and activate it only after review.",
-              confidence: 0.82,
-              importance: 0.74,
+              confidence: 82,
+              importance: 74,
               score: 0.86,
               sourceRefs: ["vibe-memory:distill-session"],
             },

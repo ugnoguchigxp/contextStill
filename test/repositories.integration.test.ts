@@ -1,4 +1,6 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { config } from "../src/config.js";
+import { buildGraphSnapshot } from "../api/modules/graph/graph.repository.js";
 import {
   getCompileRunSnapshot,
   insertCompileRun,
@@ -10,10 +12,12 @@ import {
   upsertKnowledgeFromSource,
 } from "../src/modules/knowledge/knowledge.repository.js";
 import {
+  deleteStaleSourcesForRoot,
   searchSourceContent,
   upsertSourceDocument,
 } from "../src/modules/sources/source.repository.js";
 import {
+  recordVibeMemory,
   recordVibeMemoryWithDiffEntries,
   retrieveVibeMemoryContext,
 } from "../src/modules/vibe-memory/vibe-memory.service.js";
@@ -65,6 +69,7 @@ describeDb("repositories integration", () => {
       limit: 10,
       status: "active",
       statuses: ["active"],
+      includeDraft: false,
     });
     expect(activeOnly.some((item) => item.id === activeId)).toBe(true);
     expect(activeOnly.some((item) => item.id === draftId)).toBe(false);
@@ -74,6 +79,7 @@ describeDb("repositories integration", () => {
       limit: 10,
       status: "active",
       statuses: ["active", "draft"],
+      includeDraft: true,
     });
     expect(withDrafts.some((item) => item.id === activeId)).toBe(true);
     expect(withDrafts.some((item) => item.id === draftId)).toBe(true);
@@ -96,6 +102,122 @@ describeDb("repositories integration", () => {
 
     const tagHits = await searchSourceContent("vector-runtime", 5);
     expect(tagHits.some((hit) => hit.sourceId === sourceId)).toBe(true);
+  });
+
+  test("source upsert keeps a single row per uri and refreshes searchable content", async () => {
+    const uri = "/tmp/wiki/single-source.md";
+    const firstId = await upsertSourceDocument({
+      sourceKind: "wiki",
+      uri,
+      title: "Single Source",
+      contentHash: "single-source-hash-v1",
+      body: "old-token source body",
+    });
+    const secondId = await upsertSourceDocument({
+      sourceKind: "wiki",
+      uri,
+      title: "Single Source",
+      contentHash: "single-source-hash-v2",
+      body: "new-token source body",
+    });
+
+    expect(secondId).toBe(firstId);
+    const oldHits = await searchSourceContent("old-token", 5);
+    expect(oldHits.some((hit) => hit.sourceUri === uri)).toBe(false);
+    const newHits = await searchSourceContent("new-token", 5);
+    expect(newHits.some((hit) => hit.sourceUri === uri)).toBe(true);
+  });
+
+  test("deleteStaleSourcesForRoot removes stale rows under the root only", async () => {
+    await upsertSourceDocument({
+      sourceKind: "wiki",
+      uri: "/tmp/wiki/keep.md",
+      title: "Keep",
+      contentHash: "keep-hash",
+      body: "keep body",
+    });
+    await upsertSourceDocument({
+      sourceKind: "wiki",
+      uri: "/tmp/wiki/stale.md",
+      title: "Stale",
+      contentHash: "stale-hash",
+      body: "stale body",
+    });
+    await upsertSourceDocument({
+      sourceKind: "wiki",
+      uri: "/tmp/other/outside.md",
+      title: "Outside",
+      contentHash: "outside-hash",
+      body: "outside body",
+    });
+    await upsertSourceDocument({
+      sourceKind: "wiki",
+      uri: "/tmp/wiki-archive/keep-by-boundary.md",
+      title: "Boundary Outside",
+      contentHash: "boundary-outside-hash",
+      body: "boundary outside body",
+    });
+
+    const removed = await deleteStaleSourcesForRoot({
+      rootPath: "/tmp/wiki",
+      keepUris: ["/tmp/wiki/keep.md"],
+    });
+    expect(removed).toBe(1);
+    const staleHits = await searchSourceContent("stale body", 5);
+    expect(staleHits.some((hit) => hit.sourceUri === "/tmp/wiki/stale.md")).toBe(false);
+    const outsideHits = await searchSourceContent("outside body", 5);
+    expect(outsideHits.some((hit) => hit.sourceUri === "/tmp/other/outside.md")).toBe(true);
+    const boundaryOutsideHits = await searchSourceContent("boundary outside body", 5);
+    expect(
+      boundaryOutsideHits.some((hit) => hit.sourceUri === "/tmp/wiki-archive/keep-by-boundary.md"),
+    ).toBe(true);
+  });
+
+  test("source search scope keeps boundary and repoKey constraints", async () => {
+    await upsertSourceDocument({
+      sourceKind: "wiki",
+      uri: "/workspace/repo-a/wiki/rule.md",
+      title: "Repo A Rule",
+      contentHash: "repo-a-source-hash",
+      body: "repo-scope-token",
+      metadata: {
+        repoPath: "/workspace/repo-a",
+        repoKey: "/workspace/repo-a",
+      },
+    });
+    await upsertSourceDocument({
+      sourceKind: "wiki",
+      uri: "/workspace/repo-a-archive/wiki/rule.md",
+      title: "Repo A Archive Rule",
+      contentHash: "repo-a-archive-source-hash",
+      body: "repo-scope-token",
+      metadata: {
+        repoPath: "/workspace/repo-a-archive",
+        repoKey: "/workspace/repo-a-archive",
+      },
+    });
+
+    const scopedByPath = await searchSourceContent("repo-scope-token", 10, undefined, {
+      repoPath: "/workspace/repo-a",
+    });
+    expect(
+      scopedByPath.some((hit) => hit.sourceUri.includes("/workspace/repo-a/wiki/rule.md")),
+    ).toBe(true);
+    expect(
+      scopedByPath.some((hit) => hit.sourceUri.includes("/workspace/repo-a-archive/wiki/rule.md")),
+    ).toBe(false);
+
+    const scopedByRepoKey = await searchSourceContent("repo-scope-token", 10, undefined, {
+      repoKey: "/workspace/repo-a",
+    });
+    expect(
+      scopedByRepoKey.some((hit) => hit.sourceUri.includes("/workspace/repo-a/wiki/rule.md")),
+    ).toBe(true);
+    expect(
+      scopedByRepoKey.some((hit) =>
+        hit.sourceUri.includes("/workspace/repo-a-archive/wiki/rule.md"),
+      ),
+    ).toBe(false);
   });
 
   test("compile run and context pack items are persisted and retrievable", async () => {
@@ -199,5 +321,166 @@ index 0000000..1111111
     expect(result.diffEntries.length).toBeGreaterThan(0);
     expect(result.diffEntries.some((entry) => entry.filePath === "src/embedded.ts")).toBe(true);
     expect(result.diffEntries.some((entry) => entry.symbolName === "embeddedValue")).toBe(true);
+  });
+
+  test("graph relation view enforces global per-node cap and supports axis filtering", async () => {
+    await recordVibeMemory({
+      sessionId: "graph-session-fallback",
+      content: "project fallback context",
+      memoryType: "chat",
+      metadata: {
+        projectRoot: "/workspace/graph-fallback",
+      },
+    });
+
+    const knowledgeIds: string[] = [];
+    for (let index = 0; index < 6; index += 1) {
+      const sessionId = index < 3 ? "graph-session-a" : "graph-session-b";
+      const id = await upsertKnowledgeFromSource({
+        sourceUri: `vibe-memory://graph-${index}`,
+        contentHash: `graph-rel-${index}`,
+        type: "rule",
+        status: "active",
+        scope: "repo",
+        title: `Graph Relation ${index}`,
+        body: "graph relation test body",
+        metadata: {
+          sourceSessionId: sessionId,
+          repoPath: "/workspace/repo-graph",
+          repoKey: "/workspace/repo-graph",
+        },
+      });
+      knowledgeIds.push(id);
+    }
+
+    const fallbackA = await upsertKnowledgeFromSource({
+      sourceUri: "vibe-memory://graph-fallback-a",
+      contentHash: "graph-fallback-a",
+      type: "procedure",
+      status: "active",
+      scope: "repo",
+      title: "Graph Fallback A",
+      body: "graph fallback body",
+      metadata: {
+        sourceSessionId: "graph-session-fallback",
+      },
+    });
+    const fallbackB = await upsertKnowledgeFromSource({
+      sourceUri: "vibe-memory://graph-fallback-b",
+      contentHash: "graph-fallback-b",
+      type: "procedure",
+      status: "active",
+      scope: "repo",
+      title: "Graph Fallback B",
+      body: "graph fallback body",
+      metadata: {
+        sourceSessionId: "graph-session-fallback",
+      },
+    });
+
+    const relationSnapshot = await buildGraphSnapshot({
+      limit: 30,
+      view: "relation",
+      relationAxes: ["session", "project"],
+      maxContextEdgesPerNode: 2,
+      status: "all",
+    });
+    expect(relationSnapshot.edges.length).toBeGreaterThan(0);
+    const degree = new Map<string, number>();
+    for (const edge of relationSnapshot.edges) {
+      degree.set(edge.source, (degree.get(edge.source) ?? 0) + 1);
+      degree.set(edge.target, (degree.get(edge.target) ?? 0) + 1);
+    }
+    expect(Math.max(...degree.values())).toBeLessThanOrEqual(2);
+
+    const sessionOnly = await buildGraphSnapshot({
+      limit: 30,
+      view: "relation",
+      relationAxes: ["session"],
+      status: "all",
+    });
+    expect(sessionOnly.edges.length).toBeGreaterThan(0);
+    expect(sessionOnly.edges.every((edge) => edge.edgeKind === "session")).toBe(true);
+    expect(sessionOnly.stats.projectEdgeCount).toBe(0);
+
+    const projectOnly = await buildGraphSnapshot({
+      limit: 30,
+      view: "relation",
+      relationAxes: ["project"],
+      status: "all",
+    });
+    expect(projectOnly.edges.length).toBeGreaterThan(0);
+    expect(projectOnly.edges.every((edge) => edge.edgeKind === "project")).toBe(true);
+    expect(projectOnly.stats.sessionEdgeCount).toBe(0);
+    const fallbackNodeIds = new Set([`knowledge:${fallbackA}`, `knowledge:${fallbackB}`]);
+    expect(
+      projectOnly.edges.some(
+        (edge) => fallbackNodeIds.has(edge.source) && fallbackNodeIds.has(edge.target),
+      ),
+    ).toBe(true);
+
+    for (const id of knowledgeIds) {
+      expect(relationSnapshot.nodes.some((node) => node.id === `knowledge:${id}`)).toBe(true);
+    }
+  });
+
+  test("graph semantic view keeps threshold and topK behavior", async () => {
+    const vectorA = Array.from({ length: config.embeddingDimension }, (_, index) =>
+      index === 0 ? 1 : 0,
+    );
+    const vectorB = Array.from({ length: config.embeddingDimension }, (_, index) =>
+      index === 0 ? 1 : 0,
+    );
+    const vectorC = Array.from({ length: config.embeddingDimension }, (_, index) =>
+      index === 0 ? -1 : 0,
+    );
+
+    const idA = await upsertKnowledgeFromSource({
+      sourceUri: "file:///semantic-a.md",
+      contentHash: "semantic-a",
+      type: "rule",
+      status: "active",
+      scope: "repo",
+      title: "Semantic A",
+      body: "semantic edge test",
+      embedding: vectorA,
+    });
+    const idB = await upsertKnowledgeFromSource({
+      sourceUri: "file:///semantic-b.md",
+      contentHash: "semantic-b",
+      type: "rule",
+      status: "active",
+      scope: "repo",
+      title: "Semantic B",
+      body: "semantic edge test",
+      embedding: vectorB,
+    });
+    await upsertKnowledgeFromSource({
+      sourceUri: "file:///semantic-c.md",
+      contentHash: "semantic-c",
+      type: "rule",
+      status: "active",
+      scope: "repo",
+      title: "Semantic C",
+      body: "semantic edge test",
+      embedding: vectorC,
+    });
+
+    const semanticSnapshot = await buildGraphSnapshot({
+      limit: 20,
+      view: "semantic",
+      minSimilarity: 0.72,
+      semanticTopK: 1,
+      status: "all",
+    });
+
+    expect(semanticSnapshot.edges.length).toBeGreaterThan(0);
+    expect(semanticSnapshot.edges.every((edge) => edge.edgeKind === "semantic")).toBe(true);
+    expect(semanticSnapshot.stats.relationEdgeCount).toBe(0);
+    const expectedPair = [`knowledge:${idA}`, `knowledge:${idB}`].sort().join("::");
+    const edgePairs = semanticSnapshot.edges.map((edge) =>
+      [edge.source, edge.target].sort().join("::"),
+    );
+    expect(edgePairs).toContain(expectedPair);
   });
 });

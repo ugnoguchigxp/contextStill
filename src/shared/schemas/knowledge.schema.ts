@@ -5,6 +5,7 @@ export const knowledgeTypeSchema = z.enum(["rule", "procedure"]);
 export const knowledgeStatusSchema = z.enum(["draft", "active", "deprecated"]);
 
 export const scopeSchema = z.enum(["repo", "global"]);
+const knowledgeScoreSchema = z.number().min(0).max(100);
 
 export const knowledgeItemSchema = z.object({
   id: z.string().uuid(),
@@ -14,8 +15,8 @@ export const knowledgeItemSchema = z.object({
   title: z.string().min(1),
   body: z.string().min(1),
   appliesTo: z.record(z.unknown()).default({}),
-  confidence: z.number().min(0).max(1),
-  importance: z.number().min(0).max(1),
+  confidence: knowledgeScoreSchema,
+  importance: knowledgeScoreSchema,
   metadata: z.record(z.unknown()).default({}),
   createdAt: z.coerce.date(),
   updatedAt: z.coerce.date(),
@@ -28,8 +29,25 @@ export const knowledgeSearchInputSchema = z.object({
   types: z.array(knowledgeTypeSchema).optional(),
   statuses: z.array(knowledgeStatusSchema).min(1).optional(),
   status: knowledgeStatusSchema.default("active"),
+  repoPath: z.string().trim().min(1).optional(),
+  files: z.array(z.string().trim().min(1)).optional(),
+  changeTypes: z.array(z.string().trim().min(1)).optional(),
+  technologies: z.array(z.string().trim().min(1)).optional(),
+  includeDraft: z.boolean().default(false),
+});
+
+export const registerKnowledgeInputSchema = z.object({
+  title: z.string().trim().min(1),
+  body: z.string().trim().min(1),
+  type: knowledgeTypeSchema.default("rule"),
+  status: knowledgeStatusSchema.default("draft"),
+  scope: scopeSchema.default("repo"),
+  confidence: knowledgeScoreSchema.optional(),
+  importance: knowledgeScoreSchema.optional(),
+  metadata: z.record(z.unknown()).default({}),
 });
 
 export type KnowledgeItem = z.infer<typeof knowledgeItemSchema>;
 export type KnowledgeSearchInput = z.infer<typeof knowledgeSearchInputSchema>;
 export type KnowledgeStatus = z.infer<typeof knowledgeStatusSchema>;
+export type RegisterKnowledgeInput = z.infer<typeof registerKnowledgeInputSchema>;

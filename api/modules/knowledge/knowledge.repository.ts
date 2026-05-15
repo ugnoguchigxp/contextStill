@@ -2,6 +2,7 @@ import { and, desc, eq, ilike } from "drizzle-orm";
 import { db } from "../../../src/db/index.js";
 import { knowledgeItems } from "../../../src/db/schema.js";
 import { embedOne } from "../../../src/modules/embedding/embedding.service.js";
+import { normalizeKnowledgeScore } from "../../../src/lib/score-scale.js";
 
 export type KnowledgeWriteInput = {
   type: string;
@@ -51,7 +52,11 @@ export async function listKnowledgeItems(params: {
     .orderBy(desc(knowledgeItems.updatedAt))
     .limit(params.limit);
 
-  return rows;
+  return rows.map((row) => ({
+    ...row,
+    confidence: normalizeKnowledgeScore(row.confidence, 70),
+    importance: normalizeKnowledgeScore(row.importance, 70),
+  }));
 }
 
 async function tryEmbedKnowledge(input: KnowledgeWriteInput): Promise<number[] | undefined> {
@@ -63,6 +68,8 @@ async function tryEmbedKnowledge(input: KnowledgeWriteInput): Promise<number[] |
 }
 
 export async function createKnowledgeItem(input: KnowledgeWriteInput) {
+  const confidence = normalizeKnowledgeScore(input.confidence, 70);
+  const importance = normalizeKnowledgeScore(input.importance, 70);
   const embedding = await tryEmbedKnowledge(input);
   const [inserted] = await db
     .insert(knowledgeItems)
@@ -72,8 +79,8 @@ export async function createKnowledgeItem(input: KnowledgeWriteInput) {
       scope: input.scope,
       title: input.title,
       body: input.body,
-      confidence: input.confidence,
-      importance: input.importance,
+      confidence,
+      importance,
       metadata: input.metadata ?? {},
       embedding,
     })
@@ -82,6 +89,8 @@ export async function createKnowledgeItem(input: KnowledgeWriteInput) {
 }
 
 export async function updateKnowledgeItem(id: string, input: KnowledgeWriteInput) {
+  const confidence = normalizeKnowledgeScore(input.confidence, 70);
+  const importance = normalizeKnowledgeScore(input.importance, 70);
   const embedding = await tryEmbedKnowledge(input);
   const [updated] = await db
     .update(knowledgeItems)
@@ -91,8 +100,8 @@ export async function updateKnowledgeItem(id: string, input: KnowledgeWriteInput
       scope: input.scope,
       title: input.title,
       body: input.body,
-      confidence: input.confidence,
-      importance: input.importance,
+      confidence,
+      importance,
       metadata: input.metadata ?? {},
       embedding,
       updatedAt: new Date(),

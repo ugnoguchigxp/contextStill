@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { upsertSourceDocument } from "./source.repository.js";
+import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
+import { deleteStaleSourcesForRoot, upsertSourceDocument } from "./source.repository.js";
 
 type MarkdownImportResult = {
   importedFiles: number;
   importedSources: number;
   importedKnowledge: number;
   skippedFiles: number;
+  removedSources: number;
   files: Array<{ path: string; sourceId: string }>;
 };
 
@@ -68,8 +70,12 @@ export async function importMarkdownDirectory(rootDir: string): Promise<Markdown
     importedSources: 0,
     importedKnowledge: 0,
     skippedFiles: 0,
+    removedSources: 0,
     files: [],
   };
+  const normalizedRootPath = normalizeRepoPath(rootDir) ?? rootDir;
+  const workspaceRepoPath = normalizeRepoPath(process.cwd()) ?? normalizedRootPath;
+  const workspaceRepoKey = normalizeRepoKey(process.cwd()) ?? normalizeRepoKey(rootDir);
 
   for (const filePath of markdownFiles) {
     const content = await readFile(filePath, "utf8");
@@ -90,6 +96,9 @@ export async function importMarkdownDirectory(rootDir: string): Promise<Markdown
       contentHash: hash,
       metadata: {
         importedAt: new Date().toISOString(),
+        repoPath: workspaceRepoPath,
+        repoKey: workspaceRepoKey,
+        sourceRootPath: normalizedRootPath,
       },
     });
 
@@ -97,6 +106,11 @@ export async function importMarkdownDirectory(rootDir: string): Promise<Markdown
     results.importedSources += 1;
     results.files.push({ path: filePath, sourceId });
   }
+
+  results.removedSources = await deleteStaleSourcesForRoot({
+    rootPath: normalizedRootPath,
+    keepUris: results.files.map((item) => item.path),
+  });
 
   return results;
 }

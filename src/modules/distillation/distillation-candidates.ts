@@ -1,5 +1,6 @@
 import { z } from "zod";
 import { config } from "../../config.js";
+import { normalizeKnowledgeScore } from "../../lib/score-scale.js";
 import type { KnowledgeItem } from "../../shared/schemas/knowledge.schema.js";
 import type { DistillationToolResult } from "./distillation-tools.service.js";
 
@@ -75,8 +76,8 @@ export function parseDistillationCandidateList(text: string): DistilledKnowledge
   for (const rawCandidate of parsed.candidates) {
     const candidate = candidateSchema.safeParse(rawCandidate);
     if (!candidate.success) continue;
-    const confidence = clamp01(candidate.data.confidence, 0.65);
-    const importance = clamp01(candidate.data.importance, 0.55);
+    const confidence = normalizeKnowledgeScore(candidate.data.confidence, 65);
+    const importance = normalizeKnowledgeScore(candidate.data.importance, 55);
     const normalized: DistilledKnowledgeCandidate = {
       type: candidate.data.type,
       title: candidate.data.title.trim(),

@@ -1,5 +1,6 @@
 import crypto from "node:crypto";
 import { config } from "../../config.js";
+import { toUnitKnowledgeScore } from "../../lib/score-scale.js";
 import {
   filterDistillationCandidatesByScore,
   parseDistillationCandidateList,
@@ -114,7 +115,7 @@ export function buildSourceDistillationMessages(params: {
       role: "system",
       content: buildDistillationSystemPrompt("wiki", [
         "Return strict JSON only, with this shape:",
-        '{"candidates":[{"type":"rule|procedure","title":"short title","body":"actionable reusable knowledge","confidence":0.0,"importance":0.0,"score":0.0,"rationale":"optional short reason","sourceRefs":["source fragment refs"],"evidenceRefs":["fetched URLs when tools are used"]}]}',
+        '{"candidates":[{"type":"rule|procedure","title":"short title","body":"actionable reusable knowledge","confidence":70,"importance":70,"score":0.0,"rationale":"optional short reason","sourceRefs":["source fragment refs"],"evidenceRefs":["fetched URLs when tools are used"]}]}',
       ]),
     },
     {
@@ -357,6 +358,14 @@ export async function distillSources(
               sourceFragmentId: fragment.id,
               sourceFragmentLocator: fragment.locator,
               sourceFragmentHeading: fragment.heading,
+              repoPath:
+                typeof fragment.sourceMetadata.repoPath === "string"
+                  ? fragment.sourceMetadata.repoPath
+                  : undefined,
+              repoKey:
+                typeof fragment.sourceMetadata.repoKey === "string"
+                  ? fragment.sourceMetadata.repoKey
+                  : undefined,
               inputHash,
               distillationModel: config.localLlmModel,
               promptVersion: config.sourceDistillationPromptVersion,
@@ -372,7 +381,7 @@ export async function distillSources(
           await linkKnowledgeToSourceFragment({
             knowledgeId,
             sourceFragmentId: fragment.id,
-            confidence: candidate.confidence,
+            confidence: toUnitKnowledgeScore(candidate.confidence, 70),
             metadata: {
               source: "source_distillation",
               promptVersion: config.sourceDistillationPromptVersion,
