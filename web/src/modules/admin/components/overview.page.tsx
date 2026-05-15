@@ -5,7 +5,7 @@ import {
   fetchDoctorReport,
   fetchGraphSnapshot,
   fetchKnowledgeItems,
-  fetchPageTree,
+  fetchSourceTree,
   fetchVibeMemories,
 } from "../repositories/admin.repository";
 
@@ -33,7 +33,7 @@ export function OverviewPage() {
   const knowledge = useQuery({ queryKey: ["knowledge", 80], queryFn: () => fetchKnowledgeItems() });
   const sources = useQuery({
     queryKey: ["page-tree"],
-    queryFn: () => fetchPageTree(),
+    queryFn: () => fetchSourceTree(),
   });
   const vibeMemories = useQuery({
     queryKey: ["vibe-memories", 120],

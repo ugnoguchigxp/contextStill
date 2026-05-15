@@ -136,16 +136,6 @@ export const vibeMemoryDistillationRuns = pgTable(
 
 export const sourceDistillationStatusValues = ["ok", "skipped", "failed"] as const;
 
-export const relationTypeValues = [
-  "supports",
-  "derived_from",
-  "contradicts",
-  "supersedes",
-  "applies_to",
-  "mentions",
-  "impacts",
-] as const;
-
 export const sourceLinkTypeValues = ["derived_from"] as const;
 
 export const runStatusValues = ["ok", "degraded", "failed"] as const;
@@ -342,30 +332,6 @@ export const sourceDistillationEvidence = pgTable(
   (table) => ({
     runIdIdx: index("source_distillation_evidence_run_id_idx").on(table.runId),
     toolNameIdx: index("source_distillation_evidence_tool_name_idx").on(table.toolName),
-  }),
-);
-
-export const relations = pgTable(
-  "relations",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    sourceKind: text("source_kind").notNull(),
-    sourceId: text("source_id").notNull(),
-    targetKind: text("target_kind").notNull(),
-    targetId: text("target_id").notNull(),
-    relationType: text("relation_type").notNull(),
-    confidence: real("confidence").default(0.5).notNull(),
-    metadata: jsonb("metadata").default({}).notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (table) => ({
-    sourceIdx: index("relations_source_idx").on(table.sourceKind, table.sourceId),
-    targetIdx: index("relations_target_idx").on(table.targetKind, table.targetId),
-    relationTypeIdx: index("relations_relation_type_idx").on(table.relationType),
-    relationTypeCheck: check(
-      "relations_relation_type_check",
-      sql`${table.relationType} IN (${sql.raw(toSqlList(relationTypeValues))})`,
-    ),
   }),
 );
 

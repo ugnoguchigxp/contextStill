@@ -25,21 +25,21 @@ import { useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import {
-  createFolder,
-  createPage,
-  deleteFolder,
-  deletePage,
-  type FolderTreeItem,
-  fetchHealth,
-  fetchPage,
-  fetchPageDiff,
-  fetchPageHistory,
-  fetchPageTree,
-  type PageTreeItem,
-  renameFolder,
-  runReindex,
-  searchPages,
-  updatePage,
+  createSourceFolder,
+  createSourcePage,
+  deleteSourceFolder,
+  deleteSourcePage,
+  fetchSourceDiff,
+  fetchSourceHealth,
+  fetchSourceHistory,
+  fetchSourcePage,
+  fetchSourceTree,
+  renameSourceFolder,
+  runSourceReindex,
+  searchSourcePages,
+  type SourceFolderItem,
+  type SourceTreeItem,
+  updateSourcePage,
 } from "../repositories/admin.repository";
 
 const initialBody = "# New Page\n\nWrite your documentation here.\n";
@@ -191,7 +191,10 @@ const sortExplorerNodes = (nodes: ExplorerNode[]): ExplorerNode[] =>
       return a.name.localeCompare(b.name);
     });
 
-const buildExplorerTree = (pages: PageTreeItem[], folders: FolderTreeItem[]): ExplorerNode[] => {
+const buildExplorerTree = (
+  pages: SourceTreeItem[],
+  folders: SourceFolderItem[],
+): ExplorerNode[] => {
   const rootNodes: ExplorerNode[] = [];
   const folderMap = new Map<string, Extract<ExplorerNode, { kind: "folder" }>>();
 
@@ -294,12 +297,12 @@ export function SourcesPage() {
 
   const healthQuery = useQuery({
     queryKey: ["health"],
-    queryFn: fetchHealth,
+    queryFn: fetchSourceHealth,
   });
 
   const treeQuery = useQuery({
     queryKey: ["page-tree"],
-    queryFn: fetchPageTree,
+    queryFn: fetchSourceTree,
   });
 
   const treePages = treeQuery.data?.items ?? [];
@@ -334,7 +337,7 @@ export function SourcesPage() {
 
   const pageQuery = useQuery({
     queryKey: ["page", activeSlug],
-    queryFn: () => fetchPage(activeSlug ?? ""),
+    queryFn: () => fetchSourcePage(activeSlug ?? ""),
     enabled: !isCreating && activeSlug !== null,
   });
 
@@ -357,7 +360,7 @@ export function SourcesPage() {
 
   const historyQuery = useQuery({
     queryKey: ["history", activeSlug],
-    queryFn: () => fetchPageHistory(activeSlug ?? ""),
+    queryFn: () => fetchSourceHistory(activeSlug ?? ""),
     enabled: !isCreating && activeSlug !== null,
   });
 
@@ -381,13 +384,13 @@ export function SourcesPage() {
 
   const searchQuery = useQuery({
     queryKey: ["search", searchText],
-    queryFn: () => searchPages(searchText),
+    queryFn: () => searchSourcePages(searchText),
     enabled: searchText.trim().length > 0,
   });
 
   const diffQuery = useQuery({
     queryKey: ["diff", activeSlug, diffFrom, diffTo],
-    queryFn: () => fetchPageDiff(activeSlug ?? "", diffFrom, diffTo),
+    queryFn: () => fetchSourceDiff(activeSlug ?? "", diffFrom, diffTo),
     enabled: !isCreating && activeSlug !== null && diffFrom !== "" && diffTo !== "",
   });
 
@@ -424,7 +427,7 @@ export function SourcesPage() {
   };
 
   const createMutation = useMutation({
-    mutationFn: createPage,
+    mutationFn: createSourcePage,
     onSuccess: async (result) => {
       setStatusText(`Created: ${result.slug || "home"} (${shortCommit(result.commit ?? "")})`);
       setIsCreating(false);
@@ -439,8 +442,13 @@ export function SourcesPage() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ slug, payload }: { slug: string; payload: Parameters<typeof updatePage>[1] }) =>
-      updatePage(slug, payload),
+    mutationFn: ({
+      slug,
+      payload,
+    }: {
+      slug: string;
+      payload: Parameters<typeof updateSourcePage>[1];
+    }) => updateSourcePage(slug, payload),
     onSuccess: async (result, variables) => {
       setStatusText(`Saved: ${result.slug || "home"} (${shortCommit(result.commit ?? "")})`);
       setIsCreating(false);
@@ -463,7 +471,7 @@ export function SourcesPage() {
   });
 
   const deleteMutation = useMutation({
-    mutationFn: deletePage,
+    mutationFn: deleteSourcePage,
     onSuccess: async (result, deletedSlug) => {
       setStatusText(`Deleted: ${result.slug || "home"}`);
       if (activeSlug === deletedSlug) {
@@ -480,7 +488,7 @@ export function SourcesPage() {
   });
 
   const createFolderMutation = useMutation({
-    mutationFn: createFolder,
+    mutationFn: ({ path }: { path: string }) => createSourceFolder(path),
     onSuccess: async (result) => {
       setStatusText(`Folder created: ${result.path}`);
       const createdPath = result.path ?? "";
@@ -499,7 +507,7 @@ export function SourcesPage() {
 
   const renameFolderMutation = useMutation({
     mutationFn: ({ path, payload }: { path: string; payload: { path: string } }) =>
-      renameFolder(path, payload),
+      renameSourceFolder(path, payload.path),
     onSuccess: async (result) => {
       setStatusText(`Folder renamed: ${result.from ?? ""} -> ${result.path}`);
       const renamedPath = result.path ?? "";
@@ -521,7 +529,7 @@ export function SourcesPage() {
   });
 
   const deleteFolderMutation = useMutation({
-    mutationFn: deleteFolder,
+    mutationFn: deleteSourceFolder,
     onSuccess: async (result) => {
       setStatusText(`Folder deleted: ${result.path}`);
       if (selectedFolderPath === result.path || selectedFolderPath?.startsWith(`${result.path}/`)) {
@@ -540,7 +548,7 @@ export function SourcesPage() {
   });
 
   const reindexMutation = useMutation({
-    mutationFn: runReindex,
+    mutationFn: runSourceReindex,
     onSuccess: async (result) => {
       setStatusText(`Reindex done: indexed=${result.indexed}, removed=${result.removed}`);
       await refreshAllContentQueries();
@@ -756,7 +764,7 @@ export function SourcesPage() {
       };
     }
 
-    const page = await fetchPage(slug);
+    const page = await fetchSourcePage(slug);
     return {
       title: page.title,
       body: page.body,

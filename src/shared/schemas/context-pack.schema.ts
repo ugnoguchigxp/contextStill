@@ -1,11 +1,11 @@
 import { z } from "zod";
 import { retrievalModeSchema } from "./compile.schema.js";
 
-export const contextPackStatusSchema = z.enum(["ok", "degraded", "failed"]);
+const contextPackStatusSchema = z.enum(["ok", "degraded", "failed"]);
 
-export const contextPackSectionSchema = z.enum(["rules", "procedures", "code_context", "warnings"]);
+const contextPackSectionSchema = z.enum(["rules", "procedures", "code_context", "warnings"]);
 
-export const contextPackItemSchema = z.object({
+const contextPackItemSchema = z.object({
   id: z.string().min(1),
   itemKind: z.string().min(1),
   itemId: z.string().min(1),

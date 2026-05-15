@@ -3,19 +3,24 @@ import { config } from "../src/config.js";
 import { buildGraphSnapshot } from "../api/modules/graph/graph.repository.js";
 import {
   getCompileRunSnapshot,
+  getLatestCompileRunSnapshot,
   insertCompileRun,
   insertContextPackItems,
   listRecentCompileRuns,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
+
 import {
   searchKnowledge,
   upsertKnowledgeFromSource,
+  vectorSearchKnowledge,
 } from "../src/modules/knowledge/knowledge.repository.js";
 import {
   deleteStaleSourcesForRoot,
   searchSourceContent,
   upsertSourceDocument,
+  vectorSearchSourceContent,
 } from "../src/modules/sources/source.repository.js";
+
 import {
   recordVibeMemory,
   recordVibeMemoryWithDiffEntries,
@@ -27,6 +32,14 @@ import {
   isDbIntegrationEnabled,
   truncateIntegrationTables,
 } from "./helpers/integration.js";
+import { vi } from "vitest";
+
+vi.mock("../src/modules/embedding/embedding.service.js", () => ({
+  embedOne: vi.fn().mockImplementation(async (text: string) => {
+    // Return a dummy vector of the correct dimension (default is 384)
+    return Array.from({ length: 384 }, (_, i) => (i === 0 ? 1 : 0));
+  }),
+}));
 
 const describeDb = isDbIntegrationEnabled() ? describe : describe.skip;
 
@@ -482,5 +495,124 @@ index 0000000..1111111
       [edge.source, edge.target].sort().join("::"),
     );
     expect(edgePairs).toContain(expectedPair);
+  });
+
+  test("vectorSearchKnowledge returns results based on similarity", async () => {
+    const vector = Array.from({ length: 384 }, (_, i) => (i === 0 ? 1 : 0));
+    await upsertKnowledgeFromSource({
+      sourceUri: "file:///vector-1.md",
+      contentHash: "v1",
+      type: "rule",
+      status: "active",
+      scope: "repo",
+      title: "Vector Rule",
+      body: "vector search content",
+      embedding: vector,
+    });
+
+    const results = await vectorSearchKnowledge(vector, 5);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].title).toBe("Vector Rule");
+  });
+
+  test("vectorSearchSourceContent returns results based on similarity", async () => {
+    const vector = Array.from({ length: 384 }, (_, i) => (i === 0 ? 1 : 0));
+    await upsertSourceDocument({
+      sourceKind: "wiki",
+      uri: "file:///source-v.md",
+      title: "Source V",
+      body: "source vector content",
+    });
+    // The mock embedOne will return [1, 0, ...] which matches our search vector
+
+    const results = await vectorSearchSourceContent(vector, 5);
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].sourceUri).toBe("file:///source-v.md");
+  });
+
+  test("upsertKnowledgeFromSource updates existing item if uri and hash match", async () => {
+    const params = {
+      sourceUri: "file:///upsert.md",
+      contentHash: "hash-1",
+      type: "rule" as const,
+      status: "active" as const,
+      scope: "repo" as const,
+      title: "Initial Title",
+      body: "Initial Body",
+    };
+    const firstId = await upsertKnowledgeFromSource(params);
+    const secondId = await upsertKnowledgeFromSource({
+      ...params,
+      title: "Updated Title",
+    });
+
+    expect(secondId).toBe(firstId);
+    const results = await searchKnowledge({
+      query: "Updated",
+      limit: 1,
+      status: "active",
+      includeDraft: false,
+    });
+    expect(results[0].title).toBe("Updated Title");
+  });
+
+  test("getLatestCompileRunSnapshot returns the most recent run", async () => {
+    const runId = await insertCompileRun({
+      goal: "latest goal",
+      intent: "latest intent",
+      input: {},
+      retrievalMode: "mode",
+      status: "ok",
+      degradedReasons: [],
+      tokenBudget: 1000,
+    });
+    const snapshot = await getLatestCompileRunSnapshot();
+    expect(snapshot?.run.id).toBe(runId);
+  });
+
+  test("searchKnowledge respects metadata fallback for sourceRefs", async () => {
+    await upsertKnowledgeFromSource({
+      sourceUri: "file:///metadata-ref.md",
+      contentHash: "m1",
+      type: "rule",
+      status: "active",
+      scope: "repo",
+      title: "Metadata Ref Rule",
+      body: "body",
+      metadata: {
+        sourceDocumentUri: "file:///docs/ref.md",
+        sourceFragmentLocator: "custom-locator",
+      },
+    });
+
+    const results = await searchKnowledge({
+      query: "Metadata Ref",
+      limit: 1,
+      status: "active",
+      includeDraft: false,
+    });
+    expect(results[0].sourceRefs).toContain("file:///docs/ref.md#custom-locator");
+  });
+
+  test("searchKnowledge supports repoKey and types filters", async () => {
+    await upsertKnowledgeFromSource({
+      sourceUri: "file:///repokey.md",
+      contentHash: "rk1",
+      type: "procedure",
+      status: "active",
+      scope: "repo",
+      title: "RepoKey Rule",
+      body: "body",
+      metadata: {
+        repoKey: "special-repo",
+      },
+    });
+
+    const results = await searchKnowledge(
+      { query: "RepoKey", limit: 5, status: "active", includeDraft: false },
+      { repoKey: "special-repo", types: ["procedure"] },
+    );
+    expect(results.length).toBeGreaterThan(0);
+    expect(results[0].title).toBe("RepoKey Rule");
   });
 });

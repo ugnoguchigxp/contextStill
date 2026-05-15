@@ -26,14 +26,6 @@ export function getDb(): Database {
   return ensureDatabase();
 }
 
-export function getDbPool(): InstanceType<typeof Pool> {
-  ensureDatabase();
-  if (!pool) {
-    throw new Error("database pool is not initialized");
-  }
-  return pool;
-}
-
 export async function closeDbPool(): Promise<void> {
   if (!pool) return;
   const current = pool;

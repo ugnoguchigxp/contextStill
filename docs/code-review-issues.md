@@ -484,40 +484,36 @@ memory-router は **ローカルファースト** のツールである。ナレ
 
 > サーバーホスト段階やスケール時に対処すればよい Issue。ローカル運用では実害が小さい。
 
-### Issue #9: `relations` テーブルの活用不足
+### Issue #9: 旧 `relations` テーブルの削除
 
-- [ ] **完了**
+- [x] **完了**
 
 **概要**
 
-`relations` テーブルは `supports`, `derived_from`, `contradicts`, `supersedes`, `applies_to`, `mentions`, `impacts` の 7 種の関連を扱えるスキーマを持つが、実質的に Graph 表示以外で活用されていない。蒸留時に knowledge 間の関連を自動生成できれば、`context_compile` の retrieval 品質が向上する可能性がある。
+Graph relation view は `same_session` / `same_project` を API 側で動的合成する方針になった。旧 `relations` テーブルは Graph、distillation、`context_compile` のいずれからも参照されないため、メンテナンス対象から外す。
 
 **影響範囲**
 
-- Knowledge Graph の表示が semantic 距離のみに依存しており、明示的な関連が少ない
-- `context_compile` が関連知識の連鎖取得をできない
+- 旧テーブルを残すと Doctor、migration、schema、docs が実態とズレる
+- Graph に見える relation edge が永続テーブル由来だと誤解される
 
 **具体的タスク**
 
-1. 蒸留時に既存 knowledge との関連を LLM に判定させる
-   - 蒸留候補の `sourceRefs` と既存 knowledge の `sourceRefs` を突合
-   - 同一 source 由来の knowledge 同士に `derived_from` / `supports` を自動生成
-2. `context_compile` の ranking で relations を活用
-   - 選択された knowledge に `supports` 関連がある場合、関連知識も候補に追加
-   - `contradicts` がある場合、warning に追加
-3. Graph API の `relations` mode を改善
-   - 明示的関連の edge を semantic edge と視覚的に区別
+1. `src/db/schema.ts` から旧 `relations` テーブルと `relationTypeValues` を削除
+2. Doctor と integration helper の required/truncate 対象から `relations` を削除
+3. migration で既存 DB の `relations` テーブルを drop
+4. README/docs の Graph relation 説明を、動的合成 edge として更新
 
 **受け入れ条件**
 
-- 蒸留時に少なくとも `derived_from` 関連が自動生成される
-- Graph に明示的関連の edge が表示される
+- `rg "\brelations\b"` で現役コード参照が残らない
+- Graph relation view は `same_session` / `same_project` の動的 edge として説明される
 
 **関連ファイル**
 
-- [schema.ts](../src/db/schema.ts) — `relations` テーブル
-- [distillation.service.ts](../src/modules/vibe-memory/distillation.service.ts)
-- [distillation.service.ts](../src/modules/sources/distillation.service.ts)
+- [schema.ts](../src/db/schema.ts)
+- [graph.repository.ts](../api/modules/graph/graph.repository.ts)
+- [doctor.service.ts](../src/modules/doctor/doctor.service.ts)
 
 ---
 
@@ -657,7 +653,7 @@ Web UI のテストは `web/src/smoke.test.ts`（159 bytes）のみ。Playwright
 | #6 config 構造 | Medium | - | リファクタリング機会にいつでも |
 | #7 doctor 分割 | Medium | Phase 4 | doctor 機能拡張と同時に実施 |
 | #8 API テスト | Medium | - | API 変更時にセットで追加 |
-| #9 relations 活用 | Low | Phase 5 / 6 | context quality eval と併せて検討 |
+| #9 旧 relations 削除 | Low | - | 完了。Graph relation は動的合成に統一 |
 | #10 Web UI テスト | Low | Phase 4 | ローカル運用では後回し可 |
 | #11 SSRF 対策 | Low | Phase 6 | サーバーホスト段階で対処 |
 | #12 セマンティックキャッシュ | Medium | Phase 5 | レイテンシ改善・将来のパフォーマンス要件 |
@@ -681,7 +677,7 @@ Web UI のテストは `web/src/smoke.test.ts`（159 bytes）のみ。Playwright
 9. Issue #13 (コールドスタート)   ← ユーザー導入促進のため早めに
 10. Issue #14 (HITL UI 強化)      ← 運用が本格化する前に
 11. Issue #12 (キャッシュ導入)    ← 呼び出し頻度が増大したタイミングで
-12. Issue #9-11, 15               ← 必要になった時、または段階的に
+12. Issue #10-11, 15              ← 必要になった時、または段階的に
 ```
 
 ---
@@ -692,5 +688,5 @@ Web UI のテストは `web/src/smoke.test.ts`（159 bytes）のみ。Playwright
 |---|---|---|---|
 | High | 4 | 0 | 4 |
 | Medium | 7 | 0 | 7 |
-| Low | 4 | 0 | 4 |
-| **合計** | **15** | **0** | **15** |
+| Low | 4 | 1 | 3 |
+| **合計** | **15** | **1** | **14** |

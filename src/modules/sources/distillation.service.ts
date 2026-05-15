@@ -26,11 +26,11 @@ import {
   upsertSourceDistillationRun,
 } from "./distillation.repository.js";
 
-export type SourceDistillationModelClient = (
+type SourceDistillationModelClient = (
   request: DistillationModelRequest,
 ) => Promise<string | DistillationCompletionResult>;
 
-export type SourceDistillationEmbedder = (text: string) => Promise<number[]>;
+type SourceDistillationEmbedder = (text: string) => Promise<number[]>;
 
 export type DistillSourcesOptions = {
   limit?: number;
@@ -42,7 +42,7 @@ export type DistillSourcesOptions = {
   embedder?: SourceDistillationEmbedder;
 };
 
-export type DistilledSourceResult = {
+type DistilledSourceResult = {
   sourceFragmentId: string;
   sourceUri: string;
   locator: string;

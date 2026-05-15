@@ -12,27 +12,26 @@
 
 ## 2. 現状整理（2026-05-15）
 
-- `relations` は Graph で参照しているが、自動生成の書き込み経路は未整備。
-  - 参照: `api/modules/graph/graph.repository.ts`
-  - スキーマ: `src/db/schema.ts` (`relations`)
+- Graph relation は `api/modules/graph/graph.repository.ts` で動的に合成している。
+- 旧 `relations` テーブルは Graph から参照されておらず、永続化方針も採用しないため削除対象。
 - semantic edge は `knowledge_items.embedding` の cosine 類似度で生成済み。
 - knowledge metadata は `sourceSessionId` を持つものが多いが、`repoKey/repoPath` は欠損が残る。
 - `vibe_memories.metadata` には `projectRoot/projectName` がほぼ入っているため、project 軸補完に使える。
 
 ## 3. 方針（推奨）
 
-### 3.1 第1段階は「動的 relation 生成」（DB永続化なし）
+### 3.1 「動的 relation 生成」（DB永続化なし）を採用する
 
 - `same_session` / `same_project` は `GET /api/graph` 内で合成する。
-- まずは **表示価値の検証を優先**し、`relations` 永続化は後段に回す。
+- 永続 relation テーブルは持たない。
 - 理由:
   - migration と運用コストを増やさずに UX 検証できる。
   - relation 生成ルールを後から調整しやすい。
 
-### 3.2 永続化は第2段階（必要時のみ）
+### 3.2 明示的な根拠リンクは `knowledge_source_links` に集約する
 
-- 効果が確認できたら `relations` に保存する経路を追加する。
-- この段階で `relation_type` 拡張（`same_session` / `same_project`）を実施。
+- source provenance は `knowledge_source_links` と pack の `sourceRefs` を使う。
+- session/project relation は表示用の派生 edge として扱い、レビュー対象の永続データにはしない。
 
 ## 4. 実装スコープ
 
@@ -174,9 +173,8 @@
 3. **表示切替でレイアウトが大きく揺れる**
    - 対策: モード切替時のみオートフィット、以降は手動位置維持
 
-## 9. 将来拡張（第2段階）
+## 9. 将来拡張
 
-- relation 永続化（`relations` へ保存）
-  - migration で `relation_type` に `same_session` / `same_project` を追加
-  - `metadata.reviewStatus` で draft relation を管理
-- relation lifecycle（approve/reject）を UI で導入
+- relation 生成ルールの調整 UI
+- source provenance 表示の強化
+- `knowledge_source_links` を使った根拠別フィルタ

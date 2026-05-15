@@ -11,7 +11,6 @@ const requiredTables = [
   "vibe_memory_distillation_runs",
   "source_distillation_runs",
   "source_distillation_evidence",
-  "relations",
   "context_compile_runs",
   "context_pack_items",
 ] as const;
@@ -80,7 +79,6 @@ export async function truncateIntegrationTables(): Promise<void> {
       knowledge_source_links,
       source_fragments,
       sources,
-      relations,
       knowledge_items
     restart identity cascade
   `);

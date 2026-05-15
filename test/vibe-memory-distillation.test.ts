@@ -1,4 +1,4 @@
-import { describe, expect, test } from "vitest";
+import { describe, expect, test, vi } from "vitest";
 import type {
   AgentDiffEntryForDistillation,
   VibeMemoryForDistillation,
@@ -8,7 +8,28 @@ import {
   buildVibeMemoryInputHash,
   filterDistillationCandidatesByScore,
   parseDistillationCandidates,
+  distillVibeMemories,
 } from "../src/modules/vibe-memory/distillation.service.js";
+import * as distillationRepo from "../src/modules/vibe-memory/distillation.repository.js";
+import * as knowledgeRepo from "../src/modules/knowledge/knowledge.repository.js";
+import * as embeddingService from "../src/modules/embedding/embedding.service.js";
+
+vi.mock("../src/modules/vibe-memory/distillation.repository.js", () => ({
+  listVibeMemoriesForDistillation: vi.fn(),
+  listAgentDiffEntriesForVibeMemories: vi.fn(),
+  recordVibeMemoryDistillationState: vi.fn().mockResolvedValue(undefined),
+  upsertVibeMemoryDistillationRun: vi.fn().mockResolvedValue({ id: "run-1" }),
+}));
+vi.mock("../src/modules/knowledge/knowledge.repository.js", () => ({
+  upsertKnowledgeFromSource: vi.fn(),
+}));
+vi.mock("../src/modules/embedding/embedding.service.js", () => ({
+  embedOne: vi.fn(),
+}));
+
+function mockResolvedValue<T>(fn: unknown, value: T): void {
+  (fn as { mockResolvedValue(value: T): void }).mockResolvedValue(value);
+}
 
 function memory(overrides: Partial<VibeMemoryForDistillation> = {}): VibeMemoryForDistillation {
   return {
@@ -167,5 +188,41 @@ describe("vibe memory distillation", () => {
     });
 
     expect(changed).not.toBe(base);
+  });
+
+  test("distillVibeMemories orchestrates the full flow", async () => {
+    mockResolvedValue(distillationRepo.listVibeMemoriesForDistillation, [memory()]);
+    mockResolvedValue(distillationRepo.listAgentDiffEntriesForVibeMemories, [diff()]);
+    mockResolvedValue(knowledgeRepo.upsertKnowledgeFromSource, "k-123");
+    mockResolvedValue(embeddingService.embedOne, [0.1, 0.2]);
+
+    const modelClient = async () => ({
+      content: JSON.stringify({
+        candidates: [
+          {
+            type: "rule",
+            title: "Test",
+            body: "Test body",
+            score: 1.0,
+            sourceRefs: ["local"],
+          },
+        ],
+      }),
+      toolEvents: [],
+      messages: [],
+    });
+
+    const result = await distillVibeMemories({
+      apply: true,
+      modelClient: modelClient as unknown as never,
+    });
+
+    if (result.knowledgeCount === 0) {
+      console.log("DEBUG: Result results:", JSON.stringify(result.results, null, 2));
+    }
+
+    expect(result.knowledgeCount).toBe(1);
+    expect(result.results[0].vibeMemoryId).toBe(memory().id);
+    expect(distillationRepo.upsertVibeMemoryDistillationRun).toHaveBeenCalled();
   });
 });

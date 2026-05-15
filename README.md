@@ -198,7 +198,7 @@ macOS LaunchAgent として継続実行:
 - `GET /api/agent-diffs`
 - `GET /api/graph`
 
-`GET /api/graph` は既定で `active / draft` の `knowledge_items` だけをノードにします。`vibe_memories` は raw transcript として検索・蒸留候補に使い、Graph の主ノードには含めません。`edgeMode=semantic|relations|both`、`status=current|active|draft|deprecated|all` で表示対象を切り替えられます。
+`GET /api/graph` は既定で `active / draft` の `knowledge_items` だけをノードにします。`vibe_memories` は raw transcript として検索・蒸留候補に使い、Graph の主ノードには含めません。`view=relation|semantic`、`relationAxes=session,project`、`status=current|active|draft|deprecated|all` で表示対象を切り替えられます。Relation view の edge は `sourceSessionId` / `repoKey` / `vibe_memories.metadata.projectRoot` から動的に合成され、永続 relation テーブルには依存しません。
 
 `POST /api/vibe-memory` は自然言語の `content` に加えて `diff` または `agentDiffs[]` を受け取れます。`content` に混ざった diff block も保存前に取り除かれ、unified diff は `agent_diff_entries` に分解されます。TypeScript/JavaScript の主要シンボルは同じテーブルの symbol 列に保存されます。
 

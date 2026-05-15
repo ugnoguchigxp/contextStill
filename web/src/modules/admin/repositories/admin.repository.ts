@@ -236,17 +236,6 @@ export type SourceReindexResponse = {
   removed: number;
 };
 
-export type PageTreeItem = SourceTreeItem;
-export type FolderTreeItem = SourceFolderItem;
-export type PageTreeResponse = SourceTreeResponse;
-export type PageDocument = SourcePageDocument;
-export type PageMutationResponse = SourceMutationResponse;
-export type FolderMutationResponse = SourceMutationResponse;
-export type PageHistoryItem = SourceHistoryItem;
-export type HealthResponse = SourceHealth;
-export type SearchResultItem = SourceSearchItem;
-export type ReindexResponse = SourceReindexResponse;
-
 async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
   if (!response.ok) {
@@ -432,31 +421,4 @@ export async function searchSourcePages(query: string): Promise<SourceSearchItem
 
 export async function runSourceReindex(): Promise<SourceReindexResponse> {
   return requestJson<SourceReindexResponse>("/api/sources/reindex", "POST");
-}
-
-// Wiki-compatible aliases for the Sources page.
-export const fetchHealth = fetchSourceHealth;
-export const fetchPageTree = fetchSourceTree;
-export const fetchPage = fetchSourcePage;
-export const createPage = createSourcePage;
-export const updatePage = updateSourcePage;
-export const deletePage = deleteSourcePage;
-export const fetchPageHistory = fetchSourceHistory;
-export const fetchPageDiff = fetchSourceDiff;
-export const searchPages = searchSourcePages;
-export const runReindex = runSourceReindex;
-
-export async function createFolder(payload: { path: string }): Promise<FolderMutationResponse> {
-  return createSourceFolder(payload.path);
-}
-
-export async function renameFolder(
-  path: string,
-  payload: { path: string },
-): Promise<FolderMutationResponse> {
-  return renameSourceFolder(path, payload.path);
-}
-
-export async function deleteFolder(path: string): Promise<FolderMutationResponse> {
-  return deleteSourceFolder(path);
 }

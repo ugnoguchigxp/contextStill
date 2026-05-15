@@ -1,13 +1,13 @@
 import { z } from "zod";
 
-export const knowledgeTypeSchema = z.enum(["rule", "procedure"]);
+const knowledgeTypeSchema = z.enum(["rule", "procedure"]);
 
-export const knowledgeStatusSchema = z.enum(["draft", "active", "deprecated"]);
+const knowledgeStatusSchema = z.enum(["draft", "active", "deprecated"]);
 
-export const scopeSchema = z.enum(["repo", "global"]);
+const scopeSchema = z.enum(["repo", "global"]);
 const knowledgeScoreSchema = z.number().min(0).max(100);
 
-export const knowledgeItemSchema = z.object({
+const knowledgeItemSchema = z.object({
   id: z.string().uuid(),
   type: knowledgeTypeSchema,
   status: knowledgeStatusSchema,
@@ -50,4 +50,3 @@ export const registerKnowledgeInputSchema = z.object({
 export type KnowledgeItem = z.infer<typeof knowledgeItemSchema>;
 export type KnowledgeSearchInput = z.infer<typeof knowledgeSearchInputSchema>;
 export type KnowledgeStatus = z.infer<typeof knowledgeStatusSchema>;
-export type RegisterKnowledgeInput = z.infer<typeof registerKnowledgeInputSchema>;

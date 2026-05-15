@@ -78,6 +78,13 @@
       "when": 1778850000000,
       "tag": "0010_knowledge_score_100_scale",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1778853600000,
+      "tag": "0011_drop_unused_relations",
+      "breakpoints": true
     }
   ]
 }

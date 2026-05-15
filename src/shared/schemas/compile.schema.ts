@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const intentSchema = z.enum(["plan", "edit", "debug", "review", "finish"]);
+const intentSchema = z.enum(["plan", "edit", "debug", "review", "finish"]);
 export const retrievalModeSchema = z.enum([
   "task_context",
   "review_context",

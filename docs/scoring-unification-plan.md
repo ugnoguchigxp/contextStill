@@ -145,7 +145,7 @@ ALTER TABLE knowledge_items
 
 補足:
 - 型は `real` のまま維持（今回の変更範囲外）
-- `relations.confidence` / `knowledge_source_links.confidence` は対象外（意味が別）
+- `knowledge_source_links.confidence` は対象外（意味が別）
 
 ## 6. テスト更新範囲
 

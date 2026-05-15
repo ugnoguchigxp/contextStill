@@ -2,7 +2,7 @@
 
 ## 結論
 
-`sources` / `source_fragments` は raw evidence として残し、Graph の主ノードは引き続き `knowledge_items` に限定する。wiki を Graph に直接載せるのではなく、wiki fragment を Gemma4 で `rule / procedure` に蒸留し、保存時に embedding 化する。Graph はその distilled knowledge の距離と relation を見る。
+`sources` / `source_fragments` は raw evidence として残し、Graph の主ノードは引き続き `knowledge_items` に限定する。wiki を Graph に直接載せるのではなく、wiki fragment を Gemma4 で `rule / procedure` に蒸留し、保存時に embedding 化する。Graph はその distilled knowledge の embedding 距離と、metadata から動的に合成する session/project relation を見る。
 
 tool loop、Gemma4 system context、compile-ready 粒度、保存前 validation は vibe memory と source/wiki で共通化する。共通設計は [distillation-runtime-plan.md](distillation-runtime-plan.md) に置き、この文書は source/wiki 固有の差分に絞る。
 
@@ -29,7 +29,7 @@ flowchart LR
   C --> H["knowledge_source_links"]
   G --> H
   G --> I["Graph semantic distance"]
-  G --> J["relations"]
+  G --> J["dynamic session/project relation"]
   I --> K["Graph API/UI"]
   J --> K
 ```
@@ -140,14 +140,7 @@ LLM 出力はそのまま保存しない。保存前に機械的に落とす。
 
 Graph は追加実装なしで semantic distance を使える。source distillation で作った knowledge は保存時に embedding 済みになるため、既存の `GET /api/graph` の semantic edge 対象になる。
 
-次に追加するべき relation:
-
-- 同じ source fragment から蒸留された knowledge 同士: relation 候補として評価するが、自動で強い relation にしない。
-- fetch evidence が同じで意味が近い knowledge: `supports`
-- 新しい source content hash で置き換わった知識: `supersedes`
-- source と矛盾する既存 knowledge: `contradicts`
-
-relation も最初は `draft` 相当の review 対象にする。relations に status がないため、metadata に `reviewStatus: "draft"` を入れるか、後続 migration で relation lifecycle を追加する。
+現在の Graph relation は永続テーブルを使わず、API が `same_session` / `same_project` edge を動的に合成する。明示的な relation を保存する設計は採用していないため、source provenance は `knowledge_source_links` と `sourceRefs` に集約する。
 
 ## CLI / automation
 

@@ -78,12 +78,3 @@ export async function searchVibeMemories(params: {
 
   return results;
 }
-
-export async function getVibeMemoriesBySession(sessionId: string, limit = 50) {
-  return db
-    .select()
-    .from(vibeMemories)
-    .where(eq(vibeMemories.sessionId, sessionId))
-    .orderBy(desc(vibeMemories.createdAt))
-    .limit(limit);
-}

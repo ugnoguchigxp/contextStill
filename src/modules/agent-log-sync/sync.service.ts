@@ -34,7 +34,7 @@ type AgentLogSource = {
   }>;
 };
 
-export type AgentLogSourceSyncSummary = {
+type AgentLogSourceSyncSummary = {
   id: AgentLogSource["id"];
   label: AgentLogSource["label"];
   ok: boolean;
@@ -92,7 +92,7 @@ export function chunkMessages(
   return chunks;
 }
 
-export function buildTranscript(messages: ChatMessage[]): string {
+function buildTranscript(messages: ChatMessage[]): string {
   return messages
     .map((message) => `${message.role.toUpperCase()}: ${message.content}`)
     .join("\n\n");
@@ -209,7 +209,7 @@ export function buildReadableTranscript(messages: ChatMessage[]): string {
     .join("\n\n");
 }
 
-export function buildMemorySessionId(sourceId: string, message: ChatMessage): string {
+function buildMemorySessionId(sourceId: string, message: ChatMessage): string {
   const sessionId = message.metadata.sessionId;
   if (typeof sessionId === "string" && sessionId.trim().length > 0) {
     return `${sourceId}:${sessionId.trim()}`;

@@ -30,9 +30,9 @@ export type GraphEdge = {
   detail: string;
 };
 
-export type GraphStatusFilter = "current" | "active" | "draft" | "deprecated" | "all";
+type GraphStatusFilter = "current" | "active" | "draft" | "deprecated" | "all";
 
-export type GraphViewMode = "relation" | "semantic";
+type GraphViewMode = "relation" | "semantic";
 export type GraphRelationAxis = "session" | "project";
 
 export type GraphSnapshotParams = {

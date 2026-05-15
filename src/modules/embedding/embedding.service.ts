@@ -7,9 +7,9 @@ import { config } from "../../config.js";
 const execFileAsync = promisify(execFile);
 
 export type EmbeddingKind = "query" | "passage";
-export type EmbeddingProviderName = "daemon" | "cli";
+type EmbeddingProviderName = "daemon" | "cli";
 
-export type EmbeddingResult = {
+type EmbeddingResult = {
   embeddings: number[][];
   dimension: number;
   provider: EmbeddingProviderName;
@@ -131,7 +131,7 @@ async function embedViaCli(texts: string[], type: EmbeddingKind): Promise<Embedd
   };
 }
 
-export async function embedTexts(texts: string[], type: EmbeddingKind): Promise<EmbeddingResult> {
+async function embedTexts(texts: string[], type: EmbeddingKind): Promise<EmbeddingResult> {
   const cleanTexts = texts.map((text) => text.trim()).filter((text) => text.length > 0);
   if (cleanTexts.length === 0) {
     throw new Error("embedding input must include at least one non-empty text");

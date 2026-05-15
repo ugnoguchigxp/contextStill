@@ -1,1 +1,1 @@
-export { closeDbPool, db, getDb, getDbPool } from "./client.js";
+export { closeDbPool, db, getDb } from "./client.js";

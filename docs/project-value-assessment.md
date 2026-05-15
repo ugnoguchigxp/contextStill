@@ -51,7 +51,7 @@ graph TD
 
 **懸念:**
 - `metadata: jsonb` が多用されており、`repoPath` / `repoKey` / `sourceUri` など検索に使うフィールドが非構造化。改善計画（Phase 1）で認識済みだが、DB 制約による保護がない
-- `relations` テーブルの `sourceKind` / `targetKind` が text 型で、knowledge → knowledge 以外の関連を扱う設計だが、実質的に利用されている箇所が限定的
+- Graph の relation edge は API が動的合成しているため、永続 relation テーブルは不要になっている
 
 ### 2.2 モジュール構成 — 良好
 
@@ -263,7 +263,7 @@ memory-router は以下の 3 段階でこの課題を解決する:
 |---|---|---|---|
 | 9 | `config.ts` が 180 行のフラット構造 | 設定項目の増加に伴う可読性低下 | namespace 別のグルーピング |
 | 10 | `doctor.service.ts` が 644 行の単一ファイル | 拡張性の制約 | セクション別のインスペクタに分割 |
-| 11 | `relations` テーブルの活用不足 | Graph の潜在能力が未発揮 | knowledge 間の明示的関連を蒸留時に生成 |
+| 11 | Graph relation の説明不足 | 派生 edge と永続データの境界が誤解されやすい | docs/API の relation view 記述を明確化 |
 
 ---
 

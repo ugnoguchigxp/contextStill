@@ -4,7 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { config } from "../../config.js";
 
-export type ChatRole = "user" | "assistant";
+type ChatRole = "user" | "assistant";
 
 export type ChatMessage = {
   role: ChatRole;
@@ -12,7 +12,7 @@ export type ChatMessage = {
   metadata: Record<string, unknown>;
 };
 
-export type ToolCallSummary = {
+type ToolCallSummary = {
   name: string;
   summary?: string;
   commandLine?: string;
@@ -24,7 +24,7 @@ export type ToolCallSummary = {
   reconstructedFromFile?: boolean;
 };
 
-export type IngestFileCursor = {
+type IngestFileCursor = {
   offset: number;
   mtimeMs: number;
 };
@@ -76,7 +76,7 @@ const SECRET_PATTERNS: RegExp[] = [
 
 const SECRET_LINE_KEYWORDS = ["password", "secret_key", "auth_token"];
 
-export function filterSensitiveData(text: string): string {
+function filterSensitiveData(text: string): string {
   let filtered = text;
   for (const pattern of SECRET_PATTERNS) {
     filtered = filtered.replace(pattern, "[REMOVED SENSITIVE DATA]");
@@ -91,7 +91,7 @@ export function filterSensitiveData(text: string): string {
     .join("\n");
 }
 
-export function extractCodexTextContent(raw: unknown): string {
+function extractCodexTextContent(raw: unknown): string {
   if (typeof raw === "string") return raw;
   if (!Array.isArray(raw)) return "";
 
@@ -548,7 +548,7 @@ function buildCodexMessageMetadata(params: {
   };
 }
 
-export function parseCodexJsonLine(
+function parseCodexJsonLine(
   line: string,
   filePath: string,
   context: CodexFileContext = {},

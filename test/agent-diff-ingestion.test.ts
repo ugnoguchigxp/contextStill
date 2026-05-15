@@ -124,4 +124,36 @@ ${diff}
     expect(stripped).toBe("実装しました。\n\n確認してください。");
     expect(stripped).not.toContain("diff --git");
   });
+
+  test("extractAgentDiffSymbols captures interface and enum", () => {
+    const content = `
+      export interface User { id: string; name: string; }
+      export enum Status { Active, Inactive }
+    `;
+    const symbols = extractAgentDiffSymbols({ filePath: "types.ts", content });
+    expect(symbols.some((s) => s.symbolName === "User" && s.symbolKind === "interface")).toBe(true);
+    expect(symbols.some((s) => s.symbolName === "Status" && s.symbolKind === "enum")).toBe(true);
+  });
+
+  test("parseUnifiedAgentDiffs handles deleted file", () => {
+    const deleteDiff = `diff --git a/old.ts b/old.ts
+deleted file mode 100644
+--- a/old.ts
++++ /dev/null
+@@ -1,1 +0,0 @@
+-old content`;
+    const entries = parseUnifiedAgentDiffs(deleteDiff);
+    expect(entries[0].changeType).toBe("delete");
+    expect(entries[0].filePath).toBe("old.ts");
+  });
+
+  test("parseUnifiedAgentDiffs handles /dev/null for new files", () => {
+    const newDiff = `--- /dev/null
++++ b/new.ts
+@@ -0,0 +1,1 @@
++new content`;
+    const entries = parseUnifiedAgentDiffs(newDiff);
+    expect(entries[0].changeType).toBe("add");
+    expect(entries[0].filePath).toBe("new.ts");
+  });
 });

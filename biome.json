@@ -16,6 +16,13 @@
     "enabled": true
   },
   "files": {
-    "ignore": ["drizzle/meta/**", "dist-web/**"]
+    "ignore": [
+      "coverage/**",
+      "dist/**",
+      "dist-web/**",
+      "drizzle/meta/**",
+      "playwright-report/**",
+      "test-results/**"
+    ]
   }
 }

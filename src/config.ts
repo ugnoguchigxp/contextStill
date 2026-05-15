@@ -4,13 +4,13 @@ import path from "node:path";
 
 loadEnv({ quiet: true });
 
-export const envBoolean = (value: string | undefined, fallback: boolean): boolean => {
+const envBoolean = (value: string | undefined, fallback: boolean): boolean => {
   if (value === undefined || value.trim() === "") return fallback;
   const normalized = value.trim().toLowerCase();
   return normalized === "1" || normalized === "true" || normalized === "yes";
 };
 
-export const envNumber = (value: string | undefined, fallback: number): number => {
+const envNumber = (value: string | undefined, fallback: number): number => {
   if (!value) return fallback;
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;

@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const doctorStatusSchema = z.enum(["ok", "degraded", "failed"]);
+const doctorStatusSchema = z.enum(["ok", "degraded", "failed"]);
 
 const launchAgentSchema = z.object({
   label: z.string(),

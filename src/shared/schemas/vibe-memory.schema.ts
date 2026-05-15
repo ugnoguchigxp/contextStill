@@ -1,10 +1,10 @@
 import { z } from "zod";
 
-export const vibeMemoryTypeSchema = z.enum(["chat", "action", "observation", "system"]);
+const vibeMemoryTypeSchema = z.enum(["chat", "action", "observation", "system"]);
 
 const metadataSchema = z.record(z.string(), z.unknown()).default({});
 
-export const agentDiffEntryInputSchema = z
+const agentDiffEntryInputSchema = z
   .object({
     filePath: z.string().trim().min(1),
     diffHunk: z.string().optional(),
@@ -26,7 +26,7 @@ export const agentDiffEntryInputSchema = z
     message: "Agent diff entry requires diffHunk or diff",
   });
 
-export const agentDiffSymbolInputSchema = z.object({
+const agentDiffSymbolInputSchema = z.object({
   symbolName: z.string().trim().min(1),
   symbolKind: z.string().trim().min(1),
   signature: z.string().nullable().optional(),

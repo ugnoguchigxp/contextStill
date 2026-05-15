@@ -51,7 +51,7 @@ const languageByExtension = new Map<string, string>([
   [".sql", "sql"],
 ]);
 
-export function inferAgentDiffLanguage(filePath: string): string | undefined {
+function inferAgentDiffLanguage(filePath: string): string | undefined {
   const dotIndex = filePath.lastIndexOf(".");
   if (dotIndex === -1) return undefined;
   return languageByExtension.get(filePath.slice(dotIndex).toLowerCase());

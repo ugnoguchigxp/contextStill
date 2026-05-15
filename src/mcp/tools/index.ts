@@ -4,7 +4,7 @@ import { contextCompileTool } from "./context-compile.tool.js";
 import { searchKnowledgeTool, registerKnowledgeTool } from "./knowledge.tool.js";
 import { doctorTool, initialInstructionsTool } from "./system.tool.js";
 
-export const toolEntries: ToolEntry[] = [
+const toolEntries: ToolEntry[] = [
   initialInstructionsTool,
   contextCompileTool,
   searchKnowledgeTool,

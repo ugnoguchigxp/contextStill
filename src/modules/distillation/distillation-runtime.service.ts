@@ -21,12 +21,12 @@ export type DistillationModelRequest = {
   maxTokens: number;
 };
 
-export type DistillationChatRequest = DistillationModelRequest & {
+type DistillationChatRequest = DistillationModelRequest & {
   tools?: DistillationToolDefinition[];
   toolChoice?: "auto" | "none";
 };
 
-export type DistillationChatResponse = {
+type DistillationChatResponse = {
   content?: string | null;
   toolCalls: DistillationToolCall[];
   finishReason?: string;
@@ -93,7 +93,7 @@ function parseToolCalls(value: unknown): DistillationToolCall[] {
   });
 }
 
-export async function callLocalLlmChat(
+async function callLocalLlmChat(
   request: DistillationChatRequest,
 ): Promise<DistillationChatResponse> {
   const controller = new AbortController();
@@ -204,13 +204,6 @@ export async function runDistillationCompletion(
 
     throw new Error("local-llm response did not include assistant content");
   }
-}
-
-export async function callLocalLlmForDistillation(
-  request: DistillationModelRequest,
-): Promise<string> {
-  const result = await runDistillationCompletion(request);
-  return result.content;
 }
 
 export async function callLocalLlmCompletionForDistillation(

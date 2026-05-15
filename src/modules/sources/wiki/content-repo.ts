@@ -1,15 +1,13 @@
 import { execFile } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs/promises";
-import { createRequire } from "node:module";
 import path from "node:path";
 import { promisify } from "node:util";
+import matter from "gray-matter";
 import { sanitizeMarkdownBody, sanitizePlainText } from "./sanitize.js";
 import { assertSafeSlug, filePathToSlug } from "./slug.js";
 
 const execFileAsync = promisify(execFile);
-const require = createRequire(import.meta.url);
-const matter: typeof import("gray-matter") = require("gray-matter");
 
 export type GitSummary = {
   branch: string;

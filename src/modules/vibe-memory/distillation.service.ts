@@ -30,16 +30,12 @@ export {
   filterDistillationCandidatesByScore,
   parseDistillationCandidates,
 } from "../distillation/distillation-candidates.js";
-export type {
-  DistillationScoreGateResult,
-  DistilledKnowledgeCandidate,
-} from "../distillation/distillation-candidates.js";
 
-export type DistillationModelClient = (
+type DistillationModelClient = (
   request: DistillationModelRequest,
 ) => Promise<string | DistillationCompletionResult>;
 
-export type DistillationEmbedder = (text: string) => Promise<number[]>;
+type DistillationEmbedder = (text: string) => Promise<number[]>;
 
 export type DistillVibeMemoriesOptions = {
   limit?: number;
@@ -51,7 +47,7 @@ export type DistillVibeMemoriesOptions = {
   embedder?: DistillationEmbedder;
 };
 
-export type DistilledVibeMemoryResult = {
+type DistilledVibeMemoryResult = {
   vibeMemoryId: string;
   sessionId: string;
   status: VibeMemoryDistillationStatus | "dry_run";

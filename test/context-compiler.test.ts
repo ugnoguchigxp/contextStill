@@ -20,6 +20,42 @@ describe("context compiler helpers", () => {
     expect(ranked[1]?.id).toBe("b");
   });
 
+  test("rankAndDedupe applies penalties and boosts", () => {
+    const items = [
+      {
+        id: "active",
+        title: "A",
+        content: "x",
+        score: 0.5,
+        status: "active",
+        hasSourceLinks: true,
+      },
+      { id: "deprecated", title: "D", content: "x", score: 0.9, status: "deprecated" },
+      { id: "stale", title: "S", content: "x", score: 0.9, stale: true },
+    ];
+    const ranked = rankAndDedupe(items, 10);
+    expect(ranked[0].id).toBe("active"); // 0.5 + 0.05 vs 0.9 - 0.5 vs 0.9 - 0.4
+  });
+
+  test("rankAndDedupe falls back to sourceRefCount and raw score", () => {
+    const items = [
+      { id: "low-ref", title: "L", content: "x", score: 0.5, sourceRefCount: 1 },
+      { id: "high-ref", title: "H", content: "x", score: 0.5, sourceRefCount: 5 },
+      { id: "high-score", title: "S", content: "x", score: 0.6, sourceRefCount: 0 },
+    ];
+    const ranked = rankAndDedupe(items, 10);
+    expect(ranked[0].id).toBe("high-score"); // 0.6 beats 0.5 + 0.05 boost
+  });
+
+  test("rankAndDedupe tie-breaking logic", () => {
+    const items = [
+      { id: "b", title: "T1", content: "x", score: 0.5, sourceRefCount: 2 },
+      { id: "a", title: "T2", content: "x", score: 0.5, sourceRefCount: 2 },
+    ];
+    const ranked = rankAndDedupe(items, 10);
+    expect(ranked[0].id).toBe("a"); // localeCompare fallback
+  });
+
   test("rankAndDedupe treats legacy unit-scale quality and 100-scale quality consistently", () => {
     const ranked = rankAndDedupe(
       [

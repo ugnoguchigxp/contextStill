@@ -1,6 +1,5 @@
 import {
   type VibeMemorySeed,
-  getVibeMemoriesBySession,
   insertVibeMemory,
   searchVibeMemories,
 } from "./vibe-memory.repository.js";
@@ -97,8 +96,4 @@ export async function retrieveVibeMemoryContext(params: {
     createdAt: m.createdAt,
     score: m.score,
   }));
-}
-
-export async function getSessionHistory(sessionId: string) {
-  return getVibeMemoriesBySession(sessionId);
 }

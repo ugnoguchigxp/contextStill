@@ -75,4 +75,34 @@ describe("distillation runtime", () => {
     expect(prompt).not.toMatch(/\bfact\b/i);
     expect(prompt).not.toMatch(/\blesson\b/i);
   });
+
+  test("throws error when tool rounds exceeded", async () => {
+    const chatClient: DistillationChatClient = async () => ({
+      content: null,
+      toolCalls: [{ id: "c1", type: "function", function: { name: "t", arguments: "{}" } }],
+    });
+    const toolExecutor: DistillationToolExecutor = async () => ({
+      callId: "c1",
+      name: "t",
+      ok: true,
+      content: "",
+    });
+
+    await expect(
+      runDistillationCompletion(
+        { model: "m", messages: [], maxTokens: 10 },
+        { chatClient, toolExecutor, maxToolRounds: 1 },
+      ),
+    ).rejects.toThrow("distillation tool loop exceeded max rounds");
+  });
+
+  test("throws error when response content is missing", async () => {
+    const chatClient: DistillationChatClient = async () => ({
+      content: null,
+      toolCalls: [],
+    });
+    await expect(
+      runDistillationCompletion({ model: "m", messages: [], maxTokens: 10 }, { chatClient }),
+    ).rejects.toThrow("local-llm response did not include assistant content");
+  });
 });

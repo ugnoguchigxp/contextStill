@@ -10,7 +10,7 @@
 - 保存前 validation と embedding 必須化を共通化する。
 - 保存結果は `knowledge_items.status = "draft"` にする。
 
-これにより、Graph は入力元に依存せず `knowledge_items.embedding` の距離と `relations` を見るだけでよい。
+これにより、Graph は入力元に依存せず `knowledge_items.embedding` の距離と、metadata から動的に合成する session/project relation を見るだけでよい。永続 relation テーブルは使わない。
 
 ## 共通 runtime の責務
 
