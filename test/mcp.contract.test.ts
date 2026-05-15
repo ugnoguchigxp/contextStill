@@ -49,6 +49,15 @@ describeDb("mcp contract", () => {
         "learning_context",
       ],
     });
+    expect(properties?.errorKind).toEqual({
+      type: "string",
+      enum: ["typecheck", "lint", "test", "runtime", "build", "unknown"],
+    });
+    expect(properties?.lastErrorContext).toEqual(
+      expect.objectContaining({
+        type: "object",
+      }),
+    );
   });
 
   test("public tools list contract", () => {
@@ -126,6 +135,7 @@ describeDb("mcp contract", () => {
       status: "ok",
       degradedReasons: [],
       tokenBudget: 2048,
+      durationMs: 42,
     });
     await insertContextPackItems(runId, [
       {
@@ -164,5 +174,28 @@ describeDb("mcp contract", () => {
     expect(Array.isArray(mcp?.exposedTools)).toBe(true);
     expect(Array.isArray(mcp?.requiredPrimaryTools)).toBe(true);
     expect(Array.isArray(mcp?.missingPrimaryTools)).toBe(true);
+  });
+
+  test("context_compile degraded suggestions use only supported tools/commands", async () => {
+    const response = await contextCompileTool.handler({
+      goal: "fresh repo no knowledge",
+      intent: "debug",
+    });
+    const payload = JSON.parse(response.content[0]?.text ?? "{}") as {
+      diagnostics?: { retrievalStats?: { suggestedNextCalls?: string[] } };
+    };
+    const suggested = payload.diagnostics?.retrievalStats?.suggestedNextCalls ?? [];
+    const allowedExact = new Set([
+      "search_knowledge",
+      "memory_search",
+      "doctor",
+      "context_compile (retry with explicit repoPath/files)",
+      "bun run import:sources -- <wiki root>",
+      "bun run distill:sources -- --apply",
+    ]);
+    expect(
+      suggested.every((entry) => allowedExact.has(entry)),
+      `unexpected suggestions: ${suggested.join(", ")}`,
+    ).toBe(true);
   });
 });

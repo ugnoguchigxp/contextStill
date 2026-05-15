@@ -45,6 +45,7 @@ describe("Context Compiler Repository", () => {
       status: "ok",
       degradedReasons: [],
       tokenBudget: 1000,
+      durationMs: 50,
     });
 
     expect(id).toBe("run-1");

@@ -1,7 +1,9 @@
-import { and, desc, eq, ilike } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray } from "drizzle-orm";
 import { db } from "../../../src/db/index.js";
 import { knowledgeItems } from "../../../src/db/schema.js";
 import { embedOne } from "../../../src/modules/embedding/embedding.service.js";
+import { canTransitionKnowledgeStatus } from "../../../src/modules/lifecycle/lifecycle.service.js";
+import type { KnowledgeStatus } from "../../../src/shared/schemas/knowledge.schema.js";
 import { normalizeKnowledgeScore } from "../../../src/lib/score-scale.js";
 
 export type KnowledgeWriteInput = {
@@ -14,6 +16,57 @@ export type KnowledgeWriteInput = {
   importance: number;
   metadata?: Record<string, unknown>;
 };
+
+export type BulkKnowledgeStatusUpdateResult = {
+  targetStatus: KnowledgeStatus;
+  requestedIds: string[];
+  updatedIds: string[];
+  unchangedIds: string[];
+  notFoundIds: string[];
+  invalidTransitionIds: Array<{ id: string; fromStatus: KnowledgeStatus }>;
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function extractSourceRefs(metadata: Record<string, unknown>): string[] {
+  const refs = new Set<string>();
+  const sourceRefs = Array.isArray(metadata.sourceRefs) ? metadata.sourceRefs : [];
+  const candidateSourceRefs = Array.isArray(metadata.candidateSourceRefs)
+    ? metadata.candidateSourceRefs
+    : [];
+  for (const value of [...sourceRefs, ...candidateSourceRefs]) {
+    if (typeof value === "string" && value.trim()) refs.add(value.trim());
+  }
+
+  const sourceDocumentUri =
+    typeof metadata.sourceDocumentUri === "string" ? metadata.sourceDocumentUri.trim() : "";
+  const sourceUri = typeof metadata.sourceUri === "string" ? metadata.sourceUri.trim() : "";
+  const locator =
+    typeof metadata.sourceFragmentLocator === "string" && metadata.sourceFragmentLocator.trim()
+      ? metadata.sourceFragmentLocator.trim()
+      : "full";
+  const origin = sourceDocumentUri || sourceUri;
+  if (origin) refs.add(`${origin}#${locator}`);
+  return [...refs].slice(0, 8);
+}
+
+function extractSourceVibeMemoryIds(metadata: Record<string, unknown>): string[] {
+  const ids = new Set<string>();
+  const direct = Array.isArray(metadata.sourceVibeMemoryIds) ? metadata.sourceVibeMemoryIds : [];
+  for (const value of direct) {
+    if (typeof value === "string" && value.trim()) ids.add(value.trim());
+  }
+  const sourceUri = typeof metadata.sourceUri === "string" ? metadata.sourceUri.trim() : "";
+  if (sourceUri.startsWith("vibe-memory://")) {
+    const id = sourceUri.replace("vibe-memory://", "").trim();
+    if (id) ids.add(id);
+  }
+  return [...ids];
+}
 
 export async function listKnowledgeItems(params: {
   limit: number;
@@ -54,6 +107,9 @@ export async function listKnowledgeItems(params: {
 
   return rows.map((row) => ({
     ...row,
+    metadata: asRecord(row.metadata),
+    sourceRefs: extractSourceRefs(asRecord(row.metadata)),
+    sourceVibeMemoryIds: extractSourceVibeMemoryIds(asRecord(row.metadata)),
     confidence: normalizeKnowledgeScore(row.confidence, 70),
     importance: normalizeKnowledgeScore(row.importance, 70),
   }));
@@ -117,4 +173,61 @@ export async function deleteKnowledgeItem(id: string) {
     .where(eq(knowledgeItems.id, id))
     .returning({ id: knowledgeItems.id });
   return deleted ?? null;
+}
+
+export async function bulkUpdateKnowledgeStatus(params: {
+  ids: string[];
+  status: KnowledgeStatus;
+}): Promise<BulkKnowledgeStatusUpdateResult> {
+  const requestedIds = [...new Set(params.ids.map((id) => id.trim()).filter(Boolean))];
+  const result: BulkKnowledgeStatusUpdateResult = {
+    targetStatus: params.status,
+    requestedIds,
+    updatedIds: [],
+    unchangedIds: [],
+    notFoundIds: [],
+    invalidTransitionIds: [],
+  };
+  if (requestedIds.length === 0) {
+    return result;
+  }
+
+  const rows = await db
+    .select({
+      id: knowledgeItems.id,
+      status: knowledgeItems.status,
+    })
+    .from(knowledgeItems)
+    .where(inArray(knowledgeItems.id, requestedIds));
+  const rowById = new Map(rows.map((row) => [row.id, row]));
+
+  for (const id of requestedIds) {
+    const row = rowById.get(id);
+    if (!row) {
+      result.notFoundIds.push(id);
+      continue;
+    }
+    const fromStatus = row.status as KnowledgeStatus;
+    if (fromStatus === params.status) {
+      result.unchangedIds.push(id);
+      continue;
+    }
+    if (!canTransitionKnowledgeStatus(fromStatus, params.status)) {
+      result.invalidTransitionIds.push({ id, fromStatus });
+      continue;
+    }
+    result.updatedIds.push(id);
+  }
+
+  if (result.updatedIds.length > 0) {
+    await db
+      .update(knowledgeItems)
+      .set({
+        status: params.status,
+        updatedAt: new Date(),
+      })
+      .where(inArray(knowledgeItems.id, result.updatedIds));
+  }
+
+  return result;
 }

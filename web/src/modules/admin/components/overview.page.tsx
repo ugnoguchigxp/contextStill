@@ -43,6 +43,14 @@ export function OverviewPage() {
   const doctor = useQuery({ queryKey: ["doctor"], queryFn: () => fetchDoctorReport() });
 
   const status = doctor.data?.status ?? "degraded";
+  const hitl = doctor.data?.hitl;
+  const hitlBacklogWarning =
+    Boolean(hitl) &&
+    ((hitl?.draftCount ?? 0) > (hitl?.backlogThresholdCount ?? Number.POSITIVE_INFINITY) ||
+      (hitl?.oldestDraftAgeMinutes !== null &&
+        hitl?.oldestDraftAgeMinutes !== undefined &&
+        hitl.oldestDraftAgeMinutes >
+          (hitl?.backlogThresholdAgeMinutes ?? Number.POSITIVE_INFINITY)));
 
   return (
     <div className="page-stack">
@@ -71,7 +79,28 @@ export function OverviewPage() {
           value={graph.data?.nodes.length ?? "-"}
           hint="knowledge graph"
         />
+        <Metric
+          label="Draft Knowledge"
+          value={hitl?.draftCount ?? "-"}
+          hint={`threshold ${hitl?.backlogThresholdCount ?? "-"}`}
+        />
+        <Metric
+          label="Oldest Draft (min)"
+          value={hitl?.oldestDraftAgeMinutes ?? "-"}
+          hint={`threshold ${hitl?.backlogThresholdAgeMinutes ?? "-"}`}
+        />
       </section>
+
+      {hitlBacklogWarning ? (
+        <Card>
+          <CardContent className="metric-card">
+            <span className="metric-label text-amber-400">HITL Warning</span>
+            <strong className="metric-value">
+              draft backlog is above threshold. Review and activate/deprecate drafts in Knowledge.
+            </strong>
+          </CardContent>
+        </Card>
+      ) : null}
 
       <Card>
         <CardHeader>
@@ -93,6 +122,16 @@ export function OverviewPage() {
           <div>
             <span>Embedding CLI</span>
             <strong>{doctor.data?.embedding?.cli.usable ? "usable" : "unavailable"}</strong>
+          </div>
+          <div>
+            <span>Azure OpenAI</span>
+            <strong>
+              {doctor.data?.azureOpenAi?.reachable
+                ? "reachable"
+                : doctor.data?.azureOpenAi?.configured
+                  ? "offline"
+                  : "unconfigured"}
+            </strong>
           </div>
         </CardContent>
       </Card>

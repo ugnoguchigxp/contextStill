@@ -242,6 +242,7 @@ describeDb("repositories integration", () => {
       status: "degraded",
       degradedReasons: ["NO_SOURCE_MATCH"],
       tokenBudget: 2048,
+      durationMs: 123,
     });
 
     await insertContextPackItems(runId, [
@@ -565,6 +566,7 @@ index 0000000..1111111
       status: "ok",
       degradedReasons: [],
       tokenBudget: 1000,
+      durationMs: 88,
     });
     const snapshot = await getLatestCompileRunSnapshot();
     expect(snapshot?.run.id).toBe(runId);

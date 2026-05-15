@@ -1,3 +1,4 @@
+import net from "node:net";
 import sanitizeHtml from "sanitize-html";
 import { config } from "../../config.js";
 
@@ -44,6 +45,10 @@ const defaultHeaders = {
     "memory-router-distillation/0.1 (+https://localhost; compile-ready knowledge verifier)",
   accept: "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
 };
+
+const maxRedirectHops = 5;
+
+export type UrlSafetyResult = { safe: true } | { safe: false; reason: string };
 
 async function fetchWithTimeout(url: URL, init: RequestInit = {}): Promise<Response> {
   const controller = new AbortController();
@@ -161,10 +166,69 @@ function normalizeUrl(rawUrl: unknown): URL {
     throw new Error("url must be a non-empty string");
   }
   const url = new URL(rawUrl.trim());
-  if (url.protocol !== "http:" && url.protocol !== "https:") {
-    throw new Error("url must use http or https");
+  const safety = validateFetchContentUrl(url);
+  if (!safety.safe) {
+    throw new Error(`fetch_content blocked: ${safety.reason}`);
   }
   return url;
+}
+
+function isPrivateIpv4(hostname: string): boolean {
+  const octets = hostname.split(".").map((part) => Number.parseInt(part, 10));
+  if (octets.length !== 4 || octets.some((part) => Number.isNaN(part) || part < 0 || part > 255)) {
+    return false;
+  }
+  if (octets[0] === 10) return true;
+  if (octets[0] === 127) return true;
+  if (octets[0] === 169 && octets[1] === 254) return true;
+  if (octets[0] === 192 && octets[1] === 168) return true;
+  if (octets[0] === 172 && octets[1] >= 16 && octets[1] <= 31) return true;
+  return false;
+}
+
+function isBlockedIpv6(hostname: string): boolean {
+  const normalized = hostname.toLowerCase();
+  if (normalized === "::1" || normalized === "0:0:0:0:0:0:0:1") return true;
+  if (/^fe[89ab][0-9a-f:]*$/i.test(normalized)) return true; // link-local fe80::/10
+  if (/^f[cd][0-9a-f:]*$/i.test(normalized)) return true; // unique local fc00::/7
+
+  const mappedMatch = normalized.match(/::ffff:(\d+\.\d+\.\d+\.\d+)$/i);
+  if (mappedMatch && isPrivateIpv4(mappedMatch[1] ?? "")) return true;
+  return false;
+}
+
+export function validateFetchContentUrl(input: string | URL): UrlSafetyResult {
+  let url: URL;
+  try {
+    url = typeof input === "string" ? new URL(input.trim()) : new URL(input.href);
+  } catch {
+    return { safe: false, reason: "invalid URL" };
+  }
+
+  if (url.protocol !== "http:" && url.protocol !== "https:") {
+    return { safe: false, reason: "protocol must be http or https" };
+  }
+
+  const hostname = url.hostname.trim().replace(/\.$/, "").toLowerCase();
+  if (!hostname) {
+    return { safe: false, reason: "hostname is empty" };
+  }
+  if (hostname === "localhost" || hostname.endsWith(".localhost")) {
+    return { safe: false, reason: "localhost is not allowed" };
+  }
+  if (hostname === "169.254.169.254") {
+    return { safe: false, reason: "cloud metadata endpoint is blocked" };
+  }
+
+  const ipVersion = net.isIP(hostname);
+  if (ipVersion === 4 && isPrivateIpv4(hostname)) {
+    return { safe: false, reason: "private or loopback IPv4 is blocked" };
+  }
+  if (ipVersion === 6 && isBlockedIpv6(hostname)) {
+    return { safe: false, reason: "private, loopback, or link-local IPv6 is blocked" };
+  }
+
+  return { safe: true };
 }
 
 function cleanDuckDuckGoUrl(rawUrl: string): string {
@@ -279,28 +343,60 @@ function isLikelyHtml(contentType: string, body: string): boolean {
 
 async function fetchUrlText(
   url: URL,
-): Promise<{ text: string; finalUrl: string; contentType: string }> {
-  const response = await fetchWithTimeout(url, { headers: defaultHeaders });
-  if (!response.ok) {
-    throw new Error(`fetch_content HTTP ${response.status}`);
+): Promise<{ text: string; finalUrl: string; contentType: string; redirectCount: number }> {
+  let current = new URL(url.href);
+  for (let redirectCount = 0; redirectCount <= maxRedirectHops; redirectCount += 1) {
+    const safety = validateFetchContentUrl(current);
+    if (!safety.safe) {
+      throw new Error(`fetch_content blocked: ${safety.reason}`);
+    }
+
+    const response = await fetchWithTimeout(current, {
+      headers: defaultHeaders,
+      redirect: "manual",
+    });
+    if (response.status >= 300 && response.status < 400) {
+      const location = response.headers.get("location");
+      if (!location) {
+        throw new Error("fetch_content blocked: redirect location missing");
+      }
+      const redirectedUrl = new URL(location, current);
+      const redirectedSafety = validateFetchContentUrl(redirectedUrl);
+      if (!redirectedSafety.safe) {
+        throw new Error(`fetch_content blocked: redirect target ${redirectedSafety.reason}`);
+      }
+      current = redirectedUrl;
+      continue;
+    }
+
+    if (!response.ok) {
+      throw new Error(`fetch_content HTTP ${response.status}`);
+    }
+    const contentType = response.headers.get("content-type") ?? "";
+    const body = await response.text();
+    const text = isLikelyHtml(contentType, body) ? stripMarkup(body) : compactWhitespace(body);
+    return {
+      text,
+      finalUrl: current.href,
+      contentType,
+      redirectCount,
+    };
   }
-  const contentType = response.headers.get("content-type") ?? "";
-  const body = await response.text();
-  const text = isLikelyHtml(contentType, body) ? stripMarkup(body) : compactWhitespace(body);
-  return {
-    text,
-    finalUrl: response.url || url.href,
-    contentType,
-  };
+  throw new Error(`fetch_content blocked: redirect limit exceeded (${maxRedirectHops})`);
 }
 
 async function fetchContent(rawUrl: unknown): Promise<DistillationToolResult> {
   const url = normalizeUrl(rawUrl);
-  let fetched: { text: string; finalUrl: string; contentType: string };
+  let fetched: { text: string; finalUrl: string; contentType: string; redirectCount: number };
 
   try {
     fetched = await fetchUrlText(url);
   } catch (directError) {
+    const directErrorMessage =
+      directError instanceof Error ? directError.message : String(directError);
+    if (directErrorMessage.includes("fetch_content blocked")) {
+      throw directError;
+    }
     const readerUrl = new URL(`https://r.jina.ai/http://${url.href.replace(/^https?:\/\//, "")}`);
     try {
       fetched = await fetchUrlText(readerUrl);
@@ -333,6 +429,7 @@ async function fetchContent(rawUrl: unknown): Promise<DistillationToolResult> {
       url: url.href,
       finalUrl: fetched.finalUrl,
       contentChars: fetched.text.length,
+      redirectCount: fetched.redirectCount,
     },
   };
 }

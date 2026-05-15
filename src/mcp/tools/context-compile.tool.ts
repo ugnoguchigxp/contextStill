@@ -28,6 +28,19 @@ export const contextCompileTool: ToolEntry = {
       technologies: { type: "array", items: { type: "string" } },
       tokenBudget: { type: "number" },
       includeDraft: { type: "boolean" },
+      errorKind: {
+        type: "string",
+        enum: ["typecheck", "lint", "test", "runtime", "build", "unknown"],
+      },
+      lastErrorContext: {
+        type: "object",
+        properties: {
+          command: { type: "string" },
+          output: { type: "string" },
+          stack: { type: "string" },
+          files: { type: "array", items: { type: "string" } },
+        },
+      },
       queryEmbedding: { type: "array", items: { type: "number" } },
     },
     required: ["goal"],

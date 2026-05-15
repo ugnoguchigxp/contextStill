@@ -1,6 +1,6 @@
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { contextCompileRuns, contextPackItems } from "../../db/schema.js";
+import { contextCompileRuns, contextPackItems, knowledgeItems, sources } from "../../db/schema.js";
 
 export async function insertCompileRun(params: {
   goal: string;
@@ -11,6 +11,7 @@ export async function insertCompileRun(params: {
   status: "ok" | "degraded" | "failed";
   degradedReasons: string[];
   tokenBudget: number;
+  durationMs: number;
 }): Promise<string> {
   const [inserted] = await db
     .insert(contextCompileRuns)
@@ -23,6 +24,7 @@ export async function insertCompileRun(params: {
       status: params.status,
       degradedReasons: params.degradedReasons,
       tokenBudget: params.tokenBudget,
+      durationMs: params.durationMs,
     })
     .returning({ id: contextCompileRuns.id });
 
@@ -62,7 +64,14 @@ export type CompileRunSummary = {
   retrievalMode: string;
   status: "ok" | "degraded" | "failed";
   degradedReasons: string[];
+  durationMs: number;
   createdAt: Date;
+};
+
+export type CompileFreshnessMarkers = {
+  knowledgeActiveUpdatedAt: string | null;
+  knowledgeDraftUpdatedAt: string | null;
+  sourceCorpusUpdatedAt: string | null;
 };
 
 export type CompileRunSnapshot = {
@@ -87,6 +96,7 @@ export async function listRecentCompileRuns(limit = 20): Promise<CompileRunSumma
       retrievalMode: contextCompileRuns.retrievalMode,
       status: contextCompileRuns.status,
       degradedReasons: contextCompileRuns.degradedReasons,
+      durationMs: contextCompileRuns.durationMs,
       createdAt: contextCompileRuns.createdAt,
     })
     .from(contextCompileRuns)
@@ -100,6 +110,7 @@ export async function listRecentCompileRuns(limit = 20): Promise<CompileRunSumma
     retrievalMode: row.retrievalMode,
     status: row.status as "ok" | "degraded" | "failed",
     degradedReasons: Array.isArray(row.degradedReasons) ? (row.degradedReasons as string[]) : [],
+    durationMs: Number.isFinite(row.durationMs) ? Math.max(0, Math.round(row.durationMs)) : 0,
     createdAt: row.createdAt,
   }));
 }
@@ -113,6 +124,7 @@ export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSn
       retrievalMode: contextCompileRuns.retrievalMode,
       status: contextCompileRuns.status,
       degradedReasons: contextCompileRuns.degradedReasons,
+      durationMs: contextCompileRuns.durationMs,
       createdAt: contextCompileRuns.createdAt,
     })
     .from(contextCompileRuns)
@@ -142,6 +154,7 @@ export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSn
       retrievalMode: run.retrievalMode,
       status: run.status as "ok" | "degraded" | "failed",
       degradedReasons: Array.isArray(run.degradedReasons) ? (run.degradedReasons as string[]) : [],
+      durationMs: Number.isFinite(run.durationMs) ? Math.max(0, Math.round(run.durationMs)) : 0,
       createdAt: run.createdAt,
     },
     items: itemRows.map((row) => ({
@@ -160,4 +173,57 @@ export async function getLatestCompileRunSnapshot(): Promise<CompileRunSnapshot 
   const latest = rows[0];
   if (!latest) return null;
   return getCompileRunSnapshot(latest.id);
+}
+
+function toIsoTimestamp(value: unknown): string | null {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+  return null;
+}
+
+export async function getCompileFreshnessMarkers(params?: {
+  repoPath?: string;
+  repoKey?: string;
+}): Promise<CompileFreshnessMarkers> {
+  const repoPath = params?.repoPath?.trim() ? params.repoPath.trim() : undefined;
+  const repoKey = params?.repoKey?.trim() ? params.repoKey.trim().toLowerCase() : undefined;
+
+  const knowledgeResult =
+    repoPath || repoKey
+      ? await db.execute(sql`
+          select
+            max(case when ${knowledgeItems.status} = 'active' then ${knowledgeItems.updatedAt} end) as active_updated_at,
+            max(case when ${knowledgeItems.status} = 'draft' then ${knowledgeItems.updatedAt} end) as draft_updated_at
+          from ${knowledgeItems}
+          where ${knowledgeItems.status} in ('active', 'draft')
+            and (
+              ${knowledgeItems.scope} = 'global'
+              ${repoKey ? sql`or ${knowledgeItems.appliesTo} ->> 'repoKey' = ${repoKey}` : sql``}
+              ${repoPath ? sql`or ${knowledgeItems.appliesTo} ->> 'repoPath' = ${repoPath}` : sql``}
+            )
+        `)
+      : await db.execute(sql`
+          select
+            max(case when ${knowledgeItems.status} = 'active' then ${knowledgeItems.updatedAt} end) as active_updated_at,
+            max(case when ${knowledgeItems.status} = 'draft' then ${knowledgeItems.updatedAt} end) as draft_updated_at
+          from ${knowledgeItems}
+          where ${knowledgeItems.status} in ('active', 'draft')
+        `);
+
+  const sourceResult = await db.execute(sql`
+    select max(${sources.updatedAt}) as source_updated_at
+    from ${sources}
+  `);
+
+  const knowledgeRow = (knowledgeResult.rows as Array<Record<string, unknown>>)[0] ?? {};
+  const sourceRow = (sourceResult.rows as Array<Record<string, unknown>>)[0] ?? {};
+
+  return {
+    knowledgeActiveUpdatedAt: toIsoTimestamp(knowledgeRow.active_updated_at),
+    knowledgeDraftUpdatedAt: toIsoTimestamp(knowledgeRow.draft_updated_at),
+    sourceCorpusUpdatedAt: toIsoTimestamp(sourceRow.source_updated_at),
+  };
 }

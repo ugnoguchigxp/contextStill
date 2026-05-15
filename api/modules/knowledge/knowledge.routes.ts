@@ -2,6 +2,7 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
 import {
+  bulkUpdateKnowledgeStatus,
   createKnowledgeItem,
   deleteKnowledgeItem,
   listKnowledgeItems,
@@ -27,6 +28,11 @@ const knowledgeWriteSchema = z.object({
   metadata: z.record(z.unknown()).default({}),
 });
 
+const bulkStatusSchema = z.object({
+  ids: z.array(z.string().trim().min(1)).min(1).max(200),
+  status: z.enum(["active", "deprecated"]),
+});
+
 export const knowledgeRouter = new Hono()
   .get("/", zValidator("query", listKnowledgeQuerySchema), async (c) => {
     const query = c.req.valid("query");
@@ -37,6 +43,19 @@ export const knowledgeRouter = new Hono()
     const input = c.req.valid("json");
     const item = await createKnowledgeItem(input);
     return c.json({ item }, 201);
+  })
+  .post("/bulk-status", zValidator("json", bulkStatusSchema), async (c) => {
+    const input = c.req.valid("json");
+    const result = await bulkUpdateKnowledgeStatus(input);
+    const failureCount = result.notFoundIds.length + result.invalidTransitionIds.length;
+    const response = {
+      ...result,
+      outcome: failureCount === 0 ? "ok" : result.updatedIds.length > 0 ? "partial" : "none",
+    } as const;
+    if (response.outcome === "none" && failureCount > 0) {
+      return c.json(response, 409);
+    }
+    return c.json(response);
   })
   .put("/:id", zValidator("json", knowledgeWriteSchema), async (c) => {
     const item = await updateKnowledgeItem(c.req.param("id"), c.req.valid("json"));

@@ -22,6 +22,7 @@ export type CompileRunSummary = {
   retrievalMode: string;
   status: "ok" | "degraded" | "failed";
   degradedReasons: string[];
+  durationMs: number;
   createdAt: string;
 };
 

@@ -7,6 +7,25 @@ type DatabaseInspectorOptions = {
   freshnessThresholdMinutes: number;
 };
 
+const hitlBacklogThresholdCount = 50;
+const hitlBacklogThresholdAgeMinutes = 60 * 24 * 3;
+
+function toIso(value: unknown): string | null {
+  if (value instanceof Date) return value.toISOString();
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+  }
+  return null;
+}
+
+function ageMinutesFromIso(value: string | null): number | null {
+  if (!value) return null;
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return null;
+  return Math.max(0, Math.round((Date.now() - timestamp) / 60000));
+}
+
 export type DatabaseInspection = {
   db: DoctorReport["db"];
   reachable: boolean;
@@ -15,6 +34,7 @@ export type DatabaseInspection = {
   missingTables: string[];
   staleKnowledgeCount: number;
   staleSourceCount: number;
+  hitl: DoctorReport["hitl"];
   reasons: string[];
 };
 
@@ -39,6 +59,15 @@ export async function inspectDatabase({
       missingTables: [...requiredTables],
       staleKnowledgeCount: 0,
       staleSourceCount: 0,
+      hitl: {
+        draftCount: 0,
+        oldestDraftAt: null,
+        oldestDraftAgeMinutes: null,
+        draftFromSourceDistillationCount: 0,
+        draftFromVibeDistillationCount: 0,
+        backlogThresholdCount: hitlBacklogThresholdCount,
+        backlogThresholdAgeMinutes: hitlBacklogThresholdAgeMinutes,
+      },
       reasons: ["DB_UNREACHABLE"],
     };
   }
@@ -80,6 +109,15 @@ export async function inspectDatabase({
 
   let staleKnowledgeCount = 0;
   let staleSourceCount = 0;
+  const hitl: DoctorReport["hitl"] = {
+    draftCount: 0,
+    oldestDraftAt: null,
+    oldestDraftAgeMinutes: null,
+    draftFromSourceDistillationCount: 0,
+    draftFromVibeDistillationCount: 0,
+    backlogThresholdCount: hitlBacklogThresholdCount,
+    backlogThresholdAgeMinutes: hitlBacklogThresholdAgeMinutes,
+  };
 
   if (!missingTables.includes("knowledge_items")) {
     try {
@@ -91,6 +129,40 @@ export async function inspectDatabase({
       staleKnowledgeCount = Number((result.rows as Array<{ count?: number }>)[0]?.count ?? 0);
     } catch {
       reasons.push("STALE_KNOWLEDGE_COUNT_QUERY_FAILED");
+    }
+
+    try {
+      const draftResult = await db.execute(sql`
+        select
+          count(*) filter (where status = 'draft')::int as draft_count,
+          min(case when status = 'draft' then updated_at end) as oldest_draft_at,
+          count(*) filter (
+            where status = 'draft'
+              and coalesce(metadata ->> 'sourceKind', '') = 'wiki'
+          )::int as source_draft_count,
+          count(*) filter (
+            where status = 'draft'
+              and coalesce(metadata ->> 'sourceKind', '') = 'vibe_memory'
+          )::int as vibe_draft_count
+        from knowledge_items
+      `);
+      const draftRow = (draftResult.rows as Array<Record<string, unknown>>)[0] ?? {};
+      hitl.draftCount = Number(draftRow.draft_count ?? 0);
+      hitl.oldestDraftAt = toIso(draftRow.oldest_draft_at);
+      hitl.oldestDraftAgeMinutes = ageMinutesFromIso(hitl.oldestDraftAt);
+      hitl.draftFromSourceDistillationCount = Number(draftRow.source_draft_count ?? 0);
+      hitl.draftFromVibeDistillationCount = Number(draftRow.vibe_draft_count ?? 0);
+      if (hitl.draftCount > hitl.backlogThresholdCount) {
+        reasons.push("HITL_DRAFT_BACKLOG_HIGH");
+      }
+      if (
+        hitl.oldestDraftAgeMinutes !== null &&
+        hitl.oldestDraftAgeMinutes > hitl.backlogThresholdAgeMinutes
+      ) {
+        reasons.push("HITL_DRAFT_REVIEW_STALE");
+      }
+    } catch {
+      reasons.push("HITL_BACKLOG_QUERY_FAILED");
     }
   }
 
@@ -118,6 +190,7 @@ export async function inspectDatabase({
     missingTables,
     staleKnowledgeCount,
     staleSourceCount,
+    hitl,
     reasons,
   };
 }

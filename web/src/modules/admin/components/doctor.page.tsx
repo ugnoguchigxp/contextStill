@@ -51,6 +51,30 @@ export function DoctorPage() {
               <span>degraded rate</span>
               <strong>{report ? report.runs.degradedRate.toFixed(2) : "-"}</strong>
             </div>
+            <div>
+              <span>compile latency p50</span>
+              <strong>
+                {report?.runs.durationMsP50 !== null && report?.runs.durationMsP50 !== undefined
+                  ? `${Math.round(report.runs.durationMsP50)}ms`
+                  : "-"}
+              </strong>
+            </div>
+            <div>
+              <span>compile latency p95</span>
+              <strong>
+                {report?.runs.durationMsP95 !== null && report?.runs.durationMsP95 !== undefined
+                  ? `${Math.round(report.runs.durationMsP95)}ms`
+                  : "-"}
+              </strong>
+            </div>
+            <div>
+              <span>compile latency avg</span>
+              <strong>
+                {report?.runs.durationMsAvg !== null && report?.runs.durationMsAvg !== undefined
+                  ? `${Math.round(report.runs.durationMsAvg)}ms`
+                  : "-"}
+              </strong>
+            </div>
           </CardContent>
         </Card>
 
@@ -197,6 +221,35 @@ export function DoctorPage() {
           ) : (
             <p className="row-subtext">degraded reasonはありません。</p>
           )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle>HITL Backlog</CardTitle>
+        </CardHeader>
+        <CardContent className="runtime-list">
+          <div>
+            <span>Draft count</span>
+            <strong>{report?.hitl.draftCount ?? 0}</strong>
+          </div>
+          <div>
+            <span>Oldest draft age</span>
+            <strong>
+              {report?.hitl.oldestDraftAgeMinutes !== null &&
+              report?.hitl.oldestDraftAgeMinutes !== undefined
+                ? `${report.hitl.oldestDraftAgeMinutes} min`
+                : "-"}
+            </strong>
+          </div>
+          <div>
+            <span>Draft from source distillation</span>
+            <strong>{report?.hitl.draftFromSourceDistillationCount ?? 0}</strong>
+          </div>
+          <div>
+            <span>Draft from vibe distillation</span>
+            <strong>{report?.hitl.draftFromVibeDistillationCount ?? 0}</strong>
+          </div>
         </CardContent>
       </Card>
     </div>

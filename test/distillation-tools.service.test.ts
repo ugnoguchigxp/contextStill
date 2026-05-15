@@ -97,6 +97,53 @@ describe("Distillation Tools Service", () => {
       expect(result.ok).toBe(true);
       expect(result.content).toContain("Jina Result");
     });
+
+    test("blocks localhost URLs", async () => {
+      const result = await executeDistillationToolCall({
+        id: "call1",
+        function: {
+          name: "fetch_content",
+          arguments: JSON.stringify({ url: "http://localhost:3000/internal" }),
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("fetch_content blocked");
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    test("blocks private IPv4 URLs", async () => {
+      const result = await executeDistillationToolCall({
+        id: "call1",
+        function: {
+          name: "fetch_content",
+          arguments: JSON.stringify({ url: "http://192.168.1.20/secret" }),
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("private or loopback IPv4 is blocked");
+      expect(fetch).not.toHaveBeenCalled();
+    });
+
+    test("blocks redirects to private endpoints", async () => {
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: false,
+        status: 302,
+        headers: new Map([["location", "http://127.0.0.1:8080/hidden"]]),
+      } as any);
+
+      const result = await executeDistillationToolCall({
+        id: "call1",
+        function: {
+          name: "fetch_content",
+          arguments: JSON.stringify({ url: "https://example.com/redirect" }),
+        },
+      });
+
+      expect(result.ok).toBe(false);
+      expect(result.error).toContain("redirect target");
+    });
   });
 
   describe("error handling", () => {

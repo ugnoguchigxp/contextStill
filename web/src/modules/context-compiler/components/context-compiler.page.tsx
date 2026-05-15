@@ -58,6 +58,10 @@ const columns = [
     header: "Mode",
     cell: (info) => info.getValue(),
   }),
+  columnHelper.accessor("durationMs", {
+    header: "Latency",
+    cell: (info) => `${info.getValue()}ms`,
+  }),
   columnHelper.accessor("createdAt", {
     header: "Created",
     cell: (info) => new Date(info.getValue()).toLocaleString(),
@@ -145,8 +149,11 @@ export function ContextCompilerPage() {
                 id="goal"
                 rows={4}
                 placeholder="Describe what you want the agent to do"
-                {...register("goal", { required: true })}
+                {...register("goal", { required: "Goal is required." })}
               />
+              {formState.errors.goal ? (
+                <p className="text-destructive text-xs">{formState.errors.goal.message}</p>
+              ) : null}
             </div>
             <div className="grid gap-4 md:grid-cols-2">
               <div className="grid gap-2">

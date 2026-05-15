@@ -10,7 +10,19 @@ export type KnowledgeItem = {
   confidence: number;
   importance: number;
   metadata?: Record<string, unknown>;
+  sourceRefs?: string[];
+  sourceVibeMemoryIds?: string[];
   updatedAt: string;
+};
+
+export type KnowledgeBulkStatusResponse = {
+  targetStatus: "active" | "deprecated";
+  requestedIds: string[];
+  updatedIds: string[];
+  unchangedIds: string[];
+  notFoundIds: string[];
+  invalidTransitionIds: Array<{ id: string; fromStatus: string }>;
+  outcome: "ok" | "partial" | "none";
 };
 
 export type VibeMemory = {
@@ -55,11 +67,30 @@ export type DoctorReport = {
     daemon: { url: string; reachable: boolean; error?: string };
     cli: { python: string; root: string; modelDir: string; usable: boolean; error?: string };
   };
+  azureOpenAi?: {
+    configured: boolean;
+    reachable: boolean;
+    model: string;
+    endpoint: string;
+    error?: string;
+  };
   runs: {
     totalRuns: number;
     degradedRuns: number;
     degradedRate: number;
+    durationMsP50: number | null;
+    durationMsP95: number | null;
+    durationMsAvg: number | null;
     lastRunAt: string | null;
+  };
+  hitl: {
+    draftCount: number;
+    oldestDraftAt: string | null;
+    oldestDraftAgeMinutes: number | null;
+    draftFromSourceDistillationCount: number;
+    draftFromVibeDistillationCount: number;
+    backlogThresholdCount: number;
+    backlogThresholdAgeMinutes: number;
   };
   agentLogSync: {
     codex: {
@@ -251,7 +282,15 @@ async function requestJson<T>(url: string, method: string, body?: unknown): Prom
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok) {
-    throw new Error(`${method} ${url} failed: ${response.status}`);
+    const message = await response
+      .json()
+      .then((payload) =>
+        typeof payload === "object" && payload && "outcome" in payload
+          ? JSON.stringify(payload)
+          : `${method} ${url} failed: ${response.status}`,
+      )
+      .catch(() => `${method} ${url} failed: ${response.status}`);
+    throw new Error(message);
   }
   return response.json() as Promise<T>;
 }
@@ -277,6 +316,16 @@ export async function updateKnowledgeItem(id: string, input: KnowledgeWriteInput
 
 export async function deleteKnowledgeItem(id: string): Promise<void> {
   await requestJson(`/api/knowledge/${id}`, "DELETE");
+}
+
+export async function bulkUpdateKnowledgeStatus(
+  ids: string[],
+  status: "active" | "deprecated",
+): Promise<KnowledgeBulkStatusResponse> {
+  return requestJson<KnowledgeBulkStatusResponse>("/api/knowledge/bulk-status", "POST", {
+    ids,
+    status,
+  });
 }
 
 export async function fetchVibeMemories(limit = 120): Promise<VibeMemory[]> {

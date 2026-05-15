@@ -11,6 +11,9 @@ export type Rankable = {
   hasSourceLinks?: boolean;
   sourceRefCount?: number;
   stale?: boolean;
+  errorKeywordHits?: number;
+  errorFileHits?: number;
+  errorContextWeight?: number;
 };
 
 function weightedScore(item: Rankable): number {
@@ -19,9 +22,21 @@ function weightedScore(item: Rankable): number {
     toUnitKnowledgeScore(item.importance, 0) * 0.2 +
     toUnitKnowledgeScore(item.confidence, 0) * 0.1;
   const sourceLinkBoost = item.hasSourceLinks || (item.sourceRefCount ?? 0) > 0 ? 0.05 : 0;
+  const errorKeywordBoost = Math.min(0.18, Math.max(0, item.errorKeywordHits ?? 0) * 0.03);
+  const errorFileBoost = Math.min(0.16, Math.max(0, item.errorFileHits ?? 0) * 0.04);
+  const errorContextBoost =
+    (item.errorContextWeight ?? 0) > 0 && (errorKeywordBoost > 0 || errorFileBoost > 0) ? 0.06 : 0;
   const deprecatedPenalty = item.status === "deprecated" ? 0.5 : 0;
   const stalePenalty = item.stale ? 0.4 : 0;
-  return baseScore + sourceLinkBoost - deprecatedPenalty - stalePenalty;
+  return (
+    baseScore +
+    sourceLinkBoost +
+    errorKeywordBoost +
+    errorFileBoost +
+    errorContextBoost -
+    deprecatedPenalty -
+    stalePenalty
+  );
 }
 
 export function rankAndDedupe<T extends Rankable>(items: T[], limit: number): T[] {

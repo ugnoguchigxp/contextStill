@@ -353,6 +353,7 @@ export const contextCompileRuns = pgTable(
     status: text("status").notNull(),
     degradedReasons: jsonb("degraded_reasons").notNull().default([]),
     tokenBudget: integer("token_budget").notNull(),
+    durationMs: integer("duration_ms").notNull().default(0),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => ({

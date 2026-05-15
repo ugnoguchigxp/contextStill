@@ -10,6 +10,7 @@ import { inspectEmbedding } from "./inspectors/embedding.inspector.js";
 import { inspectMcpSurface } from "./inspectors/mcp.inspector.js";
 import { inspectSourceDistillation } from "./inspectors/source-distillation.inspector.js";
 import { inspectVibeDistillation } from "./inspectors/vibe-distillation.inspector.js";
+import { checkAzureOpenAiHealth } from "../context-compiler/agentic-refine.service.js";
 
 function resolveDoctorOptions(rawOptions?: DoctorOptions): ResolvedDoctorOptions {
   return {
@@ -26,6 +27,9 @@ function createEmptyRuns(options: ResolvedDoctorOptions): DoctorReport["runs"] {
     totalRuns: 0,
     degradedRuns: 0,
     degradedRate: 0,
+    durationMsP50: null,
+    durationMsP95: null,
+    durationMsAvg: null,
     lastRunAt: null,
     lastRunAgeMinutes: null,
     freshnessThresholdMinutes: options.freshnessThresholdMinutes,
@@ -107,6 +111,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
   }
 
   const embedding = await inspectEmbedding();
+  const azureOpenAi = await checkAzureOpenAiHealth();
   const database = await inspectDatabase({
     freshnessThresholdMinutes: options.freshnessThresholdMinutes,
   });
@@ -134,12 +139,14 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
       db: database.db,
       vector: { installed: database.vectorInstalled },
       embedding,
+      azureOpenAi,
       tables: {
         expected: [...requiredTables],
         existing: database.existingTables,
         missing: database.missingTables,
       },
       runs: createEmptyRuns(options),
+      hitl: database.hitl,
       mcp,
       agentLogSync,
       vibeDistillation,
@@ -151,6 +158,12 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
 
   if (embedding.configured && !embedding.daemon.reachable && !embedding.cli.usable) {
     reasons.push("EMBEDDING_PROVIDER_UNAVAILABLE");
+  }
+
+  if (config.agenticCompileEnabled && !azureOpenAi.configured) {
+    reasons.push("AZURE_OPENAI_NOT_CONFIGURED");
+  } else if (config.agenticCompileEnabled && !azureOpenAi.reachable) {
+    reasons.push("AZURE_OPENAI_UNREACHABLE");
   }
 
   const compile = await inspectCompileRuns({
@@ -197,6 +210,11 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
       ...(database.staleSourceCount > 0
         ? [`stale source を再importまたは更新する（count: ${database.staleSourceCount}）`]
         : []),
+      ...(database.hitl.draftCount > database.hitl.backlogThresholdCount
+        ? [
+            `draft backlog が閾値超過（${database.hitl.draftCount}/${database.hitl.backlogThresholdCount}）。Knowledge UI で一括レビューする`,
+          ]
+        : []),
     ],
   };
 
@@ -209,12 +227,14 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
       installed: database.vectorInstalled,
     },
     embedding,
+    azureOpenAi,
     tables: {
       expected: [...requiredTables],
       existing: database.existingTables,
       missing: database.missingTables,
     },
     runs: compile.runs,
+    hitl: database.hitl,
     mcp: mcpReport,
     agentLogSync,
     vibeDistillation,

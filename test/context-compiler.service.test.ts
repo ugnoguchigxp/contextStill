@@ -224,4 +224,93 @@ describe("Context Compiler Service", () => {
     expect(pack.retrievalMode).toBe("procedure_context");
     expect(pack.minimalTasks[0]).toContain("Inspect the selected procedure candidates");
   });
+
+  test("adds source recovery commands to suggestedNextCalls on source miss", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [],
+      degradedReasons: ["NO_ACTIVE_KNOWLEDGE_MATCH"],
+      stats: {
+        textHitCount: 0,
+        vectorHitCount: 0,
+        mergedCount: 0,
+        textFailed: false,
+        vectorFailed: false,
+        embeddingStatus: "generated",
+        scopedSearch: false,
+        repoScopeFallbackUsed: false,
+        queryText: "goal",
+      },
+    } as any);
+    vi.mocked(retrieveSources).mockResolvedValue({
+      items: [],
+      degradedReasons: ["NO_SOURCE_MATCH"],
+      stats: { hitCount: 0 },
+    } as any);
+
+    const { pack } = await compileContextPack({
+      goal: "recover source context",
+      intent: "debug",
+    });
+    const calls = (pack.diagnostics.retrievalStats.suggestedNextCalls ?? []) as string[];
+    expect(calls).toContain("search_knowledge");
+    expect(calls).toContain("memory_search");
+    expect(calls).toContain("bun run import:sources -- <wiki root>");
+    expect(calls).toContain("bun run distill:sources -- --apply");
+  });
+
+  test("boosts ranking with error context keyword and file matches", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [
+        {
+          id: "k-strong",
+          type: "rule",
+          status: "active",
+          title: "Type mismatch fix for src/auth/login.ts",
+          body: "Handle not assignable type in login flow.",
+          score: 0.6,
+          sourceRefs: [],
+          hasSourceLinks: false,
+        },
+        {
+          id: "k-weak",
+          type: "rule",
+          status: "active",
+          title: "General clean code guidance",
+          body: "Keep functions small and readable.",
+          score: 0.6,
+          sourceRefs: [],
+          hasSourceLinks: false,
+        },
+      ],
+      degradedReasons: [],
+      stats: {
+        textHitCount: 2,
+        vectorHitCount: 0,
+        mergedCount: 2,
+        textFailed: false,
+        vectorFailed: false,
+        embeddingStatus: "generated",
+        scopedSearch: false,
+        repoScopeFallbackUsed: false,
+        queryText: "goal",
+      },
+    } as any);
+    vi.mocked(retrieveSources).mockResolvedValue({
+      items: [],
+      degradedReasons: [],
+      stats: { hitCount: 0 },
+    } as any);
+
+    const { pack } = await compileContextPack({
+      goal: "fix compile error",
+      intent: "debug",
+      errorKind: "typecheck",
+      lastErrorContext: {
+        output: "Type 'Foo' is not assignable to type 'Bar'",
+        files: ["src/auth/login.ts"],
+      },
+    });
+
+    expect(pack.rules[0]?.id).toBe("knowledge:k-strong");
+  });
 });

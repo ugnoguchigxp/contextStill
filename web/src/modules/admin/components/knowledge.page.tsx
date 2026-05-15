@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from "react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Pencil,
@@ -41,6 +41,7 @@ import {
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import {
+  bulkUpdateKnowledgeStatus,
   createKnowledgeItem,
   deleteKnowledgeItem,
   fetchKnowledgeItems,
@@ -78,6 +79,8 @@ export function KnowledgePage() {
   const [displayFilter, setDisplayFilter] = useState<string>("all");
   const [minQuality, setMinQuality] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState("");
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [expandedEvidenceId, setExpandedEvidenceId] = useState<string | null>(null);
 
   // TanStack Table states
   const [sorting, setSorting] = useState<SortingState>([{ id: "updatedAt", desc: true }]);
@@ -101,6 +104,14 @@ export function KnowledgePage() {
       return statusMatch && qualityMatch && searchMatch;
     });
   }, [knowledge.data, displayFilter, minQuality, searchQuery]);
+
+  useEffect(() => {
+    const validIds = new Set(filteredItems.map((item) => item.id));
+    setSelectedIds((current) => current.filter((id) => validIds.has(id)));
+    if (expandedEvidenceId && !validIds.has(expandedEvidenceId)) {
+      setExpandedEvidenceId(null);
+    }
+  }, [filteredItems, expandedEvidenceId]);
 
   const save = useMutation({
     mutationFn: () =>
@@ -162,6 +173,26 @@ export function KnowledgePage() {
     },
   });
 
+  const bulkStatusUpdate = useMutation({
+    mutationFn: ({ ids, status }: { ids: string[]; status: "active" | "deprecated" }) =>
+      bulkUpdateKnowledgeStatus(ids, status),
+    onSuccess: async (result) => {
+      setError(
+        result.outcome === "partial"
+          ? `Bulk update partial: updated=${result.updatedIds.length}, notFound=${result.notFoundIds.length}, invalidTransition=${result.invalidTransitionIds.length}`
+          : null,
+      );
+      if (result.outcome !== "none") {
+        setSelectedIds([]);
+      }
+      await queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+      await queryClient.invalidateQueries({ queryKey: ["graph"] });
+    },
+    onError: (mutationError) => {
+      setError(mutationError instanceof Error ? mutationError.message : String(mutationError));
+    },
+  });
+
   const openEdit = useCallback((item: KnowledgeItem) => {
     setEditingId(item.id);
     setForm({
@@ -183,8 +214,43 @@ export function KnowledgePage() {
     setIsModalOpen(true);
   };
 
+  const selectedCount = selectedIds.length;
+  const allFilteredIds = useMemo(() => filteredItems.map((item) => item.id), [filteredItems]);
+  const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
+  const visibleSelectedCount = allFilteredIds.filter((id) => selectedSet.has(id)).length;
+  const toggleSelected = useCallback((id: string, checked: boolean) => {
+    setSelectedIds((current) => {
+      if (checked) {
+        if (current.includes(id)) return current;
+        return [...current, id];
+      }
+      return current.filter((itemId) => itemId !== id);
+    });
+  }, []);
+  const selectAllFiltered = useCallback(() => {
+    setSelectedIds(allFilteredIds);
+  }, [allFilteredIds]);
+  const clearSelection = useCallback(() => {
+    setSelectedIds([]);
+  }, []);
+
   const columns = useMemo<ColumnDef<KnowledgeItem>[]>(
     () => [
+      {
+        id: "select",
+        header: "Select",
+        cell: ({ row }) => {
+          const item = row.original;
+          return (
+            <input
+              type="checkbox"
+              checked={selectedSet.has(item.id)}
+              onChange={(event) => toggleSelected(item.id, event.target.checked)}
+              aria-label={`select-${item.id}`}
+            />
+          );
+        },
+      },
       {
         accessorKey: "title",
         header: "Title & Description",
@@ -200,6 +266,15 @@ export function KnowledgePage() {
                 {item.title}
               </button>
               <p className="row-subtext line-clamp-2 text-xs opacity-70">{item.body}</p>
+              <button
+                type="button"
+                className="mt-1 text-[11px] text-cyan-400 hover:text-cyan-300"
+                onClick={() =>
+                  setExpandedEvidenceId((current) => (current === item.id ? null : item.id))
+                }
+              >
+                {expandedEvidenceId === item.id ? "Hide evidence" : "Show evidence"}
+              </button>
             </div>
           );
         },
@@ -368,12 +443,15 @@ export function KnowledgePage() {
       },
     ],
     [
+      expandedEvidenceId,
       openEdit,
       quickScopeUpdate.isPending,
       quickScopeUpdate.mutate,
       quickStatusUpdate.isPending,
       quickStatusUpdate.mutate,
       remove.mutate,
+      selectedSet,
+      toggleSelected,
     ],
   );
 
@@ -440,6 +518,56 @@ export function KnowledgePage() {
             </select>
           </div>
 
+          <div className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-1">
+            <span className="text-[10px] font-bold uppercase text-slate-300">
+              Selected {selectedCount} / Visible {visibleSelectedCount}
+            </span>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-[11px]"
+              disabled={selectedCount === 0 || bulkStatusUpdate.isPending}
+              onClick={() => {
+                if (confirm(`Activate ${selectedCount} selected knowledge items?`)) {
+                  bulkStatusUpdate.mutate({ ids: selectedIds, status: "active" });
+                }
+              }}
+            >
+              Activate selected
+            </Button>
+            <Button
+              variant="outline"
+              size="sm"
+              className="h-7 px-2 text-[11px] border-red-300 text-red-300 hover:bg-red-900/30"
+              disabled={selectedCount === 0 || bulkStatusUpdate.isPending}
+              onClick={() => {
+                if (confirm(`Deprecate ${selectedCount} selected knowledge items?`)) {
+                  bulkStatusUpdate.mutate({ ids: selectedIds, status: "deprecated" });
+                }
+              }}
+            >
+              Deprecate selected
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[11px]"
+              disabled={allFilteredIds.length === 0}
+              onClick={selectAllFiltered}
+            >
+              Select filtered ({allFilteredIds.length})
+            </Button>
+            <Button
+              variant="ghost"
+              size="sm"
+              className="h-7 px-2 text-[11px]"
+              disabled={selectedCount === 0}
+              onClick={clearSelection}
+            >
+              Clear
+            </Button>
+          </div>
+
           <Button onClick={openCreate} className="gap-2">
             <Plus size={18} />
             Create New
@@ -479,15 +607,60 @@ export function KnowledgePage() {
             ))}
           </TableHeader>
           <TableBody>
-            {table.getRowModel().rows.map((row) => (
-              <TableRow key={row.id} className="group hover:bg-muted/50 transition-colors">
-                {row.getVisibleCells().map((cell) => (
-                  <TableCell key={cell.id}>
-                    {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                  </TableCell>
-                ))}
-              </TableRow>
-            ))}
+            {table.getRowModel().rows.map((row) => {
+              const item = row.original;
+              const rowSelected = selectedSet.has(item.id);
+              const sourceRefs = item.sourceRefs ?? [];
+              const sourceVibeMemoryIds = item.sourceVibeMemoryIds ?? [];
+              return (
+                <Fragment key={row.id}>
+                  <TableRow
+                    className={`group hover:bg-muted/50 transition-colors ${rowSelected ? "bg-muted/30" : ""}`}
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell key={cell.id}>
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                  {expandedEvidenceId === item.id ? (
+                    <TableRow className="bg-slate-900/20">
+                      <TableCell colSpan={columns.length}>
+                        <div className="space-y-2 text-xs">
+                          <p className="font-semibold text-slate-200">Evidence</p>
+                          <div>
+                            <p className="text-muted-foreground">source refs</p>
+                            {sourceRefs.length > 0 ? (
+                              <ul className="list-disc pl-4">
+                                {sourceRefs.map((ref) => (
+                                  <li key={`${item.id}-${ref}`} className="break-all">
+                                    {ref}
+                                  </li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="text-muted-foreground">none</p>
+                            )}
+                          </div>
+                          <div>
+                            <p className="text-muted-foreground">originating vibe memory</p>
+                            {sourceVibeMemoryIds.length > 0 ? (
+                              <ul className="list-disc pl-4">
+                                {sourceVibeMemoryIds.map((memoryId) => (
+                                  <li key={`${item.id}-${memoryId}`}>{memoryId}</li>
+                                ))}
+                              </ul>
+                            ) : (
+                              <p className="text-muted-foreground">none</p>
+                            )}
+                          </div>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  ) : null}
+                </Fragment>
+              );
+            })}
             {table.getRowModel().rows.length === 0 && !knowledge.isLoading && (
               <TableRow>
                 <TableCell

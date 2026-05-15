@@ -87,6 +87,16 @@ describe("Doctor Service", () => {
           rows: [{ table_name: "knowledge_items" }, { table_name: "sources" }],
         }) // tables check
         .mockResolvedValueOnce({ rows: [{ count: 5 }] }) // stale knowledge
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              draft_count: 1,
+              oldest_draft_at: new Date(),
+              source_draft_count: 1,
+              vibe_draft_count: 0,
+            },
+          ],
+        }) // hitl backlog
         .mockResolvedValueOnce({ rows: [{ count: 10 }] }), // stale sources
     };
     vi.mocked(getDb).mockReturnValue(mockDb as any);

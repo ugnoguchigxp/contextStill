@@ -9,6 +9,7 @@ import {
 import { doctorRouter } from "../api/modules/doctor/doctor.routes.js";
 import { getDoctorReportForApi } from "../api/modules/doctor/doctor.service.js";
 import {
+  bulkUpdateKnowledgeStatus,
   createKnowledgeItem,
   deleteKnowledgeItem,
   listKnowledgeItems,
@@ -33,6 +34,7 @@ vi.mock("../api/modules/doctor/doctor.service.js", () => ({
 }));
 
 vi.mock("../api/modules/knowledge/knowledge.repository.js", () => ({
+  bulkUpdateKnowledgeStatus: vi.fn(),
   createKnowledgeItem: vi.fn(),
   deleteKnowledgeItem: vi.fn(),
   listKnowledgeItems: vi.fn(),
@@ -87,6 +89,12 @@ const validDoctorReport: DoctorReport = {
       usable: true,
     },
   },
+  azureOpenAi: {
+    configured: true,
+    reachable: true,
+    model: "gpt-5-4-mini",
+    endpoint: "https://test.openai.azure.com",
+  },
   tables: {
     expected: ["knowledge_items"],
     existing: ["knowledge_items"],
@@ -97,10 +105,22 @@ const validDoctorReport: DoctorReport = {
     totalRuns: 1,
     degradedRuns: 0,
     degradedRate: 0,
+    durationMsP50: 80,
+    durationMsP95: 120,
+    durationMsAvg: 90,
     lastRunAt: "2026-05-15T00:00:00.000Z",
     lastRunAgeMinutes: 1,
     freshnessThresholdMinutes: 720,
     degradedRateThreshold: 0.5,
+  },
+  hitl: {
+    draftCount: 0,
+    oldestDraftAt: null,
+    oldestDraftAgeMinutes: null,
+    draftFromSourceDistillationCount: 0,
+    draftFromVibeDistillationCount: 0,
+    backlogThresholdCount: 50,
+    backlogThresholdAgeMinutes: 4320,
   },
   mcp: {
     exposedTools: ["context_compile"],
@@ -177,6 +197,14 @@ describe("API route contract tests", () => {
     vi.mocked(listRunsForApi).mockResolvedValue([]);
     vi.mocked(getDoctorReportForApi).mockResolvedValue(validDoctorReport);
     vi.mocked(listKnowledgeItems).mockResolvedValue([]);
+    vi.mocked(bulkUpdateKnowledgeStatus).mockResolvedValue({
+      targetStatus: "active",
+      requestedIds: [],
+      updatedIds: [],
+      unchangedIds: [],
+      notFoundIds: [],
+      invalidTransitionIds: [],
+    });
     vi.mocked(createKnowledgeItem).mockResolvedValue({ id: "new-item-id" });
     vi.mocked(updateKnowledgeItem).mockResolvedValue({ id: "updated-item-id" });
     vi.mocked(deleteKnowledgeItem).mockResolvedValue({ id: "deleted-item-id" });
@@ -255,6 +283,8 @@ describe("API route contract tests", () => {
         confidence: 80,
         importance: 70,
         metadata: {},
+        sourceRefs: [],
+        sourceVibeMemoryIds: [],
         createdAt: new Date("2026-05-15T00:00:00.000Z"),
         updatedAt: new Date("2026-05-15T00:00:00.000Z"),
       },
@@ -310,6 +340,61 @@ describe("API route contract tests", () => {
     expect(response.status).toBe(404);
     const json = (await response.json()) as { error: string };
     expect(json.error).toBe("not found");
+  });
+
+  test("POST /api/knowledge/bulk-status returns partial update summary", async () => {
+    vi.mocked(bulkUpdateKnowledgeStatus).mockResolvedValueOnce({
+      targetStatus: "active",
+      requestedIds: ["k1", "k2"],
+      updatedIds: ["k1"],
+      unchangedIds: [],
+      notFoundIds: ["k2"],
+      invalidTransitionIds: [],
+    });
+    const app = buildApp();
+    const response = await app.request("/api/knowledge/bulk-status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ids: ["k1", "k2"],
+        status: "active",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    const json = (await response.json()) as {
+      outcome: string;
+      updatedIds: string[];
+      notFoundIds: string[];
+    };
+    expect(json.outcome).toBe("partial");
+    expect(json.updatedIds).toEqual(["k1"]);
+    expect(json.notFoundIds).toEqual(["k2"]);
+  });
+
+  test("POST /api/knowledge/bulk-status returns 409 when nothing can be updated", async () => {
+    vi.mocked(bulkUpdateKnowledgeStatus).mockResolvedValueOnce({
+      targetStatus: "deprecated",
+      requestedIds: ["k1"],
+      updatedIds: [],
+      unchangedIds: [],
+      notFoundIds: [],
+      invalidTransitionIds: [{ id: "k1", fromStatus: "draft" }],
+    });
+
+    const app = buildApp();
+    const response = await app.request("/api/knowledge/bulk-status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        ids: ["k1"],
+        status: "deprecated",
+      }),
+    });
+
+    expect(response.status).toBe(409);
+    const json = (await response.json()) as { outcome: string };
+    expect(json.outcome).toBe("none");
   });
 
   test("POST /api/vibe-memory rejects invalid payload", async () => {

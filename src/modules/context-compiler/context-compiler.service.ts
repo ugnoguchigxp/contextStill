@@ -1,6 +1,8 @@
+import crypto from "node:crypto";
 import { config } from "../../config.js";
 import {
   type CompileInput,
+  type CompileErrorKind,
   type RetrievalMode,
   compileInputSchema,
 } from "../../shared/schemas/compile.schema.js";
@@ -10,11 +12,17 @@ import {
   contextPackSchema,
 } from "../../shared/schemas/context-pack.schema.js";
 import type { KnowledgeItem, KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
+import { normalizeRepoKey, normalizeRepoPath } from "./query-context.js";
 import { retrieveKnowledge } from "../knowledge/knowledge.service.js";
 import { retrieveSources } from "../sources/source-retrieval.service.js";
-import { insertCompileRun, insertContextPackItems } from "./context-compiler.repository.js";
+import {
+  getCompileFreshnessMarkers,
+  insertCompileRun,
+  insertContextPackItems,
+} from "./context-compiler.repository.js";
 import { renderContextPackMarkdown } from "./pack-renderer.js";
 import { type Rankable, rankAndDedupe } from "./ranking.service.js";
+import { agenticRefine } from "./agentic-refine.service.js";
 
 const retrievalModeByIntent: Record<CompileInput["intent"], RetrievalMode> = {
   plan: "architecture_context",
@@ -311,40 +319,226 @@ function buildCodeContextItems(files: string[] | undefined): ContextPackItem[] {
   }));
 }
 
+type CompileErrorSignals = {
+  kind?: CompileErrorKind;
+  keywords: string[];
+  files: string[];
+};
+
+type CompileCacheKeyDraft = {
+  version: string;
+  repoPath: string | null;
+  repoKey: string | null;
+  retrievalMode: RetrievalMode;
+  tokenBudget: number;
+  includeDraft: boolean;
+  intent: CompileInput["intent"];
+  taskType: CompileInput["intent"];
+  goalHash: string;
+  filesHash: string;
+  changeTypesHash: string;
+  technologiesHash: string;
+  freshness: {
+    knowledgeActiveUpdatedAt: string | null;
+    knowledgeDraftUpdatedAt: string | null;
+    sourceCorpusUpdatedAt: string | null;
+  };
+};
+
+function hashValue(value: unknown): string {
+  return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
+}
+
+function normalizeErrorText(value: string | undefined): string {
+  return value ? value.trim().toLowerCase() : "";
+}
+
+function extractErrorKeywords(input: CompileInput): string[] {
+  const rawTexts = [
+    normalizeErrorText(input.lastErrorContext?.command),
+    normalizeErrorText(input.lastErrorContext?.output),
+    normalizeErrorText(input.lastErrorContext?.stack),
+    input.errorKind ?? "",
+  ];
+  const stopWords = new Set([
+    "error",
+    "errors",
+    "failed",
+    "failure",
+    "exception",
+    "line",
+    "column",
+    "stack",
+    "trace",
+    "module",
+    "file",
+    "test",
+    "tests",
+    "lint",
+    "typecheck",
+    "build",
+    "runtime",
+    "unknown",
+  ]);
+  const keywords = new Set<string>();
+  for (const text of rawTexts) {
+    if (!text) continue;
+    for (const token of text.split(/[^a-z0-9_\-./\u3040-\u30ff\u4e00-\u9faf]+/g)) {
+      const normalized = token.trim();
+      if (!normalized) continue;
+      if (normalized.length < 3 && !/[\u3040-\u30ff\u4e00-\u9faf]/.test(normalized)) continue;
+      if (stopWords.has(normalized)) continue;
+      keywords.add(normalized);
+      if (keywords.size >= 32) return [...keywords];
+    }
+  }
+  return [...keywords];
+}
+
+function extractErrorFileHints(input: CompileInput): string[] {
+  const candidates = [...(input.files ?? []), ...(input.lastErrorContext?.files ?? [])];
+  const normalized = candidates
+    .map((value) => value.trim())
+    .filter(Boolean)
+    .map((value) => value.replace(/\\/g, "/").toLowerCase());
+  return [...new Set(normalized)].slice(0, 24);
+}
+
+function buildCompileErrorSignals(input: CompileInput): CompileErrorSignals {
+  return {
+    kind: input.errorKind,
+    keywords: extractErrorKeywords(input),
+    files: extractErrorFileHints(input),
+  };
+}
+
+function countMatches(haystack: string, needles: string[]): number {
+  if (!haystack || needles.length === 0) return 0;
+  let hits = 0;
+  for (const needle of needles) {
+    if (needle && haystack.includes(needle)) hits += 1;
+  }
+  return hits;
+}
+
+function buildCompileCacheKeyDraft(params: {
+  input: CompileInput;
+  retrievalMode: RetrievalMode;
+  tokenBudget: number;
+  repoPath?: string;
+  repoKey?: string;
+  freshness: {
+    knowledgeActiveUpdatedAt: string | null;
+    knowledgeDraftUpdatedAt: string | null;
+    sourceCorpusUpdatedAt: string | null;
+  };
+}): CompileCacheKeyDraft {
+  const normalizedFiles = [...new Set((params.input.files ?? []).map((item) => item.trim()))]
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+  const changeTypes = [...new Set((params.input.changeTypes ?? []).map((item) => item.trim()))]
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+  const technologies = [...new Set((params.input.technologies ?? []).map((item) => item.trim()))]
+    .filter(Boolean)
+    .sort((a, b) => a.localeCompare(b));
+
+  return {
+    version: "v1-exact-normalized",
+    repoPath: params.repoPath ?? null,
+    repoKey: params.repoKey ?? null,
+    retrievalMode: params.retrievalMode,
+    tokenBudget: params.tokenBudget,
+    includeDraft: params.input.includeDraft,
+    intent: params.input.intent,
+    taskType: params.input.intent,
+    goalHash: hashValue(params.input.goal.trim()),
+    filesHash: hashValue(normalizedFiles),
+    changeTypesHash: hashValue(changeTypes),
+    technologiesHash: hashValue(technologies),
+    freshness: params.freshness,
+  };
+}
+
 export async function compileContextPack(rawInput: unknown): Promise<{
   pack: ContextPack;
   markdown: string;
 }> {
+  const compileStartedAt = Date.now();
   const input = compileInputSchema.parse(rawInput);
   const retrievalMode = resolveRetrievalMode(input);
   const tokenBudget = input.tokenBudget ?? config.defaultTokenBudget;
+  const normalizedRepoPath = normalizeRepoPath(input.repoPath);
+  const normalizedRepoKey = normalizeRepoKey(input.repoPath);
 
-  const [knowledge, sourceContext] = await Promise.all([
+  const [knowledge, sourceContext, freshnessMarkers] = await Promise.all([
     retrieveKnowledge(input, { retrievalMode }),
     retrieveSources(input, { retrievalMode }),
+    getCompileFreshnessMarkers({
+      repoPath: normalizedRepoPath,
+      repoKey: normalizedRepoKey,
+    }),
   ]);
+  const cacheKeyDraft = buildCompileCacheKeyDraft({
+    input,
+    retrievalMode,
+    tokenBudget,
+    repoPath: normalizedRepoPath,
+    repoKey: normalizedRepoKey,
+    freshness: freshnessMarkers,
+  });
+  const errorSignals = buildCompileErrorSignals(input);
 
   const degradedReasons = [...knowledge.degradedReasons, ...sourceContext.degradedReasons];
 
   const rankedKnowledge = rankAndDedupe<KnowledgeRankable>(
-    knowledge.items.map((item) => ({
-      id: item.id,
-      title: item.title,
-      content: item.body,
-      score: item.score,
-      confidence: item.confidence,
-      importance: item.importance,
-      type: normalizeKnowledgeType(item.type),
-      status: normalizeKnowledgeStatus(item.status),
-      sourceRefs: item.sourceRefs,
-      sourceRefCount: item.sourceRefs.length,
-      hasSourceLinks: item.hasSourceLinks,
-      stale: item.status === "deprecated",
-    })),
-    10,
+    knowledge.items.map((item) => {
+      const searchable = `${item.title}\n${item.body}\n${item.sourceRefs.join("\n")}`.toLowerCase();
+      return {
+        id: item.id,
+        title: item.title,
+        content: item.body,
+        score: item.score,
+        confidence: item.confidence,
+        importance: item.importance,
+        type: normalizeKnowledgeType(item.type),
+        status: normalizeKnowledgeStatus(item.status),
+        sourceRefs: item.sourceRefs,
+        sourceRefCount: item.sourceRefs.length,
+        hasSourceLinks: item.hasSourceLinks,
+        stale: item.status === "deprecated",
+        errorKeywordHits: countMatches(searchable, errorSignals.keywords),
+        errorFileHits: countMatches(searchable, errorSignals.files),
+        errorContextWeight: input.lastErrorContext ? 1 : 0,
+      };
+    }),
+    15,
   );
 
-  const packItems = rankedKnowledge.map((item) => {
+  const agenticResult = await agenticRefine(
+    rankedKnowledge.map((item) => ({
+      id: item.id,
+      type: item.type,
+      status: item.status,
+      title: item.title,
+      content: item.content,
+      score: item.score,
+      sourceRefs: item.sourceRefs,
+    })),
+    input,
+    retrievalMode,
+  );
+
+  if (agenticResult.error) {
+    degradedReasons.push("AGENTIC_REFINE_FAILED");
+  }
+
+  const refinedKnowledgeMap = new Map(rankedKnowledge.map((k) => [k.id, k]));
+  const finalKnowledge = agenticResult.items
+    .map((item) => refinedKnowledgeMap.get(item.id))
+    .filter((k): k is KnowledgeRankable => k !== undefined);
+
+  const packItems = finalKnowledge.map((item) => {
     const sourceRefs = selectSourceRefsForKnowledge(
       { type: item.type, title: item.title, content: item.content },
       sourceContext.items,
@@ -399,9 +593,12 @@ export async function compileContextPack(rawInput: unknown): Promise<{
   const suggestedNextCalls: string[] = [];
   if (degradedReasons.includes("NO_ACTIVE_KNOWLEDGE_MATCH")) {
     suggestedNextCalls.push("search_knowledge");
+    suggestedNextCalls.push("memory_search");
   }
   if (degradedReasons.includes("NO_SOURCE_MATCH")) {
     suggestedNextCalls.push("memory_search");
+    suggestedNextCalls.push("bun run import:sources -- <wiki root>");
+    suggestedNextCalls.push("bun run distill:sources -- --apply");
   }
   if (
     degradedReasons.includes("KNOWLEDGE_APPLIES_TO_FALLBACK") ||
@@ -421,16 +618,22 @@ export async function compileContextPack(rawInput: unknown): Promise<{
   ) {
     suggestedNextCalls.push("doctor");
   }
+  if (knowledge.stats.embeddingStatus === "unavailable") {
+    suggestedNextCalls.push("doctor");
+  }
+
+  const compileDurationMs = Math.max(0, Date.now() - compileStartedAt);
 
   const runId = await insertCompileRun({
     goal: input.goal,
     intent: input.intent,
-    repoPath: input.repoPath,
+    repoPath: normalizedRepoPath ?? input.repoPath,
     input: input as unknown as Record<string, unknown>,
     retrievalMode,
     status,
     degradedReasons,
     tokenBudget,
+    durationMs: compileDurationMs,
   });
 
   await insertContextPackItems(
@@ -478,6 +681,15 @@ export async function compileContextPack(rawInput: unknown): Promise<{
         knowledge: knowledge.stats,
         sources: sourceContext.stats,
         tokenBudget,
+        compileDurationMs,
+        agenticUsed: agenticResult.agenticUsed,
+        agenticReasoning: agenticResult.reasoning,
+        cacheKeyDraft,
+        errorContext: {
+          errorKind: errorSignals.kind ?? null,
+          keywordCount: errorSignals.keywords.length,
+          fileHintCount: errorSignals.files.length,
+        },
         suggestedNextCalls: [...new Set(suggestedNextCalls)],
       },
     },
