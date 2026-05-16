@@ -396,6 +396,23 @@ export const groupedConfig: GroupedConfig = {
         ),
       ),
     ),
+    knowledgeStaleDecayFactor: Math.min(
+      1,
+      Math.max(
+        0,
+        envNumber(
+          process.env.MEMORY_ROUTER_DOCTOR_KNOWLEDGE_STALE_DECAY_FACTOR,
+          APP_CONSTANTS.doctorKnowledgeStaleDecayFactor,
+        ),
+      ),
+    ),
+    knowledgeZeroUseWarningMinActiveCount: Math.max(
+      1,
+      envNumber(
+        process.env.MEMORY_ROUTER_DOCTOR_KNOWLEDGE_ZERO_USE_WARNING_MIN_ACTIVE_COUNT,
+        APP_CONSTANTS.doctorKnowledgeZeroUseWarningMinActiveCount,
+      ),
+    ),
   },
 };
 

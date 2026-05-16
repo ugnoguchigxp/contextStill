@@ -21,6 +21,7 @@
     "distill:vibe-memory": "bun run src/cli/distill-vibe-memory.ts",
     "distill:sources": "bun run src/cli/distill-sources.ts",
     "backfill:knowledge-project-context": "bun run src/cli/backfill-knowledge-project-context.ts",
+    "backfill:knowledge-value": "bun run src/cli/backfill-knowledge-value.ts",
     "doctor": "bun run src/cli/doctor.ts",
     "mcp:smoke": "DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@localhost:7889/memory_router_test} bun run src/cli/mcp-smoke.ts",
     "db:generate": "drizzle-kit generate",

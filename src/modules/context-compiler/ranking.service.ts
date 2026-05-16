@@ -7,6 +7,8 @@ export type Rankable = {
   score: number;
   confidence?: number;
   importance?: number;
+  dynamicScore?: number;
+  decayFactor?: number;
   status?: string;
   hasSourceLinks?: boolean;
   sourceRefCount?: number;
@@ -17,10 +19,13 @@ export type Rankable = {
 };
 
 function weightedScore(item: Rankable): number {
+  const decayFactor = Math.min(1, Math.max(0, Number(item.decayFactor ?? 1)));
   const baseScore =
     item.score +
     toUnitKnowledgeScore(item.importance, 0) * 0.2 +
     toUnitKnowledgeScore(item.confidence, 0) * 0.1;
+  const dynamicBoost = toUnitKnowledgeScore(item.dynamicScore, 0) * 0.12;
+  const decayPenalty = (1 - decayFactor) * 0.12;
   const sourceLinkBoost = item.hasSourceLinks || (item.sourceRefCount ?? 0) > 0 ? 0.05 : 0;
   const errorKeywordBoost = Math.min(0.18, Math.max(0, item.errorKeywordHits ?? 0) * 0.03);
   const errorFileBoost = Math.min(0.16, Math.max(0, item.errorFileHits ?? 0) * 0.04);
@@ -30,10 +35,12 @@ function weightedScore(item: Rankable): number {
   const stalePenalty = item.stale ? 0.4 : 0;
   return (
     baseScore +
+    dynamicBoost +
     sourceLinkBoost +
     errorKeywordBoost +
     errorFileBoost +
     errorContextBoost -
+    decayPenalty -
     deprecatedPenalty -
     stalePenalty
   );

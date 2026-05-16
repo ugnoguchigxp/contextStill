@@ -77,6 +77,20 @@ export const doctorReportSchema = z.object({
     backlogThresholdCount: z.number().int().positive(),
     backlogThresholdAgeMinutes: z.number().int().positive(),
   }),
+  knowledgeLifecycle: z.object({
+    activeCount: z.number().int().nonnegative(),
+    zeroUseActiveCount: z.number().int().nonnegative(),
+    staleByDecayCount: z.number().int().nonnegative(),
+    staleProcedureCount: z.number().int().nonnegative(),
+    dynamicScoreAvg: z.number().nonnegative().nullable(),
+    dynamicScoreP95: z.number().nonnegative().nullable(),
+    lastCompiledAt: z.string().datetime().nullable(),
+    lastCompiledAgeMinutes: z.number().nonnegative().nullable(),
+    thresholds: z.object({
+      staleDecayFactor: z.number().min(0).max(1),
+      zeroUseWarningMinActiveCount: z.number().int().positive(),
+    }),
+  }),
   mcp: z.object({
     exposedTools: z.array(z.string()),
     requiredPrimaryTools: z.array(z.string()),

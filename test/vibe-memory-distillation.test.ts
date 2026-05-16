@@ -134,6 +134,15 @@ describe("vibe memory distillation", () => {
     expect(candidates).toHaveLength(2);
   });
 
+  test("parses natural language candidate even when score is omitted", () => {
+    const candidates = parseDistillationCandidates(
+      "TYPE: rule\nTITLE: Keep verify scope focused\nBODY: Start with repo-local verify command before broad checks.",
+    );
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0].type).toBe("rule");
+    expect(candidates[0].title).toContain("Keep verify scope focused");
+  });
+
   test("filters out low scoring candidates before knowledge registration", () => {
     const candidates = parseDistillationCandidates(
       JSON.stringify({
@@ -162,6 +171,31 @@ describe("vibe memory distillation", () => {
     expect(gate.rejectedLowScore.map((candidate) => candidate.title)).toEqual(["Weak"]);
   });
 
+  test("rejects candidates when URL evidence is required but no tool fetch exists", () => {
+    const candidates = parseDistillationCandidates(
+      JSON.stringify({
+        candidates: [
+          {
+            type: "rule",
+            title: "External behavior rule",
+            body: "Use latest public API behavior.",
+            score: 0.95,
+            evidenceRefs: ["https://example.com/spec"],
+          },
+        ],
+      }),
+    );
+    const gate = filterDistillationCandidatesByScore(candidates, {
+      requireFetchEvidenceForUrlInput: true,
+      toolEvents: [],
+    });
+
+    expect(gate.accepted).toHaveLength(0);
+    expect(gate.rejectedInvalidEvidence.map((candidate) => candidate.title)).toEqual([
+      "External behavior rule",
+    ]);
+  });
+
   test("builds a prompt constrained to rule and procedure knowledge", () => {
     const messages = buildVibeMemoryDistillationMessages({
       memory: memory(),
@@ -173,8 +207,9 @@ describe("vibe memory distillation", () => {
     expect(prompt).toContain("知識タイプは rule と procedure のみ");
     expect(prompt).toContain("confidence と importance は判断可能な場合のみ");
     expect(prompt).toContain("score");
-    expect(prompt).toContain("未満の candidate は出力しない");
-    expect(prompt).toContain("閾値未満の candidate は candidates 配列へ入れず");
+    expect(prompt).toContain("score は 0 から 1 で付けるのが望ましい（省略可）");
+    expect(prompt).toContain("出力形式は次のいずれかでよい");
+    expect(prompt).toContain("自然言語: TYPE / TITLE / BODY / SCORE(任意)");
     expect(prompt).toContain("可能な限り日本語");
     expect(prompt).toContain("AGENT_DIFF_ENTRIES");
     expect(prompt).not.toMatch(/\bfact\b/i);

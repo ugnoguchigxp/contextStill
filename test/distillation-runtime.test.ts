@@ -3,6 +3,11 @@ import { buildDistillationSystemPrompt } from "../src/modules/distillation/disti
 import {
   type DistillationChatClient,
   type DistillationToolExecutor,
+  buildBedrockConversation,
+  buildBedrockToolConfig,
+  parseBedrockResponse,
+  parseOpenAiStyleResponse,
+  parseToolCalls,
   runDistillationCompletion,
 } from "../src/modules/distillation/distillation-runtime.service.js";
 
@@ -105,5 +110,80 @@ describe("distillation runtime", () => {
     await expect(
       runDistillationCompletion({ model: "m", messages: [], maxTokens: 10 }, { chatClient }),
     ).rejects.toThrow("distillation response did not include assistant content");
+  });
+
+  describe("parsing helpers", () => {
+    test("parseToolCalls extracts function info", () => {
+      const raw = [
+        {
+          id: "call_1",
+          type: "function",
+          function: { name: "test_tool", arguments: '{"a":1}' },
+        },
+      ];
+      const result = parseToolCalls(raw);
+      expect(result).toHaveLength(1);
+      expect(result[0].function.name).toBe("test_tool");
+      expect(result[0].function.arguments).toBe('{"a":1}');
+    });
+
+    test("parseOpenAiStyleResponse maps choices to chat response", () => {
+      const raw = {
+        choices: [{ message: { content: "hello", tool_calls: [] }, finish_reason: "stop" }],
+      };
+      const result = parseOpenAiStyleResponse(raw);
+      expect(result.content).toBe("hello");
+      expect(result.finishReason).toBe("stop");
+    });
+  });
+
+  describe("bedrock conversion", () => {
+    test("buildBedrockConversation handles system, user, assistant and tool messages", () => {
+      const messages: any[] = [
+        { role: "system", content: "sys" },
+        { role: "user", content: "hi" },
+        {
+          role: "assistant",
+          content: "ok",
+          tool_calls: [{ id: "c1", function: { name: "t", arguments: "{}" } }],
+        },
+        { role: "tool", tool_call_id: "c1", content: "done" },
+      ];
+      const result = buildBedrockConversation(messages);
+
+      expect(result.system).toEqual([{ text: "sys" }]);
+      expect(result.messages).toHaveLength(3); // user, assistant, tool-result-as-user
+      expect(result.messages[0].role).toBe("user");
+      expect(result.messages[1].role).toBe("assistant");
+      expect(result.messages[2].role).toBe("user"); // Bedrock expects tool results as user role
+    });
+
+    test("buildBedrockToolConfig maps distillation tools to bedrock specs", () => {
+      const tools: any[] = [
+        { function: { name: "t1", description: "d1", parameters: { type: "object" } } },
+      ];
+      const result = buildBedrockToolConfig(tools);
+      expect(result?.tools).toHaveLength(1);
+      expect((result?.tools?.[0] as any).toolSpec.name).toBe("t1");
+    });
+
+    test("parseBedrockResponse extracts text and tool calls", () => {
+      const raw = {
+        output: {
+          message: {
+            content: [
+              { text: "thinking" },
+              { toolUse: { toolUseId: "c1", name: "t1", input: { x: 1 } } },
+            ],
+          },
+        },
+        stopReason: "tool_use",
+      };
+      const result = parseBedrockResponse(raw);
+      expect(result.content).toBe("thinking");
+      expect(result.toolCalls).toHaveLength(1);
+      expect(result.toolCalls[0].id).toBe("c1");
+      expect(result.toolCalls[0].function.name).toBe("t1");
+    });
   });
 });

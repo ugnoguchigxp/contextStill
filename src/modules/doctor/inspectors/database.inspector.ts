@@ -5,6 +5,8 @@ import { requiredTableSqlList, requiredTables } from "../doctor.constants.js";
 
 type DatabaseInspectorOptions = {
   freshnessThresholdMinutes: number;
+  staleDecayFactor: number;
+  zeroUseWarningMinActiveCount: number;
 };
 
 const hitlBacklogThresholdCount = 50;
@@ -35,11 +37,33 @@ export type DatabaseInspection = {
   staleKnowledgeCount: number;
   staleSourceCount: number;
   hitl: DoctorReport["hitl"];
+  knowledgeLifecycle: DoctorReport["knowledgeLifecycle"];
   reasons: string[];
 };
 
+function createDefaultKnowledgeLifecycle(
+  options: Pick<DatabaseInspectorOptions, "staleDecayFactor" | "zeroUseWarningMinActiveCount">,
+): DoctorReport["knowledgeLifecycle"] {
+  return {
+    activeCount: 0,
+    zeroUseActiveCount: 0,
+    staleByDecayCount: 0,
+    staleProcedureCount: 0,
+    dynamicScoreAvg: null,
+    dynamicScoreP95: null,
+    lastCompiledAt: null,
+    lastCompiledAgeMinutes: null,
+    thresholds: {
+      staleDecayFactor: options.staleDecayFactor,
+      zeroUseWarningMinActiveCount: options.zeroUseWarningMinActiveCount,
+    },
+  };
+}
+
 export async function inspectDatabase({
   freshnessThresholdMinutes,
+  staleDecayFactor,
+  zeroUseWarningMinActiveCount,
 }: DatabaseInspectorOptions): Promise<DatabaseInspection> {
   const db = getDb();
   const startedAt = Date.now();
@@ -68,6 +92,10 @@ export async function inspectDatabase({
         backlogThresholdCount: hitlBacklogThresholdCount,
         backlogThresholdAgeMinutes: hitlBacklogThresholdAgeMinutes,
       },
+      knowledgeLifecycle: createDefaultKnowledgeLifecycle({
+        staleDecayFactor,
+        zeroUseWarningMinActiveCount,
+      }),
       reasons: ["DB_UNREACHABLE"],
     };
   }
@@ -118,6 +146,10 @@ export async function inspectDatabase({
     backlogThresholdCount: hitlBacklogThresholdCount,
     backlogThresholdAgeMinutes: hitlBacklogThresholdAgeMinutes,
   };
+  const knowledgeLifecycle = createDefaultKnowledgeLifecycle({
+    staleDecayFactor,
+    zeroUseWarningMinActiveCount,
+  });
 
   if (!missingTables.includes("knowledge_items")) {
     try {
@@ -164,6 +196,80 @@ export async function inspectDatabase({
     } catch {
       reasons.push("HITL_BACKLOG_QUERY_FAILED");
     }
+
+    try {
+      const lifecycleResult = await db.execute(sql`
+        with active_items as (
+          select
+            status,
+            type,
+            scope,
+            compile_select_count,
+            dynamic_score,
+            last_compiled_at,
+            coalesce(last_verified_at, updated_at) as freshness_base
+          from knowledge_items
+          where status = 'active'
+        ),
+        scored as (
+          select
+            *,
+            exp(
+              -(
+                (case when type = 'procedure' then 0.004 else 0.001 end) *
+                (case when scope = 'global' then 0.5 else 1.0 end) *
+                greatest(0, extract(epoch from (now() - freshness_base)) / 86400.0)
+              )
+            ) as decay_factor
+          from active_items
+        )
+        select
+          count(*)::int as active_count,
+          count(*) filter (where compile_select_count = 0)::int as zero_use_active_count,
+          count(*) filter (where decay_factor < ${staleDecayFactor})::int as stale_by_decay_count,
+          count(*) filter (
+            where type = 'procedure' and decay_factor < ${staleDecayFactor}
+          )::int as stale_procedure_count,
+          avg(dynamic_score)::float as dynamic_score_avg,
+          percentile_cont(0.95) within group (order by dynamic_score)::float as dynamic_score_p95,
+          max(last_compiled_at) as last_compiled_at
+        from scored
+      `);
+      const lifecycleRow = (lifecycleResult.rows as Array<Record<string, unknown>>)[0] ?? {};
+
+      knowledgeLifecycle.activeCount = Number(lifecycleRow.active_count ?? 0);
+      knowledgeLifecycle.zeroUseActiveCount = Number(lifecycleRow.zero_use_active_count ?? 0);
+      knowledgeLifecycle.staleByDecayCount = Number(lifecycleRow.stale_by_decay_count ?? 0);
+      knowledgeLifecycle.staleProcedureCount = Number(lifecycleRow.stale_procedure_count ?? 0);
+
+      const dynamicScoreAvgRaw = lifecycleRow.dynamic_score_avg;
+      const dynamicScoreP95Raw = lifecycleRow.dynamic_score_p95;
+      knowledgeLifecycle.dynamicScoreAvg =
+        dynamicScoreAvgRaw === null || dynamicScoreAvgRaw === undefined
+          ? null
+          : Number(dynamicScoreAvgRaw);
+      knowledgeLifecycle.dynamicScoreP95 =
+        dynamicScoreP95Raw === null || dynamicScoreP95Raw === undefined
+          ? null
+          : Number(dynamicScoreP95Raw);
+
+      knowledgeLifecycle.lastCompiledAt = toIso(lifecycleRow.last_compiled_at);
+      knowledgeLifecycle.lastCompiledAgeMinutes = ageMinutesFromIso(
+        knowledgeLifecycle.lastCompiledAt,
+      );
+
+      if (
+        knowledgeLifecycle.activeCount >= zeroUseWarningMinActiveCount &&
+        knowledgeLifecycle.zeroUseActiveCount / Math.max(1, knowledgeLifecycle.activeCount) >= 0.7
+      ) {
+        reasons.push("KNOWLEDGE_ZERO_USE_HIGH");
+      }
+      if (knowledgeLifecycle.staleByDecayCount >= 10) {
+        reasons.push("KNOWLEDGE_DECAY_STALE_HIGH");
+      }
+    } catch {
+      reasons.push("KNOWLEDGE_VALUE_QUERY_FAILED");
+    }
   }
 
   if (!missingTables.includes("sources")) {
@@ -179,6 +285,25 @@ export async function inspectDatabase({
     }
   }
 
+  if (!missingTables.includes("audit_logs")) {
+    try {
+      const result = await db.execute(sql`
+        select count(*)::int as count
+        from audit_logs
+        where event_type = 'KNOWLEDGE_VALUE_UPDATE_FAILED'
+          and created_at >= now() - (${freshnessThresholdMinutes} * interval '1 minute')
+      `);
+      const recentFailureCount = Number((result.rows as Array<{ count?: number }>)[0]?.count ?? 0);
+      if (recentFailureCount > 0 && !reasons.includes("KNOWLEDGE_VALUE_UPDATE_FAILED")) {
+        reasons.push("KNOWLEDGE_VALUE_UPDATE_FAILED");
+      }
+    } catch {
+      if (!reasons.includes("KNOWLEDGE_VALUE_QUERY_FAILED")) {
+        reasons.push("KNOWLEDGE_VALUE_QUERY_FAILED");
+      }
+    }
+  }
+
   return {
     db: {
       reachable: true,
@@ -191,6 +316,7 @@ export async function inspectDatabase({
     staleKnowledgeCount,
     staleSourceCount,
     hitl,
+    knowledgeLifecycle,
     reasons,
   };
 }

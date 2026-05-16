@@ -103,7 +103,7 @@ describe("sources distillation service", () => {
         toolEvents: [],
         messages: [],
       };
-      vi.mocked(runtime.callLocalLlmCompletionForDistillation).mockResolvedValue(mockCompletion);
+      vi.mocked(runtime.runDistillationCompletion).mockResolvedValue(mockCompletion);
 
       const summary = await distillSources({ apply: false });
 
@@ -128,7 +128,7 @@ describe("sources distillation service", () => {
         messages: [],
       };
 
-      vi.mocked(runtime.callLocalLlmCompletionForDistillation).mockResolvedValue(mockCompletion);
+      vi.mocked(runtime.runDistillationCompletion).mockResolvedValue(mockCompletion);
       vi.mocked(candidatesUtil.parseDistillationCandidateList).mockReturnValue([mockCandidate]);
       vi.mocked(candidatesUtil.filterDistillationCandidatesByScore).mockReturnValue({
         accepted: [mockCandidate],
@@ -153,9 +153,7 @@ describe("sources distillation service", () => {
     });
 
     test("handles errors for individual fragments", async () => {
-      vi.mocked(runtime.callLocalLlmCompletionForDistillation).mockRejectedValue(
-        new Error("LLM failure"),
-      );
+      vi.mocked(runtime.runDistillationCompletion).mockRejectedValue(new Error("LLM failure"));
       vi.mocked(repository.upsertSourceDistillationRun).mockResolvedValue({
         id: "run-failed",
       } as unknown as never);
@@ -169,24 +167,17 @@ describe("sources distillation service", () => {
       );
     });
 
-    test("repairs invalid JSON if initial parse fails", async () => {
-      const mockCompletion = { content: "invalid json", toolEvents: [], messages: [] };
-      const mockRepairCompletion = { content: '{"candidates":[]}', toolEvents: [], messages: [] };
-
-      vi.mocked(runtime.callLocalLlmCompletionForDistillation).mockResolvedValueOnce(
-        mockCompletion,
-      );
-      vi.mocked(candidatesUtil.parseDistillationCandidateList)
-        .mockImplementationOnce(() => {
-          throw new Error("JSON parse error");
-        })
-        .mockReturnValueOnce([]);
-
-      const mockModelClient = vi.fn().mockResolvedValue(mockRepairCompletion);
+    test("does not require extra repair call for non-JSON output", async () => {
+      const mockCompletion = {
+        content: "TYPE: rule\nTITLE: non-json\nBODY: still parseable\nSCORE: 0.8",
+        toolEvents: [],
+        messages: [],
+      };
+      const mockModelClient = vi.fn().mockResolvedValue(mockCompletion);
 
       await distillSources({ apply: false, modelClient: mockModelClient });
 
-      expect(mockModelClient).toHaveBeenCalledTimes(2);
+      expect(mockModelClient).toHaveBeenCalledTimes(1);
     });
   });
 });

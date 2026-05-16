@@ -109,6 +109,19 @@ describe("Doctor Service", () => {
             },
           ],
         }) // hitl backlog
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              active_count: 3,
+              zero_use_active_count: 2,
+              stale_by_decay_count: 1,
+              stale_procedure_count: 1,
+              dynamic_score_avg: 42,
+              dynamic_score_p95: 88,
+              last_compiled_at: new Date(),
+            },
+          ],
+        }) // knowledge lifecycle
         .mockResolvedValueOnce({ rows: [{ count: 10 }] }), // stale sources
     };
     vi.mocked(getDb).mockReturnValue(mockDb as any);
@@ -182,5 +195,51 @@ describe("Doctor Service", () => {
     const report = await runDoctor();
     expect(report.agentLogSync.launchAgent.loaded).toBe(true);
     expect(report.agentLogSync.launchAgent.state).toBe("running");
+  });
+
+  test("reports knowledge value update failures from recent audit logs", async () => {
+    const mockDb = {
+      execute: vi
+        .fn()
+        .mockResolvedValueOnce({ rows: [{ ok: 1 }] })
+        .mockResolvedValueOnce({ rows: [{ installed: true }] })
+        .mockResolvedValueOnce({
+          rows: [
+            { table_name: "knowledge_items" },
+            { table_name: "sources" },
+            { table_name: "audit_logs" },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              draft_count: 0,
+              oldest_draft_at: null,
+              source_draft_count: 0,
+              vibe_draft_count: 0,
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              active_count: 10,
+              zero_use_active_count: 0,
+              stale_by_decay_count: 0,
+              stale_procedure_count: 0,
+              dynamic_score_avg: 10,
+              dynamic_score_p95: 20,
+              last_compiled_at: new Date(),
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] })
+        .mockResolvedValueOnce({ rows: [{ count: 2 }] }),
+    };
+    vi.mocked(getDb).mockReturnValue(mockDb as any);
+
+    const report = await runDoctor();
+    expect(report.reasons).toContain("KNOWLEDGE_VALUE_UPDATE_FAILED");
   });
 });

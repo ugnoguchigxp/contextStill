@@ -1,16 +1,18 @@
-import { describe, expect, test, vi, beforeEach, afterAll } from "vitest";
+import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { groupedConfig } from "../src/config.js";
-import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
-import { retrieveKnowledge } from "../src/modules/knowledge/knowledge.service.js";
-import { retrieveSources } from "../src/modules/sources/source-retrieval.service.js";
 import {
   insertCompileRun,
   insertContextPackItems,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
+import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
+import { recordKnowledgeCompileSelectionSafe } from "../src/modules/knowledge/knowledge-value.service.js";
+import { retrieveKnowledge } from "../src/modules/knowledge/knowledge.service.js";
+import { retrieveSources } from "../src/modules/sources/source-retrieval.service.js";
 
 vi.mock("../src/modules/knowledge/knowledge.service.js");
 vi.mock("../src/modules/sources/source-retrieval.service.js");
 vi.mock("../src/modules/context-compiler/context-compiler.repository.js");
+vi.mock("../src/modules/knowledge/knowledge-value.service.js");
 vi.mock("../src/modules/context-compiler/pack-renderer.js", () => ({
   renderContextPackMarkdown: vi.fn(() => "# Pack Content"),
 }));
@@ -22,6 +24,7 @@ describe("Context Compiler Service", () => {
     vi.clearAllMocks();
     groupedConfig.agenticCompile.enabled = false;
     vi.mocked(insertCompileRun).mockResolvedValue("550e8400-e29b-41d4-a716-446655440000");
+    vi.mocked(recordKnowledgeCompileSelectionSafe).mockResolvedValue();
   });
 
   afterAll(() => {

@@ -32,4 +32,6 @@ export const APP_CONSTANTS = {
   agenticCompileMaxTokens: 2048,
   doctorFreshnessThresholdMinutes: 720,
   doctorDegradedRateThreshold: 0.5,
+  doctorKnowledgeStaleDecayFactor: 0.5,
+  doctorKnowledgeZeroUseWarningMinActiveCount: 10,
 };

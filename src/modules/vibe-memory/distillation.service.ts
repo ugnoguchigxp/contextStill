@@ -13,7 +13,7 @@ import {
   type DistillationCompletionResult,
   type DistillationMessage,
   type DistillationModelRequest,
-  callLocalLlmCompletionForDistillation,
+  runDistillationCompletion,
   resolveDistillationModel,
 } from "../distillation/distillation-runtime.service.js";
 import { embedOne } from "../embedding/embedding.service.js";
@@ -114,6 +114,10 @@ function truncate(value: string, maxChars: number): string {
   return `${value.slice(0, Math.max(0, maxChars - 24))}\n...[truncated]`;
 }
 
+function textContainsUrl(value: string): boolean {
+  return /https?:\/\//i.test(value);
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -140,6 +144,20 @@ function resolveRepoScopeForMemory(params: {
     params.fallbackRepoKey;
 
   return { repoPath, repoKey };
+}
+
+function vibeMemoryInputContainsUrl(
+  memory: VibeMemoryForDistillation,
+  diffEntries: AgentDiffEntryForDistillation[],
+): boolean {
+  if (textContainsUrl(memory.content)) return true;
+  if (textContainsUrl(JSON.stringify(memory.metadata ?? {}))) return true;
+  return diffEntries.some(
+    (entry) =>
+      textContainsUrl(entry.filePath) ||
+      textContainsUrl(entry.diffHunk) ||
+      textContainsUrl(JSON.stringify(entry.metadata ?? {})),
+  );
 }
 
 function formatAgentDiff(entry: AgentDiffEntryForDistillation, maxDiffChars: number): string {
@@ -191,8 +209,10 @@ export function buildVibeMemoryDistillationMessages(params: {
     {
       role: "system",
       content: buildDistillationSystemPrompt("vibe_memory", [
-        "次の形式の厳密な JSON のみを返すこと:",
-        '{"candidates":[{"type":"rule|procedure","title":"短い日本語タイトル","body":"再利用可能で実行可能な日本語 knowledge","score":0.0}]}',
+        "出力形式は次のいずれかでよい:",
+        '1) 推奨: 単純 JSON {"candidates":[{"type":"rule|procedure","title":"...","body":"...","score":0.0-1.0}]}',
+        "2) 自然言語: TYPE / TITLE / BODY / SCORE(任意) のラベル付きテキスト",
+        "候補がない場合は空配列または『候補なし』と返してよい。",
       ]),
     },
     {
@@ -237,45 +257,14 @@ async function parseDistillationCandidatesWithRepair(params: {
   maxTokens: number;
   model: string;
 }): Promise<{ candidates: DistilledKnowledgeCandidate[]; repaired: boolean }> {
-  try {
-    return {
-      candidates: parseDistillationCandidateList(params.rawResponse),
-      repaired: false,
-    };
-  } catch (initialError) {
-    const repairResponse = await params.modelClient({
-      model: params.model,
-      messages: [
-        ...params.messages,
-        {
-          role: "assistant",
-          content: params.rawResponse,
-        },
-        {
-          role: "user",
-          content:
-            '前回の応答は不正または不完全な JSON でした。同じ schema で候補は最大 1 件に絞り、type/title/body/score のみを含む厳密 JSON を返してください。不確実な場合は {"candidates":[]} を返してください。',
-        },
-      ],
-      maxTokens: params.maxTokens,
-    });
-    const repairedContent = normalizeDistillationModelResult(repairResponse).content;
-
-    try {
-      return {
-        candidates: parseDistillationCandidateList(repairedContent),
-        repaired: true,
-      };
-    } catch (repairError) {
-      const initialMessage =
-        initialError instanceof Error ? initialError.message : String(initialError);
-      const repairMessage =
-        repairError instanceof Error ? repairError.message : String(repairError);
-      throw new Error(
-        `distillation response invalid after JSON repair: ${repairMessage}; initial error: ${initialMessage}`,
-      );
-    }
-  }
+  void params.messages;
+  void params.modelClient;
+  void params.maxTokens;
+  void params.model;
+  return {
+    candidates: parseDistillationCandidateList(params.rawResponse),
+    repaired: false,
+  };
 }
 
 function normalizeDistillationModelResult(
@@ -324,6 +313,7 @@ async function recordDistillationRun(params: {
   error?: string;
   inputHash: string;
   model: string;
+  toolEvents?: DistillationCompletionResult["toolEvents"];
   metadata?: Record<string, unknown>;
 }) {
   if (!recordRunEnabled(params.apply)) return;
@@ -336,6 +326,7 @@ async function recordDistillationRun(params: {
     inputHash: params.inputHash,
     promptVersion: groupedConfig.vibeDistillation.promptVersion,
     model: params.model,
+    toolEvents: params.toolEvents ?? [],
     metadata: params.metadata,
   });
 }
@@ -345,7 +336,7 @@ export async function distillVibeMemories(
 ): Promise<DistillVibeMemoriesSummary> {
   const apply = Boolean(options.apply);
   const distillationModel = resolveDistillationModel();
-  const modelClient = options.modelClient ?? callLocalLlmCompletionForDistillation;
+  const modelClient = options.modelClient ?? runDistillationCompletion;
   const embedder = options.embedder ?? defaultEmbedder;
   const workspaceRepoPath = normalizeRepoPath(process.cwd());
   const workspaceRepoKey = normalizeRepoKey(process.cwd());
@@ -411,6 +402,7 @@ export async function distillVibeMemories(
         });
         const scoreGate = filterDistillationCandidatesByScore(candidates, {
           toolEvents: completion.toolEvents,
+          requireFetchEvidenceForUrlInput: vibeMemoryInputContainsUrl(memory, memoryDiffs),
         });
         const acceptedCandidates = scoreGate.accepted;
         const rejectedLowScoreCandidates = scoreGate.rejectedLowScore;
@@ -428,6 +420,7 @@ export async function distillVibeMemories(
             knowledgeIds: [],
             inputHash,
             model: distillationModel,
+            toolEvents: completion.toolEvents,
             metadata: {
               reason: skipReason,
               sourceSessionId: memory.sessionId,
@@ -537,6 +530,7 @@ export async function distillVibeMemories(
           knowledgeIds,
           inputHash,
           model: distillationModel,
+          toolEvents: completion.toolEvents,
           metadata: {
             sourceSessionId: memory.sessionId,
             diffEntryCount: memoryDiffs.length,
@@ -582,6 +576,7 @@ export async function distillVibeMemories(
           error: message,
           inputHash,
           model: distillationModel,
+          toolEvents: [],
           metadata: {
             sourceSessionId: memory.sessionId,
             diffEntryCount: memoryDiffs.length,

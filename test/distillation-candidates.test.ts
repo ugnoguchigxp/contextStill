@@ -28,12 +28,10 @@ describe("parseDistillationCandidateList", () => {
     expect(candidates[0]?.score).toBe(0.9);
   });
 
-  test("throws when no complete candidate can be recovered", () => {
+  test("returns empty list when no complete candidate can be recovered", () => {
     const response = `\`\`\`json
 {"candidates":[{"type":"rule","title":"未完`;
 
-    expect(() => parseDistillationCandidateList(response)).toThrow(
-      "distillation response did not contain valid JSON",
-    );
+    expect(parseDistillationCandidateList(response)).toEqual([]);
   });
 });

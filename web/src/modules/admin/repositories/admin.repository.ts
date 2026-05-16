@@ -12,7 +12,24 @@ export type KnowledgeItem = {
   metadata?: Record<string, unknown>;
   sourceRefs?: string[];
   sourceVibeMemoryIds?: string[];
+  compileSelectCount: number;
+  lastCompiledAt: string | null;
+  agenticAcceptCount: number;
+  explicitUpvoteCount: number;
+  explicitDownvoteCount: number;
+  dynamicScore: number;
+  decayFactor: number;
+  lastVerifiedAt: string | null;
   updatedAt: string;
+};
+
+export type KnowledgeFeedback = {
+  id: string;
+  direction: "up" | "down";
+  explicitUpvoteCount: number;
+  explicitDownvoteCount: number;
+  dynamicScore: number;
+  lastVerifiedAt: string | null;
 };
 
 export type KnowledgeBulkStatusResponse = {
@@ -51,8 +68,15 @@ export type AgentDiffEntry = {
   updatedAt: string;
 };
 
-export type KnowledgeWriteInput = Omit<KnowledgeItem, "id" | "type" | "updatedAt"> & {
+export type KnowledgeWriteInput = {
   type: KnowledgeType;
+  status: string;
+  scope: string;
+  title: string;
+  body: string;
+  confidence: number;
+  importance: number;
+  metadata?: Record<string, unknown>;
 };
 
 export type DoctorReport = {
@@ -95,6 +119,20 @@ export type DoctorReport = {
     draftFromVibeDistillationCount: number;
     backlogThresholdCount: number;
     backlogThresholdAgeMinutes: number;
+  };
+  knowledgeLifecycle: {
+    activeCount: number;
+    zeroUseActiveCount: number;
+    staleByDecayCount: number;
+    staleProcedureCount: number;
+    dynamicScoreAvg: number | null;
+    dynamicScoreP95: number | null;
+    lastCompiledAt: string | null;
+    lastCompiledAgeMinutes: number | null;
+    thresholds: {
+      staleDecayFactor: number;
+      zeroUseWarningMinActiveCount: number;
+    };
   };
   agentLogSync: {
     codex: {
@@ -363,6 +401,18 @@ export async function bulkUpdateKnowledgeStatus(
     ids,
     status,
   });
+}
+
+export async function sendKnowledgeFeedback(
+  id: string,
+  input: { direction: "up" | "down"; reason?: string },
+): Promise<KnowledgeFeedback> {
+  const json = await requestJson<{ feedback: KnowledgeFeedback }>(
+    `/api/knowledge/${id}/feedback`,
+    "POST",
+    input,
+  );
+  return json.feedback;
 }
 
 export async function fetchVibeMemories(limit = 120): Promise<VibeMemory[]> {

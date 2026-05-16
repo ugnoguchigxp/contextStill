@@ -1,14 +1,15 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
+import { knowledgeStatusValues, knowledgeTypeValues, scopeValues } from "../../../src/db/schema.js";
 import {
   bulkUpdateKnowledgeStatus,
   createKnowledgeItem,
   deleteKnowledgeItem,
   listKnowledgeItems,
+  recordKnowledgeFeedback,
   updateKnowledgeItem,
 } from "./knowledge.repository.js";
-import { knowledgeStatusValues, knowledgeTypeValues, scopeValues } from "../../../src/db/schema.js";
 
 const listKnowledgeQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -31,6 +32,11 @@ const knowledgeWriteSchema = z.object({
 const bulkStatusSchema = z.object({
   ids: z.array(z.string().trim().min(1)).min(1).max(200),
   status: z.enum(["active", "deprecated"]),
+});
+
+const feedbackSchema = z.object({
+  direction: z.enum(["up", "down"]),
+  reason: z.string().trim().max(160).optional(),
 });
 
 export const knowledgeRouter = new Hono()
@@ -61,6 +67,15 @@ export const knowledgeRouter = new Hono()
     const item = await updateKnowledgeItem(c.req.param("id"), c.req.valid("json"));
     if (!item) return c.json({ error: "not found" }, 404);
     return c.json({ item });
+  })
+  .post("/:id/feedback", zValidator("json", feedbackSchema), async (c) => {
+    const result = await recordKnowledgeFeedback({
+      id: c.req.param("id"),
+      direction: c.req.valid("json").direction,
+      reason: c.req.valid("json").reason,
+    });
+    if (!result) return c.json({ error: "not found" }, 404);
+    return c.json({ feedback: result });
   })
   .delete("/:id", async (c) => {
     const item = await deleteKnowledgeItem(c.req.param("id"));

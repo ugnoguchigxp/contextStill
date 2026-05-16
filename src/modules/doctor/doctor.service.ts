@@ -1,5 +1,7 @@
 import { groupedConfig } from "../../config.js";
 import { type DoctorReport, doctorReportSchema } from "../../shared/schemas/doctor.schema.js";
+import { cleanupExpiredAuditLogsSafe } from "../audit/audit-log.service.js";
+import { checkAgenticLlmHealth } from "../llm/agentic-llm.service.js";
 import { requiredTables } from "./doctor.constants.js";
 import type { DoctorOptions, ResolvedDoctorOptions } from "./doctor.types.js";
 import { nowIso } from "./doctor.utils.js";
@@ -10,8 +12,6 @@ import { inspectEmbedding } from "./inspectors/embedding.inspector.js";
 import { inspectMcpSurface } from "./inspectors/mcp.inspector.js";
 import { inspectSourceDistillation } from "./inspectors/source-distillation.inspector.js";
 import { inspectVibeDistillation } from "./inspectors/vibe-distillation.inspector.js";
-import { cleanupExpiredAuditLogsSafe } from "../audit/audit-log.service.js";
-import { checkAgenticLlmHealth } from "../llm/agentic-llm.service.js";
 
 function resolveDoctorOptions(rawOptions?: DoctorOptions): ResolvedDoctorOptions {
   return {
@@ -122,6 +122,8 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
   const agenticLlm = await checkAgenticLlmHealth(groupedConfig.agenticCompile.provider);
   const database = await inspectDatabase({
     freshnessThresholdMinutes: options.freshnessThresholdMinutes,
+    staleDecayFactor: groupedConfig.doctor.knowledgeStaleDecayFactor,
+    zeroUseWarningMinActiveCount: groupedConfig.doctor.knowledgeZeroUseWarningMinActiveCount,
   });
 
   if (!database.reachable) {
@@ -155,6 +157,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
       },
       runs: createEmptyRuns(options),
       hitl: database.hitl,
+      knowledgeLifecycle: database.knowledgeLifecycle,
       mcp,
       agentLogSync,
       vibeDistillation,
@@ -223,6 +226,16 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
             `draft backlog が閾値超過（${database.hitl.draftCount}/${database.hitl.backlogThresholdCount}）。Knowledge UI で一括レビューする`,
           ]
         : []),
+      ...(database.knowledgeLifecycle.zeroUseActiveCount > 0
+        ? [
+            `unused active knowledge を確認する（${database.knowledgeLifecycle.zeroUseActiveCount}/${database.knowledgeLifecycle.activeCount}）`,
+          ]
+        : []),
+      ...(database.knowledgeLifecycle.staleByDecayCount > 0
+        ? [
+            `decay が低い knowledge を再検証する（stale=${database.knowledgeLifecycle.staleByDecayCount}, threshold=${database.knowledgeLifecycle.thresholds.staleDecayFactor}）`,
+          ]
+        : []),
     ],
   };
 
@@ -243,6 +256,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
     },
     runs: compile.runs,
     hitl: database.hitl,
+    knowledgeLifecycle: database.knowledgeLifecycle,
     mcp: mcpReport,
     agentLogSync,
     vibeDistillation,

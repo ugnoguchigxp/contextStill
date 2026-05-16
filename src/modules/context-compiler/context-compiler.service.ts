@@ -1,8 +1,8 @@
 import crypto from "node:crypto";
 import { groupedConfig } from "../../config.js";
 import {
-  type CompileInput,
   type CompileErrorKind,
+  type CompileInput,
   type RetrievalMode,
   compileInputSchema,
 } from "../../shared/schemas/compile.schema.js";
@@ -12,18 +12,19 @@ import {
   contextPackSchema,
 } from "../../shared/schemas/context-pack.schema.js";
 import type { KnowledgeItem, KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
-import { normalizeRepoKey, normalizeRepoPath } from "./query-context.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
+import { recordKnowledgeCompileSelectionSafe } from "../knowledge/knowledge-value.service.js";
 import { retrieveKnowledge } from "../knowledge/knowledge.service.js";
 import { retrieveSources } from "../sources/source-retrieval.service.js";
+import { agenticRefine } from "./agentic-refine.service.js";
 import {
   getCompileFreshnessMarkers,
   insertCompileRun,
   insertContextPackItems,
 } from "./context-compiler.repository.js";
 import { renderContextPackMarkdown } from "./pack-renderer.js";
+import { normalizeRepoKey, normalizeRepoPath } from "./query-context.js";
 import { type Rankable, rankAndDedupe } from "./ranking.service.js";
-import { agenticRefine } from "./agentic-refine.service.js";
 
 const retrievalModeByIntent: Record<CompileInput["intent"], RetrievalMode> = {
   plan: "architecture_context",
@@ -502,6 +503,8 @@ export async function compileContextPack(rawInput: unknown): Promise<{
         score: item.score,
         confidence: item.confidence,
         importance: item.importance,
+        dynamicScore: item.dynamicScore,
+        decayFactor: item.decayFactor,
         type: normalizeKnowledgeType(item.type),
         status: normalizeKnowledgeStatus(item.status),
         sourceRefs: item.sourceRefs,
@@ -653,6 +656,22 @@ export async function compileContextPack(rawInput: unknown): Promise<{
       sourceRefs: item.sourceRefs,
     })),
   );
+
+  const selectedKnowledgeIds = [
+    ...new Set(
+      selectedPackItems
+        .filter((item) => item.itemKind === "rule" || item.itemKind === "procedure")
+        .map((item) => item.itemId),
+    ),
+  ];
+  const agenticAcceptedKnowledgeIds = agenticResult.agenticUsed
+    ? [...new Set(finalKnowledge.map((item) => item.id))]
+    : [];
+  await recordKnowledgeCompileSelectionSafe({
+    runId,
+    selectedKnowledgeIds,
+    agenticAcceptedKnowledgeIds,
+  });
 
   const sourceRefs =
     sourceRefsCandidate.length > 0

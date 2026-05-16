@@ -1,31 +1,3 @@
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import {
-  Pencil,
-  Trash2,
-  Plus,
-  X,
-  Check,
-  ChevronLeft,
-  ChevronRight,
-  ArrowUpDown,
-  ArrowUp,
-  ArrowDown,
-  Search,
-  Globe,
-  Home,
-  Archive,
-  RotateCcw,
-} from "lucide-react";
-import {
-  useReactTable,
-  getCoreRowModel,
-  getSortedRowModel,
-  getPaginationRowModel,
-  flexRender,
-  type ColumnDef,
-  type SortingState,
-} from "@tanstack/react-table";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -40,14 +12,45 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  type ColumnDef,
+  type SortingState,
+  flexRender,
+  getCoreRowModel,
+  getPaginationRowModel,
+  getSortedRowModel,
+  useReactTable,
+} from "@tanstack/react-table";
+import {
+  Archive,
+  ArrowDown,
+  ArrowUp,
+  ArrowUpDown,
+  Check,
+  ChevronLeft,
+  ChevronRight,
+  Globe,
+  Home,
+  Pencil,
+  Plus,
+  RotateCcw,
+  Search,
+  ThumbsDown,
+  ThumbsUp,
+  Trash2,
+  X,
+} from "lucide-react";
+import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  type KnowledgeItem,
+  type KnowledgeType,
+  type KnowledgeWriteInput,
   bulkUpdateKnowledgeStatus,
   createKnowledgeItem,
   deleteKnowledgeItem,
   fetchKnowledgeItems,
-  type KnowledgeItem,
-  type KnowledgeType,
-  type KnowledgeWriteInput,
+  sendKnowledgeFeedback,
   updateKnowledgeItem,
 } from "../repositories/admin.repository";
 
@@ -69,6 +72,16 @@ const normalizeKnowledgeType = (type: string): KnowledgeType =>
 
 const qualityScore = (item: Pick<KnowledgeItem, "importance" | "confidence">): number =>
   Math.round(item.importance * 0.6 + item.confidence * 0.4);
+
+const staleDecayThreshold = 0.5;
+const highValueThreshold = 60;
+
+function formatTimestamp(value: string | null): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return "-";
+  return date.toLocaleDateString("ja-JP");
+}
 
 export function KnowledgePage() {
   const queryClient = useQueryClient();
@@ -94,7 +107,15 @@ export function KnowledgePage() {
   const filteredItems = useMemo(() => {
     const items = knowledge.data ?? [];
     return items.filter((item) => {
-      const statusMatch = displayFilter === "all" || item.status === displayFilter;
+      const statusMatch =
+        displayFilter === "all" ||
+        (displayFilter === "unused-active"
+          ? item.status === "active" && item.compileSelectCount === 0
+          : displayFilter === "stale"
+            ? item.decayFactor < staleDecayThreshold
+            : displayFilter === "high-value"
+              ? item.dynamicScore >= highValueThreshold
+              : item.status === displayFilter);
       const qualityMatch = qualityScore(item) >= minQuality;
       const query = searchQuery.toLowerCase().trim();
       const searchMatch =
@@ -187,6 +208,25 @@ export function KnowledgePage() {
       }
       await queryClient.invalidateQueries({ queryKey: ["knowledge"] });
       await queryClient.invalidateQueries({ queryKey: ["graph"] });
+    },
+    onError: (mutationError) => {
+      setError(mutationError instanceof Error ? mutationError.message : String(mutationError));
+    },
+  });
+
+  const feedbackMutation = useMutation({
+    mutationFn: ({
+      id,
+      direction,
+      reason,
+    }: {
+      id: string;
+      direction: "up" | "down";
+      reason?: string;
+    }) => sendKnowledgeFeedback(id, { direction, reason }),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+      await queryClient.invalidateQueries({ queryKey: ["doctor"] });
     },
     onError: (mutationError) => {
       setError(mutationError instanceof Error ? mutationError.message : String(mutationError));
@@ -406,6 +446,62 @@ export function KnowledgePage() {
         },
       },
       {
+        id: "lifecycle",
+        header: "Lifecycle",
+        cell: ({ row }) => {
+          const item = row.original;
+          const isStale = item.decayFactor < staleDecayThreshold;
+          const isHighValue = item.dynamicScore >= highValueThreshold;
+          const isUnusedActive = item.status === "active" && item.compileSelectCount === 0;
+          return (
+            <div className="font-mono text-xs space-y-1 min-w-[220px]">
+              <div className="flex items-center gap-2">
+                <span className="text-muted-foreground">use</span>
+                <strong>{item.compileSelectCount}</strong>
+                <span className="text-muted-foreground">dyn</span>
+                <strong>{item.dynamicScore.toFixed(1)}</strong>
+                <span className="text-muted-foreground">decay</span>
+                <strong>{item.decayFactor.toFixed(2)}</strong>
+              </div>
+              <div className="flex items-center gap-2 text-[11px]">
+                <Badge variant={isUnusedActive ? "warning" : "secondary"}>unused</Badge>
+                <Badge variant={isStale ? "destructive" : "secondary"}>stale</Badge>
+                <Badge variant={isHighValue ? "success" : "secondary"}>high value</Badge>
+              </div>
+              <div className="text-muted-foreground">
+                compiled {formatTimestamp(item.lastCompiledAt)} / verified{" "}
+                {formatTimestamp(item.lastVerifiedAt)}
+              </div>
+              <div className="flex items-center gap-1">
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-6 w-6"
+                  title="Upvote"
+                  disabled={feedbackMutation.isPending}
+                  onClick={() => feedbackMutation.mutate({ id: item.id, direction: "up" })}
+                >
+                  <ThumbsUp size={12} />
+                </Button>
+                <Button
+                  variant="outline"
+                  size="icon"
+                  className="h-6 w-6"
+                  title="Downvote"
+                  disabled={feedbackMutation.isPending}
+                  onClick={() => feedbackMutation.mutate({ id: item.id, direction: "down" })}
+                >
+                  <ThumbsDown size={12} />
+                </Button>
+                <span className="text-[11px] text-muted-foreground">
+                  +{item.explicitUpvoteCount} / -{item.explicitDownvoteCount}
+                </span>
+              </div>
+            </div>
+          );
+        },
+      },
+      {
         accessorKey: "updatedAt",
         header: "Updated",
         cell: ({ row }) => (
@@ -444,6 +540,8 @@ export function KnowledgePage() {
     ],
     [
       expandedEvidenceId,
+      feedbackMutation.isPending,
+      feedbackMutation.mutate,
       openEdit,
       quickScopeUpdate.isPending,
       quickScopeUpdate.mutate,
@@ -486,20 +584,22 @@ export function KnowledgePage() {
         </div>
         <div className="flex items-center gap-4">
           <div className="flex bg-muted rounded-lg p-1">
-            {["all", "draft", "active", "deprecated"].map((f) => (
-              <button
-                key={f}
-                type="button"
-                onClick={() => setDisplayFilter(f)}
-                className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-                  displayFilter === f
-                    ? "bg-background shadow-sm text-foreground"
-                    : "text-muted-foreground hover:text-foreground"
-                }`}
-              >
-                <span className="capitalize">{f}</span>
-              </button>
-            ))}
+            {["all", "draft", "active", "deprecated", "unused-active", "stale", "high-value"].map(
+              (f) => (
+                <button
+                  key={f}
+                  type="button"
+                  onClick={() => setDisplayFilter(f)}
+                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
+                    displayFilter === f
+                      ? "bg-background shadow-sm text-foreground"
+                      : "text-muted-foreground hover:text-foreground"
+                  }`}
+                >
+                  <span className="capitalize">{f.replace("-", " ")}</span>
+                </button>
+              ),
+            )}
           </div>
 
           <div className="flex items-center gap-2 px-3 py-1 bg-muted rounded-lg border border-transparent">

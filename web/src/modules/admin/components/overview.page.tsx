@@ -1,6 +1,6 @@
-import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useQuery } from "@tanstack/react-query";
 import {
   fetchDoctorReport,
   fetchGraphSnapshot,
@@ -44,6 +44,7 @@ export function OverviewPage() {
 
   const status = doctor.data?.status ?? "degraded";
   const hitl = doctor.data?.hitl;
+  const lifecycle = doctor.data?.knowledgeLifecycle;
   const hitlBacklogWarning =
     Boolean(hitl) &&
     ((hitl?.draftCount ?? 0) > (hitl?.backlogThresholdCount ?? Number.POSITIVE_INFINITY) ||
@@ -88,6 +89,29 @@ export function OverviewPage() {
           label="Oldest Draft (min)"
           value={hitl?.oldestDraftAgeMinutes ?? "-"}
           hint={`threshold ${hitl?.backlogThresholdAgeMinutes ?? "-"}`}
+        />
+        <Metric
+          label="Active Knowledge"
+          value={lifecycle?.activeCount ?? "-"}
+          hint={`unused ${lifecycle?.zeroUseActiveCount ?? "-"}`}
+        />
+        <Metric
+          label="Decay Stale"
+          value={lifecycle?.staleByDecayCount ?? "-"}
+          hint={`threshold < ${lifecycle?.thresholds.staleDecayFactor ?? "-"}`}
+        />
+        <Metric
+          label="Dynamic Score Avg"
+          value={
+            lifecycle?.dynamicScoreAvg === null || lifecycle?.dynamicScoreAvg === undefined
+              ? "-"
+              : lifecycle.dynamicScoreAvg.toFixed(1)
+          }
+          hint={
+            lifecycle?.dynamicScoreP95 === null || lifecycle?.dynamicScoreP95 === undefined
+              ? "p95 -"
+              : `p95 ${lifecycle.dynamicScoreP95.toFixed(1)}`
+          }
         />
       </section>
 

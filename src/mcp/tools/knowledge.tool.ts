@@ -5,15 +5,15 @@ import {
   updateKnowledgeItem,
 } from "../../../api/modules/knowledge/knowledge.repository.js";
 import { db } from "../../db/index.js";
+import { knowledgeItems } from "../../db/schema.js";
+import { checkKnowledgeDuplicate } from "../../lib/knowledge-dedup.js";
+import { normalizeKnowledgeScore } from "../../lib/score-scale.js";
 import { rankAndDedupe } from "../../modules/context-compiler/ranking.service.js";
-import { canTransitionKnowledgeStatus } from "../../modules/lifecycle/lifecycle.service.js";
 import {
   registerKnowledgeFromMarkdown,
   searchKnowledgeCandidates,
 } from "../../modules/knowledge/knowledge.service.js";
-import { knowledgeItems } from "../../db/schema.js";
-import { checkKnowledgeDuplicate } from "../../lib/knowledge-dedup.js";
-import { normalizeKnowledgeScore } from "../../lib/score-scale.js";
+import { canTransitionKnowledgeStatus } from "../../modules/lifecycle/lifecycle.service.js";
 import {
   knowledgeSearchInputSchema,
   listKnowledgeInputSchema,
@@ -74,6 +74,15 @@ export const searchKnowledgeTool: ToolEntry = {
       score: item.score,
       confidence: item.confidence,
       importance: item.importance,
+      dynamicScore: item.dynamicScore,
+      decayFactor: item.decayFactor,
+      compileSelectCount: item.compileSelectCount,
+      agenticAcceptCount: item.agenticAcceptCount,
+      explicitUpvoteCount: item.explicitUpvoteCount,
+      explicitDownvoteCount: item.explicitDownvoteCount,
+      lastCompiledAt: item.lastCompiledAt,
+      lastVerifiedAt: item.lastVerifiedAt,
+      updatedAt: item.updatedAt,
       sourceRefs: item.sourceRefs,
       metadata: item.metadata,
     }));

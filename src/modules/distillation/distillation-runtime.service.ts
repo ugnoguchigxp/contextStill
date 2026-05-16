@@ -136,7 +136,8 @@ function withRequestTimeout<T>(
   });
 }
 
-function parseToolCalls(value: unknown): DistillationToolCall[] {
+/** @internal */
+export function parseToolCalls(value: unknown): DistillationToolCall[] {
   if (!Array.isArray(value)) return [];
 
   return value.flatMap((rawCall, index) => {
@@ -186,7 +187,8 @@ function buildAzureOpenAiUrl(): string {
   return new URL(path, groupedConfig.azureOpenAi.apiBaseUrl).toString();
 }
 
-function parseOpenAiStyleResponse(payload: unknown): DistillationChatResponse {
+/** @internal */
+export function parseOpenAiStyleResponse(payload: unknown): DistillationChatResponse {
   const parsed = payload as {
     choices?: Array<{
       message?: { content?: unknown; tool_calls?: unknown };
@@ -211,7 +213,8 @@ function parseToolArguments(raw: string): unknown {
   }
 }
 
-function buildBedrockToolConfig(
+/** @internal */
+export function buildBedrockToolConfig(
   tools: DistillationToolDefinition[] | undefined,
 ): ToolConfiguration | undefined {
   if (!tools || tools.length === 0) return undefined;
@@ -229,7 +232,8 @@ function buildBedrockToolConfig(
   };
 }
 
-function buildBedrockConversation(messages: DistillationMessage[]): {
+/** @internal */
+export function buildBedrockConversation(messages: DistillationMessage[]): {
   system: SystemContentBlock[];
   messages: Message[];
 } {
@@ -319,7 +323,8 @@ function buildBedrockConversation(messages: DistillationMessage[]): {
   return { system, messages: converted };
 }
 
-function parseBedrockResponse(payload: unknown): DistillationChatResponse {
+/** @internal */
+export function parseBedrockResponse(payload: unknown): DistillationChatResponse {
   const response = payload as {
     output?: {
       message?: {

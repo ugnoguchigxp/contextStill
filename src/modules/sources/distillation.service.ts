@@ -14,7 +14,7 @@ import {
   type DistillationCompletionResult,
   type DistillationMessage,
   type DistillationModelRequest,
-  callLocalLlmCompletionForDistillation,
+  runDistillationCompletion,
   resolveDistillationModel,
 } from "../distillation/distillation-runtime.service.js";
 import { embedOne } from "../embedding/embedding.service.js";
@@ -110,6 +110,10 @@ function truncate(value: string, maxChars: number): string {
   return `${value.slice(0, Math.max(0, maxChars - 24))}\n...[truncated]`;
 }
 
+function textContainsUrl(value: string): boolean {
+  return /https?:\/\//i.test(value);
+}
+
 function normalizeDistillationModelResult(
   result: string | DistillationCompletionResult,
 ): DistillationCompletionResult {
@@ -149,8 +153,10 @@ export function buildSourceDistillationMessages(params: {
     {
       role: "system",
       content: buildDistillationSystemPrompt("wiki", [
-        "次の形式の厳密な JSON のみを返すこと:",
-        '{"candidates":[{"type":"rule|procedure","title":"短い日本語タイトル","body":"再利用可能で実行可能な日本語 knowledge","score":0.0}]}',
+        "出力形式は次のいずれかでよい:",
+        '1) 推奨: 単純 JSON {"candidates":[{"type":"rule|procedure","title":"...","body":"...","score":0.0-1.0}]}',
+        "2) 自然言語: TYPE / TITLE / BODY / SCORE(任意) のラベル付きテキスト",
+        "候補がない場合は空配列または『候補なし』と返してよい。",
       ]),
     },
     {
@@ -175,6 +181,17 @@ export function buildSourceDistillationInputHash(fragment: SourceFragmentForDist
   );
 }
 
+function sourceFragmentContainsUrl(fragment: SourceFragmentForDistillation): boolean {
+  if (textContainsUrl(fragment.sourceUri)) return true;
+  if (textContainsUrl(fragment.content)) return true;
+  return textContainsUrl(
+    JSON.stringify({
+      metadata: fragment.metadata,
+      sourceMetadata: fragment.sourceMetadata,
+    }),
+  );
+}
+
 async function parseDistillationCandidatesWithRepair(params: {
   rawResponse: string;
   messages: DistillationMessage[];
@@ -182,45 +199,14 @@ async function parseDistillationCandidatesWithRepair(params: {
   maxTokens: number;
   model: string;
 }): Promise<{ candidates: DistilledKnowledgeCandidate[]; repaired: boolean }> {
-  try {
-    return {
-      candidates: parseDistillationCandidateList(params.rawResponse),
-      repaired: false,
-    };
-  } catch (initialError) {
-    const repairResponse = await params.modelClient({
-      model: params.model,
-      messages: [
-        ...params.messages,
-        {
-          role: "assistant",
-          content: params.rawResponse,
-        },
-        {
-          role: "user",
-          content:
-            '前回の応答は不正または不完全な JSON でした。同じ schema で候補は最大 1 件に絞り、type/title/body/score のみを含む厳密 JSON を返してください。不確実な場合は {"candidates":[]} を返してください。',
-        },
-      ],
-      maxTokens: params.maxTokens,
-    });
-    const repairedContent = normalizeDistillationModelResult(repairResponse).content;
-
-    try {
-      return {
-        candidates: parseDistillationCandidateList(repairedContent),
-        repaired: true,
-      };
-    } catch (repairError) {
-      const initialMessage =
-        initialError instanceof Error ? initialError.message : String(initialError);
-      const repairMessage =
-        repairError instanceof Error ? repairError.message : String(repairError);
-      throw new Error(
-        `source distillation response invalid after JSON repair: ${repairMessage}; initial error: ${initialMessage}`,
-      );
-    }
-  }
+  void params.messages;
+  void params.modelClient;
+  void params.maxTokens;
+  void params.model;
+  return {
+    candidates: parseDistillationCandidateList(params.rawResponse),
+    repaired: false,
+  };
 }
 
 async function defaultEmbedder(text: string): Promise<number[]> {
@@ -288,7 +274,7 @@ export async function distillSources(
 ): Promise<DistillSourcesSummary> {
   const apply = Boolean(options.apply);
   const distillationModel = resolveDistillationModel();
-  const modelClient = options.modelClient ?? callLocalLlmCompletionForDistillation;
+  const modelClient = options.modelClient ?? runDistillationCompletion;
   const embedder = options.embedder ?? defaultEmbedder;
   await recordAuditLogSafe({
     eventType: auditEventTypes.sourceDistillationRunStarted,
@@ -336,6 +322,7 @@ export async function distillSources(
         });
         const scoreGate = filterDistillationCandidatesByScore(candidates, {
           toolEvents: completion.toolEvents,
+          requireFetchEvidenceForUrlInput: sourceFragmentContainsUrl(fragment),
         });
         const acceptedCandidates = scoreGate.accepted;
 

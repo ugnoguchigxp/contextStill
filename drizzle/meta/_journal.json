@@ -106,6 +106,20 @@
       "when": 1778864400000,
       "tag": "0014_audit_logs",
       "breakpoints": true
+    },
+    {
+      "idx": 15,
+      "version": "7",
+      "when": 1778868000000,
+      "tag": "0015_knowledge_value_lifecycle",
+      "breakpoints": true
+    },
+    {
+      "idx": 16,
+      "version": "7",
+      "when": 1778871600000,
+      "tag": "0016_vibe_distillation_tool_events",
+      "breakpoints": true
     }
   ]
 }

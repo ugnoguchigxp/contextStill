@@ -1,8 +1,8 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
-import { auditLogsRouter } from "../api/modules/audit/audit.routes.js";
 import { listAuditLogsForApi } from "../api/modules/audit/audit.repository.js";
+import { auditLogsRouter } from "../api/modules/audit/audit.routes.js";
 import { contextCompilerRouter } from "../api/modules/context-compiler/context-compiler.routes.js";
 import {
   compilePackForApi,
@@ -15,6 +15,7 @@ import {
   createKnowledgeItem,
   deleteKnowledgeItem,
   listKnowledgeItems,
+  recordKnowledgeFeedback,
   updateKnowledgeItem,
 } from "../api/modules/knowledge/knowledge.repository.js";
 import { knowledgeRouter } from "../api/modules/knowledge/knowledge.routes.js";
@@ -40,6 +41,7 @@ vi.mock("../api/modules/knowledge/knowledge.repository.js", () => ({
   createKnowledgeItem: vi.fn(),
   deleteKnowledgeItem: vi.fn(),
   listKnowledgeItems: vi.fn(),
+  recordKnowledgeFeedback: vi.fn(),
   updateKnowledgeItem: vi.fn(),
 }));
 
@@ -133,6 +135,20 @@ const validDoctorReport: DoctorReport = {
     draftFromVibeDistillationCount: 0,
     backlogThresholdCount: 50,
     backlogThresholdAgeMinutes: 4320,
+  },
+  knowledgeLifecycle: {
+    activeCount: 0,
+    zeroUseActiveCount: 0,
+    staleByDecayCount: 0,
+    staleProcedureCount: 0,
+    dynamicScoreAvg: null,
+    dynamicScoreP95: null,
+    lastCompiledAt: null,
+    lastCompiledAgeMinutes: null,
+    thresholds: {
+      staleDecayFactor: 0.5,
+      zeroUseWarningMinActiveCount: 10,
+    },
   },
   mcp: {
     exposedTools: ["context_compile"],
@@ -231,6 +247,14 @@ describe("API route contract tests", () => {
     vi.mocked(createKnowledgeItem).mockResolvedValue({ id: "new-item-id" });
     vi.mocked(updateKnowledgeItem).mockResolvedValue({ id: "updated-item-id" });
     vi.mocked(deleteKnowledgeItem).mockResolvedValue({ id: "deleted-item-id" });
+    vi.mocked(recordKnowledgeFeedback).mockResolvedValue({
+      id: "updated-item-id",
+      direction: "up",
+      explicitUpvoteCount: 1,
+      explicitDownvoteCount: 0,
+      dynamicScore: 42,
+      lastVerifiedAt: new Date("2026-05-15T00:00:00.000Z"),
+    });
     vi.mocked(recordVibeMemoryWithDiffEntries).mockResolvedValue({
       memory: {
         id: "550e8400-e29b-41d4-a716-446655440001",
@@ -364,6 +388,14 @@ describe("API route contract tests", () => {
         metadata: {},
         sourceRefs: [],
         sourceVibeMemoryIds: [],
+        compileSelectCount: 0,
+        lastCompiledAt: null,
+        agenticAcceptCount: 0,
+        explicitUpvoteCount: 0,
+        explicitDownvoteCount: 0,
+        dynamicScore: 0,
+        decayFactor: 1,
+        lastVerifiedAt: null,
         createdAt: new Date("2026-05-15T00:00:00.000Z"),
         updatedAt: new Date("2026-05-15T00:00:00.000Z"),
       },
@@ -474,6 +506,25 @@ describe("API route contract tests", () => {
     expect(response.status).toBe(409);
     const json = (await response.json()) as { outcome: string };
     expect(json.outcome).toBe("none");
+  });
+
+  test("POST /api/knowledge/:id/feedback returns payload", async () => {
+    const app = buildApp();
+    const response = await app.request(
+      "/api/knowledge/550e8400-e29b-41d4-a716-446655440003/feedback",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ direction: "up" }),
+      },
+    );
+
+    expect(response.status).toBe(200);
+    const json = (await response.json()) as {
+      feedback: { id: string; direction: string };
+    };
+    expect(json.feedback.id).toBe("updated-item-id");
+    expect(json.feedback.direction).toBe("up");
   });
 
   test("POST /api/vibe-memory rejects invalid payload", async () => {

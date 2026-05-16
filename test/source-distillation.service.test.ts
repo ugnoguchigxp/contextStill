@@ -7,7 +7,7 @@ import {
 } from "../src/modules/sources/distillation.repository.js";
 import { upsertKnowledgeFromSource } from "../src/modules/knowledge/knowledge.repository.js";
 import { embedOne } from "../src/modules/embedding/embedding.service.js";
-import { callLocalLlmCompletionForDistillation } from "../src/modules/distillation/distillation-runtime.service.js";
+import { runDistillationCompletion } from "../src/modules/distillation/distillation-runtime.service.js";
 import { checkKnowledgeDuplicate } from "../src/lib/knowledge-dedup.js";
 
 vi.mock("../src/modules/sources/distillation.repository.js");
@@ -36,7 +36,7 @@ describe("Source Distillation Service", () => {
   });
 
   test("runs distillation in dry run mode", async () => {
-    vi.mocked(callLocalLlmCompletionForDistillation).mockResolvedValue({
+    vi.mocked(runDistillationCompletion).mockResolvedValue({
       content: JSON.stringify({
         candidates: [
           {
@@ -62,7 +62,7 @@ describe("Source Distillation Service", () => {
   });
 
   test("applies distillation and inserts knowledge", async () => {
-    vi.mocked(callLocalLlmCompletionForDistillation).mockResolvedValue({
+    vi.mocked(runDistillationCompletion).mockResolvedValue({
       content: JSON.stringify({
         candidates: [
           {
@@ -90,7 +90,7 @@ describe("Source Distillation Service", () => {
   });
 
   test("handles error during distillation", async () => {
-    vi.mocked(callLocalLlmCompletionForDistillation).mockRejectedValue(new Error("LLM Down"));
+    vi.mocked(runDistillationCompletion).mockRejectedValue(new Error("LLM Down"));
 
     const summary = await distillSources({ apply: true });
 

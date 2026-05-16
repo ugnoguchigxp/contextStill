@@ -21,6 +21,24 @@ describe("Ranking Service", () => {
     expect(result[0].id).toBe("2");
   });
 
+  test("applies dynamic score boost when relevance is similar", () => {
+    const items = [
+      { id: "1", title: "Static", content: "", score: 0.6, dynamicScore: 0 },
+      { id: "2", title: "Used", content: "", score: 0.6, dynamicScore: 90 },
+    ];
+    const result = rankAndDedupe(items, 10);
+    expect(result[0].id).toBe("2");
+  });
+
+  test("applies decay penalty when relevance is similar", () => {
+    const items = [
+      { id: "1", title: "Fresh", content: "", score: 0.6, decayFactor: 1 },
+      { id: "2", title: "Old", content: "", score: 0.6, decayFactor: 0.2 },
+    ];
+    const result = rankAndDedupe(items, 10);
+    expect(result[0].id).toBe("1");
+  });
+
   test("applies penalties for deprecated and stale items", () => {
     const items = [
       { id: "1", title: "Deprecated", content: "", score: 0.9, status: "deprecated" },

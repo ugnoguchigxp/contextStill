@@ -3,6 +3,7 @@ import { groupedConfig } from "../../config.js";
 import { db } from "../../db/client.js";
 import { agentDiffEntries, vibeMemories, vibeMemoryDistillationRuns } from "../../db/schema.js";
 import { syncStates } from "../../db/schema.js";
+import type { DistillationToolResult } from "../distillation/distillation-tools.service.js";
 
 export type VibeMemoryForDistillation = typeof vibeMemories.$inferSelect;
 export type AgentDiffEntryForDistillation = typeof agentDiffEntries.$inferSelect;
@@ -75,6 +76,7 @@ export async function upsertVibeMemoryDistillationRun(params: {
   inputHash: string;
   promptVersion: string;
   model: string;
+  toolEvents?: DistillationToolResult[];
   metadata?: Record<string, unknown>;
 }) {
   const [run] = await db
@@ -88,6 +90,7 @@ export async function upsertVibeMemoryDistillationRun(params: {
       inputHash: params.inputHash,
       promptVersion: params.promptVersion,
       model: params.model,
+      toolEvents: params.toolEvents ?? [],
       metadata: params.metadata ?? {},
       updatedAt: new Date(),
     })
@@ -103,6 +106,7 @@ export async function upsertVibeMemoryDistillationRun(params: {
         knowledgeIds: params.knowledgeIds,
         error: params.error ?? null,
         model: params.model,
+        toolEvents: params.toolEvents ?? [],
         metadata: params.metadata ?? {},
         updatedAt: new Date(),
       },

@@ -1,224 +1,618 @@
-# 知識価値ライフサイクル設計書
+# 知識価値ライフサイクル実装計画
 
-> **ステータス**: Draft  
-> **作成日**: 2026-05-15  
-> **対象バージョン**: v0.2（予定）
-
----
-
-## 1. 概要
-
-現在の `knowledge_items` は静的なスコア（`confidence` / `importance`）を持つが、知識の「価値」は時間と使われ方によって動的に変化する。本計画では以下の 2 つの軸でスコアを動的化する。
-
-| 軸 | 方向性 | 主なシグナル |
-|---|---|---|
-| **参照による価値増幅** | 使われるほど価値が上がる | `context_compile` での選択回数、エージェントの明示的フィードバック |
-| **時間経過による陳腐化** | 使われないほど価値が下がる | `lastVerifiedAt`・`updatedAt` からの経過日数、技術スタックのバージョン変化 |
-
-目標は「**エージェントが実際に有用と判断した知識が自動的に浮き上がり、陳腐化した知識が自動的に沈む**」ナレッジエコシステムの実現。
+> **ステータス**: Implementation Ready
+> **作成日**: 2026-05-15
+> **最終更新**: 2026-05-16
+> **対象バージョン**: v0.2
 
 ---
 
-## 2. 参照による価値付与（Reference Amplification）
+## 1. 実装判断
 
-### 2.1 コンセプト
+実装推奨。対象は `memory-router` の中核価値である `context_compile` の品質を上げる変更であり、単なる管理 UI 機能ではない。
 
-```
-compile_run で item が選択される
-        ↓
-context_pack_items に記録される
-        ↓
-使用回数・最終使用日を集計
-        ↓
-dynamic_score に加算
-```
+ただし一括実装は避ける。最初の実装単位は **参照カウント、動的スコア、陳腐化スコア、doctor/UI 可視化** までに限定する。明示フィードバックと名寄せ統合は、基礎指標が実データで安定してから別フェーズで入れる。
 
-### 2.2 計測シグナル
+### この計画で解決する問題
 
-| シグナル | 説明 | 重み（案） |
+- `knowledge_items.importance` / `confidence` は静的で、実際に使われた知識が自然に浮き上がらない。
+- `context_pack_items` には選択履歴があるが、ranking に戻っていない。
+- `lastVerifiedAt` はスキーマ上存在するが、陳腐化計算・doctor・UI に活かされていない。
+- draft/active/deprecated の状態管理はあるが、active knowledge の運用品質を測る指標が弱い。
+
+### 非ゴール
+
+- `context_compile` の public MCP surface を増やして問題を隠さない。
+- stale 判定だけで knowledge を自動 `deprecated` 化しない。
+- raw transcript や source body を ranking に直接混ぜない。
+- 名寄せ・クラスタリングを Phase 1 に含めない。
+- `agentic_search` 的な大きな orchestrator は追加しない。
+
+---
+
+## 2. 現状コードの前提
+
+### 既にある実装
+
+| 領域 | 現状 | 主なファイル |
 |---|---|---|
-| `compile_select_count` | `context_pack_items` に登場した回数 | +0.02/回（最大 +0.4） |
-| `recent_select_count_30d` | 直近 30 日の選択回数 | 鮮度係数: ×1.5 |
-| `agentic_accepted` | `agenticRefine` で保持された回数 | +0.05/回（最大 +0.2） |
-| `explicit_upvote` | ユーザー/エージェントからの明示的フィードバック | +0.15/回 |
-| `explicit_downvote` | ネガティブフィードバック | −0.20/回 |
+| Knowledge storage | `knowledge_items` に `type/status/scope/title/body/appliesTo/confidence/importance/lastVerifiedAt` がある | `src/db/schema.ts` |
+| Compile history | `context_compile_runs` と `context_pack_items` が選択履歴を保存している | `src/modules/context-compiler/context-compiler.repository.ts` |
+| Ranking | `rankAndDedupe` が text/vector score、importance、confidence、source refs、error hints を加味する | `src/modules/context-compiler/ranking.service.ts` |
+| Compile flow | `compileContextPack` が retrieval、agentic refine、token budget、pack item insert を実行する | `src/modules/context-compiler/context-compiler.service.ts` |
+| Knowledge API/UI | CRUD、bulk status、Knowledge page がある | `api/modules/knowledge/*`, `web/src/modules/admin/components/knowledge.page.tsx` |
+| Doctor | DB、pgvector、embedding、MCP surface、compile health、draft backlog を診断する | `src/modules/doctor/*` |
+| Quality gates | unit/build の `verify` と DB/MCP の `verify:mcp` がある | `package.json`, `.github/workflows/verify.yml` |
 
-### 2.3 スキーマ拡張案
+### 設計原則
+
+- `context_pack_items` を実績の正本とし、`knowledge_items` のカウンタは ranking/UI 用の denormalized cache とする。
+- 動的スコアは 0-100 scale で保存し、ranking では `toUnitKnowledgeScore` と同じ考え方で 0-1 に正規化する。
+- 陳腐化係数は保存せず、ranking/doctor/UI 表示時に `lastVerifiedAt ?? updatedAt` から計算する。
+- compile の主処理は、価値指標の更新に失敗しても失敗扱いにしない。ただし audit と doctor で検出可能にする。
+
+---
+
+## 3. データモデル
+
+### 3.1 追加 migration
+
+次の migration を追加する。
+
+- `drizzle/0015_knowledge_value_lifecycle.sql`
+- `drizzle/meta/_journal.json`
+- `src/db/schema.ts`
+
+`knowledge_items` に追加するカラム:
 
 ```sql
--- knowledge_items に追加するカラム
-compile_select_count    INTEGER    DEFAULT 0 NOT NULL,
-last_compiled_at        TIMESTAMP,
-agentic_accept_count    INTEGER    DEFAULT 0 NOT NULL,
-dynamic_score           REAL       DEFAULT 0 NOT NULL,
+alter table knowledge_items
+  add column compile_select_count integer not null default 0,
+  add column last_compiled_at timestamp,
+  add column agentic_accept_count integer not null default 0,
+  add column explicit_upvote_count integer not null default 0,
+  add column explicit_downvote_count integer not null default 0,
+  add column dynamic_score real not null default 0;
+
+create index knowledge_items_last_compiled_at_idx
+  on knowledge_items (last_compiled_at);
+
+create index knowledge_items_dynamic_score_idx
+  on knowledge_items (dynamic_score);
 ```
 
-### 2.4 集計タイミング
+補足:
 
-- `insertContextPackItems` 実行後、バックグラウンドで `UPDATE knowledge_items` を発行
-- `dynamic_score` は `importance` / `confidence` の基礎スコアに加算した **合成スコア** として `ranking.service.ts` に注入
-- 集計は非同期・非ブロッキング（`recordAuditLogSafe` と同様のパターン）
+- `last_verified_at` は既存カラムを使う。
+- `dynamic_score` は 0-100 scale。0 は「使用実績なし」であり、品質が低いという意味ではない。
+- `explicit_*_count` は Phase 1 では schema だけ入れてもよい。API/UI は Phase 3 で使う。
 
-### 2.5 ランキングへの統合
+### 3.2 バックフィル
 
-```typescript
-// ranking.service.ts の rankAndDedupe への入力に dynamicScore を追加
-const compositeScore =
-  base.importance * 0.35 +
-  base.confidence * 0.25 +
-  base.dynamicScore * 0.25 +   // ← NEW
-  base.sourceRefCount * 0.15;
-```
+既存の `context_pack_items` から初期値を作る CLI を追加する。
+
+- `src/cli/backfill-knowledge-value.ts`
+- `package.json`: `backfill:knowledge-value`
+
+仕様:
+
+1. `context_pack_items.itemKind in ('rule', 'procedure')` を対象にする。
+2. `context_pack_items.itemId` を `knowledge_items.id` として join する。
+3. `compile_select_count = count(*)`
+4. `last_compiled_at = max(context_pack_items.created_at)`
+5. `dynamic_score = computeDynamicScore(...)`
+6. `updated_at` は変更しない。これは knowledge 本文の更新ではなく派生値の更新であるため。
+
+受け入れ条件:
+
+- 同じ CLI を複数回実行しても同じ結果になる。
+- 存在しない `itemId` や `file_hint` は無視される。
+- 実行結果は JSON で `updatedCount`, `ignoredCount`, `dryRun` を返す。
 
 ---
 
-## 3. 時間経過による陳腐化（Temporal Decay）
+## 4. Core Service
 
-### 3.1 コンセプト
+### 4.1 新規 service
 
-知識は時間が経つほど陳腐化リスクが高まる。特に：
-- ライブラリのバージョンを含む手順（`procedure`）
-- 特定のフレームワーク制約に依存するルール
+追加ファイル:
 
-```
-lastVerifiedAt（または updatedAt）からの経過日数
-        ↓
-decay_factor の計算（指数減衰）
-        ↓
-dynamic_score からの減算
-```
+- `src/modules/knowledge/knowledge-value.service.ts`
+- 必要なら `src/modules/knowledge/knowledge-value.repository.ts`
 
-### 3.2 減衰モデル
-
-**指数減衰関数：**
-
-```
-decay_factor(t) = exp(-λ × t)
-
-t  = 最終検証日からの経過日数
-λ  = 知識タイプ別の減衰定数
-```
-
-| 知識タイプ | λ（減衰定数） | half-life（半減期） |
-|---|---|---|
-| `procedure`（手順） | 0.004 | 約 180 日 |
-| `rule`（ルール） | 0.001 | 約 700 日 |
-| `global` scope | λ × 0.5 | 2 倍長持ち |
-
-> **根拠**: 手順は技術スタックの変化に敏感（6 ヶ月で別物になりやすい）。ルールは原則に近いため減衰が遅い。
-
-### 3.3 実装アプローチ
-
-陳腐化スコアの計算は **ランキング時にリアルタイム計算**（DBに保存しない）を基本とする：
+公開する関数:
 
 ```typescript
-function computeDecayFactor(item: {
-  type: KnowledgeItem["type"];
-  scope: KnowledgeItem["scope"];
+export type KnowledgeValueSignals = {
+  compileSelectCount: number;
+  recentSelectCount30d: number;
+  agenticAcceptCount: number;
+  explicitUpvoteCount: number;
+  explicitDownvoteCount: number;
+};
+
+export function computeDynamicScore(signals: KnowledgeValueSignals): number;
+
+export function computeDecayFactor(input: {
+  type: "rule" | "procedure";
+  scope: "repo" | "global";
   lastVerifiedAt: Date | null;
   updatedAt: Date;
-}): number {
-  const referenceDate = item.lastVerifiedAt ?? item.updatedAt;
-  const daysSince = (Date.now() - referenceDate.getTime()) / (1000 * 60 * 60 * 24);
-  const lambda = item.type === "procedure" ? 0.004 : 0.001;
-  const scopeFactor = item.scope === "global" ? 0.5 : 1.0;
-  return Math.exp(-lambda * scopeFactor * daysSince);
+  now?: Date;
+}): number;
+
+export async function recordKnowledgeCompileSelectionSafe(input: {
+  runId: string;
+  selectedKnowledgeIds: string[];
+  agenticAcceptedKnowledgeIds: string[];
+}): Promise<void>;
+```
+
+### 4.2 dynamic score
+
+初期実装は単純でよい。重要なのは、score scale を既存の `importance/confidence` と揃えること。
+
+```typescript
+dynamicScore =
+  min(35, log1p(compileSelectCount) * 10)
+  + min(25, recentSelectCount30d * 3)
+  + min(20, agenticAcceptCount * 4)
+  + min(20, explicitUpvoteCount * 10)
+  - min(40, explicitDownvoteCount * 15)
+```
+
+最後に `0..100` へ clamp する。
+
+理由:
+
+- compile 回数は長期的には対数で効かせる。
+- 直近 30 日の選択は freshness として強めに効かせる。
+- agentic refine に残った回数は compile 選択より強い肯定シグナルとして扱う。
+- downvote は上振れ抑制として強く効かせる。
+
+### 4.3 decay factor
+
+陳腐化係数は `0..1` で計算する。
+
+```typescript
+lambda =
+  type === "procedure" ? 0.004 :
+  type === "rule" ? 0.001 :
+  0.001;
+
+scopeFactor = scope === "global" ? 0.5 : 1.0;
+days = now - (lastVerifiedAt ?? updatedAt);
+decayFactor = exp(-lambda * scopeFactor * days);
+```
+
+この値は DB に保存しない。ranking と doctor/UI で都度計算する。
+
+---
+
+## 5. Compile Flow Integration
+
+対象:
+
+- `src/modules/context-compiler/context-compiler.service.ts`
+- `src/modules/context-compiler/context-compiler.repository.ts`
+- `src/modules/knowledge/knowledge-value.service.ts`
+- `test/context-compiler.service.test.ts`
+- `test/context-compiler.integration.test.ts`
+
+実装:
+
+1. `compileContextPack` で `selectedPackItems` を作った後、knowledge item の ID だけを抽出する。
+   - `item.itemKind in ('rule', 'procedure')`
+   - `item.itemId` を knowledge ID として使う。
+2. `agenticResult.agenticUsed === true` のときだけ、`finalKnowledge` の ID を `agenticAcceptedKnowledgeIds` として渡す。
+3. `insertContextPackItems` の後に `recordKnowledgeCompileSelectionSafe` を呼ぶ。
+4. 価値指標更新に失敗しても compile response は壊さない。
+5. 失敗時は `audit_logs` に `KNOWLEDGE_VALUE_UPDATE_FAILED` を記録する。
+
+更新 SQL の考え方:
+
+```sql
+update knowledge_items
+set
+  compile_select_count = compile_select_count + 1,
+  agentic_accept_count = agentic_accept_count + case when id in (...) then 1 else 0 end,
+  last_compiled_at = now(),
+  dynamic_score = <recomputed score>,
+  last_verified_at = coalesce(last_verified_at, now())
+where id in (...);
+```
+
+注意:
+
+- `updated_at` は変えない。本文・状態・metadata の更新ではないため。
+- `last_verified_at` は初回 compile 選択時だけ埋める。毎回 compile で更新すると decay が働かなくなる。
+- `status = deprecated` の item が compile に入った場合も記録はするが、ranking 側で強く下げる。
+
+受け入れ条件:
+
+- `context_compile` が active knowledge を pack に入れると `compile_select_count` が増える。
+- `agenticRefine` が有効で選別した item は `agentic_accept_count` も増える。
+- `file_hint` はカウントされない。
+- カウンタ更新失敗時も `context_compile` は pack を返す。
+
+---
+
+## 6. Ranking Integration
+
+対象:
+
+- `src/modules/context-compiler/ranking.service.ts`
+- `src/modules/knowledge/knowledge.repository.ts`
+- `src/mcp/tools/knowledge.tool.ts`
+- `test/ranking.service.test.ts`
+- `test/context-compiler.test.ts`
+
+実装:
+
+1. `KnowledgeSearchResult` に以下を追加する。
+   - `dynamicScore`
+   - `compileSelectCount`
+   - `agenticAcceptCount`
+   - `explicitUpvoteCount`
+   - `explicitDownvoteCount`
+   - `lastCompiledAt`
+   - `lastVerifiedAt`
+   - `updatedAt`
+   - `decayFactor`
+2. text search / vector search の select に追加カラムを含める。
+3. repository で `decayFactor` を計算して返す。
+4. `Rankable` に `dynamicScore?: number` と `decayFactor?: number` を追加する。
+5. `weightedScore` に次の要素を加える。
+
+```typescript
+const dynamicBoost = toUnitKnowledgeScore(item.dynamicScore, 0) * 0.12;
+const decayPenalty = (1 - (item.decayFactor ?? 1)) * 0.12;
+```
+
+既存の `score`、`importance`、`confidence`、source refs、error hints は維持する。dynamic score は relevance を置き換えるものではなく、同程度に関連する候補の優先度を決める補助シグナルである。
+
+受け入れ条件:
+
+- 同じ text/vector score の候補では、使用実績のある item が上に来る。
+- 古い procedure は同条件の新しい procedure より下がる。
+- high-confidence/high-importance で source refs がある item は、使用回数が少なくても極端に沈まない。
+- 0-1 scale と 0-100 scale の混在バグを再発させない。
+
+---
+
+## 7. Doctor / Diagnostics
+
+対象:
+
+- `src/shared/schemas/doctor.schema.ts`
+- `src/modules/doctor/inspectors/database.inspector.ts`
+- `src/modules/doctor/doctor.service.ts`
+- `api/modules/doctor/doctor.service.ts`
+- `web/src/modules/admin/components/overview.page.tsx`
+- `test/doctor.service.test.ts`
+- `test/schemas.test.ts`
+
+追加する doctor section:
+
+```typescript
+knowledgeLifecycle: {
+  activeCount: number;
+  zeroUseActiveCount: number;
+  staleByDecayCount: number;
+  staleProcedureCount: number;
+  dynamicScoreAvg: number | null;
+  dynamicScoreP95: number | null;
+  lastCompiledAt: string | null;
+  lastCompiledAgeMinutes: number | null;
+  thresholds: {
+    staleDecayFactor: number; // default 0.5
+    zeroUseWarningMinActiveCount: number; // default 10
+  };
 }
 ```
 
-### 3.4 陳腐化アラート
+doctor reasons:
 
-`doctor` コマンドに陳腐化チェックを追加：
+- `KNOWLEDGE_ZERO_USE_HIGH`
+- `KNOWLEDGE_DECAY_STALE_HIGH`
+- `KNOWLEDGE_VALUE_QUERY_FAILED`
 
+初期しきい値:
+
+- active knowledge が 10 件以上あり、その 70% 以上が `compile_select_count = 0` なら warning。
+- `decayFactor < 0.5` の active knowledge が 10 件以上なら warning。
+- しきい値は `groupedConfig.doctor` に追加する。
+
+受け入れ条件:
+
+- `bun run doctor` だけで、知識が使われているか、古すぎるか、最後に compile で使われた時刻が分かる。
+- optional な lifecycle 指標の計算失敗は doctor 全体を failed にしない。
+- schema と API/UI の型が一致する。
+
+---
+
+## 8. Knowledge API / UI
+
+対象:
+
+- `api/modules/knowledge/knowledge.repository.ts`
+- `api/modules/knowledge/knowledge.routes.ts`
+- `web/src/modules/admin/repositories/admin.repository.ts`
+- `web/src/modules/admin/components/knowledge.page.tsx`
+- `web/src/modules/admin/components/overview.page.tsx`
+- `test/api.routes.test.ts`
+
+### Phase 1 UI
+
+Knowledge list に追加する表示:
+
+- `compileSelectCount`
+- `lastCompiledAt`
+- `dynamicScore`
+- `decayFactor`
+- `lastVerifiedAt`
+
+フィルタ:
+
+- `unused active`: `status=active` かつ `compileSelectCount=0`
+- `stale`: `decayFactor < 0.5`
+- `high value`: `dynamicScore >= 60`
+
+### Phase 3 feedback API
+
+Phase 1/2 が安定した後に追加する。
+
+Endpoint:
+
+```http
+POST /api/knowledge/:id/feedback
 ```
-⚠️  STALE KNOWLEDGE DETECTED
-   15 items have decay_factor < 0.5 (last verified > 6 months ago)
-   Recommended: bun run distill:sources --apply --stale-only
+
+Input:
+
+```json
+{
+  "direction": "up" | "down",
+  "reason": "optional short note"
+}
 ```
 
-### 3.5 `lastVerifiedAt` の更新トリガー
+挙動:
 
-| トリガー | アクション |
-|---|---|
-| エージェントが `register_knowledge` で同内容を再登録 | `lastVerifiedAt = NOW()` にリセット |
-| `agentic_accept_count` が増加 | `lastVerifiedAt = NOW()` にリセット |
-| 再蒸留で同一 contentHash のアイテムがヒット | `lastVerifiedAt = NOW()` にリセット |
-| ユーザーが管理 UI でステータスを変更 | `lastVerifiedAt = NOW()` にリセット |
+- `explicit_upvote_count` または `explicit_downvote_count` を increment。
+- `dynamic_score` を再計算。
+- `audit_logs` に `KNOWLEDGE_FEEDBACK_RECORDED` を保存。
+- upvote の場合のみ `last_verified_at = now()` に更新してよい。
 
----
-
-## 4. 名寄せ・重複消込（Deduplication & Canonicalization）
-
-> **Note**: 別ドキュメント `knowledge-deduplication-plan.md` で詳述予定。本書ではライフサイクルとの関係のみ記載。
-
-重複知識は以下の手順でライフサイクル価値を統合する：
-
-1. **名寄せ判定**: bigram 類似度 + ベクトルコサイン類似度でクラスタリング
-2. **正規形の選択**: `compile_select_count` が最大のアイテムを canonical として保持
-3. **価値の継承**: 非 canonical アイテムの `compile_select_count` / `dynamic_score` を canonical に加算してから `deprecated` 化
+MCP tool は初期追加しない。public MCP surface は contract test で固定されているため、agent からの feedback 専用 tool が必要になった時点で、`docs/mcp-tools.md` と `test/mcp.contract.test.ts` を同時に更新して判断する。
 
 ---
 
-## 5. 合成スコアの最終形
+## 9. lastVerifiedAt 更新ルール
 
+`lastVerifiedAt` は「実際に信頼できる確認が入った時」だけ更新する。
+
+| トリガー | 更新するか | 理由 |
+|---|---:|---|
+| create knowledge | Yes | 人間/API/agent が新規登録した時点を初回確認日とする |
+| draft -> active | Yes | 人間または明示操作による採用判断 |
+| active -> deprecated | No | 確認ではなく廃止判断 |
+| body/title 更新 | Yes | 内容を再確認したとみなす |
+| metadata のみ更新 | No | 本文品質の確認ではない |
+| compile に選ばれた | 初回 null の場合のみ Yes | 使用だけで毎回 fresh 扱いにしない |
+| upvote | Yes | 明示的な肯定 |
+| downvote | No | 肯定ではない |
+| source/vibe 再蒸留で同一 contentHash が再発見された | Yes | 同じ知識が再検証されたとみなす |
+
+対象:
+
+- `api/modules/knowledge/knowledge.repository.ts`
+- `src/modules/knowledge/knowledge.repository.ts`
+- `src/mcp/tools/knowledge.tool.ts`
+- distillation の保存経路
+
+---
+
+## 10. 実装フェーズ
+
+### Phase 0: Preparation
+
+- [ ] `docs/knowledge-value-lifecycle.md` をこの実装計画として確定する。
+- [ ] 既存 tests の baseline を確認する。
+- [ ] migration 番号が `0015` で衝突しないことを確認する。
+
+検証:
+
+```bash
+git status --short
+bun run verify
 ```
-final_score =
-  importance  × 0.30  (基礎品質)
-  + confidence × 0.20  (信頼度)
-  + dynamic    × 0.25  (使用実績)
-  + decay      × 0.15  (陳腐化係数: 0.0〜1.0)
-  + source_ref × 0.10  (証拠充実度)
+
+### Phase 1: Usage Signals
+
+- [ ] `0015_knowledge_value_lifecycle.sql` を追加する。
+- [ ] `src/db/schema.ts` に追加カラムと indexes を反映する。
+- [ ] `knowledge-value.service.ts` を追加する。
+- [ ] `computeDynamicScore` / `computeDecayFactor` の unit test を追加する。
+- [ ] `recordKnowledgeCompileSelectionSafe` を実装する。
+- [ ] `compileContextPack` から選択済み knowledge ID を記録する。
+- [ ] `backfill:knowledge-value` CLI を追加する。
+
+検証:
+
+```bash
+bun run verify
+DATABASE_URL=postgres://postgres:postgres@localhost:7889/memory_router_test bun run test:integration
 ```
 
-> **実装上の注意**: `context-compiler.service.ts` の `applySectionTokenBudget` 前のランキングにのみ反映し、DB 側のカラムとは分離を保つこと（計算モデルの変更が容易になる）。
+### Phase 2: Ranking + Doctor + UI
+
+- [ ] `KnowledgeSearchResult` に lifecycle fields を追加する。
+- [ ] text/vector repository select に lifecycle fields を追加する。
+- [ ] `rankAndDedupe` に `dynamicScore` / `decayFactor` を反映する。
+- [ ] doctor schema に `knowledgeLifecycle` を追加する。
+- [ ] database inspector に lifecycle 集計を追加する。
+- [ ] Overview / Knowledge UI に usage/decay/dynamic score を表示する。
+- [ ] API repository / frontend repository の型を更新する。
+
+検証:
+
+```bash
+bun run verify
+DATABASE_URL=postgres://postgres:postgres@localhost:7889/memory_router_test bun run test:integration
+bun run doctor
+```
+
+### Phase 3: Explicit Feedback
+
+- [ ] `POST /api/knowledge/:id/feedback` を追加する。
+- [ ] `KNOWLEDGE_FEEDBACK_RECORDED` audit event を追加する。
+- [ ] Knowledge UI に up/down 操作を追加する。
+- [ ] feedback 後の dynamic score 再計算を追加する。
+- [ ] 必要性が確認できた場合だけ MCP feedback tool を検討する。
+
+検証:
+
+```bash
+bun run verify
+DATABASE_URL=postgres://postgres:postgres@localhost:7889/memory_router_test bun run test:integration
+```
+
+MCP tool を増やした場合のみ追加:
+
+```bash
+bun run verify:mcp
+```
+
+### Phase 4: Dedup Integration
+
+このフェーズは本計画では実装しない。Phase 1-3 の実データを見てから別計画に分離する。
+
+候補:
+
+- `compile_select_count` が高い item を canonical 候補にする。
+- duplicate item を `deprecated` 化する時に usage counters を canonical に移す。
+- 自動統合は confidence 0.98 以上に限定し、それ以外は UI review にする。
 
 ---
 
-## 6. 実装ロードマップ
+## 11. 受け入れ基準
 
-### Phase 1: 参照カウント基盤（優先度: 高）
+Phase 1-2 完了条件:
 
-- [ ] `knowledge_items` に `compile_select_count`, `last_compiled_at`, `agentic_accept_count`, `dynamic_score` を追加（マイグレーション）
-- [ ] `insertContextPackItems` 後に非同期でカウンタをインクリメント
-- [ ] `ranking.service.ts` に `dynamicScore` 入力を追加
-- [ ] `doctor` に参照ゼロのアイテム一覧を追加
+- `context_compile` が knowledge を選択すると、該当 item の `compile_select_count` と `last_compiled_at` が更新される。
+- `agenticRefine` が実際に使われた場合のみ `agentic_accept_count` が更新される。
+- `rankAndDedupe` が dynamic score と decay factor を考慮する。
+- `doctor` が knowledge lifecycle health を返す。
+- Knowledge UI で unused/stale/high value を見分けられる。
+- 既存 MCP public surface は変わらない。
+- `bun run verify` と DB integration が通る。
 
-### Phase 2: 陳腐化計算（優先度: 中）
+品質上の追加条件:
 
-- [ ] `computeDecayFactor` をランキングサービスに組み込み
-- [ ] `doctor` に陳腐化アラートを追加
-- [ ] 管理 UI の Knowledge ページに decay_factor インジケータ表示
-- [ ] `distill:sources --stale-only` フラグの追加
-
-### Phase 3: フィードバックループ（優先度: 中）
-
-- [ ] `explicit_upvote` / `explicit_downvote` エンドポイント（`PUT /api/knowledge/:id/feedback`）
-- [ ] エージェントからのフィードバックを MCP ツール経由で受け付け
-- [ ] フィードバック履歴を `audit_logs` に記録
-
-### Phase 4: 名寄せ統合（優先度: 低→中）
-
-- [ ] 重複判定バッチ（`bun run dedup:knowledge`）の実装
-- [ ] 管理 UI に重複候補テーブルの表示
-- [ ] 自動名寄せ（confidence > 0.98 の場合のみ自動実行）
+- 0-100 scale と 0-1 scale の混在が test で防がれている。
+- 価値指標の更新失敗は compile を壊さず、audit/doctor で検出できる。
+- migration は additive で、既存データを破壊しない。
+- `updated_at` は価値指標の派生更新だけでは変えない。
 
 ---
 
-## 7. リスクと緩和策
+## 12. ロールバック方針
 
-| リスク | 緩和策 |
-|---|---|
-| 人気があるだけで不正確な知識が高スコアに | `confidence` を別軸で保持し、フィードバックで下げられる設計 |
-| 陳腐化係数が強すぎて有用な知識が埋もれる | λ を設定可能にし、デフォルトは保守的な値に設定 |
-| 参照カウントのパフォーマンス影響 | 非同期・バッファード更新（10 件ごとにバッチ UPDATE） |
-| 名寄せの誤判定 | 自動消込は confidence > 0.98 以上に限定し、それ以下は UI でレビュー |
+コード rollback:
+
+- ranking から `dynamicScore` / `decayFactor` の加点減点を外せば、既存の text/vector + quality ranking に戻せる。
+- compile flow から `recordKnowledgeCompileSelectionSafe` 呼び出しを外せば、カウンタ更新は止まる。
+- doctor/UI は追加 section を非表示にできる。
+
+DB rollback:
+
+- 追加カラムは ranking/UI 用 cache なので、残っていても既存機能を壊さない。
+- 物理削除が必要な場合だけ rollback migration で追加 indexes と columns を drop する。
+
+運用 rollback:
+
+- `backfill:knowledge-value` は idempotent なので、誤実行時は再実行で復元できる。
+- `dynamic_score` が不自然な場合は全件 0 に戻して再計算できる。
 
 ---
 
-## 8. 参考
+## 13. 変更対象一覧
 
-- [Context Compile MCP Improvement Plan](./context-compile-mcp-improvement-plan.md)
-- [Improvement Plan](./improvement-plan.md)
-- `src/modules/context-compiler/ranking.service.ts` — 現在のランキングロジック
-- `src/modules/context-compiler/context-compiler.service.ts` — コンパイル本体
-- `src/db/schema.ts` — `knowledge_items` スキーマ定義
+必須:
+
+- `drizzle/0015_knowledge_value_lifecycle.sql`
+- `drizzle/meta/_journal.json`
+- `src/db/schema.ts`
+- `src/modules/knowledge/knowledge-value.service.ts`
+- `src/modules/context-compiler/context-compiler.service.ts`
+- `src/modules/context-compiler/ranking.service.ts`
+- `src/modules/knowledge/knowledge.repository.ts`
+- `src/modules/doctor/inspectors/database.inspector.ts`
+- `src/modules/doctor/doctor.service.ts`
+- `src/shared/schemas/doctor.schema.ts`
+- `api/modules/knowledge/knowledge.repository.ts`
+- `web/src/modules/admin/repositories/admin.repository.ts`
+- `web/src/modules/admin/components/knowledge.page.tsx`
+- `web/src/modules/admin/components/overview.page.tsx`
+- `package.json`
+
+テスト:
+
+- `test/ranking.service.test.ts`
+- `test/context-compiler.service.test.ts`
+- `test/context-compiler.repository.test.ts`
+- `test/repositories.integration.test.ts`
+- `test/doctor.service.test.ts`
+- `test/api.routes.test.ts`
+- `test/schemas.test.ts`
+
+Phase 3 のみ:
+
+- `api/modules/knowledge/knowledge.routes.ts`
+- `src/modules/audit/audit-log.service.ts`
+- feedback 用 UI components/tests
+- MCP tool を増やす場合は `src/mcp/tools/*`, `docs/mcp-tools.md`, `test/mcp.contract.test.ts`
+
+---
+
+## 14. 実装時の検証コマンド
+
+通常:
+
+```bash
+bun run verify
+```
+
+DB 変更を含むため必須:
+
+```bash
+DATABASE_URL=postgres://postgres:postgres@localhost:7889/memory_router_test bun run test:integration
+```
+
+MCP surface または MCP response shape を変えた場合:
+
+```bash
+bun run verify:mcp
+```
+
+動作確認:
+
+```bash
+bun run doctor
+bun run compile --goal "knowledge lifecycle の ranking を確認する" --intent review --json
+```
+
+UI を触った場合:
+
+```bash
+bun run test:e2e
+```
+
+e2e が実行できない環境では、代替として以下を実リクエストで確認する。
+
+```bash
+bun run dev
+curl -s http://localhost:5173/api/doctor
+curl -s "http://localhost:5173/api/knowledge?limit=5"
+```

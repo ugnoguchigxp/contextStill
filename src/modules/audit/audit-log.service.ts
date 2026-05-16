@@ -10,6 +10,7 @@ export const auditEventTypes = {
   knowledgeUpdated: "KNOWLEDGE_UPDATED",
   knowledgeDeleted: "KNOWLEDGE_DELETED",
   knowledgeStatusChanged: "KNOWLEDGE_STATUS_CHANGED",
+  knowledgeFeedbackRecorded: "KNOWLEDGE_FEEDBACK_RECORDED",
   sourceImported: "SOURCE_IMPORTED",
   sourceUpdated: "SOURCE_UPDATED",
   sourceDeleted: "SOURCE_DELETED",
@@ -231,4 +232,9 @@ export async function cleanupExpiredAuditLogsSafe(input?: {
     console.warn(`[audit-log] cleanup failed trigger=${trigger}: ${message}`);
     return null;
   }
+}
+
+/** @internal - For testing only */
+export function resetAuditLogStatus(): void {
+  auditLogDisabledReason = null;
 }

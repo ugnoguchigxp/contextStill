@@ -78,5 +78,10 @@ export type GroupedConfig = {
   distillation: {
     provider: DistillationProvider;
   };
-  doctor: { freshnessThresholdMinutes: number; degradedRateThreshold: number };
+  doctor: {
+    freshnessThresholdMinutes: number;
+    degradedRateThreshold: number;
+    knowledgeStaleDecayFactor: number;
+    knowledgeZeroUseWarningMinActiveCount: number;
+  };
 };

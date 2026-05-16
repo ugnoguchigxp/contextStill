@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
+import { compileInputSchema } from "../src/shared/schemas/compile.schema.ts";
+import { doctorReportSchema } from "../src/shared/schemas/doctor.schema.ts";
 import {
   knowledgeSearchInputSchema,
   registerKnowledgeInputSchema,
 } from "../src/shared/schemas/knowledge.schema.ts";
-import { compileInputSchema } from "../src/shared/schemas/compile.schema.ts";
-import { doctorReportSchema } from "../src/shared/schemas/doctor.schema.ts";
 import { recordVibeMemoryInputSchema } from "../src/shared/schemas/vibe-memory.schema.ts";
 
 describe("Shared Schemas", () => {
@@ -69,6 +69,20 @@ describe("Shared Schemas", () => {
         draftFromVibeDistillationCount: 0,
         backlogThresholdCount: 50,
         backlogThresholdAgeMinutes: 4320,
+      },
+      knowledgeLifecycle: {
+        activeCount: 0,
+        zeroUseActiveCount: 0,
+        staleByDecayCount: 0,
+        staleProcedureCount: 0,
+        dynamicScoreAvg: null,
+        dynamicScoreP95: null,
+        lastCompiledAt: null,
+        lastCompiledAgeMinutes: null,
+        thresholds: {
+          staleDecayFactor: 0.5,
+          zeroUseWarningMinActiveCount: 10,
+        },
       },
       mcp: {
         exposedTools: [],

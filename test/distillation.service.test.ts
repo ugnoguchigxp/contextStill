@@ -8,7 +8,7 @@ import {
 } from "../src/modules/vibe-memory/distillation.repository.js";
 import { upsertKnowledgeFromSource } from "../src/modules/knowledge/knowledge.repository.js";
 import { embedOne } from "../src/modules/embedding/embedding.service.js";
-import { callLocalLlmCompletionForDistillation } from "../src/modules/distillation/distillation-runtime.service.js";
+import { runDistillationCompletion } from "../src/modules/distillation/distillation-runtime.service.js";
 import { checkKnowledgeDuplicate } from "../src/lib/knowledge-dedup.js";
 
 vi.mock("../src/modules/vibe-memory/distillation.repository.js");
@@ -37,7 +37,7 @@ describe("Vibe Memory Distillation Service", () => {
   });
 
   test("runs distillation in dry run mode", async () => {
-    vi.mocked(callLocalLlmCompletionForDistillation).mockResolvedValue({
+    vi.mocked(runDistillationCompletion).mockResolvedValue({
       content: JSON.stringify({
         candidates: [
           {
@@ -64,7 +64,7 @@ describe("Vibe Memory Distillation Service", () => {
   });
 
   test("applies distillation and inserts knowledge", async () => {
-    vi.mocked(callLocalLlmCompletionForDistillation).mockResolvedValue({
+    vi.mocked(runDistillationCompletion).mockResolvedValue({
       content: JSON.stringify({
         candidates: [
           {
@@ -93,7 +93,7 @@ describe("Vibe Memory Distillation Service", () => {
   });
 
   test("handles low score by skipping", async () => {
-    vi.mocked(callLocalLlmCompletionForDistillation).mockResolvedValue({
+    vi.mocked(runDistillationCompletion).mockResolvedValue({
       content: JSON.stringify({
         candidates: [
           {
@@ -118,26 +118,12 @@ describe("Vibe Memory Distillation Service", () => {
     expect(summary.results[0].status).toBe("skipped");
   });
 
-  test("repairs invalid JSON", async () => {
-    vi.mocked(callLocalLlmCompletionForDistillation)
-      .mockResolvedValueOnce({ content: "Invalid JSON", toolEvents: [], messages: [] })
-      .mockResolvedValueOnce({
-        content: JSON.stringify({
-          candidates: [
-            {
-              type: "rule",
-              title: "Fixed",
-              body: "...",
-              confidence: 80,
-              importance: 80,
-              score: 0.8,
-              sourceRefs: ["ref1"],
-            },
-          ],
-        }),
-        toolEvents: [],
-        messages: [],
-      });
+  test("accepts non-JSON labeled text", async () => {
+    vi.mocked(runDistillationCompletion).mockResolvedValueOnce({
+      content: "TYPE: rule\nTITLE: Fixed\nBODY: ...\nSCORE: 0.8",
+      toolEvents: [],
+      messages: [],
+    });
 
     const summary = await distillVibeMemories({ apply: false });
 

@@ -9,6 +9,7 @@ import type {
 } from "../../shared/schemas/knowledge.schema.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
+import { computeDecayFactor } from "./knowledge-value.service.js";
 
 export type KnowledgeSearchResult = {
   id: string;
@@ -24,6 +25,15 @@ export type KnowledgeSearchResult = {
   metadata: Record<string, unknown>;
   sourceRefs: string[];
   hasSourceLinks: boolean;
+  dynamicScore: number;
+  compileSelectCount: number;
+  agenticAcceptCount: number;
+  explicitUpvoteCount: number;
+  explicitDownvoteCount: number;
+  lastCompiledAt: Date | null;
+  lastVerifiedAt: Date | null;
+  updatedAt: Date;
+  decayFactor: number;
 };
 
 export type UpsertKnowledgeFromSourceParams = {
@@ -255,6 +265,14 @@ export async function searchKnowledge(
       importance: knowledgeItems.importance,
       appliesTo: knowledgeItems.appliesTo,
       metadata: knowledgeItems.metadata,
+      dynamicScore: knowledgeItems.dynamicScore,
+      compileSelectCount: knowledgeItems.compileSelectCount,
+      agenticAcceptCount: knowledgeItems.agenticAcceptCount,
+      explicitUpvoteCount: knowledgeItems.explicitUpvoteCount,
+      explicitDownvoteCount: knowledgeItems.explicitDownvoteCount,
+      lastCompiledAt: knowledgeItems.lastCompiledAt,
+      lastVerifiedAt: knowledgeItems.lastVerifiedAt,
+      updatedAt: knowledgeItems.updatedAt,
       score: rankExpr,
     })
     .from(knowledgeItems)
@@ -269,6 +287,20 @@ export async function searchKnowledge(
     const metadata = asRecord(row.metadata);
     const sourceRefs =
       sourceRefsByKnowledgeId.get(row.id) ?? fallbackSourceRefsFromMetadata(metadata);
+    const normalizedType = row.type === "procedure" ? "procedure" : "rule";
+    const normalizedScope = row.scope === "global" ? "global" : "repo";
+    const dynamicScore = Math.max(0, finiteOrZero(row.dynamicScore));
+    const compileSelectCount = Math.max(0, Math.floor(finiteOrZero(row.compileSelectCount)));
+    const agenticAcceptCount = Math.max(0, Math.floor(finiteOrZero(row.agenticAcceptCount)));
+    const explicitUpvoteCount = Math.max(0, Math.floor(finiteOrZero(row.explicitUpvoteCount)));
+    const explicitDownvoteCount = Math.max(0, Math.floor(finiteOrZero(row.explicitDownvoteCount)));
+    const updatedAt = row.updatedAt instanceof Date ? row.updatedAt : new Date(row.updatedAt);
+    const decayFactor = computeDecayFactor({
+      type: normalizedType,
+      scope: normalizedScope,
+      lastVerifiedAt: row.lastVerifiedAt,
+      updatedAt,
+    });
     return {
       id: row.id,
       type: row.type,
@@ -283,6 +315,15 @@ export async function searchKnowledge(
       metadata,
       sourceRefs,
       hasSourceLinks: sourceRefs.length > 0,
+      dynamicScore,
+      compileSelectCount,
+      agenticAcceptCount,
+      explicitUpvoteCount,
+      explicitDownvoteCount,
+      lastCompiledAt: row.lastCompiledAt,
+      lastVerifiedAt: row.lastVerifiedAt,
+      updatedAt,
+      decayFactor,
     };
   });
 }
@@ -304,6 +345,7 @@ export async function upsertKnowledgeFromSource(
   };
 
   if (existing) {
+    const now = new Date();
     await db
       .update(knowledgeItems)
       .set({
@@ -317,7 +359,8 @@ export async function upsertKnowledgeFromSource(
         appliesTo: scoped.appliesTo,
         metadata,
         embedding: params.embedding,
-        updatedAt: new Date(),
+        updatedAt: now,
+        lastVerifiedAt: now,
       })
       .where(eq(knowledgeItems.id, existing.id));
     const actor = resolveKnowledgeActor(params.sourceUri);
@@ -362,6 +405,7 @@ export async function upsertKnowledgeFromSource(
       appliesTo: scoped.appliesTo,
       metadata,
       embedding: params.embedding,
+      lastVerifiedAt: new Date(),
     })
     .returning({ id: knowledgeItems.id });
 
@@ -414,6 +458,14 @@ export async function vectorSearchKnowledge(
       importance: knowledgeItems.importance,
       appliesTo: knowledgeItems.appliesTo,
       metadata: knowledgeItems.metadata,
+      dynamicScore: knowledgeItems.dynamicScore,
+      compileSelectCount: knowledgeItems.compileSelectCount,
+      agenticAcceptCount: knowledgeItems.agenticAcceptCount,
+      explicitUpvoteCount: knowledgeItems.explicitUpvoteCount,
+      explicitDownvoteCount: knowledgeItems.explicitDownvoteCount,
+      lastCompiledAt: knowledgeItems.lastCompiledAt,
+      lastVerifiedAt: knowledgeItems.lastVerifiedAt,
+      updatedAt: knowledgeItems.updatedAt,
       score: similarity,
     })
     .from(knowledgeItems)
@@ -427,6 +479,20 @@ export async function vectorSearchKnowledge(
     const metadata = asRecord(row.metadata);
     const sourceRefs =
       sourceRefsByKnowledgeId.get(row.id) ?? fallbackSourceRefsFromMetadata(metadata);
+    const normalizedType = row.type === "procedure" ? "procedure" : "rule";
+    const normalizedScope = row.scope === "global" ? "global" : "repo";
+    const dynamicScore = Math.max(0, finiteOrZero(row.dynamicScore));
+    const compileSelectCount = Math.max(0, Math.floor(finiteOrZero(row.compileSelectCount)));
+    const agenticAcceptCount = Math.max(0, Math.floor(finiteOrZero(row.agenticAcceptCount)));
+    const explicitUpvoteCount = Math.max(0, Math.floor(finiteOrZero(row.explicitUpvoteCount)));
+    const explicitDownvoteCount = Math.max(0, Math.floor(finiteOrZero(row.explicitDownvoteCount)));
+    const updatedAt = row.updatedAt instanceof Date ? row.updatedAt : new Date(row.updatedAt);
+    const decayFactor = computeDecayFactor({
+      type: normalizedType,
+      scope: normalizedScope,
+      lastVerifiedAt: row.lastVerifiedAt,
+      updatedAt,
+    });
     return {
       id: row.id,
       type: row.type,
@@ -441,6 +507,15 @@ export async function vectorSearchKnowledge(
       metadata,
       sourceRefs,
       hasSourceLinks: sourceRefs.length > 0,
+      dynamicScore,
+      compileSelectCount,
+      agenticAcceptCount,
+      explicitUpvoteCount,
+      explicitDownvoteCount,
+      lastCompiledAt: row.lastCompiledAt,
+      lastVerifiedAt: row.lastVerifiedAt,
+      updatedAt,
+      decayFactor,
     };
   });
 }
