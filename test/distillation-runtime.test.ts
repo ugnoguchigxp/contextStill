@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { buildDistillationSystemPrompt } from "../src/modules/distillation/distillation-prompts.js";
+import {
+  buildDistillationExtractionSystemPrompt,
+  buildDistillationSystemPrompt,
+  buildDistillationVerificationSystemPrompt,
+} from "../src/modules/distillation/distillation-prompts.js";
 import {
   type DistillationChatClient,
   type DistillationToolExecutor,
@@ -46,12 +50,15 @@ describe("distillation runtime", () => {
         toolCalls: [],
       };
     };
-    const toolExecutor: DistillationToolExecutor = async (toolCall) => ({
-      callId: toolCall.id,
-      name: toolCall.function.name,
-      ok: true,
-      content: '{"url":"https://example.com/docs","text":"Fetched documentation body"}',
-    });
+    const toolExecutor: DistillationToolExecutor = async (toolCall, auditContext) => {
+      expect(auditContext).toMatchObject({ candidateRowId: "candidate-1" });
+      return {
+        callId: toolCall.id,
+        name: toolCall.function.name,
+        ok: true,
+        content: '{"url":"https://example.com/docs","text":"Fetched documentation body"}',
+      };
+    };
 
     const result = await runDistillationCompletion(
       {
@@ -62,12 +69,130 @@ describe("distillation runtime", () => {
         ],
         maxTokens: 256,
       },
-      { chatClient, toolExecutor, maxToolRounds: 2 },
+      {
+        chatClient,
+        toolExecutor,
+        maxToolRounds: 2,
+        auditContext: { candidateRowId: "candidate-1" },
+      },
     );
 
     expect(result.content).toContain('"candidates"');
     expect(result.toolEvents).toHaveLength(1);
     expect(result.messages.some((message) => message.role === "tool")).toBe(true);
+  });
+
+  test("can require the first verification round to call a tool", async () => {
+    const seenToolChoices: unknown[] = [];
+    const chatClient: DistillationChatClient = async (request) => {
+      seenToolChoices.push(request.toolChoice);
+      if (seenToolChoices.length === 1) {
+        return {
+          content: null,
+          toolCalls: [
+            {
+              id: "call_1",
+              type: "function",
+              function: { name: "search_web", arguments: '{"query":"memory router"}' },
+            },
+          ],
+        };
+      }
+      return {
+        content: '{"candidates":[]}',
+        toolCalls: [],
+      };
+    };
+    const toolExecutor: DistillationToolExecutor = async (toolCall) => ({
+      callId: toolCall.id,
+      name: toolCall.function.name,
+      ok: true,
+      content: "Search evidence",
+    });
+
+    await runDistillationCompletion(
+      { model: "m", messages: [{ role: "user", content: "verify" }], maxTokens: 10 },
+      { chatClient, toolExecutor, requireToolCall: true },
+    );
+
+    expect(seenToolChoices).toEqual(["required", "auto"]);
+  });
+
+  test("reprompts once when required tool use is skipped", async () => {
+    const seenToolChoices: unknown[] = [];
+    const seenMessages: string[][] = [];
+    const chatClient: DistillationChatClient = async (request) => {
+      seenToolChoices.push(request.toolChoice);
+      seenMessages.push(request.messages.map((message) => String(message.content ?? "")));
+      if (seenToolChoices.length === 1) {
+        return {
+          content: '{"candidates":[{"type":"rule","title":"Premature","body":"No tool yet"}]}',
+          toolCalls: [],
+        };
+      }
+      if (seenToolChoices.length === 2) {
+        expect(request.messages.at(-1)?.content).toContain("tool call が必須");
+        return {
+          content: null,
+          toolCalls: [
+            {
+              id: "call_1",
+              type: "function",
+              function: { name: "search_web", arguments: '{"query":"memory router"}' },
+            },
+          ],
+        };
+      }
+      return {
+        content: '{"candidates":[]}',
+        toolCalls: [],
+      };
+    };
+    const toolExecutor: DistillationToolExecutor = async (toolCall) => ({
+      callId: toolCall.id,
+      name: toolCall.function.name,
+      ok: true,
+      content: "Search evidence",
+    });
+
+    const result = await runDistillationCompletion(
+      { model: "m", messages: [{ role: "user", content: "verify" }], maxTokens: 10 },
+      { chatClient, toolExecutor, requireToolCall: true },
+    );
+
+    expect(result.toolEvents).toHaveLength(1);
+    expect(seenToolChoices).toEqual(["required", "required", "auto"]);
+    expect(seenMessages[1]?.some((content) => content.includes("直前の応答"))).toBe(true);
+  });
+
+  test("reprompts once when the final assistant response is blank", async () => {
+    const seenMessages: string[][] = [];
+    const chatClient: DistillationChatClient = async (request) => {
+      seenMessages.push(request.messages.map((message) => String(message.content ?? "")));
+      if (seenMessages.length === 1) {
+        return {
+          content: "",
+          toolCalls: [],
+        };
+      }
+      expect(request.messages.at(-1)?.content).toContain("最小 JSON");
+      return {
+        content: '{"candidates":[]}',
+        toolCalls: [],
+      };
+    };
+
+    const result = await runDistillationCompletion(
+      {
+        model: "m",
+        messages: [{ role: "user", content: "distill" }],
+        maxTokens: 10,
+      },
+      { chatClient },
+    );
+
+    expect(result.content).toBe('{"candidates":[]}');
+    expect(seenMessages).toHaveLength(2);
   });
 
   test("common system prompt keeps output constrained to compile-ready rule/procedure", () => {
@@ -80,6 +205,26 @@ describe("distillation runtime", () => {
     expect(prompt).toContain("可能な限り日本語");
     expect(prompt).not.toMatch(/\bfact\b/i);
     expect(prompt).not.toMatch(/\blesson\b/i);
+  });
+
+  test("extraction and verification prompts split source-first and tool-backed sessions", () => {
+    const extractionPrompt = buildDistillationExtractionSystemPrompt("wiki");
+    const procedureVerificationPrompt = buildDistillationVerificationSystemPrompt("procedure");
+
+    expect(extractionPrompt).toContain("1 段階目の候補抽出セッション");
+    expect(extractionPrompt).toContain("入力証拠だけから候補を抽出");
+    expect(extractionPrompt).not.toContain("fetch_content の成功結果を必須");
+    expect(procedureVerificationPrompt).toContain("2 段階目の新しいセッション");
+    expect(procedureVerificationPrompt).toContain("tool result を受け取る前");
+    expect(procedureVerificationPrompt).toContain("search_web");
+    expect(procedureVerificationPrompt).toContain("fetch_content");
+    expect(procedureVerificationPrompt).toContain('"name":"search_web"');
+    expect(procedureVerificationPrompt).toContain("SKILL.md");
+    expect(procedureVerificationPrompt).toContain("順序付きワークフロー");
+    expect(procedureVerificationPrompt).toContain("最小 JSON");
+    expect(procedureVerificationPrompt).toContain("必須キーは type / title / body のみ");
+    expect(procedureVerificationPrompt).not.toContain("sourceRefs");
+    expect(procedureVerificationPrompt).not.toContain("evidenceRefs");
   });
 
   test("throws error when tool rounds exceeded", async () => {
@@ -165,6 +310,14 @@ describe("distillation runtime", () => {
       const result = buildBedrockToolConfig(tools);
       expect(result?.tools).toHaveLength(1);
       expect((result?.tools?.[0] as any).toolSpec.name).toBe("t1");
+    });
+
+    test("buildBedrockToolConfig can require a tool call", () => {
+      const tools: any[] = [
+        { function: { name: "t1", description: "d1", parameters: { type: "object" } } },
+      ];
+      const result = buildBedrockToolConfig(tools, "required");
+      expect(result?.toolChoice).toEqual({ any: {} });
     });
 
     test("parseBedrockResponse extracts text and tool calls", () => {

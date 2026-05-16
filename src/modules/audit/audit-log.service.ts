@@ -16,6 +16,8 @@ export const auditEventTypes = {
   sourceDeleted: "SOURCE_DELETED",
   sourceDistillationRunStarted: "SOURCE_DISTILLATION_RUN_STARTED",
   sourceDistillationRunFinished: "SOURCE_DISTILLATION_RUN_FINISHED",
+  distillationWebSearch: "DISTILLATION_WEB_SEARCH",
+  distillationFetchContent: "DISTILLATION_FETCH_CONTENT",
   vibeDistillationRunStarted: "VIBE_DISTILLATION_RUN_STARTED",
   vibeDistillationRunFinished: "VIBE_DISTILLATION_RUN_FINISHED",
   contextCompileRun: "CONTEXT_COMPILE_RUN",

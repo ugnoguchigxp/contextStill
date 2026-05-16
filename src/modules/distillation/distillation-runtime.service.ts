@@ -7,6 +7,7 @@ import {
   type ToolConfiguration,
 } from "@aws-sdk/client-bedrock-runtime";
 import { groupedConfig } from "../../config.js";
+import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
 import {
   distillationToolDefinitions,
   executeDistillationToolCall,
@@ -31,7 +32,7 @@ export type DistillationModelRequest = {
 
 type DistillationChatRequest = DistillationModelRequest & {
   tools?: DistillationToolDefinition[];
-  toolChoice?: "auto" | "none";
+  toolChoice?: "auto" | "none" | "required";
 };
 
 type DistillationChatResponse = {
@@ -46,6 +47,7 @@ export type DistillationChatClient = (
 
 export type DistillationToolExecutor = (
   toolCall: DistillationToolCall,
+  auditContext?: Record<string, unknown>,
 ) => Promise<DistillationToolResult>;
 
 export type DistillationCompletionResult = {
@@ -59,6 +61,8 @@ export type DistillationRuntimeOptions = {
   toolExecutor?: DistillationToolExecutor;
   enableTools?: boolean;
   maxToolRounds?: number;
+  auditContext?: Record<string, unknown>;
+  requireToolCall?: boolean;
 };
 
 type DistillationProviderName = "local-llm" | "azure-openai" | "bedrock";
@@ -130,9 +134,23 @@ function withRequestTimeout<T>(
   task: (signal: AbortSignal) => Promise<T>,
 ): Promise<T> {
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  return task(controller.signal).finally(() => {
-    clearTimeout(timer);
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeoutError = () => new Error(`distillation LLM request timed out after ${timeoutMs}ms`);
+  const timeout = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => {
+      controller.abort();
+      reject(timeoutError());
+    }, timeoutMs);
+  });
+  const request = task(controller.signal).catch((error) => {
+    if (error instanceof Error && error.name === "AbortError") {
+      throw timeoutError();
+    }
+    throw error;
+  });
+
+  return Promise.race([request, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
   });
 }
 
@@ -205,17 +223,13 @@ export function parseOpenAiStyleResponse(payload: unknown): DistillationChatResp
 }
 
 function parseToolArguments(raw: string): unknown {
-  try {
-    const parsed = JSON.parse(raw);
-    return parsed;
-  } catch {
-    return { rawArguments: raw };
-  }
+  return parseLlmJsonLike(raw)?.value ?? { rawArguments: raw };
 }
 
 /** @internal */
 export function buildBedrockToolConfig(
   tools: DistillationToolDefinition[] | undefined,
+  toolChoice: DistillationChatRequest["toolChoice"] = "auto",
 ): ToolConfiguration | undefined {
   if (!tools || tools.length === 0) return undefined;
   return {
@@ -228,7 +242,9 @@ export function buildBedrockToolConfig(
         },
       },
     })) as ToolConfiguration["tools"],
-    toolChoice: { auto: {} } as ToolConfiguration["toolChoice"],
+    toolChoice: (toolChoice === "required"
+      ? { any: {} }
+      : { auto: {} }) as ToolConfiguration["toolChoice"],
   };
 }
 
@@ -445,7 +461,9 @@ async function callBedrockChat(
   return withRequestTimeout(groupedConfig.vibeDistillation.timeoutMs, async (signal) => {
     const { system, messages } = buildBedrockConversation(request.messages);
     const toolConfig =
-      request.toolChoice === "none" ? undefined : buildBedrockToolConfig(request.tools);
+      request.toolChoice === "none"
+        ? undefined
+        : buildBedrockToolConfig(request.tools, request.toolChoice);
 
     if (groupedConfig.bedrock.profile.trim()) {
       process.env.AWS_PROFILE = groupedConfig.bedrock.profile.trim();
@@ -525,17 +543,25 @@ export async function runDistillationCompletion(
     options.maxToolRounds ?? groupedConfig.distillationTools.maxRounds,
   );
   const enableTools = options.enableTools ?? true;
+  const requireToolCall = Boolean(options.requireToolCall);
   const messages = request.messages.map((message) => ({ ...message }));
   const toolEvents: DistillationToolResult[] = [];
   let toolRounds = 0;
+  let requiredToolReminderSent = false;
+  let blankResponseReminderSent = false;
 
   while (true) {
     const allowTools = enableTools && toolRounds < maxToolRounds;
+    const toolChoice = allowTools
+      ? requireToolCall && toolRounds === 0
+        ? "required"
+        : "auto"
+      : "none";
     const response = await chatClient({
       ...request,
       messages,
       tools: allowTools ? distillationToolDefinitions : undefined,
-      toolChoice: allowTools ? "auto" : "none",
+      toolChoice,
     });
 
     if (response.toolCalls.length > 0 && allowTools) {
@@ -546,7 +572,7 @@ export async function runDistillationCompletion(
       });
 
       for (const toolCall of response.toolCalls) {
-        const toolResult = await toolExecutor(toolCall);
+        const toolResult = await toolExecutor(toolCall, options.auditContext);
         toolEvents.push(toolResult);
         messages.push({
           role: "tool",
@@ -563,7 +589,31 @@ export async function runDistillationCompletion(
       throw new Error(`distillation tool loop exceeded max rounds (${maxToolRounds})`);
     }
 
-    if (typeof response.content === "string") {
+    if (
+      typeof response.content === "string" &&
+      allowTools &&
+      requireToolCall &&
+      toolRounds === 0 &&
+      toolEvents.length === 0 &&
+      !requiredToolReminderSent
+    ) {
+      requiredToolReminderSent = true;
+      messages.push({
+        role: "assistant",
+        content: response.content,
+      });
+      messages.push({
+        role: "user",
+        content: [
+          "直前の応答はまだ採用できません。",
+          "この検証 session は外部証拠の tool call が必須です。最終 JSON を返す前に search_web または fetch_content を 1 回だけ呼び出してください。",
+          'ローカル tool-call parser 向けには {"name":"search_web","arguments":{"query":"..."}} または {"name":"fetch_content","arguments":{"url":"https://..."}} だけを返してください。',
+        ].join("\n"),
+      });
+      continue;
+    }
+
+    if (typeof response.content === "string" && response.content.trim()) {
       const finalMessage: DistillationMessage = {
         role: "assistant",
         content: response.content,
@@ -573,6 +623,26 @@ export async function runDistillationCompletion(
         toolEvents,
         messages: [...messages, finalMessage],
       };
+    }
+
+    if (
+      typeof response.content === "string" &&
+      !response.content.trim() &&
+      !blankResponseReminderSent
+    ) {
+      blankResponseReminderSent = true;
+      messages.push({
+        role: "assistant",
+        content: response.content,
+      });
+      messages.push({
+        role: "user",
+        content: [
+          "直前の応答は空でした。",
+          '最終回答として最小 JSON だけを返してください。候補がない場合も {"candidates":[]} と明示してください。',
+        ].join("\n"),
+      });
+      continue;
     }
 
     throw new Error("distillation response did not include assistant content");

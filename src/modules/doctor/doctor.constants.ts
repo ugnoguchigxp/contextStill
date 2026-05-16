@@ -9,6 +9,7 @@ export const requiredTables = [
   "vibe_memory_distillation_runs",
   "source_distillation_runs",
   "source_distillation_evidence",
+  "distillation_candidates",
   "context_compile_runs",
   "context_pack_items",
   "sync_states",

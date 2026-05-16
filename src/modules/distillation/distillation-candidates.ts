@@ -1,4 +1,9 @@
 import { groupedConfig } from "../../config.js";
+import {
+  extractCompleteJsonValues,
+  parseLlmJsonLike,
+  type LlmJsonParseStrategy,
+} from "../../lib/llm-output-parser.js";
 import { normalizeKnowledgeScore } from "../../lib/score-scale.js";
 import type { KnowledgeItem } from "../../shared/schemas/knowledge.schema.js";
 import type { DistillationToolResult } from "./distillation-tools.service.js";
@@ -20,6 +25,12 @@ export type DistillationScoreGateResult = {
   rejectedLowScore: DistilledKnowledgeCandidate[];
   rejectedInvalidEvidence: DistilledKnowledgeCandidate[];
   threshold: number;
+};
+
+export type DistillationCandidateParseResult = {
+  candidates: DistilledKnowledgeCandidate[];
+  jsonRepaired: boolean;
+  parseStrategies: LlmJsonParseStrategy[];
 };
 
 type DistillationScoreGateOptions = {
@@ -108,79 +119,21 @@ function normalizeCandidateFromObject(raw: unknown): DistilledKnowledgeCandidate
   };
 }
 
-function parseJsonPayload(text: string): unknown | undefined {
-  const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
-  const candidates = [
-    fenceMatch?.[1],
-    text.slice(text.indexOf("{"), text.lastIndexOf("}") + 1),
-  ].filter((candidate): candidate is string => Boolean(candidate?.trim()));
-
-  for (const candidate of candidates) {
-    try {
-      return JSON.parse(candidate);
-    } catch {
-      // Try next format.
-    }
-  }
-  return undefined;
+function rawCandidatesFromParsedPayload(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (!value || typeof value !== "object") return [];
+  const record = asRecord(value);
+  if (Array.isArray(record.candidates)) return record.candidates;
+  if (Array.isArray(record.items)) return record.items;
+  if (Array.isArray(record.knowledge)) return record.knowledge;
+  return [record];
 }
 
-function parseCompleteJsonObjects(text: string): unknown[] {
-  const parsed: unknown[] = [];
-  let depth = 0;
-  let objectStart = -1;
-  let inString = false;
-  let escaped = false;
-
-  for (let index = 0; index < text.length; index += 1) {
-    const char = text[index];
-    if (!char) continue;
-
-    if (inString) {
-      if (escaped) {
-        escaped = false;
-        continue;
-      }
-      if (char === "\\") {
-        escaped = true;
-        continue;
-      }
-      if (char === '"') {
-        inString = false;
-      }
-      continue;
-    }
-
-    if (char === '"') {
-      inString = true;
-      continue;
-    }
-
-    if (char === "{") {
-      if (depth === 0) objectStart = index;
-      depth += 1;
-      continue;
-    }
-
-    if (char === "}") {
-      if (depth <= 0) continue;
-      depth -= 1;
-      if (depth === 0 && objectStart >= 0) {
-        const objectText = text.slice(objectStart, index + 1);
-        try {
-          parsed.push(JSON.parse(objectText));
-        } catch {
-          // Skip malformed object and continue.
-        }
-        objectStart = -1;
-      }
-    }
-  }
-
-  return parsed;
-}
-
-function recoverCandidatesFromTruncatedJson(text: string): unknown[] {
+function recoverCandidatesFromTruncatedJson(text: string): {
+  candidates: unknown[];
+  repaired: boolean;
+  strategies: LlmJsonParseStrategy[];
+} {
   const fenceMatch = text.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const sources = [fenceMatch?.[1], text].filter(
     (candidate): candidate is string =>
@@ -188,15 +141,26 @@ function recoverCandidatesFromTruncatedJson(text: string): unknown[] {
   );
 
   for (const source of sources) {
-    const keyIndex = source.indexOf('"candidates"');
-    if (keyIndex < 0) continue;
-    const arrayStart = source.indexOf("[", keyIndex);
+    const keyMatch = source.match(/["']?candidates["']?\s*:/i);
+    if (!keyMatch || keyMatch.index === undefined) continue;
+    const arrayStart = source.indexOf("[", keyMatch.index);
     if (arrayStart < 0) continue;
-    const parsedObjects = parseCompleteJsonObjects(source.slice(arrayStart + 1));
-    if (parsedObjects.length > 0) return parsedObjects;
+    const parsedObjects = extractCompleteJsonValues(source.slice(arrayStart + 1)).flatMap(
+      (objectText) => {
+        const parsed = parseLlmJsonLike(objectText);
+        return parsed ? [parsed] : [];
+      },
+    );
+    if (parsedObjects.length > 0) {
+      return {
+        candidates: parsedObjects.map((result) => result.value),
+        repaired: parsedObjects.some((result) => result.repaired),
+        strategies: parsedObjects.map((result) => result.strategy),
+      };
+    }
   }
 
-  return [];
+  return { candidates: [], repaired: false, strategies: [] };
 }
 
 function parseNaturalLanguageCandidate(text: string): unknown | null {
@@ -271,20 +235,38 @@ function parseNaturalLanguageCandidate(text: string): unknown | null {
   return Object.keys(record).length > 0 ? record : null;
 }
 
-function extractRawCandidates(text: string): unknown[] {
-  const jsonPayload = parseJsonPayload(text);
-  if (Array.isArray(jsonPayload)) return jsonPayload;
-  if (jsonPayload && typeof jsonPayload === "object") {
-    const record = asRecord(jsonPayload);
-    if (Array.isArray(record.candidates)) return record.candidates;
-    return [record];
+function extractRawCandidates(text: string): {
+  candidates: unknown[];
+  jsonRepaired: boolean;
+  parseStrategies: LlmJsonParseStrategy[];
+} {
+  const jsonPayload = parseLlmJsonLike(text);
+  if (jsonPayload) {
+    const candidates = rawCandidatesFromParsedPayload(jsonPayload.value);
+    if (candidates.length > 0) {
+      return {
+        candidates,
+        jsonRepaired: jsonPayload.repaired,
+        parseStrategies: [jsonPayload.strategy],
+      };
+    }
   }
 
   const recoveredCandidates = recoverCandidatesFromTruncatedJson(text);
-  if (recoveredCandidates.length > 0) return recoveredCandidates;
+  if (recoveredCandidates.candidates.length > 0) {
+    return {
+      candidates: recoveredCandidates.candidates,
+      jsonRepaired: recoveredCandidates.repaired,
+      parseStrategies: recoveredCandidates.strategies,
+    };
+  }
 
   const naturalLanguageCandidate = parseNaturalLanguageCandidate(text);
-  return naturalLanguageCandidate ? [naturalLanguageCandidate] : [];
+  return {
+    candidates: naturalLanguageCandidate ? [naturalLanguageCandidate] : [],
+    jsonRepaired: false,
+    parseStrategies: [],
+  };
 }
 
 function candidateKey(candidate: DistilledKnowledgeCandidate): string {
@@ -292,16 +274,26 @@ function candidateKey(candidate: DistilledKnowledgeCandidate): string {
 }
 
 export function parseDistillationCandidateList(text: string): DistilledKnowledgeCandidate[] {
+  return parseDistillationCandidateListWithMetadata(text).candidates;
+}
+
+export function parseDistillationCandidateListWithMetadata(
+  text: string,
+): DistillationCandidateParseResult {
   const byKey = new Map<string, DistilledKnowledgeCandidate>();
   const rawCandidates = extractRawCandidates(text);
 
-  for (const rawCandidate of rawCandidates) {
+  for (const rawCandidate of rawCandidates.candidates) {
     const normalized = normalizeCandidateFromObject(rawCandidate);
     if (!normalized) continue;
     byKey.set(candidateKey(normalized), normalized);
   }
 
-  return [...byKey.values()].sort((left, right) => right.score - left.score);
+  return {
+    candidates: [...byKey.values()].sort((left, right) => right.score - left.score),
+    jsonRepaired: rawCandidates.jsonRepaired,
+    parseStrategies: rawCandidates.parseStrategies,
+  };
 }
 
 export function parseDistillationCandidates(text: string): DistilledKnowledgeCandidate[] {
@@ -322,8 +314,22 @@ function hasSuccessfulFetch(toolEvents: DistillationToolResult[] = []): boolean 
   return toolEvents.some((event) => event.name === "fetch_content" && event.ok);
 }
 
-function hasEvidenceRefs(candidate: DistilledKnowledgeCandidate): boolean {
-  return Array.isArray(candidate.evidenceRefs) && candidate.evidenceRefs.length > 0;
+function normalizedTextLength(value: string): number {
+  return value.replace(/\s+/g, "").length;
+}
+
+function isToolNameOnly(value: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  return normalized === "search_web" || normalized === "fetch_content" || normalized === "fetch_";
+}
+
+function isMeaningfulKnowledgeCandidate(candidate: DistilledKnowledgeCandidate): boolean {
+  const titleLength = normalizedTextLength(candidate.title);
+  const bodyLength = normalizedTextLength(candidate.body);
+  if (titleLength < 3 || bodyLength < 12) return false;
+  if (candidate.title.trim().toLowerCase() === candidate.body.trim().toLowerCase()) return false;
+  if (isToolNameOnly(candidate.title) || isToolNameOnly(candidate.body)) return false;
+  return true;
 }
 
 function hasValidExternalEvidence(
@@ -339,8 +345,8 @@ function hasValidExternalEvidence(
     hasUrl(candidate.evidenceRefs);
   const externalEvidenceRequired = candidateMentionsUrl || Boolean(requireFetchEvidenceForUrlInput);
 
-  if (!externalEvidenceRequired && !hasEvidenceRefs(candidate)) return true;
-  return hasEvidenceRefs(candidate) && hasSuccessfulFetch(toolEvents);
+  if (!externalEvidenceRequired) return true;
+  return hasSuccessfulFetch(toolEvents);
 }
 
 export function filterDistillationCandidatesByScore(
@@ -359,11 +365,16 @@ export function filterDistillationCandidatesByScore(
   const invalidKeys = new Set(rejectedInvalidEvidence.map(candidateKey));
   const accepted = candidates
     .filter(
-      (candidate) => candidate.score >= threshold && !invalidKeys.has(candidateKey(candidate)),
+      (candidate) =>
+        candidate.score >= threshold &&
+        isMeaningfulKnowledgeCandidate(candidate) &&
+        !invalidKeys.has(candidateKey(candidate)),
     )
     .slice(0, groupedConfig.distillationTools.maxCandidates);
   const rejectedLowScore = candidates.filter(
-    (candidate) => candidate.score < threshold && !invalidKeys.has(candidateKey(candidate)),
+    (candidate) =>
+      (candidate.score < threshold || !isMeaningfulKnowledgeCandidate(candidate)) &&
+      !invalidKeys.has(candidateKey(candidate)),
   );
   return { accepted, rejectedLowScore, rejectedInvalidEvidence, threshold };
 }

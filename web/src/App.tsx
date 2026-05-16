@@ -3,17 +3,10 @@ import {
   createRootRouteWithContext,
   createRoute,
   createRouter,
+  lazyRouteComponent,
   RouterProvider,
 } from "@tanstack/react-router";
 import { AppShell } from "./modules/admin/components/app-shell";
-import { AuditLogsPage } from "./modules/admin/components/audit.page";
-import { VibeMemoryPage } from "./modules/admin/components/vibe-memory.page";
-import { DoctorPage } from "./modules/admin/components/doctor.page";
-import { GraphPage } from "./modules/admin/components/graph.page";
-import { KnowledgePage } from "./modules/admin/components/knowledge.page";
-import { OverviewPage } from "./modules/admin/components/overview.page";
-import { SourcesPage } from "./modules/admin/components/sources.page";
-import { ContextCompilerPage } from "./modules/context-compiler/components/context-compiler.page";
 
 type RouterContext = {
   queryClient: QueryClient;
@@ -28,49 +21,70 @@ const rootRoute = createRootRouteWithContext<RouterContext>()({
 const indexRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/",
-  component: OverviewPage,
+  component: lazyRouteComponent(
+    () => import("./modules/admin/components/overview.page"),
+    "OverviewPage",
+  ),
 });
 
 const compileRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/compile",
-  component: ContextCompilerPage,
+  component: lazyRouteComponent(
+    () => import("./modules/context-compiler/components/context-compiler.page"),
+    "ContextCompilerPage",
+  ),
 });
 
 const knowledgeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/knowledge",
-  component: KnowledgePage,
+  component: lazyRouteComponent(
+    () => import("./modules/admin/components/knowledge.page"),
+    "KnowledgePage",
+  ),
 });
 
 const sourcesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/sources",
-  component: SourcesPage,
+  component: lazyRouteComponent(
+    () => import("./modules/admin/components/sources.page"),
+    "SourcesPage",
+  ),
 });
 
 const vibeMemoryRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/vibe-memory",
-  component: VibeMemoryPage,
+  component: lazyRouteComponent(
+    () => import("./modules/admin/components/vibe-memory.page"),
+    "VibeMemoryPage",
+  ),
 });
 
 const graphRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/graph",
-  component: GraphPage,
+  component: lazyRouteComponent(() => import("./modules/admin/components/graph.page"), "GraphPage"),
 });
 
 const doctorRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/doctor",
-  component: DoctorPage,
+  component: lazyRouteComponent(
+    () => import("./modules/admin/components/doctor.page"),
+    "DoctorPage",
+  ),
 });
 
 const auditRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/audit",
-  component: AuditLogsPage,
+  component: lazyRouteComponent(
+    () => import("./modules/admin/components/audit.page"),
+    "AuditLogsPage",
+  ),
 });
 
 const routeTree = rootRoute.addChildren([

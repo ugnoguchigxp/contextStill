@@ -108,17 +108,24 @@ describe("Distillation Runtime Service", () => {
     ).rejects.toThrow("distillation response did not include assistant content");
   });
 
-  test("returns empty-string content so caller can attempt JSON repair", async () => {
-    const chatClient = vi.fn().mockResolvedValue({
-      content: "",
-      toolCalls: [],
-    });
+  test("reprompts empty-string content so caller receives parseable JSON", async () => {
+    const chatClient = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: "",
+        toolCalls: [],
+      })
+      .mockResolvedValueOnce({
+        content: '{"candidates":[]}',
+        toolCalls: [],
+      });
 
     const result = await runDistillationCompletion(
       { model: "test", messages: [], maxTokens: 100 },
       { chatClient },
     );
-    expect(result.content).toBe("");
+    expect(result.content).toBe('{"candidates":[]}');
+    expect(chatClient).toHaveBeenCalledTimes(2);
   });
 
   test("callLocalLlmChat performs fetch and parses response", async () => {
@@ -145,6 +152,29 @@ describe("Distillation Runtime Service", () => {
       expect.stringContaining("/v1/chat/completions"),
       expect.any(Object),
     );
+  });
+
+  test("callLocalLlmChat forwards required tool choice", async () => {
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: () =>
+        Promise.resolve({
+          choices: [{ message: { content: "Fetched content", tool_calls: [] } }],
+        }),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    await runDistillationCompletion(
+      {
+        model: "m1",
+        messages: [],
+        maxTokens: 50,
+      },
+      { requireToolCall: true },
+    );
+
+    const body = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+    expect(body.tool_choice).toBe("required");
   });
 
   test("callLocalLlmChat handles HTTP errors", async () => {

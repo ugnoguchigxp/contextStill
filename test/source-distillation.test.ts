@@ -18,6 +18,35 @@ vi.mock("../src/modules/sources/distillation.repository.js", () => ({
   upsertSourceDistillationRun: vi.fn().mockResolvedValue({ id: "run-1" }),
 }));
 
+vi.mock("../src/modules/distillation/distillation-candidate.repository.js", () => ({
+  attachDistillationCandidateRun: vi.fn().mockResolvedValue(undefined),
+  claimDistillationCandidateForEvaluation: vi.fn((id: string) => Promise.resolve({ id })),
+  listPromotionReadyDistillationCandidates: vi.fn().mockResolvedValue([]),
+  distillationCandidateRowToCandidate: vi.fn((row: any) => ({
+    type: row.type,
+    title: row.title,
+    body: row.body,
+    confidence: row.confidence ?? 65,
+    importance: row.importance ?? 55,
+    score: row.score,
+  })),
+  listUnevaluatedDistillationCandidates: vi.fn().mockResolvedValue([]),
+  markDistillationCandidateEvaluating: vi.fn().mockResolvedValue(undefined),
+  updateDistillationCandidateEvaluation: vi.fn().mockResolvedValue(undefined),
+  upsertExtractedDistillationCandidates: vi.fn((params: any) =>
+    Promise.resolve(
+      params.candidates.map((candidate: any, index: number) => ({
+        id: `candidate-${index}`,
+        sourceKind: params.source.sourceKind,
+        sourceFragmentId: params.source.sourceFragmentId ?? null,
+        vibeMemoryId: params.source.vibeMemoryId ?? null,
+        candidateIndex: index,
+        ...candidate,
+      })),
+    ),
+  ),
+}));
+
 vi.mock("../src/modules/knowledge/knowledge.repository.js", () => ({
   upsertKnowledgeFromSource: vi.fn(),
 }));
@@ -58,6 +87,15 @@ function fragment(
   };
 }
 
+function searchToolEvent() {
+  return {
+    callId: "search-1",
+    name: "search_web",
+    ok: true,
+    content: "Search evidence",
+  };
+}
+
 describe("source distillation", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -89,9 +127,16 @@ describe("source distillation", () => {
     (embeddingService.embedOne as any).mockResolvedValue([0.1]);
 
     let callCount = 0;
-    const modelClient = async () => {
+    const modelClient = async (_request: unknown, options?: { enableTools?: boolean }) => {
       callCount++;
-      return "TYPE: rule\nTITLE: Test\nBODY: Test body\nSCORE: 0.9";
+      const content =
+        "TYPE: rule\nTITLE: Test\nBODY: Test body with reusable implementation guidance\nSCORE: 0.9";
+      if (options?.enableTools === false) return content;
+      return {
+        content,
+        toolEvents: [searchToolEvent()],
+        messages: [],
+      };
     };
 
     const result = await distillSources({
@@ -101,7 +146,7 @@ describe("source distillation", () => {
 
     expect(result.knowledgeCount).toBe(1);
     expect(result.results[0].jsonRepaired).toBe(false);
-    expect(callCount).toBe(1);
+    expect(callCount).toBe(2);
     expect(distillationRepo.upsertSourceDistillationRun).toHaveBeenCalled();
     expect(knowledgeDedup.checkKnowledgeDuplicate).toHaveBeenCalled();
   });
@@ -114,10 +159,24 @@ describe("source distillation", () => {
       reason: "high similarity",
     });
 
-    const modelClient = async () =>
-      JSON.stringify({
-        candidates: [{ type: "rule", title: "Dup", body: "Body", score: 0.9 }],
+    const modelClient = async (_request: unknown, options?: { enableTools?: boolean }) => {
+      const content = JSON.stringify({
+        candidates: [
+          {
+            type: "rule",
+            title: "Dup",
+            body: "Duplicate candidate body with enough durable guidance.",
+            score: 0.9,
+          },
+        ],
       });
+      if (options?.enableTools === false) return content;
+      return {
+        content,
+        toolEvents: [searchToolEvent()],
+        messages: [],
+      };
+    };
 
     const result = await distillSources({
       apply: true,

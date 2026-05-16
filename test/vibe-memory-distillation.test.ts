@@ -20,6 +20,34 @@ vi.mock("../src/modules/vibe-memory/distillation.repository.js", () => ({
   recordVibeMemoryDistillationState: vi.fn().mockResolvedValue(undefined),
   upsertVibeMemoryDistillationRun: vi.fn().mockResolvedValue({ id: "run-1" }),
 }));
+vi.mock("../src/modules/distillation/distillation-candidate.repository.js", () => ({
+  attachDistillationCandidateRun: vi.fn().mockResolvedValue(undefined),
+  claimDistillationCandidateForEvaluation: vi.fn((id: string) => Promise.resolve({ id })),
+  listPromotionReadyDistillationCandidates: vi.fn().mockResolvedValue([]),
+  distillationCandidateRowToCandidate: vi.fn((row: any) => ({
+    type: row.type,
+    title: row.title,
+    body: row.body,
+    confidence: row.confidence ?? 65,
+    importance: row.importance ?? 55,
+    score: row.score,
+  })),
+  listUnevaluatedDistillationCandidates: vi.fn().mockResolvedValue([]),
+  markDistillationCandidateEvaluating: vi.fn().mockResolvedValue(undefined),
+  updateDistillationCandidateEvaluation: vi.fn().mockResolvedValue(undefined),
+  upsertExtractedDistillationCandidates: vi.fn((params: any) =>
+    Promise.resolve(
+      params.candidates.map((candidate: any, index: number) => ({
+        id: `candidate-${index}`,
+        sourceKind: params.source.sourceKind,
+        sourceFragmentId: params.source.sourceFragmentId ?? null,
+        vibeMemoryId: params.source.vibeMemoryId ?? null,
+        candidateIndex: index,
+        ...candidate,
+      })),
+    ),
+  ),
+}));
 vi.mock("../src/modules/knowledge/knowledge.repository.js", () => ({
   upsertKnowledgeFromSource: vi.fn(),
 }));
@@ -64,6 +92,15 @@ function diff(
     createdAt: new Date("2026-05-15T00:00:01.000Z"),
     updatedAt: new Date("2026-05-15T00:00:01.000Z"),
     ...overrides,
+  };
+}
+
+function searchToolEvent() {
+  return {
+    callId: "search-1",
+    name: "search_web",
+    ok: true,
+    content: "Search evidence",
   };
 }
 
@@ -196,6 +233,35 @@ describe("vibe memory distillation", () => {
     ]);
   });
 
+  test("accepts URL-backed candidates with successful fetch without requiring model refs", () => {
+    const candidates = parseDistillationCandidates(
+      JSON.stringify({
+        candidates: [
+          {
+            type: "rule",
+            title: "External behavior rule",
+            body: "Use latest public API behavior.",
+            score: 0.95,
+          },
+        ],
+      }),
+    );
+    const gate = filterDistillationCandidatesByScore(candidates, {
+      requireFetchEvidenceForUrlInput: true,
+      toolEvents: [
+        {
+          callId: "call1",
+          name: "fetch_content",
+          ok: true,
+          content: "{}",
+        },
+      ],
+    });
+
+    expect(gate.accepted.map((candidate) => candidate.title)).toEqual(["External behavior rule"]);
+    expect(gate.rejectedInvalidEvidence).toHaveLength(0);
+  });
+
   test("builds a prompt constrained to rule and procedure knowledge", () => {
     const messages = buildVibeMemoryDistillationMessages({
       memory: memory(),
@@ -207,7 +273,9 @@ describe("vibe memory distillation", () => {
     expect(prompt).toContain("知識タイプは rule と procedure のみ");
     expect(prompt).toContain("confidence と importance は判断可能な場合のみ");
     expect(prompt).toContain("score");
-    expect(prompt).toContain("score は 0 から 1 で付けるのが望ましい（省略可）");
+    expect(prompt).toContain("モデル出力は最小 JSON");
+    expect(prompt).toContain("score は 0 から 1 で付けてよい（省略可）");
+    expect(prompt).toContain("最小 JSON");
     expect(prompt).toContain("出力形式は次のいずれかでよい");
     expect(prompt).toContain("自然言語: TYPE / TITLE / BODY / SCORE(任意)");
     expect(prompt).toContain("可能な限り日本語");
@@ -232,21 +300,25 @@ describe("vibe memory distillation", () => {
     mockResolvedValue(knowledgeRepo.upsertKnowledgeFromSource, "k-123");
     mockResolvedValue(embeddingService.embedOne, [0.1, 0.2]);
 
-    const modelClient = async () => ({
-      content: JSON.stringify({
+    const modelClient = async (_request: unknown, options?: { enableTools?: boolean }) => {
+      const content = JSON.stringify({
         candidates: [
           {
             type: "rule",
             title: "Test",
-            body: "Test body",
+            body: "Test body with reusable implementation guidance.",
             score: 1.0,
             sourceRefs: ["local"],
           },
         ],
-      }),
-      toolEvents: [],
-      messages: [],
-    });
+      });
+      if (options?.enableTools === false) return content;
+      return {
+        content,
+        toolEvents: [searchToolEvent()],
+        messages: [],
+      };
+    };
 
     const result = await distillVibeMemories({
       apply: true,

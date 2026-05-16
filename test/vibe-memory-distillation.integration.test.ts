@@ -2,7 +2,11 @@ import { beforeAll, beforeEach, describe, expect, test, afterAll } from "vitest"
 import { eq, sql } from "drizzle-orm";
 import { groupedConfig } from "../src/config.js";
 import { getDb } from "../src/db/index.js";
-import { knowledgeItems, vibeMemoryDistillationRuns } from "../src/db/schema.js";
+import {
+  distillationCandidates,
+  knowledgeItems,
+  vibeMemoryDistillationRuns,
+} from "../src/db/schema.js";
 import { distillVibeMemories } from "../src/modules/vibe-memory/distillation.service.js";
 import { recordVibeMemoryWithDiffEntries } from "../src/modules/vibe-memory/vibe-memory.service.js";
 import {
@@ -18,6 +22,15 @@ function testEmbedding(): number[] {
   return Array.from({ length: groupedConfig.embedding.dimension }, (_, index) =>
     index === 0 ? 1 : 0,
   );
+}
+
+function searchToolEvent() {
+  return {
+    callId: "search-1",
+    name: "search_web",
+    ok: true,
+    content: "Search evidence",
+  };
 }
 
 describeDb("vibe memory distillation integration", () => {
@@ -51,9 +64,9 @@ describeDb("vibe memory distillation integration", () => {
     const summary = await distillVibeMemories({
       apply: true,
       limit: 5,
-      modelClient: async () => {
+      modelClient: async (_request, options) => {
         modelCalls += 1;
-        return JSON.stringify({
+        const content = JSON.stringify({
           candidates: [
             {
               type: "procedure",
@@ -66,6 +79,12 @@ describeDb("vibe memory distillation integration", () => {
             },
           ],
         });
+        if (options?.enableTools === false) return content;
+        return {
+          content,
+          toolEvents: [searchToolEvent()],
+          messages: [],
+        };
       },
       embedder: async () => testEmbedding(),
     });
@@ -73,7 +92,7 @@ describeDb("vibe memory distillation integration", () => {
     expect(summary.ok).toBe(true);
     expect(summary.processed).toBe(1);
     expect(summary.knowledgeCount).toBe(1);
-    expect(modelCalls).toBe(1);
+    expect(modelCalls).toBe(2);
 
     const db = getDb();
     const knowledgeRows = await db
@@ -111,6 +130,19 @@ describeDb("vibe memory distillation integration", () => {
     expect(runRows[0]?.candidateCount).toBe(1);
     expect(runRows[0]?.knowledgeIds).toEqual([knowledgeRows[0]?.id]);
 
+    const candidateRows = await db.select().from(distillationCandidates);
+    expect(candidateRows).toHaveLength(1);
+    expect(candidateRows[0]).toMatchObject({
+      sourceKind: "vibe_memory",
+      vibeMemoryId: recorded.memory.id,
+      vibeMemoryRunId: runRows[0]?.id,
+      status: "promoted",
+      knowledgeId: knowledgeRows[0]?.id,
+    });
+    expect(candidateRows[0]?.toolEvents).toEqual(
+      expect.arrayContaining([expect.objectContaining({ name: "search_web", ok: true })]),
+    );
+
     const secondSummary = await distillVibeMemories({
       apply: true,
       limit: 5,
@@ -122,6 +154,6 @@ describeDb("vibe memory distillation integration", () => {
     });
 
     expect(secondSummary.processed).toBe(0);
-    expect(modelCalls).toBe(1);
+    expect(modelCalls).toBe(2);
   });
 });

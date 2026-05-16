@@ -25,6 +25,10 @@ export default defineConfig({
   server: {
     port: 5173,
   },
+  optimizeDeps: {
+    include: ["dayjs", "@braintree/sanitize-url"],
+    exclude: ["markdown-wysiwyg-editor", "mermaid"],
+  },
   build: {
     outDir: "dist-web",
   },

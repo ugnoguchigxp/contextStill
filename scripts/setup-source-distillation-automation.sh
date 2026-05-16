@@ -77,6 +77,7 @@ status() {
 
 run_once() {
   cd "$PROJECT_ROOT"
+  "$(resolve_bun_path)" run db:migrate
   "$(resolve_bun_path)" run src/cli/distill-sources.ts --apply
 }
 

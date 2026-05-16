@@ -185,6 +185,32 @@ describe("agentic-refine.service", () => {
       expect(result.items[0].id).toBe("3");
     });
 
+    it("accepts loose JSON-like output without response_format", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: "selectedIds: ['2', '1',], reasoning: 'loose output'",
+              },
+            },
+          ],
+        }),
+      });
+
+      const result = await agenticRefine(candidates, input, "task_context");
+      expect(result.agenticUsed).toBe(true);
+      expect(result.reasoning).toBe("loose output");
+      expect(result.items.map((item) => item.id)).toEqual(["2", "1"]);
+
+      const body = JSON.parse(mockFetch.mock.calls[0][1]?.body as string) as Record<
+        string,
+        unknown
+      >;
+      expect(body.response_format).toBeUndefined();
+    });
+
     it("accepts raw JSON array output as selectedIds fallback", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,

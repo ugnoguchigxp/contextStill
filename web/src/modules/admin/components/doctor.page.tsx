@@ -1,7 +1,12 @@
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { fetchDoctorReport } from "../repositories/admin.repository";
+import { fetchDoctorReport, type SkippedRunReason } from "../repositories/admin.repository";
+
+function formatSkippedRunReasons(reasons: SkippedRunReason[] | undefined): string {
+  if (!reasons || reasons.length === 0) return "-";
+  return reasons.map((item) => `${item.reason}: ${item.count}`).join(" / ");
+}
 
 export function DoctorPage() {
   const doctor = useQuery({ queryKey: ["doctor"], queryFn: () => fetchDoctorReport() });
@@ -167,6 +172,14 @@ export function DoctorPage() {
             </strong>
           </div>
           <div>
+            <span>Skipped reasons</span>
+            <strong>
+              {report
+                ? formatSkippedRunReasons(report.vibeDistillation.runs.skippedRunReasons)
+                : "-"}
+            </strong>
+          </div>
+          <div>
             <span>Failed</span>
             <strong>{report?.vibeDistillation.runs.failedRuns ?? 0}</strong>
           </div>
@@ -197,6 +210,14 @@ export function DoctorPage() {
             <strong>
               {report
                 ? `${report.sourceDistillation.runs.okRuns} / ${report.sourceDistillation.runs.skippedRuns}`
+                : "-"}
+            </strong>
+          </div>
+          <div>
+            <span>Skipped reasons</span>
+            <strong>
+              {report
+                ? formatSkippedRunReasons(report.sourceDistillation.runs.skippedRunReasons)
                 : "-"}
             </strong>
           </div>

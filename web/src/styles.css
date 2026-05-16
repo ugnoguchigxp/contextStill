@@ -232,6 +232,12 @@
   font-size: 0.8rem;
 }
 
+.runtime-list strong {
+  min-width: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
 /* Knowledge Page Overhaul */
 .knowledge-full-layout {
   display: flex;

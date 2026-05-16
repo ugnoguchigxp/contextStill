@@ -1,6 +1,8 @@
 import net from "node:net";
 import sanitizeHtml from "sanitize-html";
 import { groupedConfig } from "../../config.js";
+import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
+import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 
 export type DistillationToolDefinition = {
   type: "function";
@@ -153,15 +155,67 @@ function stripMarkup(html: string): string {
 }
 
 function parseToolArguments(raw: string): Record<string, unknown> {
-  try {
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as Record<string, unknown>;
-    }
-  } catch {
-    // Fall through to an empty argument object.
+  const parsed = parseLlmJsonLike(raw)?.value;
+  if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+    return parsed as Record<string, unknown>;
   }
   return {};
+}
+
+function distillationToolAuditEventType(toolName: string): string | null {
+  if (toolName === "search_web") return auditEventTypes.distillationWebSearch;
+  if (toolName === "fetch_content") return auditEventTypes.distillationFetchContent;
+  return null;
+}
+
+function stringValue(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+async function recordDistillationToolAudit(params: {
+  toolCall: DistillationToolCall;
+  args: Record<string, unknown>;
+  result: DistillationToolResult;
+  durationMs: number;
+  auditContext?: Record<string, unknown>;
+}): Promise<void> {
+  const eventType = distillationToolAuditEventType(params.toolCall.function.name);
+  if (!eventType) return;
+
+  const metadata = params.result.metadata ?? {};
+  const payload: Record<string, unknown> = {
+    ...(params.auditContext ?? {}),
+    callId: params.toolCall.id,
+    toolName: params.toolCall.function.name,
+    ok: params.result.ok,
+    durationMs: params.durationMs,
+  };
+
+  if (params.toolCall.function.name === "search_web") {
+    payload.query = stringValue(params.args.query);
+    payload.resultCount =
+      typeof metadata.resultCount === "number" ? metadata.resultCount : undefined;
+    payload.braveError = stringValue(metadata.braveError);
+  }
+
+  if (params.toolCall.function.name === "fetch_content") {
+    payload.url = stringValue(params.args.url);
+    payload.finalUrl = stringValue(metadata.finalUrl);
+    payload.contentChars =
+      typeof metadata.contentChars === "number" ? metadata.contentChars : undefined;
+    payload.redirectCount =
+      typeof metadata.redirectCount === "number" ? metadata.redirectCount : undefined;
+  }
+
+  if (!params.result.ok) {
+    payload.error = params.result.error;
+  }
+
+  await recordAuditLogSafe({
+    eventType,
+    actor: "system",
+    payload,
+  });
 }
 
 function normalizeUrl(rawUrl: unknown): URL {
@@ -439,7 +493,9 @@ async function fetchContent(rawUrl: unknown): Promise<DistillationToolResult> {
 
 export async function executeDistillationToolCall(
   toolCall: DistillationToolCall,
+  auditContext?: Record<string, unknown>,
 ): Promise<DistillationToolResult> {
+  const startedAt = Date.now();
   const args = parseToolArguments(toolCall.function.arguments);
   try {
     const result =
@@ -453,13 +509,21 @@ export async function executeDistillationToolCall(
       throw new Error(`unknown distillation tool: ${toolCall.function.name}`);
     }
 
-    return {
+    const auditedResult = {
       ...result,
       callId: toolCall.id,
     };
+    await recordDistillationToolAudit({
+      toolCall,
+      args,
+      result: auditedResult,
+      durationMs: Date.now() - startedAt,
+      auditContext,
+    });
+    return auditedResult;
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
-    return {
+    const failureResult = {
       callId: toolCall.id,
       name: toolCall.function.name,
       ok: false,
@@ -469,5 +533,13 @@ export async function executeDistillationToolCall(
       }),
       error: message,
     };
+    await recordDistillationToolAudit({
+      toolCall,
+      args,
+      result: failureResult,
+      durationMs: Date.now() - startedAt,
+      auditContext,
+    });
+    return failureResult;
   }
 }

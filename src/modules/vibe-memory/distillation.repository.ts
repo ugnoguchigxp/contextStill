@@ -39,15 +39,23 @@ export async function listVibeMemoriesForDistillation(params: {
       where ${vibeMemoryDistillationRuns.vibeMemoryId} = ${vibeMemories.id}
         and ${vibeMemoryDistillationRuns.promptVersion} = ${params.promptVersion}
         and ${vibeMemoryDistillationRuns.status} = 'failed'
-        and ${vibeMemoryDistillationRuns.updatedAt} > now() - (${groupedConfig.distillationTools.failureRetryDelaySeconds} * interval '1 second')
+      and ${vibeMemoryDistillationRuns.updatedAt} > now() - (${groupedConfig.distillationTools.failureRetryDelaySeconds} * interval '1 second')
     )`);
   }
+
+  const estimatedInputSize = sql<number>`
+    length(${vibeMemories.content}) + coalesce((
+      select sum(length(${agentDiffEntries.diffHunk}))
+      from ${agentDiffEntries}
+      where ${agentDiffEntries.vibeMemoryId} = ${vibeMemories.id}
+    ), 0)
+  `;
 
   return db
     .select()
     .from(vibeMemories)
     .where(filters.length > 0 ? and(...filters) : undefined)
-    .orderBy(asc(vibeMemories.createdAt))
+    .orderBy(asc(estimatedInputSize), asc(vibeMemories.createdAt), asc(vibeMemories.id))
     .limit(params.limit);
 }
 

@@ -23,3 +23,23 @@ export function metadataSkipped(raw: unknown): boolean {
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return false;
   return Boolean((raw as { skipped?: unknown }).skipped);
 }
+
+export type ReasonCount = {
+  reason: string;
+  count: number;
+};
+
+export function normalizeReasonCounts(raw: unknown): ReasonCount[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((item): ReasonCount | null => {
+      if (!item || typeof item !== "object" || Array.isArray(item)) return null;
+      const reason = (item as { reason?: unknown }).reason;
+      const count = (item as { count?: unknown }).count;
+      if (typeof reason !== "string" || !reason.trim()) return null;
+      const normalizedCount = Number(count);
+      if (!Number.isFinite(normalizedCount) || normalizedCount < 0) return null;
+      return { reason, count: Math.trunc(normalizedCount) };
+    })
+    .filter((item): item is ReasonCount => item !== null);
+}

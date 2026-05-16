@@ -120,6 +120,13 @@
       "when": 1778871600000,
       "tag": "0016_vibe_distillation_tool_events",
       "breakpoints": true
+    },
+    {
+      "idx": 17,
+      "version": "7",
+      "when": 1778875200000,
+      "tag": "0017_distillation_candidates",
+      "breakpoints": true
     }
   ]
 }

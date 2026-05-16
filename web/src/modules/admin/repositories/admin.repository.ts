@@ -79,6 +79,11 @@ export type KnowledgeWriteInput = {
   metadata?: Record<string, unknown>;
 };
 
+export type SkippedRunReason = {
+  reason: string;
+  count: number;
+};
+
 export type DoctorReport = {
   status: "ok" | "degraded" | "failed";
   checkedAt: string;
@@ -175,9 +180,12 @@ export type DoctorReport = {
       totalRuns: number;
       okRuns: number;
       skippedRuns: number;
+      skippedRunReasons: SkippedRunReason[];
       failedRuns: number;
       lastRunAt: string | null;
       lastRunAgeMinutes: number | null;
+      lastOkRunAt?: string | null;
+      lastOkRunAgeMinutes?: number | null;
     };
     nextActions: string[];
   };
@@ -193,9 +201,12 @@ export type DoctorReport = {
       totalRuns: number;
       okRuns: number;
       skippedRuns: number;
+      skippedRunReasons: SkippedRunReason[];
       failedRuns: number;
       lastRunAt: string | null;
       lastRunAgeMinutes: number | null;
+      lastOkRunAt?: string | null;
+      lastOkRunAgeMinutes?: number | null;
     };
     nextActions: string[];
   };

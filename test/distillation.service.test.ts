@@ -12,10 +12,47 @@ import { runDistillationCompletion } from "../src/modules/distillation/distillat
 import { checkKnowledgeDuplicate } from "../src/lib/knowledge-dedup.js";
 
 vi.mock("../src/modules/vibe-memory/distillation.repository.js");
+vi.mock("../src/modules/distillation/distillation-candidate.repository.js", () => ({
+  attachDistillationCandidateRun: vi.fn().mockResolvedValue(undefined),
+  claimDistillationCandidateForEvaluation: vi.fn((id: string) => Promise.resolve({ id })),
+  listPromotionReadyDistillationCandidates: vi.fn().mockResolvedValue([]),
+  distillationCandidateRowToCandidate: vi.fn((row: any) => ({
+    type: row.type,
+    title: row.title,
+    body: row.body,
+    confidence: row.confidence ?? 65,
+    importance: row.importance ?? 55,
+    score: row.score,
+  })),
+  listUnevaluatedDistillationCandidates: vi.fn().mockResolvedValue([]),
+  markDistillationCandidateEvaluating: vi.fn().mockResolvedValue(undefined),
+  updateDistillationCandidateEvaluation: vi.fn().mockResolvedValue(undefined),
+  upsertExtractedDistillationCandidates: vi.fn((params: any) =>
+    Promise.resolve(
+      params.candidates.map((candidate: any, index: number) => ({
+        id: `candidate-${index}`,
+        sourceKind: params.source.sourceKind,
+        sourceFragmentId: params.source.sourceFragmentId ?? null,
+        vibeMemoryId: params.source.vibeMemoryId ?? null,
+        candidateIndex: index,
+        ...candidate,
+      })),
+    ),
+  ),
+}));
 vi.mock("../src/modules/knowledge/knowledge.repository.js");
 vi.mock("../src/modules/embedding/embedding.service.js");
 vi.mock("../src/modules/distillation/distillation-runtime.service.js");
 vi.mock("../src/lib/knowledge-dedup.js");
+
+function searchToolEvent() {
+  return {
+    callId: "search-1",
+    name: "search_web",
+    ok: true,
+    content: "Search evidence",
+  };
+}
 
 describe("Vibe Memory Distillation Service", () => {
   beforeEach(() => {
@@ -33,6 +70,7 @@ describe("Vibe Memory Distillation Service", () => {
       },
     ]);
     vi.mocked(listAgentDiffEntriesForVibeMemories).mockResolvedValue([]);
+    vi.mocked(upsertVibeMemoryDistillationRun).mockResolvedValue({ id: "run1" } as any);
     vi.mocked(checkKnowledgeDuplicate).mockResolvedValue({ isDuplicate: false });
   });
 
@@ -43,7 +81,7 @@ describe("Vibe Memory Distillation Service", () => {
           {
             type: "rule",
             title: "Rule 1",
-            body: "Body 1",
+            body: "Use durable implementation guidance when preserving a rule.",
             confidence: 90,
             importance: 90,
             score: 0.9,
@@ -51,7 +89,7 @@ describe("Vibe Memory Distillation Service", () => {
           },
         ],
       }),
-      toolEvents: [],
+      toolEvents: [searchToolEvent()],
       messages: [],
     });
 
@@ -70,7 +108,7 @@ describe("Vibe Memory Distillation Service", () => {
           {
             type: "rule",
             title: "Rule 1",
-            body: "Body 1",
+            body: "Use durable implementation guidance when preserving a rule.",
             confidence: 90,
             importance: 90,
             score: 0.9,
@@ -78,7 +116,7 @@ describe("Vibe Memory Distillation Service", () => {
           },
         ],
       }),
-      toolEvents: [],
+      toolEvents: [searchToolEvent()],
       messages: [],
     });
     vi.mocked(embedOne).mockResolvedValue([0.1, 0.2]);
@@ -115,15 +153,24 @@ describe("Vibe Memory Distillation Service", () => {
 
     expect(summary.skipped).toBe(1);
     expect(summary.knowledgeCount).toBe(0);
+    expect(summary.skipReasonCounts).toEqual({ all_candidates_missing_external_evidence: 1 });
     expect(summary.results[0].status).toBe("skipped");
   });
 
   test("accepts non-JSON labeled text", async () => {
-    vi.mocked(runDistillationCompletion).mockResolvedValueOnce({
-      content: "TYPE: rule\nTITLE: Fixed\nBODY: ...\nSCORE: 0.8",
-      toolEvents: [],
-      messages: [],
-    });
+    vi.mocked(runDistillationCompletion)
+      .mockResolvedValueOnce({
+        content:
+          "TYPE: rule\nTITLE: Fixed\nBODY: Reusable guidance should include enough detail for a later coding agent.\nSCORE: 0.8",
+        toolEvents: [],
+        messages: [],
+      })
+      .mockResolvedValueOnce({
+        content:
+          "TYPE: rule\nTITLE: Fixed\nBODY: Reusable guidance should include enough detail for a later coding agent.\nSCORE: 0.8",
+        toolEvents: [],
+        messages: [],
+      });
 
     const summary = await distillVibeMemories({ apply: false });
 

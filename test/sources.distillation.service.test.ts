@@ -14,6 +14,34 @@ import * as repository from "../src/modules/sources/distillation.repository.js";
 import * as knowledgeDedup from "../src/lib/knowledge-dedup.js";
 
 vi.mock("../src/modules/sources/distillation.repository.js");
+vi.mock("../src/modules/distillation/distillation-candidate.repository.js", () => ({
+  attachDistillationCandidateRun: vi.fn().mockResolvedValue(undefined),
+  claimDistillationCandidateForEvaluation: vi.fn((id: string) => Promise.resolve({ id })),
+  listPromotionReadyDistillationCandidates: vi.fn().mockResolvedValue([]),
+  distillationCandidateRowToCandidate: vi.fn((row: any) => ({
+    type: row.type,
+    title: row.title,
+    body: row.body,
+    confidence: row.confidence ?? 65,
+    importance: row.importance ?? 55,
+    score: row.score,
+  })),
+  listUnevaluatedDistillationCandidates: vi.fn().mockResolvedValue([]),
+  markDistillationCandidateEvaluating: vi.fn().mockResolvedValue(undefined),
+  updateDistillationCandidateEvaluation: vi.fn().mockResolvedValue(undefined),
+  upsertExtractedDistillationCandidates: vi.fn((params: any) =>
+    Promise.resolve(
+      params.candidates.map((candidate: any, index: number) => ({
+        id: `candidate-${index}`,
+        sourceKind: params.source.sourceKind,
+        sourceFragmentId: params.source.sourceFragmentId ?? null,
+        vibeMemoryId: params.source.vibeMemoryId ?? null,
+        candidateIndex: index,
+        ...candidate,
+      })),
+    ),
+  ),
+}));
 vi.mock("../src/modules/knowledge/knowledge.repository.js");
 vi.mock("../src/modules/distillation/distillation-candidates.js");
 vi.mock("../src/modules/distillation/distillation-prompts.js");
@@ -28,6 +56,15 @@ const originalSourceDistillationConfig = {
   maxOutputTokens: groupedConfig.sourceDistillation.maxOutputTokens,
 };
 const originalLocalLlmModel = groupedConfig.localLlm.model;
+
+function searchToolEvent() {
+  return {
+    callId: "search-1",
+    name: "search_web",
+    ok: true,
+    content: "Search evidence",
+  };
+}
 
 describe("sources distillation service", () => {
   const mockFragment = {
@@ -57,6 +94,11 @@ describe("sources distillation service", () => {
     ]);
     vi.mocked(promptsUtil.buildDistillationSystemPrompt).mockReturnValue("system prompt");
     vi.mocked(candidatesUtil.parseDistillationCandidateList).mockReturnValue([]);
+    vi.mocked(candidatesUtil.parseDistillationCandidateListWithMetadata).mockReturnValue({
+      candidates: [],
+      jsonRepaired: false,
+      parseStrategies: [],
+    });
     vi.mocked(candidatesUtil.filterDistillationCandidatesByScore).mockReturnValue({
       accepted: [],
       rejectedLowScore: [],
@@ -124,12 +166,17 @@ describe("sources distillation service", () => {
       };
       const mockCompletion = {
         content: '{"candidates":[...]}',
-        toolEvents: [],
+        toolEvents: [searchToolEvent()],
         messages: [],
       };
 
       vi.mocked(runtime.runDistillationCompletion).mockResolvedValue(mockCompletion);
       vi.mocked(candidatesUtil.parseDistillationCandidateList).mockReturnValue([mockCandidate]);
+      vi.mocked(candidatesUtil.parseDistillationCandidateListWithMetadata).mockReturnValue({
+        candidates: [mockCandidate],
+        jsonRepaired: false,
+        parseStrategies: [],
+      });
       vi.mocked(candidatesUtil.filterDistillationCandidatesByScore).mockReturnValue({
         accepted: [mockCandidate],
         rejectedLowScore: [],

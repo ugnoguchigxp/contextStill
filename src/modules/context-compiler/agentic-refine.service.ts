@@ -1,4 +1,5 @@
 import { groupedConfig } from "../../config.js";
+import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
 import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
 import type { KnowledgeItem, KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
 import { getAgenticLlmProviders } from "../llm/agentic-llm.service.js";
@@ -29,13 +30,9 @@ function buildSystemPrompt(input: CompileInput, retrievalMode: RetrievalMode): s
   const lines = [
     "あなたはコーディングエージェントのためのコンテキストコンパイラです。",
     "## 出力形式",
-    "必ず以下の JSON フォーマットのみを返してください。他のテキストは一切含めないでください。",
-    "```json",
-    "{",
-    '  "selectedIds": ["選別した知識のID", ...],',
-    '  "reasoning": "なぜこれらの知識を選別したか、あるいはなぜ一つも選別しなかったかの理由（簡潔に）"',
-    "}",
-    "```",
+    "厳密な JSON でなくてよい。最小限の構造だけを短く返してください。",
+    '推奨形: selectedIds: ["選別した知識のID"], reasoning: "簡潔な理由"',
+    "reasoning は省略してよい。selectedIds が分かればよい。",
     "",
     "## 選別基準",
     "- **厳格な有用性評価**: 提示する知識が、現在のゴール達成に**直接的かつ具体的**に寄与するかを評価してください。",
@@ -84,55 +81,58 @@ function buildUserPrompt(candidates: AgenticCandidate[]): string {
 }
 
 function parseAgenticOutput(raw: string): AgenticLlmOutput | null {
-  const tryParse = (text: string): AgenticLlmOutput | null => {
-    try {
-      const parsed = JSON.parse(text);
-      // Array format fallback
-      if (Array.isArray(parsed)) {
-        if (!parsed.every((item) => typeof item === "string")) {
-          return null;
-        }
-        return { selectedIds: parsed, reasoning: "Converted from array format" };
-      }
-      if (isAgenticOutput(parsed)) return parsed;
-    } catch {
-      return null;
-    }
-    return null;
-  };
-
-  const direct = tryParse(raw);
-  if (direct) return direct;
-
-  const match = raw.match(/```(?:json)?\s*([\s\S]*?)```/);
-  if (match?.[1]) {
-    const wrapped = tryParse(match[1].trim());
-    if (wrapped) return wrapped;
+  const parsed = parseLlmJsonLike(raw);
+  if (parsed) {
+    return normalizeAgenticOutput(parsed.value);
   }
 
-  const braceMatch = raw.match(/\{[\s\S]*"selectedIds"[\s\S]*\}/);
-  if (braceMatch) {
-    const braced = tryParse(braceMatch[0]);
-    if (braced) return braced;
-  }
+  return parseAgenticLabelOutput(raw);
+}
 
-  // Last resort: check if it's just a raw JSON array string
-  const arrayMatch = raw.match(/\[[\s\S]*?\]/);
-  if (arrayMatch) {
-    const arrayed = tryParse(arrayMatch[0]);
-    if (arrayed) return arrayed;
+function normalizeStringArray(value: unknown): string[] | null {
+  if (Array.isArray(value)) {
+    return value.every((id) => typeof id === "string") ? value : null;
   }
-
+  if (typeof value === "string") {
+    const ids = value
+      .split(/[\s,]+/)
+      .map((id) => id.trim())
+      .filter(Boolean);
+    return ids.length > 0 ? ids : null;
+  }
   return null;
 }
 
-function isAgenticOutput(value: unknown): value is AgenticLlmOutput {
-  if (typeof value !== "object" || value === null) return false;
+function normalizeAgenticOutput(value: unknown): AgenticLlmOutput | null {
+  if (Array.isArray(value)) {
+    const selectedIds = normalizeStringArray(value);
+    return selectedIds ? { selectedIds, reasoning: "Converted from array format" } : null;
+  }
+  if (typeof value !== "object" || value === null) return null;
   const obj = value as Record<string, unknown>;
-  if (!Array.isArray(obj.selectedIds)) return false;
-  if (!obj.selectedIds.every((id) => typeof id === "string")) return false;
-  if (obj.reasoning !== undefined && typeof obj.reasoning !== "string") return false;
-  return true;
+  const selectedIds =
+    normalizeStringArray(obj.selectedIds) ??
+    normalizeStringArray(obj.ids) ??
+    normalizeStringArray(obj.knowledgeIds) ??
+    normalizeStringArray(obj.selected);
+  if (!selectedIds) return null;
+  return {
+    selectedIds,
+    reasoning: typeof obj.reasoning === "string" ? obj.reasoning : undefined,
+  };
+}
+
+function parseAgenticLabelOutput(raw: string): AgenticLlmOutput | null {
+  const selectedMatch = raw.match(/(?:selectedIds|selected|ids|knowledgeIds)\s*[:：]\s*([^\n]+)/i);
+  if (!selectedMatch?.[1]) return null;
+  const selectedIds = selectedMatch[1]
+    .replace(/[[\]"'`]/g, "")
+    .split(/[\s,]+/)
+    .map((id) => id.trim())
+    .filter(Boolean);
+  if (selectedIds.length === 0) return null;
+  const reasoning = raw.match(/reasoning\s*[:：]\s*([^\n]+)/i)?.[1]?.trim();
+  return { selectedIds, reasoning };
 }
 
 function selectCandidates(
@@ -203,7 +203,6 @@ export async function agenticRefine(
         ],
         maxTokens: groupedConfig.agenticCompile.maxTokens,
         temperature: 0,
-        responseFormat: "json",
       });
 
       const parsed = parseAgenticOutput(response.content);

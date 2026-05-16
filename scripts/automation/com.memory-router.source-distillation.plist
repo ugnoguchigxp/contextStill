@@ -6,10 +6,9 @@
     <string>com.memory-router.source-distillation</string>
     <key>ProgramArguments</key>
     <array>
-        <string>{{BUN_PATH}}</string>
-        <string>run</string>
-        <string>src/cli/distill-sources.ts</string>
-        <string>--apply</string>
+        <string>/bin/bash</string>
+        <string>{{PROJECT_ROOT}}/scripts/setup-source-distillation-automation.sh</string>
+        <string>run-once</string>
     </array>
     <key>WorkingDirectory</key>
     <string>{{PROJECT_ROOT}}</string>

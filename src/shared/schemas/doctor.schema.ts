@@ -10,6 +10,11 @@ const launchAgentSchema = z.object({
   state: z.string().nullable(),
 });
 
+const skippedRunReasonSchema = z.object({
+  reason: z.string(),
+  count: z.number().int().nonnegative(),
+});
+
 export const doctorReportSchema = z.object({
   status: doctorStatusSchema,
   checkedAt: z.string().datetime(),
@@ -130,6 +135,7 @@ export const doctorReportSchema = z.object({
       totalRuns: z.number().int().nonnegative(),
       okRuns: z.number().int().nonnegative(),
       skippedRuns: z.number().int().nonnegative(),
+      skippedRunReasons: z.array(skippedRunReasonSchema),
       failedRuns: z.number().int().nonnegative(),
       lastRunAt: z.string().datetime().nullable(),
       lastRunAgeMinutes: z.number().nonnegative().nullable(),
@@ -144,6 +150,7 @@ export const doctorReportSchema = z.object({
       totalRuns: z.number().int().nonnegative(),
       okRuns: z.number().int().nonnegative(),
       skippedRuns: z.number().int().nonnegative(),
+      skippedRunReasons: z.array(skippedRunReasonSchema),
       failedRuns: z.number().int().nonnegative(),
       lastRunAt: z.string().datetime().nullable(),
       lastRunAgeMinutes: z.number().nonnegative().nullable(),

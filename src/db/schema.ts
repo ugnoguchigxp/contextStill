@@ -137,6 +137,17 @@ export const vibeMemoryDistillationRuns = pgTable(
 
 export const sourceDistillationStatusValues = ["ok", "skipped", "failed"] as const;
 
+export const distillationCandidateSourceKindValues = ["vibe_memory", "source_fragment"] as const;
+
+export const distillationCandidateStatusValues = [
+  "extracted",
+  "evaluating",
+  "verified",
+  "promoted",
+  "rejected",
+  "failed",
+] as const;
+
 export const sourceLinkTypeValues = ["derived_from"] as const;
 
 export const runStatusValues = ["ok", "degraded", "failed"] as const;
@@ -369,6 +380,81 @@ export const sourceDistillationEvidence = pgTable(
   (table) => ({
     runIdIdx: index("source_distillation_evidence_run_id_idx").on(table.runId),
     toolNameIdx: index("source_distillation_evidence_tool_name_idx").on(table.toolName),
+  }),
+);
+
+export const distillationCandidates = pgTable(
+  "distillation_candidates",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceKind: text("source_kind").notNull(),
+    vibeMemoryId: uuid("vibe_memory_id").references(() => vibeMemories.id, {
+      onDelete: "cascade",
+    }),
+    sourceFragmentId: uuid("source_fragment_id").references(() => sourceFragments.id, {
+      onDelete: "cascade",
+    }),
+    vibeMemoryRunId: uuid("vibe_memory_run_id").references(() => vibeMemoryDistillationRuns.id, {
+      onDelete: "set null",
+    }),
+    sourceRunId: uuid("source_run_id").references(() => sourceDistillationRuns.id, {
+      onDelete: "set null",
+    }),
+    inputHash: text("input_hash").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    model: text("model").notNull(),
+    candidateIndex: integer("candidate_index").notNull(),
+    type: text("type").notNull(),
+    title: text("title").notNull(),
+    body: text("body").notNull(),
+    score: real("score").default(0).notNull(),
+    confidence: real("confidence"),
+    importance: real("importance"),
+    status: text("status").notNull().default("extracted"),
+    rejectionReason: text("rejection_reason"),
+    knowledgeId: uuid("knowledge_id").references(() => knowledgeItems.id, {
+      onDelete: "set null",
+    }),
+    toolEvents: jsonb("tool_events").default([]).notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    evaluatedAt: timestamp("evaluated_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    statusIdx: index("distillation_candidates_status_idx").on(table.status),
+    sourceKindIdx: index("distillation_candidates_source_kind_idx").on(table.sourceKind),
+    vibeMemoryIdIdx: index("distillation_candidates_vibe_memory_id_idx").on(table.vibeMemoryId),
+    sourceFragmentIdIdx: index("distillation_candidates_source_fragment_id_idx").on(
+      table.sourceFragmentId,
+    ),
+    knowledgeIdIdx: index("distillation_candidates_knowledge_id_idx").on(table.knowledgeId),
+    vibeCandidateUniqueIdx: uniqueIndex("distillation_candidates_vibe_candidate_unique_idx")
+      .on(table.vibeMemoryId, table.promptVersion, table.inputHash, table.candidateIndex)
+      .where(sql`${table.vibeMemoryId} IS NOT NULL`),
+    sourceCandidateUniqueIdx: uniqueIndex("distillation_candidates_source_candidate_unique_idx")
+      .on(table.sourceFragmentId, table.promptVersion, table.inputHash, table.candidateIndex)
+      .where(sql`${table.sourceFragmentId} IS NOT NULL`),
+    sourceKindCheck: check(
+      "distillation_candidates_source_kind_check",
+      sql`${table.sourceKind} IN (${sql.raw(toSqlList(distillationCandidateSourceKindValues))})`,
+    ),
+    statusCheck: check(
+      "distillation_candidates_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(distillationCandidateStatusValues))})`,
+    ),
+    typeCheck: check(
+      "distillation_candidates_type_check",
+      sql`${table.type} IN (${sql.raw(toSqlList(knowledgeTypeValues))})`,
+    ),
+    sourceRefCheck: check(
+      "distillation_candidates_source_ref_check",
+      sql`(
+        (${table.sourceKind} = 'vibe_memory' AND ${table.vibeMemoryId} IS NOT NULL AND ${table.sourceFragmentId} IS NULL)
+        OR
+        (${table.sourceKind} = 'source_fragment' AND ${table.sourceFragmentId} IS NOT NULL AND ${table.vibeMemoryId} IS NULL)
+      )`,
+    ),
   }),
 );
 

@@ -1,5 +1,8 @@
 import { describe, expect, test } from "vitest";
-import { parseDistillationCandidateList } from "../src/modules/distillation/distillation-candidates.js";
+import {
+  filterDistillationCandidatesByScore,
+  parseDistillationCandidateList,
+} from "../src/modules/distillation/distillation-candidates.js";
 
 describe("parseDistillationCandidateList", () => {
   test("recovers complete candidates from truncated JSON output", () => {
@@ -33,5 +36,55 @@ describe("parseDistillationCandidateList", () => {
 {"candidates":[{"type":"rule","title":"未完`;
 
     expect(parseDistillationCandidateList(response)).toEqual([]);
+  });
+
+  test("parses loose JSON-like candidate output", () => {
+    const response = `
+      candidates: [{
+        type: 'rule',
+        title: 'Gemma4 output should stay simple',
+        body: 'Prefer relaxed structure and normalize it in code.',
+        confidence: 81,
+        importance: 76,
+      }]
+    `;
+
+    const candidates = parseDistillationCandidateList(response);
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      type: "rule",
+      title: "Gemma4 output should stay simple",
+      confidence: 81,
+      importance: 76,
+    });
+  });
+
+  test("rejects tool-name-only and identical title/body candidates", () => {
+    const candidates = parseDistillationCandidateList(
+      JSON.stringify({
+        candidates: [
+          {
+            type: "rule",
+            title: "fetch_content",
+            body: "fetch_content",
+            score: 1,
+          },
+          {
+            type: "rule",
+            title: "Meaningful distillation output",
+            body: "Distilled knowledge must preserve reusable implementation guidance, not tool names.",
+            score: 1,
+          },
+        ],
+      }),
+    );
+
+    const gate = filterDistillationCandidatesByScore(candidates);
+
+    expect(gate.accepted.map((candidate) => candidate.title)).toEqual([
+      "Meaningful distillation output",
+    ]);
+    expect(gate.rejectedLowScore.map((candidate) => candidate.title)).toContain("fetch_content");
   });
 });

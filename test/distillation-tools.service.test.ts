@@ -1,14 +1,25 @@
 import { describe, expect, test, vi, beforeEach } from "vitest";
+import { recordAuditLogSafe } from "../src/modules/audit/audit-log.service.js";
 import { executeDistillationToolCall } from "../src/modules/distillation/distillation-tools.service.js";
+
+vi.mock("../src/modules/audit/audit-log.service.js", () => ({
+  auditEventTypes: {
+    distillationWebSearch: "DISTILLATION_WEB_SEARCH",
+    distillationFetchContent: "DISTILLATION_FETCH_CONTENT",
+  },
+  recordAuditLogSafe: vi.fn().mockResolvedValue(undefined),
+}));
 
 describe("Distillation Tools Service", () => {
   beforeEach(() => {
+    vi.clearAllMocks();
+    vi.unstubAllEnvs();
     vi.stubGlobal("fetch", vi.fn());
   });
 
   describe("search_web", () => {
     test("uses Brave search when API key is present", async () => {
-      process.env.BRAVE_SEARCH_API_KEY = "test-key";
+      vi.stubEnv("BRAVE_SEARCH_API_KEY", "test-key");
       const mockResponse = {
         ok: true,
         json: async () => ({
@@ -19,13 +30,34 @@ describe("Distillation Tools Service", () => {
       };
       vi.mocked(fetch).mockResolvedValue(mockResponse as any);
 
-      const result = await executeDistillationToolCall({
-        id: "call1",
-        function: { name: "search_web", arguments: JSON.stringify({ query: "vitest" }) },
-      });
+      const result = await executeDistillationToolCall(
+        {
+          id: "call1",
+          function: { name: "search_web", arguments: JSON.stringify({ query: "vitest" }) },
+        },
+        {
+          candidateRowId: "candidate-1",
+          sourceKind: "source_fragment",
+        },
+      );
 
       expect(result.ok).toBe(true);
       expect(result.content).toContain("Brave Result");
+      expect(recordAuditLogSafe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: "DISTILLATION_WEB_SEARCH",
+          actor: "system",
+          payload: expect.objectContaining({
+            callId: "call1",
+            candidateRowId: "candidate-1",
+            sourceKind: "source_fragment",
+            toolName: "search_web",
+            query: "vitest",
+            ok: true,
+            resultCount: 1,
+          }),
+        }),
+      );
       expect(fetch).toHaveBeenCalledWith(
         expect.objectContaining({ href: expect.stringContaining("brave.com") }),
         expect.anything(),
@@ -33,7 +65,7 @@ describe("Distillation Tools Service", () => {
     });
 
     test("falls back to DuckDuckGo when Brave fails", async () => {
-      process.env.BRAVE_SEARCH_API_KEY = "test-key";
+      vi.stubEnv("BRAVE_SEARCH_API_KEY", "test-key");
       vi.mocked(fetch)
         .mockRejectedValueOnce(new Error("Brave Down")) // Brave call fails
         .mockResolvedValueOnce({
@@ -49,6 +81,42 @@ describe("Distillation Tools Service", () => {
 
       expect(result.ok).toBe(true);
       expect(result.content).toContain("DDG Result");
+      expect(recordAuditLogSafe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: "DISTILLATION_WEB_SEARCH",
+          payload: expect.objectContaining({
+            toolName: "search_web",
+            ok: true,
+            resultCount: 1,
+            braveError: "Brave Down",
+          }),
+        }),
+      );
+    });
+
+    test("accepts loose tool call arguments", async () => {
+      vi.stubEnv("BRAVE_SEARCH_API_KEY", "");
+      vi.mocked(fetch).mockResolvedValueOnce({
+        ok: true,
+        text: async () =>
+          '<div class="result"><a class="result__a" href="https://example.com">Loose Result</a></div></div>',
+      } as any);
+
+      const result = await executeDistillationToolCall({
+        id: "call1",
+        function: { name: "search_web", arguments: "{ query: 'loose args', }" },
+      });
+
+      expect(result.ok).toBe(true);
+      expect(result.content).toContain("Loose Result");
+      expect(recordAuditLogSafe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: "DISTILLATION_WEB_SEARCH",
+          payload: expect.objectContaining({
+            query: "loose args",
+          }),
+        }),
+      );
     });
   });
 
@@ -74,6 +142,21 @@ describe("Distillation Tools Service", () => {
       expect(result.ok).toBe(true);
       expect(result.content).toContain("TitleContent");
       expect(result.content).not.toContain("alert");
+      expect(recordAuditLogSafe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: "DISTILLATION_FETCH_CONTENT",
+          actor: "system",
+          payload: expect.objectContaining({
+            callId: "call1",
+            toolName: "fetch_content",
+            url: "https://example.com",
+            finalUrl: "https://example.com/",
+            ok: true,
+            contentChars: expect.any(Number),
+            redirectCount: 0,
+          }),
+        }),
+      );
     });
 
     test("falls back to Jina reader when direct fetch fails", async () => {
@@ -109,6 +192,17 @@ describe("Distillation Tools Service", () => {
 
       expect(result.ok).toBe(false);
       expect(result.error).toContain("fetch_content blocked");
+      expect(recordAuditLogSafe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: "DISTILLATION_FETCH_CONTENT",
+          payload: expect.objectContaining({
+            toolName: "fetch_content",
+            ok: false,
+            url: "http://localhost:3000/internal",
+            error: expect.stringContaining("fetch_content blocked"),
+          }),
+        }),
+      );
       expect(fetch).not.toHaveBeenCalled();
     });
 
