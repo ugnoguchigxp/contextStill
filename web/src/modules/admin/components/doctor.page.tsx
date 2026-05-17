@@ -33,7 +33,6 @@ function formatAgeMinutes(value: number | null | undefined): string {
 
 function outcomeLabel(reason: string): string {
   const labels: Record<string, string> = {
-    below_quality_threshold: "Low score",
     candidate_rejected: "Rejected",
     invalid_candidate: "Invalid candidate",
     knowledge_created: "Created",
@@ -54,7 +53,6 @@ function outcomeLabel(reason: string): string {
 
 function outcomeFocus(reason: string): string {
   const focus: Record<string, string> = {
-    below_quality_threshold: "score gate",
     candidate_rejected: "candidate value",
     invalid_candidate: "candidate shape",
     knowledge_created: "review draft",
@@ -89,7 +87,6 @@ function outcomeVariant(
   if (
     reason === "verification_no_candidate" ||
     reason === "missing_external_evidence" ||
-    reason === "below_quality_threshold" ||
     reason === "invalid_candidate" ||
     reason === "mixed_candidate_rejections" ||
     reason === "llm_empty_response" ||

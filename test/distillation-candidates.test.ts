@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
 import {
-  filterDistillationCandidatesByScore,
+  validateDistillationCandidates,
   parseDistillationCandidateList,
 } from "../src/modules/distillation/distillation-candidates.js";
 import { distillationToolNames } from "../src/modules/distillation/distillation-tools.service.js";
@@ -16,7 +16,6 @@ describe("parseDistillationCandidateList", () => {
       "body": "displayField は displayFieldForTable(columns) で動的決定する。",
       "confidence": 92,
       "importance": 88,
-      "score": 0.9,
       "sourceRefs": [
         "file: /Users/y.noguchi/Code/composia-ui/api/modules/database-design/database-design.provider.ts"
       ]
@@ -29,7 +28,6 @@ describe("parseDistillationCandidateList", () => {
 
     expect(candidates).toHaveLength(1);
     expect(candidates[0]?.title).toBe("表示フィールド決定ロジックの更新");
-    expect(candidates[0]?.score).toBe(0.9);
   });
 
   test("returns empty list when no complete candidate can be recovered", () => {
@@ -86,7 +84,6 @@ describe("parseDistillationCandidateList", () => {
             type: "rule",
             title: "Meaningful distillation output",
             body: "Distilled knowledge must preserve reusable implementation guidance, not tool names.",
-            score: 1,
           },
         ],
       }),
@@ -117,19 +114,17 @@ describe("parseDistillationCandidateList", () => {
             type: "rule",
             title: knownToolName,
             body: knownToolName,
-            score: 1,
           },
           {
             type: "rule",
             title: "Meaningful distillation output",
             body: "Distilled knowledge must preserve reusable implementation guidance, not tool names.",
-            score: 1,
           },
         ],
       }),
     );
 
-    const gate = filterDistillationCandidatesByScore(candidates);
+    const gate = validateDistillationCandidates(candidates);
 
     expect(gate.accepted.map((candidate) => candidate.title)).toEqual([
       "Meaningful distillation output",
@@ -145,13 +140,12 @@ describe("parseDistillationCandidateList", () => {
             type: "rule",
             title: "Short body",
             body: "Too short.",
-            score: 1,
           },
         ],
       }),
     );
 
-    const gate = filterDistillationCandidatesByScore(candidates);
+    const gate = validateDistillationCandidates(candidates);
 
     expect(gate.accepted).toHaveLength(0);
     expect(gate.rejectedLowQuality.map((candidate) => candidate.title)).toEqual(["Short body"]);

@@ -10,8 +10,7 @@ describe("distillation outcome classification", () => {
     expect(
       classifySkippedDistillationOutcome({
         extractionCandidateCount: 0,
-        rawCandidateCount: 0,
-        rejectedLowScoreCount: 0,
+        verificationCandidateCount: 0,
         rejectedLowQualityCount: 0,
         rejectedInvalidEvidenceCount: 0,
         failedCandidateCount: 0,
@@ -26,8 +25,7 @@ describe("distillation outcome classification", () => {
     expect(
       classifySkippedDistillationOutcome({
         extractionCandidateCount: 2,
-        rawCandidateCount: 0,
-        rejectedLowScoreCount: 0,
+        verificationCandidateCount: 0,
         rejectedLowQualityCount: 0,
         rejectedInvalidEvidenceCount: 0,
         failedCandidateCount: 0,
@@ -39,8 +37,7 @@ describe("distillation outcome classification", () => {
     expect(
       classifySkippedDistillationOutcome({
         extractionCandidateCount: 1,
-        rawCandidateCount: 1,
-        rejectedLowScoreCount: 0,
+        verificationCandidateCount: 1,
         rejectedLowQualityCount: 0,
         rejectedInvalidEvidenceCount: 1,
         failedCandidateCount: 1,
@@ -50,8 +47,7 @@ describe("distillation outcome classification", () => {
     expect(
       classifySkippedDistillationOutcome({
         extractionCandidateCount: 1,
-        rawCandidateCount: 1,
-        rejectedLowScoreCount: 0,
+        verificationCandidateCount: 1,
         rejectedLowQualityCount: 0,
         rejectedInvalidEvidenceCount: 1,
         failedCandidateCount: 0,
@@ -59,28 +55,16 @@ describe("distillation outcome classification", () => {
     ).toBe("missing_external_evidence");
   });
 
-  test("classifies low-quality candidates separately from low-score candidates", () => {
+  test("classifies invalid candidates", () => {
     expect(
       classifySkippedDistillationOutcome({
         extractionCandidateCount: 1,
-        rawCandidateCount: 1,
-        rejectedLowScoreCount: 0,
+        verificationCandidateCount: 1,
         rejectedLowQualityCount: 1,
         rejectedInvalidEvidenceCount: 0,
         failedCandidateCount: 0,
       }).outcomeKind,
     ).toBe("invalid_candidate");
-
-    expect(
-      classifySkippedDistillationOutcome({
-        extractionCandidateCount: 1,
-        rawCandidateCount: 1,
-        rejectedLowScoreCount: 1,
-        rejectedLowQualityCount: 0,
-        rejectedInvalidEvidenceCount: 0,
-        failedCandidateCount: 0,
-      }).outcomeKind,
-    ).toBe("below_quality_threshold");
   });
 
   test("classifies successful and failed runs", () => {

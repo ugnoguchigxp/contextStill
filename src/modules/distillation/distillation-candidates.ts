@@ -17,18 +17,15 @@ export type DistilledKnowledgeCandidate = {
   body: string;
   confidence: number;
   importance: number;
-  score: number;
   rationale?: string;
   sourceRefs?: Array<string | Record<string, unknown>>;
   evidenceRefs?: Array<string | Record<string, unknown>>;
 };
 
-export type DistillationScoreGateResult = {
+export type DistillationCandidateValidationResult = {
   accepted: DistilledKnowledgeCandidate[];
-  rejectedLowScore: DistilledKnowledgeCandidate[];
   rejectedLowQuality: DistilledKnowledgeCandidate[];
   rejectedInvalidEvidence: DistilledKnowledgeCandidate[];
-  threshold: number;
 };
 
 export type DistillationCandidateParseResult = {
@@ -37,7 +34,7 @@ export type DistillationCandidateParseResult = {
   parseStrategies: LlmJsonParseStrategy[];
 };
 
-type DistillationScoreGateOptions = {
+type DistillationCandidateValidationOptions = {
   toolEvents?: DistillationToolResult[];
   requireFetchEvidenceForUrlInput?: boolean;
 };
@@ -125,7 +122,6 @@ function normalizeCandidateFromObject(raw: unknown): DistilledKnowledgeCandidate
     body: normalizedBody,
     confidence: normalizeKnowledgeScore(record.confidence, 65),
     importance: normalizeKnowledgeScore(record.importance, 55),
-    score: clamp01(record.score, groupedConfig.distillationTools.minCandidateScore),
     rationale: asString(record.rationale),
     sourceRefs: asRefs(record.sourceRefs),
     evidenceRefs: asRefs(record.evidenceRefs),
@@ -198,7 +194,7 @@ function parseNaturalLanguageCandidate(text: string): unknown | null {
   if (NO_CANDIDATE_RESPONSES.has(normalized.toLowerCase())) return null;
   if (
     (normalized.includes('"candidates"') || normalized.includes("'candidates'")) &&
-    !/^\s*(type|title|body|score)\s*[:：]/im.test(normalized)
+    !/^\s*(type|title|body)\s*[:：]/im.test(normalized)
   ) {
     return null;
   }
@@ -221,7 +217,7 @@ function parseNaturalLanguageCandidate(text: string): unknown | null {
     }
 
     const labelMatch = line.match(
-      /^(type|title|body|score|confidence|importance|rationale|sourceRefs|evidenceRefs)\s*[:：]\s*(.*)$/i,
+      /^(type|title|body|confidence|importance|rationale|sourceRefs|evidenceRefs)\s*[:：]\s*(.*)$/i,
     );
     if (labelMatch) {
       const key = labelMatch[1]?.toLowerCase();
@@ -230,7 +226,7 @@ function parseNaturalLanguageCandidate(text: string): unknown | null {
       if (key === "body" || key === "rationale") {
         record[key] = value;
         currentMultilineField = key;
-      } else if (key === "score" || key === "confidence" || key === "importance") {
+      } else if (key === "confidence" || key === "importance") {
         record[key] = Number(value);
         currentMultilineField = null;
       } else {
@@ -326,17 +322,14 @@ export function parseDistillationCandidateListWithMetadata(
   }
 
   return {
-    candidates: [...byKey.values()].sort((left, right) => right.score - left.score),
+    candidates: [...byKey.values()],
     jsonRepaired: rawCandidates.jsonRepaired,
     parseStrategies: rawCandidates.parseStrategies,
   };
 }
 
 export function parseDistillationCandidates(text: string): DistilledKnowledgeCandidate[] {
-  return parseDistillationCandidateList(text).slice(
-    0,
-    groupedConfig.distillationTools.maxCandidates,
-  );
+  return parseDistillationCandidateList(text);
 }
 
 function hasUrl(value: unknown): boolean {
@@ -406,11 +399,10 @@ function hasValidExternalEvidence(
   return hasSuccessfulFetch(toolEvents);
 }
 
-export function filterDistillationCandidatesByScore(
+export function validateDistillationCandidates(
   candidates: DistilledKnowledgeCandidate[],
-  options: DistillationScoreGateOptions = {},
-): DistillationScoreGateResult {
-  const threshold = groupedConfig.distillationTools.minCandidateScore;
+  options: DistillationCandidateValidationOptions = {},
+): DistillationCandidateValidationResult {
   const rejectedInvalidEvidence = candidates.filter(
     (candidate) =>
       !hasValidExternalEvidence(
@@ -424,31 +416,19 @@ export function filterDistillationCandidatesByScore(
     (candidate) =>
       candidateQualityIssue(candidate) !== null && !invalidKeys.has(candidateKey(candidate)),
   );
-  const lowQualityKeys = new Set(rejectedLowQuality.map(candidateKey));
-  const accepted = candidates
-    .filter(
-      (candidate) =>
-        candidate.score >= threshold &&
-        candidateQualityIssue(candidate) === null &&
-        !invalidKeys.has(candidateKey(candidate)),
-    )
-    .slice(0, groupedConfig.distillationTools.maxCandidates);
-  const rejectedLowScore = candidates.filter(
+  const accepted = candidates.filter(
     (candidate) =>
-      candidate.score < threshold &&
-      !invalidKeys.has(candidateKey(candidate)) &&
-      !lowQualityKeys.has(candidateKey(candidate)),
+      candidateQualityIssue(candidate) === null && !invalidKeys.has(candidateKey(candidate)),
   );
-  return { accepted, rejectedLowScore, rejectedLowQuality, rejectedInvalidEvidence, threshold };
+  return { accepted, rejectedLowQuality, rejectedInvalidEvidence };
 }
 
 export function summarizeRejectedCandidates(
   candidates: DistilledKnowledgeCandidate[],
-): Array<{ type: string; title: string; score: number; rationale?: string }> {
+): Array<{ type: string; title: string; rationale?: string }> {
   return candidates.slice(0, 5).map((candidate) => ({
     type: candidate.type,
     title: candidate.title,
-    score: candidate.score,
     rationale: candidate.rationale,
   }));
 }

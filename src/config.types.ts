@@ -35,7 +35,6 @@ export type GroupedConfig = {
     batchSize: number;
     maxInputChars: number;
     maxOutputTokens: number;
-    timeoutMs: number;
     lockTtlSeconds: number;
     lockFile: string;
   };
@@ -53,7 +52,6 @@ export type GroupedConfig = {
     resultMaxChars: number;
     searchResultCount: number;
     maxCandidates: number;
-    minCandidateScore: number;
     failureRetryDelaySeconds: number;
   };
   compile: { defaultTokenBudget: number; enableVectorSearch: boolean };
@@ -77,6 +75,9 @@ export type GroupedConfig = {
   };
   distillation: {
     provider: DistillationProvider;
+    timeoutMs: number;
+    lockTtlSeconds: number;
+    lockFile: string;
   };
   doctor: {
     freshnessThresholdMinutes: number;

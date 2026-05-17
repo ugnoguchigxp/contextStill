@@ -407,7 +407,6 @@ export const distillationCandidates = pgTable(
     type: text("type").notNull(),
     title: text("title").notNull(),
     body: text("body").notNull(),
-    score: real("score").default(0).notNull(),
     confidence: real("confidence"),
     importance: real("importance"),
     status: text("status").notNull().default("extracted"),

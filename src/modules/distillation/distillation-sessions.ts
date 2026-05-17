@@ -18,12 +18,16 @@ export type DistillationSessionModelClient = (
 
 export type DistillationSessionResult = {
   candidates: DistilledKnowledgeCandidate[];
+  verificationCandidateCount: number;
+  verificationAttemptCount: number;
+  /** @deprecated Use verificationCandidateCount. */
   rawCandidateCount: number;
   extractionCandidateCount: number;
   toolEvents: DistillationCompletionResult["toolEvents"];
   responseChars: number;
   extractionResponseChars: number;
   verificationResponseChars: number;
+  /** @deprecated Use verificationAttemptCount. */
   verificationSessionCount: number;
   jsonRepaired: boolean;
 };
@@ -76,9 +80,7 @@ export function buildDistillationVerificationMessages(params: {
     "BODY:",
     params.candidate.body,
   ];
-  if (Number.isFinite(params.candidate.score)) {
-    candidateLines.push(`SCORE: ${params.candidate.score}`);
-  }
+
   return [
     {
       role: "system",
@@ -117,10 +119,7 @@ export async function runDistillationExtractionSession(params: {
     ),
   );
   const extractionParse = parseDistillationCandidateListWithMetadata(extractionCompletion.content);
-  const extractionCandidates = extractionParse.candidates.slice(
-    0,
-    groupedConfig.distillationTools.maxCandidates,
-  );
+  const extractionCandidates = extractionParse.candidates;
 
   return {
     candidates: extractionCandidates,
@@ -178,10 +177,12 @@ export async function runDistillationCandidateSessions(params: {
   const toolEvents = [...extraction.toolEvents];
   let verificationResponseChars = 0;
   const verifiedCandidates: DistilledKnowledgeCandidate[] = [];
-  let rawCandidateCount = 0;
+  let verificationCandidateCount = 0;
+  let verificationAttemptCount = 0;
   let jsonRepaired = extraction.jsonRepaired;
 
   for (const candidate of extraction.candidates) {
+    verificationAttemptCount++;
     const verification = await runDistillationVerificationSession({
       sourceKind: params.sourceKind,
       sourceEvidence: evidenceTextFromMessages(params.messages),
@@ -192,20 +193,22 @@ export async function runDistillationCandidateSessions(params: {
     });
     verificationResponseChars += verification.responseChars;
     toolEvents.push(...verification.toolEvents);
-    rawCandidateCount += verification.rawCandidateCount;
+    verificationCandidateCount += verification.rawCandidateCount;
     jsonRepaired = jsonRepaired || verification.jsonRepaired;
     verifiedCandidates.push(...verification.candidates);
   }
 
   return {
     candidates: verifiedCandidates,
-    rawCandidateCount,
+    verificationCandidateCount,
+    verificationAttemptCount,
+    rawCandidateCount: verificationCandidateCount,
     extractionCandidateCount: extraction.candidates.length,
     toolEvents,
     responseChars: extraction.responseChars + verificationResponseChars,
     extractionResponseChars: extraction.responseChars,
     verificationResponseChars,
-    verificationSessionCount: extraction.candidates.length,
+    verificationSessionCount: verificationAttemptCount,
     jsonRepaired,
   };
 }

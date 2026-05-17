@@ -7,6 +7,7 @@ import {
 
 const originalConfig = {
   distillationProvider: groupedConfig.distillation.provider,
+  distillationTimeoutMs: groupedConfig.distillation.timeoutMs,
   localLlmApiBaseUrl: groupedConfig.localLlm.apiBaseUrl,
   localLlmApiKey: groupedConfig.localLlm.apiKey,
   localLlmModel: groupedConfig.localLlm.model,
@@ -25,6 +26,7 @@ describe("Distillation Runtime Service", () => {
     vi.unstubAllGlobals();
 
     groupedConfig.distillation.provider = "local-llm";
+    groupedConfig.distillation.timeoutMs = 300_000;
     groupedConfig.localLlm.apiBaseUrl = "http://llm";
     groupedConfig.localLlm.apiKey = "test-key";
     groupedConfig.localLlm.model = "mock-local-model";
@@ -150,7 +152,7 @@ describe("Distillation Runtime Service", () => {
     expect(result.content).toBe("Fetched content");
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining("/v1/chat/completions"),
-      expect.any(Object),
+      expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
   });
 
@@ -264,6 +266,7 @@ describe("Distillation Runtime Service", () => {
   });
   afterAll(() => {
     groupedConfig.distillation.provider = originalConfig.distillationProvider;
+    groupedConfig.distillation.timeoutMs = originalConfig.distillationTimeoutMs;
     groupedConfig.localLlm.apiBaseUrl = originalConfig.localLlmApiBaseUrl;
     groupedConfig.localLlm.apiKey = originalConfig.localLlmApiKey;
     groupedConfig.localLlm.model = originalConfig.localLlmModel;

@@ -77,8 +77,15 @@ status() {
 
 run_once() {
   cd "$PROJECT_ROOT"
-  "$(resolve_bun_path)" run db:migrate
-  "$(resolve_bun_path)" run src/cli/distill-vibe-memory.ts --apply
+  local bun_path
+  bun_path="$(resolve_bun_path)"
+  echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $LABEL run started"
+  set +e
+  "$bun_path" run src/cli/distill-vibe-memory.ts --apply
+  local exit_code=$?
+  set -e
+  echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $LABEL run finished exit_code=$exit_code"
+  return "$exit_code"
 }
 
 case "${1:-}" in

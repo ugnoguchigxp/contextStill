@@ -56,6 +56,10 @@ export type DistillationCompletionResult = {
   messages: DistillationMessage[];
 };
 
+type DistillationErrorWithToolEvents = Error & {
+  distillationToolEvents?: DistillationToolResult[];
+};
+
 export type DistillationRuntimeOptions = {
   chatClient?: DistillationChatClient;
   toolExecutor?: DistillationToolExecutor;
@@ -73,6 +77,24 @@ type OpenAiToolCall = {
   type?: unknown;
   function?: { name?: unknown; arguments?: unknown };
 };
+
+export function distillationToolEventsFromError(error: unknown): DistillationToolResult[] {
+  if (!error || typeof error !== "object") return [];
+  const events = (error as { distillationToolEvents?: unknown }).distillationToolEvents;
+  return Array.isArray(events) ? (events as DistillationToolResult[]) : [];
+}
+
+export function errorWithDistillationToolEvents(
+  error: unknown,
+  toolEvents: DistillationToolResult[],
+): Error {
+  const normalized: DistillationErrorWithToolEvents =
+    error instanceof Error ? error : new Error(String(error));
+  if (toolEvents.length > 0) {
+    normalized.distillationToolEvents = [...toolEvents];
+  }
+  return normalized;
+}
 
 function resolveDistillationProviderOrder(
   setting: DistillationProviderSetting,
@@ -391,7 +413,7 @@ export function parseBedrockResponse(payload: unknown): DistillationChatResponse
 async function callLocalLlmChat(
   request: DistillationChatRequest,
 ): Promise<DistillationChatResponse> {
-  return withRequestTimeout(groupedConfig.vibeDistillation.timeoutMs, async (signal) => {
+  return withRequestTimeout(groupedConfig.distillation.timeoutMs, async (signal) => {
     const response = await fetch(`${groupedConfig.localLlm.apiBaseUrl}/v1/chat/completions`, {
       method: "POST",
       headers: localLlmHeaders(),
@@ -426,7 +448,7 @@ async function callLocalLlmChat(
 async function callAzureOpenAiChat(
   request: DistillationChatRequest,
 ): Promise<DistillationChatResponse> {
-  return withRequestTimeout(groupedConfig.vibeDistillation.timeoutMs, async (signal) => {
+  return withRequestTimeout(groupedConfig.distillation.timeoutMs, async (signal) => {
     const response = await fetch(buildAzureOpenAiUrl(), {
       method: "POST",
       headers: azureHeaders(),
@@ -458,7 +480,7 @@ async function callAzureOpenAiChat(
 async function callBedrockChat(
   request: DistillationChatRequest,
 ): Promise<DistillationChatResponse> {
-  return withRequestTimeout(groupedConfig.vibeDistillation.timeoutMs, async (signal) => {
+  return withRequestTimeout(groupedConfig.distillation.timeoutMs, async (signal) => {
     const { system, messages } = buildBedrockConversation(request.messages);
     const toolConfig =
       request.toolChoice === "none"
@@ -550,103 +572,107 @@ export async function runDistillationCompletion(
   let requiredToolReminderSent = false;
   let blankResponseReminderSent = false;
 
-  while (true) {
-    const allowTools = enableTools && toolRounds < maxToolRounds;
-    const toolChoice = allowTools
-      ? requireToolCall && toolRounds === 0
-        ? "required"
-        : "auto"
-      : "none";
-    const response = await chatClient({
-      ...request,
-      messages,
-      tools: allowTools ? distillationToolDefinitions : undefined,
-      toolChoice,
-    });
-
-    if (response.toolCalls.length > 0 && allowTools) {
-      messages.push({
-        role: "assistant",
-        content: response.content ?? null,
-        tool_calls: response.toolCalls,
+  try {
+    while (true) {
+      const allowTools = enableTools && toolRounds < maxToolRounds;
+      const toolChoice = allowTools
+        ? requireToolCall && toolRounds === 0
+          ? "required"
+          : "auto"
+        : "none";
+      const response = await chatClient({
+        ...request,
+        messages,
+        tools: allowTools ? distillationToolDefinitions : undefined,
+        toolChoice,
       });
 
-      for (const toolCall of response.toolCalls) {
-        const toolResult = await toolExecutor(toolCall, options.auditContext);
-        toolEvents.push(toolResult);
+      if (response.toolCalls.length > 0 && allowTools) {
         messages.push({
-          role: "tool",
-          tool_call_id: toolCall.id,
-          name: toolResult.name,
-          content: toolResult.content,
+          role: "assistant",
+          content: response.content ?? null,
+          tool_calls: response.toolCalls,
         });
+
+        for (const toolCall of response.toolCalls) {
+          const toolResult = await toolExecutor(toolCall, options.auditContext);
+          toolEvents.push(toolResult);
+          messages.push({
+            role: "tool",
+            tool_call_id: toolCall.id,
+            name: toolResult.name,
+            content: toolResult.content,
+          });
+        }
+        toolRounds += 1;
+        continue;
       }
-      toolRounds += 1;
-      continue;
-    }
 
-    if (response.toolCalls.length > 0) {
-      throw new Error(`distillation tool loop exceeded max rounds (${maxToolRounds})`);
-    }
+      if (response.toolCalls.length > 0) {
+        throw new Error(`distillation tool loop exceeded max rounds (${maxToolRounds})`);
+      }
 
-    if (
-      typeof response.content === "string" &&
-      allowTools &&
-      requireToolCall &&
-      toolRounds === 0 &&
-      toolEvents.length === 0 &&
-      !requiredToolReminderSent
-    ) {
-      requiredToolReminderSent = true;
-      messages.push({
-        role: "assistant",
-        content: response.content,
-      });
-      messages.push({
-        role: "user",
-        content: [
-          "直前の応答はまだ採用できません。",
-          "この検証 session は外部証拠の tool call が必須です。最終候補を返す前に search_web または fetch_content を 1 回だけ呼び出してください。",
-          'ローカル tool-call parser 向けには {"name":"search_web","arguments":{"query":"..."}} または {"name":"fetch_content","arguments":{"url":"https://..."}} だけを返してください。',
-          "この tool-call JSON は中間応答専用です。最終 candidates の title/body に tool 名だけを入れないでください。",
-        ].join("\n"),
-      });
-      continue;
-    }
+      if (
+        typeof response.content === "string" &&
+        allowTools &&
+        requireToolCall &&
+        toolRounds === 0 &&
+        toolEvents.length === 0 &&
+        !requiredToolReminderSent
+      ) {
+        requiredToolReminderSent = true;
+        messages.push({
+          role: "assistant",
+          content: response.content,
+        });
+        messages.push({
+          role: "user",
+          content: [
+            "直前の応答はまだ採用できません。",
+            "この検証 session は外部証拠の tool call が必須です。最終候補を返す前に search_web または fetch_content を 1 回だけ呼び出してください。",
+            'ローカル tool-call parser 向けには {"name":"search_web","arguments":{"query":"..."}} または {"name":"fetch_content","arguments":{"url":"https://..."}} だけを返してください。',
+            "この tool-call JSON は中間応答専用です。最終 candidates の title/body に tool 名だけを入れないでください。",
+          ].join("\n"),
+        });
+        continue;
+      }
 
-    if (typeof response.content === "string" && response.content.trim()) {
-      const finalMessage: DistillationMessage = {
-        role: "assistant",
-        content: response.content,
-      };
-      return {
-        content: response.content,
-        toolEvents,
-        messages: [...messages, finalMessage],
-      };
-    }
+      if (typeof response.content === "string" && response.content.trim()) {
+        const finalMessage: DistillationMessage = {
+          role: "assistant",
+          content: response.content,
+        };
+        return {
+          content: response.content,
+          toolEvents,
+          messages: [...messages, finalMessage],
+        };
+      }
 
-    if (
-      typeof response.content === "string" &&
-      !response.content.trim() &&
-      !blankResponseReminderSent
-    ) {
-      blankResponseReminderSent = true;
-      messages.push({
-        role: "assistant",
-        content: response.content,
-      });
-      messages.push({
-        role: "user",
-        content: [
-          "直前の応答は空でした。",
-          '最終回答として {"candidates":[]}、または TYPE / TITLE / BODY のラベル付きテキストを返してください。',
-        ].join("\n"),
-      });
-      continue;
-    }
+      if (
+        typeof response.content === "string" &&
+        !response.content.trim() &&
+        !blankResponseReminderSent
+      ) {
+        blankResponseReminderSent = true;
+        messages.push({
+          role: "assistant",
+          content: response.content,
+        });
+        messages.push({
+          role: "user",
+          content: [
+            "直前の応答は空でした。",
+            '最終回答として {"candidates":[]}、または TYPE / TITLE / BODY のラベル付きテキストを返してください。',
+          ].join("\n"),
+        });
+        continue;
+      }
 
-    throw new Error("distillation response did not include assistant content");
+      throw new Error("distillation response did not include assistant content");
+    }
+  } catch (error) {
+    throw errorWithDistillationToolEvents(error, toolEvents);
   }
 }
 

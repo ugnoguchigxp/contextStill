@@ -9,6 +9,7 @@ import {
   type DistillationToolExecutor,
   buildBedrockConversation,
   buildBedrockToolConfig,
+  distillationToolEventsFromError,
   parseBedrockResponse,
   parseOpenAiStyleResponse,
   parseToolCalls,
@@ -223,10 +224,8 @@ describe("distillation runtime", () => {
     expect(procedureVerificationPrompt).toContain('"name":"search_web"');
     expect(procedureVerificationPrompt).toContain("中間応答専用");
     expect(procedureVerificationPrompt).toContain("最終 candidates にコピーしてはいけない");
-    expect(procedureVerificationPrompt).toContain("JSON が難しい場合");
     expect(procedureVerificationPrompt).toContain("SKILL.md");
     expect(procedureVerificationPrompt).toContain("順序付きワークフロー");
-    expect(procedureVerificationPrompt).toContain("推奨出力");
     expect(procedureVerificationPrompt).toContain(
       "最終 knowledge に必要な情報は type / title / body",
     );
@@ -246,12 +245,20 @@ describe("distillation runtime", () => {
       content: "",
     });
 
-    await expect(
-      runDistillationCompletion(
+    let thrown: unknown;
+    try {
+      await runDistillationCompletion(
         { model: "m", messages: [], maxTokens: 10 },
         { chatClient, toolExecutor, maxToolRounds: 1 },
-      ),
-    ).rejects.toThrow("distillation tool loop exceeded max rounds");
+      );
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain("distillation tool loop exceeded max rounds");
+    expect(distillationToolEventsFromError(thrown)).toHaveLength(1);
+    expect(distillationToolEventsFromError(thrown)[0]).toMatchObject({ name: "t", ok: true });
   });
 
   test("throws error when response content is missing", async () => {
@@ -259,9 +266,19 @@ describe("distillation runtime", () => {
       content: null,
       toolCalls: [],
     });
-    await expect(
-      runDistillationCompletion({ model: "m", messages: [], maxTokens: 10 }, { chatClient }),
-    ).rejects.toThrow("distillation response did not include assistant content");
+
+    let thrown: unknown;
+    try {
+      await runDistillationCompletion({ model: "m", messages: [], maxTokens: 10 }, { chatClient });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect((thrown as Error).message).toContain(
+      "distillation response did not include assistant content",
+    );
+    expect(distillationToolEventsFromError(thrown)).toHaveLength(0);
   });
 
   describe("parsing helpers", () => {

@@ -10,7 +10,7 @@ import {
   buildVibeMemoryDistillationMessages,
   buildVibeMemoryInputHash,
   distillVibeMemories,
-  filterDistillationCandidatesByScore,
+  validateDistillationCandidates,
   parseDistillationCandidates,
 } from "../src/modules/vibe-memory/distillation.service.js";
 
@@ -30,7 +30,6 @@ vi.mock("../src/modules/distillation/distillation-candidate.repository.js", () =
     body: row.body,
     confidence: row.confidence ?? 65,
     importance: row.importance ?? 55,
-    score: row.score,
   })),
   listUnevaluatedDistillationCandidates: vi.fn().mockResolvedValue([]),
   markDistillationCandidateEvaluating: vi.fn().mockResolvedValue(undefined),
@@ -135,77 +134,7 @@ describe("vibe memory distillation", () => {
       title: "Keep generated knowledge in draft",
       confidence: 100,
       importance: 0,
-      score: 0.8,
     });
-  });
-
-  test("caps parsed candidates to the distillation limit", () => {
-    const candidates = parseDistillationCandidates(
-      JSON.stringify({
-        candidates: [
-          {
-            type: "rule",
-            title: "One",
-            body: "First reusable rule.",
-            score: 0.9,
-            sourceRefs: ["local"],
-          },
-          {
-            type: "procedure",
-            title: "Two",
-            body: "Second reusable procedure.",
-            score: 0.8,
-            sourceRefs: ["local"],
-          },
-          {
-            type: "rule",
-            title: "Three",
-            body: "Third reusable rule.",
-            score: 0.7,
-            sourceRefs: ["local"],
-          },
-        ],
-      }),
-    );
-
-    expect(candidates).toHaveLength(2);
-  });
-
-  test("parses natural language candidate even when score is omitted", () => {
-    const candidates = parseDistillationCandidates(
-      "TYPE: rule\nTITLE: Keep verify scope focused\nBODY: Start with repo-local verify command before broad checks.",
-    );
-    expect(candidates).toHaveLength(1);
-    expect(candidates[0].type).toBe("rule");
-    expect(candidates[0].title).toContain("Keep verify scope focused");
-  });
-
-  test("filters out low scoring candidates before knowledge registration", () => {
-    const candidates = parseDistillationCandidates(
-      JSON.stringify({
-        candidates: [
-          {
-            type: "rule",
-            title: "Weak",
-            body: "This is too weak to preserve.",
-            score: 0,
-            sourceRefs: ["local"],
-          },
-          {
-            type: "procedure",
-            title: "Strong",
-            body: "This is durable enough to preserve.",
-            score: 1,
-            sourceRefs: ["local"],
-          },
-        ],
-      }),
-    );
-    const gate = filterDistillationCandidatesByScore(candidates);
-
-    expect(gate.threshold).toBeGreaterThanOrEqual(0);
-    expect(gate.accepted.map((candidate) => candidate.title)).toEqual(["Strong"]);
-    expect(gate.rejectedLowScore.map((candidate) => candidate.title)).toEqual(["Weak"]);
   });
 
   test("rejects candidates when URL evidence is required but no tool fetch exists", () => {
@@ -216,13 +145,12 @@ describe("vibe memory distillation", () => {
             type: "rule",
             title: "External behavior rule",
             body: "Use latest public API behavior.",
-            score: 0.95,
             evidenceRefs: ["https://example.com/spec"],
           },
         ],
       }),
     );
-    const gate = filterDistillationCandidatesByScore(candidates, {
+    const gate = validateDistillationCandidates(candidates, {
       requireFetchEvidenceForUrlInput: true,
       toolEvents: [],
     });
@@ -241,12 +169,11 @@ describe("vibe memory distillation", () => {
             type: "rule",
             title: "External behavior rule",
             body: "Use latest public API behavior.",
-            score: 0.95,
           },
         ],
       }),
     );
-    const gate = filterDistillationCandidatesByScore(candidates, {
+    const gate = validateDistillationCandidates(candidates, {
       requireFetchEvidenceForUrlInput: true,
       toolEvents: [
         {
@@ -272,13 +199,10 @@ describe("vibe memory distillation", () => {
 
     expect(prompt).toContain("知識タイプは rule と procedure のみ");
     expect(prompt).toContain("confidence と importance は判断可能な場合のみ");
-    expect(prompt).toContain("score");
-    expect(prompt).toContain("推奨出力は candidates 配列の最小 JSON");
-    expect(prompt).toContain("難しい場合は TYPE / TITLE / BODY");
-    expect(prompt).toContain("score は 0 から 1 で付けてよい（省略可）");
+    expect(prompt).toContain("TYPE / TITLE / BODY");
     expect(prompt).toContain("最小 JSON");
     expect(prompt).toContain("出力形式は次のいずれかでよい");
-    expect(prompt).toContain("自然言語: TYPE / TITLE / BODY / SCORE(任意)");
+    expect(prompt).toContain("自然言語: TYPE / TITLE / BODY");
     expect(prompt).toContain("可能な限り日本語");
     expect(prompt).toContain("AGENT_DIFF_ENTRIES");
     expect(prompt).not.toMatch(/\bfact\b/i);
@@ -308,7 +232,6 @@ describe("vibe memory distillation", () => {
             type: "rule",
             title: "Test",
             body: "Test body with reusable implementation guidance.",
-            score: 1.0,
             sourceRefs: ["local"],
           },
         ],

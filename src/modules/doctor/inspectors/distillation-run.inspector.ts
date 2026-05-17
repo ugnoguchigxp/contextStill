@@ -68,7 +68,7 @@ function applyRunRow(runs: DistillationRuns, row: DistillationRunsRow, stateLast
   runs.outcomeKindCounts = normalizeReasonCounts(row?.outcome_kind_counts);
   runs.skippedRunReasons = normalizeReasonCounts(row?.skipped_run_reasons);
   runs.failedRuns = Number(row?.failed_runs ?? 0);
-  runs.lastRunAt = stateLastSyncedAt?.toISOString() ?? lastRunAt;
+  runs.lastRunAt = lastRunAt ?? stateLastSyncedAt?.toISOString() ?? null;
   runs.lastRunAgeMinutes = runs.lastRunAt ? minutesSince(runs.lastRunAt) : null;
   runs.lastOkRunAt = lastOkRunAt;
   runs.lastOkRunAgeMinutes = runs.lastOkRunAt ? minutesSince(runs.lastOkRunAt) : null;
@@ -121,33 +121,24 @@ async function loadDistillationRuns(config: DistillationRunInspectorConfig): Pro
               and coalesce((metadata->>'extractionCandidateCount')::int, 0) = 0
               then 'no_candidate'
             when status = 'skipped'
-              and coalesce((metadata->>'rawCandidateCount')::int, 0) = 0
+              and coalesce((metadata->>'verificationCandidateCount')::int, coalesce((metadata->>'rawCandidateCount')::int, 0)) = 0
               then 'verification_no_candidate'
             when status = 'skipped'
               and coalesce((metadata->>'failedCandidateCount')::int, 0) > 0
               and coalesce((metadata->>'rejectedInvalidEvidenceCount')::int, 0) > 0
-              and coalesce((metadata->>'rejectedLowScoreCount')::int, 0) = 0
               and coalesce((metadata->>'rejectedLowQualityCount')::int, 0) = 0
               then 'missing_verification_tool_evidence'
             when status = 'skipped'
               and coalesce((metadata->>'rejectedInvalidEvidenceCount')::int, 0) > 0
-              and coalesce((metadata->>'rejectedLowScoreCount')::int, 0) = 0
               and coalesce((metadata->>'rejectedLowQualityCount')::int, 0) = 0
               then 'missing_external_evidence'
             when status = 'skipped'
               and coalesce((metadata->>'rejectedLowQualityCount')::int, 0) > 0
-              and coalesce((metadata->>'rejectedLowScoreCount')::int, 0) = 0
               and coalesce((metadata->>'rejectedInvalidEvidenceCount')::int, 0) = 0
               then 'invalid_candidate'
             when status = 'skipped'
-              and coalesce((metadata->>'rejectedLowScoreCount')::int, 0) > 0
-              and coalesce((metadata->>'rejectedLowQualityCount')::int, 0) = 0
-              and coalesce((metadata->>'rejectedInvalidEvidenceCount')::int, 0) = 0
-              then 'below_quality_threshold'
-            when status = 'skipped'
               and (
-                coalesce((metadata->>'rejectedLowScoreCount')::int, 0) > 0
-                or coalesce((metadata->>'rejectedLowQualityCount')::int, 0) > 0
+                coalesce((metadata->>'rejectedLowQualityCount')::int, 0) > 0
                 or coalesce((metadata->>'rejectedInvalidEvidenceCount')::int, 0) > 0
                 or coalesce((metadata->>'failedCandidateCount')::int, 0) > 0
               )

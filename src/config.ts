@@ -201,13 +201,6 @@ export const groupedConfig: GroupedConfig = {
         APP_CONSTANTS.vibeDistillationMaxOutputTokens,
       ),
     ),
-    timeoutMs: Math.max(
-      1000,
-      envNumber(
-        process.env.MEMORY_ROUTER_VIBE_DISTILLATION_TIMEOUT_MS,
-        APP_CONSTANTS.vibeDistillationTimeoutMs,
-      ),
-    ),
     lockTtlSeconds: Math.max(
       60,
       envNumber(
@@ -291,16 +284,6 @@ export const groupedConfig: GroupedConfig = {
         APP_CONSTANTS.distillationMaxCandidates,
       ),
     ),
-    minCandidateScore: Math.min(
-      1,
-      Math.max(
-        0,
-        envNumber(
-          process.env.MEMORY_ROUTER_DISTILLATION_MIN_CANDIDATE_SCORE,
-          APP_CONSTANTS.distillationMinCandidateScore,
-        ),
-      ),
-    ),
     failureRetryDelaySeconds: Math.max(
       0,
       envNumber(
@@ -377,6 +360,26 @@ export const groupedConfig: GroupedConfig = {
       process.env.MEMORY_ROUTER_DISTILLATION_PROVIDER,
       "local-llm",
     ),
+    timeoutMs: Math.max(
+      1000,
+      envNumber(
+        process.env.MEMORY_ROUTER_DISTILLATION_TIMEOUT_MS,
+        envNumber(
+          process.env.MEMORY_ROUTER_VIBE_DISTILLATION_TIMEOUT_MS,
+          APP_CONSTANTS.distillationTimeoutMs,
+        ),
+      ),
+    ),
+    lockTtlSeconds: Math.max(
+      60,
+      envNumber(
+        process.env.MEMORY_ROUTER_DISTILLATION_LOCK_TTL_SECONDS,
+        APP_CONSTANTS.distillationLockTtlSeconds,
+      ),
+    ),
+    lockFile:
+      process.env.MEMORY_ROUTER_DISTILLATION_LOCK_FILE ||
+      path.resolve(process.cwd(), "logs", "distillation.lock"),
   },
   doctor: {
     freshnessThresholdMinutes: Math.max(

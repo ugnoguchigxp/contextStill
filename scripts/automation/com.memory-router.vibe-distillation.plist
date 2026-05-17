@@ -19,7 +19,7 @@
     <key>StandardErrorPath</key>
     <string>{{PROJECT_ROOT}}/logs/vibe-distillation.log</string>
     <key>RunAtLoad</key>
-    <false/>
+    <true/>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>

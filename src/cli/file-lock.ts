@@ -1,0 +1,115 @@
+import fs from "node:fs/promises";
+import path from "node:path";
+
+export type FileLockHandle = {
+  release: () => Promise<void>;
+};
+
+type LockMetadata = {
+  pid?: number;
+  createdAt?: string;
+  label?: string;
+};
+
+export type AcquireFileLockOptions = {
+  lockFile: string;
+  ttlSeconds: number;
+  label: string;
+  wait?: boolean;
+  waitTimeoutMs?: number;
+  pollMs?: number;
+};
+
+function hasFsErrorCode(error: unknown, code: string): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    "code" in error &&
+    (error as { code?: unknown }).code === code
+  );
+}
+
+async function readLockMetadata(lockFile: string): Promise<LockMetadata> {
+  try {
+    const raw = await fs.readFile(lockFile, "utf-8");
+    const parsed = JSON.parse(raw);
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      return parsed as LockMetadata;
+    }
+  } catch {
+    // Missing or malformed metadata falls back to age-based stale handling.
+  }
+  return {};
+}
+
+function isProcessAlive(pid: unknown): boolean | null {
+  if (!Number.isInteger(pid) || Number(pid) <= 0) return null;
+  try {
+    process.kill(Number(pid), 0);
+    return true;
+  } catch (error) {
+    if (hasFsErrorCode(error, "ESRCH")) return false;
+    return true;
+  }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function removeStaleLockIfSafe(lockFile: string, ttlSeconds: number): Promise<boolean> {
+  const metadata = await readLockMetadata(lockFile);
+  const alive = isProcessAlive(metadata.pid);
+  if (alive === true) return false;
+  if (alive === false) {
+    await fs.unlink(lockFile).catch(() => undefined);
+    return true;
+  }
+
+  const stat = await fs.stat(lockFile).catch(() => null);
+  const ageSeconds = stat ? (Date.now() - stat.mtimeMs) / 1000 : Number.POSITIVE_INFINITY;
+  if (ageSeconds > ttlSeconds) {
+    await fs.unlink(lockFile).catch(() => undefined);
+    return true;
+  }
+  return false;
+}
+
+export async function acquireFileLock(options: AcquireFileLockOptions): Promise<FileLockHandle> {
+  await fs.mkdir(path.dirname(options.lockFile), { recursive: true });
+  const startedAt = Date.now();
+  const pollMs = Math.max(250, options.pollMs ?? 5000);
+  const waitTimeoutMs = options.waitTimeoutMs ?? options.ttlSeconds * 1000;
+
+  while (true) {
+    const metadata: LockMetadata = {
+      pid: process.pid,
+      createdAt: new Date().toISOString(),
+      label: options.label,
+    };
+    try {
+      const fileHandle = await fs.open(options.lockFile, "wx");
+      await fileHandle.writeFile(JSON.stringify(metadata), "utf-8");
+      await fileHandle.close();
+      return {
+        release: async () => {
+          const current = await readLockMetadata(options.lockFile);
+          if (current.pid === metadata.pid && current.createdAt === metadata.createdAt) {
+            await fs.unlink(options.lockFile).catch(() => undefined);
+          }
+        },
+      };
+    } catch (error) {
+      if (!hasFsErrorCode(error, "EEXIST")) throw error;
+    }
+
+    if (await removeStaleLockIfSafe(options.lockFile, options.ttlSeconds)) {
+      continue;
+    }
+
+    if (!options.wait || Date.now() - startedAt >= waitTimeoutMs) {
+      throw new Error(`${options.label} is already running: ${options.lockFile}`);
+    }
+    await sleep(pollMs);
+  }
+}

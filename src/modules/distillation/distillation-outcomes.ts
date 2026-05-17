@@ -6,7 +6,6 @@ export type DistillationOutcomeKind =
   | "verification_no_candidate"
   | "missing_verification_tool_evidence"
   | "missing_external_evidence"
-  | "below_quality_threshold"
   | "invalid_candidate"
   | "mixed_candidate_rejections"
   | "candidate_rejected"
@@ -24,8 +23,7 @@ export type SkippedDistillationOutcome = {
 
 export function classifySkippedDistillationOutcome(params: {
   extractionCandidateCount: number;
-  rawCandidateCount: number;
-  rejectedLowScoreCount: number;
+  verificationCandidateCount: number;
   rejectedLowQualityCount: number;
   rejectedInvalidEvidenceCount: number;
   failedCandidateCount: number;
@@ -37,7 +35,7 @@ export function classifySkippedDistillationOutcome(params: {
     };
   }
 
-  if (params.rawCandidateCount === 0) {
+  if (params.verificationCandidateCount === 0) {
     return {
       outcomeKind: "verification_no_candidate",
       legacyReason: "all_candidates_rejected",
@@ -47,7 +45,6 @@ export function classifySkippedDistillationOutcome(params: {
   if (
     params.failedCandidateCount > 0 &&
     params.rejectedInvalidEvidenceCount > 0 &&
-    params.rejectedLowScoreCount === 0 &&
     params.rejectedLowQualityCount === 0
   ) {
     return {
@@ -56,41 +53,21 @@ export function classifySkippedDistillationOutcome(params: {
     };
   }
 
-  if (
-    params.rejectedInvalidEvidenceCount > 0 &&
-    params.rejectedLowScoreCount === 0 &&
-    params.rejectedLowQualityCount === 0
-  ) {
+  if (params.rejectedInvalidEvidenceCount > 0 && params.rejectedLowQualityCount === 0) {
     return {
       outcomeKind: "missing_external_evidence",
       legacyReason: "all_candidates_missing_external_evidence",
     };
   }
 
-  if (
-    params.rejectedLowQualityCount > 0 &&
-    params.rejectedLowScoreCount === 0 &&
-    params.rejectedInvalidEvidenceCount === 0
-  ) {
+  if (params.rejectedLowQualityCount > 0 && params.rejectedInvalidEvidenceCount === 0) {
     return {
       outcomeKind: "invalid_candidate",
-      legacyReason: "all_candidates_below_min_score",
+      legacyReason: "all_candidates_invalid",
     };
   }
 
   if (
-    params.rejectedLowScoreCount > 0 &&
-    params.rejectedLowQualityCount === 0 &&
-    params.rejectedInvalidEvidenceCount === 0
-  ) {
-    return {
-      outcomeKind: "below_quality_threshold",
-      legacyReason: "all_candidates_below_min_score",
-    };
-  }
-
-  if (
-    params.rejectedLowScoreCount > 0 ||
     params.rejectedLowQualityCount > 0 ||
     params.rejectedInvalidEvidenceCount > 0 ||
     params.failedCandidateCount > 0

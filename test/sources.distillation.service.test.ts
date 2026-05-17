@@ -24,7 +24,6 @@ vi.mock("../src/modules/distillation/distillation-candidate.repository.js", () =
     body: row.body,
     confidence: row.confidence ?? 65,
     importance: row.importance ?? 55,
-    score: row.score,
   })),
   listUnevaluatedDistillationCandidates: vi.fn().mockResolvedValue([]),
   markDistillationCandidateEvaluating: vi.fn().mockResolvedValue(undefined),
@@ -99,13 +98,12 @@ describe("sources distillation service", () => {
       jsonRepaired: false,
       parseStrategies: [],
     });
-    vi.mocked(candidatesUtil.filterDistillationCandidatesByScore).mockReturnValue({
+    vi.mocked(candidatesUtil.validateDistillationCandidates).mockReturnValue({
       accepted: [],
-      rejectedLowScore: [],
       rejectedLowQuality: [],
       rejectedInvalidEvidence: [],
-      threshold: 0.5,
     });
+    vi.mocked(runtime.distillationToolEventsFromError).mockReturnValue([]);
     vi.mocked(knowledgeDedup.checkKnowledgeDuplicate).mockResolvedValue({ isDuplicate: false });
   });
 
@@ -162,7 +160,6 @@ describe("sources distillation service", () => {
         body: "Do something",
         confidence: 80,
         importance: 80,
-        score: 0.9,
         sourceRefs: ["ref1"],
       };
       const mockCompletion = {
@@ -178,12 +175,10 @@ describe("sources distillation service", () => {
         jsonRepaired: false,
         parseStrategies: [],
       });
-      vi.mocked(candidatesUtil.filterDistillationCandidatesByScore).mockReturnValue({
+      vi.mocked(candidatesUtil.validateDistillationCandidates).mockReturnValue({
         accepted: [mockCandidate],
-        rejectedLowScore: [],
         rejectedLowQuality: [],
         rejectedInvalidEvidence: [],
-        threshold: 0.5,
       });
       vi.mocked(embedding.embedOne).mockResolvedValue([0.1, 0.2]);
       vi.mocked(knowledgeRepo.upsertKnowledgeFromSource).mockResolvedValue("k1");
@@ -218,7 +213,7 @@ describe("sources distillation service", () => {
 
     test("does not require extra repair call for non-JSON output", async () => {
       const mockCompletion = {
-        content: "TYPE: rule\nTITLE: non-json\nBODY: still parseable\nSCORE: 0.8",
+        content: "TYPE: rule\nTITLE: non-json\nBODY: still parseable",
         toolEvents: [],
         messages: [],
       };

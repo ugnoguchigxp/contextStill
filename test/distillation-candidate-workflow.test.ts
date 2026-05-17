@@ -3,6 +3,10 @@ import {
   runDistillationCandidateWorkflow,
   type DistillationAcceptedCandidateEntry,
 } from "../src/modules/distillation/distillation-candidate-workflow.js";
+import {
+  distillationToolEventsFromError,
+  errorWithDistillationToolEvents,
+} from "../src/modules/distillation/distillation-runtime.service.js";
 import * as candidateRepo from "../src/modules/distillation/distillation-candidate.repository.js";
 
 vi.mock("../src/modules/distillation/distillation-candidate.repository.js", () => ({
@@ -181,6 +185,9 @@ describe("distillation candidate workflow", () => {
     );
     expect(modelClient).toHaveBeenCalledTimes(3);
     expect(result.extractionCandidateCount).toBe(2);
+    expect(result.verificationCandidateCount).toBe(2);
+    expect(result.verificationAttemptCount).toBe(2);
+    expect(result.rawCandidateCount).toBe(2);
     expect(result.verificationSessionCount).toBe(2);
     expect(accepted).toHaveLength(2);
   });
@@ -206,6 +213,8 @@ describe("distillation candidate workflow", () => {
     });
 
     expect(result.usedStoredCandidates).toBe(true);
+    expect(result.verificationCandidateCount).toBe(1);
+    expect(result.verificationAttemptCount).toBe(0);
     expect(result.verificationSessionCount).toBe(0);
     expect(result.acceptedEntries).toHaveLength(1);
     expect(result.acceptedEntries[0]?.candidateRowId).toBe("verified-candidate");
@@ -314,6 +323,58 @@ describe("distillation candidate workflow", () => {
         metadata: expect.objectContaining({
           missingVerificationToolEvidence: true,
           failureKind: "verification_tool_evidence",
+        }),
+      }),
+    );
+  });
+
+  test("keeps verification tool evidence on failed candidate errors", async () => {
+    const toolEvent = searchToolEvent("search-before-timeout");
+    const modelClient = vi.fn(async (_request, options) => {
+      if (options?.enableTools === false) {
+        return JSON.stringify({
+          candidates: [
+            {
+              type: "rule",
+              title: "Rule A",
+              body: "Rule A reusable extraction body with enough implementation detail.",
+            },
+          ],
+        });
+      }
+      throw errorWithDistillationToolEvents(
+        new Error("distillation LLM request timed out after 300000ms"),
+        [toolEvent],
+      );
+    });
+
+    let thrown: unknown;
+    try {
+      await runDistillationCandidateWorkflow({
+        apply: true,
+        source: { sourceKind: "source_fragment", sourceFragmentId: "fragment-1" },
+        distillationSourceKind: "wiki",
+        messages: [{ role: "user", content: "source evidence" }],
+        modelClient,
+        model: "test-model",
+        maxTokens: 500,
+        inputHash: "hash-1",
+        promptVersion: "prompt-v1",
+      });
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(Error);
+    expect(distillationToolEventsFromError(thrown)).toEqual([toolEvent]);
+    expect(candidateRepo.updateDistillationCandidateEvaluation).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "candidate-0",
+        status: "failed",
+        toolEvents: [toolEvent],
+        metadata: expect.objectContaining({
+          failureKind: "verification",
+          toolEventCount: 1,
         }),
       }),
     );

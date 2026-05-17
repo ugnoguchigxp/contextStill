@@ -1,8 +1,8 @@
 import { groupedConfig } from "../../config.js";
 import {
+  type DistillationCandidateValidationResult,
   type DistilledKnowledgeCandidate,
-  type DistillationScoreGateResult,
-  filterDistillationCandidatesByScore,
+  validateDistillationCandidates,
 } from "./distillation-candidates.js";
 import {
   type DistillationCandidateSourceRef,
@@ -18,7 +18,11 @@ import {
   distillationToolNames,
   type DistillationToolResult,
 } from "./distillation-tools.service.js";
-import type { DistillationMessage } from "./distillation-runtime.service.js";
+import {
+  distillationToolEventsFromError,
+  errorWithDistillationToolEvents,
+  type DistillationMessage,
+} from "./distillation-runtime.service.js";
 import {
   type DistillationSessionModelClient,
   evidenceTextFromMessages,
@@ -38,6 +42,9 @@ export type DistillationAcceptedCandidateEntry = {
 export type DistillationCandidateWorkflowResult = {
   candidates: DistilledKnowledgeCandidate[];
   acceptedEntries: DistillationAcceptedCandidateEntry[];
+  verificationCandidateCount: number;
+  verificationAttemptCount: number;
+  /** @deprecated Use verificationCandidateCount. */
   rawCandidateCount: number;
   extractionCandidateCount: number;
   extractionRawCandidateCount: number;
@@ -45,21 +52,20 @@ export type DistillationCandidateWorkflowResult = {
   responseChars: number;
   extractionResponseChars: number;
   verificationResponseChars: number;
+  /** @deprecated Use verificationAttemptCount. */
   verificationSessionCount: number;
   jsonRepaired: boolean;
   usedStoredCandidates: boolean;
   failedCandidateCount: number;
   concurrentClaimMissCount: number;
-  scoreGate: DistillationScoreGateResult;
+  candidateGate: DistillationCandidateValidationResult;
 };
 
-function emptyGate(): DistillationScoreGateResult {
+function emptyGate(): DistillationCandidateValidationResult {
   return {
     accepted: [],
-    rejectedLowScore: [],
     rejectedLowQuality: [],
     rejectedInvalidEvidence: [],
-    threshold: groupedConfig.distillationTools.minCandidateScore,
   };
 }
 
@@ -85,7 +91,6 @@ function hasSuccessfulVerificationToolEvidence(toolEvents: DistillationToolResul
 
 function rejectionReason(params: {
   verifiedCandidateCount: number;
-  rejectedLowScoreCount: number;
   rejectedLowQualityCount: number;
   rejectedInvalidEvidenceCount: number;
   acceptedLimitReached: boolean;
@@ -94,7 +99,6 @@ function rejectionReason(params: {
   if (params.verifiedCandidateCount === 0) return "verification_returned_no_candidates";
   if (params.rejectedInvalidEvidenceCount > 0) return "invalid_or_missing_external_evidence";
   if (params.rejectedLowQualityCount > 0) return "invalid_candidate";
-  if (params.rejectedLowScoreCount > 0) return "below_min_score";
   return "candidate_rejected";
 }
 
@@ -114,8 +118,9 @@ export async function runDistillationCandidateWorkflow(params: {
 }): Promise<DistillationCandidateWorkflowResult> {
   const toolEvents: DistillationToolResult[] = [];
   const acceptedEntries: DistillationAcceptedCandidateEntry[] = [];
-  const scoreGate = emptyGate();
-  let rawCandidateCount = 0;
+  const validationGate = emptyGate();
+  let verificationCandidateCount = 0;
+  let verificationAttemptCount = 0;
   let extractionRawCandidateCount = 0;
   let extractionResponseChars = 0;
   let verificationResponseChars = 0;
@@ -182,11 +187,13 @@ export async function runDistillationCandidateWorkflow(params: {
           candidateIndex: row.candidateIndex,
           toolEvents: toolEventsFromRow(row),
         });
-        scoreGate.accepted.push(candidate);
+        validationGate.accepted.push(candidate);
       }
       return {
-        candidates: scoreGate.accepted,
+        candidates: validationGate.accepted,
         acceptedEntries,
+        verificationCandidateCount: promotionReadyRows.length,
+        verificationAttemptCount: 0,
         rawCandidateCount: promotionReadyRows.length,
         extractionCandidateCount: promotionReadyRows.length,
         extractionRawCandidateCount: promotionReadyRows.length,
@@ -199,7 +206,7 @@ export async function runDistillationCandidateWorkflow(params: {
         usedStoredCandidates,
         failedCandidateCount,
         concurrentClaimMissCount,
-        scoreGate,
+        candidateGate: validationGate,
       };
     }
 
@@ -267,6 +274,7 @@ export async function runDistillationCandidateWorkflow(params: {
     }
 
     try {
+      verificationAttemptCount++;
       const verification = await runDistillationVerificationSession({
         sourceKind: params.distillationSourceKind,
         sourceEvidence: evidenceTextFromMessages(params.messages),
@@ -289,7 +297,7 @@ export async function runDistillationCandidateWorkflow(params: {
         },
       });
       verificationResponseChars += verification.responseChars;
-      rawCandidateCount += verification.rawCandidateCount;
+      verificationCandidateCount += verification.rawCandidateCount;
       jsonRepaired = jsonRepaired || verification.jsonRepaired;
       toolEvents.push(...verification.toolEvents);
 
@@ -298,7 +306,7 @@ export async function runDistillationCandidateWorkflow(params: {
         !hasSuccessfulVerificationToolEvidence(verification.toolEvents)
       ) {
         failedCandidateCount++;
-        scoreGate.rejectedInvalidEvidence.push(...verification.candidates);
+        validationGate.rejectedInvalidEvidence.push(...verification.candidates);
         if (entry.row) {
           await updateDistillationCandidateEvaluation({
             id: entry.row.id,
@@ -318,18 +326,17 @@ export async function runDistillationCandidateWorkflow(params: {
         continue;
       }
 
-      const candidateGate = filterDistillationCandidatesByScore(verification.candidates, {
+      const currentValidation = validateDistillationCandidates(verification.candidates, {
         toolEvents: verification.toolEvents,
         requireFetchEvidenceForUrlInput: params.requireFetchEvidenceForUrlInput,
       });
-      scoreGate.rejectedLowScore.push(...candidateGate.rejectedLowScore);
-      scoreGate.rejectedLowQuality.push(...candidateGate.rejectedLowQuality);
-      scoreGate.rejectedInvalidEvidence.push(...candidateGate.rejectedInvalidEvidence);
+      validationGate.rejectedLowQuality.push(...currentValidation.rejectedLowQuality);
+      validationGate.rejectedInvalidEvidence.push(...currentValidation.rejectedInvalidEvidence);
 
       const acceptedLimitReached = acceptedEntries.length >= maxCandidates;
-      const acceptedCandidate = acceptedLimitReached ? undefined : candidateGate.accepted[0];
+      const acceptedCandidate = acceptedLimitReached ? undefined : currentValidation.accepted[0];
       if (acceptedCandidate) {
-        scoreGate.accepted.push(acceptedCandidate);
+        validationGate.accepted.push(acceptedCandidate);
         acceptedEntries.push({
           candidate: acceptedCandidate,
           candidateRowId: entry.row?.id,
@@ -344,7 +351,6 @@ export async function runDistillationCandidateWorkflow(params: {
             toolEvents: verification.toolEvents,
             metadata: {
               ...(params.extractionMetadata ?? {}),
-              scoreThreshold: candidateGate.threshold,
               verifiedCandidateCount: verification.candidates.length,
               acceptedCandidateCount: 1,
               jsonRepaired: verification.jsonRepaired,
@@ -361,19 +367,16 @@ export async function runDistillationCandidateWorkflow(params: {
           status: "rejected",
           rejectionReason: rejectionReason({
             verifiedCandidateCount: verification.candidates.length,
-            rejectedLowScoreCount: candidateGate.rejectedLowScore.length,
-            rejectedLowQualityCount: candidateGate.rejectedLowQuality.length,
-            rejectedInvalidEvidenceCount: candidateGate.rejectedInvalidEvidence.length,
+            rejectedLowQualityCount: currentValidation.rejectedLowQuality.length,
+            rejectedInvalidEvidenceCount: currentValidation.rejectedInvalidEvidence.length,
             acceptedLimitReached,
           }),
           toolEvents: verification.toolEvents,
           metadata: {
             ...(params.extractionMetadata ?? {}),
-            scoreThreshold: candidateGate.threshold,
             verifiedCandidateCount: verification.candidates.length,
-            rejectedLowScoreCount: candidateGate.rejectedLowScore.length,
-            rejectedLowQualityCount: candidateGate.rejectedLowQuality.length,
-            rejectedInvalidEvidenceCount: candidateGate.rejectedInvalidEvidence.length,
+            rejectedLowQualityCount: currentValidation.rejectedLowQuality.length,
+            rejectedInvalidEvidenceCount: currentValidation.rejectedInvalidEvidence.length,
             jsonRepaired: verification.jsonRepaired,
             responseChars: verification.responseChars,
           },
@@ -381,18 +384,24 @@ export async function runDistillationCandidateWorkflow(params: {
       }
     } catch (error) {
       failedCandidateCount++;
+      const errorToolEvents = distillationToolEventsFromError(error);
+      if (errorToolEvents.length > 0) {
+        toolEvents.push(...errorToolEvents);
+      }
       if (entry.row) {
         await updateDistillationCandidateEvaluation({
           id: entry.row.id,
           status: "failed",
           rejectionReason: error instanceof Error ? error.message : String(error),
+          toolEvents: errorToolEvents.length > 0 ? errorToolEvents : undefined,
           metadata: {
             ...(params.extractionMetadata ?? {}),
             failureKind: "verification",
+            toolEventCount: errorToolEvents.length,
           },
         });
       }
-      throw error;
+      throw errorWithDistillationToolEvents(error, toolEvents);
     }
   }
 
@@ -400,23 +409,23 @@ export async function runDistillationCandidateWorkflow(params: {
     throw new Error("distillation candidates are already claimed by another worker");
   }
 
-  scoreGate.accepted = scoreGate.accepted.slice(0, maxCandidates);
-
   return {
-    candidates: scoreGate.accepted,
+    candidates: validationGate.accepted,
     acceptedEntries,
-    rawCandidateCount,
+    verificationCandidateCount,
+    verificationAttemptCount,
+    rawCandidateCount: verificationCandidateCount,
     extractionCandidateCount: entries.length,
     extractionRawCandidateCount,
     toolEvents,
     responseChars: extractionResponseChars + verificationResponseChars,
     extractionResponseChars,
     verificationResponseChars,
-    verificationSessionCount: entries.length,
+    verificationSessionCount: verificationAttemptCount,
     jsonRepaired,
     usedStoredCandidates,
     failedCandidateCount,
     concurrentClaimMissCount,
-    scoreGate,
+    candidateGate: validationGate,
   };
 }

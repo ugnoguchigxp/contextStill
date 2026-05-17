@@ -8,7 +8,10 @@ import {
 } from "../src/modules/vibe-memory/distillation.repository.js";
 import { upsertKnowledgeFromSource } from "../src/modules/knowledge/knowledge.repository.js";
 import { embedOne } from "../src/modules/embedding/embedding.service.js";
-import { runDistillationCompletion } from "../src/modules/distillation/distillation-runtime.service.js";
+import {
+  distillationToolEventsFromError,
+  runDistillationCompletion,
+} from "../src/modules/distillation/distillation-runtime.service.js";
 import { checkKnowledgeDuplicate } from "../src/lib/knowledge-dedup.js";
 
 vi.mock("../src/modules/vibe-memory/distillation.repository.js");
@@ -72,6 +75,7 @@ describe("Vibe Memory Distillation Service", () => {
     vi.mocked(listAgentDiffEntriesForVibeMemories).mockResolvedValue([]);
     vi.mocked(upsertVibeMemoryDistillationRun).mockResolvedValue({ id: "run1" } as any);
     vi.mocked(checkKnowledgeDuplicate).mockResolvedValue({ isDuplicate: false });
+    vi.mocked(distillationToolEventsFromError).mockReturnValue([]);
   });
 
   test("runs distillation in dry run mode", async () => {
@@ -130,13 +134,13 @@ describe("Vibe Memory Distillation Service", () => {
     expect(recordVibeMemoryDistillationState).toHaveBeenCalled();
   });
 
-  test("handles low score by skipping", async () => {
+  test("handles invalid candidates by skipping", async () => {
     vi.mocked(runDistillationCompletion).mockResolvedValue({
       content: JSON.stringify({
         candidates: [
           {
             type: "rule",
-            title: "Low Score",
+            title: "Invalid candidate",
             body: "...",
             confidence: 30,
             importance: 30,

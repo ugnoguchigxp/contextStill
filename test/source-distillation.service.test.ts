@@ -7,7 +7,10 @@ import {
 } from "../src/modules/sources/distillation.repository.js";
 import { upsertKnowledgeFromSource } from "../src/modules/knowledge/knowledge.repository.js";
 import { embedOne } from "../src/modules/embedding/embedding.service.js";
-import { runDistillationCompletion } from "../src/modules/distillation/distillation-runtime.service.js";
+import {
+  distillationToolEventsFromError,
+  runDistillationCompletion,
+} from "../src/modules/distillation/distillation-runtime.service.js";
 import { checkKnowledgeDuplicate } from "../src/lib/knowledge-dedup.js";
 
 vi.mock("../src/modules/sources/distillation.repository.js");
@@ -70,6 +73,7 @@ describe("Source Distillation Service", () => {
     ]);
     vi.mocked(upsertSourceDistillationRun).mockResolvedValue({ id: "run1" } as any);
     vi.mocked(checkKnowledgeDuplicate).mockResolvedValue({ isDuplicate: false });
+    vi.mocked(distillationToolEventsFromError).mockReturnValue([]);
   });
 
   test("runs distillation in dry run mode", async () => {

@@ -97,7 +97,6 @@ export function distillationCandidateRowToCandidate(
     body: row.body,
     confidence: row.confidence ?? 65,
     importance: row.importance ?? 55,
-    score: row.score,
   };
 }
 
@@ -124,14 +123,12 @@ export async function upsertExtractedDistillationCandidates(params: {
         type: candidate.type,
         title: candidate.title,
         body: candidate.body,
-        score: candidate.score,
         confidence: candidate.confidence,
         importance: candidate.importance,
         status: "extracted",
         metadata: {
           ...(params.metadata ?? {}),
           extractionCandidateIndex: candidateIndex,
-          extractionScore: candidate.score,
         },
         updatedAt: new Date(),
       })),
@@ -203,7 +200,7 @@ async function resetStaleEvaluatingDistillationCandidates(params: {
   inputHash: string;
   promptVersion: string;
 }): Promise<void> {
-  const staleAfterMs = Math.max(60_000, groupedConfig.vibeDistillation.timeoutMs * 2);
+  const staleAfterMs = Math.max(60_000, groupedConfig.distillation.timeoutMs * 2);
   const staleBefore = new Date(Date.now() - staleAfterMs);
   const now = new Date();
   await db
@@ -288,7 +285,6 @@ export async function updateDistillationCandidateEvaluation(params: {
     set.type = params.candidate.type;
     set.title = params.candidate.title;
     set.body = params.candidate.body;
-    set.score = params.candidate.score;
     set.confidence = params.candidate.confidence;
     set.importance = params.candidate.importance;
   }

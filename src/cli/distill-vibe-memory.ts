@@ -1,17 +1,7 @@
-import fs from "node:fs/promises";
-import path from "node:path";
 import { groupedConfig } from "../config.js";
 import { closeDbPool } from "../db/index.js";
 import { distillVibeMemories } from "../modules/vibe-memory/distillation.service.js";
-
-type LockHandle = {
-  release: () => Promise<void>;
-};
-
-type LockMetadata = {
-  pid?: number;
-  createdAt?: string;
-};
+import { acquireFileLock, type FileLockHandle } from "./file-lock.js";
 
 type CliOptions = {
   apply: boolean;
@@ -20,74 +10,6 @@ type CliOptions = {
   sessionId?: string;
   vibeMemoryIds?: string[];
 };
-
-function hasFsErrorCode(error: unknown, code: string): boolean {
-  return (
-    typeof error === "object" &&
-    error !== null &&
-    "code" in error &&
-    (error as { code?: unknown }).code === code
-  );
-}
-
-async function readLockMetadata(lockFile: string): Promise<LockMetadata> {
-  try {
-    const raw = await fs.readFile(lockFile, "utf-8");
-    const parsed = JSON.parse(raw);
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      return parsed as LockMetadata;
-    }
-  } catch {
-    // Unreadable metadata falls back to TTL handling below.
-  }
-  return {};
-}
-
-function isProcessAlive(pid: unknown): boolean | null {
-  if (!Number.isInteger(pid) || Number(pid) <= 0) return null;
-  try {
-    process.kill(Number(pid), 0);
-    return true;
-  } catch (error) {
-    if (hasFsErrorCode(error, "ESRCH")) return false;
-    return true;
-  }
-}
-
-async function acquireLock(lockFile: string, ttlSeconds: number): Promise<LockHandle> {
-  await fs.mkdir(path.dirname(lockFile), { recursive: true });
-
-  try {
-    const fileHandle = await fs.open(lockFile, "wx");
-    await fileHandle.writeFile(
-      JSON.stringify({ pid: process.pid, createdAt: new Date().toISOString() }),
-      "utf-8",
-    );
-    return {
-      release: async () => {
-        await fileHandle.close();
-        await fs.unlink(lockFile).catch(() => undefined);
-      },
-    };
-  } catch (error) {
-    if (!hasFsErrorCode(error, "EEXIST")) throw error;
-  }
-
-  const metadata = await readLockMetadata(lockFile);
-  if (isProcessAlive(metadata.pid) === false) {
-    await fs.unlink(lockFile).catch(() => undefined);
-    return acquireLock(lockFile, ttlSeconds);
-  }
-
-  const stat = await fs.stat(lockFile).catch(() => null);
-  const ageSeconds = stat ? (Date.now() - stat.mtimeMs) / 1000 : Number.POSITIVE_INFINITY;
-  if (ageSeconds <= ttlSeconds) {
-    throw new Error(`vibe memory distillation is already running: ${lockFile}`);
-  }
-
-  await fs.unlink(lockFile).catch(() => undefined);
-  return acquireLock(lockFile, ttlSeconds);
-}
 
 function readArgValue(args: string[], index: number, name: string): string {
   const inline = args[index]?.match(new RegExp(`^${name}=(.*)$`))?.[1];
@@ -154,17 +76,26 @@ function parseArgs(args: string[]): CliOptions {
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
-  const lock = await acquireLock(
-    groupedConfig.vibeDistillation.lockFile,
-    groupedConfig.vibeDistillation.lockTtlSeconds,
-  );
+  const lock = await acquireFileLock({
+    lockFile: groupedConfig.vibeDistillation.lockFile,
+    ttlSeconds: groupedConfig.vibeDistillation.lockTtlSeconds,
+    label: "vibe memory distillation",
+  });
+  let sharedLock: FileLockHandle | null = null;
   try {
+    sharedLock = await acquireFileLock({
+      lockFile: groupedConfig.distillation.lockFile,
+      ttlSeconds: groupedConfig.distillation.lockTtlSeconds,
+      label: "distillation",
+      wait: true,
+    });
     const summary = await distillVibeMemories(options);
     console.log(JSON.stringify(summary, null, 2));
     if (!summary.ok) {
       process.exitCode = 1;
     }
   } finally {
+    await sharedLock?.release();
     await lock.release();
   }
 }

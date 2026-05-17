@@ -10,6 +10,7 @@ import { buildDistillationExtractionSystemPrompt } from "../distillation/distill
 import {
   type DistillationCompletionResult,
   type DistillationMessage,
+  distillationToolEventsFromError,
   runDistillationCompletion,
   resolveDistillationModel,
 } from "../distillation/distillation-runtime.service.js";
@@ -42,7 +43,7 @@ import {
 } from "./distillation.repository.js";
 
 export {
-  filterDistillationCandidatesByScore,
+  validateDistillationCandidates,
   parseDistillationCandidates,
 } from "../distillation/distillation-candidates.js";
 
@@ -72,8 +73,10 @@ type DistilledVibeMemoryResult = {
   outcomeKind?: DistillationOutcomeKind;
   skipReason?: string;
   jsonRepaired?: boolean;
+  verificationCandidateCount?: number;
+  verificationAttemptCount?: number;
+  /** @deprecated Use verificationCandidateCount. */
   rawCandidateCount?: number;
-  rejectedLowScoreCount?: number;
   rejectedLowQualityCount?: number;
   rejectedInvalidEvidenceCount?: number;
   toolEventCount?: number;
@@ -403,18 +406,15 @@ export async function distillVibeMemories(
           },
         });
         responseChars = session.responseChars;
-        const scoreGate = session.scoreGate;
+        const candidateGate = session.candidateGate;
         const acceptedEntries: DistillationAcceptedCandidateEntry[] = session.acceptedEntries;
         const acceptedCandidates = acceptedEntries.map((entry) => entry.candidate);
-        const rejectedLowScoreCandidates = scoreGate.rejectedLowScore;
-
         if (acceptedCandidates.length === 0) {
           const skippedOutcome = classifySkippedDistillationOutcome({
             extractionCandidateCount: session.extractionCandidateCount,
-            rawCandidateCount: session.rawCandidateCount,
-            rejectedLowScoreCount: rejectedLowScoreCandidates.length,
-            rejectedLowQualityCount: scoreGate.rejectedLowQuality.length,
-            rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
+            verificationCandidateCount: session.verificationCandidateCount,
+            rejectedLowQualityCount: candidateGate.rejectedLowQuality.length,
+            rejectedInvalidEvidenceCount: candidateGate.rejectedInvalidEvidence.length,
             failedCandidateCount: session.failedCandidateCount,
           });
           const skipReason = skippedOutcome.legacyReason;
@@ -433,6 +433,8 @@ export async function distillVibeMemories(
               outcomeKind,
               sourceSessionId: memory.sessionId,
               jsonRepaired: session.jsonRepaired,
+              verificationCandidateCount: session.verificationCandidateCount,
+              verificationAttemptCount: session.verificationAttemptCount,
               rawCandidateCount: session.rawCandidateCount,
               extractionCandidateCount: session.extractionCandidateCount,
               extractionRawCandidateCount: session.extractionRawCandidateCount,
@@ -442,16 +444,13 @@ export async function distillVibeMemories(
               usedStoredCandidates: session.usedStoredCandidates,
               failedCandidateCount: session.failedCandidateCount,
               concurrentClaimMissCount: session.concurrentClaimMissCount,
-              scoreThreshold: scoreGate.threshold,
-              rejectedLowScoreCount: rejectedLowScoreCandidates.length,
-              rejectedLowScoreCandidates: summarizeRejectedCandidates(rejectedLowScoreCandidates),
-              rejectedLowQualityCount: scoreGate.rejectedLowQuality.length,
+              rejectedLowQualityCount: candidateGate.rejectedLowQuality.length,
               rejectedLowQualityCandidates: summarizeRejectedCandidates(
-                scoreGate.rejectedLowQuality,
+                candidateGate.rejectedLowQuality,
               ),
-              rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
+              rejectedInvalidEvidenceCount: candidateGate.rejectedInvalidEvidence.length,
               rejectedInvalidEvidenceCandidates: summarizeRejectedCandidates(
-                scoreGate.rejectedInvalidEvidence,
+                candidateGate.rejectedInvalidEvidence,
               ),
               toolEventCount: session.toolEvents.length,
               responseChars,
@@ -468,10 +467,11 @@ export async function distillVibeMemories(
             outcomeKind,
             skipReason,
             jsonRepaired: session.jsonRepaired,
+            verificationCandidateCount: session.verificationCandidateCount,
+            verificationAttemptCount: session.verificationAttemptCount,
             rawCandidateCount: session.rawCandidateCount,
-            rejectedLowScoreCount: rejectedLowScoreCandidates.length,
-            rejectedLowQualityCount: scoreGate.rejectedLowQuality.length,
-            rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
+            rejectedLowQualityCount: candidateGate.rejectedLowQuality.length,
+            rejectedInvalidEvidenceCount: candidateGate.rejectedInvalidEvidence.length,
             toolEventCount: session.toolEvents.length,
             responseChars,
           });
@@ -514,7 +514,6 @@ export async function distillVibeMemories(
                     inputHash,
                     dedupMerged: true,
                     dedupReason: dedupResult.reason,
-                    distillationScoreThreshold: scoreGate.threshold,
                     toolEventCount: entry.toolEvents.length,
                   },
                 });
@@ -551,8 +550,6 @@ export async function distillVibeMemories(
                 distillationModel,
                 promptVersion: groupedConfig.vibeDistillation.promptVersion,
                 candidateIndex: entry.candidateIndex,
-                distillationScore: candidate.score,
-                distillationScoreThreshold: scoreGate.threshold,
                 rationale: candidate.rationale,
                 candidateSourceRefs: candidate.sourceRefs,
                 candidateEvidenceRefs: candidate.evidenceRefs,
@@ -577,7 +574,6 @@ export async function distillVibeMemories(
                   repoKey: memoryRepoScope.repoKey,
                   promptVersion: groupedConfig.vibeDistillation.promptVersion,
                   inputHash,
-                  distillationScoreThreshold: scoreGate.threshold,
                   toolEventCount: entry.toolEvents.length,
                 },
               });
@@ -604,6 +600,8 @@ export async function distillVibeMemories(
             sourceSessionId: memory.sessionId,
             diffEntryCount: memoryDiffs.length,
             jsonRepaired: session.jsonRepaired,
+            verificationCandidateCount: session.verificationCandidateCount,
+            verificationAttemptCount: session.verificationAttemptCount,
             rawCandidateCount: session.rawCandidateCount,
             extractionCandidateCount: session.extractionCandidateCount,
             extractionRawCandidateCount: session.extractionRawCandidateCount,
@@ -615,14 +613,13 @@ export async function distillVibeMemories(
             concurrentClaimMissCount: session.concurrentClaimMissCount,
             acceptedCandidateCount: acceptedCandidates.length,
             dedupSkippedCount,
-            scoreThreshold: scoreGate.threshold,
-            rejectedLowScoreCount: rejectedLowScoreCandidates.length,
-            rejectedLowScoreCandidates: summarizeRejectedCandidates(rejectedLowScoreCandidates),
-            rejectedLowQualityCount: scoreGate.rejectedLowQuality.length,
-            rejectedLowQualityCandidates: summarizeRejectedCandidates(scoreGate.rejectedLowQuality),
-            rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
+            rejectedLowQualityCount: candidateGate.rejectedLowQuality.length,
+            rejectedLowQualityCandidates: summarizeRejectedCandidates(
+              candidateGate.rejectedLowQuality,
+            ),
+            rejectedInvalidEvidenceCount: candidateGate.rejectedInvalidEvidence.length,
             rejectedInvalidEvidenceCandidates: summarizeRejectedCandidates(
-              scoreGate.rejectedInvalidEvidence,
+              candidateGate.rejectedInvalidEvidence,
             ),
             toolEventCount: session.toolEvents.length,
             responseChars,
@@ -638,15 +635,17 @@ export async function distillVibeMemories(
           candidates: acceptedCandidates,
           outcomeKind,
           jsonRepaired: session.jsonRepaired,
+          verificationCandidateCount: session.verificationCandidateCount,
+          verificationAttemptCount: session.verificationAttemptCount,
           rawCandidateCount: session.rawCandidateCount,
-          rejectedLowScoreCount: rejectedLowScoreCandidates.length,
-          rejectedLowQualityCount: scoreGate.rejectedLowQuality.length,
-          rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
+          rejectedLowQualityCount: candidateGate.rejectedLowQuality.length,
+          rejectedInvalidEvidenceCount: candidateGate.rejectedInvalidEvidence.length,
           toolEventCount: session.toolEvents.length,
           responseChars,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const toolEvents = distillationToolEventsFromError(error);
         const failureKind = classifyFailureKind(message, responseChars);
         const outcomeKind = classifyFailedDistillationOutcome({ message, failureKind });
         await recordDistillationRun({
@@ -658,12 +657,13 @@ export async function distillVibeMemories(
           error: message,
           inputHash,
           model: distillationModel,
-          toolEvents: [],
+          toolEvents,
           metadata: {
             sourceSessionId: memory.sessionId,
             diffEntryCount: memoryDiffs.length,
             outcomeKind,
             failureKind,
+            toolEventCount: toolEvents.length,
             responseChars,
           },
         });
@@ -678,6 +678,7 @@ export async function distillVibeMemories(
           error: message,
           outcomeKind,
           failureKind,
+          toolEventCount: toolEvents.length,
           responseChars,
         });
       }
@@ -734,6 +735,7 @@ export async function distillVibeMemories(
             error: result.error ?? null,
             outcomeKind: result.outcomeKind ?? null,
             failureKind: result.failureKind ?? null,
+            toolEventCount: result.toolEventCount ?? null,
             responseChars: result.responseChars ?? null,
           })),
         skippedMemories: summary.results
@@ -745,8 +747,9 @@ export async function distillVibeMemories(
             reason: result.skipReason ?? null,
             outcomeKind: result.outcomeKind ?? null,
             jsonRepaired: result.jsonRepaired ?? null,
+            verificationCandidateCount: result.verificationCandidateCount ?? null,
+            verificationAttemptCount: result.verificationAttemptCount ?? null,
             rawCandidateCount: result.rawCandidateCount ?? null,
-            rejectedLowScoreCount: result.rejectedLowScoreCount ?? null,
             rejectedLowQualityCount: result.rejectedLowQualityCount ?? null,
             rejectedInvalidEvidenceCount: result.rejectedInvalidEvidenceCount ?? null,
             toolEventCount: result.toolEventCount ?? null,
