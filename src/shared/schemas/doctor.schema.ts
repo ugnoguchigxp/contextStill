@@ -29,6 +29,14 @@ export const doctorDistillationHealthSchema = z.object({
     lastOkRunAt: z.string().datetime().nullable(),
     lastOkRunAgeMinutes: z.number().nonnegative().nullable(),
   }),
+  jobs: z.object({
+    queued: z.number().int().nonnegative(),
+    running: z.number().int().nonnegative(),
+    paused: z.number().int().nonnegative(),
+    failed: z.number().int().nonnegative(),
+    lastPausedAt: z.string().datetime().nullable(),
+    lastError: z.string().nullable(),
+  }),
   nextActions: z.array(z.string()),
 });
 

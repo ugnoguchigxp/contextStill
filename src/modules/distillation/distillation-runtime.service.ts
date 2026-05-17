@@ -10,9 +10,11 @@ import { groupedConfig } from "../../config.js";
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
 import {
   distillationToolDefinitions,
+  distillationEvidenceToolNames,
   executeDistillationToolCall,
   type DistillationToolCall,
   type DistillationToolDefinition,
+  type DistillationToolName,
   type DistillationToolResult,
 } from "./distillation-tools.service.js";
 
@@ -67,6 +69,7 @@ export type DistillationRuntimeOptions = {
   maxToolRounds?: number;
   auditContext?: Record<string, unknown>;
   requireToolCall?: boolean;
+  toolNames?: readonly DistillationToolName[];
 };
 
 type DistillationProviderName = "local-llm" | "azure-openai" | "bedrock";
@@ -565,6 +568,10 @@ export async function runDistillationCompletion(
     options.maxToolRounds ?? groupedConfig.distillationTools.maxRounds,
   );
   const enableTools = options.enableTools ?? true;
+  const defaultToolNames = new Set<string>(distillationEvidenceToolNames);
+  const toolDefinitions = options.toolNames?.length
+    ? distillationToolDefinitions.filter((tool) => options.toolNames?.includes(tool.function.name))
+    : distillationToolDefinitions.filter((tool) => defaultToolNames.has(tool.function.name));
   const requireToolCall = Boolean(options.requireToolCall);
   const messages = request.messages.map((message) => ({ ...message }));
   const toolEvents: DistillationToolResult[] = [];
@@ -583,7 +590,7 @@ export async function runDistillationCompletion(
       const response = await chatClient({
         ...request,
         messages,
-        tools: allowTools ? distillationToolDefinitions : undefined,
+        tools: allowTools ? toolDefinitions : undefined,
         toolChoice,
       });
 
@@ -663,7 +670,8 @@ export async function runDistillationCompletion(
           role: "user",
           content: [
             "直前の応答は空でした。",
-            '最終回答として {"candidates":[]}、または TYPE / TITLE / BODY のラベル付きテキストを返してください。',
+            '最終回答として {"candidates":[]}、または TYPE: rule、TITLE: ...、BODY: ...、CONFIDENCE: ...、IMPORTANCE: ... のラベル付きテキストを返してください。',
+            "TYPE / TITLE / BODY のような見出し行だけを出さないでください。",
           ].join("\n"),
         });
         continue;

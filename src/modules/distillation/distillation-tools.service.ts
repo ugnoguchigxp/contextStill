@@ -3,8 +3,24 @@ import sanitizeHtml from "sanitize-html";
 import { groupedConfig } from "../../config.js";
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
+import {
+  contentHash,
+  evidenceCacheFreshAfter,
+  evidenceCacheKey,
+  findDistillationEvidenceCache,
+  upsertDistillationEvidenceCache,
+} from "./distillation-evidence-cache.repository.js";
+import {
+  distillationReaderContextFromAudit,
+  readDistillationSegment,
+} from "./distillation-reader.service.js";
 
-export const distillationToolNames = ["search_web", "fetch_content"] as const;
+export const distillationEvidenceToolNames = ["search_web", "fetch_content"] as const;
+export const distillationReadToolNames = ["read_source_segment", "read_vibe_segment"] as const;
+export const distillationToolNames = [
+  ...distillationEvidenceToolNames,
+  ...distillationReadToolNames,
+] as const;
 export type DistillationToolName = (typeof distillationToolNames)[number];
 
 export type DistillationToolDefinition = {
@@ -112,6 +128,52 @@ export const distillationToolDefinitions: DistillationToolDefinition[] = [
       },
     },
   },
+  {
+    type: "function",
+    function: {
+      name: "read_source_segment",
+      description:
+        "Read one locally indexed source/wiki segment by locator before extracting candidates from large source material.",
+      parameters: {
+        type: "object",
+        properties: {
+          locator: {
+            type: "string",
+            description: "Locator exactly as listed in the source segment catalog.",
+          },
+          purpose: {
+            type: "string",
+            description: "Short reason for reading this segment.",
+          },
+        },
+        required: ["locator"],
+        additionalProperties: false,
+      },
+    },
+  },
+  {
+    type: "function",
+    function: {
+      name: "read_vibe_segment",
+      description:
+        "Read one locally indexed vibe memory or diff segment by locator before extracting candidates from large memory material.",
+      parameters: {
+        type: "object",
+        properties: {
+          locator: {
+            type: "string",
+            description: "Locator exactly as listed in the vibe segment catalog.",
+          },
+          purpose: {
+            type: "string",
+            description: "Short reason for reading this segment.",
+          },
+        },
+        required: ["locator"],
+        additionalProperties: false,
+      },
+    },
+  },
 ];
 
 function truncate(
@@ -166,11 +228,21 @@ function parseToolArguments(raw: string): Record<string, unknown> {
 }
 
 function distillationToolAuditEventType(toolName: string): string | null {
-  return isDistillationToolName(toolName) ? distillationToolAuditEventTypes[toolName] : null;
+  return isDistillationEvidenceToolName(toolName)
+    ? distillationToolAuditEventTypes[toolName]
+    : null;
 }
 
 function isDistillationToolName(value: string): value is DistillationToolName {
   return distillationToolNames.includes(value as DistillationToolName);
+}
+
+function isDistillationEvidenceToolName(
+  value: string,
+): value is (typeof distillationEvidenceToolNames)[number] {
+  return distillationEvidenceToolNames.includes(
+    value as (typeof distillationEvidenceToolNames)[number],
+  );
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -370,6 +442,29 @@ async function searchWeb(query: unknown): Promise<DistillationToolResult> {
   }
 
   const normalizedQuery = query.trim();
+  const queryHash = evidenceCacheKey(normalizedQuery);
+  const cached = await findDistillationEvidenceCache({
+    toolName: "search_web",
+    queryHash,
+    freshAfter: evidenceCacheFreshAfter(groupedConfig.distillationTools.evidenceCacheTtlSeconds),
+  }).catch(() => null);
+  if (cached?.excerpt) {
+    return {
+      callId: "",
+      name: "search_web",
+      ok: cached.ok === 1,
+      content: cached.excerpt,
+      metadata: {
+        query: normalizedQuery,
+        cacheHit: true,
+        cacheFetchedAt: cached.fetchedAt.toISOString(),
+        ...(cached.metadata && typeof cached.metadata === "object"
+          ? (cached.metadata as Record<string, unknown>)
+          : {}),
+      },
+    };
+  }
+
   let braveError: string | undefined;
   let braveResults: SearchResult[] = [];
   try {
@@ -379,7 +474,7 @@ async function searchWeb(query: unknown): Promise<DistillationToolResult> {
   }
   const results =
     braveResults.length > 0 ? braveResults : await searchWithDuckDuckGo(normalizedQuery);
-  return {
+  const result = {
     callId: "",
     name: "search_web",
     ok: true,
@@ -397,6 +492,16 @@ async function searchWeb(query: unknown): Promise<DistillationToolResult> {
     ),
     metadata: { query: normalizedQuery, resultCount: results.length, braveError },
   };
+  await upsertDistillationEvidenceCache({
+    toolName: "search_web",
+    queryHash,
+    queryText: normalizedQuery,
+    ok: true,
+    excerpt: result.content,
+    contentHash: contentHash(result.content),
+    metadata: result.metadata,
+  }).catch(() => undefined);
+  return result;
 }
 
 function isLikelyHtml(contentType: string, body: string): boolean {
@@ -449,6 +554,30 @@ async function fetchUrlText(
 
 async function fetchContent(rawUrl: unknown): Promise<DistillationToolResult> {
   const url = normalizeUrl(rawUrl);
+  const queryHash = evidenceCacheKey(url.href);
+  const cached = await findDistillationEvidenceCache({
+    toolName: "fetch_content",
+    queryHash,
+    url: url.href,
+    freshAfter: evidenceCacheFreshAfter(groupedConfig.distillationTools.evidenceCacheTtlSeconds),
+  }).catch(() => null);
+  if (cached?.excerpt) {
+    return {
+      callId: "",
+      name: "fetch_content",
+      ok: cached.ok === 1,
+      content: cached.excerpt,
+      metadata: {
+        url: url.href,
+        cacheHit: true,
+        cacheFetchedAt: cached.fetchedAt.toISOString(),
+        ...(cached.metadata && typeof cached.metadata === "object"
+          ? (cached.metadata as Record<string, unknown>)
+          : {}),
+      },
+    };
+  }
+
   let fetched: { text: string; finalUrl: string; contentType: string; redirectCount: number };
 
   try {
@@ -482,7 +611,7 @@ async function fetchContent(rawUrl: unknown): Promise<DistillationToolResult> {
     ),
   );
 
-  return {
+  const result = {
     callId: "",
     name: "fetch_content",
     ok: true,
@@ -494,20 +623,89 @@ async function fetchContent(rawUrl: unknown): Promise<DistillationToolResult> {
       redirectCount: fetched.redirectCount,
     },
   };
+  await upsertDistillationEvidenceCache({
+    toolName: "fetch_content",
+    queryHash,
+    queryText: url.href,
+    url: url.href,
+    ok: true,
+    excerpt: result.content,
+    contentHash: contentHash(fetched.text),
+    metadata: result.metadata,
+  }).catch(() => undefined);
+  return result;
 }
 
 const distillationToolHandlers: Record<
   DistillationToolName,
-  (args: Record<string, unknown>) => Promise<DistillationToolResult>
+  (
+    args: Record<string, unknown>,
+    auditContext?: Record<string, unknown>,
+  ) => Promise<DistillationToolResult>
 > = {
   search_web: (args) => searchWeb(args.query),
   fetch_content: (args) => fetchContent(args.url),
+  read_source_segment: (args, auditContext) =>
+    readSegmentTool("read_source_segment", args, auditContext),
+  read_vibe_segment: (args, auditContext) =>
+    readSegmentTool("read_vibe_segment", args, auditContext),
 };
 
-const distillationToolAuditEventTypes: Record<DistillationToolName, string> = {
+const distillationToolAuditEventTypes: Record<
+  (typeof distillationEvidenceToolNames)[number],
+  string
+> = {
   search_web: auditEventTypes.distillationWebSearch,
   fetch_content: auditEventTypes.distillationFetchContent,
 };
+
+async function readSegmentTool(
+  name: "read_source_segment" | "read_vibe_segment",
+  args: Record<string, unknown>,
+  auditContext?: Record<string, unknown>,
+): Promise<DistillationToolResult> {
+  const context = distillationReaderContextFromAudit(auditContext);
+  if (!context?.enabled) {
+    throw new Error(`${name} is not enabled for this distillation session`);
+  }
+  if (name === "read_source_segment" && context.source.sourceKind !== "source_fragment") {
+    throw new Error("read_source_segment is only available for source/wiki distillation");
+  }
+  if (name === "read_vibe_segment" && context.source.sourceKind !== "vibe_memory") {
+    throw new Error("read_vibe_segment is only available for vibe memory distillation");
+  }
+  const locator = stringValue(args.locator);
+  if (!locator) {
+    throw new Error("locator must be a non-empty string");
+  }
+  const read = await readDistillationSegment({
+    context,
+    locator,
+    purpose: stringValue(args.purpose),
+    candidateId: stringValue(auditContext?.candidateRowId),
+  });
+  return {
+    callId: "",
+    name,
+    ok: read.ok,
+    content: JSON.stringify(read, null, 2),
+    metadata: read.ok
+      ? {
+          locator: read.locator,
+          contentHash: read.contentHash,
+          charCount: read.charCount,
+          truncated: read.truncated,
+          readCount: read.readCount,
+          maxReads: read.maxReads,
+        }
+      : {
+          error: read.error,
+          readCount: read.readCount,
+          maxReads: read.maxReads,
+        },
+    error: read.ok ? undefined : read.error,
+  };
+}
 
 export async function executeDistillationToolCall(
   toolCall: DistillationToolCall,
@@ -519,7 +717,7 @@ export async function executeDistillationToolCall(
     if (!isDistillationToolName(toolCall.function.name)) {
       throw new Error(`unknown distillation tool: ${toolCall.function.name}`);
     }
-    const result = await distillationToolHandlers[toolCall.function.name](args);
+    const result = await distillationToolHandlers[toolCall.function.name](args, auditContext);
 
     const auditedResult = {
       ...result,

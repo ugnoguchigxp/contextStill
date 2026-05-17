@@ -9,6 +9,16 @@ vi.mock("../src/modules/audit/audit-log.service.js", () => ({
   },
   recordAuditLogSafe: vi.fn().mockResolvedValue(undefined),
 }));
+vi.mock("../src/modules/distillation/distillation-evidence-cache.repository.js", async () => {
+  const actual = await vi.importActual<
+    typeof import("../src/modules/distillation/distillation-evidence-cache.repository.js")
+  >("../src/modules/distillation/distillation-evidence-cache.repository.js");
+  return {
+    ...actual,
+    findDistillationEvidenceCache: vi.fn().mockResolvedValue(null),
+    upsertDistillationEvidenceCache: vi.fn().mockResolvedValue(undefined),
+  };
+});
 
 describe("Distillation Tools Service", () => {
   beforeEach(() => {

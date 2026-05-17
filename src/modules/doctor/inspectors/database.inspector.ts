@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { groupedConfig } from "../../../config.js";
 import { getDb } from "../../../db/index.js";
 import type { DoctorReport } from "../../../shared/schemas/doctor.schema.js";
 import { requiredTableSqlList, requiredTables } from "../doctor.constants.js";
@@ -9,7 +10,7 @@ type DatabaseInspectorOptions = {
   zeroUseWarningMinActiveCount: number;
 };
 
-const hitlBacklogThresholdCount = 50;
+const hitlBacklogThresholdCount = groupedConfig.distillation.promotionBacklogThresholdCount;
 const hitlBacklogThresholdAgeMinutes = 60 * 24 * 3;
 
 function toIso(value: unknown): string | null {

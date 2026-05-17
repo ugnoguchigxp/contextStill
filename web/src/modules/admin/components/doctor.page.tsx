@@ -34,7 +34,9 @@ function formatAgeMinutes(value: number | null | undefined): string {
 function outcomeLabel(reason: string): string {
   const labels: Record<string, string> = {
     candidate_rejected: "Rejected",
+    batch_paused_circuit_breaker: "Circuit paused",
     invalid_candidate: "Invalid candidate",
+    job_already_running: "Already running",
     knowledge_created: "Created",
     knowledge_deduped: "Deduped",
     llm_empty_response: "Empty response",
@@ -46,6 +48,7 @@ function outcomeLabel(reason: string): string {
     mixed_candidate_rejections: "Mixed rejection",
     no_candidate: "No candidate",
     processing_error: "Processing error",
+    promotion_paused_backpressure: "Backpressure",
     verification_no_candidate: "Verification empty",
   };
   return labels[reason] ?? reason;
@@ -54,7 +57,9 @@ function outcomeLabel(reason: string): string {
 function outcomeFocus(reason: string): string {
   const focus: Record<string, string> = {
     candidate_rejected: "candidate value",
+    batch_paused_circuit_breaker: "provider",
     invalid_candidate: "candidate shape",
+    job_already_running: "job lock",
     knowledge_created: "review draft",
     knowledge_deduped: "dedupe",
     llm_empty_response: "runtime",
@@ -66,6 +71,7 @@ function outcomeFocus(reason: string): string {
     mixed_candidate_rejections: "mixed",
     no_candidate: "source fit",
     processing_error: "runtime",
+    promotion_paused_backpressure: "HITL backlog",
     verification_no_candidate: "verification",
   };
   return focus[reason] ?? "inspect";
@@ -75,12 +81,13 @@ function outcomeVariant(
   reason: string,
 ): "default" | "secondary" | "outline" | "success" | "warning" | "destructive" {
   if (reason === "knowledge_created" || reason === "knowledge_deduped") return "success";
-  if (reason === "no_candidate") return "outline";
+  if (reason === "no_candidate" || reason === "job_already_running") return "outline";
   if (
     reason === "llm_provider_error" ||
     reason === "llm_timeout" ||
     reason === "processing_error" ||
-    reason === "missing_verification_tool_evidence"
+    reason === "missing_verification_tool_evidence" ||
+    reason === "batch_paused_circuit_breaker"
   ) {
     return "destructive";
   }
@@ -90,7 +97,8 @@ function outcomeVariant(
     reason === "invalid_candidate" ||
     reason === "mixed_candidate_rejections" ||
     reason === "llm_empty_response" ||
-    reason === "llm_unparseable"
+    reason === "llm_unparseable" ||
+    reason === "promotion_paused_backpressure"
   ) {
     return "warning";
   }
@@ -184,6 +192,25 @@ function DistillationPanel({
           <div>
             <span>Legacy skip</span>
             <strong>{formatReasonCounts(runs?.skippedRunReasons)}</strong>
+          </div>
+        </div>
+
+        <div className="doctor-meta-grid">
+          <div>
+            <span>Queued</span>
+            <strong>{distillation?.jobs.queued ?? 0}</strong>
+          </div>
+          <div>
+            <span>Running</span>
+            <strong>{distillation?.jobs.running ?? 0}</strong>
+          </div>
+          <div>
+            <span>Paused</span>
+            <strong>{distillation?.jobs.paused ?? 0}</strong>
+          </div>
+          <div>
+            <span>Job failed</span>
+            <strong>{distillation?.jobs.failed ?? 0}</strong>
           </div>
         </div>
       </CardContent>

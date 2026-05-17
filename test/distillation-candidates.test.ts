@@ -59,6 +59,23 @@ describe("parseDistillationCandidateList", () => {
     });
   });
 
+  test("parses confidence and importance from labeled natural-language output", () => {
+    const candidates = parseDistillationCandidateList(`
+TYPE: rule
+TITLE: Evidence-backed distillation scoring
+BODY: Distilled knowledge must include separate confidence and importance values so review can distinguish certainty from reuse value.
+自信度: 82%
+重要度: 74
+`);
+
+    expect(candidates).toHaveLength(1);
+    expect(candidates[0]).toMatchObject({
+      title: "Evidence-backed distillation scoring",
+      confidence: 82,
+      importance: 74,
+    });
+  });
+
   test("does not treat tool-call JSON as a natural-language candidate", () => {
     const candidates = parseDistillationCandidateList(
       JSON.stringify({
@@ -84,6 +101,8 @@ describe("parseDistillationCandidateList", () => {
             type: "rule",
             title: "Meaningful distillation output",
             body: "Distilled knowledge must preserve reusable implementation guidance, not tool names.",
+            confidence: 82,
+            importance: 78,
           },
         ],
       }),
@@ -119,6 +138,8 @@ describe("parseDistillationCandidateList", () => {
             type: "rule",
             title: "Meaningful distillation output",
             body: "Distilled knowledge must preserve reusable implementation guidance, not tool names.",
+            confidence: 82,
+            importance: 78,
           },
         ],
       }),
@@ -149,5 +170,100 @@ describe("parseDistillationCandidateList", () => {
 
     expect(gate.accepted).toHaveLength(0);
     expect(gate.rejectedLowQuality.map((candidate) => candidate.title)).toEqual(["Short body"]);
+  });
+
+  test("rejects otherwise valid candidates when confidence or importance is missing", () => {
+    const candidates = parseDistillationCandidateList(
+      JSON.stringify({
+        candidates: [
+          {
+            type: "rule",
+            title: "Missing evaluation labels",
+            body: "Distilled knowledge must include confidence and importance values so fallback defaults do not look like LLM scoring.",
+          },
+        ],
+      }),
+    );
+
+    const gate = validateDistillationCandidates(candidates);
+
+    expect(gate.accepted).toHaveLength(0);
+    expect(gate.rejectedLowQuality.map((candidate) => candidate.title)).toEqual([
+      "Missing evaluation labels",
+    ]);
+  });
+
+  test("rejects candidates below the minimum importance threshold", () => {
+    const candidates = parseDistillationCandidateList(
+      JSON.stringify({
+        candidates: [
+          {
+            type: "rule",
+            title: "Low importance candidate",
+            body: "This candidate is well-formed but not important enough to become reusable knowledge.",
+            confidence: 92,
+            importance: 59,
+          },
+        ],
+      }),
+    );
+
+    const gate = validateDistillationCandidates(candidates);
+
+    expect(gate.accepted).toHaveLength(0);
+    expect(gate.rejectedLowQuality.map((candidate) => candidate.title)).toEqual([
+      "Low importance candidate",
+    ]);
+  });
+
+  test("rejects natural-language template headings as candidate content", () => {
+    const candidates = parseDistillationCandidateList(`
+TYPE / TITLE / BODY
+rule
+The Too many open files error occurs when a process leaks file descriptors and should be handled by closing resources deterministically.
+`);
+
+    const gate = validateDistillationCandidates(candidates);
+
+    expect(gate.accepted).toHaveLength(0);
+    expect(gate.rejectedLowQuality.map((candidate) => candidate.title)).toEqual(["rule"]);
+  });
+
+  test("keeps labeled natural-language candidates after an accidental heading line", () => {
+    const candidates = parseDistillationCandidateList(`
+TYPE / TITLE / BODY
+TYPE: rule
+TITLE: SQLite connection lifecycle
+BODY: Database connections opened during background processing must be closed deterministically so repeated jobs do not leak descriptors.
+CONFIDENCE: 84
+IMPORTANCE: 78
+`);
+
+    const gate = validateDistillationCandidates(candidates);
+
+    expect(gate.accepted.map((candidate) => candidate.title)).toEqual([
+      "SQLite connection lifecycle",
+    ]);
+  });
+
+  test("rejects object candidates that keep a format heading as title", () => {
+    const candidates = parseDistillationCandidateList(
+      JSON.stringify({
+        candidates: [
+          {
+            type: "rule",
+            title: "TYPE / TITLE / BODY",
+            body: "rule\nDatabase connections opened during background processing must be closed deterministically so repeated jobs do not leak descriptors.",
+          },
+        ],
+      }),
+    );
+
+    const gate = validateDistillationCandidates(candidates);
+
+    expect(gate.accepted).toHaveLength(0);
+    expect(gate.rejectedLowQuality.map((candidate) => candidate.title)).toEqual([
+      "TYPE / TITLE / BODY",
+    ]);
   });
 });

@@ -47,6 +47,20 @@ vi.mock("../src/modules/distillation/distillation-prompts.js");
 vi.mock("../src/modules/distillation/distillation-runtime.service.js");
 vi.mock("../src/modules/embedding/embedding.service.js");
 vi.mock("../src/lib/knowledge-dedup.js");
+vi.mock("../src/modules/distillation/distillation-job.service.js", () => ({
+  beginDistillationJob: vi.fn().mockResolvedValue({ id: "job-1" }),
+  checkDistillationCircuitBreaker: vi.fn().mockResolvedValue({ allowed: true }),
+  pauseJobForCircuitBreaker: vi.fn().mockResolvedValue(undefined),
+  shouldPauseDistillationPromotion: vi.fn().mockResolvedValue({
+    paused: false,
+    draftCount: 0,
+    threshold: 50,
+  }),
+}));
+vi.mock("../src/modules/distillation/distillation-job.repository.js", () => ({
+  finishDistillationJob: vi.fn().mockResolvedValue(undefined),
+  updateDistillationJobPhase: vi.fn().mockResolvedValue(undefined),
+}));
 
 const originalSourceDistillationConfig = {
   batchSize: groupedConfig.sourceDistillation.batchSize,

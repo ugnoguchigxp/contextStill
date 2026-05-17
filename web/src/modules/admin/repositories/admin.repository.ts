@@ -188,6 +188,14 @@ export type DoctorReport = {
       lastOkRunAt?: string | null;
       lastOkRunAgeMinutes?: number | null;
     };
+    jobs: {
+      queued: number;
+      running: number;
+      paused: number;
+      failed: number;
+      lastPausedAt: string | null;
+      lastError: string | null;
+    };
     nextActions: string[];
   };
   sourceDistillation: {
@@ -209,6 +217,14 @@ export type DoctorReport = {
       lastRunAgeMinutes: number | null;
       lastOkRunAt?: string | null;
       lastOkRunAgeMinutes?: number | null;
+    };
+    jobs: {
+      queued: number;
+      running: number;
+      paused: number;
+      failed: number;
+      lastPausedAt: string | null;
+      lastError: string | null;
     };
     nextActions: string[];
   };

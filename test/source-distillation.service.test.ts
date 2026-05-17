@@ -11,6 +11,7 @@ import {
   distillationToolEventsFromError,
   runDistillationCompletion,
 } from "../src/modules/distillation/distillation-runtime.service.js";
+import { beginDistillationJob } from "../src/modules/distillation/distillation-job.service.js";
 import { checkKnowledgeDuplicate } from "../src/lib/knowledge-dedup.js";
 
 vi.mock("../src/modules/sources/distillation.repository.js");
@@ -24,7 +25,6 @@ vi.mock("../src/modules/distillation/distillation-candidate.repository.js", () =
     body: row.body,
     confidence: row.confidence ?? 65,
     importance: row.importance ?? 55,
-    score: row.score,
   })),
   listUnevaluatedDistillationCandidates: vi.fn().mockResolvedValue([]),
   markDistillationCandidateEvaluating: vi.fn().mockResolvedValue(undefined),
@@ -46,6 +46,20 @@ vi.mock("../src/modules/knowledge/knowledge.repository.js");
 vi.mock("../src/modules/embedding/embedding.service.js");
 vi.mock("../src/modules/distillation/distillation-runtime.service.js");
 vi.mock("../src/lib/knowledge-dedup.js");
+vi.mock("../src/modules/distillation/distillation-job.service.js", () => ({
+  beginDistillationJob: vi.fn().mockResolvedValue({ id: "job-1" }),
+  checkDistillationCircuitBreaker: vi.fn().mockResolvedValue({ allowed: true }),
+  pauseJobForCircuitBreaker: vi.fn().mockResolvedValue(undefined),
+  shouldPauseDistillationPromotion: vi.fn().mockResolvedValue({
+    paused: false,
+    draftCount: 0,
+    threshold: 50,
+  }),
+}));
+vi.mock("../src/modules/distillation/distillation-job.repository.js", () => ({
+  finishDistillationJob: vi.fn().mockResolvedValue(undefined),
+  updateDistillationJobPhase: vi.fn().mockResolvedValue(undefined),
+}));
 
 function searchToolEvent() {
   return {
@@ -74,6 +88,7 @@ describe("Source Distillation Service", () => {
     vi.mocked(upsertSourceDistillationRun).mockResolvedValue({ id: "run1" } as any);
     vi.mocked(checkKnowledgeDuplicate).mockResolvedValue({ isDuplicate: false });
     vi.mocked(distillationToolEventsFromError).mockReturnValue([]);
+    vi.mocked(beginDistillationJob).mockResolvedValue({ id: "job-1" } as any);
   });
 
   test("runs distillation in dry run mode", async () => {
@@ -86,7 +101,6 @@ describe("Source Distillation Service", () => {
             body: "Use durable implementation guidance when preserving a rule.",
             confidence: 90,
             importance: 90,
-            score: 0.9,
             sourceRefs: ["ref1"],
           },
         ],
@@ -112,7 +126,6 @@ describe("Source Distillation Service", () => {
             body: "Use durable implementation guidance when preserving a rule.",
             confidence: 90,
             importance: 90,
-            score: 0.9,
             sourceRefs: ["ref1"],
           },
         ],
@@ -138,5 +151,20 @@ describe("Source Distillation Service", () => {
     expect(summary.failed).toBe(1);
     expect(summary.results[0].status).toBe("failed");
     expect(summary.results[0].error).toBe("LLM Down");
+  });
+
+  test("does not hide job setup failures as already-running skips", async () => {
+    vi.mocked(beginDistillationJob).mockRejectedValue(
+      new Error("relation distillation_jobs does not exist"),
+    );
+
+    const summary = await distillSources({ apply: true });
+
+    expect(summary.failed).toBe(1);
+    expect(summary.skipped).toBe(0);
+    expect(summary.results[0]).toMatchObject({
+      status: "failed",
+      error: "relation distillation_jobs does not exist",
+    });
   });
 });

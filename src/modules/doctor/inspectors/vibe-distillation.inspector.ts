@@ -18,5 +18,6 @@ export async function inspectVibeDistillation(
     setupScript: "./scripts/setup-distillation-automation.sh",
     runCommand: "bun run distill:vibe-memory -- --apply",
     logPath: "logs/vibe-distillation.log",
+    jobSourceKind: "vibe_memory",
   });
 }

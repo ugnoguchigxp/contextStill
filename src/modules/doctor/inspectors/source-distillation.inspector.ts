@@ -18,5 +18,6 @@ export async function inspectSourceDistillation(
     setupScript: "./scripts/setup-source-distillation-automation.sh",
     runCommand: "bun run distill:sources -- --apply",
     logPath: "logs/source-distillation.log",
+    jobSourceKind: "source_fragment",
   });
 }

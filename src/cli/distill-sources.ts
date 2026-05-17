@@ -10,6 +10,7 @@ type CliOptions = {
   limit?: number;
   sourceKind?: "wiki";
   uri?: string;
+  agenticReader?: boolean;
 };
 
 function readArgValue(args: string[], index: number, name: string): string {
@@ -36,6 +37,8 @@ function parseArgs(args: string[]): CliOptions {
       options.apply = false;
     } else if (arg === "--include-processed") {
       options.includeProcessed = true;
+    } else if (arg === "--agentic-reader") {
+      options.agenticReader = true;
     } else if (arg === "--json") {
       // JSON is the only output format for now.
     } else if (arg === "--limit" || arg.startsWith("--limit=")) {

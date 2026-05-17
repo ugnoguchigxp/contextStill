@@ -1,4 +1,4 @@
-import { describe, expect, test, vi } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import * as embeddingService from "../src/modules/embedding/embedding.service.js";
 import * as knowledgeRepo from "../src/modules/knowledge/knowledge.repository.js";
 import type {
@@ -6,6 +6,7 @@ import type {
   VibeMemoryForDistillation,
 } from "../src/modules/vibe-memory/distillation.repository.js";
 import * as distillationRepo from "../src/modules/vibe-memory/distillation.repository.js";
+import { beginDistillationJob } from "../src/modules/distillation/distillation-job.service.js";
 import {
   buildVibeMemoryDistillationMessages,
   buildVibeMemoryInputHash,
@@ -52,6 +53,20 @@ vi.mock("../src/modules/knowledge/knowledge.repository.js", () => ({
 }));
 vi.mock("../src/modules/embedding/embedding.service.js", () => ({
   embedOne: vi.fn(),
+}));
+vi.mock("../src/modules/distillation/distillation-job.service.js", () => ({
+  beginDistillationJob: vi.fn().mockResolvedValue({ id: "job-1" }),
+  checkDistillationCircuitBreaker: vi.fn().mockResolvedValue({ allowed: true }),
+  pauseJobForCircuitBreaker: vi.fn().mockResolvedValue(undefined),
+  shouldPauseDistillationPromotion: vi.fn().mockResolvedValue({
+    paused: false,
+    draftCount: 0,
+    threshold: 50,
+  }),
+}));
+vi.mock("../src/modules/distillation/distillation-job.repository.js", () => ({
+  finishDistillationJob: vi.fn().mockResolvedValue(undefined),
+  updateDistillationJobPhase: vi.fn().mockResolvedValue(undefined),
 }));
 
 function mockResolvedValue<T>(fn: unknown, value: T): void {
@@ -104,6 +119,13 @@ function searchToolEvent() {
 }
 
 describe("vibe memory distillation", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockResolvedValue(beginDistillationJob, { id: "job-1" });
+    mockResolvedValue(distillationRepo.listVibeMemoriesForDistillation, []);
+    mockResolvedValue(distillationRepo.listAgentDiffEntriesForVibeMemories, []);
+  });
+
   test("parses strict JSON candidates and ignores unsupported types", () => {
     const candidates = parseDistillationCandidates(`
 \`\`\`json
@@ -115,7 +137,6 @@ describe("vibe memory distillation", () => {
       "body": "Knowledge distilled from chat should remain draft until a human reviews it.",
       "confidence": 120,
       "importance": -10,
-      "score": 0.8,
       "sourceRefs": ["vibe-memory:test"]
     },
     {
@@ -169,6 +190,8 @@ describe("vibe memory distillation", () => {
             type: "rule",
             title: "External behavior rule",
             body: "Use latest public API behavior.",
+            confidence: 86,
+            importance: 72,
           },
         ],
       }),
@@ -198,11 +221,17 @@ describe("vibe memory distillation", () => {
     const prompt = messages.map((message) => message.content).join("\n");
 
     expect(prompt).toContain("知識タイプは rule と procedure のみ");
-    expect(prompt).toContain("confidence と importance は判断可能な場合のみ");
-    expect(prompt).toContain("TYPE / TITLE / BODY");
+    expect(prompt).toContain("候補を返す場合は confidence と importance");
+    expect(prompt).toContain("根拠の強さ・検証確度");
+    expect(prompt).toContain("再利用する価値");
+    expect(prompt).toContain("importance が 60 未満");
+    expect(prompt).toContain("TYPE: rule");
+    expect(prompt).toContain("CONFIDENCE");
+    expect(prompt).toContain("IMPORTANCE");
+    expect(prompt).toContain("TYPE / TITLE / BODY のような見出し行だけを出さない");
     expect(prompt).toContain("最小 JSON");
     expect(prompt).toContain("出力形式は次のいずれかでよい");
-    expect(prompt).toContain("自然言語: TYPE / TITLE / BODY");
+    expect(prompt).toContain("自然言語: TYPE: rule");
     expect(prompt).toContain("可能な限り日本語");
     expect(prompt).toContain("AGENT_DIFF_ENTRIES");
     expect(prompt).not.toMatch(/\bfact\b/i);
@@ -220,6 +249,7 @@ describe("vibe memory distillation", () => {
   });
 
   test("distillVibeMemories orchestrates the full flow", async () => {
+    mockResolvedValue(beginDistillationJob, { id: "job-1" });
     mockResolvedValue(distillationRepo.listVibeMemoriesForDistillation, [memory()]);
     mockResolvedValue(distillationRepo.listAgentDiffEntriesForVibeMemories, [diff()]);
     mockResolvedValue(knowledgeRepo.upsertKnowledgeFromSource, "k-123");
@@ -232,6 +262,8 @@ describe("vibe memory distillation", () => {
             type: "rule",
             title: "Test",
             body: "Test body with reusable implementation guidance.",
+            confidence: 88,
+            importance: 79,
             sourceRefs: ["local"],
           },
         ],
@@ -256,5 +288,22 @@ describe("vibe memory distillation", () => {
     expect(result.knowledgeCount).toBe(1);
     expect(result.results[0].vibeMemoryId).toBe(memory().id);
     expect(distillationRepo.upsertVibeMemoryDistillationRun).toHaveBeenCalled();
+  });
+
+  test("does not report job setup failures as already-running skips", async () => {
+    mockResolvedValue(distillationRepo.listVibeMemoriesForDistillation, [memory()]);
+    mockResolvedValue(distillationRepo.listAgentDiffEntriesForVibeMemories, []);
+    (
+      beginDistillationJob as unknown as { mockRejectedValue(error: Error): void }
+    ).mockRejectedValue(new Error("relation distillation_jobs does not exist"));
+
+    const result = await distillVibeMemories({ apply: true });
+
+    expect(result.failed).toBe(1);
+    expect(result.skipped).toBe(0);
+    expect(result.results[0]).toMatchObject({
+      status: "failed",
+      error: "relation distillation_jobs does not exist",
+    });
   });
 });

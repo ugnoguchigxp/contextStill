@@ -19,7 +19,8 @@ vi.mock("../src/modules/distillation/distillation-candidate.repository.js", () =
     body: row.body,
     confidence: row.confidence ?? 65,
     importance: row.importance ?? 55,
-    score: row.score,
+    confidenceProvided: row.confidence !== undefined && row.confidence !== null,
+    importanceProvided: row.importance !== undefined && row.importance !== null,
   })),
   listUnevaluatedDistillationCandidates: vi.fn(),
   markDistillationCandidateEvaluating: vi.fn().mockResolvedValue(undefined),
@@ -67,7 +68,6 @@ function row(overrides: Record<string, unknown> = {}) {
     body: "Stored reusable guidance with enough detail for promotion.",
     confidence: 80,
     importance: 70,
-    score: 0.9,
     toolEvents: [searchToolEvent()],
     ...overrides,
   };
@@ -95,7 +95,6 @@ describe("distillation candidate workflow", () => {
           body: "Verified reusable guidance with enough detail for later coding agents.",
           confidence: 88,
           importance: 77,
-          score: 0.95,
         },
       ]),
     );
@@ -136,13 +135,15 @@ describe("distillation candidate workflow", () => {
               type: "rule",
               title: "Rule A",
               body: "Rule A reusable extraction body with enough implementation detail.",
-              score: 0.9,
+              confidence: 82,
+              importance: 72,
             },
             {
               type: "procedure",
               title: "Procedure B",
               body: "Procedure B reusable extraction body with enough implementation detail.",
-              score: 0.85,
+              confidence: 80,
+              importance: 74,
             },
           ],
         });
@@ -155,7 +156,6 @@ describe("distillation candidate workflow", () => {
             body: "Verified reusable guidance with enough detail for later coding agents.",
             confidence: 90,
             importance: 80,
-            score: 0.9,
           },
         ],
         [searchToolEvent(`search-${options?.auditContext?.candidateIndex ?? "x"}`)],
@@ -190,6 +190,134 @@ describe("distillation candidate workflow", () => {
     expect(result.rawCandidateCount).toBe(2);
     expect(result.verificationSessionCount).toBe(2);
     expect(accepted).toHaveLength(2);
+  });
+
+  test("passes Agentic Reader tool evidence into the verification session", async () => {
+    const verificationEvidence: string[] = [];
+    const modelClient = vi.fn(
+      async (
+        request: { messages: Array<{ content?: string | null }> },
+        options?: { toolNames?: readonly string[] },
+      ) => {
+        if (options?.toolNames?.includes("read_source_segment")) {
+          return {
+            content: JSON.stringify({
+              candidates: [
+                {
+                  type: "rule",
+                  title: "Reader rule",
+                  body: "Reader extracted reusable guidance with enough implementation detail.",
+                },
+              ],
+            }),
+            toolEvents: [],
+            messages: [
+              { role: "user" as const, content: "catalog only" },
+              { role: "tool" as const, content: "Read segment body for verification" },
+            ],
+          };
+        }
+        verificationEvidence.push(
+          request.messages.map((message) => message.content ?? "").join("\n"),
+        );
+        return {
+          content: JSON.stringify({
+            candidates: [
+              {
+                type: "rule",
+                title: "Verified reader rule",
+                body: "Verified reader guidance with enough detail for later coding agents.",
+              },
+            ],
+          }),
+          toolEvents: [searchToolEvent()],
+          messages: [],
+        };
+      },
+    );
+
+    await runDistillationCandidateWorkflow({
+      apply: true,
+      source: { sourceKind: "source_fragment", sourceFragmentId: "fragment-1" },
+      distillationSourceKind: "wiki",
+      messages: [{ role: "user", content: "source catalog" }],
+      modelClient,
+      model: "test-model",
+      maxTokens: 500,
+      inputHash: "hash-1",
+      promptVersion: "prompt-v1",
+      readerContext: {
+        enabled: true,
+        apply: true,
+        jobId: "job-1",
+        source: { sourceKind: "source_fragment", sourceFragmentId: "fragment-1" },
+        segments: [],
+        maxReads: 4,
+        maxCharsPerRead: 4000,
+        readCount: 0,
+        readLocators: ["locator-1"],
+      },
+    });
+
+    expect(verificationEvidence.join("\n")).toContain("Read segment body for verification");
+  });
+
+  test("rebuilds stored candidate evidence from saved reader locators", async () => {
+    vi.mocked(candidateRepo.listUnevaluatedDistillationCandidates).mockResolvedValue([
+      row({
+        id: "stored-reader-candidate",
+        sourceKind: "source_fragment",
+        sourceFragmentId: "fragment-1",
+        vibeMemoryId: null,
+        metadata: { readLocators: ["locator-1"] },
+      }) as any,
+    ]);
+    const verificationEvidence: string[] = [];
+    const modelClient = vi.fn(async (request: { messages: Array<{ content?: string | null }> }) => {
+      verificationEvidence.push(
+        request.messages.map((message) => message.content ?? "").join("\n"),
+      );
+      return verificationCompletion([
+        {
+          type: "rule",
+          title: "Verified stored reader rule",
+          body: "Verified stored reader guidance with enough detail for later coding agents.",
+        },
+      ]);
+    });
+
+    await runDistillationCandidateWorkflow({
+      apply: true,
+      source: { sourceKind: "source_fragment", sourceFragmentId: "fragment-1" },
+      distillationSourceKind: "wiki",
+      messages: [{ role: "user", content: "source catalog without body" }],
+      modelClient,
+      model: "test-model",
+      maxTokens: 500,
+      inputHash: "hash-1",
+      promptVersion: "prompt-v1",
+      readerContext: {
+        enabled: true,
+        apply: true,
+        jobId: "job-1",
+        source: { sourceKind: "source_fragment", sourceFragmentId: "fragment-1" },
+        segments: [
+          {
+            locator: "locator-1",
+            label: "Stored segment",
+            content: "Stored segment body for verification",
+            contentHash: "hash",
+            charCount: 36,
+          },
+        ],
+        maxReads: 4,
+        maxCharsPerRead: 4000,
+        readCount: 0,
+        readLocators: [],
+      },
+    });
+
+    expect(verificationEvidence.join("\n")).toContain("Stored segment body for verification");
   });
 
   test("promotes verified candidates without re-running extraction or verification", async () => {
@@ -236,7 +364,6 @@ describe("distillation candidate workflow", () => {
           body: "Reverified reusable guidance with enough detail for later coding agents.",
           confidence: 88,
           importance: 77,
-          score: 0.95,
         },
       ]),
     );
@@ -283,7 +410,8 @@ describe("distillation candidate workflow", () => {
               type: "rule",
               title: "Rule A",
               body: "Rule A reusable extraction body with enough implementation detail.",
-              score: 0.9,
+              confidence: 82,
+              importance: 72,
             },
           ],
         });
@@ -294,7 +422,8 @@ describe("distillation candidate workflow", () => {
             type: "rule",
             title: "Verified without tools",
             body: "Verified body with enough detail but without required tool evidence.",
-            score: 0.9,
+            confidence: 82,
+            importance: 72,
           },
         ],
         [],

@@ -19,6 +19,15 @@ function resolveProviderOrder(providerSetting: AgenticCompileProvider): LlmProvi
   return [providerSetting];
 }
 
+function resolveDistillationProviderOrder(
+  providerSetting: AgenticCompileProvider,
+): LlmProviderName[] {
+  if (providerSetting === "auto") {
+    return ["local-llm", "azure-openai", "bedrock"];
+  }
+  return [providerSetting];
+}
+
 function buildProvider(provider: LlmProviderName, timeoutMs: number): LlmProvider {
   switch (provider) {
     case "azure-openai":
@@ -97,6 +106,61 @@ export async function checkAgenticLlmHealth(
       firstStatus.error ??
       (providerSetting === "auto"
         ? "No configured provider in fallback chain"
+        : `${providerSetting} is not configured`),
+  };
+}
+
+export async function checkDistillationLlmHealth(
+  providerSetting: AgenticCompileProvider = groupedConfig.distillation.provider,
+  timeoutMs = groupedConfig.distillation.circuitBreakerHealthTimeoutMs,
+): Promise<AgenticLlmHealthStatus> {
+  const fallbackOrder = resolveDistillationProviderOrder(providerSetting);
+  const providers = fallbackOrder.map((providerName) => buildProvider(providerName, timeoutMs));
+  let firstConfiguredStatus: LlmHealthStatus | null = null;
+
+  for (const provider of providers) {
+    const status = await provider.healthCheck();
+    if (!status.configured) {
+      continue;
+    }
+    firstConfiguredStatus ??= status;
+    if (status.reachable) {
+      return {
+        ...status,
+        providerSetting,
+        selectedProvider: provider.name,
+        fallbackOrder,
+      };
+    }
+    if (providerSetting !== "auto") {
+      return {
+        ...status,
+        providerSetting,
+        selectedProvider: provider.name,
+        fallbackOrder,
+      };
+    }
+  }
+
+  if (firstConfiguredStatus) {
+    return {
+      ...firstConfiguredStatus,
+      providerSetting,
+      selectedProvider: firstConfiguredStatus.provider,
+      fallbackOrder,
+    };
+  }
+
+  const firstProvider = providers[0] ?? createLocalLlmProvider({ timeoutMs });
+  const firstStatus = await firstProvider.healthCheck();
+  return {
+    ...firstStatus,
+    providerSetting,
+    fallbackOrder,
+    error:
+      firstStatus.error ??
+      (providerSetting === "auto"
+        ? "No configured provider in distillation fallback chain"
         : `${providerSetting} is not configured`),
   };
 }

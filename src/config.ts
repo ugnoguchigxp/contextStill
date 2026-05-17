@@ -291,6 +291,27 @@ export const groupedConfig: GroupedConfig = {
         APP_CONSTANTS.distillationFailureRetryDelaySeconds,
       ),
     ),
+    evidenceCacheTtlSeconds: Math.max(
+      60,
+      envNumber(
+        process.env.MEMORY_ROUTER_DISTILLATION_EVIDENCE_CACHE_TTL_SECONDS,
+        APP_CONSTANTS.distillationEvidenceCacheTtlSeconds,
+      ),
+    ),
+    readerMaxReads: Math.max(
+      0,
+      envNumber(
+        process.env.MEMORY_ROUTER_DISTILLATION_READER_MAX_READS,
+        APP_CONSTANTS.distillationReaderMaxReads,
+      ),
+    ),
+    readerMaxCharsPerRead: Math.max(
+      512,
+      envNumber(
+        process.env.MEMORY_ROUTER_DISTILLATION_READER_MAX_CHARS_PER_READ,
+        APP_CONSTANTS.distillationReaderMaxCharsPerRead,
+      ),
+    ),
   },
   compile: {
     defaultTokenBudget: Math.max(
@@ -380,6 +401,53 @@ export const groupedConfig: GroupedConfig = {
     lockFile:
       process.env.MEMORY_ROUTER_DISTILLATION_LOCK_FILE ||
       path.resolve(process.cwd(), "logs", "distillation.lock"),
+    promotionBacklogThresholdCount: Math.max(
+      1,
+      envNumber(
+        process.env.MEMORY_ROUTER_DISTILLATION_PROMOTION_BACKLOG_THRESHOLD_COUNT,
+        APP_CONSTANTS.distillationPromotionBacklogThresholdCount,
+      ),
+    ),
+    minCandidateImportance: Math.min(
+      100,
+      Math.max(
+        0,
+        envNumber(
+          process.env.MEMORY_ROUTER_DISTILLATION_MIN_CANDIDATE_IMPORTANCE,
+          APP_CONSTANTS.distillationMinCandidateImportance,
+        ),
+      ),
+    ),
+    circuitBreakerEnabled: envBoolean(
+      process.env.MEMORY_ROUTER_DISTILLATION_CIRCUIT_BREAKER_ENABLED,
+      APP_CONSTANTS.distillationCircuitBreakerEnabled,
+    ),
+    circuitBreakerHealthTimeoutMs: Math.max(
+      1000,
+      envNumber(
+        process.env.MEMORY_ROUTER_DISTILLATION_CIRCUIT_BREAKER_HEALTH_TIMEOUT_MS,
+        APP_CONSTANTS.distillationCircuitBreakerHealthTimeoutMs,
+      ),
+    ),
+    circuitBreakerPauseSeconds: Math.max(
+      60,
+      envNumber(
+        process.env.MEMORY_ROUTER_DISTILLATION_CIRCUIT_BREAKER_PAUSE_SECONDS,
+        APP_CONSTANTS.distillationCircuitBreakerPauseSeconds,
+      ),
+    ),
+    sourceAgenticReaderManualEnabled: envBoolean(
+      process.env.MEMORY_ROUTER_SOURCE_DISTILLATION_AGENTIC_READER_MANUAL_ENABLED,
+      APP_CONSTANTS.sourceDistillationAgenticReaderManualEnabled,
+    ),
+    sourceAgenticReaderAutoEnabled: envBoolean(
+      process.env.MEMORY_ROUTER_SOURCE_DISTILLATION_AGENTIC_READER_AUTO_ENABLED,
+      APP_CONSTANTS.sourceDistillationAgenticReaderAutoEnabled,
+    ),
+    vibeAgenticReaderManualEnabled: envBoolean(
+      process.env.MEMORY_ROUTER_VIBE_DISTILLATION_AGENTIC_READER_MANUAL_ENABLED,
+      APP_CONSTANTS.vibeDistillationAgenticReaderManualEnabled,
+    ),
   },
   doctor: {
     freshnessThresholdMinutes: Math.max(

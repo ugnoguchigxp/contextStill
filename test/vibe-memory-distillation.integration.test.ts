@@ -74,7 +74,6 @@ describeDb("vibe memory distillation integration", () => {
               body: "When vibe memory is distilled into knowledge, save it as draft and activate it only after review.",
               confidence: 82,
               importance: 74,
-              score: 0.86,
               sourceRefs: ["vibe-memory:distill-session"],
             },
           ],

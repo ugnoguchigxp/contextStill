@@ -139,6 +139,24 @@ export const sourceDistillationStatusValues = ["ok", "skipped", "failed"] as con
 
 export const distillationCandidateSourceKindValues = ["vibe_memory", "source_fragment"] as const;
 
+export const distillationJobStatusValues = [
+  "queued",
+  "running",
+  "paused",
+  "completed",
+  "skipped",
+  "failed",
+] as const;
+
+export const distillationJobPhaseValues = [
+  "pending",
+  "reading",
+  "extracting",
+  "verifying",
+  "promoting",
+  "completed",
+] as const;
+
 export const distillationCandidateStatusValues = [
   "extracted",
   "evaluating",
@@ -383,6 +401,100 @@ export const sourceDistillationEvidence = pgTable(
   }),
 );
 
+export const distillationJobs = pgTable(
+  "distillation_jobs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceKind: text("source_kind").notNull(),
+    vibeMemoryId: uuid("vibe_memory_id").references(() => vibeMemories.id, {
+      onDelete: "cascade",
+    }),
+    sourceFragmentId: uuid("source_fragment_id").references(() => sourceFragments.id, {
+      onDelete: "cascade",
+    }),
+    inputHash: text("input_hash").notNull(),
+    promptVersion: text("prompt_version").notNull(),
+    status: text("status").notNull().default("queued"),
+    phase: text("phase").notNull().default("pending"),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    budget: jsonb("budget").default({}).notNull(),
+    budgetUsed: jsonb("budget_used").default({}).notNull(),
+    lastError: text("last_error"),
+    lastOutcomeKind: text("last_outcome_kind"),
+    nextRetryAt: timestamp("next_retry_at"),
+    lockedBy: text("locked_by"),
+    lockedAt: timestamp("locked_at"),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    statusIdx: index("distillation_jobs_status_idx").on(table.status),
+    phaseIdx: index("distillation_jobs_phase_idx").on(table.phase),
+    sourceKindIdx: index("distillation_jobs_source_kind_idx").on(table.sourceKind),
+    vibeMemoryIdIdx: index("distillation_jobs_vibe_memory_id_idx").on(table.vibeMemoryId),
+    sourceFragmentIdIdx: index("distillation_jobs_source_fragment_id_idx").on(
+      table.sourceFragmentId,
+    ),
+    nextRetryAtIdx: index("distillation_jobs_next_retry_at_idx").on(table.nextRetryAt),
+    vibeJobUniqueIdx: uniqueIndex("distillation_jobs_vibe_unique_idx")
+      .on(table.vibeMemoryId, table.promptVersion, table.inputHash)
+      .where(sql`${table.vibeMemoryId} IS NOT NULL`),
+    sourceJobUniqueIdx: uniqueIndex("distillation_jobs_source_unique_idx")
+      .on(table.sourceFragmentId, table.promptVersion, table.inputHash)
+      .where(sql`${table.sourceFragmentId} IS NOT NULL`),
+    sourceKindCheck: check(
+      "distillation_jobs_source_kind_check",
+      sql`${table.sourceKind} IN (${sql.raw(toSqlList(distillationCandidateSourceKindValues))})`,
+    ),
+    statusCheck: check(
+      "distillation_jobs_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(distillationJobStatusValues))})`,
+    ),
+    phaseCheck: check(
+      "distillation_jobs_phase_check",
+      sql`${table.phase} IN (${sql.raw(toSqlList(distillationJobPhaseValues))})`,
+    ),
+    sourceRefCheck: check(
+      "distillation_jobs_source_ref_check",
+      sql`(
+        (${table.sourceKind} = 'vibe_memory' AND ${table.vibeMemoryId} IS NOT NULL AND ${table.sourceFragmentId} IS NULL)
+        OR
+        (${table.sourceKind} = 'source_fragment' AND ${table.sourceFragmentId} IS NOT NULL AND ${table.vibeMemoryId} IS NULL)
+      )`,
+    ),
+  }),
+);
+
+export const distillationEvidenceCache = pgTable(
+  "distillation_evidence_cache",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    toolName: text("tool_name").notNull(),
+    queryHash: text("query_hash").notNull(),
+    queryText: text("query_text"),
+    url: text("url"),
+    contentHash: text("content_hash"),
+    ok: integer("ok").notNull().default(0),
+    excerpt: text("excerpt"),
+    metadata: jsonb("metadata").default({}).notNull(),
+    fetchedAt: timestamp("fetched_at").defaultNow().notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    toolNameIdx: index("distillation_evidence_cache_tool_name_idx").on(table.toolName),
+    queryHashIdx: index("distillation_evidence_cache_query_hash_idx").on(table.queryHash),
+    urlIdx: index("distillation_evidence_cache_url_idx").on(table.url),
+    fetchedAtIdx: index("distillation_evidence_cache_fetched_at_idx").on(table.fetchedAt),
+    lookupIdx: uniqueIndex("distillation_evidence_cache_lookup_idx").on(
+      table.toolName,
+      table.queryHash,
+      table.url,
+    ),
+  }),
+);
+
 export const distillationCandidates = pgTable(
   "distillation_candidates",
   {
@@ -448,6 +560,53 @@ export const distillationCandidates = pgTable(
     ),
     sourceRefCheck: check(
       "distillation_candidates_source_ref_check",
+      sql`(
+        (${table.sourceKind} = 'vibe_memory' AND ${table.vibeMemoryId} IS NOT NULL AND ${table.sourceFragmentId} IS NULL)
+        OR
+        (${table.sourceKind} = 'source_fragment' AND ${table.sourceFragmentId} IS NOT NULL AND ${table.vibeMemoryId} IS NULL)
+      )`,
+    ),
+  }),
+);
+
+export const distillationReadEvents = pgTable(
+  "distillation_read_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    jobId: uuid("job_id").references(() => distillationJobs.id, { onDelete: "cascade" }),
+    candidateId: uuid("candidate_id").references(() => distillationCandidates.id, {
+      onDelete: "set null",
+    }),
+    sourceKind: text("source_kind").notNull(),
+    vibeMemoryId: uuid("vibe_memory_id").references(() => vibeMemories.id, {
+      onDelete: "cascade",
+    }),
+    sourceFragmentId: uuid("source_fragment_id").references(() => sourceFragments.id, {
+      onDelete: "cascade",
+    }),
+    locator: text("locator").notNull(),
+    purpose: text("purpose"),
+    contentHash: text("content_hash").notNull(),
+    charCount: integer("char_count").notNull().default(0),
+    truncated: integer("truncated").notNull().default(0),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    jobIdIdx: index("distillation_read_events_job_id_idx").on(table.jobId),
+    candidateIdIdx: index("distillation_read_events_candidate_id_idx").on(table.candidateId),
+    sourceKindIdx: index("distillation_read_events_source_kind_idx").on(table.sourceKind),
+    vibeMemoryIdIdx: index("distillation_read_events_vibe_memory_id_idx").on(table.vibeMemoryId),
+    sourceFragmentIdIdx: index("distillation_read_events_source_fragment_id_idx").on(
+      table.sourceFragmentId,
+    ),
+    contentHashIdx: index("distillation_read_events_content_hash_idx").on(table.contentHash),
+    sourceKindCheck: check(
+      "distillation_read_events_source_kind_check",
+      sql`${table.sourceKind} IN (${sql.raw(toSqlList(distillationCandidateSourceKindValues))})`,
+    ),
+    sourceRefCheck: check(
+      "distillation_read_events_source_ref_check",
       sql`(
         (${table.sourceKind} = 'vibe_memory' AND ${table.vibeMemoryId} IS NOT NULL AND ${table.sourceFragmentId} IS NULL)
         OR

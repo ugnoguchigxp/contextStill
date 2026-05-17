@@ -68,7 +68,6 @@ describeDb("source distillation integration", () => {
               body: "Before committing implementation work, run the repository verify command and fix failures first.",
               confidence: 90,
               importance: 90,
-              score: 0.95,
               sourceRefs: ["source:/tmp/wiki/verify.md#chunk:0001"],
             },
           ],

@@ -13,6 +13,7 @@ export type DistillationRunInspectorOptions = {
 
 type DistillationHealthReport = DoctorDistillationHealth;
 type DistillationRuns = DistillationHealthReport["runs"];
+type DistillationJobs = DistillationHealthReport["jobs"];
 
 export type DistillationRunInspectorConfig = {
   label: string;
@@ -24,6 +25,7 @@ export type DistillationRunInspectorConfig = {
   setupScript: string;
   runCommand: string;
   logPath: string;
+  jobSourceKind: "vibe_memory" | "source_fragment";
 };
 
 type DistillationRunsRow =
@@ -51,6 +53,17 @@ function emptyRuns(): DistillationRuns {
     lastRunAgeMinutes: null,
     lastOkRunAt: null,
     lastOkRunAgeMinutes: null,
+  };
+}
+
+function emptyJobs(): DistillationJobs {
+  return {
+    queued: 0,
+    running: 0,
+    paused: 0,
+    failed: 0,
+    lastPausedAt: null,
+    lastError: null,
   };
 }
 
@@ -112,6 +125,12 @@ async function loadDistillationRuns(config: DistillationRunInspectorConfig): Pro
               and coalesce((metadata->>'dedupSkippedCount')::int, 0) >= coalesce((metadata->>'acceptedCandidateCount')::int, 0)
               then 'knowledge_deduped'
             when status = 'ok' then 'knowledge_created'
+            when status = 'skipped' and metadata->>'outcomeKind' = 'promotion_paused_backpressure'
+              then 'promotion_paused_backpressure'
+            when status = 'skipped' and metadata->>'outcomeKind' = 'batch_paused_circuit_breaker'
+              then 'batch_paused_circuit_breaker'
+            when status = 'skipped' and metadata->>'outcomeKind' = 'job_already_running'
+              then 'job_already_running'
             when status = 'failed' and metadata->>'failureKind' = 'parse_or_repair'
               then 'llm_unparseable'
             when status = 'failed' and metadata->>'failureKind' = 'llm_call'
@@ -181,10 +200,38 @@ async function loadDistillationRuns(config: DistillationRunInspectorConfig): Pro
   };
 }
 
+async function loadDistillationJobs(
+  config: DistillationRunInspectorConfig,
+): Promise<DistillationJobs> {
+  const db = getDb();
+  const result = await db.execute(sql`
+    select
+      count(*) filter (where status = 'queued')::int as queued,
+      count(*) filter (where status = 'running')::int as running,
+      count(*) filter (where status = 'paused')::int as paused,
+      count(*) filter (where status = 'failed')::int as failed,
+      max(updated_at) filter (where status = 'paused') as last_paused_at,
+      (array_agg(last_error order by updated_at desc) filter (where last_error is not null))[1] as last_error
+    from distillation_jobs
+    where prompt_version = ${config.promptVersion}
+      and source_kind = ${config.jobSourceKind}
+  `);
+  const row = (result.rows[0] ?? {}) as Record<string, unknown>;
+  return {
+    queued: Number(row.queued ?? 0),
+    running: Number(row.running ?? 0),
+    paused: Number(row.paused ?? 0),
+    failed: Number(row.failed ?? 0),
+    lastPausedAt: toIsoString(row.last_paused_at as Date | string | null | undefined),
+    lastError: typeof row.last_error === "string" ? row.last_error : null,
+  };
+}
+
 function nextActionsForDistillation(
   config: DistillationRunInspectorConfig,
   launchAgent: DistillationHealthReport["launchAgent"],
   runs: DistillationRuns,
+  jobs: DistillationJobs,
 ): string[] {
   const nextActions: string[] = [];
   if (!launchAgent.installed) {
@@ -214,6 +261,16 @@ function nextActionsForDistillation(
   ) {
     nextActions.push(`${config.label} の直近 run に失敗があります。${config.logPath} を確認する`);
   }
+  if (jobs.paused > 0) {
+    nextActions.push(
+      `${config.label} は paused job があります。LLM provider と draft backlog を確認する`,
+    );
+  }
+  if (jobs.running > 0) {
+    nextActions.push(
+      `${config.label} は running job があります。完了しない場合は lock と worker log を確認する`,
+    );
+  }
   return nextActions;
 }
 
@@ -223,6 +280,7 @@ export async function inspectDistillationRunHealth(
 ): Promise<DistillationHealthReport> {
   const launchAgent = await inspectLaunchAgent(config.launchAgentLabel);
   const runs = emptyRuns();
+  let jobs = emptyJobs();
 
   if (options.canQueryDb && options.distillationTableAvailable) {
     try {
@@ -231,11 +289,17 @@ export async function inspectDistillationRunHealth(
     } catch {
       // Keep doctor resilient. Table/query failures are surfaced by the caller.
     }
+    try {
+      jobs = await loadDistillationJobs(config);
+    } catch {
+      jobs = emptyJobs();
+    }
   }
 
   return {
     launchAgent,
     runs,
-    nextActions: nextActionsForDistillation(config, launchAgent, runs),
+    jobs,
+    nextActions: nextActionsForDistillation(config, launchAgent, runs, jobs),
   };
 }

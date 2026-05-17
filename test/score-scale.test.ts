@@ -28,6 +28,11 @@ describe("Score Scale Utility", () => {
     test("preserves explicit integer scores", () => {
       expect(normalizeKnowledgeScore(75, 0)).toBe(75);
     });
+
+    test("extracts numeric values from loose string labels", () => {
+      expect(normalizeKnowledgeScore("82%", 0)).toBe(82);
+      expect(normalizeKnowledgeScore("confidence: 76", 0)).toBe(76);
+    });
   });
 
   describe("toUnitKnowledgeScore", () => {

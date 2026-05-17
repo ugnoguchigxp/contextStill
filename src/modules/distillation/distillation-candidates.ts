@@ -17,6 +17,8 @@ export type DistilledKnowledgeCandidate = {
   body: string;
   confidence: number;
   importance: number;
+  confidenceProvided?: boolean;
+  importanceProvided?: boolean;
   rationale?: string;
   sourceRefs?: Array<string | Record<string, unknown>>;
   evidenceRefs?: Array<string | Record<string, unknown>>;
@@ -40,6 +42,16 @@ type DistillationCandidateValidationOptions = {
 };
 
 const TOOL_CALL_NAMES = new Set<string>(distillationToolNames);
+const CANDIDATE_FORMAT_LABELS = new Set([
+  "type",
+  "title",
+  "body",
+  "confidence",
+  "importance",
+  "optional",
+  "任意",
+]);
+const CANDIDATE_TYPE_LABELS = new Set(["rule", "procedure"]);
 const NO_CANDIDATE_RESPONSES = new Set([
   "none",
   "no candidate",
@@ -50,12 +62,6 @@ const NO_CANDIDATE_RESPONSES = new Set([
 const MIN_CANDIDATE_TITLE_CHARS = 3;
 const MIN_CANDIDATE_BODY_CHARS = 24;
 
-function clamp01(value: unknown, fallback: number): number {
-  const num = Number(value);
-  if (!Number.isFinite(num)) return fallback;
-  return Math.min(1, Math.max(0, num));
-}
-
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -64,6 +70,43 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function asString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+function hasNumericValue(value: unknown): boolean {
+  if (value === null || value === undefined || value === "") return false;
+  if (typeof value === "string") return /-?\d+(?:\.\d+)?/.test(value);
+  return Number.isFinite(Number(value));
+}
+
+function candidateFormatTokens(value: string): string[] {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[`"'“”‘’]/g, " ")
+    .replace(/[()（）]/g, " ")
+    .replace(/[/:：／|,]/g, " ")
+    .split(/\s+/)
+    .filter(Boolean);
+}
+
+function isCandidateFormatHeading(value: string): boolean {
+  const tokens = candidateFormatTokens(value);
+  if (!tokens.includes("type") || !tokens.includes("title") || !tokens.includes("body")) {
+    return false;
+  }
+  return tokens.every((token) => CANDIDATE_FORMAT_LABELS.has(token));
+}
+
+function isStandaloneTypeLabel(value: string): boolean {
+  return CANDIDATE_TYPE_LABELS.has(value.trim().toLowerCase());
+}
+
+function bodyStartsWithStandaloneTypeLine(value: string): boolean {
+  const lines = value
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  return lines.length > 1 && isStandaloneTypeLabel(lines[0] ?? "");
 }
 
 function asRefs(value: unknown): Array<string | Record<string, unknown>> | undefined {
@@ -85,6 +128,13 @@ function normalizeType(value: unknown): KnowledgeItem["type"] | undefined {
   if (text?.includes("procedure")) return "procedure";
   if (text?.includes("rule")) return "rule";
   return text ? undefined : "rule";
+}
+
+function normalizeCandidateLabel(value: string): string {
+  const key = value.toLowerCase();
+  if (key === "自信度" || key === "信頼度") return "confidence";
+  if (key === "重要度") return "importance";
+  return key;
 }
 
 function deriveTitleFromBody(body: string): string {
@@ -122,6 +172,8 @@ function normalizeCandidateFromObject(raw: unknown): DistilledKnowledgeCandidate
     body: normalizedBody,
     confidence: normalizeKnowledgeScore(record.confidence, 65),
     importance: normalizeKnowledgeScore(record.importance, 55),
+    confidenceProvided: hasNumericValue(record.confidence),
+    importanceProvided: hasNumericValue(record.importance),
     rationale: asString(record.rationale),
     sourceRefs: asRefs(record.sourceRefs),
     evidenceRefs: asRefs(record.evidenceRefs),
@@ -203,7 +255,13 @@ function parseNaturalLanguageCandidate(text: string): unknown | null {
   const body = (fenceMatch?.[1] ?? normalized).trim();
   if (!body) return null;
 
-  const lines = body.split("\n");
+  const originalLines = body.split("\n");
+  const firstContentLineIndex = originalLines.findIndex((line) => line.trim().length > 0);
+  const lines =
+    firstContentLineIndex >= 0 &&
+    isCandidateFormatHeading(originalLines[firstContentLineIndex] ?? "")
+      ? originalLines.filter((_, index) => index !== firstContentLineIndex)
+      : originalLines;
   const record: Record<string, unknown> = {};
   let currentMultilineField: "body" | "rationale" | null = null;
 
@@ -217,17 +275,17 @@ function parseNaturalLanguageCandidate(text: string): unknown | null {
     }
 
     const labelMatch = line.match(
-      /^(type|title|body|confidence|importance|rationale|sourceRefs|evidenceRefs)\s*[:：]\s*(.*)$/i,
+      /^(type|title|body|confidence|importance|自信度|信頼度|重要度|rationale|sourceRefs|evidenceRefs)\s*[:：]\s*(.*)$/i,
     );
     if (labelMatch) {
-      const key = labelMatch[1]?.toLowerCase();
+      const key = labelMatch[1] ? normalizeCandidateLabel(labelMatch[1]) : undefined;
       const value = labelMatch[2]?.trim() ?? "";
       if (!key) continue;
       if (key === "body" || key === "rationale") {
         record[key] = value;
         currentMultilineField = key;
       } else if (key === "confidence" || key === "importance") {
-        record[key] = Number(value);
+        record[key] = value;
         currentMultilineField = null;
       } else {
         record[key] = value;
@@ -371,6 +429,18 @@ function isToolNameOnly(value: string): boolean {
 
 function candidateQualityIssue(candidate: DistilledKnowledgeCandidate): string | null {
   if (isToolNameOnly(candidate.title) || isToolNameOnly(candidate.body)) return "tool_name_only";
+  if (isCandidateFormatHeading(candidate.title) || isCandidateFormatHeading(candidate.body)) {
+    return "format_heading_only";
+  }
+  if (isStandaloneTypeLabel(candidate.title) || bodyStartsWithStandaloneTypeLine(candidate.body)) {
+    return "type_label_only";
+  }
+  if (!candidate.confidenceProvided || !candidate.importanceProvided) {
+    return "missing_confidence_or_importance";
+  }
+  if (candidate.importance < groupedConfig.distillation.minCandidateImportance) {
+    return "importance_below_threshold";
+  }
   const titleLength = normalizedTextLength(candidate.title);
   const bodyLength = normalizedTextLength(candidate.body);
   if (titleLength < MIN_CANDIDATE_TITLE_CHARS || bodyLength < MIN_CANDIDATE_BODY_CHARS) {

@@ -25,7 +25,6 @@ vi.mock("../src/modules/distillation/distillation-candidate.repository.js", () =
     body: row.body,
     confidence: row.confidence ?? 65,
     importance: row.importance ?? 55,
-    score: row.score,
   })),
   listUnevaluatedDistillationCandidates: vi.fn().mockResolvedValue([]),
   markDistillationCandidateEvaluating: vi.fn().mockResolvedValue(undefined),
@@ -47,6 +46,20 @@ vi.mock("../src/modules/knowledge/knowledge.repository.js");
 vi.mock("../src/modules/embedding/embedding.service.js");
 vi.mock("../src/modules/distillation/distillation-runtime.service.js");
 vi.mock("../src/lib/knowledge-dedup.js");
+vi.mock("../src/modules/distillation/distillation-job.service.js", () => ({
+  beginDistillationJob: vi.fn().mockResolvedValue({ id: "job-1" }),
+  checkDistillationCircuitBreaker: vi.fn().mockResolvedValue({ allowed: true }),
+  pauseJobForCircuitBreaker: vi.fn().mockResolvedValue(undefined),
+  shouldPauseDistillationPromotion: vi.fn().mockResolvedValue({
+    paused: false,
+    draftCount: 0,
+    threshold: 50,
+  }),
+}));
+vi.mock("../src/modules/distillation/distillation-job.repository.js", () => ({
+  finishDistillationJob: vi.fn().mockResolvedValue(undefined),
+  updateDistillationJobPhase: vi.fn().mockResolvedValue(undefined),
+}));
 
 function searchToolEvent() {
   return {
@@ -88,7 +101,6 @@ describe("Vibe Memory Distillation Service", () => {
             body: "Use durable implementation guidance when preserving a rule.",
             confidence: 90,
             importance: 90,
-            score: 0.9,
             sourceRefs: ["ref1"],
           },
         ],
@@ -115,7 +127,6 @@ describe("Vibe Memory Distillation Service", () => {
             body: "Use durable implementation guidance when preserving a rule.",
             confidence: 90,
             importance: 90,
-            score: 0.9,
             sourceRefs: ["ref1"],
           },
         ],
@@ -144,7 +155,6 @@ describe("Vibe Memory Distillation Service", () => {
             body: "...",
             confidence: 30,
             importance: 30,
-            score: 0.1,
             sourceRefs: ["ref1"],
           },
         ],
@@ -167,13 +177,13 @@ describe("Vibe Memory Distillation Service", () => {
     vi.mocked(runDistillationCompletion)
       .mockResolvedValueOnce({
         content:
-          "TYPE: rule\nTITLE: Fixed\nBODY: Reusable guidance should include enough detail for a later coding agent.\nSCORE: 0.8",
+          "TYPE: rule\nTITLE: Fixed\nBODY: Reusable guidance should include enough detail for a later coding agent.\nCONFIDENCE: 82\nIMPORTANCE: 76",
         toolEvents: [],
         messages: [],
       })
       .mockResolvedValueOnce({
         content:
-          "TYPE: rule\nTITLE: Fixed\nBODY: Reusable guidance should include enough detail for a later coding agent.\nSCORE: 0.8",
+          "TYPE: rule\nTITLE: Fixed\nBODY: Reusable guidance should include enough detail for a later coding agent.\nCONFIDENCE: 84\nIMPORTANCE: 78",
         toolEvents: [],
         messages: [],
       });
@@ -181,5 +191,7 @@ describe("Vibe Memory Distillation Service", () => {
     const summary = await distillVibeMemories({ apply: false });
 
     expect(summary.results[0].candidates[0].title).toBe("Fixed");
+    expect(summary.results[0].candidates[0].confidence).toBe(84);
+    expect(summary.results[0].candidates[0].importance).toBe(78);
   });
 });

@@ -28,7 +28,6 @@ vi.mock("../src/modules/distillation/distillation-candidate.repository.js", () =
     body: row.body,
     confidence: row.confidence ?? 65,
     importance: row.importance ?? 55,
-    score: row.score,
   })),
   listUnevaluatedDistillationCandidates: vi.fn().mockResolvedValue([]),
   markDistillationCandidateEvaluating: vi.fn().mockResolvedValue(undefined),
@@ -67,6 +66,22 @@ vi.mock("../src/modules/audit/audit-log.service.js", () => ({
   recordAuditLogSafe: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../src/modules/distillation/distillation-job.service.js", () => ({
+  beginDistillationJob: vi.fn().mockResolvedValue({ id: "job-1" }),
+  checkDistillationCircuitBreaker: vi.fn().mockResolvedValue({ allowed: true }),
+  pauseJobForCircuitBreaker: vi.fn().mockResolvedValue(undefined),
+  shouldPauseDistillationPromotion: vi.fn().mockResolvedValue({
+    paused: false,
+    draftCount: 0,
+    threshold: 50,
+  }),
+}));
+
+vi.mock("../src/modules/distillation/distillation-job.repository.js", () => ({
+  finishDistillationJob: vi.fn().mockResolvedValue(undefined),
+  updateDistillationJobPhase: vi.fn().mockResolvedValue(undefined),
+}));
+
 function fragment(
   overrides: Partial<SourceFragmentForDistillation> = {},
 ): SourceFragmentForDistillation {
@@ -101,7 +116,7 @@ describe("source distillation", () => {
     vi.clearAllMocks();
   });
 
-  test("builds wiki prompt with shared score and tool constraints", () => {
+  test("builds wiki prompt with confidence, importance, and tool constraints", () => {
     const messages = buildSourceDistillationMessages({
       fragment: fragment(),
       maxInputChars: 4000,
@@ -130,7 +145,7 @@ describe("source distillation", () => {
     const modelClient = async (_request: unknown, options?: { enableTools?: boolean }) => {
       callCount++;
       const content =
-        "TYPE: rule\nTITLE: Test\nBODY: Test body with reusable implementation guidance\nSCORE: 0.9";
+        "TYPE: rule\nTITLE: Test\nBODY: Test body with reusable implementation guidance\nCONFIDENCE: 90\nIMPORTANCE: 82";
       if (options?.enableTools === false) return content;
       return {
         content,
@@ -166,7 +181,8 @@ describe("source distillation", () => {
             type: "rule",
             title: "Dup",
             body: "Duplicate candidate body with enough durable guidance.",
-            score: 0.9,
+            confidence: 91,
+            importance: 83,
           },
         ],
       });

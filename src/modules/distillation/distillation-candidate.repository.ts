@@ -97,6 +97,8 @@ export function distillationCandidateRowToCandidate(
     body: row.body,
     confidence: row.confidence ?? 65,
     importance: row.importance ?? 55,
+    confidenceProvided: row.confidence !== null,
+    importanceProvided: row.importance !== null,
   };
 }
 

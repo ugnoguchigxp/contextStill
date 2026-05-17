@@ -4,12 +4,14 @@ import {
   parseDistillationCandidateListWithMetadata,
 } from "./distillation-candidates.js";
 import { buildDistillationVerificationSystemPrompt } from "./distillation-prompts.js";
+import type { DistillationReaderContext } from "./distillation-reader.service.js";
 import type {
   DistillationCompletionResult,
   DistillationMessage,
   DistillationModelRequest,
   DistillationRuntimeOptions,
 } from "./distillation-runtime.service.js";
+import { distillationEvidenceToolNames } from "./distillation-tools.service.js";
 
 export type DistillationSessionModelClient = (
   request: DistillationModelRequest,
@@ -36,6 +38,7 @@ export type DistillationExtractionSessionResult = {
   candidates: DistilledKnowledgeCandidate[];
   rawCandidateCount: number;
   toolEvents: DistillationCompletionResult["toolEvents"];
+  messages: DistillationCompletionResult["messages"];
   responseChars: number;
   jsonRepaired: boolean;
 };
@@ -63,7 +66,7 @@ export function normalizeDistillationModelResult(
 
 export function evidenceTextFromMessages(messages: DistillationMessage[]): string {
   return messages
-    .filter((message) => message.role === "user")
+    .filter((message) => message.role === "user" || message.role === "tool")
     .map((message) => (typeof message.content === "string" ? message.content : ""))
     .filter(Boolean)
     .join("\n\n---\n\n");
@@ -107,7 +110,10 @@ export async function runDistillationExtractionSession(params: {
   modelClient: DistillationSessionModelClient;
   model: string;
   maxTokens: number;
+  readerContext?: DistillationReaderContext;
+  auditContext?: Record<string, unknown>;
 }): Promise<DistillationExtractionSessionResult> {
+  const readToolName = params.sourceKind === "wiki" ? "read_source_segment" : "read_vibe_segment";
   const extractionCompletion = normalizeDistillationModelResult(
     await params.modelClient(
       {
@@ -115,7 +121,14 @@ export async function runDistillationExtractionSession(params: {
         messages: params.messages,
         maxTokens: params.maxTokens,
       },
-      { enableTools: false },
+      params.readerContext?.enabled
+        ? {
+            enableTools: true,
+            auditContext: params.auditContext,
+            toolNames: [readToolName],
+            maxToolRounds: Math.max(1, params.readerContext.maxReads),
+          }
+        : { enableTools: false },
     ),
   );
   const extractionParse = parseDistillationCandidateListWithMetadata(extractionCompletion.content);
@@ -125,6 +138,7 @@ export async function runDistillationExtractionSession(params: {
     candidates: extractionCandidates,
     rawCandidateCount: extractionParse.candidates.length,
     toolEvents: extractionCompletion.toolEvents,
+    messages: extractionCompletion.messages,
     responseChars: extractionCompletion.content.length,
     jsonRepaired: extractionParse.jsonRepaired,
   };
@@ -150,7 +164,12 @@ export async function runDistillationVerificationSession(params: {
         }),
         maxTokens: params.maxTokens,
       },
-      { enableTools: true, auditContext: params.auditContext, requireToolCall: true },
+      {
+        enableTools: true,
+        auditContext: params.auditContext,
+        requireToolCall: true,
+        toolNames: distillationEvidenceToolNames,
+      },
     ),
   );
   const verificationParse = parseDistillationCandidateListWithMetadata(

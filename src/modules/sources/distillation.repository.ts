@@ -48,10 +48,15 @@ export async function listSourceFragmentsForDistillation(params: {
       not exists (
         select 1
         from ${sourceDistillationRuns}
-        where ${sourceDistillationRuns.sourceFragmentId} = ${sourceFragments.id}
-          and ${sourceDistillationRuns.promptVersion} = ${params.promptVersion}
-          and ${sourceDistillationRuns.status} in ('ok', 'skipped')
-      )
+	        where ${sourceDistillationRuns.sourceFragmentId} = ${sourceFragments.id}
+	          and ${sourceDistillationRuns.promptVersion} = ${params.promptVersion}
+	          and ${sourceDistillationRuns.status} in ('ok', 'skipped')
+	          and coalesce(${sourceDistillationRuns.metadata}->>'outcomeKind', '') not in (
+	            'promotion_paused_backpressure',
+	            'batch_paused_circuit_breaker',
+	            'job_already_running'
+	          )
+	      )
       and not exists (
         select 1
         from ${sourceDistillationRuns}

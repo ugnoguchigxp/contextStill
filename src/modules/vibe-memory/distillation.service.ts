@@ -15,6 +15,22 @@ import {
   resolveDistillationModel,
 } from "../distillation/distillation-runtime.service.js";
 import {
+  buildVibeReaderContext,
+  readerCatalog,
+  type DistillationReaderContext,
+} from "../distillation/distillation-reader.service.js";
+import {
+  beginDistillationJob,
+  checkDistillationCircuitBreaker,
+  pauseJobForCircuitBreaker,
+  shouldPauseDistillationPromotion,
+} from "../distillation/distillation-job.service.js";
+import {
+  finishDistillationJob,
+  updateDistillationJobPhase,
+  type DistillationJobRow,
+} from "../distillation/distillation-job.repository.js";
+import {
   type DistillationAcceptedCandidateEntry,
   runDistillationCandidateWorkflow,
 } from "../distillation/distillation-candidate-workflow.js";
@@ -59,6 +75,7 @@ export type DistillVibeMemoriesOptions = {
   includeProcessed?: boolean;
   modelClient?: DistillationModelClient;
   embedder?: DistillationEmbedder;
+  agenticReader?: boolean;
 };
 
 type DistilledVibeMemoryResult = {
@@ -82,6 +99,7 @@ type DistilledVibeMemoryResult = {
   toolEventCount?: number;
   responseChars?: number;
   failureKind?: "llm_call" | "parse_or_repair" | "processing";
+  jobId?: string;
 };
 
 export type DistillVibeMemoriesSummary = {
@@ -198,8 +216,10 @@ export function buildVibeMemoryDistillationMessages(params: {
   memory: VibeMemoryForDistillation;
   diffEntries: AgentDiffEntryForDistillation[];
   maxInputChars?: number;
+  readerContext?: DistillationReaderContext;
 }): DistillationMessage[] {
   const maxInputChars = params.maxInputChars ?? groupedConfig.vibeDistillation.maxInputChars;
+  const readerEnabled = Boolean(params.readerContext?.enabled);
   const diffBudget = Math.max(
     600,
     Math.floor(maxInputChars / Math.max(1, params.diffEntries.length + 2)),
@@ -214,11 +234,20 @@ export function buildVibeMemoryDistillationMessages(params: {
       `memoryType: ${params.memory.memoryType}`,
       `createdAt: ${params.memory.createdAt.toISOString()}`,
       "",
-      "VIBE_MEMORY_CONTENT",
-      params.memory.content.trim(),
-      "",
-      "AGENT_DIFF_ENTRIES",
-      diffText,
+      readerEnabled
+        ? [
+            "READABLE_VIBE_SEGMENTS",
+            readerCatalog(params.readerContext as DistillationReaderContext),
+            "",
+            "必要な locator だけ read_vibe_segment で読んでから候補を出してください。",
+          ].join("\n")
+        : [
+            "VIBE_MEMORY_CONTENT",
+            params.memory.content.trim(),
+            "",
+            "AGENT_DIFF_ENTRIES",
+            diffText,
+          ].join("\n"),
     ].join("\n"),
     maxInputChars,
   );
@@ -228,9 +257,16 @@ export function buildVibeMemoryDistillationMessages(params: {
       role: "system",
       content: buildDistillationExtractionSystemPrompt("vibe_memory", [
         "出力形式は次のいずれかでよい:",
-        '1) 推奨: 最小 JSON {"candidates":[{"type":"rule|procedure","title":"...","body":"..."}]}',
-        "2) 自然言語: TYPE / TITLE / BODY / SCORE(任意) のラベル付きテキスト",
+        '1) 推奨: 最小 JSON {"candidates":[{"type":"rule|procedure","title":"...","body":"...","confidence":70,"importance":80}]}',
+        "2) 自然言語: TYPE: rule、TITLE: ...、BODY: ...、CONFIDENCE: ...、IMPORTANCE: ... のラベル付きテキスト",
+        "TYPE / TITLE / BODY のような見出し行だけを出さない。",
         "候補がない場合は空配列または『候補なし』と返してよい。",
+        ...(readerEnabled
+          ? [
+              "入力には本文の全量ではなく locator catalog がある。必要に応じて read_vibe_segment を使う。",
+              "読んだ内容を短く統合し、最終候補だけを返す。圧縮メモは保存対象ではない。",
+            ]
+          : []),
       ]),
     },
     {
@@ -335,6 +371,17 @@ export async function distillVibeMemories(
   const distillationModel = resolveDistillationModel();
   const modelClient = options.modelClient ?? runDistillationCompletion;
   const embedder = options.embedder ?? defaultEmbedder;
+  const agenticReaderEnabled = Boolean(
+    options.agenticReader && groupedConfig.distillation.vibeAgenticReaderManualEnabled,
+  );
+  const circuitBreaker = apply
+    ? await checkDistillationCircuitBreaker().catch((error) => ({
+        allowed: false as const,
+        reason: error instanceof Error ? error.message : String(error),
+      }))
+    : ({ allowed: true as const } satisfies Awaited<
+        ReturnType<typeof checkDistillationCircuitBreaker>
+      >);
   const workspaceRepoPath = normalizeRepoPath(process.cwd());
   const workspaceRepoKey = normalizeRepoKey(process.cwd());
   await recordAuditLogSafe({
@@ -346,6 +393,7 @@ export async function distillVibeMemories(
       promptVersion: groupedConfig.vibeDistillation.promptVersion,
       limit: options.limit ?? groupedConfig.vibeDistillation.batchSize,
       includeProcessed: Boolean(options.includeProcessed),
+      agenticReader: agenticReaderEnabled,
       sessionId: options.sessionId ?? null,
       vibeMemoryIdCount: options.vibeMemoryIds?.length ?? 0,
     },
@@ -378,15 +426,117 @@ export async function distillVibeMemories(
       });
       const memoryDiffs = diffsByMemoryId.get(memory.id) ?? [];
       const inputHash = buildVibeMemoryInputHash({ memory, diffEntries: memoryDiffs });
-      const messages = buildVibeMemoryDistillationMessages({ memory, diffEntries: memoryDiffs });
+      const sourceRef = {
+        sourceKind: "vibe_memory" as const,
+        vibeMemoryId: memory.id,
+      };
+      let job: DistillationJobRow | null = null;
+      let jobError: unknown;
+      try {
+        job = await beginDistillationJob({
+          apply,
+          source: sourceRef,
+          inputHash,
+          promptVersion: groupedConfig.vibeDistillation.promptVersion,
+          metadata: {
+            source: "vibe_memory_distillation",
+            sourceKind: "vibe_memory",
+            sourceSessionId: memory.sessionId,
+            agenticReader: agenticReaderEnabled,
+          },
+        });
+      } catch (error) {
+        jobError = error;
+        job = null;
+      }
+      const readerContext = agenticReaderEnabled
+        ? buildVibeReaderContext({ memory, diffEntries: memoryDiffs, apply, jobId: job?.id })
+        : undefined;
+      const messages = buildVibeMemoryDistillationMessages({
+        memory,
+        diffEntries: memoryDiffs,
+        readerContext,
+      });
       let responseChars: number | undefined;
       try {
+        if (jobError) {
+          throw jobError;
+        }
+        if (apply && !job) {
+          const outcomeKind: DistillationOutcomeKind = "job_already_running";
+          await recordDistillationRun({
+            apply,
+            vibeMemoryId: memory.id,
+            status: "skipped",
+            candidateCount: 0,
+            knowledgeIds: [],
+            inputHash,
+            model: distillationModel,
+            metadata: {
+              reason: "distillation_job_already_running",
+              outcomeKind,
+              sourceSessionId: memory.sessionId,
+            },
+          });
+          results.push({
+            vibeMemoryId: memory.id,
+            sessionId: memory.sessionId,
+            status: "skipped",
+            inputHash,
+            candidateCount: 0,
+            knowledgeIds: [],
+            candidates: [],
+            outcomeKind,
+            skipReason: "distillation_job_already_running",
+          });
+          continue;
+        }
+
+        if (!circuitBreaker.allowed) {
+          const outcomeKind: DistillationOutcomeKind = "batch_paused_circuit_breaker";
+          await pauseJobForCircuitBreaker({
+            jobId: job?.id,
+            reason: circuitBreaker.reason,
+            health:
+              "health" in circuitBreaker
+                ? (circuitBreaker.health as unknown as Record<string, unknown>)
+                : undefined,
+          });
+          await recordDistillationRun({
+            apply,
+            vibeMemoryId: memory.id,
+            status: "skipped",
+            candidateCount: 0,
+            knowledgeIds: [],
+            inputHash,
+            model: distillationModel,
+            metadata: {
+              reason: "distillation_circuit_breaker_paused",
+              outcomeKind,
+              sourceSessionId: memory.sessionId,
+              error: circuitBreaker.reason,
+            },
+          });
+          results.push({
+            vibeMemoryId: memory.id,
+            sessionId: memory.sessionId,
+            status: "skipped",
+            inputHash,
+            candidateCount: 0,
+            knowledgeIds: [],
+            candidates: [],
+            outcomeKind,
+            skipReason: "distillation_circuit_breaker_paused",
+            error: circuitBreaker.reason,
+            jobId: job?.id,
+          });
+          continue;
+        }
+
+        await updateDistillationJobPhase(job?.id, agenticReaderEnabled ? "reading" : "extracting");
         const session = await runDistillationCandidateWorkflow({
           apply,
-          source: {
-            sourceKind: "vibe_memory",
-            vibeMemoryId: memory.id,
-          },
+          source: sourceRef,
           distillationSourceKind: "vibe_memory",
           messages,
           modelClient,
@@ -395,6 +545,8 @@ export async function distillVibeMemories(
           inputHash,
           promptVersion: groupedConfig.vibeDistillation.promptVersion,
           requireFetchEvidenceForUrlInput: vibeMemoryInputContainsUrl(memory, memoryDiffs),
+          jobId: job?.id,
+          readerContext,
           extractionMetadata: {
             inputHash,
             source: "vibe_memory_distillation",
@@ -403,6 +555,8 @@ export async function distillVibeMemories(
             sourceSessionId: memory.sessionId,
             sourceMemoryType: memory.memoryType,
             diffEntryCount: memoryDiffs.length,
+            agenticReader: agenticReaderEnabled,
+            readLocators: readerContext?.readLocators,
           },
         });
         responseChars = session.responseChars;
@@ -456,6 +610,15 @@ export async function distillVibeMemories(
               responseChars,
             },
           });
+          await finishDistillationJob({
+            id: job?.id,
+            status: "skipped",
+            outcomeKind,
+            metadata: {
+              reason: skipReason,
+              acceptedCandidateCount: 0,
+            },
+          });
           results.push({
             vibeMemoryId: memory.id,
             sessionId: memory.sessionId,
@@ -474,10 +637,73 @@ export async function distillVibeMemories(
             rejectedInvalidEvidenceCount: candidateGate.rejectedInvalidEvidence.length,
             toolEventCount: session.toolEvents.length,
             responseChars,
+            jobId: job?.id,
           });
           continue;
         }
 
+        const promotionGate = apply
+          ? await shouldPauseDistillationPromotion()
+          : { paused: false, draftCount: 0, threshold: 0 };
+        if (promotionGate.paused) {
+          const outcomeKind: DistillationOutcomeKind = "promotion_paused_backpressure";
+          const skipReason = "hitl_backpressure";
+          await recordDistillationRun({
+            apply,
+            vibeMemoryId: memory.id,
+            status: "skipped",
+            candidateCount: acceptedCandidates.length,
+            knowledgeIds: [],
+            inputHash,
+            model: distillationModel,
+            toolEvents: session.toolEvents,
+            metadata: {
+              reason: skipReason,
+              outcomeKind,
+              sourceSessionId: memory.sessionId,
+              acceptedCandidateCount: acceptedCandidates.length,
+              draftCount: promotionGate.draftCount,
+              backlogThresholdCount: promotionGate.threshold,
+              jsonRepaired: session.jsonRepaired,
+              toolEventCount: session.toolEvents.length,
+              responseChars,
+            },
+          });
+          await finishDistillationJob({
+            id: job?.id,
+            status: "skipped",
+            outcomeKind,
+            metadata: {
+              reason: skipReason,
+              acceptedCandidateCount: acceptedCandidates.length,
+              draftCount: promotionGate.draftCount,
+              backlogThresholdCount: promotionGate.threshold,
+            },
+          });
+          results.push({
+            vibeMemoryId: memory.id,
+            sessionId: memory.sessionId,
+            status: "skipped",
+            inputHash,
+            candidateCount: acceptedCandidates.length,
+            knowledgeIds: [],
+            candidates: acceptedCandidates,
+            outcomeKind,
+            skipReason,
+            jsonRepaired: session.jsonRepaired,
+            verificationCandidateCount: session.verificationCandidateCount,
+            verificationAttemptCount: session.verificationAttemptCount,
+            rawCandidateCount: session.rawCandidateCount,
+            rejectedLowQualityCount: candidateGate.rejectedLowQuality.length,
+            rejectedInvalidEvidenceCount: candidateGate.rejectedInvalidEvidence.length,
+            toolEventCount: session.toolEvents.length,
+            responseChars,
+            jobId: job?.id,
+          });
+          continue;
+        }
+
+        await updateDistillationJobPhase(job?.id, "promoting");
         const embeddings = apply
           ? await Promise.all(
               acceptedCandidates.map((candidate) =>
@@ -625,6 +851,16 @@ export async function distillVibeMemories(
             responseChars,
           },
         });
+        await finishDistillationJob({
+          id: job?.id,
+          status: "completed",
+          outcomeKind,
+          metadata: {
+            acceptedCandidateCount: acceptedCandidates.length,
+            knowledgeCount: knowledgeIds.length,
+            dedupSkippedCount,
+          },
+        });
         results.push({
           vibeMemoryId: memory.id,
           sessionId: memory.sessionId,
@@ -642,6 +878,7 @@ export async function distillVibeMemories(
           rejectedInvalidEvidenceCount: candidateGate.rejectedInvalidEvidence.length,
           toolEventCount: session.toolEvents.length,
           responseChars,
+          jobId: job?.id,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -667,6 +904,16 @@ export async function distillVibeMemories(
             responseChars,
           },
         });
+        await finishDistillationJob({
+          id: job?.id,
+          status: "failed",
+          outcomeKind,
+          error: message,
+          metadata: {
+            failureKind,
+            responseChars,
+          },
+        });
         results.push({
           vibeMemoryId: memory.id,
           sessionId: memory.sessionId,
@@ -680,6 +927,7 @@ export async function distillVibeMemories(
           failureKind,
           toolEventCount: toolEvents.length,
           responseChars,
+          jobId: job?.id,
         });
       }
     }

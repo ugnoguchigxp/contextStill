@@ -15,9 +15,14 @@ import {
   upsertExtractedDistillationCandidates,
 } from "./distillation-candidate.repository.js";
 import {
-  distillationToolNames,
+  distillationEvidenceToolNames,
   type DistillationToolResult,
 } from "./distillation-tools.service.js";
+import {
+  distillationReaderAuditContextKey,
+  type DistillationReaderContext,
+  type DistillationReadableSegment,
+} from "./distillation-reader.service.js";
 import {
   distillationToolEventsFromError,
   errorWithDistillationToolEvents,
@@ -30,7 +35,51 @@ import {
   runDistillationVerificationSession,
 } from "./distillation-sessions.js";
 
-const VERIFICATION_TOOL_NAMES = new Set<string>(distillationToolNames);
+const VERIFICATION_TOOL_NAMES = new Set<string>(distillationEvidenceToolNames);
+
+function metadataReadLocators(row: DistillationCandidateRow | undefined): string[] {
+  const metadata = row?.metadata;
+  if (!metadata || typeof metadata !== "object" || Array.isArray(metadata)) return [];
+  const readLocators = (metadata as Record<string, unknown>).readLocators;
+  if (!Array.isArray(readLocators)) return [];
+  return readLocators.filter(
+    (value): value is string => typeof value === "string" && Boolean(value),
+  );
+}
+
+function truncateReaderEvidence(value: string, maxChars: number): string {
+  if (value.length <= maxChars) return value;
+  return `${value.slice(0, Math.max(0, maxChars - 24))}\n...[truncated]`;
+}
+
+function readerSegmentEvidence(segment: DistillationReadableSegment, maxChars: number): string {
+  return [
+    `locator: ${segment.locator}`,
+    `label: ${segment.label}`,
+    `contentHash: ${segment.contentHash}`,
+    "content:",
+    truncateReaderEvidence(segment.content, maxChars),
+  ].join("\n");
+}
+
+function storedReaderEvidence(params: {
+  readerContext?: DistillationReaderContext;
+  row?: DistillationCandidateRow;
+}): string | null {
+  if (!params.readerContext?.enabled) return null;
+  const locators = [...new Set(metadataReadLocators(params.row))];
+  if (locators.length === 0) return null;
+  const segments = locators
+    .map((locator) => params.readerContext?.segments.find((segment) => segment.locator === locator))
+    .filter((segment): segment is DistillationReadableSegment => Boolean(segment));
+  if (segments.length === 0) return null;
+  return [
+    "READ_SEGMENT_EVIDENCE",
+    ...segments.map((segment) =>
+      readerSegmentEvidence(segment, params.readerContext?.maxCharsPerRead ?? 4000),
+    ),
+  ].join("\n\n---\n\n");
+}
 
 export type DistillationAcceptedCandidateEntry = {
   candidate: DistilledKnowledgeCandidate;
@@ -114,6 +163,8 @@ export async function runDistillationCandidateWorkflow(params: {
   promptVersion: string;
   requireFetchEvidenceForUrlInput?: boolean;
   requireVerificationToolEvidence?: boolean;
+  jobId?: string;
+  readerContext?: DistillationReaderContext;
   extractionMetadata?: Record<string, unknown>;
 }): Promise<DistillationCandidateWorkflowResult> {
   const toolEvents: DistillationToolResult[] = [];
@@ -128,6 +179,8 @@ export async function runDistillationCandidateWorkflow(params: {
   let usedStoredCandidates = false;
   let failedCandidateCount = 0;
   let concurrentClaimMissCount = 0;
+  let extractionReadEvidence: string | null = null;
+  const baseSourceEvidence = evidenceTextFromMessages(params.messages);
   const maxCandidates = groupedConfig.distillationTools.maxCandidates;
   const verificationToolEvidenceRequired = params.requireVerificationToolEvidence ?? params.apply;
 
@@ -232,12 +285,19 @@ export async function runDistillationCandidateWorkflow(params: {
       modelClient: params.modelClient,
       model: params.model,
       maxTokens: params.maxTokens,
+      readerContext: params.readerContext,
+      auditContext: {
+        ...(params.extractionMetadata ?? {}),
+        jobId: params.jobId,
+        [distillationReaderAuditContextKey]: params.readerContext,
+      },
     });
     extractionCandidates = extraction.candidates;
     extractionRawCandidateCount = extraction.rawCandidateCount;
     extractionResponseChars = extraction.responseChars;
     jsonRepaired = extraction.jsonRepaired;
     toolEvents.push(...extraction.toolEvents);
+    extractionReadEvidence = evidenceTextFromMessages(extraction.messages);
 
     if (params.apply) {
       rows = await upsertExtractedDistillationCandidates({
@@ -275,9 +335,13 @@ export async function runDistillationCandidateWorkflow(params: {
 
     try {
       verificationAttemptCount++;
+      const sourceEvidence =
+        extractionReadEvidence ||
+        storedReaderEvidence({ readerContext: params.readerContext, row: entry.row }) ||
+        baseSourceEvidence;
       const verification = await runDistillationVerificationSession({
         sourceKind: params.distillationSourceKind,
-        sourceEvidence: evidenceTextFromMessages(params.messages),
+        sourceEvidence,
         candidate: entry.candidate,
         modelClient: params.modelClient,
         model: params.model,
@@ -294,6 +358,7 @@ export async function runDistillationCandidateWorkflow(params: {
           candidateIndex: entry.candidateIndex,
           candidateType: entry.candidate.type,
           candidateTitle: entry.candidate.title,
+          jobId: params.jobId,
         },
       });
       verificationResponseChars += verification.responseChars;

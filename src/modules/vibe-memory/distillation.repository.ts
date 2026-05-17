@@ -29,10 +29,15 @@ export async function listVibeMemoriesForDistillation(params: {
     filters.push(sql`not exists (
       select 1
       from ${vibeMemoryDistillationRuns}
-      where ${vibeMemoryDistillationRuns.vibeMemoryId} = ${vibeMemories.id}
-        and ${vibeMemoryDistillationRuns.promptVersion} = ${params.promptVersion}
-        and ${vibeMemoryDistillationRuns.status} in ('ok', 'skipped')
-    )`);
+	      where ${vibeMemoryDistillationRuns.vibeMemoryId} = ${vibeMemories.id}
+	        and ${vibeMemoryDistillationRuns.promptVersion} = ${params.promptVersion}
+	        and ${vibeMemoryDistillationRuns.status} in ('ok', 'skipped')
+	        and coalesce(${vibeMemoryDistillationRuns.metadata}->>'outcomeKind', '') not in (
+	          'promotion_paused_backpressure',
+	          'batch_paused_circuit_breaker',
+	          'job_already_running'
+	        )
+	    )`);
     filters.push(sql`not exists (
       select 1
       from ${vibeMemoryDistillationRuns}

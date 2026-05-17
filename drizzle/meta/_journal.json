@@ -127,6 +127,13 @@
       "when": 1778875200000,
       "tag": "0017_distillation_candidates",
       "breakpoints": true
+    },
+    {
+      "idx": 18,
+      "version": "7",
+      "when": 1778878800000,
+      "tag": "0018_distillation_jobs_reader_cache",
+      "breakpoints": true
     }
   ]
 }

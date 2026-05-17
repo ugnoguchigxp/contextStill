@@ -16,6 +16,22 @@ import {
   resolveDistillationModel,
 } from "../distillation/distillation-runtime.service.js";
 import {
+  buildSourceReaderContext,
+  readerCatalog,
+  type DistillationReaderContext,
+} from "../distillation/distillation-reader.service.js";
+import {
+  beginDistillationJob,
+  checkDistillationCircuitBreaker,
+  pauseJobForCircuitBreaker,
+  shouldPauseDistillationPromotion,
+} from "../distillation/distillation-job.service.js";
+import {
+  finishDistillationJob,
+  updateDistillationJobPhase,
+  type DistillationJobRow,
+} from "../distillation/distillation-job.repository.js";
+import {
   type DistillationAcceptedCandidateEntry,
   runDistillationCandidateWorkflow,
 } from "../distillation/distillation-candidate-workflow.js";
@@ -54,6 +70,7 @@ export type DistillSourcesOptions = {
   includeProcessed?: boolean;
   modelClient?: SourceDistillationModelClient;
   embedder?: SourceDistillationEmbedder;
+  agenticReader?: boolean;
 };
 
 type DistilledSourceResult = {
@@ -78,6 +95,7 @@ type DistilledSourceResult = {
   toolEventCount?: number;
   responseChars?: number;
   failureKind?: "llm_call" | "parse_or_repair" | "processing";
+  jobId?: string;
 };
 
 export type DistillSourcesSummary = {
@@ -135,8 +153,10 @@ function textContainsUrl(value: string): boolean {
 export function buildSourceDistillationMessages(params: {
   fragment: SourceFragmentForDistillation;
   maxInputChars?: number;
+  readerContext?: DistillationReaderContext;
 }): DistillationMessage[] {
   const maxInputChars = params.maxInputChars ?? groupedConfig.sourceDistillation.maxInputChars;
+  const readerEnabled = Boolean(params.readerContext?.enabled);
   const input = truncate(
     [
       `sourceKind: ${params.fragment.sourceKind}`,
@@ -148,8 +168,14 @@ export function buildSourceDistillationMessages(params: {
       `fragmentLocator: ${params.fragment.locator}`,
       `fragmentHeading: ${params.fragment.heading ?? "(none)"}`,
       "",
-      "SOURCE_FRAGMENT_CONTENT",
-      params.fragment.content.trim(),
+      readerEnabled
+        ? [
+            "READABLE_SOURCE_SEGMENTS",
+            readerCatalog(params.readerContext as DistillationReaderContext),
+            "",
+            "必要な locator だけ read_source_segment で読んでから候補を出してください。",
+          ].join("\n")
+        : ["SOURCE_FRAGMENT_CONTENT", params.fragment.content.trim()].join("\n"),
     ].join("\n"),
     maxInputChars,
   );
@@ -159,9 +185,16 @@ export function buildSourceDistillationMessages(params: {
       role: "system",
       content: buildDistillationExtractionSystemPrompt("wiki", [
         "出力形式は次のいずれかでよい:",
-        '1) 推奨: 最小 JSON {"candidates":[{"type":"rule|procedure","title":"...","body":"..."}]}',
-        "2) 自然言語: TYPE / TITLE / BODY / SCORE(任意) のラベル付きテキスト",
+        '1) 推奨: 最小 JSON {"candidates":[{"type":"rule|procedure","title":"...","body":"...","confidence":70,"importance":80}]}',
+        "2) 自然言語: TYPE: rule、TITLE: ...、BODY: ...、CONFIDENCE: ...、IMPORTANCE: ... のラベル付きテキスト",
+        "TYPE / TITLE / BODY のような見出し行だけを出さない。",
         "候補がない場合は空配列または『候補なし』と返してよい。",
+        ...(readerEnabled
+          ? [
+              "入力には本文の全量ではなく locator catalog がある。必要に応じて read_source_segment を使う。",
+              "読んだ内容を短く統合し、最終候補だけを返す。圧縮メモは保存対象ではない。",
+            ]
+          : []),
       ]),
     },
     {
@@ -273,6 +306,17 @@ export async function distillSources(
   const distillationModel = resolveDistillationModel();
   const modelClient = options.modelClient ?? runDistillationCompletion;
   const embedder = options.embedder ?? defaultEmbedder;
+  const agenticReaderEnabled = Boolean(
+    options.agenticReader && groupedConfig.distillation.sourceAgenticReaderManualEnabled,
+  );
+  const circuitBreaker = apply
+    ? await checkDistillationCircuitBreaker().catch((error) => ({
+        allowed: false as const,
+        reason: error instanceof Error ? error.message : String(error),
+      }))
+    : ({ allowed: true as const } satisfies Awaited<
+        ReturnType<typeof checkDistillationCircuitBreaker>
+      >);
   await recordAuditLogSafe({
     eventType: auditEventTypes.sourceDistillationRunStarted,
     actor: "system",
@@ -282,6 +326,7 @@ export async function distillSources(
       promptVersion: groupedConfig.sourceDistillation.promptVersion,
       limit: options.limit ?? groupedConfig.sourceDistillation.batchSize,
       includeProcessed: Boolean(options.includeProcessed),
+      agenticReader: agenticReaderEnabled,
       sourceKind: options.sourceKind ?? null,
       uri: options.uri ?? null,
     },
@@ -299,15 +344,113 @@ export async function distillSources(
 
     for (const fragment of fragments) {
       const inputHash = buildSourceDistillationInputHash(fragment);
-      const messages = buildSourceDistillationMessages({ fragment });
+      const sourceRef = {
+        sourceKind: "source_fragment" as const,
+        sourceFragmentId: fragment.id,
+      };
+      let job: DistillationJobRow | null = null;
+      let jobError: unknown;
+      try {
+        job = await beginDistillationJob({
+          apply,
+          source: sourceRef,
+          inputHash,
+          promptVersion: groupedConfig.sourceDistillation.promptVersion,
+          metadata: {
+            source: "source_distillation",
+            sourceKind: fragment.sourceKind,
+            sourceUri: fragment.sourceUri,
+            agenticReader: agenticReaderEnabled,
+          },
+        });
+      } catch (error) {
+        jobError = error;
+        job = null;
+      }
+      const readerContext = agenticReaderEnabled
+        ? buildSourceReaderContext({ fragment, apply, jobId: job?.id })
+        : undefined;
+      const messages = buildSourceDistillationMessages({ fragment, readerContext });
       let responseChars: number | undefined;
       try {
+        if (jobError) {
+          throw jobError;
+        }
+        if (apply && !job) {
+          const outcomeKind: DistillationOutcomeKind = "job_already_running";
+          await recordRun({
+            apply,
+            fragment,
+            status: "skipped",
+            candidateCount: 0,
+            knowledgeIds: [],
+            inputHash,
+            model: distillationModel,
+            metadata: {
+              reason: "distillation_job_already_running",
+              outcomeKind,
+            },
+          });
+          results.push({
+            sourceFragmentId: fragment.id,
+            sourceUri: fragment.sourceUri,
+            locator: fragment.locator,
+            status: "skipped",
+            inputHash,
+            candidateCount: 0,
+            knowledgeIds: [],
+            candidates: [],
+            outcomeKind,
+            skipReason: "distillation_job_already_running",
+          });
+          continue;
+        }
+
+        if (!circuitBreaker.allowed) {
+          const outcomeKind: DistillationOutcomeKind = "batch_paused_circuit_breaker";
+          await pauseJobForCircuitBreaker({
+            jobId: job?.id,
+            reason: circuitBreaker.reason,
+            health:
+              "health" in circuitBreaker
+                ? (circuitBreaker.health as unknown as Record<string, unknown>)
+                : undefined,
+          });
+          await recordRun({
+            apply,
+            fragment,
+            status: "skipped",
+            candidateCount: 0,
+            knowledgeIds: [],
+            inputHash,
+            model: distillationModel,
+            metadata: {
+              reason: "distillation_circuit_breaker_paused",
+              outcomeKind,
+              error: circuitBreaker.reason,
+            },
+          });
+          results.push({
+            sourceFragmentId: fragment.id,
+            sourceUri: fragment.sourceUri,
+            locator: fragment.locator,
+            status: "skipped",
+            inputHash,
+            candidateCount: 0,
+            knowledgeIds: [],
+            candidates: [],
+            outcomeKind,
+            skipReason: "distillation_circuit_breaker_paused",
+            error: circuitBreaker.reason,
+            jobId: job?.id,
+          });
+          continue;
+        }
+
+        await updateDistillationJobPhase(job?.id, agenticReaderEnabled ? "reading" : "extracting");
         const session = await runDistillationCandidateWorkflow({
           apply,
-          source: {
-            sourceKind: "source_fragment",
-            sourceFragmentId: fragment.id,
-          },
+          source: sourceRef,
           distillationSourceKind: "wiki",
           messages,
           modelClient,
@@ -316,6 +459,8 @@ export async function distillSources(
           inputHash,
           promptVersion: groupedConfig.sourceDistillation.promptVersion,
           requireFetchEvidenceForUrlInput: sourceFragmentContainsUrl(fragment),
+          jobId: job?.id,
+          readerContext,
           extractionMetadata: {
             inputHash,
             source: "source_distillation",
@@ -325,6 +470,8 @@ export async function distillSources(
             sourceContentHash: fragment.sourceContentHash,
             fragmentId: fragment.id,
             fragmentLocator: fragment.locator,
+            agenticReader: agenticReaderEnabled,
+            readLocators: readerContext?.readLocators,
           },
         });
         responseChars = session.responseChars;
@@ -378,6 +525,15 @@ export async function distillSources(
               responseChars,
             },
           });
+          await finishDistillationJob({
+            id: job?.id,
+            status: "skipped",
+            outcomeKind,
+            metadata: {
+              reason: skipReason,
+              acceptedCandidateCount: 0,
+            },
+          });
           results.push({
             sourceFragmentId: fragment.id,
             sourceUri: fragment.sourceUri,
@@ -397,10 +553,73 @@ export async function distillSources(
             rejectedInvalidEvidenceCount: candidateGate.rejectedInvalidEvidence.length,
             toolEventCount: session.toolEvents.length,
             responseChars,
+            jobId: job?.id,
           });
           continue;
         }
 
+        const promotionGate = apply
+          ? await shouldPauseDistillationPromotion()
+          : { paused: false, draftCount: 0, threshold: 0 };
+        if (promotionGate.paused) {
+          const outcomeKind: DistillationOutcomeKind = "promotion_paused_backpressure";
+          const skipReason = "hitl_backpressure";
+          await recordRun({
+            apply,
+            fragment,
+            status: "skipped",
+            candidateCount: acceptedCandidates.length,
+            knowledgeIds: [],
+            inputHash,
+            model: distillationModel,
+            toolEvents: session.toolEvents,
+            metadata: {
+              reason: skipReason,
+              outcomeKind,
+              acceptedCandidateCount: acceptedCandidates.length,
+              draftCount: promotionGate.draftCount,
+              backlogThresholdCount: promotionGate.threshold,
+              jsonRepaired: session.jsonRepaired,
+              toolEventCount: session.toolEvents.length,
+              responseChars,
+            },
+          });
+          await finishDistillationJob({
+            id: job?.id,
+            status: "skipped",
+            outcomeKind,
+            metadata: {
+              reason: skipReason,
+              acceptedCandidateCount: acceptedCandidates.length,
+              draftCount: promotionGate.draftCount,
+              backlogThresholdCount: promotionGate.threshold,
+            },
+          });
+          results.push({
+            sourceFragmentId: fragment.id,
+            sourceUri: fragment.sourceUri,
+            locator: fragment.locator,
+            status: "skipped",
+            inputHash,
+            candidateCount: acceptedCandidates.length,
+            knowledgeIds: [],
+            candidates: acceptedCandidates,
+            outcomeKind,
+            skipReason,
+            jsonRepaired: session.jsonRepaired,
+            verificationCandidateCount: session.verificationCandidateCount,
+            verificationAttemptCount: session.verificationAttemptCount,
+            rawCandidateCount: session.rawCandidateCount,
+            rejectedLowQualityCount: candidateGate.rejectedLowQuality.length,
+            rejectedInvalidEvidenceCount: candidateGate.rejectedInvalidEvidence.length,
+            toolEventCount: session.toolEvents.length,
+            responseChars,
+            jobId: job?.id,
+          });
+          continue;
+        }
+
+        await updateDistillationJobPhase(job?.id, "promoting");
         const embeddings = apply
           ? await Promise.all(
               acceptedCandidates.map((candidate) =>
@@ -575,6 +794,16 @@ export async function distillSources(
             responseChars,
           },
         });
+        await finishDistillationJob({
+          id: job?.id,
+          status: "completed",
+          outcomeKind,
+          metadata: {
+            acceptedCandidateCount: acceptedCandidates.length,
+            knowledgeCount: knowledgeIds.length,
+            dedupSkippedCount,
+          },
+        });
         results.push({
           sourceFragmentId: fragment.id,
           sourceUri: fragment.sourceUri,
@@ -593,6 +822,7 @@ export async function distillSources(
           rejectedInvalidEvidenceCount: candidateGate.rejectedInvalidEvidence.length,
           toolEventCount: session.toolEvents.length,
           responseChars,
+          jobId: job?.id,
         });
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -617,6 +847,16 @@ export async function distillSources(
             responseChars,
           },
         });
+        await finishDistillationJob({
+          id: job?.id,
+          status: "failed",
+          outcomeKind,
+          error: message,
+          metadata: {
+            failureKind,
+            responseChars,
+          },
+        });
         results.push({
           sourceFragmentId: fragment.id,
           sourceUri: fragment.sourceUri,
@@ -631,6 +871,7 @@ export async function distillSources(
           responseChars,
           failureKind,
           toolEventCount: toolEvents.length,
+          jobId: job?.id,
         });
       }
     }

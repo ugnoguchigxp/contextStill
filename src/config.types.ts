@@ -53,6 +53,9 @@ export type GroupedConfig = {
     searchResultCount: number;
     maxCandidates: number;
     failureRetryDelaySeconds: number;
+    evidenceCacheTtlSeconds: number;
+    readerMaxReads: number;
+    readerMaxCharsPerRead: number;
   };
   compile: { defaultTokenBudget: number; enableVectorSearch: boolean };
   azureOpenAi: {
@@ -78,6 +81,14 @@ export type GroupedConfig = {
     timeoutMs: number;
     lockTtlSeconds: number;
     lockFile: string;
+    promotionBacklogThresholdCount: number;
+    minCandidateImportance: number;
+    circuitBreakerEnabled: boolean;
+    circuitBreakerHealthTimeoutMs: number;
+    circuitBreakerPauseSeconds: number;
+    sourceAgenticReaderManualEnabled: boolean;
+    sourceAgenticReaderAutoEnabled: boolean;
+    vibeAgenticReaderManualEnabled: boolean;
   };
   doctor: {
     freshnessThresholdMinutes: number;
