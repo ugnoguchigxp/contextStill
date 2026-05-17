@@ -14,7 +14,10 @@ import {
   updateDistillationCandidateEvaluation,
   upsertExtractedDistillationCandidates,
 } from "./distillation-candidate.repository.js";
-import type { DistillationToolResult } from "./distillation-tools.service.js";
+import {
+  distillationToolNames,
+  type DistillationToolResult,
+} from "./distillation-tools.service.js";
 import type { DistillationMessage } from "./distillation-runtime.service.js";
 import {
   type DistillationSessionModelClient,
@@ -22,6 +25,8 @@ import {
   runDistillationExtractionSession,
   runDistillationVerificationSession,
 } from "./distillation-sessions.js";
+
+const VERIFICATION_TOOL_NAMES = new Set<string>(distillationToolNames);
 
 export type DistillationAcceptedCandidateEntry = {
   candidate: DistilledKnowledgeCandidate;
@@ -52,6 +57,7 @@ function emptyGate(): DistillationScoreGateResult {
   return {
     accepted: [],
     rejectedLowScore: [],
+    rejectedLowQuality: [],
     rejectedInvalidEvidence: [],
     threshold: groupedConfig.distillationTools.minCandidateScore,
   };
@@ -74,20 +80,20 @@ function metadataFromRow(row: DistillationCandidateRow): Record<string, unknown>
 }
 
 function hasSuccessfulVerificationToolEvidence(toolEvents: DistillationToolResult[]): boolean {
-  return toolEvents.some(
-    (event) => (event.name === "search_web" || event.name === "fetch_content") && event.ok,
-  );
+  return toolEvents.some((event) => event.ok && VERIFICATION_TOOL_NAMES.has(event.name));
 }
 
 function rejectionReason(params: {
   verifiedCandidateCount: number;
   rejectedLowScoreCount: number;
+  rejectedLowQualityCount: number;
   rejectedInvalidEvidenceCount: number;
   acceptedLimitReached: boolean;
 }): string {
   if (params.acceptedLimitReached) return "candidate_limit_reached";
   if (params.verifiedCandidateCount === 0) return "verification_returned_no_candidates";
   if (params.rejectedInvalidEvidenceCount > 0) return "invalid_or_missing_external_evidence";
+  if (params.rejectedLowQualityCount > 0) return "invalid_candidate";
   if (params.rejectedLowScoreCount > 0) return "below_min_score";
   return "candidate_rejected";
 }
@@ -317,6 +323,7 @@ export async function runDistillationCandidateWorkflow(params: {
         requireFetchEvidenceForUrlInput: params.requireFetchEvidenceForUrlInput,
       });
       scoreGate.rejectedLowScore.push(...candidateGate.rejectedLowScore);
+      scoreGate.rejectedLowQuality.push(...candidateGate.rejectedLowQuality);
       scoreGate.rejectedInvalidEvidence.push(...candidateGate.rejectedInvalidEvidence);
 
       const acceptedLimitReached = acceptedEntries.length >= maxCandidates;
@@ -355,6 +362,7 @@ export async function runDistillationCandidateWorkflow(params: {
           rejectionReason: rejectionReason({
             verifiedCandidateCount: verification.candidates.length,
             rejectedLowScoreCount: candidateGate.rejectedLowScore.length,
+            rejectedLowQualityCount: candidateGate.rejectedLowQuality.length,
             rejectedInvalidEvidenceCount: candidateGate.rejectedInvalidEvidence.length,
             acceptedLimitReached,
           }),
@@ -364,6 +372,7 @@ export async function runDistillationCandidateWorkflow(params: {
             scoreThreshold: candidateGate.threshold,
             verifiedCandidateCount: verification.candidates.length,
             rejectedLowScoreCount: candidateGate.rejectedLowScore.length,
+            rejectedLowQualityCount: candidateGate.rejectedLowQuality.length,
             rejectedInvalidEvidenceCount: candidateGate.rejectedInvalidEvidence.length,
             jsonRepaired: verification.jsonRepaired,
             responseChars: verification.responseChars,

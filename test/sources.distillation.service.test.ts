@@ -102,6 +102,7 @@ describe("sources distillation service", () => {
     vi.mocked(candidatesUtil.filterDistillationCandidatesByScore).mockReturnValue({
       accepted: [],
       rejectedLowScore: [],
+      rejectedLowQuality: [],
       rejectedInvalidEvidence: [],
       threshold: 0.5,
     });
@@ -180,6 +181,7 @@ describe("sources distillation service", () => {
       vi.mocked(candidatesUtil.filterDistillationCandidatesByScore).mockReturnValue({
         accepted: [mockCandidate],
         rejectedLowScore: [],
+        rejectedLowQuality: [],
         rejectedInvalidEvidence: [],
         threshold: 0.5,
       });

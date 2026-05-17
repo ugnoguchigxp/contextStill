@@ -153,8 +153,10 @@ describe("Vibe Memory Distillation Service", () => {
 
     expect(summary.skipped).toBe(1);
     expect(summary.knowledgeCount).toBe(0);
+    expect(summary.outcomeKindCounts).toEqual({ missing_verification_tool_evidence: 1 });
     expect(summary.skipReasonCounts).toEqual({ all_candidates_missing_external_evidence: 1 });
     expect(summary.results[0].status).toBe("skipped");
+    expect(summary.results[0].outcomeKind).toBe("missing_verification_tool_evidence");
   });
 
   test("accepts non-JSON labeled text", async () => {

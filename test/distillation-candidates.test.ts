@@ -3,6 +3,7 @@ import {
   filterDistillationCandidatesByScore,
   parseDistillationCandidateList,
 } from "../src/modules/distillation/distillation-candidates.js";
+import { distillationToolNames } from "../src/modules/distillation/distillation-tools.service.js";
 
 describe("parseDistillationCandidateList", () => {
   test("recovers complete candidates from truncated JSON output", () => {
@@ -60,14 +61,62 @@ describe("parseDistillationCandidateList", () => {
     });
   });
 
+  test("does not treat tool-call JSON as a natural-language candidate", () => {
+    const candidates = parseDistillationCandidateList(
+      JSON.stringify({
+        name: "custom_lookup",
+        arguments: { query: "example docs" },
+      }),
+    );
+
+    expect(candidates).toEqual([]);
+  });
+
+  test("filters tool-call objects out of candidate arrays", () => {
+    const candidates = parseDistillationCandidateList(
+      JSON.stringify({
+        candidates: [
+          {
+            function: {
+              name: "custom_lookup",
+              arguments: { query: "example docs" },
+            },
+          },
+          {
+            type: "rule",
+            title: "Meaningful distillation output",
+            body: "Distilled knowledge must preserve reusable implementation guidance, not tool names.",
+            score: 1,
+          },
+        ],
+      }),
+    );
+
+    expect(candidates.map((candidate) => candidate.title)).toEqual([
+      "Meaningful distillation output",
+    ]);
+  });
+
+  test("ignores loose tool-call JSON instead of falling back to title/body parsing", () => {
+    const response = `
+      {
+        name: 'custom_lookup',
+        arguments: { query: 'example docs' },
+      }
+    `;
+
+    expect(parseDistillationCandidateList(response)).toEqual([]);
+  });
+
   test("rejects tool-name-only and identical title/body candidates", () => {
+    const knownToolName = distillationToolNames[0];
     const candidates = parseDistillationCandidateList(
       JSON.stringify({
         candidates: [
           {
             type: "rule",
-            title: "fetch_content",
-            body: "fetch_content",
+            title: knownToolName,
+            body: knownToolName,
             score: 1,
           },
           {
@@ -85,6 +134,26 @@ describe("parseDistillationCandidateList", () => {
     expect(gate.accepted.map((candidate) => candidate.title)).toEqual([
       "Meaningful distillation output",
     ]);
-    expect(gate.rejectedLowScore.map((candidate) => candidate.title)).toContain("fetch_content");
+    expect(gate.rejectedLowQuality.map((candidate) => candidate.title)).toContain(knownToolName);
+  });
+
+  test("rejects candidates with bodies too short to be reusable knowledge", () => {
+    const candidates = parseDistillationCandidateList(
+      JSON.stringify({
+        candidates: [
+          {
+            type: "rule",
+            title: "Short body",
+            body: "Too short.",
+            score: 1,
+          },
+        ],
+      }),
+    );
+
+    const gate = filterDistillationCandidatesByScore(candidates);
+
+    expect(gate.accepted).toHaveLength(0);
+    expect(gate.rejectedLowQuality.map((candidate) => candidate.title)).toEqual(["Short body"]);
   });
 });

@@ -175,7 +175,7 @@ describe("distillation runtime", () => {
           toolCalls: [],
         };
       }
-      expect(request.messages.at(-1)?.content).toContain("最小 JSON");
+      expect(request.messages.at(-1)?.content).toContain("TYPE / TITLE / BODY");
       return {
         content: '{"candidates":[]}',
         toolCalls: [],
@@ -202,6 +202,8 @@ describe("distillation runtime", () => {
     expect(prompt).toContain("context_compile");
     expect(prompt).toContain("search_web");
     expect(prompt).toContain("fetch_content");
+    expect(prompt).toContain("tool call JSON");
+    expect(prompt).toContain("title/body に search_web や fetch_content だけを書かない");
     expect(prompt).toContain("可能な限り日本語");
     expect(prompt).not.toMatch(/\bfact\b/i);
     expect(prompt).not.toMatch(/\blesson\b/i);
@@ -219,10 +221,15 @@ describe("distillation runtime", () => {
     expect(procedureVerificationPrompt).toContain("search_web");
     expect(procedureVerificationPrompt).toContain("fetch_content");
     expect(procedureVerificationPrompt).toContain('"name":"search_web"');
+    expect(procedureVerificationPrompt).toContain("中間応答専用");
+    expect(procedureVerificationPrompt).toContain("最終 candidates にコピーしてはいけない");
+    expect(procedureVerificationPrompt).toContain("JSON が難しい場合");
     expect(procedureVerificationPrompt).toContain("SKILL.md");
     expect(procedureVerificationPrompt).toContain("順序付きワークフロー");
-    expect(procedureVerificationPrompt).toContain("最小 JSON");
-    expect(procedureVerificationPrompt).toContain("必須キーは type / title / body のみ");
+    expect(procedureVerificationPrompt).toContain("推奨出力");
+    expect(procedureVerificationPrompt).toContain(
+      "最終 knowledge に必要な情報は type / title / body",
+    );
     expect(procedureVerificationPrompt).not.toContain("sourceRefs");
     expect(procedureVerificationPrompt).not.toContain("evidenceRefs");
   });

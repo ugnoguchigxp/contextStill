@@ -19,6 +19,12 @@ import {
   runDistillationCandidateWorkflow,
 } from "../distillation/distillation-candidate-workflow.js";
 import {
+  type DistillationOutcomeKind,
+  classifyFailedDistillationOutcome,
+  classifySkippedDistillationOutcome,
+  classifySuccessfulDistillationOutcome,
+} from "../distillation/distillation-outcomes.js";
+import {
   attachDistillationCandidateRun,
   updateDistillationCandidateEvaluation,
 } from "../distillation/distillation-candidate.repository.js";
@@ -59,10 +65,12 @@ type DistilledSourceResult = {
   knowledgeIds: string[];
   candidates: DistilledKnowledgeCandidate[];
   error?: string;
+  outcomeKind?: DistillationOutcomeKind;
   skipReason?: string;
   jsonRepaired?: boolean;
   rawCandidateCount?: number;
   rejectedLowScoreCount?: number;
+  rejectedLowQualityCount?: number;
   rejectedInvalidEvidenceCount?: number;
   toolEventCount?: number;
   responseChars?: number;
@@ -78,6 +86,7 @@ export type DistillSourcesSummary = {
   skipped: number;
   failed: number;
   knowledgeCount: number;
+  outcomeKindCounts: Record<string, number>;
   skipReasonCounts: Record<string, number>;
   failureKindCounts: Record<string, number>;
   results: DistilledSourceResult[];
@@ -321,16 +330,16 @@ export async function distillSources(
         const acceptedCandidates = acceptedEntries.map((entry) => entry.candidate);
 
         if (acceptedCandidates.length === 0) {
-          const skipReason =
-            session.extractionCandidateCount === 0
-              ? "no_rule_or_procedure_candidates"
-              : scoreGate.rejectedInvalidEvidence.length > 0 &&
-                  scoreGate.rejectedLowScore.length === 0
-                ? "all_candidates_missing_external_evidence"
-                : scoreGate.rejectedLowScore.length > 0 &&
-                    scoreGate.rejectedInvalidEvidence.length === 0
-                  ? "all_candidates_below_min_score"
-                  : "all_candidates_rejected";
+          const skippedOutcome = classifySkippedDistillationOutcome({
+            extractionCandidateCount: session.extractionCandidateCount,
+            rawCandidateCount: session.rawCandidateCount,
+            rejectedLowScoreCount: scoreGate.rejectedLowScore.length,
+            rejectedLowQualityCount: scoreGate.rejectedLowQuality.length,
+            rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
+            failedCandidateCount: session.failedCandidateCount,
+          });
+          const skipReason = skippedOutcome.legacyReason;
+          const outcomeKind = skippedOutcome.outcomeKind;
           await recordRun({
             apply,
             fragment,
@@ -342,6 +351,7 @@ export async function distillSources(
             toolEvents: session.toolEvents,
             metadata: {
               reason: skipReason,
+              outcomeKind,
               jsonRepaired: session.jsonRepaired,
               rawCandidateCount: session.rawCandidateCount,
               extractionCandidateCount: session.extractionCandidateCount,
@@ -355,6 +365,10 @@ export async function distillSources(
               scoreThreshold: scoreGate.threshold,
               rejectedLowScoreCount: scoreGate.rejectedLowScore.length,
               rejectedLowScoreCandidates: summarizeRejectedCandidates(scoreGate.rejectedLowScore),
+              rejectedLowQualityCount: scoreGate.rejectedLowQuality.length,
+              rejectedLowQualityCandidates: summarizeRejectedCandidates(
+                scoreGate.rejectedLowQuality,
+              ),
               rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
               rejectedInvalidEvidenceCandidates: summarizeRejectedCandidates(
                 scoreGate.rejectedInvalidEvidence,
@@ -372,10 +386,12 @@ export async function distillSources(
             candidateCount: 0,
             knowledgeIds: [],
             candidates: [],
+            outcomeKind,
             skipReason,
             jsonRepaired: session.jsonRepaired,
             rawCandidateCount: session.rawCandidateCount,
             rejectedLowScoreCount: scoreGate.rejectedLowScore.length,
+            rejectedLowQualityCount: scoreGate.rejectedLowQuality.length,
             rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
             toolEventCount: session.toolEvents.length,
             responseChars,
@@ -519,6 +535,11 @@ export async function distillSources(
           }
         }
 
+        const outcomeKind = classifySuccessfulDistillationOutcome({
+          apply,
+          acceptedCandidateCount: acceptedCandidates.length,
+          dedupSkippedCount,
+        });
         await recordRun({
           apply,
           fragment,
@@ -529,6 +550,7 @@ export async function distillSources(
           model: distillationModel,
           toolEvents: session.toolEvents,
           metadata: {
+            outcomeKind,
             jsonRepaired: session.jsonRepaired,
             rawCandidateCount: session.rawCandidateCount,
             extractionCandidateCount: session.extractionCandidateCount,
@@ -544,6 +566,8 @@ export async function distillSources(
             scoreThreshold: scoreGate.threshold,
             rejectedLowScoreCount: scoreGate.rejectedLowScore.length,
             rejectedLowScoreCandidates: summarizeRejectedCandidates(scoreGate.rejectedLowScore),
+            rejectedLowQualityCount: scoreGate.rejectedLowQuality.length,
+            rejectedLowQualityCandidates: summarizeRejectedCandidates(scoreGate.rejectedLowQuality),
             rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
             rejectedInvalidEvidenceCandidates: summarizeRejectedCandidates(
               scoreGate.rejectedInvalidEvidence,
@@ -561,9 +585,11 @@ export async function distillSources(
           candidateCount: acceptedCandidates.length,
           knowledgeIds,
           candidates: acceptedCandidates,
+          outcomeKind,
           jsonRepaired: session.jsonRepaired,
           rawCandidateCount: session.rawCandidateCount,
           rejectedLowScoreCount: scoreGate.rejectedLowScore.length,
+          rejectedLowQualityCount: scoreGate.rejectedLowQuality.length,
           rejectedInvalidEvidenceCount: scoreGate.rejectedInvalidEvidence.length,
           toolEventCount: session.toolEvents.length,
           responseChars,
@@ -571,6 +597,7 @@ export async function distillSources(
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         const failureKind = classifyFailureKind(message, responseChars);
+        const outcomeKind = classifyFailedDistillationOutcome({ message, failureKind });
         await recordRun({
           apply,
           fragment,
@@ -582,6 +609,7 @@ export async function distillSources(
           model: distillationModel,
           metadata: {
             error: message,
+            outcomeKind,
             failureKind,
             responseChars,
           },
@@ -596,6 +624,7 @@ export async function distillSources(
           knowledgeIds: [],
           candidates: [],
           error: message,
+          outcomeKind,
           responseChars,
           failureKind,
         });
@@ -605,6 +634,7 @@ export async function distillSources(
     const failed = results.filter((result) => result.status === "failed").length;
     const skipped = results.filter((result) => result.status === "skipped").length;
     const knowledgeCount = results.reduce((total, result) => total + result.knowledgeIds.length, 0);
+    const outcomeKindCounts = summarizeCounts(results.map((result) => result.outcomeKind));
     const skipReasonCounts = summarizeCounts(
       results.filter((result) => result.status === "skipped").map((result) => result.skipReason),
     );
@@ -620,6 +650,7 @@ export async function distillSources(
       skipped,
       failed,
       knowledgeCount,
+      outcomeKindCounts,
       skipReasonCounts,
       failureKindCounts,
       results,
@@ -637,6 +668,7 @@ export async function distillSources(
         skipped: summary.skipped,
         failed: summary.failed,
         knowledgeCount: summary.knowledgeCount,
+        outcomeKindCounts: summary.outcomeKindCounts,
         skipReasonCounts: summary.skipReasonCounts,
         failureKindCounts: summary.failureKindCounts,
         jsonRepairedCount: summary.results.filter((result) => result.jsonRepaired).length,
@@ -648,6 +680,7 @@ export async function distillSources(
             sourceUri: result.sourceUri,
             locator: result.locator,
             error: result.error ?? null,
+            outcomeKind: result.outcomeKind ?? null,
             failureKind: result.failureKind ?? null,
             responseChars: result.responseChars ?? null,
           })),
@@ -659,9 +692,11 @@ export async function distillSources(
             sourceUri: result.sourceUri,
             locator: result.locator,
             reason: result.skipReason ?? null,
+            outcomeKind: result.outcomeKind ?? null,
             jsonRepaired: result.jsonRepaired ?? null,
             rawCandidateCount: result.rawCandidateCount ?? null,
             rejectedLowScoreCount: result.rejectedLowScoreCount ?? null,
+            rejectedLowQualityCount: result.rejectedLowQualityCount ?? null,
             rejectedInvalidEvidenceCount: result.rejectedInvalidEvidenceCount ?? null,
             toolEventCount: result.toolEventCount ?? null,
             responseChars: result.responseChars ?? null,

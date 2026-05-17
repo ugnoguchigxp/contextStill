@@ -6,7 +6,10 @@ import {
 } from "../../lib/llm-output-parser.js";
 import { normalizeKnowledgeScore } from "../../lib/score-scale.js";
 import type { KnowledgeItem } from "../../shared/schemas/knowledge.schema.js";
-import type { DistillationToolResult } from "./distillation-tools.service.js";
+import {
+  distillationToolNames,
+  type DistillationToolResult,
+} from "./distillation-tools.service.js";
 
 export type DistilledKnowledgeCandidate = {
   type: KnowledgeItem["type"];
@@ -23,6 +26,7 @@ export type DistilledKnowledgeCandidate = {
 export type DistillationScoreGateResult = {
   accepted: DistilledKnowledgeCandidate[];
   rejectedLowScore: DistilledKnowledgeCandidate[];
+  rejectedLowQuality: DistilledKnowledgeCandidate[];
   rejectedInvalidEvidence: DistilledKnowledgeCandidate[];
   threshold: number;
 };
@@ -37,6 +41,17 @@ type DistillationScoreGateOptions = {
   toolEvents?: DistillationToolResult[];
   requireFetchEvidenceForUrlInput?: boolean;
 };
+
+const TOOL_CALL_NAMES = new Set<string>(distillationToolNames);
+const NO_CANDIDATE_RESPONSES = new Set([
+  "none",
+  "no candidate",
+  "no candidates",
+  "候補なし",
+  "なし",
+]);
+const MIN_CANDIDATE_TITLE_CHARS = 3;
+const MIN_CANDIDATE_BODY_CHARS = 24;
 
 function clamp01(value: unknown, fallback: number): number {
   const num = Number(value);
@@ -86,11 +101,9 @@ function deriveTitleFromBody(body: string): string {
 
 function normalizeCandidateFromObject(raw: unknown): DistilledKnowledgeCandidate | null {
   const record = asRecord(raw);
-  const title =
-    asString(record.title) ??
-    asString(record.name) ??
-    asString(record.heading) ??
-    asString(record.summary);
+  if (isToolCallObject(record)) return null;
+
+  const title = asString(record.title) ?? asString(record.heading) ?? asString(record.summary);
   const body =
     asString(record.body) ??
     asString(record.description) ??
@@ -119,13 +132,29 @@ function normalizeCandidateFromObject(raw: unknown): DistilledKnowledgeCandidate
   };
 }
 
+function hasToolCallName(value: unknown): boolean {
+  return asString(value) !== undefined;
+}
+
+function isToolCallObject(record: Record<string, unknown>): boolean {
+  if (hasToolCallName(record.name) && record.arguments !== undefined) return true;
+  const functionPayload = asRecord(record.function);
+  if (hasToolCallName(functionPayload.name) && functionPayload.arguments !== undefined) return true;
+  return false;
+}
+
+function filterRawCandidateItems(items: unknown[]): unknown[] {
+  return items.filter((item) => !isToolCallObject(asRecord(item)));
+}
+
 function rawCandidatesFromParsedPayload(value: unknown): unknown[] {
-  if (Array.isArray(value)) return value;
+  if (Array.isArray(value)) return filterRawCandidateItems(value);
   if (!value || typeof value !== "object") return [];
   const record = asRecord(value);
-  if (Array.isArray(record.candidates)) return record.candidates;
-  if (Array.isArray(record.items)) return record.items;
-  if (Array.isArray(record.knowledge)) return record.knowledge;
+  if (isToolCallObject(record)) return [];
+  if (Array.isArray(record.candidates)) return filterRawCandidateItems(record.candidates);
+  if (Array.isArray(record.items)) return filterRawCandidateItems(record.items);
+  if (Array.isArray(record.knowledge)) return filterRawCandidateItems(record.knowledge);
   return [record];
 }
 
@@ -164,11 +193,11 @@ function recoverCandidatesFromTruncatedJson(text: string): {
 }
 
 function parseNaturalLanguageCandidate(text: string): unknown | null {
-  const normalized = text.replace(/\r\n/g, "\n").trim();
+  const normalized = text.split("\r\n").join("\n").trim();
   if (!normalized) return null;
-  if (/^\s*(none|no candidates?|候補なし|なし)\s*$/i.test(normalized)) return null;
+  if (NO_CANDIDATE_RESPONSES.has(normalized.toLowerCase())) return null;
   if (
-    /"candidates"\s*:/.test(normalized) &&
+    (normalized.includes('"candidates"') || normalized.includes("'candidates'")) &&
     !/^\s*(type|title|body|score)\s*[:：]/im.test(normalized)
   ) {
     return null;
@@ -250,6 +279,13 @@ function extractRawCandidates(text: string): {
         parseStrategies: [jsonPayload.strategy],
       };
     }
+    if (jsonPayload.value && typeof jsonPayload.value === "object") {
+      return {
+        candidates: [],
+        jsonRepaired: jsonPayload.repaired,
+        parseStrategies: [jsonPayload.strategy],
+      };
+    }
   }
 
   const recoveredCandidates = recoverCandidatesFromTruncatedJson(text);
@@ -304,7 +340,10 @@ export function parseDistillationCandidates(text: string): DistilledKnowledgeCan
 }
 
 function hasUrl(value: unknown): boolean {
-  if (typeof value === "string") return /https?:\/\//i.test(value);
+  if (typeof value === "string") {
+    const normalized = value.toLowerCase();
+    return normalized.includes("https://") || normalized.includes("http://");
+  }
   if (Array.isArray(value)) return value.some((item) => hasUrl(item));
   if (value && typeof value === "object") return Object.values(value).some((item) => hasUrl(item));
   return false;
@@ -315,21 +354,39 @@ function hasSuccessfulFetch(toolEvents: DistillationToolResult[] = []): boolean 
 }
 
 function normalizedTextLength(value: string): number {
-  return value.replace(/\s+/g, "").length;
+  let length = 0;
+  for (const char of value) {
+    if (char.trim()) length += 1;
+  }
+  return length;
 }
 
 function isToolNameOnly(value: string): boolean {
-  const normalized = value.trim().toLowerCase();
-  return normalized === "search_web" || normalized === "fetch_content" || normalized === "fetch_";
+  let normalized = value.trim().toLowerCase();
+  if (
+    (normalized.startsWith('"') && normalized.endsWith('"')) ||
+    (normalized.startsWith("'") && normalized.endsWith("'")) ||
+    (normalized.startsWith("`") && normalized.endsWith("`"))
+  ) {
+    normalized = normalized.slice(1, -1).trim();
+  }
+  if (normalized.endsWith("()")) {
+    normalized = normalized.slice(0, -2).trim();
+  }
+  return TOOL_CALL_NAMES.has(normalized);
 }
 
-function isMeaningfulKnowledgeCandidate(candidate: DistilledKnowledgeCandidate): boolean {
+function candidateQualityIssue(candidate: DistilledKnowledgeCandidate): string | null {
+  if (isToolNameOnly(candidate.title) || isToolNameOnly(candidate.body)) return "tool_name_only";
   const titleLength = normalizedTextLength(candidate.title);
   const bodyLength = normalizedTextLength(candidate.body);
-  if (titleLength < 3 || bodyLength < 12) return false;
-  if (candidate.title.trim().toLowerCase() === candidate.body.trim().toLowerCase()) return false;
-  if (isToolNameOnly(candidate.title) || isToolNameOnly(candidate.body)) return false;
-  return true;
+  if (titleLength < MIN_CANDIDATE_TITLE_CHARS || bodyLength < MIN_CANDIDATE_BODY_CHARS) {
+    return "too_short";
+  }
+  if (candidate.title.trim().toLowerCase() === candidate.body.trim().toLowerCase()) {
+    return "title_body_identical";
+  }
+  return null;
 }
 
 function hasValidExternalEvidence(
@@ -363,20 +420,26 @@ export function filterDistillationCandidatesByScore(
       ),
   );
   const invalidKeys = new Set(rejectedInvalidEvidence.map(candidateKey));
+  const rejectedLowQuality = candidates.filter(
+    (candidate) =>
+      candidateQualityIssue(candidate) !== null && !invalidKeys.has(candidateKey(candidate)),
+  );
+  const lowQualityKeys = new Set(rejectedLowQuality.map(candidateKey));
   const accepted = candidates
     .filter(
       (candidate) =>
         candidate.score >= threshold &&
-        isMeaningfulKnowledgeCandidate(candidate) &&
+        candidateQualityIssue(candidate) === null &&
         !invalidKeys.has(candidateKey(candidate)),
     )
     .slice(0, groupedConfig.distillationTools.maxCandidates);
   const rejectedLowScore = candidates.filter(
     (candidate) =>
-      (candidate.score < threshold || !isMeaningfulKnowledgeCandidate(candidate)) &&
-      !invalidKeys.has(candidateKey(candidate)),
+      candidate.score < threshold &&
+      !invalidKeys.has(candidateKey(candidate)) &&
+      !lowQualityKeys.has(candidateKey(candidate)),
   );
-  return { accepted, rejectedLowScore, rejectedInvalidEvidence, threshold };
+  return { accepted, rejectedLowScore, rejectedLowQuality, rejectedInvalidEvidence, threshold };
 }
 
 export function summarizeRejectedCandidates(

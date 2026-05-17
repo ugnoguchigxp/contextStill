@@ -40,6 +40,25 @@ function createEmptyRuns(options: ResolvedDoctorOptions): DoctorReport["runs"] {
   };
 }
 
+function appendDistillationReasons(
+  reasons: string[],
+  options: ResolvedDoctorOptions,
+  prefix: string,
+  distillation: DoctorReport["vibeDistillation"],
+): void {
+  if (!distillation.launchAgent.installed) {
+    reasons.push(`${prefix}_LAUNCH_AGENT_NOT_INSTALLED`);
+  } else if (!distillation.launchAgent.loaded) {
+    reasons.push(`${prefix}_LAUNCH_AGENT_NOT_LOADED`);
+  }
+  const ageMinutes = distillation.runs.lastOkRunAgeMinutes ?? distillation.runs.lastRunAgeMinutes;
+  if (!distillation.runs.lastRunAt) {
+    reasons.push(`${prefix}_NEVER_RAN`);
+  } else if (typeof ageMinutes === "number" && ageMinutes > options.freshnessThresholdMinutes) {
+    reasons.push(`${prefix}_STALE`);
+  }
+}
+
 function appendAutomationReasons(
   reasons: string[],
   options: ResolvedDoctorOptions,
@@ -64,37 +83,8 @@ function appendAutomationReasons(
     reasons.push("AGENT_LOG_SYNC_LAUNCH_AGENT_NOT_LOADED");
   }
 
-  if (!vibeDistillation.launchAgent.installed) {
-    reasons.push("VIBE_DISTILLATION_LAUNCH_AGENT_NOT_INSTALLED");
-  } else if (!vibeDistillation.launchAgent.loaded) {
-    reasons.push("VIBE_DISTILLATION_LAUNCH_AGENT_NOT_LOADED");
-  }
-  const vibeDistillationAgeMinutes =
-    vibeDistillation.runs.lastOkRunAgeMinutes ?? vibeDistillation.runs.lastRunAgeMinutes;
-  if (!vibeDistillation.runs.lastRunAt) {
-    reasons.push("VIBE_DISTILLATION_NEVER_RAN");
-  } else if (
-    typeof vibeDistillationAgeMinutes === "number" &&
-    vibeDistillationAgeMinutes > options.freshnessThresholdMinutes
-  ) {
-    reasons.push("VIBE_DISTILLATION_STALE");
-  }
-
-  if (!sourceDistillation.launchAgent.installed) {
-    reasons.push("SOURCE_DISTILLATION_LAUNCH_AGENT_NOT_INSTALLED");
-  } else if (!sourceDistillation.launchAgent.loaded) {
-    reasons.push("SOURCE_DISTILLATION_LAUNCH_AGENT_NOT_LOADED");
-  }
-  const sourceDistillationAgeMinutes =
-    sourceDistillation.runs.lastOkRunAgeMinutes ?? sourceDistillation.runs.lastRunAgeMinutes;
-  if (!sourceDistillation.runs.lastRunAt) {
-    reasons.push("SOURCE_DISTILLATION_NEVER_RAN");
-  } else if (
-    typeof sourceDistillationAgeMinutes === "number" &&
-    sourceDistillationAgeMinutes > options.freshnessThresholdMinutes
-  ) {
-    reasons.push("SOURCE_DISTILLATION_STALE");
-  }
+  appendDistillationReasons(reasons, options, "VIBE_DISTILLATION", vibeDistillation);
+  appendDistillationReasons(reasons, options, "SOURCE_DISTILLATION", sourceDistillation);
 
   for (const state of agentLogSync.states) {
     if (

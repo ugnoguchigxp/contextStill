@@ -4,10 +4,13 @@ import { groupedConfig } from "../../config.js";
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 
+export const distillationToolNames = ["search_web", "fetch_content"] as const;
+export type DistillationToolName = (typeof distillationToolNames)[number];
+
 export type DistillationToolDefinition = {
   type: "function";
   function: {
-    name: "search_web" | "fetch_content";
+    name: DistillationToolName;
     description: string;
     parameters: {
       type: "object";
@@ -163,9 +166,11 @@ function parseToolArguments(raw: string): Record<string, unknown> {
 }
 
 function distillationToolAuditEventType(toolName: string): string | null {
-  if (toolName === "search_web") return auditEventTypes.distillationWebSearch;
-  if (toolName === "fetch_content") return auditEventTypes.distillationFetchContent;
-  return null;
+  return isDistillationToolName(toolName) ? distillationToolAuditEventTypes[toolName] : null;
+}
+
+function isDistillationToolName(value: string): value is DistillationToolName {
+  return distillationToolNames.includes(value as DistillationToolName);
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -491,6 +496,19 @@ async function fetchContent(rawUrl: unknown): Promise<DistillationToolResult> {
   };
 }
 
+const distillationToolHandlers: Record<
+  DistillationToolName,
+  (args: Record<string, unknown>) => Promise<DistillationToolResult>
+> = {
+  search_web: (args) => searchWeb(args.query),
+  fetch_content: (args) => fetchContent(args.url),
+};
+
+const distillationToolAuditEventTypes: Record<DistillationToolName, string> = {
+  search_web: auditEventTypes.distillationWebSearch,
+  fetch_content: auditEventTypes.distillationFetchContent,
+};
+
 export async function executeDistillationToolCall(
   toolCall: DistillationToolCall,
   auditContext?: Record<string, unknown>,
@@ -498,16 +516,10 @@ export async function executeDistillationToolCall(
   const startedAt = Date.now();
   const args = parseToolArguments(toolCall.function.arguments);
   try {
-    const result =
-      toolCall.function.name === "search_web"
-        ? await searchWeb(args.query)
-        : toolCall.function.name === "fetch_content"
-          ? await fetchContent(args.url)
-          : undefined;
-
-    if (!result) {
+    if (!isDistillationToolName(toolCall.function.name)) {
       throw new Error(`unknown distillation tool: ${toolCall.function.name}`);
     }
+    const result = await distillationToolHandlers[toolCall.function.name](args);
 
     const auditedResult = {
       ...result,

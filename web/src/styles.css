@@ -238,6 +238,95 @@
   overflow-wrap: anywhere;
 }
 
+.doctor-distillation-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.doctor-card-header {
+  align-items: center;
+  display: flex;
+  flex-direction: row;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.doctor-distillation-panel {
+  display: grid;
+  gap: 1rem;
+}
+
+.doctor-run-strip {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.doctor-run-strip > div,
+.doctor-meta-grid > div {
+  background: rgba(15, 23, 42, 0.03);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 0.45rem;
+  display: grid;
+  gap: 0.2rem;
+  min-width: 0;
+  padding: 0.65rem;
+}
+
+.doctor-run-strip span,
+.doctor-meta-grid span {
+  color: #64748b;
+  font-size: 0.75rem;
+}
+
+.doctor-run-strip strong {
+  color: #0f172a;
+  font-size: 1.35rem;
+  line-height: 1.1;
+}
+
+.doctor-outcome-table th,
+.doctor-outcome-table td {
+  font-size: 0.78rem;
+}
+
+.doctor-outcome-cell {
+  align-items: center;
+  display: flex;
+  gap: 0.5rem;
+  min-width: 0;
+  white-space: normal;
+}
+
+.doctor-outcome-cell span:last-child {
+  color: #64748b;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono",
+    "Courier New", monospace;
+  overflow-wrap: anywhere;
+}
+
+.doctor-focus-cell {
+  color: #475569;
+}
+
+.doctor-count-cell {
+  text-align: right;
+  width: 4.5rem;
+}
+
+.doctor-meta-grid {
+  display: grid;
+  gap: 0.5rem;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+.doctor-meta-grid strong {
+  font-size: 0.82rem;
+  line-height: 1.35;
+  overflow-wrap: anywhere;
+}
+
 /* Knowledge Page Overhaul */
 .knowledge-full-layout {
   display: flex;
@@ -589,6 +678,9 @@
 
   .metric-grid,
   .form-grid,
+  .doctor-distillation-grid,
+  .doctor-run-strip,
+  .doctor-meta-grid,
   .split-grid,
   .graph-layout {
     grid-template-columns: 1fr;

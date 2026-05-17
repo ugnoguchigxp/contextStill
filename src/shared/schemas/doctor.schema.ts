@@ -15,6 +15,23 @@ const skippedRunReasonSchema = z.object({
   count: z.number().int().nonnegative(),
 });
 
+export const doctorDistillationHealthSchema = z.object({
+  launchAgent: launchAgentSchema,
+  runs: z.object({
+    totalRuns: z.number().int().nonnegative(),
+    okRuns: z.number().int().nonnegative(),
+    skippedRuns: z.number().int().nonnegative(),
+    outcomeKindCounts: z.array(skippedRunReasonSchema),
+    skippedRunReasons: z.array(skippedRunReasonSchema),
+    failedRuns: z.number().int().nonnegative(),
+    lastRunAt: z.string().datetime().nullable(),
+    lastRunAgeMinutes: z.number().nonnegative().nullable(),
+    lastOkRunAt: z.string().datetime().nullable(),
+    lastOkRunAgeMinutes: z.number().nonnegative().nullable(),
+  }),
+  nextActions: z.array(z.string()),
+});
+
 export const doctorReportSchema = z.object({
   status: doctorStatusSchema,
   checkedAt: z.string().datetime(),
@@ -129,36 +146,9 @@ export const doctorReportSchema = z.object({
     launchAgent: launchAgentSchema,
     nextActions: z.array(z.string()),
   }),
-  vibeDistillation: z.object({
-    launchAgent: launchAgentSchema,
-    runs: z.object({
-      totalRuns: z.number().int().nonnegative(),
-      okRuns: z.number().int().nonnegative(),
-      skippedRuns: z.number().int().nonnegative(),
-      skippedRunReasons: z.array(skippedRunReasonSchema),
-      failedRuns: z.number().int().nonnegative(),
-      lastRunAt: z.string().datetime().nullable(),
-      lastRunAgeMinutes: z.number().nonnegative().nullable(),
-      lastOkRunAt: z.string().datetime().nullable(),
-      lastOkRunAgeMinutes: z.number().nonnegative().nullable(),
-    }),
-    nextActions: z.array(z.string()),
-  }),
-  sourceDistillation: z.object({
-    launchAgent: launchAgentSchema,
-    runs: z.object({
-      totalRuns: z.number().int().nonnegative(),
-      okRuns: z.number().int().nonnegative(),
-      skippedRuns: z.number().int().nonnegative(),
-      skippedRunReasons: z.array(skippedRunReasonSchema),
-      failedRuns: z.number().int().nonnegative(),
-      lastRunAt: z.string().datetime().nullable(),
-      lastRunAgeMinutes: z.number().nonnegative().nullable(),
-      lastOkRunAt: z.string().datetime().nullable(),
-      lastOkRunAgeMinutes: z.number().nonnegative().nullable(),
-    }),
-    nextActions: z.array(z.string()),
-  }),
+  vibeDistillation: doctorDistillationHealthSchema,
+  sourceDistillation: doctorDistillationHealthSchema,
 });
 
 export type DoctorReport = z.infer<typeof doctorReportSchema>;
+export type DoctorDistillationHealth = z.infer<typeof doctorDistillationHealthSchema>;

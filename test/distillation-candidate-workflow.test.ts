@@ -60,7 +60,7 @@ function row(overrides: Record<string, unknown> = {}) {
     candidateIndex: 0,
     type: "rule",
     title: "Stored rule",
-    body: "Stored body",
+    body: "Stored reusable guidance with enough detail for promotion.",
     confidence: 80,
     importance: 70,
     score: 0.9,
@@ -88,7 +88,7 @@ describe("distillation candidate workflow", () => {
         {
           type: "rule",
           title: "Verified stored rule",
-          body: "Verified body",
+          body: "Verified reusable guidance with enough detail for later coding agents.",
           confidence: 88,
           importance: 77,
           score: 0.95,
@@ -128,8 +128,18 @@ describe("distillation candidate workflow", () => {
       if (options?.enableTools === false) {
         return JSON.stringify({
           candidates: [
-            { type: "rule", title: "Rule A", body: "Body A", score: 0.9 },
-            { type: "procedure", title: "Procedure B", body: "Body B", score: 0.85 },
+            {
+              type: "rule",
+              title: "Rule A",
+              body: "Rule A reusable extraction body with enough implementation detail.",
+              score: 0.9,
+            },
+            {
+              type: "procedure",
+              title: "Procedure B",
+              body: "Procedure B reusable extraction body with enough implementation detail.",
+              score: 0.85,
+            },
           ],
         });
       }
@@ -138,7 +148,7 @@ describe("distillation candidate workflow", () => {
           {
             type: "rule",
             title: "Verified",
-            body: "Verified body",
+            body: "Verified reusable guidance with enough detail for later coding agents.",
             confidence: 90,
             importance: 80,
             score: 0.9,
@@ -214,7 +224,7 @@ describe("distillation candidate workflow", () => {
         {
           type: "rule",
           title: "Reverified rule",
-          body: "Reverified body",
+          body: "Reverified reusable guidance with enough detail for later coding agents.",
           confidence: 88,
           importance: 77,
           score: 0.95,
@@ -259,11 +269,25 @@ describe("distillation candidate workflow", () => {
     const modelClient = vi.fn(async (_request, options) => {
       if (options?.enableTools === false) {
         return JSON.stringify({
-          candidates: [{ type: "rule", title: "Rule A", body: "Body A", score: 0.9 }],
+          candidates: [
+            {
+              type: "rule",
+              title: "Rule A",
+              body: "Rule A reusable extraction body with enough implementation detail.",
+              score: 0.9,
+            },
+          ],
         });
       }
       return verificationCompletion(
-        [{ type: "rule", title: "Verified without tools", body: "Body", score: 0.9 }],
+        [
+          {
+            type: "rule",
+            title: "Verified without tools",
+            body: "Verified body with enough detail but without required tool evidence.",
+            score: 0.9,
+          },
+        ],
         [],
       );
     });

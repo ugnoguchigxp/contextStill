@@ -273,7 +273,8 @@ describe("vibe memory distillation", () => {
     expect(prompt).toContain("知識タイプは rule と procedure のみ");
     expect(prompt).toContain("confidence と importance は判断可能な場合のみ");
     expect(prompt).toContain("score");
-    expect(prompt).toContain("モデル出力は最小 JSON");
+    expect(prompt).toContain("推奨出力は candidates 配列の最小 JSON");
+    expect(prompt).toContain("難しい場合は TYPE / TITLE / BODY");
     expect(prompt).toContain("score は 0 から 1 で付けてよい（省略可）");
     expect(prompt).toContain("最小 JSON");
     expect(prompt).toContain("出力形式は次のいずれかでよい");

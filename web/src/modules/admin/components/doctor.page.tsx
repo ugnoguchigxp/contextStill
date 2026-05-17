@@ -1,11 +1,197 @@
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { fetchDoctorReport, type SkippedRunReason } from "../repositories/admin.repository";
+import {
+  Table,
+  TableBody,
+  TableCell,
+  TableHead,
+  TableHeader,
+  TableRow,
+} from "@/components/ui/table";
+import {
+  fetchDoctorReport,
+  type DoctorReport,
+  type SkippedRunReason,
+} from "../repositories/admin.repository";
 
-function formatSkippedRunReasons(reasons: SkippedRunReason[] | undefined): string {
+function formatReasonCounts(reasons: SkippedRunReason[] | undefined): string {
   if (!reasons || reasons.length === 0) return "-";
   return reasons.map((item) => `${item.reason}: ${item.count}`).join(" / ");
+}
+
+function sortedReasonCounts(reasons: SkippedRunReason[] | undefined): SkippedRunReason[] {
+  return [...(reasons ?? [])].sort((left, right) => right.count - left.count);
+}
+
+function formatAgeMinutes(value: number | null | undefined): string {
+  if (value === null || value === undefined) return "-";
+  if (value < 60) return `${Math.round(value)} min`;
+  if (value < 60 * 48) return `${(value / 60).toFixed(1)} h`;
+  return `${(value / 60 / 24).toFixed(1)} d`;
+}
+
+function outcomeLabel(reason: string): string {
+  const labels: Record<string, string> = {
+    below_quality_threshold: "Low score",
+    candidate_rejected: "Rejected",
+    invalid_candidate: "Invalid candidate",
+    knowledge_created: "Created",
+    knowledge_deduped: "Deduped",
+    llm_empty_response: "Empty response",
+    llm_provider_error: "LLM provider",
+    llm_timeout: "LLM timeout",
+    llm_unparseable: "Unparseable",
+    missing_external_evidence: "Evidence missing",
+    missing_verification_tool_evidence: "Tool evidence missing",
+    mixed_candidate_rejections: "Mixed rejection",
+    no_candidate: "No candidate",
+    processing_error: "Processing error",
+    verification_no_candidate: "Verification empty",
+  };
+  return labels[reason] ?? reason;
+}
+
+function outcomeFocus(reason: string): string {
+  const focus: Record<string, string> = {
+    below_quality_threshold: "score gate",
+    candidate_rejected: "candidate value",
+    invalid_candidate: "candidate shape",
+    knowledge_created: "review draft",
+    knowledge_deduped: "dedupe",
+    llm_empty_response: "runtime",
+    llm_provider_error: "provider",
+    llm_timeout: "timeout",
+    llm_unparseable: "parser",
+    missing_external_evidence: "evidence",
+    missing_verification_tool_evidence: "tool use",
+    mixed_candidate_rejections: "mixed",
+    no_candidate: "source fit",
+    processing_error: "runtime",
+    verification_no_candidate: "verification",
+  };
+  return focus[reason] ?? "inspect";
+}
+
+function outcomeVariant(
+  reason: string,
+): "default" | "secondary" | "outline" | "success" | "warning" | "destructive" {
+  if (reason === "knowledge_created" || reason === "knowledge_deduped") return "success";
+  if (reason === "no_candidate") return "outline";
+  if (
+    reason === "llm_provider_error" ||
+    reason === "llm_timeout" ||
+    reason === "processing_error" ||
+    reason === "missing_verification_tool_evidence"
+  ) {
+    return "destructive";
+  }
+  if (
+    reason === "verification_no_candidate" ||
+    reason === "missing_external_evidence" ||
+    reason === "below_quality_threshold" ||
+    reason === "invalid_candidate" ||
+    reason === "mixed_candidate_rejections" ||
+    reason === "llm_empty_response" ||
+    reason === "llm_unparseable"
+  ) {
+    return "warning";
+  }
+  return "secondary";
+}
+
+function launchAgentLabel(distillation: DoctorReport["vibeDistillation"] | undefined): string {
+  if (!distillation) return "-";
+  if (distillation.launchAgent.loaded) return "loaded";
+  if (distillation.launchAgent.installed) return "installed";
+  return "not installed";
+}
+
+function DistillationPanel({
+  title,
+  distillation,
+}: {
+  title: string;
+  distillation: DoctorReport["vibeDistillation"] | undefined;
+}) {
+  const runs = distillation?.runs;
+  const outcomes = sortedReasonCounts(runs?.outcomeKindCounts);
+
+  return (
+    <Card>
+      <CardHeader className="doctor-card-header">
+        <CardTitle>{title}</CardTitle>
+        <Badge variant={distillation?.launchAgent.loaded ? "success" : "warning"}>
+          {launchAgentLabel(distillation)}
+        </Badge>
+      </CardHeader>
+      <CardContent className="doctor-distillation-panel">
+        <div className="doctor-run-strip">
+          <div>
+            <span>Total</span>
+            <strong>{runs?.totalRuns ?? 0}</strong>
+          </div>
+          <div>
+            <span>OK</span>
+            <strong>{runs?.okRuns ?? 0}</strong>
+          </div>
+          <div>
+            <span>Skipped</span>
+            <strong>{runs?.skippedRuns ?? 0}</strong>
+          </div>
+          <div>
+            <span>Failed</span>
+            <strong>{runs?.failedRuns ?? 0}</strong>
+          </div>
+        </div>
+
+        <Table className="doctor-outcome-table">
+          <TableHeader>
+            <TableRow>
+              <TableHead>Outcome</TableHead>
+              <TableHead>Focus</TableHead>
+              <TableHead className="doctor-count-cell">Count</TableHead>
+            </TableRow>
+          </TableHeader>
+          <TableBody>
+            {outcomes.length > 0 ? (
+              outcomes.map((item) => (
+                <TableRow key={item.reason}>
+                  <TableCell className="doctor-outcome-cell">
+                    <Badge variant={outcomeVariant(item.reason)}>{outcomeLabel(item.reason)}</Badge>
+                    <span>{item.reason}</span>
+                  </TableCell>
+                  <TableCell className="doctor-focus-cell">{outcomeFocus(item.reason)}</TableCell>
+                  <TableCell className="doctor-count-cell">{item.count}</TableCell>
+                </TableRow>
+              ))
+            ) : (
+              <TableRow>
+                <TableCell colSpan={3} className="state-cell">
+                  No outcome data
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+
+        <div className="doctor-meta-grid">
+          <div>
+            <span>Last run</span>
+            <strong>{formatAgeMinutes(runs?.lastRunAgeMinutes)}</strong>
+          </div>
+          <div>
+            <span>Last OK</span>
+            <strong>{formatAgeMinutes(runs?.lastOkRunAgeMinutes)}</strong>
+          </div>
+          <div>
+            <span>Legacy skip</span>
+            <strong>{formatReasonCounts(runs?.skippedRunReasons)}</strong>
+          </div>
+        </div>
+      </CardContent>
+    </Card>
+  );
 }
 
 export function DoctorPage() {
@@ -144,89 +330,10 @@ export function DoctorPage() {
         </CardContent>
       </Card>
 
-      <Card>
-        <CardHeader>
-          <CardTitle>Vibe Distillation</CardTitle>
-        </CardHeader>
-        <CardContent className="runtime-list">
-          <div>
-            <span>LaunchAgent</span>
-            <strong>
-              {report?.vibeDistillation.launchAgent.loaded
-                ? "loaded"
-                : report?.vibeDistillation.launchAgent.installed
-                  ? "installed"
-                  : "not installed"}
-            </strong>
-          </div>
-          <div>
-            <span>Runs</span>
-            <strong>{report?.vibeDistillation.runs.totalRuns ?? 0}</strong>
-          </div>
-          <div>
-            <span>OK / skipped</span>
-            <strong>
-              {report
-                ? `${report.vibeDistillation.runs.okRuns} / ${report.vibeDistillation.runs.skippedRuns}`
-                : "-"}
-            </strong>
-          </div>
-          <div>
-            <span>Skipped reasons</span>
-            <strong>
-              {report
-                ? formatSkippedRunReasons(report.vibeDistillation.runs.skippedRunReasons)
-                : "-"}
-            </strong>
-          </div>
-          <div>
-            <span>Failed</span>
-            <strong>{report?.vibeDistillation.runs.failedRuns ?? 0}</strong>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card>
-        <CardHeader>
-          <CardTitle>Source Distillation</CardTitle>
-        </CardHeader>
-        <CardContent className="runtime-list">
-          <div>
-            <span>LaunchAgent</span>
-            <strong>
-              {report?.sourceDistillation.launchAgent.loaded
-                ? "loaded"
-                : report?.sourceDistillation.launchAgent.installed
-                  ? "installed"
-                  : "not installed"}
-            </strong>
-          </div>
-          <div>
-            <span>Runs</span>
-            <strong>{report?.sourceDistillation.runs.totalRuns ?? 0}</strong>
-          </div>
-          <div>
-            <span>OK / skipped</span>
-            <strong>
-              {report
-                ? `${report.sourceDistillation.runs.okRuns} / ${report.sourceDistillation.runs.skippedRuns}`
-                : "-"}
-            </strong>
-          </div>
-          <div>
-            <span>Skipped reasons</span>
-            <strong>
-              {report
-                ? formatSkippedRunReasons(report.sourceDistillation.runs.skippedRunReasons)
-                : "-"}
-            </strong>
-          </div>
-          <div>
-            <span>Failed</span>
-            <strong>{report?.sourceDistillation.runs.failedRuns ?? 0}</strong>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="doctor-distillation-grid">
+        <DistillationPanel title="Vibe Distillation" distillation={report?.vibeDistillation} />
+        <DistillationPanel title="Source Distillation" distillation={report?.sourceDistillation} />
+      </div>
 
       <Card>
         <CardHeader>

@@ -180,6 +180,7 @@ export type DoctorReport = {
       totalRuns: number;
       okRuns: number;
       skippedRuns: number;
+      outcomeKindCounts: SkippedRunReason[];
       skippedRunReasons: SkippedRunReason[];
       failedRuns: number;
       lastRunAt: string | null;
@@ -201,6 +202,7 @@ export type DoctorReport = {
       totalRuns: number;
       okRuns: number;
       skippedRuns: number;
+      outcomeKindCounts: SkippedRunReason[];
       skippedRunReasons: SkippedRunReason[];
       failedRuns: number;
       lastRunAt: string | null;

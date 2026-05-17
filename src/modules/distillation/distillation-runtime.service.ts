@@ -606,8 +606,9 @@ export async function runDistillationCompletion(
         role: "user",
         content: [
           "直前の応答はまだ採用できません。",
-          "この検証 session は外部証拠の tool call が必須です。最終 JSON を返す前に search_web または fetch_content を 1 回だけ呼び出してください。",
+          "この検証 session は外部証拠の tool call が必須です。最終候補を返す前に search_web または fetch_content を 1 回だけ呼び出してください。",
           'ローカル tool-call parser 向けには {"name":"search_web","arguments":{"query":"..."}} または {"name":"fetch_content","arguments":{"url":"https://..."}} だけを返してください。',
+          "この tool-call JSON は中間応答専用です。最終 candidates の title/body に tool 名だけを入れないでください。",
         ].join("\n"),
       });
       continue;
@@ -639,7 +640,7 @@ export async function runDistillationCompletion(
         role: "user",
         content: [
           "直前の応答は空でした。",
-          '最終回答として最小 JSON だけを返してください。候補がない場合も {"candidates":[]} と明示してください。',
+          '最終回答として {"candidates":[]}、または TYPE / TITLE / BODY のラベル付きテキストを返してください。',
         ].join("\n"),
       });
       continue;
