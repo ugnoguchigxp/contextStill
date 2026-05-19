@@ -1,176 +1,69 @@
-# Wiki Source 読み込みツール実装計画（readFileドメイン）
+# Wiki Source 読み込みツール実装メモ（readFileドメイン）
 
 作成日: 2026-05-19  
-対象リポジトリ: `memory-router`  
-方針: **実装は行わず、計画のみ**
+対象リポジトリ: `memory-router`
 
-## 1. 目的
+## 目的
 
-`wiki/pages/**/*.md` を対象に、LLM向け入力を安定化する `read_file` MCP ツールを定義する。  
-今回の主眼は「蒸留ロジック」ではなく、**入力を markdown 化し、装飾を除去し、token 単位で継続読みできること**。
+`wiki/pages/**/*.md` を LLM が安定して部分読みできるようにする。蒸留ロジック本体とは分離し、入力を Markdown 化してから token window で返す。
 
-## 2. 必須要件（今回反映）
+## 現行契約
 
-1. 入力を `markdownify` で Markdown 化する。
-2. Markdown 装飾を除去する。
-3. 改行をスペースに置換する。
-4. スペース2つ以上を1つに圧縮する。
-5. デフォルトで **1500 token** 分を読み込む。
-6. 継続読み込みとして、**「1500 token から x token」** の指定を受けられる。
-7. HTML解説などで崩れを避けるため、`minify` を `off` にできる。
+MCP ツール名: `read_file`
 
-## 3. 非目標（今回やらない）
+入力:
 
-- findCandidate / coverEvidence / finalizeDistille 本体実装。
-- 候補抽出や検証の品質改善ロジック。
-- テストの大規模追加（最小の手動確認のみ）。
+- `path: string`（必須）
+- `fromToken?: number`（既定 `0`）
+- `readTokens?: number`（既定 `1500`）
+- `includeFrontmatter?: boolean`（既定 `false`）
+- `minify?: boolean`（既定 `true`）
+- `minifiy?: boolean`（typo 互換。`minify` 未指定時のみ参照）
 
-## 4. ツール契約（read_file）
+出力は flat JSON にする。
 
-### 4.1 ツール名
+- `content`
+- `totalTokens`
+- `from`
+- `toExclusive`
+- `returnedTokens`
 
-- MCP: `read_file`
-- ドメイン: `src/modules/readFile/`
+`contentHash`、`path`、`stats`、`runs`、`compressed/original` ラベルは返さない。呼び出し元は自分が指定した読み取り条件を知っているため、余計なメタデータは増やさない。
 
-### 4.2 入力
+## 読み取りモード
 
-- `path: string`  
-  - `wiki/pages` 配下のみ許可
-- `fromToken?: number`  
-  - 既定 `0`
-- `readTokens?: number`  
-  - 既定 `1500`
-- `includeFrontmatter?: boolean`  
-  - 既定 `false`（LLM向け通常読み）
-- `minify?: boolean`  
-  - 既定 `true`
-  - `false` の場合、改行/空白圧縮を行わない
-- `minifiy?: boolean`  
-  - 互換入力（typo吸収）。`minify` 未指定時のみ参照
+### 圧縮読み取り（`minify=true`）
 
-使用例:
-- 初回: `{ "path": "...", "readTokens": 1500 }`
-- 継続: `{ "path": "...", "fromToken": 1500, "readTokens": 800 }`
-- HTML解説を崩さない: `{ "path": "...", "readTokens": 1500, "minify": false }`
+1. ファイルを UTF-8 で読む。
+2. `.md` / `.markdown` / `.mdx` / `.txt` はそのまま Markdown として扱う。
+3. HTML らしい入力や `.html` / `.htm` は `markdownify` で Markdown 化する。
+4. frontmatter は既定で除去する。
+5. Markdown 装飾を Bun markdown renderer の callback で除去する。
+6. 改行をスペースに置換し、連続空白を 1 つに圧縮する。
+7. `fromToken/readTokens` で window を切る。
 
-### 4.3 出力
+### 原文読み取り（`minify=false`）
 
-- `path: string`
-- `content: string`（最終正規化済みテキスト）
-- `tokenRange: { from: number, toExclusive: number }`
-- `hasMore: boolean`
-- `nextFromToken?: number`
-- `stats`:
-  - `totalTokens: number`
-  - `returnedTokens: number`
-  - `charCount: number`
-  - `contentHash: string`
+1. Markdown 化と frontmatter 処理までは同じ。
+2. Markdown 装飾、改行、空白幅は保持する。
+3. token window だけ適用する。
 
-## 5. 正規化パイプライン
+HTML 解説やコードブロックの形が重要な場合は、原文読み取りを使う。
 
-`read_file` は以下の順で処理する。
+## CLI 確認
 
-1. ファイル読み込み（UTF-8）。
-2. `markdownify` 段階で Markdown 化。  
-   - `.md` はそのまま入力として扱う。  
-   - 将来 `.html` 等を読む場合は同じ段階で Markdown 化する。
-3. Markdown 装飾除去（プレーンテキスト化）。
-4. `minify=true` の場合のみ:
-   - `\r\n` / `\n` をスペースへ置換
-   - 連続空白（2個以上）を1個へ圧縮
-   - trim
-5. `minify=false` の場合:
-   - 改行と空白幅を維持（トークン切り出しのみ実施）
-6. token 化して `fromToken/readTokens` の範囲を返却。
+`bun run read-file:smoke` は `wiki/pages/best-practice/hono_backend.md` を読む。
 
-## 6. 実装方針（重要）
+出力は pretty JSON を 2 個、順番に標準出力へ出す。
 
-- 装飾除去は「過度な正規表現置換」を避け、ASTベースまたは構造的処理を優先する。
-- 正規化後テキストは可観測性のため `contentHash` を返す。
-- token 切り出しは常に決定的（同一入力で同一結果）にする。
-- 例外時は `TOOL_ERROR` で返し、原因（path不正/token範囲不正/読込失敗）を分離する。
-- `minify=false` 時は、可読性優先で改行/空白を保持する。
+1. 圧縮読み取り
+2. 原文読み取り
 
-## 7. フェーズ計画
+## 関連ドメイン
 
-### Phase A: readFileドメイン骨格
+`memoryReader` は vibe memory を distillation reader に渡す前処理で使う。公開オプションは `compressed` と `original` の 2 つだけにする。
 
-対象:
-- `src/modules/readFile/domain.ts`（新規）
+- `compressed`: memory 本文は Markdown 装飾除去、同一フレーズ削除、空白圧縮を行う。diff は Markdown 装飾除去せず、同一行削除と空白圧縮だけ行う。
+- `original`: 入力文字列をそのまま返す。
 
-作業:
-- 入出力型、error型、安全path解決。
-- 正規化パイプライン関数の実装枠だけ定義。
-
-完了条件:
-- `path/fromToken/readTokens` を受けるドメイン契約が固定される。
-
-### Phase B: markdownify + 正規化処理
-
-対象:
-- `src/modules/readFile/markdownify.service.ts`（新規）
-- `src/modules/readFile/normalize.service.ts`（新規）
-
-作業:
-- Markdown 化処理。
-- 装飾除去を実装。
-- `minify=true/false` 分岐を実装。
-- `minify=true` 時のみ改行空白化・空白圧縮を実装。
-
-完了条件:
-- 1ファイルに対し正規化済み単一文字列が得られる。
-
-### Phase C: token window 読み込み
-
-対象:
-- `src/modules/readFile/token-window.service.ts`（新規）
-
-作業:
-- `fromToken/readTokens` 切り出し。
-- `hasMore/nextFromToken` 計算。
-
-完了条件:
-- 「1500 tokenからx token読む」が再現可能。
-
-### Phase D: MCP公開
-
-対象:
-- `src/mcp/tools/read-file.tool.ts`（新規）
-- `src/mcp/tools/index.ts`（登録）
-- `docs/mcp-tools.md`（追記）
-
-作業:
-- Zod schema と handler 定義。
-- ツール一覧に公開。
-
-完了条件:
-- MCP クライアントから `read_file` 呼び出し可能。
-
-### Phase E: 設定値
-
-対象:
-- `src/constants.ts`
-- `src/config.types.ts`
-- `src/config.ts`
-- `.env.example`
-
-作業:
-- `MEMORY_ROUTER_READ_FILE_ROOT`（既定 `wiki/pages`）
-- `MEMORY_ROUTER_READ_FILE_DEFAULT_TOKENS`（既定 `1500`）
-- `MEMORY_ROUTER_READ_FILE_MAX_TOKENS`（上限）
-
-完了条件:
-- 環境変数未指定でも 1500 token 既定で動作。
-
-### Phase F: 最小確認（テスト大量追加なし）
-
-作業:
-- 手動確認のみ:
-  - 初回1500token
-  - fromToken指定の継続読み
-  - 連続読みで重複/欠落がないこと
-  - `minify=false` 時に改行が保持されること
-  - ルート外path拒否
-
-完了条件:
-- Wiki読み込みの前処理が安定し、蒸留の前段入力として利用可能。
+`bun run memory-reader:smoke` は比較的長い session を選び、圧縮読み取りと原文読み取りの 2 個の pretty JSON を出す。

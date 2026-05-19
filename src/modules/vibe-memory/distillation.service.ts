@@ -19,6 +19,7 @@ import {
   readerCatalog,
   type DistillationReaderContext,
 } from "../distillation/distillation-reader.service.js";
+import type { MemoryReaderMode } from "../memoryReader/domain.js";
 import {
   beginDistillationJob,
   checkDistillationCircuitBreaker,
@@ -78,6 +79,7 @@ export type DistillVibeMemoriesOptions = {
   modelClient?: DistillationModelClient;
   embedder?: DistillationEmbedder;
   agenticReader?: boolean;
+  memoryReaderMode?: MemoryReaderMode;
 };
 
 type DistilledVibeMemoryResult = {
@@ -377,6 +379,8 @@ export async function distillVibeMemories(
   const agenticReaderEnabled = Boolean(
     options.agenticReader && groupedConfig.distillation.vibeAgenticReaderManualEnabled,
   );
+  const memoryReaderMode: MemoryReaderMode =
+    options.memoryReaderMode === "original" ? "original" : "compressed";
   const circuitBreaker = apply
     ? await checkDistillationCircuitBreaker().catch((error) => ({
         allowed: false as const,
@@ -397,6 +401,7 @@ export async function distillVibeMemories(
       limit: options.limit ?? groupedConfig.vibeDistillation.batchSize,
       includeProcessed: Boolean(options.includeProcessed),
       agenticReader: agenticReaderEnabled,
+      memoryReaderMode,
       sessionId: options.sessionId ?? null,
       vibeMemoryIdCount: options.vibeMemoryIds?.length ?? 0,
     },
@@ -446,6 +451,7 @@ export async function distillVibeMemories(
             sourceKind: "vibe_memory",
             sourceSessionId: memory.sessionId,
             agenticReader: agenticReaderEnabled,
+            memoryReaderMode,
           },
         });
       } catch (error) {
@@ -453,7 +459,13 @@ export async function distillVibeMemories(
         job = null;
       }
       const readerContext = agenticReaderEnabled
-        ? buildVibeReaderContext({ memory, diffEntries: memoryDiffs, apply, jobId: job?.id })
+        ? buildVibeReaderContext({
+            memory,
+            diffEntries: memoryDiffs,
+            apply,
+            jobId: job?.id,
+            mode: memoryReaderMode,
+          })
         : undefined;
       const messages = buildVibeMemoryDistillationMessages({
         memory,
@@ -559,6 +571,7 @@ export async function distillVibeMemories(
             sourceMemoryType: memory.memoryType,
             diffEntryCount: memoryDiffs.length,
             agenticReader: agenticReaderEnabled,
+            memoryReaderMode,
             readLocators: readerContext?.readLocators,
           },
         });

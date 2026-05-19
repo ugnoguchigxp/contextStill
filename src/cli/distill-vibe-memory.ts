@@ -10,6 +10,7 @@ type CliOptions = {
   limit?: number;
   sessionId?: string;
   vibeMemoryIds?: string[];
+  memoryReaderMode: "compressed" | "original";
 };
 
 function readArgValue(args: string[], index: number, name: string): string {
@@ -34,6 +35,7 @@ function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
     apply: false,
     includeProcessed: false,
+    memoryReaderMode: "compressed",
   };
 
   for (let index = 0; index < args.length; index += 1) {
@@ -67,6 +69,13 @@ function parseArgs(args: string[]): CliOptions {
         throw new Error("--vibe-memory-id must not be empty");
       }
       options.vibeMemoryIds = nextIds;
+    } else if (arg === "--memory-reader-mode" || arg.startsWith("--memory-reader-mode=")) {
+      const value = readArgValue(args, index, "--memory-reader-mode").trim().toLowerCase();
+      if (arg === "--memory-reader-mode") index += 1;
+      if (value !== "compressed" && value !== "original") {
+        throw new Error("--memory-reader-mode must be compressed or original");
+      }
+      options.memoryReaderMode = value;
     } else {
       throw new Error(`Unknown argument: ${arg}`);
     }

@@ -7,6 +7,7 @@ import type {
 } from "../vibe-memory/distillation.repository.js";
 import type { DistillationCandidateSourceRef } from "./distillation-candidate.repository.js";
 import { recordDistillationReadEvent } from "./distillation-read-event.repository.js";
+import { prepareMemoryReaderContent, type MemoryReaderMode } from "../memoryReader/domain.js";
 
 export const distillationReaderAuditContextKey = "distillationReaderContext";
 
@@ -137,39 +138,70 @@ export function buildVibeReaderContext(params: {
   diffEntries: AgentDiffEntryForDistillation[];
   apply: boolean;
   jobId?: string;
+  mode: MemoryReaderMode;
 }): DistillationReaderContext {
-  const segments: DistillationReadableSegment[] = [
-    ...splitTextIntoSegments({
-      text: params.memory.content,
-      locatorPrefix: "vibe-memory",
-      labelPrefix: "vibe memory",
-      maxSegmentChars: groupedConfig.distillationTools.readerMaxCharsPerRead * 2,
-      metadata: {
-        vibeMemoryId: params.memory.id,
-        sessionId: params.memory.sessionId,
-        memoryType: params.memory.memoryType,
-      },
-    }),
-  ];
+  const mode = params.mode;
+  const segments: DistillationReadableSegment[] = [];
+  const seenCompressedSegmentText = new Set<string>();
 
-  for (const entry of params.diffEntries) {
+  const appendSegments = (params: {
+    text: string;
+    contentKind: "memory" | "diff";
+    locatorPrefix: string;
+    labelPrefix: string;
+    metadata: Record<string, unknown>;
+  }) => {
+    const preparedText = prepareMemoryReaderContent({
+      text: params.text,
+      mode,
+      contentKind: params.contentKind,
+    });
+    if (mode === "compressed") {
+      const dedupeKey = preparedText.trim();
+      if (!dedupeKey || seenCompressedSegmentText.has(dedupeKey)) return;
+      seenCompressedSegmentText.add(dedupeKey);
+    }
     segments.push(
       ...splitTextIntoSegments({
-        text: entry.diffHunk,
-        locatorPrefix: `diff:${entry.filePath}:${entry.id}`,
-        labelPrefix: `diff ${entry.filePath}`,
+        text: preparedText,
+        locatorPrefix: params.locatorPrefix,
+        labelPrefix: params.labelPrefix,
         maxSegmentChars: groupedConfig.distillationTools.readerMaxCharsPerRead * 2,
-        metadata: {
-          vibeMemoryId: params.memory.id,
-          diffEntryId: entry.id,
-          filePath: entry.filePath,
-          changeType: entry.changeType,
-          language: entry.language,
-          symbolName: entry.symbolName,
-          symbolKind: entry.symbolKind,
-        },
+        metadata: params.metadata,
       }),
     );
+  };
+
+  appendSegments({
+    text: params.memory.content,
+    contentKind: "memory",
+    locatorPrefix: "vibe-memory",
+    labelPrefix: "vibe memory",
+    metadata: {
+      vibeMemoryId: params.memory.id,
+      sessionId: params.memory.sessionId,
+      memoryType: params.memory.memoryType,
+      memoryReaderMode: mode,
+    },
+  });
+
+  for (const entry of params.diffEntries) {
+    appendSegments({
+      text: entry.diffHunk,
+      contentKind: "diff",
+      locatorPrefix: `diff:${entry.filePath}:${entry.id}`,
+      labelPrefix: `diff ${entry.filePath}`,
+      metadata: {
+        vibeMemoryId: params.memory.id,
+        diffEntryId: entry.id,
+        filePath: entry.filePath,
+        changeType: entry.changeType,
+        language: entry.language,
+        symbolName: entry.symbolName,
+        symbolKind: entry.symbolKind,
+        memoryReaderMode: mode,
+      },
+    });
   }
 
   return {

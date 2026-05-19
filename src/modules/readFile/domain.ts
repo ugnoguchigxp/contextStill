@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { groupedConfig } from "../../config.js";
@@ -20,25 +19,12 @@ export type ReadFileDomainInput = {
 };
 
 export type ReadFileDomainResult = {
-  path: string;
   content: string;
-  tokenRange: {
-    from: number;
-    toExclusive: number;
-  };
-  hasMore: boolean;
-  nextFromToken?: number;
-  stats: {
-    totalTokens: number;
-    returnedTokens: number;
-    charCount: number;
-    contentHash: string;
-  };
+  totalTokens: number;
+  from: number;
+  toExclusive: number;
+  returnedTokens: number;
 };
-
-function asPosix(value: string): string {
-  return value.split(path.sep).join("/");
-}
 
 function resolveMinify(input: ReadFileDomainInput): boolean {
   if (typeof input.minify === "boolean") return input.minify;
@@ -49,7 +35,6 @@ function resolveMinify(input: ReadFileDomainInput): boolean {
 function resolveSafePath(userPath: string): {
   rootPath: string;
   absolutePath: string;
-  resultPath: string;
 } {
   const trimmed = userPath.trim();
   if (!trimmed) {
@@ -65,20 +50,14 @@ function resolveSafePath(userPath: string): {
     throw new Error(`path must be inside read_file root: ${rootPath}`);
   }
 
-  const relativePath = asPosix(path.relative(rootPath, absolutePath));
   return {
     rootPath,
     absolutePath,
-    resultPath: relativePath || ".",
   };
 }
 
-function contentHash(content: string): string {
-  return createHash("sha256").update(content).digest("hex");
-}
-
 export async function readFileDomain(input: ReadFileDomainInput): Promise<ReadFileDomainResult> {
-  const { absolutePath, resultPath } = resolveSafePath(input.path);
+  const { absolutePath } = resolveSafePath(input.path);
   const fromToken = Math.max(0, Math.floor(input.fromToken ?? 0));
   const maxTokens = Math.max(1, groupedConfig.readFile.maxTokens);
   const requestedTokens = Math.max(
@@ -95,9 +74,9 @@ export async function readFileDomain(input: ReadFileDomainInput): Promise<ReadFi
     filePath: absolutePath,
   });
   const withoutFrontmatter = maybeStripFrontmatter(markdown, includeFrontmatter);
-  const stripped = stripMarkdownFormatting(withoutFrontmatter);
+  const readableText = minify ? stripMarkdownFormatting(withoutFrontmatter) : withoutFrontmatter;
   const normalized = normalizeReadFileText({
-    text: stripped,
+    text: readableText,
     minify,
   });
   const window = sliceTextByTokenWindow({
@@ -107,16 +86,10 @@ export async function readFileDomain(input: ReadFileDomainInput): Promise<ReadFi
   });
 
   return {
-    path: resultPath,
     content: window.content,
-    tokenRange: window.tokenRange,
-    hasMore: window.hasMore,
-    nextFromToken: window.nextFromToken,
-    stats: {
-      totalTokens: window.totalTokens,
-      returnedTokens: window.returnedTokens,
-      charCount: window.content.length,
-      contentHash: contentHash(window.content),
-    },
+    totalTokens: window.totalTokens,
+    from: window.tokenRange.from,
+    toExclusive: window.tokenRange.toExclusive,
+    returnedTokens: window.returnedTokens,
   };
 }

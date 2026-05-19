@@ -357,8 +357,16 @@ function toSearchProviderRateLimit(
     const remaining = response.headers.get("x-ratelimit-remaining") ?? undefined;
     const reset = response.headers.get("x-ratelimit-reset") ?? undefined;
     const policy = response.headers.get("x-ratelimit-policy") ?? undefined;
-    const retryAfterSeconds = parseRetryAfterSeconds(retryAfter ?? null) ?? parseBraveResetSeconds(reset);
-    if (!limit && !remaining && !reset && !policy && !retryAfter && retryAfterSeconds === undefined) {
+    const retryAfterSeconds =
+      parseRetryAfterSeconds(retryAfter ?? null) ?? parseBraveResetSeconds(reset);
+    if (
+      !limit &&
+      !remaining &&
+      !reset &&
+      !policy &&
+      !retryAfter &&
+      retryAfterSeconds === undefined
+    ) {
       return undefined;
     }
     return {
@@ -846,10 +854,7 @@ async function searchWeb(query: unknown): Promise<DistillationToolResult> {
         delete providerState[provider];
         providerStateDirty = true;
       }
-      if (
-        response.results.length > 0 ||
-        attemptedProviders.length >= providersToAttempt.length
-      ) {
+      if (response.results.length > 0 || attemptedProviders.length >= providersToAttempt.length) {
         break;
       }
     } catch (error) {
@@ -872,11 +877,10 @@ async function searchWeb(query: unknown): Promise<DistillationToolResult> {
           cooldownUntil: until,
           updatedAt: now.toISOString(),
           lastError: detail.message,
-          lastRateLimit:
-            detail.rateLimit ?? {
-              status: detail.status,
-              retryAfterSeconds: cooldownSeconds,
-            },
+          lastRateLimit: detail.rateLimit ?? {
+            status: detail.status,
+            retryAfterSeconds: cooldownSeconds,
+          },
         };
         cooldownUntil[provider] = until;
         providerStateDirty = true;

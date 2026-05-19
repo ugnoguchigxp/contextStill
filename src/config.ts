@@ -177,7 +177,8 @@ export const groupedConfig: GroupedConfig = {
     freshnessThresholdMinutes: APP_CONSTANTS.doctorFreshnessThresholdMinutes,
     degradedRateThreshold: APP_CONSTANTS.doctorDegradedRateThreshold,
     knowledgeStaleDecayFactor: APP_CONSTANTS.doctorKnowledgeStaleDecayFactor,
-    knowledgeZeroUseWarningMinActiveCount: APP_CONSTANTS.doctorKnowledgeZeroUseWarningMinActiveCount,
+    knowledgeZeroUseWarningMinActiveCount:
+      APP_CONSTANTS.doctorKnowledgeZeroUseWarningMinActiveCount,
   },
 };
 

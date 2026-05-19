@@ -16,7 +16,7 @@ const server = serve(
 
 const shutdown = async (signal: string) => {
   console.log(`\nReceived ${signal}. Shutting down gracefully...`);
-  
+
   // 新規接続の受付を停止
   server.close();
 
@@ -33,4 +33,3 @@ const shutdown = async (signal: string) => {
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
-

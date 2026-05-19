@@ -1,7 +1,10 @@
 import { runCoverEvidenceSmoke } from "./coverEvidence/domain.js";
 import { runFinalizeDistilleSmoke } from "./finalizeDistille/domain.js";
 import { runFindCandidateSmoke } from "./findCandidate/domain.js";
-import type { DistillationDomainName, DistillationDomainSmokeResult } from "./distillation-domain.types.js";
+import type {
+  DistillationDomainName,
+  DistillationDomainSmokeResult,
+} from "./distillation-domain.types.js";
 
 function normalizeInput(input: unknown): Record<string, unknown> {
   if (!input || typeof input !== "object" || Array.isArray(input)) return {};

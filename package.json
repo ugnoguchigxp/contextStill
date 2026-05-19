@@ -25,6 +25,8 @@
     "backfill:knowledge-value": "bun run src/cli/backfill-knowledge-value.ts",
     "doctor": "bun run src/cli/doctor.ts",
     "mcp:smoke": "DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@localhost:7889/memory_router_test} bun run src/cli/mcp-smoke.ts",
+    "read-file:smoke": "bun run src/cli/read-file-smoke.ts",
+    "memory-reader:smoke": "bun run src/cli/memory-reader-smoke.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",

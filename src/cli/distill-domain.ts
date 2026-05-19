@@ -1,7 +1,5 @@
 import { closeDbPool } from "../db/index.js";
-import {
-  runDistillationDomainSmoke,
-} from "../modules/distillation-domain-smoke.service.js";
+import { runDistillationDomainSmoke } from "../modules/distillation-domain-smoke.service.js";
 import type { DistillationDomainName } from "../modules/distillation-domain.types.js";
 
 type CliOptions = {

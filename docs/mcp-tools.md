@@ -82,7 +82,7 @@
 ### `read_file`
 
 - 入力: `path`（必須）, `fromToken`, `readTokens`, `includeFrontmatter`, `minify`, `minifiy`
-- 役割: wiki markdown を markdownify + 装飾除去後に token 窓で部分読みする
+- 役割: wiki markdown を token 窓で部分読みする
 - 既定:
   - `readTokens`: 1500
   - `fromToken`: 0
@@ -90,7 +90,9 @@
 - 継続読み:
   - 先頭 1500 token 以降を読むには `fromToken: 1500` を指定
 - `minify=false`:
-  - 改行や空白幅を保持して返す（HTML解説を崩しにくくする）
+  - Markdown 装飾と改行や空白幅を保持して返す
+- 出力（最小メタ）:
+  - `content`, `totalTokens`, `from`, `toExclusive`, `returnedTokens`
 
 ### `doctor`
 

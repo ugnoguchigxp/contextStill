@@ -15,8 +15,8 @@ if (typeof (globalThis as any).Bun === "undefined") {
           return callbacks.link ? callbacks.link(p1, { href: p2 }) : p1;
         });
         return result;
-      }
-    }
+      },
+    },
   };
 }
 
@@ -190,7 +190,7 @@ describe("readFileDomain", () => {
 
   it("should throw error if path is outside rootPath", async () => {
     await expect(readFileDomain({ path: "../outside" })).rejects.toThrow(
-      "path must be inside read_file root"
+      "path must be inside read_file root",
     );
   });
 
@@ -207,12 +207,12 @@ describe("readFileDomain", () => {
     });
 
     expect(readFile).toHaveBeenCalledWith("/mock/root/test.md", "utf8");
-    expect(result.path).toBe("test.md");
+    expect(result.content).toContain("# Welcome");
     expect(result.content).toContain("Welcome");
     expect(result.content).toContain("This is a test file");
-    expect(result.tokenRange.from).toBe(0);
-    expect(result.stats.totalTokens).toBeGreaterThan(0);
-    expect(result.stats.contentHash).toBeDefined();
+    expect(result.from).toBe(0);
+    expect(result.totalTokens).toBeGreaterThan(0);
+    expect(result.returnedTokens).toBeGreaterThan(0);
   });
 
   it("should support both minify and minifiy (typo)", async () => {
@@ -230,5 +230,23 @@ describe("readFileDomain", () => {
       minify: true,
     });
     expect(resultWithMinify.content).toBe("word1 word2 word3");
+  });
+
+  it("should strip markdown only in compressed mode", async () => {
+    const fileContent = "# Title\n**important**";
+    vi.mocked(readFile).mockResolvedValue(fileContent);
+
+    const compressed = await readFileDomain({
+      path: "test.md",
+      minify: true,
+    });
+    expect(compressed.content).toBe("Title important");
+
+    const original = await readFileDomain({
+      path: "test.md",
+      minify: false,
+    });
+    expect(original.content).toContain("# Title");
+    expect(original.content).toContain("**important**");
   });
 });
