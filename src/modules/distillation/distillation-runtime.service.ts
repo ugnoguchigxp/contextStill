@@ -13,10 +13,22 @@ import {
   distillationEvidenceToolNames,
   executeDistillationToolCall,
   type DistillationToolCall,
-  type DistillationToolDefinition,
-  type DistillationToolName,
   type DistillationToolResult,
 } from "./distillation-tools.service.js";
+
+export type DistillationRuntimeToolDefinition = {
+  type: "function";
+  function: {
+    name: string;
+    description: string;
+    parameters: {
+      type: "object";
+      properties: Record<string, unknown>;
+      required: string[];
+      additionalProperties: false;
+    };
+  };
+};
 
 export type DistillationMessage = {
   role: "system" | "user" | "assistant" | "tool";
@@ -33,7 +45,7 @@ export type DistillationModelRequest = {
 };
 
 type DistillationChatRequest = DistillationModelRequest & {
-  tools?: DistillationToolDefinition[];
+  tools?: DistillationRuntimeToolDefinition[];
   toolChoice?: "auto" | "none" | "required";
 };
 
@@ -65,15 +77,19 @@ type DistillationErrorWithToolEvents = Error & {
 export type DistillationRuntimeOptions = {
   chatClient?: DistillationChatClient;
   toolExecutor?: DistillationToolExecutor;
+  providerSetting?: DistillationProviderSetting;
   enableTools?: boolean;
   maxToolRounds?: number;
   auditContext?: Record<string, unknown>;
   requireToolCall?: boolean;
-  toolNames?: readonly DistillationToolName[];
+  toolNames?: readonly string[];
+  toolDefinitions?: DistillationRuntimeToolDefinition[];
+  requireToolCallReminder?: string[];
+  blankResponseReminder?: string[];
 };
 
 type DistillationProviderName = "local-llm" | "azure-openai" | "bedrock";
-type DistillationProviderSetting = "local-llm" | "azure-openai" | "bedrock" | "auto";
+export type DistillationProviderSetting = "local-llm" | "azure-openai" | "bedrock" | "auto";
 
 type OpenAiToolCall = {
   id?: unknown;
@@ -253,7 +269,7 @@ function parseToolArguments(raw: string): unknown {
 
 /** @internal */
 export function buildBedrockToolConfig(
-  tools: DistillationToolDefinition[] | undefined,
+  tools: DistillationRuntimeToolDefinition[] | undefined,
   toolChoice: DistillationChatRequest["toolChoice"] = "auto",
 ): ToolConfiguration | undefined {
   if (!tools || tools.length === 0) return undefined;
@@ -561,7 +577,9 @@ export async function runDistillationCompletion(
   request: DistillationModelRequest,
   options: DistillationRuntimeOptions = {},
 ): Promise<DistillationCompletionResult> {
-  const chatClient = options.chatClient ?? createDefaultChatClient();
+  const chatClient =
+    options.chatClient ??
+    createDefaultChatClient(options.providerSetting ?? groupedConfig.distillation.provider);
   const toolExecutor = options.toolExecutor ?? executeDistillationToolCall;
   const maxToolRounds = Math.max(
     0,
@@ -569,9 +587,14 @@ export async function runDistillationCompletion(
   );
   const enableTools = options.enableTools ?? true;
   const defaultToolNames = new Set<string>(distillationEvidenceToolNames);
-  const toolDefinitions = options.toolNames?.length
-    ? distillationToolDefinitions.filter((tool) => options.toolNames?.includes(tool.function.name))
-    : distillationToolDefinitions.filter((tool) => defaultToolNames.has(tool.function.name));
+  const toolDefinitions =
+    options.toolDefinitions && options.toolDefinitions.length > 0
+      ? options.toolDefinitions
+      : options.toolNames?.length
+        ? distillationToolDefinitions.filter((tool) =>
+            options.toolNames?.includes(tool.function.name),
+          )
+        : distillationToolDefinitions.filter((tool) => defaultToolNames.has(tool.function.name));
   const requireToolCall = Boolean(options.requireToolCall);
   const messages = request.messages.map((message) => ({ ...message }));
   const toolEvents: DistillationToolResult[] = [];
@@ -632,14 +655,18 @@ export async function runDistillationCompletion(
           role: "assistant",
           content: response.content,
         });
+        const reminderLines =
+          options.requireToolCallReminder && options.requireToolCallReminder.length > 0
+            ? options.requireToolCallReminder
+            : [
+                "直前の応答はまだ採用できません。",
+                "この検証 session は外部証拠の tool call が必須です。最終候補を返す前に search_web または fetch_content を 1 回だけ呼び出してください。",
+                'ローカル tool-call parser 向けには {"name":"search_web","arguments":{"query":"..."}} または {"name":"fetch_content","arguments":{"url":"https://..."}} だけを返してください。',
+                "この tool-call JSON は中間応答専用です。最終 candidates の title/body に tool 名だけを入れないでください。",
+              ];
         messages.push({
           role: "user",
-          content: [
-            "直前の応答はまだ採用できません。",
-            "この検証 session は外部証拠の tool call が必須です。最終候補を返す前に search_web または fetch_content を 1 回だけ呼び出してください。",
-            'ローカル tool-call parser 向けには {"name":"search_web","arguments":{"query":"..."}} または {"name":"fetch_content","arguments":{"url":"https://..."}} だけを返してください。',
-            "この tool-call JSON は中間応答専用です。最終 candidates の title/body に tool 名だけを入れないでください。",
-          ].join("\n"),
+          content: reminderLines.join("\n"),
         });
         continue;
       }
@@ -666,13 +693,17 @@ export async function runDistillationCompletion(
           role: "assistant",
           content: response.content,
         });
+        const reminderLines =
+          options.blankResponseReminder && options.blankResponseReminder.length > 0
+            ? options.blankResponseReminder
+            : [
+                "直前の応答は空でした。",
+                '最終回答として {"candidates":[]}、または TYPE: rule、TITLE: ...、BODY: ...、CONFIDENCE: ...、IMPORTANCE: ... のラベル付きテキストを返してください。',
+                "TYPE / TITLE / BODY のような見出し行だけを出さないでください。",
+              ];
         messages.push({
           role: "user",
-          content: [
-            "直前の応答は空でした。",
-            '最終回答として {"candidates":[]}、または TYPE: rule、TITLE: ...、BODY: ...、CONFIDENCE: ...、IMPORTANCE: ... のラベル付きテキストを返してください。',
-            "TYPE / TITLE / BODY のような見出し行だけを出さないでください。",
-          ].join("\n"),
+          content: reminderLines.join("\n"),
         });
         continue;
       }

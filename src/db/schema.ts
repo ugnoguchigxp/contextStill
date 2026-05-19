@@ -137,6 +137,30 @@ export const vibeMemoryDistillationRuns = pgTable(
 
 export const sourceDistillationStatusValues = ["ok", "skipped", "failed"] as const;
 
+export const distillationTargetKindValues = ["wiki_file", "vibe_memory"] as const;
+
+export const distillationTargetStatusValues = [
+  "pending",
+  "running",
+  "completed",
+  "skipped",
+  "failed",
+  "paused",
+] as const;
+
+export const distillationTargetPhaseValues = [
+  "selected",
+  "reading",
+  "finding_candidate",
+  "covering_evidence",
+  "finalizing",
+  "stored",
+] as const;
+
+export const distillationTargetPriorityGroupValues = ["wiki", "vibe_memory"] as const;
+
+export const findCandidateResultStatusValues = ["selected", "parse_failed"] as const;
+
 export const distillationCandidateSourceKindValues = ["vibe_memory", "source_fragment"] as const;
 
 export const distillationJobStatusValues = [
@@ -401,6 +425,71 @@ export const sourceDistillationEvidence = pgTable(
   }),
 );
 
+export const distillationTargetStates = pgTable(
+  "distillation_target_states",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    targetKind: text("target_kind").notNull(),
+    targetKey: text("target_key").notNull(),
+    sourceUri: text("source_uri").notNull(),
+    inputHash: text("input_hash").notNull(),
+    distillationVersion: text("distillation_version").notNull(),
+    status: text("status").notNull().default("pending"),
+    phase: text("phase").notNull().default("selected"),
+    priorityGroup: text("priority_group").notNull(),
+    sortKey: text("sort_key").notNull(),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    lockedBy: text("locked_by"),
+    lockedAt: timestamp("locked_at"),
+    heartbeatAt: timestamp("heartbeat_at"),
+    nextRetryAt: timestamp("next_retry_at"),
+    lastError: text("last_error"),
+    lastOutcomeKind: text("last_outcome_kind"),
+    candidateCount: integer("candidate_count").notNull().default(0),
+    knowledgeIds: jsonb("knowledge_ids").default([]).notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    completedAt: timestamp("completed_at"),
+  },
+  (table) => ({
+    statusIdx: index("distillation_target_states_status_idx").on(table.status),
+    kindStatusIdx: index("distillation_target_states_kind_status_idx").on(
+      table.targetKind,
+      table.status,
+    ),
+    prioritySelectIdx: index("distillation_target_states_priority_select_idx").on(
+      table.priorityGroup,
+      table.status,
+      table.sortKey,
+    ),
+    heartbeatIdx: index("distillation_target_states_heartbeat_idx").on(table.heartbeatAt),
+    nextRetryAtIdx: index("distillation_target_states_next_retry_at_idx").on(table.nextRetryAt),
+    targetUniqueIdx: uniqueIndex("distillation_target_states_target_unique_idx").on(
+      table.targetKind,
+      table.targetKey,
+      table.inputHash,
+      table.distillationVersion,
+    ),
+    targetKindCheck: check(
+      "distillation_target_states_target_kind_check",
+      sql`${table.targetKind} IN (${sql.raw(toSqlList(distillationTargetKindValues))})`,
+    ),
+    statusCheck: check(
+      "distillation_target_states_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(distillationTargetStatusValues))})`,
+    ),
+    phaseCheck: check(
+      "distillation_target_states_phase_check",
+      sql`${table.phase} IN (${sql.raw(toSqlList(distillationTargetPhaseValues))})`,
+    ),
+    priorityGroupCheck: check(
+      "distillation_target_states_priority_group_check",
+      sql`${table.priorityGroup} IN (${sql.raw(toSqlList(distillationTargetPriorityGroupValues))})`,
+    ),
+  }),
+);
+
 export const distillationJobs = pgTable(
   "distillation_jobs",
   {
@@ -565,6 +654,56 @@ export const distillationCandidates = pgTable(
         OR
         (${table.sourceKind} = 'source_fragment' AND ${table.sourceFragmentId} IS NOT NULL AND ${table.vibeMemoryId} IS NULL)
       )`,
+    ),
+  }),
+);
+
+export const findCandidateResults = pgTable(
+  "find_candidate_results",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    targetStateId: uuid("target_state_id")
+      .references(() => distillationTargetStates.id, {
+        onDelete: "cascade",
+      })
+      .notNull(),
+    targetKind: text("target_kind").notNull(),
+    targetKey: text("target_key").notNull(),
+    sourceUri: text("source_uri").notNull(),
+    inputHash: text("input_hash").notNull(),
+    provider: text("provider").notNull(),
+    model: text("model").notNull(),
+    candidateIndex: integer("candidate_index").notNull(),
+    candidateHash: text("candidate_hash").notNull(),
+    title: text("title").notNull(),
+    content: text("content").notNull(),
+    origin: jsonb("origin").default({}).notNull(),
+    rawOutput: text("raw_output").notNull(),
+    status: text("status").notNull().default("selected"),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    targetStateIdx: index("find_candidate_results_target_state_idx").on(table.targetStateId),
+    targetInputIdx: index("find_candidate_results_target_input_idx").on(
+      table.targetStateId,
+      table.inputHash,
+    ),
+    statusIdx: index("find_candidate_results_status_idx").on(table.status),
+    candidateHashIdx: index("find_candidate_results_candidate_hash_idx").on(table.candidateHash),
+    targetKindCheck: check(
+      "find_candidate_results_target_kind_check",
+      sql`${table.targetKind} IN (${sql.raw(toSqlList(distillationTargetKindValues))})`,
+    ),
+    statusCheck: check(
+      "find_candidate_results_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(findCandidateResultStatusValues))})`,
+    ),
+    dedupeUniqueIdx: uniqueIndex("find_candidate_results_dedupe_unique_idx").on(
+      table.targetStateId,
+      table.inputHash,
+      table.candidateHash,
     ),
   }),
 );

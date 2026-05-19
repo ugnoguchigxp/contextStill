@@ -11,7 +11,9 @@ const requiredTables = [
   "vibe_memory_distillation_runs",
   "source_distillation_runs",
   "source_distillation_evidence",
+  "distillation_target_states",
   "distillation_candidates",
+  "find_candidate_results",
   "context_compile_runs",
   "context_pack_items",
 ] as const;
@@ -72,7 +74,9 @@ export async function truncateIntegrationTables(): Promise<void> {
     truncate table
       context_pack_items,
       context_compile_runs,
+      find_candidate_results,
       distillation_candidates,
+      distillation_target_states,
       source_distillation_evidence,
       source_distillation_runs,
       vibe_memory_distillation_runs,

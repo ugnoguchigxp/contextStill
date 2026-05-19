@@ -818,7 +818,7 @@ async function searchWeb(query: unknown): Promise<DistillationToolResult> {
   const configuredProviders =
     groupedConfig.distillationTools.searchProviders.length > 0
       ? groupedConfig.distillationTools.searchProviders
-      : (["duckduckgo"] as SearchProviderName[]);
+      : (["brave", "exa"] as SearchProviderName[]);
   const maxAttempts = Math.max(
     1,
     Math.min(groupedConfig.distillationTools.searchMaxProviderAttempts, configuredProviders.length),

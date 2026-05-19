@@ -1,0 +1,141 @@
+export type DistillationTargetKind = "wiki_file" | "vibe_memory";
+
+export type DistillationTargetStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "skipped"
+  | "failed"
+  | "paused";
+
+export type DistillationTargetPhase =
+  | "selected"
+  | "reading"
+  | "finding_candidate"
+  | "covering_evidence"
+  | "finalizing"
+  | "stored";
+
+export type DistillationTargetPriorityGroup = "wiki" | "vibe_memory";
+
+export type DistillationTargetCandidate = {
+  targetKind: DistillationTargetKind;
+  targetKey: string;
+  sourceUri: string;
+  inputHash: string;
+  status?: DistillationTargetStatus;
+  sortKey?: string;
+  createdAt?: Date;
+};
+
+export type SelectedDistillationTarget = {
+  targetKind: DistillationTargetKind;
+  targetKey: string;
+  sourceUri: string;
+  inputHash: string;
+  status: DistillationTargetStatus;
+};
+
+export type DistillationTargetStateView = SelectedDistillationTarget & {
+  id: string;
+  distillationVersion: string;
+  phase: DistillationTargetPhase;
+  priorityGroup: DistillationTargetPriorityGroup;
+  sortKey: string;
+  attemptCount: number;
+  lockedBy: string | null;
+  lockedAt: Date | null;
+  heartbeatAt: Date | null;
+  nextRetryAt: Date | null;
+  lastError: string | null;
+  lastOutcomeKind: string | null;
+  candidateCount: number;
+  knowledgeIds: string[];
+  metadata: Record<string, unknown>;
+  createdAt: Date;
+  updatedAt: Date;
+  completedAt: Date | null;
+};
+
+function statusOf(candidate: DistillationTargetCandidate): DistillationTargetStatus {
+  return candidate.status ?? "pending";
+}
+
+function isSelectable(candidate: DistillationTargetCandidate): boolean {
+  const status = statusOf(candidate);
+  return status === "pending" || status === "paused";
+}
+
+function compareText(a: string, b: string): number {
+  return a.localeCompare(b, "en", { sensitivity: "base" });
+}
+
+function compareWikiTarget(a: DistillationTargetCandidate, b: DistillationTargetCandidate): number {
+  const sortKeyCompare = compareText(a.sortKey ?? a.targetKey, b.sortKey ?? b.targetKey);
+  if (sortKeyCompare !== 0) return sortKeyCompare;
+  return compareText(a.targetKey, b.targetKey);
+}
+
+function compareVibeMemoryTarget(
+  a: DistillationTargetCandidate,
+  b: DistillationTargetCandidate,
+): number {
+  const aTime = a.createdAt?.getTime() ?? 0;
+  const bTime = b.createdAt?.getTime() ?? 0;
+  if (aTime !== bTime) return aTime - bTime;
+  return compareText(a.targetKey, b.targetKey);
+}
+
+function toSelected(candidate: DistillationTargetCandidate): SelectedDistillationTarget {
+  return {
+    targetKind: candidate.targetKind,
+    targetKey: candidate.targetKey,
+    sourceUri: candidate.sourceUri,
+    inputHash: candidate.inputHash,
+    status: statusOf(candidate),
+  };
+}
+
+export function selectDistillationTarget(
+  candidates: DistillationTargetCandidate[],
+): SelectedDistillationTarget | null {
+  const selectable = candidates.filter(isSelectable);
+  const wikiTarget = selectable
+    .filter((candidate) => candidate.targetKind === "wiki_file")
+    .sort(compareWikiTarget)[0];
+  if (wikiTarget) return toSelected(wikiTarget);
+
+  const vibeMemoryTarget = selectable
+    .filter((candidate) => candidate.targetKind === "vibe_memory")
+    .sort(compareVibeMemoryTarget)[0];
+  return vibeMemoryTarget ? toSelected(vibeMemoryTarget) : null;
+}
+
+export function priorityGroupForTargetKind(
+  targetKind: DistillationTargetKind,
+): DistillationTargetPriorityGroup {
+  return targetKind === "wiki_file" ? "wiki" : "vibe_memory";
+}
+
+export function sortKeyForTarget(candidate: DistillationTargetCandidate): string {
+  if (candidate.sortKey?.trim()) return candidate.sortKey.trim();
+  if (candidate.targetKind === "wiki_file") return candidate.targetKey.toLowerCase();
+  const createdAt = candidate.createdAt?.toISOString() ?? "9999-12-31T23:59:59.999Z";
+  return `${createdAt}:${candidate.targetKey}`;
+}
+
+export function selectedTargetFromState(state: {
+  targetKind: string;
+  targetKey: string;
+  sourceUri: string;
+  inputHash: string;
+  status: string;
+}): SelectedDistillationTarget {
+  return {
+    targetKind: state.targetKind as DistillationTargetKind,
+    targetKey: state.targetKey,
+    sourceUri: state.sourceUri,
+    inputHash: state.inputHash,
+    status: state.status as DistillationTargetStatus,
+  };
+}

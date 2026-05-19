@@ -1,0 +1,31 @@
+import type { CandidateRecord } from "./repository.js";
+
+function stripJsonFence(text: string): string {
+  const trimmed = text.trim();
+  const match = trimmed.match(/^```(?:json)?\s*([\s\S]*?)```$/i);
+  return (match?.[1] ?? trimmed).trim();
+}
+
+function toCandidateRecord(value: unknown): CandidateRecord | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const title =
+    typeof (value as { title?: unknown }).title === "string"
+      ? (value as { title: string }).title.trim()
+      : "";
+  const content =
+    typeof (value as { content?: unknown }).content === "string"
+      ? (value as { content: string }).content.trim()
+      : "";
+  if (!title || !content) return null;
+  return { title, content };
+}
+
+export function parseStorageCandidatesFromLlmOutput(rawOutput: string): CandidateRecord[] {
+  const parsed = JSON.parse(stripJsonFence(rawOutput)) as { candidates?: unknown };
+  if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.candidates)) {
+    throw new Error("LLM output JSON must have candidates array");
+  }
+
+  const candidates = parsed.candidates.map(toCandidateRecord).filter(Boolean) as CandidateRecord[];
+  return candidates;
+}

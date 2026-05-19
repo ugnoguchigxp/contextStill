@@ -33,6 +33,23 @@ const parseDistillationSearchProviders = (
   return [...new Set(parsed)];
 };
 
+const parseDistillationProvider = (
+  value: string | undefined,
+  fallback: DistillationProvider,
+): DistillationProvider => {
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "local-llm" ||
+    normalized === "azure-openai" ||
+    normalized === "bedrock" ||
+    normalized === "auto"
+  ) {
+    return normalized;
+  }
+  return fallback;
+};
+
 const sourceContentRoot = path.resolve(process.cwd(), "wiki");
 const readFileRoot = path.resolve(sourceContentRoot, "pages");
 
@@ -139,12 +156,17 @@ export const groupedConfig: GroupedConfig = {
     apiBaseUrl: (
       process.env.MEMORY_ROUTER_AZURE_OPENAI_API_BASE_URL ||
       process.env.AZURE_OPENAI_API_BASE_URL ||
+      process.env.AZURE_OPENAI_ENDPOINT ||
       process.env.GNOSIS_REVIEW_LLM_API_BASE_URL ||
       ""
     ).replace(/\/+$/, ""),
     apiPath: "/openai/deployments",
-    apiVersion: "2025-04-01-preview",
-    model: "gpt-4o",
+    apiVersion:
+      process.env.MEMORY_ROUTER_AZURE_OPENAI_API_VERSION ||
+      process.env.AZURE_OPENAI_API_VERSION ||
+      "2025-04-01-preview",
+    model:
+      process.env.MEMORY_ROUTER_AZURE_OPENAI_MODEL || process.env.AZURE_OPENAI_MODEL || "gpt-4o",
   },
   bedrock: {
     model: "",
@@ -158,7 +180,10 @@ export const groupedConfig: GroupedConfig = {
     maxTokens: APP_CONSTANTS.agenticCompileMaxTokens,
   },
   distillation: {
-    provider: "local-llm",
+    provider: parseDistillationProvider(
+      process.env.MEMORY_ROUTER_DISTILLATION_PROVIDER,
+      "local-llm",
+    ),
     legacyEnabled: APP_CONSTANTS.distillationLegacyEnabled,
     timeoutMs: APP_CONSTANTS.distillationTimeoutMs,
     lockTtlSeconds: APP_CONSTANTS.distillationLockTtlSeconds,
