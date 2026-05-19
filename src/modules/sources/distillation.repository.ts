@@ -3,6 +3,7 @@ import { and, asc, eq, sql } from "drizzle-orm";
 import { groupedConfig } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
+  distillationJobs,
   knowledgeSourceLinks,
   sourceDistillationEvidence,
   sourceDistillationRuns,
@@ -35,6 +36,11 @@ function normalizeRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+const staleRunningLockSeconds = Math.max(
+  Math.ceil((groupedConfig.distillation.timeoutMs * 2) / 1000),
+  groupedConfig.distillation.lockTtlSeconds,
+);
+
 export async function listSourceFragmentsForDistillation(params: {
   limit: number;
   promptVersion: string;
@@ -64,6 +70,25 @@ export async function listSourceFragmentsForDistillation(params: {
           and ${sourceDistillationRuns.promptVersion} = ${params.promptVersion}
           and ${sourceDistillationRuns.status} = 'failed'
           and ${sourceDistillationRuns.updatedAt} > now() - (${groupedConfig.distillationTools.failureRetryDelaySeconds} * interval '1 second')
+      )
+      and not exists (
+        select 1
+        from ${distillationJobs}
+        where ${distillationJobs.sourceFragmentId} = ${sourceFragments.id}
+          and ${distillationJobs.promptVersion} = ${params.promptVersion}
+          and (
+            (
+              ${distillationJobs.status} = 'running'
+              and coalesce(${distillationJobs.lockedAt}, now()) > now() - (${staleRunningLockSeconds} * interval '1 second')
+            )
+            or (
+              ${distillationJobs.status} = 'paused'
+              and (
+                ${distillationJobs.nextRetryAt} is null
+                or ${distillationJobs.nextRetryAt} > now()
+              )
+            )
+          )
       )
     `;
   const rows = await db

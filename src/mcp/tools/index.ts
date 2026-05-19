@@ -7,6 +7,7 @@ import {
   searchKnowledgeTool,
   updateKnowledgeTool,
 } from "./knowledge.tool.js";
+import { readFileTool } from "./read-file.tool.js";
 import { doctorTool, initialInstructionsTool } from "./system.tool.js";
 
 const toolEntries: ToolEntry[] = [
@@ -16,6 +17,7 @@ const toolEntries: ToolEntry[] = [
   registerKnowledgeTool,
   listKnowledgeTool,
   updateKnowledgeTool,
+  readFileTool,
   memorySearchTool,
   memoryFetchTool,
   doctorTool,

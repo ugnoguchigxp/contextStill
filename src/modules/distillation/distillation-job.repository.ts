@@ -1,5 +1,6 @@
 import os from "node:os";
 import { and, eq, inArray, isNotNull, isNull, lte, or, sql } from "drizzle-orm";
+import { groupedConfig } from "../../config.js";
 import { db } from "../../db/index.js";
 import { distillationJobs } from "../../db/schema.js";
 import type { DistillationCandidateSourceRef } from "./distillation-candidate.repository.js";
@@ -67,6 +68,41 @@ function workerId(): string {
   return `${os.hostname()}:${process.pid}`;
 }
 
+function staleRunningBefore(now: Date): Date {
+  const staleMs = Math.max(
+    groupedConfig.distillation.timeoutMs * 2,
+    groupedConfig.distillation.lockTtlSeconds * 1000,
+  );
+  return new Date(now.getTime() - staleMs);
+}
+
+async function recoverStaleRunningJob(id: string, now: Date): Promise<void> {
+  await db
+    .update(distillationJobs)
+    .set({
+      status: "failed",
+      phase: "completed",
+      lastOutcomeKind: "processing_error",
+      lastError: "stale_running_job_recovered",
+      nextRetryAt: null,
+      lockedBy: null,
+      lockedAt: null,
+      metadata: sql`${distillationJobs.metadata} || ${JSON.stringify({
+        staleRecovered: true,
+        staleRecoveredAt: now.toISOString(),
+      })}::jsonb` as never,
+      updatedAt: now,
+    })
+    .where(
+      and(
+        eq(distillationJobs.id, id),
+        eq(distillationJobs.status, "running"),
+        isNotNull(distillationJobs.lockedAt),
+        lte(distillationJobs.lockedAt, staleRunningBefore(now)),
+      ),
+    );
+}
+
 export async function upsertDistillationJob(params: {
   source: DistillationCandidateSourceRef;
   inputHash: string;
@@ -131,6 +167,7 @@ export async function upsertDistillationJob(params: {
 
 export async function claimDistillationJob(id: string): Promise<DistillationJobRow | null> {
   const now = new Date();
+  await recoverStaleRunningJob(id, now);
   const [job] = await db
     .update(distillationJobs)
     .set({

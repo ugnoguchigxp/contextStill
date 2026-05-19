@@ -1,13 +1,23 @@
 import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { groupedConfig } from "../../config.js";
 import { db } from "../../db/client.js";
-import { agentDiffEntries, vibeMemories, vibeMemoryDistillationRuns } from "../../db/schema.js";
+import {
+  agentDiffEntries,
+  distillationJobs,
+  vibeMemories,
+  vibeMemoryDistillationRuns,
+} from "../../db/schema.js";
 import { syncStates } from "../../db/schema.js";
 import type { DistillationToolResult } from "../distillation/distillation-tools.service.js";
 
 export type VibeMemoryForDistillation = typeof vibeMemories.$inferSelect;
 export type AgentDiffEntryForDistillation = typeof agentDiffEntries.$inferSelect;
 export type VibeMemoryDistillationStatus = "ok" | "skipped" | "failed";
+
+const staleRunningLockSeconds = Math.max(
+  Math.ceil((groupedConfig.distillation.timeoutMs * 2) / 1000),
+  groupedConfig.distillation.lockTtlSeconds,
+);
 
 export async function listVibeMemoriesForDistillation(params: {
   limit: number;
@@ -45,6 +55,25 @@ export async function listVibeMemoriesForDistillation(params: {
         and ${vibeMemoryDistillationRuns.promptVersion} = ${params.promptVersion}
         and ${vibeMemoryDistillationRuns.status} = 'failed'
       and ${vibeMemoryDistillationRuns.updatedAt} > now() - (${groupedConfig.distillationTools.failureRetryDelaySeconds} * interval '1 second')
+    )`);
+    filters.push(sql`not exists (
+      select 1
+      from ${distillationJobs}
+      where ${distillationJobs.vibeMemoryId} = ${vibeMemories.id}
+        and ${distillationJobs.promptVersion} = ${params.promptVersion}
+        and (
+          (
+            ${distillationJobs.status} = 'running'
+            and coalesce(${distillationJobs.lockedAt}, now()) > now() - (${staleRunningLockSeconds} * interval '1 second')
+          )
+          or (
+            ${distillationJobs.status} = 'paused'
+            and (
+              ${distillationJobs.nextRetryAt} is null
+              or ${distillationJobs.nextRetryAt} > now()
+            )
+          )
+        )
     )`);
   }
 

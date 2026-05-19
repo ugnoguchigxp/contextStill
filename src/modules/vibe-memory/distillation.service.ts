@@ -22,6 +22,7 @@ import {
 import {
   beginDistillationJob,
   checkDistillationCircuitBreaker,
+  pauseJobForBackpressure,
   pauseJobForCircuitBreaker,
   shouldPauseDistillationPromotion,
 } from "../distillation/distillation-job.service.js";
@@ -44,6 +45,7 @@ import {
   attachDistillationCandidateRun,
   updateDistillationCandidateEvaluation,
 } from "../distillation/distillation-candidate.repository.js";
+import { assertLegacyDistillationEnabled } from "../distillation/legacy-distillation-guard.js";
 import type { DistillationSessionModelClient } from "../distillation/distillation-sessions.js";
 import { embedOne } from "../embedding/embedding.service.js";
 import { upsertKnowledgeFromSource } from "../knowledge/knowledge.repository.js";
@@ -367,6 +369,7 @@ async function recordDistillationRun(params: {
 export async function distillVibeMemories(
   options: DistillVibeMemoriesOptions = {},
 ): Promise<DistillVibeMemoriesSummary> {
+  assertLegacyDistillationEnabled("distillVibeMemories");
   const apply = Boolean(options.apply);
   const distillationModel = resolveDistillationModel();
   const modelClient = options.modelClient ?? runDistillationCompletion;
@@ -648,6 +651,12 @@ export async function distillVibeMemories(
         if (promotionGate.paused) {
           const outcomeKind: DistillationOutcomeKind = "promotion_paused_backpressure";
           const skipReason = "hitl_backpressure";
+          await pauseJobForBackpressure({
+            jobId: job?.id,
+            draftCount: promotionGate.draftCount,
+            threshold: promotionGate.threshold,
+            acceptedCandidateCount: acceptedCandidates.length,
+          });
           await recordDistillationRun({
             apply,
             vibeMemoryId: memory.id,
@@ -667,17 +676,6 @@ export async function distillVibeMemories(
               jsonRepaired: session.jsonRepaired,
               toolEventCount: session.toolEvents.length,
               responseChars,
-            },
-          });
-          await finishDistillationJob({
-            id: job?.id,
-            status: "skipped",
-            outcomeKind,
-            metadata: {
-              reason: skipReason,
-              acceptedCandidateCount: acceptedCandidates.length,
-              draftCount: promotionGate.draftCount,
-              backlogThresholdCount: promotionGate.threshold,
             },
           });
           results.push({

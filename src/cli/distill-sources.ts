@@ -1,6 +1,7 @@
 import path from "node:path";
 import { groupedConfig } from "../config.js";
 import { closeDbPool } from "../db/index.js";
+import { assertLegacyDistillationEnabled } from "../modules/distillation/legacy-distillation-guard.js";
 import { distillSources } from "../modules/sources/distillation.service.js";
 import { acquireFileLock, type FileLockHandle } from "./file-lock.js";
 
@@ -69,6 +70,7 @@ function parseArgs(args: string[]): CliOptions {
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+  assertLegacyDistillationEnabled("distill-sources CLI");
   const lock = await acquireFileLock({
     lockFile: groupedConfig.sourceDistillation.lockFile,
     ttlSeconds: groupedConfig.sourceDistillation.lockTtlSeconds,

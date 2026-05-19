@@ -1,6 +1,6 @@
 # MCP Tools
 
-`memory-router` の公開 MCP surface は次の 9 ツールです。
+`memory-router` の公開 MCP surface は次の 10 ツールです。
 
 1. `initial_instructions`
 2. `context_compile`
@@ -10,13 +10,14 @@
 6. `update_knowledge`
 7. `memory_search`
 8. `memory_fetch`
-9. `doctor`
+9. `read_file`
+10. `doctor`
 
 ## 推奨フロー
 
 1. `initial_instructions`
 2. `context_compile`
-3. 必要時のみ `search_knowledge` / `list_knowledge` / `update_knowledge` / `memory_search` / `memory_fetch`
+3. 必要時のみ `search_knowledge` / `list_knowledge` / `update_knowledge` / `memory_search` / `memory_fetch` / `read_file`
 4. 実装・検証
 5. `doctor`
 
@@ -77,6 +78,19 @@
 
 - 入力: `id`（必須）, `start`, `end`, `maxChars`, `query`
 - 役割: 特定 memory の詳細参照
+
+### `read_file`
+
+- 入力: `path`（必須）, `fromToken`, `readTokens`, `includeFrontmatter`, `minify`, `minifiy`
+- 役割: wiki markdown を markdownify + 装飾除去後に token 窓で部分読みする
+- 既定:
+  - `readTokens`: 1500
+  - `fromToken`: 0
+  - `minify`: true
+- 継続読み:
+  - 先頭 1500 token 以降を読むには `fromToken: 1500` を指定
+- `minify=false`:
+  - 改行や空白幅を保持して返す（HTML解説を崩しにくくする）
 
 ### `doctor`
 

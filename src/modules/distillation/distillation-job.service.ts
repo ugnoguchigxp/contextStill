@@ -77,6 +77,26 @@ export async function pauseJobForCircuitBreaker(params: {
   });
 }
 
+export async function pauseJobForBackpressure(params: {
+  jobId?: string;
+  draftCount: number;
+  threshold: number;
+  acceptedCandidateCount: number;
+}): Promise<void> {
+  await pauseDistillationJob({
+    id: params.jobId,
+    outcomeKind: "promotion_paused_backpressure",
+    error: "distillation promotion paused by HITL backlog",
+    pauseSeconds: groupedConfig.distillation.backpressurePauseSeconds,
+    metadata: {
+      backpressure: true,
+      draftCount: params.draftCount,
+      backlogThresholdCount: params.threshold,
+      acceptedCandidateCount: params.acceptedCandidateCount,
+    },
+  });
+}
+
 export async function shouldPauseDistillationPromotion(): Promise<{
   paused: boolean;
   draftCount: number;

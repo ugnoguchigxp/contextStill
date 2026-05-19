@@ -12,6 +12,7 @@ function buildInitialInstructionsText(): string {
     "  - `changeTypes`: (任意) 変更の種類 (例: ['refactoring', 'feature', 'bugfix'])",
     "  - `lastErrorContext`: (debug時) 発生しているエラー内容やスタックトレース",
     "- `memory_search` / `memory_fetch` は必要根拠の確認時だけ使う。",
+    "- Wikiソースの部分読みや継続読みが必要な場合は `read_file` を使う。",
     "- `search_knowledge` は raw 候補確認用。通常は `context_compile` を優先する。",
     "- draft backlog の整理や status 更新が必要な場合は `list_knowledge` / `update_knowledge` を使う。",
     "- ユーザーに情報を提示する際、それが本当に有用（ゴールに直接的・具体的に関係する）であるかを厳格に評価すること。不確実な情報やノイズでコンテキストを圧迫してはならない。",
@@ -25,6 +26,7 @@ function buildInitialInstructionsText(): string {
     "- `register_knowledge`: 新しいルールや手順（スキル）の登録。",
     "- `list_knowledge` / `update_knowledge`: backlog 一覧と status/本文の更新（運用補助）。",
     "- `memory_search` / `memory_fetch`: 過去会話・差分の参照（補助）。",
+    "- `read_file`: wiki markdown の token 窓読み（補助）。",
     "- `doctor`: DB / embedding / automation / run health の診断。",
   ].join("\n");
 }

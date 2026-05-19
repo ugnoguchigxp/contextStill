@@ -1,5 +1,6 @@
 import { groupedConfig } from "../config.js";
 import { closeDbPool } from "../db/index.js";
+import { assertLegacyDistillationEnabled } from "../modules/distillation/legacy-distillation-guard.js";
 import { distillVibeMemories } from "../modules/vibe-memory/distillation.service.js";
 import { acquireFileLock, type FileLockHandle } from "./file-lock.js";
 
@@ -76,6 +77,7 @@ function parseArgs(args: string[]): CliOptions {
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+  assertLegacyDistillationEnabled("distill-vibe-memory CLI");
   const lock = await acquireFileLock({
     lockFile: groupedConfig.vibeDistillation.lockFile,
     ttlSeconds: groupedConfig.vibeDistillation.lockTtlSeconds,

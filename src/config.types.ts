@@ -1,6 +1,7 @@
 export type EmbeddingProvider = "auto" | "daemon" | "cli" | "disabled";
 export type AgenticCompileProvider = "azure-openai" | "bedrock" | "local-llm" | "auto";
 export type DistillationProvider = "local-llm" | "azure-openai" | "bedrock" | "auto";
+export type DistillationSearchProvider = "brave" | "exa" | "duckduckgo";
 
 export type GroupedConfig = {
   database: { url: string };
@@ -20,6 +21,11 @@ export type GroupedConfig = {
     model: string;
   };
   sourceContent: { root: string };
+  readFile: {
+    root: string;
+    defaultTokens: number;
+    maxTokens: number;
+  };
   codex: { sessionDir: string; archivedSessionDir: string };
   antigravity: { logDir: string; initialLookbackHours: number };
   agentLogSync: {
@@ -51,6 +57,9 @@ export type GroupedConfig = {
     timeoutMs: number;
     resultMaxChars: number;
     searchResultCount: number;
+    searchProviders: DistillationSearchProvider[];
+    searchMaxProviderAttempts: number;
+    searchRateLimitCooldownSeconds: number;
     maxCandidates: number;
     failureRetryDelaySeconds: number;
     evidenceCacheTtlSeconds: number;
@@ -78,6 +87,7 @@ export type GroupedConfig = {
   };
   distillation: {
     provider: DistillationProvider;
+    legacyEnabled: boolean;
     timeoutMs: number;
     lockTtlSeconds: number;
     lockFile: string;
@@ -86,6 +96,7 @@ export type GroupedConfig = {
     circuitBreakerEnabled: boolean;
     circuitBreakerHealthTimeoutMs: number;
     circuitBreakerPauseSeconds: number;
+    backpressurePauseSeconds: number;
     sourceAgenticReaderManualEnabled: boolean;
     sourceAgenticReaderAutoEnabled: boolean;
     vibeAgenticReaderManualEnabled: boolean;
