@@ -3,11 +3,11 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.memory-router.source-distillation</string>
+    <string>com.memory-router.distill-pipeline</string>
     <key>ProgramArguments</key>
     <array>
         <string>/bin/bash</string>
-        <string>{{PROJECT_ROOT}}/scripts/setup-source-distillation-automation.sh</string>
+        <string>{{PROJECT_ROOT}}/scripts/setup-distill-pipeline-automation.sh</string>
         <string>run-once</string>
     </array>
     <key>WorkingDirectory</key>
@@ -15,9 +15,9 @@
     <key>StartInterval</key>
     <integer>{{INTERVAL_SECONDS}}</integer>
     <key>StandardOutPath</key>
-    <string>{{PROJECT_ROOT}}/logs/source-distillation.log</string>
+    <string>{{PROJECT_ROOT}}/logs/distill-pipeline.log</string>
     <key>StandardErrorPath</key>
-    <string>{{PROJECT_ROOT}}/logs/source-distillation.log</string>
+    <string>{{PROJECT_ROOT}}/logs/distill-pipeline.log</string>
     <key>RunAtLoad</key>
     <true/>
     <key>EnvironmentVariables</key>

@@ -25,6 +25,41 @@ function toPosixPath(value: string): string {
   return value.split(path.sep).join("/");
 }
 
+function isMissingRelationError(error: unknown, relationName: string): boolean {
+  const needle = `relation "${relationName}" does not exist`;
+  const queue: unknown[] = [error];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) continue;
+    if (typeof current === "string") {
+      if (current.includes(needle)) return true;
+      continue;
+    }
+    if (current instanceof Error) {
+      if (current.message.includes(needle)) return true;
+      const coded = current as Error & { code?: string; cause?: unknown };
+      if (coded.code === "42P01") return true;
+      if (coded.cause) queue.push(coded.cause);
+      continue;
+    }
+    if (typeof current === "object") {
+      const shaped = current as {
+        code?: unknown;
+        message?: unknown;
+        cause?: unknown;
+        originalError?: unknown;
+      };
+      if (shaped.code === "42P01") return true;
+      if (typeof shaped.message === "string" && shaped.message.includes(needle)) return true;
+      if (shaped.cause) queue.push(shaped.cause);
+      if (shaped.originalError) queue.push(shaped.originalError);
+    }
+  }
+
+  return false;
+}
+
 async function collectMarkdownFiles(rootDir: string): Promise<string[]> {
   const entries = await readdir(rootDir, { recursive: true, withFileTypes: true });
   const files: string[] = [];
@@ -73,11 +108,19 @@ export async function collectVibeMemoryTargetCandidates(
   } = {},
 ): Promise<DistillationTargetCandidate[]> {
   const limit = Math.max(1, Math.floor(params.limit ?? 100));
-  const memories = await db
-    .select()
-    .from(vibeMemories)
-    .orderBy(asc(vibeMemories.createdAt), asc(vibeMemories.id))
-    .limit(limit);
+  let memories: Array<typeof vibeMemories.$inferSelect> = [];
+  try {
+    memories = await db
+      .select()
+      .from(vibeMemories)
+      .orderBy(asc(vibeMemories.createdAt), asc(vibeMemories.id))
+      .limit(limit);
+  } catch (error) {
+    if (isMissingRelationError(error, "vibe_memories")) {
+      return [];
+    }
+    throw error;
+  }
 
   if (memories.length === 0) return [];
 

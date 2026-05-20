@@ -123,11 +123,9 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
       }),
       inspectVibeDistillation({
         canQueryDb: false,
-        distillationTableAvailable: false,
       }),
       inspectSourceDistillation({
         canQueryDb: false,
-        distillationTableAvailable: false,
       }),
     ]);
 
@@ -181,11 +179,9 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
     }),
     inspectVibeDistillation({
       canQueryDb: true,
-      distillationTableAvailable: !database.missingTables.includes("vibe_memory_distillation_runs"),
     }),
     inspectSourceDistillation({
       canQueryDb: true,
-      distillationTableAvailable: !database.missingTables.includes("source_distillation_runs"),
     }),
   ]);
 

@@ -2,7 +2,6 @@ import path from "node:path";
 import { closeDbPool } from "../db/index.js";
 import { compileContextPack } from "../modules/context-compiler/context-compiler.service.js";
 import { upsertKnowledgeFromSource } from "../modules/knowledge/knowledge.repository.js";
-import { distillSources } from "../modules/sources/distillation.service.js";
 import { importMarkdownDirectory } from "../modules/sources/markdown-importer.service.js";
 
 type CliOptions = {
@@ -10,9 +9,6 @@ type CliOptions = {
   runImport: boolean;
   seedPreset: boolean;
   presetName: "typescript-react";
-  runDistillSources: boolean;
-  distillApply: boolean;
-  distillLimit?: number;
   runSmokeCompile: boolean;
   smokeGoal: string;
   repoPath: string;
@@ -34,9 +30,6 @@ type InitProjectSummary = {
     runImport: boolean;
     seedPreset: boolean;
     presetName: string;
-    runDistillSources: boolean;
-    distillApply: boolean;
-    distillLimit: number | null;
     runSmokeCompile: boolean;
     smokeGoal: string;
     repoPath: string;
@@ -56,14 +49,6 @@ type InitProjectSummary = {
       insertedOrUpdated: number;
       knowledgeIds: string[];
       scope: "global";
-    };
-    distillSources?: {
-      ok: boolean;
-      apply: boolean;
-      processed: number;
-      skipped: number;
-      failed: number;
-      knowledgeCount: number;
     };
     smokeCompile?: {
       ok: boolean;
@@ -140,22 +125,12 @@ function readArgValue(args: string[], index: number, name: string): string {
   return next;
 }
 
-function parsePositiveInteger(raw: string, name: string): number {
-  const parsed = Number(raw);
-  if (!Number.isInteger(parsed) || parsed < 1) {
-    throw new Error(`${name} must be a positive integer`);
-  }
-  return parsed;
-}
-
 function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
     wikiRoot: path.resolve(process.cwd(), "wiki/pages"),
     runImport: true,
     seedPreset: true,
     presetName: "typescript-react",
-    runDistillSources: false,
-    distillApply: false,
     runSmokeCompile: true,
     smokeGoal: "このリポジトリの初回セットアップ手順と検証手順を確認したい",
     repoPath: path.resolve(process.cwd()),
@@ -178,16 +153,6 @@ function parseArgs(args: string[]): CliOptions {
         throw new Error("--preset currently supports only: typescript-react");
       }
       options.presetName = value;
-    } else if (arg === "--distill-sources") {
-      options.runDistillSources = true;
-      options.distillApply = false;
-    } else if (arg === "--distill-sources-apply") {
-      options.runDistillSources = true;
-      options.distillApply = true;
-    } else if (arg === "--distill-limit" || arg.startsWith("--distill-limit=")) {
-      const value = readArgValue(args, index, "--distill-limit");
-      if (arg === "--distill-limit") index += 1;
-      options.distillLimit = parsePositiveInteger(value, "--distill-limit");
     } else if (arg === "--skip-smoke") {
       options.runSmokeCompile = false;
     } else if (arg === "--smoke-goal" || arg.startsWith("--smoke-goal=")) {
@@ -267,7 +232,7 @@ async function runSmokeCompile(
       ? []
       : [
           "bun run import:sources -- <wiki root>",
-          "bun run distill:sources -- --apply",
+          "bun run distill:pipeline:once",
           "Admin UI で draft knowledge を review して active に更新",
         ];
 
@@ -290,9 +255,6 @@ async function main(): Promise<void> {
       runImport: options.runImport,
       seedPreset: options.seedPreset,
       presetName: options.presetName,
-      runDistillSources: options.runDistillSources,
-      distillApply: options.distillApply,
-      distillLimit: options.distillLimit ?? null,
       runSmokeCompile: options.runSmokeCompile,
       smokeGoal: options.smokeGoal,
       repoPath: options.repoPath,
@@ -326,32 +288,6 @@ async function main(): Promise<void> {
     });
   }
 
-  if (options.runDistillSources) {
-    const distillSummary = await distillSources({
-      apply: options.distillApply,
-      limit: options.distillLimit,
-      sourceKind: "wiki",
-      includeProcessed: false,
-    }).catch((error) => {
-      throw new Error(
-        `[init-project/distill-sources] ${error instanceof Error ? error.message : String(error)}`,
-      );
-    });
-
-    summary.steps.distillSources = {
-      ok: distillSummary.ok,
-      apply: distillSummary.apply,
-      processed: distillSummary.processed,
-      skipped: distillSummary.skipped,
-      failed: distillSummary.failed,
-      knowledgeCount: distillSummary.knowledgeCount,
-    };
-
-    if (!distillSummary.ok) {
-      summary.ok = false;
-    }
-  }
-
   summary.steps.smokeCompile = await runSmokeCompile(options);
   if (summary.steps.smokeCompile && !summary.steps.smokeCompile.ok) {
     summary.ok = false;
@@ -369,12 +305,12 @@ async function main(): Promise<void> {
       "bun run doctor でシステム健全性を確認する",
       "mcpConfigSnippet を MCP クライアント設定へ貼り付ける",
       "Admin UI で新規 draft knowledge を review し、必要なものだけ active に昇格する",
-      "通常運用では import:sources と distill:sources を定期実行する",
+      "通常運用では import:sources と distill:pipeline を定期実行する",
     ];
   } else {
     summary.nextActions = [
       "bun run import:sources -- <wiki root>",
-      "bun run distill:sources -- --apply",
+      "bun run distill:pipeline:once",
       "bun run doctor でシステム健全性を確認する",
       "mcpConfigSnippet を MCP クライアント設定へ貼り付ける",
       "Admin UI で draft knowledge の根拠を確認して active/deprecated を整理する",

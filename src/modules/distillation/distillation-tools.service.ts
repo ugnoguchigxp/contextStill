@@ -12,16 +12,13 @@ import {
   findDistillationEvidenceCache,
   upsertDistillationEvidenceCache,
 } from "./distillation-evidence-cache.repository.js";
-import {
-  distillationReaderContextFromAudit,
-  readDistillationSegment,
-} from "./distillation-reader.service.js";
+import { executeMcpEvidenceTool } from "./mcp-evidence-tools.service.js";
 
 export const distillationEvidenceToolNames = ["search_web", "fetch_content"] as const;
-export const distillationReadToolNames = ["read_source_segment", "read_vibe_segment"] as const;
+export const distillationMcpToolNames = ["context7", "deepwiki"] as const;
 export const distillationToolNames = [
   ...distillationEvidenceToolNames,
-  ...distillationReadToolNames,
+  ...distillationMcpToolNames,
 ] as const;
 export type DistillationToolName = (typeof distillationToolNames)[number];
 
@@ -196,22 +193,26 @@ export const distillationToolDefinitions: DistillationToolDefinition[] = [
   {
     type: "function",
     function: {
-      name: "read_source_segment",
+      name: "context7",
       description:
-        "Read one locally indexed source/wiki segment by locator before extracting candidates from large source material.",
+        "Ask an optional Context7 MCP server for library, framework, API, or package documentation evidence.",
       parameters: {
         type: "object",
         properties: {
-          locator: {
+          query: {
             type: "string",
-            description: "Locator exactly as listed in the source segment catalog.",
+            description: "Focused documentation query.",
           },
-          purpose: {
+          library: {
             type: "string",
-            description: "Short reason for reading this segment.",
+            description: "Optional library or framework name.",
+          },
+          topic: {
+            type: "string",
+            description: "Optional documentation topic.",
           },
         },
-        required: ["locator"],
+        required: ["query"],
         additionalProperties: false,
       },
     },
@@ -219,22 +220,26 @@ export const distillationToolDefinitions: DistillationToolDefinition[] = [
   {
     type: "function",
     function: {
-      name: "read_vibe_segment",
+      name: "deepwiki",
       description:
-        "Read one locally indexed vibe memory or diff segment by locator before extracting candidates from large memory material.",
+        "Ask an optional DeepWiki MCP server for repository or project documentation evidence.",
       parameters: {
         type: "object",
         properties: {
-          locator: {
+          query: {
             type: "string",
-            description: "Locator exactly as listed in the vibe segment catalog.",
+            description: "Focused repository or project documentation query.",
           },
-          purpose: {
+          repository: {
             type: "string",
-            description: "Short reason for reading this segment.",
+            description: "Optional repository identifier.",
+          },
+          topic: {
+            type: "string",
+            description: "Optional documentation topic.",
           },
         },
-        required: ["locator"],
+        required: ["query"],
         additionalProperties: false,
       },
     },
@@ -293,9 +298,13 @@ function parseToolArguments(raw: string): Record<string, unknown> {
 }
 
 function distillationToolAuditEventType(toolName: string): string | null {
-  return isDistillationEvidenceToolName(toolName)
-    ? distillationToolAuditEventTypes[toolName]
-    : null;
+  if (isDistillationEvidenceToolName(toolName)) {
+    return distillationToolAuditEventTypes[toolName];
+  }
+  if (isDistillationMcpToolName(toolName)) {
+    return auditEventTypes.distillationMcpEvidence;
+  }
+  return null;
 }
 
 function isDistillationToolName(value: string): value is DistillationToolName {
@@ -308,6 +317,12 @@ function isDistillationEvidenceToolName(
   return distillationEvidenceToolNames.includes(
     value as (typeof distillationEvidenceToolNames)[number],
   );
+}
+
+function isDistillationMcpToolName(
+  value: string,
+): value is (typeof distillationMcpToolNames)[number] {
+  return distillationMcpToolNames.includes(value as (typeof distillationMcpToolNames)[number]);
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -530,6 +545,17 @@ async function recordDistillationToolAudit(params: {
       typeof metadata.contentChars === "number" ? metadata.contentChars : undefined;
     payload.redirectCount =
       typeof metadata.redirectCount === "number" ? metadata.redirectCount : undefined;
+  }
+
+  if (isDistillationMcpToolName(params.toolCall.function.name)) {
+    payload.query = stringValue(params.args.query);
+    payload.uri = stringValue(metadata.uri);
+    payload.title = stringValue(metadata.title);
+    payload.locator = stringValue(metadata.locator);
+    payload.server = stringValue(metadata.server);
+    payload.mcpToolName = stringValue(metadata.mcpToolName);
+    payload.unavailable =
+      typeof metadata.unavailable === "boolean" ? metadata.unavailable : undefined;
   }
 
   if (!params.result.ok) {
@@ -1106,10 +1132,8 @@ const distillationToolHandlers: Record<
     fetchContent(args.url, {
       forceRefreshEvidence: Boolean(auditContext?.forceRefreshEvidence),
     }),
-  read_source_segment: (args, auditContext) =>
-    readSegmentTool("read_source_segment", args, auditContext),
-  read_vibe_segment: (args, auditContext) =>
-    readSegmentTool("read_vibe_segment", args, auditContext),
+  context7: (args) => executeMcpEvidenceTool("context7", args),
+  deepwiki: (args) => executeMcpEvidenceTool("deepwiki", args),
 };
 
 const distillationToolAuditEventTypes: Record<
@@ -1119,53 +1143,6 @@ const distillationToolAuditEventTypes: Record<
   search_web: auditEventTypes.distillationWebSearch,
   fetch_content: auditEventTypes.distillationFetchContent,
 };
-
-async function readSegmentTool(
-  name: "read_source_segment" | "read_vibe_segment",
-  args: Record<string, unknown>,
-  auditContext?: Record<string, unknown>,
-): Promise<DistillationToolResult> {
-  const context = distillationReaderContextFromAudit(auditContext);
-  if (!context?.enabled) {
-    throw new Error(`${name} is not enabled for this distillation session`);
-  }
-  if (name === "read_source_segment" && context.source.sourceKind !== "source_fragment") {
-    throw new Error("read_source_segment is only available for source/wiki distillation");
-  }
-  if (name === "read_vibe_segment" && context.source.sourceKind !== "vibe_memory") {
-    throw new Error("read_vibe_segment is only available for vibe memory distillation");
-  }
-  const locator = stringValue(args.locator);
-  if (!locator) {
-    throw new Error("locator must be a non-empty string");
-  }
-  const read = await readDistillationSegment({
-    context,
-    locator,
-    purpose: stringValue(args.purpose),
-    candidateId: stringValue(auditContext?.candidateRowId),
-  });
-  return {
-    callId: "",
-    name,
-    ok: read.ok,
-    content: JSON.stringify(read, null, 2),
-    metadata: read.ok
-      ? {
-          locator: read.locator,
-          charCount: read.charCount,
-          truncated: read.truncated,
-          readCount: read.readCount,
-          maxReads: read.maxReads,
-        }
-      : {
-          error: read.error,
-          readCount: read.readCount,
-          maxReads: read.maxReads,
-        },
-    error: read.ok ? undefined : read.error,
-  };
-}
 
 export async function executeDistillationToolCall(
   toolCall: DistillationToolCall,

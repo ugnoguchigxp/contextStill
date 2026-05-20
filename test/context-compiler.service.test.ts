@@ -266,7 +266,7 @@ describe("Context Compiler Service", () => {
     expect(calls).toContain("search_knowledge");
     expect(calls).toContain("memory_search");
     expect(calls).toContain("bun run import:sources -- <wiki root>");
-    expect(calls).toContain("bun run distill:sources -- --apply");
+    expect(calls).toContain("bun run distill:pipeline:once");
   });
 
   test("boosts ranking with error context keyword and file matches", async () => {

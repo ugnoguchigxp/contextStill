@@ -1222,3 +1222,68 @@
   color: var(--muted-foreground);
   font-size: 0.74rem;
 }
+
+/* Metadata Accordion (environment_context, GEMINI.md 等) */
+.vibe-metadata-accordion {
+  border-color: oklch(0.75 0.03 220 / 0.4);
+  background: oklch(0.97 0.005 220 / 0.5);
+  margin-bottom: 0.5rem;
+}
+
+.dark .vibe-metadata-accordion {
+  background: oklch(0.2 0.01 220 / 0.4);
+  border-color: oklch(0.4 0.03 220 / 0.4);
+}
+
+.vibe-metadata-accordion > summary {
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 500;
+  opacity: 0.8;
+}
+
+.vibe-metadata-accordion > summary:hover {
+  opacity: 1;
+}
+
+.metadata-turn-list {
+  border-top: 1px solid oklch(0.75 0.03 220 / 0.3);
+  padding: 0.6rem;
+  display: grid;
+  gap: 0.5rem;
+}
+
+.metadata-turn-item {
+  display: grid;
+  gap: 0.25rem;
+}
+
+.metadata-turn-role {
+  font-size: 0.65rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted-foreground);
+  opacity: 0.7;
+}
+
+.metadata-turn-content {
+  background: oklch(0.95 0.005 220 / 0.6);
+  border: 1px solid oklch(0.8 0.02 220 / 0.4);
+  border-radius: var(--radius-sm);
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  margin: 0;
+  max-height: 200px;
+  overflow: auto;
+  padding: 0.5rem 0.65rem;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.dark .metadata-turn-content {
+  background: oklch(0.15 0.01 220 / 0.5);
+  border-color: oklch(0.35 0.02 220 / 0.4);
+}

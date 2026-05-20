@@ -88,8 +88,6 @@ export async function inspectDatabase({
         draftCount: 0,
         oldestDraftAt: null,
         oldestDraftAgeMinutes: null,
-        draftFromSourceDistillationCount: 0,
-        draftFromVibeDistillationCount: 0,
         backlogThresholdCount: hitlBacklogThresholdCount,
         backlogThresholdAgeMinutes: hitlBacklogThresholdAgeMinutes,
       },
@@ -142,8 +140,6 @@ export async function inspectDatabase({
     draftCount: 0,
     oldestDraftAt: null,
     oldestDraftAgeMinutes: null,
-    draftFromSourceDistillationCount: 0,
-    draftFromVibeDistillationCount: 0,
     backlogThresholdCount: hitlBacklogThresholdCount,
     backlogThresholdAgeMinutes: hitlBacklogThresholdAgeMinutes,
   };
@@ -168,23 +164,13 @@ export async function inspectDatabase({
       const draftResult = await db.execute(sql`
         select
           count(*) filter (where status = 'draft')::int as draft_count,
-          min(case when status = 'draft' then updated_at end) as oldest_draft_at,
-          count(*) filter (
-            where status = 'draft'
-              and coalesce(metadata ->> 'sourceKind', '') = 'wiki'
-          )::int as source_draft_count,
-          count(*) filter (
-            where status = 'draft'
-              and coalesce(metadata ->> 'sourceKind', '') = 'vibe_memory'
-          )::int as vibe_draft_count
+          min(case when status = 'draft' then updated_at end) as oldest_draft_at
         from knowledge_items
       `);
       const draftRow = (draftResult.rows as Array<Record<string, unknown>>)[0] ?? {};
       hitl.draftCount = Number(draftRow.draft_count ?? 0);
       hitl.oldestDraftAt = toIso(draftRow.oldest_draft_at);
       hitl.oldestDraftAgeMinutes = ageMinutesFromIso(hitl.oldestDraftAt);
-      hitl.draftFromSourceDistillationCount = Number(draftRow.source_draft_count ?? 0);
-      hitl.draftFromVibeDistillationCount = Number(draftRow.vibe_draft_count ?? 0);
       if (hitl.draftCount > hitl.backlogThresholdCount) {
         reasons.push("HITL_DRAFT_BACKLOG_HIGH");
       }

@@ -394,14 +394,6 @@ export function DoctorPage() {
                 : "-"}
             </strong>
           </div>
-          <div>
-            <span>Draft from source distillation</span>
-            <strong>{report?.hitl.draftFromSourceDistillationCount ?? 0}</strong>
-          </div>
-          <div>
-            <span>Draft from vibe distillation</span>
-            <strong>{report?.hitl.draftFromVibeDistillationCount ?? 0}</strong>
-          </div>
         </CardContent>
       </Card>
     </div>

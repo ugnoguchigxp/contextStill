@@ -1,6 +1,8 @@
 export type ChatTurn = {
   role: "user" | "assistant" | "system";
   content: string;
+  /** 環境コンテキストや設定ファイルなどのメタデータターンかどうか */
+  isMetadata?: boolean;
 };
 
 const roleLabels: Record<ChatTurn["role"], string> = {
@@ -31,26 +33,32 @@ export function parseVibeMemoryTurns(content: string): ChatTurn[] {
 function parseRolePrefixedTurns(content: string): ChatTurn[] {
   const turns: ChatTurn[] = [];
   let current: ChatTurn | null = null;
+  let currentRaw = "";
 
   const flush = () => {
     if (!current) return;
+    const metadata = isMetadataContent(currentRaw);
     const cleaned = cleanNaturalText(current.content);
-    if (cleaned) turns.push({ ...current, content: cleaned });
+    if (cleaned) turns.push({ ...current, content: cleaned, isMetadata: metadata || undefined });
     current = null;
+    currentRaw = "";
   };
 
   for (const line of content.split("\n")) {
     const match = line.match(/^(USER|ASSISTANT|SYSTEM):\s*(.*)$/);
     if (match) {
       flush();
+      const initialContent = match[2] ?? "";
       current = {
         role: match[1].toLowerCase() as ChatTurn["role"],
-        content: match[2] ?? "",
+        content: initialContent,
       };
+      currentRaw = initialContent;
       continue;
     }
     if (current) {
       current.content += `${current.content ? "\n" : ""}${line}`;
+      currentRaw += `${currentRaw ? "\n" : ""}${line}`;
     }
   }
 
@@ -72,14 +80,32 @@ function parseJsonOverviewTurns(content: string): ChatTurn[] {
         tool_calls?: unknown;
       };
       if (typeof data.content !== "string") continue;
-      const text = cleanNaturalText(data.content);
+      const rawContent = data.content;
+      const text = cleanNaturalText(rawContent);
       if (!text) continue;
       const role =
         data.source === "USER_EXPLICIT" || data.type === "USER_INPUT" ? "user" : "assistant";
-      turns.push({ role, content: text });
+      const metadata = isMetadataContent(rawContent) || undefined;
+      turns.push({ role, content: text, isMetadata: metadata });
     } catch {}
   }
   return turns;
+}
+
+/**
+ * environment_context や GEMINI.md 等のメタデータブロックを含むかどうか判定する。
+ * 完全に除去するのではなく、isMetadata フラグで UI 側がアコーディオン非表示できるようにする。
+ */
+export function isMetadataContent(content: string): boolean {
+  const trimmed = content.trim();
+  // <environment_context> ブロックが含まれる場合
+  if (/<environment_context[\s>]/i.test(trimmed)) return true;
+  // GEMINI.md / AGENT.md / .cursorrules / system prompt 等の設定ファイルコンテンツが主体の場合
+  // これらはコードブロックや長い設定テキストで始まる傾向がある
+  if (/^```(markdown|md)?\n#\s+(GEMINI|AGENT|CLAUDE|CURSOR)/im.test(trimmed)) return true;
+  // 環境情報タグのみで構成されている場合
+  if (/^<environment_context>[\s\S]*?<\/environment_context>\s*$/i.test(trimmed)) return true;
+  return false;
 }
 
 function cleanNaturalText(content: string): string {
@@ -88,6 +114,8 @@ function cleanNaturalText(content: string): string {
   const cleaned = base
     .replace(/<ADDITIONAL_METADATA>[\s\S]*?<\/ADDITIONAL_METADATA>/gi, "")
     .replace(/<USER_SETTINGS_CHANGE>[\s\S]*?<\/USER_SETTINGS_CHANGE>/gi, "")
+    // environment_context はメタデータとして除去（isMetadata フラグで UI 側が Accordion 表示する）
+    .replace(/<environment_context[\s\S]*?<\/environment_context>/gi, "")
     .replace(/<\/?[A-Z_]+>/g, "")
     .trim();
 

@@ -47,6 +47,16 @@ function nowMinusSeconds(seconds: number, now = new Date()): Date {
   return new Date(now.getTime() - Math.max(1, seconds) * 1000);
 }
 
+function staleThresholdMs(staleSeconds: number, now = new Date()): number {
+  return nowMinusSeconds(staleSeconds, now).getTime();
+}
+
+function rowHeartbeatMs(row: Pick<DistillationTargetStateRow, "heartbeatAt" | "lockedAt">): number {
+  const value = row.heartbeatAt ?? row.lockedAt;
+  if (!value) return Number.NEGATIVE_INFINITY;
+  return value.getTime();
+}
+
 function targetIdentity(row: DistillationTargetStateRow): Record<string, unknown> {
   return {
     id: row.id,
@@ -447,21 +457,21 @@ export async function recoverStaleDistillationTargets(
 ): Promise<RecoveryResult> {
   const now = params.now ?? new Date();
   const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
-  const threshold = nowMinusSeconds(
+  const thresholdMs = staleThresholdMs(
     params.staleSeconds ?? APP_CONSTANTS.distillationTargetStaleSeconds,
     now,
   );
   const maxAttempts = params.maxAttempts ?? APP_CONSTANTS.distillationTargetMaxAttempts;
-  const staleRows = await db
+  const runningRows = await db
     .select()
     .from(distillationTargetStates)
     .where(
       and(
         eq(distillationTargetStates.distillationVersion, distillationVersion),
         eq(distillationTargetStates.status, "running"),
-        sql`coalesce(${distillationTargetStates.heartbeatAt}, ${distillationTargetStates.lockedAt}) <= ${threshold}`,
       ),
     );
+  const staleRows = runningRows.filter((row) => rowHeartbeatMs(row) <= thresholdMs);
 
   let recoveredToPending = 0;
   let failed = 0;
@@ -568,18 +578,20 @@ async function countStaleRunning(
   distillationVersion: string,
   staleSeconds: number,
 ): Promise<number> {
-  const threshold = nowMinusSeconds(staleSeconds);
-  const [row] = await db
-    .select({ value: count() })
+  const thresholdMs = staleThresholdMs(staleSeconds);
+  const rows = await db
+    .select({
+      heartbeatAt: distillationTargetStates.heartbeatAt,
+      lockedAt: distillationTargetStates.lockedAt,
+    })
     .from(distillationTargetStates)
     .where(
       and(
         eq(distillationTargetStates.distillationVersion, distillationVersion),
         eq(distillationTargetStates.status, "running"),
-        sql`coalesce(${distillationTargetStates.heartbeatAt}, ${distillationTargetStates.lockedAt}) <= ${threshold}`,
       ),
     );
-  return Number(row?.value ?? 0);
+  return rows.filter((row) => rowHeartbeatMs(row) <= thresholdMs).length;
 }
 
 async function lastTargetByStatus(

@@ -185,7 +185,6 @@ export const groupedConfig: GroupedConfig = {
       process.env.MEMORY_ROUTER_DISTILLATION_PROVIDER,
       "local-llm",
     ),
-    legacyEnabled: APP_CONSTANTS.distillationLegacyEnabled,
     timeoutMs: APP_CONSTANTS.distillationTimeoutMs,
     lockTtlSeconds: APP_CONSTANTS.distillationLockTtlSeconds,
     lockFile: path.resolve(process.cwd(), "logs", "distillation.lock"),

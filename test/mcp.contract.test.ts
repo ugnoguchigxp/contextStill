@@ -194,7 +194,7 @@ describeDb("mcp contract", () => {
       "doctor",
       "context_compile (retry with explicit repoPath/files)",
       "bun run import:sources -- <wiki root>",
-      "bun run distill:sources -- --apply",
+      "bun run distill:pipeline:once",
     ]);
     expect(
       suggested.every((entry) => allowedExact.has(entry)),

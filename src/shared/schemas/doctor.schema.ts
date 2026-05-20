@@ -101,8 +101,6 @@ export const doctorReportSchema = z.object({
     draftCount: z.number().int().nonnegative(),
     oldestDraftAt: z.string().datetime().nullable(),
     oldestDraftAgeMinutes: z.number().nonnegative().nullable(),
-    draftFromSourceDistillationCount: z.number().int().nonnegative(),
-    draftFromVibeDistillationCount: z.number().int().nonnegative(),
     backlogThresholdCount: z.number().int().positive(),
     backlogThresholdAgeMinutes: z.number().int().positive(),
   }),

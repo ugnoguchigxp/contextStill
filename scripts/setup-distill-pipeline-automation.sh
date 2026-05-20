@@ -11,9 +11,18 @@ done
 PROJECT_ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
 PLIST_DIR="$PROJECT_ROOT/scripts/automation"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
-PLIST="com.memory-router.source-distillation.plist"
+PLIST="com.memory-router.distill-pipeline.plist"
 LABEL="${PLIST%.plist}"
-INTERVAL_SECONDS="${MEMORY_ROUTER_SOURCE_DISTILLATION_INTERVAL_SECONDS:-3600}"
+INTERVAL_SECONDS="${MEMORY_ROUTER_DISTILL_PIPELINE_INTERVAL_SECONDS:-120}"
+PIPELINE_KIND="${MEMORY_ROUTER_DISTILL_PIPELINE_KIND:-auto}"
+PIPELINE_LIMIT="${MEMORY_ROUTER_DISTILL_PIPELINE_LIMIT:-1}"
+PIPELINE_REFRESH="${MEMORY_ROUTER_DISTILL_PIPELINE_REFRESH:-1}"
+PIPELINE_PROVIDER="${MEMORY_ROUTER_DISTILL_PIPELINE_PROVIDER:-}"
+PIPELINE_VERSION="${MEMORY_ROUTER_DISTILL_PIPELINE_VERSION:-}"
+LEGACY_LABELS=(
+  "com.memory-router.vibe-distillation"
+  "com.memory-router.source-distillation"
+)
 
 mkdir -p "$PROJECT_ROOT/logs"
 mkdir -p "$LAUNCH_AGENTS_DIR"
@@ -39,11 +48,18 @@ install() {
   echo "installed: $LAUNCH_AGENTS_DIR/$PLIST"
 }
 
+disable_legacy_jobs() {
+  for legacy in "${LEGACY_LABELS[@]}"; do
+    launchctl bootout "gui/$UID/$legacy" >/dev/null 2>&1 || true
+  done
+}
+
 load_job() {
   local target="$LAUNCH_AGENTS_DIR/$PLIST"
   if [ ! -f "$target" ]; then
     install
   fi
+  disable_legacy_jobs
   launchctl bootout "gui/$UID" "$target" >/dev/null 2>&1 || true
   launchctl bootstrap "gui/$UID" "$target"
   echo "loaded: $LABEL"
@@ -79,9 +95,28 @@ run_once() {
   cd "$PROJECT_ROOT"
   local bun_path
   bun_path="$(resolve_bun_path)"
-  echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $LABEL run started"
+  local args=(
+    "run"
+    "src/cli/distill-pipeline.ts"
+    "--write"
+    "--limit"
+    "$PIPELINE_LIMIT"
+    "--kind"
+    "$PIPELINE_KIND"
+  )
+  if [ "$PIPELINE_REFRESH" = "0" ]; then
+    args+=("--no-refresh")
+  fi
+  if [ -n "$PIPELINE_PROVIDER" ]; then
+    args+=("--provider" "$PIPELINE_PROVIDER")
+  fi
+  if [ -n "$PIPELINE_VERSION" ]; then
+    args+=("--version" "$PIPELINE_VERSION")
+  fi
+
+  echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $LABEL run started kind=$PIPELINE_KIND limit=$PIPELINE_LIMIT"
   set +e
-  "$bun_path" run src/cli/distill-sources.ts --apply
+  "$bun_path" "${args[@]}"
   local exit_code=$?
   set -e
   echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $LABEL run finished exit_code=$exit_code"

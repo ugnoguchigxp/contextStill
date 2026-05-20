@@ -526,7 +526,7 @@ export async function compileContextPack(rawInput: unknown): Promise<{
   if (degradedReasons.includes("NO_SOURCE_MATCH")) {
     suggestedNextCalls.push("memory_search");
     suggestedNextCalls.push("bun run import:sources -- <wiki root>");
-    suggestedNextCalls.push("bun run distill:sources -- --apply");
+    suggestedNextCalls.push("bun run distill:pipeline:once");
   }
   if (
     degradedReasons.includes("KNOWLEDGE_APPLIES_TO_FALLBACK") ||

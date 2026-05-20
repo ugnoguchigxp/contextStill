@@ -161,6 +161,8 @@ describe("runCoverEvidence", () => {
       id: "cover-1",
       ...result,
     }));
+    process.env.MEMORY_ROUTER_CONTEXT7_MCP_COMMAND = "";
+    process.env.MEMORY_ROUTER_DEEPWIKI_MCP_COMMAND = "";
   });
 
   test("returns source-backed knowledge_ready without creating a draft", async () => {
@@ -246,6 +248,95 @@ describe("runCoverEvidence", () => {
       expect.anything(),
       expect.objectContaining({
         auditContext: expect.objectContaining({ forceRefreshEvidence: true }),
+        toolNames: ["search_web", "fetch_content"],
+      }),
+    );
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  test("preserves MCP evidence references when available", async () => {
+    const externalOutput = JSON.stringify({
+      schemaVersion: 1,
+      status: "knowledge_ready",
+      stage: "web",
+      candidate: {
+        type: "rule",
+        title: "Use Context7 docs for API behavior",
+        body: "Use fetched and MCP-backed API documentation before preserving provider behavior claims.",
+        importance: 80,
+        confidence: 84,
+      },
+      references: [],
+      duplicateRefs: [],
+      toolEvents: [],
+      reason: null,
+    });
+    const mcpOutput = JSON.stringify({ status: "checked" });
+    mocks.getFindCandidateResultById.mockResolvedValue(
+      candidateRow({
+        title: "Use current API docs from https://example.com/docs",
+        content:
+          "Use current API docs from https://example.com/docs before preserving provider behavior claims.",
+      }),
+    );
+    mocks.readFileDomain.mockResolvedValue({
+      content:
+        "Use current API docs from https://example.com/docs before preserving provider behavior claims.",
+      totalTokens: 120,
+      from: 0,
+      toExclusive: 120,
+      returnedTokens: 120,
+    });
+    process.env.MEMORY_ROUTER_CONTEXT7_MCP_COMMAND = "stub";
+    mocks.runDistillationCompletion.mockResolvedValueOnce({
+      content: externalOutput,
+      toolEvents: [
+        {
+          callId: "call-1",
+          name: "fetch_content",
+          ok: true,
+          content: "Fetched docs",
+          metadata: { url: "https://example.com/docs" },
+        },
+      ],
+      messages: [],
+    });
+    mocks.runDistillationCompletion.mockResolvedValueOnce({
+      content: mcpOutput,
+      toolEvents: [
+        {
+          callId: "call-2",
+          name: "context7",
+          ok: true,
+          content: "Context7 docs",
+          metadata: {
+            uri: "context7://example/api",
+            title: "Example API",
+            locator: "api-reference",
+          },
+        },
+      ],
+      messages: [],
+    });
+
+    const result = await runCoverEvidence({ id: "find-1" });
+
+    expect(mocks.runDistillationCompletion).toHaveBeenNthCalledWith(
+      1,
+      expect.anything(),
+      expect.objectContaining({ toolNames: ["search_web", "fetch_content"] }),
+    );
+    expect(mocks.runDistillationCompletion).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({ toolNames: ["context7"] }),
+    );
+    expect(result.result.references).toContainEqual(
+      expect.objectContaining({
+        kind: "context7",
+        uri: "context7://example/api",
+        locator: "api-reference",
+        evidenceRole: "external_verification",
       }),
     );
   });

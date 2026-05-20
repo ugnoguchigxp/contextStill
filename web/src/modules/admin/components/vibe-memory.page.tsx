@@ -208,11 +208,11 @@ function buildSessionSummary(id: string, items: VibeMemory[]): SessionSummary {
   const sourceLabel = firstMetadataString(items, "source") ?? "Agent";
   const startedAt = earliestMetadataTime(items, "sessionStartedAt") ?? firstCreatedAt.toISOString();
 
-  // Find the first user message to use as a title
+  // Find the first user message to use as a title (メタデータターンはスキップ)
   let firstMessage: string | undefined;
   for (const item of sortedItems) {
     const turns = parseVibeMemoryTurns(item.content);
-    const userTurn = turns.find((t) => t.role === "user");
+    const userTurn = turns.find((t) => t.role === "user" && !t.isMetadata);
     if (userTurn?.content.trim()) {
       firstMessage = userTurn.content.trim().slice(0, 100);
       break;
@@ -287,13 +287,19 @@ function formatSessionTimeCompact(value: string): string {
 }
 
 function ChatTranscript({ turns }: { turns: ChatTurn[] }) {
-  if (turns.length === 0) {
+  const normalTurns = turns.filter((t) => !t.isMetadata);
+  const metaTurns = turns.filter((t) => t.isMetadata);
+
+  if (normalTurns.length === 0 && metaTurns.length === 0) {
     return <p className="vibe-muted-text">自然言語の会話本文はありません。</p>;
   }
 
   return (
     <div className="chat-turns">
-      {turns.map((turn, index) => (
+      {/* メタデータターン（environment_context, GEMINI.md 等）はデフォルト非表示 */}
+      {metaTurns.length > 0 ? <MetadataAccordion turns={metaTurns} /> : null}
+      {/* メインの会話本文 */}
+      {normalTurns.map((turn, index) => (
         <div key={`${turn.role}-${index}`} className={`chat-turn chat-turn-${turn.role}`}>
           <span className="chat-turn-role">{getChatRoleLabel(turn.role)}</span>
           <div className="chat-turn-content">
@@ -307,7 +313,33 @@ function ChatTranscript({ turns }: { turns: ChatTurn[] }) {
           </div>
         </div>
       ))}
+      {normalTurns.length === 0 && metaTurns.length > 0 ? (
+        <p className="vibe-muted-text">主題となる会話はありません（メタデータのみ）。</p>
+      ) : null}
     </div>
+  );
+}
+
+/**
+ * environment_context や設定ファイル等のメタデータターンを
+ * デフォルト非表示のアコーディオンでまとめて表示するコンポーネント。
+ */
+function MetadataAccordion({ turns }: { turns: ChatTurn[] }) {
+  return (
+    <details className="vibe-accordion vibe-metadata-accordion">
+      <summary>
+        <span>環境・設定メタデータ</span>
+        <Badge variant="outline">{turns.length}</Badge>
+      </summary>
+      <div className="metadata-turn-list">
+        {turns.map((turn, index) => (
+          <div key={`meta-${turn.role}-${index}`} className="metadata-turn-item">
+            <span className="metadata-turn-role">{getChatRoleLabel(turn.role)}</span>
+            <pre className="metadata-turn-content">{turn.content}</pre>
+          </div>
+        ))}
+      </div>
+    </details>
   );
 }
 

@@ -105,8 +105,6 @@ describe("Doctor Service", () => {
             {
               draft_count: 1,
               oldest_draft_at: new Date(),
-              source_draft_count: 1,
-              vibe_draft_count: 0,
             },
           ],
         }) // hitl backlog
@@ -166,22 +164,19 @@ describe("Doctor Service", () => {
         .mockResolvedValueOnce({ rows: [{ installed: true }] }) // vector
         .mockResolvedValueOnce({
           rows: [
-            { table_name: "vibe_memory_distillation_runs" },
-            { table_name: "source_distillation_runs" },
+            { table_name: "distillation_target_states" },
           ],
         }) // tables
-        .mockResolvedValueOnce({ rows: [{ total_runs: 10, ok_runs: 8, last_run_at: new Date() }] }) // vibe runs
-        .mockResolvedValueOnce({ rows: [{ total_runs: 5, ok_runs: 5, last_run_at: new Date() }] }), // source runs
+        .mockResolvedValue({ rows: [{ total_runs: 10, ok_runs: 8, last_run_at: new Date() }] }),
       select: vi.fn().mockReturnThis(),
       from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockResolvedValue([{ lastSyncedAt: new Date() }]), // sync_states mock for state?.lastSyncedAt
+      where: vi.fn().mockResolvedValue([]),
     };
     vi.mocked(getDb).mockReturnValue(mockDb as any);
 
     const report = await runDoctor();
     expect(report.vibeDistillation.runs.totalRuns).toBe(10);
-    expect(report.sourceDistillation.runs.totalRuns).toBe(5);
+    expect(report.sourceDistillation.runs.totalRuns).toBe(10);
   });
 
   test("inspects launch agents via launchctl", async () => {
@@ -217,8 +212,6 @@ describe("Doctor Service", () => {
             {
               draft_count: 0,
               oldest_draft_at: null,
-              source_draft_count: 0,
-              vibe_draft_count: 0,
             },
           ],
         })

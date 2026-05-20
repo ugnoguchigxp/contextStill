@@ -11,6 +11,11 @@ import {
   type DistillationToolExecutor,
 } from "../distillation/distillation-runtime.service.js";
 import { dedupeCoverEvidenceCandidate } from "./dedupe.service.js";
+import {
+  configuredMcpEvidenceToolNames,
+  referencesFromMcpToolEvents,
+  type McpEvidenceToolName,
+} from "./mcp-evidence.service.js";
 import { parseCoverEvidenceResult } from "./parser.js";
 import {
   coverEvidenceResultFromRow,
@@ -139,7 +144,7 @@ function referencesFromDuplicateRefs(
 }
 
 function referencesFromToolEvents(toolEvents: CoverEvidenceToolEvent[]): CoverEvidenceReference[] {
-  return toolEvents
+  const webReferences = toolEvents
     .filter((event) => event.ok)
     .map((event): CoverEvidenceReference | null => {
       const metadata = event.metadata ?? {};
@@ -169,6 +174,7 @@ function referencesFromToolEvents(toolEvents: CoverEvidenceToolEvent[]): CoverEv
       return null;
     })
     .filter((reference): reference is CoverEvidenceReference => Boolean(reference));
+  return [...webReferences, ...referencesFromMcpToolEvents(toolEvents)];
 }
 
 function makeResult(params: {
@@ -320,6 +326,113 @@ async function runExternalEvidence(params: {
   }
 }
 
+function mcpEvidenceSystemPrompt(toolNames: readonly McpEvidenceToolName[]): string {
+  return [
+    "あなたは coverEvidence の任意 MCP evidence 収集器です。",
+    `利用可能な補助 tool は ${toolNames.join(", ")} です。`,
+    "候補の公開ライブラリ、フレームワーク、API、リポジトリ仕様に関係する補助 evidence がある場合だけ tool を使ってください。",
+    "MCP evidence は補助情報です。web fetch evidence の代替として扱ってはいけません。",
+    '最後は {"status":"checked"} の JSON だけを返してください。',
+  ].join("\n");
+}
+
+function mcpEvidenceUserPrompt(candidate: CoverEvidenceCandidate): string {
+  return [
+    "候補に関連する補助 MCP evidence を収集してください。",
+    "候補:",
+    JSON.stringify(candidate, null, 2),
+  ].join("\n\n");
+}
+
+async function runOptionalMcpEvidence(params: {
+  id: string;
+  candidate: CoverEvidenceCandidate;
+  provider: DistillationProviderSetting;
+  model: string;
+  chatClient?: DistillationChatClient;
+  toolExecutor?: DistillationToolExecutor;
+}): Promise<{ references: CoverEvidenceReference[]; toolEvents: CoverEvidenceToolEvent[] }> {
+  const toolNames = configuredMcpEvidenceToolNames();
+  if (toolNames.length === 0) {
+    return { references: [], toolEvents: [] };
+  }
+
+  try {
+    const completion = await runDistillationCompletion(
+      {
+        model: params.model,
+        maxTokens: 1024,
+        messages: [
+          { role: "system", content: mcpEvidenceSystemPrompt(toolNames) },
+          { role: "user", content: mcpEvidenceUserPrompt(params.candidate) },
+        ],
+      },
+      {
+        providerSetting: params.provider,
+        chatClient: params.chatClient,
+        toolExecutor: params.toolExecutor,
+        enableTools: true,
+        maxToolRounds: 2,
+        requireToolCall: true,
+        toolNames,
+        requireToolCallReminder: [
+          "直前の応答はまだ採用できません。",
+          `補助 MCP evidence が設定されているため、最終 JSON の前に ${toolNames.join(
+            " または ",
+          )} を 1 回だけ呼び出してください。`,
+        ],
+        auditContext: {
+          domain: "coverEvidence",
+          id: params.id,
+          optionalEvidence: "mcp",
+        },
+      },
+    );
+    const toolEvents = toolEventsForResult(completion.toolEvents);
+    return {
+      references: referencesFromMcpToolEvents(toolEvents),
+      toolEvents,
+    };
+  } catch (error) {
+    const toolEvents = toolEventsForResult(distillationToolEventsFromError(error));
+    return {
+      references: referencesFromMcpToolEvents(toolEvents),
+      toolEvents,
+    };
+  }
+}
+
+async function appendOptionalMcpEvidence(params: {
+  id: string;
+  result: CoverEvidenceResult;
+  provider: DistillationProviderSetting;
+  model: string;
+  chatClient?: DistillationChatClient;
+  toolExecutor?: DistillationToolExecutor;
+}): Promise<CoverEvidenceResult> {
+  if (params.result.status !== "knowledge_ready" || !params.result.candidate) {
+    return params.result;
+  }
+
+  const mcpEvidence = await runOptionalMcpEvidence({
+    id: params.id,
+    candidate: params.result.candidate,
+    provider: params.provider,
+    model: params.model,
+    chatClient: params.chatClient,
+    toolExecutor: params.toolExecutor,
+  });
+  if (mcpEvidence.references.length === 0 && mcpEvidence.toolEvents.length === 0) {
+    return params.result;
+  }
+
+  return {
+    ...params.result,
+    references: mergeReferences(params.result.references, mcpEvidence.references),
+    toolEvents: [...params.result.toolEvents, ...mcpEvidence.toolEvents],
+  };
+}
+
 export async function runCoverEvidence(
   input: CoverEvidenceRunInput,
 ): Promise<CoverEvidenceRunResult> {
@@ -424,6 +537,14 @@ export async function runCoverEvidence(
               provider,
               model,
               forceRefreshEvidence: input.forceRefreshEvidence,
+              chatClient: input.chatClient,
+              toolExecutor: input.toolExecutor,
+            });
+            result = await appendOptionalMcpEvidence({
+              id,
+              result,
+              provider,
+              model,
               chatClient: input.chatClient,
               toolExecutor: input.toolExecutor,
             });

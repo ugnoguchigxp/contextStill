@@ -16,12 +16,7 @@ if (typeof (globalThis as any).Bun === "undefined") {
 }
 
 import { describe, expect, it } from "vitest";
-import { buildVibeReaderContext } from "../src/modules/distillation/distillation-reader.service.js";
 import { prepareMemoryReaderContent } from "../src/modules/memoryReader/domain.js";
-import type {
-  AgentDiffEntryForDistillation,
-  VibeMemoryForDistillation,
-} from "../src/modules/vibe-memory/distillation.repository.js";
 
 describe("prepareMemoryReaderContent", () => {
   it("should compress memory text by stripping markdown, minifying, and deduping phrases", () => {
@@ -54,61 +49,5 @@ describe("prepareMemoryReaderContent", () => {
     });
 
     expect(result).toBe(text);
-  });
-});
-
-describe("buildVibeReaderContext memoryReader integration", () => {
-  const memory = {
-    id: "memory-1",
-    sessionId: "session-1",
-    content: "Memory body",
-    memoryType: "chat",
-    dedupeKey: null,
-    embedding: null,
-    metadata: {},
-    createdAt: new Date("2026-05-19T00:00:00.000Z"),
-  } satisfies VibeMemoryForDistillation;
-
-  const diffEntry = {
-    id: "diff-1",
-    vibeMemoryId: "memory-1",
-    filePath: "src/example.ts",
-    diffHunk: "+++ src/example.ts\n+const value = 1\n",
-    changeType: "modify",
-    language: "typescript",
-    symbolName: null,
-    symbolKind: null,
-    signature: null,
-    startLine: null,
-    endLine: null,
-    metadata: {},
-    createdAt: new Date("2026-05-19T00:00:00.000Z"),
-    updatedAt: new Date("2026-05-19T00:00:00.000Z"),
-  } satisfies AgentDiffEntryForDistillation;
-
-  it("should dedupe identical diff segments in compressed mode", () => {
-    const context = buildVibeReaderContext({
-      memory,
-      diffEntries: [diffEntry, { ...diffEntry, id: "diff-2" }],
-      apply: false,
-      mode: "compressed",
-    });
-
-    expect(
-      context.segments.filter((segment) => segment.metadata?.filePath === "src/example.ts"),
-    ).toHaveLength(1);
-  });
-
-  it("should keep identical diff segments in original mode", () => {
-    const context = buildVibeReaderContext({
-      memory,
-      diffEntries: [diffEntry, { ...diffEntry, id: "diff-2" }],
-      apply: false,
-      mode: "original",
-    });
-
-    expect(
-      context.segments.filter((segment) => segment.metadata?.filePath === "src/example.ts"),
-    ).toHaveLength(2);
   });
 });

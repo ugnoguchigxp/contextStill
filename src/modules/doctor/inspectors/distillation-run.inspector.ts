@@ -1,14 +1,13 @@
-import { eq, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { groupedConfig } from "../../../config.js";
+import { APP_CONSTANTS } from "../../../constants.js";
 import { getDb } from "../../../db/index.js";
-import { syncStates } from "../../../db/schema.js";
 import type { DoctorDistillationHealth } from "../../../shared/schemas/doctor.schema.js";
 import { minutesSince, normalizeReasonCounts } from "../doctor.utils.js";
 import { inspectLaunchAgent } from "../launch-agent.util.js";
 
 export type DistillationRunInspectorOptions = {
   canQueryDb: boolean;
-  distillationTableAvailable: boolean;
 };
 
 type DistillationHealthReport = DoctorDistillationHealth;
@@ -18,14 +17,10 @@ type DistillationJobs = DistillationHealthReport["jobs"];
 export type DistillationRunInspectorConfig = {
   label: string;
   launchAgentLabel: string;
-  syncStateId: string;
-  runTableName: string;
-  subjectColumnName: string;
-  promptVersion: string;
   setupScript: string;
   runCommand: string;
   logPath: string;
-  jobSourceKind: "vibe_memory" | "source_fragment";
+  targetKind: "wiki_file" | "vibe_memory";
 };
 
 type DistillationRunsRow =
@@ -72,7 +67,7 @@ function toIsoString(value: Date | string | null | undefined): string | null {
   return value ? new Date(value).toISOString() : null;
 }
 
-function applyRunRow(runs: DistillationRuns, row: DistillationRunsRow, stateLastSyncedAt?: Date) {
+function applyRunRow(runs: DistillationRuns, row: DistillationRunsRow) {
   const lastRunAt = toIsoString(row?.last_run_at);
   const lastOkRunAt = toIsoString(row?.last_ok_run_at);
   runs.totalRuns = Number(row?.total_runs ?? 0);
@@ -81,102 +76,69 @@ function applyRunRow(runs: DistillationRuns, row: DistillationRunsRow, stateLast
   runs.outcomeKindCounts = normalizeReasonCounts(row?.outcome_kind_counts);
   runs.skippedRunReasons = normalizeReasonCounts(row?.skipped_run_reasons);
   runs.failedRuns = Number(row?.failed_runs ?? 0);
-  runs.lastRunAt = lastRunAt ?? stateLastSyncedAt?.toISOString() ?? null;
+  runs.lastRunAt = lastRunAt;
   runs.lastRunAgeMinutes = runs.lastRunAt ? minutesSince(runs.lastRunAt) : null;
   runs.lastOkRunAt = lastOkRunAt;
   runs.lastOkRunAgeMinutes = runs.lastOkRunAt ? minutesSince(runs.lastOkRunAt) : null;
 }
 
-async function loadDistillationRuns(config: DistillationRunInspectorConfig): Promise<{
-  row: DistillationRunsRow;
-  stateLastSyncedAt?: Date;
-}> {
+async function loadDomainDistillationRuns(
+  targetKind: "wiki_file" | "vibe_memory",
+): Promise<DistillationRunsRow> {
   const db = getDb();
-  const [state] = await db
-    .select()
-    .from(syncStates)
-    .where(eq(syncStates.id, config.syncStateId))
-    .limit(1);
   const result = await db.execute(sql`
     with latest as (
-      select distinct on (${sql.raw(config.subjectColumnName)})
+      select
         status,
-        metadata,
-        updated_at
-      from ${sql.raw(config.runTableName)}
-      where prompt_version = ${config.promptVersion}
-      order by ${sql.raw(config.subjectColumnName)}, updated_at desc, id desc
+        last_outcome_kind,
+        coalesce(completed_at, updated_at) as ended_at
+      from distillation_target_states
+      where distillation_version = ${APP_CONSTANTS.distillationTargetVersion}
+        and target_kind = ${targetKind}
+        and status in ('completed', 'skipped', 'failed')
+    ),
+    normalized as (
+      select
+        status,
+        case
+          when status = 'completed' and coalesce(last_outcome_kind, '') like 'knowledge_finalized%'
+            then 'knowledge_created'
+          when status = 'completed' then coalesce(last_outcome_kind, 'knowledge_created')
+          when status = 'failed' and coalesce(last_outcome_kind, '') = 'finalize_failed'
+            then 'processing_error'
+          when status = 'failed' then coalesce(last_outcome_kind, 'processing_error')
+          when status = 'skipped' and coalesce(last_outcome_kind, '') in ('no_candidate', 'missing_source')
+            then 'no_candidate'
+          when status = 'skipped' and coalesce(last_outcome_kind, '') = 'all_rejected'
+            then 'candidate_rejected'
+          when status = 'skipped' then coalesce(last_outcome_kind, 'candidate_rejected')
+          else status
+        end as reason,
+        ended_at
+      from latest
     ),
     skipped_reason_counts as (
       select
-        coalesce(metadata->>'reason', 'unknown') as reason,
+        reason,
         count(*)::int as run_count
-      from latest
+      from normalized
       where status = 'skipped'
       group by reason
     ),
     outcome_kind_counts as (
       select
-        coalesce(
-          metadata->>'outcomeKind',
-          case
-            when status = 'ok'
-              and coalesce((metadata->>'acceptedCandidateCount')::int, 0) > 0
-              and coalesce((metadata->>'dedupSkippedCount')::int, 0) >= coalesce((metadata->>'acceptedCandidateCount')::int, 0)
-              then 'knowledge_deduped'
-            when status = 'ok' then 'knowledge_created'
-            when status = 'skipped' and metadata->>'outcomeKind' = 'promotion_paused_backpressure'
-              then 'promotion_paused_backpressure'
-            when status = 'skipped' and metadata->>'outcomeKind' = 'batch_paused_circuit_breaker'
-              then 'batch_paused_circuit_breaker'
-            when status = 'skipped' and metadata->>'outcomeKind' = 'job_already_running'
-              then 'job_already_running'
-            when status = 'failed' and metadata->>'failureKind' = 'parse_or_repair'
-              then 'llm_unparseable'
-            when status = 'failed' and metadata->>'failureKind' = 'llm_call'
-              then 'llm_provider_error'
-            when status = 'failed' then 'processing_error'
-            when status = 'skipped'
-              and coalesce((metadata->>'extractionCandidateCount')::int, 0) = 0
-              then 'no_candidate'
-            when status = 'skipped'
-              and coalesce((metadata->>'verificationCandidateCount')::int, coalesce((metadata->>'rawCandidateCount')::int, 0)) = 0
-              then 'verification_no_candidate'
-            when status = 'skipped'
-              and coalesce((metadata->>'failedCandidateCount')::int, 0) > 0
-              and coalesce((metadata->>'rejectedInvalidEvidenceCount')::int, 0) > 0
-              and coalesce((metadata->>'rejectedLowQualityCount')::int, 0) = 0
-              then 'missing_verification_tool_evidence'
-            when status = 'skipped'
-              and coalesce((metadata->>'rejectedInvalidEvidenceCount')::int, 0) > 0
-              and coalesce((metadata->>'rejectedLowQualityCount')::int, 0) = 0
-              then 'missing_external_evidence'
-            when status = 'skipped'
-              and coalesce((metadata->>'rejectedLowQualityCount')::int, 0) > 0
-              and coalesce((metadata->>'rejectedInvalidEvidenceCount')::int, 0) = 0
-              then 'invalid_candidate'
-            when status = 'skipped'
-              and (
-                coalesce((metadata->>'rejectedLowQualityCount')::int, 0) > 0
-                or coalesce((metadata->>'rejectedInvalidEvidenceCount')::int, 0) > 0
-                or coalesce((metadata->>'failedCandidateCount')::int, 0) > 0
-              )
-              then 'mixed_candidate_rejections'
-            when status = 'skipped' then 'candidate_rejected'
-            else status
-          end
-        ) as reason,
+        reason,
         count(*)::int as run_count
-      from latest
+      from normalized
       group by reason
     )
     select
       count(*)::int as total_runs,
-      count(*) filter (where status = 'ok')::int as ok_runs,
+      count(*) filter (where status = 'completed')::int as ok_runs,
       count(*) filter (where status = 'skipped')::int as skipped_runs,
       count(*) filter (where status = 'failed')::int as failed_runs,
-      max(updated_at) as last_run_at,
-      max(updated_at) filter (where status = 'ok') as last_ok_run_at,
+      max(ended_at) as last_run_at,
+      max(ended_at) filter (where status = 'completed') as last_ok_run_at,
       coalesce((
         select jsonb_agg(
           jsonb_build_object('reason', reason, 'count', run_count)
@@ -191,30 +153,26 @@ async function loadDistillationRuns(config: DistillationRunInspectorConfig): Pro
         )
         from outcome_kind_counts
       ), '[]'::jsonb) as outcome_kind_counts
-    from latest
+    from normalized
   `);
-
-  return {
-    row: result.rows[0] as DistillationRunsRow,
-    stateLastSyncedAt: state?.lastSyncedAt ?? undefined,
-  };
+  return result.rows[0] as DistillationRunsRow;
 }
 
-async function loadDistillationJobs(
-  config: DistillationRunInspectorConfig,
+async function loadDomainDistillationJobs(
+  targetKind: "wiki_file" | "vibe_memory",
 ): Promise<DistillationJobs> {
   const db = getDb();
   const result = await db.execute(sql`
     select
-      count(*) filter (where status = 'queued')::int as queued,
+      count(*) filter (where status = 'pending')::int as queued,
       count(*) filter (where status = 'running')::int as running,
       count(*) filter (where status = 'paused')::int as paused,
       count(*) filter (where status = 'failed')::int as failed,
       max(updated_at) filter (where status = 'paused') as last_paused_at,
       (array_agg(last_error order by updated_at desc) filter (where last_error is not null))[1] as last_error
-    from distillation_jobs
-    where prompt_version = ${config.promptVersion}
-      and source_kind = ${config.jobSourceKind}
+    from distillation_target_states
+    where distillation_version = ${APP_CONSTANTS.distillationTargetVersion}
+      and target_kind = ${targetKind}
   `);
   const row = (result.rows[0] ?? {}) as Record<string, unknown>;
   return {
@@ -282,15 +240,15 @@ export async function inspectDistillationRunHealth(
   const runs = emptyRuns();
   let jobs = emptyJobs();
 
-  if (options.canQueryDb && options.distillationTableAvailable) {
+  if (options.canQueryDb) {
     try {
-      const { row, stateLastSyncedAt } = await loadDistillationRuns(config);
-      applyRunRow(runs, row, stateLastSyncedAt);
+      const row = await loadDomainDistillationRuns(config.targetKind);
+      applyRunRow(runs, row);
     } catch {
-      // Keep doctor resilient. Table/query failures are surfaced by the caller.
+      // Keep doctor resilient. Query failures are surfaced by caller-level DB checks.
     }
     try {
-      jobs = await loadDistillationJobs(config);
+      jobs = await loadDomainDistillationJobs(config.targetKind);
     } catch {
       jobs = emptyJobs();
     }

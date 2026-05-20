@@ -120,8 +120,6 @@ export type DoctorReport = {
     draftCount: number;
     oldestDraftAt: string | null;
     oldestDraftAgeMinutes: number | null;
-    draftFromSourceDistillationCount: number;
-    draftFromVibeDistillationCount: number;
     backlogThresholdCount: number;
     backlogThresholdAgeMinutes: number;
   };

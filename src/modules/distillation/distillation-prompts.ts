@@ -27,7 +27,7 @@ function commonSystemLines(
     "広すぎる・曖昧・履歴説明だけ・興味情報だけ・実行不能な candidate は除外する。",
     "不足情報を推測で補わない。",
     "持続的な rule / procedure がない場合は候補なしを返す。",
-    "tool call JSON、tool 名、検索クエリ、URL、locator だけの断片は knowledge ではない。title/body に search_web、fetch_content、read_source_segment、read_vibe_segment だけを書かない。",
+    "tool call JSON、tool 名、検索クエリ、URL だけの断片は knowledge ではない。title/body に search_web や fetch_content だけを書かない。",
     "body は最小 24文字の情報がないと取り扱わないので、次回の coding agent が判断または実行できる具体的な制約・手順をちゃんと作文しろ。十分に書けない場合は候補なしにする。",
     "title と body は可能な限り日本語で記述する。",
     "ただし識別子、API 名、コマンド、URL、エラーメッセージなどは必要に応じて原文を保持してよい。",

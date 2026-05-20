@@ -130,8 +130,6 @@ const validDoctorReport: DoctorReport = {
     draftCount: 0,
     oldestDraftAt: null,
     oldestDraftAgeMinutes: null,
-    draftFromSourceDistillationCount: 0,
-    draftFromVibeDistillationCount: 0,
     backlogThresholdCount: 50,
     backlogThresholdAgeMinutes: 4320,
   },

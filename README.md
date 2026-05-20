@@ -104,7 +104,7 @@ bun install
 docker compose up -d
 cp .env.example .env
 bun run db:migrate
-bun run init:project -- --distill-sources-apply --json
+bun run init:project -- --json
 ```
 
 `init:project` の出力には次アクション（`compile` / `doctor` / draft review）が含まれます。  
@@ -148,13 +148,12 @@ bun run sync:agent-logs
 Convert raw evidence into structured **rules** and **procedures** using a local LLM:
 
 ```bash
-# Distill from conversation logs (dry-run first)
-bun run distill:vibe-memory
-bun run distill:vibe-memory -- --apply
+# Run one distillation cycle (wiki-first auto selection)
+bun run distill:pipeline:once
 
-# Distill from wiki/documentation sources
-bun run distill:sources
-bun run distill:sources -- --apply
+# Or target kind explicitly
+bun run distill:pipeline -- --write --limit 1 --kind wiki
+bun run distill:pipeline -- --write --limit 1 --kind vibe
 ```
 
 The distillation pipeline:
@@ -239,13 +238,13 @@ For the full MCP tool contract, see [docs/mcp-tools.md](docs/mcp-tools.md).
 
 | Command | Description |
 |---|---|
-| `bun run init:project` | Run first-time onboarding flow (import, preset, optional distillation, smoke compile) |
+| `bun run init:project` | Run first-time onboarding flow (import, preset, smoke compile) |
 | `bun run compile` | Compile a context pack |
 | `bun run import:wiki <path>` | Import Markdown into sources |
 | `bun run import:markdown <file>` | Import a single Markdown file |
 | `bun run sync:agent-logs` | Sync Codex / Antigravity logs |
-| `bun run distill:vibe-memory` | Distill knowledge from conversations |
-| `bun run distill:sources` | Distill knowledge from wiki sources |
+| `bun run distill:pipeline:once` | Run one wiki-first distillation cycle |
+| `bun run distill:status` | Show distillation target queue and progress |
 | `bun run doctor` | Run system diagnostics |
 | `bun run backfill:knowledge-project-context` | Backfill project context on existing knowledge |
 
@@ -257,15 +256,13 @@ Use `init:project` on a fresh repository to connect the first-run path end-to-en
 # import wiki + seed global preset + smoke compile
 bun run init:project -- --wiki-root ./wiki/pages
 
-# include source distillation (dry-run)
-bun run init:project -- --wiki-root ./wiki/pages --distill-sources
-
-# include source distillation and persist generated draft knowledge
-bun run init:project -- --wiki-root ./wiki/pages --distill-sources-apply
+# refresh distillation targets and run one cycle
+bun run distill-target:refresh
+bun run distill:pipeline:once
 ```
 
 - Global preset entries are stored as `scope: global`.
-- Repo-specific knowledge stays in `scope: repo` through `import:wiki` / `distill:sources`.
+- Repo-specific knowledge stays in `scope: repo` through `import:wiki` / `distill:pipeline`.
 - If smoke compile returns no relevant items, the command prints concrete next actions.
 
 ### Examples
@@ -274,13 +271,12 @@ bun run init:project -- --wiki-root ./wiki/pages --distill-sources-apply
 # Compile with specific intent and JSON output
 bun run compile --goal "fix context compiler" --intent edit --json
 
-# Distill with limits
-bun run distill:vibe-memory -- --apply --limit 20
-bun run distill:vibe-memory -- --apply --session-id <id>
+# Distill one cycle (wiki-first)
+bun run distill:pipeline:once
 
-# Distill specific source
-bun run distill:sources -- --apply --uri /path/to/page.md
-bun run distill:sources -- --apply --source-kind wiki --limit 20
+# Distill explicit target kind
+bun run distill:pipeline -- --write --limit 1 --kind wiki
+bun run distill:pipeline -- --write --limit 1 --kind vibe
 ```
 
 ---
@@ -342,12 +338,7 @@ memory-router separates **evidence** (raw data) from **instructions** (distilled
 
 | Table | Description |
 |---|---|
-| `vibe_memory_distillation_runs` | Distillation history for conversation logs. |
-| `source_distillation_runs` | Distillation history for wiki sources. |
-| `distillation_jobs` | Restartable work queue for distillation runs. |
-| `distillation_read_events` | Segment read audit trail for agentic distillation. |
 | `distillation_evidence_cache` | Short-lived cache for external evidence lookup results. |
-| `distillation_candidates` | Candidate knowledge extracted by the legacy distillation flow. |
 | `distillation_target_states` | Target selection and lifecycle state for the staged distillation flow. |
 | `find_candidate_results` | Minimal candidate rows produced by `findCandidate`. |
 | `cover_evidence_results` | Evidence coverage results keyed by `find_candidate_results.id`. |
@@ -388,19 +379,33 @@ Default log locations:
 - Codex: `~/.codex/sessions` and `~/.codex/archived_sessions`
 - Antigravity: `~/.gemini/antigravity/brain`
 
-### Distillation Automation
+### Distillation Automation (Conveyor)
 
-Run distillation on a schedule:
+Run staged distillation (`selectDistillationTarget -> findCandidate -> coverEvidence -> finalizeDistille`) on a schedule:
 
 ```bash
-# Vibe memory distillation
-./scripts/setup-distillation-automation.sh install
-./scripts/setup-distillation-automation.sh load
+# One-time run
+bun run distill:pipeline:once
 
-# Source distillation
-./scripts/setup-source-distillation-automation.sh install
-./scripts/setup-source-distillation-automation.sh load
+# Install and load as macOS LaunchAgent
+./scripts/setup-distill-pipeline-automation.sh install
+./scripts/setup-distill-pipeline-automation.sh load
+./scripts/setup-distill-pipeline-automation.sh status
 ```
+
+Progress / recovery commands:
+
+```bash
+# Queue state + latest counters
+bun run distill-target:status
+bun run distill-progress
+
+# Recover stale or retryable targets
+bun run distill-target:release-stale
+bun run src/cli/distillation-target.ts release-paused
+```
+
+The pipeline LaunchAgent load step boots out legacy `vibe/source` distillation jobs to avoid duplicate execution.
 
 ---
 

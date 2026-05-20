@@ -88,7 +88,6 @@ export type GroupedConfig = {
   };
   distillation: {
     provider: DistillationProvider;
-    legacyEnabled: boolean;
     timeoutMs: number;
     lockTtlSeconds: number;
     lockFile: string;

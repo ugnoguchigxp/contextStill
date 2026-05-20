@@ -1,10 +1,5 @@
 import type { CandidateRecord } from "./repository.js";
-
-function stripJsonFence(text: string): string {
-  const trimmed = text.trim();
-  const match = trimmed.match(/^```(?:json)?\s*([\s\S]*?)```$/i);
-  return (match?.[1] ?? trimmed).trim();
-}
+import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
 
 function toCandidateRecord(value: unknown): CandidateRecord | null {
   if (!value || typeof value !== "object" || Array.isArray(value)) return null;
@@ -21,7 +16,7 @@ function toCandidateRecord(value: unknown): CandidateRecord | null {
 }
 
 export function parseStorageCandidatesFromLlmOutput(llmOutput: string): CandidateRecord[] {
-  const parsed = JSON.parse(stripJsonFence(llmOutput)) as { candidates?: unknown };
+  const parsed = parseLlmJsonLike(llmOutput)?.value as { candidates?: unknown } | null;
   if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.candidates)) {
     throw new Error("LLM output JSON must have candidates array");
   }

@@ -44,7 +44,6 @@ export const APP_CONSTANTS = {
   sourceDistillationAgenticReaderManualEnabled: true,
   sourceDistillationAgenticReaderAutoEnabled: false,
   vibeDistillationAgenticReaderManualEnabled: false,
-  distillationLegacyEnabled: false,
   distillationTimeoutMs: 300_000,
   distillationLockTtlSeconds: 7200,
   defaultTokenBudget: 3000,

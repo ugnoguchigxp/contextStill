@@ -1,6 +1,3 @@
-import { access, mkdir, open, unlink } from "node:fs/promises";
-import path from "node:path";
-import { spawn } from "node:child_process";
 import { groupedConfig } from "../../config.js";
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
 import { recordAuditLogSafe, auditEventTypes } from "../audit/audit-log.service.js";
@@ -9,16 +6,12 @@ import {
   runDistillationCompletion,
   resolveDistillationModel,
   type DistillationProviderSetting,
-  type DistillationMessage,
   type DistillationRuntimeToolDefinition,
   type DistillationToolExecutor,
 } from "../distillation/distillation-runtime.service.js";
 import { readVibeMemoryByTokenWindow } from "../memoryReader/reader.service.js";
 import { readFileDomain } from "../readFile/domain.js";
-import {
-  getDistillationTargetStateById,
-  type DistillationTargetStateRow,
-} from "../selectDistillationTarget/repository.js";
+import { getDistillationTargetStateById } from "../selectDistillationTarget/repository.js";
 import { parseStorageCandidatesFromLlmOutput } from "./parser.js";
 import {
   insertFindCandidateResult,
@@ -173,344 +166,6 @@ export function formatCliTextCandidates(candidates: CandidateRecord[]): string {
     .join("\n---\n");
 }
 
-function normalizeCandidateText(text: string): string {
-  return text.replace(/\s+/g, " ").trim().toLowerCase();
-}
-
-function candidateKey(candidate: CandidateRecord): string {
-  return `${normalizeCandidateText(candidate.title)}\n${normalizeCandidateText(candidate.content)}`;
-}
-
-function isLikelyLocalLlmConnectionError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  if (!message) return false;
-  const lowered = message.toLowerCase();
-  return (
-    lowered.includes("unable to connect") ||
-    lowered.includes("fetch failed") ||
-    lowered.includes("econnrefused") ||
-    lowered.includes("enotfound") ||
-    lowered.includes("ehostunreach") ||
-    lowered.includes("econnreset") ||
-    lowered.includes("connection refused") ||
-    lowered.includes("couldn't connect")
-  );
-}
-
-async function resolveLocalLlmPython(): Promise<{ python: string; localLlmRoot: string }> {
-  const localLlmRoot = path.resolve(process.cwd(), "../local-llm");
-  const preferred = path.resolve(localLlmRoot, ".venv/bin/python");
-  try {
-    await access(preferred);
-    return { python: preferred, localLlmRoot };
-  } catch {
-    return { python: "python3", localLlmRoot };
-  }
-}
-
-function pidIsAlive(pid: number): boolean {
-  try {
-    process.kill(pid, 0);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function sleep(ms: number): Promise<void> {
-  await new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-async function listLocalLlmPids(localLlmRoot: string): Promise<number[]> {
-  return new Promise<number[]>((resolve, reject) => {
-    const child = spawn("ps", ["-ax", "-o", "pid=", "-o", "command="], {
-      stdio: "pipe",
-    });
-    let stdout = "";
-    let stderr = "";
-
-    child.stdout.on("data", (chunk: Buffer | string) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk: Buffer | string) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", (error) => {
-      reject(error);
-    });
-    child.on("close", (code) => {
-      if (code !== 0) {
-        reject(new Error(`failed to list processes: ${stderr.trim() || `exit code ${code}`}`));
-        return;
-      }
-      const pids: number[] = [];
-      const lines = stdout.split(/\r?\n/);
-      for (const line of lines) {
-        const trimmed = line.trim();
-        if (!trimmed) continue;
-        const match = trimmed.match(/^(\d+)\s+(.+)$/);
-        if (!match) continue;
-        const pid = Number(match[1]);
-        const command = match[2];
-        if (!Number.isInteger(pid) || pid < 1) continue;
-        if (pid === process.pid) continue;
-        if (!command.includes(localLlmRoot)) continue;
-        if (
-          command.includes("run_openai_api.sh") ||
-          command.includes("api.main:app") ||
-          command.includes("main.py") ||
-          command.includes("scripts/gemma4") ||
-          command.includes("scripts/qwen") ||
-          command.includes("scripts/bonsai")
-        ) {
-          pids.push(pid);
-        }
-      }
-      resolve([...new Set(pids)]);
-    });
-  });
-}
-
-async function terminateExistingLocalLlmProcesses(localLlmRoot: string): Promise<number[]> {
-  const pids = await listLocalLlmPids(localLlmRoot);
-  if (pids.length === 0) return [];
-
-  for (const pid of pids) {
-    try {
-      process.kill(pid, "SIGTERM");
-    } catch {}
-  }
-
-  const graceDeadline = Date.now() + 5000;
-  while (Date.now() < graceDeadline) {
-    const alive = pids.filter((pid) => pidIsAlive(pid));
-    if (alive.length === 0) break;
-    await sleep(200);
-  }
-
-  const remaining = pids.filter((pid) => pidIsAlive(pid));
-  for (const pid of remaining) {
-    try {
-      process.kill(pid, "SIGKILL");
-    } catch {}
-  }
-  return pids;
-}
-
-async function withLocalLlmFallbackLock<T>(task: () => Promise<T>): Promise<T> {
-  const lockPath = path.resolve(process.cwd(), "logs/find-candidate-local-llm.lock");
-  await mkdir(path.dirname(lockPath), { recursive: true });
-  let handle: Awaited<ReturnType<typeof open>> | null = null;
-  try {
-    handle = await open(lockPath, "wx");
-  } catch (error) {
-    const code =
-      error && typeof error === "object" && "code" in error
-        ? (error as { code?: string }).code
-        : "";
-    if (code === "EEXIST") {
-      throw new Error("local-llm fallback is already running");
-    }
-    throw error;
-  }
-
-  try {
-    return await task();
-  } finally {
-    try {
-      await handle?.close();
-    } catch {}
-    try {
-      await unlink(lockPath);
-    } catch {}
-  }
-}
-
-async function runLocalLlmCliFallback(params: {
-  messages: DistillationMessage[];
-  model: string;
-  maxTokens: number;
-}): Promise<string> {
-  const { python, localLlmRoot } = await resolveLocalLlmPython();
-  const script = [
-    "import json",
-    "import sys",
-    "from core.model import MLXModelManager",
-    "from core.chat_engine import ChatEngine",
-    "payload = json.load(sys.stdin)",
-    "manager = MLXModelManager()",
-    "engine = ChatEngine(model_manager=manager, verbose=False, max_tool_rounds=0)",
-    "content = engine.run_chat(",
-    "    messages=payload.get('messages', []),",
-    "    model=payload.get('model'),",
-    "    max_tokens=int(payload.get('max_tokens', 1024)),",
-    "    temperature=float(payload.get('temperature', 0.0)),",
-    "    tools=[],",
-    ")",
-    "print(json.dumps({'content': content}, ensure_ascii=False))",
-  ].join("\n");
-
-  const timeoutMs = Math.max(60_000, groupedConfig.distillation.timeoutMs);
-  const payload = JSON.stringify({
-    model: params.model,
-    max_tokens: params.maxTokens,
-    temperature: 0,
-    messages: params.messages,
-  });
-
-  return new Promise<string>((resolve, reject) => {
-    const child = spawn(python, ["-c", script], {
-      cwd: localLlmRoot,
-      env: {
-        ...process.env,
-        PYTHONPATH: process.env.PYTHONPATH
-          ? `${localLlmRoot}${path.delimiter}${process.env.PYTHONPATH}`
-          : localLlmRoot,
-      },
-      stdio: "pipe",
-    });
-
-    let stdout = "";
-    let stderr = "";
-    let settled = false;
-    const timer = setTimeout(() => {
-      if (settled) return;
-      settled = true;
-      child.kill("SIGKILL");
-      reject(new Error(`local-llm CLI fallback timed out after ${timeoutMs}ms`));
-    }, timeoutMs);
-
-    child.stdout.on("data", (chunk: Buffer | string) => {
-      stdout += chunk.toString();
-    });
-    child.stderr.on("data", (chunk: Buffer | string) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", (error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      reject(error);
-    });
-    child.on("close", (code) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      if (code !== 0) {
-        const detail = stderr.trim() || stdout.trim() || `exit code ${code ?? "unknown"}`;
-        reject(new Error(`local-llm CLI fallback failed: ${detail}`));
-        return;
-      }
-      const lines = stdout
-        .trim()
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter(Boolean);
-      for (let index = lines.length - 1; index >= 0; index -= 1) {
-        try {
-          const parsed = JSON.parse(lines[index]) as { content?: unknown };
-          if (typeof parsed.content === "string") {
-            resolve(parsed.content);
-            return;
-          }
-        } catch {}
-      }
-      reject(new Error("local-llm CLI fallback returned no parsable content"));
-    });
-
-    child.stdin.write(payload);
-    child.stdin.end();
-  });
-}
-
-function fallbackUserPrompt(content: string): string {
-  return [
-    "以下は対象本文です。候補選定だけを実施してください。",
-    "1候補=1知識（1ルール or 1手続き）を厳守してください。",
-    "文書全体をそのまま1候補にすることは禁止です。",
-    "最終出力は JSON のみで、次の形だけを返してください:",
-    '{"candidates":[{"title":"...","content":"..."}]}',
-    '候補が無い場合は {"candidates":[]} を返してください。',
-    "",
-    content,
-  ].join("\n");
-}
-
-async function runFindCandidateWithLocalCliFallback(params: {
-  target: DistillationTargetStateRow;
-  input: FindCandidateInput;
-  callerMode: FindCandidateCallerMode;
-  model: string;
-  readLimit: number;
-}): Promise<{
-  candidates: CandidateRecord[];
-  readRanges: Array<{ from: number; toExclusive: number }>;
-}> {
-  const { localLlmRoot } = await resolveLocalLlmPython();
-  return withLocalLlmFallbackLock(async () => {
-    await terminateExistingLocalLlmProcesses(localLlmRoot);
-
-    const readRanges: Array<{ from: number; toExclusive: number }> = [];
-    const selectedCandidates: CandidateRecord[] = [];
-    const candidateSet = new Set<string>();
-    let cursor = Math.max(0, Math.floor(params.input.fromToken ?? 0));
-    const tokenWindow = Math.min(readTokens(params.input), 400);
-    const fallbackMaxOutputTokens = Math.min(groupedConfig.vibeDistillation.maxOutputTokens, 1200);
-    const maxCandidates = desiredCandidateLimit();
-
-    for (let index = 0; index < params.readLimit; index += 1) {
-      const result =
-        params.target.targetKind === "wiki_file"
-          ? await readFileDomain({
-              path: params.target.targetKey,
-              fromToken: cursor,
-              readTokens: tokenWindow,
-              minify: params.input.wikiMinify ?? true,
-            })
-          : await readVibeMemoryByTokenWindow({
-              vibeMemoryId: params.target.targetKey,
-              fromToken: cursor,
-              readTokens: tokenWindow,
-              mode: params.input.memoryReaderMode ?? "compressed",
-            });
-
-      readRanges.push({ from: result.from, toExclusive: result.toExclusive });
-      const chunk = result.content.trim();
-      if (chunk) {
-        const chunkRawOutput = (
-          await runLocalLlmCliFallback({
-            model: params.model,
-            maxTokens: fallbackMaxOutputTokens,
-            messages: [
-              { role: "system", content: systemPrompt() },
-              { role: "user", content: fallbackUserPrompt(chunk) },
-            ],
-          })
-        ).trim();
-        const chunkCandidates = parseStorageCandidatesFromLlmOutput(chunkRawOutput);
-        for (const candidate of chunkCandidates) {
-          const key = candidateKey(candidate);
-          if (candidateSet.has(key)) continue;
-          candidateSet.add(key);
-          selectedCandidates.push(candidate);
-          if (selectedCandidates.length >= maxCandidates) break;
-        }
-      }
-      const progressed = result.toExclusive > cursor;
-      cursor = result.toExclusive;
-      if (selectedCandidates.length >= maxCandidates) break;
-      if (!progressed || result.returnedTokens <= 0 || result.toExclusive >= result.totalTokens) {
-        break;
-      }
-    }
-
-    return {
-      candidates: selectedCandidates,
-      readRanges,
-    };
-  });
-}
-
 export async function runFindCandidate(input: FindCandidateInput): Promise<FindCandidateResult> {
   const targetStateId = input.targetStateId.trim();
   if (!targetStateId) {
@@ -620,53 +275,39 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
   try {
     let llmOutput = "";
     let candidates: CandidateRecord[] = [];
-    let usedLocalCliFallback = false;
 
-    try {
-      const completion = await runDistillationCompletion(
-        {
-          model,
-          maxTokens: candidateOutputMaxTokens(),
-          messages: [
-            { role: "system", content: systemPrompt() },
-            { role: "user", content: userPrompt() },
-          ],
-        },
-        {
-          providerSetting: provider,
-          toolDefinitions: [toolDefinition],
-          toolExecutor,
-          enableTools: true,
-          maxToolRounds: readLimit,
-          requireToolCall: true,
-          requireToolCallReminder: [
-            "まだ本文を読んでいません。",
-            "まず tool を呼び出して本文 content を読んでください。",
-            "その後に候補のみを返してください。",
-          ],
-          blankResponseReminder: [
-            '空の応答です。{"candidates":[]} または {"candidates":[{"title":"...","content":"..."}]} を返してください。',
-          ],
-        },
-      );
-
-      llmOutput = completion.content.trim();
-      candidates = parseStorageCandidatesFromLlmOutput(llmOutput);
-    } catch (error) {
-      if (provider !== "local-llm" || !isLikelyLocalLlmConnectionError(error)) {
-        throw error;
-      }
-      const fallback = await runFindCandidateWithLocalCliFallback({
-        target,
-        input,
-        callerMode,
+    const completion = await runDistillationCompletion(
+      {
         model,
-        readLimit,
-      });
-      candidates = fallback.candidates;
-      readLog.splice(0, readLog.length, ...fallback.readRanges);
-      usedLocalCliFallback = true;
+        maxTokens: candidateOutputMaxTokens(),
+        messages: [
+          { role: "system", content: systemPrompt() },
+          { role: "user", content: userPrompt() },
+        ],
+      },
+      {
+        providerSetting: provider,
+        toolDefinitions: [toolDefinition],
+        toolExecutor,
+        enableTools: true,
+        maxToolRounds: readLimit,
+        requireToolCall: true,
+        requireToolCallReminder: [
+          "まだ本文を読んでいません。",
+          "まず提供された reader tool を呼び出して本文 content を読んでください。",
+          "その後に候補のみを返してください。",
+        ],
+        blankResponseReminder: [
+          '空の応答です。{"candidates":[]} または {"candidates":[{"title":"...","content":"..."}]} を返してください。',
+        ],
+      },
+    );
+
+    if (readLog.length === 0) {
+      throw new Error("findCandidate reader tool was not used");
     }
+    llmOutput = completion.content.trim();
+    candidates = parseStorageCandidatesFromLlmOutput(llmOutput);
 
     candidates = candidates.slice(0, candidateLimit);
 
@@ -677,7 +318,6 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         targetStateId: target.id,
         readCount: readLog.length,
         readRanges: readLog,
-        localCliFallback: usedLocalCliFallback,
       },
     });
 
@@ -689,7 +329,6 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
           targetStateId: target.id,
           candidateCount: candidates.length,
           readCount: readLog.length,
-          localCliFallback: usedLocalCliFallback,
         },
       });
 
@@ -726,7 +365,6 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         targetStateId: target.id,
         candidateCount: candidates.length,
         insertedCount: insertedIds.length,
-        localCliFallback: usedLocalCliFallback,
       },
     });
 
@@ -765,7 +403,7 @@ export async function runFindCandidateSmoke(
     receivedInput: input,
     nextContracts: [
       "findCandidate runtime is implemented via runFindCandidate",
-      "coverEvidence/finalizeDistille contracts remain pending",
+      "coverEvidence and finalizeDistille runtimes are available as downstream stages",
       "distill-domain smoke will be replaced after all domains migrate",
     ],
   };

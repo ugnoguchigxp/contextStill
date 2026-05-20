@@ -207,7 +207,7 @@ describe("distillation runtime", () => {
     expect(prompt).toContain("search_web");
     expect(prompt).toContain("fetch_content");
     expect(prompt).toContain("tool call JSON");
-    expect(prompt).toContain("title/body に search_web、fetch_content、read_source_segment");
+    expect(prompt).toContain("title/body に search_web や fetch_content");
     expect(prompt).toContain("可能な限り日本語");
     expect(prompt).not.toMatch(/\bfact\b/i);
     expect(prompt).not.toMatch(/\blesson\b/i);
