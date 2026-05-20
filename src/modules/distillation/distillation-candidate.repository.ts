@@ -70,14 +70,12 @@ function conflictTarget(source: DistillationCandidateSourceRef) {
     return [
       distillationCandidates.vibeMemoryId,
       distillationCandidates.promptVersion,
-      distillationCandidates.inputHash,
       distillationCandidates.candidateIndex,
     ];
   }
   return [
     distillationCandidates.sourceFragmentId,
     distillationCandidates.promptVersion,
-    distillationCandidates.inputHash,
     distillationCandidates.candidateIndex,
   ];
 }
@@ -104,7 +102,6 @@ export function distillationCandidateRowToCandidate(
 
 export async function upsertExtractedDistillationCandidates(params: {
   source: DistillationCandidateSourceRef;
-  inputHash: string;
   promptVersion: string;
   model: string;
   candidates: DistilledKnowledgeCandidate[];
@@ -118,7 +115,6 @@ export async function upsertExtractedDistillationCandidates(params: {
     .values(
       params.candidates.map((candidate, candidateIndex) => ({
         ...sourceValues,
-        inputHash: params.inputHash,
         promptVersion: params.promptVersion,
         model: params.model,
         candidateIndex,
@@ -142,21 +138,18 @@ export async function upsertExtractedDistillationCandidates(params: {
 
   return listUnevaluatedDistillationCandidates({
     source: params.source,
-    inputHash: params.inputHash,
     promptVersion: params.promptVersion,
   });
 }
 
 export async function listDistillationCandidatesForInput(params: {
   source: DistillationCandidateSourceRef;
-  inputHash: string;
   promptVersion: string;
   statuses?: DistillationCandidateStatus[];
   limit?: number;
 }): Promise<DistillationCandidateRow[]> {
   const filters = [
     ...sourceFilters(params.source),
-    eq(distillationCandidates.inputHash, params.inputHash),
     eq(distillationCandidates.promptVersion, params.promptVersion),
   ];
   if (params.statuses && params.statuses.length > 0) {
@@ -174,7 +167,6 @@ export async function listDistillationCandidatesForInput(params: {
 
 export function listUnevaluatedDistillationCandidates(params: {
   source: DistillationCandidateSourceRef;
-  inputHash: string;
   promptVersion: string;
   limit?: number;
 }): Promise<DistillationCandidateRow[]> {
@@ -183,14 +175,12 @@ export function listUnevaluatedDistillationCandidates(params: {
 
 async function listUnevaluatedDistillationCandidatesAfterStaleReset(params: {
   source: DistillationCandidateSourceRef;
-  inputHash: string;
   promptVersion: string;
   limit?: number;
 }): Promise<DistillationCandidateRow[]> {
   await resetStaleEvaluatingDistillationCandidates(params);
   return listDistillationCandidatesForInput({
     source: params.source,
-    inputHash: params.inputHash,
     promptVersion: params.promptVersion,
     statuses: ["extracted", "failed"],
     limit: params.limit,
@@ -199,7 +189,6 @@ async function listUnevaluatedDistillationCandidatesAfterStaleReset(params: {
 
 async function resetStaleEvaluatingDistillationCandidates(params: {
   source: DistillationCandidateSourceRef;
-  inputHash: string;
   promptVersion: string;
 }): Promise<void> {
   const staleAfterMs = Math.max(60_000, groupedConfig.distillation.timeoutMs * 2);
@@ -220,7 +209,6 @@ async function resetStaleEvaluatingDistillationCandidates(params: {
     .where(
       and(
         ...sourceFilters(params.source),
-        eq(distillationCandidates.inputHash, params.inputHash),
         eq(distillationCandidates.promptVersion, params.promptVersion),
         eq(distillationCandidates.status, "evaluating"),
         lt(distillationCandidates.updatedAt, staleBefore),
@@ -230,13 +218,11 @@ async function resetStaleEvaluatingDistillationCandidates(params: {
 
 export function listPromotionReadyDistillationCandidates(params: {
   source: DistillationCandidateSourceRef;
-  inputHash: string;
   promptVersion: string;
   limit?: number;
 }): Promise<DistillationCandidateRow[]> {
   return listDistillationCandidatesForInput({
     source: params.source,
-    inputHash: params.inputHash,
     promptVersion: params.promptVersion,
     statuses: ["verified"],
     limit: params.limit,
@@ -302,7 +288,6 @@ export async function updateDistillationCandidateEvaluation(params: {
 
 export async function attachDistillationCandidateRun(params: {
   source: DistillationCandidateSourceRef;
-  inputHash: string;
   promptVersion: string;
   vibeMemoryRunId?: string | null;
   sourceRunId?: string | null;
@@ -322,7 +307,6 @@ export async function attachDistillationCandidateRun(params: {
     .where(
       and(
         ...sourceFilters(params.source),
-        eq(distillationCandidates.inputHash, params.inputHash),
         eq(distillationCandidates.promptVersion, params.promptVersion),
       ),
     );

@@ -41,7 +41,6 @@ describeDb("cli compile e2e", () => {
   test("bun run compile --json returns parseable context pack JSON", async () => {
     await upsertKnowledgeFromSource({
       sourceUri: "file:///cli/knowledge.md",
-      contentHash: "cli-knowledge-hash",
       type: "rule",
       status: "active",
       scope: "repo",
@@ -52,7 +51,6 @@ describeDb("cli compile e2e", () => {
       sourceKind: "wiki",
       uri: "file:///cli/source.md",
       title: "CLI source",
-      contentHash: "cli-source-hash",
       body: "cli compile goal source",
     });
 
@@ -84,7 +82,6 @@ describeDb("cli compile e2e", () => {
   test("compile accepts includeDraft/files/tokenBudget flags", async () => {
     await upsertKnowledgeFromSource({
       sourceUri: "file:///cli/draft-proc.md",
-      contentHash: "cli-draft-proc-hash",
       type: "procedure",
       status: "draft",
       scope: "repo",

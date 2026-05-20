@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { groupedConfig } from "../../config.js";
 import {
   type CompileErrorKind,
@@ -17,11 +16,7 @@ import { recordKnowledgeCompileSelectionSafe } from "../knowledge/knowledge-valu
 import { retrieveKnowledge } from "../knowledge/knowledge.service.js";
 import { retrieveSources } from "../sources/source-retrieval.service.js";
 import { agenticRefine } from "./agentic-refine.service.js";
-import {
-  getCompileFreshnessMarkers,
-  insertCompileRun,
-  insertContextPackItems,
-} from "./context-compiler.repository.js";
+import { insertCompileRun, insertContextPackItems } from "./context-compiler.repository.js";
 import { renderContextPackMarkdown } from "./pack-renderer.js";
 import { normalizeRepoKey, normalizeRepoPath } from "./query-context.js";
 import { type Rankable, rankAndDedupe } from "./ranking.service.js";
@@ -73,11 +68,14 @@ function isWhitespaceCodePoint(codePoint: number): boolean {
 
 function isCjkCodePoint(codePoint: number): boolean {
   return (
-    (codePoint >= 0x3040 && codePoint <= 0x30ff) ||
-    (codePoint >= 0x31f0 && codePoint <= 0x31ff) ||
-    (codePoint >= 0x3400 && codePoint <= 0x4dbf) ||
-    (codePoint >= 0x4e00 && codePoint <= 0x9fff) ||
-    (codePoint >= 0xf900 && codePoint <= 0xfaff)
+    (codePoint >= 0x3040 && codePoint <= 0x30ff) || // Hiragana and Katakana
+    (codePoint >= 0x31f0 && codePoint <= 0x31ff) || // Katakana phonetic extensions
+    (codePoint >= 0x3400 && codePoint <= 0x4dbf) || // CJK Unified Ideographs Extension A
+    (codePoint >= 0x4e00 && codePoint <= 0x9fff) || // CJK Unified Ideographs
+    (codePoint >= 0xf900 && codePoint <= 0xfaff) || // CJK Compatibility Ideographs
+    (codePoint >= 0xff61 && codePoint <= 0xff9f) || // Half-width Katakana
+    (codePoint >= 0xac00 && codePoint <= 0xd7af) || // Hangul Syllables
+    (codePoint >= 0x3130 && codePoint <= 0x318f) // Hangul Compatibility Jamo
   );
 }
 
@@ -132,7 +130,7 @@ function truncateForBudget(content: string, maxTokens: number): string {
 function scoreSourceOverlap(text: string, candidateText: string): number {
   const baseTokens = text
     .toLowerCase()
-    .split(/[^a-z0-9_\u3040-\u30ff\u4e00-\u9faf]+/g)
+    .split(/[^a-z0-9_\u3040-\u30ff\u4e00-\u9fff\uff61-\uff9f]+/g)
     .filter((token) => token.length >= 3)
     .slice(0, 32);
   if (baseTokens.length === 0) return 0;
@@ -327,30 +325,6 @@ type CompileErrorSignals = {
   files: string[];
 };
 
-type CompileCacheKeyDraft = {
-  version: string;
-  repoPath: string | null;
-  repoKey: string | null;
-  retrievalMode: RetrievalMode;
-  tokenBudget: number;
-  includeDraft: boolean;
-  intent: CompileInput["intent"];
-  taskType: CompileInput["intent"];
-  goalHash: string;
-  filesHash: string;
-  changeTypesHash: string;
-  technologiesHash: string;
-  freshness: {
-    knowledgeActiveUpdatedAt: string | null;
-    knowledgeDraftUpdatedAt: string | null;
-    sourceCorpusUpdatedAt: string | null;
-  };
-};
-
-function hashValue(value: unknown): string {
-  return crypto.createHash("sha256").update(JSON.stringify(value)).digest("hex");
-}
-
 function normalizeErrorText(value: string | undefined): string {
   return value ? value.trim().toLowerCase() : "";
 }
@@ -385,10 +359,11 @@ function extractErrorKeywords(input: CompileInput): string[] {
   const keywords = new Set<string>();
   for (const text of rawTexts) {
     if (!text) continue;
-    for (const token of text.split(/[^a-z0-9_\-./\u3040-\u30ff\u4e00-\u9faf]+/g)) {
+    for (const token of text.split(/[^a-z0-9_\-./\u3040-\u30ff\u4e00-\u9fff\uff61-\uff9f]+/g)) {
       const normalized = token.trim();
       if (!normalized) continue;
-      if (normalized.length < 3 && !/[\u3040-\u30ff\u4e00-\u9faf]/.test(normalized)) continue;
+      if (normalized.length < 3 && !/[\u3040-\u30ff\u4e00-\u9fff\uff61-\uff9f]/.test(normalized))
+        continue;
       if (stopWords.has(normalized)) continue;
       keywords.add(normalized);
       if (keywords.size >= 32) return [...keywords];
@@ -423,45 +398,6 @@ function countMatches(haystack: string, needles: string[]): number {
   return hits;
 }
 
-function buildCompileCacheKeyDraft(params: {
-  input: CompileInput;
-  retrievalMode: RetrievalMode;
-  tokenBudget: number;
-  repoPath?: string;
-  repoKey?: string;
-  freshness: {
-    knowledgeActiveUpdatedAt: string | null;
-    knowledgeDraftUpdatedAt: string | null;
-    sourceCorpusUpdatedAt: string | null;
-  };
-}): CompileCacheKeyDraft {
-  const normalizedFiles = [...new Set((params.input.files ?? []).map((item) => item.trim()))]
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
-  const changeTypes = [...new Set((params.input.changeTypes ?? []).map((item) => item.trim()))]
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
-  const technologies = [...new Set((params.input.technologies ?? []).map((item) => item.trim()))]
-    .filter(Boolean)
-    .sort((a, b) => a.localeCompare(b));
-
-  return {
-    version: "v1-exact-normalized",
-    repoPath: params.repoPath ?? null,
-    repoKey: params.repoKey ?? null,
-    retrievalMode: params.retrievalMode,
-    tokenBudget: params.tokenBudget,
-    includeDraft: params.input.includeDraft,
-    intent: params.input.intent,
-    taskType: params.input.intent,
-    goalHash: hashValue(params.input.goal.trim()),
-    filesHash: hashValue(normalizedFiles),
-    changeTypesHash: hashValue(changeTypes),
-    technologiesHash: hashValue(technologies),
-    freshness: params.freshness,
-  };
-}
-
 export async function compileContextPack(rawInput: unknown): Promise<{
   pack: ContextPack;
   markdown: string;
@@ -473,22 +409,10 @@ export async function compileContextPack(rawInput: unknown): Promise<{
   const normalizedRepoPath = normalizeRepoPath(input.repoPath);
   const normalizedRepoKey = normalizeRepoKey(input.repoPath);
 
-  const [knowledge, sourceContext, freshnessMarkers] = await Promise.all([
+  const [knowledge, sourceContext] = await Promise.all([
     retrieveKnowledge(input, { retrievalMode }),
     retrieveSources(input, { retrievalMode }),
-    getCompileFreshnessMarkers({
-      repoPath: normalizedRepoPath,
-      repoKey: normalizedRepoKey,
-    }),
   ]);
-  const cacheKeyDraft = buildCompileCacheKeyDraft({
-    input,
-    retrievalMode,
-    tokenBudget,
-    repoPath: normalizedRepoPath,
-    repoKey: normalizedRepoKey,
-    freshness: freshnessMarkers,
-  });
   const errorSignals = buildCompileErrorSignals(input);
 
   const degradedReasons = [...knowledge.degradedReasons, ...sourceContext.degradedReasons];
@@ -632,12 +556,7 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     goal: input.goal,
     intent: input.intent,
     repoPath: normalizedRepoPath ?? input.repoPath,
-    input: {
-      ...input,
-      _compileDiagnostics: {
-        cacheKeyDraft,
-      },
-    } as unknown as Record<string, unknown>,
+    input: input as unknown as Record<string, unknown>,
     retrievalMode,
     status,
     degradedReasons,
@@ -712,7 +631,6 @@ export async function compileContextPack(rawInput: unknown): Promise<{
         compileDurationMs,
         agenticUsed: agenticResult.agenticUsed,
         agenticReasoning: agenticResult.reasoning,
-        cacheKeyDraft,
         errorContext: {
           errorKind: errorSignals.kind ?? null,
           keywordCount: errorSignals.keywords.length,

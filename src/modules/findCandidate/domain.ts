@@ -21,9 +21,7 @@ import {
 } from "../selectDistillationTarget/repository.js";
 import { parseStorageCandidatesFromLlmOutput } from "./parser.js";
 import {
-  candidateHash,
   insertFindCandidateResult,
-  selectFindCandidateResultByHash,
   type CandidateOrigin,
   type CandidateRecord,
 } from "./repository.js";
@@ -45,14 +43,9 @@ export type FindCandidateResult = {
   targetStateId: string;
   targetKind: "wiki_file" | "vibe_memory";
   targetKey: string;
-  inputHash: string;
   callerMode: FindCandidateCallerMode;
-  provider: DistillationProviderSetting;
-  model: string;
-  rawOutput: string;
   candidates: CandidateRecord[];
   insertedIds?: string[];
-  existingIds?: string[];
   readRanges: Array<{ from: number; toExclusive: number }>;
 };
 
@@ -173,11 +166,19 @@ function userPrompt(): string {
   ].join("\n");
 }
 
-function formatCliTextCandidates(candidates: CandidateRecord[]): string {
+export function formatCliTextCandidates(candidates: CandidateRecord[]): string {
   if (candidates.length === 0) return "NO_CANDIDATE";
   return candidates
     .map((candidate) => `TITLE: ${candidate.title}\nCONTENT:\n${candidate.content}`)
     .join("\n---\n");
+}
+
+function normalizeCandidateText(text: string): string {
+  return text.replace(/\s+/g, " ").trim().toLowerCase();
+}
+
+function candidateKey(candidate: CandidateRecord): string {
+  return `${normalizeCandidateText(candidate.title)}\n${normalizeCandidateText(candidate.content)}`;
 }
 
 function isLikelyLocalLlmConnectionError(error: unknown): boolean {
@@ -442,7 +443,6 @@ async function runFindCandidateWithLocalCliFallback(params: {
   model: string;
   readLimit: number;
 }): Promise<{
-  rawOutput: string;
   candidates: CandidateRecord[];
   readRanges: Array<{ from: number; toExclusive: number }>;
 }> {
@@ -489,9 +489,9 @@ async function runFindCandidateWithLocalCliFallback(params: {
         ).trim();
         const chunkCandidates = parseStorageCandidatesFromLlmOutput(chunkRawOutput);
         for (const candidate of chunkCandidates) {
-          const hash = candidateHash(candidate);
-          if (candidateSet.has(hash)) continue;
-          candidateSet.add(hash);
+          const key = candidateKey(candidate);
+          if (candidateSet.has(key)) continue;
+          candidateSet.add(key);
           selectedCandidates.push(candidate);
           if (selectedCandidates.length >= maxCandidates) break;
         }
@@ -504,13 +504,7 @@ async function runFindCandidateWithLocalCliFallback(params: {
       }
     }
 
-    const rawOutput =
-      params.callerMode === "storage"
-        ? JSON.stringify({ candidates: selectedCandidates })
-        : formatCliTextCandidates(selectedCandidates);
-
     return {
-      rawOutput,
       candidates: selectedCandidates,
       readRanges,
     };
@@ -624,7 +618,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
   });
 
   try {
-    let rawOutput = "";
+    let llmOutput = "";
     let candidates: CandidateRecord[] = [];
     let usedLocalCliFallback = false;
 
@@ -656,8 +650,8 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         },
       );
 
-      rawOutput = completion.content.trim();
-      candidates = parseStorageCandidatesFromLlmOutput(rawOutput);
+      llmOutput = completion.content.trim();
+      candidates = parseStorageCandidatesFromLlmOutput(llmOutput);
     } catch (error) {
       if (provider !== "local-llm" || !isLikelyLocalLlmConnectionError(error)) {
         throw error;
@@ -669,14 +663,12 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         model,
         readLimit,
       });
-      rawOutput = fallback.rawOutput;
       candidates = fallback.candidates;
       readLog.splice(0, readLog.length, ...fallback.readRanges);
       usedLocalCliFallback = true;
     }
 
     candidates = candidates.slice(0, candidateLimit);
-    const canonicalCliOutput = formatCliTextCandidates(candidates);
 
     await recordAuditLogSafe({
       eventType: auditEventTypes.findCandidateReaderUsed,
@@ -705,53 +697,26 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         targetStateId: target.id,
         targetKind: target.targetKind,
         targetKey: target.targetKey,
-        inputHash: target.inputHash,
         callerMode,
-        provider,
-        model,
-        rawOutput: canonicalCliOutput,
         candidates,
         readRanges: readLog,
       };
     }
 
     const origin: CandidateOrigin = {
-      targetStateId: target.id,
-      targetKind: target.targetKind,
-      targetKey: target.targetKey,
-      sourceUri: target.sourceUri,
-      inputHash: target.inputHash,
       readRanges: readLog,
     };
 
     const insertedIds: string[] = [];
-    const existingIds: string[] = [];
 
     for (const [index, candidate] of candidates.entries()) {
-      const hash = candidateHash(candidate);
-      const existing = await selectFindCandidateResultByHash({
+      const saved = await insertFindCandidateResult({
         targetStateId: target.id,
-        inputHash: target.inputHash,
-        hash,
-      });
-      if (existing) {
-        existingIds.push(existing.id);
-        continue;
-      }
-      const inserted = await insertFindCandidateResult({
-        targetStateId: target.id,
-        targetKind: target.targetKind,
-        targetKey: target.targetKey,
-        sourceUri: target.sourceUri,
-        inputHash: target.inputHash,
-        provider,
-        model,
         candidateIndex: index,
         candidate,
         origin,
-        rawOutput,
       });
-      insertedIds.push(inserted.id);
+      insertedIds.push(saved.id);
     }
 
     await recordAuditLogSafe({
@@ -761,7 +726,6 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         targetStateId: target.id,
         candidateCount: candidates.length,
         insertedCount: insertedIds.length,
-        existingCount: existingIds.length,
         localCliFallback: usedLocalCliFallback,
       },
     });
@@ -770,14 +734,9 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
       targetStateId: target.id,
       targetKind: target.targetKind,
       targetKey: target.targetKey,
-      inputHash: target.inputHash,
       callerMode,
-      provider,
-      model,
-      rawOutput,
       candidates,
       insertedIds,
-      existingIds,
       readRanges: readLog,
     };
   } catch (error) {

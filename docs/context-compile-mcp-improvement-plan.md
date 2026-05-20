@@ -124,8 +124,8 @@ initial_instructions
    - stale / deprecated / low-confidence は明示的に下げる。
 
 4. source update の整合性を直す。
-   - `sources.uri` を実質 unique key とし、同じ URI は contentHash 更新として扱う。
-   - contentHash が変わった時は source row を更新し、fragments を replace する。
+   - `sources.uri` を unique key とし、同じ URI は同じ source row として更新する。
+   - body が変わった時は source row を更新し、fragments を replace する。
    - `reindex` は存在しない source を削除または deprecated/stale 扱いにする。
    - folder rename/delete 時に DB source URI も更新/削除する。
 
@@ -150,7 +150,7 @@ initial_instructions
 
 1. `knowledge_source_links` から source refs を引く。
    - overlap 推定は fallback に下げる。
-   - source fragment URI、locator、heading、contentHash を pack item に持たせる。
+   - source fragment URI、locator、heading を pack item に持たせる。
 
 2. pack に `evidence` / `provenance` を追加する。
    - item ごとに `sourceRefs`, `sourceKind`, `sourceUri`, `locator`, `confidence` を返す。

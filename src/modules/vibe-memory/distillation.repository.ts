@@ -115,7 +115,6 @@ export async function upsertVibeMemoryDistillationRun(params: {
   candidateCount: number;
   knowledgeIds: string[];
   error?: string | null;
-  inputHash: string;
   promptVersion: string;
   model: string;
   toolEvents?: DistillationToolResult[];
@@ -129,7 +128,6 @@ export async function upsertVibeMemoryDistillationRun(params: {
       candidateCount: params.candidateCount,
       knowledgeIds: params.knowledgeIds,
       error: params.error ?? null,
-      inputHash: params.inputHash,
       promptVersion: params.promptVersion,
       model: params.model,
       toolEvents: params.toolEvents ?? [],
@@ -137,11 +135,7 @@ export async function upsertVibeMemoryDistillationRun(params: {
       updatedAt: new Date(),
     })
     .onConflictDoUpdate({
-      target: [
-        vibeMemoryDistillationRuns.vibeMemoryId,
-        vibeMemoryDistillationRuns.promptVersion,
-        vibeMemoryDistillationRuns.inputHash,
-      ],
+      target: [vibeMemoryDistillationRuns.vibeMemoryId, vibeMemoryDistillationRuns.promptVersion],
       set: {
         status: params.status,
         candidateCount: params.candidateCount,

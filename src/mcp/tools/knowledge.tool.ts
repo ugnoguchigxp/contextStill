@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import {
   listKnowledgeItems,
@@ -136,7 +135,6 @@ export const registerKnowledgeTool: ToolEntry = {
   },
   handler: async (args) => {
     const parsed = registerKnowledgeInputSchema.parse(args ?? {});
-    const contentHash = createHash("sha256").update(parsed.body).digest("hex");
 
     // 共通重複チェック（MCP 登録時は厳しめ: 0.95）
     const dedupResult = await checkKnowledgeDuplicate(parsed.title, parsed.body, {
@@ -157,7 +155,6 @@ export const registerKnowledgeTool: ToolEntry = {
     const id = await registerKnowledgeFromMarkdown({
       ...parsed,
       sourceUri: "agent://register",
-      contentHash,
     });
     return {
       content: [{ type: "text", text: `Knowledge registered successfully with ID: ${id}` }],

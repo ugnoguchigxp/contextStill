@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
 import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
@@ -84,7 +83,6 @@ export async function importMarkdownDirectory(rootDir: string): Promise<Markdown
       continue;
     }
 
-    const hash = createHash("sha256").update(content).digest("hex");
     const { frontmatter, body } = parseFrontmatter(content);
     const inferredTitle = firstMarkdownHeading(body) ?? path.basename(filePath, ".md");
 
@@ -93,7 +91,6 @@ export async function importMarkdownDirectory(rootDir: string): Promise<Markdown
       uri: filePath,
       title: frontmatter.title ?? inferredTitle,
       body: content,
-      contentHash: hash,
       metadata: {
         importedAt: new Date().toISOString(),
         repoPath: workspaceRepoPath,

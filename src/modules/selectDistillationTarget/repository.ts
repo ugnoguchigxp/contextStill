@@ -52,7 +52,6 @@ function targetIdentity(row: DistillationTargetStateRow): Record<string, unknown
     id: row.id,
     targetKind: row.targetKind,
     targetKey: row.targetKey,
-    inputHash: row.inputHash,
     distillationVersion: row.distillationVersion,
     status: row.status,
   };
@@ -88,7 +87,6 @@ export async function upsertDistillationTargetState(params: {
       targetKind: params.candidate.targetKind,
       targetKey: params.candidate.targetKey,
       sourceUri: params.candidate.sourceUri,
-      inputHash: params.candidate.inputHash,
       distillationVersion,
       status: "pending",
       phase: "selected",
@@ -101,7 +99,6 @@ export async function upsertDistillationTargetState(params: {
       target: [
         distillationTargetStates.targetKind,
         distillationTargetStates.targetKey,
-        distillationTargetStates.inputHash,
         distillationTargetStates.distillationVersion,
       ],
       set: {

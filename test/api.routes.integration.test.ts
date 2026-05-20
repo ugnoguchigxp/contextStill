@@ -45,7 +45,6 @@ describeDb("api route integration", () => {
   test("GET /api/knowledge returns persisted items", async () => {
     await upsertKnowledgeFromSource({
       sourceUri: "file:///integration/knowledge.md",
-      contentHash: "integration-knowledge-hash",
       type: "rule",
       status: "active",
       scope: "repo",

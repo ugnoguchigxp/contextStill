@@ -94,7 +94,6 @@ export const doctorReportSchema = z.object({
     durationMsAvg: z.number().nonnegative().nullable(),
     lastRunAt: z.string().datetime().nullable(),
     lastRunAgeMinutes: z.number().nonnegative().nullable(),
-    lastCacheKeyDraft: z.string().nullable(),
     freshnessThresholdMinutes: z.number().int().positive(),
     degradedRateThreshold: z.number().min(0).max(1),
   }),

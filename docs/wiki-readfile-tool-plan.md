@@ -28,7 +28,7 @@ MCP ツール名: `read_file`
 - `toExclusive`
 - `returnedTokens`
 
-`contentHash`、`path`、`stats`、`runs`、`compressed/original` ラベルは返さない。呼び出し元は自分が指定した読み取り条件を知っているため、余計なメタデータは増やさない。
+本文識別用の派生値、`path`、`stats`、`runs`、`compressed/original` ラベルは返さない。呼び出し元は自分が指定した読み取り条件を知っているため、余計なメタデータは増やさない。
 
 ## 読み取りモード
 

@@ -107,7 +107,6 @@ describe("distillation candidate workflow", () => {
       modelClient,
       model: "test-model",
       maxTokens: 500,
-      inputHash: "hash-1",
       promptVersion: "prompt-v1",
     });
 
@@ -170,7 +169,6 @@ describe("distillation candidate workflow", () => {
       modelClient,
       model: "test-model",
       maxTokens: 500,
-      inputHash: "hash-1",
       promptVersion: "prompt-v1",
     });
 
@@ -244,7 +242,6 @@ describe("distillation candidate workflow", () => {
       modelClient,
       model: "test-model",
       maxTokens: 500,
-      inputHash: "hash-1",
       promptVersion: "prompt-v1",
       readerContext: {
         enabled: true,
@@ -294,7 +291,6 @@ describe("distillation candidate workflow", () => {
       modelClient,
       model: "test-model",
       maxTokens: 500,
-      inputHash: "hash-1",
       promptVersion: "prompt-v1",
       readerContext: {
         enabled: true,
@@ -306,7 +302,6 @@ describe("distillation candidate workflow", () => {
             locator: "locator-1",
             label: "Stored segment",
             content: "Stored segment body for verification",
-            contentHash: "hash",
             charCount: 36,
           },
         ],
@@ -336,7 +331,6 @@ describe("distillation candidate workflow", () => {
       modelClient,
       model: "test-model",
       maxTokens: 500,
-      inputHash: "hash-1",
       promptVersion: "prompt-v1",
     });
 
@@ -376,7 +370,6 @@ describe("distillation candidate workflow", () => {
       modelClient,
       model: "test-model",
       maxTokens: 500,
-      inputHash: "hash-1",
       promptVersion: "prompt-v1",
     });
 
@@ -438,7 +431,6 @@ describe("distillation candidate workflow", () => {
       modelClient,
       model: "test-model",
       maxTokens: 500,
-      inputHash: "hash-1",
       promptVersion: "prompt-v1",
     });
 
@@ -487,7 +479,6 @@ describe("distillation candidate workflow", () => {
         modelClient,
         model: "test-model",
         maxTokens: 500,
-        inputHash: "hash-1",
         promptVersion: "prompt-v1",
       });
     } catch (error) {
@@ -525,7 +516,6 @@ describe("distillation candidate workflow", () => {
         modelClient,
         model: "test-model",
         maxTokens: 500,
-        inputHash: "hash-1",
         promptVersion: "prompt-v1",
       }),
     ).rejects.toThrow("already claimed");

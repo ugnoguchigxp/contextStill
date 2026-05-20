@@ -344,7 +344,13 @@ memory-router separates **evidence** (raw data) from **instructions** (distilled
 |---|---|
 | `vibe_memory_distillation_runs` | Distillation history for conversation logs. |
 | `source_distillation_runs` | Distillation history for wiki sources. |
-| `source_distillation_evidence` | External evidence fetched during distillation. |
+| `distillation_jobs` | Restartable work queue for distillation runs. |
+| `distillation_read_events` | Segment read audit trail for agentic distillation. |
+| `distillation_evidence_cache` | Short-lived cache for external evidence lookup results. |
+| `distillation_candidates` | Candidate knowledge extracted by the legacy distillation flow. |
+| `distillation_target_states` | Target selection and lifecycle state for the staged distillation flow. |
+| `find_candidate_results` | Minimal candidate rows produced by `findCandidate`. |
+| `cover_evidence_results` | Evidence coverage results keyed by `find_candidate_results.id`. |
 | `context_compile_runs` | Compile execution history with diagnostics. |
 | `context_pack_items` | Items selected for each compile run. |
 | `sync_states` | Agent log sync cursors and timestamps. |

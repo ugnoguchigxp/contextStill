@@ -1,10 +1,9 @@
-import { createHash } from "node:crypto";
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
-import { asc, inArray } from "drizzle-orm";
+import { asc } from "drizzle-orm";
 import { groupedConfig } from "../../config.js";
 import { db } from "../../db/index.js";
-import { agentDiffEntries, vibeMemories } from "../../db/schema.js";
+import { vibeMemories } from "../../db/schema.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import {
   selectDistillationTarget,
@@ -21,10 +20,6 @@ import {
   markMissingWikiTargetsSkipped,
   upsertDistillationTargetState,
 } from "./repository.js";
-
-function sha256(value: string): string {
-  return createHash("sha256").update(value).digest("hex");
-}
 
 function toPosixPath(value: string): string {
   return value.split(path.sep).join("/");
@@ -62,7 +57,6 @@ export async function collectWikiFileTargetCandidates(
       targetKind: "wiki_file",
       targetKey,
       sourceUri: absolutePath,
-      inputHash: sha256(content),
       status: "pending",
       sortKey: targetKey.toLowerCase(),
     });
@@ -87,40 +81,11 @@ export async function collectVibeMemoryTargetCandidates(
 
   if (memories.length === 0) return [];
 
-  const diffs = await db
-    .select()
-    .from(agentDiffEntries)
-    .where(
-      inArray(
-        agentDiffEntries.vibeMemoryId,
-        memories.map((memory) => memory.id),
-      ),
-    )
-    .orderBy(
-      asc(agentDiffEntries.vibeMemoryId),
-      asc(agentDiffEntries.createdAt),
-      asc(agentDiffEntries.filePath),
-      asc(agentDiffEntries.id),
-    );
-
-  const diffsByMemoryId = new Map<string, typeof diffs>();
-  for (const diff of diffs) {
-    const current = diffsByMemoryId.get(diff.vibeMemoryId) ?? [];
-    current.push(diff);
-    diffsByMemoryId.set(diff.vibeMemoryId, current);
-  }
-
   return memories.map((memory) => {
-    const memoryDiffs = diffsByMemoryId.get(memory.id) ?? [];
-    const hashInput = [
-      memory.content,
-      ...memoryDiffs.map((diff) => `${diff.filePath}\n${diff.diffHunk}`),
-    ].join("\n\n--- agent diff ---\n\n");
     return {
       targetKind: "vibe_memory",
       targetKey: memory.id,
       sourceUri: `vibe_memory:${memory.id}`,
-      inputHash: sha256(hashInput),
       status: "pending",
       sortKey: memory.id,
       createdAt: memory.createdAt,
@@ -137,13 +102,11 @@ export async function applyPersistedDistillationTargetStatuses(params: {
     distillationVersion: params.distillationVersion,
   });
   const stateByTarget = new Map(
-    states.map((state) => [`${state.targetKind}\0${state.targetKey}\0${state.inputHash}`, state]),
+    states.map((state) => [`${state.targetKind}\0${state.targetKey}`, state]),
   );
 
   return params.candidates.map((candidate) => {
-    const state = stateByTarget.get(
-      `${candidate.targetKind}\0${candidate.targetKey}\0${candidate.inputHash}`,
-    );
+    const state = stateByTarget.get(`${candidate.targetKind}\0${candidate.targetKey}`);
     return state
       ? {
           ...candidate,

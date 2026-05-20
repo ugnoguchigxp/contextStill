@@ -303,7 +303,7 @@ export const sourcesRouter = new Hono()
     if (existing) {
       return c.json({ message: "Page already exists", slug: payload.slug }, 409);
     }
-    const { path, hash } = await writePage(
+    const { path } = await writePage(
       groupedConfig.sourceContent.root,
       payload.slug,
       payload.title,
@@ -324,11 +324,10 @@ export const sourcesRouter = new Hono()
       uri: savedPage.path,
       title: savedPage.title,
       body: savedPage.body,
-      contentHash: hash,
       metadata: savedPage.meta,
       actor: "user",
     });
-    return c.json({ ok: true, slug: savedPage.slug, hash, commit });
+    return c.json({ ok: true, slug: savedPage.slug, commit });
   })
   .put("/pages/*", zValidator("json", updatePageSchema), async (c) => {
     await ensureSourceRuntime();
@@ -350,7 +349,7 @@ export const sourcesRouter = new Hono()
     }
     const title = payload.title ?? existing.title;
     const meta = payload.meta ?? existing.meta;
-    const { path, hash } = await writePage(
+    const { path } = await writePage(
       groupedConfig.sourceContent.root,
       targetSlug,
       title,
@@ -383,11 +382,10 @@ export const sourcesRouter = new Hono()
       uri: savedPage.path,
       title: savedPage.title,
       body: savedPage.body,
-      contentHash: hash,
       metadata: savedPage.meta,
       actor: "user",
     });
-    return c.json({ ok: true, slug: savedPage.slug, hash, commit });
+    return c.json({ ok: true, slug: savedPage.slug, commit });
   })
   .delete("/pages/*", async (c) => {
     await ensureSourceRuntime();

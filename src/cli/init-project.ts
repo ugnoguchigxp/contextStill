@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import path from "node:path";
 import { closeDbPool } from "../db/index.js";
 import { compileContextPack } from "../modules/context-compiler/context-compiler.service.js";
@@ -211,10 +210,6 @@ function parseArgs(args: string[]): CliOptions {
   return options;
 }
 
-function sha256(value: string): string {
-  return crypto.createHash("sha256").update(value).digest("hex");
-}
-
 async function seedGlobalPreset(presetName: CliOptions["presetName"]): Promise<{
   presetName: string;
   insertedOrUpdated: number;
@@ -226,10 +221,8 @@ async function seedGlobalPreset(presetName: CliOptions["presetName"]): Promise<{
 
   for (const entry of entries) {
     const sourceUri = `preset://memory-router/${presetName}/${entry.id}`;
-    const contentHash = sha256(`${entry.title}\n${entry.body}`);
     const knowledgeId = await upsertKnowledgeFromSource({
       sourceUri,
-      contentHash,
       type: entry.type,
       status: "active",
       scope: "global",

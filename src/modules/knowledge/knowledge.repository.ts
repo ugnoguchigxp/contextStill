@@ -38,7 +38,6 @@ export type KnowledgeSearchResult = {
 
 export type UpsertKnowledgeFromSourceParams = {
   sourceUri: string;
-  contentHash: string;
   type: KnowledgeItem["type"];
   status: KnowledgeStatus;
   scope: KnowledgeItem["scope"];
@@ -332,17 +331,11 @@ export async function upsertKnowledgeFromSource(
   params: UpsertKnowledgeFromSourceParams,
 ): Promise<string> {
   const existing = await db.query.knowledgeItems.findFirst({
-    where: and(
-      sql`${knowledgeItems.metadata} ->> 'sourceUri' = ${params.sourceUri}`,
-      sql`${knowledgeItems.metadata} ->> 'contentHash' = ${params.contentHash}`,
-    ),
+    where: sql`${knowledgeItems.metadata} ->> 'sourceUri' = ${params.sourceUri}`,
   });
 
   const scoped = buildKnowledgeScopeMetadata(params.sourceUri, params.metadata);
-  const metadata = {
-    ...scoped.metadata,
-    contentHash: params.contentHash,
-  };
+  const metadata = scoped.metadata;
 
   if (existing) {
     const now = new Date();

@@ -1,9 +1,14 @@
-import { createHash } from "node:crypto";
-import { and, eq } from "drizzle-orm";
+import { eq } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { findCandidateResults } from "../../db/schema.js";
+import { distillationTargetStates, findCandidateResults } from "../../db/schema.js";
 
-export type FindCandidateResultRow = typeof findCandidateResults.$inferSelect;
+type FindCandidateBaseRow = typeof findCandidateResults.$inferSelect;
+
+export type FindCandidateResultRow = FindCandidateBaseRow & {
+  targetKind: "wiki_file" | "vibe_memory";
+  targetKey: string;
+  sourceUri: string;
+};
 
 export type CandidateRecord = {
   title: string;
@@ -11,96 +16,65 @@ export type CandidateRecord = {
 };
 
 export type CandidateOrigin = {
-  targetStateId: string;
-  targetKind: "wiki_file" | "vibe_memory";
-  targetKey: string;
-  sourceUri: string;
-  inputHash: string;
   readRanges: Array<{
     from: number;
     toExclusive: number;
   }>;
 };
 
-function normalizeForHash(text: string): string {
-  return text.replace(/\s+/g, " ").trim().toLowerCase();
-}
-
-export function candidateHash(candidate: CandidateRecord): string {
-  const normalized = `${normalizeForHash(candidate.title)}\n${normalizeForHash(candidate.content)}`;
-  return createHash("sha256").update(normalized).digest("hex");
-}
-
-export async function selectFindCandidateResultByHash(params: {
-  targetStateId: string;
-  inputHash: string;
-  hash: string;
-}): Promise<FindCandidateResultRow | null> {
+export async function getFindCandidateResultById(
+  id: string,
+): Promise<FindCandidateResultRow | null> {
   const [row] = await db
-    .select()
+    .select({
+      id: findCandidateResults.id,
+      targetStateId: findCandidateResults.targetStateId,
+      candidateIndex: findCandidateResults.candidateIndex,
+      title: findCandidateResults.title,
+      content: findCandidateResults.content,
+      origin: findCandidateResults.origin,
+      status: findCandidateResults.status,
+      createdAt: findCandidateResults.createdAt,
+      updatedAt: findCandidateResults.updatedAt,
+      targetKind: distillationTargetStates.targetKind,
+      targetKey: distillationTargetStates.targetKey,
+      sourceUri: distillationTargetStates.sourceUri,
+    })
     .from(findCandidateResults)
-    .where(
-      and(
-        eq(findCandidateResults.targetStateId, params.targetStateId),
-        eq(findCandidateResults.inputHash, params.inputHash),
-        eq(findCandidateResults.candidateHash, params.hash),
-      ),
+    .innerJoin(
+      distillationTargetStates,
+      eq(distillationTargetStates.id, findCandidateResults.targetStateId),
     )
+    .where(eq(findCandidateResults.id, id))
     .limit(1);
-  return row ?? null;
+  if (!row) return null;
+  return {
+    ...row,
+    targetKind: row.targetKind as "wiki_file" | "vibe_memory",
+  };
 }
 
 export async function insertFindCandidateResult(params: {
   targetStateId: string;
-  targetKind: "wiki_file" | "vibe_memory";
-  targetKey: string;
-  sourceUri: string;
-  inputHash: string;
-  provider: string;
-  model: string;
   candidateIndex: number;
   candidate: CandidateRecord;
   origin: CandidateOrigin;
-  rawOutput: string;
-}): Promise<FindCandidateResultRow> {
-  const hash = candidateHash(params.candidate);
+}): Promise<FindCandidateBaseRow> {
   const [row] = await db
     .insert(findCandidateResults)
     .values({
       targetStateId: params.targetStateId,
-      targetKind: params.targetKind,
-      targetKey: params.targetKey,
-      sourceUri: params.sourceUri,
-      inputHash: params.inputHash,
-      provider: params.provider,
-      model: params.model,
       candidateIndex: params.candidateIndex,
-      candidateHash: hash,
       title: params.candidate.title,
       content: params.candidate.content,
       origin: params.origin,
-      rawOutput: params.rawOutput,
       status: "selected",
-      metadata: {},
       updatedAt: new Date(),
-    })
-    .onConflictDoNothing({
-      target: [
-        findCandidateResults.targetStateId,
-        findCandidateResults.inputHash,
-        findCandidateResults.candidateHash,
-      ],
     })
     .returning();
 
-  if (row) return row;
-  const existing = await selectFindCandidateResultByHash({
-    targetStateId: params.targetStateId,
-    inputHash: params.inputHash,
-    hash,
-  });
-  if (!existing) {
-    throw new Error("failed to insert or find existing find_candidate_results row");
+  if (!row) {
+    throw new Error("failed to save find_candidate_results row");
   }
-  return existing;
+  return row;
 }

@@ -29,6 +29,7 @@
     "memory-reader:smoke": "bun run src/cli/memory-reader-smoke.ts",
     "select-target:smoke": "bun run src/cli/select-distillation-target-smoke.ts",
     "find-candidate": "bun run src/cli/find-candidate.ts",
+    "cover-evidence": "bun run src/cli/cover-evidence.ts",
     "distill-target": "bun run src/cli/distillation-target.ts",
     "distill-target:status": "bun run src/cli/distillation-target.ts status",
     "distill-target:refresh": "bun run src/cli/distillation-target.ts refresh",

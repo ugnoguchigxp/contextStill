@@ -1,5 +1,4 @@
 import { execFile } from "node:child_process";
-import crypto from "node:crypto";
 import fs from "node:fs/promises";
 import path from "node:path";
 import { promisify } from "node:util";
@@ -224,15 +223,12 @@ export const writePage = async (
   body: string,
   meta: Record<string, unknown>,
   options: { relativePath?: string } = {},
-): Promise<{ path: string; hash: string }> => {
+): Promise<{ path: string }> => {
   const targetPath = resolveWritePath(contentRoot, slug, options.relativePath);
   await fs.mkdir(path.dirname(targetPath), { recursive: true });
   const output = serializeMarkdown(title, body, meta);
   await fs.writeFile(targetPath, output, "utf8");
-  return {
-    path: targetPath,
-    hash: crypto.createHash("sha256").update(output).digest("hex"),
-  };
+  return { path: targetPath };
 };
 
 const removeEmptyParentDirectories = async (

@@ -41,23 +41,19 @@ runner から受け取る入力は selected target 1 件だけにする。
 
 ```ts
 type FindCandidateInput = {
-  targetStateId?: string;
-  targetKind: "wiki_file" | "vibe_memory";
-  targetKey: string;
-  sourceUri: string;
-  inputHash: string;
+  targetStateId: string;
   provider?: "local-llm" | "azure-openai" | "bedrock" | "auto";
   callerMode?: "cli_text" | "storage";
 };
 ```
 
-`targetStateId` は storage mode で必須にする。CLI text mode では次 target の dry run や、明示 target の確認にも使える。
+`targetKind`、`targetKey`、`sourceUri` は `distillation_target_states` から引く。入力側で同じ識別情報を重複して渡さない。
 
 ## Reader Tool
 
 LLM に渡す tool は target kind で 1 つだけにする。
 
-LLM に見せる tool result は本文 content の文字列だけにする。`targetKey`、`sourceUri`、`inputHash`、token range、total token、read count などのメタ情報は LLM に渡さない。
+LLM に見せる tool result は本文 content の文字列だけにする。`targetKey`、`sourceUri`、token range、total token、read count などのメタ情報は LLM に渡さない。
 
 target や読み取り範囲は orchestrator が内部で保持する。候補保存時の `origin` は、この内部 read log から付与する。
 
@@ -124,8 +120,8 @@ LLM の出力形式は呼び元で切り替える。
 
 CLI text mode:
 
-- LLM には labeled text を返させる。
-- CLI は原則として LLM 出力をそのまま stdout に出す。
+- LLM には storage mode と同じ最小 JSON を返させる。
+- CLI は parse 後の候補リストを人間向け text に整形して stdout に出す。
 - 人間が見て妥当性を確認するための経路なので、DB 保存用の parse は必須にしない。
 
 候補あり:
@@ -179,28 +175,16 @@ storage mode の parse 失敗時は aggressive repair しない。1 回だけ「
 
 ```ts
 type FindCandidateResult = {
+  targetStateId: string;
   targetKind: "wiki_file" | "vibe_memory";
   targetKey: string;
-  inputHash: string;
+  callerMode: "cli_text" | "storage";
   candidates: Array<{
     title: string;
     content: string;
-    origin: {
-      targetStateId?: string;
-      targetKind: "wiki_file" | "vibe_memory";
-      targetKey: string;
-      sourceUri: string;
-      inputHash: string;
-      readRanges: Array<{
-        from: number;
-        toExclusive: number;
-      }>;
-    };
   }>;
-  rawOutput: string;
-  provider: string;
-  model: string;
-  callerMode: "cli_text" | "storage";
+  insertedIds?: string[];
+  readRanges: Array<{ from: number; toExclusive: number }>;
 };
 ```
 
@@ -237,26 +221,13 @@ storage mode は保存結果を JSON で返す。
 
 - `id`
 - `target_state_id`
-- `target_kind`
-- `target_key`
-- `source_uri`
-- `input_hash`
-- `provider`
-- `model`
 - `candidate_index`
-- `candidate_hash`
 - `title`
 - `content`
 - `origin`
-- `raw_output`
 - `status`: `selected` / `parse_failed`
-- `metadata`
 - `created_at`
 - `updated_at`
-
-unique 制約:
-
-- `(target_state_id, input_hash, candidate_hash)`
 
 この table は次工程 `coverEvidence` の入力になる。`distillation_candidates` への昇格は、候補評価・型判定が入る段階で行う。
 
@@ -264,14 +235,9 @@ unique 制約:
 
 保存する出自:
 
-- `target_state_id`
-- `target_kind`
-- `target_key`
-- `source_uri`
-- `input_hash`
 - `origin.readRanges`
 
-`target_*` は「どのドキュメントまたは memory から出た候補か」を示す。`origin.readRanges` は、複数回の部分読みのうち候補に関係した token window を示す。
+target の identity は `target_state_id` 経由で `distillation_target_states` から参照する。`origin.readRanges` は、複数回の部分読みのうち候補に関係した token window を示す。
 
 これらは LLM に渡す情報ではない。LLM は content だけを見て候補を選ぶ。orchestrator が、実際に読ませた target と read window を候補に後付けする。
 
@@ -280,12 +246,10 @@ unique 制約:
 保存手順:
 
 1. LLM output を JSON parse する。
-2. 各 candidate について `candidate_hash = sha256(normalized title + "\n" + normalized content)` を計算する。
-3. `(target_state_id, input_hash, candidate_hash)` で事前に select する。
-4. 既存行があれば insert しない。
-5. 既存行がなければ insert する。
+2. candidate の順序を `candidate_index` として固定する。
+3. 各 candidate を新しい `find_candidate_results.id` で insert する。
 
-重複排除は保存境界で行う。LLM 出力本文を正規表現で大きく書き換えて重複扱いにしない。
+重複排除はこの段階では行わない。LLM 出力本文を正規表現で大きく書き換えて重複扱いにしない。
 
 ## Provider 切替
 
@@ -420,8 +384,8 @@ payload は target identity、provider、candidate count、read count、read ran
 
 - text mode は保存しない。
 - storage mode は candidate を保存する。
-- 保存前に `(target_state_id, input_hash, candidate_hash)` を select し、なければ insert する。
-- 同じ target/input/title/content の再実行で重複しない。
+- 保存時は各 candidate に新しい id を割り当てる。
+- 同じ target の再実行で候補内容が変わっても既存 `cover_evidence_results` を stale にしない。
 
 ### Phase 5: CLI
 

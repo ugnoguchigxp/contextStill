@@ -8,9 +8,7 @@ import { syncStates } from "../../db/schema.js";
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import {
-  contentHash,
   evidenceCacheFreshAfter,
-  evidenceCacheKey,
   findDistillationEvidenceCache,
   upsertDistillationEvidenceCache,
 } from "./distillation-evidence-cache.repository.js";
@@ -785,18 +783,24 @@ const searchProviderHandlers: Record<
   duckduckgo: searchWithDuckDuckGo,
 };
 
-async function searchWeb(query: unknown): Promise<DistillationToolResult> {
+async function searchWeb(
+  query: unknown,
+  options: { forceRefreshEvidence?: boolean } = {},
+): Promise<DistillationToolResult> {
   if (typeof query !== "string" || !query.trim()) {
     throw new Error("query must be a non-empty string");
   }
 
   const normalizedQuery = query.trim();
-  const queryHash = evidenceCacheKey(normalizedQuery);
-  const cached = await findDistillationEvidenceCache({
-    toolName: "search_web",
-    queryHash,
-    freshAfter: evidenceCacheFreshAfter(groupedConfig.distillationTools.evidenceCacheTtlSeconds),
-  }).catch(() => null);
+  const cached = options.forceRefreshEvidence
+    ? null
+    : await findDistillationEvidenceCache({
+        toolName: "search_web",
+        queryText: normalizedQuery,
+        freshAfter: evidenceCacheFreshAfter(
+          groupedConfig.distillationTools.evidenceCacheTtlSeconds,
+        ),
+      }).catch(() => null);
   if (cached?.excerpt) {
     return {
       callId: "",
@@ -937,15 +941,14 @@ async function searchWeb(query: unknown): Promise<DistillationToolResult> {
       cooldownApplied: hasCooldownUntil,
       cooldownUntil: hasCooldownUntil ? cooldownUntil : undefined,
       braveError: providerErrorsSummary.brave,
+      forceRefreshEvidence: options.forceRefreshEvidence || undefined,
     },
   };
   await upsertDistillationEvidenceCache({
     toolName: "search_web",
-    queryHash,
     queryText: normalizedQuery,
     ok: true,
     excerpt: result.content,
-    contentHash: contentHash(result.content),
     metadata: result.metadata,
   }).catch(() => undefined);
   return result;
@@ -999,15 +1002,21 @@ async function fetchUrlText(
   throw new Error(`fetch_content blocked: redirect limit exceeded (${maxRedirectHops})`);
 }
 
-async function fetchContent(rawUrl: unknown): Promise<DistillationToolResult> {
+async function fetchContent(
+  rawUrl: unknown,
+  options: { forceRefreshEvidence?: boolean } = {},
+): Promise<DistillationToolResult> {
   const url = normalizeUrl(rawUrl);
-  const queryHash = evidenceCacheKey(url.href);
-  const cached = await findDistillationEvidenceCache({
-    toolName: "fetch_content",
-    queryHash,
-    url: url.href,
-    freshAfter: evidenceCacheFreshAfter(groupedConfig.distillationTools.evidenceCacheTtlSeconds),
-  }).catch(() => null);
+  const cached = options.forceRefreshEvidence
+    ? null
+    : await findDistillationEvidenceCache({
+        toolName: "fetch_content",
+        queryText: url.href,
+        url: url.href,
+        freshAfter: evidenceCacheFreshAfter(
+          groupedConfig.distillationTools.evidenceCacheTtlSeconds,
+        ),
+      }).catch(() => null);
   if (cached?.excerpt) {
     return {
       callId: "",
@@ -1068,16 +1077,15 @@ async function fetchContent(rawUrl: unknown): Promise<DistillationToolResult> {
       finalUrl: fetched.finalUrl,
       contentChars: fetched.text.length,
       redirectCount: fetched.redirectCount,
+      forceRefreshEvidence: options.forceRefreshEvidence || undefined,
     },
   };
   await upsertDistillationEvidenceCache({
     toolName: "fetch_content",
-    queryHash,
     queryText: url.href,
     url: url.href,
     ok: true,
     excerpt: result.content,
-    contentHash: contentHash(fetched.text),
     metadata: result.metadata,
   }).catch(() => undefined);
   return result;
@@ -1090,8 +1098,14 @@ const distillationToolHandlers: Record<
     auditContext?: Record<string, unknown>,
   ) => Promise<DistillationToolResult>
 > = {
-  search_web: (args) => searchWeb(args.query),
-  fetch_content: (args) => fetchContent(args.url),
+  search_web: (args, auditContext) =>
+    searchWeb(args.query, {
+      forceRefreshEvidence: Boolean(auditContext?.forceRefreshEvidence),
+    }),
+  fetch_content: (args, auditContext) =>
+    fetchContent(args.url, {
+      forceRefreshEvidence: Boolean(auditContext?.forceRefreshEvidence),
+    }),
   read_source_segment: (args, auditContext) =>
     readSegmentTool("read_source_segment", args, auditContext),
   read_vibe_segment: (args, auditContext) =>
@@ -1139,7 +1153,6 @@ async function readSegmentTool(
     metadata: read.ok
       ? {
           locator: read.locator,
-          contentHash: read.contentHash,
           charCount: read.charCount,
           truncated: read.truncated,
           readCount: read.readCount,

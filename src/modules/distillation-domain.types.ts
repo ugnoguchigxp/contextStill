@@ -2,8 +2,8 @@ export type DistillationDomainName = "findCandidate" | "coverEvidence" | "finali
 
 export type DistillationDomainSmokeResult = {
   domain: DistillationDomainName;
-  implemented: false;
-  status: "prepared";
+  implemented: boolean;
+  status: "prepared" | "ok" | "failed";
   checkedAt: string;
   message: string;
   receivedInput: Record<string, unknown>;

@@ -50,7 +50,6 @@ export async function inspectCompileRuns({
     durationMsAvg: null,
     lastRunAt: null,
     lastRunAgeMinutes: null,
-    lastCacheKeyDraft: null,
     freshnessThresholdMinutes,
     degradedRateThreshold,
   };
@@ -75,8 +74,6 @@ export async function inspectCompileRuns({
     runs.durationMsAvg = average(durations);
     runs.lastRunAt = recentRuns[0]?.createdAt ? recentRuns[0].createdAt.toISOString() : null;
     runs.lastRunAgeMinutes = runs.lastRunAt ? minutesSince(runs.lastRunAt) : null;
-    runs.lastCacheKeyDraft = recentRuns[0]?.cacheKeyDraft ?? null;
-
     if (runs.totalRuns === 0) {
       reasons.push("NO_COMPILE_RUN_HISTORY");
     }

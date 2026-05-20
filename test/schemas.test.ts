@@ -57,7 +57,6 @@ describe("Shared Schemas", () => {
         durationMsAvg: null,
         lastRunAt: null,
         lastRunAgeMinutes: null,
-        lastCacheKeyDraft: null,
         freshnessThresholdMinutes: 60,
         degradedRateThreshold: 0.1,
       },

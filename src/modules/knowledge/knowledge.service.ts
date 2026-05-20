@@ -346,7 +346,6 @@ export async function searchKnowledgeCandidates(
 
 export async function registerKnowledgeFromMarkdown(params: {
   sourceUri: string;
-  contentHash: string;
   title: string;
   body: string;
   type?: "rule" | "procedure";
@@ -367,7 +366,6 @@ export async function registerKnowledgeFromMarkdown(params: {
   }
   return upsertKnowledgeFromSource({
     sourceUri: params.sourceUri,
-    contentHash: params.contentHash,
     type: params.type ?? "rule",
     status: params.status ?? "draft",
     scope: params.scope ?? "repo",

@@ -41,20 +41,13 @@ export async function checkDistillationCircuitBreaker(): Promise<DistillationCir
 export async function beginDistillationJob(params: {
   apply: boolean;
   source: DistillationCandidateSourceRef;
-  inputHash: string;
   promptVersion: string;
   metadata?: Record<string, unknown>;
 }): Promise<DistillationJobRow | null> {
   if (!params.apply) return null;
   const job = await upsertDistillationJob({
     source: params.source,
-    inputHash: params.inputHash,
     promptVersion: params.promptVersion,
-    budget: {
-      maxReads: groupedConfig.distillationTools.readerMaxReads,
-      maxCandidates: groupedConfig.distillationTools.maxCandidates,
-      maxToolRounds: groupedConfig.distillationTools.maxRounds,
-    },
     metadata: params.metadata,
   });
   return claimDistillationJob(job.id);

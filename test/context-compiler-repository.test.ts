@@ -75,13 +75,12 @@ describe("context-compiler repository", () => {
   });
 
   describe("listRecentCompileRuns", () => {
-    test("returns formatted summaries including cache key from diagnostics", async () => {
+    test("returns formatted summaries", async () => {
       const mockRows = [
         {
           id: "r1",
           goal: "g1",
           intent: "i1",
-          input: { _compileDiagnostics: { cacheKeyDraft: "hash-123" } },
           retrievalMode: "m1",
           status: "ok",
           degradedReasons: [],
@@ -99,7 +98,6 @@ describe("context-compiler repository", () => {
       const result = await listRecentCompileRuns(1);
 
       expect(result).toHaveLength(1);
-      expect(result[0].cacheKeyDraft).toBe("hash-123");
       expect(result[0].durationMs).toBe(123); // Rounded
     });
 
@@ -125,7 +123,6 @@ describe("context-compiler repository", () => {
       });
 
       const result = await listRecentCompileRuns(1);
-      expect(result[0].cacheKeyDraft).toBeNull();
       expect(result[0].degradedReasons).toEqual([]);
       expect(result[0].durationMs).toBe(0);
     });

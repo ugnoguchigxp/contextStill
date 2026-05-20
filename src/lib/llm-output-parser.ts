@@ -195,24 +195,41 @@ function convertSingleQuotedStrings(text: string): string {
     }
 
     if (char === "'") {
-      let value = "";
+      result += '"';
       index += 1;
       while (index < text.length) {
         const current = text[index] ?? "";
-        const next = text[index + 1] ?? "";
-        if (current === "\\") {
-          value += next || current;
-          index += next ? 2 : 1;
-          continue;
-        }
         if (current === "'") {
+          result += '"';
           index += 1;
           break;
         }
-        value += current;
+        if (current === "\\") {
+          const next = text[index + 1] ?? "";
+          if (next === "'") {
+            // \' inside single-quoted is just ' in JSON (which is fine inside double quotes)
+            result += "'";
+            index += 2;
+          } else if (next === '"') {
+            // \" inside single-quoted needs to be escaped in JSON
+            result += '\\"';
+            index += 2;
+          } else {
+            // Other escapes like \n, \t, \\, etc. are preserved as is
+            result += current + next;
+            index += 2;
+          }
+          continue;
+        }
+        if (current === '"') {
+          // Unescaped " inside single-quoted must be escaped to \" in double-quoted JSON
+          result += '\\"';
+          index += 1;
+          continue;
+        }
+        result += current;
         index += 1;
       }
-      result += JSON.stringify(value);
       continue;
     }
 

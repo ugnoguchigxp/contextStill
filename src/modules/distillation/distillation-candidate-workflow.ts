@@ -56,7 +56,6 @@ function readerSegmentEvidence(segment: DistillationReadableSegment, maxChars: n
   return [
     `locator: ${segment.locator}`,
     `label: ${segment.label}`,
-    `contentHash: ${segment.contentHash}`,
     "content:",
     truncateReaderEvidence(segment.content, maxChars),
   ].join("\n");
@@ -159,7 +158,6 @@ export async function runDistillationCandidateWorkflow(params: {
   modelClient: DistillationSessionModelClient;
   model: string;
   maxTokens: number;
-  inputHash: string;
   promptVersion: string;
   requireFetchEvidenceForUrlInput?: boolean;
   requireVerificationToolEvidence?: boolean;
@@ -191,7 +189,6 @@ export async function runDistillationCandidateWorkflow(params: {
   if (params.apply) {
     const promotionRows = await listPromotionReadyDistillationCandidates({
       source: params.source,
-      inputHash: params.inputHash,
       promptVersion: params.promptVersion,
       limit: maxCandidates,
     });
@@ -223,7 +220,6 @@ export async function runDistillationCandidateWorkflow(params: {
       if (promotionReadyRows.length === 0) {
         rows = await listUnevaluatedDistillationCandidates({
           source: params.source,
-          inputHash: params.inputHash,
           promptVersion: params.promptVersion,
           limit: maxCandidates,
         });
@@ -266,7 +262,6 @@ export async function runDistillationCandidateWorkflow(params: {
     if (rows.length === 0) {
       rows = await listUnevaluatedDistillationCandidates({
         source: params.source,
-        inputHash: params.inputHash,
         promptVersion: params.promptVersion,
         limit: maxCandidates,
       });
@@ -302,7 +297,6 @@ export async function runDistillationCandidateWorkflow(params: {
     if (params.apply) {
       rows = await upsertExtractedDistillationCandidates({
         source: params.source,
-        inputHash: params.inputHash,
         promptVersion: params.promptVersion,
         model: params.model,
         candidates: extractionCandidates,
@@ -352,7 +346,6 @@ export async function runDistillationCandidateWorkflow(params: {
             params.source.sourceKind === "vibe_memory"
               ? params.source.vibeMemoryId
               : params.source.sourceFragmentId,
-          inputHash: params.inputHash,
           promptVersion: params.promptVersion,
           candidateRowId: entry.row?.id,
           candidateIndex: entry.candidateIndex,

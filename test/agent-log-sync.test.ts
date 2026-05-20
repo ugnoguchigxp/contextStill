@@ -272,24 +272,21 @@ diff --git a/src/a.ts b/src/a.ts
     expect(chunkMessages(messages, 10, 5)).toHaveLength(3);
   });
 
-  test("buildDedupeKey is stable and content-sensitive", () => {
+  test("buildDedupeKey is stable by source session and chunk", () => {
     const first = buildDedupeKey({
       sourceId: "codex_logs",
       memorySessionId: "codex_logs:abc",
       chunkIndex: 0,
-      content: "same",
     });
     const second = buildDedupeKey({
       sourceId: "codex_logs",
       memorySessionId: "codex_logs:abc",
       chunkIndex: 0,
-      content: "same",
     });
     const changed = buildDedupeKey({
       sourceId: "codex_logs",
       memorySessionId: "codex_logs:abc",
-      chunkIndex: 0,
-      content: "changed",
+      chunkIndex: 1,
     });
 
     expect(first).toBe(second);

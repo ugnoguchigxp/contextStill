@@ -20,8 +20,8 @@ function toCandidateRecord(value: unknown): CandidateRecord | null {
   return { title, content };
 }
 
-export function parseStorageCandidatesFromLlmOutput(rawOutput: string): CandidateRecord[] {
-  const parsed = JSON.parse(stripJsonFence(rawOutput)) as { candidates?: unknown };
+export function parseStorageCandidatesFromLlmOutput(llmOutput: string): CandidateRecord[] {
+  const parsed = JSON.parse(stripJsonFence(llmOutput)) as { candidates?: unknown };
   if (!parsed || typeof parsed !== "object" || !Array.isArray(parsed.candidates)) {
     throw new Error("LLM output JSON must have candidates array");
   }

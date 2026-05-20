@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { and, desc, eq, ilike, inArray, notInArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { sourceFragments, sources } from "../../db/schema.js";
@@ -13,7 +12,6 @@ type UpsertSourceParams = {
   uri: string;
   title?: string;
   body: string;
-  contentHash?: string;
   metadata?: Record<string, unknown>;
   actor?: "agent" | "user" | "system";
 };
@@ -32,10 +30,6 @@ export type SourceSearchOptions = {
   repoPath?: string;
   repoKey?: string;
 };
-
-function defaultHash(input: string): string {
-  return createHash("sha256").update(input).digest("hex");
-}
 
 function finiteOrZero(value: unknown): number {
   const num = Number(value);
@@ -152,8 +146,6 @@ async function replaceSourceFragments(params: {
 
 export async function upsertSourceDocument(params: UpsertSourceParams): Promise<string> {
   const actor = params.actor ?? "system";
-  const contentHash =
-    params.contentHash ?? defaultHash(`${params.sourceKind}\n${params.uri}\n${params.body}`);
   const existing = await db.query.sources.findFirst({
     where: eq(sources.uri, params.uri),
     columns: { id: true },
@@ -167,7 +159,6 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
         uri: params.uri,
         title: params.title ?? null,
         body: params.body,
-        contentHash,
         metadata: params.metadata ?? {},
         updatedAt: new Date(),
       })
@@ -186,7 +177,6 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
         sourceKind: params.sourceKind,
         uri: params.uri,
         title: params.title ?? null,
-        contentHash,
         fragmentCount,
       },
     });
@@ -200,7 +190,6 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
       uri: params.uri,
       title: params.title ?? null,
       body: params.body,
-      contentHash,
       metadata: params.metadata ?? {},
     })
     .returning({ id: sources.id });
@@ -218,7 +207,6 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
       sourceKind: params.sourceKind,
       uri: params.uri,
       title: params.title ?? null,
-      contentHash,
       fragmentCount,
     },
   });

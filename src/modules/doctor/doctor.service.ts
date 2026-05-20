@@ -34,7 +34,6 @@ function createEmptyRuns(options: ResolvedDoctorOptions): DoctorReport["runs"] {
     durationMsAvg: null,
     lastRunAt: null,
     lastRunAgeMinutes: null,
-    lastCacheKeyDraft: null,
     freshnessThresholdMinutes: options.freshnessThresholdMinutes,
     degradedRateThreshold: options.degradedRateThreshold,
   };

@@ -1,17 +1,12 @@
-import crypto from "node:crypto";
 import { and, eq, gte, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { distillationEvidenceCache } from "../../db/schema.js";
 
 export type DistillationEvidenceCacheRow = typeof distillationEvidenceCache.$inferSelect;
 
-export function evidenceCacheKey(value: string): string {
-  return crypto.createHash("sha256").update(value.trim()).digest("hex");
-}
-
 export async function findDistillationEvidenceCache(params: {
   toolName: string;
-  queryHash: string;
+  queryText: string;
   url?: string | null;
   freshAfter: Date;
 }): Promise<DistillationEvidenceCacheRow | null> {
@@ -21,7 +16,7 @@ export async function findDistillationEvidenceCache(params: {
     .where(
       and(
         eq(distillationEvidenceCache.toolName, params.toolName),
-        eq(distillationEvidenceCache.queryHash, params.queryHash),
+        eq(distillationEvidenceCache.queryText, params.queryText),
         params.url
           ? eq(distillationEvidenceCache.url, params.url)
           : eq(distillationEvidenceCache.url, ""),
@@ -34,10 +29,8 @@ export async function findDistillationEvidenceCache(params: {
 
 export async function upsertDistillationEvidenceCache(params: {
   toolName: string;
-  queryHash: string;
-  queryText?: string | null;
+  queryText: string;
   url?: string | null;
-  contentHash?: string | null;
   ok: boolean;
   excerpt?: string | null;
   metadata?: Record<string, unknown>;
@@ -47,10 +40,8 @@ export async function upsertDistillationEvidenceCache(params: {
     .insert(distillationEvidenceCache)
     .values({
       toolName: params.toolName,
-      queryHash: params.queryHash,
-      queryText: params.queryText ?? null,
+      queryText: params.queryText,
       url: params.url ?? "",
-      contentHash: params.contentHash ?? null,
       ok: params.ok ? 1 : 0,
       excerpt: params.excerpt ?? null,
       metadata: params.metadata ?? {},
@@ -60,12 +51,11 @@ export async function upsertDistillationEvidenceCache(params: {
     .onConflictDoUpdate({
       target: [
         distillationEvidenceCache.toolName,
-        distillationEvidenceCache.queryHash,
+        distillationEvidenceCache.queryText,
         distillationEvidenceCache.url,
       ],
       set: {
-        queryText: params.queryText ?? null,
-        contentHash: params.contentHash ?? null,
+        queryText: params.queryText,
         ok: params.ok ? 1 : 0,
         excerpt: params.excerpt ?? null,
         metadata: sql`${distillationEvidenceCache.metadata} || ${JSON.stringify(
@@ -79,8 +69,4 @@ export async function upsertDistillationEvidenceCache(params: {
 
 export function evidenceCacheFreshAfter(ttlSeconds: number): Date {
   return new Date(Date.now() - ttlSeconds * 1000);
-}
-
-export function contentHash(value: string): string {
-  return crypto.createHash("sha256").update(value).digest("hex");
 }

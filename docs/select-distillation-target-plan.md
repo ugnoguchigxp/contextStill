@@ -63,12 +63,7 @@ target key:
 - `wiki_file`: `wiki/pages` からの相対 path。例: `best-practice/hono_backend.md`
 - `vibe_memory`: `vibe_memories.id`
 
-input hash:
-
-- `wiki_file`: file content の sha256。
-- `vibe_memory`: `vibe_memories.content` と紐づく `agent_diff_entries.diff_hunk` を安定順で連結した sha256。
-
-同じ target key でも input hash が変わった場合は、再蒸留対象として扱う。
+同じ target key は同じ target として扱う。file や memory の内容変更だけでは別 identity を作らない。再実行が必要な場合は target status の明示 reset または `distillation_version` 更新で扱う。
 
 ## 状態管理
 
@@ -82,7 +77,6 @@ input hash:
 - `target_kind`: `wiki_file` / `vibe_memory`
 - `target_key`
 - `source_uri`
-- `input_hash`
 - `distillation_version`
 - `status`: `pending` / `running` / `completed` / `skipped` / `failed` / `paused`
 - `phase`: `selected` / `reading` / `finding_candidate` / `covering_evidence` / `finalizing` / `stored`
@@ -103,7 +97,7 @@ input hash:
 
 unique 制約:
 
-- `(target_kind, target_key, input_hash, distillation_version)`
+- `(target_kind, target_key, distillation_version)`
 
 `distillation_version` は、蒸留ロジックが大きく変わったときに全 target を再対象化するために使う。
 
@@ -148,15 +142,14 @@ Wiki refresh:
 
 1. `wiki/pages/**/*.md` を再帰的に列挙する。
 2. 空 file は target にしない。
-3. content hash を計算する。
-4. `(wiki_file, relativePath, inputHash, distillationVersion)` がなければ `pending` で upsert する。
-5. 既に同じ path の古い input hash が `completed` でも、file が変わっていれば新しい input hash は `pending` になる。
+3. `(wiki_file, relativePath, distillationVersion)` で upsert する。
+4. 既存 row があれば inventory metadata だけを更新する。`completed` を自動で別 target 化しない。
 
 vibe memory refresh:
 
 1. `vibe_memories` を対象にする。
-2. 紐づく `agent_diff_entries` を安定順で含めて input hash を計算する。
-3. まだ state がなければ `pending` で upsert する。
+2. `(vibe_memory, vibeMemoryId, distillationVersion)` で upsert する。
+3. 既存 row があれば inventory metadata だけを更新する。
 
 削除済み Wiki file:
 
@@ -312,7 +305,7 @@ Doctor に追加する確認:
 
 手動リカバリー時の原則:
 
-- `completed` target は、input hash または distillation version が変わらない限り再実行しない。
+- `completed` target は、明示 requeue または distillation version 更新がない限り再実行しない。
 - `running` target を手動で戻す前に heartbeat を確認する。
 - localLLM / embedding の結果保存が途中の場合、knowledge の duplicate key / idempotency key を確認してから requeue する。
 - requeue は audit に必ず残す。
@@ -353,7 +346,7 @@ Doctor に追加する確認:
 - Wiki pending がある場合は alphabet order の最初の Wiki file を返す。
 - Wiki が全部 completed の場合だけ vibe memory を返す。
 - completed target は再選択されない。
-- input hash が変わると pending として再選択される。
+- 明示 requeue または distillation version 更新で pending として再選択される。
 
 ### Phase 3: runner skeleton
 

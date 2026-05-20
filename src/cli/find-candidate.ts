@@ -1,5 +1,6 @@
 import { closeDbPool } from "../db/index.js";
 import {
+  formatCliTextCandidates,
   runFindCandidate,
   type FindCandidateCallerMode,
   type FindCandidateInput,
@@ -133,7 +134,7 @@ async function main(): Promise<void> {
   });
 
   if (options.callerMode === "cli_text") {
-    process.stdout.write(`${result.rawOutput}\n`);
+    process.stdout.write(`${formatCliTextCandidates(result.candidates)}\n`);
     return;
   }
 
@@ -145,7 +146,6 @@ async function main(): Promise<void> {
         targetKey: result.targetKey,
         candidateCount: result.candidates.length,
         insertedIds: result.insertedIds ?? [],
-        existingIds: result.existingIds ?? [],
       },
       null,
       2,

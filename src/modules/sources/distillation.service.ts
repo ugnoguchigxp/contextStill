@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { groupedConfig } from "../../config.js";
 import { toUnitKnowledgeScore } from "../../lib/score-scale.js";
 import { checkKnowledgeDuplicate } from "../../lib/knowledge-dedup.js";
@@ -55,7 +54,6 @@ import {
   type SourceFragmentForDistillation,
   linkKnowledgeToSourceFragment,
   listSourceFragmentsForDistillation,
-  recordSourceDistillationEvidence,
   recordSourceDistillationState,
   upsertSourceDistillationRun,
 } from "./distillation.repository.js";
@@ -80,7 +78,6 @@ type DistilledSourceResult = {
   sourceUri: string;
   locator: string;
   status: SourceDistillationStatus | "dry_run";
-  inputHash: string;
   candidateCount: number;
   knowledgeIds: string[];
   candidates: DistilledKnowledgeCandidate[];
@@ -139,10 +136,6 @@ function classifyFailureKind(
   return "processing";
 }
 
-function sha256(value: string): string {
-  return crypto.createHash("sha256").update(value).digest("hex");
-}
-
 function truncate(value: string, maxChars: number): string {
   if (value.length <= maxChars) return value;
   return `${value.slice(0, Math.max(0, maxChars - 24))}\n...[truncated]`;
@@ -165,7 +158,6 @@ export function buildSourceDistillationMessages(params: {
       `sourceId: ${params.fragment.sourceId}`,
       `sourceUri: ${params.fragment.sourceUri}`,
       `sourceTitle: ${params.fragment.sourceTitle ?? "(none)"}`,
-      `sourceContentHash: ${params.fragment.sourceContentHash}`,
       `fragmentId: ${params.fragment.id}`,
       `fragmentLocator: ${params.fragment.locator}`,
       `fragmentHeading: ${params.fragment.heading ?? "(none)"}`,
@@ -206,21 +198,6 @@ export function buildSourceDistillationMessages(params: {
   ];
 }
 
-export function buildSourceDistillationInputHash(fragment: SourceFragmentForDistillation): string {
-  return sha256(
-    JSON.stringify({
-      sourceId: fragment.sourceId,
-      sourceKind: fragment.sourceKind,
-      sourceUri: fragment.sourceUri,
-      sourceContentHash: fragment.sourceContentHash,
-      fragmentId: fragment.id,
-      locator: fragment.locator,
-      heading: fragment.heading,
-      content: fragment.content,
-    }),
-  );
-}
-
 function sourceFragmentContainsUrl(fragment: SourceFragmentForDistillation): boolean {
   if (textContainsUrl(fragment.sourceUri)) return true;
   if (textContainsUrl(fragment.content)) return true;
@@ -236,22 +213,6 @@ async function defaultEmbedder(text: string): Promise<number[]> {
   return embedOne(text, "passage");
 }
 
-function knowledgeContentHash(params: {
-  promptVersion: string;
-  inputHash: string;
-  candidate: DistilledKnowledgeCandidate;
-}): string {
-  return sha256(
-    [
-      params.promptVersion,
-      params.inputHash,
-      params.candidate.type,
-      params.candidate.title,
-      params.candidate.body,
-    ].join("\0"),
-  );
-}
-
 async function recordRun(params: {
   apply: boolean;
   fragment: SourceFragmentForDistillation;
@@ -259,7 +220,6 @@ async function recordRun(params: {
   candidateCount: number;
   knowledgeIds: string[];
   error?: string;
-  inputHash: string;
   model: string;
   toolEvents?: DistillationCompletionResult["toolEvents"];
   metadata?: Record<string, unknown>;
@@ -271,7 +231,6 @@ async function recordRun(params: {
     candidateCount: params.candidateCount,
     knowledgeIds: params.knowledgeIds,
     error: params.error,
-    inputHash: params.inputHash,
     promptVersion: groupedConfig.sourceDistillation.promptVersion,
     model: params.model,
     toolEvents: params.toolEvents ?? [],
@@ -279,22 +238,16 @@ async function recordRun(params: {
       sourceId: params.fragment.sourceId,
       sourceKind: params.fragment.sourceKind,
       sourceUri: params.fragment.sourceUri,
-      sourceContentHash: params.fragment.sourceContentHash,
       fragmentLocator: params.fragment.locator,
       fragmentHeading: params.fragment.heading,
       ...(params.metadata ?? {}),
     },
-  });
-  await recordSourceDistillationEvidence({
-    runId: run.id,
-    toolEvents: params.toolEvents ?? [],
   });
   await attachDistillationCandidateRun({
     source: {
       sourceKind: "source_fragment",
       sourceFragmentId: params.fragment.id,
     },
-    inputHash: params.inputHash,
     promptVersion: groupedConfig.sourceDistillation.promptVersion,
     sourceRunId: run.id,
   });
@@ -346,7 +299,6 @@ export async function distillSources(
     });
 
     for (const fragment of fragments) {
-      const inputHash = buildSourceDistillationInputHash(fragment);
       const sourceRef = {
         sourceKind: "source_fragment" as const,
         sourceFragmentId: fragment.id,
@@ -357,7 +309,6 @@ export async function distillSources(
         job = await beginDistillationJob({
           apply,
           source: sourceRef,
-          inputHash,
           promptVersion: groupedConfig.sourceDistillation.promptVersion,
           metadata: {
             source: "source_distillation",
@@ -387,7 +338,6 @@ export async function distillSources(
             status: "skipped",
             candidateCount: 0,
             knowledgeIds: [],
-            inputHash,
             model: distillationModel,
             metadata: {
               reason: "distillation_job_already_running",
@@ -399,7 +349,6 @@ export async function distillSources(
             sourceUri: fragment.sourceUri,
             locator: fragment.locator,
             status: "skipped",
-            inputHash,
             candidateCount: 0,
             knowledgeIds: [],
             candidates: [],
@@ -425,7 +374,6 @@ export async function distillSources(
             status: "skipped",
             candidateCount: 0,
             knowledgeIds: [],
-            inputHash,
             model: distillationModel,
             metadata: {
               reason: "distillation_circuit_breaker_paused",
@@ -438,7 +386,6 @@ export async function distillSources(
             sourceUri: fragment.sourceUri,
             locator: fragment.locator,
             status: "skipped",
-            inputHash,
             candidateCount: 0,
             knowledgeIds: [],
             candidates: [],
@@ -459,18 +406,15 @@ export async function distillSources(
           modelClient,
           model: distillationModel,
           maxTokens: groupedConfig.sourceDistillation.maxOutputTokens,
-          inputHash,
           promptVersion: groupedConfig.sourceDistillation.promptVersion,
           requireFetchEvidenceForUrlInput: sourceFragmentContainsUrl(fragment),
           jobId: job?.id,
           readerContext,
           extractionMetadata: {
-            inputHash,
             source: "source_distillation",
             sourceId: fragment.sourceId,
             sourceKind: fragment.sourceKind,
             sourceUri: fragment.sourceUri,
-            sourceContentHash: fragment.sourceContentHash,
             fragmentId: fragment.id,
             fragmentLocator: fragment.locator,
             agenticReader: agenticReaderEnabled,
@@ -498,7 +442,6 @@ export async function distillSources(
             status: "skipped",
             candidateCount: 0,
             knowledgeIds: [],
-            inputHash,
             model: distillationModel,
             toolEvents: session.toolEvents,
             metadata: {
@@ -542,7 +485,6 @@ export async function distillSources(
             sourceUri: fragment.sourceUri,
             locator: fragment.locator,
             status: apply ? "skipped" : "dry_run",
-            inputHash,
             candidateCount: 0,
             knowledgeIds: [],
             candidates: [],
@@ -579,7 +521,6 @@ export async function distillSources(
             status: "skipped",
             candidateCount: acceptedCandidates.length,
             knowledgeIds: [],
-            inputHash,
             model: distillationModel,
             toolEvents: session.toolEvents,
             metadata: {
@@ -598,7 +539,6 @@ export async function distillSources(
             sourceUri: fragment.sourceUri,
             locator: fragment.locator,
             status: "skipped",
-            inputHash,
             candidateCount: acceptedCandidates.length,
             knowledgeIds: [],
             candidates: acceptedCandidates,
@@ -647,7 +587,6 @@ export async function distillSources(
                 metadata: {
                   source: "source_distillation",
                   promptVersion: groupedConfig.sourceDistillation.promptVersion,
-                  inputHash,
                   dedupMerged: true,
                   dedupReason: dedupResult.reason,
                 },
@@ -663,7 +602,6 @@ export async function distillSources(
                   metadata: {
                     source: "source_distillation",
                     promptVersion: groupedConfig.sourceDistillation.promptVersion,
-                    inputHash,
                     dedupMerged: true,
                     dedupReason: dedupResult.reason,
                     toolEventCount: entry.toolEvents.length,
@@ -675,11 +613,6 @@ export async function distillSources(
             }
             const knowledgeId = await upsertKnowledgeFromSource({
               sourceUri: `source-fragment://${fragment.id}`,
-              contentHash: knowledgeContentHash({
-                promptVersion: groupedConfig.sourceDistillation.promptVersion,
-                inputHash,
-                candidate,
-              }),
               type: candidate.type,
               status: "draft",
               scope: "repo",
@@ -694,7 +627,6 @@ export async function distillSources(
                 sourceId: fragment.sourceId,
                 sourceDocumentUri: fragment.sourceUri,
                 sourceTitle: fragment.sourceTitle,
-                sourceContentHash: fragment.sourceContentHash,
                 sourceFragmentId: fragment.id,
                 sourceFragmentLocator: fragment.locator,
                 sourceFragmentHeading: fragment.heading,
@@ -706,7 +638,6 @@ export async function distillSources(
                   typeof fragment.sourceMetadata.repoKey === "string"
                     ? fragment.sourceMetadata.repoKey
                     : undefined,
-                inputHash,
                 distillationModel,
                 promptVersion: groupedConfig.sourceDistillation.promptVersion,
                 candidateIndex: entry.candidateIndex,
@@ -723,7 +654,6 @@ export async function distillSources(
               metadata: {
                 source: "source_distillation",
                 promptVersion: groupedConfig.sourceDistillation.promptVersion,
-                inputHash,
               },
             });
             knowledgeIds.push(knowledgeId);
@@ -742,7 +672,6 @@ export async function distillSources(
                   sourceFragmentId: fragment.id,
                   sourceFragmentLocator: fragment.locator,
                   promptVersion: groupedConfig.sourceDistillation.promptVersion,
-                  inputHash,
                   toolEventCount: entry.toolEvents.length,
                 },
               });
@@ -761,7 +690,6 @@ export async function distillSources(
           status: "ok",
           candidateCount: acceptedCandidates.length,
           knowledgeIds,
-          inputHash,
           model: distillationModel,
           toolEvents: session.toolEvents,
           metadata: {
@@ -807,7 +735,6 @@ export async function distillSources(
           sourceUri: fragment.sourceUri,
           locator: fragment.locator,
           status: apply ? "ok" : "dry_run",
-          inputHash,
           candidateCount: acceptedCandidates.length,
           knowledgeIds,
           candidates: acceptedCandidates,
@@ -834,7 +761,6 @@ export async function distillSources(
           candidateCount: 0,
           knowledgeIds: [],
           error: message,
-          inputHash,
           model: distillationModel,
           toolEvents,
           metadata: {
@@ -860,7 +786,6 @@ export async function distillSources(
           sourceUri: fragment.sourceUri,
           locator: fragment.locator,
           status: "failed",
-          inputHash,
           candidateCount: 0,
           knowledgeIds: [],
           candidates: [],

@@ -109,7 +109,6 @@ export const vibeMemoryDistillationRuns = pgTable(
     candidateCount: integer("candidate_count").notNull().default(0),
     knowledgeIds: jsonb("knowledge_ids").default([]).notNull(),
     error: text("error"),
-    inputHash: text("input_hash").notNull(),
     promptVersion: text("prompt_version").notNull(),
     model: text("model").notNull(),
     toolEvents: jsonb("tool_events").default([]).notNull(),
@@ -123,11 +122,9 @@ export const vibeMemoryDistillationRuns = pgTable(
     promptVersionIdx: index("vibe_memory_distillation_runs_prompt_version_idx").on(
       table.promptVersion,
     ),
-    memoryPromptHashIdx: uniqueIndex("vibe_memory_distillation_runs_memory_prompt_hash_idx").on(
-      table.vibeMemoryId,
-      table.promptVersion,
-      table.inputHash,
-    ),
+    memoryPromptVersionIdx: uniqueIndex(
+      "vibe_memory_distillation_runs_memory_prompt_version_idx",
+    ).on(table.vibeMemoryId, table.promptVersion),
     statusCheck: check(
       "vibe_memory_distillation_runs_status_check",
       sql`${table.status} IN (${sql.raw(toSqlList(vibeMemoryDistillationStatusValues))})`,
@@ -160,6 +157,26 @@ export const distillationTargetPhaseValues = [
 export const distillationTargetPriorityGroupValues = ["wiki", "vibe_memory"] as const;
 
 export const findCandidateResultStatusValues = ["selected", "parse_failed"] as const;
+
+export const coverEvidenceStatusValues = [
+  "knowledge_ready",
+  "duplicate",
+  "near_duplicate",
+  "insufficient",
+  "parse_failed",
+  "tool_failed",
+  "provider_failed",
+] as const;
+
+export const coverEvidenceStageValues = [
+  "load",
+  "source_support",
+  "dedupe",
+  "evidence_need",
+  "web",
+  "mcp",
+  "final",
+] as const;
 
 export const distillationCandidateSourceKindValues = ["vibe_memory", "source_fragment"] as const;
 
@@ -286,7 +303,6 @@ export const sources = pgTable(
     uri: text("uri").notNull(),
     title: text("title"),
     body: text("body").notNull(),
-    contentHash: text("content_hash").notNull(),
     metadata: jsonb("metadata").default({}).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -295,7 +311,6 @@ export const sources = pgTable(
   (table) => ({
     kindIdx: index("sources_kind_idx").on(table.sourceKind),
     uriUniqueIdx: uniqueIndex("sources_uri_unique_idx").on(table.uri),
-    contentHashIdx: index("sources_content_hash_idx").on(table.contentHash),
     sourceKindCheck: check(
       "sources_source_kind_check",
       sql`${table.sourceKind} IN (${sql.raw(toSqlList(sourceKindValues))})`,
@@ -379,7 +394,6 @@ export const sourceDistillationRuns = pgTable(
     candidateCount: integer("candidate_count").notNull().default(0),
     knowledgeIds: jsonb("knowledge_ids").default([]).notNull(),
     error: text("error"),
-    inputHash: text("input_hash").notNull(),
     promptVersion: text("prompt_version").notNull(),
     model: text("model").notNull(),
     toolEvents: jsonb("tool_events").default([]).notNull(),
@@ -393,35 +407,13 @@ export const sourceDistillationRuns = pgTable(
     ),
     statusIdx: index("source_distillation_runs_status_idx").on(table.status),
     promptVersionIdx: index("source_distillation_runs_prompt_version_idx").on(table.promptVersion),
-    fragmentPromptHashIdx: uniqueIndex("source_distillation_runs_fragment_prompt_hash_idx").on(
-      table.sourceFragmentId,
-      table.promptVersion,
-      table.inputHash,
-    ),
+    fragmentPromptVersionIdx: uniqueIndex(
+      "source_distillation_runs_fragment_prompt_version_idx",
+    ).on(table.sourceFragmentId, table.promptVersion),
     statusCheck: check(
       "source_distillation_runs_status_check",
       sql`${table.status} IN (${sql.raw(toSqlList(sourceDistillationStatusValues))})`,
     ),
-  }),
-);
-
-export const sourceDistillationEvidence = pgTable(
-  "source_distillation_evidence",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    runId: uuid("run_id")
-      .references(() => sourceDistillationRuns.id, { onDelete: "cascade" })
-      .notNull(),
-    toolName: text("tool_name").notNull(),
-    url: text("url"),
-    ok: integer("ok").notNull().default(0),
-    contentHash: text("content_hash"),
-    metadata: jsonb("metadata").default({}).notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-  },
-  (table) => ({
-    runIdIdx: index("source_distillation_evidence_run_id_idx").on(table.runId),
-    toolNameIdx: index("source_distillation_evidence_tool_name_idx").on(table.toolName),
   }),
 );
 
@@ -432,7 +424,6 @@ export const distillationTargetStates = pgTable(
     targetKind: text("target_kind").notNull(),
     targetKey: text("target_key").notNull(),
     sourceUri: text("source_uri").notNull(),
-    inputHash: text("input_hash").notNull(),
     distillationVersion: text("distillation_version").notNull(),
     status: text("status").notNull().default("pending"),
     phase: text("phase").notNull().default("selected"),
@@ -468,7 +459,6 @@ export const distillationTargetStates = pgTable(
     targetUniqueIdx: uniqueIndex("distillation_target_states_target_unique_idx").on(
       table.targetKind,
       table.targetKey,
-      table.inputHash,
       table.distillationVersion,
     ),
     targetKindCheck: check(
@@ -501,13 +491,10 @@ export const distillationJobs = pgTable(
     sourceFragmentId: uuid("source_fragment_id").references(() => sourceFragments.id, {
       onDelete: "cascade",
     }),
-    inputHash: text("input_hash").notNull(),
     promptVersion: text("prompt_version").notNull(),
     status: text("status").notNull().default("queued"),
     phase: text("phase").notNull().default("pending"),
     attemptCount: integer("attempt_count").notNull().default(0),
-    budget: jsonb("budget").default({}).notNull(),
-    budgetUsed: jsonb("budget_used").default({}).notNull(),
     lastError: text("last_error"),
     lastOutcomeKind: text("last_outcome_kind"),
     nextRetryAt: timestamp("next_retry_at"),
@@ -527,10 +514,10 @@ export const distillationJobs = pgTable(
     ),
     nextRetryAtIdx: index("distillation_jobs_next_retry_at_idx").on(table.nextRetryAt),
     vibeJobUniqueIdx: uniqueIndex("distillation_jobs_vibe_unique_idx")
-      .on(table.vibeMemoryId, table.promptVersion, table.inputHash)
+      .on(table.vibeMemoryId, table.promptVersion)
       .where(sql`${table.vibeMemoryId} IS NOT NULL`),
     sourceJobUniqueIdx: uniqueIndex("distillation_jobs_source_unique_idx")
-      .on(table.sourceFragmentId, table.promptVersion, table.inputHash)
+      .on(table.sourceFragmentId, table.promptVersion)
       .where(sql`${table.sourceFragmentId} IS NOT NULL`),
     sourceKindCheck: check(
       "distillation_jobs_source_kind_check",
@@ -560,10 +547,8 @@ export const distillationEvidenceCache = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     toolName: text("tool_name").notNull(),
-    queryHash: text("query_hash").notNull(),
-    queryText: text("query_text"),
+    queryText: text("query_text").notNull(),
     url: text("url"),
-    contentHash: text("content_hash"),
     ok: integer("ok").notNull().default(0),
     excerpt: text("excerpt"),
     metadata: jsonb("metadata").default({}).notNull(),
@@ -573,12 +558,12 @@ export const distillationEvidenceCache = pgTable(
   },
   (table) => ({
     toolNameIdx: index("distillation_evidence_cache_tool_name_idx").on(table.toolName),
-    queryHashIdx: index("distillation_evidence_cache_query_hash_idx").on(table.queryHash),
+    queryTextIdx: index("distillation_evidence_cache_query_text_idx").on(table.queryText),
     urlIdx: index("distillation_evidence_cache_url_idx").on(table.url),
     fetchedAtIdx: index("distillation_evidence_cache_fetched_at_idx").on(table.fetchedAt),
     lookupIdx: uniqueIndex("distillation_evidence_cache_lookup_idx").on(
       table.toolName,
-      table.queryHash,
+      table.queryText,
       table.url,
     ),
   }),
@@ -601,7 +586,6 @@ export const distillationCandidates = pgTable(
     sourceRunId: uuid("source_run_id").references(() => sourceDistillationRuns.id, {
       onDelete: "set null",
     }),
-    inputHash: text("input_hash").notNull(),
     promptVersion: text("prompt_version").notNull(),
     model: text("model").notNull(),
     candidateIndex: integer("candidate_index").notNull(),
@@ -630,10 +614,10 @@ export const distillationCandidates = pgTable(
     ),
     knowledgeIdIdx: index("distillation_candidates_knowledge_id_idx").on(table.knowledgeId),
     vibeCandidateUniqueIdx: uniqueIndex("distillation_candidates_vibe_candidate_unique_idx")
-      .on(table.vibeMemoryId, table.promptVersion, table.inputHash, table.candidateIndex)
+      .on(table.vibeMemoryId, table.promptVersion, table.candidateIndex)
       .where(sql`${table.vibeMemoryId} IS NOT NULL`),
     sourceCandidateUniqueIdx: uniqueIndex("distillation_candidates_source_candidate_unique_idx")
-      .on(table.sourceFragmentId, table.promptVersion, table.inputHash, table.candidateIndex)
+      .on(table.sourceFragmentId, table.promptVersion, table.candidateIndex)
       .where(sql`${table.sourceFragmentId} IS NOT NULL`),
     sourceKindCheck: check(
       "distillation_candidates_source_kind_check",
@@ -667,43 +651,69 @@ export const findCandidateResults = pgTable(
         onDelete: "cascade",
       })
       .notNull(),
-    targetKind: text("target_kind").notNull(),
-    targetKey: text("target_key").notNull(),
-    sourceUri: text("source_uri").notNull(),
-    inputHash: text("input_hash").notNull(),
-    provider: text("provider").notNull(),
-    model: text("model").notNull(),
     candidateIndex: integer("candidate_index").notNull(),
-    candidateHash: text("candidate_hash").notNull(),
     title: text("title").notNull(),
     content: text("content").notNull(),
     origin: jsonb("origin").default({}).notNull(),
-    rawOutput: text("raw_output").notNull(),
     status: text("status").notNull().default("selected"),
-    metadata: jsonb("metadata").default({}).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
   (table) => ({
     targetStateIdx: index("find_candidate_results_target_state_idx").on(table.targetStateId),
-    targetInputIdx: index("find_candidate_results_target_input_idx").on(
+    targetCandidateIndexIdx: index("find_candidate_results_target_candidate_index_idx").on(
       table.targetStateId,
-      table.inputHash,
+      table.candidateIndex,
     ),
     statusIdx: index("find_candidate_results_status_idx").on(table.status),
-    candidateHashIdx: index("find_candidate_results_candidate_hash_idx").on(table.candidateHash),
-    targetKindCheck: check(
-      "find_candidate_results_target_kind_check",
-      sql`${table.targetKind} IN (${sql.raw(toSqlList(distillationTargetKindValues))})`,
-    ),
     statusCheck: check(
       "find_candidate_results_status_check",
       sql`${table.status} IN (${sql.raw(toSqlList(findCandidateResultStatusValues))})`,
     ),
-    dedupeUniqueIdx: uniqueIndex("find_candidate_results_dedupe_unique_idx").on(
-      table.targetStateId,
-      table.inputHash,
-      table.candidateHash,
+  }),
+);
+
+export const coverEvidenceResults = pgTable(
+  "cover_evidence_results",
+  {
+    id: uuid("id")
+      .primaryKey()
+      .references(() => findCandidateResults.id, {
+        onDelete: "cascade",
+      })
+      .notNull(),
+    status: text("status").notNull(),
+    stage: text("stage").notNull(),
+    type: text("type"),
+    title: text("title"),
+    body: text("body"),
+    importance: real("importance"),
+    confidence: real("confidence"),
+    references: jsonb("references").default([]).notNull(),
+    duplicateRefs: jsonb("duplicate_refs").default([]).notNull(),
+    toolEvents: jsonb("tool_events").default([]).notNull(),
+    reason: text("reason"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    statusIdx: index("cover_evidence_results_status_idx").on(table.status),
+    stageIdx: index("cover_evidence_results_stage_idx").on(table.stage),
+    statusCheck: check(
+      "cover_evidence_results_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(coverEvidenceStatusValues))})`,
+    ),
+    stageCheck: check(
+      "cover_evidence_results_stage_check",
+      sql`${table.stage} IN (${sql.raw(toSqlList(coverEvidenceStageValues))})`,
+    ),
+    typeCheck: check(
+      "cover_evidence_results_type_check",
+      sql`${table.type} IS NULL OR ${table.type} IN (${sql.raw(toSqlList(knowledgeTypeValues))})`,
+    ),
+    reasonLengthCheck: check(
+      "cover_evidence_results_reason_length_check",
+      sql`${table.reason} IS NULL OR char_length(${table.reason}) <= 160`,
     ),
   }),
 );
@@ -725,7 +735,6 @@ export const distillationReadEvents = pgTable(
     }),
     locator: text("locator").notNull(),
     purpose: text("purpose"),
-    contentHash: text("content_hash").notNull(),
     charCount: integer("char_count").notNull().default(0),
     truncated: integer("truncated").notNull().default(0),
     metadata: jsonb("metadata").default({}).notNull(),
@@ -739,7 +748,6 @@ export const distillationReadEvents = pgTable(
     sourceFragmentIdIdx: index("distillation_read_events_source_fragment_id_idx").on(
       table.sourceFragmentId,
     ),
-    contentHashIdx: index("distillation_read_events_content_hash_idx").on(table.contentHash),
     sourceKindCheck: check(
       "distillation_read_events_source_kind_check",
       sql`${table.sourceKind} IN (${sql.raw(toSqlList(distillationCandidateSourceKindValues))})`,

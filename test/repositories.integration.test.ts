@@ -59,7 +59,6 @@ describeDb("repositories integration", () => {
   test("knowledge upsert/search respects lifecycle filters", async () => {
     const activeId = await upsertKnowledgeFromSource({
       sourceUri: "file:///active.md",
-      contentHash: "hash-active",
       type: "rule",
       status: "active",
       scope: "repo",
@@ -69,7 +68,6 @@ describeDb("repositories integration", () => {
 
     const draftId = await upsertKnowledgeFromSource({
       sourceUri: "file:///draft.md",
-      contentHash: "hash-draft",
       type: "procedure",
       status: "draft",
       scope: "repo",
@@ -103,7 +101,6 @@ describeDb("repositories integration", () => {
       sourceKind: "wiki",
       uri: "file:///docs/source.md",
       title: "Source",
-      contentHash: "source-hash-1",
       body: "compile command failed because vector extension was missing.",
       metadata: { tags: ["vector-runtime", "operations"] },
     });
@@ -123,14 +120,12 @@ describeDb("repositories integration", () => {
       sourceKind: "wiki",
       uri,
       title: "Single Source",
-      contentHash: "single-source-hash-v1",
       body: "old-token source body",
     });
     const secondId = await upsertSourceDocument({
       sourceKind: "wiki",
       uri,
       title: "Single Source",
-      contentHash: "single-source-hash-v2",
       body: "new-token source body",
     });
 
@@ -146,28 +141,24 @@ describeDb("repositories integration", () => {
       sourceKind: "wiki",
       uri: "/tmp/wiki/keep.md",
       title: "Keep",
-      contentHash: "keep-hash",
       body: "keep body",
     });
     await upsertSourceDocument({
       sourceKind: "wiki",
       uri: "/tmp/wiki/stale.md",
       title: "Stale",
-      contentHash: "stale-hash",
       body: "stale body",
     });
     await upsertSourceDocument({
       sourceKind: "wiki",
       uri: "/tmp/other/outside.md",
       title: "Outside",
-      contentHash: "outside-hash",
       body: "outside body",
     });
     await upsertSourceDocument({
       sourceKind: "wiki",
       uri: "/tmp/wiki-archive/keep-by-boundary.md",
       title: "Boundary Outside",
-      contentHash: "boundary-outside-hash",
       body: "boundary outside body",
     });
 
@@ -191,7 +182,6 @@ describeDb("repositories integration", () => {
       sourceKind: "wiki",
       uri: "/workspace/repo-a/wiki/rule.md",
       title: "Repo A Rule",
-      contentHash: "repo-a-source-hash",
       body: "repo-scope-token",
       metadata: {
         repoPath: "/workspace/repo-a",
@@ -202,7 +192,6 @@ describeDb("repositories integration", () => {
       sourceKind: "wiki",
       uri: "/workspace/repo-a-archive/wiki/rule.md",
       title: "Repo A Archive Rule",
-      contentHash: "repo-a-archive-source-hash",
       body: "repo-scope-token",
       metadata: {
         repoPath: "/workspace/repo-a-archive",
@@ -352,7 +341,6 @@ index 0000000..1111111
       const sessionId = index < 3 ? "graph-session-a" : "graph-session-b";
       const id = await upsertKnowledgeFromSource({
         sourceUri: `vibe-memory://graph-${index}`,
-        contentHash: `graph-rel-${index}`,
         type: "rule",
         status: "active",
         scope: "repo",
@@ -369,7 +357,6 @@ index 0000000..1111111
 
     const fallbackA = await upsertKnowledgeFromSource({
       sourceUri: "vibe-memory://graph-fallback-a",
-      contentHash: "graph-fallback-a",
       type: "procedure",
       status: "active",
       scope: "repo",
@@ -381,7 +368,6 @@ index 0000000..1111111
     });
     const fallbackB = await upsertKnowledgeFromSource({
       sourceUri: "vibe-memory://graph-fallback-b",
-      contentHash: "graph-fallback-b",
       type: "procedure",
       status: "active",
       scope: "repo",
@@ -451,7 +437,6 @@ index 0000000..1111111
 
     const idA = await upsertKnowledgeFromSource({
       sourceUri: "file:///semantic-a.md",
-      contentHash: "semantic-a",
       type: "rule",
       status: "active",
       scope: "repo",
@@ -461,7 +446,6 @@ index 0000000..1111111
     });
     const idB = await upsertKnowledgeFromSource({
       sourceUri: "file:///semantic-b.md",
-      contentHash: "semantic-b",
       type: "rule",
       status: "active",
       scope: "repo",
@@ -471,7 +455,6 @@ index 0000000..1111111
     });
     await upsertKnowledgeFromSource({
       sourceUri: "file:///semantic-c.md",
-      contentHash: "semantic-c",
       type: "rule",
       status: "active",
       scope: "repo",
@@ -502,7 +485,6 @@ index 0000000..1111111
     const vector = Array.from({ length: 384 }, (_, i) => (i === 0 ? 1 : 0));
     await upsertKnowledgeFromSource({
       sourceUri: "file:///vector-1.md",
-      contentHash: "v1",
       type: "rule",
       status: "active",
       scope: "repo",
@@ -531,10 +513,9 @@ index 0000000..1111111
     expect(results[0].sourceUri).toBe("file:///source-v.md");
   });
 
-  test("upsertKnowledgeFromSource updates existing item if uri and hash match", async () => {
+  test("upsertKnowledgeFromSource updates existing item by uri", async () => {
     const params = {
       sourceUri: "file:///upsert.md",
-      contentHash: "hash-1",
       type: "rule" as const,
       status: "active" as const,
       scope: "repo" as const,
@@ -575,7 +556,6 @@ index 0000000..1111111
   test("searchKnowledge respects metadata fallback for sourceRefs", async () => {
     await upsertKnowledgeFromSource({
       sourceUri: "file:///metadata-ref.md",
-      contentHash: "m1",
       type: "rule",
       status: "active",
       scope: "repo",
@@ -599,7 +579,6 @@ index 0000000..1111111
   test("searchKnowledge supports repoKey and types filters", async () => {
     await upsertKnowledgeFromSource({
       sourceUri: "file:///repokey.md",
-      contentHash: "rk1",
       type: "procedure",
       status: "active",
       scope: "repo",

@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { groupedConfig } from "../../config.js";
 import type { SourceFragmentForDistillation } from "../sources/distillation.repository.js";
 import type {
@@ -15,7 +14,6 @@ export type DistillationReadableSegment = {
   locator: string;
   label: string;
   content: string;
-  contentHash: string;
   charCount: number;
   metadata?: Record<string, unknown>;
 };
@@ -38,7 +36,6 @@ export type DistillationReadResult =
       locator: string;
       label: string;
       content: string;
-      contentHash: string;
       charCount: number;
       truncated: boolean;
       readCount: number;
@@ -50,10 +47,6 @@ export type DistillationReadResult =
       readCount: number;
       maxReads: number;
     };
-
-function sha256(value: string): string {
-  return crypto.createHash("sha256").update(value).digest("hex");
-}
 
 function truncate(value: string, maxChars: number): { content: string; truncated: boolean } {
   if (value.length <= maxChars) return { content: value, truncated: false };
@@ -84,7 +77,6 @@ function splitTextIntoSegments(params: {
         locator: `${params.locatorPrefix}:chunk-${index}`,
         label: `${params.labelPrefix} ${index}`,
         content,
-        contentHash: sha256(content),
         charCount: content.length,
         metadata: {
           ...(params.metadata ?? {}),
@@ -289,7 +281,6 @@ export async function readDistillationSegment(params: {
       source: params.context.source,
       locator,
       purpose: params.purpose,
-      contentHash: segment.contentHash,
       charCount: segment.charCount,
       truncated: truncated.truncated,
       metadata: segment.metadata,
@@ -301,7 +292,6 @@ export async function readDistillationSegment(params: {
     locator: segment.locator,
     label: segment.label,
     content: truncated.content,
-    contentHash: segment.contentHash,
     charCount: segment.charCount,
     truncated: truncated.truncated,
     readCount: params.context.readCount,

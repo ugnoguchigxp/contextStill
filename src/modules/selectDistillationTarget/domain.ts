@@ -22,7 +22,6 @@ export type DistillationTargetCandidate = {
   targetKind: DistillationTargetKind;
   targetKey: string;
   sourceUri: string;
-  inputHash: string;
   status?: DistillationTargetStatus;
   sortKey?: string;
   createdAt?: Date;
@@ -32,7 +31,6 @@ export type SelectedDistillationTarget = {
   targetKind: DistillationTargetKind;
   targetKey: string;
   sourceUri: string;
-  inputHash: string;
   status: DistillationTargetStatus;
 };
 
@@ -91,7 +89,6 @@ function toSelected(candidate: DistillationTargetCandidate): SelectedDistillatio
     targetKind: candidate.targetKind,
     targetKey: candidate.targetKey,
     sourceUri: candidate.sourceUri,
-    inputHash: candidate.inputHash,
     status: statusOf(candidate),
   };
 }
@@ -128,14 +125,12 @@ export function selectedTargetFromState(state: {
   targetKind: string;
   targetKey: string;
   sourceUri: string;
-  inputHash: string;
   status: string;
 }): SelectedDistillationTarget {
   return {
     targetKind: state.targetKind as DistillationTargetKind,
     targetKey: state.targetKey,
     sourceUri: state.sourceUri,
-    inputHash: state.inputHash,
     status: state.status as DistillationTargetStatus,
   };
 }

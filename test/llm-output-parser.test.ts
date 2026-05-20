@@ -28,6 +28,17 @@ describe("llm-output-parser", () => {
     expect(parsed?.repaired).toBe(true);
   });
 
+  test("repairs single quoted strings with escape sequences like \\n", () => {
+    const parsed = parseLlmJsonLike(`
+      {
+        "message": 'hello\\nworld'
+      }
+    `);
+    expect(parsed?.value).toEqual({
+      message: "hello\nworld",
+    });
+  });
+
   test("wraps loose top-level properties", () => {
     expect(parseLlmJsonLike("selectedIds: ['2','1'], reasoning: 'ok'")?.value).toEqual({
       selectedIds: ["2", "1"],

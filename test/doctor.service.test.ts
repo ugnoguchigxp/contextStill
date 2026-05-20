@@ -26,6 +26,7 @@ describe("Doctor Service", () => {
 
       daemon: { url: "http://localhost:1234", reachable: true },
       cli: { python: "python3", root: "/tmp", modelDir: "/tmp/models", usable: true },
+      openai: { configured: false, model: "" },
     });
     vi.mocked(getExposedToolEntries).mockReturnValue([
       { name: "initial_instructions" },

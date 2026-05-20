@@ -1,4 +1,4 @@
-export type EmbeddingProvider = "auto" | "daemon" | "cli" | "disabled";
+export type EmbeddingProvider = "auto" | "daemon" | "cli" | "openai" | "disabled";
 export type AgenticCompileProvider = "azure-openai" | "bedrock" | "local-llm" | "auto";
 export type DistillationProvider = "local-llm" | "azure-openai" | "bedrock" | "auto";
 export type DistillationSearchProvider = "brave" | "exa" | "duckduckgo";
@@ -11,6 +11,7 @@ export type GroupedConfig = {
     daemonUrl: string;
     accessToken: string;
     timeoutMs: number;
+    openaiModel: string;
   };
   localLlm: {
     embeddingRoot: string;

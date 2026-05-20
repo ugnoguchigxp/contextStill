@@ -148,6 +148,34 @@
       "when": 1778886000000,
       "tag": "0020_find_candidate_results",
       "breakpoints": true
+    },
+    {
+      "idx": 21,
+      "version": "7",
+      "when": 1778889600000,
+      "tag": "0021_cover_evidence_results",
+      "breakpoints": true
+    },
+    {
+      "idx": 22,
+      "version": "7",
+      "when": 1778893200000,
+      "tag": "0022_candidate_identity_simplification",
+      "breakpoints": true
+    },
+    {
+      "idx": 23,
+      "version": "7",
+      "when": 1778896800000,
+      "tag": "0023_remove_local_fingerprints",
+      "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1778900400000,
+      "tag": "0024_drop_candidate_index_identity",
+      "breakpoints": true
     }
   ]
 }

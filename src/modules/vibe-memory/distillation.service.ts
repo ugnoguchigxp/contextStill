@@ -1,4 +1,3 @@
-import crypto from "node:crypto";
 import { groupedConfig } from "../../config.js";
 import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
@@ -86,7 +85,6 @@ type DistilledVibeMemoryResult = {
   vibeMemoryId: string;
   sessionId: string;
   status: VibeMemoryDistillationStatus | "dry_run";
-  inputHash: string;
   candidateCount: number;
   knowledgeIds: string[];
   candidates: DistilledKnowledgeCandidate[];
@@ -143,10 +141,6 @@ function classifyFailureKind(
     return "parse_or_repair";
   }
   return "processing";
-}
-
-function sha256(value: string): string {
-  return crypto.createHash("sha256").update(value).digest("hex");
 }
 
 function truncate(value: string, maxChars: number): string {
@@ -280,52 +274,8 @@ export function buildVibeMemoryDistillationMessages(params: {
   ];
 }
 
-export function buildVibeMemoryInputHash(params: {
-  memory: VibeMemoryForDistillation;
-  diffEntries: AgentDiffEntryForDistillation[];
-}): string {
-  return sha256(
-    JSON.stringify({
-      memory: {
-        id: params.memory.id,
-        sessionId: params.memory.sessionId,
-        content: params.memory.content,
-        memoryType: params.memory.memoryType,
-        createdAt: params.memory.createdAt.toISOString(),
-      },
-      diffEntries: params.diffEntries.map((entry) => ({
-        filePath: entry.filePath,
-        diffHunk: entry.diffHunk,
-        changeType: entry.changeType,
-        language: entry.language,
-        symbolName: entry.symbolName,
-        symbolKind: entry.symbolKind,
-        signature: entry.signature,
-        startLine: entry.startLine,
-        endLine: entry.endLine,
-      })),
-    }),
-  );
-}
-
 async function defaultEmbedder(text: string): Promise<number[]> {
   return embedOne(text, "passage");
-}
-
-function knowledgeContentHash(params: {
-  promptVersion: string;
-  inputHash: string;
-  candidate: DistilledKnowledgeCandidate;
-}): string {
-  return sha256(
-    [
-      params.promptVersion,
-      params.inputHash,
-      params.candidate.type,
-      params.candidate.title,
-      params.candidate.body,
-    ].join("\0"),
-  );
 }
 
 function recordRunEnabled(apply: boolean): boolean {
@@ -339,7 +289,6 @@ async function recordDistillationRun(params: {
   candidateCount: number;
   knowledgeIds: string[];
   error?: string;
-  inputHash: string;
   model: string;
   toolEvents?: DistillationCompletionResult["toolEvents"];
   metadata?: Record<string, unknown>;
@@ -351,7 +300,6 @@ async function recordDistillationRun(params: {
     candidateCount: params.candidateCount,
     knowledgeIds: params.knowledgeIds,
     error: params.error,
-    inputHash: params.inputHash,
     promptVersion: groupedConfig.vibeDistillation.promptVersion,
     model: params.model,
     toolEvents: params.toolEvents ?? [],
@@ -362,7 +310,6 @@ async function recordDistillationRun(params: {
       sourceKind: "vibe_memory",
       vibeMemoryId: params.vibeMemoryId,
     },
-    inputHash: params.inputHash,
     promptVersion: groupedConfig.vibeDistillation.promptVersion,
     vibeMemoryRunId: run.id,
   });
@@ -433,7 +380,6 @@ export async function distillVibeMemories(
         fallbackRepoKey: workspaceRepoKey,
       });
       const memoryDiffs = diffsByMemoryId.get(memory.id) ?? [];
-      const inputHash = buildVibeMemoryInputHash({ memory, diffEntries: memoryDiffs });
       const sourceRef = {
         sourceKind: "vibe_memory" as const,
         vibeMemoryId: memory.id,
@@ -444,7 +390,6 @@ export async function distillVibeMemories(
         job = await beginDistillationJob({
           apply,
           source: sourceRef,
-          inputHash,
           promptVersion: groupedConfig.vibeDistillation.promptVersion,
           metadata: {
             source: "vibe_memory_distillation",
@@ -485,7 +430,6 @@ export async function distillVibeMemories(
             status: "skipped",
             candidateCount: 0,
             knowledgeIds: [],
-            inputHash,
             model: distillationModel,
             metadata: {
               reason: "distillation_job_already_running",
@@ -497,7 +441,6 @@ export async function distillVibeMemories(
             vibeMemoryId: memory.id,
             sessionId: memory.sessionId,
             status: "skipped",
-            inputHash,
             candidateCount: 0,
             knowledgeIds: [],
             candidates: [],
@@ -523,7 +466,6 @@ export async function distillVibeMemories(
             status: "skipped",
             candidateCount: 0,
             knowledgeIds: [],
-            inputHash,
             model: distillationModel,
             metadata: {
               reason: "distillation_circuit_breaker_paused",
@@ -536,7 +478,6 @@ export async function distillVibeMemories(
             vibeMemoryId: memory.id,
             sessionId: memory.sessionId,
             status: "skipped",
-            inputHash,
             candidateCount: 0,
             knowledgeIds: [],
             candidates: [],
@@ -557,13 +498,11 @@ export async function distillVibeMemories(
           modelClient,
           model: distillationModel,
           maxTokens: groupedConfig.vibeDistillation.maxOutputTokens,
-          inputHash,
           promptVersion: groupedConfig.vibeDistillation.promptVersion,
           requireFetchEvidenceForUrlInput: vibeMemoryInputContainsUrl(memory, memoryDiffs),
           jobId: job?.id,
           readerContext,
           extractionMetadata: {
-            inputHash,
             source: "vibe_memory_distillation",
             sourceKind: "vibe_memory",
             vibeMemoryId: memory.id,
@@ -595,7 +534,6 @@ export async function distillVibeMemories(
             status: "skipped",
             candidateCount: 0,
             knowledgeIds: [],
-            inputHash,
             model: distillationModel,
             toolEvents: session.toolEvents,
             metadata: {
@@ -639,7 +577,6 @@ export async function distillVibeMemories(
             vibeMemoryId: memory.id,
             sessionId: memory.sessionId,
             status: apply ? "skipped" : "dry_run",
-            inputHash,
             candidateCount: 0,
             knowledgeIds: [],
             candidates: [],
@@ -676,7 +613,6 @@ export async function distillVibeMemories(
             status: "skipped",
             candidateCount: acceptedCandidates.length,
             knowledgeIds: [],
-            inputHash,
             model: distillationModel,
             toolEvents: session.toolEvents,
             metadata: {
@@ -695,7 +631,6 @@ export async function distillVibeMemories(
             vibeMemoryId: memory.id,
             sessionId: memory.sessionId,
             status: "skipped",
-            inputHash,
             candidateCount: acceptedCandidates.length,
             knowledgeIds: [],
             candidates: acceptedCandidates,
@@ -748,7 +683,6 @@ export async function distillVibeMemories(
                   metadata: {
                     source: "vibe_memory_distillation",
                     promptVersion: groupedConfig.vibeDistillation.promptVersion,
-                    inputHash,
                     dedupMerged: true,
                     dedupReason: dedupResult.reason,
                     toolEventCount: entry.toolEvents.length,
@@ -760,11 +694,6 @@ export async function distillVibeMemories(
             }
             const knowledgeId = await upsertKnowledgeFromSource({
               sourceUri: `vibe-memory://${memory.id}`,
-              contentHash: knowledgeContentHash({
-                promptVersion: groupedConfig.vibeDistillation.promptVersion,
-                inputHash,
-                candidate,
-              }),
               type: candidate.type,
               status: "draft",
               scope: "repo",
@@ -780,10 +709,8 @@ export async function distillVibeMemories(
                 sourceSessionId: memory.sessionId,
                 sourceMemoryType: memory.memoryType,
                 sourceCreatedAt: memory.createdAt.toISOString(),
-                sourceContentHash: sha256(memory.content),
                 repoPath: memoryRepoScope.repoPath,
                 repoKey: memoryRepoScope.repoKey,
-                inputHash,
                 distillationModel,
                 promptVersion: groupedConfig.vibeDistillation.promptVersion,
                 candidateIndex: entry.candidateIndex,
@@ -810,7 +737,6 @@ export async function distillVibeMemories(
                   repoPath: memoryRepoScope.repoPath,
                   repoKey: memoryRepoScope.repoKey,
                   promptVersion: groupedConfig.vibeDistillation.promptVersion,
-                  inputHash,
                   toolEventCount: entry.toolEvents.length,
                 },
               });
@@ -829,7 +755,6 @@ export async function distillVibeMemories(
           status: "ok",
           candidateCount: acceptedCandidates.length,
           knowledgeIds,
-          inputHash,
           model: distillationModel,
           toolEvents: session.toolEvents,
           metadata: {
@@ -876,7 +801,6 @@ export async function distillVibeMemories(
           vibeMemoryId: memory.id,
           sessionId: memory.sessionId,
           status: apply ? "ok" : "dry_run",
-          inputHash,
           candidateCount: acceptedCandidates.length,
           knowledgeIds,
           candidates: acceptedCandidates,
@@ -903,7 +827,6 @@ export async function distillVibeMemories(
           candidateCount: 0,
           knowledgeIds: [],
           error: message,
-          inputHash,
           model: distillationModel,
           toolEvents,
           metadata: {
@@ -929,7 +852,6 @@ export async function distillVibeMemories(
           vibeMemoryId: memory.id,
           sessionId: memory.sessionId,
           status: "failed",
-          inputHash,
           candidateCount: 0,
           knowledgeIds: [],
           candidates: [],

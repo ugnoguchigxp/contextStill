@@ -123,7 +123,6 @@ describe("knowledge repository", () => {
 
       const params = {
         sourceUri: "agent://test",
-        contentHash: "h1",
         type: "rule" as const,
         status: "active" as const,
         scope: "repo" as const,
@@ -153,7 +152,6 @@ describe("knowledge repository", () => {
 
       const params = {
         sourceUri: "system://test",
-        contentHash: "h1",
         type: "rule" as const,
         status: "active" as const,
         scope: "repo" as const,

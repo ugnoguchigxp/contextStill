@@ -1,0 +1,1 @@
+DROP INDEX IF EXISTS "find_candidate_results_target_candidate_index_unique_idx";

@@ -101,7 +101,6 @@ describe("Knowledge Service", () => {
 
     const id = await registerKnowledgeFromMarkdown({
       sourceUri: "test.md",
-      contentHash: "hash",
       title: "Title",
       body: "Body",
     });
@@ -141,7 +140,6 @@ describe("Knowledge Service", () => {
 
     const id = await registerKnowledgeFromMarkdown({
       sourceUri: "test.md",
-      contentHash: "hash",
       title: "Title",
       body: "Body",
     });

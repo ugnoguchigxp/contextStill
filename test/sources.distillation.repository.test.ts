@@ -2,7 +2,6 @@ import { describe, expect, test, vi, beforeEach } from "vitest";
 import {
   listSourceFragmentsForDistillation,
   upsertSourceDistillationRun,
-  recordSourceDistillationEvidence,
 } from "../src/modules/sources/distillation.repository.js";
 import { db } from "../src/db/client.js";
 
@@ -45,25 +44,10 @@ describe("Sources Distillation Repository", () => {
       status: "ok",
       candidateCount: 1,
       knowledgeIds: ["k1"],
-      inputHash: "h1",
       promptVersion: "v1",
       model: "m1",
     });
     expect(run.id).toBe("rid");
-    expect(db.insert).toHaveBeenCalled();
-  });
-
-  test("recordSourceDistillationEvidence handles empty events", async () => {
-    await recordSourceDistillationEvidence({ runId: "r1", toolEvents: [] });
-    expect(db.delete).toHaveBeenCalled();
-    expect(db.insert).not.toHaveBeenCalled();
-  });
-
-  test("recordSourceDistillationEvidence inserts events", async () => {
-    await recordSourceDistillationEvidence({
-      runId: "r1",
-      toolEvents: [{ name: "t1", ok: true, content: "c1", metadata: {}, callId: "c1" }],
-    });
     expect(db.insert).toHaveBeenCalled();
   });
 });

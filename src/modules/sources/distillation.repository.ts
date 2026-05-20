@@ -1,11 +1,9 @@
-import crypto from "node:crypto";
 import { and, asc, eq, sql } from "drizzle-orm";
 import { groupedConfig } from "../../config.js";
 import { db } from "../../db/client.js";
 import {
   distillationJobs,
   knowledgeSourceLinks,
-  sourceDistillationEvidence,
   sourceDistillationRuns,
   sourceFragments,
   sources,
@@ -19,7 +17,6 @@ export type SourceFragmentForDistillation = {
   sourceKind: "wiki";
   sourceUri: string;
   sourceTitle: string | null;
-  sourceContentHash: string;
   locator: string;
   heading: string | null;
   content: string;
@@ -98,7 +95,6 @@ export async function listSourceFragmentsForDistillation(params: {
       sourceKind: sources.sourceKind,
       sourceUri: sources.uri,
       sourceTitle: sources.title,
-      sourceContentHash: sources.contentHash,
       locator: sourceFragments.locator,
       heading: sourceFragments.heading,
       content: sourceFragments.content,
@@ -129,7 +125,6 @@ export async function listSourceFragmentsForDistillation(params: {
     sourceKind: row.sourceKind as "wiki",
     sourceUri: row.sourceUri,
     sourceTitle: row.sourceTitle,
-    sourceContentHash: row.sourceContentHash,
     locator: row.locator,
     heading: row.heading,
     content: row.content,
@@ -145,7 +140,6 @@ export async function upsertSourceDistillationRun(params: {
   candidateCount: number;
   knowledgeIds: string[];
   error?: string | null;
-  inputHash: string;
   promptVersion: string;
   model: string;
   toolEvents?: DistillationToolResult[];
@@ -159,7 +153,6 @@ export async function upsertSourceDistillationRun(params: {
       candidateCount: params.candidateCount,
       knowledgeIds: params.knowledgeIds,
       error: params.error ?? null,
-      inputHash: params.inputHash,
       promptVersion: params.promptVersion,
       model: params.model,
       toolEvents: params.toolEvents ?? [],
@@ -167,11 +160,7 @@ export async function upsertSourceDistillationRun(params: {
       updatedAt: new Date(),
     })
     .onConflictDoUpdate({
-      target: [
-        sourceDistillationRuns.sourceFragmentId,
-        sourceDistillationRuns.promptVersion,
-        sourceDistillationRuns.inputHash,
-      ],
+      target: [sourceDistillationRuns.sourceFragmentId, sourceDistillationRuns.promptVersion],
       set: {
         status: params.status,
         candidateCount: params.candidateCount,
@@ -186,39 +175,6 @@ export async function upsertSourceDistillationRun(params: {
     .returning();
 
   return run;
-}
-
-export async function recordSourceDistillationEvidence(params: {
-  runId: string;
-  toolEvents: DistillationToolResult[];
-}): Promise<void> {
-  await db
-    .delete(sourceDistillationEvidence)
-    .where(eq(sourceDistillationEvidence.runId, params.runId));
-  if (params.toolEvents.length === 0) return;
-
-  await db.insert(sourceDistillationEvidence).values(
-    params.toolEvents.map((event) => {
-      const metadata = normalizeRecord(event.metadata);
-      const url =
-        typeof metadata.url === "string"
-          ? metadata.url
-          : typeof metadata.finalUrl === "string"
-            ? metadata.finalUrl
-            : null;
-      return {
-        runId: params.runId,
-        toolName: event.name,
-        url,
-        ok: event.ok ? 1 : 0,
-        contentHash: crypto.createHash("sha256").update(event.content).digest("hex"),
-        metadata: {
-          ...metadata,
-          error: event.error,
-        },
-      };
-    }),
-  );
 }
 
 export async function linkKnowledgeToSourceFragment(params: {

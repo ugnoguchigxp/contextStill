@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
+import { groupedConfig } from "../src/config.js";
 import { getDb } from "../src/db/index.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
 import { upsertKnowledgeFromSource } from "../src/modules/knowledge/knowledge.repository.js";
@@ -14,15 +15,19 @@ import {
 const describeDb = isDbIntegrationEnabled() ? describe : describe.skip;
 
 describeDb("context compiler integration", () => {
+  const originalAgenticCompileEnabled = groupedConfig.agenticCompile.enabled;
+
   beforeAll(async () => {
     await ensureDbIntegrationReady();
   });
 
   beforeEach(async () => {
+    groupedConfig.agenticCompile.enabled = false;
     await truncateIntegrationTables();
   });
 
   afterAll(async () => {
+    groupedConfig.agenticCompile.enabled = originalAgenticCompileEnabled;
     await closeIntegrationDb();
   });
 
@@ -30,7 +35,6 @@ describeDb("context compiler integration", () => {
     for (let i = 0; i < 6; i += 1) {
       await upsertKnowledgeFromSource({
         sourceUri: `file:///knowledge/rule-${i}.md`,
-        contentHash: `rule-hash-${i}`,
         type: "rule",
         status: "active",
         scope: "repo",
@@ -43,7 +47,6 @@ describeDb("context compiler integration", () => {
       sourceKind: "wiki",
       uri: "file:///sources/budget.md",
       title: "Budget Source",
-      contentHash: "budget-source-hash",
       body: "budget scenario integration source linkage proof",
     });
 
@@ -91,7 +94,6 @@ describeDb("context compiler integration", () => {
   test("procedure_context prioritizes procedure knowledge types", async () => {
     await upsertKnowledgeFromSource({
       sourceUri: "file:///knowledge/procedure.md",
-      contentHash: "procedure-hash",
       type: "procedure",
       status: "active",
       scope: "repo",
@@ -100,7 +102,6 @@ describeDb("context compiler integration", () => {
     });
     await upsertKnowledgeFromSource({
       sourceUri: "file:///knowledge/rule.md",
-      contentHash: "rule-hash",
       type: "rule",
       status: "active",
       scope: "repo",
@@ -123,7 +124,6 @@ describeDb("context compiler integration", () => {
   test("includeDraft includes draft procedures when requested", async () => {
     await upsertKnowledgeFromSource({
       sourceUri: "file:///knowledge/draft-proc.md",
-      contentHash: "draft-proc-hash",
       type: "procedure",
       status: "draft",
       scope: "repo",
@@ -165,7 +165,6 @@ describeDb("context compiler integration", () => {
   test("repoPath scopes knowledge retrieval to same repo and global", async () => {
     await upsertKnowledgeFromSource({
       sourceUri: "file:///repo-a/rule.md",
-      contentHash: "repo-a-rule-hash",
       type: "rule",
       status: "active",
       scope: "repo",
@@ -178,7 +177,6 @@ describeDb("context compiler integration", () => {
     });
     await upsertKnowledgeFromSource({
       sourceUri: "file:///repo-b/rule.md",
-      contentHash: "repo-b-rule-hash",
       type: "rule",
       status: "active",
       scope: "repo",
@@ -191,7 +189,6 @@ describeDb("context compiler integration", () => {
     });
     await upsertKnowledgeFromSource({
       sourceUri: "file:///repo-a-archive/rule.md",
-      contentHash: "repo-a-archive-rule-hash",
       type: "rule",
       status: "active",
       scope: "repo",
@@ -204,7 +201,6 @@ describeDb("context compiler integration", () => {
     });
     await upsertKnowledgeFromSource({
       sourceUri: "file:///global/rule.md",
-      contentHash: "global-rule-hash",
       type: "rule",
       status: "active",
       scope: "global",
@@ -230,7 +226,6 @@ describeDb("context compiler integration", () => {
   test("repoPath never mixes draft knowledge from other repos", async () => {
     await upsertKnowledgeFromSource({
       sourceUri: "file:///repo-a/rule-draft-safe.md",
-      contentHash: "repo-a-rule-draft-safe-hash",
       type: "rule",
       status: "active",
       scope: "repo",
@@ -243,7 +238,6 @@ describeDb("context compiler integration", () => {
     });
     await upsertKnowledgeFromSource({
       sourceUri: "file:///repo-b/rule-draft-danger.md",
-      contentHash: "repo-b-rule-draft-danger-hash",
       type: "rule",
       status: "draft",
       scope: "repo",
@@ -271,7 +265,6 @@ describeDb("context compiler integration", () => {
   test("repoPath fallback is explicit when scoped knowledge is missing", async () => {
     await upsertKnowledgeFromSource({
       sourceUri: "file:///legacy/rule.md",
-      contentHash: "legacy-rule-hash",
       type: "rule",
       status: "active",
       scope: "repo",
@@ -293,7 +286,6 @@ describeDb("context compiler integration", () => {
     const sourceUri = "file:///legacy-metadata/rule.md";
     await upsertKnowledgeFromSource({
       sourceUri,
-      contentHash: "legacy-metadata-rule-hash",
       type: "rule",
       status: "active",
       scope: "repo",
@@ -327,7 +319,6 @@ describeDb("context compiler integration", () => {
     const legacySourceUri = "file:///legacy-mixed/rule.md";
     await upsertKnowledgeFromSource({
       sourceUri: "file:///repo-a/primary-rule.md",
-      contentHash: "repo-a-primary-rule-hash",
       type: "rule",
       status: "active",
       scope: "repo",
@@ -340,7 +331,6 @@ describeDb("context compiler integration", () => {
     });
     await upsertKnowledgeFromSource({
       sourceUri: legacySourceUri,
-      contentHash: "repo-a-legacy-rule-hash",
       type: "rule",
       status: "active",
       scope: "repo",

@@ -54,7 +54,6 @@ describe("Knowledge Repository", () => {
       vi.mocked(db.query.knowledgeItems.findFirst).mockResolvedValue(undefined as any);
       const id = await upsertKnowledgeFromSource({
         sourceUri: "uri",
-        contentHash: "h1",
         type: "rule",
         status: "active",
         scope: "repo",
@@ -69,7 +68,6 @@ describe("Knowledge Repository", () => {
       vi.mocked(db.query.knowledgeItems.findFirst).mockResolvedValue({ id: "ex-id" } as any);
       const id = await upsertKnowledgeFromSource({
         sourceUri: "uri",
-        contentHash: "h1",
         type: "rule",
         status: "active",
         scope: "repo",

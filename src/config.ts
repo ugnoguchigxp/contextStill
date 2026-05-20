@@ -59,7 +59,7 @@ export const groupedConfig: GroupedConfig = {
   },
   embedding: {
     dimension: APP_CONSTANTS.embeddingDimension,
-    provider: "auto",
+    provider: (process.env.MEMORY_ROUTER_EMBEDDING_PROVIDER || "auto") as EmbeddingProvider,
     daemonUrl: (process.env.MEMORY_ROUTER_EMBEDDING_DAEMON_URL || "http://127.0.0.1:44512").replace(
       /\/+$/,
       "",
@@ -67,6 +67,7 @@ export const groupedConfig: GroupedConfig = {
     accessToken:
       process.env.MEMORY_ROUTER_EMBEDDING_ACCESS_TOKEN || process.env.LOCAL_LLM_ACCESS_TOKEN || "",
     timeoutMs: APP_CONSTANTS.embeddingTimeoutMs,
+    openaiModel: process.env.MEMORY_ROUTER_EMBEDDING_OPENAI_MODEL || "text-embedding-3-small",
   },
   localLlm: {
     embeddingRoot: path.resolve(process.cwd(), "../local-llm/embedding"),

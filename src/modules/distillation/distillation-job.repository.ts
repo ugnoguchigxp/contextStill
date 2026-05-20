@@ -50,12 +50,8 @@ function sourceFilters(source: DistillationCandidateSourceRef) {
 
 function conflictTarget(source: DistillationCandidateSourceRef) {
   return source.sourceKind === "vibe_memory"
-    ? [distillationJobs.vibeMemoryId, distillationJobs.promptVersion, distillationJobs.inputHash]
-    : [
-        distillationJobs.sourceFragmentId,
-        distillationJobs.promptVersion,
-        distillationJobs.inputHash,
-      ];
+    ? [distillationJobs.vibeMemoryId, distillationJobs.promptVersion]
+    : [distillationJobs.sourceFragmentId, distillationJobs.promptVersion];
 }
 
 function conflictWhere(source: DistillationCandidateSourceRef) {
@@ -105,9 +101,7 @@ async function recoverStaleRunningJob(id: string, now: Date): Promise<void> {
 
 export async function upsertDistillationJob(params: {
   source: DistillationCandidateSourceRef;
-  inputHash: string;
   promptVersion: string;
-  budget?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 }): Promise<DistillationJobRow> {
   const now = new Date();
@@ -115,11 +109,9 @@ export async function upsertDistillationJob(params: {
     .insert(distillationJobs)
     .values({
       ...sourceValues(params.source),
-      inputHash: params.inputHash,
       promptVersion: params.promptVersion,
       status: "queued",
       phase: "pending",
-      budget: params.budget ?? {},
       metadata: params.metadata ?? {},
       updatedAt: now,
     })
@@ -139,7 +131,6 @@ export async function upsertDistillationJob(params: {
             else ${distillationJobs.phase}
           end
         ` as never,
-        budget: params.budget ?? {},
         metadata:
           sql`${distillationJobs.metadata} || ${JSON.stringify(params.metadata ?? {})}::jsonb` as never,
         updatedAt: now,
@@ -154,7 +145,6 @@ export async function upsertDistillationJob(params: {
       .where(
         and(
           ...sourceFilters(params.source),
-          eq(distillationJobs.inputHash, params.inputHash),
           eq(distillationJobs.promptVersion, params.promptVersion),
         ),
       )
@@ -191,14 +181,12 @@ export async function claimDistillationJob(id: string): Promise<DistillationJobR
 export async function updateDistillationJobPhase(
   id: string | undefined,
   phase: DistillationJobPhase,
-  budgetUsed?: Record<string, unknown>,
 ): Promise<void> {
   if (!id) return;
   await db
     .update(distillationJobs)
     .set({
       phase,
-      ...(budgetUsed ? { budgetUsed } : {}),
       updatedAt: new Date(),
     })
     .where(eq(distillationJobs.id, id));

@@ -108,7 +108,6 @@ async function main(): Promise<void> {
     });
     knowledgeId = await upsertKnowledgeFromSource({
       sourceUri,
-      contentHash: `${token}-knowledge`,
       type: "rule",
       status: "active",
       scope: "repo",

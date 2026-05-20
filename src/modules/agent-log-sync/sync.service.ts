@@ -1,4 +1,3 @@
-import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
 import { groupedConfig } from "../../config.js";
 import { db } from "../../db/client.js";
@@ -227,8 +226,7 @@ function buildMemorySessionId(sourceId: string, message: ChatMessage): string {
 
   const sessionFile = message.metadata.sessionFile;
   if (typeof sessionFile === "string" && sessionFile.trim().length > 0) {
-    const digest = createHash("sha256").update(sessionFile).digest("hex").slice(0, 16);
-    return `${sourceId}:${projectKey}:file:${digest}`;
+    return `${sourceId}:${projectKey}:file:${sessionFile.trim()}`;
   }
 
   return `${sourceId}:${projectKey}:fallback`;
@@ -238,13 +236,8 @@ export function buildDedupeKey(params: {
   sourceId: string;
   memorySessionId: string;
   chunkIndex: number;
-  content: string;
 }): string {
-  return createHash("sha256")
-    .update(
-      `${params.sourceId}\n${params.memorySessionId}\n${params.chunkIndex}\n${params.content}`,
-    )
-    .digest("hex");
+  return `${params.sourceId}:${params.memorySessionId}:${params.chunkIndex}`;
 }
 
 export function extractUnifiedDiffsFromText(text: string): string {
@@ -452,7 +445,6 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
               sourceId: source.id,
               memorySessionId,
               chunkIndex,
-              content: rawContent,
             });
             const [inserted] = await tx
               .insert(vibeMemories)
@@ -465,12 +457,6 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
                   ...mergeMessageMetadata(source, chunk),
                   chunkIndex,
                   dedupeKey,
-                  rawContentHash: buildDedupeKey({
-                    sourceId: source.id,
-                    memorySessionId,
-                    chunkIndex,
-                    content: rawContent,
-                  }),
                   hiddenToolCallCount,
                   agentDiffCount: diffEntries.length,
                 },

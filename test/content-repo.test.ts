@@ -131,7 +131,7 @@ describe("Content Repo Service", () => {
   });
 
   test("getPageHistory parses git log output", async () => {
-    const logOutput = "hash1\tauthor1\t2023-01-01\tmsg1\n";
+    const logOutput = "commit1\tauthor1\t2023-01-01\tmsg1\n";
     vi.mocked(execFile).mockImplementation((_cmd, _args, callback: any) => {
       callback(null, { stdout: logOutput }, "");
       return {} as any;
@@ -140,18 +140,18 @@ describe("Content Repo Service", () => {
 
     const history = await getPageHistory(contentRoot, "about");
     expect(history).toHaveLength(1);
-    expect(history[0].commit).toBe("hash1");
+    expect(history[0].commit).toBe("commit1");
   });
 
   test("commitFileChange adds and commits a file", async () => {
     vi.mocked(execFile).mockImplementation((_cmd, _args, callback: any) => {
-      callback(null, { stdout: "hash-abc\n" }, "");
+      callback(null, { stdout: "commit-abc\n" }, "");
       return {} as any;
     });
 
     const { commitFileChange } = await import("../src/modules/sources/wiki/content-repo.js");
     const commit = await commitFileChange(contentRoot, "/wiki-root/pages/test.md", "feat: test");
-    expect(commit).toBe("hash-abc");
+    expect(commit).toBe("commit-abc");
     expect(execFile).toHaveBeenCalledWith(
       "git",
       expect.arrayContaining(["commit", "-m", "feat: test"]),
@@ -214,7 +214,7 @@ describe("Content Repo Service", () => {
 
   test("commitPathsChange commits multiple files", async () => {
     vi.mocked(execFile).mockImplementation((_cmd, _args, callback: any) => {
-      callback(null, { stdout: "hash-multi\n" }, "");
+      callback(null, { stdout: "commit-multi\n" }, "");
       return {} as any;
     });
 
@@ -224,7 +224,7 @@ describe("Content Repo Service", () => {
       ["/wiki-root/pages/a.md", "/wiki-root/pages/b.md"],
       "feat: multi",
     );
-    expect(commit).toBe("hash-multi");
+    expect(commit).toBe("commit-multi");
   });
 
   test("deletePage throws error if page not found", async () => {

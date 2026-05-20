@@ -22,7 +22,6 @@ export async function recordDistillationReadEvent(params: {
   source: DistillationCandidateSourceRef;
   locator: string;
   purpose?: string;
-  contentHash: string;
   charCount: number;
   truncated: boolean;
   metadata?: Record<string, unknown>;
@@ -33,7 +32,6 @@ export async function recordDistillationReadEvent(params: {
     ...sourceValues(params.source),
     locator: params.locator,
     purpose: params.purpose,
-    contentHash: params.contentHash,
     charCount: params.charCount,
     truncated: params.truncated ? 1 : 0,
     metadata: params.metadata ?? {},

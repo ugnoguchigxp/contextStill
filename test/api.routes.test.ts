@@ -123,7 +123,6 @@ const validDoctorReport: DoctorReport = {
     durationMsAvg: 90,
     lastRunAt: "2026-05-15T00:00:00.000Z",
     lastRunAgeMinutes: 1,
-    lastCacheKeyDraft: "cache:test",
     freshnessThresholdMinutes: 720,
     degradedRateThreshold: 0.5,
   },
