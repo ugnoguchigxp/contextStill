@@ -5,6 +5,7 @@ import {
   knowledgeSearchInputSchema,
   registerKnowledgeInputSchema,
 } from "../src/shared/schemas/knowledge.schema.ts";
+import { overviewDashboardSchema } from "../src/shared/schemas/overview.schema.ts";
 import { recordVibeMemoryInputSchema } from "../src/shared/schemas/vibe-memory.schema.ts";
 
 describe("Shared Schemas", () => {
@@ -198,6 +199,82 @@ describe("Shared Schemas", () => {
       memoryType: "chat",
     };
     expect(recordVibeMemoryInputSchema.parse(input)).toEqual(expect.objectContaining(input));
+  });
+
+  test("overviewDashboardSchema parses valid input", () => {
+    const input = {
+      checkedAt: new Date().toISOString(),
+      kpis: {
+        knowledgeTotal: 10,
+        activeKnowledge: 8,
+        draftKnowledge: 2,
+        deprecatedKnowledge: 0,
+        rules: 7,
+        procedures: 3,
+        embeddedKnowledge: 9,
+        zeroUseActiveKnowledge: 4,
+        wikiPages: 5,
+        indexedSources: 5,
+        sourceFragments: 30,
+        sourceLinks: 12,
+        linkedKnowledge: 6,
+        unlinkedKnowledge: 4,
+        vibeRecords: 20,
+        vibeSessions: 3,
+        vibeRecordsWithDiffs: 14,
+        agentDiffEntries: 55,
+        compileRuns: 12,
+        compileOkRuns: 6,
+        compileDegradedRuns: 5,
+        compileFailedRuns: 1,
+      },
+      charts: {
+        knowledgeByStatusType: [
+          { status: "active", rule: 6, procedure: 2 },
+          { status: "draft", rule: 1, procedure: 1 },
+          { status: "deprecated", rule: 0, procedure: 0 },
+        ],
+        dynamicScoreBuckets: [
+          { bucket: "0", count: 4 },
+          { bucket: "0-1", count: 1 },
+          { bucket: "1-5", count: 2 },
+          { bucket: "5-10", count: 1 },
+          { bucket: "10+", count: 0 },
+        ],
+        compileRunsByDay: [
+          { day: "2026-05-20", ok: 2, degraded: 1, failed: 0, avgDurationMs: 1200 },
+          { day: "2026-05-21", ok: 1, degraded: 0, failed: 1, avgDurationMs: null },
+        ],
+        vibeRecordsByDay: [
+          { day: "2026-05-20", records: 3 },
+          { day: "2026-05-21", records: 1 },
+        ],
+        sourceCoverage: [
+          { label: "linked", count: 6 },
+          { label: "unlinked", count: 4 },
+        ],
+        distillationQueue: [
+          {
+            targetKind: "wiki_file",
+            pending: 4,
+            running: 1,
+            paused: 0,
+            completed: 2,
+            failed: 0,
+          },
+          {
+            targetKind: "vibe_memory",
+            pending: 3,
+            running: 0,
+            paused: 1,
+            completed: 1,
+            failed: 1,
+          },
+        ],
+      },
+    };
+
+    expect(overviewDashboardSchema.parse(input)).toEqual(expect.objectContaining(input));
   });
 
   test("contextPackSchema parses valid input", async () => {

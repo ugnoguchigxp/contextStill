@@ -188,7 +188,7 @@ export const groupedConfig: GroupedConfig = {
     lockTtlSeconds: APP_CONSTANTS.distillationLockTtlSeconds,
     lockFile: path.resolve(process.cwd(), "logs", "distillation.lock"),
     pipelineLockFile: path.resolve(process.cwd(), "logs", "distillation-pipeline.lock"),
-    targetTimeoutMs: APP_CONSTANTS.distillationTargetTimeoutMs,
+    candidateTimeoutMs: APP_CONSTANTS.distillationCandidateTimeoutMs,
     pipelineLockStaleSeconds: APP_CONSTANTS.distillationPipelineLockStaleSeconds,
     continuousIdleSleepMs: APP_CONSTANTS.distillationContinuousIdleSleepMs,
     continuousErrorSleepMs: APP_CONSTANTS.distillationContinuousErrorSleepMs,

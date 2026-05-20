@@ -434,6 +434,7 @@ export async function requeueDistillationTargetState(params: {
       lockedAt: null,
       heartbeatAt: null,
       nextRetryAt: null,
+      attemptCount: 0,
       completedAt: null,
       lastOutcomeKind: "manual_requeue",
       lastError: params.reason ?? null,

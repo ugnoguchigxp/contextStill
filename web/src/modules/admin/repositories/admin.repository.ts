@@ -168,6 +168,14 @@ export type DoctorReport = {
       zeroUseWarningMinActiveCount: number;
     };
   };
+  mcp: {
+    exposedTools: string[];
+    requiredPrimaryTools: string[];
+    missingPrimaryTools: string[];
+    staleKnowledgeCount: number;
+    staleSourceCount: number;
+    nextActions: string[];
+  };
   agentLogSync: {
     codex: {
       sessionDir: string;
@@ -294,6 +302,68 @@ export type DoctorReport = {
       };
     };
     nextActions: string[];
+  };
+};
+
+export type OverviewDashboard = {
+  checkedAt: string;
+  kpis: {
+    knowledgeTotal: number;
+    activeKnowledge: number;
+    draftKnowledge: number;
+    deprecatedKnowledge: number;
+    rules: number;
+    procedures: number;
+    embeddedKnowledge: number;
+    zeroUseActiveKnowledge: number;
+    wikiPages: number;
+    indexedSources: number;
+    sourceFragments: number;
+    sourceLinks: number;
+    linkedKnowledge: number;
+    unlinkedKnowledge: number;
+    vibeRecords: number;
+    vibeSessions: number;
+    vibeRecordsWithDiffs: number;
+    agentDiffEntries: number;
+    compileRuns: number;
+    compileOkRuns: number;
+    compileDegradedRuns: number;
+    compileFailedRuns: number;
+  };
+  charts: {
+    knowledgeByStatusType: Array<{
+      status: "active" | "draft" | "deprecated";
+      rule: number;
+      procedure: number;
+    }>;
+    dynamicScoreBuckets: Array<{
+      bucket: "0" | "0-1" | "1-5" | "5-10" | "10+";
+      count: number;
+    }>;
+    compileRunsByDay: Array<{
+      day: string;
+      ok: number;
+      degraded: number;
+      failed: number;
+      avgDurationMs: number | null;
+    }>;
+    vibeRecordsByDay: Array<{
+      day: string;
+      records: number;
+    }>;
+    sourceCoverage: Array<{
+      label: "linked" | "unlinked";
+      count: number;
+    }>;
+    distillationQueue: Array<{
+      targetKind: "wiki_file" | "vibe_memory";
+      pending: number;
+      running: number;
+      paused: number;
+      completed: number;
+      failed: number;
+    }>;
   };
 };
 
@@ -642,6 +712,10 @@ export async function fetchAgentDiffEntries(
 
 export async function fetchDoctorReport(): Promise<DoctorReport> {
   return getJson<DoctorReport>("/api/doctor");
+}
+
+export async function fetchOverviewDashboard(): Promise<OverviewDashboard> {
+  return getJson<OverviewDashboard>("/api/overview");
 }
 
 export async function fetchGraphSnapshot(

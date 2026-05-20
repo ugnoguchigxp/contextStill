@@ -76,7 +76,7 @@
 `src/constants.ts` に次を追加・整理する。
 
 ```ts
-distillationTargetTimeoutMs: 600_000,
+distillationCandidateTimeoutMs: 600_000,
 distillationTargetStaleSeconds: 660,
 distillationPipelineLockStaleSeconds: 660,
 distillationLowImportanceRejectThreshold: 50,
@@ -280,9 +280,9 @@ lease mismatch 時:
 
 作業:
 
-- `runClaimedTarget()` の開始時に `AbortController` を作る。
-- timeout は `groupedConfig.distillation.targetTimeoutMs`。
-- deadline context を下流へ渡す。
+- candidate ごとに `AbortController` を作る。
+- timeout は `groupedConfig.distillation.candidateTimeoutMs`。
+- candidate timeout は該当 cover evidence result だけを retryable failure として保存し、target 全体は次 candidate へ進める。
 
 推奨型:
 

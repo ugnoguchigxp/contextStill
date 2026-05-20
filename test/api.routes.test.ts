@@ -23,11 +23,17 @@ import {
   updateKnowledgeItem,
 } from "../api/modules/knowledge/knowledge.repository.js";
 import { knowledgeRouter } from "../api/modules/knowledge/knowledge.routes.js";
+import { fetchOverviewDashboardForApi } from "../api/modules/overview/overview.repository.js";
+import { overviewRouter } from "../api/modules/overview/overview.routes.js";
 import { vibeMemoryRouter } from "../api/modules/vibe-memory/vibe-memory.routes.js";
 import { recordVibeMemoryWithDiffEntries } from "../src/modules/vibe-memory/vibe-memory.service.js";
 import { compileRunDetailSchema } from "../src/shared/schemas/compile-run.schema.js";
 import { type ContextPack, contextPackSchema } from "../src/shared/schemas/context-pack.schema.js";
 import { type DoctorReport, doctorReportSchema } from "../src/shared/schemas/doctor.schema.js";
+import {
+  overviewDashboardSchema,
+  type OverviewDashboard,
+} from "../src/shared/schemas/overview.schema.js";
 
 vi.mock("../api/modules/context-compiler/context-compiler.service.js", () => ({
   compilePackForApi: vi.fn(),
@@ -43,6 +49,10 @@ vi.mock("../api/modules/context-compiler/context-compiler.service.js", () => ({
 
 vi.mock("../api/modules/doctor/doctor.service.js", () => ({
   getDoctorReportForApi: vi.fn(),
+}));
+
+vi.mock("../api/modules/overview/overview.repository.js", () => ({
+  fetchOverviewDashboardForApi: vi.fn(),
 }));
 
 vi.mock("../api/modules/candidates/candidates.repository.js", () => ({
@@ -82,6 +92,7 @@ const buildApp = () => {
   app.route("/api/context", contextCompilerRouter);
   app.route("/api/doctor", doctorRouter);
   app.route("/api/knowledge", knowledgeRouter);
+  app.route("/api/overview", overviewRouter);
   app.route("/api/vibe-memory", vibeMemoryRouter);
   return app;
 };
@@ -303,6 +314,64 @@ const validDoctorReport: DoctorReport = {
   },
 };
 
+const validOverviewDashboard: OverviewDashboard = overviewDashboardSchema.parse({
+  checkedAt: "2026-05-20T00:00:00.000Z",
+  kpis: {
+    knowledgeTotal: 334,
+    activeKnowledge: 300,
+    draftKnowledge: 34,
+    deprecatedKnowledge: 0,
+    rules: 302,
+    procedures: 32,
+    embeddedKnowledge: 334,
+    zeroUseActiveKnowledge: 293,
+    wikiPages: 40,
+    indexedSources: 40,
+    sourceFragments: 1235,
+    sourceLinks: 254,
+    linkedKnowledge: 254,
+    unlinkedKnowledge: 80,
+    vibeRecords: 1072,
+    vibeSessions: 118,
+    vibeRecordsWithDiffs: 963,
+    agentDiffEntries: 10462,
+    compileRuns: 52,
+    compileOkRuns: 1,
+    compileDegradedRuns: 51,
+    compileFailedRuns: 0,
+  },
+  charts: {
+    knowledgeByStatusType: [
+      { status: "active", rule: 270, procedure: 30 },
+      { status: "draft", rule: 32, procedure: 2 },
+      { status: "deprecated", rule: 0, procedure: 0 },
+    ],
+    dynamicScoreBuckets: [
+      { bucket: "0", count: 327 },
+      { bucket: "0-1", count: 0 },
+      { bucket: "1-5", count: 0 },
+      { bucket: "5-10", count: 0 },
+      { bucket: "10+", count: 7 },
+    ],
+    compileRunsByDay: [
+      { day: "2026-05-19", ok: 0, degraded: 1, failed: 0, avgDurationMs: 1250 },
+      { day: "2026-05-20", ok: 1, degraded: 0, failed: 0, avgDurationMs: 980 },
+    ],
+    vibeRecordsByDay: [
+      { day: "2026-05-19", records: 12 },
+      { day: "2026-05-20", records: 8 },
+    ],
+    sourceCoverage: [
+      { label: "linked", count: 254 },
+      { label: "unlinked", count: 80 },
+    ],
+    distillationQueue: [
+      { targetKind: "wiki_file", pending: 100, running: 1, paused: 0, completed: 20, failed: 0 },
+      { targetKind: "vibe_memory", pending: 17, running: 0, paused: 0, completed: 2, failed: 0 },
+    ],
+  },
+});
+
 describe("API route contract tests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -317,6 +386,7 @@ describe("API route contract tests", () => {
     vi.mocked(listRunsForApi).mockResolvedValue([]);
     vi.mocked(getRunDetailForApi).mockResolvedValue(validRunDetail);
     vi.mocked(getDoctorReportForApi).mockResolvedValue(validDoctorReport);
+    vi.mocked(fetchOverviewDashboardForApi).mockResolvedValue(validOverviewDashboard);
     vi.mocked(listCandidateItems).mockResolvedValue({
       items: [],
       total: 0,
@@ -599,6 +669,18 @@ describe("API route contract tests", () => {
     const parsed = doctorReportSchema.parse(json);
     expect(parsed.status).toBe("ok");
     expect(getDoctorReportForApi).toHaveBeenCalledTimes(1);
+  });
+
+  test("GET /api/overview returns contract-compatible response", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/overview");
+
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    const parsed = overviewDashboardSchema.parse(json);
+    expect(parsed.kpis.knowledgeTotal).toBe(334);
+    expect(parsed.charts.dynamicScoreBuckets).toHaveLength(5);
+    expect(fetchOverviewDashboardForApi).toHaveBeenCalledTimes(1);
   });
 
   test("GET /api/knowledge rejects invalid query", async () => {

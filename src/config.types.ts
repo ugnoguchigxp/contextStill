@@ -91,7 +91,7 @@ export type GroupedConfig = {
     lockTtlSeconds: number;
     lockFile: string;
     pipelineLockFile: string;
-    targetTimeoutMs: number;
+    candidateTimeoutMs: number;
     pipelineLockStaleSeconds: number;
     continuousIdleSleepMs: number;
     continuousErrorSleepMs: number;

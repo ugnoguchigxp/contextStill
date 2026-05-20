@@ -8,6 +8,7 @@ import { contextCompilerRouter } from "./modules/context-compiler/context-compil
 import { doctorRouter } from "./modules/doctor/doctor.routes.js";
 import { graphRouter } from "./modules/graph/graph.routes.js";
 import { knowledgeRouter } from "./modules/knowledge/knowledge.routes.js";
+import { overviewRouter } from "./modules/overview/overview.routes.js";
 import { sourcesRouter } from "./modules/sources/sources.routes.js";
 import { vibeMemoryRouter } from "./modules/vibe-memory/vibe-memory.routes.js";
 import { Hono } from "hono";
@@ -24,6 +25,7 @@ app.route("/api/sources", sourcesRouter);
 app.route("/api/vibe-memory", vibeMemoryRouter);
 app.route("/api/agent-diffs", agentDiffsRouter);
 app.route("/api/graph", graphRouter);
+app.route("/api/overview", overviewRouter);
 app.route("/api/audit-logs", auditLogsRouter);
 app.route("/api/candidates", candidatesRouter);
 

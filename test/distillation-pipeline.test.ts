@@ -16,6 +16,7 @@ const mocks = vi.hoisted(() => ({
   runCoverEvidenceForCandidate: vi.fn(),
   listCoverEvidenceResultsByTargetStateId: vi.fn(),
   coverEvidenceResultFromRow: vi.fn(),
+  saveCoverEvidenceResult: vi.fn(),
   runFinalizeDistille: vi.fn(),
 }));
 
@@ -46,6 +47,7 @@ vi.mock("../src/modules/findCandidate/repository.js", () => ({
 vi.mock("../src/modules/coverEvidence/repository.js", () => ({
   listCoverEvidenceResultsByTargetStateId: mocks.listCoverEvidenceResultsByTargetStateId,
   coverEvidenceResultFromRow: mocks.coverEvidenceResultFromRow,
+  saveCoverEvidenceResult: mocks.saveCoverEvidenceResult,
 }));
 
 vi.mock("../src/modules/coverEvidence/runner.js", () => ({
@@ -111,6 +113,7 @@ describe("runDistillationPipeline", () => {
       toolEvents: [],
       reason: row.reason ?? null,
     }));
+    mocks.saveCoverEvidenceResult.mockResolvedValue({});
     mocks.runFindCandidate.mockResolvedValue({
       targetStateId: "target-1",
       targetKind: "wiki_file",
@@ -156,6 +159,84 @@ describe("runDistillationPipeline", () => {
         knowledgeIds: ["knowledge-1"],
       }),
     );
+  });
+
+  test("times out one candidate and continues with the next candidate", async () => {
+    vi.useFakeTimers();
+    try {
+      mocks.runFindCandidate.mockResolvedValue({
+        targetStateId: "target-1",
+        targetKind: "wiki_file",
+        targetKey: "pipeline.md",
+        callerMode: "storage",
+        candidates: [
+          { title: "Slow", content: "Candidate that does not finish" },
+          { title: "Ready", content: "Candidate that should still be finalized" },
+        ],
+        insertedIds: ["candidate-slow", "candidate-ready"],
+        readRanges: [{ from: 0, toExclusive: 100 }],
+      });
+      mocks.runCoverEvidenceForCandidate.mockImplementation(({ findCandidateId, signal }) => {
+        if (findCandidateId === "candidate-slow") {
+          return new Promise((_resolve, reject) => {
+            signal?.addEventListener(
+              "abort",
+              () => {
+                const error = new Error("aborted");
+                error.name = "AbortError";
+                reject(error);
+              },
+              { once: true },
+            );
+          });
+        }
+
+        return Promise.resolve({
+          coverEvidenceResultId: "candidate-ready",
+          findCandidateId: "candidate-ready",
+          status: "knowledge_ready",
+          stage: "final",
+          retryable: false,
+          reason: null,
+        });
+      });
+      mocks.runFinalizeDistille.mockResolvedValue({
+        coverEvidenceResultId: "candidate-ready",
+        knowledgeId: "knowledge-ready",
+        status: "stored",
+        embeddingStatus: "stored",
+        sourceReferenceCount: 1,
+        sourceLinkCount: 0,
+        reason: null,
+      });
+
+      const pending = runDistillationPipeline({ write: true, refresh: false, limit: 1 });
+      await vi.advanceTimersByTimeAsync(600_000);
+      const result = await pending;
+
+      expect(mocks.saveCoverEvidenceResult).toHaveBeenCalledWith(
+        expect.objectContaining({
+          id: "candidate-slow",
+          result: expect.objectContaining({
+            status: "provider_failed",
+            reason: "candidate_timeout",
+          }),
+        }),
+      );
+      expect(mocks.runCoverEvidenceForCandidate).toHaveBeenCalledWith(
+        expect.objectContaining({ findCandidateId: "candidate-ready" }),
+      );
+      expect(mocks.runFinalizeDistille).toHaveBeenCalledWith(
+        expect.objectContaining({ coverEvidenceResultId: "candidate-ready" }),
+      );
+      expect(result.results[0]).toMatchObject({
+        status: "completed",
+        outcomeKind: "knowledge_finalized_with_retryable_rejections",
+        knowledgeIds: ["knowledge-ready"],
+      });
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   test("skips target when no candidates are found", async () => {
