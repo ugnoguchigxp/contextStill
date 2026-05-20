@@ -10,8 +10,12 @@ const mocks = vi.hoisted(() => ({
   updateDistillationTargetHeartbeat: vi.fn(),
   finishDistillationTargetState: vi.fn(),
   pauseDistillationTargetState: vi.fn(),
+  leaseFromTargetState: vi.fn(),
   runFindCandidate: vi.fn(),
+  listFindCandidateResultsByTargetStateId: vi.fn(),
   runCoverEvidenceForCandidate: vi.fn(),
+  listCoverEvidenceResultsByTargetStateId: vi.fn(),
+  coverEvidenceResultFromRow: vi.fn(),
   runFinalizeDistille: vi.fn(),
 }));
 
@@ -28,10 +32,20 @@ vi.mock("../src/modules/selectDistillationTarget/repository.js", () => ({
   updateDistillationTargetHeartbeat: mocks.updateDistillationTargetHeartbeat,
   finishDistillationTargetState: mocks.finishDistillationTargetState,
   pauseDistillationTargetState: mocks.pauseDistillationTargetState,
+  leaseFromTargetState: mocks.leaseFromTargetState,
 }));
 
 vi.mock("../src/modules/findCandidate/domain.js", () => ({
   runFindCandidate: mocks.runFindCandidate,
+}));
+
+vi.mock("../src/modules/findCandidate/repository.js", () => ({
+  listFindCandidateResultsByTargetStateId: mocks.listFindCandidateResultsByTargetStateId,
+}));
+
+vi.mock("../src/modules/coverEvidence/repository.js", () => ({
+  listCoverEvidenceResultsByTargetStateId: mocks.listCoverEvidenceResultsByTargetStateId,
+  coverEvidenceResultFromRow: mocks.coverEvidenceResultFromRow,
 }));
 
 vi.mock("../src/modules/coverEvidence/runner.js", () => ({
@@ -80,6 +94,23 @@ describe("runDistillationPipeline", () => {
     mocks.updateDistillationTargetHeartbeat.mockResolvedValue({});
     mocks.finishDistillationTargetState.mockResolvedValue({});
     mocks.pauseDistillationTargetState.mockResolvedValue({});
+    mocks.leaseFromTargetState.mockImplementation((row) => ({
+      targetStateId: row.id,
+      lockedBy: row.lockedBy,
+      attemptCount: row.attemptCount,
+    }));
+    mocks.listFindCandidateResultsByTargetStateId.mockResolvedValue([]);
+    mocks.listCoverEvidenceResultsByTargetStateId.mockResolvedValue([]);
+    mocks.coverEvidenceResultFromRow.mockImplementation((row) => ({
+      schemaVersion: 1,
+      status: row.status,
+      stage: row.stage,
+      candidate: null,
+      references: [],
+      duplicateRefs: [],
+      toolEvents: [],
+      reason: row.reason ?? null,
+    }));
     mocks.runFindCandidate.mockResolvedValue({
       targetStateId: "target-1",
       targetKind: "wiki_file",

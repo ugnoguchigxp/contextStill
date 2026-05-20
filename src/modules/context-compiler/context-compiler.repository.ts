@@ -1,6 +1,47 @@
 import { desc, eq, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { contextCompileRuns, contextPackItems, knowledgeItems, sources } from "../../db/schema.js";
+import {
+  type CompileRunDetail,
+  type CompileRunSelectedItem,
+  type CompileRunSource,
+  compileRunDetailSchema,
+  compileRunSourceSchema,
+} from "../../shared/schemas/compile-run.schema.js";
+import type { ContextPack } from "../../shared/schemas/context-pack.schema.js";
+import { contextPackSchema } from "../../shared/schemas/context-pack.schema.js";
+
+const runStatusValues = new Set(["ok", "degraded", "failed"]);
+
+function normalizeRunStatus(value: unknown): "ok" | "degraded" | "failed" {
+  return typeof value === "string" && runStatusValues.has(value)
+    ? (value as "ok" | "degraded" | "failed")
+    : "failed";
+}
+
+function normalizeCompileRunSource(value: unknown): CompileRunSource {
+  const parsed = compileRunSourceSchema.safeParse(value);
+  return parsed.success ? parsed.data : "unknown";
+}
+
+function normalizeDate(value: unknown): Date {
+  if (value instanceof Date) return value;
+  if (typeof value === "string") {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return new Date(0);
+}
+
+function normalizeStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function normalizeDuration(value: unknown): number {
+  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+}
 
 export async function insertCompileRun(params: {
   goal: string;
@@ -12,6 +53,7 @@ export async function insertCompileRun(params: {
   degradedReasons: string[];
   tokenBudget: number;
   durationMs: number;
+  source?: CompileRunSource;
 }): Promise<string> {
   const [inserted] = await db
     .insert(contextCompileRuns)
@@ -25,10 +67,18 @@ export async function insertCompileRun(params: {
       degradedReasons: params.degradedReasons,
       tokenBudget: params.tokenBudget,
       durationMs: params.durationMs,
+      source: params.source ?? "unknown",
     })
     .returning({ id: contextCompileRuns.id });
 
   return inserted.id;
+}
+
+export async function updateCompileRunSnapshot(runId: string, pack: ContextPack): Promise<void> {
+  await db
+    .update(contextCompileRuns)
+    .set({ packSnapshot: pack as unknown as Record<string, unknown> })
+    .where(eq(contextCompileRuns.id, runId));
 }
 
 export async function insertContextPackItems(
@@ -65,6 +115,7 @@ export type CompileRunSummary = {
   status: "ok" | "degraded" | "failed";
   degradedReasons: string[];
   durationMs: number;
+  source: CompileRunSource;
   createdAt: Date;
 };
 
@@ -76,14 +127,7 @@ export type CompileFreshnessMarkers = {
 
 export type CompileRunSnapshot = {
   run: CompileRunSummary;
-  items: Array<{
-    itemKind: string;
-    itemId: string;
-    section: string;
-    score: number;
-    rankingReason: string;
-    sourceRefs: string[];
-  }>;
+  items: CompileRunSelectedItem[];
 };
 
 export async function listRecentCompileRuns(limit = 20): Promise<CompileRunSummary[]> {
@@ -97,6 +141,7 @@ export async function listRecentCompileRuns(limit = 20): Promise<CompileRunSumma
       status: contextCompileRuns.status,
       degradedReasons: contextCompileRuns.degradedReasons,
       durationMs: contextCompileRuns.durationMs,
+      source: contextCompileRuns.source,
       createdAt: contextCompileRuns.createdAt,
     })
     .from(contextCompileRuns)
@@ -108,10 +153,11 @@ export async function listRecentCompileRuns(limit = 20): Promise<CompileRunSumma
     goal: row.goal,
     intent: row.intent,
     retrievalMode: row.retrievalMode,
-    status: row.status as "ok" | "degraded" | "failed",
-    degradedReasons: Array.isArray(row.degradedReasons) ? (row.degradedReasons as string[]) : [],
-    durationMs: Number.isFinite(row.durationMs) ? Math.max(0, Math.round(row.durationMs)) : 0,
-    createdAt: row.createdAt,
+    status: normalizeRunStatus(row.status),
+    degradedReasons: normalizeStringArray(row.degradedReasons),
+    durationMs: normalizeDuration(row.durationMs),
+    source: normalizeCompileRunSource(row.source),
+    createdAt: normalizeDate(row.createdAt),
   }));
 }
 
@@ -125,6 +171,7 @@ export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSn
       status: contextCompileRuns.status,
       degradedReasons: contextCompileRuns.degradedReasons,
       durationMs: contextCompileRuns.durationMs,
+      source: contextCompileRuns.source,
       createdAt: contextCompileRuns.createdAt,
     })
     .from(contextCompileRuns)
@@ -152,10 +199,11 @@ export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSn
       goal: run.goal,
       intent: run.intent,
       retrievalMode: run.retrievalMode,
-      status: run.status as "ok" | "degraded" | "failed",
-      degradedReasons: Array.isArray(run.degradedReasons) ? (run.degradedReasons as string[]) : [],
-      durationMs: Number.isFinite(run.durationMs) ? Math.max(0, Math.round(run.durationMs)) : 0,
-      createdAt: run.createdAt,
+      status: normalizeRunStatus(run.status),
+      degradedReasons: normalizeStringArray(run.degradedReasons),
+      durationMs: normalizeDuration(run.durationMs),
+      source: normalizeCompileRunSource(run.source),
+      createdAt: normalizeDate(run.createdAt),
     },
     items: itemRows.map((row) => ({
       itemKind: row.itemKind,
@@ -163,9 +211,81 @@ export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSn
       section: row.section,
       score: row.score,
       rankingReason: row.rankingReason,
-      sourceRefs: Array.isArray(row.sourceRefs) ? (row.sourceRefs as string[]) : [],
+      sourceRefs: normalizeStringArray(row.sourceRefs),
     })),
   };
+}
+
+export async function getCompileRunDetail(runId: string): Promise<CompileRunDetail | null> {
+  const [run] = await db
+    .select({
+      id: contextCompileRuns.id,
+      goal: contextCompileRuns.goal,
+      intent: contextCompileRuns.intent,
+      retrievalMode: contextCompileRuns.retrievalMode,
+      status: contextCompileRuns.status,
+      degradedReasons: contextCompileRuns.degradedReasons,
+      durationMs: contextCompileRuns.durationMs,
+      source: contextCompileRuns.source,
+      createdAt: contextCompileRuns.createdAt,
+      tokenBudget: contextCompileRuns.tokenBudget,
+      input: contextCompileRuns.input,
+      packSnapshot: contextCompileRuns.packSnapshot,
+    })
+    .from(contextCompileRuns)
+    .where(eq(contextCompileRuns.id, runId))
+    .limit(1);
+
+  if (!run) return null;
+
+  const itemRows = await db
+    .select({
+      itemKind: contextPackItems.itemKind,
+      itemId: contextPackItems.itemId,
+      section: contextPackItems.section,
+      score: contextPackItems.score,
+      rankingReason: contextPackItems.rankingReason,
+      sourceRefs: contextPackItems.sourceRefs,
+    })
+    .from(contextPackItems)
+    .where(eq(contextPackItems.runId, runId))
+    .orderBy(desc(contextPackItems.score), desc(contextPackItems.createdAt));
+
+  const parsedPackSnapshot = contextPackSchema.safeParse(run.packSnapshot);
+  const packSnapshot =
+    parsedPackSnapshot.success && parsedPackSnapshot.data.runId === run.id
+      ? parsedPackSnapshot.data
+      : null;
+  const detail = {
+    run: {
+      id: run.id,
+      goal: run.goal,
+      intent: run.intent,
+      retrievalMode: run.retrievalMode,
+      status: normalizeRunStatus(run.status),
+      degradedReasons: normalizeStringArray(run.degradedReasons),
+      durationMs: normalizeDuration(run.durationMs),
+      source: normalizeCompileRunSource(run.source),
+      createdAt: normalizeDate(run.createdAt).toISOString(),
+      tokenBudget: normalizeDuration(run.tokenBudget),
+      input:
+        typeof run.input === "object" && run.input !== null
+          ? (run.input as Record<string, unknown>)
+          : {},
+    },
+    pack: packSnapshot,
+    selectedItems: itemRows.map((row) => ({
+      itemKind: row.itemKind,
+      itemId: row.itemId,
+      section: row.section,
+      score: row.score,
+      rankingReason: row.rankingReason,
+      sourceRefs: normalizeStringArray(row.sourceRefs),
+    })),
+    snapshotAvailable: packSnapshot !== null,
+  };
+
+  return compileRunDetailSchema.parse(detail);
 }
 
 export async function getLatestCompileRunSnapshot(): Promise<CompileRunSnapshot | null> {

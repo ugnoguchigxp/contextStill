@@ -56,6 +56,24 @@ function appendDistillationReasons(
   } else if (typeof ageMinutes === "number" && ageMinutes > options.freshnessThresholdMinutes) {
     reasons.push(`${prefix}_STALE`);
   }
+  if (distillation.queueHealth.staleRunning > 0) {
+    reasons.push(`${prefix}_QUEUE_STALE_RUNNING`);
+  }
+  if (distillation.queueHealth.lock.staleByCreatedAge) {
+    reasons.push(`${prefix}_PIPELINE_LOCK_STALE`);
+  }
+  const runnableQueued = distillation.queueHealth.queued + distillation.queueHealth.retryablePaused;
+  if (
+    runnableQueued > 0 &&
+    distillation.queueHealth.running === 0 &&
+    distillation.launchAgent.loaded &&
+    !distillation.queueHealth.blockedByHigherPriority &&
+    distillation.queueHealth.oldestQueuedAgeMinutes !== null &&
+    distillation.queueHealth.oldestQueuedAgeMinutes >
+      groupedConfig.distillation.pipelineLockStaleSeconds / 60
+  ) {
+    reasons.push(`${prefix}_QUEUE_STOPPED`);
+  }
 }
 
 function appendAutomationReasons(

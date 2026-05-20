@@ -146,6 +146,23 @@ describe("runFinalizeDistille", () => {
     expect(mocks.upsertKnowledgeFromSource).not.toHaveBeenCalled();
   });
 
+  test("rejects low-importance ready cover evidence without creating knowledge", async () => {
+    mocks.coverEvidenceResultFromRow.mockReturnValue({
+      ...readyResult(),
+      candidate: {
+        ...readyResult().candidate,
+        importance: 50,
+      },
+    });
+
+    const result = await runFinalizeDistille({ coverEvidenceResultId: "find-1", write: true });
+
+    expect(result.status).toBe("rejected");
+    expect(result.reason).toBe("low_importance");
+    expect(mocks.getFindCandidateResultById).not.toHaveBeenCalled();
+    expect(mocks.upsertKnowledgeFromSource).not.toHaveBeenCalled();
+  });
+
   test("stores draft when embedding fails", async () => {
     mocks.embedOne.mockRejectedValue(new Error("embedding provider crashed"));
 

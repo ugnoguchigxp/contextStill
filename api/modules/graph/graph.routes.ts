@@ -12,7 +12,7 @@ const graphQuerySchema = z.object({
   limit: z.coerce.number().int().min(1).max(1000).default(1000),
   status: z.enum(["current", "active", "draft", "deprecated", "all"]).default("current"),
   view: z.enum(["relation", "semantic"]).default("relation"),
-  relationAxes: z.string().default("session,project"),
+  relationAxes: z.string().default("session,project,source"),
   minSimilarity: z.coerce.number().min(0).max(1).default(0.72),
   semanticTopK: z.coerce.number().int().min(1).max(10).default(3),
   maxContextEdgesPerNode: z.coerce.number().int().min(1).max(10).default(3),
@@ -24,8 +24,9 @@ function parseRelationAxes(input: string): GraphRelationAxis[] {
     const normalized = token.trim().toLowerCase();
     if (normalized === "session") deduped.add("session");
     if (normalized === "project") deduped.add("project");
+    if (normalized === "source") deduped.add("source");
   }
-  return deduped.size > 0 ? [...deduped] : ["session", "project"];
+  return deduped.size > 0 ? [...deduped] : ["session", "project", "source"];
 }
 
 export const graphRouter = new Hono()

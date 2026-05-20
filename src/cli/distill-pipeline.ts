@@ -12,6 +12,7 @@ type CliOptions = {
   limit: number;
   write: boolean;
   refresh: boolean;
+  continuous: boolean;
   rootPath?: string;
   vibeLimit?: number;
   worker?: string;
@@ -45,6 +46,7 @@ function parseArgs(args: string[]): CliOptions {
     limit: 1,
     write: false,
     refresh: true,
+    continuous: false,
     forceRefreshEvidence: false,
   };
 
@@ -94,6 +96,8 @@ function parseArgs(args: string[]): CliOptions {
       options.refresh = false;
     } else if (arg === "--force-refresh-evidence") {
       options.forceRefreshEvidence = true;
+    } else if (arg === "--continuous") {
+      options.continuous = true;
     } else if (arg === "--json") {
       // JSON is the only output format.
     } else {
@@ -108,32 +112,92 @@ function parseArgs(args: string[]): CliOptions {
   return options;
 }
 
-async function main(): Promise<void> {
-  const options = parseArgs(process.argv.slice(2));
+function lockFilePath(): string {
+  return groupedConfig.distillation.pipelineLockFile;
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function pipelineInput(
+  options: CliOptions,
+  refresh: boolean,
+  limit: number,
+): DistillationPipelineInput {
+  return {
+    kind: options.kind,
+    limit,
+    worker: options.worker,
+    provider: options.provider,
+    distillationVersion: options.distillationVersion,
+    refresh,
+    rootPath: options.rootPath,
+    vibeLimit: options.vibeLimit,
+    forceRefreshEvidence: options.forceRefreshEvidence,
+    write: true,
+  };
+}
+
+async function runOnceWithLock(
+  options: CliOptions,
+  params: { refresh: boolean; limit: number; wait: boolean },
+): Promise<Awaited<ReturnType<typeof runDistillationPipeline>>> {
   let lock: FileLockHandle | null = null;
   try {
     lock = await acquireFileLock({
-      lockFile: path.resolve(process.cwd(), "logs", "distillation-pipeline.lock"),
+      lockFile: lockFilePath(),
       ttlSeconds: groupedConfig.distillation.lockTtlSeconds,
+      staleCreatedAgeSeconds: groupedConfig.distillation.pipelineLockStaleSeconds,
+      removeWhenCreatedAgeExceeded: true,
       label: "distillation pipeline",
-      wait: true,
+      wait: params.wait,
     });
-    const result = await runDistillationPipeline({
-      kind: options.kind,
-      limit: options.limit,
-      worker: options.worker,
-      provider: options.provider,
-      distillationVersion: options.distillationVersion,
-      refresh: options.refresh,
-      rootPath: options.rootPath,
-      vibeLimit: options.vibeLimit,
-      forceRefreshEvidence: options.forceRefreshEvidence,
-      write: true,
-    });
-    process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+    return await runDistillationPipeline(pipelineInput(options, params.refresh, params.limit));
   } finally {
     await lock?.release();
   }
+}
+
+async function runContinuous(options: CliOptions): Promise<void> {
+  let lastRefreshAt = 0;
+  while (true) {
+    try {
+      const now = Date.now();
+      const refresh =
+        options.refresh &&
+        (lastRefreshAt === 0 ||
+          now - lastRefreshAt >= groupedConfig.distillation.inventoryRefreshIntervalMs);
+      if (refresh) lastRefreshAt = now;
+      const result = await runOnceWithLock(options, {
+        refresh,
+        limit: 1,
+        wait: false,
+      });
+      process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
+      if (result.idle) {
+        await sleep(groupedConfig.distillation.continuousIdleSleepMs);
+      }
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      await sleep(groupedConfig.distillation.continuousErrorSleepMs);
+    }
+  }
+}
+
+async function main(): Promise<void> {
+  const options = parseArgs(process.argv.slice(2));
+  if (options.continuous) {
+    await runContinuous(options);
+    return;
+  }
+
+  const result = await runOnceWithLock(options, {
+    refresh: options.refresh,
+    limit: options.limit,
+    wait: true,
+  });
+  process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 }
 
 main()

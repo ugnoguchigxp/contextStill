@@ -3,6 +3,8 @@ import { Hono } from "hono";
 import { compileInputSchema } from "../../../src/shared/schemas/compile.schema.js";
 import {
   compilePackForApi,
+  getRunDetailForApi,
+  getRunDetailParamSchema,
   listRunsForApi,
   listRunsQuerySchema,
 } from "./context-compiler.service.js";
@@ -17,4 +19,12 @@ export const contextCompilerRouter = new Hono()
     const query = c.req.valid("query");
     const runs = await listRunsForApi(query);
     return c.json({ runs });
+  })
+  .get("/runs/:id", zValidator("param", getRunDetailParamSchema), async (c) => {
+    const params = c.req.valid("param");
+    const detail = await getRunDetailForApi(params);
+    if (!detail) {
+      return c.json({ error: "Compile run not found." }, 404);
+    }
+    return c.json({ detail });
   });

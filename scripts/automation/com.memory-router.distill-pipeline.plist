@@ -8,12 +8,12 @@
     <array>
         <string>/bin/bash</string>
         <string>{{PROJECT_ROOT}}/scripts/setup-distill-pipeline-automation.sh</string>
-        <string>run-once</string>
+        <string>run-continuous</string>
     </array>
     <key>WorkingDirectory</key>
     <string>{{PROJECT_ROOT}}</string>
-    <key>StartInterval</key>
-    <integer>{{INTERVAL_SECONDS}}</integer>
+    <key>KeepAlive</key>
+    <true/>
     <key>StandardOutPath</key>
     <string>{{PROJECT_ROOT}}/logs/distill-pipeline.log</string>
     <key>StandardErrorPath</key>

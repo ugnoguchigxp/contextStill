@@ -80,9 +80,9 @@ function layoutNodes(nodes: GraphNode[], edges: GraphEdge[]): PositionedNode[] {
   const points = positioned.map((node) => ({ x: node.x, y: node.y, vx: 0, vy: 0 }));
   const forces = points.map(() => ({ x: 0, y: 0 }));
   const iterations =
-    nodes.length >= 180 ? 70 : nodes.length >= 100 ? 100 : nodes.length >= 60 ? 130 : 170;
-  const repulsionStrength = nodes.length >= 180 ? 3000 : 6000;
-  const gravityStrength = nodes.length >= 180 ? 0.0022 : 0.0018;
+    nodes.length >= 180 ? 100 : nodes.length >= 100 ? 110 : nodes.length >= 60 ? 130 : 170;
+  const repulsionStrength = nodes.length >= 180 ? 150 : nodes.length >= 100 ? 1200 : 4000;
+  const gravityStrength = nodes.length >= 180 ? 0.022 : nodes.length >= 100 ? 0.008 : 0.0022;
   const damping = 0.84;
 
   for (let iteration = 0; iteration < iterations; iteration += 1) {
@@ -129,9 +129,17 @@ function layoutNodes(nodes: GraphNode[], edges: GraphEdge[]): PositionedNode[] {
           ? clamp(220 - edge.weight * 160, 70, 220)
           : edge.edgeKind === "session"
             ? clamp(200 - edge.weight * 120, 75, 210)
-            : clamp(230 - edge.weight * 120, 90, 240);
+            : edge.edgeKind === "source"
+              ? clamp(210 - edge.weight * 130, 80, 220)
+              : clamp(230 - edge.weight * 120, 90, 240);
       const springStrength =
-        edge.edgeKind === "semantic" ? 0.055 : edge.edgeKind === "session" ? 0.04 : 0.03;
+        edge.edgeKind === "semantic"
+          ? 0.055
+          : edge.edgeKind === "session"
+            ? 0.04
+            : edge.edgeKind === "source"
+              ? 0.038
+              : 0.03;
       const delta = distance - targetDistance;
       const fx = (dx / distance) * delta * springStrength;
       const fy = (dy / distance) * delta * springStrength;
@@ -199,7 +207,7 @@ function computeAutoFitTransform(nodes: PositionedNode[], viewport: Viewport): T
   const availableWidth = Math.max(120, viewport.width - horizontalPadding * 2);
   const availableHeight = Math.max(120, viewport.height - verticalPadding * 2);
   const fitScale = Math.min(availableWidth / graphWidth, availableHeight / graphHeight);
-  const scale = clamp(fitScale, 0.2, 1.6);
+  const scale = clamp(fitScale, 0.05, 1.6);
 
   const centerX = (minX + maxX) / 2;
   const centerY = (minY + maxY) / 2;
@@ -213,7 +221,11 @@ function computeAutoFitTransform(nodes: PositionedNode[], viewport: Viewport): T
 export function GraphPage() {
   const [statusFilter, setStatusFilter] = useState<GraphStatusFilter>("current");
   const [viewMode, setViewMode] = useState<GraphViewMode>("relation");
-  const [relationAxes, setRelationAxes] = useState<GraphRelationAxis[]>(["session", "project"]);
+  const [relationAxes, setRelationAxes] = useState<GraphRelationAxis[]>([
+    "session",
+    "project",
+    "source",
+  ]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
 
@@ -263,7 +275,8 @@ export function GraphPage() {
         return prev.filter((candidate) => candidate !== axis);
       }
       const next = [...prev, axis];
-      return next.sort((a, b) => (a === b ? 0 : a === "session" ? -1 : 1));
+      const axisOrder: Record<GraphRelationAxis, number> = { session: 0, project: 1, source: 2 };
+      return next.sort((a, b) => (axisOrder[a] ?? 0) - (axisOrder[b] ?? 0));
     });
   };
 
@@ -381,6 +394,14 @@ export function GraphPage() {
                 />
                 <span className="graph-axis-label project">Project</span>
               </label>
+              <label htmlFor="graph-axis-source" className="graph-axis-toggle">
+                <Checkbox
+                  id="graph-axis-source"
+                  checked={relationAxes.includes("source")}
+                  onChange={() => toggleRelationAxis("source")}
+                />
+                <span className="graph-axis-label source">Source</span>
+              </label>
             </div>
           ) : null}
         </div>
@@ -409,6 +430,10 @@ export function GraphPage() {
           <div className="legend-item">
             <span className="legend-line session" />
             <span>Session Relation</span>
+          </div>
+          <div className="legend-item">
+            <span className="legend-line source" />
+            <span>Source Relation</span>
           </div>
           <div className="legend-item">
             <span className="legend-line semantic" />
@@ -450,6 +475,10 @@ export function GraphPage() {
               <div className="stat-row graph-stats-subtle">
                 <span>Project</span>
                 <strong>{graph.data?.stats.projectEdgeCount ?? 0}</strong>
+              </div>
+              <div className="stat-row graph-stats-subtle">
+                <span>Source</span>
+                <strong>{graph.data?.stats.sourceEdgeCount ?? 0}</strong>
               </div>
             </>
           )}

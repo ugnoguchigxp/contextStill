@@ -18,7 +18,6 @@ import {
   type SortingState,
   flexRender,
   getCoreRowModel,
-  getPaginationRowModel,
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
@@ -98,15 +97,37 @@ export function KnowledgePage() {
   // TanStack Table states
   const [sorting, setSorting] = useState<SortingState>([{ id: "updatedAt", desc: true }]);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 50 });
+  const resetToFirstPage = useCallback(() => {
+    setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
+  }, []);
+  const serverStatusFilter = ["draft", "active", "deprecated"].includes(displayFilter)
+    ? displayFilter
+    : undefined;
+  const serverSearchQuery = searchQuery.trim();
 
   const knowledge = useQuery({
-    queryKey: ["knowledge", 200],
-    queryFn: () => fetchKnowledgeItems(200),
+    queryKey: [
+      "knowledge",
+      {
+        page: pagination.pageIndex + 1,
+        limit: pagination.pageSize,
+        status: serverStatusFilter,
+        query: serverSearchQuery,
+      },
+    ],
+    queryFn: () =>
+      fetchKnowledgeItems({
+        page: pagination.pageIndex + 1,
+        limit: pagination.pageSize,
+        status: serverStatusFilter,
+        query: serverSearchQuery || undefined,
+      }),
   });
+  const loadedKnowledgeItems = knowledge.data?.items ?? [];
+  const totalKnowledgeCount = knowledge.data?.total ?? loadedKnowledgeItems.length;
 
   const filteredItems = useMemo(() => {
-    const items = knowledge.data ?? [];
-    return items.filter((item) => {
+    return loadedKnowledgeItems.filter((item) => {
       const statusMatch =
         displayFilter === "all" ||
         (displayFilter === "unused-active"
@@ -124,7 +145,7 @@ export function KnowledgePage() {
         item.body.toLowerCase().includes(query);
       return statusMatch && qualityMatch && searchMatch;
     });
-  }, [knowledge.data, displayFilter, minQuality, searchQuery]);
+  }, [loadedKnowledgeItems, displayFilter, minQuality, searchQuery]);
 
   useEffect(() => {
     const validIds = new Set(filteredItems.map((item) => item.id));
@@ -562,10 +583,18 @@ export function KnowledgePage() {
     },
     onSortingChange: setSorting,
     onPaginationChange: setPagination,
+    manualPagination: true,
+    pageCount: knowledge.data?.totalPages ?? 0,
     getCoreRowModel: getCoreRowModel(),
     getSortedRowModel: getSortedRowModel(),
-    getPaginationRowModel: getPaginationRowModel(),
   });
+  const pageStart = totalKnowledgeCount === 0 ? 0 : pagination.pageIndex * pagination.pageSize + 1;
+  const pageEnd = Math.min(
+    pagination.pageIndex * pagination.pageSize + loadedKnowledgeItems.length,
+    totalKnowledgeCount,
+  );
+  const hasCurrentPageFilters =
+    minQuality > 0 || ["unused-active", "stale", "high-value"].includes(displayFilter);
 
   return (
     <div className="knowledge-full-layout">
@@ -578,7 +607,10 @@ export function KnowledgePage() {
               placeholder="Knowledgeを検索..."
               className="pl-9 h-9"
               value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
+              onChange={(e) => {
+                setSearchQuery(e.target.value);
+                resetToFirstPage();
+              }}
             />
           </div>
         </div>
@@ -589,7 +621,10 @@ export function KnowledgePage() {
                 <button
                   key={f}
                   type="button"
-                  onClick={() => setDisplayFilter(f)}
+                  onClick={() => {
+                    setDisplayFilter(f);
+                    resetToFirstPage();
+                  }}
                   className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
                     displayFilter === f
                       ? "bg-background shadow-sm text-foreground"
@@ -606,7 +641,10 @@ export function KnowledgePage() {
             <span className="text-[10px] font-bold uppercase text-muted-foreground">Quality</span>
             <select
               value={minQuality}
-              onChange={(e) => setMinQuality(Number(e.target.value))}
+              onChange={(e) => {
+                setMinQuality(Number(e.target.value));
+                resetToFirstPage();
+              }}
               className="bg-transparent text-xs font-medium outline-none cursor-pointer"
             >
               <option value="0">All</option>
@@ -778,18 +816,17 @@ export function KnowledgePage() {
       {/* Pagination Controls */}
       <div className="flex items-center justify-between px-6 py-3 border-t bg-background">
         <div className="text-xs text-muted-foreground">
-          Showing{" "}
-          <strong>
-            {table.getState().pagination.pageIndex * table.getState().pagination.pageSize + 1}
-          </strong>{" "}
-          to{" "}
-          <strong>
-            {Math.min(
-              (table.getState().pagination.pageIndex + 1) * table.getState().pagination.pageSize,
-              filteredItems.length,
-            )}
-          </strong>{" "}
-          of <strong>{filteredItems.length}</strong> items
+          {hasCurrentPageFilters ? (
+            <>
+              Showing <strong>{filteredItems.length}</strong> matching items on this page /{" "}
+              <strong>{totalKnowledgeCount}</strong> total
+            </>
+          ) : (
+            <>
+              Showing <strong>{pageStart}</strong> to <strong>{pageEnd}</strong> of{" "}
+              <strong>{totalKnowledgeCount}</strong> items
+            </>
+          )}
         </div>
         <div className="flex items-center gap-2">
           <Button

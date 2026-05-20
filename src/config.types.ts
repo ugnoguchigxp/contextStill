@@ -61,7 +61,6 @@ export type GroupedConfig = {
     searchProviders: DistillationSearchProvider[];
     searchMaxProviderAttempts: number;
     searchRateLimitCooldownSeconds: number;
-    maxCandidates: number;
     failureRetryDelaySeconds: number;
     evidenceCacheTtlSeconds: number;
     readerMaxReads: number;
@@ -91,8 +90,14 @@ export type GroupedConfig = {
     timeoutMs: number;
     lockTtlSeconds: number;
     lockFile: string;
+    pipelineLockFile: string;
+    targetTimeoutMs: number;
+    pipelineLockStaleSeconds: number;
+    continuousIdleSleepMs: number;
+    continuousErrorSleepMs: number;
+    inventoryRefreshIntervalMs: number;
     promotionBacklogThresholdCount: number;
-    minCandidateImportance: number;
+    lowImportanceRejectThreshold: number;
     circuitBreakerEnabled: boolean;
     circuitBreakerHealthTimeoutMs: number;
     circuitBreakerPauseSeconds: number;

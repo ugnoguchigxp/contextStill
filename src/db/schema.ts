@@ -142,6 +142,8 @@ export const sourceLinkTypeValues = ["derived_from"] as const;
 
 export const runStatusValues = ["ok", "degraded", "failed"] as const;
 
+export const compileRunSourceValues = ["ui", "mcp", "cli", "unknown"] as const;
+
 export const packSectionValues = ["rules", "procedures", "code_context", "warnings"] as const;
 
 export const auditLogActorValues = ["agent", "user", "system"] as const;
@@ -491,14 +493,21 @@ export const contextCompileRuns = pgTable(
     degradedReasons: jsonb("degraded_reasons").notNull().default([]),
     tokenBudget: integer("token_budget").notNull(),
     durationMs: integer("duration_ms").notNull().default(0),
+    source: text("source").notNull().default("unknown"),
+    packSnapshot: jsonb("pack_snapshot"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
   },
   (table) => ({
     statusIdx: index("context_compile_runs_status_idx").on(table.status),
     createdAtIdx: index("context_compile_runs_created_at_idx").on(table.createdAt),
+    sourceIdx: index("context_compile_runs_source_idx").on(table.source),
     statusCheck: check(
       "context_compile_runs_status_check",
       sql`${table.status} IN (${sql.raw(toSqlList(runStatusValues))})`,
+    ),
+    sourceCheck: check(
+      "context_compile_runs_source_check",
+      sql`${table.source} IN (${sql.raw(toSqlList(compileRunSourceValues))})`,
     ),
   }),
 );

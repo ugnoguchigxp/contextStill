@@ -15,6 +15,8 @@ export type AcquireFileLockOptions = {
   lockFile: string;
   ttlSeconds: number;
   label: string;
+  staleCreatedAgeSeconds?: number;
+  removeWhenCreatedAgeExceeded?: boolean;
   wait?: boolean;
   waitTimeoutMs?: number;
   pollMs?: number;
@@ -53,12 +55,36 @@ function isProcessAlive(pid: unknown): boolean | null {
   }
 }
 
+function parseTimestampMs(value: unknown): number | null {
+  if (typeof value !== "string" || !value.trim()) return null;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function removeStaleLockIfSafe(lockFile: string, ttlSeconds: number): Promise<boolean> {
+async function removeStaleLockIfSafe(
+  lockFile: string,
+  ttlSeconds: number,
+  options?: Pick<AcquireFileLockOptions, "staleCreatedAgeSeconds" | "removeWhenCreatedAgeExceeded">,
+): Promise<boolean> {
   const metadata = await readLockMetadata(lockFile);
+  const stat = await fs.stat(lockFile).catch(() => null);
+  const createdAtMs = parseTimestampMs(metadata.createdAt) ?? stat?.mtimeMs ?? null;
+  const createdAgeSeconds =
+    createdAtMs === null ? Number.POSITIVE_INFINITY : (Date.now() - createdAtMs) / 1000;
+  const staleCreatedAgeSeconds = options?.staleCreatedAgeSeconds;
+  if (
+    options?.removeWhenCreatedAgeExceeded &&
+    typeof staleCreatedAgeSeconds === "number" &&
+    createdAgeSeconds > staleCreatedAgeSeconds
+  ) {
+    await fs.unlink(lockFile).catch(() => undefined);
+    return true;
+  }
+
   const alive = isProcessAlive(metadata.pid);
   if (alive === true) return false;
   if (alive === false) {
@@ -66,7 +92,6 @@ async function removeStaleLockIfSafe(lockFile: string, ttlSeconds: number): Prom
     return true;
   }
 
-  const stat = await fs.stat(lockFile).catch(() => null);
   const ageSeconds = stat ? (Date.now() - stat.mtimeMs) / 1000 : Number.POSITIVE_INFINITY;
   if (ageSeconds > ttlSeconds) {
     await fs.unlink(lockFile).catch(() => undefined);
@@ -103,7 +128,7 @@ export async function acquireFileLock(options: AcquireFileLockOptions): Promise<
       if (!hasFsErrorCode(error, "EEXIST")) throw error;
     }
 
-    if (await removeStaleLockIfSafe(options.lockFile, options.ttlSeconds)) {
+    if (await removeStaleLockIfSafe(options.lockFile, options.ttlSeconds, options)) {
       continue;
     }
 

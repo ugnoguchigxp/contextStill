@@ -3,6 +3,7 @@ import { groupedConfig } from "../src/config.js";
 import {
   insertCompileRun,
   insertContextPackItems,
+  updateCompileRunSnapshot,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
 import { recordKnowledgeCompileSelectionSafe } from "../src/modules/knowledge/knowledge-value.service.js";
@@ -24,6 +25,7 @@ describe("Context Compiler Service", () => {
     vi.clearAllMocks();
     groupedConfig.agenticCompile.enabled = false;
     vi.mocked(insertCompileRun).mockResolvedValue("550e8400-e29b-41d4-a716-446655440000");
+    vi.mocked(updateCompileRunSnapshot).mockResolvedValue();
     vi.mocked(recordKnowledgeCompileSelectionSafe).mockResolvedValue();
   });
 
@@ -63,6 +65,24 @@ describe("Context Compiler Service", () => {
     expect(pack.retrievalMode).toBe("procedure_context");
     expect(pack.procedures).toHaveLength(1);
     expect(insertCompileRun).toHaveBeenCalled();
+    expect(updateCompileRunSnapshot).toHaveBeenCalledWith(pack.runId, pack);
+  });
+
+  test("tags compile runs with caller source", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [],
+      degradedReasons: [],
+      stats: {},
+    } as any);
+    vi.mocked(retrieveSources).mockResolvedValue({
+      items: [],
+      degradedReasons: [],
+      stats: {},
+    } as any);
+
+    await compileContextPack({ goal: "test source", intent: "edit" }, { source: "mcp" });
+
+    expect(insertCompileRun).toHaveBeenCalledWith(expect.objectContaining({ source: "mcp" }));
   });
 
   test("applies token budget truncation for rules", async () => {

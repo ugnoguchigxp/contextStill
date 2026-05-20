@@ -1,7 +1,9 @@
-import { sql } from "drizzle-orm";
+import fs from "node:fs/promises";
+import { and, eq, sql } from "drizzle-orm";
 import { groupedConfig } from "../../../config.js";
 import { APP_CONSTANTS } from "../../../constants.js";
 import { getDb } from "../../../db/index.js";
+import { distillationTargetStates } from "../../../db/schema.js";
 import type { DoctorDistillationHealth } from "../../../shared/schemas/doctor.schema.js";
 import { minutesSince, normalizeReasonCounts } from "../doctor.utils.js";
 import { inspectLaunchAgent } from "../launch-agent.util.js";
@@ -13,6 +15,7 @@ export type DistillationRunInspectorOptions = {
 type DistillationHealthReport = DoctorDistillationHealth;
 type DistillationRuns = DistillationHealthReport["runs"];
 type DistillationJobs = DistillationHealthReport["jobs"];
+type DistillationQueueHealth = DistillationHealthReport["queueHealth"];
 
 export type DistillationRunInspectorConfig = {
   label: string;
@@ -35,6 +38,18 @@ type DistillationRunsRow =
       outcome_kind_counts?: unknown;
     }
   | undefined;
+
+type QueueHealthRow =
+  | Pick<
+      typeof distillationTargetStates.$inferSelect,
+      "status" | "createdAt" | "lockedAt" | "heartbeatAt" | "updatedAt" | "nextRetryAt"
+    >
+  | undefined;
+
+type LockMetadata = {
+  pid?: unknown;
+  createdAt?: unknown;
+};
 
 function emptyRuns(): DistillationRuns {
   return {
@@ -62,9 +77,49 @@ function emptyJobs(): DistillationJobs {
   };
 }
 
+function emptyQueueHealth(): DistillationQueueHealth {
+  return {
+    queued: 0,
+    running: 0,
+    retryablePaused: 0,
+    staleRunning: 0,
+    blockedByHigherPriority: false,
+    oldestQueuedAt: null,
+    oldestQueuedAgeMinutes: null,
+    oldestRunningAt: null,
+    oldestRunningAgeMinutes: null,
+    lock: {
+      path: groupedConfig.distillation.pipelineLockFile,
+      exists: false,
+      pid: null,
+      createdAt: null,
+      ageSeconds: null,
+      staleByCreatedAge: false,
+    },
+  };
+}
+
 function toIsoString(value: Date | string | null | undefined): string | null {
   if (value instanceof Date) return value.toISOString();
   return value ? new Date(value).toISOString() : null;
+}
+
+function numberOrNull(value: unknown): number | null {
+  if (!Number.isInteger(value) || Number(value) <= 0) return null;
+  return Number(value);
+}
+
+function timestampMs(value: unknown): number | null {
+  if (value instanceof Date) return value.getTime();
+  if (typeof value !== "string" || !value.trim()) return null;
+  const parsed = new Date(value).getTime();
+  return Number.isFinite(parsed) ? parsed : null;
+}
+
+function minTimestamp(current: number | null, candidate: number | null): number | null {
+  if (candidate === null) return current;
+  if (current === null) return candidate;
+  return Math.min(current, candidate);
 }
 
 function applyRunRow(runs: DistillationRuns, row: DistillationRunsRow) {
@@ -185,11 +240,141 @@ async function loadDomainDistillationJobs(
   };
 }
 
+async function loadDomainQueueHealth(
+  targetKind: "wiki_file" | "vibe_memory",
+): Promise<Omit<DistillationQueueHealth, "lock">> {
+  const db = getDb();
+  const nowMs = Date.now();
+  const staleAtMs = nowMs - APP_CONSTANTS.distillationTargetStaleSeconds * 1000;
+  const rows = await db
+    .select({
+      status: distillationTargetStates.status,
+      createdAt: distillationTargetStates.createdAt,
+      lockedAt: distillationTargetStates.lockedAt,
+      heartbeatAt: distillationTargetStates.heartbeatAt,
+      updatedAt: distillationTargetStates.updatedAt,
+      nextRetryAt: distillationTargetStates.nextRetryAt,
+    })
+    .from(distillationTargetStates)
+    .where(
+      and(
+        eq(distillationTargetStates.distillationVersion, APP_CONSTANTS.distillationTargetVersion),
+        eq(distillationTargetStates.targetKind, targetKind),
+      ),
+    );
+  let queued = 0;
+  let running = 0;
+  let retryablePaused = 0;
+  let staleRunning = 0;
+  let blockedByHigherPriority = false;
+  let oldestQueuedMs: number | null = null;
+  let oldestRunningMs: number | null = null;
+
+  for (const row of rows) {
+    if (!row) continue;
+    const status = typeof row.status === "string" ? row.status : "";
+    const createdMs = timestampMs(row.createdAt);
+    const nextRetryMs = timestampMs(row.nextRetryAt);
+    if (status === "pending") {
+      queued += 1;
+      oldestQueuedMs = minTimestamp(oldestQueuedMs, createdMs);
+    } else if (status === "paused" && (nextRetryMs === null || nextRetryMs <= nowMs)) {
+      retryablePaused += 1;
+      oldestQueuedMs = minTimestamp(oldestQueuedMs, createdMs);
+    } else if (status === "running") {
+      running += 1;
+      const runningMs =
+        timestampMs(row.heartbeatAt) ?? timestampMs(row.lockedAt) ?? timestampMs(row.updatedAt);
+      oldestRunningMs = minTimestamp(oldestRunningMs, runningMs);
+      if ((runningMs ?? Number.NEGATIVE_INFINITY) <= staleAtMs) {
+        staleRunning += 1;
+      }
+    }
+  }
+
+  if (targetKind === "vibe_memory") {
+    const blockers = await db
+      .select({
+        status: distillationTargetStates.status,
+        nextRetryAt: distillationTargetStates.nextRetryAt,
+      })
+      .from(distillationTargetStates)
+      .where(
+        and(
+          eq(distillationTargetStates.distillationVersion, APP_CONSTANTS.distillationTargetVersion),
+          eq(distillationTargetStates.targetKind, "wiki_file"),
+        ),
+      );
+    blockedByHigherPriority = blockers.some((row) => {
+      if (row.status === "pending" || row.status === "running") return true;
+      if (row.status !== "paused") return false;
+      const nextRetryMs = timestampMs(row.nextRetryAt);
+      return nextRetryMs === null || nextRetryMs <= nowMs;
+    });
+  }
+
+  const oldestQueuedAt = oldestQueuedMs === null ? null : new Date(oldestQueuedMs).toISOString();
+  const oldestRunningAt = oldestRunningMs === null ? null : new Date(oldestRunningMs).toISOString();
+  return {
+    queued,
+    running,
+    retryablePaused,
+    staleRunning,
+    blockedByHigherPriority,
+    oldestQueuedAt,
+    oldestQueuedAgeMinutes: oldestQueuedAt ? minutesSince(oldestQueuedAt) : null,
+    oldestRunningAt,
+    oldestRunningAgeMinutes: oldestRunningAt ? minutesSince(oldestRunningAt) : null,
+  };
+}
+
+async function inspectPipelineLock(): Promise<DistillationQueueHealth["lock"]> {
+  const lockPath = groupedConfig.distillation.pipelineLockFile;
+  let stat: Awaited<ReturnType<typeof fs.stat>> | null = null;
+  try {
+    stat = await fs.stat(lockPath);
+  } catch {
+    stat = null;
+  }
+  if (!stat) {
+    return {
+      path: lockPath,
+      exists: false,
+      pid: null,
+      createdAt: null,
+      ageSeconds: null,
+      staleByCreatedAge: false,
+    };
+  }
+
+  let metadata: LockMetadata = {};
+  try {
+    const parsed = JSON.parse(await fs.readFile(lockPath, "utf-8"));
+    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+      metadata = parsed as LockMetadata;
+    }
+  } catch {
+    metadata = {};
+  }
+
+  const createdMs = timestampMs(metadata.createdAt) ?? stat.mtimeMs;
+  const ageSeconds = Math.max(0, Math.floor((Date.now() - createdMs) / 1000));
+  return {
+    path: lockPath,
+    exists: true,
+    pid: numberOrNull(metadata.pid),
+    createdAt: new Date(createdMs).toISOString(),
+    ageSeconds,
+    staleByCreatedAge: ageSeconds > groupedConfig.distillation.pipelineLockStaleSeconds,
+  };
+}
+
 function nextActionsForDistillation(
   config: DistillationRunInspectorConfig,
   launchAgent: DistillationHealthReport["launchAgent"],
   runs: DistillationRuns,
   jobs: DistillationJobs,
+  queueHealth: DistillationQueueHealth,
 ): string[] {
   const nextActions: string[] = [];
   if (!launchAgent.installed) {
@@ -229,6 +414,27 @@ function nextActionsForDistillation(
       `${config.label} は running job があります。完了しない場合は lock と worker log を確認する`,
     );
   }
+  if (queueHealth.staleRunning > 0) {
+    nextActions.push(
+      `${config.label} は stale running job があります。次回runでrequeue/skipされるか確認する`,
+    );
+  }
+  if (queueHealth.lock.staleByCreatedAge) {
+    nextActions.push(
+      `${config.label} の pipeline lock が古いです。次回runで削除されない場合は ${queueHealth.lock.path} を確認する`,
+    );
+  }
+  if (
+    queueHealth.queued > 0 &&
+    queueHealth.running === 0 &&
+    !queueHealth.blockedByHigherPriority &&
+    queueHealth.oldestQueuedAgeMinutes !== null &&
+    queueHealth.oldestQueuedAgeMinutes > groupedConfig.distillation.pipelineLockStaleSeconds / 60
+  ) {
+    nextActions.push(
+      `${config.label} のqueueが進んでいません。LaunchAgentの状態と ${config.logPath} を確認する`,
+    );
+  }
   return nextActions;
 }
 
@@ -239,6 +445,7 @@ export async function inspectDistillationRunHealth(
   const launchAgent = await inspectLaunchAgent(config.launchAgentLabel);
   const runs = emptyRuns();
   let jobs = emptyJobs();
+  let queueHealth = emptyQueueHealth();
 
   if (options.canQueryDb) {
     try {
@@ -252,12 +459,26 @@ export async function inspectDistillationRunHealth(
     } catch {
       jobs = emptyJobs();
     }
+    try {
+      queueHealth = {
+        ...(await loadDomainQueueHealth(config.targetKind)),
+        lock: await inspectPipelineLock(),
+      };
+    } catch {
+      queueHealth = emptyQueueHealth();
+    }
+  } else {
+    queueHealth = {
+      ...queueHealth,
+      lock: await inspectPipelineLock(),
+    };
   }
 
   return {
     launchAgent,
     runs,
     jobs,
-    nextActions: nextActionsForDistillation(config, launchAgent, runs, jobs),
+    queueHealth,
+    nextActions: nextActionsForDistillation(config, launchAgent, runs, jobs, queueHealth),
   };
 }

@@ -1,6 +1,6 @@
-import { eq } from "drizzle-orm";
+import { asc, eq } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { coverEvidenceResults } from "../../db/schema.js";
+import { coverEvidenceResults, findCandidateResults } from "../../db/schema.js";
 import type { CoverEvidenceResult } from "./types.js";
 
 export type CoverEvidenceResultRow = typeof coverEvidenceResults.$inferSelect;
@@ -19,6 +19,32 @@ export async function selectCoverEvidenceResultById(
     .where(eq(coverEvidenceResults.id, id))
     .limit(1);
   return row ?? null;
+}
+
+export async function listCoverEvidenceResultsByTargetStateId(
+  targetStateId: string,
+): Promise<CoverEvidenceResultRow[]> {
+  return db
+    .select({
+      id: coverEvidenceResults.id,
+      status: coverEvidenceResults.status,
+      stage: coverEvidenceResults.stage,
+      type: coverEvidenceResults.type,
+      title: coverEvidenceResults.title,
+      body: coverEvidenceResults.body,
+      importance: coverEvidenceResults.importance,
+      confidence: coverEvidenceResults.confidence,
+      references: coverEvidenceResults.references,
+      duplicateRefs: coverEvidenceResults.duplicateRefs,
+      toolEvents: coverEvidenceResults.toolEvents,
+      reason: coverEvidenceResults.reason,
+      createdAt: coverEvidenceResults.createdAt,
+      updatedAt: coverEvidenceResults.updatedAt,
+    })
+    .from(coverEvidenceResults)
+    .innerJoin(findCandidateResults, eq(findCandidateResults.id, coverEvidenceResults.id))
+    .where(eq(findCandidateResults.targetStateId, targetStateId))
+    .orderBy(asc(findCandidateResults.candidateIndex), asc(coverEvidenceResults.id));
 }
 
 export async function saveCoverEvidenceResult(

@@ -6,12 +6,14 @@ import { auditLogsRouter } from "../api/modules/audit/audit.routes.js";
 import { contextCompilerRouter } from "../api/modules/context-compiler/context-compiler.routes.js";
 import {
   compilePackForApi,
+  getRunDetailForApi,
   listRunsForApi,
 } from "../api/modules/context-compiler/context-compiler.service.js";
 import { doctorRouter } from "../api/modules/doctor/doctor.routes.js";
 import { getDoctorReportForApi } from "../api/modules/doctor/doctor.service.js";
 import {
   bulkUpdateKnowledgeStatus,
+  countKnowledgeItems,
   createKnowledgeItem,
   deleteKnowledgeItem,
   listKnowledgeItems,
@@ -21,11 +23,16 @@ import {
 import { knowledgeRouter } from "../api/modules/knowledge/knowledge.routes.js";
 import { vibeMemoryRouter } from "../api/modules/vibe-memory/vibe-memory.routes.js";
 import { recordVibeMemoryWithDiffEntries } from "../src/modules/vibe-memory/vibe-memory.service.js";
+import { compileRunDetailSchema } from "../src/shared/schemas/compile-run.schema.js";
 import { type ContextPack, contextPackSchema } from "../src/shared/schemas/context-pack.schema.js";
 import { type DoctorReport, doctorReportSchema } from "../src/shared/schemas/doctor.schema.js";
 
 vi.mock("../api/modules/context-compiler/context-compiler.service.js", () => ({
   compilePackForApi: vi.fn(),
+  getRunDetailForApi: vi.fn(),
+  getRunDetailParamSchema: z.object({
+    id: z.string().uuid(),
+  }),
   listRunsForApi: vi.fn(),
   listRunsQuerySchema: z.object({
     limit: z.coerce.number().int().min(1).max(100).default(20),
@@ -38,6 +45,7 @@ vi.mock("../api/modules/doctor/doctor.service.js", () => ({
 
 vi.mock("../api/modules/knowledge/knowledge.repository.js", () => ({
   bulkUpdateKnowledgeStatus: vi.fn(),
+  countKnowledgeItems: vi.fn(),
   createKnowledgeItem: vi.fn(),
   deleteKnowledgeItem: vi.fn(),
   listKnowledgeItems: vi.fn(),
@@ -78,6 +86,45 @@ const validPack: ContextPack = {
   diagnostics: {
     degradedReasons: [],
     retrievalStats: {},
+  },
+};
+
+const validRunDetail = compileRunDetailSchema.parse({
+  run: {
+    id: validPack.runId,
+    goal: validPack.goal,
+    intent: validPack.intent,
+    retrievalMode: validPack.retrievalMode,
+    status: validPack.status,
+    degradedReasons: validPack.diagnostics.degradedReasons,
+    durationMs: 42,
+    source: "ui",
+    createdAt: "2026-05-15T00:00:00.000Z",
+    tokenBudget: 5000,
+    input: { goal: validPack.goal, intent: validPack.intent, includeDraft: false },
+  },
+  pack: validPack,
+  selectedItems: [],
+  snapshotAvailable: true,
+});
+
+const validDistillationQueueHealth = {
+  queued: 0,
+  running: 0,
+  retryablePaused: 0,
+  staleRunning: 0,
+  blockedByHigherPriority: false,
+  oldestQueuedAt: null,
+  oldestQueuedAgeMinutes: null,
+  oldestRunningAt: null,
+  oldestRunningAgeMinutes: null,
+  lock: {
+    path: "/tmp/distillation.lock",
+    exists: false,
+    pid: null,
+    createdAt: null,
+    ageSeconds: null,
+    staleByCreatedAge: false,
   },
 };
 
@@ -205,6 +252,7 @@ const validDoctorReport: DoctorReport = {
       lastPausedAt: null,
       lastError: null,
     },
+    queueHealth: validDistillationQueueHealth,
     nextActions: [],
   },
   sourceDistillation: {
@@ -235,6 +283,7 @@ const validDoctorReport: DoctorReport = {
       lastPausedAt: null,
       lastError: null,
     },
+    queueHealth: validDistillationQueueHealth,
     nextActions: [],
   },
 };
@@ -251,8 +300,10 @@ describe("API route contract tests", () => {
     });
     vi.mocked(compilePackForApi).mockResolvedValue(validPack);
     vi.mocked(listRunsForApi).mockResolvedValue([]);
+    vi.mocked(getRunDetailForApi).mockResolvedValue(validRunDetail);
     vi.mocked(getDoctorReportForApi).mockResolvedValue(validDoctorReport);
     vi.mocked(listKnowledgeItems).mockResolvedValue([]);
+    vi.mocked(countKnowledgeItems).mockResolvedValue(0);
     vi.mocked(bulkUpdateKnowledgeStatus).mockResolvedValue({
       targetStatus: "active",
       requestedIds: [],
@@ -372,6 +423,33 @@ describe("API route contract tests", () => {
     );
   });
 
+  test("GET /api/context/runs/:id returns run detail", async () => {
+    const app = buildApp();
+    const response = await app.request(`/api/context/runs/${validPack.runId}`);
+
+    expect(response.status).toBe(200);
+    const json = (await response.json()) as { detail: unknown };
+    const parsed = compileRunDetailSchema.parse(json.detail);
+    expect(parsed.pack?.runId).toBe(validPack.runId);
+    expect(getRunDetailForApi).toHaveBeenCalledWith({ id: validPack.runId });
+  });
+
+  test("GET /api/context/runs/:id returns 404 for missing run", async () => {
+    vi.mocked(getRunDetailForApi).mockResolvedValueOnce(null);
+    const app = buildApp();
+    const response = await app.request(`/api/context/runs/${validPack.runId}`);
+
+    expect(response.status).toBe(404);
+  });
+
+  test("GET /api/context/runs/:id rejects invalid run id", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/context/runs/not-a-uuid");
+
+    expect(response.status).toBe(400);
+    expect(getRunDetailForApi).not.toHaveBeenCalled();
+  });
+
   test("GET /api/doctor returns contract-compatible response", async () => {
     const app = buildApp();
     const response = await app.request("/api/doctor");
@@ -389,6 +467,7 @@ describe("API route contract tests", () => {
 
     expect(response.status).toBe(400);
     expect(listKnowledgeItems).not.toHaveBeenCalled();
+    expect(countKnowledgeItems).not.toHaveBeenCalled();
   });
 
   test("GET /api/knowledge returns list shape used by web repository", async () => {
@@ -417,15 +496,28 @@ describe("API route contract tests", () => {
         updatedAt: new Date("2026-05-15T00:00:00.000Z"),
       },
     ]);
+    vi.mocked(countKnowledgeItems).mockResolvedValueOnce(260);
 
     const app = buildApp();
-    const response = await app.request("/api/knowledge?limit=1");
-    const json = (await response.json()) as { items: Array<{ id: string; title: string }> };
+    const response = await app.request("/api/knowledge?limit=1&page=2");
+    const json = (await response.json()) as {
+      items: Array<{ id: string; title: string }>;
+      total: number;
+      page: number;
+      limit: number;
+      totalPages: number;
+    };
 
     expect(response.status).toBe(200);
     expect(json.items).toHaveLength(1);
+    expect(json.total).toBe(260);
+    expect(json.page).toBe(2);
+    expect(json.limit).toBe(1);
+    expect(json.totalPages).toBe(260);
     expect(json.items[0]?.id).toBe("550e8400-e29b-41d4-a716-446655440002");
     expect(json.items[0]?.title).toBe("Knowledge title");
+    expect(listKnowledgeItems).toHaveBeenCalledWith({ limit: 1, page: 2 });
+    expect(countKnowledgeItems).toHaveBeenCalledWith({ limit: 1, page: 2 });
   });
 
   test("PUT /api/knowledge/:id rejects invalid payload", async () => {

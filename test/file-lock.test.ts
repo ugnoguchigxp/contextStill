@@ -56,6 +56,31 @@ describe("acquireFileLock", () => {
     await expect(fs.stat(lockFile)).rejects.toThrow();
   });
 
+  test("reclaims a created-age-expired lock even when the recorded pid is alive", async () => {
+    const lockFile = await createTempLockPath();
+    await fs.mkdir(path.dirname(lockFile), { recursive: true });
+    await fs.writeFile(
+      lockFile,
+      JSON.stringify({
+        pid: process.pid,
+        createdAt: new Date(Date.now() - 12 * 60_000).toISOString(),
+        label: "distillation pipeline",
+      }),
+      "utf-8",
+    );
+
+    const lock = await acquireFileLock({
+      lockFile,
+      ttlSeconds: 660,
+      staleCreatedAgeSeconds: 660,
+      removeWhenCreatedAgeExceeded: true,
+      label: "distillation pipeline",
+    });
+
+    await lock.release();
+    await expect(fs.stat(lockFile)).rejects.toThrow();
+  });
+
   test("waits for a held lock before acquiring", async () => {
     const lockFile = await createTempLockPath();
     const firstLock = await acquireFileLock({

@@ -17,6 +17,12 @@ export const DEFAULT_DISTILLATION_TARGET_VERSION = APP_CONSTANTS.distillationTar
 
 export type DistillationTargetStateRow = typeof distillationTargetStates.$inferSelect;
 
+export type TargetLease = {
+  targetStateId: string;
+  lockedBy: string;
+  attemptCount: number;
+};
+
 export type DistillationTargetSummary = {
   version: string;
   mode: "wiki_first" | "vibe_memory_fallback" | "idle";
@@ -37,6 +43,7 @@ export type DistillationTargetSummary = {
 export type RecoveryResult = {
   recoveredToPending: number;
   failed: number;
+  skipped: number;
 };
 
 function workerId(): string {
@@ -65,6 +72,26 @@ function targetIdentity(row: DistillationTargetStateRow): Record<string, unknown
     distillationVersion: row.distillationVersion,
     status: row.status,
   };
+}
+
+export function leaseFromTargetState(row: DistillationTargetStateRow): TargetLease {
+  return {
+    targetStateId: row.id,
+    lockedBy: row.lockedBy ?? "",
+    attemptCount: row.attemptCount,
+  };
+}
+
+function targetLeaseWhere(id: string, lease: TargetLease | undefined) {
+  const conditions = [eq(distillationTargetStates.id, id)];
+  if (lease) {
+    conditions.push(
+      eq(distillationTargetStates.status, "running"),
+      eq(distillationTargetStates.lockedBy, lease.lockedBy),
+      eq(distillationTargetStates.attemptCount, lease.attemptCount),
+    );
+  }
+  return and(...conditions);
 }
 
 function statusEligibility(now: Date) {
@@ -259,6 +286,7 @@ export async function claimNextDistillationTargetState(
 
 export async function updateDistillationTargetHeartbeat(
   id: string,
+  lease?: TargetLease,
 ): Promise<DistillationTargetStateRow | null> {
   const now = new Date();
   const [row] = await db
@@ -267,7 +295,11 @@ export async function updateDistillationTargetHeartbeat(
       heartbeatAt: now,
       updatedAt: now,
     })
-    .where(and(eq(distillationTargetStates.id, id), eq(distillationTargetStates.status, "running")))
+    .where(
+      lease
+        ? targetLeaseWhere(id, lease)
+        : and(eq(distillationTargetStates.id, id), eq(distillationTargetStates.status, "running")),
+    )
     .returning();
 
   if (row) {
@@ -284,6 +316,7 @@ export async function updateDistillationTargetHeartbeat(
 export async function updateDistillationTargetPhase(params: {
   id: string;
   phase: DistillationTargetPhase;
+  lease?: TargetLease;
 }): Promise<DistillationTargetStateRow | null> {
   const [row] = await db
     .update(distillationTargetStates)
@@ -291,7 +324,7 @@ export async function updateDistillationTargetPhase(params: {
       phase: params.phase,
       updatedAt: new Date(),
     })
-    .where(eq(distillationTargetStates.id, params.id))
+    .where(targetLeaseWhere(params.id, params.lease))
     .returning();
   return row ?? null;
 }
@@ -304,6 +337,7 @@ export async function finishDistillationTargetState(params: {
   candidateCount?: number;
   knowledgeIds?: string[];
   metadata?: Record<string, unknown>;
+  lease?: TargetLease;
 }): Promise<DistillationTargetStateRow | null> {
   const now = new Date();
   const [row] = await db
@@ -325,7 +359,7 @@ export async function finishDistillationTargetState(params: {
       completedAt: now,
       updatedAt: now,
     })
-    .where(eq(distillationTargetStates.id, params.id))
+    .where(targetLeaseWhere(params.id, params.lease))
     .returning();
 
   if (row) {
@@ -347,6 +381,7 @@ export async function pauseDistillationTargetState(params: {
   reason: string;
   retryDelaySeconds?: number;
   metadata?: Record<string, unknown>;
+  lease?: TargetLease;
 }): Promise<DistillationTargetStateRow | null> {
   const now = new Date();
   const retryDelaySeconds =
@@ -366,7 +401,7 @@ export async function pauseDistillationTargetState(params: {
         : undefined,
       updatedAt: now,
     })
-    .where(eq(distillationTargetStates.id, params.id))
+    .where(targetLeaseWhere(params.id, params.lease))
     .returning();
 
   if (row) {
@@ -474,42 +509,41 @@ export async function recoverStaleDistillationTargets(
   const staleRows = runningRows.filter((row) => rowHeartbeatMs(row) <= thresholdMs);
 
   let recoveredToPending = 0;
-  let failed = 0;
+  const failed = 0;
+  let skipped = 0;
 
   for (const stale of staleRows) {
-    const nextAttemptCount = stale.attemptCount + 1;
     const nextStatus: DistillationTargetStatus =
-      nextAttemptCount >= maxAttempts ? "failed" : "pending";
+      stale.attemptCount >= maxAttempts ? "skipped" : "pending";
     const [row] = await db
       .update(distillationTargetStates)
       .set({
         status: nextStatus,
-        phase: nextStatus === "failed" ? "stored" : "selected",
-        attemptCount: nextAttemptCount,
+        phase: nextStatus === "skipped" ? "stored" : "selected",
         lockedBy: null,
         lockedAt: null,
         heartbeatAt: null,
         nextRetryAt: null,
         lastOutcomeKind: "stale_running_recovered",
         lastError:
-          nextStatus === "failed"
+          nextStatus === "skipped"
             ? "stale_running_retry_limit_exceeded"
             : "stale_running_recovered",
         metadata: sql`${distillationTargetStates.metadata} || ${JSON.stringify({
           staleRecovered: true,
           staleRecoveredAt: now.toISOString(),
         })}::jsonb` as never,
-        completedAt: nextStatus === "failed" ? now : null,
+        completedAt: nextStatus === "skipped" ? now : null,
         updatedAt: now,
       })
       .where(eq(distillationTargetStates.id, stale.id))
       .returning();
     if (!row) continue;
-    if (nextStatus === "failed") failed += 1;
+    if (nextStatus === "skipped") skipped += 1;
     else recoveredToPending += 1;
   }
 
-  if (recoveredToPending > 0 || failed > 0) {
+  if (recoveredToPending > 0 || failed > 0 || skipped > 0) {
     await recordAuditLogSafe({
       eventType: auditEventTypes.distillationTargetRecovered,
       actor: "system",
@@ -517,12 +551,13 @@ export async function recoverStaleDistillationTargets(
         distillationVersion,
         recoveredToPending,
         failed,
+        skipped,
         staleSeconds: params.staleSeconds ?? APP_CONSTANTS.distillationTargetStaleSeconds,
       },
     });
   }
 
-  return { recoveredToPending, failed };
+  return { recoveredToPending, failed, skipped };
 }
 
 export async function markMissingWikiTargetsSkipped(params: {

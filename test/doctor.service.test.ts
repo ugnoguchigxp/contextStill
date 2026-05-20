@@ -163,9 +163,7 @@ describe("Doctor Service", () => {
         .mockResolvedValueOnce({ rows: [{ ok: 1 }] }) // select 1
         .mockResolvedValueOnce({ rows: [{ installed: true }] }) // vector
         .mockResolvedValueOnce({
-          rows: [
-            { table_name: "distillation_target_states" },
-          ],
+          rows: [{ table_name: "distillation_target_states" }],
         }) // tables
         .mockResolvedValue({ rows: [{ total_runs: 10, ok_runs: 8, last_run_at: new Date() }] }),
       select: vi.fn().mockReturnThis(),

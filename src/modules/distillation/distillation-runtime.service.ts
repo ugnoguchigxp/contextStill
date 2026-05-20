@@ -47,6 +47,7 @@ export type DistillationModelRequest = {
 type DistillationChatRequest = DistillationModelRequest & {
   tools?: DistillationRuntimeToolDefinition[];
   toolChoice?: "auto" | "none" | "required";
+  signal?: AbortSignal;
 };
 
 type DistillationChatResponse = {
@@ -86,6 +87,7 @@ export type DistillationRuntimeOptions = {
   toolDefinitions?: DistillationRuntimeToolDefinition[];
   requireToolCallReminder?: string[];
   blankResponseReminder?: string[];
+  signal?: AbortSignal;
 };
 
 type DistillationProviderName = "local-llm" | "azure-openai" | "bedrock";
@@ -170,28 +172,62 @@ export function resolveDistillationModel(
   return defaultModelForProvider(resolveProviderForDistillation(providerSetting));
 }
 
+function abortError(): Error {
+  const error = new Error("distillation request aborted");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (signal?.aborted) {
+    throw abortError();
+  }
+}
+
 function withRequestTimeout<T>(
   timeoutMs: number,
   task: (signal: AbortSignal) => Promise<T>,
+  parentSignal?: AbortSignal,
 ): Promise<T> {
   const controller = new AbortController();
   let timer: ReturnType<typeof setTimeout> | undefined;
+  let timedOut = false;
+  let parentAbortHandler: (() => void) | undefined;
   const timeoutError = () => new Error(`distillation LLM request timed out after ${timeoutMs}ms`);
   const timeout = new Promise<never>((_, reject) => {
     timer = setTimeout(() => {
+      timedOut = true;
       controller.abort();
       reject(timeoutError());
     }, timeoutMs);
   });
+  const parentAbort = new Promise<never>((_, reject) => {
+    if (!parentSignal) return;
+    parentAbortHandler = () => {
+      controller.abort();
+      reject(abortError());
+    };
+    if (parentSignal.aborted) {
+      parentAbortHandler();
+      return;
+    }
+    parentSignal.addEventListener("abort", parentAbortHandler, { once: true });
+  });
   const request = task(controller.signal).catch((error) => {
     if (error instanceof Error && error.name === "AbortError") {
+      if (!timedOut && parentSignal?.aborted) {
+        throw abortError();
+      }
       throw timeoutError();
     }
     throw error;
   });
 
-  return Promise.race([request, timeout]).finally(() => {
+  return Promise.race([request, timeout, parentAbort]).finally(() => {
     if (timer) clearTimeout(timer);
+    if (parentSignal && parentAbortHandler) {
+      parentSignal.removeEventListener("abort", parentAbortHandler);
+    }
   });
 }
 
@@ -432,103 +468,115 @@ export function parseBedrockResponse(payload: unknown): DistillationChatResponse
 async function callLocalLlmChat(
   request: DistillationChatRequest,
 ): Promise<DistillationChatResponse> {
-  return withRequestTimeout(groupedConfig.distillation.timeoutMs, async (signal) => {
-    const response = await fetch(`${groupedConfig.localLlm.apiBaseUrl}/v1/chat/completions`, {
-      method: "POST",
-      headers: localLlmHeaders(),
-      body: JSON.stringify({
-        model: request.model,
-        messages: request.messages,
-        stream: false,
-        temperature: 0,
-        max_tokens: request.maxTokens,
-        priority: "low",
-        ...(request.tools && request.tools.length > 0
-          ? {
-              tools: request.tools,
-              tool_choice: request.toolChoice ?? "auto",
-            }
-          : {
-              tool_choice: request.toolChoice ?? "none",
-            }),
-      }),
-      signal,
-    });
+  return withRequestTimeout(
+    groupedConfig.distillation.timeoutMs,
+    async (signal) => {
+      const response = await fetch(`${groupedConfig.localLlm.apiBaseUrl}/v1/chat/completions`, {
+        method: "POST",
+        headers: localLlmHeaders(),
+        body: JSON.stringify({
+          model: request.model,
+          messages: request.messages,
+          stream: false,
+          temperature: 0,
+          max_tokens: request.maxTokens,
+          priority: "low",
+          ...(request.tools && request.tools.length > 0
+            ? {
+                tools: request.tools,
+                tool_choice: request.toolChoice ?? "auto",
+              }
+            : {
+                tool_choice: request.toolChoice ?? "none",
+              }),
+        }),
+        signal,
+      });
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`local-llm HTTP ${response.status}: ${body.slice(0, 500)}`);
-    }
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        throw new Error(`local-llm HTTP ${response.status}: ${body.slice(0, 500)}`);
+      }
 
-    return parseOpenAiStyleResponse(await response.json());
-  });
+      return parseOpenAiStyleResponse(await response.json());
+    },
+    request.signal,
+  );
 }
 
 async function callAzureOpenAiChat(
   request: DistillationChatRequest,
 ): Promise<DistillationChatResponse> {
-  return withRequestTimeout(groupedConfig.distillation.timeoutMs, async (signal) => {
-    const response = await fetch(buildAzureOpenAiUrl(), {
-      method: "POST",
-      headers: azureHeaders(),
-      body: JSON.stringify({
-        messages: request.messages,
-        temperature: 0,
-        max_completion_tokens: request.maxTokens,
-        ...(request.tools && request.tools.length > 0
-          ? {
-              tools: request.tools,
-              tool_choice: request.toolChoice ?? "auto",
-            }
-          : {
-              tool_choice: request.toolChoice ?? "none",
-            }),
-      }),
-      signal,
-    });
+  return withRequestTimeout(
+    groupedConfig.distillation.timeoutMs,
+    async (signal) => {
+      const response = await fetch(buildAzureOpenAiUrl(), {
+        method: "POST",
+        headers: azureHeaders(),
+        body: JSON.stringify({
+          messages: request.messages,
+          temperature: 0,
+          max_completion_tokens: request.maxTokens,
+          ...(request.tools && request.tools.length > 0
+            ? {
+                tools: request.tools,
+                tool_choice: request.toolChoice ?? "auto",
+              }
+            : {
+                tool_choice: request.toolChoice ?? "none",
+              }),
+        }),
+        signal,
+      });
 
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      throw new Error(`Azure OpenAI HTTP ${response.status}: ${body.slice(0, 500)}`);
-    }
+      if (!response.ok) {
+        const body = await response.text().catch(() => "");
+        throw new Error(`Azure OpenAI HTTP ${response.status}: ${body.slice(0, 500)}`);
+      }
 
-    return parseOpenAiStyleResponse(await response.json());
-  });
+      return parseOpenAiStyleResponse(await response.json());
+    },
+    request.signal,
+  );
 }
 
 async function callBedrockChat(
   request: DistillationChatRequest,
 ): Promise<DistillationChatResponse> {
-  return withRequestTimeout(groupedConfig.distillation.timeoutMs, async (signal) => {
-    const { system, messages } = buildBedrockConversation(request.messages);
-    const toolConfig =
-      request.toolChoice === "none"
-        ? undefined
-        : buildBedrockToolConfig(request.tools, request.toolChoice);
+  return withRequestTimeout(
+    groupedConfig.distillation.timeoutMs,
+    async (signal) => {
+      const { system, messages } = buildBedrockConversation(request.messages);
+      const toolConfig =
+        request.toolChoice === "none"
+          ? undefined
+          : buildBedrockToolConfig(request.tools, request.toolChoice);
 
-    if (groupedConfig.bedrock.profile.trim()) {
-      process.env.AWS_PROFILE = groupedConfig.bedrock.profile.trim();
-    }
-    const client = new BedrockRuntimeClient({
-      region: groupedConfig.bedrock.region,
-    });
+      if (groupedConfig.bedrock.profile.trim()) {
+        process.env.AWS_PROFILE = groupedConfig.bedrock.profile.trim();
+      }
+      const client = new BedrockRuntimeClient({
+        region: groupedConfig.bedrock.region,
+      });
 
-    const response = await client.send(
-      new ConverseCommand({
-        modelId: request.model,
-        messages,
-        ...(system.length > 0 ? { system } : {}),
-        inferenceConfig: {
-          maxTokens: request.maxTokens,
-          temperature: 0,
-        },
-        ...(toolConfig ? { toolConfig } : {}),
-      }),
-      { abortSignal: signal },
-    );
+      const response = await client.send(
+        new ConverseCommand({
+          modelId: request.model,
+          messages,
+          ...(system.length > 0 ? { system } : {}),
+          inferenceConfig: {
+            maxTokens: request.maxTokens,
+            temperature: 0,
+          },
+          ...(toolConfig ? { toolConfig } : {}),
+        }),
+        { abortSignal: signal },
+      );
 
-    return parseBedrockResponse(response);
-  });
+      return parseBedrockResponse(response);
+    },
+    request.signal,
+  );
 }
 
 function createDefaultChatClient(
@@ -604,6 +652,7 @@ export async function runDistillationCompletion(
 
   try {
     while (true) {
+      throwIfAborted(options.signal);
       const allowTools = enableTools && toolRounds < maxToolRounds;
       const toolChoice = allowTools
         ? requireToolCall && toolRounds === 0
@@ -615,6 +664,7 @@ export async function runDistillationCompletion(
         messages,
         tools: allowTools ? toolDefinitions : undefined,
         toolChoice,
+        signal: options.signal,
       });
 
       if (response.toolCalls.length > 0 && allowTools) {
@@ -625,7 +675,9 @@ export async function runDistillationCompletion(
         });
 
         for (const toolCall of response.toolCalls) {
+          throwIfAborted(options.signal);
           const toolResult = await toolExecutor(toolCall, options.auditContext);
+          throwIfAborted(options.signal);
           toolEvents.push(toolResult);
           messages.push({
             role: "tool",

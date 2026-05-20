@@ -39,7 +39,12 @@ function parseRolePrefixedTurns(content: string): ChatTurn[] {
     if (!current) return;
     const metadata = isMetadataContent(currentRaw);
     const cleaned = cleanNaturalText(current.content);
-    if (cleaned) turns.push({ ...current, content: cleaned, isMetadata: metadata || undefined });
+    if (cleaned)
+      turns.push({
+        ...current,
+        content: cleaned,
+        isMetadata: metadata || undefined,
+      });
     current = null;
     currentRaw = "";
   };
@@ -117,6 +122,10 @@ function cleanNaturalText(content: string): string {
     // environment_context はメタデータとして除去（isMetadata フラグで UI 側が Accordion 表示する）
     .replace(/<environment_context[\s\S]*?<\/environment_context>/gi, "")
     .replace(/<\/?[A-Z_]+>/g, "")
+    // markdown-wysiwyg-editor のパースバグ回避:
+    // **`code`** のようにネストされた場合にプレースホルダー §CODE§ が残る問題を防ぐため
+    // バッククォートの周囲にスペースを挿入してパースを補助する
+    .replace(/(\*\*|[*~_])`([^`]+)`(\*\*|[*~_])/g, "$1 `$2` $3")
     .trim();
 
   if (!cleaned) return "";

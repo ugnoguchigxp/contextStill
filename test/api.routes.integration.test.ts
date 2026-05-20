@@ -58,8 +58,14 @@ describeDb("api route integration", () => {
 
     const response = await app.request("/api/knowledge?limit=20&query=Integration%20Knowledge");
     expect(response.status).toBe(200);
-    const json = (await response.json()) as { items: Array<{ title: string }> };
+    const json = (await response.json()) as {
+      items: Array<{ title: string }>;
+      total: number;
+      totalPages: number;
+    };
     expect(json.items.some((item) => item.title === "Integration Knowledge Rule")).toBe(true);
+    expect(json.total).toBe(1);
+    expect(json.totalPages).toBe(1);
   });
 
   test("POST /api/vibe-memory persists memory and GET /api/vibe-memory lists it", async () => {

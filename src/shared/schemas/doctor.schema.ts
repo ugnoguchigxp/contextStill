@@ -15,6 +15,26 @@ const skippedRunReasonSchema = z.object({
   count: z.number().int().nonnegative(),
 });
 
+const distillationQueueHealthSchema = z.object({
+  queued: z.number().int().nonnegative(),
+  running: z.number().int().nonnegative(),
+  retryablePaused: z.number().int().nonnegative(),
+  staleRunning: z.number().int().nonnegative(),
+  blockedByHigherPriority: z.boolean(),
+  oldestQueuedAt: z.string().datetime().nullable(),
+  oldestQueuedAgeMinutes: z.number().nonnegative().nullable(),
+  oldestRunningAt: z.string().datetime().nullable(),
+  oldestRunningAgeMinutes: z.number().nonnegative().nullable(),
+  lock: z.object({
+    path: z.string(),
+    exists: z.boolean(),
+    pid: z.number().int().positive().nullable(),
+    createdAt: z.string().datetime().nullable(),
+    ageSeconds: z.number().nonnegative().nullable(),
+    staleByCreatedAge: z.boolean(),
+  }),
+});
+
 export const doctorDistillationHealthSchema = z.object({
   launchAgent: launchAgentSchema,
   runs: z.object({
@@ -37,6 +57,7 @@ export const doctorDistillationHealthSchema = z.object({
     lastPausedAt: z.string().datetime().nullable(),
     lastError: z.string().nullable(),
   }),
+  queueHealth: distillationQueueHealthSchema,
   nextActions: z.array(z.string()),
 });
 

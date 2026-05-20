@@ -7,6 +7,7 @@ export type CoverEvidenceRunnerInput = {
   findCandidateId: string;
   provider?: DistillationProviderSetting;
   forceRefreshEvidence?: boolean;
+  signal?: AbortSignal;
 };
 
 export type CoverEvidenceRunnerResult = {
@@ -32,6 +33,7 @@ export async function runCoverEvidenceForCandidate(
     provider: input.provider,
     write: true,
     forceRefreshEvidence: input.forceRefreshEvidence,
+    signal: input.signal,
   });
 
   return {

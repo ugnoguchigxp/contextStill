@@ -30,7 +30,7 @@ function Metric({
 }
 
 export function OverviewPage() {
-  const knowledge = useQuery({ queryKey: ["knowledge", 80], queryFn: () => fetchKnowledgeItems() });
+  const knowledge = useQuery({ queryKey: ["knowledge", 1], queryFn: () => fetchKnowledgeItems(1) });
   const sources = useQuery({
     queryKey: ["page-tree"],
     queryFn: () => fetchSourceTree(),
@@ -68,7 +68,7 @@ export function OverviewPage() {
       </section>
 
       <section className="metric-grid">
-        <Metric label="Knowledge" value={knowledge.data?.length ?? "-"} hint="rules / procedures" />
+        <Metric label="Knowledge" value={knowledge.data?.total ?? "-"} hint="rules / procedures" />
         <Metric label="Sources" value={sources.data?.items.length ?? "-"} hint="wiki pages" />
         <Metric
           label="Vibe Memory"

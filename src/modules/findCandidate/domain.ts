@@ -30,6 +30,7 @@ export type FindCandidateInput = {
   wikiMinify?: boolean;
   memoryReaderMode?: "compressed" | "original";
   maxReads?: number;
+  signal?: AbortSignal;
 };
 
 export type FindCandidateResult = {
@@ -67,10 +68,6 @@ function maxReads(input: FindCandidateInput): number {
 
 function readTokens(input: FindCandidateInput): number {
   return Math.max(1, Math.floor(input.readTokens ?? groupedConfig.readFile.defaultTokens));
-}
-
-function desiredCandidateLimit(): number {
-  return Math.max(32, groupedConfig.distillationTools.maxCandidates);
 }
 
 function candidateOutputMaxTokens(): number {
@@ -184,7 +181,6 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
   const callerMode = input.callerMode ?? "cli_text";
   const provider = input.provider ?? defaultFindCandidateProvider(target.targetKind);
   const model = resolveDistillationModel(provider);
-  const candidateLimit = desiredCandidateLimit();
   const toolDefinition = buildToolDefinitionForTarget(target.targetKind);
   const readLog: Array<{ from: number; toExclusive: number }> = [];
   const readLimit = maxReads(input);
@@ -300,6 +296,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         blankResponseReminder: [
           '空の応答です。{"candidates":[]} または {"candidates":[{"title":"...","content":"..."}]} を返してください。',
         ],
+        signal: input.signal,
       },
     );
 
@@ -308,8 +305,6 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
     }
     llmOutput = completion.content.trim();
     candidates = parseStorageCandidatesFromLlmOutput(llmOutput);
-
-    candidates = candidates.slice(0, candidateLimit);
 
     await recordAuditLogSafe({
       eventType: auditEventTypes.findCandidateReaderUsed,

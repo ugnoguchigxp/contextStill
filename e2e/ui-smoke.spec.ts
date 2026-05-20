@@ -85,6 +85,18 @@ const doctorPayload = {
       failedRuns: 0,
       lastRunAt: "2026-05-15T00:00:00.000Z",
       lastRunAgeMinutes: 20,
+      lastOkRunAt: "2026-05-15T00:00:00.000Z",
+      lastOkRunAgeMinutes: 20,
+      outcomeKindCounts: [],
+      skippedRunReasons: [],
+    },
+    jobs: {
+      queued: 0,
+      running: 0,
+      paused: 0,
+      failed: 0,
+      lastPausedAt: null,
+      lastError: null,
     },
     nextActions: [],
   },
@@ -103,6 +115,18 @@ const doctorPayload = {
       failedRuns: 0,
       lastRunAt: "2026-05-15T00:00:00.000Z",
       lastRunAgeMinutes: 20,
+      lastOkRunAt: "2026-05-15T00:00:00.000Z",
+      lastOkRunAgeMinutes: 20,
+      outcomeKindCounts: [],
+      skippedRunReasons: [],
+    },
+    jobs: {
+      queued: 0,
+      running: 0,
+      paused: 0,
+      failed: 0,
+      lastPausedAt: null,
+      lastError: null,
     },
     nextActions: [],
   },
@@ -131,6 +155,14 @@ test.beforeEach(async ({ page }) => {
             importance: 70,
             sourceRefs: ["file:///docs/rule.md#L1"],
             sourceVibeMemoryIds: ["vm-1"],
+            compileSelectCount: 0,
+            lastCompiledAt: null,
+            agenticAcceptCount: 0,
+            explicitUpvoteCount: 0,
+            explicitDownvoteCount: 0,
+            dynamicScore: 75,
+            decayFactor: 1,
+            lastVerifiedAt: null,
             metadata: {},
             updatedAt: "2026-05-15T00:00:00.000Z",
           },
@@ -209,6 +241,108 @@ test.beforeEach(async ({ page }) => {
     await route.fulfill({ json: { items: [] } });
   });
   await page.route("**/api/context/runs**", async (route) => {
+    const url = new URL(route.request().url());
+    if (url.pathname.endsWith("/api/context/runs/run-1")) {
+      await route.fulfill({
+        json: {
+          detail: {
+            run: {
+              id: "run-1",
+              goal: "sample run",
+              intent: "edit",
+              retrievalMode: "task_context",
+              status: "ok",
+              degradedReasons: [],
+              durationMs: 90,
+              source: "ui",
+              createdAt: "2026-05-15T00:00:00.000Z",
+              tokenBudget: 5000,
+              input: {
+                goal: "sample run",
+                intent: "edit",
+                includeDraft: false,
+                files: ["src/sample.ts"],
+              },
+            },
+            pack: {
+              runId: "run-1",
+              goal: "sample run",
+              intent: "edit",
+              retrievalMode: "task_context",
+              status: "ok",
+              minimalTasks: ["Inspect context"],
+              rules: [
+                {
+                  id: "knowledge:k-1",
+                  itemKind: "rule",
+                  itemId: "k-1",
+                  section: "rules",
+                  title: "Use selected columns",
+                  content: "Select only required columns.",
+                  score: 0.9,
+                  rankingReason: "ranked by weighted score",
+                  sourceRefs: ["file:///docs/rule.md#L1"],
+                },
+              ],
+              procedures: [],
+              codeContext: [],
+              warnings: [],
+              sourceRefs: ["file:///docs/rule.md#L1"],
+              diagnostics: {
+                degradedReasons: [],
+                retrievalStats: {
+                  knowledge: { textHitCount: 1, vectorHitCount: 0, mergedCount: 1 },
+                  sources: { hitCount: 1, textHitCount: 1, vectorHitCount: 0 },
+                  tokenBudget: 5000,
+                  compileDurationMs: 90,
+                  agenticUsed: true,
+                  agenticReasoning: "Selected direct rule.",
+                  errorContext: { keywordCount: 0, fileHintCount: 1 },
+                  suggestedNextCalls: [],
+                },
+              },
+            },
+            selectedItems: [],
+            snapshotAvailable: true,
+          },
+        },
+      });
+      return;
+    }
+    if (url.pathname.endsWith("/api/context/runs/run-legacy")) {
+      await route.fulfill({
+        json: {
+          detail: {
+            run: {
+              id: "run-legacy",
+              goal: "legacy run",
+              intent: "debug",
+              retrievalMode: "debug_context",
+              status: "degraded",
+              degradedReasons: ["NO_SOURCE_MATCH"],
+              durationMs: 120,
+              source: "unknown",
+              createdAt: "2026-05-14T00:00:00.000Z",
+              tokenBudget: 5000,
+              input: { goal: "legacy run", intent: "debug" },
+            },
+            pack: null,
+            selectedItems: [
+              {
+                itemKind: "rule",
+                itemId: "k-legacy",
+                section: "rules",
+                score: 0.5,
+                rankingReason: "legacy selected item",
+                sourceRefs: [],
+              },
+            ],
+            snapshotAvailable: false,
+          },
+        },
+      });
+      return;
+    }
     await route.fulfill({
       json: {
         runs: [
@@ -220,7 +354,19 @@ test.beforeEach(async ({ page }) => {
             status: "ok",
             degradedReasons: [],
             durationMs: 90,
+            source: "ui",
             createdAt: "2026-05-15T00:00:00.000Z",
+          },
+          {
+            id: "run-legacy",
+            goal: "legacy run",
+            intent: "debug",
+            retrievalMode: "debug_context",
+            status: "degraded",
+            degradedReasons: ["NO_SOURCE_MATCH"],
+            durationMs: 120,
+            source: "unknown",
+            createdAt: "2026-05-14T00:00:00.000Z",
           },
         ],
       },
@@ -289,4 +435,25 @@ test("Compile page shows validation error when goal is empty", async ({ page }) 
   await page.getByRole("button", { name: "Compile" }).click();
   await expect(page.getByText("Goal is required.")).toBeVisible();
   expect(compileCalled).toBe(false);
+});
+
+test("Compile page shows run detail and legacy snapshot state", async ({ page }) => {
+  await page.goto("/compile");
+
+  await expect(page.getByRole("heading", { name: "Context Compiler Control Plane" })).toBeVisible();
+  await expect(page.getByRole("button", { name: /sample run ok UI/ })).toBeVisible();
+
+  await page.getByRole("button", { name: /sample run/ }).click();
+  await expect(page.getByRole("heading", { name: "Retrieval" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Agentic Refine" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Output" })).toBeVisible();
+  await expect(page.getByText("Use selected columns")).toBeVisible();
+
+  await page.getByRole("button", { name: "New" }).click();
+  await expect(page.getByRole("heading", { name: "Goal" })).toBeVisible();
+  await expect(page.getByRole("heading", { name: "Options" })).toBeVisible();
+
+  await page.getByRole("button", { name: /legacy run/ }).click();
+  await expect(page.getByText("Snapshot unavailable")).toBeVisible();
+  await expect(page.getByText("before pack snapshot persistence")).toBeVisible();
 });

@@ -23,6 +23,21 @@ export type KnowledgeItem = {
   updatedAt: string;
 };
 
+export type KnowledgeListResponse = {
+  items: KnowledgeItem[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+};
+
+export type KnowledgeListRequest = {
+  limit?: number;
+  page?: number;
+  status?: string;
+  query?: string;
+};
+
 export type KnowledgeFeedback = {
   id: string;
   direction: "up" | "down";
@@ -194,6 +209,25 @@ export type DoctorReport = {
       lastPausedAt: string | null;
       lastError: string | null;
     };
+    queueHealth: {
+      queued: number;
+      running: number;
+      retryablePaused: number;
+      staleRunning: number;
+      blockedByHigherPriority: boolean;
+      oldestQueuedAt: string | null;
+      oldestQueuedAgeMinutes: number | null;
+      oldestRunningAt: string | null;
+      oldestRunningAgeMinutes: number | null;
+      lock: {
+        path: string;
+        exists: boolean;
+        pid: number | null;
+        createdAt: string | null;
+        ageSeconds: number | null;
+        staleByCreatedAge: boolean;
+      };
+    };
     nextActions: string[];
   };
   sourceDistillation: {
@@ -223,6 +257,25 @@ export type DoctorReport = {
       failed: number;
       lastPausedAt: string | null;
       lastError: string | null;
+    };
+    queueHealth: {
+      queued: number;
+      running: number;
+      retryablePaused: number;
+      staleRunning: number;
+      blockedByHigherPriority: boolean;
+      oldestQueuedAt: string | null;
+      oldestQueuedAgeMinutes: number | null;
+      oldestRunningAt: string | null;
+      oldestRunningAgeMinutes: number | null;
+      lock: {
+        path: string;
+        exists: boolean;
+        pid: number | null;
+        createdAt: string | null;
+        ageSeconds: number | null;
+        staleByCreatedAge: boolean;
+      };
     };
     nextActions: string[];
   };
@@ -257,8 +310,8 @@ export type GraphEdge = {
   source: string;
   target: string;
   relationType: string;
-  edgeKind: "semantic" | "session" | "project";
-  relationAxis: "semantic" | "session" | "project";
+  edgeKind: "semantic" | "session" | "project" | "source";
+  relationAxis: "semantic" | "session" | "project" | "source";
   derived: boolean;
   weight: number;
 };
@@ -266,7 +319,7 @@ export type GraphEdge = {
 export type GraphStatusFilter = "current" | "active" | "draft" | "deprecated" | "all";
 
 export type GraphViewMode = "relation" | "semantic";
-export type GraphRelationAxis = "session" | "project";
+export type GraphRelationAxis = "session" | "project" | "source";
 
 export type GraphSnapshot = {
   nodes: GraphNode[];
@@ -278,6 +331,7 @@ export type GraphSnapshot = {
     semanticEdgeCount: number;
     sessionEdgeCount: number;
     projectEdgeCount: number;
+    sourceEdgeCount: number;
     relationEdgeCount: number;
     sourceRefCount: number;
   };
@@ -403,9 +457,20 @@ const encodeSlug = (slug: string): string =>
     .map((part) => encodeURIComponent(part))
     .join("/");
 
-export async function fetchKnowledgeItems(limit = 80): Promise<KnowledgeItem[]> {
-  const json = await getJson<{ items: KnowledgeItem[] }>(`/api/knowledge?limit=${limit}`);
-  return json.items;
+export async function fetchKnowledgeItems(
+  input: number | KnowledgeListRequest = 80,
+): Promise<KnowledgeListResponse> {
+  const params = new URLSearchParams();
+  if (typeof input === "number") {
+    params.set("limit", String(input));
+  } else {
+    params.set("limit", String(input.limit ?? 80));
+    params.set("page", String(input.page ?? 1));
+    if (input.status) params.set("status", input.status);
+    if (input.query) params.set("query", input.query);
+  }
+  const json = await getJson<KnowledgeListResponse>(`/api/knowledge?${params.toString()}`);
+  return json;
 }
 
 export async function createKnowledgeItem(input: KnowledgeWriteInput): Promise<void> {

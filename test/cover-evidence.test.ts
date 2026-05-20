@@ -161,6 +161,26 @@ describe("runCoverEvidence", () => {
       id: "cover-1",
       ...result,
     }));
+    mocks.runDistillationCompletion.mockResolvedValue({
+      content: JSON.stringify({
+        schemaVersion: 1,
+        status: "knowledge_ready",
+        stage: "source",
+        candidate: {
+          type: "procedure",
+          title: "Run smoke tests before finalizing coverEvidence",
+          body: "Run smoke tests before finalizing coverEvidence so source references and evidence status stay verifiable.",
+          importance: 80,
+          confidence: 85,
+        },
+        references: [],
+        duplicateRefs: [],
+        toolEvents: [],
+        reason: null,
+      }),
+      toolEvents: [],
+      messages: [],
+    });
     process.env.MEMORY_ROUTER_CONTEXT7_MCP_COMMAND = "";
     process.env.MEMORY_ROUTER_DEEPWIKI_MCP_COMMAND = "";
   });
@@ -185,6 +205,74 @@ describe("runCoverEvidence", () => {
       expect.objectContaining({
         id: "find-1",
         result: expect.objectContaining({ status: "knowledge_ready" }),
+      }),
+    );
+  });
+
+  test("reruns retryable existing cover evidence instead of returning the checkpoint", async () => {
+    mocks.selectCoverEvidenceResultById.mockResolvedValue({
+      id: "find-1",
+      status: "provider_failed",
+      stage: "final",
+      reason: "value_provider_failed",
+    });
+    mocks.coverEvidenceResultFromRow.mockReturnValue({
+      schemaVersion: 1,
+      status: "provider_failed",
+      stage: "final",
+      candidate: null,
+      references: [],
+      duplicateRefs: [],
+      toolEvents: [],
+      reason: "value_provider_failed",
+    });
+
+    const result = await runCoverEvidence({ id: "find-1", write: true });
+
+    expect(result.result.status).toBe("knowledge_ready");
+    expect(mocks.getFindCandidateResultById).toHaveBeenCalledWith("find-1");
+    expect(mocks.saveCoverEvidenceResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "find-1",
+        result: expect.objectContaining({ status: "knowledge_ready" }),
+      }),
+    );
+  });
+
+  test("rejects source-backed candidates with low value assessment importance", async () => {
+    mocks.runDistillationCompletion.mockResolvedValueOnce({
+      content: JSON.stringify({
+        schemaVersion: 1,
+        status: "knowledge_ready",
+        stage: "source",
+        candidate: {
+          type: "procedure",
+          title: "Low value reminder",
+          body: "Low value operational reminders should not become durable knowledge.",
+          importance: 50,
+          confidence: 80,
+        },
+        references: [],
+        duplicateRefs: [],
+        toolEvents: [],
+        reason: null,
+      }),
+      toolEvents: [],
+      messages: [],
+    });
+
+    const result = await runCoverEvidence({ id: "find-1", write: true });
+
+    expect(result.result.status).toBe("insufficient");
+    expect(result.result.reason).toBe("low_importance");
+    expect(mocks.saveCoverEvidenceResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "find-1",
+        result: expect.objectContaining({
+          status: "insufficient",
+          reason: "low_importance",
+          candidate: null,
+        }),
       }),
     );
   });

@@ -13,7 +13,6 @@ PLIST_DIR="$PROJECT_ROOT/scripts/automation"
 LAUNCH_AGENTS_DIR="$HOME/Library/LaunchAgents"
 PLIST="com.memory-router.distill-pipeline.plist"
 LABEL="${PLIST%.plist}"
-INTERVAL_SECONDS="${MEMORY_ROUTER_DISTILL_PIPELINE_INTERVAL_SECONDS:-120}"
 PIPELINE_KIND="${MEMORY_ROUTER_DISTILL_PIPELINE_KIND:-auto}"
 PIPELINE_LIMIT="${MEMORY_ROUTER_DISTILL_PIPELINE_LIMIT:-1}"
 PIPELINE_REFRESH="${MEMORY_ROUTER_DISTILL_PIPELINE_REFRESH:-1}"
@@ -42,7 +41,6 @@ install() {
   sed \
     -e "s|{{PROJECT_ROOT}}|$PROJECT_ROOT|g" \
     -e "s|{{BUN_PATH}}|$bun_path|g" \
-    -e "s|{{INTERVAL_SECONDS}}|$INTERVAL_SECONDS|g" \
     "$PLIST_DIR/$PLIST" > "$LAUNCH_AGENTS_DIR/$PLIST"
   chmod 644 "$LAUNCH_AGENTS_DIR/$PLIST"
   echo "installed: $LAUNCH_AGENTS_DIR/$PLIST"
@@ -123,6 +121,34 @@ run_once() {
   return "$exit_code"
 }
 
+run_continuous() {
+  cd "$PROJECT_ROOT"
+  local bun_path
+  bun_path="$(resolve_bun_path)"
+  local args=(
+    "run"
+    "src/cli/distill-pipeline.ts"
+    "--write"
+    "--continuous"
+    "--limit"
+    "$PIPELINE_LIMIT"
+    "--kind"
+    "$PIPELINE_KIND"
+  )
+  if [ "$PIPELINE_REFRESH" = "0" ]; then
+    args+=("--no-refresh")
+  fi
+  if [ -n "$PIPELINE_PROVIDER" ]; then
+    args+=("--provider" "$PIPELINE_PROVIDER")
+  fi
+  if [ -n "$PIPELINE_VERSION" ]; then
+    args+=("--version" "$PIPELINE_VERSION")
+  fi
+
+  echo "[$(date -u '+%Y-%m-%dT%H:%M:%SZ')] $LABEL continuous run started kind=$PIPELINE_KIND"
+  exec "$bun_path" "${args[@]}"
+}
+
 case "${1:-}" in
   install)
     install
@@ -142,8 +168,11 @@ case "${1:-}" in
   run-once)
     run_once
     ;;
+  run-continuous)
+    run_continuous
+    ;;
   *)
-    echo "Usage: $0 {install|load|unload|uninstall|status|run-once}"
+    echo "Usage: $0 {install|load|unload|uninstall|status|run-once|run-continuous}"
     exit 1
     ;;
 esac

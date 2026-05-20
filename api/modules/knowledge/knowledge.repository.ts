@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, sql } from "drizzle-orm";
+import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "../../../src/db/index.js";
 import { contextPackItems, knowledgeItems } from "../../../src/db/schema.js";
 import { normalizeKnowledgeScore } from "../../../src/lib/score-scale.js";
@@ -69,6 +69,14 @@ export type KnowledgeListItem = {
   updatedAt: Date;
 };
 
+type KnowledgeListParams = {
+  limit: number;
+  page?: number;
+  status?: string;
+  type?: string;
+  query?: string;
+};
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -126,13 +134,8 @@ function isMissingKnowledgeLifecycleColumnsError(error: unknown): boolean {
   );
 }
 
-export async function listKnowledgeItems(params: {
-  limit: number;
-  status?: string;
-  type?: string;
-  query?: string;
-}): Promise<KnowledgeListItem[]> {
-  const conditions = [];
+function buildKnowledgeListWhere(params: Pick<KnowledgeListParams, "status" | "type" | "query">) {
+  const conditions: SQL[] = [];
   if (params.status) {
     conditions.push(eq(knowledgeItems.status, params.status));
   }
@@ -141,9 +144,33 @@ export async function listKnowledgeItems(params: {
   }
   if (params.query?.trim()) {
     const query = `%${params.query.trim()}%`;
-    conditions.push(ilike(knowledgeItems.title, query));
+    const searchCondition = or(
+      ilike(knowledgeItems.title, query),
+      ilike(knowledgeItems.body, query),
+    );
+    if (searchCondition) conditions.push(searchCondition);
   }
+  return conditions.length > 0 ? and(...conditions) : undefined;
+}
 
+export async function countKnowledgeItems(
+  params: Pick<KnowledgeListParams, "status" | "type" | "query">,
+): Promise<number> {
+  const rows = await db
+    .select({
+      count: sql<number>`count(*)::int`,
+    })
+    .from(knowledgeItems)
+    .where(buildKnowledgeListWhere(params));
+
+  return Math.max(0, Number(rows[0]?.count ?? 0));
+}
+
+export async function listKnowledgeItems(
+  params: KnowledgeListParams,
+): Promise<KnowledgeListItem[]> {
+  const where = buildKnowledgeListWhere(params);
+  const offset = Math.max(0, (params.page ?? 1) - 1) * params.limit;
   const commonSelect = {
     id: knowledgeItems.id,
     type: knowledgeItems.type,
@@ -184,9 +211,10 @@ export async function listKnowledgeItems(params: {
         dynamicScore: knowledgeItems.dynamicScore,
       })
       .from(knowledgeItems)
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .where(where)
       .orderBy(desc(knowledgeItems.updatedAt))
-      .limit(params.limit);
+      .limit(params.limit)
+      .offset(offset);
   } catch (error) {
     if (!isMissingKnowledgeLifecycleColumnsError(error)) {
       throw error;
@@ -194,9 +222,10 @@ export async function listKnowledgeItems(params: {
     rows = await db
       .select(commonSelect)
       .from(knowledgeItems)
-      .where(conditions.length > 0 ? and(...conditions) : undefined)
+      .where(where)
       .orderBy(desc(knowledgeItems.updatedAt))
-      .limit(params.limit);
+      .limit(params.limit)
+      .offset(offset);
   }
 
   return rows.map((row: Record<string, unknown>): KnowledgeListItem => {

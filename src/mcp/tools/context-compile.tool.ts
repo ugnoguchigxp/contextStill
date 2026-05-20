@@ -47,7 +47,7 @@ export const contextCompileTool: ToolEntry = {
   },
   handler: async (args) => {
     const parsed = compileInputSchema.parse(args ?? {});
-    const { pack, markdown } = await compileContextPack(parsed);
+    const { pack, markdown } = await compileContextPack(parsed, { source: "mcp" });
     const hasAnyContent = [pack.rules, pack.procedures, pack.codeContext, pack.warnings].some(
       (section) => Array.isArray(section) && section.length > 0,
     );

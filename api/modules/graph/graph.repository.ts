@@ -1,6 +1,11 @@
 import { and, desc, inArray, sql } from "drizzle-orm";
 import { db } from "../../../src/db/index.js";
-import { knowledgeItems, knowledgeSourceLinks, vibeMemories } from "../../../src/db/schema.js";
+import {
+  knowledgeItems,
+  knowledgeSourceLinks,
+  sourceFragments,
+  vibeMemories,
+} from "../../../src/db/schema.js";
 import { normalizeKnowledgeScore, toUnitKnowledgeScore } from "../../../src/lib/score-scale.js";
 import { normalizeRepoKey } from "../../../src/modules/context-compiler/query-context.js";
 
@@ -35,8 +40,8 @@ export type GraphEdge = {
   source: string;
   target: string;
   relationType: string;
-  edgeKind: "semantic" | "session" | "project";
-  relationAxis: "semantic" | "session" | "project";
+  edgeKind: "semantic" | "session" | "project" | "source";
+  relationAxis: "semantic" | "session" | "project" | "source";
   derived: boolean;
   weight: number;
 };
@@ -44,7 +49,7 @@ export type GraphEdge = {
 type GraphStatusFilter = "current" | "active" | "draft" | "deprecated" | "all";
 
 type GraphViewMode = "relation" | "semantic";
-export type GraphRelationAxis = "session" | "project";
+export type GraphRelationAxis = "session" | "project" | "source";
 
 export type GraphSnapshotParams = {
   limit: number;
@@ -61,6 +66,7 @@ type RelationNodeContext = {
   importance: number;
   sessionKey?: string;
   projectKey?: string;
+  sourceDocIds?: string[];
 };
 
 function resolveStatusFilter(status: GraphStatusFilter | undefined): string[] | undefined {
@@ -165,7 +171,7 @@ async function buildSessionProjectLookup(sessionIds: string[]): Promise<Map<stri
 
 function buildContextEdgesForGroup(params: {
   members: RelationNodeContext[];
-  axis: GraphRelationAxis;
+  axis: "session" | "project" | "source";
   weight: number;
   maxEdgesPerNode: number;
 }): GraphEdge[] {
@@ -212,7 +218,12 @@ function buildContextEdgesForGroup(params: {
       id: `${params.axis}:${sourceId}:${targetId}`,
       source: knowledgeNodeId(sourceId),
       target: knowledgeNodeId(targetId),
-      relationType: params.axis === "session" ? "same_session" : "same_project",
+      relationType:
+        params.axis === "session"
+          ? "same_session"
+          : params.axis === "project"
+            ? "same_project"
+            : "same_source",
       edgeKind: params.axis,
       relationAxis: params.axis,
       derived: true,
@@ -246,9 +257,14 @@ async function buildRelationEdges(params: {
   axes: GraphRelationAxis[];
   maxEdges: number;
   maxContextEdgesPerNode: number;
-}): Promise<{ edges: GraphEdge[]; sessionEdgeCount: number; projectEdgeCount: number }> {
+}): Promise<{
+  edges: GraphEdge[];
+  sessionEdgeCount: number;
+  projectEdgeCount: number;
+  sourceEdgeCount: number;
+}> {
   if (params.nodes.length < 2 || params.axes.length === 0) {
-    return { edges: [], sessionEdgeCount: 0, projectEdgeCount: 0 };
+    return { edges: [], sessionEdgeCount: 0, projectEdgeCount: 0, sourceEdgeCount: 0 };
   }
 
   const missingProjectSessionIds = new Set<string>();
@@ -264,6 +280,7 @@ async function buildRelationEdges(params: {
 
   const sessionBuckets = new Map<string, RelationNodeContext[]>();
   const projectBuckets = new Map<string, RelationNodeContext[]>();
+  const sourceBuckets = new Map<string, RelationNodeContext[]>();
 
   for (const node of enrichedNodes) {
     if (params.axes.includes("session") && node.sessionKey) {
@@ -276,10 +293,18 @@ async function buildRelationEdges(params: {
       bucket.push(node);
       projectBuckets.set(node.projectKey, bucket);
     }
+    if (params.axes.includes("source") && node.sourceDocIds) {
+      for (const sourceDocId of node.sourceDocIds) {
+        const bucket = sourceBuckets.get(sourceDocId) ?? [];
+        bucket.push(node);
+        sourceBuckets.set(sourceDocId, bucket);
+      }
+    }
   }
 
   const sessionEdges: GraphEdge[] = [];
   const projectEdges: GraphEdge[] = [];
+  const sourceEdges: GraphEdge[] = [];
 
   for (const members of sessionBuckets.values()) {
     sessionEdges.push(
@@ -303,13 +328,32 @@ async function buildRelationEdges(params: {
     );
   }
 
+  for (const members of sourceBuckets.values()) {
+    sourceEdges.push(
+      ...buildContextEdgesForGroup({
+        members,
+        axis: "source",
+        weight: 0.75,
+        maxEdgesPerNode: params.maxContextEdgesPerNode,
+      }),
+    );
+  }
+
   const sessionPairs = new Set(
     sessionEdges.map((edge) => unorderedPairKey(edge.source, edge.target)),
   );
   const dedupedProjectEdges = projectEdges.filter(
     (edge) => !sessionPairs.has(unorderedPairKey(edge.source, edge.target)),
   );
-  const merged = [...sessionEdges, ...dedupedProjectEdges];
+  const sessionProjectPairs = new Set(
+    [...sessionEdges, ...dedupedProjectEdges].map((edge) =>
+      unorderedPairKey(edge.source, edge.target),
+    ),
+  );
+  const dedupedSourceEdges = sourceEdges.filter(
+    (edge) => !sessionProjectPairs.has(unorderedPairKey(edge.source, edge.target)),
+  );
+  const merged = [...sessionEdges, ...dedupedProjectEdges, ...dedupedSourceEdges];
   const globallyCappedEdges = enforceGlobalPerNodeCap(merged, params.maxContextEdgesPerNode).slice(
     0,
     params.maxEdges,
@@ -317,15 +361,18 @@ async function buildRelationEdges(params: {
 
   let sessionEdgeCount = 0;
   let projectEdgeCount = 0;
+  let sourceEdgeCount = 0;
   for (const edge of globallyCappedEdges) {
     if (edge.edgeKind === "session") sessionEdgeCount += 1;
     if (edge.edgeKind === "project") projectEdgeCount += 1;
+    if (edge.edgeKind === "source") sourceEdgeCount += 1;
   }
 
   return {
     edges: globallyCappedEdges,
     sessionEdgeCount,
     projectEdgeCount,
+    sourceEdgeCount,
   };
 }
 
@@ -403,6 +450,7 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
     semanticEdgeCount: number;
     sessionEdgeCount: number;
     projectEdgeCount: number;
+    sourceEdgeCount: number;
     relationEdgeCount: number;
     sourceRefCount: number;
   };
@@ -476,11 +524,38 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
   const nodes = [...nodeById.values()];
   const nodeRawIds = nodes.map((node) => node.id.replace(/^knowledge:/, ""));
   const nodeRawIdSet = new Set(nodeRawIds);
+
+  // wiki source 軸用: knowledgeId → sources.id[] のマップを構築
+  const sourceDocIdsByKnowledge = new Map<string, string[]>();
+  if (view === "relation" && nodeRawIds.length > 0) {
+    const sourceLinks = await db
+      .select({
+        knowledgeId: knowledgeSourceLinks.knowledgeId,
+        sourceId: sourceFragments.sourceId,
+      })
+      .from(knowledgeSourceLinks)
+      .innerJoin(
+        sourceFragments,
+        sql`${sourceFragments.id} = ${knowledgeSourceLinks.sourceFragmentId}`,
+      )
+      .where(inArray(knowledgeSourceLinks.knowledgeId, nodeRawIds));
+    for (const row of sourceLinks) {
+      const existing = sourceDocIdsByKnowledge.get(row.knowledgeId) ?? [];
+      if (!existing.includes(row.sourceId)) existing.push(row.sourceId);
+      sourceDocIdsByKnowledge.set(row.knowledgeId, existing);
+    }
+  }
+
+  const enrichedRelationContexts = relationNodeContexts.map((node) => ({
+    ...node,
+    sourceDocIds: sourceDocIdsByKnowledge.get(node.id),
+  }));
+
   const [relationResult, semanticEdges, sourceRefRows] = await Promise.all([
     view === "semantic"
-      ? Promise.resolve({ edges: [], sessionEdgeCount: 0, projectEdgeCount: 0 })
+      ? Promise.resolve({ edges: [], sessionEdgeCount: 0, projectEdgeCount: 0, sourceEdgeCount: 0 })
       : buildRelationEdges({
-          nodes: relationNodeContexts.filter((node) => nodeRawIdSet.has(node.id)),
+          nodes: enrichedRelationContexts.filter((node) => nodeRawIdSet.has(node.id)),
           axes: relationAxes,
           maxEdges: params.limit * 2,
           maxContextEdgesPerNode,
@@ -505,7 +580,10 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
   const relationEdges = relationResult.edges;
   const edges = view === "semantic" ? semanticEdges : relationEdges;
   const stats = statsRows[0] ?? { totalKnowledgeCount: 0, embeddedKnowledgeCount: 0 };
-  const relationEdgeCount = relationResult.sessionEdgeCount + relationResult.projectEdgeCount;
+  const relationEdgeCount =
+    relationResult.sessionEdgeCount +
+    relationResult.projectEdgeCount +
+    relationResult.sourceEdgeCount;
 
   return {
     nodes,
@@ -517,6 +595,7 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
       semanticEdgeCount: semanticEdges.length,
       sessionEdgeCount: relationResult.sessionEdgeCount,
       projectEdgeCount: relationResult.projectEdgeCount,
+      sourceEdgeCount: relationResult.sourceEdgeCount,
       relationEdgeCount,
       sourceRefCount: finiteOrFallback(sourceRefRows[0]?.sourceRefCount, 0),
     },

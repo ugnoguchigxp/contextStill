@@ -198,6 +198,39 @@ function makeResult(params: {
   };
 }
 
+function rejectLowImportance(result: CoverEvidenceResult): CoverEvidenceResult {
+  if (
+    result.status !== "knowledge_ready" ||
+    !result.candidate ||
+    result.candidate.importance > groupedConfig.distillation.lowImportanceRejectThreshold
+  ) {
+    return result;
+  }
+  return makeResult({
+    status: "insufficient",
+    stage: result.stage,
+    candidate: null,
+    references: result.references,
+    duplicateRefs: result.duplicateRefs,
+    toolEvents: result.toolEvents,
+    reason: "low_importance",
+  });
+}
+
+const retryableCoverEvidenceStatuses = new Set<CoverEvidenceStatus>([
+  "tool_failed",
+  "provider_failed",
+  "parse_failed",
+]);
+
+function isRetryableCoverEvidenceStatus(status: CoverEvidenceStatus): boolean {
+  return retryableCoverEvidenceStatuses.has(status);
+}
+
+function isAbortError(error: unknown): boolean {
+  return error instanceof Error && error.name === "AbortError";
+}
+
 function requiresExternalEvidence(candidate: CoverEvidenceCandidate): boolean {
   const text = `${candidate.title}\n${candidate.body}`;
   return (
@@ -233,6 +266,97 @@ function externalEvidenceUserPrompt(params: {
   ].join("\n\n");
 }
 
+function valueAssessmentSystemPrompt(): string {
+  return [
+    "あなたは coverEvidence の knowledge value 判定器です。",
+    "候補が次回以降の coding agent に再利用可能な rule/procedure かを判定してください。",
+    "候補は元 source で支えられている前提ですが、重要度と自己完結性を改めて評価してください。",
+    "importance と confidence は 0 から 100 の整数です。",
+    `importance が ${groupedConfig.distillation.lowImportanceRejectThreshold} 以下なら status は insufficient、reason は low_importance にしてください。`,
+    "JSON は次の形だけにしてください:",
+    '{"schemaVersion":1,"status":"knowledge_ready|insufficient","stage":"final","candidate":{"type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80},"references":[],"duplicateRefs":[],"toolEvents":[],"reason":null}',
+    "insufficient の場合は candidate を null にしてよいです。",
+  ].join("\n");
+}
+
+function valueAssessmentUserPrompt(params: {
+  candidate: CoverEvidenceCandidate;
+  sourceReferences: CoverEvidenceReference[];
+  sourceContentExcerpt: string;
+}): string {
+  return [
+    "候補の value を判定してください。",
+    "候補:",
+    JSON.stringify(params.candidate, null, 2),
+    "source references:",
+    JSON.stringify(params.sourceReferences, null, 2),
+    "source excerpt:",
+    params.sourceContentExcerpt.slice(0, 6000),
+  ].join("\n\n");
+}
+
+async function runValueAssessment(params: {
+  id: string;
+  candidate: CoverEvidenceCandidate;
+  sourceReferences: CoverEvidenceReference[];
+  sourceContentExcerpt: string;
+  provider: DistillationProviderSetting;
+  model: string;
+  chatClient?: DistillationChatClient;
+  signal?: AbortSignal;
+}): Promise<CoverEvidenceResult> {
+  try {
+    const completion = await runDistillationCompletion(
+      {
+        model: params.model,
+        maxTokens: Math.max(1024, groupedConfig.vibeDistillation.maxOutputTokens),
+        messages: [
+          { role: "system", content: valueAssessmentSystemPrompt() },
+          {
+            role: "user",
+            content: valueAssessmentUserPrompt({
+              candidate: params.candidate,
+              sourceReferences: params.sourceReferences,
+              sourceContentExcerpt: params.sourceContentExcerpt,
+            }),
+          },
+        ],
+      },
+      {
+        providerSetting: params.provider,
+        chatClient: params.chatClient,
+        enableTools: false,
+        signal: params.signal,
+        auditContext: {
+          domain: "coverEvidence",
+          id: params.id,
+          assessment: "value",
+        },
+      },
+    );
+    const parsed = parseCoverEvidenceResult(completion.content);
+    return rejectLowImportance({
+      ...parsed,
+      references: mergeReferences(params.sourceReferences, parsed.references),
+      toolEvents: toolEventsForResult(completion.toolEvents),
+    });
+  } catch (error) {
+    if (isAbortError(error)) {
+      throw error;
+    }
+    const toolEvents = toolEventsForResult(distillationToolEventsFromError(error));
+    const status: CoverEvidenceStatus = toolEvents.length > 0 ? "tool_failed" : "provider_failed";
+    return makeResult({
+      status,
+      stage: "final",
+      candidate: null,
+      references: params.sourceReferences,
+      toolEvents,
+      reason: status === "tool_failed" ? "value_tool_failed" : "value_provider_failed",
+    });
+  }
+}
+
 async function runExternalEvidence(params: {
   id: string;
   candidate: CoverEvidenceCandidate;
@@ -242,6 +366,7 @@ async function runExternalEvidence(params: {
   forceRefreshEvidence?: boolean;
   chatClient?: DistillationChatClient;
   toolExecutor?: DistillationToolExecutor;
+  signal?: AbortSignal;
 }): Promise<CoverEvidenceResult> {
   try {
     const completion = await runDistillationCompletion(
@@ -272,6 +397,7 @@ async function runExternalEvidence(params: {
           id: params.id,
           forceRefreshEvidence: Boolean(params.forceRefreshEvidence),
         },
+        signal: params.signal,
       },
     );
     let parsed: CoverEvidenceResult;
@@ -307,12 +433,15 @@ async function runExternalEvidence(params: {
       });
     }
 
-    return {
+    return rejectLowImportance({
       ...parsed,
       references,
       toolEvents,
-    };
+    });
   } catch (error) {
+    if (isAbortError(error)) {
+      throw error;
+    }
     const toolEvents = toolEventsForResult(distillationToolEventsFromError(error));
     const status: CoverEvidenceStatus = toolEvents.length > 0 ? "tool_failed" : "provider_failed";
     return makeResult({
@@ -351,6 +480,7 @@ async function runOptionalMcpEvidence(params: {
   model: string;
   chatClient?: DistillationChatClient;
   toolExecutor?: DistillationToolExecutor;
+  signal?: AbortSignal;
 }): Promise<{ references: CoverEvidenceReference[]; toolEvents: CoverEvidenceToolEvent[] }> {
   const toolNames = configuredMcpEvidenceToolNames();
   if (toolNames.length === 0) {
@@ -386,6 +516,7 @@ async function runOptionalMcpEvidence(params: {
           id: params.id,
           optionalEvidence: "mcp",
         },
+        signal: params.signal,
       },
     );
     const toolEvents = toolEventsForResult(completion.toolEvents);
@@ -394,6 +525,9 @@ async function runOptionalMcpEvidence(params: {
       toolEvents,
     };
   } catch (error) {
+    if (isAbortError(error)) {
+      throw error;
+    }
     const toolEvents = toolEventsForResult(distillationToolEventsFromError(error));
     return {
       references: referencesFromMcpToolEvents(toolEvents),
@@ -409,6 +543,7 @@ async function appendOptionalMcpEvidence(params: {
   model: string;
   chatClient?: DistillationChatClient;
   toolExecutor?: DistillationToolExecutor;
+  signal?: AbortSignal;
 }): Promise<CoverEvidenceResult> {
   if (params.result.status !== "knowledge_ready" || !params.result.candidate) {
     return params.result;
@@ -421,6 +556,7 @@ async function appendOptionalMcpEvidence(params: {
     model: params.model,
     chatClient: params.chatClient,
     toolExecutor: params.toolExecutor,
+    signal: params.signal,
   });
   if (mcpEvidence.references.length === 0 && mcpEvidence.toolEvents.length === 0) {
     return params.result;
@@ -446,10 +582,15 @@ export async function runCoverEvidence(
   if (input.write) {
     const existing = await selectCoverEvidenceResultById(id);
     if (existing) {
-      return {
-        id: existing.id,
-        result: coverEvidenceResultFromRow(existing),
-      };
+      const existingResult = coverEvidenceResultFromRow(existing);
+      if (input.forceRefreshEvidence || isRetryableCoverEvidenceStatus(existingResult.status)) {
+        // Retryable rows are checkpoints, not terminal cache hits.
+      } else {
+        return {
+          id: existing.id,
+          result: existingResult,
+        };
+      }
     }
   }
 
@@ -539,6 +680,7 @@ export async function runCoverEvidence(
               forceRefreshEvidence: input.forceRefreshEvidence,
               chatClient: input.chatClient,
               toolExecutor: input.toolExecutor,
+              signal: input.signal,
             });
             result = await appendOptionalMcpEvidence({
               id,
@@ -547,15 +689,18 @@ export async function runCoverEvidence(
               model,
               chatClient: input.chatClient,
               toolExecutor: input.toolExecutor,
+              signal: input.signal,
             });
           } else {
-            result = makeResult({
-              status: "knowledge_ready",
-              stage: "final",
+            result = await runValueAssessment({
+              id,
               candidate,
-              references: sourceRead.references,
-              duplicateRefs: dedupe.duplicateRefs,
-              reason: null,
+              sourceReferences: sourceRead.references,
+              sourceContentExcerpt: sourceRead.content,
+              provider,
+              model,
+              chatClient: input.chatClient,
+              signal: input.signal,
             });
           }
         }
@@ -626,18 +771,17 @@ export async function runCoverEvidenceSmoke(
       reason: null,
     }),
   );
-
   return {
     domain: "coverEvidence",
     implemented: true,
-    status: parsed.status === "knowledge_ready" ? "ok" : "prepared",
+    status: "ok",
     checkedAt: new Date().toISOString(),
-    message: "coverEvidence parser, query builder, and runtime entrypoint are wired.",
+    message: "coverEvidence parser and runtime are available.",
     receivedInput: input,
     nextContracts: [
-      "runCoverEvidence reads find_candidate_results by id",
-      "cover_evidence_results is the write-side result table",
-      "finalizeDistille remains responsible for draft knowledge creation",
+      "coverEvidence preserves source references",
+      "coverEvidence write=true stores cover_evidence_results",
+      "finalizeDistille consumes knowledge_ready cover evidence results",
     ],
   };
 }

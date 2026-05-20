@@ -1,4 +1,5 @@
 export type CompileIntent = "plan" | "edit" | "debug" | "review" | "finish";
+export type CompileRunSource = "ui" | "mcp" | "cli" | "unknown";
 export type CompileMode =
   | "task_context"
   | "review_context"
@@ -23,6 +24,7 @@ export type CompileRunSummary = {
   status: "ok" | "degraded" | "failed";
   degradedReasons: string[];
   durationMs: number;
+  source: CompileRunSource;
   createdAt: string;
 };
 
@@ -33,6 +35,7 @@ export type CompilePackItem = {
   content: string;
   score: number;
   rankingReason: string;
+  sourceRefs: string[];
 };
 
 export type CompilePack = {
@@ -46,10 +49,30 @@ export type CompilePack = {
   procedures: CompilePackItem[];
   codeContext: CompilePackItem[];
   warnings: string[];
+  sourceRefs: string[];
   diagnostics: {
     degradedReasons: string[];
     retrievalStats: Record<string, unknown>;
   };
+};
+
+export type CompileRunSelectedItem = {
+  itemKind: string;
+  itemId: string;
+  section: string;
+  score: number;
+  rankingReason: string;
+  sourceRefs: string[];
+};
+
+export type CompileRunDetail = {
+  run: CompileRunSummary & {
+    tokenBudget: number;
+    input: Partial<CompileRequest> & Record<string, unknown>;
+  };
+  pack: CompilePack | null;
+  selectedItems: CompileRunSelectedItem[];
+  snapshotAvailable: boolean;
 };
 
 export async function compilePack(input: CompileRequest): Promise<CompilePack> {
@@ -72,4 +95,13 @@ export async function fetchRecentRuns(limit = 20): Promise<CompileRunSummary[]> 
   }
   const json = (await response.json()) as { runs: CompileRunSummary[] };
   return json.runs;
+}
+
+export async function fetchRunDetail(runId: string): Promise<CompileRunDetail> {
+  const response = await fetch(`/api/context/runs/${encodeURIComponent(runId)}`);
+  if (!response.ok) {
+    throw new Error(`Fetch run detail failed: ${response.status}`);
+  }
+  const json = (await response.json()) as { detail: CompileRunDetail };
+  return json.detail;
 }

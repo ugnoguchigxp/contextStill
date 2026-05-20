@@ -70,6 +70,7 @@ export type CoverEvidenceInput = {
   provider?: DistillationProviderSetting;
   write?: boolean;
   forceRefreshEvidence?: boolean;
+  signal?: AbortSignal;
 };
 
 export function isCoverEvidenceStatus(value: unknown): value is CoverEvidenceStatus {

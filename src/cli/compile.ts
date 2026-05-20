@@ -115,7 +115,7 @@ async function main(): Promise<void> {
     ...(queryEmbedding ? { queryEmbedding } : {}),
   };
 
-  const result = await compileContextPack(compileInput);
+  const result = await compileContextPack(compileInput, { source: "cli" });
   if (asJson) {
     console.log(JSON.stringify(result.pack, null, 2));
   } else {

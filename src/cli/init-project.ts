@@ -218,12 +218,15 @@ async function runSmokeCompile(
 ): Promise<InitProjectSummary["steps"]["smokeCompile"]> {
   if (!options.runSmokeCompile) return undefined;
 
-  const { pack } = await compileContextPack({
-    goal: options.smokeGoal,
-    intent: "plan",
-    repoPath: options.repoPath,
-    includeDraft: true,
-  });
+  const { pack } = await compileContextPack(
+    {
+      goal: options.smokeGoal,
+      intent: "plan",
+      repoPath: options.repoPath,
+      includeDraft: true,
+    },
+    { source: "cli" },
+  );
 
   const relevantKnowledgeCount = pack.rules.length + pack.procedures.length;
   const degradedReasons = [...pack.diagnostics.degradedReasons];

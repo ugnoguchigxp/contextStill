@@ -4,6 +4,7 @@ import { z } from "zod";
 import { knowledgeStatusValues, knowledgeTypeValues, scopeValues } from "../../../src/db/schema.js";
 import {
   bulkUpdateKnowledgeStatus,
+  countKnowledgeItems,
   createKnowledgeItem,
   deleteKnowledgeItem,
   listKnowledgeItems,
@@ -12,6 +13,7 @@ import {
 } from "./knowledge.repository.js";
 
 const listKnowledgeQuerySchema = z.object({
+  page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   status: z.string().trim().min(1).optional(),
   type: z.string().trim().min(1).optional(),
@@ -42,8 +44,17 @@ const feedbackSchema = z.object({
 export const knowledgeRouter = new Hono()
   .get("/", zValidator("query", listKnowledgeQuerySchema), async (c) => {
     const query = c.req.valid("query");
-    const items = await listKnowledgeItems(query);
-    return c.json({ items });
+    const [items, total] = await Promise.all([
+      listKnowledgeItems(query),
+      countKnowledgeItems(query),
+    ]);
+    return c.json({
+      items,
+      total,
+      page: query.page,
+      limit: query.limit,
+      totalPages: Math.ceil(total / query.limit),
+    });
   })
   .post("/", zValidator("json", knowledgeWriteSchema), async (c) => {
     const input = c.req.valid("json");

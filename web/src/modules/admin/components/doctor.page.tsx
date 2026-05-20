@@ -121,6 +121,7 @@ function DistillationPanel({
 }) {
   const runs = distillation?.runs;
   const outcomes = sortedReasonCounts(runs?.outcomeKindCounts);
+  const queue = distillation?.queueHealth;
 
   return (
     <Card>
@@ -211,6 +212,27 @@ function DistillationPanel({
           <div>
             <span>Job failed</span>
             <strong>{distillation?.jobs.failed ?? 0}</strong>
+          </div>
+        </div>
+
+        <div className="doctor-meta-grid">
+          <div>
+            <span>Retry ready</span>
+            <strong>{queue?.retryablePaused ?? 0}</strong>
+          </div>
+          <div>
+            <span>Stale running</span>
+            <strong>{queue?.staleRunning ?? 0}</strong>
+          </div>
+          <div>
+            <span>Oldest queue</span>
+            <strong>{formatAgeMinutes(queue?.oldestQueuedAgeMinutes)}</strong>
+          </div>
+          <div>
+            <span>Pipeline lock</span>
+            <strong>
+              {queue?.lock.staleByCreatedAge ? "stale" : queue?.lock.exists ? "held" : "clear"}
+            </strong>
           </div>
         </div>
       </CardContent>

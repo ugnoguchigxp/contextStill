@@ -1,4 +1,5 @@
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
+import { groupedConfig } from "../../config.js";
 import {
   coverEvidenceResultFromRow,
   selectCoverEvidenceResultById,
@@ -14,6 +15,7 @@ import { linkKnowledgeToSourceFragment } from "./source-link.repository.js";
 export type FinalizeDistilleInput = {
   coverEvidenceResultId: string;
   write?: boolean;
+  signal?: AbortSignal;
 };
 
 export type FinalizeDistilleResult = {
@@ -50,6 +52,13 @@ function unitConfidence(confidence: number | undefined): number {
 
 function sourceLinkCandidate(reference: CoverEvidenceReference): boolean {
   return reference.kind === "source" && reference.evidenceRole === "supports_candidate";
+}
+
+function throwIfAborted(signal: AbortSignal | undefined): void {
+  if (!signal?.aborted) return;
+  const error = new Error("operation aborted");
+  error.name = "AbortError";
+  throw error;
 }
 
 async function linkResolvableSourceReferences(params: {
@@ -100,12 +109,14 @@ function rejectedResult(
 export async function runFinalizeDistille(
   input: FinalizeDistilleInput,
 ): Promise<FinalizeDistilleResult> {
+  throwIfAborted(input.signal);
   const coverEvidenceResultId = input.coverEvidenceResultId.trim();
   if (!coverEvidenceResultId) {
     throw new Error("coverEvidenceResultId is required");
   }
 
   const row = await selectCoverEvidenceResultById(coverEvidenceResultId);
+  throwIfAborted(input.signal);
   if (!row) {
     throw new Error(`cover evidence result not found: ${coverEvidenceResultId}`);
   }
@@ -118,6 +129,10 @@ export async function runFinalizeDistille(
       result,
       result.reason ?? `cover evidence status is ${result.status}`,
     );
+  }
+
+  if (result.candidate.importance <= groupedConfig.distillation.lowImportanceRejectThreshold) {
+    return rejectedResult(coverEvidenceResultId, result, "low_importance");
   }
 
   const candidateRow = await getFindCandidateResultById(coverEvidenceResultId);
@@ -200,7 +215,9 @@ export async function runFinalizeDistille(
   let embedding: number[] | undefined;
   let embeddingStatus: FinalizeDistilleResult["embeddingStatus"] = "stored";
   try {
+    throwIfAborted(input.signal);
     embedding = await embedOne(`${candidate.title}\n${candidate.body}`, "passage");
+    throwIfAborted(input.signal);
   } catch (error) {
     embeddingStatus = embeddingStatusFromError(error);
     await recordAuditLogSafe({
@@ -211,8 +228,10 @@ export async function runFinalizeDistille(
         error: error instanceof Error ? error.message : String(error),
       },
     });
+    throwIfAborted(input.signal);
   }
 
+  throwIfAborted(input.signal);
   const knowledgeId = await upsertKnowledgeFromSource({
     sourceUri,
     type: candidate.type,
@@ -226,6 +245,7 @@ export async function runFinalizeDistille(
     embedding,
   });
 
+  throwIfAborted(input.signal);
   const sourceLinkCount = await linkResolvableSourceReferences({
     knowledgeId,
     references: result.references,

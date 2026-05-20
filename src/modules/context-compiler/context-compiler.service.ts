@@ -16,10 +16,15 @@ import { recordKnowledgeCompileSelectionSafe } from "../knowledge/knowledge-valu
 import { retrieveKnowledge } from "../knowledge/knowledge.service.js";
 import { retrieveSources } from "../sources/source-retrieval.service.js";
 import { agenticRefine } from "./agentic-refine.service.js";
-import { insertCompileRun, insertContextPackItems } from "./context-compiler.repository.js";
+import {
+  insertCompileRun,
+  insertContextPackItems,
+  updateCompileRunSnapshot,
+} from "./context-compiler.repository.js";
 import { renderContextPackMarkdown } from "./pack-renderer.js";
 import { normalizeRepoKey, normalizeRepoPath } from "./query-context.js";
 import { type Rankable, rankAndDedupe } from "./ranking.service.js";
+import type { CompileRunSource } from "../../shared/schemas/compile-run.schema.js";
 
 const retrievalModeByIntent: Record<CompileInput["intent"], RetrievalMode> = {
   plan: "architecture_context",
@@ -398,7 +403,18 @@ function countMatches(haystack: string, needles: string[]): number {
   return hits;
 }
 
-export async function compileContextPack(rawInput: unknown): Promise<{
+async function updateCompileRunSnapshotSafe(runId: string, pack: ContextPack): Promise<void> {
+  try {
+    await updateCompileRunSnapshot(runId, pack);
+  } catch {
+    // Snapshot persistence is for UI replay. A compile result should still be returned.
+  }
+}
+
+export async function compileContextPack(
+  rawInput: unknown,
+  options?: { source?: CompileRunSource },
+): Promise<{
   pack: ContextPack;
   markdown: string;
 }> {
@@ -562,6 +578,7 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     degradedReasons,
     tokenBudget,
     durationMs: compileDurationMs,
+    source: options?.source ?? "unknown",
   });
 
   await insertContextPackItems(
@@ -641,6 +658,8 @@ export async function compileContextPack(rawInput: unknown): Promise<{
     },
   });
 
+  await updateCompileRunSnapshotSafe(runId, pack);
+
   await recordAuditLogSafe({
     eventType: auditEventTypes.contextCompileRun,
     actor: "agent",
@@ -655,6 +674,7 @@ export async function compileContextPack(rawInput: unknown): Promise<{
       degradedReasons,
       tokenBudget,
       compileDurationMs,
+      source: options?.source ?? "unknown",
       selectedCounts: {
         rules: budgetedRules.items.length,
         procedures: budgetedProcedures.items.length,
