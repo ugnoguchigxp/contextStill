@@ -40,9 +40,9 @@
 ┌──────────────────────────────┐               │
 │  Distillation (Local LLM)    │               │
 │  ┌────────┐ ┌─────────────┐  │               │
-│  │ Score  │ │ Tool Loop   │  │               │
+│  │ Value  │ │ Tool Loop   │  │               │
 │  │ Gate   │ │ search_web  │  │               │
-│  │ ≥0.75  │ │ fetch_url   │  │               │
+│  │ >50    │ │ fetch docs  │  │               │
 │  └────────┘ └─────────────┘  │               │
 └──────────────┬───────────────┘               │
                │                               │
@@ -92,14 +92,14 @@
 
 - [Bun](https://bun.sh/) 1.3+
 - [Docker](https://www.docker.com/) (for PostgreSQL + pgvector)
-- A local LLM server for distillation (optional, e.g. [local-llm](https://github.com/user/local-llm) with Gemma4)
+- A local LLM server for distillation (optional; this checkout defaults to a local OpenAI-compatible endpoint at `http://127.0.0.1:44448`)
 - An embedding service (optional, daemon or CLI)
 
 ### Setup
 
 ```bash
-git clone https://github.com/user/memory-router.git
-cd memory-router
+git clone https://github.com/ugnoguchigxp/memoryRouter.git
+cd memoryRouter
 bun install
 docker compose up -d
 cp .env.example .env
@@ -107,12 +107,12 @@ bun run db:migrate
 bun run init:project -- --json
 ```
 
-`init:project` の出力には次アクション（`compile` / `doctor` / draft review）が含まれます。  
-まずは次のコマンドで動作確認できます。
+`init:project` prints concrete next actions for `compile`, `doctor`, and draft review.
+Use these commands for a first health check:
 
 ```bash
 bun run doctor
-bun run compile --goal "このリポジトリの開発フローを把握したい" --intent plan --json
+bun run compile --goal "understand this repository's development workflow" --intent plan --json
 ```
 
 ### Start Developing
@@ -124,6 +124,8 @@ bun run dev
 
 - **UI**: http://localhost:5173
 - **API**: Same origin at `/api/*`
+
+The admin UI includes views for knowledge, source pages, graph exploration, compile history, system health, audit logs, and distillation candidates. The Candidates view is the main place to inspect whether a candidate became stored knowledge, still needs finalization, was rejected, is retryable, or only exists as a raw candidate.
 
 ---
 
@@ -156,11 +158,14 @@ bun run distill:pipeline -- --write --limit 1 --kind wiki
 bun run distill:pipeline -- --write --limit 1 --kind vibe
 ```
 
-The distillation pipeline:
-1. Sends raw evidence to a local LLM (Gemma4 by default)
-2. LLM can use `search_web` / `fetch_content` tools to verify external claims
-3. Candidates with a score below the threshold (default: 0.75) are rejected
-4. Accepted candidates are saved as `draft` knowledge with passage embeddings
+The staged distillation pipeline:
+1. Selects a target from wiki files or agent memories.
+2. Extracts minimal `find_candidate_results` rows.
+3. Checks source support, duplicate/near-duplicate matches, and external claims in `cover_evidence_results`.
+4. Uses `search_web` to find source URLs and `fetch_content` to ground external claims. Search and fetched content are cached in `distillation_evidence_cache`.
+5. Finalizes `knowledge_ready` candidates into `draft` knowledge when they remain valuable enough (`importance > 50`) and can be embedded.
+
+Candidate outcomes are intentionally separated from final knowledge. `rejected` means the cover-evidence stage found a terminal reason such as `duplicate`, `near_duplicate`, `unsupported_by_source`, `not_actionable`, or `external_fetch_evidence_missing`; retryable provider/tool/parse failures are tracked separately.
 
 ### Stage 3: Compile
 
@@ -305,6 +310,7 @@ The REST API serves the Web UI and can be used independently.
 | `GET/DELETE` | `/api/vibe-memory/:id` | Get / delete a memory |
 | `GET` | `/api/agent-diffs` | List agent diff entries |
 | `GET` | `/api/graph` | Knowledge graph data |
+| `GET` | `/api/candidates` | List distillation candidates with outcome stats |
 
 Start the API server:
 
@@ -342,6 +348,7 @@ memory-router separates **evidence** (raw data) from **instructions** (distilled
 | `distillation_target_states` | Target selection and lifecycle state for the staged distillation flow. |
 | `find_candidate_results` | Minimal candidate rows produced by `findCandidate`. |
 | `cover_evidence_results` | Evidence coverage results keyed by `find_candidate_results.id`. |
+| `knowledge_items` metadata indexes | Fast joins from finalized knowledge back to candidate/cover-evidence IDs. |
 | `context_compile_runs` | Compile execution history with diagnostics. |
 | `context_pack_items` | Items selected for each compile run. |
 | `sync_states` | Agent log sync cursors and timestamps. |
@@ -472,8 +479,10 @@ All configuration is done through environment variables. See [`.env.example`](.e
 | Variable | Default | Description |
 |---|---|---|
 | `MEMORY_ROUTER_LOCAL_LLM_API_BASE_URL` | `http://127.0.0.1:44448` | Local LLM API endpoint |
-| `MEMORY_ROUTER_LOCAL_LLM_MODEL` | `gemma-4-e4b-it` | LLM model name |
-| `MEMORY_ROUTER_DISTILLATION_MIN_CANDIDATE_SCORE` | `0.75` | Minimum score to accept a candidate |
+| `MEMORY_ROUTER_DISTILLATION_PROVIDER` | `local-llm` | `local-llm`, `azure-openai`, `bedrock`, or `auto` |
+| `MEMORY_ROUTER_DISTILLATION_SEARCH_PROVIDERS` | `brave,exa` | Ordered search providers for `search_web` |
+| `MEMORY_ROUTER_EXA_API_KEY` / `EXA_API_KEY` | empty | Exa search API key |
+| `BRAVE_SEARCH_API_KEY` | empty | Brave Search API key |
 
 ### Agent Log Sync
 
@@ -507,7 +516,7 @@ memory-router/
 ├── api/                  # Hono REST API
 ├── web/                  # React frontend (Vite + TanStack)
 ├── test/                 # Unit + integration tests
-├── tests/                # E2E tests (Playwright)
+├── e2e/                  # E2E tests (Playwright)
 ├── wiki/                 # Wiki content (independent Git repo)
 ├── drizzle/              # Database migrations
 ├── scripts/              # Automation setup scripts
@@ -521,7 +530,9 @@ memory-router/
 | Document | Description |
 |---|---|
 | [MCP Tool Contract](docs/mcp-tools.md) | Full MCP tool input/output specifications |
-| [Improvement Plan](docs/improvement-plan.md) | Current implementation roadmap and acceptance criteria |
+| [Distillation Conveyor](docs/distillation-conveyor.md) | Staged distillation queue and automation flow |
+| [Candidate List UI Plan](docs/candidate-list-ui-plan.md) | Candidate review API/UI read model |
+| [Cover Evidence Plan](docs/cover-evidence-plan.md) | Evidence coverage and external verification design |
 | [Context Compile/MCP Plan](docs/context-compile-mcp-improvement-plan.md) | Context Compile and MCP hardening plan |
 | [Knowledge Value Lifecycle](docs/knowledge-value-lifecycle.md) | Knowledge lifecycle operation policy |
 

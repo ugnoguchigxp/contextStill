@@ -57,6 +57,22 @@ export type KnowledgeBulkStatusResponse = {
   outcome: "ok" | "partial" | "none";
 };
 
+export type KnowledgeBulkStatusSelection = {
+  status?: string;
+  type?: string;
+  query?: string;
+};
+
+export type KnowledgeBulkStatusRequest =
+  | {
+      ids: string[];
+      status: "active" | "deprecated";
+    }
+  | {
+      selection: KnowledgeBulkStatusSelection;
+      status: "active" | "deprecated";
+    };
+
 export type VibeMemory = {
   id: string;
   sessionId: string;
@@ -586,13 +602,9 @@ export async function deleteKnowledgeItem(id: string): Promise<void> {
 }
 
 export async function bulkUpdateKnowledgeStatus(
-  ids: string[],
-  status: "active" | "deprecated",
+  input: KnowledgeBulkStatusRequest,
 ): Promise<KnowledgeBulkStatusResponse> {
-  return requestJson<KnowledgeBulkStatusResponse>("/api/knowledge/bulk-status", "POST", {
-    ids,
-    status,
-  });
+  return requestJson<KnowledgeBulkStatusResponse>("/api/knowledge/bulk-status", "POST", input);
 }
 
 export async function sendKnowledgeFeedback(

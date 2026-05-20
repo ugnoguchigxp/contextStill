@@ -732,6 +732,70 @@ describe("API route contract tests", () => {
     expect(json.notFoundIds).toEqual(["k2"]);
   });
 
+  test("POST /api/knowledge/bulk-status accepts status selection", async () => {
+    vi.mocked(bulkUpdateKnowledgeStatus).mockResolvedValueOnce({
+      targetStatus: "active",
+      requestedIds: ["k1", "k2", "k3"],
+      updatedIds: ["k1", "k2", "k3"],
+      unchangedIds: [],
+      notFoundIds: [],
+      invalidTransitionIds: [],
+    });
+    const app = buildApp();
+    const response = await app.request("/api/knowledge/bulk-status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        selection: { status: "draft", query: "router" },
+        status: "active",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(bulkUpdateKnowledgeStatus).toHaveBeenCalledWith({
+      selection: { status: "draft", query: "router" },
+      status: "active",
+    });
+    const json = (await response.json()) as {
+      outcome: string;
+      updatedIds: string[];
+    };
+    expect(json.outcome).toBe("ok");
+    expect(json.updatedIds).toEqual(["k1", "k2", "k3"]);
+  });
+
+  test("POST /api/knowledge/bulk-status accepts all item selection", async () => {
+    vi.mocked(bulkUpdateKnowledgeStatus).mockResolvedValueOnce({
+      targetStatus: "deprecated",
+      requestedIds: ["k1", "k2"],
+      updatedIds: ["k1", "k2"],
+      unchangedIds: [],
+      notFoundIds: [],
+      invalidTransitionIds: [],
+    });
+    const app = buildApp();
+    const response = await app.request("/api/knowledge/bulk-status", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        selection: {},
+        status: "deprecated",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(bulkUpdateKnowledgeStatus).toHaveBeenCalledWith({
+      selection: {},
+      status: "deprecated",
+    });
+    const json = (await response.json()) as {
+      outcome: string;
+      updatedIds: string[];
+    };
+    expect(json.outcome).toBe("ok");
+    expect(json.updatedIds).toEqual(["k1", "k2"]);
+  });
+
   test("POST /api/knowledge/bulk-status returns 409 when nothing can be updated", async () => {
     vi.mocked(bulkUpdateKnowledgeStatus).mockResolvedValueOnce({
       targetStatus: "deprecated",

@@ -42,6 +42,7 @@ import {
 } from "lucide-react";
 import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  type KnowledgeBulkStatusSelection,
   type KnowledgeItem,
   type KnowledgeType,
   type KnowledgeWriteInput,
@@ -74,6 +75,16 @@ const qualityScore = (item: Pick<KnowledgeItem, "importance" | "confidence">): n
 
 const staleDecayThreshold = 0.5;
 const highValueThreshold = 60;
+const displayFilterOptions = [
+  { value: "all", label: "All" },
+  { value: "draft", label: "Draft" },
+  { value: "active", label: "Active" },
+  { value: "deprecated", label: "Deprecated" },
+  { value: "unused-active", label: "Unused Active" },
+  { value: "stale", label: "Stale" },
+  { value: "high-value", label: "High Value" },
+] as const;
+const serverSelectableStatusFilters = new Set(["all", "draft", "active", "deprecated"]);
 
 function formatTimestamp(value: string | null): string {
   if (!value) return "-";
@@ -92,6 +103,7 @@ export function KnowledgePage() {
   const [minQuality, setMinQuality] = useState<number>(0);
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [bulkSelection, setBulkSelection] = useState<KnowledgeBulkStatusSelection | null>(null);
   const [expandedEvidenceId, setExpandedEvidenceId] = useState<string | null>(null);
 
   // TanStack Table states
@@ -149,7 +161,10 @@ export function KnowledgePage() {
 
   useEffect(() => {
     const validIds = new Set(filteredItems.map((item) => item.id));
-    setSelectedIds((current) => current.filter((id) => validIds.has(id)));
+    setSelectedIds((current) => {
+      const next = current.filter((id) => validIds.has(id));
+      return next.length === current.length ? current : next;
+    });
     if (expandedEvidenceId && !validIds.has(expandedEvidenceId)) {
       setExpandedEvidenceId(null);
     }
@@ -216,8 +231,11 @@ export function KnowledgePage() {
   });
 
   const bulkStatusUpdate = useMutation({
-    mutationFn: ({ ids, status }: { ids: string[]; status: "active" | "deprecated" }) =>
-      bulkUpdateKnowledgeStatus(ids, status),
+    mutationFn: (
+      input:
+        | { ids: string[]; status: "active" | "deprecated" }
+        | { selection: KnowledgeBulkStatusSelection; status: "active" | "deprecated" },
+    ) => bulkUpdateKnowledgeStatus(input),
     onSuccess: async (result) => {
       setError(
         result.outcome === "partial"
@@ -226,6 +244,7 @@ export function KnowledgePage() {
       );
       if (result.outcome !== "none") {
         setSelectedIds([]);
+        setBulkSelection(null);
       }
       await queryClient.invalidateQueries({ queryKey: ["knowledge"] });
       await queryClient.invalidateQueries({ queryKey: ["graph"] });
@@ -278,8 +297,13 @@ export function KnowledgePage() {
   const selectedCount = selectedIds.length;
   const allFilteredIds = useMemo(() => filteredItems.map((item) => item.id), [filteredItems]);
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
-  const visibleSelectedCount = allFilteredIds.filter((id) => selectedSet.has(id)).length;
+  const selectedTotalCount = bulkSelection ? totalKnowledgeCount : selectedCount;
+  const visibleSelectedCount = bulkSelection
+    ? filteredItems.filter((item) => !bulkSelection.status || item.status === bulkSelection.status)
+        .length
+    : allFilteredIds.filter((id) => selectedSet.has(id)).length;
   const toggleSelected = useCallback((id: string, checked: boolean) => {
+    setBulkSelection(null);
     setSelectedIds((current) => {
       if (checked) {
         if (current.includes(id)) return current;
@@ -288,12 +312,20 @@ export function KnowledgePage() {
       return current.filter((itemId) => itemId !== id);
     });
   }, []);
-  const selectAllFiltered = useCallback(() => {
-    setSelectedIds(allFilteredIds);
-  }, [allFilteredIds]);
+  const selectAllMatching = useCallback(() => {
+    setSelectedIds([]);
+    const status = displayFilter === "all" ? undefined : displayFilter;
+    setBulkSelection({
+      status,
+      query: serverSearchQuery || undefined,
+    });
+  }, [displayFilter, serverSearchQuery]);
   const clearSelection = useCallback(() => {
     setSelectedIds([]);
+    setBulkSelection(null);
   }, []);
+  const canSelectAllMatching =
+    serverSelectableStatusFilters.has(displayFilter) && minQuality === 0 && totalKnowledgeCount > 0;
 
   const columns = useMemo<ColumnDef<KnowledgeItem>[]>(
     () => [
@@ -305,7 +337,11 @@ export function KnowledgePage() {
           return (
             <input
               type="checkbox"
-              checked={selectedSet.has(item.id)}
+              checked={
+                selectedSet.has(item.id) ||
+                (bulkSelection !== null &&
+                  (!bulkSelection.status || bulkSelection.status === item.status))
+              }
               onChange={(event) => toggleSelected(item.id, event.target.checked)}
               aria-label={`select-${item.id}`}
             />
@@ -563,6 +599,7 @@ export function KnowledgePage() {
       expandedEvidenceId,
       feedbackMutation.isPending,
       feedbackMutation.mutate,
+      bulkSelection,
       openEdit,
       quickScopeUpdate.isPending,
       quickScopeUpdate.mutate,
@@ -599,8 +636,8 @@ export function KnowledgePage() {
   return (
     <div className="knowledge-full-layout">
       <section className="knowledge-header">
-        <div className="flex items-center gap-4 flex-1">
-          <div className="relative w-full max-w-sm">
+        <div className="flex items-center gap-4 flex-1 min-w-[280px]">
+          <div className="relative w-full max-w-md">
             <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
             <Input
               type="search"
@@ -609,43 +646,42 @@ export function KnowledgePage() {
               value={searchQuery}
               onChange={(e) => {
                 setSearchQuery(e.target.value);
+                setBulkSelection(null);
                 resetToFirstPage();
               }}
             />
           </div>
         </div>
-        <div className="flex items-center gap-4">
-          <div className="flex bg-muted rounded-lg p-1">
-            {["all", "draft", "active", "deprecated", "unused-active", "stale", "high-value"].map(
-              (f) => (
-                <button
-                  key={f}
-                  type="button"
-                  onClick={() => {
-                    setDisplayFilter(f);
-                    resetToFirstPage();
-                  }}
-                  className={`px-3 py-1 text-xs font-medium rounded-md transition-all ${
-                    displayFilter === f
-                      ? "bg-background shadow-sm text-foreground"
-                      : "text-muted-foreground hover:text-foreground"
-                  }`}
-                >
-                  <span className="capitalize">{f.replace("-", " ")}</span>
-                </button>
-              ),
-            )}
+        <div className="flex items-center gap-3">
+          <div className="flex items-center gap-2 px-3 py-1 bg-muted rounded-lg border border-transparent">
+            <span className="text-[10px] font-bold uppercase text-muted-foreground">Filter</span>
+            <Select
+              value={displayFilter}
+              onChange={(e) => {
+                setDisplayFilter(e.target.value);
+                setBulkSelection(null);
+                resetToFirstPage();
+              }}
+              className="h-7 w-[150px] border-0 bg-transparent px-1 py-0 text-xs font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+            >
+              {displayFilterOptions.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </Select>
           </div>
 
           <div className="flex items-center gap-2 px-3 py-1 bg-muted rounded-lg border border-transparent">
             <span className="text-[10px] font-bold uppercase text-muted-foreground">Quality</span>
-            <select
+            <Select
               value={minQuality}
               onChange={(e) => {
                 setMinQuality(Number(e.target.value));
+                setBulkSelection(null);
                 resetToFirstPage();
               }}
-              className="bg-transparent text-xs font-medium outline-none cursor-pointer"
+              className="h-7 w-[74px] border-0 bg-transparent px-1 py-0 text-xs font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
             >
               <option value="0">All</option>
               <option value="30">30+</option>
@@ -653,21 +689,25 @@ export function KnowledgePage() {
               <option value="70">70+</option>
               <option value="80">80+</option>
               <option value="90">90+</option>
-            </select>
+            </Select>
           </div>
 
           <div className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-1">
-            <span className="text-[10px] font-bold uppercase text-slate-300">
-              Selected {selectedCount} / Visible {visibleSelectedCount}
+            <span className="whitespace-nowrap text-[10px] font-bold uppercase text-slate-300">
+              Selected {selectedTotalCount} / Visible {visibleSelectedCount}
             </span>
             <Button
               variant="outline"
               size="sm"
               className="h-7 px-2 text-[11px]"
-              disabled={selectedCount === 0 || bulkStatusUpdate.isPending}
+              disabled={selectedTotalCount === 0 || bulkStatusUpdate.isPending}
               onClick={() => {
-                if (confirm(`Activate ${selectedCount} selected knowledge items?`)) {
-                  bulkStatusUpdate.mutate({ ids: selectedIds, status: "active" });
+                if (confirm(`Activate ${selectedTotalCount} selected knowledge items?`)) {
+                  bulkStatusUpdate.mutate(
+                    bulkSelection
+                      ? { selection: bulkSelection, status: "active" }
+                      : { ids: selectedIds, status: "active" },
+                  );
                 }
               }}
             >
@@ -677,29 +717,35 @@ export function KnowledgePage() {
               variant="outline"
               size="sm"
               className="h-7 px-2 text-[11px] border-red-300 text-red-300 hover:bg-red-900/30"
-              disabled={selectedCount === 0 || bulkStatusUpdate.isPending}
+              disabled={selectedTotalCount === 0 || bulkStatusUpdate.isPending}
               onClick={() => {
-                if (confirm(`Deprecate ${selectedCount} selected knowledge items?`)) {
-                  bulkStatusUpdate.mutate({ ids: selectedIds, status: "deprecated" });
+                if (confirm(`Deprecate ${selectedTotalCount} selected knowledge items?`)) {
+                  bulkStatusUpdate.mutate(
+                    bulkSelection
+                      ? { selection: bulkSelection, status: "deprecated" }
+                      : { ids: selectedIds, status: "deprecated" },
+                  );
                 }
               }}
             >
               Deprecate selected
             </Button>
+            {canSelectAllMatching ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                disabled={bulkStatusUpdate.isPending}
+                onClick={selectAllMatching}
+              >
+                Select all ({totalKnowledgeCount})
+              </Button>
+            ) : null}
             <Button
               variant="ghost"
               size="sm"
               className="h-7 px-2 text-[11px]"
-              disabled={allFilteredIds.length === 0}
-              onClick={selectAllFiltered}
-            >
-              Select filtered ({allFilteredIds.length})
-            </Button>
-            <Button
-              variant="ghost"
-              size="sm"
-              className="h-7 px-2 text-[11px]"
-              disabled={selectedCount === 0}
+              disabled={selectedTotalCount === 0}
               onClick={clearSelection}
             >
               Clear
@@ -747,7 +793,10 @@ export function KnowledgePage() {
           <TableBody>
             {table.getRowModel().rows.map((row) => {
               const item = row.original;
-              const rowSelected = selectedSet.has(item.id);
+              const rowSelected =
+                selectedSet.has(item.id) ||
+                (bulkSelection !== null &&
+                  (!bulkSelection.status || bulkSelection.status === item.status));
               const sourceRefs = item.sourceRefs ?? [];
               const sourceVibeMemoryIds = item.sourceVibeMemoryIds ?? [];
               return (

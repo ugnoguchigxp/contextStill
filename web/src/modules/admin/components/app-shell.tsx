@@ -36,6 +36,7 @@ export function AppShell() {
       </header>
       <main
         className={`app-content ${
+          pathname.startsWith("/compile") ||
           pathname.startsWith("/vibe-memory") ||
           pathname.startsWith("/sources") ||
           pathname.startsWith("/graph") ||

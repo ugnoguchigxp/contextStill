@@ -31,10 +31,22 @@ const knowledgeWriteSchema = z.object({
   metadata: z.record(z.unknown()).default({}),
 });
 
-const bulkStatusSchema = z.object({
-  ids: z.array(z.string().trim().min(1)).min(1).max(200),
-  status: z.enum(["active", "deprecated"]),
-});
+const bulkStatusTargetSchema = z.enum(["active", "deprecated"]);
+
+const bulkStatusSchema = z.union([
+  z.object({
+    ids: z.array(z.string().trim().min(1)).min(1).max(200),
+    status: bulkStatusTargetSchema,
+  }),
+  z.object({
+    selection: z.object({
+      status: z.enum(knowledgeStatusValues).optional(),
+      type: z.enum(knowledgeTypeValues).optional(),
+      query: z.string().trim().optional(),
+    }),
+    status: bulkStatusTargetSchema,
+  }),
+]);
 
 const feedbackSchema = z.object({
   direction: z.enum(["up", "down"]),
@@ -65,9 +77,17 @@ export const knowledgeRouter = new Hono()
     const input = c.req.valid("json");
     const result = await bulkUpdateKnowledgeStatus(input);
     const failureCount = result.notFoundIds.length + result.invalidTransitionIds.length;
+    const affectedCount = result.updatedIds.length + result.unchangedIds.length + failureCount;
     const response = {
       ...result,
-      outcome: failureCount === 0 ? "ok" : result.updatedIds.length > 0 ? "partial" : "none",
+      outcome:
+        affectedCount === 0
+          ? "none"
+          : failureCount === 0
+            ? "ok"
+            : result.updatedIds.length > 0 || result.unchangedIds.length > 0
+              ? "partial"
+              : "none",
     } as const;
     if (response.outcome === "none" && failureCount > 0) {
       return c.json(response, 409);

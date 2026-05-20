@@ -34,6 +34,22 @@ export type BulkKnowledgeStatusUpdateResult = {
   invalidTransitionIds: Array<{ id: string; fromStatus: KnowledgeStatus }>;
 };
 
+export type BulkKnowledgeStatusSelection = {
+  status?: KnowledgeStatus;
+  type?: string;
+  query?: string;
+};
+
+export type BulkKnowledgeStatusUpdateParams =
+  | {
+      ids: string[];
+      status: KnowledgeStatus;
+    }
+  | {
+      selection: BulkKnowledgeStatusSelection;
+      status: KnowledgeStatus;
+    };
+
 export type KnowledgeFeedbackDirection = "up" | "down";
 
 export type KnowledgeFeedbackResult = {
@@ -390,11 +406,26 @@ export async function deleteKnowledgeItem(id: string) {
   return deleted ?? null;
 }
 
-export async function bulkUpdateKnowledgeStatus(params: {
-  ids: string[];
-  status: KnowledgeStatus;
-}): Promise<BulkKnowledgeStatusUpdateResult> {
-  const requestedIds = [...new Set(params.ids.map((id) => id.trim()).filter(Boolean))];
+async function resolveBulkKnowledgeStatusIds(
+  params: BulkKnowledgeStatusUpdateParams,
+): Promise<string[]> {
+  if ("ids" in params) {
+    return [...new Set(params.ids.map((id) => id.trim()).filter(Boolean))];
+  }
+
+  const rows = await db
+    .select({
+      id: knowledgeItems.id,
+    })
+    .from(knowledgeItems)
+    .where(buildKnowledgeListWhere(params.selection));
+  return rows.map((row) => row.id);
+}
+
+export async function bulkUpdateKnowledgeStatus(
+  params: BulkKnowledgeStatusUpdateParams,
+): Promise<BulkKnowledgeStatusUpdateResult> {
+  const requestedIds = await resolveBulkKnowledgeStatusIds(params);
   const result: BulkKnowledgeStatusUpdateResult = {
     targetStatus: params.status,
     requestedIds,
