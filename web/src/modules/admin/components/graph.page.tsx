@@ -1,4 +1,4 @@
-import { useMemo, useState, useRef, useEffect } from "react";
+import { useMemo, useState, useRef, useEffect, useLayoutEffect } from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { Checkbox } from "@/components/ui/checkbox";
@@ -19,6 +19,12 @@ const nodeColors: Record<string, string> = {
   procedure: "#60a5fa",
 };
 
+const LABEL_GAP_PX = 10;
+const DETAIL_PANEL_GAP_PX = 16;
+const DETAIL_PANEL_DEFAULT_TOP_PX = 148;
+const MIN_GRAPH_SCALE = 0.1;
+const MAX_GRAPH_SCALE = 24;
+
 type PositionedNode = GraphNode & { x: number; y: number };
 type Viewport = { width: number; height: number };
 type Transform = { x: number; y: number; scale: number };
@@ -28,6 +34,7 @@ type EdgeLink = {
   edgeKind: GraphEdge["edgeKind"];
   weight: number;
 };
+type ScreenPoint = { x: number; y: number };
 
 function clamp(value: number, min: number, max: number): number {
   return Math.max(min, Math.min(max, value));
@@ -218,6 +225,17 @@ function computeAutoFitTransform(nodes: PositionedNode[], viewport: Viewport): T
   };
 }
 
+function toScreenPoint(
+  node: PositionedNode,
+  transform: Transform,
+  viewport: Viewport,
+): ScreenPoint {
+  return {
+    x: transform.x + viewport.width / 2 + node.x * transform.scale,
+    y: transform.y + viewport.height / 2 + node.y * transform.scale,
+  };
+}
+
 export function GraphPage() {
   const [statusFilter, setStatusFilter] = useState<GraphStatusFilter>("current");
   const [viewMode, setViewMode] = useState<GraphViewMode>("relation");
@@ -231,10 +249,12 @@ export function GraphPage() {
 
   const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, scale: 1 });
   const [viewport, setViewport] = useState<Viewport>({ width: 0, height: 0 });
+  const [detailPanelTop, setDetailPanelTop] = useState(DETAIL_PANEL_DEFAULT_TOP_PX);
   const [hasInteracted, setHasInteracted] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const dragStart = useRef({ x: 0, y: 0 });
   const containerRef = useRef<HTMLDivElement>(null);
+  const controlsRef = useRef<HTMLDivElement>(null);
 
   const graph = useQuery({
     queryKey: ["graph", 1000, statusFilter, viewMode, relationAxes.join(",")],
@@ -261,6 +281,11 @@ export function GraphPage() {
     [graph.data?.nodes, graph.data?.edges],
   );
   const nodeById = useMemo(() => new Map(nodes.map((node) => [node.id, node])), [nodes]);
+  const screenNodeById = useMemo(
+    () => new Map(nodes.map((node) => [node.id, toScreenPoint(node, transform, viewport)])),
+    [nodes, transform, viewport],
+  );
+  const selectedNode = selectedId ? nodeById.get(selectedId) : undefined;
   const activeId = selectedId ?? hoveredId;
   const totalEdges = graph.data?.edges.length ?? 0;
 
@@ -306,6 +331,29 @@ export function GraphPage() {
     setTransform(computeAutoFitTransform(nodes, viewport));
   }, [nodes, viewport, hasInteracted]);
 
+  useLayoutEffect(() => {
+    const container = containerRef.current;
+    const controls = controlsRef.current;
+    if (!container || !controls) return;
+
+    const updatePanelTop = () => {
+      const containerRect = container.getBoundingClientRect();
+      const controlsRect = controls.getBoundingClientRect();
+      setDetailPanelTop(Math.ceil(controlsRect.bottom - containerRect.top + DETAIL_PANEL_GAP_PX));
+    };
+
+    updatePanelTop();
+    const observer =
+      typeof ResizeObserver !== "undefined" ? new ResizeObserver(updatePanelTop) : undefined;
+    observer?.observe(container);
+    observer?.observe(controls);
+    window.addEventListener("resize", updatePanelTop);
+    return () => {
+      observer?.disconnect();
+      window.removeEventListener("resize", updatePanelTop);
+    };
+  }, []);
+
   useEffect(() => {
     const container = containerRef.current;
     if (!container) return;
@@ -314,11 +362,19 @@ export function GraphPage() {
       e.preventDefault();
       const delta = -e.deltaY;
       const factor = 1.1 ** (delta / 100);
+      const rect = container.getBoundingClientRect();
+      const pointerX = e.clientX - rect.left - rect.width / 2;
+      const pointerY = e.clientY - rect.top - rect.height / 2;
       setHasInteracted(true);
-      setTransform((prev) => ({
-        ...prev,
-        scale: clamp(prev.scale * factor, 0.1, 5),
-      }));
+      setTransform((prev) => {
+        const nextScale = clamp(prev.scale * factor, MIN_GRAPH_SCALE, MAX_GRAPH_SCALE);
+        const scaleRatio = nextScale / prev.scale;
+        return {
+          x: pointerX - (pointerX - prev.x) * scaleRatio,
+          y: pointerY - (pointerY - prev.y) * scaleRatio,
+          scale: nextScale,
+        };
+      });
     };
 
     container.addEventListener("wheel", handleWheelRaw, { passive: false });
@@ -345,7 +401,7 @@ export function GraphPage() {
 
   return (
     <div className="graph-full-container" ref={containerRef}>
-      <div className="graph-overlay-top-right">
+      <div className="graph-overlay-top-right" ref={controlsRef}>
         <div className="graph-controls-compact">
           <Select
             value={statusFilter}
@@ -447,7 +503,7 @@ export function GraphPage() {
         </div>
       </div>
 
-      <div className="graph-overlay-bottom-right">
+      <div className="graph-overlay-stats">
         <div className="graph-stats-overlay">
           <div className="stat-row">
             <span>Nodes</span>
@@ -485,67 +541,82 @@ export function GraphPage() {
         </div>
       </div>
 
-      <div className="graph-overlay-bottom-left">
-        {selectedId ? (
-          <div className="graph-selection-card">
-            {nodeDetail.isLoading ? (
-              <p className="text-xs text-slate-400">Loading...</p>
+      <div className="graph-overlay-right-detail" style={{ top: detailPanelTop }}>
+        <aside className="graph-detail-panel" aria-live="polite">
+          <div className="graph-detail-panel-header">
+            <span className="graph-detail-kicker">Node Detail</span>
+            <strong>{viewMode === "semantic" ? "Semantic" : "Relation"}</strong>
+          </div>
+          {selectedId ? (
+            nodeDetail.isLoading ? (
+              <div className="graph-detail-empty">Loading node detail...</div>
             ) : nodeDetail.data ? (
               <>
-                <div className="flex gap-2 mb-1">
-                  <Badge variant="secondary" className="h-4 text-[10px]">
+                <div className="graph-detail-badges">
+                  <Badge variant="secondary" className="h-5 text-[11px]">
                     {nodeDetail.data.group}
                   </Badge>
                   <Badge
                     variant="outline"
-                    className="h-4 border-slate-500 text-[10px] text-slate-100"
+                    className="h-5 border-slate-400 text-[11px] text-slate-50"
                   >
                     {nodeDetail.data.status}
                   </Badge>
                   <Badge
-                    variant={nodeDetail.data.embedded ? "secondary" : "outline"}
-                    className={`h-4 text-[10px] ${
-                      nodeById.get(selectedId)?.embedded ? "" : "border-amber-400 text-amber-200"
+                    variant={selectedNode?.embedded ? "secondary" : "outline"}
+                    className={`h-5 text-[11px] ${
+                      selectedNode?.embedded ? "" : "border-amber-300 text-amber-100"
                     }`}
                   >
-                    {nodeById.get(selectedId)?.embedded ? "embedded" : "no-embedding"}
+                    {selectedNode?.embedded ? "embedded" : "no-embedding"}
                   </Badge>
                 </div>
-                <h3 className="text-sm font-bold truncate">{nodeDetail.data.label}</h3>
-                <div className="flex gap-3 text-[10px] text-slate-400 mt-1 mb-1">
-                  <span>confidence: {nodeDetail.data.confidence.toFixed(0)}</span>
-                  <span>importance: {nodeDetail.data.importance.toFixed(0)}</span>
+                <h2 className="graph-detail-title">{nodeDetail.data.label}</h2>
+                <div className="graph-detail-meta-grid">
+                  <div className="graph-detail-metric">
+                    <span>Confidence</span>
+                    <strong>{nodeDetail.data.confidence.toFixed(0)}</strong>
+                  </div>
+                  <div className="graph-detail-metric">
+                    <span>Importance</span>
+                    <strong>{nodeDetail.data.importance.toFixed(0)}</strong>
+                  </div>
+                  <div className="graph-detail-metric">
+                    <span>Weight</span>
+                    <strong>{nodeDetail.data.weight.toFixed(2)}</strong>
+                  </div>
+                  <div className="graph-detail-metric">
+                    <span>Kind</span>
+                    <strong>{nodeDetail.data.kind}</strong>
+                  </div>
                 </div>
-                <p className="text-xs text-muted-foreground line-clamp-3">
-                  {nodeDetail.data.bodyPreview}
-                </p>
+                <div className="graph-detail-body">
+                  <span>Preview</span>
+                  <p>{nodeDetail.data.bodyPreview}</p>
+                </div>
+                <div className="graph-detail-id">{selectedId}</div>
               </>
-            ) : (
-              // 詳細取得前 or 失敗時は軽量データでフォールバック表示
-              (() => {
-                const node = nodeById.get(selectedId);
-                return node ? (
-                  <>
-                    <div className="flex gap-2 mb-1">
-                      <Badge variant="secondary" className="h-4 text-[10px]">
-                        {node.group}
-                      </Badge>
-                      <Badge
-                        variant="outline"
-                        className="h-4 border-slate-500 text-[10px] text-slate-100"
-                      >
-                        {node.status}
-                      </Badge>
-                    </div>
-                    <h3 className="text-sm font-bold truncate">{node.label}</h3>
-                  </>
-                ) : null;
-              })()
-            )}
-          </div>
-        ) : (
-          <div className="graph-selection-hint">Select a node to view details</div>
-        )}
+            ) : selectedNode ? (
+              <>
+                <div className="graph-detail-badges">
+                  <Badge variant="secondary" className="h-5 text-[11px]">
+                    {selectedNode.group}
+                  </Badge>
+                  <Badge
+                    variant="outline"
+                    className="h-5 border-slate-400 text-[11px] text-slate-50"
+                  >
+                    {selectedNode.status}
+                  </Badge>
+                </div>
+                <h2 className="graph-detail-title">{selectedNode.label}</h2>
+                <div className="graph-detail-empty">Detail fetch failed. Showing graph data.</div>
+              </>
+            ) : null
+          ) : (
+            <div className="graph-detail-empty">Select a node to view details</div>
+          )}
+        </aside>
       </div>
 
       <div
@@ -568,86 +639,85 @@ export function GraphPage() {
           style={{ overflow: "visible" }}
         >
           <title>Knowledge graph visualization</title>
-          <g
-            transform={`translate(${transform.x + viewport.width / 2}, ${transform.y + viewport.height / 2})`}
-          >
-            <g transform={`scale(${transform.scale})`}>
-              {/* Edges */}
-              <g>
-                {graph.data?.edges.map((edge) => {
-                  const source = nodeById.get(edge.source);
-                  const target = nodeById.get(edge.target);
-                  if (!source || !target) return null;
-                  return (
-                    <line
-                      key={edge.id}
-                      x1={source.x}
-                      y1={source.y}
-                      x2={target.x}
-                      y2={target.y}
-                      className={`graph-edge ${edge.edgeKind}`}
-                      strokeWidth={Math.max(0.5, edge.weight * 2)}
-                      opacity={0.4}
-                    />
-                  );
-                })}
-              </g>
-              {/* Nodes: Circles First */}
-              <g>
-                {nodes.map((node) => {
-                  const isSelected = selectedId === node.id;
-                  const isEmbedded = node.embedded;
-                  return (
-                    <circle
-                      key={`circle-${node.id}`}
-                      cx={node.x}
-                      cy={node.y}
-                      r={6 + node.weight * 4}
-                      fill={nodeColors[node.group] ?? nodeColors.rule}
-                      stroke={
-                        isSelected
-                          ? "#fff"
-                          : isEmbedded
-                            ? "rgba(255, 255, 255, 0.12)"
-                            : "rgba(251, 191, 36, 0.88)"
-                      }
-                      strokeWidth={isSelected ? 2.2 : isEmbedded ? 0.8 : 1.2}
-                      strokeDasharray={isEmbedded ? undefined : "2.5 2"}
-                      opacity={isEmbedded ? 1 : 0.9}
-                      className="graph-node-circle"
-                      role="button"
-                      tabIndex={0}
-                      aria-label={`Select ${node.label || node.id}`}
-                      onMouseEnter={() => setHoveredId(node.id)}
-                      onMouseLeave={() => setHoveredId(null)}
-                      onClick={() => setSelectedId(node.id)}
-                      onKeyDown={(event) => {
-                        if (event.key !== "Enter" && event.key !== " ") return;
-                        event.preventDefault();
-                        setSelectedId(node.id);
-                      }}
-                    />
-                  );
-                })}
-              </g>
-              {/* Labels: Always on Top */}
-              <g pointerEvents="none">
-                {nodes.map((node) => {
-                  const active = activeId === node.id;
-                  return (
-                    <text
-                      key={`label-${node.id}`}
-                      x={node.x}
-                      y={node.y - (6 + node.weight * 4) - 10}
-                      textAnchor="middle"
-                      className={`graph-node-label ${active ? "active" : ""}`}
-                    >
-                      {node.label || node.id}
-                    </text>
-                  );
-                })}
-              </g>
-            </g>
+          {/* Edges */}
+          <g>
+            {graph.data?.edges.map((edge) => {
+              const source = screenNodeById.get(edge.source);
+              const target = screenNodeById.get(edge.target);
+              if (!source || !target) return null;
+              return (
+                <line
+                  key={edge.id}
+                  x1={source.x}
+                  y1={source.y}
+                  x2={target.x}
+                  y2={target.y}
+                  className={`graph-edge ${edge.edgeKind}`}
+                  strokeWidth={Math.max(0.5, edge.weight * 2)}
+                  opacity={0.4}
+                />
+              );
+            })}
+          </g>
+          {/* Nodes: Circles First */}
+          <g>
+            {nodes.map((node) => {
+              const isSelected = selectedId === node.id;
+              const isEmbedded = node.embedded;
+              const screenNode = screenNodeById.get(node.id);
+              if (!screenNode) return null;
+              return (
+                <circle
+                  key={`circle-${node.id}`}
+                  cx={screenNode.x}
+                  cy={screenNode.y}
+                  r={6 + node.weight * 4}
+                  fill={nodeColors[node.group] ?? nodeColors.rule}
+                  stroke={
+                    isSelected
+                      ? "#fff"
+                      : isEmbedded
+                        ? "rgba(255, 255, 255, 0.12)"
+                        : "rgba(251, 191, 36, 0.88)"
+                  }
+                  strokeWidth={isSelected ? 2.2 : isEmbedded ? 0.8 : 1.2}
+                  strokeDasharray={isEmbedded ? undefined : "2.5 2"}
+                  opacity={isEmbedded ? 1 : 0.9}
+                  className="graph-node-circle"
+                  role="button"
+                  tabIndex={0}
+                  aria-label={`Select ${node.label || node.id}`}
+                  onMouseEnter={() => setHoveredId(node.id)}
+                  onMouseLeave={() => setHoveredId(null)}
+                  onClick={() => setSelectedId(node.id)}
+                  onKeyDown={(event) => {
+                    if (event.key !== "Enter" && event.key !== " ") return;
+                    event.preventDefault();
+                    setSelectedId(node.id);
+                  }}
+                />
+              );
+            })}
+          </g>
+          {/* Labels: Always on Top */}
+          <g pointerEvents="none">
+            {nodes.map((node) => {
+              const active = activeId === node.id;
+              const nodeRadius = 6 + node.weight * 4;
+              const screenNode = screenNodeById.get(node.id);
+              if (!screenNode) return null;
+              return (
+                <text
+                  key={`label-${node.id}`}
+                  x={screenNode.x}
+                  y={screenNode.y - nodeRadius - LABEL_GAP_PX}
+                  textAnchor="middle"
+                  className={`graph-node-label ${active ? "active" : ""}`}
+                >
+                  {node.label || node.id}
+                </text>
+              );
+            })}
           </g>
         </svg>
         {nodes.length === 0 && !graph.isLoading ? (

@@ -423,6 +423,106 @@ export type SourceReindexResponse = {
   removed: number;
 };
 
+export type CandidateOutcome =
+  | "stored"
+  | "ready_not_finalized"
+  | "rejected"
+  | "retryable"
+  | "candidate_only"
+  | "target_pending";
+
+export type CandidateDiffSummary = {
+  titleChanged: boolean;
+  bodyChanged: boolean;
+  typeChanged: boolean;
+  importanceDelta: number | null;
+  confidenceDelta: number | null;
+  bodySimilarity: number;
+  summary: string[];
+};
+
+export type CandidateListItem = {
+  id: string;
+  targetStateId: string;
+  candidateIndex: number;
+  targetKind: "wiki_file" | "vibe_memory";
+  targetKey: string;
+  sourceUri: string;
+  finalizeSourceUri: string;
+  targetStatus: string;
+  targetPhase: string;
+  targetOutcomeKind: string | null;
+  targetLastError: string | null;
+  latestUpdatedAt: string;
+  original: {
+    title: string;
+    body: string;
+    status: string;
+    createdAt: string;
+    updatedAt: string;
+  };
+  cover: null | {
+    status: string;
+    stage: string;
+    type: "rule" | "procedure" | null;
+    title: string | null;
+    body: string | null;
+    importance: number | null;
+    confidence: number | null;
+    reason: string | null;
+    referencesCount: number;
+    duplicateRefsCount: number;
+    toolEventsCount: number;
+    updatedAt: string;
+  };
+  knowledge: null | {
+    id: string;
+    type: string;
+    status: string;
+    scope: string;
+    title: string;
+    body: string;
+    importance: number | null;
+    confidence: number | null;
+    updatedAt: string;
+  };
+  outcome: CandidateOutcome;
+  diff: {
+    originalToCover: CandidateDiffSummary | null;
+    coverToKnowledge: CandidateDiffSummary | null;
+    originalToKnowledge: CandidateDiffSummary | null;
+  };
+};
+
+export type CandidateListStats = {
+  total: number;
+  stored: number;
+  readyNotFinalized: number;
+  rejected: number;
+  retryable: number;
+  targetPending: number;
+  candidateOnly: number;
+};
+
+export type CandidateListResponse = {
+  items: CandidateListItem[];
+  total: number;
+  page: number;
+  limit: number;
+  totalPages: number;
+  stats: CandidateListStats;
+};
+
+export type CandidateListRequest = {
+  page?: number;
+  limit?: number;
+  query?: string;
+  targetKind?: "all" | "wiki_file" | "vibe_memory";
+  outcome?: "all" | CandidateOutcome;
+  hasKnowledge?: "all" | "yes" | "no";
+  targetStateId?: string;
+};
+
 async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
   if (!response.ok) {
@@ -672,4 +772,20 @@ export async function fetchAuditLogs(input?: {
   if (input?.actor && input.actor !== "all") query.set("actor", input.actor);
   const suffix = query.size > 0 ? `?${query.toString()}` : "";
   return getJson<AuditLogsResponse>(`/api/audit-logs${suffix}`);
+}
+
+export async function fetchCandidateItems(
+  input: CandidateListRequest = {},
+): Promise<CandidateListResponse> {
+  const query = new URLSearchParams();
+  query.set("page", String(input.page ?? 1));
+  query.set("limit", String(input.limit ?? 50));
+  if (input.query?.trim()) query.set("query", input.query.trim());
+  if (input.targetKind && input.targetKind !== "all") query.set("targetKind", input.targetKind);
+  if (input.outcome && input.outcome !== "all") query.set("outcome", input.outcome);
+  if (input.hasKnowledge && input.hasKnowledge !== "all") {
+    query.set("hasKnowledge", input.hasKnowledge);
+  }
+  if (input.targetStateId?.trim()) query.set("targetStateId", input.targetStateId.trim());
+  return getJson<CandidateListResponse>(`/api/candidates?${query.toString()}`);
 }

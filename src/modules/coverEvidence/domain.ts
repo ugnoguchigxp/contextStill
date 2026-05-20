@@ -244,7 +244,12 @@ function externalEvidenceSystemPrompt(): string {
   return [
     "あなたは coverEvidence の外部 evidence 検証器です。",
     "必ず search_web または fetch_content を使ってから、JSON だけを返してください。",
-    "検索結果 snippet だけを最終根拠にしてはいけません。外部主張を採用するなら fetch_content の成功結果に基づけてください。",
+    "search_web は URL 発見用です。検索結果 snippet だけを最終根拠にしてはいけません。",
+    "search_web の結果を受け取ったら、採用候補の一次ソース URL を 1 から 3 件選び、最終 JSON の前に fetch_content を呼んでください。",
+    "fetch_content は同じ検証 session で複数回呼んで構いません。失敗した URL があれば、別の有望な URL を fetch_content してください。",
+    "候補や source references に URL が含まれる場合は、search_web より先にその URL を fetch_content してください。",
+    "search_web を同義の言い換え query で繰り返さないでください。query は短く安定した公式名・API名・概念名を優先してください。",
+    "外部主張を採用するなら fetch_content の成功結果に基づけてください。",
     "JSON は次の形だけにしてください:",
     '{"schemaVersion":1,"status":"knowledge_ready|insufficient|duplicate|near_duplicate","stage":"web","candidate":{"type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80},"references":[],"duplicateRefs":[],"toolEvents":[],"reason":null}',
     "candidate.importance と candidate.confidence は 0 から 100 の整数です。",
@@ -389,7 +394,7 @@ async function runExternalEvidence(params: {
         chatClient: params.chatClient,
         toolExecutor: params.toolExecutor,
         enableTools: true,
-        maxToolRounds: 3,
+        maxToolRounds: groupedConfig.distillationTools.maxRounds,
         requireToolCall: true,
         toolNames: ["search_web", "fetch_content"],
         auditContext: {

@@ -329,6 +329,10 @@ function stringValue(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+export function normalizeDistillationSearchQuery(query: string): string {
+  return query.normalize("NFKC").replace(/\s+/g, " ").trim().toLowerCase();
+}
+
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
@@ -514,7 +518,7 @@ async function recordDistillationToolAudit(params: {
   };
 
   if (params.toolCall.function.name === "search_web") {
-    payload.query = stringValue(params.args.query);
+    payload.query = stringValue(metadata.query) ?? stringValue(params.args.query);
     payload.resultCount =
       typeof metadata.resultCount === "number" ? metadata.resultCount : undefined;
     payload.provider = stringValue(metadata.provider);
@@ -817,7 +821,10 @@ async function searchWeb(
     throw new Error("query must be a non-empty string");
   }
 
-  const normalizedQuery = query.trim();
+  const normalizedQuery = normalizeDistillationSearchQuery(query);
+  if (!normalizedQuery) {
+    throw new Error("query must be a non-empty string");
+  }
   const cached = options.forceRefreshEvidence
     ? null
     : await findDistillationEvidenceCache({
@@ -949,7 +956,7 @@ async function searchWeb(
           query: normalizedQuery,
           results,
           instruction:
-            "Use search results to choose URLs to fetch. Do not treat snippets as sufficient evidence for saved knowledge.",
+            "Use search results only to choose primary source URLs. Call fetch_content for 1-3 promising URLs before returning final JSON. Do not treat snippets as sufficient evidence for saved knowledge.",
         },
         null,
         2,

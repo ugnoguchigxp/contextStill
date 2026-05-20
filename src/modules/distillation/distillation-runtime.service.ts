@@ -712,7 +712,9 @@ export async function runDistillationCompletion(
             ? options.requireToolCallReminder
             : [
                 "直前の応答はまだ採用できません。",
-                "この検証 session は外部証拠の tool call が必須です。最終候補を返す前に search_web または fetch_content を 1 回だけ呼び出してください。",
+                "この検証 session は外部証拠の tool call が必須です。最終候補を返す前に search_web または fetch_content を少なくとも 1 回呼び出してください。",
+                "search_web の結果は URL 発見用です。検索結果を受け取った後は、有望な一次ソース URL を fetch_content してから最終候補を返してください。",
+                "fetch_content は複数回呼べます。同義の search_web query を繰り返すより、検索結果 URL を fetch_content してください。",
                 'ローカル tool-call parser 向けには {"name":"search_web","arguments":{"query":"..."}} または {"name":"fetch_content","arguments":{"url":"https://..."}} だけを返してください。',
                 "この tool-call JSON は中間応答専用です。最終 candidates の title/body に tool 名だけを入れないでください。",
               ];

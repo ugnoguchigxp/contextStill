@@ -203,6 +203,12 @@ export const knowledgeItems = pgTable(
     appliesToRepoPathIdx: index("knowledge_items_applies_to_repo_path_idx").on(
       sql`${table.appliesTo} ->> 'repoPath'`,
     ),
+    coverEvidenceResultIdIdx: index("knowledge_items_cover_evidence_result_id_idx").on(
+      sql`${table.metadata} ->> 'coverEvidenceResultId'`,
+    ),
+    metadataSourceUriIdx: index("knowledge_items_metadata_source_uri_idx").on(
+      sql`${table.metadata} ->> 'sourceUri'`,
+    ),
     lastCompiledAtIdx: index("knowledge_items_last_compiled_at_idx").on(table.lastCompiledAt),
     dynamicScoreIdx: index("knowledge_items_dynamic_score_idx").on(table.dynamicScore),
     titleBodyFtsIdx: index("knowledge_items_title_body_fts_idx").using(

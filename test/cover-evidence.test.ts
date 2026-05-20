@@ -336,9 +336,19 @@ describe("runCoverEvidence", () => {
       expect.anything(),
       expect.objectContaining({
         auditContext: expect.objectContaining({ forceRefreshEvidence: true }),
+        maxToolRounds: expect.any(Number),
         toolNames: ["search_web", "fetch_content"],
       }),
     );
+    const options = mocks.runDistillationCompletion.mock.calls[0]?.[1] as {
+      maxToolRounds: number;
+    };
+    expect(options.maxToolRounds).toBeGreaterThan(3);
+    const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(request.messages[0]?.content).toContain("fetch_content は同じ検証 session で複数回");
+    expect(request.messages[0]?.content).toContain("search_web を同義の言い換え query");
     expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(1);
   });
 

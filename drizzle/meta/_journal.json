@@ -183,6 +183,13 @@
       "when": 1778904000000,
       "tag": "0025_context_compile_run_snapshots",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1778907600000,
+      "tag": "0026_knowledge_candidate_metadata_indexes",
+      "breakpoints": true
     }
   ]
 }

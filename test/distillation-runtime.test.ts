@@ -15,8 +15,15 @@ import {
   parseToolCalls,
   runDistillationCompletion,
 } from "../src/modules/distillation/distillation-runtime.service.js";
+import { normalizeDistillationSearchQuery } from "../src/modules/distillation/distillation-tools.service.js";
 
 describe("distillation runtime", () => {
+  test("normalizes search queries before evidence cache lookup", () => {
+    expect(normalizeDistillationSearchQuery("  TanStack   Query　API  ")).toBe(
+      "tanstack query api",
+    );
+  });
+
   test("executes tool calls and feeds results back before final JSON", async () => {
     const seenMessages: unknown[] = [];
     const chatClient: DistillationChatClient = async (request) => {
@@ -206,6 +213,8 @@ describe("distillation runtime", () => {
     expect(prompt).toContain("context_compile");
     expect(prompt).toContain("search_web");
     expect(prompt).toContain("fetch_content");
+    expect(prompt).toContain("fetch_content は複数回使ってよい");
+    expect(prompt).toContain("search query は短く安定");
     expect(prompt).toContain("tool call JSON");
     expect(prompt).toContain("title/body に search_web や fetch_content");
     expect(prompt).toContain("可能な限り日本語");
@@ -224,6 +233,8 @@ describe("distillation runtime", () => {
     expect(procedureVerificationPrompt).toContain("tool result を受け取る前");
     expect(procedureVerificationPrompt).toContain("search_web");
     expect(procedureVerificationPrompt).toContain("fetch_content");
+    expect(procedureVerificationPrompt).toContain("採用候補の一次ソース URL");
+    expect(procedureVerificationPrompt).toContain("search_web の言い換え query を繰り返さない");
     expect(procedureVerificationPrompt).toContain('"name":"search_web"');
     expect(procedureVerificationPrompt).toContain("中間応答専用");
     expect(procedureVerificationPrompt).toContain("最終 candidates にコピーしてはいけない");

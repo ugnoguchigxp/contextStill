@@ -173,6 +173,87 @@ test.beforeEach(async ({ page }) => {
   await page.route("**/api/vibe-memory**", async (route) => {
     await route.fulfill({ json: { memories: [] } });
   });
+  await page.route("**/api/candidates**", async (route) => {
+    await route.fulfill({
+      json: {
+        items: [
+          {
+            id: "candidate-1",
+            targetStateId: "target-1",
+            candidateIndex: 0,
+            targetKind: "wiki_file",
+            targetKey: "docs/guide.md",
+            sourceUri: "file:///workspace/docs/guide.md",
+            finalizeSourceUri: "cover-evidence-result://candidate-1",
+            targetStatus: "completed",
+            targetPhase: "stored",
+            targetOutcomeKind: "knowledge_finalized",
+            targetLastError: null,
+            latestUpdatedAt: "2026-05-15T00:00:00.000Z",
+            original: {
+              title: "Original candidate title",
+              body: "Original candidate body",
+              status: "selected",
+              createdAt: "2026-05-15T00:00:00.000Z",
+              updatedAt: "2026-05-15T00:00:00.000Z",
+            },
+            cover: {
+              status: "knowledge_ready",
+              stage: "final",
+              type: "rule",
+              title: "Covered candidate title",
+              body: "Covered candidate body",
+              importance: 80,
+              confidence: 75,
+              reason: null,
+              referencesCount: 1,
+              duplicateRefsCount: 0,
+              toolEventsCount: 1,
+              updatedAt: "2026-05-15T00:00:00.000Z",
+            },
+            knowledge: {
+              id: "knowledge-1",
+              type: "rule",
+              status: "draft",
+              scope: "repo",
+              title: "Knowledge candidate title",
+              body: "Knowledge candidate body",
+              importance: 80,
+              confidence: 75,
+              updatedAt: "2026-05-15T00:00:00.000Z",
+            },
+            outcome: "stored",
+            diff: {
+              originalToCover: {
+                titleChanged: true,
+                bodyChanged: true,
+                typeChanged: true,
+                importanceDelta: null,
+                confidenceDelta: null,
+                bodySimilarity: 0.5,
+                summary: ["title changed", "body changed"],
+              },
+              coverToKnowledge: null,
+              originalToKnowledge: null,
+            },
+          },
+        ],
+        total: 1,
+        page: 1,
+        limit: 50,
+        totalPages: 1,
+        stats: {
+          total: 1,
+          stored: 1,
+          readyNotFinalized: 0,
+          rejected: 0,
+          retryable: 0,
+          targetPending: 0,
+          candidateOnly: 0,
+        },
+      },
+    });
+  });
   await page.route("**/api/graph**", async (route) => {
     await route.fulfill({
       json: {
@@ -421,6 +502,14 @@ test("Knowledge and sources pages show core UI", async ({ page }) => {
   await page.goto("/sources");
   await expect(page.getByRole("heading", { name: "Explorer" })).toBeVisible();
   await expect(page.getByText("page: guides/setup").first()).toBeVisible();
+});
+
+test("Candidates page shows list and row detail", async ({ page }) => {
+  await page.goto("/candidates");
+  await expect(page.getByRole("button", { name: "Refresh" })).toBeVisible();
+  await expect(page.getByText("Original candidate title")).toBeVisible();
+  await page.getByText("docs/guide.md").click();
+  await expect(page.getByText("cover-evidence-result://candidate-1")).toBeVisible();
 });
 
 test("Compile page shows validation error when goal is empty", async ({ page }) => {

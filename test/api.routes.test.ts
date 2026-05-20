@@ -1,5 +1,7 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { listCandidateItems } from "../api/modules/candidates/candidates.repository.js";
+import { candidatesRouter } from "../api/modules/candidates/candidates.routes.js";
 import { z } from "zod";
 import { listAuditLogsForApi } from "../api/modules/audit/audit.repository.js";
 import { auditLogsRouter } from "../api/modules/audit/audit.routes.js";
@@ -43,6 +45,18 @@ vi.mock("../api/modules/doctor/doctor.service.js", () => ({
   getDoctorReportForApi: vi.fn(),
 }));
 
+vi.mock("../api/modules/candidates/candidates.repository.js", () => ({
+  candidateOutcomeValues: [
+    "stored",
+    "ready_not_finalized",
+    "rejected",
+    "retryable",
+    "candidate_only",
+    "target_pending",
+  ] as const,
+  listCandidateItems: vi.fn(),
+}));
+
 vi.mock("../api/modules/knowledge/knowledge.repository.js", () => ({
   bulkUpdateKnowledgeStatus: vi.fn(),
   countKnowledgeItems: vi.fn(),
@@ -64,6 +78,7 @@ vi.mock("../src/modules/vibe-memory/vibe-memory.service.js", () => ({
 const buildApp = () => {
   const app = new Hono();
   app.route("/api/audit-logs", auditLogsRouter);
+  app.route("/api/candidates", candidatesRouter);
   app.route("/api/context", contextCompilerRouter);
   app.route("/api/doctor", doctorRouter);
   app.route("/api/knowledge", knowledgeRouter);
@@ -302,6 +317,19 @@ describe("API route contract tests", () => {
     vi.mocked(listRunsForApi).mockResolvedValue([]);
     vi.mocked(getRunDetailForApi).mockResolvedValue(validRunDetail);
     vi.mocked(getDoctorReportForApi).mockResolvedValue(validDoctorReport);
+    vi.mocked(listCandidateItems).mockResolvedValue({
+      items: [],
+      total: 0,
+      stats: {
+        total: 0,
+        stored: 0,
+        readyNotFinalized: 0,
+        rejected: 0,
+        retryable: 0,
+        targetPending: 0,
+        candidateOnly: 0,
+      },
+    });
     vi.mocked(listKnowledgeItems).mockResolvedValue([]);
     vi.mocked(countKnowledgeItems).mockResolvedValue(0);
     vi.mocked(bulkUpdateKnowledgeStatus).mockResolvedValue({
@@ -391,6 +419,118 @@ describe("API route contract tests", () => {
     });
     expect(listAuditLogsForApi).toHaveBeenCalledWith(
       expect.objectContaining({ page: 1, limit: 20 }),
+    );
+  });
+
+  test("GET /api/candidates rejects invalid query", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/candidates?limit=0");
+    expect(response.status).toBe(400);
+    expect(listCandidateItems).not.toHaveBeenCalled();
+  });
+
+  test("GET /api/candidates returns list and stats payload", async () => {
+    vi.mocked(listCandidateItems).mockResolvedValueOnce({
+      items: [
+        {
+          id: "candidate-1",
+          targetStateId: "target-1",
+          candidateIndex: 0,
+          targetKind: "wiki_file",
+          targetKey: "docs/guide.md",
+          sourceUri: "file:///workspace/docs/guide.md",
+          finalizeSourceUri: "cover-evidence-result://candidate-1",
+          targetStatus: "completed",
+          targetPhase: "stored",
+          targetOutcomeKind: "knowledge_finalized",
+          targetLastError: null,
+          latestUpdatedAt: "2026-05-20T00:00:00.000Z",
+          original: {
+            title: "Original title",
+            body: "Original body",
+            status: "selected",
+            createdAt: "2026-05-20T00:00:00.000Z",
+            updatedAt: "2026-05-20T00:00:00.000Z",
+          },
+          cover: {
+            status: "knowledge_ready",
+            stage: "final",
+            type: "rule",
+            title: "Covered title",
+            body: "Covered body",
+            importance: 80,
+            confidence: 75,
+            reason: null,
+            referencesCount: 1,
+            duplicateRefsCount: 0,
+            toolEventsCount: 1,
+            updatedAt: "2026-05-20T00:00:00.000Z",
+          },
+          knowledge: {
+            id: "knowledge-1",
+            type: "rule",
+            status: "draft",
+            scope: "repo",
+            title: "Knowledge title",
+            body: "Knowledge body",
+            importance: 80,
+            confidence: 75,
+            updatedAt: "2026-05-20T00:00:00.000Z",
+          },
+          outcome: "stored",
+          diff: {
+            originalToCover: {
+              titleChanged: true,
+              bodyChanged: true,
+              typeChanged: true,
+              importanceDelta: null,
+              confidenceDelta: null,
+              bodySimilarity: 0.5,
+              summary: ["title changed"],
+            },
+            coverToKnowledge: null,
+            originalToKnowledge: null,
+          },
+        },
+      ],
+      total: 1,
+      stats: {
+        total: 1,
+        stored: 1,
+        readyNotFinalized: 0,
+        rejected: 0,
+        retryable: 0,
+        targetPending: 0,
+        candidateOnly: 0,
+      },
+    });
+
+    const app = buildApp();
+    const response = await app.request("/api/candidates?limit=1&page=1&outcome=stored");
+    expect(response.status).toBe(200);
+    const json = (await response.json()) as {
+      items: Array<{ id: string; outcome: string }>;
+      total: number;
+      page: number;
+      limit: number;
+      totalPages: number;
+      stats: { stored: number; total: number };
+    };
+
+    expect(json.items).toHaveLength(1);
+    expect(json.items[0]?.id).toBe("candidate-1");
+    expect(json.items[0]?.outcome).toBe("stored");
+    expect(json.total).toBe(1);
+    expect(json.page).toBe(1);
+    expect(json.limit).toBe(1);
+    expect(json.totalPages).toBe(1);
+    expect(json.stats).toMatchObject({ total: 1, stored: 1 });
+    expect(listCandidateItems).toHaveBeenCalledWith(
+      expect.objectContaining({
+        page: 1,
+        limit: 1,
+        outcome: "stored",
+      }),
     );
   });
 
