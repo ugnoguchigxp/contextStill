@@ -142,7 +142,7 @@ export type DoctorReport = {
   status: "ok" | "degraded" | "failed";
   checkedAt: string;
   reasons: string[];
-  db: { reachable: boolean; durationMs: number };
+  db: { reachable: boolean; durationMs: number; error?: string };
   vector: { installed: boolean };
   embedding?: {
     configured: boolean;
@@ -162,13 +162,30 @@ export type DoctorReport = {
     error?: string;
   };
   runs: {
+    windowSize?: number;
     totalRuns: number;
     degradedRuns: number;
     degradedRate: number;
+    blockingRuns?: number;
+    blockingRate?: number;
+    usableRuns?: number;
+    usableRate?: number;
+    warningOnlyRuns?: number;
+    warningOnlyRate?: number;
+    noContentRuns?: number;
+    noContentRate?: number;
     durationMsP50: number | null;
     durationMsP95: number | null;
     durationMsAvg: number | null;
     lastRunAt: string | null;
+    lastRunAgeMinutes?: number | null;
+    freshnessThresholdMinutes?: number;
+    degradedRateThreshold?: number;
+  };
+  tables?: {
+    expected: string[];
+    existing: string[];
+    missing: string[];
   };
   hitl: {
     draftCount: number;

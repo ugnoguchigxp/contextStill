@@ -31,6 +31,10 @@ const outcomeOptions: Array<"all" | CandidateOutcome> = [
   "target_pending",
 ];
 
+const tableHeadClass = "px-3 whitespace-normal break-words [overflow-wrap:anywhere]";
+const tableCellClass = "px-3 py-3 align-top whitespace-normal break-words [overflow-wrap:anywhere]";
+const compactBadgeClass = "text-[10px] whitespace-normal break-words [overflow-wrap:anywhere]";
+
 function formatDate(value: string): string {
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
@@ -89,17 +93,17 @@ function CandidateDetailPane({
   confidence?: number | null;
 }) {
   return (
-    <div className="rounded-lg border bg-muted/20 p-3 space-y-2">
+    <div className="rounded-lg border bg-muted/20 p-3 space-y-2 min-w-0">
       <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
         {sectionTitle}
       </p>
-      <p className="text-xs font-semibold">
+      <p className="text-xs font-semibold break-words [overflow-wrap:anywhere]">
         {candidateTitle ? textPreview(candidateTitle, 120) : "-"}
       </p>
-      <p className="text-xs text-muted-foreground">
+      <p className="text-xs text-muted-foreground break-words [overflow-wrap:anywhere]">
         {candidateBody ? textPreview(candidateBody, 180) : "-"}
       </p>
-      <div className="text-[11px] text-muted-foreground">
+      <div className="text-[11px] text-muted-foreground break-words [overflow-wrap:anywhere]">
         type: {type ?? "-"} | importance: {importance ?? "-"} | confidence: {confidence ?? "-"}
       </div>
     </div>
@@ -202,17 +206,26 @@ export function CandidatesPage() {
           </div>
         </CardHeader>
 
-        <div className="flex-1 overflow-auto">
-          <Table>
+        <div className="min-w-0 flex-1 overflow-auto">
+          <Table className="table-fixed">
+            <colgroup>
+              <col className="w-[18%]" />
+              <col className="w-[25%]" />
+              <col className="w-[14%]" />
+              <col className="w-[14%]" />
+              <col className="w-[8%]" />
+              <col className="w-[13%]" />
+              <col className="w-[8%]" />
+            </colgroup>
             <TableHeader className="sticky top-0 z-10 bg-background/95 border-b shadow-sm">
               <TableRow>
-                <TableHead className="px-4">Target</TableHead>
-                <TableHead className="px-4">Candidate</TableHead>
-                <TableHead className="px-4">Coverage</TableHead>
-                <TableHead className="px-4">Knowledge</TableHead>
-                <TableHead className="px-4">Quality</TableHead>
-                <TableHead className="px-4">Diff</TableHead>
-                <TableHead className="px-4">Updated</TableHead>
+                <TableHead className={tableHeadClass}>Target</TableHead>
+                <TableHead className={tableHeadClass}>Candidate</TableHead>
+                <TableHead className={tableHeadClass}>Coverage</TableHead>
+                <TableHead className={tableHeadClass}>Knowledge</TableHead>
+                <TableHead className={tableHeadClass}>Quality</TableHead>
+                <TableHead className={tableHeadClass}>Diff</TableHead>
+                <TableHead className={tableHeadClass}>Updated</TableHead>
               </TableRow>
             </TableHeader>
             <TableBody>
@@ -241,46 +254,53 @@ export function CandidatesPage() {
                 <Fragment key={item.id}>
                   <TableRow key={item.id} className="cursor-pointer hover:bg-muted/30">
                     <TableCell
-                      className="px-4 py-3 align-top"
+                      className={tableCellClass}
                       onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
                     >
-                      <div className="space-y-1">
-                        <div className="flex items-center gap-2">
-                          <Badge variant="outline" className="text-[10px]">
+                      <div className="min-w-0 space-y-1">
+                        <div className="flex min-w-0 flex-wrap items-center gap-1">
+                          <Badge variant="outline" className={compactBadgeClass}>
                             {item.targetKind}
                           </Badge>
-                          <Badge variant={outcomeBadge(item.outcome)} className="text-[10px]">
+                          <Badge variant={outcomeBadge(item.outcome)} className={compactBadgeClass}>
                             {item.outcome}
                           </Badge>
                         </div>
-                        <p className="text-xs font-medium">{item.targetKey}</p>
+                        <p className="text-xs font-medium break-words [overflow-wrap:anywhere]">
+                          {item.targetKey}
+                        </p>
                         <p className="text-[11px] text-muted-foreground">
                           idx: {item.candidateIndex}
                         </p>
                       </div>
                     </TableCell>
                     <TableCell
-                      className="px-4 py-3 align-top"
+                      className={tableCellClass}
                       onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
                     >
-                      <p className="text-xs font-semibold">{item.original.title}</p>
-                      <p className="text-[11px] text-muted-foreground">
+                      <p className="text-xs font-semibold break-words [overflow-wrap:anywhere]">
+                        {item.original.title}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground break-words [overflow-wrap:anywhere]">
                         {textPreview(item.original.body, 100)}
                       </p>
                     </TableCell>
                     <TableCell
-                      className="px-4 py-3 align-top"
+                      className={tableCellClass}
                       onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
                     >
                       {item.cover ? (
-                        <div className="space-y-1">
-                          <Badge variant={coverageBadge(item.cover.status)} className="text-[10px]">
+                        <div className="min-w-0 space-y-1">
+                          <Badge
+                            variant={coverageBadge(item.cover.status)}
+                            className={compactBadgeClass}
+                          >
                             {item.cover.status}
                           </Badge>
                           <p className="text-[11px] text-muted-foreground">
                             stage: {item.cover.stage}
                           </p>
-                          <p className="text-[11px] text-muted-foreground">
+                          <p className="text-[11px] text-muted-foreground break-words [overflow-wrap:anywhere]">
                             {item.cover.reason ?? "-"}
                           </p>
                         </div>
@@ -288,15 +308,15 @@ export function CandidatesPage() {
                         <span className="text-[11px] text-muted-foreground">no cover result</span>
                       )}
                     </TableCell>
-                    <TableCell className="px-4 py-3 align-top">
+                    <TableCell className={tableCellClass}>
                       {item.knowledge ? (
-                        <div className="space-y-1">
-                          <Badge variant="success" className="text-[10px]">
+                        <div className="min-w-0 space-y-1">
+                          <Badge variant="success" className={compactBadgeClass}>
                             {item.knowledge.status}
                           </Badge>
                           <Link
                             to="/knowledge"
-                            className="block text-[11px] text-blue-600 hover:underline break-all"
+                            className="block text-[11px] text-blue-600 hover:underline break-words [overflow-wrap:anywhere]"
                           >
                             {item.knowledge.id}
                           </Link>
@@ -305,7 +325,7 @@ export function CandidatesPage() {
                         <span className="text-[11px] text-muted-foreground">not stored</span>
                       )}
                     </TableCell>
-                    <TableCell className="px-4 py-3 align-top">
+                    <TableCell className={tableCellClass}>
                       <p className="text-[11px] text-muted-foreground">
                         I: {item.cover?.importance ?? item.knowledge?.importance ?? "-"}
                       </p>
@@ -313,32 +333,35 @@ export function CandidatesPage() {
                         C: {item.cover?.confidence ?? item.knowledge?.confidence ?? "-"}
                       </p>
                     </TableCell>
-                    <TableCell className="px-4 py-3 align-top">
-                      <div className="flex flex-wrap gap-1">
+                    <TableCell className={tableCellClass}>
+                      <div className="flex min-w-0 flex-wrap gap-1">
                         {diffSignals(item).map((label) => (
                           <Badge
                             key={`${item.id}-${label}`}
                             variant="outline"
-                            className="text-[10px]"
+                            className={compactBadgeClass}
                           >
                             {label}
                           </Badge>
                         ))}
                         {item.diff.originalToKnowledge ? (
-                          <Badge variant="secondary" className="text-[10px]">
+                          <Badge variant="secondary" className={compactBadgeClass}>
                             sim {toPercent(item.diff.originalToKnowledge.bodySimilarity)}
                           </Badge>
                         ) : null}
                       </div>
                     </TableCell>
-                    <TableCell className="px-4 py-3 align-top text-[11px] text-muted-foreground">
+                    <TableCell className={`${tableCellClass} text-[11px] text-muted-foreground`}>
                       {formatDate(item.latestUpdatedAt)}
                     </TableCell>
                   </TableRow>
                   {expandedId === item.id ? (
                     <TableRow className="bg-muted/20">
-                      <TableCell colSpan={7} className="px-4 py-4">
-                        <div className="grid gap-3 lg:grid-cols-3">
+                      <TableCell
+                        colSpan={7}
+                        className="px-3 py-4 whitespace-normal break-words [overflow-wrap:anywhere]"
+                      >
+                        <div className="grid min-w-0 gap-3 lg:grid-cols-3">
                           <CandidateDetailPane
                             sectionTitle="Original Candidate"
                             candidateTitle={item.original.title}
@@ -363,13 +386,13 @@ export function CandidatesPage() {
                           />
                         </div>
                         <div className="mt-3 grid gap-2 text-[11px] text-muted-foreground lg:grid-cols-2">
-                          <div className="rounded-lg border bg-background px-3 py-2">
+                          <div className="min-w-0 rounded-lg border bg-background px-3 py-2 break-words [overflow-wrap:anywhere]">
                             <p>targetStateId: {item.targetStateId}</p>
                             <p>findCandidateResultId: {item.id}</p>
                             <p>coverEvidenceResultId: {item.id}</p>
                             <p>knowledgeId: {item.knowledge?.id ?? "-"}</p>
                           </div>
-                          <div className="rounded-lg border bg-background px-3 py-2">
+                          <div className="min-w-0 rounded-lg border bg-background px-3 py-2 break-words [overflow-wrap:anywhere]">
                             <p>sourceUri: {item.sourceUri}</p>
                             <p>finalizeSourceUri: {item.finalizeSourceUri}</p>
                             <p>references: {item.cover?.referencesCount ?? 0}</p>
@@ -386,8 +409,8 @@ export function CandidatesPage() {
           </Table>
         </div>
 
-        <div className="border-t bg-muted/10 px-4 py-1.5 flex items-center justify-between gap-3 text-[11px] leading-4">
-          <div className="min-w-0 flex items-center gap-3 text-muted-foreground overflow-x-auto whitespace-nowrap">
+        <div className="border-t bg-muted/10 px-4 py-1.5 flex flex-wrap items-center justify-between gap-3 text-[11px] leading-4">
+          <div className="min-w-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
             <span>
               Page {page} / {Math.max(1, totalPages)}
             </span>

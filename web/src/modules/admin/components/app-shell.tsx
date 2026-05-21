@@ -43,7 +43,8 @@ export function AppShell() {
           pathname.startsWith("/graph") ||
           pathname.startsWith("/knowledge") ||
           pathname.startsWith("/candidates") ||
-          pathname.startsWith("/audit")
+          pathname.startsWith("/audit") ||
+          pathname.startsWith("/doctor")
             ? "full-width"
             : ""
         }`}

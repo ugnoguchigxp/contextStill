@@ -1,9 +1,9 @@
 /** @vitest-environment jsdom */
-import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi, beforeEach } from "vitest";
 import React from "react";
-import { DoctorPage } from "../../../web/src/modules/admin/components/doctor.page";
+import { render, screen } from "@testing-library/react";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { DoctorPage } from "../../../web/src/modules/admin/components/doctor.page";
 
 vi.mock("@tanstack/react-query", async () => {
   const actual = await vi.importActual("@tanstack/react-query");
@@ -15,84 +15,230 @@ vi.mock("@tanstack/react-query", async () => {
 
 const queryClient = new QueryClient();
 
-// テスト用モックデータ (ほぼ全ロジックを網羅する巨大なレポート)
-const mockDoctorReport = {
-  status: "warning",
-  db: { reachable: true, durationMs: 45 },
+const baseReport = {
+  status: "degraded",
+  checkedAt: "2026-05-21T13:26:44.509Z",
+  reasons: [
+    "KNOWLEDGE_ZERO_USE_HIGH",
+    "VIBE_DISTILLATION_NEVER_RAN",
+    "VIBE_DISTILLATION_PIPELINE_LOCK_STALE",
+    "SOURCE_DISTILLATION_PIPELINE_LOCK_STALE",
+    "ANTIGRAVITY_LOGS_SYNC_STALE",
+  ],
+  db: { reachable: true, durationMs: 26 },
   vector: { installed: true },
-  runs: { degradedRate: 0.15, durationMsP50: 120, durationMsP95: 500, durationMsAvg: 230 },
   embedding: {
-    provider: "openai",
-    daemon: { reachable: true },
-    cli: { usable: true, modelDir: "/models/embedding" },
+    configured: true,
+    provider: "daemon",
+    daemon: { url: "http://127.0.0.1:44512", reachable: true },
+    cli: {
+      python: "/tmp/.venv/bin/python",
+      root: "/tmp/root",
+      modelDir: "/tmp/model",
+      usable: true,
+    },
+  },
+  agenticLlm: {
+    providerSetting: "azure-openai",
+    selectedProvider: "azure-openai",
+    fallbackOrder: ["azure-openai"],
+    provider: "azure-openai",
+    configured: true,
+    reachable: true,
+    model: "gpt-5-4-mini",
+    endpoint: "https://example.openai.azure.com",
+  },
+  tables: {
+    expected: ["knowledge_items", "sources"],
+    existing: ["knowledge_items", "sources"],
+    missing: [],
+  },
+  runs: {
+    windowSize: 20,
+    totalRuns: 20,
+    degradedRuns: 15,
+    degradedRate: 0.75,
+    blockingRuns: 4,
+    blockingRate: 0.2,
+    usableRuns: 16,
+    usableRate: 0.8,
+    warningOnlyRuns: 15,
+    warningOnlyRate: 0.75,
+    noContentRuns: 3,
+    noContentRate: 0.15,
+    durationMsP50: 1982,
+    durationMsP95: 6871.1,
+    durationMsAvg: 3094.9,
+    lastRunAt: "2026-05-21T13:25:54.789Z",
+    lastRunAgeMinutes: 1,
+    freshnessThresholdMinutes: 720,
+    degradedRateThreshold: 0.5,
+  },
+  hitl: {
+    draftCount: 39,
+    oldestDraftAt: "2026-05-20T23:17:04.355Z",
+    oldestDraftAgeMinutes: 850,
+    backlogThresholdCount: 50,
+    backlogThresholdAgeMinutes: 4320,
+  },
+  knowledgeLifecycle: {
+    activeCount: 671,
+    zeroUseActiveCount: 658,
+    staleByDecayCount: 0,
+    staleProcedureCount: 0,
+    dynamicScoreAvg: 0.4,
+    dynamicScoreP95: 0,
+    lastCompiledAt: "2026-05-20T17:26:48.523Z",
+    lastCompiledAgeMinutes: 1200,
+    thresholds: {
+      staleDecayFactor: 0.5,
+      zeroUseWarningMinActiveCount: 10,
+    },
+  },
+  mcp: {
+    exposedTools: ["doctor"],
+    requiredPrimaryTools: ["doctor"],
+    missingPrimaryTools: [],
+    staleKnowledgeCount: 0,
+    staleSourceCount: 40,
+    nextActions: ["stale source を再importまたは更新する（count: 40）"],
   },
   agentLogSync: {
-    codex: { sessionDirExists: true, sessions: 12 },
-    antigravity: { configured: true, exists: true },
-    launchAgent: { loaded: true, installed: true },
-    states: [{ name: "sync-1" }],
+    codex: {
+      sessionDir: "/Users/y.noguchi/.codex/sessions",
+      sessionDirExists: true,
+      archivedSessionDir: "/Users/y.noguchi/.codex/archived_sessions",
+      archivedSessionDirExists: true,
+    },
+    antigravity: {
+      logDir: "/Users/y.noguchi/.gemini/antigravity/brain",
+      configured: true,
+      exists: true,
+    },
+    states: [
+      {
+        id: "codex_logs",
+        lastSyncedAt: "2026-05-21T08:31:04.936Z",
+        lastSyncedAgeMinutes: 295,
+        cursorFiles: 385,
+        skipped: false,
+        warnings: [],
+      },
+      {
+        id: "antigravity_logs",
+        lastSyncedAt: "2026-05-19T09:44:11.413Z",
+        lastSyncedAgeMinutes: 3102,
+        cursorFiles: 121,
+        skipped: false,
+        warnings: [],
+      },
+    ],
+    launchAgent: {
+      label: "com.memory-router.agent-log-sync",
+      plistPath: "/Users/y.noguchi/Library/LaunchAgents/com.memory-router.agent-log-sync.plist",
+      installed: true,
+      loaded: true,
+      state: "not running",
+    },
+    nextActions: [],
   },
-  reasons: ["Database latency is high", "Degraded performance observed"],
-  issues: ["Some issue description"],
-  hitl: { draftCount: 5, oldestDraftAgeMinutes: 75 },
   vibeDistillation: {
-    launchAgent: { loaded: true, installed: true },
-    runs: {
-      totalRuns: 100,
-      okRuns: 80,
-      skippedRuns: 15,
-      failedRuns: 5,
-      lastRunAgeMinutes: 45, // 1時間未満のテスト（45 min）
-      lastOkRunAgeMinutes: 120, // 48時間未満のテスト（2.0 h）
-      skippedRunReasons: [{ reason: "test_reason", count: 3 }],
-      outcomeKindCounts: [
-        { reason: "candidate_rejected", count: 10 },
-        { reason: "batch_paused_circuit_breaker", count: 2 },
-        { reason: "invalid_candidate", count: 3 },
-        { reason: "job_already_running", count: 4 },
-        { reason: "knowledge_created", count: 50 },
-        { reason: "knowledge_deduped", count: 15 },
-        { reason: "llm_empty_response", count: 1 },
-        { reason: "llm_provider_error", count: 1 },
-        { reason: "llm_timeout", count: 1 },
-        { reason: "llm_unparseable", count: 1 },
-        { reason: "missing_external_evidence", count: 1 },
-        { reason: "missing_verification_tool_evidence", count: 1 },
-        { reason: "mixed_candidate_rejections", count: 1 },
-        { reason: "no_candidate", count: 1 },
-        { reason: "processing_error", count: 1 },
-        { reason: "promotion_paused_backpressure", count: 1 },
-        { reason: "verification_no_candidate", count: 1 },
-        { reason: "unknown_custom_reason", count: 1 }, // デフォルトフォールバックのテスト
-      ],
+    launchAgent: {
+      label: "com.memory-router.distill-pipeline",
+      plistPath: "/Users/y.noguchi/Library/LaunchAgents/com.memory-router.distill-pipeline.plist",
+      installed: true,
+      loaded: true,
+      state: "running",
     },
-    queueHealth: {
-      retryablePaused: 2,
-      staleRunning: 1,
-      oldestQueuedAgeMinutes: 3000, // 48時間以上のテスト (2.1 d)
-      lock: { staleByCreatedAge: false, exists: true },
-    },
-    jobs: { queued: 5, running: 2, paused: 1, failed: 0 },
-  },
-  sourceDistillation: {
-    launchAgent: { loaded: false, installed: true }, // loaded: false, installed: true のテスト (installed)
     runs: {
-      totalRuns: 50,
-      okRuns: 40,
-      skippedRuns: 10,
-      failedRuns: 0,
-      lastRunAgeMinutes: null, // nullのテスト
-      lastOkRunAgeMinutes: undefined, // undefinedのテスト
-      skippedRunReasons: [],
+      totalRuns: 0,
+      okRuns: 0,
+      skippedRuns: 0,
       outcomeKindCounts: [],
+      skippedRunReasons: [],
+      failedRuns: 0,
+      lastRunAt: null,
+      lastRunAgeMinutes: null,
+      lastOkRunAt: null,
+      lastOkRunAgeMinutes: null,
+    },
+    jobs: {
+      queued: 1150,
+      running: 0,
+      paused: 0,
+      failed: 0,
+      lastPausedAt: null,
+      lastError: null,
     },
     queueHealth: {
+      queued: 1150,
+      running: 0,
       retryablePaused: 0,
       staleRunning: 0,
-      oldestQueuedAgeMinutes: null,
-      lock: { staleByCreatedAge: true, exists: true }, // staleByCreatedAge のテスト (stale)
+      blockedByHigherPriority: true,
+      oldestQueuedAt: "2026-05-21T07:49:40.165Z",
+      oldestQueuedAgeMinutes: 337,
+      oldestRunningAt: null,
+      oldestRunningAgeMinutes: null,
+      lock: {
+        path: "/tmp/vibe.lock",
+        exists: true,
+        pid: 123,
+        createdAt: "2026-05-21T13:04:36.225Z",
+        ageSeconds: 1328,
+        staleByCreatedAge: true,
+      },
     },
-    jobs: { queued: 0, running: 0, paused: 0, failed: 0 },
+    nextActions: ["vibe lock を確認する"],
+  },
+  sourceDistillation: {
+    launchAgent: {
+      label: "com.memory-router.distill-pipeline",
+      plistPath: "/Users/y.noguchi/Library/LaunchAgents/com.memory-router.distill-pipeline.plist",
+      installed: true,
+      loaded: true,
+      state: "running",
+    },
+    runs: {
+      totalRuns: 5,
+      okRuns: 5,
+      skippedRuns: 0,
+      outcomeKindCounts: [{ reason: "knowledge_created", count: 5 }],
+      skippedRunReasons: [],
+      failedRuns: 0,
+      lastRunAt: "2026-05-21T02:48:15.457Z",
+      lastRunAgeMinutes: 638,
+      lastOkRunAt: "2026-05-21T02:48:15.457Z",
+      lastOkRunAgeMinutes: 638,
+    },
+    jobs: {
+      queued: 36,
+      running: 1,
+      paused: 0,
+      failed: 0,
+      lastPausedAt: null,
+      lastError: null,
+    },
+    queueHealth: {
+      queued: 36,
+      running: 1,
+      retryablePaused: 0,
+      staleRunning: 0,
+      blockedByHigherPriority: false,
+      oldestQueuedAt: "2026-05-21T07:49:40.146Z",
+      oldestQueuedAgeMinutes: 337,
+      oldestRunningAt: "2026-05-21T13:26:00.057Z",
+      oldestRunningAgeMinutes: 1,
+      lock: {
+        path: "/tmp/source.lock",
+        exists: true,
+        pid: 456,
+        createdAt: "2026-05-21T13:04:36.225Z",
+        ageSeconds: 1328,
+        staleByCreatedAge: true,
+      },
+    },
+    nextActions: ["source queue を確認する"],
   },
 };
 
@@ -101,11 +247,12 @@ describe("DoctorPage", () => {
     vi.clearAllMocks();
   });
 
-  it("renders doctor page with full report properly", () => {
+  it("renders dashboard sections and human-readable reason labels", () => {
     vi.mocked(useQuery).mockReturnValue({
-      data: mockDoctorReport,
-      isLoading: false,
-      error: null,
+      data: baseReport,
+      isError: false,
+      isFetching: false,
+      refetch: vi.fn(),
     } as any);
 
     render(
@@ -114,115 +261,41 @@ describe("DoctorPage", () => {
       </QueryClientProvider>,
     );
 
-    // 1. 基本ヘッダーとステータスの確認
     expect(screen.getByText("Doctor")).toBeInTheDocument();
-    expect(screen.getByText("warning")).toBeInTheDocument();
+    expect(screen.getAllByText("degraded").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("System Status")).toBeInTheDocument();
+    expect(screen.getByText("Compile Usable")).toBeInTheDocument();
+    expect(screen.getByText("Runtime Matrix")).toBeInTheDocument();
+    expect(screen.getByText("Automation Matrix")).toBeInTheDocument();
+    expect(screen.getByText("Compile Quality Mix")).toBeInTheDocument();
+    expect(screen.getByText("Distillation Queue")).toBeInTheDocument();
+    expect(screen.getByText("Doctor Signals")).toBeInTheDocument();
+    expect(screen.getByText("Next Actions")).toBeInTheDocument();
 
-    // 2. Runtime パネルのデータ確認
-    expect(screen.getByText("Database")).toBeInTheDocument();
-    expect(screen.getAllByText("reachable").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("45ms")).toBeInTheDocument();
-    expect(screen.getByText("pgvector")).toBeInTheDocument();
-    expect(screen.getAllByText("installed").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("0.15")).toBeInTheDocument(); // degraded rate
-    expect(screen.getByText("120ms")).toBeInTheDocument(); // compile latency p50
-    expect(screen.getByText("500ms")).toBeInTheDocument(); // compile latency p95
-    expect(screen.getByText("230ms")).toBeInTheDocument(); // compile latency avg
-
-    // 3. Embedding パネルのデータ確認
-    expect(screen.getByText("openai")).toBeInTheDocument();
-    expect(screen.queryByText("offline")).not.toBeInTheDocument();
-    expect(screen.getByText("/models/embedding")).toBeInTheDocument();
-
-    // 4. Agent Log Sync の確認
-    expect(screen.getByText("Codex sessions")).toBeInTheDocument();
-    expect(screen.getByText("Antigravity logs")).toBeInTheDocument();
-    expect(screen.getAllByText("loaded").length).toBeGreaterThanOrEqual(1);
-
-    // 5. Reasons のリスト表示確認
-    expect(screen.getByText("Database latency is high")).toBeInTheDocument();
-    expect(screen.getByText("Degraded performance observed")).toBeInTheDocument();
-
-    // 6. HITL Backlog の確認
-    expect(screen.getByText("Draft count")).toBeInTheDocument();
-    expect(screen.getAllByText("5").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("75 min")).toBeInTheDocument();
-
-    // 7. Vibe Distillation の動作確認 (年齢フォーマットや outcome 種別)
-    expect(screen.getByText("Vibe Distillation")).toBeInTheDocument();
-    expect(screen.getByText("100")).toBeInTheDocument(); // total runs
-    expect(screen.getByText("80")).toBeInTheDocument(); // ok runs
-    expect(screen.getAllByText("15").length).toBeGreaterThanOrEqual(1); // skipped runs
-    expect(screen.getAllByText("5").length).toBeGreaterThanOrEqual(1); // failed runs
-
-    // Age のフォーマットテスト結果の確認
-    expect(screen.getByText("45 min")).toBeInTheDocument(); // lastRunAgeMinutes (45)
-    expect(screen.getByText("2.0 h")).toBeInTheDocument(); // lastOkRunAgeMinutes (120)
-    expect(screen.getByText("2.1 d")).toBeInTheDocument(); // oldestQueuedAgeMinutes (3000)
-
-    // Legacy skip の確認
-    expect(screen.getByText("test_reason: 3")).toBeInTheDocument();
-
-    // Pipeline lockの表示
-    expect(screen.getByText("held")).toBeInTheDocument(); // exists is true, staleByCreatedAge is false
-
-    // Outcome 理由の網羅テスト (Labels, Focus, Counts)
-    // 17種類以上の outcome をアサート
-    expect(screen.getByText("Rejected")).toBeInTheDocument();
-    expect(screen.getByText("candidate value")).toBeInTheDocument();
-    expect(screen.getByText("Circuit paused")).toBeInTheDocument();
-    expect(screen.getByText("Invalid candidate")).toBeInTheDocument();
-    expect(screen.getByText("Already running")).toBeInTheDocument();
-    expect(screen.getByText("Created")).toBeInTheDocument();
-    expect(screen.getByText("review draft")).toBeInTheDocument();
-    expect(screen.getByText("Deduped")).toBeInTheDocument();
-    expect(screen.getByText("Empty response")).toBeInTheDocument();
-    expect(screen.getByText("LLM provider")).toBeInTheDocument();
-    expect(screen.getByText("LLM timeout")).toBeInTheDocument();
-    expect(screen.getByText("Unparseable")).toBeInTheDocument();
-    expect(screen.getByText("Evidence missing")).toBeInTheDocument();
-    expect(screen.getByText("Tool evidence missing")).toBeInTheDocument();
-    expect(screen.getByText("Mixed rejection")).toBeInTheDocument();
-    expect(screen.getByText("No candidate")).toBeInTheDocument();
-    expect(screen.getByText("Processing error")).toBeInTheDocument();
-    expect(screen.getByText("Backpressure")).toBeInTheDocument();
-    expect(screen.getByText("Verification empty")).toBeInTheDocument();
-    expect(screen.getAllByText("unknown_custom_reason").length).toBeGreaterThanOrEqual(1); // フォールバックの確認
+    expect(screen.getByText("未使用の active knowledge が多い")).toBeInTheDocument();
+    expect(screen.getByText("会話ログ蒸留が未実行")).toBeInTheDocument();
+    expect(screen.getByText("KNOWLEDGE_ZERO_USE_HIGH")).toBeInTheDocument();
+    expect(
+      screen.getByText("stale source を再importまたは更新する（count: 40）"),
+    ).toBeInTheDocument();
+    expect(screen.getByText("vibe lock を確認する")).toBeInTheDocument();
+    expect(screen.getByText("source queue を確認する")).toBeInTheDocument();
   });
 
-  it("renders alternative statuses (not installed launchAgent, lock stale, lock clear, outcomes empty, reasons empty)", () => {
-    const alternativeReport = {
-      ...mockDoctorReport,
-      status: "failed", // failed status test
-      reasons: [], // empty reasons test
-      vibeDistillation: {
-        ...mockDoctorReport.vibeDistillation,
-        launchAgent: { loaded: false, installed: false }, // launchAgent "not installed"
-        runs: {
-          ...mockDoctorReport.vibeDistillation.runs,
-          lastRunAgeMinutes: null,
-          lastOkRunAgeMinutes: null,
-          skippedRunReasons: [],
-        },
-        queueHealth: {
-          ...mockDoctorReport.vibeDistillation.queueHealth,
-          oldestQueuedAgeMinutes: null,
-          lock: { staleByCreatedAge: false, exists: false }, // lock is clear
-        },
-      },
-      sourceDistillation: {
-        ...mockDoctorReport.sourceDistillation,
-        queueHealth: {
-          ...mockDoctorReport.sourceDistillation.queueHealth,
-          lock: { staleByCreatedAge: true, exists: true }, // lock is stale
-        },
-      },
+  it("renders fallback text for unknown reason codes", () => {
+    const report = {
+      ...baseReport,
+      reasons: ["UNMAPPED_CUSTOM_REASON"],
+      mcp: { ...baseReport.mcp, nextActions: [] },
+      vibeDistillation: { ...baseReport.vibeDistillation, nextActions: [] },
+      sourceDistillation: { ...baseReport.sourceDistillation, nextActions: [] },
     };
 
     vi.mocked(useQuery).mockReturnValue({
-      data: alternativeReport,
-      isLoading: false,
-      error: null,
+      data: report,
+      isError: false,
+      isFetching: false,
+      refetch: vi.fn(),
     } as any);
 
     render(
@@ -231,20 +304,25 @@ describe("DoctorPage", () => {
       </QueryClientProvider>,
     );
 
-    // failed ステータスの確認
-    expect(screen.getByText("failed")).toBeInTheDocument();
+    expect(screen.getByText("Unmapped Custom Reason")).toBeInTheDocument();
+    expect(screen.getByText("Doctor が未定義の診断コードを返しました。")).toBeInTheDocument();
+    expect(screen.getByText("No pending actions")).toBeInTheDocument();
+  });
 
-    // reasons が空の時の代替テキスト確認
-    expect(screen.getByText("degraded reasonはありません。")).toBeInTheDocument();
+  it("renders error card when doctor query fails", () => {
+    vi.mocked(useQuery).mockReturnValue({
+      data: undefined,
+      isError: true,
+      isFetching: false,
+      refetch: vi.fn(),
+    } as any);
 
-    // Vibe Distillation の launchAgent が not installed バッジであること
-    expect(screen.getAllByText("not installed").length).toBeGreaterThanOrEqual(1);
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DoctorPage />
+      </QueryClientProvider>,
+    );
 
-    // Pipeline lockの表示 (stale & clear)
-    expect(screen.getByText("clear")).toBeInTheDocument(); // vibeDistillation lock exists: false
-    expect(screen.getByText("stale")).toBeInTheDocument(); // sourceDistillation lock staleByCreatedAge: true
-
-    // Source Distillation は outcomes が空なので、空テキストが表示されること
-    expect(screen.getByText("No outcome data")).toBeInTheDocument();
+    expect(screen.getByText("Doctor API Error")).toBeInTheDocument();
   });
 });
