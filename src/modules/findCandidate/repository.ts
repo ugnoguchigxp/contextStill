@@ -10,12 +10,16 @@ export type FindCandidateResultRow = FindCandidateBaseRow & {
   sourceUri: string;
 };
 
+export type CandidateKnowledgeType = "rule" | "procedure";
+
 export type CandidateRecord = {
+  type?: CandidateKnowledgeType;
   title: string;
   content: string;
 };
 
 export type CandidateOrigin = {
+  candidateType?: CandidateKnowledgeType;
   readRanges: Array<{
     from: number;
     toExclusive: number;
@@ -99,7 +103,10 @@ export async function insertFindCandidateResult(params: {
       candidateIndex: params.candidateIndex,
       title: params.candidate.title,
       content: params.candidate.content,
-      origin: params.origin,
+      origin: {
+        ...params.origin,
+        ...(params.candidate.type ? { candidateType: params.candidate.type } : {}),
+      },
       status: "selected",
       updatedAt: new Date(),
     })

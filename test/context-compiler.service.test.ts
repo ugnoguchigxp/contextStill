@@ -151,6 +151,69 @@ describe("Context Compiler Service", () => {
     expect(pack.status).toBe("degraded");
   });
 
+  test("keeps status ok when only maintenance fallback reasons exist", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [
+        {
+          id: "k1",
+          type: "rule",
+          status: "active",
+          title: "Repo scoped knowledge",
+          body: "Use repo metadata aware retrieval.",
+          score: 0.92,
+          sourceRefs: ["file:///repo/rule.md#full"],
+          hasSourceLinks: true,
+        },
+      ],
+      degradedReasons: ["KNOWLEDGE_APPLIES_TO_FALLBACK"],
+      stats: {
+        textHitCount: 1,
+        vectorHitCount: 0,
+        mergedCount: 1,
+        textFailed: false,
+        vectorFailed: false,
+        embeddingStatus: "generated",
+        scopedSearch: true,
+        repoScopeFallbackUsed: false,
+        queryText: "goal",
+      },
+    } as any);
+    vi.mocked(retrieveSources).mockResolvedValue({
+      items: [
+        {
+          id: "s1",
+          sourceUri: "file:///repo/rule.md",
+          locator: "full",
+          score: 0.7,
+          content: "repo metadata guidance",
+        },
+      ],
+      degradedReasons: [],
+      stats: {
+        hitCount: 1,
+        textHitCount: 1,
+        vectorHitCount: 0,
+        searchFailed: false,
+        embeddingStatus: "generated",
+        scopedSearch: true,
+        repoScopeFallbackUsed: false,
+        queryText: "goal",
+      },
+    } as any);
+
+    const { pack } = await compileContextPack({
+      goal: "inspect fallback quality",
+      intent: "review",
+      repoPath: "/workspace/repo-a",
+      files: ["src/modules/context-compiler/context-compiler.service.ts"],
+    });
+
+    expect(pack.status).toBe("ok");
+    const calls = (pack.diagnostics.retrievalStats.suggestedNextCalls ?? []) as string[];
+    expect(calls).toContain("search_knowledge (inspect appliesTo/repo metadata coverage)");
+    expect(calls).not.toContain("context_compile (retry with explicit repoPath/files)");
+  });
+
   test("resolves retrieval mode based on intent", async () => {
     vi.mocked(retrieveKnowledge).mockResolvedValue({
       items: [],

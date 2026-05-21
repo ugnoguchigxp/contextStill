@@ -4,6 +4,7 @@ import { doctorReportSchema } from "../src/shared/schemas/doctor.schema.ts";
 import {
   knowledgeSearchInputSchema,
   registerKnowledgeInputSchema,
+  updateKnowledgeInputSchema,
 } from "../src/shared/schemas/knowledge.schema.ts";
 import { overviewDashboardSchema } from "../src/shared/schemas/overview.schema.ts";
 import { recordVibeMemoryInputSchema } from "../src/shared/schemas/vibe-memory.schema.ts";
@@ -331,5 +332,93 @@ describe("Shared Schemas", () => {
         agentDiffs: [{ filePath: "a.ts", diff: " " }],
       }),
     ).toThrow("Agent diff entry requires diffHunk or diff");
+  });
+
+  test("knowledge.schema preprocess and refine edge cases", () => {
+    // test optionalKnowledgeScoreSchema preprocess
+    const reg1 = registerKnowledgeInputSchema.parse({
+      title: "T",
+      body: "B",
+      confidence: "", // empty string should map to undefined
+      importance: "85", // numeric string should map to 85
+    });
+    expect(reg1.confidence).toBeUndefined();
+    expect(reg1.importance).toBe(85);
+
+    const reg2 = registerKnowledgeInputSchema.parse({
+      title: "T",
+      body: "B",
+      confidence: null, // null should map to undefined
+      importance: 90,
+    });
+    expect(reg2.confidence).toBeUndefined();
+    expect(reg2.importance).toBe(90);
+
+    const regInvalidScore = registerKnowledgeInputSchema.safeParse({
+      title: "T",
+      body: "B",
+      confidence: "invalid-number", // should result in undefined
+    });
+    expect(regInvalidScore.success).toBe(true);
+    if (regInvalidScore.success) {
+      expect(regInvalidScore.data.confidence).toBeUndefined();
+    }
+
+    // test optionalApplicabilityBooleanSchema preprocess
+    const regBool1 = registerKnowledgeInputSchema.parse({
+      title: "T",
+      body: "B",
+      general: "true",
+    });
+    expect(regBool1.general).toBe(true);
+
+    const regBool2 = registerKnowledgeInputSchema.parse({
+      title: "T",
+      body: "B",
+      general: "false",
+    });
+    expect(regBool2.general).toBe(false);
+
+    const regBoolInvalid = registerKnowledgeInputSchema.parse({
+      title: "T",
+      body: "B",
+      general: "not-a-boolean",
+    });
+    expect(regBoolInvalid.general).toBeUndefined();
+
+    // test optionalApplicabilityArraySchema preprocess
+    const regArr1 = registerKnowledgeInputSchema.parse({
+      title: "T",
+      body: "B",
+      technologies: "node, bun, typescript", // split comma
+    });
+    expect(regArr1.technologies).toEqual(["node", "bun", "typescript"]);
+
+    const regArr2 = registerKnowledgeInputSchema.parse({
+      title: "T",
+      body: "B",
+      technologies: ["node", "bun"],
+    });
+    expect(regArr2.technologies).toEqual(["node", "bun"]);
+
+    const regArrEmpty = registerKnowledgeInputSchema.parse({
+      title: "T",
+      body: "B",
+      technologies: "",
+    });
+    expect(regArrEmpty.technologies).toBeUndefined();
+
+    // test updateKnowledgeInputSchema refine
+    const updateValid = updateKnowledgeInputSchema.safeParse({
+      id: "550e8400-e29b-41d4-a716-446655440000",
+      title: "Updated Title",
+    });
+    expect(updateValid.success).toBe(true);
+
+    const updateInvalid = updateKnowledgeInputSchema.safeParse({
+      id: "550e8400-e29b-41d4-a716-446655440000",
+      // no update fields
+    });
+    expect(updateInvalid.success).toBe(false);
   });
 });

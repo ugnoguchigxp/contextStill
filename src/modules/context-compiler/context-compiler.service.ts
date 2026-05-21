@@ -84,7 +84,7 @@ function isCjkCodePoint(codePoint: number): boolean {
   );
 }
 
-function estimatedTokenWeight(char: string): number {
+export function estimatedTokenWeight(char: string): number {
   const codePoint = char.codePointAt(0);
   if (!codePoint) return 0;
   if (isWhitespaceCodePoint(codePoint)) return 0.15;
@@ -94,7 +94,7 @@ function estimatedTokenWeight(char: string): number {
   return 0.5;
 }
 
-function estimateTokens(text: string): number {
+export function estimateTokens(text: string): number {
   let total = 0;
   for (const char of text) {
     total += estimatedTokenWeight(char);
@@ -403,6 +403,103 @@ function countMatches(haystack: string, needles: string[]): number {
   return hits;
 }
 
+function pushUnique(items: string[], value: string): void {
+  if (!items.includes(value)) {
+    items.push(value);
+  }
+}
+
+const maintenanceReasonSet = new Set([
+  "KNOWLEDGE_APPLIES_TO_FALLBACK",
+  "KNOWLEDGE_REPO_SCOPE_FALLBACK",
+  "SOURCE_REPO_SCOPE_FALLBACK",
+]);
+
+const warningReasonSet = new Set([
+  "QUERY_EMBEDDING_UNAVAILABLE",
+  "SOURCE_QUERY_EMBEDDING_UNAVAILABLE",
+  "TOKEN_BUDGET_SECTION_LIMIT_REACHED",
+]);
+
+type CompileReasonBuckets = {
+  blockingReasons: string[];
+  hardFailureReasons: string[];
+  qualityWarnings: string[];
+  maintenanceWarnings: string[];
+};
+
+function classifyCompileReasons(params: {
+  reasons: string[];
+  selectedKnowledgeCount: number;
+  selectedCodeContextCount: number;
+  sourceHitCount: number;
+}): CompileReasonBuckets {
+  const uniqueReasons = [...new Set(params.reasons.map((reason) => reason.trim()).filter(Boolean))];
+  const blockingReasons: string[] = [];
+  const hardFailureReasons: string[] = [];
+  const qualityWarnings: string[] = [];
+  const maintenanceWarnings: string[] = [];
+  const hasKnowledge = params.selectedKnowledgeCount > 0;
+  const hasCodeContext = params.selectedCodeContextCount > 0;
+  const hasSourceHits = params.sourceHitCount > 0;
+  const hasActionableContent = hasKnowledge || hasCodeContext;
+
+  for (const reason of uniqueReasons) {
+    if (maintenanceReasonSet.has(reason)) {
+      maintenanceWarnings.push(reason);
+      continue;
+    }
+
+    if (reason === "AGENTIC_REFINE_FAILED") {
+      qualityWarnings.push(reason);
+      continue;
+    }
+
+    if (reason === "NO_ACTIVE_KNOWLEDGE_MATCH") {
+      if (hasKnowledge || hasSourceHits || hasCodeContext) {
+        qualityWarnings.push(reason);
+      } else {
+        blockingReasons.push(reason);
+      }
+      continue;
+    }
+
+    if (reason === "NO_SOURCE_MATCH") {
+      if (hasKnowledge || hasCodeContext) {
+        qualityWarnings.push(reason);
+      } else {
+        blockingReasons.push(reason);
+      }
+      continue;
+    }
+
+    if (warningReasonSet.has(reason)) {
+      if (reason === "TOKEN_BUDGET_SECTION_LIMIT_REACHED" && !hasActionableContent) {
+        blockingReasons.push(reason);
+      } else {
+        qualityWarnings.push(reason);
+      }
+      continue;
+    }
+
+    if (reason.endsWith("_FAILED") || reason.includes("ERROR")) {
+      hardFailureReasons.push(reason);
+      blockingReasons.push(reason);
+      continue;
+    }
+
+    // Unknown reasons are treated as blocking so that new failure modes stay visible.
+    blockingReasons.push(reason);
+  }
+
+  return {
+    blockingReasons,
+    hardFailureReasons,
+    qualityWarnings,
+    maintenanceWarnings,
+  };
+}
+
 async function updateCompileRunSnapshotSafe(runId: string, pack: ContextPack): Promise<void> {
   try {
     await updateCompileRunSnapshot(runId, pack);
@@ -451,6 +548,7 @@ export async function compileContextPack(
         sourceRefCount: item.sourceRefs.length,
         hasSourceLinks: item.hasSourceLinks,
         stale: item.status === "deprecated",
+        applicabilityScore: item.applicabilityScore,
         errorKeywordHits: countMatches(searchable, errorSignals.keywords),
         errorFileHits: countMatches(searchable, errorSignals.files),
         errorContextWeight: input.lastErrorContext ? 1 : 0,
@@ -474,7 +572,7 @@ export async function compileContextPack(
   );
 
   if (agenticResult.error) {
-    degradedReasons.push("AGENTIC_REFINE_FAILED");
+    pushUnique(degradedReasons, "AGENTIC_REFINE_FAILED");
   }
 
   const refinedKnowledgeMap = new Map(rankedKnowledge.map((k) => [k.id, k]));
@@ -515,7 +613,7 @@ export async function compileContextPack(
   const budgetDropDetected =
     budgetedRules.dropped || budgetedProcedures.dropped || budgetedCodeContext.dropped;
   if (budgetDropDetected) {
-    degradedReasons.push("TOKEN_BUDGET_SECTION_LIMIT_REACHED");
+    pushUnique(degradedReasons, "TOKEN_BUDGET_SECTION_LIMIT_REACHED");
   }
 
   const selectedPackItems = [
@@ -523,6 +621,8 @@ export async function compileContextPack(
     ...budgetedProcedures.items,
     ...budgetedCodeContext.items,
   ];
+  const selectedKnowledgeCount = budgetedRules.items.length + budgetedProcedures.items.length;
+  const selectedCodeContextCount = budgetedCodeContext.items.length;
   const itemSourceRefs = selectedPackItems.flatMap((item) => item.sourceRefs);
   const sourceRefsCandidate = [
     ...new Set([
@@ -530,35 +630,51 @@ export async function compileContextPack(
       ...sourceContext.items.map((item) => formatSourceRef(item.sourceUri, item.locator)),
     ]),
   ];
-  const hardFailureCount = degradedReasons.filter((reason) => reason.endsWith("_FAILED")).length;
-  const status = hardFailureCount >= 2 ? "failed" : degradedReasons.length > 0 ? "degraded" : "ok";
+  const reasonBuckets = classifyCompileReasons({
+    reasons: degradedReasons,
+    selectedKnowledgeCount,
+    selectedCodeContextCount,
+    sourceHitCount: sourceContext.stats.hitCount,
+  });
+  const hardFailureCount = reasonBuckets.hardFailureReasons.length;
+  const status =
+    hardFailureCount >= 2 ? "failed" : reasonBuckets.blockingReasons.length > 0 ? "degraded" : "ok";
   const minimalTasks = buildMinimalTasks(retrievalMode);
   const selectedStatuses = new Set(rankedKnowledge.map((item) => item.status));
+  const hasExplicitRepoPath = Boolean(normalizedRepoPath);
+  const hasExplicitFiles = Boolean(input.files?.some((file) => file.trim().length > 0));
+  const reasonSet = new Set(degradedReasons);
   const suggestedNextCalls: string[] = [];
-  if (degradedReasons.includes("NO_ACTIVE_KNOWLEDGE_MATCH")) {
+  if (reasonSet.has("NO_ACTIVE_KNOWLEDGE_MATCH")) {
     suggestedNextCalls.push("search_knowledge");
     suggestedNextCalls.push("memory_search");
   }
-  if (degradedReasons.includes("NO_SOURCE_MATCH")) {
+  if (reasonSet.has("NO_SOURCE_MATCH")) {
     suggestedNextCalls.push("memory_search");
     suggestedNextCalls.push("bun run import:sources -- <wiki root>");
     suggestedNextCalls.push("bun run distill:pipeline:once");
   }
-  if (
-    degradedReasons.includes("KNOWLEDGE_APPLIES_TO_FALLBACK") ||
-    degradedReasons.includes("KNOWLEDGE_REPO_SCOPE_FALLBACK") ||
-    degradedReasons.includes("SOURCE_REPO_SCOPE_FALLBACK")
-  ) {
-    suggestedNextCalls.push("context_compile (retry with explicit repoPath/files)");
+  if (reasonSet.has("KNOWLEDGE_APPLIES_TO_FALLBACK")) {
+    suggestedNextCalls.push("search_knowledge (inspect appliesTo/repo metadata coverage)");
   }
   if (
-    degradedReasons.some(
-      (r) =>
-        r.endsWith("_FAILED") ||
-        r.includes("UNAVAILABLE") ||
-        r.includes("ERROR") ||
-        r.includes("BUDGET_SECTION_LIMIT_REACHED"),
-    )
+    reasonSet.has("KNOWLEDGE_REPO_SCOPE_FALLBACK") ||
+    reasonSet.has("SOURCE_REPO_SCOPE_FALLBACK")
+  ) {
+    if (!hasExplicitRepoPath || !hasExplicitFiles) {
+      suggestedNextCalls.push("context_compile (retry with explicit repoPath/files)");
+    } else {
+      suggestedNextCalls.push("search_knowledge (validate repo scope tagging)");
+    }
+  }
+  if (reasonSet.has("TOKEN_BUDGET_SECTION_LIMIT_REACHED")) {
+    suggestedNextCalls.push("context_compile (retry with larger tokenBudget)");
+  }
+  if (
+    reasonBuckets.hardFailureReasons.length > 0 ||
+    reasonSet.has("AGENTIC_REFINE_FAILED") ||
+    reasonSet.has("QUERY_EMBEDDING_UNAVAILABLE") ||
+    reasonSet.has("SOURCE_QUERY_EMBEDDING_UNAVAILABLE")
   ) {
     suggestedNextCalls.push("doctor");
   }
@@ -634,6 +750,12 @@ export async function compileContextPack(
       ...(suggestedNextCalls.length > 0
         ? [`推奨される次の MCP コール: ${[...new Set(suggestedNextCalls)].join(", ")}`]
         : []),
+      ...(reasonBuckets.qualityWarnings.length > 0
+        ? [`品質警告: ${reasonBuckets.qualityWarnings.join(", ")}`]
+        : []),
+      ...(reasonBuckets.maintenanceWarnings.length > 0
+        ? [`メンテナンス警告: ${reasonBuckets.maintenanceWarnings.join(", ")}`]
+        : []),
       ...(budgetDropDetected
         ? ["トークン予算の制限により、優先順位の低い項目がカットされました。"]
         : []),
@@ -652,6 +774,12 @@ export async function compileContextPack(
           errorKind: errorSignals.kind ?? null,
           keywordCount: errorSignals.keywords.length,
           fileHintCount: errorSignals.files.length,
+        },
+        reasonBuckets: {
+          blocking: reasonBuckets.blockingReasons,
+          qualityWarnings: reasonBuckets.qualityWarnings,
+          maintenanceWarnings: reasonBuckets.maintenanceWarnings,
+          hardFailures: reasonBuckets.hardFailureReasons,
         },
         suggestedNextCalls: [...new Set(suggestedNextCalls)],
       },

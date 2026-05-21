@@ -36,9 +36,9 @@ export const searchKnowledgeTool: ToolEntry = {
     properties: {
       query: { type: "string" },
       repoPath: { type: "string" },
-      files: { type: "array", items: { type: "string" } },
       changeTypes: { type: "array", items: { type: "string" } },
       technologies: { type: "array", items: { type: "string" } },
+      includeGeneral: { type: "boolean", default: true },
       statuses: {
         type: "array",
         items: { type: "string", enum: ["draft", "active", "deprecated"] },
@@ -83,6 +83,9 @@ export const searchKnowledgeTool: ToolEntry = {
       lastVerifiedAt: item.lastVerifiedAt,
       updatedAt: item.updatedAt,
       sourceRefs: item.sourceRefs,
+      appliesTo: item.appliesTo,
+      applicabilityScore: item.applicabilityScore,
+      applicabilityMatches: item.applicabilityMatches,
       metadata: item.metadata,
     }));
 
@@ -129,6 +132,12 @@ export const registerKnowledgeTool: ToolEntry = {
       scope: { type: "string", enum: ["repo", "global"], default: "repo" },
       confidence: { type: "number", minimum: 0, maximum: 100 },
       importance: { type: "number", minimum: 0, maximum: 100 },
+      appliesTo: { type: "object" },
+      general: { type: "boolean" },
+      technologies: { type: "array", items: { type: "string" } },
+      changeTypes: { type: "array", items: { type: "string" } },
+      repoPath: { type: "string" },
+      repoKey: { type: "string" },
       metadata: { type: "object" },
     },
     required: ["title", "body"],
@@ -212,6 +221,12 @@ export const updateKnowledgeTool: ToolEntry = {
       body: { type: "string" },
       confidence: { type: "number", minimum: 0, maximum: 100 },
       importance: { type: "number", minimum: 0, maximum: 100 },
+      appliesTo: { type: "object" },
+      general: { type: "boolean" },
+      technologies: { type: "array", items: { type: "string" } },
+      changeTypes: { type: "array", items: { type: "string" } },
+      repoPath: { type: "string" },
+      repoKey: { type: "string" },
       metadata: { type: "object" },
     },
     required: ["id"],
@@ -228,6 +243,7 @@ export const updateKnowledgeTool: ToolEntry = {
         body: knowledgeItems.body,
         confidence: knowledgeItems.confidence,
         importance: knowledgeItems.importance,
+        appliesTo: knowledgeItems.appliesTo,
         metadata: knowledgeItems.metadata,
       })
       .from(knowledgeItems)
@@ -264,6 +280,15 @@ export const updateKnowledgeTool: ToolEntry = {
       body: parsed.body ?? existing.body,
       confidence: parsed.confidence ?? normalizeKnowledgeScore(existing.confidence, 70),
       importance: parsed.importance ?? normalizeKnowledgeScore(existing.importance, 70),
+      appliesTo: {
+        ...asRecord(existing.appliesTo),
+        ...(parsed.appliesTo ? asRecord(parsed.appliesTo) : {}),
+        ...(parsed.general !== undefined ? { general: parsed.general } : {}),
+        ...(parsed.technologies ? { technologies: parsed.technologies } : {}),
+        ...(parsed.changeTypes ? { changeTypes: parsed.changeTypes } : {}),
+        ...(parsed.repoPath ? { repoPath: parsed.repoPath } : {}),
+        ...(parsed.repoKey ? { repoKey: parsed.repoKey } : {}),
+      },
       metadata: parsed.metadata
         ? {
             ...existingMetadata,

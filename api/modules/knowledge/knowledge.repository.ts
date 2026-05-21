@@ -1,4 +1,4 @@
-import { and, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
+import { and, asc, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
 import { db } from "../../../src/db/index.js";
 import { contextPackItems, knowledgeItems } from "../../../src/db/schema.js";
 import { normalizeKnowledgeScore } from "../../../src/lib/score-scale.js";
@@ -11,6 +11,15 @@ import {
   computeDecayFactor,
   computeDynamicScore,
 } from "../../../src/modules/knowledge/knowledge-value.service.js";
+import {
+  mergeApplicabilityInput,
+  normalizeKnowledgeApplicability,
+} from "../../../src/modules/knowledge/applicability.service.js";
+import {
+  type KnowledgeTagKind,
+  type KnowledgeTagStatus,
+  listKnowledgeTagDefinitions,
+} from "../../../src/modules/knowledge/knowledge-tags.repository.js";
 import { canTransitionKnowledgeStatus } from "../../../src/modules/lifecycle/lifecycle.service.js";
 import type { KnowledgeStatus } from "../../../src/shared/schemas/knowledge.schema.js";
 
@@ -22,6 +31,12 @@ export type KnowledgeWriteInput = {
   body: string;
   confidence: number;
   importance: number;
+  appliesTo?: Record<string, unknown>;
+  general?: boolean;
+  technologies?: string[];
+  changeTypes?: string[];
+  repoPath?: string;
+  repoKey?: string;
   metadata?: Record<string, unknown>;
 };
 
@@ -61,6 +76,17 @@ export type KnowledgeFeedbackResult = {
   lastVerifiedAt: Date | null;
 };
 
+export type KnowledgeTagDefinitionApi = {
+  id: string;
+  kind: KnowledgeTagKind;
+  slug: string;
+  label: string;
+  description: string | null;
+  aliases: string[];
+  status: KnowledgeTagStatus;
+  sortOrder: number;
+};
+
 export type KnowledgeListItem = {
   id: string;
   type: string;
@@ -70,6 +96,7 @@ export type KnowledgeListItem = {
   body: string;
   confidence: number;
   importance: number;
+  appliesTo: Record<string, unknown>;
   metadata: Record<string, unknown>;
   sourceRefs: string[];
   sourceVibeMemoryIds: string[];
@@ -91,7 +118,19 @@ type KnowledgeListParams = {
   status?: string;
   type?: string;
   query?: string;
+  sortBy?: KnowledgeListSortBy;
+  sortDir?: KnowledgeListSortDir;
 };
+
+export type KnowledgeListSortBy =
+  | "title"
+  | "type"
+  | "status"
+  | "scope"
+  | "qualityScore"
+  | "updatedAt";
+
+export type KnowledgeListSortDir = "asc" | "desc";
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -187,6 +226,7 @@ export async function listKnowledgeItems(
 ): Promise<KnowledgeListItem[]> {
   const where = buildKnowledgeListWhere(params);
   const offset = Math.max(0, (params.page ?? 1) - 1) * params.limit;
+  const orderBy = buildKnowledgeListOrderBy(params);
   const commonSelect = {
     id: knowledgeItems.id,
     type: knowledgeItems.type,
@@ -196,6 +236,7 @@ export async function listKnowledgeItems(
     body: knowledgeItems.body,
     confidence: knowledgeItems.confidence,
     importance: knowledgeItems.importance,
+    appliesTo: knowledgeItems.appliesTo,
     metadata: knowledgeItems.metadata,
     lastVerifiedAt: knowledgeItems.lastVerifiedAt,
     createdAt: knowledgeItems.createdAt,
@@ -228,7 +269,7 @@ export async function listKnowledgeItems(
       })
       .from(knowledgeItems)
       .where(where)
-      .orderBy(desc(knowledgeItems.updatedAt))
+      .orderBy(...orderBy)
       .limit(params.limit)
       .offset(offset);
   } catch (error) {
@@ -239,7 +280,7 @@ export async function listKnowledgeItems(
       .select(commonSelect)
       .from(knowledgeItems)
       .where(where)
-      .orderBy(desc(knowledgeItems.updatedAt))
+      .orderBy(...orderBy)
       .limit(params.limit)
       .offset(offset);
   }
@@ -260,6 +301,7 @@ export async function listKnowledgeItems(
       scope: String(row.scope ?? "repo"),
       title: String(row.title ?? ""),
       body: String(row.body ?? ""),
+      appliesTo: asRecord(row.appliesTo),
       metadata: asRecord(row.metadata),
       sourceRefs: extractSourceRefs(asRecord(row.metadata)),
       sourceVibeMemoryIds: extractSourceVibeMemoryIds(asRecord(row.metadata)),
@@ -279,6 +321,22 @@ export async function listKnowledgeItems(
   });
 }
 
+function buildKnowledgeListOrderBy(params: Pick<KnowledgeListParams, "sortBy" | "sortDir">) {
+  const sortBy = params.sortBy ?? "updatedAt";
+  const direction = params.sortDir === "asc" ? asc : desc;
+  const qualityScore = sql<number>`(${knowledgeItems.importance} * 0.6 + ${knowledgeItems.confidence} * 0.4)`;
+  const sortableColumns = {
+    title: sql`lower(${knowledgeItems.title})`,
+    type: sql`${knowledgeItems.type}`,
+    status: sql`${knowledgeItems.status}`,
+    scope: sql`${knowledgeItems.scope}`,
+    qualityScore,
+    updatedAt: sql`${knowledgeItems.updatedAt}`,
+  } satisfies Record<KnowledgeListSortBy, SQL>;
+  const selected = sortableColumns[sortBy] ?? sortableColumns.updatedAt;
+  return [direction(selected), desc(knowledgeItems.updatedAt), desc(knowledgeItems.id)];
+}
+
 async function tryEmbedKnowledge(input: KnowledgeWriteInput): Promise<number[] | undefined> {
   try {
     return await embedOne(`${input.title}\n${input.body}`, "passage");
@@ -287,9 +345,42 @@ async function tryEmbedKnowledge(input: KnowledgeWriteInput): Promise<number[] |
   }
 }
 
+async function buildNormalizedApplicability(
+  input: Pick<
+    KnowledgeWriteInput,
+    "appliesTo" | "general" | "technologies" | "changeTypes" | "repoPath" | "repoKey"
+  >,
+) {
+  const mergedInput = mergeApplicabilityInput({
+    appliesTo: input.appliesTo,
+    general: input.general,
+    technologies: input.technologies,
+    changeTypes: input.changeTypes,
+    repoPath: input.repoPath,
+    repoKey: input.repoKey,
+  });
+  return normalizeKnowledgeApplicability(mergedInput);
+}
+
+function mergeApplicabilityMetadata(
+  metadata: Record<string, unknown>,
+  normalized: Awaited<ReturnType<typeof buildNormalizedApplicability>>,
+): Record<string, unknown> {
+  const next: Record<string, unknown> = { ...metadata };
+  if (normalized.warnings.length > 0) {
+    next.tagNormalizationWarnings = normalized.warnings;
+  }
+  if (normalized.unknownTagCandidates.length > 0) {
+    next.unknownTagCandidates = normalized.unknownTagCandidates;
+  }
+  return next;
+}
+
 export async function createKnowledgeItem(input: KnowledgeWriteInput) {
   const confidence = normalizeKnowledgeScore(input.confidence, 70);
   const importance = normalizeKnowledgeScore(input.importance, 70);
+  const normalizedApplicability = await buildNormalizedApplicability(input);
+  const metadata = mergeApplicabilityMetadata(input.metadata ?? {}, normalizedApplicability);
   const embedding = await tryEmbedKnowledge(input);
   const [inserted] = await db
     .insert(knowledgeItems)
@@ -301,7 +392,8 @@ export async function createKnowledgeItem(input: KnowledgeWriteInput) {
       body: input.body,
       confidence,
       importance,
-      metadata: input.metadata ?? {},
+      appliesTo: normalizedApplicability.appliesTo,
+      metadata,
       embedding,
       lastVerifiedAt: new Date(),
     })
@@ -329,6 +421,8 @@ export async function updateKnowledgeItem(id: string, input: KnowledgeWriteInput
       type: knowledgeItems.type,
       title: knowledgeItems.title,
       body: knowledgeItems.body,
+      appliesTo: knowledgeItems.appliesTo,
+      metadata: knowledgeItems.metadata,
       lastVerifiedAt: knowledgeItems.lastVerifiedAt,
     })
     .from(knowledgeItems)
@@ -338,6 +432,21 @@ export async function updateKnowledgeItem(id: string, input: KnowledgeWriteInput
 
   const confidence = normalizeKnowledgeScore(input.confidence, 70);
   const importance = normalizeKnowledgeScore(input.importance, 70);
+  const normalizedApplicability = await buildNormalizedApplicability({
+    appliesTo: input.appliesTo ?? asRecord(existing.appliesTo),
+    general: input.general,
+    technologies: input.technologies,
+    changeTypes: input.changeTypes,
+    repoPath: input.repoPath,
+    repoKey: input.repoKey,
+  });
+  const metadata = mergeApplicabilityMetadata(
+    {
+      ...asRecord(existing.metadata),
+      ...(input.metadata ?? {}),
+    },
+    normalizedApplicability,
+  );
   const embedding = await tryEmbedKnowledge(input);
   const titleChanged = input.title !== existing.title;
   const bodyChanged = input.body !== existing.body;
@@ -354,7 +463,8 @@ export async function updateKnowledgeItem(id: string, input: KnowledgeWriteInput
       body: input.body,
       confidence,
       importance,
-      metadata: input.metadata ?? {},
+      appliesTo: normalizedApplicability.appliesTo,
+      metadata,
       embedding,
       updatedAt: now,
       lastVerifiedAt: shouldUpdateLastVerifiedAt ? now : existing.lastVerifiedAt,
@@ -592,4 +702,24 @@ export async function recordKnowledgeFeedback(params: {
     dynamicScore: updated.dynamicScore,
     lastVerifiedAt: updated.lastVerifiedAt,
   };
+}
+
+export async function listKnowledgeTagDefinitionsForApi(params?: {
+  kind?: KnowledgeTagKind;
+  status?: KnowledgeTagStatus;
+}): Promise<KnowledgeTagDefinitionApi[]> {
+  const definitions = await listKnowledgeTagDefinitions({
+    kinds: params?.kind ? [params.kind] : undefined,
+    statuses: params?.status ? [params.status] : undefined,
+  });
+  return definitions.map((definition) => ({
+    id: definition.id,
+    kind: definition.kind,
+    slug: definition.slug,
+    label: definition.label,
+    description: definition.description,
+    aliases: definition.aliases,
+    status: definition.status,
+    sortOrder: definition.sortOrder,
+  }));
 }

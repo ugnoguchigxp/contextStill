@@ -21,6 +21,7 @@
   "files": {
     "ignore": [
       "coverage/**",
+      "coverage.json",
       "dist/**",
       "dist-web/**",
       "drizzle/meta/**",

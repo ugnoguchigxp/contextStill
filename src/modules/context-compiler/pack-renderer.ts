@@ -79,5 +79,24 @@ export function renderContextPackMarkdown(pack: ContextPack): string {
   } else {
     lines.push(`- 低下理由: ${pack.diagnostics.degradedReasons.join(", ")}`);
   }
+  const reasonBuckets = pack.diagnostics.retrievalStats.reasonBuckets as
+    | {
+        blocking?: string[];
+        qualityWarnings?: string[];
+        maintenanceWarnings?: string[];
+      }
+    | undefined;
+  if (Array.isArray(reasonBuckets?.blocking) && reasonBuckets.blocking.length > 0) {
+    lines.push(`- ブロッキング理由: ${reasonBuckets.blocking.join(", ")}`);
+  }
+  if (Array.isArray(reasonBuckets?.qualityWarnings) && reasonBuckets.qualityWarnings.length > 0) {
+    lines.push(`- 品質警告: ${reasonBuckets.qualityWarnings.join(", ")}`);
+  }
+  if (
+    Array.isArray(reasonBuckets?.maintenanceWarnings) &&
+    reasonBuckets.maintenanceWarnings.length > 0
+  ) {
+    lines.push(`- メンテナンス警告: ${reasonBuckets.maintenanceWarnings.join(", ")}`);
+  }
   return lines.join("\n");
 }

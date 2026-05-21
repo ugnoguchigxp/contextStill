@@ -107,14 +107,16 @@ export async function collectVibeMemoryTargetCandidates(
     limit?: number;
   } = {},
 ): Promise<DistillationTargetCandidate[]> {
-  const limit = Math.max(1, Math.floor(params.limit ?? 100));
   let memories: Array<typeof vibeMemories.$inferSelect> = [];
   try {
-    memories = await db
+    const query = db
       .select()
       .from(vibeMemories)
-      .orderBy(asc(vibeMemories.createdAt), asc(vibeMemories.id))
-      .limit(limit);
+      .orderBy(asc(vibeMemories.createdAt), asc(vibeMemories.id));
+    memories =
+      typeof params.limit === "number"
+        ? await query.limit(Math.max(1, Math.floor(params.limit)))
+        : await query;
   } catch (error) {
     if (isMissingRelationError(error, "vibe_memories")) {
       return [];

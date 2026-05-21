@@ -239,7 +239,11 @@ describe("distillation runtime", () => {
     expect(procedureVerificationPrompt).toContain("中間応答専用");
     expect(procedureVerificationPrompt).toContain("最終 candidates にコピーしてはいけない");
     expect(procedureVerificationPrompt).toContain("SKILL.md");
-    expect(procedureVerificationPrompt).toContain("順序付きワークフロー");
+    expect(procedureVerificationPrompt).toContain("System Context");
+    expect(procedureVerificationPrompt).toContain("description に相当する使用条件");
+    expect(procedureVerificationPrompt).toContain("YAML frontmatter");
+    expect(procedureVerificationPrompt).toContain("Use when:");
+    expect(procedureVerificationPrompt).toContain("Workflow:");
     expect(procedureVerificationPrompt).toContain(
       "最終 knowledge に必要な情報は type / title / body / confidence / importance",
     );

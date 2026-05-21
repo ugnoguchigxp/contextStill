@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { parseCoverEvidenceResult } from "../src/modules/coverEvidence/parser.js";
 import { runCoverEvidence } from "../src/modules/coverEvidence/domain.js";
+import { parseCoverEvidenceResult } from "../src/modules/coverEvidence/parser.js";
 
 const mocks = vi.hoisted(() => ({
   getFindCandidateResultById: vi.fn(),
@@ -87,6 +87,21 @@ function candidateRow(overrides: Record<string, unknown> = {}) {
   };
 }
 
+function skillLikeProcedureBody(): string {
+  return [
+    "Use when: Use this when coverEvidence changes are ready to finalize and the result must remain traceable to source evidence.",
+    "",
+    "Workflow:",
+    "1. Run the focused smoke or unit test for the changed coverEvidence path.",
+    "2. Inspect the returned output and confirm source references are present.",
+    "3. Finalize only after the evidence status is knowledge_ready.",
+    "",
+    "Verification: Confirm the command output shows the focused test passed and the saved result keeps source references.",
+    "",
+    "Avoid: Do not finalize when the source reference is missing or the test output was not inspected.",
+  ].join("\n");
+}
+
 describe("coverEvidence parser", () => {
   test("parses a knowledge-ready result", () => {
     const parsed = parseCoverEvidenceResult(
@@ -100,6 +115,8 @@ describe("coverEvidence parser", () => {
           body: "coverEvidence must keep source evidence before finalization.",
           importance: 72,
           confidence: 81,
+          technologies: "typescript, vitest",
+          changeTypes: "test",
         },
         references: [
           {
@@ -117,28 +134,83 @@ describe("coverEvidence parser", () => {
 
     expect(parsed.status).toBe("knowledge_ready");
     expect(parsed.candidate?.confidence).toBe(81);
+    expect(parsed.candidate).toMatchObject({
+      technologies: ["typescript", "vitest"],
+      changeTypes: ["test"],
+    });
     expect(parsed.references).toHaveLength(1);
   });
 
-  test("rejects non-integer score scales", () => {
-    expect(() =>
-      parseCoverEvidenceResult(
-        JSON.stringify({
-          status: "knowledge_ready",
-          stage: "final",
-          candidate: {
-            type: "rule",
-            title: "Bad score",
-            body: "Score should use integer percent values.",
-            importance: 0.8,
-            confidence: 80,
-          },
-          references: [],
-          duplicateRefs: [],
-          toolEvents: [],
-        }),
-      ),
-    ).toThrow("candidate.importance must be an integer from 0 to 100");
+  test("does not require applicability fields", () => {
+    const parsed = parseCoverEvidenceResult(
+      JSON.stringify({
+        schemaVersion: 1,
+        status: "knowledge_ready",
+        stage: "final",
+        candidate: {
+          type: "rule",
+          title: "Keep evidence",
+          body: "coverEvidence must keep source evidence before finalization.",
+          importance: 72,
+          confidence: 81,
+        },
+        references: [],
+        duplicateRefs: [],
+        toolEvents: [],
+        reason: null,
+      }),
+    );
+
+    expect(parsed.candidate).not.toHaveProperty("technologies");
+    expect(parsed.candidate).not.toHaveProperty("changeTypes");
+  });
+
+  test("accepts flat output and normalizes non-integer score scales", () => {
+    const parsed = parseCoverEvidenceResult(
+      JSON.stringify({
+        status: "knowledge_ready",
+        stage: "final",
+        type: "rule",
+        title: "Bad score",
+        body: "Score should use integer percent values.",
+        importance: 0.8,
+        confidence: "79.6",
+        references: [],
+        duplicateRefs: [],
+        toolEvents: [],
+      }),
+    );
+    expect(parsed.status).toBe("knowledge_ready");
+    expect(parsed.candidate?.importance).toBe(80);
+    expect(parsed.candidate?.confidence).toBe(80);
+  });
+
+  test("parses labeled plain-text fallback output", () => {
+    const parsed = parseCoverEvidenceResult(
+      [
+        "STATUS: knowledge_ready",
+        "STAGE: final",
+        "TYPE: procedure",
+        "TITLE: Verify before finalize",
+        "BODY: 1. Run typecheck.",
+        "2. Run focused tests.",
+        "3. Confirm evidence payload.",
+        "CONFIDENCE: 82.4",
+        "IMPORTANCE: 0.79",
+        "TECHNOLOGIES: typescript, vitest",
+        "CHANGE_TYPES: test",
+      ].join("\n"),
+    );
+    expect(parsed.status).toBe("knowledge_ready");
+    expect(parsed.candidate).toMatchObject({
+      type: "procedure",
+      title: "Verify before finalize",
+      confidence: 82,
+      importance: 79,
+      technologies: ["typescript", "vitest"],
+      changeTypes: ["test"],
+    });
+    expect(parsed.candidate?.body).toContain("Run focused tests.");
   });
 });
 
@@ -169,9 +241,11 @@ describe("runCoverEvidence", () => {
         candidate: {
           type: "procedure",
           title: "Run smoke tests before finalizing coverEvidence",
-          body: "Run smoke tests before finalizing coverEvidence so source references and evidence status stay verifiable.",
+          body: skillLikeProcedureBody(),
           importance: 80,
           confidence: 85,
+          technologies: "typescript, vitest",
+          changeTypes: "test",
         },
         references: [],
         duplicateRefs: [],
@@ -190,11 +264,210 @@ describe("runCoverEvidence", () => {
 
     expect(result.result.status).toBe("knowledge_ready");
     expect(result.result.candidate?.type).toBe("procedure");
+    expect(result.result.candidate).toMatchObject({
+      technologies: ["typescript", "vitest"],
+      changeTypes: ["test"],
+    });
     expect(result.result.references[0]).toMatchObject({
       kind: "source",
       evidenceRole: "supports_candidate",
     });
     expect(mocks.saveCoverEvidenceResult).not.toHaveBeenCalled();
+  });
+
+  test("reclassifies command workflows as procedures when assessment returns rule", async () => {
+    mocks.getFindCandidateResultById.mockResolvedValue(
+      candidateRow({
+        title: "Run focused verify before finalizing",
+        content:
+          "Run `bun run typecheck`, then run `bun run test:unit`, and verify the returned evidence before finalizing.",
+        origin: {
+          readRanges: [{ from: 0, toExclusive: 120 }],
+          candidateType: "procedure",
+        },
+      }),
+    );
+    mocks.readFileDomain.mockResolvedValue({
+      content:
+        "Run `bun run typecheck`, then run `bun run test:unit`, and verify the returned evidence before finalizing.",
+      totalTokens: 120,
+      from: 0,
+      toExclusive: 120,
+      returnedTokens: 120,
+    });
+    mocks.runDistillationCompletion.mockResolvedValueOnce({
+      content: JSON.stringify({
+        schemaVersion: 1,
+        status: "knowledge_ready",
+        stage: "final",
+        candidate: {
+          type: "rule",
+          title: "Run focused verify before finalizing",
+          body: [
+            "Use when: Use this when a code change is ready for final verification.",
+            "",
+            "Workflow:",
+            "1. Run `bun run typecheck`.",
+            "2. Run `bun run test:unit`.",
+            "3. Inspect the returned evidence before finalizing.",
+            "",
+            "Verification: Confirm both commands pass and the output no longer contains the original failure.",
+            "",
+            "Avoid: Do not finalize from memory or from a stale terminal output.",
+          ].join("\n"),
+          importance: 82,
+          confidence: 86,
+        },
+        references: [],
+        duplicateRefs: [],
+        toolEvents: [],
+        reason: null,
+      }),
+      toolEvents: [],
+      messages: [],
+    });
+
+    const result = await runCoverEvidence({ id: "find-1", write: true });
+
+    expect(result.result.status).toBe("knowledge_ready");
+    expect(result.result.candidate?.type).toBe("procedure");
+    expect(result.result.candidate?.body).toContain("Workflow:");
+    expect(mocks.saveCoverEvidenceResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "find-1",
+        result: expect.objectContaining({
+          candidate: expect.objectContaining({ type: "procedure" }),
+        }),
+      }),
+    );
+    const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(request.messages[0]?.content).toContain("SKILL.md");
+    expect(request.messages[0]?.content).toContain("System Context");
+    expect(request.messages[0]?.content).toContain("description に相当する使用条件");
+    expect(request.messages[0]?.content).toContain("YAML frontmatter");
+    expect(request.messages[0]?.content).toContain("Use when:");
+    expect(request.messages[0]?.content).toContain("Workflow:");
+    expect(request.messages[0]?.content).toContain("カンマ区切り文字列");
+    expect(request.messages[0]?.content).not.toContain('"appliesTo":');
+  });
+
+  test("rejects procedure candidates that are not written as reusable steps", async () => {
+    mocks.runDistillationCompletion.mockResolvedValueOnce({
+      content: JSON.stringify({
+        schemaVersion: 1,
+        status: "knowledge_ready",
+        stage: "final",
+        candidate: {
+          type: "procedure",
+          title: "Run smoke tests before finalizing coverEvidence",
+          body: "Run smoke tests, then inspect the returned source references before finalizing coverEvidence.",
+          importance: 80,
+          confidence: 85,
+        },
+        references: [],
+        duplicateRefs: [],
+        toolEvents: [],
+        reason: null,
+      }),
+      toolEvents: [],
+      messages: [],
+    });
+
+    const result = await runCoverEvidence({ id: "find-1", write: true });
+
+    expect(result.result.status).toBe("insufficient");
+    expect(result.result.reason).toBe("procedure_body_not_actionable");
+    expect(mocks.saveCoverEvidenceResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "find-1",
+        result: expect.objectContaining({
+          status: "insufficient",
+          reason: "procedure_body_not_actionable",
+          candidate: null,
+        }),
+      }),
+    );
+  });
+
+  test("demotes one-line procedure misclassifications to rules", async () => {
+    mocks.runDistillationCompletion.mockResolvedValueOnce({
+      content: JSON.stringify({
+        schemaVersion: 1,
+        status: "knowledge_ready",
+        stage: "final",
+        candidate: {
+          type: "procedure",
+          title: "頻出クエリは Prepared Statement を使う",
+          body: "繰り返し実行するクエリは `prepare()` で Prepared Statement 化して高速化する。",
+          importance: 90,
+          confidence: 95,
+        },
+        references: [],
+        duplicateRefs: [],
+        toolEvents: [],
+        reason: null,
+      }),
+      toolEvents: [],
+      messages: [],
+    });
+
+    const result = await runCoverEvidence({ id: "find-1", write: true });
+
+    expect(result.result.status).toBe("knowledge_ready");
+    expect(result.result.candidate?.type).toBe("rule");
+    expect(mocks.saveCoverEvidenceResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "find-1",
+        result: expect.objectContaining({
+          status: "knowledge_ready",
+          candidate: expect.objectContaining({ type: "rule" }),
+        }),
+      }),
+    );
+  });
+
+  test("normalizes invalid procedure rows when reusing cached cover evidence", async () => {
+    mocks.selectCoverEvidenceResultById.mockResolvedValue({
+      id: "find-1",
+      status: "knowledge_ready",
+      stage: "final",
+      type: "procedure",
+      title: "頻出クエリは Prepared Statement を使う",
+      body: "繰り返し実行するクエリは `prepare()` で Prepared Statement 化して高速化する。",
+      importance: 90,
+      confidence: 95,
+    });
+    mocks.coverEvidenceResultFromRow.mockReturnValue({
+      schemaVersion: 1,
+      status: "knowledge_ready",
+      stage: "final",
+      candidate: {
+        type: "procedure",
+        title: "頻出クエリは Prepared Statement を使う",
+        body: "繰り返し実行するクエリは `prepare()` で Prepared Statement 化して高速化する。",
+        importance: 90,
+        confidence: 95,
+      },
+      references: [],
+      duplicateRefs: [],
+      toolEvents: [],
+      reason: null,
+    });
+
+    const result = await runCoverEvidence({ id: "find-1", write: true });
+
+    expect(result.result.candidate?.type).toBe("rule");
+    expect(mocks.runDistillationCompletion).not.toHaveBeenCalled();
+    expect(mocks.saveCoverEvidenceResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "find-1",
+        result: expect.objectContaining({
+          candidate: expect.objectContaining({ type: "rule" }),
+        }),
+      }),
+    );
   });
 
   test("persists cover_evidence_results when write is enabled", async () => {

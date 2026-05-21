@@ -1,12 +1,19 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
-import { knowledgeStatusValues, knowledgeTypeValues, scopeValues } from "../../../src/db/schema.js";
+import {
+  knowledgeStatusValues,
+  knowledgeTagKindValues,
+  knowledgeTagStatusValues,
+  knowledgeTypeValues,
+  scopeValues,
+} from "../../../src/db/schema.js";
 import {
   bulkUpdateKnowledgeStatus,
   countKnowledgeItems,
   createKnowledgeItem,
   deleteKnowledgeItem,
+  listKnowledgeTagDefinitionsForApi,
   listKnowledgeItems,
   recordKnowledgeFeedback,
   updateKnowledgeItem,
@@ -18,6 +25,10 @@ const listKnowledgeQuerySchema = z.object({
   status: z.string().trim().min(1).optional(),
   type: z.string().trim().min(1).optional(),
   query: z.string().trim().optional(),
+  sortBy: z
+    .enum(["title", "type", "status", "scope", "qualityScore", "updatedAt"])
+    .default("updatedAt"),
+  sortDir: z.enum(["asc", "desc"]).default("desc"),
 });
 
 const knowledgeWriteSchema = z.object({
@@ -28,7 +39,26 @@ const knowledgeWriteSchema = z.object({
   body: z.string().trim().min(1),
   confidence: z.number().min(0).max(100).default(70),
   importance: z.number().min(0).max(100).default(70),
+  appliesTo: z
+    .object({
+      general: z.boolean().optional(),
+      technologies: z.array(z.string().trim().min(1)).optional(),
+      changeTypes: z.array(z.string().trim().min(1)).optional(),
+      repoPath: z.string().trim().min(1).optional(),
+      repoKey: z.string().trim().min(1).optional(),
+    })
+    .optional(),
+  general: z.boolean().optional(),
+  technologies: z.array(z.string().trim().min(1)).optional(),
+  changeTypes: z.array(z.string().trim().min(1)).optional(),
+  repoPath: z.string().trim().min(1).optional(),
+  repoKey: z.string().trim().min(1).optional(),
   metadata: z.record(z.unknown()).default({}),
+});
+
+const listKnowledgeTagsQuerySchema = z.object({
+  kind: z.enum(knowledgeTagKindValues).optional(),
+  status: z.enum(knowledgeTagStatusValues).optional(),
 });
 
 const bulkStatusTargetSchema = z.enum(["active", "deprecated"]);
@@ -54,6 +84,14 @@ const feedbackSchema = z.object({
 });
 
 export const knowledgeRouter = new Hono()
+  .get("/tags", zValidator("query", listKnowledgeTagsQuerySchema), async (c) => {
+    const query = c.req.valid("query");
+    const tags = await listKnowledgeTagDefinitionsForApi({
+      kind: query.kind,
+      status: query.status,
+    });
+    return c.json({ tags });
+  })
   .get("/", zValidator("query", listKnowledgeQuerySchema), async (c) => {
     const query = c.req.valid("query");
     const [items, total] = await Promise.all([

@@ -190,6 +190,27 @@
       "when": 1778907600000,
       "tag": "0026_knowledge_candidate_metadata_indexes",
       "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1778911200000,
+      "tag": "0027_knowledge_applicability_tags",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1778914800000,
+      "tag": "0028_remove_retrieval_domain_applicability",
+      "breakpoints": true
+    },
+    {
+      "idx": 29,
+      "version": "7",
+      "when": 1778918400000,
+      "tag": "0029_cover_evidence_result_applies_to",
+      "breakpoints": true
     }
   ]
 }

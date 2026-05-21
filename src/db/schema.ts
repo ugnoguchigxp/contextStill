@@ -19,6 +19,13 @@ export const knowledgeTypeValues = ["rule", "procedure"] as const;
 export const knowledgeStatusValues = ["draft", "active", "deprecated"] as const;
 
 export const scopeValues = ["repo", "global"] as const;
+export const knowledgeTagKindValues = [
+  "technology",
+  "change_type",
+  "retrieval_mode",
+  "domain",
+] as const;
+export const knowledgeTagStatusValues = ["active", "draft", "deprecated"] as const;
 
 export const sourceKindValues = ["wiki"] as const;
 
@@ -203,6 +210,7 @@ export const knowledgeItems = pgTable(
     appliesToRepoPathIdx: index("knowledge_items_applies_to_repo_path_idx").on(
       sql`${table.appliesTo} ->> 'repoPath'`,
     ),
+    appliesToGinIdx: index("knowledge_items_applies_to_gin_idx").using("gin", table.appliesTo),
     coverEvidenceResultIdIdx: index("knowledge_items_cover_evidence_result_id_idx").on(
       sql`${table.metadata} ->> 'coverEvidenceResultId'`,
     ),
@@ -230,6 +238,38 @@ export const knowledgeItems = pgTable(
     scopeCheck: check(
       "knowledge_items_scope_check",
       sql`${table.scope} IN (${sql.raw(toSqlList(scopeValues))})`,
+    ),
+  }),
+);
+
+export const knowledgeTagDefinitions = pgTable(
+  "knowledge_tag_definitions",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    kind: text("kind").notNull(),
+    slug: text("slug").notNull(),
+    label: text("label").notNull(),
+    description: text("description"),
+    aliases: jsonb("aliases").default([]).notNull(),
+    status: text("status").notNull().default("active"),
+    sortOrder: integer("sort_order").notNull().default(1000),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    kindStatusIdx: index("knowledge_tag_definitions_kind_status_idx").on(table.kind, table.status),
+    aliasesGinIdx: index("knowledge_tag_definitions_aliases_gin_idx").using("gin", table.aliases),
+    kindSlugUniqueIdx: uniqueIndex("knowledge_tag_definitions_kind_slug_unique").on(
+      table.kind,
+      table.slug,
+    ),
+    kindCheck: check(
+      "knowledge_tag_definitions_kind_check",
+      sql`${table.kind} IN (${sql.raw(toSqlList(knowledgeTagKindValues))})`,
+    ),
+    statusCheck: check(
+      "knowledge_tag_definitions_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(knowledgeTagStatusValues))})`,
     ),
   }),
 );
@@ -457,6 +497,7 @@ export const coverEvidenceResults = pgTable(
     body: text("body"),
     importance: real("importance"),
     confidence: real("confidence"),
+    appliesTo: jsonb("applies_to").default({}).notNull(),
     references: jsonb("references").default([]).notNull(),
     duplicateRefs: jsonb("duplicate_refs").default([]).notNull(),
     toolEvents: jsonb("tool_events").default([]).notNull(),

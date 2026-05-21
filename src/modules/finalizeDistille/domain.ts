@@ -1,11 +1,16 @@
-import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import { groupedConfig } from "../../config.js";
+import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import {
   coverEvidenceResultFromRow,
   selectCoverEvidenceResultById,
 } from "../coverEvidence/repository.js";
 import type { CoverEvidenceReference, CoverEvidenceResult } from "../coverEvidence/types.js";
 import type { DistillationDomainSmokeResult } from "../distillation-domain.types.js";
+import {
+  PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
+  hasSkillLikeProcedureBody,
+  shouldDemoteProcedureToRule,
+} from "../distillation/procedure-quality.js";
 import { embedOne } from "../embedding/embedding.service.js";
 import { getFindCandidateResultById } from "../findCandidate/repository.js";
 import { upsertKnowledgeFromSource } from "../knowledge/knowledge.repository.js";
@@ -106,6 +111,25 @@ function rejectedResult(
   };
 }
 
+function appliesToFromCandidate(
+  candidate: CoverEvidenceResult["candidate"],
+): Record<string, unknown> {
+  if (!candidate) return {};
+  return {
+    ...(candidate.applicabilityGeneral !== undefined
+      ? { general: candidate.applicabilityGeneral }
+      : {}),
+    ...(candidate.technologies && candidate.technologies.length > 0
+      ? { technologies: candidate.technologies }
+      : {}),
+    ...(candidate.changeTypes && candidate.changeTypes.length > 0
+      ? { changeTypes: candidate.changeTypes }
+      : {}),
+    ...(candidate.repoPath ? { repoPath: candidate.repoPath } : {}),
+    ...(candidate.repoKey ? { repoKey: candidate.repoKey } : {}),
+  };
+}
+
 export async function runFinalizeDistille(
   input: FinalizeDistilleInput,
 ): Promise<FinalizeDistilleResult> {
@@ -135,12 +159,23 @@ export async function runFinalizeDistille(
     return rejectedResult(coverEvidenceResultId, result, "low_importance");
   }
 
+  let candidate = result.candidate;
+  if (candidate.type === "procedure" && !hasSkillLikeProcedureBody(candidate.body)) {
+    if (shouldDemoteProcedureToRule({ title: candidate.title, body: candidate.body })) {
+      candidate = {
+        ...candidate,
+        type: "rule",
+      };
+    } else {
+      return rejectedResult(coverEvidenceResultId, result, PROCEDURE_BODY_NOT_ACTIONABLE_REASON);
+    }
+  }
+
   const candidateRow = await getFindCandidateResultById(coverEvidenceResultId);
   if (!candidateRow) {
     throw new Error(`find candidate result not found: ${coverEvidenceResultId}`);
   }
 
-  const candidate = result.candidate;
   const sourceUri = finalizeSourceUri(coverEvidenceResultId);
   const finalizedAt = new Date().toISOString();
   const metadata = {
@@ -241,6 +276,7 @@ export async function runFinalizeDistille(
     body: candidate.body,
     confidence: candidate.confidence,
     importance: candidate.importance,
+    appliesTo: appliesToFromCandidate(candidate),
     metadata,
     embedding,
   });

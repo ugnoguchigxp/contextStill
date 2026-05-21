@@ -29,6 +29,11 @@ export type CoverEvidenceCandidate = {
   body: string;
   importance: number;
   confidence: number;
+  applicabilityGeneral?: boolean;
+  technologies?: string[];
+  changeTypes?: string[];
+  repoPath?: string;
+  repoKey?: string;
 };
 
 export type CoverEvidenceReference = {

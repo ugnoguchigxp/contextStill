@@ -16,6 +16,7 @@ export type Rankable = {
   errorKeywordHits?: number;
   errorFileHits?: number;
   errorContextWeight?: number;
+  applicabilityScore?: number;
 };
 
 function weightedScore(item: Rankable): number {
@@ -31,6 +32,7 @@ function weightedScore(item: Rankable): number {
   const errorFileBoost = Math.min(0.16, Math.max(0, item.errorFileHits ?? 0) * 0.04);
   const errorContextBoost =
     (item.errorContextWeight ?? 0) > 0 && (errorKeywordBoost > 0 || errorFileBoost > 0) ? 0.06 : 0;
+  const applicabilityBoost = Math.max(0, Number(item.applicabilityScore ?? 0));
   const deprecatedPenalty = item.status === "deprecated" ? 0.5 : 0;
   const stalePenalty = item.stale ? 0.4 : 0;
   return (
@@ -39,6 +41,7 @@ function weightedScore(item: Rankable): number {
     sourceLinkBoost +
     errorKeywordBoost +
     errorFileBoost +
+    applicabilityBoost +
     errorContextBoost -
     decayPenalty -
     deprecatedPenalty -

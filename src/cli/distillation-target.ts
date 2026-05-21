@@ -30,7 +30,7 @@ type CliOptions = {
   command: Command;
   kind: "auto" | "wiki" | "vibe";
   rootPath?: string;
-  vibeLimit: number;
+  vibeLimit?: number;
   refresh: boolean;
   worker?: string;
   id?: string;
@@ -80,7 +80,6 @@ function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
     command,
     kind: "auto",
-    vibeLimit: 100,
     refresh: command === "claim",
     distillationVersion: DEFAULT_DISTILLATION_TARGET_VERSION,
     allowCompleted: false,

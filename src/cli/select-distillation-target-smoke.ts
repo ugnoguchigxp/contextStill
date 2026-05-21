@@ -5,7 +5,7 @@ import { previewNextDistillationTarget } from "../modules/selectDistillationTarg
 type CliOptions = {
   kind: "auto" | "wiki" | "vibe";
   rootPath?: string;
-  vibeLimit: number;
+  vibeLimit?: number;
   fromStateTable: boolean;
 };
 
@@ -22,7 +22,6 @@ function readArgValue(args: string[], index: number, name: string): string {
 function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
     kind: "auto",
-    vibeLimit: 100,
     fromStateTable: false,
   };
 

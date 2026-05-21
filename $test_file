@@ -1,0 +1,7 @@
+import { describe, expect, it } from "vitest";
+import * as repo from "../$repo";
+describe("$(basename $repo) smoke", () => {
+  it("exports are defined", () => {
+    expect(repo).toBeDefined();
+  });
+});

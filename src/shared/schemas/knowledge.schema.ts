@@ -7,6 +7,53 @@ const knowledgeStatusSchema = z.enum(["draft", "active", "deprecated"]);
 const scopeSchema = z.enum(["repo", "global"]);
 const knowledgeScoreSchema = z.number().min(0).max(100);
 
+const optionalKnowledgeScoreSchema = z.preprocess((value) => {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "number") return value;
+  if (typeof value === "string" && value.trim()) {
+    const numeric = Number(value);
+    return Number.isFinite(numeric) ? numeric : undefined;
+  }
+  return undefined;
+}, knowledgeScoreSchema.optional());
+
+const optionalApplicabilityBooleanSchema = z.preprocess((value) => {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+  return undefined;
+}, z.boolean().optional());
+
+const optionalApplicabilityStringSchema = z.preprocess((value) => {
+  if (typeof value !== "string") return undefined;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : undefined;
+}, z.string().optional());
+
+const optionalApplicabilityArraySchema = z.preprocess((value) => {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (Array.isArray(value)) return value;
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+  return undefined;
+}, z.array(z.string().trim().min(1)).optional());
+
+const knowledgeApplicabilitySchema = z.object({
+  general: optionalApplicabilityBooleanSchema,
+  technologies: optionalApplicabilityArraySchema,
+  changeTypes: optionalApplicabilityArraySchema,
+  repoPath: optionalApplicabilityStringSchema,
+  repoKey: optionalApplicabilityStringSchema,
+});
+
 const knowledgeItemSchema = z.object({
   id: z.string().uuid(),
   type: knowledgeTypeSchema,
@@ -30,9 +77,9 @@ export const knowledgeSearchInputSchema = z.object({
   statuses: z.array(knowledgeStatusSchema).min(1).optional(),
   status: knowledgeStatusSchema.default("active"),
   repoPath: z.string().trim().min(1).optional(),
-  files: z.array(z.string().trim().min(1)).optional(),
   changeTypes: z.array(z.string().trim().min(1)).optional(),
   technologies: z.array(z.string().trim().min(1)).optional(),
+  includeGeneral: z.boolean().default(true),
   includeDraft: z.boolean().default(false),
 });
 
@@ -42,8 +89,14 @@ export const registerKnowledgeInputSchema = z.object({
   type: knowledgeTypeSchema.default("rule"),
   status: knowledgeStatusSchema.default("draft"),
   scope: scopeSchema.default("repo"),
-  confidence: knowledgeScoreSchema.optional(),
-  importance: knowledgeScoreSchema.optional(),
+  confidence: optionalKnowledgeScoreSchema,
+  importance: optionalKnowledgeScoreSchema,
+  appliesTo: knowledgeApplicabilitySchema.optional(),
+  general: optionalApplicabilityBooleanSchema,
+  technologies: optionalApplicabilityArraySchema,
+  changeTypes: optionalApplicabilityArraySchema,
+  repoPath: optionalApplicabilityStringSchema,
+  repoKey: optionalApplicabilityStringSchema,
   metadata: z.record(z.unknown()).default({}),
 });
 
@@ -60,8 +113,14 @@ const knowledgeUpdatePatchSchema = z.object({
   scope: scopeSchema.optional(),
   title: z.string().trim().min(1).optional(),
   body: z.string().trim().min(1).optional(),
-  confidence: knowledgeScoreSchema.optional(),
-  importance: knowledgeScoreSchema.optional(),
+  confidence: optionalKnowledgeScoreSchema,
+  importance: optionalKnowledgeScoreSchema,
+  appliesTo: knowledgeApplicabilitySchema.optional(),
+  general: optionalApplicabilityBooleanSchema,
+  technologies: optionalApplicabilityArraySchema,
+  changeTypes: optionalApplicabilityArraySchema,
+  repoPath: optionalApplicabilityStringSchema,
+  repoKey: optionalApplicabilityStringSchema,
   metadata: z.record(z.unknown()).optional(),
 });
 
@@ -79,11 +138,18 @@ export const updateKnowledgeInputSchema = z
       value.body !== undefined ||
       value.confidence !== undefined ||
       value.importance !== undefined ||
+      value.appliesTo !== undefined ||
+      value.general !== undefined ||
+      value.technologies !== undefined ||
+      value.changeTypes !== undefined ||
+      value.repoPath !== undefined ||
+      value.repoKey !== undefined ||
       value.metadata !== undefined,
     { message: "at least one update field is required" },
   );
 
 export type KnowledgeItem = z.infer<typeof knowledgeItemSchema>;
+export type KnowledgeApplicabilityInput = z.infer<typeof knowledgeApplicabilitySchema>;
 export type KnowledgeSearchInput = z.infer<typeof knowledgeSearchInputSchema>;
 export type KnowledgeStatus = z.infer<typeof knowledgeStatusSchema>;
 export type KnowledgeType = z.infer<typeof knowledgeTypeSchema>;

@@ -193,8 +193,11 @@ describeDb("mcp contract", () => {
       "memory_search",
       "doctor",
       "context_compile (retry with explicit repoPath/files)",
+      "context_compile (retry with larger tokenBudget)",
       "bun run import:sources -- <wiki root>",
       "bun run distill:pipeline:once",
+      "search_knowledge (inspect appliesTo/repo metadata coverage)",
+      "search_knowledge (validate repo scope tagging)",
     ]);
     expect(
       suggested.every((entry) => allowedExact.has(entry)),

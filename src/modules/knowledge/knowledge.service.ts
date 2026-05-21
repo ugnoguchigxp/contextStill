@@ -78,6 +78,9 @@ type InternalKnowledgeSearchParams = {
   generateEmbeddingIfMissing: boolean;
   noMatchReason: string;
   repoScopeFallbackReason: string;
+  technologies?: string[];
+  changeTypes?: string[];
+  includeGeneral?: boolean;
 };
 
 function mergeKnowledgeHits(hits: KnowledgeSearchResult[], limit: number): KnowledgeSearchResult[] {
@@ -114,6 +117,9 @@ async function executeKnowledgeSearch(
       statuses: params.statuses,
       status: params.status,
       includeDraft: params.includeDraft,
+      technologies: params.technologies,
+      changeTypes: params.changeTypes,
+      includeGeneral: params.includeGeneral ?? true,
       ...(repoPath ? { repoPath } : {}),
     });
 
@@ -139,6 +145,9 @@ async function executeKnowledgeSearch(
           allowGlobalScope: scope.allowGlobalScope,
           types: params.types,
           scopeMatchMode: scope.scopeMatchMode,
+          technologies: params.technologies,
+          changeTypes: params.changeTypes,
+          includeGeneral: params.includeGeneral ?? true,
         },
       );
       if (params.queryText !== params.primaryQuery) {
@@ -154,6 +163,9 @@ async function executeKnowledgeSearch(
             allowGlobalScope: scope.allowGlobalScope,
             types: params.types,
             scopeMatchMode: scope.scopeMatchMode,
+            technologies: params.technologies,
+            changeTypes: params.changeTypes,
+            includeGeneral: params.includeGeneral ?? true,
           },
         );
         textHits = [...new Map([...textHits, ...hintHits].map((item) => [item.id, item])).values()];
@@ -189,6 +201,9 @@ async function executeKnowledgeSearch(
               allowGlobalScope: scope.allowGlobalScope,
               types: params.types,
               scopeMatchMode: scope.scopeMatchMode,
+              technologies: params.technologies,
+              changeTypes: params.changeTypes,
+              includeGeneral: params.includeGeneral ?? true,
             },
           );
         } catch {
@@ -305,6 +320,9 @@ export async function retrieveKnowledge(
     generateEmbeddingIfMissing: true,
     noMatchReason: "NO_ACTIVE_KNOWLEDGE_MATCH",
     repoScopeFallbackReason: "KNOWLEDGE_REPO_SCOPE_FALLBACK",
+    technologies: input.technologies,
+    changeTypes: input.changeTypes,
+    includeGeneral: true,
   });
 }
 
@@ -326,7 +344,6 @@ export async function searchKnowledgeCandidates(
     queryText: buildRetrievalQueryText({
       goal: primaryQuery,
       repoPath: parsed.repoPath,
-      files: parsed.files,
       changeTypes: parsed.changeTypes,
       technologies: parsed.technologies,
     }),
@@ -341,6 +358,9 @@ export async function searchKnowledgeCandidates(
     generateEmbeddingIfMissing: true,
     noMatchReason: "NO_ACTIVE_KNOWLEDGE_MATCH",
     repoScopeFallbackReason: "KNOWLEDGE_REPO_SCOPE_FALLBACK",
+    technologies: parsed.technologies,
+    changeTypes: parsed.changeTypes,
+    includeGeneral: parsed.includeGeneral,
   });
 }
 
@@ -353,6 +373,12 @@ export async function registerKnowledgeFromMarkdown(params: {
   scope?: "repo" | "global";
   confidence?: number;
   importance?: number;
+  appliesTo?: Record<string, unknown>;
+  general?: boolean;
+  technologies?: string[];
+  changeTypes?: string[];
+  repoPath?: string;
+  repoKey?: string;
   metadata?: Record<string, unknown>;
   embedding?: number[];
 }): Promise<string> {
@@ -373,6 +399,14 @@ export async function registerKnowledgeFromMarkdown(params: {
     body: params.body,
     confidence: params.confidence,
     importance: params.importance,
+    appliesTo: {
+      ...(params.appliesTo ?? {}),
+      ...(params.general !== undefined ? { general: params.general } : {}),
+      ...(params.technologies ? { technologies: params.technologies } : {}),
+      ...(params.changeTypes ? { changeTypes: params.changeTypes } : {}),
+      ...(params.repoPath ? { repoPath: params.repoPath } : {}),
+      ...(params.repoKey ? { repoKey: params.repoKey } : {}),
+    },
     metadata: params.metadata,
     embedding,
   });

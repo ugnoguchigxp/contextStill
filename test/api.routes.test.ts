@@ -18,6 +18,7 @@ import {
   countKnowledgeItems,
   createKnowledgeItem,
   deleteKnowledgeItem,
+  listKnowledgeTagDefinitionsForApi,
   listKnowledgeItems,
   recordKnowledgeFeedback,
   updateKnowledgeItem,
@@ -72,6 +73,7 @@ vi.mock("../api/modules/knowledge/knowledge.repository.js", () => ({
   countKnowledgeItems: vi.fn(),
   createKnowledgeItem: vi.fn(),
   deleteKnowledgeItem: vi.fn(),
+  listKnowledgeTagDefinitionsForApi: vi.fn(),
   listKnowledgeItems: vi.fn(),
   recordKnowledgeFeedback: vi.fn(),
   updateKnowledgeItem: vi.fn(),
@@ -401,6 +403,7 @@ describe("API route contract tests", () => {
       },
     });
     vi.mocked(listKnowledgeItems).mockResolvedValue([]);
+    vi.mocked(listKnowledgeTagDefinitionsForApi).mockResolvedValue([]);
     vi.mocked(countKnowledgeItems).mockResolvedValue(0);
     vi.mocked(bulkUpdateKnowledgeStatus).mockResolvedValue({
       targetStatus: "active",
@@ -692,6 +695,34 @@ describe("API route contract tests", () => {
     expect(countKnowledgeItems).not.toHaveBeenCalled();
   });
 
+  test("GET /api/knowledge/tags returns tag definitions", async () => {
+    vi.mocked(listKnowledgeTagDefinitionsForApi).mockResolvedValueOnce([
+      {
+        id: "550e8400-e29b-41d4-a716-446655440004",
+        kind: "technology",
+        slug: "typescript",
+        label: "TypeScript",
+        description: null,
+        aliases: ["ts"],
+        status: "active",
+        sortOrder: 10,
+      },
+    ]);
+    const app = buildApp();
+    const response = await app.request("/api/knowledge/tags?kind=technology&status=active");
+    const json = (await response.json()) as {
+      tags: Array<{ slug: string }>;
+    };
+
+    expect(response.status).toBe(200);
+    expect(json.tags).toHaveLength(1);
+    expect(json.tags[0]?.slug).toBe("typescript");
+    expect(listKnowledgeTagDefinitionsForApi).toHaveBeenCalledWith({
+      kind: "technology",
+      status: "active",
+    });
+  });
+
   test("GET /api/knowledge returns list shape used by web repository", async () => {
     vi.mocked(listKnowledgeItems).mockResolvedValueOnce([
       {
@@ -703,6 +734,7 @@ describe("API route contract tests", () => {
         body: "Knowledge body",
         confidence: 80,
         importance: 70,
+        appliesTo: {},
         metadata: {},
         sourceRefs: [],
         sourceVibeMemoryIds: [],
@@ -738,8 +770,34 @@ describe("API route contract tests", () => {
     expect(json.totalPages).toBe(260);
     expect(json.items[0]?.id).toBe("550e8400-e29b-41d4-a716-446655440002");
     expect(json.items[0]?.title).toBe("Knowledge title");
-    expect(listKnowledgeItems).toHaveBeenCalledWith({ limit: 1, page: 2 });
-    expect(countKnowledgeItems).toHaveBeenCalledWith({ limit: 1, page: 2 });
+    expect(listKnowledgeItems).toHaveBeenCalledWith({
+      limit: 1,
+      page: 2,
+      sortBy: "updatedAt",
+      sortDir: "desc",
+    });
+    expect(countKnowledgeItems).toHaveBeenCalledWith({
+      limit: 1,
+      page: 2,
+      sortBy: "updatedAt",
+      sortDir: "desc",
+    });
+  });
+
+  test("GET /api/knowledge passes server-side sort parameters", async () => {
+    vi.mocked(listKnowledgeItems).mockResolvedValueOnce([]);
+    vi.mocked(countKnowledgeItems).mockResolvedValueOnce(0);
+
+    const app = buildApp();
+    const response = await app.request("/api/knowledge?limit=20&page=3&sortBy=title&sortDir=asc");
+
+    expect(response.status).toBe(200);
+    expect(listKnowledgeItems).toHaveBeenCalledWith({
+      limit: 20,
+      page: 3,
+      sortBy: "title",
+      sortDir: "asc",
+    });
   });
 
   test("PUT /api/knowledge/:id rejects invalid payload", async () => {

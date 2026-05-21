@@ -14,6 +14,31 @@ export type CompileRunsInspection = {
   reasons: string[];
 };
 
+const maintenanceReasonSet = new Set([
+  "KNOWLEDGE_APPLIES_TO_FALLBACK",
+  "KNOWLEDGE_REPO_SCOPE_FALLBACK",
+  "SOURCE_REPO_SCOPE_FALLBACK",
+]);
+
+const warningReasonSet = new Set([
+  "QUERY_EMBEDDING_UNAVAILABLE",
+  "SOURCE_QUERY_EMBEDDING_UNAVAILABLE",
+  "TOKEN_BUDGET_SECTION_LIMIT_REACHED",
+  "AGENTIC_REFINE_FAILED",
+]);
+
+function isBlockingReason(reason: string): boolean {
+  if (maintenanceReasonSet.has(reason)) return false;
+  if (warningReasonSet.has(reason)) return false;
+  if (reason === "NO_ACTIVE_KNOWLEDGE_MATCH" || reason === "NO_SOURCE_MATCH") return true;
+  if (reason.endsWith("_FAILED") || reason.includes("ERROR")) return true;
+  return true;
+}
+
+function hasBlockingReason(degradedReasons: string[]): boolean {
+  return degradedReasons.some((reason) => isBlockingReason(reason));
+}
+
 function percentile(values: number[], quantile: number): number | null {
   if (values.length === 0) return null;
   const sorted = [...values].sort((a, b) => a - b);
@@ -45,6 +70,14 @@ export async function inspectCompileRuns({
     totalRuns: 0,
     degradedRuns: 0,
     degradedRate: 0,
+    blockingRuns: 0,
+    blockingRate: 0,
+    usableRuns: 0,
+    usableRate: 0,
+    warningOnlyRuns: 0,
+    warningOnlyRate: 0,
+    noContentRuns: 0,
+    noContentRate: 0,
     durationMsP50: null,
     durationMsP95: null,
     durationMsAvg: null,
@@ -66,6 +99,36 @@ export async function inspectCompileRuns({
       (run) => run.status === "degraded" || run.status === "failed",
     ).length;
     runs.degradedRate = runs.totalRuns > 0 ? runs.degradedRuns / runs.totalRuns : 0;
+    let blockingRuns = 0;
+    let usableRuns = 0;
+    let warningOnlyRuns = 0;
+    let noContentRuns = 0;
+    for (const run of recentRuns) {
+      const degradedReasons = [...new Set(run.degradedReasons)];
+      const blocking = run.status === "failed" || hasBlockingReason(degradedReasons);
+      if (blocking) {
+        blockingRuns += 1;
+      } else {
+        usableRuns += 1;
+      }
+      if (!blocking && degradedReasons.length > 0) {
+        warningOnlyRuns += 1;
+      }
+      if (
+        degradedReasons.includes("NO_ACTIVE_KNOWLEDGE_MATCH") &&
+        degradedReasons.includes("NO_SOURCE_MATCH")
+      ) {
+        noContentRuns += 1;
+      }
+    }
+    runs.blockingRuns = blockingRuns;
+    runs.blockingRate = runs.totalRuns > 0 ? blockingRuns / runs.totalRuns : 0;
+    runs.usableRuns = usableRuns;
+    runs.usableRate = runs.totalRuns > 0 ? usableRuns / runs.totalRuns : 0;
+    runs.warningOnlyRuns = warningOnlyRuns;
+    runs.warningOnlyRate = runs.totalRuns > 0 ? warningOnlyRuns / runs.totalRuns : 0;
+    runs.noContentRuns = noContentRuns;
+    runs.noContentRate = runs.totalRuns > 0 ? noContentRuns / runs.totalRuns : 0;
     const durations = recentRuns
       .map((run) => run.durationMs)
       .filter((duration) => Number.isFinite(duration) && duration >= 0);
@@ -80,8 +143,11 @@ export async function inspectCompileRuns({
     if (runs.lastRunAgeMinutes !== null && runs.lastRunAgeMinutes > freshnessThresholdMinutes) {
       reasons.push("CONTEXT_COMPILE_STALE");
     }
-    if (runs.degradedRate > degradedRateThreshold) {
+    if ((runs.blockingRate ?? 0) > degradedRateThreshold) {
       reasons.push("DEGRADED_RATE_HIGH");
+    }
+    if ((runs.usableRate ?? 0) < 1 - degradedRateThreshold) {
+      reasons.push("USABLE_PACK_RATE_LOW");
     }
   } catch {
     reasons.push("RUN_HEALTH_QUERY_FAILED");

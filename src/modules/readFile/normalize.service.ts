@@ -1,6 +1,6 @@
 import matter from "gray-matter";
 
-const plainTextRenderCallbacks: Bun.markdown.RenderCallbacks = {
+export const plainTextRenderCallbacks: Bun.markdown.RenderCallbacks = {
   heading: (children) => `${children}\n\n`,
   paragraph: (children) => `${children}\n\n`,
   blockquote: (children) => `${children}\n\n`,

@@ -12,6 +12,7 @@ import {
   FolderOpen,
   FolderPlus,
   Home,
+  Monitor,
   Pencil,
   RefreshCw,
   Save,
@@ -97,6 +98,7 @@ const formatDate = (value: string): string => {
 };
 
 const editableMetaKeys = new Set(["title", "showOnMenu", "showOnHome", "sort", "tags"]);
+const noop = (): void => {};
 
 const parseMetaBoolean = (value: unknown, fallback: boolean): boolean => {
   if (typeof value === "boolean") {
@@ -281,6 +283,7 @@ export function SourcesPage() {
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [statusText, setStatusText] = useState("");
+  const [isPreviewOpen, setIsPreviewOpen] = useState(false);
 
   const [draftSlug, setDraftSlug] = useState("");
   const [draftTitle, setDraftTitle] = useState("");
@@ -1250,6 +1253,12 @@ export function SourcesPage() {
               disabled={busy || !!metaFormError}
             />
             <IconButton
+              label="Screen preview"
+              Icon={Monitor}
+              variant="secondary"
+              onClick={() => setIsPreviewOpen(true)}
+            />
+            <IconButton
               label="Delete"
               Icon={Trash2}
               variant="secondary"
@@ -1368,6 +1377,30 @@ export function SourcesPage() {
           </div>
         </aside>
       </div>
+      {isPreviewOpen ? (
+        <div className="fixed inset-0 z-50 flex flex-col bg-background">
+          <div className="flex items-center justify-between border-b border-border px-4 py-3">
+            <h2 className="text-sm font-semibold">Screen Preview</h2>
+            <Button type="button" variant="outline" onClick={() => setIsPreviewOpen(false)}>
+              Close
+            </Button>
+          </div>
+          <div className="min-h-0 flex-1 overflow-hidden px-4 py-4">
+            <div className="h-full overflow-hidden rounded-md border border-border">
+              <MarkdownEditor
+                value={draftBody}
+                onChange={noop}
+                editable={false}
+                toolbarMode="hidden"
+                className="h-full"
+                enableVerticalScroll
+                enableMermaid
+                mermaidLib={mermaid}
+              />
+            </div>
+          </div>
+        </div>
+      ) : null}
     </main>
   );
 }

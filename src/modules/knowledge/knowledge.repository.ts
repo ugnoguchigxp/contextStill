@@ -4,11 +4,13 @@ import { knowledgeItems, knowledgeSourceLinks, sourceFragments, sources } from "
 import { normalizeKnowledgeScore } from "../../lib/score-scale.js";
 import type {
   KnowledgeItem,
+  KnowledgeApplicabilityInput,
   KnowledgeSearchInput,
   KnowledgeStatus,
 } from "../../shared/schemas/knowledge.schema.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
+import { parseApplicabilityFromRecord } from "./applicability.service.js";
 import { computeDecayFactor } from "./knowledge-value.service.js";
 
 export type KnowledgeSearchResult = {
@@ -34,6 +36,12 @@ export type KnowledgeSearchResult = {
   lastVerifiedAt: Date | null;
   updatedAt: Date;
   decayFactor: number;
+  applicabilityScore: number;
+  applicabilityMatches: {
+    technologies: string[];
+    changeTypes: string[];
+    general: boolean;
+  };
 };
 
 export type UpsertKnowledgeFromSourceParams = {
@@ -47,6 +55,7 @@ export type UpsertKnowledgeFromSourceParams = {
   importance?: number;
   metadata?: Record<string, unknown>;
   embedding?: number[];
+  appliesTo?: Record<string, unknown> | KnowledgeApplicabilityInput;
 };
 
 export type KnowledgeSearchOptions = {
@@ -55,6 +64,13 @@ export type KnowledgeSearchOptions = {
   allowGlobalScope?: boolean;
   types?: KnowledgeItem["type"][];
   scopeMatchMode?: "primary" | "legacy";
+  technologies?: string[];
+  changeTypes?: string[];
+  includeGeneral?: boolean;
+};
+
+type KnowledgeSearchQueryInput = Omit<KnowledgeSearchInput, "includeGeneral"> & {
+  includeGeneral?: boolean;
 };
 
 function finiteOrZero(value: unknown): number {
@@ -82,17 +98,113 @@ function valueAsString(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function toLowerSlug(value: string): string {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[\s_]+/g, "-")
+    .replace(/[^a-z0-9./-]/g, "-")
+    .replace(/-+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
+function uniqueLowerSlugs(values: string[] | undefined): string[] {
+  const deduped = new Set<string>();
+  for (const raw of values ?? []) {
+    const normalized = toLowerSlug(raw);
+    if (!normalized) continue;
+    deduped.add(normalized);
+  }
+  return [...deduped];
+}
+
+type ApplicabilityQuery = {
+  technologies: string[];
+  changeTypes: string[];
+  includeGeneral: boolean;
+};
+
+function buildApplicabilityQuery(
+  input: Pick<KnowledgeSearchQueryInput, "technologies" | "changeTypes" | "includeGeneral">,
+  options: Pick<KnowledgeSearchOptions, "technologies" | "changeTypes" | "includeGeneral">,
+): ApplicabilityQuery {
+  const technologies = uniqueLowerSlugs(options.technologies ?? input.technologies);
+  const changeTypes = uniqueLowerSlugs(options.changeTypes ?? input.changeTypes);
+  const includeGeneral = options.includeGeneral ?? input.includeGeneral ?? true;
+  return {
+    technologies,
+    changeTypes,
+    includeGeneral,
+  };
+}
+
+function hasApplicabilityQuery(query: ApplicabilityQuery): boolean {
+  return query.technologies.length > 0 || query.changeTypes.length > 0;
+}
+
+function intersect(queryValues: string[], sourceValues: string[]): string[] {
+  if (queryValues.length === 0 || sourceValues.length === 0) return [];
+  const sourceSet = new Set(sourceValues.map(toLowerSlug));
+  const matched: string[] = [];
+  for (const value of queryValues) {
+    if (sourceSet.has(toLowerSlug(value))) matched.push(value);
+  }
+  return matched;
+}
+
+function computeApplicability(appliesTo: Record<string, unknown>, query: ApplicabilityQuery) {
+  const sourceTechnologies = toStringArray(appliesTo.technologies);
+  const sourceChangeTypes = toStringArray(appliesTo.changeTypes);
+  const technologies = intersect(query.technologies, sourceTechnologies);
+  const changeTypes = intersect(query.changeTypes, sourceChangeTypes);
+  const hasFacetData = sourceTechnologies.length > 0 || sourceChangeTypes.length > 0;
+  const hasExplicitGeneral = typeof appliesTo.general === "boolean";
+  const general = appliesTo.general === true || (!hasExplicitGeneral && !hasFacetData);
+  const hasScopedQuery = query.technologies.length > 0 || query.changeTypes.length > 0;
+
+  let score = 0;
+  score += Math.min(0.18, technologies.length * 0.08);
+  score += Math.min(0.12, changeTypes.length * 0.06);
+  if (score === 0 && query.includeGeneral && general && hasScopedQuery) score += 0.03;
+
+  return {
+    score,
+    matches: {
+      technologies,
+      changeTypes,
+      general: general && query.includeGeneral,
+    },
+  };
+}
+
 function buildKnowledgeScopeMetadata(
   sourceUri: string,
   metadata?: Record<string, unknown>,
+  explicitAppliesTo?: Record<string, unknown> | KnowledgeApplicabilityInput,
 ): { metadata: Record<string, unknown>; appliesTo: Record<string, unknown> } {
   const sourceMetadata = asRecord(metadata);
+  const explicit = parseApplicabilityFromRecord(explicitAppliesTo);
   const repoPathCandidate =
+    explicit.repoPath ??
     valueAsString(sourceMetadata.repoPath) ??
     valueAsString(sourceMetadata.sourceRepoPath) ??
     valueAsString(sourceMetadata.workspacePath);
   const repoPath = normalizeRepoPath(repoPathCandidate);
-  const repoKey = valueAsString(sourceMetadata.repoKey) ?? normalizeRepoKey(repoPathCandidate);
+  const repoKey =
+    valueAsString(explicit.repoKey) ??
+    valueAsString(sourceMetadata.repoKey) ??
+    normalizeRepoKey(repoPathCandidate);
+  const technologies = uniqueLowerSlugs(explicit.technologies);
+  const changeTypes = uniqueLowerSlugs(explicit.changeTypes);
+  const general = explicit.general === true;
 
   return {
     metadata: {
@@ -104,6 +216,9 @@ function buildKnowledgeScopeMetadata(
     appliesTo: {
       ...(repoPath ? { repoPath } : {}),
       ...(repoKey ? { repoKey } : {}),
+      ...(general ? { general: true } : {}),
+      ...(technologies.length > 0 ? { technologies } : {}),
+      ...(changeTypes.length > 0 ? { changeTypes } : {}),
     },
   };
 }
@@ -206,8 +321,106 @@ async function listKnowledgeSourceRefs(knowledgeIds: string[]): Promise<Map<stri
   return refsByKnowledgeId;
 }
 
+type KnowledgeSearchRow = {
+  id: string;
+  type: string;
+  status: string;
+  scope: string;
+  title: string;
+  body: string;
+  confidence: number;
+  importance: number;
+  appliesTo: unknown;
+  metadata: unknown;
+  dynamicScore: number;
+  compileSelectCount: number;
+  agenticAcceptCount: number;
+  explicitUpvoteCount: number;
+  explicitDownvoteCount: number;
+  lastCompiledAt: Date | null;
+  lastVerifiedAt: Date | null;
+  updatedAt: Date;
+  score: number;
+};
+
+function mapKnowledgeRowsToResults(
+  rows: KnowledgeSearchRow[],
+  sourceRefsByKnowledgeId: Map<string, string[]>,
+  applicabilityQuery: ApplicabilityQuery,
+): KnowledgeSearchResult[] {
+  return rows.map((row) => {
+    const appliesTo = asRecord(row.appliesTo);
+    const metadata = asRecord(row.metadata);
+    const sourceRefs =
+      sourceRefsByKnowledgeId.get(row.id) ?? fallbackSourceRefsFromMetadata(metadata);
+    const normalizedType = row.type === "procedure" ? "procedure" : "rule";
+    const normalizedScope = row.scope === "global" ? "global" : "repo";
+    const dynamicScore = Math.max(0, finiteOrZero(row.dynamicScore));
+    const compileSelectCount = Math.max(0, Math.floor(finiteOrZero(row.compileSelectCount)));
+    const agenticAcceptCount = Math.max(0, Math.floor(finiteOrZero(row.agenticAcceptCount)));
+    const explicitUpvoteCount = Math.max(0, Math.floor(finiteOrZero(row.explicitUpvoteCount)));
+    const explicitDownvoteCount = Math.max(0, Math.floor(finiteOrZero(row.explicitDownvoteCount)));
+    const updatedAt = row.updatedAt instanceof Date ? row.updatedAt : new Date(row.updatedAt);
+    const decayFactor = computeDecayFactor({
+      type: normalizedType,
+      scope: normalizedScope,
+      lastVerifiedAt: row.lastVerifiedAt,
+      updatedAt,
+    });
+    const applicability = computeApplicability(appliesTo, applicabilityQuery);
+    return {
+      id: row.id,
+      type: row.type,
+      status: row.status,
+      scope: row.scope,
+      title: row.title,
+      body: row.body,
+      confidence: normalizeKnowledgeScore(row.confidence, 70),
+      importance: normalizeKnowledgeScore(row.importance, 70),
+      score: finiteOrZero(row.score) + applicability.score,
+      appliesTo,
+      metadata,
+      sourceRefs,
+      hasSourceLinks: sourceRefs.length > 0,
+      dynamicScore,
+      compileSelectCount,
+      agenticAcceptCount,
+      explicitUpvoteCount,
+      explicitDownvoteCount,
+      lastCompiledAt: row.lastCompiledAt,
+      lastVerifiedAt: row.lastVerifiedAt,
+      updatedAt,
+      decayFactor,
+      applicabilityScore: applicability.score,
+      applicabilityMatches: applicability.matches,
+    };
+  });
+}
+
+function buildJsonbArrayAnyMatch(key: string, values: string[]): SQL | undefined {
+  if (values.length === 0) return undefined;
+  const quotedKey = sql.raw(`'${key}'`);
+  return sql`(coalesce(${knowledgeItems.appliesTo} -> ${quotedKey}, '[]'::jsonb) ?| array[${sql.join(
+    values.map((value) => sql`${value}`),
+    sql`,`,
+  )}])`;
+}
+
+function buildApplicabilityFilterCondition(query: ApplicabilityQuery): SQL | undefined {
+  const clauses: SQL[] = [];
+  const technologies = buildJsonbArrayAnyMatch("technologies", query.technologies);
+  if (technologies) clauses.push(technologies);
+  const changeTypes = buildJsonbArrayAnyMatch("changeTypes", query.changeTypes);
+  if (changeTypes) clauses.push(changeTypes);
+  if (query.includeGeneral) {
+    clauses.push(sql`coalesce((${knowledgeItems.appliesTo} ->> 'general')::boolean, false) = true`);
+  }
+  if (clauses.length === 0) return undefined;
+  return clauses.length === 1 ? clauses[0] : or(...clauses);
+}
+
 export async function searchKnowledge(
-  input: KnowledgeSearchInput,
+  input: KnowledgeSearchQueryInput,
   options: KnowledgeSearchOptions = {},
 ): Promise<KnowledgeSearchResult[]> {
   const conditions: SQL[] = [];
@@ -250,81 +463,60 @@ export async function searchKnowledge(
       ilike(knowledgeItems.body, `%${query}%`),
       textMatchExpr,
     ) ?? textMatchExpr;
-  conditions.push(textSearchCondition);
+  const applicabilityQuery = buildApplicabilityQuery(input, options);
+  const facetRequested = hasApplicabilityQuery(applicabilityQuery);
+  const searchLimit = facetRequested ? Math.max(input.limit * 3, 30) : input.limit;
 
-  const rows = await db
-    .select({
-      id: knowledgeItems.id,
-      type: knowledgeItems.type,
-      status: knowledgeItems.status,
-      scope: knowledgeItems.scope,
-      title: knowledgeItems.title,
-      body: knowledgeItems.body,
-      confidence: knowledgeItems.confidence,
-      importance: knowledgeItems.importance,
-      appliesTo: knowledgeItems.appliesTo,
-      metadata: knowledgeItems.metadata,
-      dynamicScore: knowledgeItems.dynamicScore,
-      compileSelectCount: knowledgeItems.compileSelectCount,
-      agenticAcceptCount: knowledgeItems.agenticAcceptCount,
-      explicitUpvoteCount: knowledgeItems.explicitUpvoteCount,
-      explicitDownvoteCount: knowledgeItems.explicitDownvoteCount,
-      lastCompiledAt: knowledgeItems.lastCompiledAt,
-      lastVerifiedAt: knowledgeItems.lastVerifiedAt,
-      updatedAt: knowledgeItems.updatedAt,
-      score: rankExpr,
-    })
+  const selectFields = {
+    id: knowledgeItems.id,
+    type: knowledgeItems.type,
+    status: knowledgeItems.status,
+    scope: knowledgeItems.scope,
+    title: knowledgeItems.title,
+    body: knowledgeItems.body,
+    confidence: knowledgeItems.confidence,
+    importance: knowledgeItems.importance,
+    appliesTo: knowledgeItems.appliesTo,
+    metadata: knowledgeItems.metadata,
+    dynamicScore: knowledgeItems.dynamicScore,
+    compileSelectCount: knowledgeItems.compileSelectCount,
+    agenticAcceptCount: knowledgeItems.agenticAcceptCount,
+    explicitUpvoteCount: knowledgeItems.explicitUpvoteCount,
+    explicitDownvoteCount: knowledgeItems.explicitDownvoteCount,
+    lastCompiledAt: knowledgeItems.lastCompiledAt,
+    lastVerifiedAt: knowledgeItems.lastVerifiedAt,
+    updatedAt: knowledgeItems.updatedAt,
+    score: rankExpr,
+  } as const;
+
+  const rankedRows = (await db
+    .select(selectFields)
     .from(knowledgeItems)
-    .where(and(...conditions))
+    .where(and(...conditions, textSearchCondition))
     .orderBy(desc(rankExpr), desc(importanceOrderExpr), desc(knowledgeItems.updatedAt))
-    .limit(input.limit);
+    .limit(searchLimit)) as KnowledgeSearchRow[];
+
+  let rows: KnowledgeSearchRow[] = [...rankedRows];
+  if (rows.length === 0 && facetRequested) {
+    const applicabilityCondition = buildApplicabilityFilterCondition(applicabilityQuery);
+    if (applicabilityCondition) {
+      const fallbackRows = (await db
+        .select({
+          ...selectFields,
+          score: sql<number>`0`,
+        })
+        .from(knowledgeItems)
+        .where(and(...conditions, applicabilityCondition))
+        .orderBy(desc(importanceOrderExpr), desc(knowledgeItems.updatedAt))
+        .limit(searchLimit)) as KnowledgeSearchRow[];
+      rows = fallbackRows;
+    }
+  }
 
   const sourceRefsByKnowledgeId = await listKnowledgeSourceRefs(rows.map((row) => row.id));
-
-  return rows.map((row) => {
-    const appliesTo = asRecord(row.appliesTo);
-    const metadata = asRecord(row.metadata);
-    const sourceRefs =
-      sourceRefsByKnowledgeId.get(row.id) ?? fallbackSourceRefsFromMetadata(metadata);
-    const normalizedType = row.type === "procedure" ? "procedure" : "rule";
-    const normalizedScope = row.scope === "global" ? "global" : "repo";
-    const dynamicScore = Math.max(0, finiteOrZero(row.dynamicScore));
-    const compileSelectCount = Math.max(0, Math.floor(finiteOrZero(row.compileSelectCount)));
-    const agenticAcceptCount = Math.max(0, Math.floor(finiteOrZero(row.agenticAcceptCount)));
-    const explicitUpvoteCount = Math.max(0, Math.floor(finiteOrZero(row.explicitUpvoteCount)));
-    const explicitDownvoteCount = Math.max(0, Math.floor(finiteOrZero(row.explicitDownvoteCount)));
-    const updatedAt = row.updatedAt instanceof Date ? row.updatedAt : new Date(row.updatedAt);
-    const decayFactor = computeDecayFactor({
-      type: normalizedType,
-      scope: normalizedScope,
-      lastVerifiedAt: row.lastVerifiedAt,
-      updatedAt,
-    });
-    return {
-      id: row.id,
-      type: row.type,
-      status: row.status,
-      scope: row.scope,
-      title: row.title,
-      body: row.body,
-      confidence: normalizeKnowledgeScore(row.confidence, 70),
-      importance: normalizeKnowledgeScore(row.importance, 70),
-      score: finiteOrZero(row.score),
-      appliesTo,
-      metadata,
-      sourceRefs,
-      hasSourceLinks: sourceRefs.length > 0,
-      dynamicScore,
-      compileSelectCount,
-      agenticAcceptCount,
-      explicitUpvoteCount,
-      explicitDownvoteCount,
-      lastCompiledAt: row.lastCompiledAt,
-      lastVerifiedAt: row.lastVerifiedAt,
-      updatedAt,
-      decayFactor,
-    };
-  });
+  return mapKnowledgeRowsToResults(rows, sourceRefsByKnowledgeId, applicabilityQuery)
+    .sort((a, b) => b.score - a.score || b.updatedAt.getTime() - a.updatedAt.getTime())
+    .slice(0, input.limit);
 }
 
 export async function upsertKnowledgeFromSource(
@@ -334,7 +526,7 @@ export async function upsertKnowledgeFromSource(
     where: sql`${knowledgeItems.metadata} ->> 'sourceUri' = ${params.sourceUri}`,
   });
 
-  const scoped = buildKnowledgeScopeMetadata(params.sourceUri, params.metadata);
+  const scoped = buildKnowledgeScopeMetadata(params.sourceUri, params.metadata, params.appliesTo);
   const metadata = scoped.metadata;
 
   if (existing) {
@@ -424,6 +616,14 @@ export async function vectorSearchKnowledge(
   statuses: KnowledgeStatus[] = ["active"],
   options: KnowledgeSearchOptions = {},
 ): Promise<KnowledgeSearchResult[]> {
+  const applicabilityQuery = buildApplicabilityQuery(
+    {
+      includeGeneral: options.includeGeneral ?? true,
+    },
+    options,
+  );
+  const facetRequested = hasApplicabilityQuery(applicabilityQuery);
+  const searchLimit = facetRequested ? Math.max(limit * 3, 30) : limit;
   const embeddingStr = JSON.stringify(embedding);
   const importanceOrderExpr = normalizedImportanceExpr();
   const similarity = sql<number>`1 - (${knowledgeItems.embedding} <=> ${embeddingStr}::vector)`;
@@ -464,51 +664,14 @@ export async function vectorSearchKnowledge(
     .from(knowledgeItems)
     .where(and(...conditions))
     .orderBy(desc(similarity), desc(importanceOrderExpr))
-    .limit(limit);
+    .limit(searchLimit);
 
   const sourceRefsByKnowledgeId = await listKnowledgeSourceRefs(rows.map((row) => row.id));
-  return rows.map((row) => {
-    const appliesTo = asRecord(row.appliesTo);
-    const metadata = asRecord(row.metadata);
-    const sourceRefs =
-      sourceRefsByKnowledgeId.get(row.id) ?? fallbackSourceRefsFromMetadata(metadata);
-    const normalizedType = row.type === "procedure" ? "procedure" : "rule";
-    const normalizedScope = row.scope === "global" ? "global" : "repo";
-    const dynamicScore = Math.max(0, finiteOrZero(row.dynamicScore));
-    const compileSelectCount = Math.max(0, Math.floor(finiteOrZero(row.compileSelectCount)));
-    const agenticAcceptCount = Math.max(0, Math.floor(finiteOrZero(row.agenticAcceptCount)));
-    const explicitUpvoteCount = Math.max(0, Math.floor(finiteOrZero(row.explicitUpvoteCount)));
-    const explicitDownvoteCount = Math.max(0, Math.floor(finiteOrZero(row.explicitDownvoteCount)));
-    const updatedAt = row.updatedAt instanceof Date ? row.updatedAt : new Date(row.updatedAt);
-    const decayFactor = computeDecayFactor({
-      type: normalizedType,
-      scope: normalizedScope,
-      lastVerifiedAt: row.lastVerifiedAt,
-      updatedAt,
-    });
-    return {
-      id: row.id,
-      type: row.type,
-      status: row.status,
-      scope: row.scope,
-      title: row.title,
-      body: row.body,
-      confidence: normalizeKnowledgeScore(row.confidence, 70),
-      importance: normalizeKnowledgeScore(row.importance, 70),
-      score: finiteOrZero(row.score),
-      appliesTo,
-      metadata,
-      sourceRefs,
-      hasSourceLinks: sourceRefs.length > 0,
-      dynamicScore,
-      compileSelectCount,
-      agenticAcceptCount,
-      explicitUpvoteCount,
-      explicitDownvoteCount,
-      lastCompiledAt: row.lastCompiledAt,
-      lastVerifiedAt: row.lastVerifiedAt,
-      updatedAt,
-      decayFactor,
-    };
-  });
+  return mapKnowledgeRowsToResults(
+    rows as KnowledgeSearchRow[],
+    sourceRefsByKnowledgeId,
+    applicabilityQuery,
+  )
+    .sort((a, b) => b.score - a.score || b.updatedAt.getTime() - a.updatedAt.getTime())
+    .slice(0, limit);
 }

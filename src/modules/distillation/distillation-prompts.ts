@@ -1,4 +1,5 @@
 import { groupedConfig } from "../../config.js";
+import { buildProcedureSystemContext } from "./procedure-system-context.js";
 
 export type DistillationSourceKind = "vibe_memory" | "wiki";
 
@@ -96,8 +97,7 @@ function typeSpecificVerificationLines(type: "rule" | "procedure"): string[] {
   if (type === "procedure") {
     return [
       "candidate type は procedure。",
-      "procedure は SKILL.md と同等に再利用できる運用知識として仕上げる。",
-      "body には、いつ使うか、前提、順序付きワークフロー、確認方法、避けるべき過剰実装を含める。",
+      buildProcedureSystemContext(),
       "手順は実行可能で、次回の coding agent がそのまま使える粒度にする。",
       "単なる作業履歴や抽象論ではなく、検証可能な成功条件を含める。",
     ];

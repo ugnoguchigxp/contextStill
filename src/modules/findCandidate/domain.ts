@@ -5,10 +5,12 @@ import type { DistillationDomainSmokeResult } from "../distillation-domain.types
 import {
   runDistillationCompletion,
   resolveDistillationModel,
+  type DistillationMessage,
   type DistillationProviderSetting,
   type DistillationRuntimeToolDefinition,
   type DistillationToolExecutor,
 } from "../distillation/distillation-runtime.service.js";
+import type { DistillationToolCall } from "../distillation/distillation-tools.service.js";
 import { readVibeMemoryByTokenWindow } from "../memoryReader/reader.service.js";
 import { readFileDomain } from "../readFile/domain.js";
 import { getDistillationTargetStateById } from "../selectDistillationTarget/repository.js";
@@ -43,6 +45,8 @@ export type FindCandidateResult = {
   readRanges: Array<{ from: number; toExclusive: number }>;
 };
 
+type FindCandidateTargetKind = FindCandidateResult["targetKind"];
+
 function parseToolArgs(raw: string): Record<string, unknown> {
   const parsed = parseLlmJsonLike(raw)?.value;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
@@ -50,12 +54,21 @@ function parseToolArgs(raw: string): Record<string, unknown> {
 }
 
 function asInt(value: unknown, fallback: number): number {
-  if (typeof value !== "number" || !Number.isFinite(value)) return fallback;
-  return Math.floor(value);
+  if (typeof value === "number" && Number.isFinite(value)) return Math.floor(value);
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return Math.floor(parsed);
+  }
+  return fallback;
 }
 
 function asBool(value: unknown, fallback: boolean): boolean {
   if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
   return fallback;
 }
 
@@ -121,6 +134,7 @@ function buildToolDefinitionForTarget(
           mode: {
             type: "string",
             description: "Reader mode: compressed or original.",
+            enum: ["compressed", "original"],
           },
         },
         required: [],
@@ -130,36 +144,115 @@ function buildToolDefinitionForTarget(
   };
 }
 
-function systemPrompt(): string {
+function commonCandidateRules(): string[] {
   return [
-    "あなたの仕事は文章 content だけを見て、有用な知識候補を選ぶことです。",
-    "候補選出以外のことはしないでください。",
     "厳守ルール:",
     "- 1候補 = 1知識（1ルール または 1手続き）",
     "- 複数のルール/手続きを1候補に混ぜない",
+    "- ただし 1 つの再利用可能な手順・運用フロー・レビュー手順は、細切れの rule に分けず 1 つの procedure 候補にまとめる",
     "- 文書全体をそのまま1候補にしない",
     "- 複数の有用知識がある場合は候補を分割して複数出す",
+    "- type は必ず rule または procedure にする",
+    "- rule は持続的な制約・方針・不変条件・意思決定",
+    "- procedure は順序付き作業、コマンドフロー、検証/復旧/レビューの再利用可能な手順",
+    "- 単独の判断、制約、使うべき API/コマンド、避けるべき実装方針は procedure ではなく rule",
+    "- procedure は 2 step 以上の workflow と成功確認まで書ける候補だけにする",
+    "- procedure の content には、最終工程で SKILL.md 風に展開できるよう、使う場面・順序・確認方法・避けることの根拠を含める",
     "- 候補件数は内容に応じて決める。件数合わせはしない",
-    "最終出力は JSON のみで、次の形だけを返してください:",
-    '{"candidates":[{"title":"...","content":"..."}]}',
-    "候補がない場合は必ず次を返してください:",
-    '{"candidates":[]}',
-    "title/content 以外の field を返さないでください。",
+    "最終出力は JSON のみで返してください。",
+    "候補がある場合は単体オブジェクトまたは配列のどちらでも構いません。",
+    '{"type":"rule|procedure","title":"...","content":"..."}',
+    '[{"type":"rule|procedure","title":"...","content":"..."}]',
+    "候補がない場合は [] を返してください。",
+    "必須 field を増やさず、type/title/content 以外は省略してください。",
+  ];
+}
+
+function wikiSystemPrompt(): string {
+  return [
+    "あなたの仕事は文章 content だけを見て、有用な知識候補を選ぶことです。",
+    "候補選出以外のことはしないでください。",
+    ...commonCandidateRules(),
   ].join("\n");
 }
 
-function userPrompt(): string {
+function vibeMemorySystemPrompt(): string {
+  return [
+    "あなたの仕事は vibe memory の content と agent diff だけを見て、再利用可能な知識候補を選ぶことです。",
+    "system/user prompt、tool 名、JSON schema、進行報告だけの会話文は知識候補にしないでください。",
+    "vibe memory は作業ログなので、永続的なルール、再利用できる手順、レビュー観点、復旧手順、リポジトリ固有の運用知だけを候補にしてください。",
+    "単なる一回限りの実行結果、途中経過、感想、明らかに古い仮説、未確認の推測は候補にしないでください。",
+    "agent diff がある場合は、diff から読み取れる実装上の不変条件や手順だけを候補にしてください。",
+    "追加情報が必要な場合だけ memory_reader tool を使って次の token window を読んでください。",
+    ...commonCandidateRules(),
+  ].join("\n");
+}
+
+function systemPromptForTarget(targetKind: FindCandidateTargetKind): string {
+  return targetKind === "vibe_memory" ? vibeMemorySystemPrompt() : wikiSystemPrompt();
+}
+
+function wikiUserPrompt(): string {
   return [
     "まず tool で本文を読んでください。",
     "必要なら複数回読み、最終的に JSON だけを返してください。",
     "候補は必ず知識単位で分割してください（1候補=1ルール or 1手続き）。",
+    "手順・運用フロー・レビュー手順・コマンド列は procedure として返してください。",
   ].join("\n");
+}
+
+function vibeMemoryInitialUserPrompt(): string {
+  return [
+    "これから memory_reader tool で最初の vibe memory window を読みます。",
+    "tool result に含まれる memory content と diff だけを source として扱ってください。",
+    "この user prompt や system prompt の文言を候補化しないでください。",
+  ].join("\n");
+}
+
+function vibeMemoryAfterInitialReadPrompt(): string {
+  return [
+    "上の memory_reader tool result を評価してください。",
+    "追加の window が必要なら memory_reader を呼び出してください。",
+    "十分なら、候補 JSON だけを返してください。",
+    "候補がなければ [] を返してください。",
+  ].join("\n");
+}
+
+function buildInitialUserMessages(targetKind: FindCandidateTargetKind): DistillationMessage[] {
+  return [
+    {
+      role: "user",
+      content: targetKind === "vibe_memory" ? vibeMemoryInitialUserPrompt() : wikiUserPrompt(),
+    },
+  ];
+}
+
+function buildInitialVibeMemoryToolCall(input: FindCandidateInput): DistillationToolCall {
+  const mode = input.memoryReaderMode ?? "compressed";
+  return {
+    id: "initial-memory-reader",
+    type: "function",
+    function: {
+      name: "memory_reader",
+      arguments: JSON.stringify({
+        fromToken: Math.max(0, Math.floor(input.fromToken ?? 0)),
+        readTokens: readTokens(input),
+        mode,
+      }),
+    },
+  };
 }
 
 export function formatCliTextCandidates(candidates: CandidateRecord[]): string {
   if (candidates.length === 0) return "NO_CANDIDATE";
   return candidates
-    .map((candidate) => `TITLE: ${candidate.title}\nCONTENT:\n${candidate.content}`)
+    .map((candidate) =>
+      [
+        ...(candidate.type ? [`TYPE: ${candidate.type}`] : []),
+        `TITLE: ${candidate.title}`,
+        `CONTENT:\n${candidate.content}`,
+      ].join("\n"),
+    )
     .join("\n---\n");
 }
 
@@ -271,30 +364,74 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
   try {
     let llmOutput = "";
     let candidates: CandidateRecord[] = [];
+    let readerUsedRecorded = false;
+
+    const recordReaderUsed = async (metadata: Record<string, unknown> = {}) => {
+      if (readerUsedRecorded || readLog.length === 0) return;
+      readerUsedRecorded = true;
+      await recordAuditLogSafe({
+        eventType: auditEventTypes.findCandidateReaderUsed,
+        actor: "system",
+        payload: {
+          targetStateId: target.id,
+          readCount: readLog.length,
+          readRanges: readLog,
+          ...metadata,
+        },
+      });
+    };
+
+    const messages: DistillationMessage[] = [
+      { role: "system", content: systemPromptForTarget(target.targetKind) },
+      ...buildInitialUserMessages(target.targetKind),
+    ];
+
+    if (target.targetKind === "vibe_memory") {
+      const initialToolCall = buildInitialVibeMemoryToolCall(input);
+      const initialToolResult = await toolExecutor(initialToolCall);
+      if (!initialToolResult.ok) {
+        throw new Error(initialToolResult.error ?? "initial memory_reader failed");
+      }
+      messages.push(
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [initialToolCall],
+        },
+        {
+          role: "tool",
+          tool_call_id: initialToolCall.id,
+          name: initialToolResult.name,
+          content: initialToolResult.content,
+        },
+        {
+          role: "user",
+          content: vibeMemoryAfterInitialReadPrompt(),
+        },
+      );
+      await recordReaderUsed({ initialRead: true, reader: "memory_reader" });
+    }
 
     const completion = await runDistillationCompletion(
       {
         model,
         maxTokens: candidateOutputMaxTokens(),
-        messages: [
-          { role: "system", content: systemPrompt() },
-          { role: "user", content: userPrompt() },
-        ],
+        messages,
       },
       {
         providerSetting: provider,
         toolDefinitions: [toolDefinition],
         toolExecutor,
-        enableTools: true,
-        maxToolRounds: readLimit,
-        requireToolCall: true,
+        enableTools: reads < readLimit,
+        maxToolRounds: Math.max(0, readLimit - reads),
+        requireToolCall: target.targetKind === "wiki_file",
         requireToolCallReminder: [
           "まだ本文を読んでいません。",
           "まず提供された reader tool を呼び出して本文 content を読んでください。",
           "その後に候補のみを返してください。",
         ],
         blankResponseReminder: [
-          '空の応答です。{"candidates":[]} または {"candidates":[{"title":"...","content":"..."}]} を返してください。',
+          '空の応答です。[] または {"type":"rule|procedure","title":"...","content":"..."} を返してください。',
         ],
         signal: input.signal,
       },
@@ -306,15 +443,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
     llmOutput = completion.content.trim();
     candidates = parseStorageCandidatesFromLlmOutput(llmOutput);
 
-    await recordAuditLogSafe({
-      eventType: auditEventTypes.findCandidateReaderUsed,
-      actor: "system",
-      payload: {
-        targetStateId: target.id,
-        readCount: readLog.length,
-        readRanges: readLog,
-      },
-    });
+    await recordReaderUsed();
 
     if (callerMode === "cli_text") {
       await recordAuditLogSafe({

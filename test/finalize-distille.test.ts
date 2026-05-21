@@ -107,6 +107,15 @@ describe("runFinalizeDistille", () => {
   });
 
   test("stores draft knowledge with cover evidence metadata", async () => {
+    mocks.coverEvidenceResultFromRow.mockReturnValue({
+      ...readyResult(),
+      candidate: {
+        ...readyResult().candidate,
+        technologies: ["typescript", "vitest"],
+        changeTypes: ["test"],
+      },
+    });
+
     const result = await runFinalizeDistille({ coverEvidenceResultId: "find-1", write: true });
 
     expect(result).toMatchObject({
@@ -120,6 +129,10 @@ describe("runFinalizeDistille", () => {
         sourceUri: "cover-evidence-result://find-1",
         status: "draft",
         title: "Keep finalize evidence",
+        appliesTo: {
+          technologies: ["typescript", "vitest"],
+          changeTypes: ["test"],
+        },
         metadata: expect.objectContaining({
           coverEvidenceResultId: "find-1",
           findCandidateResultId: "find-1",
@@ -159,6 +172,49 @@ describe("runFinalizeDistille", () => {
 
     expect(result.status).toBe("rejected");
     expect(result.reason).toBe("low_importance");
+    expect(mocks.getFindCandidateResultById).not.toHaveBeenCalled();
+    expect(mocks.upsertKnowledgeFromSource).not.toHaveBeenCalled();
+  });
+
+  test("demotes one-line procedure misclassifications before storing", async () => {
+    mocks.coverEvidenceResultFromRow.mockReturnValue({
+      ...readyResult(),
+      candidate: {
+        type: "procedure",
+        title: "頻出クエリは Prepared Statement を使う",
+        body: "繰り返し実行するクエリは `prepare()` で Prepared Statement 化して高速化する。",
+        importance: 90,
+        confidence: 95,
+      },
+    });
+
+    const result = await runFinalizeDistille({ coverEvidenceResultId: "find-1", write: true });
+
+    expect(result.status).toBe("stored");
+    expect(mocks.upsertKnowledgeFromSource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "rule",
+        title: "頻出クエリは Prepared Statement を使う",
+      }),
+    );
+  });
+
+  test("rejects procedure-like bodies that are not actionable steps", async () => {
+    mocks.coverEvidenceResultFromRow.mockReturnValue({
+      ...readyResult(),
+      candidate: {
+        type: "procedure",
+        title: "Run smoke tests before finalizing coverEvidence",
+        body: "Run smoke tests, then inspect the returned source references before finalizing coverEvidence.",
+        importance: 82,
+        confidence: 84,
+      },
+    });
+
+    const result = await runFinalizeDistille({ coverEvidenceResultId: "find-1", write: true });
+
+    expect(result.status).toBe("rejected");
+    expect(result.reason).toBe("procedure_body_not_actionable");
     expect(mocks.getFindCandidateResultById).not.toHaveBeenCalled();
     expect(mocks.upsertKnowledgeFromSource).not.toHaveBeenCalled();
   });

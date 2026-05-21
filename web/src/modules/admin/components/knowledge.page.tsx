@@ -18,7 +18,6 @@ import {
   type SortingState,
   flexRender,
   getCoreRowModel,
-  getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
 import {
@@ -40,7 +39,7 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { Fragment, useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import {
   type KnowledgeBulkStatusSelection,
   type KnowledgeItem,
@@ -64,6 +63,9 @@ const emptyForm: KnowledgeWriteInput = {
   body: "",
   confidence: 70,
   importance: 70,
+  appliesTo: {
+    general: false,
+  },
   metadata: {},
 };
 
@@ -93,6 +95,48 @@ function formatTimestamp(value: string | null): string {
   return date.toLocaleDateString("ja-JP");
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function parseCsv(value: string): string[] {
+  return value
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+}
+
+function csvFrom(value: unknown): string {
+  return toStringArray(value).join(", ");
+}
+
+function summarizeApplicability(appliesTo: unknown): Array<{ label: string; values: string[] }> {
+  const record = asRecord(appliesTo);
+  const facets: Array<{ label: string; values: string[] }> = [];
+  if (record.general === true) {
+    facets.push({ label: "general", values: ["true"] });
+  }
+  const technologies = toStringArray(record.technologies);
+  if (technologies.length > 0) {
+    facets.push({ label: "tech", values: technologies });
+  }
+  const changeTypes = toStringArray(record.changeTypes);
+  if (changeTypes.length > 0) {
+    facets.push({ label: "change", values: changeTypes });
+  }
+  return facets;
+}
+
 export function KnowledgePage() {
   const queryClient = useQueryClient();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -104,7 +148,10 @@ export function KnowledgePage() {
   const [searchQuery, setSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkSelection, setBulkSelection] = useState<KnowledgeBulkStatusSelection | null>(null);
-  const [expandedEvidenceId, setExpandedEvidenceId] = useState<string | null>(null);
+  const [modalEvidence, setModalEvidence] = useState<{
+    sourceRefs: string[];
+    sourceVibeMemoryIds: string[];
+  } | null>(null);
 
   // TanStack Table states
   const [sorting, setSorting] = useState<SortingState>([{ id: "updatedAt", desc: true }]);
@@ -116,6 +163,7 @@ export function KnowledgePage() {
     ? displayFilter
     : undefined;
   const serverSearchQuery = searchQuery.trim();
+  const serverSort = sorting[0] ?? { id: "updatedAt", desc: true };
 
   const knowledge = useQuery({
     queryKey: [
@@ -125,6 +173,8 @@ export function KnowledgePage() {
         limit: pagination.pageSize,
         status: serverStatusFilter,
         query: serverSearchQuery,
+        sortBy: serverSort.id,
+        sortDir: serverSort.desc ? "desc" : "asc",
       },
     ],
     queryFn: () =>
@@ -133,6 +183,8 @@ export function KnowledgePage() {
         limit: pagination.pageSize,
         status: serverStatusFilter,
         query: serverSearchQuery || undefined,
+        sortBy: serverSort.id,
+        sortDir: serverSort.desc ? "desc" : "asc",
       }),
   });
   const loadedKnowledgeItems = knowledge.data?.items ?? [];
@@ -165,10 +217,7 @@ export function KnowledgePage() {
       const next = current.filter((id) => validIds.has(id));
       return next.length === current.length ? current : next;
     });
-    if (expandedEvidenceId && !validIds.has(expandedEvidenceId)) {
-      setExpandedEvidenceId(null);
-    }
-  }, [filteredItems, expandedEvidenceId]);
+  }, [filteredItems]);
 
   const save = useMutation({
     mutationFn: () =>
@@ -176,6 +225,7 @@ export function KnowledgePage() {
     onSuccess: async () => {
       setForm(emptyForm);
       setEditingId(null);
+      setModalEvidence(null);
       setError(null);
       setIsModalOpen(false);
       await queryClient.invalidateQueries({ queryKey: ["knowledge"] });
@@ -204,6 +254,7 @@ export function KnowledgePage() {
         body: item.body,
         confidence: item.confidence,
         importance: item.importance,
+        appliesTo: asRecord(item.appliesTo),
         metadata: item.metadata ?? {},
       }),
     onSuccess: async () => {
@@ -222,6 +273,7 @@ export function KnowledgePage() {
         body: item.body,
         confidence: item.confidence,
         importance: item.importance,
+        appliesTo: asRecord(item.appliesTo),
         metadata: item.metadata ?? {},
       }),
     onSuccess: async () => {
@@ -275,6 +327,10 @@ export function KnowledgePage() {
 
   const openEdit = useCallback((item: KnowledgeItem) => {
     setEditingId(item.id);
+    setModalEvidence({
+      sourceRefs: item.sourceRefs ?? [],
+      sourceVibeMemoryIds: item.sourceVibeMemoryIds ?? [],
+    });
     setForm({
       type: normalizeKnowledgeType(item.type),
       status: item.status,
@@ -283,6 +339,7 @@ export function KnowledgePage() {
       body: item.body,
       confidence: item.confidence,
       importance: item.importance,
+      appliesTo: asRecord(item.appliesTo),
       metadata: item.metadata ?? {},
     });
     setIsModalOpen(true);
@@ -290,9 +347,20 @@ export function KnowledgePage() {
 
   const openCreate = () => {
     setEditingId(null);
+    setModalEvidence(null);
     setForm(emptyForm);
     setIsModalOpen(true);
   };
+
+  const updateAppliesTo = useCallback((next: Record<string, unknown>) => {
+    setForm((current) => ({
+      ...current,
+      appliesTo: {
+        ...asRecord(current.appliesTo),
+        ...next,
+      },
+    }));
+  }, []);
 
   const selectedCount = selectedIds.length;
   const allFilteredIds = useMemo(() => filteredItems.map((item) => item.id), [filteredItems]);
@@ -353,6 +421,9 @@ export function KnowledgePage() {
         header: "Title & Description",
         cell: ({ row }) => {
           const item = row.original;
+          const appliesTo = asRecord(item.appliesTo);
+          const technologyBadges = toStringArray(appliesTo.technologies).slice(0, 3);
+          const generalBadge = appliesTo.general === true;
           return (
             <div className="max-w-md">
               <button
@@ -363,15 +434,50 @@ export function KnowledgePage() {
                 {item.title}
               </button>
               <p className="row-subtext line-clamp-2 text-xs opacity-70">{item.body}</p>
-              <button
-                type="button"
-                className="mt-1 text-[11px] text-cyan-400 hover:text-cyan-300"
-                onClick={() =>
-                  setExpandedEvidenceId((current) => (current === item.id ? null : item.id))
-                }
-              >
-                {expandedEvidenceId === item.id ? "Hide evidence" : "Show evidence"}
-              </button>
+              <div className="mt-1 flex flex-wrap gap-1">
+                {generalBadge ? (
+                  <Badge variant="secondary" className="text-[10px]">
+                    general
+                  </Badge>
+                ) : null}
+                {technologyBadges.map((tag) => (
+                  <Badge key={`${item.id}-${tag}`} variant="outline" className="text-[10px]">
+                    {tag}
+                  </Badge>
+                ))}
+              </div>
+            </div>
+          );
+        },
+      },
+      {
+        id: "appliesTo",
+        header: "Applicability",
+        cell: ({ row }) => {
+          const item = row.original;
+          const facets = summarizeApplicability(item.appliesTo);
+          if (facets.length === 0) {
+            return <span className="text-xs text-muted-foreground">-</span>;
+          }
+          return (
+            <div className="min-w-[210px] space-y-1">
+              {facets.map((facet) => {
+                const visible = facet.values.slice(0, 2);
+                const remaining = facet.values.length - visible.length;
+                return (
+                  <div key={`${item.id}-${facet.label}`} className="flex items-start gap-1 text-xs">
+                    <span className="text-muted-foreground">{facet.label}:</span>
+                    <div className="flex flex-wrap gap-1">
+                      {visible.map((value) => (
+                        <Badge key={`${item.id}-${facet.label}-${value}`} variant="outline">
+                          {value}
+                        </Badge>
+                      ))}
+                      {remaining > 0 ? <Badge variant="secondary">+{remaining}</Badge> : null}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           );
         },
@@ -596,7 +702,6 @@ export function KnowledgePage() {
       },
     ],
     [
-      expandedEvidenceId,
       feedbackMutation.isPending,
       feedbackMutation.mutate,
       bulkSelection,
@@ -618,12 +723,15 @@ export function KnowledgePage() {
       sorting,
       pagination,
     },
-    onSortingChange: setSorting,
+    onSortingChange: (updater) => {
+      setSorting((current) => (typeof updater === "function" ? updater(current) : updater));
+      resetToFirstPage();
+    },
     onPaginationChange: setPagination,
     manualPagination: true,
+    manualSorting: true,
     pageCount: knowledge.data?.totalPages ?? 0,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
   });
   const pageStart = totalKnowledgeCount === 0 ? 0 : pagination.pageIndex * pagination.pageSize + 1;
   const pageEnd = Math.min(
@@ -797,55 +905,17 @@ export function KnowledgePage() {
                 selectedSet.has(item.id) ||
                 (bulkSelection !== null &&
                   (!bulkSelection.status || bulkSelection.status === item.status));
-              const sourceRefs = item.sourceRefs ?? [];
-              const sourceVibeMemoryIds = item.sourceVibeMemoryIds ?? [];
               return (
-                <Fragment key={row.id}>
-                  <TableRow
-                    className={`group hover:bg-muted/50 transition-colors ${rowSelected ? "bg-muted/30" : ""}`}
-                  >
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell key={cell.id}>
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                  {expandedEvidenceId === item.id ? (
-                    <TableRow className="bg-slate-900/20">
-                      <TableCell colSpan={columns.length}>
-                        <div className="space-y-2 text-xs">
-                          <p className="font-semibold text-slate-200">Evidence</p>
-                          <div>
-                            <p className="text-muted-foreground">source refs</p>
-                            {sourceRefs.length > 0 ? (
-                              <ul className="list-disc pl-4">
-                                {sourceRefs.map((ref) => (
-                                  <li key={`${item.id}-${ref}`} className="break-all">
-                                    {ref}
-                                  </li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <p className="text-muted-foreground">none</p>
-                            )}
-                          </div>
-                          <div>
-                            <p className="text-muted-foreground">originating vibe memory</p>
-                            {sourceVibeMemoryIds.length > 0 ? (
-                              <ul className="list-disc pl-4">
-                                {sourceVibeMemoryIds.map((memoryId) => (
-                                  <li key={`${item.id}-${memoryId}`}>{memoryId}</li>
-                                ))}
-                              </ul>
-                            ) : (
-                              <p className="text-muted-foreground">none</p>
-                            )}
-                          </div>
-                        </div>
-                      </TableCell>
-                    </TableRow>
-                  ) : null}
-                </Fragment>
+                <TableRow
+                  key={row.id}
+                  className={`group hover:bg-muted/50 transition-colors ${rowSelected ? "bg-muted/30" : ""}`}
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <TableCell key={cell.id}>
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </TableCell>
+                  ))}
+                </TableRow>
               );
             })}
             {table.getRowModel().rows.length === 0 && !knowledge.isLoading && (
@@ -919,8 +989,8 @@ export function KnowledgePage() {
 
       {/* Modal / Dialog Overlay */}
       {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm p-4">
-          <Card className="w-full max-w-2xl shadow-2xl animate-in zoom-in-95 duration-200">
+        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm">
+          <Card className="my-4 w-full max-w-2xl max-h-[calc(100vh-2rem)] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
             <div className="flex items-center justify-between border-b px-6 py-4">
               <h2 className="text-lg font-bold">
                 {editingId ? "Edit Knowledge" : "Create New Knowledge"}
@@ -929,7 +999,7 @@ export function KnowledgePage() {
                 <X size={20} />
               </Button>
             </div>
-            <CardContent className="p-6 space-y-4">
+            <CardContent className="space-y-4 overflow-y-auto p-6">
               <div className="space-y-1">
                 <label
                   htmlFor="knowledge-title"
@@ -1058,6 +1128,89 @@ export function KnowledgePage() {
                   />
                 </div>
               </div>
+
+              <div className="space-y-3 rounded-lg border border-border/60 p-3">
+                <div className="flex items-center justify-between">
+                  <p className="text-xs font-bold uppercase text-muted-foreground">Applicability</p>
+                  <label className="flex items-center gap-2 text-xs">
+                    <input
+                      type="checkbox"
+                      checked={asRecord(form.appliesTo).general === true}
+                      onChange={(event) => updateAppliesTo({ general: event.target.checked })}
+                    />
+                    general
+                  </label>
+                </div>
+                <div className="grid grid-cols-2 gap-3">
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="knowledge-applies-technologies"
+                      className="text-[11px] text-muted-foreground"
+                    >
+                      Technologies
+                    </label>
+                    <Input
+                      id="knowledge-applies-technologies"
+                      className="placeholder:text-muted-foreground/60"
+                      placeholder="typescript, python"
+                      value={csvFrom(asRecord(form.appliesTo).technologies)}
+                      onChange={(event) =>
+                        updateAppliesTo({ technologies: parseCsv(event.target.value) })
+                      }
+                    />
+                  </div>
+                  <div className="space-y-1">
+                    <label
+                      htmlFor="knowledge-applies-change-types"
+                      className="text-[11px] text-muted-foreground"
+                    >
+                      Change Types
+                    </label>
+                    <Input
+                      id="knowledge-applies-change-types"
+                      className="placeholder:text-muted-foreground/60"
+                      placeholder="feature, bugfix, schema"
+                      value={csvFrom(asRecord(form.appliesTo).changeTypes)}
+                      onChange={(event) =>
+                        updateAppliesTo({ changeTypes: parseCsv(event.target.value) })
+                      }
+                    />
+                  </div>
+                </div>
+              </div>
+              {editingId ? (
+                <div className="space-y-3 rounded-lg border border-border/60 p-3">
+                  <p className="text-xs font-bold uppercase text-muted-foreground">Evidence</p>
+                  <div className="space-y-1">
+                    <p className="text-[11px] text-muted-foreground">source refs</p>
+                    {modalEvidence && modalEvidence.sourceRefs.length > 0 ? (
+                      <ul className="list-disc space-y-1 pl-4 text-xs">
+                        {modalEvidence.sourceRefs.map((ref, index) => (
+                          // biome-ignore lint/suspicious/noArrayIndexKey: index is appropriate since elements are read-only evidence references
+                          <li key={`evidence-ref-${index}`} className="break-all">
+                            {ref}
+                          </li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">none</p>
+                    )}
+                  </div>
+                  <div className="space-y-1">
+                    <p className="text-[11px] text-muted-foreground">originating vibe memory</p>
+                    {modalEvidence && modalEvidence.sourceVibeMemoryIds.length > 0 ? (
+                      <ul className="list-disc space-y-1 pl-4 text-xs">
+                        {modalEvidence.sourceVibeMemoryIds.map((memoryId, index) => (
+                          // biome-ignore lint/suspicious/noArrayIndexKey: index is appropriate since elements are read-only evidence memory IDs
+                          <li key={`evidence-memory-${index}`}>{memoryId}</li>
+                        ))}
+                      </ul>
+                    ) : (
+                      <p className="text-xs text-muted-foreground">none</p>
+                    )}
+                  </div>
+                </div>
+              ) : null}
 
               <div className="pt-4 flex justify-end gap-3 border-t">
                 <Button variant="outline" onClick={() => setIsModalOpen(false)}>

@@ -5,6 +5,11 @@ import {
   saveCoverEvidenceResult,
   type CoverEvidenceResultRow,
 } from "../coverEvidence/repository.js";
+import {
+  PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
+  hasSkillLikeProcedureBody,
+  shouldDemoteProcedureToRule,
+} from "../distillation/procedure-quality.js";
 import type { DistillationProviderSetting } from "../distillation/distillation-runtime.service.js";
 import { runCoverEvidenceForCandidate } from "../coverEvidence/runner.js";
 import { runFinalizeDistille, type FinalizeDistilleResult } from "../finalizeDistille/domain.js";
@@ -187,6 +192,24 @@ async function runWithCandidateTimeout<T>(
 
 function coverResultFromRow(row: CoverEvidenceResultRow): CoverResult {
   const result = coverEvidenceResultFromRow(row);
+  if (
+    result.status === "knowledge_ready" &&
+    result.candidate?.type === "procedure" &&
+    !hasSkillLikeProcedureBody(result.candidate.body) &&
+    !shouldDemoteProcedureToRule({
+      title: result.candidate.title,
+      body: result.candidate.body,
+    })
+  ) {
+    return {
+      coverEvidenceResultId: row.id,
+      findCandidateId: row.id,
+      status: "insufficient",
+      stage: result.stage,
+      retryable: false,
+      reason: PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
+    };
+  }
   return {
     coverEvidenceResultId: row.id,
     findCandidateId: row.id,

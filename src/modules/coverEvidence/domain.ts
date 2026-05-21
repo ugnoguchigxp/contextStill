@@ -1,20 +1,31 @@
 import { groupedConfig } from "../../config.js";
-import { getFindCandidateResultById } from "../findCandidate/repository.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import type { DistillationDomainSmokeResult } from "../distillation-domain.types.js";
 import {
-  distillationToolEventsFromError,
-  resolveDistillationModel,
-  runDistillationCompletion,
   type DistillationChatClient,
   type DistillationProviderSetting,
   type DistillationToolExecutor,
+  distillationToolEventsFromError,
+  resolveDistillationModel,
+  runDistillationCompletion,
 } from "../distillation/distillation-runtime.service.js";
+import {
+  PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
+  hasProcedureWorkflowSignal,
+  hasSkillLikeProcedureBody,
+  shouldDemoteProcedureToRule,
+} from "../distillation/procedure-quality.js";
+import { buildProcedureSystemContext } from "../distillation/procedure-system-context.js";
+import {
+  type CandidateKnowledgeType,
+  type FindCandidateResultRow,
+  getFindCandidateResultById,
+} from "../findCandidate/repository.js";
 import { dedupeCoverEvidenceCandidate } from "./dedupe.service.js";
 import {
+  type McpEvidenceToolName,
   configuredMcpEvidenceToolNames,
   referencesFromMcpToolEvents,
-  type McpEvidenceToolName,
 } from "./mcp-evidence.service.js";
 import { parseCoverEvidenceResult } from "./parser.js";
 import {
@@ -44,6 +55,13 @@ export type CoverEvidenceRunResult = {
   result: CoverEvidenceResult;
 };
 
+type CoverEvidenceSourceContext = {
+  targetKind: "wiki_file" | "vibe_memory";
+  targetKey: string;
+  sourceUri: string;
+  readRanges: Array<{ from: number; toExclusive: number }>;
+};
+
 const MAX_REASON_LENGTH = 160;
 
 function compactReason(value: string | null | undefined): string | null {
@@ -51,16 +69,66 @@ function compactReason(value: string | null | undefined): string | null {
   return reason ? reason.slice(0, MAX_REASON_LENGTH) : null;
 }
 
-function inferCandidateType(title: string, body: string): CoverEvidenceCandidate["type"] {
-  const text = `${title}\n${body}`.toLowerCase();
-  if (
-    /(\bstep\b|\bsteps\b|\brun\b|\bcommand\b|\bcli\b|\bprocedure\b|手順|実行|コマンド|まず|次に|最後に)/i.test(
-      text,
-    )
-  ) {
+function procedureBodyInstructions(): string[] {
+  return buildProcedureSystemContext().split("\n");
+}
+
+function applicabilityInstructions(): string[] {
+  return [
+    "draft knowledge の applicability metadata も、わかる範囲で最終 JSON の任意 field として返してください。",
+    "ネストした appliesTo や candidate オブジェクトは作らないでください。",
+    "任意 field は applicabilityGeneral, technologies, changeTypes, repoPath, repoKey です。",
+    "technologies / changeTypes は JSON 配列ではなく、できればカンマ区切り文字列で返してください。",
+    "title/body/source excerpt に明確な技術名や変更種別がある場合は、対応する technologies/changeTypes を埋めてください。",
+    "必須 field は増やしません。最低限 status と title/body が返せれば十分です。type/importance/confidence は省略しても構いません。",
+    "source evidence から明確に言える値だけを返し、不明な field は省略してください。省略しても問題ありません。",
+    "applicabilityGeneral は repo、project、file、technology に依存せず広く再利用できる knowledge の場合だけ true にしてください。",
+    "repoPath と repoKey は system/source metadata に明示されている場合だけ使い、推測で作らないでください。",
+  ];
+}
+
+function sourceContextForPrompts(params: {
+  row: FindCandidateResultRow;
+  readRanges: Array<{ from: number; toExclusive: number }>;
+}): CoverEvidenceSourceContext {
+  return {
+    targetKind: params.row.targetKind,
+    targetKey: params.row.targetKey,
+    sourceUri: params.row.sourceUri,
+    readRanges: params.readRanges,
+  };
+}
+
+function candidateTypeFromOrigin(origin: unknown): CandidateKnowledgeType | undefined {
+  if (!origin || typeof origin !== "object" || Array.isArray(origin)) return undefined;
+  const record = origin as { candidateType?: unknown; type?: unknown; typeHint?: unknown };
+  const value = record.candidateType ?? record.typeHint ?? record.type;
+  if (value === "rule" || value === "procedure") return value;
+  return undefined;
+}
+
+function inferCandidateType(
+  title: string,
+  body: string,
+  typeHint?: CandidateKnowledgeType,
+): CoverEvidenceCandidate["type"] {
+  if (typeHint === "procedure" && hasProcedureWorkflowSignal(title, body)) return "procedure";
+  if (hasProcedureWorkflowSignal(title, body)) {
     return "procedure";
   }
   return "rule";
+}
+
+function reclassifyCandidate(candidate: CoverEvidenceCandidate): CoverEvidenceCandidate {
+  if (candidate.type === "procedure") return candidate;
+  const inferred = inferCandidateType(candidate.title, candidate.body);
+  return inferred === "procedure" ? { ...candidate, type: "procedure" } : candidate;
+}
+
+function reclassifyResultCandidate(result: CoverEvidenceResult): CoverEvidenceResult {
+  if (!result.candidate) return result;
+  const candidate = reclassifyCandidate(result.candidate);
+  return candidate === result.candidate ? result : { ...result, candidate };
 }
 
 function inferImportance(title: string, body: string): number {
@@ -82,9 +150,10 @@ function baseCandidate(params: {
   title: string;
   body: string;
   confidence: number;
+  typeHint?: CandidateKnowledgeType;
 }): CoverEvidenceCandidate {
   return {
-    type: inferCandidateType(params.title, params.body),
+    type: inferCandidateType(params.title, params.body, params.typeHint),
     title: params.title,
     body: params.body,
     importance: inferImportance(params.title, params.body),
@@ -198,6 +267,36 @@ function makeResult(params: {
   };
 }
 
+function normalizeProcedureBodyQuality(result: CoverEvidenceResult): CoverEvidenceResult {
+  if (result.status !== "knowledge_ready" || result.candidate?.type !== "procedure") {
+    return result;
+  }
+  if (hasSkillLikeProcedureBody(result.candidate.body)) return result;
+  if (
+    shouldDemoteProcedureToRule({
+      title: result.candidate.title,
+      body: result.candidate.body,
+    })
+  ) {
+    return {
+      ...result,
+      candidate: {
+        ...result.candidate,
+        type: "rule",
+      },
+    };
+  }
+  return makeResult({
+    status: "insufficient",
+    stage: result.stage,
+    candidate: null,
+    references: result.references,
+    duplicateRefs: result.duplicateRefs,
+    toolEvents: result.toolEvents,
+    reason: PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
+  });
+}
+
 function rejectLowImportance(result: CoverEvidenceResult): CoverEvidenceResult {
   if (
     result.status !== "knowledge_ready" ||
@@ -240,25 +339,43 @@ function requiresExternalEvidence(candidate: CoverEvidenceCandidate): boolean {
   );
 }
 
+function applicabilityBlankResponseReminderLines(
+  stage: "web" | "final",
+  statuses: string,
+): string[] {
+  return [
+    "直前の応答は空でした。",
+    `次のようなフラット JSON を返してください: {"status":"${statuses}","stage":"${stage}","type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80,"technologies":"...","changeTypes":"...","applicabilityGeneral":false}`,
+    "またはラベル付きテキストを返してください: STATUS / STAGE / TYPE / TITLE / BODY / TECHNOLOGIES / CHANGE_TYPES / APPLICABILITY_GENERAL / REPO_PATH / REPO_KEY。",
+  ];
+}
+
 function externalEvidenceSystemPrompt(): string {
   return [
     "あなたは coverEvidence の外部 evidence 検証器です。",
     "必ず search_web または fetch_content を使ってから、JSON だけを返してください。",
+    "入力 candidate.type は暫定ヒントです。最終 JSON では type を独立に再分類してください。",
+    "procedure は順序付き作業、コマンドフロー、検証/復旧/レビューの再利用可能な手順です。",
+    "rule は持続的な制約・方針・不変条件・意思決定です。",
+    "手順・運用フロー・レビュー手順を小さな rule に分解して返さないでください。",
+    ...procedureBodyInstructions(),
+    ...applicabilityInstructions(),
     "search_web は URL 発見用です。検索結果 snippet だけを最終根拠にしてはいけません。",
     "search_web の結果を受け取ったら、採用候補の一次ソース URL を 1 から 3 件選び、最終 JSON の前に fetch_content を呼んでください。",
     "fetch_content は同じ検証 session で複数回呼んで構いません。失敗した URL があれば、別の有望な URL を fetch_content してください。",
     "候補や source references に URL が含まれる場合は、search_web より先にその URL を fetch_content してください。",
     "search_web を同義の言い換え query で繰り返さないでください。query は短く安定した公式名・API名・概念名を優先してください。",
     "外部主張を採用するなら fetch_content の成功結果に基づけてください。",
-    "JSON は次の形だけにしてください:",
-    '{"schemaVersion":1,"status":"knowledge_ready|insufficient|duplicate|near_duplicate","stage":"web","candidate":{"type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80},"references":[],"duplicateRefs":[],"toolEvents":[],"reason":null}',
-    "candidate.importance と candidate.confidence は 0 から 100 の整数です。",
+    "JSON は次の形を基本にしてください。applicability field は任意で、省略しても構いません:",
+    '{"schemaVersion":1,"status":"knowledge_ready|insufficient|duplicate|near_duplicate","stage":"web","type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80,"technologies":"...","changeTypes":"...","applicabilityGeneral":false,"references":[],"duplicateRefs":[],"toolEvents":[],"reason":null}',
+    "importance と confidence は 0 から 100 目安の数値で返してください。整数でなくても構いません。",
   ].join("\n");
 }
 
 function externalEvidenceUserPrompt(params: {
   candidate: CoverEvidenceCandidate;
   sourceReferences: CoverEvidenceReference[];
+  sourceContext: CoverEvidenceSourceContext;
 }): string {
   const query = buildCoverEvidenceSearchQuery(`${params.candidate.title} ${params.candidate.body}`);
   return [
@@ -267,6 +384,8 @@ function externalEvidenceUserPrompt(params: {
     JSON.stringify(params.candidate, null, 2),
     "source references:",
     JSON.stringify(params.sourceReferences, null, 2),
+    "system/source metadata:",
+    JSON.stringify(params.sourceContext, null, 2),
     `推奨検索 query: ${query.query}`,
   ].join("\n\n");
 }
@@ -275,12 +394,18 @@ function valueAssessmentSystemPrompt(): string {
   return [
     "あなたは coverEvidence の knowledge value 判定器です。",
     "候補が次回以降の coding agent に再利用可能な rule/procedure かを判定してください。",
+    "入力 candidate.type は暫定ヒントです。最終 JSON では type を独立に再分類してください。",
+    "procedure は順序付き作業、コマンドフロー、検証/復旧/レビューの再利用可能な手順です。",
+    "rule は持続的な制約・方針・不変条件・意思決定です。",
+    "手順・運用フロー・レビュー手順を小さな rule に分解して返さないでください。",
+    ...procedureBodyInstructions(),
+    ...applicabilityInstructions(),
     "候補は元 source で支えられている前提ですが、重要度と自己完結性を改めて評価してください。",
-    "importance と confidence は 0 から 100 の整数です。",
+    "importance と confidence は 0 から 100 目安の数値です。未確定なら省略して構いません。",
     `importance が ${groupedConfig.distillation.lowImportanceRejectThreshold} 以下なら status は insufficient、reason は low_importance にしてください。`,
-    "JSON は次の形だけにしてください:",
-    '{"schemaVersion":1,"status":"knowledge_ready|insufficient","stage":"final","candidate":{"type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80},"references":[],"duplicateRefs":[],"toolEvents":[],"reason":null}',
-    "insufficient の場合は candidate を null にしてよいです。",
+    "JSON は次の形を基本にしてください。applicability field は任意で、省略しても構いません:",
+    '{"schemaVersion":1,"status":"knowledge_ready|insufficient","stage":"final","type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80,"technologies":"...","changeTypes":"...","applicabilityGeneral":false,"references":[],"duplicateRefs":[],"toolEvents":[],"reason":null}',
+    "insufficient の場合は title/body/type/importance/confidence を省略して構いません。",
   ].join("\n");
 }
 
@@ -288,6 +413,7 @@ function valueAssessmentUserPrompt(params: {
   candidate: CoverEvidenceCandidate;
   sourceReferences: CoverEvidenceReference[];
   sourceContentExcerpt: string;
+  sourceContext: CoverEvidenceSourceContext;
 }): string {
   return [
     "候補の value を判定してください。",
@@ -295,6 +421,8 @@ function valueAssessmentUserPrompt(params: {
     JSON.stringify(params.candidate, null, 2),
     "source references:",
     JSON.stringify(params.sourceReferences, null, 2),
+    "system/source metadata:",
+    JSON.stringify(params.sourceContext, null, 2),
     "source excerpt:",
     params.sourceContentExcerpt.slice(0, 6000),
   ].join("\n\n");
@@ -305,6 +433,7 @@ async function runValueAssessment(params: {
   candidate: CoverEvidenceCandidate;
   sourceReferences: CoverEvidenceReference[];
   sourceContentExcerpt: string;
+  sourceContext: CoverEvidenceSourceContext;
   provider: DistillationProviderSetting;
   model: string;
   chatClient?: DistillationChatClient;
@@ -323,6 +452,7 @@ async function runValueAssessment(params: {
               candidate: params.candidate,
               sourceReferences: params.sourceReferences,
               sourceContentExcerpt: params.sourceContentExcerpt,
+              sourceContext: params.sourceContext,
             }),
           },
         ],
@@ -331,6 +461,10 @@ async function runValueAssessment(params: {
         providerSetting: params.provider,
         chatClient: params.chatClient,
         enableTools: false,
+        blankResponseReminder: applicabilityBlankResponseReminderLines(
+          "final",
+          "knowledge_ready|insufficient",
+        ),
         signal: params.signal,
         auditContext: {
           domain: "coverEvidence",
@@ -340,11 +474,13 @@ async function runValueAssessment(params: {
       },
     );
     const parsed = parseCoverEvidenceResult(completion.content);
-    return rejectLowImportance({
-      ...parsed,
-      references: mergeReferences(params.sourceReferences, parsed.references),
-      toolEvents: toolEventsForResult(completion.toolEvents),
-    });
+    return normalizeProcedureBodyQuality(
+      rejectLowImportance({
+        ...reclassifyResultCandidate(parsed),
+        references: mergeReferences(params.sourceReferences, parsed.references),
+        toolEvents: toolEventsForResult(completion.toolEvents),
+      }),
+    );
   } catch (error) {
     if (isAbortError(error)) {
       throw error;
@@ -366,6 +502,7 @@ async function runExternalEvidence(params: {
   id: string;
   candidate: CoverEvidenceCandidate;
   sourceReferences: CoverEvidenceReference[];
+  sourceContext: CoverEvidenceSourceContext;
   provider: DistillationProviderSetting;
   model: string;
   forceRefreshEvidence?: boolean;
@@ -385,6 +522,7 @@ async function runExternalEvidence(params: {
             content: externalEvidenceUserPrompt({
               candidate: params.candidate,
               sourceReferences: params.sourceReferences,
+              sourceContext: params.sourceContext,
             }),
           },
         ],
@@ -396,6 +534,10 @@ async function runExternalEvidence(params: {
         enableTools: true,
         maxToolRounds: groupedConfig.distillationTools.maxRounds,
         requireToolCall: true,
+        blankResponseReminder: applicabilityBlankResponseReminderLines(
+          "web",
+          "knowledge_ready|insufficient|duplicate|near_duplicate",
+        ),
         toolNames: ["search_web", "fetch_content"],
         auditContext: {
           domain: "coverEvidence",
@@ -438,11 +580,13 @@ async function runExternalEvidence(params: {
       });
     }
 
-    return rejectLowImportance({
-      ...parsed,
-      references,
-      toolEvents,
-    });
+    return normalizeProcedureBodyQuality(
+      rejectLowImportance({
+        ...reclassifyResultCandidate(parsed),
+        references,
+        toolEvents,
+      }),
+    );
   } catch (error) {
     if (isAbortError(error)) {
       throw error;
@@ -588,12 +732,19 @@ export async function runCoverEvidence(
     const existing = await selectCoverEvidenceResultById(id);
     if (existing) {
       const existingResult = coverEvidenceResultFromRow(existing);
+      const normalizedExistingResult = normalizeProcedureBodyQuality(existingResult);
       if (input.forceRefreshEvidence || isRetryableCoverEvidenceStatus(existingResult.status)) {
         // Retryable rows are checkpoints, not terminal cache hits.
       } else {
+        if (normalizedExistingResult !== existingResult) {
+          await saveCoverEvidenceResult({
+            id: existing.id,
+            result: normalizedExistingResult,
+          });
+        }
         return {
           id: existing.id,
-          result: existingResult,
+          result: normalizedExistingResult,
         };
       }
     }
@@ -657,10 +808,15 @@ export async function runCoverEvidence(
             reason: support.reason,
           });
         } else {
+          const sourceContext = sourceContextForPrompts({
+            row,
+            readRanges: sourceRead.readRanges,
+          });
           const candidate = baseCandidate({
             title: row.title,
             body: row.content,
             confidence: support.confidence,
+            typeHint: candidateTypeFromOrigin(row.origin),
           });
           const dedupe = await dedupeCoverEvidenceCandidate(candidate);
           if (dedupe.status !== "unique") {
@@ -680,6 +836,7 @@ export async function runCoverEvidence(
               id,
               candidate,
               sourceReferences: sourceRead.references,
+              sourceContext,
               provider,
               model,
               forceRefreshEvidence: input.forceRefreshEvidence,
@@ -702,6 +859,7 @@ export async function runCoverEvidence(
               candidate,
               sourceReferences: sourceRead.references,
               sourceContentExcerpt: sourceRead.content,
+              sourceContext,
               provider,
               model,
               chatClient: input.chatClient,

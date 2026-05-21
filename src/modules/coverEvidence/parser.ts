@@ -4,14 +4,16 @@ import {
   type CoverEvidenceDuplicateRef,
   type CoverEvidenceReference,
   type CoverEvidenceResult,
+  type CoverEvidenceStage,
   type CoverEvidenceStatus,
   type CoverEvidenceToolEvent,
-  type CoverEvidenceStage,
-  isCoverEvidenceStatus,
   isCoverEvidenceStage,
+  isCoverEvidenceStatus,
 } from "./types.js";
 
 const MAX_REASON_LENGTH = 160;
+const DEFAULT_IMPORTANCE = 70;
+const DEFAULT_CONFIDENCE = 70;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -28,45 +30,118 @@ function asOptionalString(value: unknown): string | undefined {
   return text ? text : undefined;
 }
 
+function asStringArray(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value
+      .filter((item): item is string => typeof item === "string")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  if (typeof value === "string" && value.trim()) {
+    return value
+      .split(",")
+      .map((part) => part.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
+function asOptionalBoolean(value: unknown): boolean | undefined {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (normalized === "true") return true;
+    if (normalized === "false") return false;
+  }
+  return undefined;
+}
+
 function asOptionalReason(value: unknown): string | null {
   const text = asOptionalString(value)?.replace(/\s+/g, " ").trim();
   return text ? text.slice(0, MAX_REASON_LENGTH) : null;
 }
 
-function parseScore(value: unknown, fieldName: string): number {
-  if (typeof value !== "number" || !Number.isInteger(value) || value < 0 || value > 100) {
-    throw new Error(`${fieldName} must be an integer from 0 to 100`);
+function parseScore(value: unknown, fallback: number): number {
+  const numeric =
+    typeof value === "number"
+      ? value
+      : typeof value === "string" && value.trim()
+        ? Number(value)
+        : Number.NaN;
+  if (!Number.isFinite(numeric)) {
+    return fallback;
   }
-  return value;
+  const normalized = numeric >= 0 && numeric <= 1 ? numeric * 100 : numeric;
+  return Math.max(0, Math.min(100, Math.round(normalized)));
 }
 
-function parseCandidate(
-  value: unknown,
-  status: CoverEvidenceStatus,
-): CoverEvidenceCandidate | null {
-  if (value === null || value === undefined) {
-    if (status === "knowledge_ready") {
-      throw new Error("candidate is required when status is knowledge_ready");
-    }
+function parseApplicability(
+  record: Record<string, unknown>,
+): Pick<
+  CoverEvidenceCandidate,
+  "applicabilityGeneral" | "technologies" | "changeTypes" | "repoPath" | "repoKey"
+> {
+  const nested = asRecord(record.appliesTo ?? record.applicability);
+  const technologies = asStringArray(record.technologies ?? nested.technologies);
+  const changeTypes = asStringArray(record.changeTypes ?? nested.changeTypes);
+  const general = asOptionalBoolean(
+    record.applicabilityGeneral ?? record.general ?? nested.general,
+  );
+  const repoPath = asOptionalString(record.repoPath ?? nested.repoPath);
+  const repoKey = asOptionalString(record.repoKey ?? nested.repoKey);
+
+  return {
+    ...(general !== undefined ? { applicabilityGeneral: general } : {}),
+    ...(technologies.length > 0 ? { technologies } : {}),
+    ...(changeTypes.length > 0 ? { changeTypes } : {}),
+    ...(repoPath ? { repoPath } : {}),
+    ...(repoKey ? { repoKey } : {}),
+  };
+}
+
+function candidateRecordFromResult(record: Record<string, unknown>): Record<string, unknown> {
+  const nested = asRecord(record.candidate);
+  if (Object.keys(nested).length === 0) {
+    return record;
+  }
+  return {
+    ...record,
+    ...nested,
+  };
+}
+
+function inferTitleFromBody(body: string): string {
+  return body.replace(/\s+/g, " ").trim().slice(0, 80);
+}
+
+function parseCandidate(record: Record<string, unknown>): CoverEvidenceCandidate | null {
+  const candidateRecord = candidateRecordFromResult(record);
+  const title = asString(candidateRecord.title ?? candidateRecord.candidateTitle);
+  const body = asString(
+    candidateRecord.body ??
+      candidateRecord.content ??
+      candidateRecord.candidateBody ??
+      candidateRecord.candidateContent,
+  );
+  const normalizedTitle = title || (body ? inferTitleFromBody(body) : "");
+  const normalizedBody = body || title;
+  if (!normalizedTitle || !normalizedBody) {
     return null;
   }
 
-  const record = asRecord(value);
-  const type = asString(record.type);
-  if (type !== "rule" && type !== "procedure") {
-    throw new Error("candidate.type must be rule or procedure");
-  }
-  const title = asString(record.title);
-  const body = asString(record.body ?? record.content);
-  if (!title || !body) {
-    throw new Error("candidate.title and candidate.body are required");
-  }
+  const type =
+    asString(candidateRecord.type ?? candidateRecord.candidateType ?? candidateRecord.kind) ===
+    "procedure"
+      ? "procedure"
+      : "rule";
+  const applicability = parseApplicability(candidateRecord);
   return {
     type,
-    title,
-    body,
-    importance: parseScore(record.importance, "candidate.importance"),
-    confidence: parseScore(record.confidence, "candidate.confidence"),
+    title: normalizedTitle,
+    body: normalizedBody,
+    importance: parseScore(candidateRecord.importance, DEFAULT_IMPORTANCE),
+    confidence: parseScore(candidateRecord.confidence, DEFAULT_CONFIDENCE),
+    ...applicability,
   };
 }
 
@@ -146,18 +221,93 @@ function isToolEvent(value: CoverEvidenceToolEvent | null): value is CoverEviden
   return value !== null;
 }
 
+function parseLabelledResultRecord(text: string): Record<string, unknown> | null {
+  const lines = text.split(/\r?\n/);
+  const labelValues = new Map<string, string>();
+  const bodyLines: string[] = [];
+  let inBody = false;
+  const knownLabels = new Set([
+    "STATUS",
+    "STAGE",
+    "TYPE",
+    "TITLE",
+    "BODY",
+    "IMPORTANCE",
+    "CONFIDENCE",
+    "TECHNOLOGIES",
+    "CHANGE_TYPES",
+    "CHANGETYPES",
+    "APPLICABILITY_GENERAL",
+    "GENERAL",
+    "REPO_PATH",
+    "REPO_KEY",
+  ]);
+
+  for (const line of lines) {
+    const match = line.match(/^([A-Z_]+):\s*(.*)$/);
+    if (match && knownLabels.has(match[1])) {
+      const label = match[1];
+      const value = match[2] ?? "";
+      if (label === "BODY") {
+        inBody = true;
+        if (value.trim()) bodyLines.push(value);
+      } else {
+        inBody = false;
+        labelValues.set(label, value.trim());
+      }
+      continue;
+    }
+    if (inBody) {
+      bodyLines.push(line);
+    }
+  }
+
+  const title = (labelValues.get("TITLE") ?? "").trim();
+  const body = bodyLines.join("\n").trim();
+  if (!title && !body) return null;
+  const record: Record<string, unknown> = {
+    ...(labelValues.get("STATUS") ? { status: labelValues.get("STATUS") } : {}),
+    ...(labelValues.get("STAGE") ? { stage: labelValues.get("STAGE") } : {}),
+    ...(labelValues.get("TYPE") ? { type: labelValues.get("TYPE") } : {}),
+    ...(title ? { title } : {}),
+    ...(body ? { body } : {}),
+    ...(labelValues.get("IMPORTANCE") ? { importance: labelValues.get("IMPORTANCE") } : {}),
+    ...(labelValues.get("CONFIDENCE") ? { confidence: labelValues.get("CONFIDENCE") } : {}),
+    ...(labelValues.get("TECHNOLOGIES") ? { technologies: labelValues.get("TECHNOLOGIES") } : {}),
+    ...(labelValues.get("CHANGE_TYPES") ? { changeTypes: labelValues.get("CHANGE_TYPES") } : {}),
+    ...(labelValues.get("CHANGETYPES") ? { changeTypes: labelValues.get("CHANGETYPES") } : {}),
+    ...(labelValues.get("APPLICABILITY_GENERAL")
+      ? { applicabilityGeneral: labelValues.get("APPLICABILITY_GENERAL") }
+      : {}),
+    ...(labelValues.get("GENERAL") ? { general: labelValues.get("GENERAL") } : {}),
+    ...(labelValues.get("REPO_PATH") ? { repoPath: labelValues.get("REPO_PATH") } : {}),
+    ...(labelValues.get("REPO_KEY") ? { repoKey: labelValues.get("REPO_KEY") } : {}),
+  };
+  return record;
+}
+
 export function parseCoverEvidenceResult(llmOutput: string): CoverEvidenceResult {
   const parsed = parseLlmJsonLike(llmOutput);
-  if (!parsed || !parsed.value || typeof parsed.value !== "object") {
+  const labelledFallback = parseLabelledResultRecord(llmOutput);
+  if ((!parsed || !parsed.value || typeof parsed.value !== "object") && !labelledFallback) {
     throw new Error("coverEvidence output must be a JSON object");
   }
 
-  const record = asRecord(parsed.value);
+  const record =
+    parsed?.value && typeof parsed.value === "object"
+      ? asRecord(parsed.value)
+      : (labelledFallback ?? {});
   const statusValue = asString(record.status);
-  if (!isCoverEvidenceStatus(statusValue)) {
-    throw new Error("coverEvidence status is invalid");
-  }
-  const status = statusValue as CoverEvidenceStatus;
+  const hasCandidateShape = Object.keys(candidateRecordFromResult(record)).some((key) =>
+    ["title", "candidateTitle", "body", "content", "candidateBody", "candidateContent"].includes(
+      key,
+    ),
+  );
+  const status: CoverEvidenceStatus = isCoverEvidenceStatus(statusValue)
+    ? statusValue
+    : hasCandidateShape
+      ? "knowledge_ready"
+      : "insufficient";
 
   const stageValue = asString(record.stage);
   const stage: CoverEvidenceStage = isCoverEvidenceStage(stageValue) ? stageValue : "final";
@@ -170,15 +320,19 @@ export function parseCoverEvidenceResult(llmOutput: string): CoverEvidenceResult
   const toolEvents = Array.isArray(record.toolEvents)
     ? record.toolEvents.map(parseToolEvent).filter(isToolEvent)
     : [];
+  const candidate = parseCandidate(record);
+  const normalizedStatus: CoverEvidenceStatus =
+    status === "knowledge_ready" && !candidate ? "insufficient" : status;
+  const reason = asOptionalReason(record.reason);
 
   return {
     schemaVersion: 1,
-    status,
+    status: normalizedStatus,
     stage,
-    candidate: parseCandidate(record.candidate, status),
+    candidate,
     references,
     duplicateRefs,
     toolEvents,
-    reason: asOptionalReason(record.reason),
+    reason: reason ?? (status === "knowledge_ready" && !candidate ? "candidate_missing" : null),
   };
 }

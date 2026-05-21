@@ -9,6 +9,7 @@ export type KnowledgeItem = {
   body: string;
   confidence: number;
   importance: number;
+  appliesTo?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   sourceRefs?: string[];
   sourceVibeMemoryIds?: string[];
@@ -36,6 +37,8 @@ export type KnowledgeListRequest = {
   page?: number;
   status?: string;
   query?: string;
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
 };
 
 export type KnowledgeFeedback = {
@@ -107,7 +110,27 @@ export type KnowledgeWriteInput = {
   body: string;
   confidence: number;
   importance: number;
+  appliesTo?: {
+    general?: boolean;
+    technologies?: string[];
+    changeTypes?: string[];
+    repoPath?: string;
+    repoKey?: string;
+  };
+  technologies?: string[];
+  changeTypes?: string[];
   metadata?: Record<string, unknown>;
+};
+
+export type KnowledgeTagDefinition = {
+  id: string;
+  kind: "technology" | "change_type" | "retrieval_mode" | "domain";
+  slug: string;
+  label: string;
+  description: string | null;
+  aliases: string[];
+  status: "active" | "draft" | "deprecated";
+  sortOrder: number;
 };
 
 export type SkippedRunReason = {
@@ -654,6 +677,8 @@ export async function fetchKnowledgeItems(
     params.set("page", String(input.page ?? 1));
     if (input.status) params.set("status", input.status);
     if (input.query) params.set("query", input.query);
+    if (input.sortBy) params.set("sortBy", input.sortBy);
+    if (input.sortDir) params.set("sortDir", input.sortDir);
   }
   const json = await getJson<KnowledgeListResponse>(`/api/knowledge?${params.toString()}`);
   return json;
@@ -669,6 +694,20 @@ export async function updateKnowledgeItem(id: string, input: KnowledgeWriteInput
 
 export async function deleteKnowledgeItem(id: string): Promise<void> {
   await requestJson(`/api/knowledge/${id}`, "DELETE");
+}
+
+export async function fetchKnowledgeTagDefinitions(input?: {
+  kind?: KnowledgeTagDefinition["kind"];
+  status?: KnowledgeTagDefinition["status"];
+}): Promise<KnowledgeTagDefinition[]> {
+  const params = new URLSearchParams();
+  if (input?.kind) params.set("kind", input.kind);
+  if (input?.status) params.set("status", input.status);
+  const suffix = params.toString();
+  const json = await getJson<{ tags: KnowledgeTagDefinition[] }>(
+    `/api/knowledge/tags${suffix ? `?${suffix}` : ""}`,
+  );
+  return json.tags;
 }
 
 export async function bulkUpdateKnowledgeStatus(

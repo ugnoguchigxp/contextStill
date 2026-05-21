@@ -10,6 +10,61 @@ export type SaveCoverEvidenceResultInput = {
   result: CoverEvidenceResult;
 };
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function appliesToFromCandidate(
+  candidate: CoverEvidenceResult["candidate"],
+): Record<string, unknown> {
+  if (!candidate) return {};
+  return {
+    ...(candidate.applicabilityGeneral !== undefined
+      ? { general: candidate.applicabilityGeneral }
+      : {}),
+    ...(candidate.technologies && candidate.technologies.length > 0
+      ? { technologies: candidate.technologies }
+      : {}),
+    ...(candidate.changeTypes && candidate.changeTypes.length > 0
+      ? { changeTypes: candidate.changeTypes }
+      : {}),
+    ...(candidate.repoPath ? { repoPath: candidate.repoPath } : {}),
+    ...(candidate.repoKey ? { repoKey: candidate.repoKey } : {}),
+  };
+}
+
+function candidateApplicabilityFromAppliesTo(
+  appliesTo: Record<string, unknown>,
+): Pick<
+  NonNullable<CoverEvidenceResult["candidate"]>,
+  "applicabilityGeneral" | "technologies" | "changeTypes" | "repoPath" | "repoKey"
+> {
+  const toStringArray = (value: unknown): string[] =>
+    Array.isArray(value)
+      ? value
+          .filter((item): item is string => typeof item === "string")
+          .map((item) => item.trim())
+          .filter(Boolean)
+      : [];
+  return {
+    ...(typeof appliesTo.general === "boolean" ? { applicabilityGeneral: appliesTo.general } : {}),
+    ...(toStringArray(appliesTo.technologies).length > 0
+      ? { technologies: toStringArray(appliesTo.technologies) }
+      : {}),
+    ...(toStringArray(appliesTo.changeTypes).length > 0
+      ? { changeTypes: toStringArray(appliesTo.changeTypes) }
+      : {}),
+    ...(typeof appliesTo.repoPath === "string" && appliesTo.repoPath.trim()
+      ? { repoPath: appliesTo.repoPath.trim() }
+      : {}),
+    ...(typeof appliesTo.repoKey === "string" && appliesTo.repoKey.trim()
+      ? { repoKey: appliesTo.repoKey.trim() }
+      : {}),
+  };
+}
+
 export async function selectCoverEvidenceResultById(
   id: string,
 ): Promise<CoverEvidenceResultRow | null> {
@@ -34,6 +89,7 @@ export async function listCoverEvidenceResultsByTargetStateId(
       body: coverEvidenceResults.body,
       importance: coverEvidenceResults.importance,
       confidence: coverEvidenceResults.confidence,
+      appliesTo: coverEvidenceResults.appliesTo,
       references: coverEvidenceResults.references,
       duplicateRefs: coverEvidenceResults.duplicateRefs,
       toolEvents: coverEvidenceResults.toolEvents,
@@ -61,6 +117,7 @@ export async function saveCoverEvidenceResult(
     body: result.candidate?.body ?? null,
     importance: result.candidate?.importance ?? null,
     confidence: result.candidate?.confidence ?? null,
+    appliesTo: appliesToFromCandidate(result.candidate),
     references: result.references,
     duplicateRefs: result.duplicateRefs,
     toolEvents: result.toolEvents,
@@ -85,6 +142,7 @@ export async function saveCoverEvidenceResult(
 
 export function coverEvidenceResultFromRow(row: CoverEvidenceResultRow): CoverEvidenceResult {
   const type: "rule" | "procedure" = row.type === "procedure" ? "procedure" : "rule";
+  const appliesTo = asRecord(row.appliesTo);
   const candidate =
     row.type && row.title && row.body && row.importance !== null && row.confidence !== null
       ? {
@@ -93,6 +151,7 @@ export function coverEvidenceResultFromRow(row: CoverEvidenceResultRow): CoverEv
           body: row.body,
           importance: Math.round(row.importance),
           confidence: Math.round(row.confidence),
+          ...candidateApplicabilityFromAppliesTo(appliesTo),
         }
       : null;
 
