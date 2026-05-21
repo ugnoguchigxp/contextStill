@@ -80,20 +80,17 @@ describe("context compiler helpers", () => {
     const markdown = renderContextPackMarkdown({
       runId: "00000000-0000-0000-0000-000000000001",
       goal: "test",
-      intent: "edit",
       retrievalMode: "task_context",
       status: "ok",
       minimalTasks: ["one"],
       rules: [],
       procedures: [],
-      codeContext: [],
       warnings: [],
       sourceRefs: [],
       diagnostics: { degradedReasons: [], retrievalStats: {} },
     });
 
-    expect(markdown.includes("# コンテキスト・パック")).toBe(true);
-    expect(markdown.includes("## ルール")).toBe(true);
+    expect(markdown.includes("該当する knowledge はありません。")).toBe(true);
   });
 
   test("normalizeRepoPath resolves file URI input", () => {

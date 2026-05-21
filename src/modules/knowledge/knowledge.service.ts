@@ -80,6 +80,7 @@ type InternalKnowledgeSearchParams = {
   repoScopeFallbackReason: string;
   technologies?: string[];
   changeTypes?: string[];
+  domains?: string[];
   includeGeneral?: boolean;
 };
 
@@ -119,6 +120,7 @@ async function executeKnowledgeSearch(
       includeDraft: params.includeDraft,
       technologies: params.technologies,
       changeTypes: params.changeTypes,
+      domains: params.domains,
       includeGeneral: params.includeGeneral ?? true,
       ...(repoPath ? { repoPath } : {}),
     });
@@ -147,6 +149,7 @@ async function executeKnowledgeSearch(
           scopeMatchMode: scope.scopeMatchMode,
           technologies: params.technologies,
           changeTypes: params.changeTypes,
+          domains: params.domains,
           includeGeneral: params.includeGeneral ?? true,
         },
       );
@@ -165,6 +168,7 @@ async function executeKnowledgeSearch(
             scopeMatchMode: scope.scopeMatchMode,
             technologies: params.technologies,
             changeTypes: params.changeTypes,
+            domains: params.domains,
             includeGeneral: params.includeGeneral ?? true,
           },
         );
@@ -203,6 +207,7 @@ async function executeKnowledgeSearch(
               scopeMatchMode: scope.scopeMatchMode,
               technologies: params.technologies,
               changeTypes: params.changeTypes,
+              domains: params.domains,
               includeGeneral: params.includeGeneral ?? true,
             },
           );
@@ -295,33 +300,35 @@ async function executeKnowledgeSearch(
 
 export async function retrieveKnowledge(
   input: CompileInput,
-  options: { retrievalMode: RetrievalMode },
+  options: {
+    retrievalMode: RetrievalMode;
+    facetFilters?: {
+      changeTypes?: string[];
+      technologies?: string[];
+      domains?: string[];
+    };
+  },
 ): Promise<KnowledgeRetrievalResult> {
   const profile = getKnowledgeRetrievalProfile(options.retrievalMode);
   const statuses = resolveKnowledgeSearchStatuses({
     retrievalMode: options.retrievalMode,
-    includeDraft: input.includeDraft,
+    includeDraft: false,
   });
-  const repoPath = normalizeRepoPath(input.repoPath);
-  const repoKey = normalizeRepoKey(input.repoPath);
-  const scopedSearch = Boolean(repoPath || repoKey);
   return executeKnowledgeSearch({
     primaryQuery: input.goal.trim(),
     queryText: buildRetrievalQueryText(input),
     limit: profile.limit,
     statuses,
     status: "active",
-    includeDraft: input.includeDraft,
+    includeDraft: false,
     types: profile.types,
-    repoPath,
-    repoKey,
-    scopedSearch,
-    queryEmbedding: input.queryEmbedding,
+    scopedSearch: false,
     generateEmbeddingIfMissing: true,
     noMatchReason: "NO_ACTIVE_KNOWLEDGE_MATCH",
     repoScopeFallbackReason: "KNOWLEDGE_REPO_SCOPE_FALLBACK",
-    technologies: input.technologies,
-    changeTypes: input.changeTypes,
+    technologies: options.facetFilters?.technologies ?? input.technologies,
+    changeTypes: options.facetFilters?.changeTypes ?? input.changeTypes,
+    domains: options.facetFilters?.domains ?? input.domains,
     includeGeneral: true,
   });
 }
@@ -343,9 +350,9 @@ export async function searchKnowledgeCandidates(
     primaryQuery,
     queryText: buildRetrievalQueryText({
       goal: primaryQuery,
-      repoPath: parsed.repoPath,
       changeTypes: parsed.changeTypes,
       technologies: parsed.technologies,
+      domains: parsed.domains,
     }),
     limit: parsed.limit,
     statuses,
@@ -360,6 +367,7 @@ export async function searchKnowledgeCandidates(
     repoScopeFallbackReason: "KNOWLEDGE_REPO_SCOPE_FALLBACK",
     technologies: parsed.technologies,
     changeTypes: parsed.changeTypes,
+    domains: parsed.domains,
     includeGeneral: parsed.includeGeneral,
   });
 }
@@ -377,6 +385,7 @@ export async function registerKnowledgeFromMarkdown(params: {
   general?: boolean;
   technologies?: string[];
   changeTypes?: string[];
+  domains?: string[];
   repoPath?: string;
   repoKey?: string;
   metadata?: Record<string, unknown>;
@@ -404,6 +413,7 @@ export async function registerKnowledgeFromMarkdown(params: {
       ...(params.general !== undefined ? { general: params.general } : {}),
       ...(params.technologies ? { technologies: params.technologies } : {}),
       ...(params.changeTypes ? { changeTypes: params.changeTypes } : {}),
+      ...(params.domains ? { domains: params.domains } : {}),
       ...(params.repoPath ? { repoPath: params.repoPath } : {}),
       ...(params.repoKey ? { repoKey: params.repoKey } : {}),
     },

@@ -39,17 +39,15 @@ describe("Query Context Utility", () => {
   test("buildRetrievalQueryText concatenates fields", () => {
     const input = {
       goal: "fix bug",
-      files: ["a.ts"],
       changeTypes: ["feat"],
       technologies: ["react"],
-      repoPath: "/repo",
+      domains: ["context-compiler"],
     };
     const text = buildRetrievalQueryText(input);
     expect(text).toContain("fix bug");
-    expect(text).toContain("files: a.ts ts");
     expect(text).toContain("changeTypes: feat");
     expect(text).toContain("technologies: react");
-    expect(text).toContain("repoPath: /repo");
+    expect(text).toContain("domains: context-compiler");
   });
 
   test("buildRetrievalQueryText handles minimal input", () => {

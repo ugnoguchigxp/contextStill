@@ -38,7 +38,7 @@ export function normalizeRepoKey(repoPath?: string): string | undefined {
   return normalizedRepoPath.toLowerCase();
 }
 
-export function fileHintsFromInput(input: Pick<CompileInput, "files">): string[] {
+export function fileHintsFromInput(input: { files?: string[] }): string[] {
   const files = uniqueTrimmed(input.files);
   const hints = new Set<string>();
   for (const filePath of files) {
@@ -55,25 +55,21 @@ export function fileHintsFromInput(input: Pick<CompileInput, "files">): string[]
 }
 
 export function buildRetrievalQueryText(
-  input: Pick<CompileInput, "goal" | "files" | "changeTypes" | "technologies" | "repoPath">,
+  input: Pick<CompileInput, "goal" | "changeTypes" | "technologies" | "domains">,
 ): string {
   const lines: string[] = [input.goal.trim()];
-  const fileHints = fileHintsFromInput(input);
   const changeTypes = uniqueTrimmed(input.changeTypes);
   const technologies = uniqueTrimmed(input.technologies);
-  const normalizedRepoPath = normalizeRepoPath(input.repoPath);
+  const domains = uniqueTrimmed(input.domains);
 
-  if (fileHints.length > 0) {
-    lines.push(`files: ${fileHints.slice(0, 12).join(" ")}`);
-  }
   if (changeTypes.length > 0) {
     lines.push(`changeTypes: ${changeTypes.join(" ")}`);
   }
   if (technologies.length > 0) {
     lines.push(`technologies: ${technologies.join(" ")}`);
   }
-  if (normalizedRepoPath) {
-    lines.push(`repoPath: ${normalizedRepoPath}`);
+  if (domains.length > 0) {
+    lines.push(`domains: ${domains.join(" ")}`);
   }
   return lines.join("\n");
 }

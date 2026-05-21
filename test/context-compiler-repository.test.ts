@@ -24,13 +24,11 @@ vi.mock("../src/db/index.js", () => ({
 const validPack: ContextPack = {
   runId: "550e8400-e29b-41d4-a716-446655440000",
   goal: "detail goal",
-  intent: "edit",
   retrievalMode: "task_context",
   status: "ok",
   minimalTasks: ["Inspect context"],
   rules: [],
   procedures: [],
-  codeContext: [],
   warnings: [],
   sourceRefs: ["memory-router://packs/run/550e8400-e29b-41d4-a716-446655440000#full"],
   diagnostics: {
@@ -242,7 +240,6 @@ describe("context-compiler repository", () => {
       const mockRun = {
         id: validPack.runId,
         goal: validPack.goal,
-        intent: validPack.intent,
         retrievalMode: validPack.retrievalMode,
         status: validPack.status,
         degradedReasons: [],
@@ -250,7 +247,7 @@ describe("context-compiler repository", () => {
         source: "cli",
         createdAt: new Date("2026-05-15T00:00:00.000Z"),
         tokenBudget: 5000,
-        input: { goal: validPack.goal, intent: validPack.intent },
+        input: { goal: validPack.goal, changeTypes: ["feature"] },
         packSnapshot: validPack,
       };
       const mockItems = [
@@ -288,7 +285,6 @@ describe("context-compiler repository", () => {
       const mockRun = {
         id: validPack.runId,
         goal: validPack.goal,
-        intent: validPack.intent,
         retrievalMode: validPack.retrievalMode,
         status: validPack.status,
         degradedReasons: [],
@@ -324,7 +320,6 @@ describe("context-compiler repository", () => {
       const mockRun = {
         id: validPack.runId,
         goal: validPack.goal,
-        intent: validPack.intent,
         retrievalMode: validPack.retrievalMode,
         status: validPack.status,
         degradedReasons: [],
@@ -332,7 +327,7 @@ describe("context-compiler repository", () => {
         source: "ui",
         createdAt: new Date("2026-05-15T00:00:00.000Z"),
         tokenBudget: 5000,
-        input: { goal: validPack.goal, intent: validPack.intent },
+        input: { goal: validPack.goal, changeTypes: ["feature"] },
         packSnapshot: {
           ...validPack,
           runId: "550e8400-e29b-41d4-a716-446655440001",

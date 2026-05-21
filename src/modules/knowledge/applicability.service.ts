@@ -5,6 +5,7 @@ export type KnowledgeApplicabilityInput = {
   general?: boolean;
   technologies?: string[];
   changeTypes?: string[];
+  domains?: string[];
   repoPath?: string;
   repoKey?: string;
 };
@@ -22,12 +23,13 @@ export type NormalizedKnowledgeApplicability = {
   unknownTagCandidates: KnowledgeApplicabilityUnknownTag[];
 };
 
-type ApplicabilityFacetKind = Extract<KnowledgeTagKind, "technology" | "change_type">;
+type ApplicabilityFacetKind = Extract<KnowledgeTagKind, "technology" | "change_type" | "domain">;
 
 const FACET_TO_KIND = {
   technologies: "technology",
   changeTypes: "change_type",
-} satisfies Record<"technologies" | "changeTypes", ApplicabilityFacetKind>;
+  domains: "domain",
+} satisfies Record<"technologies" | "changeTypes" | "domains", ApplicabilityFacetKind>;
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -150,6 +152,7 @@ export function mergeApplicabilityInput(params: {
   general?: unknown;
   technologies?: unknown;
   changeTypes?: unknown;
+  domains?: unknown;
   repoPath?: unknown;
   repoKey?: unknown;
 }): KnowledgeApplicabilityInput {
@@ -158,6 +161,7 @@ export function mergeApplicabilityInput(params: {
     general: asBoolean(params.general ?? appliesTo.general),
     technologies: mergeFacetArrays(params.technologies, appliesTo.technologies),
     changeTypes: mergeFacetArrays(params.changeTypes, appliesTo.changeTypes),
+    domains: mergeFacetArrays(params.domains, appliesTo.domains),
     repoPath: pickString(params.repoPath ?? appliesTo.repoPath),
     repoKey: pickString(params.repoKey ?? appliesTo.repoKey),
   };
@@ -195,6 +199,14 @@ export async function normalizeKnowledgeApplicability(
     warnings,
     unknownTagCandidates,
   });
+  const domains = normalizeFacetValues({
+    kind: FACET_TO_KIND.domains,
+    values: input.domains ?? [],
+    slugsByKind,
+    aliasesByKind,
+    warnings,
+    unknownTagCandidates,
+  });
   const repoPath = normalizeRepoPath(input.repoPath);
   const repoKey = (input.repoKey?.trim() || normalizeRepoKey(input.repoPath) || "").toLowerCase();
   const general = Boolean(input.general);
@@ -205,6 +217,7 @@ export async function normalizeKnowledgeApplicability(
     ...(general ? { general: true } : {}),
     ...(technologies.length > 0 ? { technologies } : {}),
     ...(changeTypes.length > 0 ? { changeTypes } : {}),
+    ...(domains.length > 0 ? { domains } : {}),
   };
 
   return {
@@ -220,6 +233,7 @@ export function parseApplicabilityFromRecord(value: unknown): KnowledgeApplicabi
     general: asBoolean(record.general),
     technologies: toStringArray(record.technologies),
     changeTypes: toStringArray(record.changeTypes),
+    domains: toStringArray(record.domains),
     repoPath: pickString(record.repoPath),
     repoKey: pickString(record.repoKey),
   };

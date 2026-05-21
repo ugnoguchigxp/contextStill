@@ -30,16 +30,16 @@
 
 ### `context_compile`
 
-- 入力: `goal`（必須）, `intent`, `repoPath`, `files`, `changeTypes`, `technologies`, `includeDraft` など
+- 入力: `goal`（必須）, `changeTypes`, `technologies`, `domains`
 - 役割: 作業前コンテキスト pack 生成（主導線）
 - 挙動:
-  - `repoPath` 指定時は repo scoped 検索を優先
-  - scoped ヒットがない場合のみ degraded reason 付き fallback
-  - no-hit/degraded 時は `diagnostics.retrievalStats.suggestedNextCalls` を返す
+  - `changeTypes` から retrieval mode を自動導出
+  - unknown facet は diagnostics に残しつつ query text には保持
+  - MCP レスポンスは LLM向け Markdown 1件のみを返す（JSON pack は DB/UI 側で保持）
 
 ### `search_knowledge`
 
-- 入力: `query`（必須）, `repoPath`, `files`, `changeTypes`, `technologies`, `types`, `statuses`, `limit`, `includeDraft`
+- 入力: `query`（必須）, `repoPath`, `changeTypes`, `technologies`, `domains`, `types`, `statuses`, `limit`, `includeDraft`
 - 役割: raw knowledge 候補確認
 - 出力:
   - 候補配列（`score`, `status`, `scope`, `sourceRefs`, `metadata`）

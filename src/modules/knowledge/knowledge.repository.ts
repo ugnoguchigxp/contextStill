@@ -40,6 +40,7 @@ export type KnowledgeSearchResult = {
   applicabilityMatches: {
     technologies: string[];
     changeTypes: string[];
+    domains: string[];
     general: boolean;
   };
 };
@@ -66,6 +67,7 @@ export type KnowledgeSearchOptions = {
   scopeMatchMode?: "primary" | "legacy";
   technologies?: string[];
   changeTypes?: string[];
+  domains?: string[];
   includeGeneral?: boolean;
 };
 
@@ -129,25 +131,34 @@ function uniqueLowerSlugs(values: string[] | undefined): string[] {
 type ApplicabilityQuery = {
   technologies: string[];
   changeTypes: string[];
+  domains: string[];
   includeGeneral: boolean;
 };
 
 function buildApplicabilityQuery(
-  input: Pick<KnowledgeSearchQueryInput, "technologies" | "changeTypes" | "includeGeneral">,
-  options: Pick<KnowledgeSearchOptions, "technologies" | "changeTypes" | "includeGeneral">,
+  input: Pick<
+    KnowledgeSearchQueryInput,
+    "technologies" | "changeTypes" | "domains" | "includeGeneral"
+  >,
+  options: Pick<
+    KnowledgeSearchOptions,
+    "technologies" | "changeTypes" | "domains" | "includeGeneral"
+  >,
 ): ApplicabilityQuery {
   const technologies = uniqueLowerSlugs(options.technologies ?? input.technologies);
   const changeTypes = uniqueLowerSlugs(options.changeTypes ?? input.changeTypes);
+  const domains = uniqueLowerSlugs(options.domains ?? input.domains);
   const includeGeneral = options.includeGeneral ?? input.includeGeneral ?? true;
   return {
     technologies,
     changeTypes,
+    domains,
     includeGeneral,
   };
 }
 
 function hasApplicabilityQuery(query: ApplicabilityQuery): boolean {
-  return query.technologies.length > 0 || query.changeTypes.length > 0;
+  return query.technologies.length > 0 || query.changeTypes.length > 0 || query.domains.length > 0;
 }
 
 function intersect(queryValues: string[], sourceValues: string[]): string[] {
@@ -163,23 +174,22 @@ function intersect(queryValues: string[], sourceValues: string[]): string[] {
 function computeApplicability(appliesTo: Record<string, unknown>, query: ApplicabilityQuery) {
   const sourceTechnologies = toStringArray(appliesTo.technologies);
   const sourceChangeTypes = toStringArray(appliesTo.changeTypes);
+  const sourceDomains = toStringArray(appliesTo.domains);
   const technologies = intersect(query.technologies, sourceTechnologies);
   const changeTypes = intersect(query.changeTypes, sourceChangeTypes);
-  const hasFacetData = sourceTechnologies.length > 0 || sourceChangeTypes.length > 0;
+  const domains = intersect(query.domains, sourceDomains);
+  const hasFacetData =
+    sourceTechnologies.length > 0 || sourceChangeTypes.length > 0 || sourceDomains.length > 0;
   const hasExplicitGeneral = typeof appliesTo.general === "boolean";
   const general = appliesTo.general === true || (!hasExplicitGeneral && !hasFacetData);
-  const hasScopedQuery = query.technologies.length > 0 || query.changeTypes.length > 0;
-
-  let score = 0;
-  score += Math.min(0.18, technologies.length * 0.08);
-  score += Math.min(0.12, changeTypes.length * 0.06);
-  if (score === 0 && query.includeGeneral && general && hasScopedQuery) score += 0.03;
+  const score = 0;
 
   return {
     score,
     matches: {
       technologies,
       changeTypes,
+      domains,
       general: general && query.includeGeneral,
     },
   };
@@ -204,6 +214,7 @@ function buildKnowledgeScopeMetadata(
     normalizeRepoKey(repoPathCandidate);
   const technologies = uniqueLowerSlugs(explicit.technologies);
   const changeTypes = uniqueLowerSlugs(explicit.changeTypes);
+  const domains = uniqueLowerSlugs(explicit.domains);
   const general = explicit.general === true;
 
   return {
@@ -219,6 +230,7 @@ function buildKnowledgeScopeMetadata(
       ...(general ? { general: true } : {}),
       ...(technologies.length > 0 ? { technologies } : {}),
       ...(changeTypes.length > 0 ? { changeTypes } : {}),
+      ...(domains.length > 0 ? { domains } : {}),
     },
   };
 }
@@ -412,6 +424,8 @@ function buildApplicabilityFilterCondition(query: ApplicabilityQuery): SQL | und
   if (technologies) clauses.push(technologies);
   const changeTypes = buildJsonbArrayAnyMatch("changeTypes", query.changeTypes);
   if (changeTypes) clauses.push(changeTypes);
+  const domains = buildJsonbArrayAnyMatch("domains", query.domains);
+  if (domains) clauses.push(domains);
   if (query.includeGeneral) {
     clauses.push(sql`coalesce((${knowledgeItems.appliesTo} ->> 'general')::boolean, false) = true`);
   }

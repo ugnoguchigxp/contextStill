@@ -26,63 +26,36 @@ function parseCsvArgs(values: string[]): string[] {
   return [...new Set(items)];
 }
 
-function parseBoolean(value: string | undefined): boolean | undefined {
-  if (value === undefined) return undefined;
-  const normalized = value.trim().toLowerCase();
-  if (["1", "true", "yes", "y", "on"].includes(normalized)) return true;
-  if (["0", "false", "no", "n", "off"].includes(normalized)) return false;
-  throw new Error(`Invalid boolean value: ${value}`);
-}
-
-function parseNumber(value: string | undefined): number | undefined {
-  if (value === undefined) return undefined;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) {
-    throw new Error(`Invalid number value: ${value}`);
-  }
-  return parsed;
-}
-
-function parseEmbedding(value: string | undefined): number[] | undefined {
-  if (value === undefined) return undefined;
-  const trimmed = value.trim();
-  if (!trimmed) return undefined;
-
-  if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-    const parsed = JSON.parse(trimmed);
-    if (!Array.isArray(parsed) || parsed.some((item) => !Number.isFinite(Number(item)))) {
-      throw new Error("Invalid --query-embedding JSON array");
-    }
-    return parsed.map((item) => Number(item));
-  }
-
-  const csv = trimmed
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0)
-    .map((item) => Number(item));
-
-  if (csv.length === 0 || csv.some((item) => !Number.isFinite(item))) {
-    throw new Error("Invalid --query-embedding CSV values");
-  }
-  return csv;
+function assertNoRemovedFlags(argv: string[]): void {
+  const removedFlags = [
+    "--intent",
+    "--retrieval-mode",
+    "--repo-path",
+    "--files",
+    "--file",
+    "--token-budget",
+    "--include-draft",
+    "--query-embedding",
+    "--error-kind",
+    "--last-error-context",
+  ] as const;
+  const found = removedFlags.find((flag) => argv.includes(flag));
+  if (!found) return;
+  throw new Error(
+    `${found} is no longer supported. Use only --goal, --change-types, --technologies, --domains, --json.`,
+  );
 }
 
 async function main(): Promise<void> {
+  assertNoRemovedFlags(process.argv);
   const goal = readArg("--goal") || process.argv[2];
   if (!goal) {
     console.error(
       [
         'Usage: bun run compile --goal "your task goal"',
-        "[--intent edit]",
-        "[--retrieval-mode procedure_context]",
-        "[--repo-path /path/to/repo]",
-        "[--files fileA.ts,fileB.ts | --file fileA.ts --file fileB.ts]",
         "[--change-types backend,api]",
         "[--technologies bun,typescript]",
-        "[--token-budget 3000]",
-        "[--include-draft true|false]",
-        '[--query-embedding "[0.1,0.2,...]" | --query-embedding 0.1,0.2,...]',
+        "[--domains context-compiler,knowledge]",
         "[--json]",
       ].join(" "),
     );
@@ -90,29 +63,16 @@ async function main(): Promise<void> {
     return;
   }
 
-  const intent =
-    (readArg("--intent") as "plan" | "edit" | "debug" | "review" | "finish" | undefined) ?? "edit";
-  const retrievalMode = readArg("--retrieval-mode") as CompileInput["retrievalMode"] | undefined;
-  const repoPath = readArg("--repo-path");
-  const files = parseCsvArgs([...readArgs("--files"), ...readArgs("--file")]);
   const changeTypes = parseCsvArgs([...readArgs("--change-types"), ...readArgs("--change-type")]);
   const technologies = parseCsvArgs([...readArgs("--technologies"), ...readArgs("--technology")]);
-  const tokenBudget = parseNumber(readArg("--token-budget"));
-  const includeDraft = parseBoolean(readArg("--include-draft"));
-  const queryEmbedding = parseEmbedding(readArg("--query-embedding"));
+  const domains = parseCsvArgs([...readArgs("--domains"), ...readArgs("--domain")]);
   const asJson = process.argv.includes("--json");
 
   const compileInput: CompileInput = {
     goal,
-    intent,
-    includeDraft: includeDraft ?? false,
-    ...(retrievalMode ? { retrievalMode } : {}),
-    ...(repoPath ? { repoPath } : {}),
-    ...(files.length > 0 ? { files } : {}),
     ...(changeTypes.length > 0 ? { changeTypes } : {}),
     ...(technologies.length > 0 ? { technologies } : {}),
-    ...(tokenBudget !== undefined ? { tokenBudget } : {}),
-    ...(queryEmbedding ? { queryEmbedding } : {}),
+    ...(domains.length > 0 ? { domains } : {}),
   };
 
   const result = await compileContextPack(compileInput, { source: "cli" });

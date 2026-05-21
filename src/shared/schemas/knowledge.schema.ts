@@ -50,6 +50,7 @@ const knowledgeApplicabilitySchema = z.object({
   general: optionalApplicabilityBooleanSchema,
   technologies: optionalApplicabilityArraySchema,
   changeTypes: optionalApplicabilityArraySchema,
+  domains: optionalApplicabilityArraySchema,
   repoPath: optionalApplicabilityStringSchema,
   repoKey: optionalApplicabilityStringSchema,
 });
@@ -79,6 +80,7 @@ export const knowledgeSearchInputSchema = z.object({
   repoPath: z.string().trim().min(1).optional(),
   changeTypes: z.array(z.string().trim().min(1)).optional(),
   technologies: z.array(z.string().trim().min(1)).optional(),
+  domains: z.array(z.string().trim().min(1)).optional(),
   includeGeneral: z.boolean().default(true),
   includeDraft: z.boolean().default(false),
 });
@@ -95,6 +97,7 @@ export const registerKnowledgeInputSchema = z.object({
   general: optionalApplicabilityBooleanSchema,
   technologies: optionalApplicabilityArraySchema,
   changeTypes: optionalApplicabilityArraySchema,
+  domains: optionalApplicabilityArraySchema,
   repoPath: optionalApplicabilityStringSchema,
   repoKey: optionalApplicabilityStringSchema,
   metadata: z.record(z.unknown()).default({}),
@@ -119,6 +122,7 @@ const knowledgeUpdatePatchSchema = z.object({
   general: optionalApplicabilityBooleanSchema,
   technologies: optionalApplicabilityArraySchema,
   changeTypes: optionalApplicabilityArraySchema,
+  domains: optionalApplicabilityArraySchema,
   repoPath: optionalApplicabilityStringSchema,
   repoKey: optionalApplicabilityStringSchema,
   metadata: z.record(z.unknown()).optional(),
@@ -142,6 +146,7 @@ export const updateKnowledgeInputSchema = z
       value.general !== undefined ||
       value.technologies !== undefined ||
       value.changeTypes !== undefined ||
+      value.domains !== undefined ||
       value.repoPath !== undefined ||
       value.repoKey !== undefined ||
       value.metadata !== undefined,

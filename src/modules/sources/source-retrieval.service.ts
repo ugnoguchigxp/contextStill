@@ -1,12 +1,7 @@
 import { groupedConfig } from "../../config.js";
 import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
 import { embedOne } from "../embedding/embedding.service.js";
-import {
-  buildRetrievalQueryText,
-  fileHintsFromInput,
-  normalizeRepoKey,
-  normalizeRepoPath,
-} from "../context-compiler/query-context.js";
+import { buildRetrievalQueryText } from "../context-compiler/query-context.js";
 import {
   type SourceKind,
   type SourceSearchResult,
@@ -71,13 +66,9 @@ export async function retrieveSources(
   const profile = getSourceRetrievalProfile(options.retrievalMode);
   const primaryQuery = input.goal.trim();
   const queryText = buildRetrievalQueryText(input);
-  const pathHints = fileHintsFromInput(input).filter((hint) => hint.length >= 2);
-  const repoPath = normalizeRepoPath(input.repoPath);
-  const repoKey = normalizeRepoKey(input.repoPath);
-  const scopedSearch = Boolean(repoPath || repoKey);
   const degradedReasons: string[] = [];
 
-  const runSearch = async (scope: { repoPath?: string; repoKey?: string }): Promise<{
+  const runSearch = async (): Promise<{
     items: SourceSearchResult[];
     textHits: SourceSearchResult[];
     vectorHits: SourceSearchResult[];
@@ -95,7 +86,7 @@ export async function retrieveSources(
         primaryQuery,
         profile.limit,
         profile.sourceKinds,
-        scope,
+        undefined,
       );
       const enrichedHits =
         queryText !== primaryQuery
@@ -103,31 +94,21 @@ export async function retrieveSources(
               queryText,
               Math.max(3, Math.floor(profile.limit / 2)),
               profile.sourceKinds,
-              scope,
+              undefined,
             )
           : [];
       const mergedBaseHits = mergeSourceHits(baseHits, enrichedHits, profile.limit);
-      if (pathHints.length > 0) {
-        const hintHits = await searchSourceContent(
-          pathHints.slice(0, 4).join(" "),
-          Math.max(3, Math.floor(profile.limit / 2)),
-          profile.sourceKinds,
-          scope,
-        );
-        textHits = mergeSourceHits(mergedBaseHits, hintHits, profile.limit);
-      } else {
-        textHits = mergedBaseHits;
-      }
+      textHits = mergedBaseHits;
 
       if (groupedConfig.compile.enableVectorSearch) {
         try {
-          const queryEmbedding = input.queryEmbedding ?? (await embedOne(primaryQuery, "query"));
-          embeddingStatus = input.queryEmbedding ? "provided" : "generated";
+          const queryEmbedding = await embedOne(primaryQuery, "query");
+          embeddingStatus = "generated";
           vectorHits = await vectorSearchSourceContent(
             queryEmbedding,
             profile.limit,
             profile.sourceKinds,
-            scope,
+            undefined,
           );
         } catch {
           embeddingStatus = "unavailable";
@@ -142,16 +123,7 @@ export async function retrieveSources(
     return { items, textHits, vectorHits, searchFailed, embeddingStatus };
   };
 
-  let result = await runSearch({
-    repoPath,
-    repoKey,
-  });
-  let repoScopeFallbackUsed = false;
-  if (scopedSearch && !result.searchFailed && result.items.length === 0) {
-    degradedReasons.push("SOURCE_REPO_SCOPE_FALLBACK");
-    repoScopeFallbackUsed = true;
-    result = await runSearch({});
-  }
+  const result = await runSearch();
 
   if (!result.searchFailed && result.items.length === 0) {
     degradedReasons.push("NO_SOURCE_MATCH");
@@ -166,8 +138,8 @@ export async function retrieveSources(
       vectorHitCount: result.vectorHits.length,
       searchFailed: result.searchFailed,
       embeddingStatus: result.embeddingStatus,
-      scopedSearch,
-      repoScopeFallbackUsed,
+      scopedSearch: false,
+      repoScopeFallbackUsed: false,
       queryText,
     },
   };

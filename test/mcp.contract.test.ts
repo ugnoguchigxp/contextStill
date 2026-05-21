@@ -38,26 +38,16 @@ describeDb("mcp contract", () => {
     const properties = (contextCompileTool.inputSchema as { properties?: Record<string, unknown> })
       .properties;
     expect(properties).toBeTruthy();
-    expect(properties?.retrievalMode).toEqual({
-      type: "string",
-      enum: [
-        "task_context",
-        "review_context",
-        "debug_context",
-        "architecture_context",
-        "procedure_context",
-        "learning_context",
-      ],
-    });
-    expect(properties?.errorKind).toEqual({
-      type: "string",
-      enum: ["typecheck", "lint", "test", "runtime", "build", "unknown"],
-    });
-    expect(properties?.lastErrorContext).toEqual(
-      expect.objectContaining({
-        type: "object",
-      }),
-    );
+    expect(properties?.goal).toEqual({ type: "string" });
+    expect(properties?.changeTypes).toEqual({ type: "array", items: { type: "string" } });
+    expect(properties?.technologies).toEqual({ type: "array", items: { type: "string" } });
+    expect(properties?.domains).toEqual({ type: "array", items: { type: "string" } });
+    expect(properties).not.toHaveProperty("intent");
+    expect(properties).not.toHaveProperty("repoPath");
+    expect(properties).not.toHaveProperty("files");
+    expect(properties).not.toHaveProperty("tokenBudget");
+    expect(properties).not.toHaveProperty("includeDraft");
+    expect(properties).not.toHaveProperty("queryEmbedding");
   });
 
   test("public tools list contract", () => {
@@ -179,29 +169,13 @@ describeDb("mcp contract", () => {
     expect(Array.isArray(mcp?.missingPrimaryTools)).toBe(true);
   });
 
-  test("context_compile degraded suggestions use only supported tools/commands", async () => {
+  test("context_compile returns markdown only", async () => {
     const response = await contextCompileTool.handler({
       goal: "fresh repo no knowledge",
-      intent: "debug",
+      changeTypes: ["debug"],
     });
-    const payload = JSON.parse(response.content[0]?.text ?? "{}") as {
-      diagnostics?: { retrievalStats?: { suggestedNextCalls?: string[] } };
-    };
-    const suggested = payload.diagnostics?.retrievalStats?.suggestedNextCalls ?? [];
-    const allowedExact = new Set([
-      "search_knowledge",
-      "memory_search",
-      "doctor",
-      "context_compile (retry with explicit repoPath/files)",
-      "context_compile (retry with larger tokenBudget)",
-      "bun run import:sources -- <wiki root>",
-      "bun run distill:pipeline:once",
-      "search_knowledge (inspect appliesTo/repo metadata coverage)",
-      "search_knowledge (validate repo scope tagging)",
-    ]);
-    expect(
-      suggested.every((entry) => allowedExact.has(entry)),
-      `unexpected suggestions: ${suggested.join(", ")}`,
-    ).toBe(true);
+    expect(response.content.length).toBe(1);
+    expect(response.content[0]?.type).toBe("text");
+    expect(response.content[0]?.text.length).toBeGreaterThan(0);
   });
 });

@@ -102,13 +102,11 @@ const buildApp = () => {
 const validPack: ContextPack = {
   runId: "550e8400-e29b-41d4-a716-446655440000",
   goal: "api contract goal",
-  intent: "edit",
   retrievalMode: "task_context",
   status: "ok",
   minimalTasks: ["Inspect relevant knowledge and source material"],
   rules: [],
   procedures: [],
-  codeContext: [],
   warnings: [],
   sourceRefs: ["memory-router://packs/run/550e8400-e29b-41d4-a716-446655440000#full"],
   diagnostics: {
@@ -121,7 +119,6 @@ const validRunDetail = compileRunDetailSchema.parse({
   run: {
     id: validPack.runId,
     goal: validPack.goal,
-    intent: validPack.intent,
     retrievalMode: validPack.retrievalMode,
     status: validPack.status,
     degradedReasons: validPack.diagnostics.degradedReasons,
@@ -129,7 +126,7 @@ const validRunDetail = compileRunDetailSchema.parse({
     source: "ui",
     createdAt: "2026-05-15T00:00:00.000Z",
     tokenBudget: 5000,
-    input: { goal: validPack.goal, intent: validPack.intent, includeDraft: false },
+    input: { goal: validPack.goal, changeTypes: ["feature"] },
   },
   pack: validPack,
   selectedItems: [],
@@ -624,7 +621,7 @@ describe("API route contract tests", () => {
     const response = await app.request("/api/context/compile", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ goal: "api contract goal", intent: "edit" }),
+      body: JSON.stringify({ goal: "api contract goal", changeTypes: ["feature"] }),
     });
 
     expect(response.status).toBe(200);
@@ -632,7 +629,7 @@ describe("API route contract tests", () => {
     const parsed = contextPackSchema.parse(json.pack);
     expect(parsed.goal).toBe("api contract goal");
     expect(compilePackForApi).toHaveBeenCalledWith(
-      expect.objectContaining({ goal: "api contract goal", intent: "edit", includeDraft: false }),
+      expect.objectContaining({ goal: "api contract goal", changeTypes: ["feature"] }),
     );
   });
 

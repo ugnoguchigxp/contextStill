@@ -9,7 +9,6 @@ export const compileRunStatusSchema = z.enum(["ok", "degraded", "failed"]);
 export const compileRunSummarySchema = z.object({
   id: z.string().uuid(),
   goal: z.string(),
-  intent: z.string(),
   retrievalMode: retrievalModeSchema,
   status: compileRunStatusSchema,
   degradedReasons: z.array(z.string()),

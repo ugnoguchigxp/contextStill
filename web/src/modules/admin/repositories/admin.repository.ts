@@ -114,11 +114,13 @@ export type KnowledgeWriteInput = {
     general?: boolean;
     technologies?: string[];
     changeTypes?: string[];
+    domains?: string[];
     repoPath?: string;
     repoKey?: string;
   };
   technologies?: string[];
   changeTypes?: string[];
+  domains?: string[];
   metadata?: Record<string, unknown>;
 };
 

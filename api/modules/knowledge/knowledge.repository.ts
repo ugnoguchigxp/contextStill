@@ -35,6 +35,7 @@ export type KnowledgeWriteInput = {
   general?: boolean;
   technologies?: string[];
   changeTypes?: string[];
+  domains?: string[];
   repoPath?: string;
   repoKey?: string;
   metadata?: Record<string, unknown>;
@@ -348,7 +349,7 @@ async function tryEmbedKnowledge(input: KnowledgeWriteInput): Promise<number[] |
 async function buildNormalizedApplicability(
   input: Pick<
     KnowledgeWriteInput,
-    "appliesTo" | "general" | "technologies" | "changeTypes" | "repoPath" | "repoKey"
+    "appliesTo" | "general" | "technologies" | "changeTypes" | "domains" | "repoPath" | "repoKey"
   >,
 ) {
   const mergedInput = mergeApplicabilityInput({
@@ -356,6 +357,7 @@ async function buildNormalizedApplicability(
     general: input.general,
     technologies: input.technologies,
     changeTypes: input.changeTypes,
+    domains: input.domains,
     repoPath: input.repoPath,
     repoKey: input.repoKey,
   });
@@ -437,6 +439,7 @@ export async function updateKnowledgeItem(id: string, input: KnowledgeWriteInput
     general: input.general,
     technologies: input.technologies,
     changeTypes: input.changeTypes,
+    domains: input.domains,
     repoPath: input.repoPath,
     repoKey: input.repoKey,
   });

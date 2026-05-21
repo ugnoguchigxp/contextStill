@@ -1,4 +1,4 @@
-export type KnowledgeTagSeedKind = "technology" | "change_type";
+export type KnowledgeTagSeedKind = "technology" | "change_type" | "domain";
 
 export type KnowledgeTagSeed = {
   kind: KnowledgeTagSeedKind;
@@ -37,4 +37,14 @@ export const knowledgeTagDefinitionSeeds: KnowledgeTagSeed[] = [
   { kind: "change_type", slug: "build", label: "Build" },
   { kind: "change_type", slug: "runtime", label: "Runtime" },
   { kind: "change_type", slug: "performance", label: "Performance", aliases: ["perf"] },
+  { kind: "domain", slug: "context-compiler", label: "Context Compiler" },
+  { kind: "domain", slug: "knowledge", label: "Knowledge" },
+  { kind: "domain", slug: "mcp-tools", label: "MCP Tools" },
+  { kind: "domain", slug: "doctor", label: "Doctor" },
+  { kind: "domain", slug: "admin-ui", label: "Admin UI" },
+  { kind: "domain", slug: "distillation", label: "Distillation" },
+  { kind: "domain", slug: "source-sync", label: "Source Sync" },
+  { kind: "domain", slug: "vibe-memory", label: "Vibe Memory" },
+  { kind: "domain", slug: "database", label: "Database" },
+  { kind: "domain", slug: "testing", label: "Testing" },
 ];

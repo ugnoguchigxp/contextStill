@@ -42,21 +42,17 @@ function buildSystemPrompt(input: CompileInput, retrievalMode: RetrievalMode): s
     "",
     "## タスク情報",
     `- goal: ${input.goal}`,
-    `- intent: ${input.intent}`,
     `- retrievalMode: ${retrievalMode}`,
   ];
 
-  if (input.files && input.files.length > 0) {
-    lines.push(`- files: ${input.files.join(", ")}`);
-  }
   if (input.technologies && input.technologies.length > 0) {
     lines.push(`- technologies: ${input.technologies.join(", ")}`);
   }
   if (input.changeTypes && input.changeTypes.length > 0) {
     lines.push(`- changeTypes: ${input.changeTypes.join(", ")}`);
   }
-  if (input.repoPath) {
-    lines.push(`- repoPath: ${input.repoPath}`);
+  if (input.domains && input.domains.length > 0) {
+    lines.push(`- domains: ${input.domains.join(", ")}`);
   }
 
   lines.push(

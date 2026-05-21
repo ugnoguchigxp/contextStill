@@ -2,101 +2,33 @@ import type { ContextPack } from "../../shared/schemas/context-pack.schema.js";
 
 export function renderContextPackMarkdown(pack: ContextPack): string {
   const lines: string[] = [];
-  lines.push("# コンテキスト・パック");
-  lines.push("");
-  lines.push(`- 目的: ${pack.goal}`);
-  lines.push(`- 意図: ${pack.intent}`);
-  lines.push(`- 検索モード: ${pack.retrievalMode}`);
-  lines.push(`- 状態: ${pack.status}`);
-  lines.push("");
 
-  lines.push("## 最小タスク");
-  lines.push("");
-  for (const task of pack.minimalTasks) {
-    lines.push(`- ${task}`);
-  }
-  lines.push("");
-
-  const renderSection = (title: string, items: ContextPack["rules"]): void => {
+  const appendKnowledgeSection = (title: string, items: ContextPack["rules"]): void => {
+    if (items.length === 0) return;
     lines.push(`## ${title}`);
     lines.push("");
-    if (items.length === 0) {
-      lines.push("- なし");
-    } else {
-      for (const item of items) {
-        lines.push(`- ${item.title} (${item.rankingReason})`);
-      }
+    for (const item of items) {
+      lines.push(`### ${item.title}`);
+      lines.push(item.content.trim());
+      lines.push("");
     }
-    lines.push("");
   };
 
-  renderSection("ルール", pack.rules);
-  renderSection("手順", pack.procedures);
-  renderSection("ファイル・ヒント", pack.codeContext);
+  appendKnowledgeSection("Rules", pack.rules);
+  appendKnowledgeSection("Procedures", pack.procedures);
 
-  lines.push("## 関連するソース・エビデンス");
-  lines.push("");
-  if (pack.sourceRefs.length === 0) {
-    lines.push("- なし");
-  } else {
-    for (const ref of pack.sourceRefs) {
-      lines.push(`- ${ref}`);
-    }
+  if (lines.length === 0) {
+    lines.push("該当する knowledge はありません。通常の実装判断で進めてください。");
   }
-  lines.push("");
 
-  lines.push("## 警告 / 不足しているコンテキスト");
-  lines.push("");
-  if (pack.warnings.length === 0) {
-    lines.push("- なし");
-  } else {
-    for (const warning of pack.warnings) {
+  if (pack.warnings.length > 0) {
+    lines.push("");
+    lines.push("## Context Quality");
+    lines.push("");
+    for (const warning of pack.warnings.slice(0, 3)) {
       lines.push(`- ${warning}`);
     }
   }
-  lines.push("");
 
-  lines.push("## 推奨される次の MCP コール");
-  lines.push("");
-  const suggestedNextCalls =
-    Array.isArray(pack.diagnostics.retrievalStats.suggestedNextCalls) &&
-    pack.diagnostics.retrievalStats.suggestedNextCalls.every((item) => typeof item === "string")
-      ? (pack.diagnostics.retrievalStats.suggestedNextCalls as string[])
-      : [];
-  if (suggestedNextCalls.length === 0) {
-    lines.push("- なし");
-  } else {
-    for (const call of suggestedNextCalls) {
-      lines.push(`- ${call}`);
-    }
-  }
-  lines.push("");
-
-  lines.push("## 診断情報");
-  lines.push("");
-  if (pack.diagnostics.degradedReasons.length === 0) {
-    lines.push("- 低下理由: []");
-  } else {
-    lines.push(`- 低下理由: ${pack.diagnostics.degradedReasons.join(", ")}`);
-  }
-  const reasonBuckets = pack.diagnostics.retrievalStats.reasonBuckets as
-    | {
-        blocking?: string[];
-        qualityWarnings?: string[];
-        maintenanceWarnings?: string[];
-      }
-    | undefined;
-  if (Array.isArray(reasonBuckets?.blocking) && reasonBuckets.blocking.length > 0) {
-    lines.push(`- ブロッキング理由: ${reasonBuckets.blocking.join(", ")}`);
-  }
-  if (Array.isArray(reasonBuckets?.qualityWarnings) && reasonBuckets.qualityWarnings.length > 0) {
-    lines.push(`- 品質警告: ${reasonBuckets.qualityWarnings.join(", ")}`);
-  }
-  if (
-    Array.isArray(reasonBuckets?.maintenanceWarnings) &&
-    reasonBuckets.maintenanceWarnings.length > 0
-  ) {
-    lines.push(`- メンテナンス警告: ${reasonBuckets.maintenanceWarnings.join(", ")}`);
-  }
-  return lines.join("\n");
+  return lines.join("\n").trim();
 }

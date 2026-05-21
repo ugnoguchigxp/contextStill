@@ -1,4 +1,3 @@
-export type CompileIntent = "plan" | "edit" | "debug" | "review" | "finish";
 export type CompileRunSource = "ui" | "mcp" | "cli" | "unknown";
 export type CompileMode =
   | "task_context"
@@ -10,16 +9,14 @@ export type CompileMode =
 
 export type CompileRequest = {
   goal: string;
-  intent: CompileIntent;
-  retrievalMode?: CompileMode;
-  includeDraft?: boolean;
-  files?: string[];
+  changeTypes?: string[];
+  technologies?: string[];
+  domains?: string[];
 };
 
 export type CompileRunSummary = {
   id: string;
   goal: string;
-  intent: string;
   retrievalMode: string;
   status: "ok" | "degraded" | "failed";
   degradedReasons: string[];
@@ -41,18 +38,21 @@ export type CompilePackItem = {
 export type CompilePack = {
   runId: string;
   goal: string;
-  intent: string;
   retrievalMode: string;
   status: "ok" | "degraded" | "failed";
   minimalTasks: string[];
   rules: CompilePackItem[];
   procedures: CompilePackItem[];
-  codeContext: CompilePackItem[];
   warnings: string[];
   sourceRefs: string[];
   diagnostics: {
     degradedReasons: string[];
     retrievalStats: Record<string, unknown>;
+    inputFacets?: {
+      requested?: Record<string, string[]>;
+      matched?: Record<string, string[]>;
+      unknown?: Record<string, string[]>;
+    };
   };
 };
 

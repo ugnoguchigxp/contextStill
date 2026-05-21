@@ -90,9 +90,9 @@ describe("agentic-refine.service", () => {
 
   const input: CompileInput = {
     goal: "Test goal",
-    intent: "edit",
-    files: ["test.ts"],
-    includeDraft: false,
+    changeTypes: ["feature"],
+    technologies: ["typescript"],
+    domains: ["context-compiler"],
   };
 
   describe("agenticRefine", () => {

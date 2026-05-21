@@ -241,60 +241,45 @@ describe("MCP Tools Handlers", () => {
   });
 
   describe("context_compile", () => {
-    test("calls compileContextPack and returns pack and markdown", async () => {
+    test("calls compileContextPack and returns markdown only", async () => {
       vi.mocked(compileContextPack).mockResolvedValue({
         pack: {
-          rules: [{ title: "r", body: "b", sourceRefs: [] }],
+          rules: [{ id: "k1", itemKind: "rule", title: "r", content: "b", sourceRefs: [] }],
           procedures: [],
-          codeContext: [],
           warnings: [],
         },
         markdown: "# Context",
       } as unknown as never);
 
       const response = await contextCompileTool.handler({ goal: "test goal" });
-      expect(response.content.length).toBe(2);
-      expect(response.content[1].text).toBe("# Context");
+      expect(response.content.length).toBe(1);
+      expect(response.content[0].text).toBe("# Context");
     });
 
-    test("does not crash when section fields are partially missing", async () => {
+    test("does not crash when pack fields are partially missing", async () => {
       vi.mocked(compileContextPack).mockResolvedValue({
         pack: {
-          rules: [{ title: "r", body: "b", sourceRefs: [] }],
+          rules: [{ id: "k1", itemKind: "rule", title: "r", content: "b", sourceRefs: [] }],
           procedures: [],
         },
         markdown: "# Context",
       } as unknown as never);
 
       const response = await contextCompileTool.handler({ goal: "test goal" });
-      expect(response.content.length).toBe(2);
-      expect(response.content[1].text).toBe("# Context");
+      expect(response.content.length).toBe(1);
+      expect(response.content[0].text).toBe("# Context");
     });
 
-    test("returns pack when only codeContext exists", async () => {
+    test("returns markdown even when sections are empty", async () => {
       vi.mocked(compileContextPack).mockResolvedValue({
-        pack: {
-          rules: [],
-          procedures: [],
-          codeContext: [{ title: "src/app.ts", content: "hint", sourceRefs: [] }],
-          warnings: [],
-        },
-        markdown: "# Context",
+        pack: { rules: [], procedures: [], warnings: [] },
+        markdown: "該当する knowledge はありません。",
       } as unknown as never);
 
       const response = await contextCompileTool.handler({ goal: "test goal" });
-      expect(response.content.length).toBe(2);
-      expect(response.content[1].text).toBe("# Context");
-    });
-
-    test("returns no content only when every section is empty", async () => {
-      vi.mocked(compileContextPack).mockResolvedValue({
-        pack: { rules: [], procedures: [], codeContext: [], warnings: [] },
-        markdown: "# Context",
-      } as unknown as never);
-
-      const response = await contextCompileTool.handler({ goal: "test goal" });
-      expect(response.content).toEqual([{ type: "text", text: "no content" }]);
+      expect(response.content).toEqual([
+        { type: "text", text: "該当する knowledge はありません。" },
+      ]);
     });
   });
 

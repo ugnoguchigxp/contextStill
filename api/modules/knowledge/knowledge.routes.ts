@@ -44,6 +44,7 @@ const knowledgeWriteSchema = z.object({
       general: z.boolean().optional(),
       technologies: z.array(z.string().trim().min(1)).optional(),
       changeTypes: z.array(z.string().trim().min(1)).optional(),
+      domains: z.array(z.string().trim().min(1)).optional(),
       repoPath: z.string().trim().min(1).optional(),
       repoKey: z.string().trim().min(1).optional(),
     })
@@ -51,6 +52,7 @@ const knowledgeWriteSchema = z.object({
   general: z.boolean().optional(),
   technologies: z.array(z.string().trim().min(1)).optional(),
   changeTypes: z.array(z.string().trim().min(1)).optional(),
+  domains: z.array(z.string().trim().min(1)).optional(),
   repoPath: z.string().trim().min(1).optional(),
   repoKey: z.string().trim().min(1).optional(),
   metadata: z.record(z.unknown()).default({}),

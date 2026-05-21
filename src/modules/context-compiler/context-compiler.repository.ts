@@ -110,7 +110,6 @@ export async function insertContextPackItems(
 export type CompileRunSummary = {
   id: string;
   goal: string;
-  intent: string;
   retrievalMode: string;
   status: "ok" | "degraded" | "failed";
   degradedReasons: string[];
@@ -136,7 +135,6 @@ export async function listRecentCompileRuns(limit = 20): Promise<CompileRunSumma
     .select({
       id: contextCompileRuns.id,
       goal: contextCompileRuns.goal,
-      intent: contextCompileRuns.intent,
       retrievalMode: contextCompileRuns.retrievalMode,
       status: contextCompileRuns.status,
       degradedReasons: contextCompileRuns.degradedReasons,
@@ -151,7 +149,6 @@ export async function listRecentCompileRuns(limit = 20): Promise<CompileRunSumma
   return rows.map((row) => ({
     id: row.id,
     goal: row.goal,
-    intent: row.intent,
     retrievalMode: row.retrievalMode,
     status: normalizeRunStatus(row.status),
     degradedReasons: normalizeStringArray(row.degradedReasons),
@@ -166,7 +163,6 @@ export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSn
     .select({
       id: contextCompileRuns.id,
       goal: contextCompileRuns.goal,
-      intent: contextCompileRuns.intent,
       retrievalMode: contextCompileRuns.retrievalMode,
       status: contextCompileRuns.status,
       degradedReasons: contextCompileRuns.degradedReasons,
@@ -197,7 +193,6 @@ export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSn
     run: {
       id: run.id,
       goal: run.goal,
-      intent: run.intent,
       retrievalMode: run.retrievalMode,
       status: normalizeRunStatus(run.status),
       degradedReasons: normalizeStringArray(run.degradedReasons),
@@ -221,7 +216,6 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
     .select({
       id: contextCompileRuns.id,
       goal: contextCompileRuns.goal,
-      intent: contextCompileRuns.intent,
       retrievalMode: contextCompileRuns.retrievalMode,
       status: contextCompileRuns.status,
       degradedReasons: contextCompileRuns.degradedReasons,
@@ -260,7 +254,6 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
     run: {
       id: run.id,
       goal: run.goal,
-      intent: run.intent,
       retrievalMode: run.retrievalMode,
       status: normalizeRunStatus(run.status),
       degradedReasons: normalizeStringArray(run.degradedReasons),

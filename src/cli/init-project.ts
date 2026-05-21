@@ -221,9 +221,8 @@ async function runSmokeCompile(
   const { pack } = await compileContextPack(
     {
       goal: options.smokeGoal,
-      intent: "plan",
-      repoPath: options.repoPath,
-      includeDraft: true,
+      changeTypes: ["plan", "docs"],
+      domains: ["context-compiler", "knowledge"],
     },
     { source: "cli" },
   );

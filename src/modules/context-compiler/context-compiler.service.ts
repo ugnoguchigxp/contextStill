@@ -1,9 +1,9 @@
 import { groupedConfig } from "../../config.js";
 import {
-  type CompileErrorKind,
   type CompileInput,
   type RetrievalMode,
   compileInputSchema,
+  deriveRetrievalModeFromChangeTypes,
 } from "../../shared/schemas/compile.schema.js";
 import {
   type ContextPack,
@@ -12,6 +12,7 @@ import {
 } from "../../shared/schemas/context-pack.schema.js";
 import type { KnowledgeItem, KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
+import { normalizeKnowledgeApplicability } from "../knowledge/applicability.service.js";
 import { recordKnowledgeCompileSelectionSafe } from "../knowledge/knowledge-value.service.js";
 import { retrieveKnowledge } from "../knowledge/knowledge.service.js";
 import { retrieveSources } from "../sources/source-retrieval.service.js";
@@ -22,39 +23,21 @@ import {
   updateCompileRunSnapshot,
 } from "./context-compiler.repository.js";
 import { renderContextPackMarkdown } from "./pack-renderer.js";
-import { normalizeRepoKey, normalizeRepoPath } from "./query-context.js";
 import { type Rankable, rankAndDedupe } from "./ranking.service.js";
 import type { CompileRunSource } from "../../shared/schemas/compile-run.schema.js";
 
-const retrievalModeByIntent: Record<CompileInput["intent"], RetrievalMode> = {
-  plan: "architecture_context",
-  edit: "task_context",
-  debug: "debug_context",
-  review: "review_context",
-  finish: "learning_context",
-};
-
 const sectionRatios = {
-  rules: 0.45,
-  procedures: 0.35,
-  codeContext: 0.2,
+  rules: 0.55,
+  procedures: 0.45,
 } as const;
 
-function resolveRetrievalMode(input: CompileInput): RetrievalMode {
-  if (input.retrievalMode) return input.retrievalMode;
-  const goal = input.goal.toLowerCase();
-  if (
-    goal.includes("runbook") ||
-    goal.includes("playbook") ||
-    goal.includes("procedure") ||
-    goal.includes("command") ||
-    goal.includes("手順") ||
-    goal.includes("コマンド")
-  ) {
-    return "procedure_context";
-  }
-  return retrievalModeByIntent[input.intent];
-}
+const maintenanceReasonSet = new Set(["KNOWLEDGE_APPLIES_TO_FALLBACK"]);
+const warningReasonSet = new Set([
+  "QUERY_EMBEDDING_UNAVAILABLE",
+  "SOURCE_QUERY_EMBEDDING_UNAVAILABLE",
+  "AGENTIC_REFINE_FAILED",
+  "TOKEN_BUDGET_SECTION_LIMIT_REACHED",
+]);
 
 function isWhitespaceCodePoint(codePoint: number): boolean {
   return (
@@ -73,14 +56,14 @@ function isWhitespaceCodePoint(codePoint: number): boolean {
 
 function isCjkCodePoint(codePoint: number): boolean {
   return (
-    (codePoint >= 0x3040 && codePoint <= 0x30ff) || // Hiragana and Katakana
-    (codePoint >= 0x31f0 && codePoint <= 0x31ff) || // Katakana phonetic extensions
-    (codePoint >= 0x3400 && codePoint <= 0x4dbf) || // CJK Unified Ideographs Extension A
-    (codePoint >= 0x4e00 && codePoint <= 0x9fff) || // CJK Unified Ideographs
-    (codePoint >= 0xf900 && codePoint <= 0xfaff) || // CJK Compatibility Ideographs
-    (codePoint >= 0xff61 && codePoint <= 0xff9f) || // Half-width Katakana
-    (codePoint >= 0xac00 && codePoint <= 0xd7af) || // Hangul Syllables
-    (codePoint >= 0x3130 && codePoint <= 0x318f) // Hangul Compatibility Jamo
+    (codePoint >= 0x3040 && codePoint <= 0x30ff) ||
+    (codePoint >= 0x31f0 && codePoint <= 0x31ff) ||
+    (codePoint >= 0x3400 && codePoint <= 0x4dbf) ||
+    (codePoint >= 0x4e00 && codePoint <= 0x9fff) ||
+    (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
+    (codePoint >= 0xff61 && codePoint <= 0xff9f) ||
+    (codePoint >= 0xac00 && codePoint <= 0xd7af) ||
+    (codePoint >= 0x3130 && codePoint <= 0x318f)
   );
 }
 
@@ -117,18 +100,14 @@ function truncateForBudget(content: string, maxTokens: number): string {
     selectedChars.push(char);
     usedTokens += tokenCost;
   }
-  if (selectedChars.length === 0) {
-    return suffix;
-  }
+  if (selectedChars.length === 0) return suffix;
   while (
     selectedChars.length > 0 &&
     estimateTokens(`${selectedChars.join("")}${suffix}`) > maxTokens
   ) {
     selectedChars.pop();
   }
-  if (selectedChars.length === 0) {
-    return suffix;
-  }
+  if (selectedChars.length === 0) return suffix;
   return `${selectedChars.join("")}${suffix}`;
 }
 
@@ -164,7 +143,7 @@ function buildFallbackSourceRef(params: {
 }
 
 function selectSourceRefsForKnowledge(
-  item: { type: string; title: string; content: string },
+  item: { title: string; content: string },
   sourceItems: Array<{ sourceUri: string; locator: string; content: string; score: number }>,
   knownSourceRefs: string[],
 ): string[] {
@@ -191,7 +170,6 @@ function selectSourceRefsForKnowledge(
     .slice(0, 2)
     .map((entry) => entry.ref);
   if (overlapRefs.length > 0) return [...new Set(overlapRefs)];
-
   return [];
 }
 
@@ -205,9 +183,7 @@ function applySectionTokenBudget(
   const selected: ContextPackItem[] = [];
   let usedTokens = 0;
   for (const item of items) {
-    const itemCost = estimateTokens(
-      `${item.title}\n${item.content}\n${item.rankingReason}\n${item.sourceRefs.join("\n")}`,
-    );
+    const itemCost = estimateTokens(`${item.title}\n${item.content}\n${item.rankingReason}`);
     if (usedTokens + itemCost <= maxTokens) {
       selected.push(item);
       usedTokens += itemCost;
@@ -215,8 +191,7 @@ function applySectionTokenBudget(
     }
     if (selected.length === 0) {
       const remaining = Math.max(24, maxTokens - usedTokens);
-      const truncatedContent = truncateForBudget(item.content, remaining);
-      selected.push({ ...item, content: truncatedContent });
+      selected.push({ ...item, content: truncateForBudget(item.content, remaining) });
     }
     break;
   }
@@ -227,46 +202,30 @@ function buildMinimalTasks(retrievalMode: RetrievalMode): string[] {
   switch (retrievalMode) {
     case "review_context":
       return [
-        "有効なルール、手順、および関連するソース資料を確認してください",
-        "変更されたファイルが既知の制約に適合しているかチェックしてください",
-        "レビュー結果の各主張についてソース参照を検証してください",
-        "具体的な次のアクションを含めて結果を要約してください",
+        "有効なルールと手順を確認する",
+        "変更内容が既知の制約に反しないか検証する",
+        "指摘は根拠を明確にして優先順位順にまとめる",
       ];
     case "debug_context":
       return [
-        "まず、障害に関連するソース資料とコードコンテキストを確認してください",
-        "修正を行う前に、根本原因の候補を絞り込んでください",
-        "既知の手順に沿った、最小限かつ安全な修正を適用してください",
-        "修正したパスに対してピンポイントな検証を実行してください",
+        "関連する既知手順を先に確認する",
+        "原因候補を狭めてから最小変更で修正する",
+        "修正箇所に絞った再現・検証を行う",
       ];
     case "architecture_context":
       return [
-        "以前の設計ルールとアーキテクチャ上の制約を確認してください",
-        "候補となる設計を既知のトレードオフと比較検討してください",
-        "影響を受けるシンボル/ファイルと互換性リスクをリストアップしてください",
-        "実装の境界線と検証方法を提案してください",
+        "既存ルールと制約を先に確認する",
+        "設計候補のトレードオフを比較する",
+        "実装境界と検証方法を明確化する",
       ];
     case "procedure_context":
       return [
-        "選択された手順の候補を確認してください",
-        "必要なコマンドとチェックのみを実行してください",
-        "各操作の根拠としてソース参照を記録してください",
-        "結果と、その後の検証ステップを報告してください",
-      ];
-    case "learning_context":
-      return [
-        "ソースの追跡可能性を維持しつつ、ドラフト知識をレビューしてください",
-        "恒久的なガイダンスと一時的な観察結果を分離してください",
-        "検証可能な項目のみを 'active' 状態に昇格させてください",
-        "昇格または廃止の決定理由を記録してください",
+        "手順候補を上から順に確認する",
+        "必要最小限のコマンドのみ実行する",
+        "結果と次の検証ステップを記録する",
       ];
     default:
-      return [
-        "関連する知識とソース資料を確認してください",
-        "有効なルールと手順のみを適用してください",
-        "最小限で安全な変更セットを実装してください",
-        "変更した箇所の振る舞いに対して集中した検証を行ってください",
-      ];
+      return ["関連する知識を確認する", "安全な最小変更で実装する", "変更箇所を重点検証する"];
   }
 }
 
@@ -309,118 +268,6 @@ type KnowledgeRankable = Rankable & {
   sourceRefs: string[];
 };
 
-function buildCodeContextItems(files: string[] | undefined): ContextPackItem[] {
-  const uniqueFiles = [...new Set((files ?? []).map((file) => file.trim()).filter(Boolean))];
-  return uniqueFiles.map((filePath, index) => ({
-    id: `file_hint:${filePath}`,
-    itemKind: "file_hint",
-    itemId: filePath,
-    section: "code_context",
-    title: filePath,
-    content: filePath,
-    score: Math.max(0.1, 1 - index * 0.05),
-    rankingReason: "provided in compile input files",
-    sourceRefs: [],
-  }));
-}
-
-type CompileErrorSignals = {
-  kind?: CompileErrorKind;
-  keywords: string[];
-  files: string[];
-};
-
-function normalizeErrorText(value: string | undefined): string {
-  return value ? value.trim().toLowerCase() : "";
-}
-
-function extractErrorKeywords(input: CompileInput): string[] {
-  const rawTexts = [
-    normalizeErrorText(input.lastErrorContext?.command),
-    normalizeErrorText(input.lastErrorContext?.output),
-    normalizeErrorText(input.lastErrorContext?.stack),
-    input.errorKind ?? "",
-  ];
-  const stopWords = new Set([
-    "error",
-    "errors",
-    "failed",
-    "failure",
-    "exception",
-    "line",
-    "column",
-    "stack",
-    "trace",
-    "module",
-    "file",
-    "test",
-    "tests",
-    "lint",
-    "typecheck",
-    "build",
-    "runtime",
-    "unknown",
-  ]);
-  const keywords = new Set<string>();
-  for (const text of rawTexts) {
-    if (!text) continue;
-    for (const token of text.split(/[^a-z0-9_\-./\u3040-\u30ff\u4e00-\u9fff\uff61-\uff9f]+/g)) {
-      const normalized = token.trim();
-      if (!normalized) continue;
-      if (normalized.length < 3 && !/[\u3040-\u30ff\u4e00-\u9fff\uff61-\uff9f]/.test(normalized))
-        continue;
-      if (stopWords.has(normalized)) continue;
-      keywords.add(normalized);
-      if (keywords.size >= 32) return [...keywords];
-    }
-  }
-  return [...keywords];
-}
-
-function extractErrorFileHints(input: CompileInput): string[] {
-  const candidates = [...(input.files ?? []), ...(input.lastErrorContext?.files ?? [])];
-  const normalized = candidates
-    .map((value) => value.trim())
-    .filter(Boolean)
-    .map((value) => value.replace(/\\/g, "/").toLowerCase());
-  return [...new Set(normalized)].slice(0, 24);
-}
-
-function buildCompileErrorSignals(input: CompileInput): CompileErrorSignals {
-  return {
-    kind: input.errorKind,
-    keywords: extractErrorKeywords(input),
-    files: extractErrorFileHints(input),
-  };
-}
-
-function countMatches(haystack: string, needles: string[]): number {
-  if (!haystack || needles.length === 0) return 0;
-  let hits = 0;
-  for (const needle of needles) {
-    if (needle && haystack.includes(needle)) hits += 1;
-  }
-  return hits;
-}
-
-function pushUnique(items: string[], value: string): void {
-  if (!items.includes(value)) {
-    items.push(value);
-  }
-}
-
-const maintenanceReasonSet = new Set([
-  "KNOWLEDGE_APPLIES_TO_FALLBACK",
-  "KNOWLEDGE_REPO_SCOPE_FALLBACK",
-  "SOURCE_REPO_SCOPE_FALLBACK",
-]);
-
-const warningReasonSet = new Set([
-  "QUERY_EMBEDDING_UNAVAILABLE",
-  "SOURCE_QUERY_EMBEDDING_UNAVAILABLE",
-  "TOKEN_BUDGET_SECTION_LIMIT_REACHED",
-]);
-
 type CompileReasonBuckets = {
   blockingReasons: string[];
   hardFailureReasons: string[];
@@ -428,11 +275,13 @@ type CompileReasonBuckets = {
   maintenanceWarnings: string[];
 };
 
+function pushUnique(items: string[], value: string): void {
+  if (!items.includes(value)) items.push(value);
+}
+
 function classifyCompileReasons(params: {
   reasons: string[];
   selectedKnowledgeCount: number;
-  selectedCodeContextCount: number;
-  sourceHitCount: number;
 }): CompileReasonBuckets {
   const uniqueReasons = [...new Set(params.reasons.map((reason) => reason.trim()).filter(Boolean))];
   const blockingReasons: string[] = [];
@@ -440,55 +289,26 @@ function classifyCompileReasons(params: {
   const qualityWarnings: string[] = [];
   const maintenanceWarnings: string[] = [];
   const hasKnowledge = params.selectedKnowledgeCount > 0;
-  const hasCodeContext = params.selectedCodeContextCount > 0;
-  const hasSourceHits = params.sourceHitCount > 0;
-  const hasActionableContent = hasKnowledge || hasCodeContext;
 
   for (const reason of uniqueReasons) {
     if (maintenanceReasonSet.has(reason)) {
       maintenanceWarnings.push(reason);
       continue;
     }
-
-    if (reason === "AGENTIC_REFINE_FAILED") {
+    if (reason === "NO_ACTIVE_KNOWLEDGE_MATCH") {
+      if (hasKnowledge) qualityWarnings.push(reason);
+      else blockingReasons.push(reason);
+      continue;
+    }
+    if (reason === "NO_SOURCE_MATCH" || warningReasonSet.has(reason)) {
       qualityWarnings.push(reason);
       continue;
     }
-
-    if (reason === "NO_ACTIVE_KNOWLEDGE_MATCH") {
-      if (hasKnowledge || hasSourceHits || hasCodeContext) {
-        qualityWarnings.push(reason);
-      } else {
-        blockingReasons.push(reason);
-      }
-      continue;
-    }
-
-    if (reason === "NO_SOURCE_MATCH") {
-      if (hasKnowledge || hasCodeContext) {
-        qualityWarnings.push(reason);
-      } else {
-        blockingReasons.push(reason);
-      }
-      continue;
-    }
-
-    if (warningReasonSet.has(reason)) {
-      if (reason === "TOKEN_BUDGET_SECTION_LIMIT_REACHED" && !hasActionableContent) {
-        blockingReasons.push(reason);
-      } else {
-        qualityWarnings.push(reason);
-      }
-      continue;
-    }
-
     if (reason.endsWith("_FAILED") || reason.includes("ERROR")) {
       hardFailureReasons.push(reason);
       blockingReasons.push(reason);
       continue;
     }
-
-    // Unknown reasons are treated as blocking so that new failure modes stay visible.
     blockingReasons.push(reason);
   }
 
@@ -500,12 +320,49 @@ function classifyCompileReasons(params: {
   };
 }
 
-async function updateCompileRunSnapshotSafe(runId: string, pack: ContextPack): Promise<void> {
-  try {
-    await updateCompileRunSnapshot(runId, pack);
-  } catch {
-    // Snapshot persistence is for UI replay. A compile result should still be returned.
+function buildHumanWarnings(reasons: string[], limit = 3): string[] {
+  const messages: string[] = [];
+  const reasonSet = new Set(reasons);
+  if (reasonSet.has("NO_ACTIVE_KNOWLEDGE_MATCH")) {
+    messages.push("該当する knowledge はありません。通常の実装判断で進めてください。");
   }
+  if (reasonSet.has("TOKEN_BUDGET_SECTION_LIMIT_REACHED")) {
+    messages.push("LLMが選んだ knowledge の一部は、出力上限のため省略されました。");
+  }
+  if (reasonSet.has("AGENTIC_REFINE_FAILED")) {
+    messages.push("knowledge の自動選別に失敗したため、候補スコア順で出力しています。");
+  }
+  if (
+    reasonSet.has("QUERY_EMBEDDING_UNAVAILABLE") ||
+    reasonSet.has("SOURCE_QUERY_EMBEDDING_UNAVAILABLE")
+  ) {
+    messages.push("一部のベクトル検索が利用できず、テキスト検索中心で構成されています。");
+  }
+  if (reasonSet.has("NO_SOURCE_MATCH")) {
+    messages.push("関連する source refs が見つからず、knowledge中心のコンテキストです。");
+  }
+  return [...new Set(messages)].slice(0, limit);
+}
+
+function updateCompileRunSnapshotSafe(runId: string, pack: ContextPack): Promise<void> {
+  return updateCompileRunSnapshot(runId, pack).catch(() => undefined);
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+function legacyIntentFromRetrievalMode(retrievalMode: RetrievalMode): string {
+  if (retrievalMode === "debug_context") return "debug";
+  if (retrievalMode === "review_context") return "review";
+  if (retrievalMode === "architecture_context") return "plan";
+  if (retrievalMode === "procedure_context") return "edit";
+  if (retrievalMode === "learning_context") return "finish";
+  return "edit";
 }
 
 export async function compileContextPack(
@@ -517,43 +374,59 @@ export async function compileContextPack(
 }> {
   const compileStartedAt = Date.now();
   const input = compileInputSchema.parse(rawInput);
-  const retrievalMode = resolveRetrievalMode(input);
-  const tokenBudget = input.tokenBudget ?? groupedConfig.compile.defaultTokenBudget;
-  const normalizedRepoPath = normalizeRepoPath(input.repoPath);
-  const normalizedRepoKey = normalizeRepoKey(input.repoPath);
+  const retrievalMode = deriveRetrievalModeFromChangeTypes(input.changeTypes);
+  const tokenBudget = groupedConfig.compile.defaultTokenBudget;
+
+  const normalizedApplicability = await normalizeKnowledgeApplicability({
+    technologies: input.technologies,
+    changeTypes: input.changeTypes,
+    domains: input.domains,
+  });
+
+  const matchedTechnologies = asStringArray(normalizedApplicability.appliesTo.technologies);
+  const matchedChangeTypes = asStringArray(normalizedApplicability.appliesTo.changeTypes);
+  const matchedDomains = asStringArray(normalizedApplicability.appliesTo.domains);
+  const unknownFacetsByKind = normalizedApplicability.unknownTagCandidates.reduce<
+    Record<string, string[]>
+  >((acc, candidate) => {
+    const current = acc[candidate.kind] ?? [];
+    if (!current.includes(candidate.value)) current.push(candidate.value);
+    acc[candidate.kind] = current;
+    return acc;
+  }, {});
 
   const [knowledge, sourceContext] = await Promise.all([
-    retrieveKnowledge(input, { retrievalMode }),
+    retrieveKnowledge(input, {
+      retrievalMode,
+      facetFilters: {
+        technologies: matchedTechnologies,
+        changeTypes: matchedChangeTypes,
+        domains: matchedDomains,
+      },
+    }),
     retrieveSources(input, { retrievalMode }),
   ]);
-  const errorSignals = buildCompileErrorSignals(input);
 
   const degradedReasons = [...knowledge.degradedReasons, ...sourceContext.degradedReasons];
 
   const rankedKnowledge = rankAndDedupe<KnowledgeRankable>(
-    knowledge.items.map((item) => {
-      const searchable = `${item.title}\n${item.body}\n${item.sourceRefs.join("\n")}`.toLowerCase();
-      return {
-        id: item.id,
-        title: item.title,
-        content: item.body,
-        score: item.score,
-        confidence: item.confidence,
-        importance: item.importance,
-        dynamicScore: item.dynamicScore,
-        decayFactor: item.decayFactor,
-        type: normalizeKnowledgeType(item.type),
-        status: normalizeKnowledgeStatus(item.status),
-        sourceRefs: item.sourceRefs,
-        sourceRefCount: item.sourceRefs.length,
-        hasSourceLinks: item.hasSourceLinks,
-        stale: item.status === "deprecated",
-        applicabilityScore: item.applicabilityScore,
-        errorKeywordHits: countMatches(searchable, errorSignals.keywords),
-        errorFileHits: countMatches(searchable, errorSignals.files),
-        errorContextWeight: input.lastErrorContext ? 1 : 0,
-      };
-    }),
+    knowledge.items.map((item) => ({
+      id: item.id,
+      title: item.title,
+      content: item.body,
+      score: item.score,
+      confidence: item.confidence,
+      importance: item.importance,
+      dynamicScore: item.dynamicScore,
+      decayFactor: item.decayFactor,
+      type: normalizeKnowledgeType(item.type),
+      status: normalizeKnowledgeStatus(item.status),
+      sourceRefs: item.sourceRefs,
+      sourceRefCount: item.sourceRefs.length,
+      hasSourceLinks: item.hasSourceLinks,
+      stale: item.status === "deprecated",
+      applicabilityScore: item.applicabilityScore,
+    })),
     15,
   );
 
@@ -571,9 +444,7 @@ export async function compileContextPack(
     retrievalMode,
   );
 
-  if (agenticResult.error) {
-    pushUnique(degradedReasons, "AGENTIC_REFINE_FAILED");
-  }
+  if (agenticResult.error) pushUnique(degradedReasons, "AGENTIC_REFINE_FAILED");
 
   const refinedKnowledgeMap = new Map(rankedKnowledge.map((k) => [k.id, k]));
   const finalKnowledge = agenticResult.items
@@ -582,7 +453,7 @@ export async function compileContextPack(
 
   const packItems = finalKnowledge.map((item) => {
     const sourceRefs = selectSourceRefsForKnowledge(
-      { type: item.type, title: item.title, content: item.content },
+      { title: item.title, content: item.content },
       sourceContext.items,
       item.sourceRefs,
     );
@@ -605,90 +476,59 @@ export async function compileContextPack(
     packItems.filter((item) => item.section === "procedures"),
     Math.floor(tokenBudget * sectionRatios.procedures),
   );
-  const budgetedCodeContext = applySectionTokenBudget(
-    buildCodeContextItems(input.files),
-    Math.floor(tokenBudget * sectionRatios.codeContext),
-  );
 
-  const budgetDropDetected =
-    budgetedRules.dropped || budgetedProcedures.dropped || budgetedCodeContext.dropped;
-  if (budgetDropDetected) {
+  if (budgetedRules.dropped || budgetedProcedures.dropped) {
     pushUnique(degradedReasons, "TOKEN_BUDGET_SECTION_LIMIT_REACHED");
   }
 
-  const selectedPackItems = [
-    ...budgetedRules.items,
-    ...budgetedProcedures.items,
-    ...budgetedCodeContext.items,
-  ];
-  const selectedKnowledgeCount = budgetedRules.items.length + budgetedProcedures.items.length;
-  const selectedCodeContextCount = budgetedCodeContext.items.length;
-  const itemSourceRefs = selectedPackItems.flatMap((item) => item.sourceRefs);
+  const selectedPackItems = [...budgetedRules.items, ...budgetedProcedures.items];
+  const selectedKnowledgeCount = selectedPackItems.length;
   const sourceRefsCandidate = [
     ...new Set([
-      ...itemSourceRefs,
+      ...selectedPackItems.flatMap((item) => item.sourceRefs),
       ...sourceContext.items.map((item) => formatSourceRef(item.sourceUri, item.locator)),
     ]),
   ];
   const reasonBuckets = classifyCompileReasons({
     reasons: degradedReasons,
     selectedKnowledgeCount,
-    selectedCodeContextCount,
-    sourceHitCount: sourceContext.stats.hitCount,
   });
-  const hardFailureCount = reasonBuckets.hardFailureReasons.length;
   const status =
-    hardFailureCount >= 2 ? "failed" : reasonBuckets.blockingReasons.length > 0 ? "degraded" : "ok";
+    reasonBuckets.hardFailureReasons.length >= 2
+      ? "failed"
+      : reasonBuckets.blockingReasons.length > 0
+        ? "degraded"
+        : "ok";
   const minimalTasks = buildMinimalTasks(retrievalMode);
-  const selectedStatuses = new Set(rankedKnowledge.map((item) => item.status));
-  const hasExplicitRepoPath = Boolean(normalizedRepoPath);
-  const hasExplicitFiles = Boolean(input.files?.some((file) => file.trim().length > 0));
-  const reasonSet = new Set(degradedReasons);
-  const suggestedNextCalls: string[] = [];
-  if (reasonSet.has("NO_ACTIVE_KNOWLEDGE_MATCH")) {
-    suggestedNextCalls.push("search_knowledge");
-    suggestedNextCalls.push("memory_search");
-  }
-  if (reasonSet.has("NO_SOURCE_MATCH")) {
-    suggestedNextCalls.push("memory_search");
-    suggestedNextCalls.push("bun run import:sources -- <wiki root>");
-    suggestedNextCalls.push("bun run distill:pipeline:once");
-  }
-  if (reasonSet.has("KNOWLEDGE_APPLIES_TO_FALLBACK")) {
-    suggestedNextCalls.push("search_knowledge (inspect appliesTo/repo metadata coverage)");
-  }
-  if (
-    reasonSet.has("KNOWLEDGE_REPO_SCOPE_FALLBACK") ||
-    reasonSet.has("SOURCE_REPO_SCOPE_FALLBACK")
-  ) {
-    if (!hasExplicitRepoPath || !hasExplicitFiles) {
-      suggestedNextCalls.push("context_compile (retry with explicit repoPath/files)");
-    } else {
-      suggestedNextCalls.push("search_knowledge (validate repo scope tagging)");
-    }
-  }
-  if (reasonSet.has("TOKEN_BUDGET_SECTION_LIMIT_REACHED")) {
-    suggestedNextCalls.push("context_compile (retry with larger tokenBudget)");
-  }
-  if (
-    reasonBuckets.hardFailureReasons.length > 0 ||
-    reasonSet.has("AGENTIC_REFINE_FAILED") ||
-    reasonSet.has("QUERY_EMBEDDING_UNAVAILABLE") ||
-    reasonSet.has("SOURCE_QUERY_EMBEDDING_UNAVAILABLE")
-  ) {
-    suggestedNextCalls.push("doctor");
-  }
-  if (knowledge.stats.embeddingStatus === "unavailable") {
-    suggestedNextCalls.push("doctor");
-  }
-
   const compileDurationMs = Math.max(0, Date.now() - compileStartedAt);
+  const suggestedNextCalls: string[] = [];
+  if (degradedReasons.includes("NO_ACTIVE_KNOWLEDGE_MATCH")) {
+    suggestedNextCalls.push("search_knowledge");
+  }
+  if (degradedReasons.includes("NO_SOURCE_MATCH")) {
+    suggestedNextCalls.push("memory_search");
+  }
+  if (
+    degradedReasons.some(
+      (reason) =>
+        reason.endsWith("_FAILED") ||
+        reason === "AGENTIC_REFINE_FAILED" ||
+        reason === "QUERY_EMBEDDING_UNAVAILABLE" ||
+        reason === "SOURCE_QUERY_EMBEDDING_UNAVAILABLE",
+    )
+  ) {
+    suggestedNextCalls.push("doctor");
+  }
 
   const runId = await insertCompileRun({
     goal: input.goal,
-    intent: input.intent,
-    repoPath: normalizedRepoPath ?? input.repoPath,
-    input: input as unknown as Record<string, unknown>,
+    intent: legacyIntentFromRetrievalMode(retrievalMode),
+    input: {
+      goal: input.goal,
+      ...(input.changeTypes ? { changeTypes: input.changeTypes } : {}),
+      ...(input.technologies ? { technologies: input.technologies } : {}),
+      ...(input.domains ? { domains: input.domains } : {}),
+    },
     retrievalMode,
     status,
     degradedReasons,
@@ -733,33 +573,12 @@ export async function compileContextPack(
   const pack = contextPackSchema.parse({
     runId,
     goal: input.goal,
-    intent: input.intent,
     retrievalMode,
     status,
     minimalTasks,
     rules: budgetedRules.items,
     procedures: budgetedProcedures.items,
-    codeContext: budgetedCodeContext.items,
-    warnings: [
-      "ドラフト状態の知識を自動的に指示に組み込まないでください。必ず検証が必要です。",
-      "ルールや手順がソース資料に依存している場合は、ソース参照を維持してください。",
-      "必ず日本語で回答し、思考プロセスも日本語で行ってください。",
-      ...(selectedStatuses.has("draft")
-        ? ["ドラフト知識が含まれています。安定した指示として採用する前に内容を検証してください。"]
-        : []),
-      ...(suggestedNextCalls.length > 0
-        ? [`推奨される次の MCP コール: ${[...new Set(suggestedNextCalls)].join(", ")}`]
-        : []),
-      ...(reasonBuckets.qualityWarnings.length > 0
-        ? [`品質警告: ${reasonBuckets.qualityWarnings.join(", ")}`]
-        : []),
-      ...(reasonBuckets.maintenanceWarnings.length > 0
-        ? [`メンテナンス警告: ${reasonBuckets.maintenanceWarnings.join(", ")}`]
-        : []),
-      ...(budgetDropDetected
-        ? ["トークン予算の制限により、優先順位の低い項目がカットされました。"]
-        : []),
-    ],
+    warnings: buildHumanWarnings(degradedReasons),
     sourceRefs,
     diagnostics: {
       degradedReasons,
@@ -770,11 +589,6 @@ export async function compileContextPack(
         compileDurationMs,
         agenticUsed: agenticResult.agenticUsed,
         agenticReasoning: agenticResult.reasoning,
-        errorContext: {
-          errorKind: errorSignals.kind ?? null,
-          keywordCount: errorSignals.keywords.length,
-          fileHintCount: errorSignals.files.length,
-        },
         reasonBuckets: {
           blocking: reasonBuckets.blockingReasons,
           qualityWarnings: reasonBuckets.qualityWarnings,
@@ -782,6 +596,23 @@ export async function compileContextPack(
           hardFailures: reasonBuckets.hardFailureReasons,
         },
         suggestedNextCalls: [...new Set(suggestedNextCalls)],
+      },
+      inputFacets: {
+        requested: {
+          changeTypes: input.changeTypes ?? [],
+          technologies: input.technologies ?? [],
+          domains: input.domains ?? [],
+        },
+        matched: {
+          changeTypes: matchedChangeTypes,
+          technologies: matchedTechnologies,
+          domains: matchedDomains,
+        },
+        unknown: {
+          change_type: unknownFacetsByKind.change_type ?? [],
+          technology: unknownFacetsByKind.technology ?? [],
+          domain: unknownFacetsByKind.domain ?? [],
+        },
       },
     },
   });
@@ -794,11 +625,8 @@ export async function compileContextPack(
     payload: {
       runId,
       goal: input.goal,
-      intent: input.intent,
       retrievalMode,
       status,
-      repoPath: normalizedRepoPath ?? null,
-      repoKey: normalizedRepoKey ?? null,
       degradedReasons,
       tokenBudget,
       compileDurationMs,
@@ -806,7 +634,6 @@ export async function compileContextPack(
       selectedCounts: {
         rules: budgetedRules.items.length,
         procedures: budgetedProcedures.items.length,
-        codeContext: budgetedCodeContext.items.length,
       },
     },
   });

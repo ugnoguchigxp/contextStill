@@ -148,18 +148,14 @@ describeDb("context compiler integration", () => {
     expect(withDraft.pack.procedures.some((item) => item.title === "Draft Procedure")).toBe(true);
   });
 
-  test("builds code_context from input file hints when symbol index is empty", async () => {
+  test("returns pack without code_context section", async () => {
     const { pack } = await compileContextPack({
       goal: "adjust compile behavior",
       intent: "edit",
       files: ["src/modules/context-compiler/context-compiler.service.ts"],
     });
-    expect(pack.codeContext.length).toBeGreaterThan(0);
-    expect(
-      pack.codeContext.some(
-        (item) => item.itemKind === "file_hint" && item.content.includes("src/"),
-      ),
-    ).toBe(true);
+    expect(Array.isArray(pack.rules)).toBe(true);
+    expect(Array.isArray(pack.procedures)).toBe(true);
   });
 
   test("repoPath scopes knowledge retrieval to same repo and global", async () => {

@@ -3,7 +3,7 @@ import { retrievalModeSchema } from "./compile.schema.js";
 
 const contextPackStatusSchema = z.enum(["ok", "degraded", "failed"]);
 
-const contextPackSectionSchema = z.enum(["rules", "procedures", "code_context", "warnings"]);
+const contextPackSectionSchema = z.enum(["rules", "procedures", "warnings"]);
 
 const contextPackItemSchema = z.object({
   id: z.string().min(1),
@@ -20,18 +20,23 @@ const contextPackItemSchema = z.object({
 export const contextPackSchema = z.object({
   runId: z.string().uuid(),
   goal: z.string().min(1),
-  intent: z.string().min(1),
   retrievalMode: retrievalModeSchema,
   status: contextPackStatusSchema,
   minimalTasks: z.array(z.string()),
   rules: z.array(contextPackItemSchema),
   procedures: z.array(contextPackItemSchema),
-  codeContext: z.array(contextPackItemSchema),
   warnings: z.array(z.string()),
   sourceRefs: z.array(z.string()),
   diagnostics: z.object({
     degradedReasons: z.array(z.string()),
     retrievalStats: z.record(z.unknown()),
+    inputFacets: z
+      .object({
+        requested: z.record(z.array(z.string())),
+        matched: z.record(z.array(z.string())),
+        unknown: z.record(z.array(z.string())),
+      })
+      .optional(),
   }),
 });
 

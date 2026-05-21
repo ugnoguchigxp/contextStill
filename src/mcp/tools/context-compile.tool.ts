@@ -10,59 +10,17 @@ export const contextCompileTool: ToolEntry = {
     type: "object",
     properties: {
       goal: { type: "string" },
-      intent: { type: "string", enum: ["plan", "edit", "debug", "review", "finish"] },
-      retrievalMode: {
-        type: "string",
-        enum: [
-          "task_context",
-          "review_context",
-          "debug_context",
-          "architecture_context",
-          "procedure_context",
-          "learning_context",
-        ],
-      },
-      repoPath: { type: "string" },
-      files: { type: "array", items: { type: "string" } },
       changeTypes: { type: "array", items: { type: "string" } },
       technologies: { type: "array", items: { type: "string" } },
-      tokenBudget: { type: "number" },
-      includeDraft: { type: "boolean" },
-      errorKind: {
-        type: "string",
-        enum: ["typecheck", "lint", "test", "runtime", "build", "unknown"],
-      },
-      lastErrorContext: {
-        type: "object",
-        properties: {
-          command: { type: "string" },
-          output: { type: "string" },
-          stack: { type: "string" },
-          files: { type: "array", items: { type: "string" } },
-        },
-      },
-      queryEmbedding: { type: "array", items: { type: "number" } },
+      domains: { type: "array", items: { type: "string" } },
     },
     required: ["goal"],
   },
   handler: async (args) => {
     const parsed = compileInputSchema.parse(args ?? {});
-    const { pack, markdown } = await compileContextPack(parsed, { source: "mcp" });
-    const hasAnyContent = [pack.rules, pack.procedures, pack.codeContext, pack.warnings].some(
-      (section) => Array.isArray(section) && section.length > 0,
-    );
-
-    if (!hasAnyContent) {
-      return {
-        content: [{ type: "text", text: "no content" }],
-      };
-    }
-
+    const { markdown } = await compileContextPack(parsed, { source: "mcp" });
     return {
-      content: [
-        { type: "text", text: JSON.stringify(pack, null, 2) },
-        { type: "text", text: markdown },
-      ],
+      content: [{ type: "text", text: markdown }],
     };
   },
 };
