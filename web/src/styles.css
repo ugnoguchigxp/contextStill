@@ -549,9 +549,16 @@
 }
 
 .knowledge-table-container {
+  display: flex;
   flex: 1;
-  overflow-y: auto;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
   width: 100%;
+}
+
+.knowledge-table-container > .min-h-0 {
+  flex: 1;
 }
 
 .knowledge-table-container th {
@@ -561,6 +568,34 @@
   letter-spacing: 0.05em;
   font-weight: 700;
   color: #64748b;
+}
+
+.knowledge-title-cell {
+  min-width: 0;
+  max-width: 100%;
+  overflow: hidden;
+}
+
+.knowledge-title-link,
+.knowledge-description-preview {
+  display: -webkit-box;
+  max-width: 100%;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  white-space: normal;
+  word-break: break-word;
+  -webkit-box-orient: vertical;
+}
+
+.knowledge-title-link {
+  margin-bottom: 0.25rem;
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
+}
+
+.knowledge-description-preview {
+  -webkit-line-clamp: 2;
+  line-clamp: 2;
 }
 
 .form-actions,

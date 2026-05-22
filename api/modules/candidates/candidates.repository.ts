@@ -12,6 +12,19 @@ export const candidateOutcomeValues = [
 
 export type CandidateOutcome = (typeof candidateOutcomeValues)[number];
 
+export const candidateListSortByValues = [
+  "targetKey",
+  "candidateTitle",
+  "coverageStatus",
+  "knowledgeStatus",
+  "outcome",
+  "qualityScore",
+  "latestUpdatedAt",
+] as const;
+
+export type CandidateListSortBy = (typeof candidateListSortByValues)[number];
+export type CandidateListSortDir = "asc" | "desc";
+
 export type CandidateListQuery = {
   page: number;
   limit: number;
@@ -20,6 +33,8 @@ export type CandidateListQuery = {
   outcome?: "all" | CandidateOutcome;
   hasKnowledge?: "all" | "yes" | "no";
   targetStateId?: string;
+  sortBy?: CandidateListSortBy;
+  sortDir?: CandidateListSortDir;
 };
 
 export type CandidateDiffSummary = {
@@ -526,10 +541,30 @@ function buildFilters(params: CandidateListQuery, includeOutcome: boolean): SQL 
   return conditions.length > 0 ? and(...conditions) : undefined;
 }
 
+function buildOrderBy(params: Pick<CandidateListQuery, "sortBy" | "sortDir">): SQL {
+  const sortBy = params.sortBy ?? "latestUpdatedAt";
+  const direction = params.sortDir === "asc" ? sql`asc` : sql`desc`;
+  const sortableColumns = {
+    targetKey: sql`lower(target_key)`,
+    candidateTitle: sql`lower(original_title)`,
+    coverageStatus: sql`coalesce(cover_status, '')`,
+    knowledgeStatus: sql`coalesce(knowledge_status, '')`,
+    outcome: sql`outcome`,
+    qualityScore: sql`(
+      coalesce(cover_importance, knowledge_importance, 0) * 0.6
+      + coalesce(cover_confidence, knowledge_confidence, 0) * 0.4
+    )`,
+    latestUpdatedAt: sql`latest_updated_at`,
+  } satisfies Record<CandidateListSortBy, SQL>;
+  const selected = sortableColumns[sortBy] ?? sortableColumns.latestUpdatedAt;
+  return sql`${selected} ${direction}, latest_updated_at desc, candidate_index asc, id asc`;
+}
+
 export async function listCandidateItems(params: CandidateListQuery): Promise<CandidateListResult> {
   const offset = Math.max(0, params.page - 1) * params.limit;
   const listWhere = buildFilters(params, true);
   const statsWhere = buildFilters(params, false);
+  const orderBy = buildOrderBy(params);
 
   const [itemsResult, totalResult, statsResult] = await Promise.all([
     db.execute(sql`
@@ -537,7 +572,7 @@ export async function listCandidateItems(params: CandidateListQuery): Promise<Ca
       select *
       from candidate_with_outcome
       ${listWhere ? sql`where ${listWhere}` : sql``}
-      order by latest_updated_at desc, candidate_index asc
+      order by ${orderBy}
       limit ${params.limit}
       offset ${offset}
     `),

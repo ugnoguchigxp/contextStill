@@ -3,14 +3,7 @@ import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
@@ -30,7 +23,6 @@ import {
   ChevronRight,
   Globe,
   Home,
-  Pencil,
   Plus,
   RotateCcw,
   Search,
@@ -89,11 +81,52 @@ const displayFilterOptions = [
 ] as const;
 const serverSelectableStatusFilters = new Set(["all", "draft", "active", "deprecated"]);
 
+function visiblePageNumbers(currentPage: number, totalPages: number): Array<number | "ellipsis"> {
+  if (totalPages <= 0) return [];
+  if (totalPages <= 9) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  const pages = new Set<number>([1, totalPages]);
+  for (let pageNumber = currentPage - 2; pageNumber <= currentPage + 2; pageNumber += 1) {
+    if (pageNumber >= 1 && pageNumber <= totalPages) pages.add(pageNumber);
+  }
+
+  const sortedPages = Array.from(pages).sort((a, b) => a - b);
+  return sortedPages.flatMap((pageNumber, index) => {
+    const previousPage = sortedPages[index - 1];
+    return previousPage && pageNumber - previousPage > 1 ? ["ellipsis", pageNumber] : [pageNumber];
+  });
+}
+
+function KnowledgeColumnGroup() {
+  return (
+    <colgroup>
+      <col className="w-[4%]" />
+      <col className="w-[29%]" />
+      <col className="w-[15%]" />
+      <col className="w-[6%]" />
+      <col className="w-[12%]" />
+      <col className="w-[7%]" />
+      <col className="w-[7%]" />
+      <col className="w-[14%]" />
+      <col className="w-[6%]" />
+    </colgroup>
+  );
+}
+
 function formatTimestamp(value: string | null): string {
   if (!value) return "-";
   const date = new Date(value);
   if (Number.isNaN(date.getTime())) return "-";
   return date.toLocaleDateString("ja-JP");
+}
+
+function formatDateTime(value: string | null): string {
+  if (!value) return "-";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString("ja-JP", { hour12: false });
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
@@ -266,8 +299,18 @@ export function KnowledgePage() {
   const remove = useMutation({
     mutationFn: (id: string) => deleteKnowledgeItem(id),
     onSuccess: async () => {
+      setForm(emptyForm);
+      setEditingId(null);
+      setEditingOriginalType(null);
+      setTypeChangedInForm(false);
+      setModalEvidence(null);
+      setError(null);
+      setIsModalOpen(false);
       await queryClient.invalidateQueries({ queryKey: ["knowledge"] });
       await queryClient.invalidateQueries({ queryKey: ["graph"] });
+    },
+    onError: (mutationError) => {
+      setError(mutationError instanceof Error ? mutationError.message : String(mutationError));
     },
   });
 
@@ -367,6 +410,13 @@ export function KnowledgePage() {
     setIsModalOpen(true);
   };
 
+  const deleteEditingItem = useCallback(() => {
+    if (!editingId) return;
+    if (confirm(`Delete knowledge item: ${form.title}?`)) {
+      remove.mutate(editingId);
+    }
+  }, [editingId, form.title, remove.mutate]);
+
   const updateAppliesTo = useCallback((next: Record<string, unknown>) => {
     setForm((current) => ({
       ...current,
@@ -450,15 +500,21 @@ export function KnowledgePage() {
           const technologyBadges = toStringArray(appliesTo.technologies).slice(0, 3);
           const generalBadge = appliesTo.general === true;
           return (
-            <div className="max-w-md">
+            <div className="knowledge-title-cell">
               <button
                 type="button"
                 onClick={() => openEdit(item)}
-                className="text-left font-bold text-blue-600 hover:underline hover:text-blue-700 transition-colors block mb-1"
+                className="knowledge-title-link text-left font-bold text-blue-600 hover:underline hover:text-blue-700 transition-colors"
+                title={item.title}
               >
                 {item.title}
               </button>
-              <p className="row-subtext line-clamp-2 text-xs opacity-70">{item.body}</p>
+              <p
+                className="knowledge-description-preview row-subtext text-xs opacity-70"
+                title={item.body}
+              >
+                {item.body}
+              </p>
               <div className="mt-1 flex flex-wrap gap-1">
                 {generalBadge ? (
                   <Badge variant="secondary" className="text-[10px]">
@@ -691,37 +747,10 @@ export function KnowledgePage() {
         accessorKey: "updatedAt",
         header: "Updated",
         cell: ({ row }) => (
-          <div className="text-xs text-muted-foreground">
-            {new Date(row.getValue("updatedAt")).toLocaleDateString("ja-JP")}
+          <div className="text-[11px] text-muted-foreground whitespace-normal break-words [overflow-wrap:anywhere]">
+            {formatDateTime(row.getValue("updatedAt"))}
           </div>
         ),
-      },
-      {
-        id: "actions",
-        header: () => <div className="text-right">Actions</div>,
-        cell: ({ row }) => {
-          const item = row.original;
-          return (
-            <div className="flex justify-end gap-1">
-              <Button variant="ghost" size="icon" onClick={() => openEdit(item)} title="Edit">
-                <Pencil size={16} />
-              </Button>
-              <Button
-                variant="ghost"
-                size="icon"
-                className="text-destructive hover:bg-destructive/10"
-                onClick={() => {
-                  if (confirm(`Delete knowledge item: ${item.title}?`)) {
-                    remove.mutate(item.id);
-                  }
-                }}
-                title="Delete"
-              >
-                <Trash2 size={16} />
-              </Button>
-            </div>
-          );
-        },
       },
     ],
     [
@@ -733,7 +762,6 @@ export function KnowledgePage() {
       quickScopeUpdate.mutate,
       quickStatusUpdate.isPending,
       quickStatusUpdate.mutate,
-      remove.mutate,
       selectedSet,
       toggleSelected,
     ],
@@ -761,6 +789,8 @@ export function KnowledgePage() {
     pagination.pageIndex * pagination.pageSize + loadedKnowledgeItems.length,
     totalKnowledgeCount,
   );
+  const currentPage = pagination.pageIndex + 1;
+  const pageNumbers = visiblePageNumbers(currentPage, table.getPageCount());
   const hasCurrentPageFilters =
     minQuality > 0 || ["unused-active", "stale", "high-value"].includes(displayFilter);
 
@@ -890,73 +920,87 @@ export function KnowledgePage() {
       </section>
 
       <div className="knowledge-table-container">
-        <Table>
-          <TableHeader className="sticky top-0 z-10 bg-background shadow-sm">
-            {table.getHeaderGroups().map((headerGroup) => (
-              <TableRow key={headerGroup.id}>
-                {headerGroup.headers.map((header) => (
-                  <TableHead key={header.id}>
-                    {header.isPlaceholder ? null : header.column.getCanSort() ? (
-                      <button
-                        type="button"
-                        className="flex items-center gap-2 cursor-pointer select-none hover:text-foreground transition-colors"
-                        onClick={header.column.getToggleSortingHandler()}
-                      >
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        <span className="w-4">
-                          {{
-                            asc: <ArrowUp size={12} />,
-                            desc: <ArrowDown size={12} />,
-                          }[header.column.getIsSorted() as string] ?? (
-                            <ArrowUpDown size={12} className="opacity-30" />
-                          )}
-                        </span>
-                      </button>
-                    ) : (
-                      <div>{flexRender(header.column.columnDef.header, header.getContext())}</div>
-                    )}
-                  </TableHead>
-                ))}
-              </TableRow>
-            ))}
-          </TableHeader>
-          <TableBody>
-            {table.getRowModel().rows.map((row) => {
-              const item = row.original;
-              const rowSelected =
-                selectedSet.has(item.id) ||
-                (bulkSelection !== null &&
-                  (!bulkSelection.status || bulkSelection.status === item.status));
-              return (
-                <TableRow
-                  key={row.id}
-                  className={`group hover:bg-muted/50 transition-colors ${rowSelected ? "bg-muted/30" : ""}`}
-                >
-                  {row.getVisibleCells().map((cell) => (
-                    <TableCell key={cell.id}>
-                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                    </TableCell>
+        <div className="shrink-0 border-b bg-background shadow-sm">
+          <table className="w-full table-fixed caption-bottom text-sm">
+            <KnowledgeColumnGroup />
+            <TableHeader>
+              {table.getHeaderGroups().map((headerGroup) => (
+                <TableRow key={headerGroup.id}>
+                  {headerGroup.headers.map((header) => (
+                    <TableHead key={header.id}>
+                      {header.isPlaceholder ? null : header.column.getCanSort() ? (
+                        <button
+                          type="button"
+                          className="flex items-center gap-2 cursor-pointer select-none hover:text-foreground transition-colors"
+                          onClick={header.column.getToggleSortingHandler()}
+                        >
+                          {flexRender(header.column.columnDef.header, header.getContext())}
+                          <span className="w-4">
+                            {{
+                              asc: <ArrowUp size={12} />,
+                              desc: <ArrowDown size={12} />,
+                            }[header.column.getIsSorted() as string] ?? (
+                              <ArrowUpDown size={12} className="opacity-30" />
+                            )}
+                          </span>
+                        </button>
+                      ) : (
+                        <div>{flexRender(header.column.columnDef.header, header.getContext())}</div>
+                      )}
+                    </TableHead>
                   ))}
                 </TableRow>
-              );
-            })}
-            {table.getRowModel().rows.length === 0 && !knowledge.isLoading && (
-              <TableRow>
-                <TableCell
-                  colSpan={columns.length}
-                  className="text-center py-20 text-muted-foreground"
-                >
-                  knowledge itemはまだありません。
-                </TableCell>
-              </TableRow>
-            )}
-          </TableBody>
-        </Table>
+              ))}
+            </TableHeader>
+          </table>
+        </div>
+        <div className="min-h-0 flex-1 overflow-auto">
+          <table className="w-full table-fixed caption-bottom text-sm">
+            <KnowledgeColumnGroup />
+            <TableBody>
+              {table.getRowModel().rows.map((row) => {
+                const item = row.original;
+                const rowSelected =
+                  selectedSet.has(item.id) ||
+                  (bulkSelection !== null &&
+                    (!bulkSelection.status || bulkSelection.status === item.status));
+                return (
+                  <TableRow
+                    key={row.id}
+                    className={`group hover:bg-muted/50 transition-colors ${rowSelected ? "bg-muted/30" : ""}`}
+                  >
+                    {row.getVisibleCells().map((cell) => (
+                      <TableCell
+                        key={cell.id}
+                        className={
+                          cell.column.id === "updatedAt"
+                            ? "whitespace-normal break-words [overflow-wrap:anywhere]"
+                            : undefined
+                        }
+                      >
+                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                      </TableCell>
+                    ))}
+                  </TableRow>
+                );
+              })}
+              {table.getRowModel().rows.length === 0 && !knowledge.isLoading && (
+                <TableRow>
+                  <TableCell
+                    colSpan={columns.length}
+                    className="text-center py-20 text-muted-foreground"
+                  >
+                    knowledge itemはまだありません。
+                  </TableCell>
+                </TableRow>
+              )}
+            </TableBody>
+          </table>
+        </div>
       </div>
 
-      {/* Pagination Controls */}
-      <div className="flex items-center justify-between px-6 py-3 border-t bg-background">
-        <div className="text-xs text-muted-foreground">
+      <div className="border-t bg-muted/10 px-4 py-1.5 flex flex-wrap items-center justify-between gap-3 text-[11px] leading-4">
+        <div className="min-w-0 text-muted-foreground">
           {hasCurrentPageFilters ? (
             <>
               Showing <strong>{filteredItems.length}</strong> matching items on this page /{" "}
@@ -975,33 +1019,44 @@ export function KnowledgePage() {
             size="sm"
             onClick={() => table.previousPage()}
             disabled={!table.getCanPreviousPage()}
-            className="gap-1"
+            className="h-7 gap-1 px-2"
           >
             <ChevronLeft size={16} />
-            Previous
+            Prev
           </Button>
           <div className="flex items-center gap-1 mx-2">
-            {Array.from({ length: table.getPageCount() }, (_, i) => (
-              <button
-                key={`page-${i + 1}`}
-                type="button"
-                onClick={() => table.setPageIndex(i)}
-                className={`w-7 h-7 text-xs rounded-md transition-colors ${
-                  table.getState().pagination.pageIndex === i
-                    ? "bg-primary text-primary-foreground font-bold"
-                    : "hover:bg-muted text-muted-foreground"
-                }`}
-              >
-                {i + 1}
-              </button>
-            ))}
+            {pageNumbers.map((pageNumber, index) =>
+              pageNumber === "ellipsis" ? (
+                <span
+                  // biome-ignore lint/suspicious/noArrayIndexKey: separator positions are derived from page windows
+                  key={`knowledge-page-ellipsis-${index}`}
+                  className="px-1 text-xs text-muted-foreground"
+                >
+                  ...
+                </span>
+              ) : (
+                <button
+                  key={`knowledge-page-${pageNumber}`}
+                  type="button"
+                  onClick={() => table.setPageIndex(pageNumber - 1)}
+                  className={`w-7 h-7 text-xs rounded-md transition-colors ${
+                    currentPage === pageNumber
+                      ? "bg-primary text-primary-foreground font-bold"
+                      : "hover:bg-muted text-muted-foreground"
+                  }`}
+                  aria-current={currentPage === pageNumber ? "page" : undefined}
+                >
+                  {pageNumber}
+                </button>
+              ),
+            )}
           </div>
           <Button
             variant="outline"
             size="sm"
             onClick={() => table.nextPage()}
             disabled={!table.getCanNextPage()}
-            className="gap-1"
+            className="h-7 gap-1 px-2"
           >
             Next
             <ChevronRight size={16} />
@@ -1235,13 +1290,28 @@ export function KnowledgePage() {
                 </div>
               ) : null}
 
-              <div className="pt-4 flex justify-end gap-3 border-t">
-                <Button variant="outline" onClick={() => setIsModalOpen(false)}>
-                  Cancel
-                </Button>
-                <Button onClick={() => save.mutate()} disabled={save.isPending}>
-                  {save.isPending ? "Saving..." : editingId ? "Update Item" : "Create Item"}
-                </Button>
+              <div className="pt-4 flex items-center justify-between gap-3 border-t">
+                <div>
+                  {editingId ? (
+                    <Button
+                      variant="destructive"
+                      onClick={deleteEditingItem}
+                      disabled={remove.isPending}
+                      title="Delete"
+                    >
+                      <Trash2 size={16} />
+                      {remove.isPending ? "Deleting..." : "Delete"}
+                    </Button>
+                  ) : null}
+                </div>
+                <div className="flex justify-end gap-3">
+                  <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+                    Cancel
+                  </Button>
+                  <Button onClick={() => save.mutate()} disabled={save.isPending}>
+                    {save.isPending ? "Saving..." : editingId ? "Update Item" : "Create Item"}
+                  </Button>
+                </div>
               </div>
               {error ? <p className="text-xs text-destructive text-right mt-2">{error}</p> : null}
             </CardContent>

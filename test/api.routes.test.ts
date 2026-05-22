@@ -62,6 +62,15 @@ vi.mock("../api/modules/overview/overview.repository.js", () => ({
 }));
 
 vi.mock("../api/modules/candidates/candidates.repository.js", () => ({
+  candidateListSortByValues: [
+    "targetKey",
+    "candidateTitle",
+    "coverageStatus",
+    "knowledgeStatus",
+    "outcome",
+    "qualityScore",
+    "latestUpdatedAt",
+  ] as const,
   candidateOutcomeValues: [
     "stored",
     "ready_not_finalized",
@@ -686,7 +695,9 @@ describe("API route contract tests", () => {
     });
 
     const app = buildApp();
-    const response = await app.request("/api/candidates?limit=1&page=1&outcome=stored");
+    const response = await app.request(
+      "/api/candidates?limit=1&page=1&outcome=stored&sortBy=candidateTitle&sortDir=asc",
+    );
     expect(response.status).toBe(200);
     const json = (await response.json()) as {
       items: Array<{ id: string; outcome: string }>;
@@ -710,6 +721,8 @@ describe("API route contract tests", () => {
         page: 1,
         limit: 1,
         outcome: "stored",
+        sortBy: "candidateTitle",
+        sortDir: "asc",
       }),
     );
   });

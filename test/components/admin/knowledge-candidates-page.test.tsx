@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 /** @vitest-environment jsdom */
-import { fireEvent, render, screen, within } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CandidatesPage } from "../../../web/src/modules/admin/components/candidates.page";
@@ -181,6 +181,36 @@ describe("CandidatesPage", () => {
 
     // useQuery が正しく更新されたパラメータで動くためのトリガー確認
     expect(useQuery).toHaveBeenCalled();
+  });
+
+  it("passes TanStack table sorting state to the candidates query", async () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <CandidatesPage />
+      </QueryClientProvider>,
+    );
+
+    const latestQueryState = () => {
+      const latestCall = vi.mocked(useQuery).mock.calls.at(-1)?.[0] as
+        | { queryKey?: unknown[] }
+        | undefined;
+      return latestCall?.queryKey?.[1] as Record<string, unknown> | undefined;
+    };
+
+    expect(latestQueryState()).toMatchObject({
+      sortBy: "latestUpdatedAt",
+      sortDir: "desc",
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: /Candidate/i }));
+
+    await waitFor(() => {
+      expect(latestQueryState()).toMatchObject({
+        page: 1,
+        sortBy: "candidateTitle",
+        sortDir: "asc",
+      });
+    });
   });
 
   it("handles loading and error states correctly", () => {

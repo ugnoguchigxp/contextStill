@@ -312,6 +312,22 @@ describeDb("candidates repository integration", () => {
 
     const sourceUriOnly = byId.get("10000000-0000-0000-0000-000000000007");
     expect(sourceUriOnly?.knowledge?.id).toBe("20000000-0000-0000-0000-000000000071");
+
+    const sortedByCandidateTitle = await listCandidateItems({
+      page: 1,
+      limit: 3,
+      targetKind: "all",
+      outcome: "all",
+      hasKnowledge: "all",
+      sortBy: "candidateTitle",
+      sortDir: "asc",
+    });
+
+    expect(sortedByCandidateTitle.items.map((item) => item.original.title)).toEqual([
+      "Candidate 1",
+      "Candidate 2",
+      "Candidate 3",
+    ]);
   });
 
   test("stats ignore outcome filter while total honors it", async () => {

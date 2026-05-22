@@ -180,7 +180,7 @@ describe("KnowledgePage", () => {
     });
   });
 
-  it("handles item deletion with confirm dialog", () => {
+  it("handles item deletion from the edit modal with confirm dialog", () => {
     const confirmSpy = vi.spyOn(window, "confirm");
     render(
       <QueryClientProvider client={queryClient}>
@@ -188,17 +188,20 @@ describe("KnowledgePage", () => {
       </QueryClientProvider>,
     );
 
-    const deleteBtns = screen.getAllByTitle("Delete");
+    expect(screen.queryByText("Actions")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Test Rule Title 1" }));
+    const deleteBtn = screen.getByTitle("Delete");
 
     // キャンセル時
     confirmSpy.mockReturnValue(false);
-    fireEvent.click(deleteBtns[0]);
+    fireEvent.click(deleteBtn);
     expect(confirmSpy).toHaveBeenCalledWith("Delete knowledge item: Test Rule Title 1?");
     expect(mockMutate).not.toHaveBeenCalled();
 
     // 承諾時
     confirmSpy.mockReturnValue(true);
-    fireEvent.click(deleteBtns[0]);
+    fireEvent.click(deleteBtn);
     expect(mockMutate).toHaveBeenCalledWith("kn-1");
   });
 
@@ -274,9 +277,8 @@ describe("KnowledgePage", () => {
     const cancelBtn = screen.getByText("Cancel");
     fireEvent.click(cancelBtn);
 
-    // 2. 編集モードでのモーダル展開 (kn-1の編集ボタンをクリック)
-    const editBtns = screen.getAllByTitle("Edit");
-    fireEvent.click(editBtns[0]);
+    // 2. 編集モードでのモーダル展開 (kn-1のタイトルをクリック)
+    fireEvent.click(screen.getByRole("button", { name: "Test Rule Title 1" }));
 
     // 編集モーダルのタイトルとエビデンス項目が表示されることを確認
     expect(screen.getByText("Edit Knowledge")).toBeInTheDocument();
@@ -301,7 +303,7 @@ describe("KnowledgePage", () => {
 
     // ページ遷移ボタンの存在を確認
     const nextBtn = screen.getByText("Next");
-    const prevBtn = screen.getByText("Previous");
+    const prevBtn = screen.getByText("Prev");
 
     // ページ番号ボタン（1, 2, 3）が存在することを確認
     const page2Btn = screen.getByRole("button", { name: "2" });
@@ -311,6 +313,31 @@ describe("KnowledgePage", () => {
     fireEvent.click(nextBtn);
     fireEvent.click(page2Btn);
     fireEvent.click(prevBtn);
+  });
+
+  it("limits page jump buttons to the current page window", () => {
+    vi.mocked(useQuery).mockReturnValue({
+      data: {
+        items: mockKnowledgeItems,
+        total: 600,
+        totalPages: 12,
+      },
+      isLoading: false,
+      isError: false,
+    } as any);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <KnowledgePage />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByRole("button", { name: "1" })).toHaveAttribute("aria-current", "page");
+    expect(screen.getByRole("button", { name: "2" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "3" })).toBeInTheDocument();
+    expect(screen.getByText("...")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "12" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "4" })).not.toBeInTheDocument();
   });
 
   it("handles displayFilter and minQuality filter changes", () => {

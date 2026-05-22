@@ -1,7 +1,11 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
-import { candidateOutcomeValues, listCandidateItems } from "./candidates.repository.js";
+import {
+  candidateListSortByValues,
+  candidateOutcomeValues,
+  listCandidateItems,
+} from "./candidates.repository.js";
 
 const candidateQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -11,6 +15,8 @@ const candidateQuerySchema = z.object({
   outcome: z.enum(["all", ...candidateOutcomeValues]).default("all"),
   hasKnowledge: z.enum(["all", "yes", "no"]).default("all"),
   targetStateId: z.string().trim().min(1).optional(),
+  sortBy: z.enum(candidateListSortByValues).default("latestUpdatedAt"),
+  sortDir: z.enum(["asc", "desc"]).default("desc"),
 });
 
 export const candidatesRouter = new Hono().get(
@@ -26,6 +32,8 @@ export const candidatesRouter = new Hono().get(
       outcome: query.outcome,
       hasKnowledge: query.hasKnowledge,
       targetStateId: query.targetStateId,
+      sortBy: query.sortBy,
+      sortDir: query.sortDir,
     });
 
     const totalPages = result.total === 0 ? 0 : Math.ceil(result.total / query.limit);

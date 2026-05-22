@@ -631,6 +631,17 @@ export type CandidateOutcome =
   | "candidate_only"
   | "target_pending";
 
+export type CandidateListSortBy =
+  | "targetKey"
+  | "candidateTitle"
+  | "coverageStatus"
+  | "knowledgeStatus"
+  | "outcome"
+  | "qualityScore"
+  | "latestUpdatedAt";
+
+export type CandidateListSortDir = "asc" | "desc";
+
 export type CandidateDiffSummary = {
   titleChanged: boolean;
   bodyChanged: boolean;
@@ -721,6 +732,8 @@ export type CandidateListRequest = {
   outcome?: "all" | CandidateOutcome;
   hasKnowledge?: "all" | "yes" | "no";
   targetStateId?: string;
+  sortBy?: CandidateListSortBy;
+  sortDir?: CandidateListSortDir;
 };
 
 async function getJson<T>(url: string): Promise<T> {
@@ -989,5 +1002,7 @@ export async function fetchCandidateItems(
     query.set("hasKnowledge", input.hasKnowledge);
   }
   if (input.targetStateId?.trim()) query.set("targetStateId", input.targetStateId.trim());
+  if (input.sortBy) query.set("sortBy", input.sortBy);
+  if (input.sortDir) query.set("sortDir", input.sortDir);
   return getJson<CandidateListResponse>(`/api/candidates?${query.toString()}`);
 }

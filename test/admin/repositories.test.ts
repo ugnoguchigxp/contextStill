@@ -469,9 +469,11 @@ describe("Admin Repository", () => {
         outcome: "stored",
         hasKnowledge: "yes",
         targetStateId: "state-1",
+        sortBy: "candidateTitle",
+        sortDir: "asc",
       });
       expect(spy).toHaveBeenCalledWith(
-        "/api/candidates?page=1&limit=20&query=candidate&targetKind=wiki_file&outcome=stored&hasKnowledge=yes&targetStateId=state-1",
+        "/api/candidates?page=1&limit=20&query=candidate&targetKind=wiki_file&outcome=stored&hasKnowledge=yes&targetStateId=state-1&sortBy=candidateTitle&sortDir=asc",
       );
     });
   });
