@@ -90,7 +90,7 @@ describe("context compiler helpers", () => {
       diagnostics: { degradedReasons: [], retrievalStats: {} },
     });
 
-    expect(markdown.includes("該当する knowledge はありません。")).toBe(true);
+    expect(markdown).toBe("No Content");
   });
 
   test("normalizeRepoPath resolves file URI input", () => {

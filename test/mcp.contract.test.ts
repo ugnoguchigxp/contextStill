@@ -73,6 +73,7 @@ describeDb("mcp contract", () => {
     expect(text).toContain("## MCPツール種別");
     expect(text).toContain("context_compile");
     expect(text).toContain("register_knowledge");
+    expect(text).toContain("design.md");
   });
 
   test("search_knowledge tool input schema contract", () => {

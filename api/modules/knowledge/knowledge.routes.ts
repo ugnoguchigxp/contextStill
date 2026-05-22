@@ -31,7 +31,18 @@ const listKnowledgeQuerySchema = z.object({
   sortDir: z.enum(["asc", "desc"]).default("desc"),
 });
 
-const knowledgeWriteSchema = z.object({
+const knowledgeApplicabilitySchema = z
+  .object({
+    general: z.boolean().optional(),
+    technologies: z.array(z.string().trim().min(1)).optional(),
+    changeTypes: z.array(z.string().trim().min(1)).optional(),
+    domains: z.array(z.string().trim().min(1)).optional(),
+    repoPath: z.string().trim().min(1).optional(),
+    repoKey: z.string().trim().min(1).optional(),
+  })
+  .passthrough();
+
+const knowledgeCreateSchema = z.object({
   type: z.enum(knowledgeTypeValues),
   status: z.enum(knowledgeStatusValues),
   scope: z.enum(scopeValues),
@@ -39,16 +50,7 @@ const knowledgeWriteSchema = z.object({
   body: z.string().trim().min(1),
   confidence: z.number().min(0).max(100).default(70),
   importance: z.number().min(0).max(100).default(70),
-  appliesTo: z
-    .object({
-      general: z.boolean().optional(),
-      technologies: z.array(z.string().trim().min(1)).optional(),
-      changeTypes: z.array(z.string().trim().min(1)).optional(),
-      domains: z.array(z.string().trim().min(1)).optional(),
-      repoPath: z.string().trim().min(1).optional(),
-      repoKey: z.string().trim().min(1).optional(),
-    })
-    .optional(),
+  appliesTo: knowledgeApplicabilitySchema.optional(),
   general: z.boolean().optional(),
   technologies: z.array(z.string().trim().min(1)).optional(),
   changeTypes: z.array(z.string().trim().min(1)).optional(),
@@ -57,6 +59,28 @@ const knowledgeWriteSchema = z.object({
   repoKey: z.string().trim().min(1).optional(),
   metadata: z.record(z.unknown()).default({}),
 });
+
+const knowledgeUpdateSchema = z
+  .object({
+    type: z.enum(knowledgeTypeValues).optional(),
+    status: z.enum(knowledgeStatusValues).optional(),
+    scope: z.enum(scopeValues).optional(),
+    title: z.string().trim().min(1).optional(),
+    body: z.string().trim().min(1).optional(),
+    confidence: z.number().min(0).max(100).optional(),
+    importance: z.number().min(0).max(100).optional(),
+    appliesTo: knowledgeApplicabilitySchema.optional(),
+    general: z.boolean().optional(),
+    technologies: z.array(z.string().trim().min(1)).optional(),
+    changeTypes: z.array(z.string().trim().min(1)).optional(),
+    domains: z.array(z.string().trim().min(1)).optional(),
+    repoPath: z.string().trim().min(1).optional(),
+    repoKey: z.string().trim().min(1).optional(),
+    metadata: z.record(z.unknown()).optional(),
+  })
+  .refine((value) => Object.keys(value).length > 0, {
+    message: "at least one update field is required",
+  });
 
 const listKnowledgeTagsQuerySchema = z.object({
   kind: z.enum(knowledgeTagKindValues).optional(),
@@ -108,7 +132,7 @@ export const knowledgeRouter = new Hono()
       totalPages: Math.ceil(total / query.limit),
     });
   })
-  .post("/", zValidator("json", knowledgeWriteSchema), async (c) => {
+  .post("/", zValidator("json", knowledgeCreateSchema), async (c) => {
     const input = c.req.valid("json");
     const item = await createKnowledgeItem(input);
     return c.json({ item }, 201);
@@ -134,7 +158,7 @@ export const knowledgeRouter = new Hono()
     }
     return c.json(response);
   })
-  .put("/:id", zValidator("json", knowledgeWriteSchema), async (c) => {
+  .put("/:id", zValidator("json", knowledgeUpdateSchema), async (c) => {
     const item = await updateKnowledgeItem(c.req.param("id"), c.req.valid("json"));
     if (!item) return c.json({ error: "not found" }, 404);
     return c.json({ item });

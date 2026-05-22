@@ -50,7 +50,7 @@ export const APP_CONSTANTS = {
   distillationInventoryRefreshIntervalMs: 300_000,
   distillationTimeoutMs: 600_000,
   distillationLockTtlSeconds: 660,
-  defaultTokenBudget: 3000,
+  defaultTokenBudget: 5000,
   enableVectorSearch: true,
   agenticCompileEnabled: true,
   agenticCompileTimeoutMs: 10000,

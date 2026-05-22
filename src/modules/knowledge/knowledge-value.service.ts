@@ -1,6 +1,6 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { contextPackItems, knowledgeItems } from "../../db/schema.js";
+import { contextPackItems, knowledgeItems, knowledgeUsageEvents } from "../../db/schema.js";
 import { recordAuditLogSafe } from "../audit/audit-log.service.js";
 
 const RECENT_SELECTION_WINDOW_DAYS = 30;
@@ -11,6 +11,8 @@ export type KnowledgeValueSignals = {
   agenticAcceptCount: number;
   explicitUpvoteCount: number;
   explicitDownvoteCount: number;
+  usageUsedCount30d?: number;
+  usageOffTopicCount30d?: number;
 };
 
 type RecordKnowledgeCompileSelectionInput = {
@@ -26,6 +28,11 @@ type KnowledgeCounterRow = {
   explicitUpvoteCount: number;
   explicitDownvoteCount: number;
   lastVerifiedAt: Date | null;
+};
+
+type UsageSignals = {
+  usedCount30d: number;
+  offTopicCount30d: number;
 };
 
 function clamp(value: number, min: number, max: number): number {
@@ -49,13 +56,17 @@ export function computeDynamicScore(signals: KnowledgeValueSignals): number {
   const agenticAcceptCount = asNonNegativeInteger(signals.agenticAcceptCount);
   const explicitUpvoteCount = asNonNegativeInteger(signals.explicitUpvoteCount);
   const explicitDownvoteCount = asNonNegativeInteger(signals.explicitDownvoteCount);
+  const usageUsedCount30d = asNonNegativeInteger(signals.usageUsedCount30d ?? 0);
+  const usageOffTopicCount30d = asNonNegativeInteger(signals.usageOffTopicCount30d ?? 0);
 
   const score =
     Math.min(35, Math.log1p(compileSelectCount) * 10) +
     Math.min(25, recentSelectCount30d * 3) +
     Math.min(20, agenticAcceptCount * 4) +
     Math.min(20, explicitUpvoteCount * 10) -
-    Math.min(40, explicitDownvoteCount * 15);
+    Math.min(40, explicitDownvoteCount * 15) +
+    Math.min(10, usageUsedCount30d * 1.5) -
+    Math.min(30, usageOffTopicCount30d * 3);
 
   return clamp(score, 0, 100);
 }
@@ -124,6 +135,35 @@ async function loadRecentSelectionCountMap(knowledgeIds: string[]): Promise<Map<
   return countMap;
 }
 
+async function loadRecentUsageSignalsMap(
+  knowledgeIds: string[],
+): Promise<Map<string, UsageSignals>> {
+  if (knowledgeIds.length === 0) return new Map();
+  const rows = await db
+    .select({
+      knowledgeId: knowledgeUsageEvents.knowledgeId,
+      usedCount30d: sql<number>`count(*) filter (where ${knowledgeUsageEvents.verdict} = 'used')::int`,
+      offTopicCount30d: sql<number>`count(*) filter (where ${knowledgeUsageEvents.verdict} = 'off_topic')::int`,
+    })
+    .from(knowledgeUsageEvents)
+    .where(
+      and(
+        inArray(knowledgeUsageEvents.knowledgeId, knowledgeIds),
+        sql`${knowledgeUsageEvents.createdAt} >= now() - (${RECENT_SELECTION_WINDOW_DAYS} * interval '1 day')`,
+      ),
+    )
+    .groupBy(knowledgeUsageEvents.knowledgeId);
+
+  const usageMap = new Map<string, UsageSignals>();
+  for (const row of rows) {
+    usageMap.set(row.knowledgeId, {
+      usedCount30d: asNonNegativeInteger(row.usedCount30d),
+      offTopicCount30d: asNonNegativeInteger(row.offTopicCount30d),
+    });
+  }
+  return usageMap;
+}
+
 export async function recordKnowledgeCompileSelection(
   input: RecordKnowledgeCompileSelectionInput,
 ): Promise<void> {
@@ -135,21 +175,25 @@ export async function recordKnowledgeCompileSelection(
     input.agenticAcceptedKnowledgeIds.map((id) => id.trim()).filter((id) => id.length > 0),
   );
 
-  const [knowledgeRows, recentSelectionCountMap] = await Promise.all([
+  const [knowledgeRows, recentSelectionCountMap, recentUsageSignalsMap] = await Promise.all([
     loadKnowledgeCounterRows(selectedKnowledgeIds),
     loadRecentSelectionCountMap(selectedKnowledgeIds),
+    loadRecentUsageSignalsMap(selectedKnowledgeIds),
   ]);
 
   const now = new Date();
   for (const row of knowledgeRows) {
     const nextCompileSelectCount = row.compileSelectCount + 1;
     const nextAgenticAcceptCount = row.agenticAcceptCount + (acceptedSet.has(row.id) ? 1 : 0);
+    const usageSignals = recentUsageSignalsMap.get(row.id);
     const dynamicScore = computeDynamicScore({
       compileSelectCount: nextCompileSelectCount,
       recentSelectCount30d: recentSelectionCountMap.get(row.id) ?? 0,
       agenticAcceptCount: nextAgenticAcceptCount,
       explicitUpvoteCount: row.explicitUpvoteCount,
       explicitDownvoteCount: row.explicitDownvoteCount,
+      usageUsedCount30d: usageSignals?.usedCount30d ?? 0,
+      usageOffTopicCount30d: usageSignals?.offTopicCount30d ?? 0,
     });
 
     await db
@@ -162,6 +206,52 @@ export async function recordKnowledgeCompileSelection(
         lastVerifiedAt: row.lastVerifiedAt ?? now,
       })
       .where(eq(knowledgeItems.id, row.id));
+  }
+}
+
+export async function recalculateKnowledgeDynamicScores(knowledgeIds: string[]): Promise<void> {
+  const normalizedKnowledgeIds = [...new Set(knowledgeIds.map((id) => id.trim()))].filter(Boolean);
+  if (normalizedKnowledgeIds.length === 0) return;
+
+  const [knowledgeRows, recentSelectionCountMap, recentUsageSignalsMap] = await Promise.all([
+    loadKnowledgeCounterRows(normalizedKnowledgeIds),
+    loadRecentSelectionCountMap(normalizedKnowledgeIds),
+    loadRecentUsageSignalsMap(normalizedKnowledgeIds),
+  ]);
+
+  for (const row of knowledgeRows) {
+    const usageSignals = recentUsageSignalsMap.get(row.id);
+    const dynamicScore = computeDynamicScore({
+      compileSelectCount: row.compileSelectCount,
+      recentSelectCount30d: recentSelectionCountMap.get(row.id) ?? 0,
+      agenticAcceptCount: row.agenticAcceptCount,
+      explicitUpvoteCount: row.explicitUpvoteCount,
+      explicitDownvoteCount: row.explicitDownvoteCount,
+      usageUsedCount30d: usageSignals?.usedCount30d ?? 0,
+      usageOffTopicCount30d: usageSignals?.offTopicCount30d ?? 0,
+    });
+
+    await db
+      .update(knowledgeItems)
+      .set({
+        dynamicScore,
+      })
+      .where(eq(knowledgeItems.id, row.id));
+  }
+}
+
+export async function recalculateKnowledgeDynamicScoresSafe(knowledgeIds: string[]): Promise<void> {
+  try {
+    await recalculateKnowledgeDynamicScores(knowledgeIds);
+  } catch (error) {
+    await recordAuditLogSafe({
+      eventType: "KNOWLEDGE_DYNAMIC_SCORE_RECALC_FAILED",
+      actor: "system",
+      payload: {
+        knowledgeIds,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
   }
 }
 

@@ -4,6 +4,8 @@ import {
   fetchRunDetail,
   fetchRecentRuns,
   type CompileRequest,
+  submitRunKnowledgeFeedback,
+  type CompileRunKnowledgeFeedbackWriteItem,
 } from "../repositories/context-compiler.repository";
 
 export function useCompileRuns(limit = 20) {
@@ -28,5 +30,16 @@ export function useCompileRunDetail(runId: string | null) {
     queryKey: ["compile-run-detail", runId],
     queryFn: () => fetchRunDetail(runId as string),
     enabled: Boolean(runId),
+  });
+}
+
+export function useRunKnowledgeFeedbackMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { runId: string; items: CompileRunKnowledgeFeedbackWriteItem[] }) =>
+      submitRunKnowledgeFeedback(input.runId, input.items),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: ["compile-run-detail", variables.runId] });
+    },
   });
 }

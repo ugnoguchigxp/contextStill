@@ -14,16 +14,18 @@ vi.mock("../src/db/index.js", () => ({
         returning: vi.fn(),
       })),
     })),
-    select: vi.fn(() => ({
-      from: vi.fn(() => ({
-        orderBy: vi.fn(() => ({
-          limit: vi.fn(),
-        })),
-        where: vi.fn(() => ({
-          limit: vi.fn(),
-        })),
-      })),
-    })),
+    select: vi.fn(() => {
+      const chain = {
+        from: vi.fn(),
+        where: vi.fn(),
+        orderBy: vi.fn(),
+        limit: vi.fn(),
+      };
+      chain.from.mockReturnValue(chain);
+      chain.where.mockReturnValue(chain);
+      chain.orderBy.mockReturnValue(chain);
+      return chain;
+    }),
   },
 }));
 

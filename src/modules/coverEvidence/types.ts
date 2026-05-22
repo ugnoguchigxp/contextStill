@@ -32,6 +32,7 @@ export type CoverEvidenceCandidate = {
   applicabilityGeneral?: boolean;
   technologies?: string[];
   changeTypes?: string[];
+  domains?: string[];
   repoPath?: string;
   repoKey?: string;
 };

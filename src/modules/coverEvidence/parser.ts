@@ -79,11 +79,12 @@ function parseApplicability(
   record: Record<string, unknown>,
 ): Pick<
   CoverEvidenceCandidate,
-  "applicabilityGeneral" | "technologies" | "changeTypes" | "repoPath" | "repoKey"
+  "applicabilityGeneral" | "technologies" | "changeTypes" | "domains" | "repoPath" | "repoKey"
 > {
   const nested = asRecord(record.appliesTo ?? record.applicability);
   const technologies = asStringArray(record.technologies ?? nested.technologies);
   const changeTypes = asStringArray(record.changeTypes ?? nested.changeTypes);
+  const domains = asStringArray(record.domains ?? nested.domains);
   const general = asOptionalBoolean(
     record.applicabilityGeneral ?? record.general ?? nested.general,
   );
@@ -94,6 +95,7 @@ function parseApplicability(
     ...(general !== undefined ? { applicabilityGeneral: general } : {}),
     ...(technologies.length > 0 ? { technologies } : {}),
     ...(changeTypes.length > 0 ? { changeTypes } : {}),
+    ...(domains.length > 0 ? { domains } : {}),
     ...(repoPath ? { repoPath } : {}),
     ...(repoKey ? { repoKey } : {}),
   };
@@ -237,6 +239,8 @@ function parseLabelledResultRecord(text: string): Record<string, unknown> | null
     "TECHNOLOGIES",
     "CHANGE_TYPES",
     "CHANGETYPES",
+    "DOMAINS",
+    "DOMAIN",
     "APPLICABILITY_GENERAL",
     "GENERAL",
     "REPO_PATH",
@@ -276,6 +280,8 @@ function parseLabelledResultRecord(text: string): Record<string, unknown> | null
     ...(labelValues.get("TECHNOLOGIES") ? { technologies: labelValues.get("TECHNOLOGIES") } : {}),
     ...(labelValues.get("CHANGE_TYPES") ? { changeTypes: labelValues.get("CHANGE_TYPES") } : {}),
     ...(labelValues.get("CHANGETYPES") ? { changeTypes: labelValues.get("CHANGETYPES") } : {}),
+    ...(labelValues.get("DOMAINS") ? { domains: labelValues.get("DOMAINS") } : {}),
+    ...(labelValues.get("DOMAIN") ? { domains: labelValues.get("DOMAIN") } : {}),
     ...(labelValues.get("APPLICABILITY_GENERAL")
       ? { applicabilityGeneral: labelValues.get("APPLICABILITY_GENERAL") }
       : {}),

@@ -153,6 +153,19 @@ export const compileRunSourceValues = ["ui", "mcp", "cli", "unknown"] as const;
 
 export const packSectionValues = ["rules", "procedures", "code_context", "warnings"] as const;
 
+export const knowledgeUsageVerdictValues = ["used", "off_topic", "wrong"] as const;
+export const knowledgeReviewQueueStatusValues = [
+  "pending",
+  "reviewing",
+  "resolved",
+  "dismissed",
+] as const;
+export const knowledgeReviewProposedActionValues = [
+  "review_only",
+  "demote_to_draft_candidate",
+] as const;
+export const knowledgeQualityAdjustmentKindValues = ["off_topic_quality_decrement"] as const;
+
 export const auditLogActorValues = ["agent", "user", "system"] as const;
 
 export const auditLogs = pgTable(
@@ -580,6 +593,124 @@ export const contextPackItems = pgTable(
     sectionCheck: check(
       "context_pack_items_section_check",
       sql`${table.section} IN (${sql.raw(toSqlList(packSectionValues))})`,
+    ),
+  }),
+);
+
+export const knowledgeUsageEvents = pgTable(
+  "knowledge_usage_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .references(() => contextCompileRuns.id, { onDelete: "cascade" })
+      .notNull(),
+    knowledgeId: uuid("knowledge_id")
+      .references(() => knowledgeItems.id, { onDelete: "cascade" })
+      .notNull(),
+    verdict: text("verdict").notNull(),
+    actor: text("actor").notNull(),
+    reason: text("reason"),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    runIdIdx: index("knowledge_usage_events_run_id_idx").on(table.runId),
+    knowledgeIdIdx: index("knowledge_usage_events_knowledge_id_idx").on(table.knowledgeId),
+    verdictCreatedAtIdx: index("knowledge_usage_events_verdict_created_at_idx").on(
+      table.verdict,
+      table.createdAt,
+    ),
+    knowledgeVerdictCreatedAtIdx: index(
+      "knowledge_usage_events_knowledge_verdict_created_at_idx",
+    ).on(table.knowledgeId, table.verdict, table.createdAt),
+    runKnowledgeUnique: uniqueIndex("knowledge_usage_events_run_knowledge_unique").on(
+      table.runId,
+      table.knowledgeId,
+    ),
+    verdictCheck: check(
+      "knowledge_usage_events_verdict_check",
+      sql`${table.verdict} IN (${sql.raw(toSqlList(knowledgeUsageVerdictValues))})`,
+    ),
+    actorCheck: check(
+      "knowledge_usage_events_actor_check",
+      sql`${table.actor} IN (${sql.raw(toSqlList(auditLogActorValues))})`,
+    ),
+    reasonLengthCheck: check(
+      "knowledge_usage_events_reason_length_check",
+      sql`${table.reason} IS NULL OR char_length(${table.reason}) <= 160`,
+    ),
+  }),
+);
+
+export const knowledgeReviewQueue = pgTable(
+  "knowledge_review_queue",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    knowledgeId: uuid("knowledge_id")
+      .references(() => knowledgeItems.id, { onDelete: "cascade" })
+      .notNull(),
+    triggerEventId: uuid("trigger_event_id")
+      .references(() => knowledgeUsageEvents.id, { onDelete: "cascade" })
+      .notNull(),
+    triggerVerdict: text("trigger_verdict").notNull(),
+    status: text("status").notNull().default("pending"),
+    proposedAction: text("proposed_action").notNull().default("review_only"),
+    note: text("note"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    statusCreatedAtIdx: index("knowledge_review_queue_status_created_at_idx").on(
+      table.status,
+      table.createdAt,
+    ),
+    knowledgeStatusIdx: index("knowledge_review_queue_knowledge_status_idx").on(
+      table.knowledgeId,
+      table.status,
+    ),
+    triggerEventUnique: uniqueIndex("knowledge_review_queue_trigger_event_unique").on(
+      table.triggerEventId,
+    ),
+    triggerVerdictCheck: check(
+      "knowledge_review_queue_trigger_verdict_check",
+      sql`${table.triggerVerdict} IN (${sql.raw(toSqlList(knowledgeUsageVerdictValues))})`,
+    ),
+    statusCheck: check(
+      "knowledge_review_queue_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(knowledgeReviewQueueStatusValues))})`,
+    ),
+    proposedActionCheck: check(
+      "knowledge_review_queue_proposed_action_check",
+      sql`${table.proposedAction} IN (${sql.raw(toSqlList(knowledgeReviewProposedActionValues))})`,
+    ),
+  }),
+);
+
+export const knowledgeQualityAdjustments = pgTable(
+  "knowledge_quality_adjustments",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    knowledgeId: uuid("knowledge_id")
+      .references(() => knowledgeItems.id, { onDelete: "cascade" })
+      .notNull(),
+    adjustmentKind: text("adjustment_kind").notNull(),
+    windowStartAt: timestamp("window_start_at").notNull(),
+    windowEndAt: timestamp("window_end_at").notNull(),
+    negativeRunCount: integer("negative_run_count").notNull(),
+    offTopicRate: real("off_topic_rate").notNull(),
+    importanceDelta: real("importance_delta").notNull(),
+    confidenceDelta: real("confidence_delta").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    knowledgeKindCreatedAtIdx: index(
+      "knowledge_quality_adjustments_knowledge_kind_created_at_idx",
+    ).on(table.knowledgeId, table.adjustmentKind, table.createdAt),
+    createdAtIdx: index("knowledge_quality_adjustments_created_at_idx").on(table.createdAt),
+    adjustmentKindCheck: check(
+      "knowledge_quality_adjustments_adjustment_kind_check",
+      sql`${table.adjustmentKind} IN (${sql.raw(toSqlList(knowledgeQualityAdjustmentKindValues))})`,
     ),
   }),
 );

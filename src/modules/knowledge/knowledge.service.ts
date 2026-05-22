@@ -19,8 +19,19 @@ import {
   vectorSearchKnowledge,
 } from "./knowledge.repository.js";
 
+export type KnowledgeCandidateEvidence = {
+  textMatched: boolean;
+  vectorMatched: boolean;
+  vectorScore?: number;
+  facetMatched: boolean;
+};
+
+type KnowledgeSearchResultWithEvidence = KnowledgeSearchResult & {
+  candidateEvidence?: KnowledgeCandidateEvidence;
+};
+
 export type KnowledgeRetrievalResult = {
-  items: KnowledgeSearchResult[];
+  items: KnowledgeSearchResultWithEvidence[];
   degradedReasons: string[];
   stats: {
     textHitCount: number;
@@ -93,6 +104,81 @@ function mergeKnowledgeHits(hits: KnowledgeSearchResult[], limit: number): Knowl
     }
   }
   return [...mergedById.values()].sort((a, b) => b.score - a.score).slice(0, limit);
+}
+
+function hasFacetMatch(item: KnowledgeSearchResult): boolean {
+  const matches = item.applicabilityMatches;
+  if (!matches) return false;
+  return (
+    matches.technologies.length > 0 ||
+    matches.changeTypes.length > 0 ||
+    matches.domains.length > 0 ||
+    matches.general
+  );
+}
+
+function mergeCandidateEvidence(
+  target: KnowledgeCandidateEvidence | undefined,
+  incoming: Partial<KnowledgeCandidateEvidence>,
+): KnowledgeCandidateEvidence {
+  const merged: KnowledgeCandidateEvidence = {
+    textMatched: target?.textMatched ?? false,
+    vectorMatched: target?.vectorMatched ?? false,
+    facetMatched: target?.facetMatched ?? false,
+    ...(typeof target?.vectorScore === "number" ? { vectorScore: target.vectorScore } : {}),
+  };
+
+  if (incoming.textMatched) merged.textMatched = true;
+  if (incoming.vectorMatched) merged.vectorMatched = true;
+  if (incoming.facetMatched) merged.facetMatched = true;
+  if (typeof incoming.vectorScore === "number") {
+    merged.vectorScore =
+      typeof merged.vectorScore === "number"
+        ? Math.max(merged.vectorScore, incoming.vectorScore)
+        : incoming.vectorScore;
+  }
+
+  return merged;
+}
+
+function buildCandidateEvidenceMap(params: {
+  textHits: KnowledgeSearchResult[];
+  vectorHits: KnowledgeSearchResult[];
+  merged: KnowledgeSearchResult[];
+}): Map<string, KnowledgeCandidateEvidence> {
+  const evidenceById = new Map<string, KnowledgeCandidateEvidence>();
+
+  for (const hit of params.textHits) {
+    evidenceById.set(
+      hit.id,
+      mergeCandidateEvidence(evidenceById.get(hit.id), {
+        textMatched: true,
+        facetMatched: hasFacetMatch(hit),
+      }),
+    );
+  }
+
+  for (const hit of params.vectorHits) {
+    evidenceById.set(
+      hit.id,
+      mergeCandidateEvidence(evidenceById.get(hit.id), {
+        vectorMatched: true,
+        vectorScore: hit.score,
+        facetMatched: hasFacetMatch(hit),
+      }),
+    );
+  }
+
+  for (const item of params.merged) {
+    evidenceById.set(
+      item.id,
+      mergeCandidateEvidence(evidenceById.get(item.id), {
+        facetMatched: hasFacetMatch(item),
+      }),
+    );
+  }
+
+  return evidenceById;
 }
 
 function appendDegradedReason(reasons: string[], reason: string): void {
@@ -280,8 +366,17 @@ async function executeKnowledgeSearch(
     appendDegradedReason(degradedReasons, params.noMatchReason);
   }
 
+  const evidenceById = buildCandidateEvidenceMap({
+    textHits: searchResult.textHits,
+    vectorHits: searchResult.vectorHits,
+    merged,
+  });
+
   return {
-    items: merged,
+    items: merged.map((item) => ({
+      ...item,
+      candidateEvidence: evidenceById.get(item.id),
+    })),
     degradedReasons,
     stats: {
       textHitCount: searchResult.textHits.length,

@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
+import { type SQL, and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { db } from "../../../src/db/index.js";
 import { contextPackItems, knowledgeItems } from "../../../src/db/schema.js";
 import { normalizeKnowledgeScore } from "../../../src/lib/score-scale.js";
@@ -8,10 +8,6 @@ import {
 } from "../../../src/modules/audit/audit-log.service.js";
 import { embedOne } from "../../../src/modules/embedding/embedding.service.js";
 import {
-  computeDecayFactor,
-  computeDynamicScore,
-} from "../../../src/modules/knowledge/knowledge-value.service.js";
-import {
   mergeApplicabilityInput,
   normalizeKnowledgeApplicability,
 } from "../../../src/modules/knowledge/applicability.service.js";
@@ -20,10 +16,14 @@ import {
   type KnowledgeTagStatus,
   listKnowledgeTagDefinitions,
 } from "../../../src/modules/knowledge/knowledge-tags.repository.js";
+import {
+  computeDecayFactor,
+  computeDynamicScore,
+} from "../../../src/modules/knowledge/knowledge-value.service.js";
 import { canTransitionKnowledgeStatus } from "../../../src/modules/lifecycle/lifecycle.service.js";
 import type { KnowledgeStatus } from "../../../src/shared/schemas/knowledge.schema.js";
 
-export type KnowledgeWriteInput = {
+export type KnowledgeCreateInput = {
   type: string;
   status: string;
   scope: string;
@@ -31,6 +31,24 @@ export type KnowledgeWriteInput = {
   body: string;
   confidence: number;
   importance: number;
+  appliesTo?: Record<string, unknown>;
+  general?: boolean;
+  technologies?: string[];
+  changeTypes?: string[];
+  domains?: string[];
+  repoPath?: string;
+  repoKey?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type KnowledgeUpdateInput = {
+  type?: string;
+  status?: string;
+  scope?: string;
+  title?: string;
+  body?: string;
+  confidence?: number;
+  importance?: number;
   appliesTo?: Record<string, unknown>;
   general?: boolean;
   technologies?: string[];
@@ -203,6 +221,9 @@ function buildKnowledgeListWhere(params: Pick<KnowledgeListParams, "status" | "t
     const searchCondition = or(
       ilike(knowledgeItems.title, query),
       ilike(knowledgeItems.body, query),
+      sql`${knowledgeItems.appliesTo} ->> 'technologies' ilike ${query}`,
+      sql`${knowledgeItems.appliesTo} ->> 'domains' ilike ${query}`,
+      sql`${knowledgeItems.appliesTo} ->> 'changeTypes' ilike ${query}`,
     );
     if (searchCondition) conditions.push(searchCondition);
   }
@@ -338,7 +359,9 @@ function buildKnowledgeListOrderBy(params: Pick<KnowledgeListParams, "sortBy" | 
   return [direction(selected), desc(knowledgeItems.updatedAt), desc(knowledgeItems.id)];
 }
 
-async function tryEmbedKnowledge(input: KnowledgeWriteInput): Promise<number[] | undefined> {
+async function tryEmbedKnowledge(input: { title: string; body: string }): Promise<
+  number[] | undefined
+> {
   try {
     return await embedOne(`${input.title}\n${input.body}`, "passage");
   } catch {
@@ -346,12 +369,21 @@ async function tryEmbedKnowledge(input: KnowledgeWriteInput): Promise<number[] |
   }
 }
 
-async function buildNormalizedApplicability(
-  input: Pick<
-    KnowledgeWriteInput,
-    "appliesTo" | "general" | "technologies" | "changeTypes" | "domains" | "repoPath" | "repoKey"
-  >,
-) {
+type KnowledgeApplicabilityInput = Pick<
+  KnowledgeCreateInput,
+  "appliesTo" | "general" | "technologies" | "changeTypes" | "domains" | "repoPath" | "repoKey"
+>;
+
+const knownApplicabilityKeys = new Set([
+  "general",
+  "technologies",
+  "changeTypes",
+  "domains",
+  "repoPath",
+  "repoKey",
+]);
+
+async function buildNormalizedApplicability(input: KnowledgeApplicabilityInput) {
   const mergedInput = mergeApplicabilityInput({
     appliesTo: input.appliesTo,
     general: input.general,
@@ -362,6 +394,30 @@ async function buildNormalizedApplicability(
     repoKey: input.repoKey,
   });
   return normalizeKnowledgeApplicability(mergedInput);
+}
+
+function pickUnknownApplicabilityKeys(value: Record<string, unknown>): Record<string, unknown> {
+  const extras: Record<string, unknown> = {};
+  for (const [key, entry] of Object.entries(value)) {
+    if (!knownApplicabilityKeys.has(key)) {
+      extras[key] = entry;
+    }
+  }
+  return extras;
+}
+
+function mergeNormalizedApplicability(params: {
+  existingAppliesTo?: unknown;
+  inputAppliesTo?: unknown;
+  normalizedAppliesTo: Record<string, unknown>;
+}): Record<string, unknown> {
+  const existing = asRecord(params.existingAppliesTo);
+  const incoming = asRecord(params.inputAppliesTo);
+  return {
+    ...pickUnknownApplicabilityKeys(existing),
+    ...pickUnknownApplicabilityKeys(incoming),
+    ...params.normalizedAppliesTo,
+  };
 }
 
 function mergeApplicabilityMetadata(
@@ -378,12 +434,17 @@ function mergeApplicabilityMetadata(
   return next;
 }
 
-export async function createKnowledgeItem(input: KnowledgeWriteInput) {
+export async function createKnowledgeItem(input: KnowledgeCreateInput) {
   const confidence = normalizeKnowledgeScore(input.confidence, 70);
   const importance = normalizeKnowledgeScore(input.importance, 70);
   const normalizedApplicability = await buildNormalizedApplicability(input);
   const metadata = mergeApplicabilityMetadata(input.metadata ?? {}, normalizedApplicability);
   const embedding = await tryEmbedKnowledge(input);
+  const appliesTo = mergeNormalizedApplicability({
+    existingAppliesTo: undefined,
+    inputAppliesTo: input.appliesTo,
+    normalizedAppliesTo: normalizedApplicability.appliesTo,
+  });
   const [inserted] = await db
     .insert(knowledgeItems)
     .values({
@@ -394,7 +455,7 @@ export async function createKnowledgeItem(input: KnowledgeWriteInput) {
       body: input.body,
       confidence,
       importance,
-      appliesTo: normalizedApplicability.appliesTo,
+      appliesTo,
       metadata,
       embedding,
       lastVerifiedAt: new Date(),
@@ -414,7 +475,7 @@ export async function createKnowledgeItem(input: KnowledgeWriteInput) {
   return inserted;
 }
 
-export async function updateKnowledgeItem(id: string, input: KnowledgeWriteInput) {
+export async function updateKnowledgeItem(id: string, input: KnowledgeUpdateInput) {
   const [existing] = await db
     .select({
       id: knowledgeItems.id,
@@ -423,6 +484,8 @@ export async function updateKnowledgeItem(id: string, input: KnowledgeWriteInput
       type: knowledgeItems.type,
       title: knowledgeItems.title,
       body: knowledgeItems.body,
+      confidence: knowledgeItems.confidence,
+      importance: knowledgeItems.importance,
       appliesTo: knowledgeItems.appliesTo,
       metadata: knowledgeItems.metadata,
       lastVerifiedAt: knowledgeItems.lastVerifiedAt,
@@ -432,41 +495,80 @@ export async function updateKnowledgeItem(id: string, input: KnowledgeWriteInput
     .limit(1);
   if (!existing) return null;
 
+  const nextType = input.type ?? existing.type;
+  const nextStatus = input.status ?? existing.status;
+  const nextScope = input.scope ?? existing.scope;
+  const nextTitle = input.title ?? existing.title;
+  const nextBody = input.body ?? existing.body;
   const confidence = normalizeKnowledgeScore(input.confidence, 70);
   const importance = normalizeKnowledgeScore(input.importance, 70);
-  const normalizedApplicability = await buildNormalizedApplicability({
-    appliesTo: input.appliesTo ?? asRecord(existing.appliesTo),
-    general: input.general,
-    technologies: input.technologies,
-    changeTypes: input.changeTypes,
-    domains: input.domains,
-    repoPath: input.repoPath,
-    repoKey: input.repoKey,
-  });
-  const metadata = mergeApplicabilityMetadata(
-    {
-      ...asRecord(existing.metadata),
-      ...(input.metadata ?? {}),
-    },
-    normalizedApplicability,
-  );
-  const embedding = await tryEmbedKnowledge(input);
-  const titleChanged = input.title !== existing.title;
-  const bodyChanged = input.body !== existing.body;
-  const promotedToActive = existing.status === "draft" && input.status === "active";
+  const nextConfidence =
+    input.confidence === undefined ? normalizeKnowledgeScore(existing.confidence, 70) : confidence;
+  const nextImportance =
+    input.importance === undefined ? normalizeKnowledgeScore(existing.importance, 70) : importance;
+  const existingAppliesTo = asRecord(existing.appliesTo);
+  const hasApplicabilityPatch =
+    input.appliesTo !== undefined ||
+    input.general !== undefined ||
+    input.technologies !== undefined ||
+    input.changeTypes !== undefined ||
+    input.domains !== undefined ||
+    input.repoPath !== undefined ||
+    input.repoKey !== undefined;
+
+  const normalizedApplicability = hasApplicabilityPatch
+    ? await buildNormalizedApplicability({
+        appliesTo:
+          input.appliesTo === undefined
+            ? existingAppliesTo
+            : {
+                ...existingAppliesTo,
+                ...asRecord(input.appliesTo),
+              },
+        general: input.general,
+        technologies: input.technologies,
+        changeTypes: input.changeTypes,
+        domains: input.domains,
+        repoPath: input.repoPath,
+        repoKey: input.repoKey,
+      })
+    : null;
+  const appliesTo =
+    normalizedApplicability === null
+      ? existingAppliesTo
+      : mergeNormalizedApplicability({
+          existingAppliesTo,
+          inputAppliesTo: input.appliesTo,
+          normalizedAppliesTo: normalizedApplicability.appliesTo,
+        });
+  const metadataBase = {
+    ...asRecord(existing.metadata),
+    ...(input.metadata ?? {}),
+  };
+  const metadata =
+    normalizedApplicability === null
+      ? metadataBase
+      : mergeApplicabilityMetadata(metadataBase, normalizedApplicability);
+  const titleChanged = nextTitle !== existing.title;
+  const bodyChanged = nextBody !== existing.body;
+  const promotedToActive = existing.status === "draft" && nextStatus === "active";
   const shouldUpdateLastVerifiedAt = titleChanged || bodyChanged || promotedToActive;
+  const embedding =
+    titleChanged || bodyChanged
+      ? await tryEmbedKnowledge({ title: nextTitle, body: nextBody })
+      : undefined;
   const now = new Date();
   const [updated] = await db
     .update(knowledgeItems)
     .set({
-      type: input.type,
-      status: input.status,
-      scope: input.scope,
-      title: input.title,
-      body: input.body,
-      confidence,
-      importance,
-      appliesTo: normalizedApplicability.appliesTo,
+      type: nextType,
+      status: nextStatus,
+      scope: nextScope,
+      title: nextTitle,
+      body: nextBody,
+      confidence: nextConfidence,
+      importance: nextImportance,
+      appliesTo,
       metadata,
       embedding,
       updatedAt: now,
@@ -481,21 +583,21 @@ export async function updateKnowledgeItem(id: string, input: KnowledgeWriteInput
     actor: "user",
     payload: {
       knowledgeId: updated.id,
-      type: input.type,
-      status: input.status,
-      scope: input.scope,
-      title: input.title,
+      type: nextType,
+      status: nextStatus,
+      scope: nextScope,
+      title: nextTitle,
       previousStatus: existing.status,
     },
   });
-  if (existing.status !== input.status) {
+  if (existing.status !== nextStatus) {
     await recordAuditLogSafe({
       eventType: auditEventTypes.knowledgeStatusChanged,
       actor: "user",
       payload: {
         knowledgeId: updated.id,
         fromStatus: existing.status,
-        toStatus: input.status,
+        toStatus: nextStatus,
       },
     });
   }

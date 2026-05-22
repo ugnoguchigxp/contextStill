@@ -14,6 +14,9 @@ const requiredTables = [
   "cover_evidence_results",
   "context_compile_runs",
   "context_pack_items",
+  "knowledge_usage_events",
+  "knowledge_review_queue",
+  "knowledge_quality_adjustments",
 ] as const;
 
 const requiredTableSqlList = requiredTables.map((tableName) => `'${tableName}'`).join(", ");
@@ -72,6 +75,9 @@ export async function truncateIntegrationTables(): Promise<void> {
     truncate table
       context_pack_items,
       context_compile_runs,
+      knowledge_quality_adjustments,
+      knowledge_review_queue,
+      knowledge_usage_events,
       cover_evidence_results,
       find_candidate_results,
       distillation_evidence_cache,

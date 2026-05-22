@@ -131,8 +131,9 @@ describe("Context Compiler Service", () => {
 
     const { pack } = await compileContextPack({ goal: "budget test" });
     expect(pack.rules.length).toBeGreaterThan(0);
+    expect(pack.status).toBe("ok");
     expect(pack.diagnostics.degradedReasons).toContain("TOKEN_BUDGET_SECTION_LIMIT_REACHED");
-    expect(pack.warnings.some((warning) => warning.includes("出力上限"))).toBe(true);
+    expect(pack.warnings).toEqual([]);
   });
 
   test("builds fallback source ref when retrieval has no matches", async () => {
@@ -222,5 +223,60 @@ describe("Context Compiler Service", () => {
     const calls = (pack.diagnostics.retrievalStats.suggestedNextCalls ?? []) as string[];
     expect(calls).not.toContain("context_compile (retry with explicit repoPath/files)");
     expect(calls).not.toContain("context_compile (retry with larger tokenBudget)");
+  });
+
+  test("short-circuits compile when goal contains design document reference", async () => {
+    const { pack } = await compileContextPack({
+      goal: "docs/context-compile-four-input-redesign-plan.md を実装する",
+      changeTypes: ["refactor"],
+    });
+
+    expect(pack.status).toBe("degraded");
+    expect(pack.rules).toEqual([]);
+    expect(pack.procedures).toEqual([]);
+    expect(pack.diagnostics.degradedReasons).toContain("GOAL_CONTAINS_DESIGN_DOCUMENT_REFERENCE");
+    expect(retrieveKnowledge).not.toHaveBeenCalled();
+    expect(retrieveSources).not.toHaveBeenCalled();
+  });
+
+  test("suppresses low-confidence vector-only candidates", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [
+        {
+          id: "k-vector-only",
+          type: "rule",
+          status: "active",
+          title: "Weak vector-only knowledge",
+          body: "not really relevant",
+          score: 0.12,
+          sourceRefs: [],
+          hasSourceLinks: false,
+          candidateEvidence: {
+            textMatched: false,
+            vectorMatched: true,
+            vectorScore: 0.12,
+            facetMatched: false,
+          },
+        },
+      ],
+      degradedReasons: [],
+      stats: {
+        textHitCount: 0,
+        vectorHitCount: 1,
+        mergedCount: 1,
+        textFailed: false,
+        vectorFailed: false,
+        embeddingStatus: "generated",
+        scopedSearch: false,
+        repoScopeFallbackUsed: false,
+        queryText: "goal",
+      },
+    } as any);
+
+    const { pack } = await compileContextPack({ goal: "actual compile behavior improvement" });
+    expect(pack.rules).toEqual([]);
+    expect(pack.procedures).toEqual([]);
+    expect(pack.diagnostics.degradedReasons).toContain("LOW_CONFIDENCE_VECTOR_ONLY_SUPPRESSED");
+    expect(pack.diagnostics.degradedReasons).toContain("NO_RELEVANT_CONTEXT");
   });
 });

@@ -30,6 +30,7 @@ function appliesToFromCandidate(
     ...(candidate.changeTypes && candidate.changeTypes.length > 0
       ? { changeTypes: candidate.changeTypes }
       : {}),
+    ...(candidate.domains && candidate.domains.length > 0 ? { domains: candidate.domains } : {}),
     ...(candidate.repoPath ? { repoPath: candidate.repoPath } : {}),
     ...(candidate.repoKey ? { repoKey: candidate.repoKey } : {}),
   };
@@ -39,7 +40,7 @@ function candidateApplicabilityFromAppliesTo(
   appliesTo: Record<string, unknown>,
 ): Pick<
   NonNullable<CoverEvidenceResult["candidate"]>,
-  "applicabilityGeneral" | "technologies" | "changeTypes" | "repoPath" | "repoKey"
+  "applicabilityGeneral" | "technologies" | "changeTypes" | "domains" | "repoPath" | "repoKey"
 > {
   const toStringArray = (value: unknown): string[] =>
     Array.isArray(value)
@@ -55,6 +56,9 @@ function candidateApplicabilityFromAppliesTo(
       : {}),
     ...(toStringArray(appliesTo.changeTypes).length > 0
       ? { changeTypes: toStringArray(appliesTo.changeTypes) }
+      : {}),
+    ...(toStringArray(appliesTo.domains).length > 0
+      ? { domains: toStringArray(appliesTo.domains) }
       : {}),
     ...(typeof appliesTo.repoPath === "string" && appliesTo.repoPath.trim()
       ? { repoPath: appliesTo.repoPath.trim() }

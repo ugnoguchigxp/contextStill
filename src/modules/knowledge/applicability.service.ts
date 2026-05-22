@@ -142,6 +142,8 @@ function normalizeFacetValues(params: {
       reason: "no matching active tag definition",
     });
     params.warnings.push(`unknown ${params.kind} tag: ${rawValue}`);
+    // Keep unknown facets in appliesTo to avoid destructive data loss on edit/update.
+    resolved.push(aliased);
   }
 
   return dedupe(resolved);

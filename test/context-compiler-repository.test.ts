@@ -273,6 +273,12 @@ describe("context-compiler repository", () => {
         orderBy: vi.fn().mockResolvedValue(mockItems),
       });
 
+      (db.select as any).mockReturnValueOnce({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockResolvedValue([]),
+      });
+
       const result = await getCompileRunDetail(validPack.runId);
 
       expect(result?.snapshotAvailable).toBe(true);
@@ -300,6 +306,12 @@ describe("context-compiler repository", () => {
         from: vi.fn().mockReturnThis(),
         where: vi.fn().mockReturnThis(),
         limit: vi.fn().mockResolvedValue([mockRun]),
+      });
+
+      (db.select as any).mockReturnValueOnce({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockResolvedValue([]),
       });
 
       (db.select as any).mockReturnValueOnce({
@@ -338,6 +350,12 @@ describe("context-compiler repository", () => {
         from: vi.fn().mockReturnThis(),
         where: vi.fn().mockReturnThis(),
         limit: vi.fn().mockResolvedValue([mockRun]),
+      });
+
+      (db.select as any).mockReturnValueOnce({
+        from: vi.fn().mockReturnThis(),
+        where: vi.fn().mockReturnThis(),
+        orderBy: vi.fn().mockResolvedValue([]),
       });
 
       (db.select as any).mockReturnValueOnce({

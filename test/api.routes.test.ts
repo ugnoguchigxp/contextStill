@@ -10,6 +10,7 @@ import {
   compilePackForApi,
   getRunDetailForApi,
   listRunsForApi,
+  saveRunKnowledgeFeedbackForApi,
 } from "../api/modules/context-compiler/context-compiler.service.js";
 import { doctorRouter } from "../api/modules/doctor/doctor.routes.js";
 import { getDoctorReportForApi } from "../api/modules/doctor/doctor.service.js";
@@ -42,10 +43,14 @@ vi.mock("../api/modules/context-compiler/context-compiler.service.js", () => ({
   getRunDetailParamSchema: z.object({
     id: z.string().uuid(),
   }),
+  runKnowledgeFeedbackParamSchema: z.object({
+    id: z.string().uuid(),
+  }),
   listRunsForApi: vi.fn(),
   listRunsQuerySchema: z.object({
     limit: z.coerce.number().int().min(1).max(100).default(20),
   }),
+  saveRunKnowledgeFeedbackForApi: vi.fn(),
 }));
 
 vi.mock("../api/modules/doctor/doctor.service.js", () => ({
@@ -115,6 +120,11 @@ const validPack: ContextPack = {
   },
 };
 
+const validCompileResponse = {
+  pack: validPack,
+  markdown: "No Content",
+};
+
 const validRunDetail = compileRunDetailSchema.parse({
   run: {
     id: validPack.runId,
@@ -129,9 +139,22 @@ const validRunDetail = compileRunDetailSchema.parse({
     input: { goal: validPack.goal, changeTypes: ["feature"] },
   },
   pack: validPack,
+  outputMarkdown: "No Content",
   selectedItems: [],
+  knowledgeFeedback: [],
   snapshotAvailable: true,
 });
+
+const validRunKnowledgeFeedback = {
+  savedCount: 2,
+  updatedCount: 1,
+  queueCreatedCount: 1,
+  queueDismissedCount: 0,
+  affectedKnowledgeIds: [
+    "550e8400-e29b-41d4-a716-446655440001",
+    "550e8400-e29b-41d4-a716-446655440002",
+  ],
+};
 
 const validDistillationQueueHealth = {
   queued: 0,
@@ -381,9 +404,10 @@ describe("API route contract tests", () => {
       limit: 50,
       availableEventTypes: [],
     });
-    vi.mocked(compilePackForApi).mockResolvedValue(validPack);
+    vi.mocked(compilePackForApi).mockResolvedValue(validCompileResponse);
     vi.mocked(listRunsForApi).mockResolvedValue([]);
     vi.mocked(getRunDetailForApi).mockResolvedValue(validRunDetail);
+    vi.mocked(saveRunKnowledgeFeedbackForApi).mockResolvedValue(validRunKnowledgeFeedback);
     vi.mocked(getDoctorReportForApi).mockResolvedValue(validDoctorReport);
     vi.mocked(fetchOverviewDashboardForApi).mockResolvedValue(validOverviewDashboard);
     vi.mocked(listCandidateItems).mockResolvedValue({
@@ -625,9 +649,10 @@ describe("API route contract tests", () => {
     });
 
     expect(response.status).toBe(200);
-    const json = (await response.json()) as { pack: unknown };
+    const json = (await response.json()) as { pack: unknown; markdown: unknown };
     const parsed = contextPackSchema.parse(json.pack);
     expect(parsed.goal).toBe("api contract goal");
+    expect(typeof json.markdown).toBe("string");
     expect(compilePackForApi).toHaveBeenCalledWith(
       expect.objectContaining({ goal: "api contract goal", changeTypes: ["feature"] }),
     );
@@ -658,6 +683,49 @@ describe("API route contract tests", () => {
 
     expect(response.status).toBe(400);
     expect(getRunDetailForApi).not.toHaveBeenCalled();
+  });
+
+  test("POST /api/context/runs/:id/knowledge-feedback returns persisted summary", async () => {
+    const app = buildApp();
+    const runId = validPack.runId;
+    const response = await app.request(`/api/context/runs/${runId}/knowledge-feedback`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        items: [
+          {
+            knowledgeId: "550e8400-e29b-41d4-a716-446655440001",
+            verdict: "used",
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(saveRunKnowledgeFeedbackForApi).toHaveBeenCalledWith(
+      { id: runId },
+      {
+        items: [{ knowledgeId: "550e8400-e29b-41d4-a716-446655440001", verdict: "used" }],
+      },
+    );
+    const json = (await response.json()) as { feedback: typeof validRunKnowledgeFeedback };
+    expect(json.feedback.savedCount).toBeGreaterThanOrEqual(1);
+    expect(Array.isArray(json.feedback.affectedKnowledgeIds)).toBe(true);
+  });
+
+  test("POST /api/context/runs/:id/knowledge-feedback rejects invalid payload", async () => {
+    const app = buildApp();
+    const runId = validPack.runId;
+    const response = await app.request(`/api/context/runs/${runId}/knowledge-feedback`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        items: [{ knowledgeId: "not-uuid", verdict: "used" }],
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(saveRunKnowledgeFeedbackForApi).not.toHaveBeenCalled();
   });
 
   test("GET /api/doctor returns contract-compatible response", async () => {
@@ -837,6 +905,48 @@ describe("API route contract tests", () => {
     expect(response.status).toBe(404);
     const json = (await response.json()) as { error: string };
     expect(json.error).toBe("not found");
+  });
+
+  test("PUT /api/knowledge/:id accepts patch payload", async () => {
+    vi.mocked(updateKnowledgeItem).mockResolvedValueOnce({ id: "updated-item-id" } as any);
+
+    const app = buildApp();
+    const response = await app.request("/api/knowledge/550e8400-e29b-41d4-a716-446655440003", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        status: "deprecated",
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(updateKnowledgeItem).toHaveBeenCalledWith("550e8400-e29b-41d4-a716-446655440003", {
+      status: "deprecated",
+    });
+  });
+
+  test("PUT /api/knowledge/:id keeps unknown appliesTo keys", async () => {
+    vi.mocked(updateKnowledgeItem).mockResolvedValueOnce({ id: "updated-item-id" } as any);
+
+    const app = buildApp();
+    const response = await app.request("/api/knowledge/550e8400-e29b-41d4-a716-446655440003", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        appliesTo: {
+          general: true,
+          customFacet: ["alpha", "beta"],
+        },
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(updateKnowledgeItem).toHaveBeenCalledWith("550e8400-e29b-41d4-a716-446655440003", {
+      appliesTo: {
+        general: true,
+        customFacet: ["alpha", "beta"],
+      },
+    });
   });
 
   test("POST /api/knowledge/bulk-status returns partial update summary", async () => {

@@ -46,6 +46,7 @@ describe("knowledge applicability service", () => {
     });
     expect(result.unknownTagCandidates).toHaveLength(1);
     expect(result.unknownTagCandidates[0]?.normalizedSlug).toBe("fastapi");
+    expect(result.appliesTo.technologies).toEqual(["fastapi"]);
   });
 
   test("mergeApplicabilityInput merges top-level and appliesTo facets", () => {
@@ -123,6 +124,7 @@ describe("knowledge applicability service", () => {
       // fallback maps will be empty, so "typescript" will be treated as unknown tag candidate
       expect(result.unknownTagCandidates).toHaveLength(1);
       expect(result.unknownTagCandidates[0]?.normalizedSlug).toBe("typescript");
+      expect(result.appliesTo.technologies).toEqual(["typescript"]);
     });
   });
 

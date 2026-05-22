@@ -117,6 +117,7 @@ describe("coverEvidence parser", () => {
           confidence: 81,
           technologies: "typescript, vitest",
           changeTypes: "test",
+          domains: "distillation, context-compiler",
         },
         references: [
           {
@@ -137,6 +138,7 @@ describe("coverEvidence parser", () => {
     expect(parsed.candidate).toMatchObject({
       technologies: ["typescript", "vitest"],
       changeTypes: ["test"],
+      domains: ["distillation", "context-compiler"],
     });
     expect(parsed.references).toHaveLength(1);
   });
@@ -199,6 +201,7 @@ describe("coverEvidence parser", () => {
         "IMPORTANCE: 0.79",
         "TECHNOLOGIES: typescript, vitest",
         "CHANGE_TYPES: test",
+        "DOMAINS: distillation, context-compiler",
       ].join("\n"),
     );
     expect(parsed.status).toBe("knowledge_ready");
@@ -209,6 +212,7 @@ describe("coverEvidence parser", () => {
       importance: 79,
       technologies: ["typescript", "vitest"],
       changeTypes: ["test"],
+      domains: ["distillation", "context-compiler"],
     });
     expect(parsed.candidate?.body).toContain("Run focused tests.");
   });
@@ -246,6 +250,7 @@ describe("runCoverEvidence", () => {
           confidence: 85,
           technologies: "typescript, vitest",
           changeTypes: "test",
+          domains: "distillation, testing",
         },
         references: [],
         duplicateRefs: [],
@@ -267,6 +272,7 @@ describe("runCoverEvidence", () => {
     expect(result.result.candidate).toMatchObject({
       technologies: ["typescript", "vitest"],
       changeTypes: ["test"],
+      domains: ["distillation", "testing"],
     });
     expect(result.result.references[0]).toMatchObject({
       kind: "source",
@@ -350,6 +356,7 @@ describe("runCoverEvidence", () => {
     expect(request.messages[0]?.content).toContain("Use when:");
     expect(request.messages[0]?.content).toContain("Workflow:");
     expect(request.messages[0]?.content).toContain("カンマ区切り文字列");
+    expect(request.messages[0]?.content).toContain("domains");
     expect(request.messages[0]?.content).not.toContain('"appliesTo":');
   });
 

@@ -77,9 +77,9 @@ function applicabilityInstructions(): string[] {
   return [
     "draft knowledge の applicability metadata も、わかる範囲で最終 JSON の任意 field として返してください。",
     "ネストした appliesTo や candidate オブジェクトは作らないでください。",
-    "任意 field は applicabilityGeneral, technologies, changeTypes, repoPath, repoKey です。",
-    "technologies / changeTypes は JSON 配列ではなく、できればカンマ区切り文字列で返してください。",
-    "title/body/source excerpt に明確な技術名や変更種別がある場合は、対応する technologies/changeTypes を埋めてください。",
+    "任意 field は applicabilityGeneral, technologies, changeTypes, domains, repoPath, repoKey です。",
+    "technologies / changeTypes / domains は JSON 配列ではなく、できればカンマ区切り文字列で返してください。",
+    "title/body/source excerpt に明確な技術名や変更種別や機能領域がある場合は、対応する technologies/changeTypes/domains を埋めてください。",
     "必須 field は増やしません。最低限 status と title/body が返せれば十分です。type/importance/confidence は省略しても構いません。",
     "source evidence から明確に言える値だけを返し、不明な field は省略してください。省略しても問題ありません。",
     "applicabilityGeneral は repo、project、file、technology に依存せず広く再利用できる knowledge の場合だけ true にしてください。",
@@ -345,8 +345,8 @@ function applicabilityBlankResponseReminderLines(
 ): string[] {
   return [
     "直前の応答は空でした。",
-    `次のようなフラット JSON を返してください: {"status":"${statuses}","stage":"${stage}","type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80,"technologies":"...","changeTypes":"...","applicabilityGeneral":false}`,
-    "またはラベル付きテキストを返してください: STATUS / STAGE / TYPE / TITLE / BODY / TECHNOLOGIES / CHANGE_TYPES / APPLICABILITY_GENERAL / REPO_PATH / REPO_KEY。",
+    `次のようなフラット JSON を返してください: {"status":"${statuses}","stage":"${stage}","type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80,"technologies":"...","changeTypes":"...","domains":"...","applicabilityGeneral":false}`,
+    "またはラベル付きテキストを返してください: STATUS / STAGE / TYPE / TITLE / BODY / TECHNOLOGIES / CHANGE_TYPES / DOMAINS / APPLICABILITY_GENERAL / REPO_PATH / REPO_KEY。",
   ];
 }
 
@@ -367,7 +367,7 @@ function externalEvidenceSystemPrompt(): string {
     "search_web を同義の言い換え query で繰り返さないでください。query は短く安定した公式名・API名・概念名を優先してください。",
     "外部主張を採用するなら fetch_content の成功結果に基づけてください。",
     "JSON は次の形を基本にしてください。applicability field は任意で、省略しても構いません:",
-    '{"schemaVersion":1,"status":"knowledge_ready|insufficient|duplicate|near_duplicate","stage":"web","type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80,"technologies":"...","changeTypes":"...","applicabilityGeneral":false,"references":[],"duplicateRefs":[],"toolEvents":[],"reason":null}',
+    '{"schemaVersion":1,"status":"knowledge_ready|insufficient|duplicate|near_duplicate","stage":"web","type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80,"technologies":"...","changeTypes":"...","domains":"...","applicabilityGeneral":false,"references":[],"duplicateRefs":[],"toolEvents":[],"reason":null}',
     "importance と confidence は 0 から 100 目安の数値で返してください。整数でなくても構いません。",
   ].join("\n");
 }
@@ -404,7 +404,7 @@ function valueAssessmentSystemPrompt(): string {
     "importance と confidence は 0 から 100 目安の数値です。未確定なら省略して構いません。",
     `importance が ${groupedConfig.distillation.lowImportanceRejectThreshold} 以下なら status は insufficient、reason は low_importance にしてください。`,
     "JSON は次の形を基本にしてください。applicability field は任意で、省略しても構いません:",
-    '{"schemaVersion":1,"status":"knowledge_ready|insufficient","stage":"final","type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80,"technologies":"...","changeTypes":"...","applicabilityGeneral":false,"references":[],"duplicateRefs":[],"toolEvents":[],"reason":null}',
+    '{"schemaVersion":1,"status":"knowledge_ready|insufficient","stage":"final","type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80,"technologies":"...","changeTypes":"...","domains":"...","applicabilityGeneral":false,"references":[],"duplicateRefs":[],"toolEvents":[],"reason":null}',
     "insufficient の場合は title/body/type/importance/confidence を省略して構いません。",
   ].join("\n");
 }

@@ -26,6 +26,40 @@ export const compileRunSelectedItemSchema = z.object({
   sourceRefs: z.array(z.string()),
 });
 
+export const knowledgeUsageVerdictSchema = z.enum(["used", "off_topic", "wrong"]);
+
+export const compileRunKnowledgeFeedbackSchema = z.object({
+  id: z.string().uuid(),
+  runId: z.string().uuid(),
+  knowledgeId: z.string().uuid(),
+  verdict: knowledgeUsageVerdictSchema,
+  actor: z.enum(["agent", "user", "system"]),
+  reason: z.string().nullable().optional(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const compileRunKnowledgeFeedbackWriteSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        knowledgeId: z.string().uuid(),
+        verdict: knowledgeUsageVerdictSchema,
+        reason: z.string().trim().max(160).optional(),
+      }),
+    )
+    .min(1)
+    .max(100),
+});
+
+export const compileRunKnowledgeFeedbackResultSchema = z.object({
+  savedCount: z.number().int().nonnegative(),
+  updatedCount: z.number().int().nonnegative(),
+  queueCreatedCount: z.number().int().nonnegative(),
+  queueDismissedCount: z.number().int().nonnegative(),
+  affectedKnowledgeIds: z.array(z.string().uuid()),
+});
+
 export const compileRunInputSnapshotSchema = z.record(z.string(), z.unknown());
 
 export const compileRunDetailSchema = z.object({
@@ -34,11 +68,17 @@ export const compileRunDetailSchema = z.object({
     input: compileRunInputSnapshotSchema,
   }),
   pack: contextPackSchema.nullable(),
+  outputMarkdown: z.string().nullable().optional(),
   selectedItems: z.array(compileRunSelectedItemSchema),
+  knowledgeFeedback: z.array(compileRunKnowledgeFeedbackSchema).default([]),
   snapshotAvailable: z.boolean(),
 });
 
 export type CompileRunSource = z.infer<typeof compileRunSourceSchema>;
 export type CompileRunSummaryPayload = z.infer<typeof compileRunSummarySchema>;
 export type CompileRunSelectedItem = z.infer<typeof compileRunSelectedItemSchema>;
+export type CompileRunKnowledgeFeedback = z.infer<typeof compileRunKnowledgeFeedbackSchema>;
+export type CompileRunKnowledgeFeedbackResult = z.infer<
+  typeof compileRunKnowledgeFeedbackResultSchema
+>;
 export type CompileRunDetail = z.infer<typeof compileRunDetailSchema>;

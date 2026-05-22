@@ -39,11 +39,12 @@ import {
   Trash2,
   X,
 } from "lucide-react";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
   type KnowledgeBulkStatusSelection,
   type KnowledgeItem,
   type KnowledgeType,
+  type KnowledgeUpdateInput,
   type KnowledgeWriteInput,
   bulkUpdateKnowledgeStatus,
   createKnowledgeItem,
@@ -134,18 +135,25 @@ function summarizeApplicability(appliesTo: unknown): Array<{ label: string; valu
   if (changeTypes.length > 0) {
     facets.push({ label: "change", values: changeTypes });
   }
+  const domains = toStringArray(record.domains);
+  if (domains.length > 0) {
+    facets.push({ label: "domain", values: domains });
+  }
   return facets;
 }
 
 export function KnowledgePage() {
   const queryClient = useQueryClient();
   const [editingId, setEditingId] = useState<string | null>(null);
+  const [editingOriginalType, setEditingOriginalType] = useState<string | null>(null);
+  const [typeChangedInForm, setTypeChangedInForm] = useState(false);
   const [form, setForm] = useState<KnowledgeWriteInput>(emptyForm);
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [displayFilter, setDisplayFilter] = useState<string>("all");
   const [minQuality, setMinQuality] = useState<number>(0);
-  const [searchQuery, setSearchQuery] = useState("");
+  const [searchInputValue, setSearchInputValue] = useState("");
+  const [submittedSearchQuery, setSubmittedSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkSelection, setBulkSelection] = useState<KnowledgeBulkStatusSelection | null>(null);
   const [modalEvidence, setModalEvidence] = useState<{
@@ -162,7 +170,7 @@ export function KnowledgePage() {
   const serverStatusFilter = ["draft", "active", "deprecated"].includes(displayFilter)
     ? displayFilter
     : undefined;
-  const serverSearchQuery = searchQuery.trim();
+  const serverSearchQuery = submittedSearchQuery.trim();
   const serverSort = sorting[0] ?? { id: "updatedAt", desc: true };
 
   const knowledge = useQuery({
@@ -202,14 +210,9 @@ export function KnowledgePage() {
               ? item.dynamicScore >= highValueThreshold
               : item.status === displayFilter);
       const qualityMatch = qualityScore(item) >= minQuality;
-      const query = searchQuery.toLowerCase().trim();
-      const searchMatch =
-        !query ||
-        item.title.toLowerCase().includes(query) ||
-        item.body.toLowerCase().includes(query);
-      return statusMatch && qualityMatch && searchMatch;
+      return statusMatch && qualityMatch;
     });
-  }, [loadedKnowledgeItems, displayFilter, minQuality, searchQuery]);
+  }, [loadedKnowledgeItems, displayFilter, minQuality]);
 
   useEffect(() => {
     const validIds = new Set(filteredItems.map((item) => item.id));
@@ -219,12 +222,36 @@ export function KnowledgePage() {
     });
   }, [filteredItems]);
 
+  const buildEditPayload = useCallback((): KnowledgeUpdateInput => {
+    const payload: KnowledgeUpdateInput = {
+      status: form.status,
+      scope: form.scope,
+      title: form.title,
+      body: form.body,
+      confidence: form.confidence,
+      importance: form.importance,
+      appliesTo: asRecord(form.appliesTo),
+      metadata: form.metadata ?? {},
+    };
+    const originalType = editingOriginalType;
+    const canPreserveLegacyType =
+      originalType !== null &&
+      !knowledgeTypes.includes(originalType as KnowledgeType) &&
+      !typeChangedInForm;
+    if (!canPreserveLegacyType) {
+      payload.type = form.type;
+    }
+    return payload;
+  }, [editingOriginalType, form, typeChangedInForm]);
+
   const save = useMutation({
     mutationFn: () =>
-      editingId ? updateKnowledgeItem(editingId, form) : createKnowledgeItem(form),
+      editingId ? updateKnowledgeItem(editingId, buildEditPayload()) : createKnowledgeItem(form),
     onSuccess: async () => {
       setForm(emptyForm);
       setEditingId(null);
+      setEditingOriginalType(null);
+      setTypeChangedInForm(false);
       setModalEvidence(null);
       setError(null);
       setIsModalOpen(false);
@@ -245,17 +272,9 @@ export function KnowledgePage() {
   });
 
   const quickStatusUpdate = useMutation({
-    mutationFn: ({ id, item, status }: { id: string; item: KnowledgeItem; status: string }) =>
+    mutationFn: ({ id, status }: { id: string; status: string }) =>
       updateKnowledgeItem(id, {
-        type: normalizeKnowledgeType(item.type),
         status,
-        scope: item.scope,
-        title: item.title,
-        body: item.body,
-        confidence: item.confidence,
-        importance: item.importance,
-        appliesTo: asRecord(item.appliesTo),
-        metadata: item.metadata ?? {},
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["knowledge"] });
@@ -264,17 +283,9 @@ export function KnowledgePage() {
   });
 
   const quickScopeUpdate = useMutation({
-    mutationFn: ({ id, item, scope }: { id: string; item: KnowledgeItem; scope: string }) =>
+    mutationFn: ({ id, scope }: { id: string; scope: string }) =>
       updateKnowledgeItem(id, {
-        type: normalizeKnowledgeType(item.type),
-        status: item.status,
         scope,
-        title: item.title,
-        body: item.body,
-        confidence: item.confidence,
-        importance: item.importance,
-        appliesTo: asRecord(item.appliesTo),
-        metadata: item.metadata ?? {},
       }),
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["knowledge"] });
@@ -327,6 +338,8 @@ export function KnowledgePage() {
 
   const openEdit = useCallback((item: KnowledgeItem) => {
     setEditingId(item.id);
+    setEditingOriginalType(item.type);
+    setTypeChangedInForm(false);
     setModalEvidence({
       sourceRefs: item.sourceRefs ?? [],
       sourceVibeMemoryIds: item.sourceVibeMemoryIds ?? [],
@@ -347,6 +360,8 @@ export function KnowledgePage() {
 
   const openCreate = () => {
     setEditingId(null);
+    setEditingOriginalType(null);
+    setTypeChangedInForm(false);
     setModalEvidence(null);
     setForm(emptyForm);
     setIsModalOpen(true);
@@ -394,6 +409,16 @@ export function KnowledgePage() {
   }, []);
   const canSelectAllMatching =
     serverSelectableStatusFilters.has(displayFilter) && minQuality === 0 && totalKnowledgeCount > 0;
+  const submitSearch = useCallback(
+    (event?: FormEvent<HTMLFormElement>) => {
+      event?.preventDefault();
+      const nextQuery = searchInputValue.trim();
+      setSubmittedSearchQuery(nextQuery);
+      setBulkSelection(null);
+      resetToFirstPage();
+    },
+    [resetToFirstPage, searchInputValue],
+  );
 
   const columns = useMemo<ColumnDef<KnowledgeItem>[]>(
     () => [
@@ -521,7 +546,7 @@ export function KnowledgePage() {
                   variant="outline"
                   size="sm"
                   className="h-6 px-2 text-[10px] gap-1 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200"
-                  onClick={() => quickStatusUpdate.mutate({ id: item.id, item, status: "active" })}
+                  onClick={() => quickStatusUpdate.mutate({ id: item.id, status: "active" })}
                   disabled={quickStatusUpdate.isPending}
                   title="Promote to Active"
                 >
@@ -535,9 +560,7 @@ export function KnowledgePage() {
                   variant="outline"
                   size="sm"
                   className="h-6 px-2 text-[10px] gap-1 hover:bg-red-50 hover:text-red-600 hover:border-red-200"
-                  onClick={() =>
-                    quickStatusUpdate.mutate({ id: item.id, item, status: "deprecated" })
-                  }
+                  onClick={() => quickStatusUpdate.mutate({ id: item.id, status: "deprecated" })}
                   disabled={quickStatusUpdate.isPending}
                   title="Deprecate"
                 >
@@ -551,7 +574,7 @@ export function KnowledgePage() {
                   variant="outline"
                   size="sm"
                   className="h-6 px-2 text-[10px] gap-1 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200"
-                  onClick={() => quickStatusUpdate.mutate({ id: item.id, item, status: "active" })}
+                  onClick={() => quickStatusUpdate.mutate({ id: item.id, status: "active" })}
                   disabled={quickStatusUpdate.isPending}
                   title="Restore to Active"
                 >
@@ -579,7 +602,7 @@ export function KnowledgePage() {
                   : "border-amber-200 text-amber-600 bg-amber-50 hover:bg-amber-100"
               }`}
               onClick={() =>
-                quickScopeUpdate.mutate({ id: item.id, item, scope: isRepo ? "global" : "repo" })
+                quickScopeUpdate.mutate({ id: item.id, scope: isRepo ? "global" : "repo" })
               }
               disabled={quickScopeUpdate.isPending}
             >
@@ -745,20 +768,19 @@ export function KnowledgePage() {
     <div className="knowledge-full-layout">
       <section className="knowledge-header">
         <div className="flex items-center gap-4 flex-1 min-w-[280px]">
-          <div className="relative w-full max-w-md">
-            <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
+          <form className="flex w-full max-w-lg items-center gap-2" onSubmit={submitSearch}>
             <Input
               type="search"
               placeholder="Knowledgeを検索..."
-              className="pl-9 h-9"
-              value={searchQuery}
-              onChange={(e) => {
-                setSearchQuery(e.target.value);
-                setBulkSelection(null);
-                resetToFirstPage();
-              }}
+              className="h-9"
+              value={searchInputValue}
+              onChange={(e) => setSearchInputValue(e.target.value)}
             />
-          </div>
+            <Button type="submit" size="sm" className="h-9 gap-1.5 whitespace-nowrap">
+              <Search size={15} />
+              Search
+            </Button>
+          </form>
         </div>
         <div className="flex items-center gap-3">
           <div className="flex items-center gap-2 px-3 py-1 bg-muted rounded-lg border border-transparent">
@@ -1040,9 +1062,10 @@ export function KnowledgePage() {
                   <Select
                     id="knowledge-type"
                     value={form.type}
-                    onChange={(event) =>
-                      setForm({ ...form, type: event.target.value as KnowledgeType })
-                    }
+                    onChange={(event) => {
+                      setTypeChangedInForm(true);
+                      setForm({ ...form, type: event.target.value as KnowledgeType });
+                    }}
                   >
                     {knowledgeTypes.map((type) => (
                       <option key={type} value={type}>

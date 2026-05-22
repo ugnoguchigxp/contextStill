@@ -110,7 +110,7 @@ export type KnowledgeWriteInput = {
   body: string;
   confidence: number;
   importance: number;
-  appliesTo?: {
+  appliesTo?: Record<string, unknown> & {
     general?: boolean;
     technologies?: string[];
     changeTypes?: string[];
@@ -123,6 +123,8 @@ export type KnowledgeWriteInput = {
   domains?: string[];
   metadata?: Record<string, unknown>;
 };
+
+export type KnowledgeUpdateInput = Partial<KnowledgeWriteInput>;
 
 export type KnowledgeTagDefinition = {
   id: string;
@@ -707,7 +709,7 @@ export async function createKnowledgeItem(input: KnowledgeWriteInput): Promise<v
   await requestJson("/api/knowledge", "POST", input);
 }
 
-export async function updateKnowledgeItem(id: string, input: KnowledgeWriteInput): Promise<void> {
+export async function updateKnowledgeItem(id: string, input: KnowledgeUpdateInput): Promise<void> {
   await requestJson(`/api/knowledge/${id}`, "PUT", input);
 }
 

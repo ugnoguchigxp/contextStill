@@ -114,6 +114,45 @@ describe("Knowledge Service", () => {
     expect(repo.vectorSearchKnowledge).toHaveBeenCalled();
   });
 
+  test("annotates merged candidates with text/vector evidence", async () => {
+    vi.mocked(repo.searchKnowledge).mockResolvedValue([
+      {
+        id: "k1",
+        score: 0.4,
+        applicabilityMatches: {
+          technologies: ["typescript"],
+          changeTypes: [],
+          domains: [],
+          general: false,
+        },
+      },
+    ] as any);
+    vi.mocked(embedding.embedOne).mockResolvedValue([0.1, 0.2]);
+    vi.mocked(repo.vectorSearchKnowledge).mockResolvedValue([
+      {
+        id: "k1",
+        score: 0.82,
+        applicabilityMatches: {
+          technologies: [],
+          changeTypes: [],
+          domains: [],
+          general: false,
+        },
+      },
+    ] as any);
+
+    const result = await retrieveKnowledge({ goal: "typed compile task" } as any, {
+      retrievalMode: "task_context",
+    });
+    expect(result.items).toHaveLength(1);
+    expect(result.items[0]?.candidateEvidence).toMatchObject({
+      textMatched: true,
+      vectorMatched: true,
+      facetMatched: true,
+      vectorScore: 0.82,
+    });
+  });
+
   test("searchKnowledgeCandidates parses input and searches", async () => {
     vi.mocked(repo.searchKnowledge).mockResolvedValue([{ id: "c1", score: 0.7 }] as any);
     vi.mocked(repo.vectorSearchKnowledge).mockResolvedValue([]);

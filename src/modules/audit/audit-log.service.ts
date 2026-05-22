@@ -11,6 +11,7 @@ export const auditEventTypes = {
   knowledgeDeleted: "KNOWLEDGE_DELETED",
   knowledgeStatusChanged: "KNOWLEDGE_STATUS_CHANGED",
   knowledgeFeedbackRecorded: "KNOWLEDGE_FEEDBACK_RECORDED",
+  knowledgeQualityAdjusted: "KNOWLEDGE_QUALITY_ADJUSTED",
   sourceImported: "SOURCE_IMPORTED",
   sourceUpdated: "SOURCE_UPDATED",
   sourceDeleted: "SOURCE_DELETED",

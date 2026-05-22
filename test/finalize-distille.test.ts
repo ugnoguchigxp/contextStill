@@ -113,6 +113,7 @@ describe("runFinalizeDistille", () => {
         ...readyResult().candidate,
         technologies: ["typescript", "vitest"],
         changeTypes: ["test"],
+        domains: ["distillation", "context-compiler"],
       },
     });
 
@@ -132,6 +133,7 @@ describe("runFinalizeDistille", () => {
         appliesTo: {
           technologies: ["typescript", "vitest"],
           changeTypes: ["test"],
+          domains: ["distillation", "context-compiler"],
         },
         metadata: expect.objectContaining({
           coverEvidenceResultId: "find-1",

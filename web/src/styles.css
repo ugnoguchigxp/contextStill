@@ -1917,6 +1917,19 @@
   white-space: pre-wrap;
 }
 
+.compile-feedback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+}
+
+.compile-output-markdown {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  min-height: 12rem;
+  overflow: hidden;
+}
+
 .compile-pack-item-meta {
   color: var(--muted-foreground);
   flex-wrap: wrap;

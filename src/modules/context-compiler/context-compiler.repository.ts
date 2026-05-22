@@ -1,6 +1,12 @@
 import { desc, eq, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { contextCompileRuns, contextPackItems, knowledgeItems, sources } from "../../db/schema.js";
+import {
+  contextCompileRuns,
+  contextPackItems,
+  knowledgeItems,
+  knowledgeUsageEvents,
+  sources,
+} from "../../db/schema.js";
 import {
   type CompileRunDetail,
   type CompileRunSelectedItem,
@@ -10,6 +16,7 @@ import {
 } from "../../shared/schemas/compile-run.schema.js";
 import type { ContextPack } from "../../shared/schemas/context-pack.schema.js";
 import { contextPackSchema } from "../../shared/schemas/context-pack.schema.js";
+import { renderContextPackMarkdown } from "./pack-renderer.js";
 
 const runStatusValues = new Set(["ok", "degraded", "failed"]);
 
@@ -41,6 +48,24 @@ function normalizeStringArray(value: unknown): string[] {
 
 function normalizeDuration(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
+}
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function extractOutputMarkdown(pack: ContextPack | null): string | null {
+  if (!pack) return null;
+  const retrievalStats = asRecord(pack.diagnostics.retrievalStats);
+  const responseComposer = asRecord(retrievalStats.responseComposer);
+  const fromComposer =
+    typeof responseComposer.outputMarkdown === "string"
+      ? responseComposer.outputMarkdown.trim()
+      : "";
+  if (fromComposer) return fromComposer;
+  return renderContextPackMarkdown(pack);
 }
 
 export async function insertCompileRun(params: {
@@ -245,11 +270,27 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
     .where(eq(contextPackItems.runId, runId))
     .orderBy(desc(contextPackItems.score), desc(contextPackItems.createdAt));
 
+  const feedbackRows = await db
+    .select({
+      id: knowledgeUsageEvents.id,
+      runId: knowledgeUsageEvents.runId,
+      knowledgeId: knowledgeUsageEvents.knowledgeId,
+      verdict: knowledgeUsageEvents.verdict,
+      actor: knowledgeUsageEvents.actor,
+      reason: knowledgeUsageEvents.reason,
+      createdAt: knowledgeUsageEvents.createdAt,
+      updatedAt: knowledgeUsageEvents.updatedAt,
+    })
+    .from(knowledgeUsageEvents)
+    .where(eq(knowledgeUsageEvents.runId, runId))
+    .orderBy(desc(knowledgeUsageEvents.updatedAt), desc(knowledgeUsageEvents.createdAt));
+
   const parsedPackSnapshot = contextPackSchema.safeParse(run.packSnapshot);
   const packSnapshot =
     parsedPackSnapshot.success && parsedPackSnapshot.data.runId === run.id
       ? parsedPackSnapshot.data
       : null;
+  const outputMarkdown = extractOutputMarkdown(packSnapshot);
   const detail = {
     run: {
       id: run.id,
@@ -267,6 +308,7 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
           : {},
     },
     pack: packSnapshot,
+    outputMarkdown,
     selectedItems: itemRows.map((row) => ({
       itemKind: row.itemKind,
       itemId: row.itemId,
@@ -274,6 +316,22 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
       score: row.score,
       rankingReason: row.rankingReason,
       sourceRefs: normalizeStringArray(row.sourceRefs),
+    })),
+    knowledgeFeedback: feedbackRows.map((row) => ({
+      id: row.id,
+      runId: row.runId,
+      knowledgeId: row.knowledgeId,
+      verdict:
+        row.verdict === "used" || row.verdict === "off_topic" || row.verdict === "wrong"
+          ? row.verdict
+          : "used",
+      actor:
+        row.actor === "agent" || row.actor === "user" || row.actor === "system"
+          ? row.actor
+          : "system",
+      reason: typeof row.reason === "string" ? row.reason : null,
+      createdAt: normalizeDate(row.createdAt).toISOString(),
+      updatedAt: normalizeDate(row.updatedAt).toISOString(),
     })),
     snapshotAvailable: packSnapshot !== null,
   };

@@ -125,6 +125,7 @@ function appliesToFromCandidate(
     ...(candidate.changeTypes && candidate.changeTypes.length > 0
       ? { changeTypes: candidate.changeTypes }
       : {}),
+    ...(candidate.domains && candidate.domains.length > 0 ? { domains: candidate.domains } : {}),
     ...(candidate.repoPath ? { repoPath: candidate.repoPath } : {}),
     ...(candidate.repoKey ? { repoKey: candidate.repoKey } : {}),
   };

@@ -4,6 +4,8 @@
 > 対象: `context_compile` MCP tool、knowledge applicability、context pack rendering
 > 目的: `goal` / `changeTypes` / `technologies` / `domains` の4入力から、LLMが実際のコーディング判断に使える最小コンテキストを生成する。
 
+> 追補: `No Content`、`Context Quality` 削除、設計ドキュメント参照を `goal` に入れない方針、vector-only 候補の抑制は [Context Compile No Content and Goal Quality Plan](./context-compile-no-content-and-goal-quality-plan.md) を優先する。
+
 ---
 
 ## 1. コンセプト
@@ -289,7 +291,7 @@ deterministic logic の責務は次に限定する。
 3. Markdown には rule/procedure の `title` だけでなく `content` を短く載せる。
 4. Source Refs は通常 Markdown から外し、diagnostics / UI 用に残す。
 5. `ファイル・ヒント` セクションは削除する。
-6. `診断情報` はデフォルトで出さない。必要な場合だけ短い `Context quality` として出す。
+6. `診断情報` はデフォルトで出さない。`Context Quality` セクションは追補計画に従い出さない。
 7. 静的 warning を出さない。
 8. `goal`、`changeTypes`、`technologies`、`domains`、`status` の再掲はしない。呼び出し側LLMが渡した入力を返すだけの情報は prompt の無駄になる。
 
@@ -318,6 +320,8 @@ AIに実装を任せる際は、全てのコードベースを渡すのではな
 ```
 
 ### 4.6 Warning / Degraded の再設計
+
+この節の LLM 向け warning 方針は追補計画で上書きする。新規実装では `Context Quality` を出さず、役立つ rule/procedure がない場合は `No Content` だけを返す。
 
 対象:
 

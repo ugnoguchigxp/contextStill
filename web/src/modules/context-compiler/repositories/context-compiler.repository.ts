@@ -1,4 +1,5 @@
 export type CompileRunSource = "ui" | "mcp" | "cli" | "unknown";
+export type CompileRunKnowledgeVerdict = "used" | "off_topic" | "wrong";
 export type CompileMode =
   | "task_context"
   | "review_context"
@@ -56,6 +57,11 @@ export type CompilePack = {
   };
 };
 
+export type CompileResponse = {
+  pack: CompilePack;
+  markdown: string;
+};
+
 export type CompileRunSelectedItem = {
   itemKind: string;
   itemId: string;
@@ -65,17 +71,44 @@ export type CompileRunSelectedItem = {
   sourceRefs: string[];
 };
 
+export type CompileRunKnowledgeFeedback = {
+  id: string;
+  runId: string;
+  knowledgeId: string;
+  verdict: CompileRunKnowledgeVerdict;
+  actor: "agent" | "user" | "system";
+  reason?: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
 export type CompileRunDetail = {
   run: CompileRunSummary & {
     tokenBudget: number;
     input: Partial<CompileRequest> & Record<string, unknown>;
   };
   pack: CompilePack | null;
+  outputMarkdown?: string | null;
   selectedItems: CompileRunSelectedItem[];
+  knowledgeFeedback: CompileRunKnowledgeFeedback[];
   snapshotAvailable: boolean;
 };
 
-export async function compilePack(input: CompileRequest): Promise<CompilePack> {
+export type CompileRunKnowledgeFeedbackWriteItem = {
+  knowledgeId: string;
+  verdict: CompileRunKnowledgeVerdict;
+  reason?: string;
+};
+
+export type CompileRunKnowledgeFeedbackResult = {
+  savedCount: number;
+  updatedCount: number;
+  queueCreatedCount: number;
+  queueDismissedCount: number;
+  affectedKnowledgeIds: string[];
+};
+
+export async function compilePack(input: CompileRequest): Promise<CompileResponse> {
   const response = await fetch("/api/context/compile", {
     method: "POST",
     headers: { "content-type": "application/json" },
@@ -84,8 +117,7 @@ export async function compilePack(input: CompileRequest): Promise<CompilePack> {
   if (!response.ok) {
     throw new Error(`Compile failed: ${response.status}`);
   }
-  const json = (await response.json()) as { pack: CompilePack };
-  return json.pack;
+  return (await response.json()) as CompileResponse;
 }
 
 export async function fetchRecentRuns(limit = 20): Promise<CompileRunSummary[]> {
@@ -104,4 +136,23 @@ export async function fetchRunDetail(runId: string): Promise<CompileRunDetail> {
   }
   const json = (await response.json()) as { detail: CompileRunDetail };
   return json.detail;
+}
+
+export async function submitRunKnowledgeFeedback(
+  runId: string,
+  items: CompileRunKnowledgeFeedbackWriteItem[],
+): Promise<CompileRunKnowledgeFeedbackResult> {
+  const response = await fetch(
+    `/api/context/runs/${encodeURIComponent(runId)}/knowledge-feedback`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ items }),
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Save knowledge feedback failed: ${response.status}`);
+  }
+  const json = (await response.json()) as { feedback: CompileRunKnowledgeFeedbackResult };
+  return json.feedback;
 }

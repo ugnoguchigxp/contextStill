@@ -99,6 +99,11 @@ describe("knowledge value service", () => {
           from: vi.fn().mockReturnThis(),
           where: vi.fn().mockReturnThis(),
           groupBy: vi.fn().mockResolvedValue([{ itemId: "k1", count: 2 }]),
+        })
+        .mockReturnValueOnce({
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          groupBy: vi.fn().mockResolvedValue([]),
         });
       (db.update as any).mockReturnValue({
         set: vi.fn().mockReturnThis(),

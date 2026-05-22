@@ -273,13 +273,11 @@ describe("MCP Tools Handlers", () => {
     test("returns markdown even when sections are empty", async () => {
       vi.mocked(compileContextPack).mockResolvedValue({
         pack: { rules: [], procedures: [], warnings: [] },
-        markdown: "該当する knowledge はありません。",
+        markdown: "No Content",
       } as unknown as never);
 
       const response = await contextCompileTool.handler({ goal: "test goal" });
-      expect(response.content).toEqual([
-        { type: "text", text: "該当する knowledge はありません。" },
-      ]);
+      expect(response.content).toEqual([{ type: "text", text: "No Content" }]);
     });
   });
 

@@ -33,9 +33,12 @@
 - 入力: `goal`（必須）, `changeTypes`, `technologies`, `domains`
 - 役割: 作業前コンテキスト pack 生成（主導線）
 - 挙動:
+  - `goal` は設計書パス（例: `docs/*.md`, `design.md`, `spec.md`）ではなく、実装したいマイルストーンを自然文で渡す
   - `changeTypes` から retrieval mode を自動導出
   - unknown facet は diagnostics に残しつつ query text には保持
   - MCP レスポンスは LLM向け Markdown 1件のみを返す（JSON pack は DB/UI 側で保持）
+  - 出力は knowledge 列挙ではなく、`実装フォーカス` / `実装手順` / `検証観点` を中心とした自然言語コンテキストに整形する
+  - 有効な rule/procedure が選べない場合や compile が失敗した場合、Markdown は `No Content` のみ返す
 
 ### `search_knowledge`
 

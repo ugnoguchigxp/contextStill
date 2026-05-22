@@ -65,7 +65,7 @@ const mockKnowledgeItems = [
     compileSelectCount: 0, // unused
     explicitUpvoteCount: 1,
     explicitDownvoteCount: 1,
-    appliesTo: { general: false, technologies: ["bun"], changeTypes: ["add"] },
+    appliesTo: { general: false, technologies: ["bun"], changeTypes: ["add"], domains: ["admin"] },
     metadata: {},
     sourceRefs: [],
     sourceVibeMemoryIds: [],
@@ -123,21 +123,29 @@ describe("KnowledgePage", () => {
     expect(screen.getByRole("button", { name: /global/i })).toBeInTheDocument();
   });
 
-  it("handles filtering by text, status, and quality", () => {
+  it("runs text search only after submitting", () => {
     render(
       <QueryClientProvider client={queryClient}>
         <KnowledgePage />
       </QueryClientProvider>,
     );
 
-    // テキスト検索を入力してフィルタリングをシミュレート
     const searchInput = screen.getByPlaceholderText("Knowledgeを検索...");
-    fireEvent.change(searchInput, { target: { value: "Procedure" } });
+    fireEvent.change(searchInput, { target: { value: "admin" } });
 
-    // React State 更新後の描画で 'Test Rule Title 1' が除外されることを確認
-    // (JSDOM環境内での filteredItems フィルタリングが動作する)
-    expect(screen.queryByText("Test Rule Title 1")).not.toBeInTheDocument();
+    expect(screen.getByText("Test Rule Title 1")).toBeInTheDocument();
     expect(screen.getByText("Test Procedure Title 2")).toBeInTheDocument();
+    expect(vi.mocked(useQuery).mock.calls.at(-1)?.[0].queryKey).toEqual([
+      "knowledge",
+      expect.objectContaining({ query: "" }),
+    ]);
+
+    fireEvent.click(screen.getByRole("button", { name: /search/i }));
+
+    expect(vi.mocked(useQuery).mock.calls.at(-1)?.[0].queryKey).toEqual([
+      "knowledge",
+      expect.objectContaining({ query: "admin" }),
+    ]);
   });
 
   it("handles quick status, scope, and feedback action mutations", () => {
@@ -152,7 +160,6 @@ describe("KnowledgePage", () => {
     fireEvent.click(promoteBtn);
     expect(mockMutate).toHaveBeenCalledWith({
       id: "kn-1",
-      item: mockKnowledgeItems[0],
       status: "active",
     });
 
@@ -161,7 +168,6 @@ describe("KnowledgePage", () => {
     fireEvent.click(scopeBtn);
     expect(mockMutate).toHaveBeenCalledWith({
       id: "kn-1",
-      item: mockKnowledgeItems[0],
       scope: "global",
     });
 
