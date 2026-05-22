@@ -43,6 +43,7 @@
     "db:migrate": "drizzle-kit migrate",
     "db:push": "drizzle-kit push",
     "db:seed": "bun run src/db/seed.ts",
+    "seed:llm-usage-sample": "bun run src/cli/seed-llm-usage-sample.ts",
     "typecheck": "tsc --noEmit",
     "lint": "biome lint .",
     "format": "biome format --write .",

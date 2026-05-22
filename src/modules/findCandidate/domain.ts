@@ -422,6 +422,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         providerSetting: provider,
         toolDefinitions: [toolDefinition],
         toolExecutor,
+        usageSource: "find-candidate",
         enableTools: reads < readLimit,
         maxToolRounds: Math.max(0, readLimit - reads),
         requireToolCall: target.targetKind === "wiki_file",

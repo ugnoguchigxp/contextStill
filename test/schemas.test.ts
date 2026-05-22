@@ -295,6 +295,67 @@ describe("Shared Schemas", () => {
           },
         ],
       },
+      llmUsage: {
+        kpis: {
+          totalCalls30d: 40,
+          measuredCalls30d: 32,
+          estimatedCalls30d: 8,
+          localTokensTotal30d: 3000,
+          localPromptTokens30d: 1200,
+          localCompletionTokens30d: 1800,
+          cloudTokensTotal30d: 7000,
+          cloudPromptTokens30d: 3000,
+          cloudCompletionTokens30d: 4000,
+          measuredTokensTotal30d: 8500,
+          estimatedTokensTotal30d: 1500,
+          measuredCoveragePercent30d: 80,
+          reasoningTokensTotal30d: 500,
+          cloudCostJpyTotal30d: 12.5,
+          cloudModel: "gpt-5-4-mini",
+          cloudInputCostJpyPerMTokens: 165,
+          cloudOutputCostJpyPerMTokens: 660,
+        },
+        daily: [
+          {
+            day: "2026-05-20",
+            localPromptTokens: 100,
+            localCompletionTokens: 200,
+            localReasoningTokens: 0,
+            cloudPromptTokens: 300,
+            cloudCompletionTokens: 400,
+            cloudReasoningTokens: 50,
+            totalTokens: 1000,
+            measuredTokens: 900,
+            estimatedTokens: 100,
+            measuredCalls: 6,
+            estimatedCalls: 1,
+            costJpy: 1.25,
+          },
+        ],
+        bySource: [
+          {
+            source: "context-compiler",
+            calls: 20,
+            measuredCalls: 16,
+            estimatedCalls: 4,
+            promptTokens: 2400,
+            completionTokens: 1600,
+            totalTokens: 4000,
+          },
+        ],
+      },
+      searchApiStatus: {
+        brave: {
+          status: "cooldown",
+          cooldownUntil: "2026-05-21T00:00:00.000Z",
+          lastError: "Brave search HTTP 429",
+        },
+        exa: {
+          status: "ok",
+          cooldownUntil: null,
+          lastError: null,
+        },
+      },
     };
 
     expect(overviewDashboardSchema.parse(input)).toEqual(expect.objectContaining(input));

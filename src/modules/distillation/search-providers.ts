@@ -8,6 +8,10 @@ import {
   findDistillationEvidenceCache,
   upsertDistillationEvidenceCache,
 } from "./distillation-evidence-cache.repository.js";
+import {
+  deriveSearchProviderCooldownSeconds,
+  parseRetryAfterSeconds,
+} from "./search-rate-limit.js";
 import { stripMarkup, truncate } from "./url-fetcher.js";
 
 export type DistillationToolResult = {
@@ -126,32 +130,6 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
-function parseRetryAfterSeconds(value: string | null): number | undefined {
-  if (!value) return undefined;
-  const numeric = Number(value);
-  if (Number.isFinite(numeric) && numeric > 0) {
-    return Math.ceil(numeric);
-  }
-  const dateMs = Date.parse(value);
-  if (Number.isFinite(dateMs)) {
-    const seconds = Math.ceil((dateMs - Date.now()) / 1000);
-    return seconds > 0 ? seconds : undefined;
-  }
-  return undefined;
-}
-
-function parseBraveResetSeconds(value: string | undefined): number | undefined {
-  if (!value) return undefined;
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed) || parsed <= 0) return undefined;
-  if (parsed > 1_000_000_000) {
-    const epochSeconds = parsed > 10_000_000_000 ? Math.floor(parsed / 1000) : Math.floor(parsed);
-    const seconds = epochSeconds - Math.floor(Date.now() / 1000);
-    return seconds > 0 ? seconds : undefined;
-  }
-  return Math.ceil(parsed);
-}
-
 function toSearchProviderRateLimit(
   provider: SearchProviderName,
   response: Response,
@@ -162,8 +140,15 @@ function toSearchProviderRateLimit(
     const remaining = response.headers.get("x-ratelimit-remaining") ?? undefined;
     const reset = response.headers.get("x-ratelimit-reset") ?? undefined;
     const policy = response.headers.get("x-ratelimit-policy") ?? undefined;
-    const retryAfterSeconds =
-      parseRetryAfterSeconds(retryAfter ?? null) ?? parseBraveResetSeconds(reset);
+    const rateLimit: SearchProviderRateLimit = {
+      status: response.status,
+      limit,
+      remaining,
+      reset,
+      policy,
+      retryAfter,
+    };
+    const retryAfterSeconds = deriveSearchProviderCooldownSeconds(provider, rateLimit);
     if (
       !limit &&
       !remaining &&
@@ -175,12 +160,7 @@ function toSearchProviderRateLimit(
       return undefined;
     }
     return {
-      status: response.status,
-      limit,
-      remaining,
-      reset,
-      policy,
-      retryAfter,
+      ...rateLimit,
       retryAfterSeconds,
     };
   }
@@ -188,7 +168,7 @@ function toSearchProviderRateLimit(
   const limit = response.headers.get("x-ratelimit-limit") ?? undefined;
   const remaining = response.headers.get("x-ratelimit-remaining") ?? undefined;
   const reset = response.headers.get("x-ratelimit-reset") ?? undefined;
-  const retryAfterSeconds = parseRetryAfterSeconds(retryAfter ?? null);
+  const retryAfterSeconds = parseRetryAfterSeconds(retryAfter);
   if (!limit && !remaining && !reset && !retryAfter && retryAfterSeconds === undefined) {
     return undefined;
   }

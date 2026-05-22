@@ -1,5 +1,6 @@
 import { groupedConfig } from "../../config.js";
 import type { LlmHealthStatus, LlmProvider, LlmProviderName } from "./llm-provider.js";
+import { recordLlmUsage } from "./llm-usage-logger.js";
 import { createAzureOpenAiProvider } from "./providers/azure-openai.provider.js";
 import { createBedrockProvider } from "./providers/bedrock.provider.js";
 import { createLocalLlmProvider } from "./providers/local-llm.provider.js";
@@ -41,13 +42,45 @@ function buildProvider(provider: LlmProviderName, timeoutMs: number): LlmProvide
   }
 }
 
+function defaultModelForProvider(provider: LlmProviderName): string {
+  switch (provider) {
+    case "azure-openai":
+      return groupedConfig.azureOpenAi.model;
+    case "bedrock":
+      return groupedConfig.bedrock.model;
+    case "local-llm":
+      return groupedConfig.localLlm.model;
+  }
+}
+
+function withUsageLogging(provider: LlmProvider, source: string): LlmProvider {
+  return {
+    ...provider,
+    async chat(request) {
+      const response = await provider.chat(request);
+      recordLlmUsage({
+        provider: provider.name,
+        model: defaultModelForProvider(provider.name),
+        usage: response.usage,
+        promptMessages: request.messages,
+        completionText: response.content,
+        source,
+      });
+      return response;
+    },
+  };
+}
+
 export function getAgenticLlmProviders(
   providerSetting: AgenticCompileProvider = groupedConfig.agenticCompile.provider,
   timeoutMs = groupedConfig.agenticCompile.timeoutMs,
+  usageSource?: string,
 ): LlmProvider[] {
-  return resolveProviderOrder(providerSetting).map((providerName) =>
-    buildProvider(providerName, timeoutMs),
-  );
+  const resolvedUsageSource = usageSource ?? "agentic-llm";
+  return resolveProviderOrder(providerSetting).map((providerName) => {
+    const provider = buildProvider(providerName, timeoutMs);
+    return withUsageLogging(provider, resolvedUsageSource);
+  });
 }
 
 export async function checkAgenticLlmHealth(
@@ -55,7 +88,7 @@ export async function checkAgenticLlmHealth(
   timeoutMs = 5000,
 ): Promise<AgenticLlmHealthStatus> {
   const fallbackOrder = resolveProviderOrder(providerSetting);
-  const providers = getAgenticLlmProviders(providerSetting, timeoutMs);
+  const providers = getAgenticLlmProviders(providerSetting, timeoutMs, "health-check:agentic-llm");
   let firstConfiguredStatus: LlmHealthStatus | null = null;
 
   for (const provider of providers) {
@@ -115,7 +148,9 @@ export async function checkDistillationLlmHealth(
   timeoutMs = groupedConfig.distillation.circuitBreakerHealthTimeoutMs,
 ): Promise<AgenticLlmHealthStatus> {
   const fallbackOrder = resolveDistillationProviderOrder(providerSetting);
-  const providers = fallbackOrder.map((providerName) => buildProvider(providerName, timeoutMs));
+  const providers = fallbackOrder.map((providerName) =>
+    withUsageLogging(buildProvider(providerName, timeoutMs), "health-check:distillation-llm"),
+  );
   let firstConfiguredStatus: LlmHealthStatus | null = null;
 
   for (const provider of providers) {

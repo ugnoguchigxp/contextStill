@@ -13,6 +13,12 @@ export type LlmChatRequest = {
 export type LlmChatResponse = {
   content: string;
   finishReason?: string;
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    reasoningTokens?: number;
+  };
 };
 
 export type LlmProviderName = "azure-openai" | "bedrock" | "local-llm";

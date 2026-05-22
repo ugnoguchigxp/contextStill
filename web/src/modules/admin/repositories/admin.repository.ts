@@ -422,6 +422,63 @@ export type OverviewDashboard = {
       failed: number;
     }>;
   };
+  llmUsage: {
+    kpis: {
+      totalCalls30d: number;
+      measuredCalls30d: number;
+      estimatedCalls30d: number;
+      localTokensTotal30d: number;
+      localPromptTokens30d: number;
+      localCompletionTokens30d: number;
+      cloudTokensTotal30d: number;
+      cloudPromptTokens30d: number;
+      cloudCompletionTokens30d: number;
+      measuredTokensTotal30d: number;
+      estimatedTokensTotal30d: number;
+      measuredCoveragePercent30d: number;
+      reasoningTokensTotal30d: number;
+      cloudCostJpyTotal30d: number;
+      cloudModel: string;
+      cloudInputCostJpyPerMTokens: number;
+      cloudOutputCostJpyPerMTokens: number;
+    };
+    daily: Array<{
+      day: string;
+      localPromptTokens: number;
+      localCompletionTokens: number;
+      localReasoningTokens: number;
+      cloudPromptTokens: number;
+      cloudCompletionTokens: number;
+      cloudReasoningTokens: number;
+      totalTokens: number;
+      measuredTokens: number;
+      estimatedTokens: number;
+      measuredCalls: number;
+      estimatedCalls: number;
+      costJpy: number;
+    }>;
+    bySource: Array<{
+      source: string;
+      calls: number;
+      measuredCalls: number;
+      estimatedCalls: number;
+      promptTokens: number;
+      completionTokens: number;
+      totalTokens: number;
+    }>;
+  };
+  searchApiStatus: {
+    brave: {
+      status: "ok" | "cooldown";
+      cooldownUntil: string | null;
+      lastError: string | null;
+    };
+    exa: {
+      status: "ok" | "cooldown";
+      cooldownUntil: string | null;
+      lastError: string | null;
+    };
+  };
 };
 
 export type GraphNode = {

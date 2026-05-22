@@ -5,12 +5,18 @@ import type {
   LlmHealthStatus,
   LlmProvider,
 } from "../llm-provider.js";
+import { normalizeLlmUsage } from "../usage-normalizer.js";
 
 type LocalLlmResponse = {
   choices?: Array<{
     message?: { content?: unknown };
     finish_reason?: unknown;
   }>;
+  usage?: {
+    prompt_tokens?: number;
+    completion_tokens?: number;
+    total_tokens?: number;
+  };
 };
 
 type LocalLlmProviderOptions = {
@@ -37,9 +43,17 @@ async function parseResponse(response: Response): Promise<LlmChatResponse> {
   if (typeof rawContent !== "string" || !rawContent.trim()) {
     throw new Error("local-llm response did not include assistant content");
   }
+  const usage = payload.usage
+    ? normalizeLlmUsage({
+        promptTokens: payload.usage.prompt_tokens,
+        completionTokens: payload.usage.completion_tokens,
+        totalTokens: payload.usage.total_tokens,
+      })
+    : undefined;
   return {
     content: rawContent,
     finishReason: typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined,
+    usage,
   };
 }
 

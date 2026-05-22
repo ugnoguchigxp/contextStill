@@ -72,6 +72,7 @@ export async function runValueAssessment(params: {
       {
         providerSetting: params.provider,
         chatClient: params.chatClient,
+        usageSource: "cover-evidence:value-assessment",
         enableTools: false,
         blankResponseReminder: applicabilityBlankResponseReminderLines(
           "final",
@@ -145,6 +146,7 @@ export async function runExternalEvidence(params: {
         providerSetting: params.provider,
         chatClient: params.chatClient,
         toolExecutor: params.toolExecutor,
+        usageSource: "cover-evidence:external-evidence",
         enableTools: true,
         maxToolRounds: groupedConfig.distillationTools.maxRounds,
         requireToolCall: true,
@@ -248,6 +250,7 @@ export async function runOptionalMcpEvidence(params: {
         providerSetting: params.provider,
         chatClient: params.chatClient,
         toolExecutor: params.toolExecutor,
+        usageSource: "cover-evidence:mcp-evidence",
         enableTools: true,
         maxToolRounds: 2,
         requireToolCall: true,

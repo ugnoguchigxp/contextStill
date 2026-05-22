@@ -104,6 +104,7 @@ describe("runFindCandidate", () => {
       }),
       expect.objectContaining({
         requireToolCall: true,
+        usageSource: "find-candidate",
         toolDefinitions: [
           expect.objectContaining({
             function: expect.objectContaining({ name: "read_file" }),
@@ -205,6 +206,7 @@ describe("runFindCandidate", () => {
       expect.objectContaining({
         requireToolCall: false,
         maxToolRounds: 1,
+        usageSource: "find-candidate",
       }),
     );
     expect(result.readRanges).toEqual([{ from: 0, toExclusive: 24 }]);

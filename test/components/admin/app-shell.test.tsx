@@ -14,5 +14,8 @@ describe("AppShell", () => {
   it("renders with navigation", () => {
     render(<AppShell />);
     expect(screen.getByText("outlet-content")).toBeInTheDocument();
+    const labels = screen.getByLabelText("main navigation").textContent ?? "";
+    expect(labels.indexOf("Graph")).toBeLessThan(labels.indexOf("Compile"));
+    expect(labels.indexOf("Compile")).toBeLessThan(labels.indexOf("Audit"));
   });
 });

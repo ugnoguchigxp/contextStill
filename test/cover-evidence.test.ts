@@ -376,6 +376,11 @@ describe("runCoverEvidence", () => {
     const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
+    expect(mocks.runDistillationCompletion.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        usageSource: "cover-evidence:value-assessment",
+      }),
+    );
     expect(request.messages[1]?.content).toContain('"technologies": [');
     expect(request.messages[1]?.content).toContain('"candidate-registration"');
     expect(request.messages[1]?.content).toContain('"/Users/y.noguchi/Code/memoryRouter"');
@@ -718,6 +723,7 @@ describe("runCoverEvidence", () => {
         auditContext: expect.objectContaining({ forceRefreshEvidence: true }),
         maxToolRounds: expect.any(Number),
         toolNames: ["search_web", "fetch_content"],
+        usageSource: "cover-evidence:external-evidence",
       }),
     );
     const options = mocks.runDistillationCompletion.mock.calls[0]?.[1] as {
@@ -802,12 +808,18 @@ describe("runCoverEvidence", () => {
     expect(mocks.runDistillationCompletion).toHaveBeenNthCalledWith(
       1,
       expect.anything(),
-      expect.objectContaining({ toolNames: ["search_web", "fetch_content"] }),
+      expect.objectContaining({
+        toolNames: ["search_web", "fetch_content"],
+        usageSource: "cover-evidence:external-evidence",
+      }),
     );
     expect(mocks.runDistillationCompletion).toHaveBeenNthCalledWith(
       2,
       expect.anything(),
-      expect.objectContaining({ toolNames: ["context7"] }),
+      expect.objectContaining({
+        toolNames: ["context7"],
+        usageSource: "cover-evidence:mcp-evidence",
+      }),
     );
     expect(result.result.references).toContainEqual(
       expect.objectContaining({

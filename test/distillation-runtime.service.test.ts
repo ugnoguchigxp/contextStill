@@ -4,6 +4,11 @@ import {
   resolveDistillationModel,
   runDistillationCompletion,
 } from "../src/modules/distillation/distillation-runtime.service.js";
+import { recordLlmUsage } from "../src/modules/llm/llm-usage-logger.js";
+
+vi.mock("../src/modules/llm/llm-usage-logger.js", () => ({
+  recordLlmUsage: vi.fn(),
+}));
 
 const originalConfig = {
   distillationProvider: groupedConfig.distillation.provider,
@@ -153,6 +158,15 @@ describe("Distillation Runtime Service", () => {
     expect(mockFetch).toHaveBeenCalledWith(
       expect.stringContaining("/v1/chat/completions"),
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
+    );
+    expect(recordLlmUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "local-llm",
+        model: "m1",
+        promptMessages: [],
+        completionText: "Fetched content",
+        source: "distillation",
+      }),
     );
   });
 

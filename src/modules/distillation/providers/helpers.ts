@@ -1,4 +1,5 @@
 import { parseLlmJsonLike } from "../../../lib/llm-output-parser.js";
+import { normalizeLlmUsage } from "../../llm/usage-normalizer.js";
 import type { DistillationToolCall } from "../distillation-tools.service.js";
 import type { DistillationChatResponse } from "../types.js";
 
@@ -103,12 +104,27 @@ export function parseOpenAiStyleResponse(payload: unknown): DistillationChatResp
       message?: { content?: unknown; tool_calls?: unknown };
       finish_reason?: unknown;
     }>;
+    usage?: {
+      prompt_tokens?: unknown;
+      completion_tokens?: unknown;
+      total_tokens?: unknown;
+      completion_tokens_details?: {
+        reasoning_tokens?: unknown;
+      };
+    };
   };
   const choice = parsed.choices?.[0];
   const rawContent = choice?.message?.content;
+  const usage = normalizeLlmUsage({
+    promptTokens: parsed.usage?.prompt_tokens,
+    completionTokens: parsed.usage?.completion_tokens,
+    totalTokens: parsed.usage?.total_tokens,
+    reasoningTokens: parsed.usage?.completion_tokens_details?.reasoning_tokens,
+  });
   return {
     content: typeof rawContent === "string" ? rawContent : null,
     toolCalls: parseToolCalls(choice?.message?.tool_calls),
     finishReason: typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined,
+    usage,
   };
 }

@@ -37,6 +37,33 @@ function parseNullableDuration(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+function parseNumber(value: unknown): number {
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function formatCompactNumber(value: unknown): string {
+  return new Intl.NumberFormat("en-US", { notation: "compact", maximumFractionDigits: 1 }).format(
+    parseNumber(value),
+  );
+}
+
+function formatJpy(value: unknown): string {
+  return new Intl.NumberFormat("ja-JP", {
+    style: "currency",
+    currency: "JPY",
+    maximumFractionDigits: parseNumber(value) < 1 ? 2 : 0,
+  }).format(parseNumber(value));
+}
+
+const llmTooltipLabel: Record<string, string> = {
+  localTokens: "local tokens",
+  cloudTokens: "cloud tokens",
+  totalTokens: "total tokens",
+  costJpy: "cloud cost",
+};
+
 export function OverviewCharts({ dashboard }: { dashboard: OverviewDashboard }) {
   const knowledgeData = dashboard.charts.knowledgeByStatusType.map((item) => ({
     ...item,
@@ -46,9 +73,125 @@ export function OverviewCharts({ dashboard }: { dashboard: OverviewDashboard }) 
     ...item,
     targetLabel: distillationLabel[item.targetKind],
   }));
+  const llmData = dashboard.llmUsage.daily.map((item) => ({
+    ...item,
+    localTokens: item.localPromptTokens + item.localCompletionTokens,
+    cloudTokens: item.cloudPromptTokens + item.cloudCompletionTokens,
+    totalTokens: item.totalTokens,
+  }));
 
   return (
     <section className="overview-chart-grid">
+      <Card className="overview-chart-card">
+        <CardHeader>
+          <CardTitle>Daily LLM Tokens (14d)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="overview-chart-frame">
+            <LineChart responsive style={{ width: "100%", height: "100%" }} data={llmData}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="day" minTickGap={24} />
+              <YAxis tickFormatter={formatCompactNumber} />
+              <Tooltip
+                formatter={(value, name, item) => {
+                  const dataKey = String(item.dataKey ?? name);
+                  if (dataKey === "localTokens" || dataKey === "cloudTokens") {
+                    const payload = item.payload as (typeof llmData)[number] | undefined;
+                    const promptTokens =
+                      dataKey === "localTokens"
+                        ? payload?.localPromptTokens
+                        : payload?.cloudPromptTokens;
+                    const completionTokens =
+                      dataKey === "localTokens"
+                        ? payload?.localCompletionTokens
+                        : payload?.cloudCompletionTokens;
+                    const reasoningTokens =
+                      dataKey === "localTokens"
+                        ? payload?.localReasoningTokens
+                        : payload?.cloudReasoningTokens;
+                    return [
+                      `in ${formatCompactNumber(promptTokens)} / out ${formatCompactNumber(completionTokens)} / reasoning ${formatCompactNumber(reasoningTokens)}`,
+                      llmTooltipLabel[dataKey],
+                    ];
+                  }
+                  return [formatCompactNumber(value), llmTooltipLabel[dataKey] ?? dataKey];
+                }}
+              />
+              <Legend />
+              <Line
+                type="monotone"
+                dataKey="totalTokens"
+                name="Total tokens"
+                stroke="#0f766e"
+                dot={false}
+                strokeWidth={2}
+              />
+              <Line
+                type="monotone"
+                dataKey="localTokens"
+                name="Local tokens"
+                stroke="#7c3aed"
+                dot={false}
+                strokeWidth={2}
+              />
+              <Line
+                type="monotone"
+                dataKey="cloudTokens"
+                name="Cloud tokens"
+                stroke="#2563eb"
+                dot={false}
+                strokeWidth={2}
+              />
+            </LineChart>
+          </div>
+        </CardContent>
+      </Card>
+
+      <Card className="overview-chart-card">
+        <CardHeader>
+          <CardTitle>Cloud LLM Tokens & Cost (14d)</CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="overview-chart-frame">
+            <ComposedChart responsive style={{ width: "100%", height: "100%" }} data={llmData}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="day" minTickGap={24} />
+              <YAxis yAxisId="tokens" tickFormatter={formatCompactNumber} />
+              <YAxis yAxisId="cost" orientation="right" tickFormatter={formatJpy} />
+              <Tooltip
+                formatter={(value, name, item) => {
+                  const dataKey = String(item.dataKey ?? name);
+                  if (dataKey === "costJpy") return [formatJpy(value), llmTooltipLabel[dataKey]];
+                  const payload = item.payload as (typeof llmData)[number] | undefined;
+                  const detail =
+                    dataKey === "cloudTokens" && payload
+                      ? `in ${payload.cloudPromptTokens} / out ${payload.cloudCompletionTokens} / reasoning ${payload.cloudReasoningTokens}`
+                      : formatCompactNumber(value);
+                  return [detail, llmTooltipLabel[dataKey] ?? dataKey];
+                }}
+              />
+              <Legend />
+              <Bar
+                yAxisId="tokens"
+                dataKey="cloudTokens"
+                name="Cloud tokens"
+                stackId="tokens"
+                fill="#2563eb"
+              />
+              <Line
+                yAxisId="cost"
+                type="monotone"
+                dataKey="costJpy"
+                name="Cloud cost"
+                stroke="#f97316"
+                dot={false}
+                strokeWidth={2}
+              />
+            </ComposedChart>
+          </div>
+        </CardContent>
+      </Card>
+
       <Card className="overview-chart-card">
         <CardHeader>
           <CardTitle>Knowledge Lifecycle</CardTitle>

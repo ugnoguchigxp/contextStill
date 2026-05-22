@@ -23,10 +23,14 @@ vi.mock("@tanstack/react-query", async () => {
             payload: {},
           },
         ],
-        total: 1,
-        page: 1,
-        limit: 50,
-        totalPages: 1,
+        availableEventTypes: ["test_event"],
+        pagination: {
+          page: 1,
+          limit: 100,
+          total: 1,
+          totalPages: 1,
+          hasNextPage: false,
+        },
       },
       isLoading: false,
       error: null,
@@ -44,6 +48,10 @@ describe("AuditLogsPage", () => {
       </QueryClientProvider>,
     );
     // モックデータが表示されていることを確認
-    expect(screen.getByText("test_event")).toBeInTheDocument();
+    expect(screen.getAllByText("test_event").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Audit Events")).toBeInTheDocument();
+    expect(screen.getByText("Previous")).toBeInTheDocument();
+    expect(screen.getByText("Next")).toBeInTheDocument();
+    expect(screen.getByText(/Showing/)).toBeInTheDocument();
   });
 });

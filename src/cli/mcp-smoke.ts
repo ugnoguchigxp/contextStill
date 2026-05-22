@@ -1,7 +1,6 @@
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { eq } from "drizzle-orm";
-import { groupedConfig } from "../config.js";
 import { closeDbPool, getDb } from "../db/index.js";
 import { knowledgeItems, sources } from "../db/schema.js";
 import { normalizeRepoKey, normalizeRepoPath } from "../modules/context-compiler/query-context.js";
@@ -19,6 +18,8 @@ const requiredPrimaryTools = [
   "memory_fetch",
   "doctor",
 ] as const;
+
+const disallowedTopLevelSchemaKeys = ["oneOf", "anyOf", "allOf", "enum", "not"] as const;
 
 function extractTextContent(result: unknown): string {
   if (!result || typeof result !== "object" || Array.isArray(result)) return "";
@@ -55,6 +56,42 @@ function parseToolJson(result: unknown): Record<string, unknown> {
     return JSON.parse(text.slice(firstBrace, lastBrace + 1)) as Record<string, unknown>;
   }
   throw new Error("Tool result did not contain JSON payload.");
+}
+
+function parseResourceJson(result: unknown): Record<string, unknown> {
+  if (!result || typeof result !== "object" || Array.isArray(result)) {
+    throw new Error("Resource result did not contain JSON payload.");
+  }
+
+  const contents = (result as { contents?: unknown }).contents;
+  if (!Array.isArray(contents)) {
+    throw new Error("Resource result did not contain JSON payload.");
+  }
+
+  const text = contents
+    .map((item) =>
+      item && typeof item === "object" && typeof (item as { text?: unknown }).text === "string"
+        ? (item as { text: string }).text
+        : "",
+    )
+    .find((item) => item.trim().startsWith("{"));
+  if (!text) {
+    throw new Error("Resource result did not contain JSON payload.");
+  }
+  return JSON.parse(text) as Record<string, unknown>;
+}
+
+function findInvalidTopLevelSchemaKeys(inputSchema: unknown): string[] {
+  if (!inputSchema || typeof inputSchema !== "object" || Array.isArray(inputSchema)) {
+    return ["type"];
+  }
+
+  const schema = inputSchema as Record<string, unknown>;
+  const invalidKeys: string[] = disallowedTopLevelSchemaKeys.filter((key) =>
+    Object.prototype.hasOwnProperty.call(schema, key),
+  );
+  if (schema.type !== "object") invalidKeys.unshift("type");
+  return invalidKeys;
 }
 
 async function main(): Promise<void> {
@@ -127,6 +164,19 @@ async function main(): Promise<void> {
     if (missingPrimaryTools.length > 0) {
       throw new Error(`Missing primary tools: ${missingPrimaryTools.join(", ")}`);
     }
+    const invalidSchemaTools = tools.tools
+      .map((tool) => ({
+        name: tool.name,
+        invalidKeys: findInvalidTopLevelSchemaKeys(tool.inputSchema),
+      }))
+      .filter((tool) => tool.invalidKeys.length > 0);
+    if (invalidSchemaTools.length > 0) {
+      throw new Error(
+        `Invalid MCP input schemas: ${invalidSchemaTools
+          .map((tool) => `${tool.name}(${tool.invalidKeys.join(",")})`)
+          .join(", ")}`,
+      );
+    }
 
     const initialInstructions = await client.callTool({
       name: "initial_instructions",
@@ -137,21 +187,24 @@ async function main(): Promise<void> {
       throw new Error("initial_instructions response is missing expected heading.");
     }
 
-    const queryEmbedding = new Array(groupedConfig.embedding.dimension).fill(0);
     const noHit = await client.callTool({
       name: "context_compile",
       arguments: {
         goal: `${token}-no-hit`,
-        intent: "edit",
-        repoPath,
-        queryEmbedding,
       },
     });
-    const noHitPack = parseToolJson(noHit);
-    const noHitDiagnostics = (noHitPack.diagnostics ?? {}) as Record<string, unknown>;
-    const noHitReasons = Array.isArray(noHitDiagnostics.degradedReasons)
-      ? noHitDiagnostics.degradedReasons
-      : [];
+    const noHitText = extractTextContent(noHit);
+    if (noHitText.trim() !== "No Content") {
+      throw new Error("context_compile no-hit check failed.");
+    }
+    const noHitSnapshot = parseResourceJson(
+      await client.readResource({ uri: "memory-router://packs/latest" }),
+    );
+    const noHitRun = (noHitSnapshot.run ?? {}) as Record<string, unknown>;
+    const noHitReasons = Array.isArray(noHitRun.degradedReasons) ? noHitRun.degradedReasons : [];
+    if (noHitRun.goal !== `${token}-no-hit`) {
+      throw new Error("context_compile no-hit snapshot check failed.");
+    }
     if (!noHitReasons.includes("NO_ACTIVE_KNOWLEDGE_MATCH")) {
       throw new Error("context_compile no-hit check failed.");
     }
@@ -160,15 +213,21 @@ async function main(): Promise<void> {
       name: "context_compile",
       arguments: {
         goal: token,
-        intent: "edit",
-        repoPath,
-        queryEmbedding,
       },
     });
-    const hitPack = parseToolJson(hit);
-    const rules = Array.isArray(hitPack.rules) ? hitPack.rules : [];
-    const procedures = Array.isArray(hitPack.procedures) ? hitPack.procedures : [];
-    if (rules.length === 0 && procedures.length === 0) {
+    const hitText = extractTextContent(hit);
+    if (!hitText.includes(token)) {
+      throw new Error("context_compile hit response did not include the smoke token.");
+    }
+    const hitSnapshot = parseResourceJson(
+      await client.readResource({ uri: "memory-router://packs/latest" }),
+    );
+    const hitRun = (hitSnapshot.run ?? {}) as Record<string, unknown>;
+    const hitItems = Array.isArray(hitSnapshot.items) ? hitSnapshot.items : [];
+    if (hitRun.goal !== token) {
+      throw new Error("context_compile hit snapshot check failed.");
+    }
+    if (hitItems.length === 0) {
       throw new Error("context_compile hit check failed.");
     }
 

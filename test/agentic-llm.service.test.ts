@@ -4,10 +4,14 @@ import {
   checkDistillationLlmHealth,
   getAgenticLlmProviders,
 } from "../src/modules/llm/agentic-llm.service.js";
+import { recordLlmUsage } from "../src/modules/llm/llm-usage-logger.js";
 import { createAzureOpenAiProvider } from "../src/modules/llm/providers/azure-openai.provider.js";
 import { createBedrockProvider } from "../src/modules/llm/providers/bedrock.provider.js";
 import { createLocalLlmProvider } from "../src/modules/llm/providers/local-llm.provider.js";
 
+vi.mock("../src/modules/llm/llm-usage-logger.js", () => ({
+  recordLlmUsage: vi.fn(),
+}));
 vi.mock("../src/modules/llm/providers/azure-openai.provider.js", () => ({
   createAzureOpenAiProvider: vi.fn(),
 }));
@@ -26,6 +30,8 @@ describe("agentic-llm service tests", () => {
   const mockProvider = (name: string, configured: boolean, reachable: boolean, error?: string) => {
     return {
       name,
+      isConfigured: vi.fn(() => configured),
+      chat: vi.fn().mockResolvedValue({ content: "ok" }),
       healthCheck: vi.fn().mockResolvedValue({
         provider: name,
         configured,
@@ -50,6 +56,53 @@ describe("agentic-llm service tests", () => {
 
     // timeout parameter should be passed down
     expect(createAzureOpenAiProvider).toHaveBeenCalledWith({ timeoutMs: 2000 });
+  });
+
+  test("getAgenticLlmProviders can wrap chat calls with usage logging", async () => {
+    const usage = {
+      promptTokens: 10,
+      completionTokens: 20,
+      totalTokens: 30,
+      reasoningTokens: 5,
+    };
+    const azure = mockProvider("azure-openai", true, true);
+    azure.chat.mockResolvedValue({ content: "ok", usage });
+    vi.mocked(createAzureOpenAiProvider).mockReturnValue(azure as any);
+
+    const [provider] = getAgenticLlmProviders("azure-openai", 2000, "context-compiler");
+    await provider?.chat({
+      messages: [{ role: "user", content: "hi" }],
+      maxTokens: 10,
+    });
+
+    expect(azure.chat).toHaveBeenCalledTimes(1);
+    expect(recordLlmUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "azure-openai",
+        model: expect.any(String),
+        usage,
+        promptMessages: [{ role: "user", content: "hi" }],
+        completionText: "ok",
+        source: "context-compiler",
+      }),
+    );
+  });
+
+  test("wrapped chat does not wait for usage persistence", async () => {
+    const azure = mockProvider("azure-openai", true, true);
+    azure.chat.mockResolvedValue({ content: "ok" });
+    vi.mocked(createAzureOpenAiProvider).mockReturnValue(azure as any);
+
+    vi.mocked(recordLlmUsage).mockReturnValueOnce(new Promise<void>(() => undefined) as never);
+
+    const [provider] = getAgenticLlmProviders("azure-openai", 2000, "context-compiler");
+    const result = await provider?.chat({
+      messages: [{ role: "user", content: "hi" }],
+      maxTokens: 10,
+    });
+
+    expect(result?.content).toBe("ok");
+    expect(recordLlmUsage).toHaveBeenCalledTimes(1);
   });
 
   describe("checkAgenticLlmHealth fallback logic", () => {

@@ -132,7 +132,7 @@ export const registerCandidateTool: ToolEntry = {
       text: {
         type: "string",
         description:
-          "Optional raw note or JSON-like text. The server will normalize the first candidate into title/body.",
+          "Raw note or JSON-like text alternative to title/body. The server will normalize the first candidate into title/body.",
       },
       type: { type: "string", enum: ["rule", "procedure"] },
       confidence: { type: "number", minimum: 0, maximum: 100 },
@@ -146,7 +146,6 @@ export const registerCandidateTool: ToolEntry = {
       repoKey: { type: "string" },
       metadata: { type: "object" },
     },
-    anyOf: [{ required: ["title", "body"] }, { required: ["text"] }],
   },
   handler: async (args) => {
     const parsed = registerCandidateInputSchema.parse(args ?? {});

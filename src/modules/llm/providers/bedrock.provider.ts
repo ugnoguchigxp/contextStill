@@ -7,6 +7,7 @@ import type {
   LlmHealthStatus,
   LlmProvider,
 } from "../llm-provider.js";
+import { normalizeLlmUsage } from "../usage-normalizer.js";
 
 type BedrockProviderOptions = {
   timeoutMs?: number;
@@ -121,9 +122,15 @@ export function createBedrockProvider(options: BedrockProviderOptions = {}): Llm
         }
 
         const stopReason = (response as { stopReason?: string }).stopReason;
+        const usage = normalizeLlmUsage({
+          promptTokens: response.usage?.inputTokens,
+          completionTokens: response.usage?.outputTokens,
+          totalTokens: response.usage?.totalTokens,
+        });
         return {
           content,
           finishReason: typeof stopReason === "string" ? stopReason : undefined,
+          usage,
         };
       } finally {
         clearTimeout(timer);

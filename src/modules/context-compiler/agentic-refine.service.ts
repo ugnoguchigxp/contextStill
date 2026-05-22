@@ -176,6 +176,7 @@ export async function agenticRefine(
   const providers = getAgenticLlmProviders(
     groupedConfig.agenticCompile.provider,
     groupedConfig.agenticCompile.timeoutMs,
+    "context-compiler",
   );
   const allowFallback = providers.length > 1;
   const fallbackErrors: string[] = [];

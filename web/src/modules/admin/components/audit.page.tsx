@@ -1,6 +1,5 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Select } from "@/components/ui/select";
 import {
   Table,
@@ -19,8 +18,8 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { ArrowUpDown, ChevronLeft, ChevronRight } from "lucide-react";
-import { useEffect, useMemo, useState } from "react";
+import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, X } from "lucide-react";
+import { useMemo, useState } from "react";
 import {
   type AuditLogActor,
   type AuditLogItem,
@@ -39,6 +38,33 @@ function compactJson(value: Record<string, unknown>, maxChars = 160): string {
   const text = JSON.stringify(value);
   if (text.length <= maxChars) return text;
   return `${text.slice(0, Math.max(0, maxChars - 3))}...`;
+}
+
+function visiblePageNumbers(currentPage: number, totalPages: number): Array<number | "ellipsis"> {
+  if (totalPages <= 7) {
+    return Array.from({ length: totalPages }, (_, index) => index + 1);
+  }
+
+  const pages = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
+  if (currentPage <= 3) {
+    pages.add(2);
+    pages.add(3);
+    pages.add(4);
+  }
+  if (currentPage >= totalPages - 2) {
+    pages.add(totalPages - 3);
+    pages.add(totalPages - 2);
+    pages.add(totalPages - 1);
+  }
+
+  const sortedPages = Array.from(pages)
+    .filter((pageNumber) => pageNumber >= 1 && pageNumber <= totalPages)
+    .sort((a, b) => a - b);
+
+  return sortedPages.flatMap((pageNumber, index) => {
+    const previousPage = sortedPages[index - 1];
+    return previousPage && pageNumber - previousPage > 1 ? ["ellipsis", pageNumber] : [pageNumber];
+  });
 }
 
 export function AuditLogsPage() {
@@ -112,153 +138,192 @@ export function AuditLogsPage() {
   });
 
   const pagination = auditQuery.data?.pagination;
-  const canPrev = (pagination?.page ?? 1) > 1;
+  const currentPage = pagination?.page ?? page;
+  const totalPages = Math.max(1, pagination?.totalPages ?? 1);
+  const totalAuditCount = pagination?.total ?? items.length;
+  const pageLimit = pagination?.limit ?? limit;
+  const pageStart = totalAuditCount === 0 ? 0 : (currentPage - 1) * pageLimit + 1;
+  const pageEnd = Math.min((currentPage - 1) * pageLimit + items.length, totalAuditCount);
+  const canPrev = currentPage > 1;
   const canNext = Boolean(pagination?.hasNextPage);
+  const pageNumbers = visiblePageNumbers(currentPage, totalPages);
 
   return (
-    <div className="flex h-[calc(100vh-64px)] flex-col overflow-hidden bg-background">
-      {/* Full-screen Card Container */}
-      <Card className="flex flex-1 flex-col overflow-hidden rounded-none border-0 shadow-none">
-        <CardHeader className="flex flex-row items-center justify-between space-y-0 py-4 px-6 border-b bg-muted/20">
-          <div className="flex items-center gap-4">
-            <CardTitle className="text-base font-bold">Audit Events</CardTitle>
-            <Badge variant="outline" className="font-mono text-[10px] bg-background">
-              {pagination?.total ?? 0} total
+    <div className="flex h-full flex-col overflow-hidden bg-background">
+      <section className="flex flex-wrap items-center justify-between gap-3 border-b bg-background px-6 py-2">
+        <div>
+          <div className="flex items-center gap-3">
+            <h1 className="text-xl font-bold">Audit Events</h1>
+            <Badge variant="outline" className="bg-background font-mono text-[10px]">
+              {totalAuditCount} total
             </Badge>
           </div>
-          <div className="flex items-center gap-6">
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground whitespace-nowrap shrink-0">
-                Event Type
-              </span>
-              <Select
-                aria-label="Event Type"
-                value={eventTypeFilter}
-                className="h-8 min-w-[160px] text-xs bg-background"
-                onChange={(event) => {
-                  setEventTypeFilter(event.target.value);
-                  setPage(1);
-                }}
-              >
-                <option value="all">All Events</option>
-                {(auditQuery.data?.availableEventTypes ?? []).map((eventType) => (
-                  <option key={eventType} value={eventType}>
-                    {eventType}
-                  </option>
-                ))}
-              </Select>
-            </div>
-            <div className="flex items-center gap-2 text-sm">
-              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground whitespace-nowrap shrink-0">
-                Actor
-              </span>
-              <Select
-                aria-label="Actor"
-                value={actorFilter}
-                className="h-8 min-w-[110px] text-xs bg-background"
-                onChange={(event) => {
-                  setActorFilter(event.target.value as AuditLogActor | "all");
-                  setPage(1);
-                }}
-              >
-                {actorOptions.map((actor) => (
-                  <option key={actor} value={actor}>
-                    {actor}
-                  </option>
-                ))}
-              </Select>
-            </div>
+        </div>
+        <div className="flex flex-wrap items-center justify-end gap-3">
+          <div className="flex items-center gap-2 rounded-lg border border-transparent bg-muted px-3 py-1">
+            <span className="shrink-0 whitespace-nowrap text-[10px] font-bold uppercase text-muted-foreground">
+              Event Type
+            </span>
+            <Select
+              aria-label="Event Type"
+              value={eventTypeFilter}
+              className="h-7 w-[170px] border-0 bg-transparent px-1 py-0 text-xs font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              onChange={(event) => {
+                setEventTypeFilter(event.target.value);
+                setPage(1);
+              }}
+            >
+              <option value="all">All Events</option>
+              {(auditQuery.data?.availableEventTypes ?? []).map((eventType) => (
+                <option key={eventType} value={eventType}>
+                  {eventType}
+                </option>
+              ))}
+            </Select>
           </div>
-        </CardHeader>
-        <div className="flex-1 overflow-auto">
-          <Table>
-            <TableHeader className="sticky top-0 z-10 bg-background/95 backdrop-blur border-b shadow-sm">
-              {table.getHeaderGroups().map((headerGroup) => (
-                <TableRow key={headerGroup.id}>
-                  {headerGroup.headers.map((header) => (
-                    <TableHead
-                      key={header.id}
-                      className={
-                        header.column.getCanSort() ? "cursor-pointer select-none px-6" : "px-6"
-                      }
-                      onClick={header.column.getToggleSortingHandler()}
+          <div className="flex items-center gap-2 rounded-lg border border-transparent bg-muted px-3 py-1">
+            <span className="shrink-0 whitespace-nowrap text-[10px] font-bold uppercase text-muted-foreground">
+              Actor
+            </span>
+            <Select
+              aria-label="Actor"
+              value={actorFilter}
+              className="h-7 w-[110px] border-0 bg-transparent px-1 py-0 text-xs font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
+              onChange={(event) => {
+                setActorFilter(event.target.value as AuditLogActor | "all");
+                setPage(1);
+              }}
+            >
+              {actorOptions.map((actor) => (
+                <option key={actor} value={actor}>
+                  {actor}
+                </option>
+              ))}
+            </Select>
+          </div>
+        </div>
+      </section>
+
+      <div className="min-h-0 flex-1 overflow-y-auto">
+        <Table>
+          <TableHeader className="sticky top-0 z-10 bg-background shadow-sm">
+            {table.getHeaderGroups().map((headerGroup) => (
+              <TableRow key={headerGroup.id}>
+                {headerGroup.headers.map((header) => (
+                  <TableHead
+                    key={header.id}
+                    className="bg-background px-4 text-xs font-bold uppercase text-muted-foreground"
+                  >
+                    {header.isPlaceholder ? null : header.column.getCanSort() ? (
+                      <button
+                        type="button"
+                        className="flex cursor-pointer select-none items-center gap-2 transition-colors hover:text-foreground"
+                        onClick={header.column.getToggleSortingHandler()}
+                      >
+                        {flexRender(header.column.columnDef.header, header.getContext())}
+                        <span className="w-4">
+                          {{
+                            asc: <ArrowUp size={12} />,
+                            desc: <ArrowDown size={12} />,
+                          }[header.column.getIsSorted() as string] ?? (
+                            <ArrowUpDown size={12} className="opacity-30" />
+                          )}
+                        </span>
+                      </button>
+                    ) : (
+                      <div>{flexRender(header.column.columnDef.header, header.getContext())}</div>
+                    )}
+                  </TableHead>
+                ))}
+              </TableRow>
+            ))}
+          </TableHeader>
+          <TableBody>
+            {table.getRowModel().rows.length > 0 ? (
+              table.getRowModel().rows.map((row) => (
+                <TableRow
+                  key={row.id}
+                  onClick={() => setSelectedLog(row.original)}
+                  className="group cursor-pointer transition-colors hover:bg-muted/40"
+                >
+                  {row.getVisibleCells().map((cell) => (
+                    <TableCell
+                      key={cell.id}
+                      className="border-b border-muted/30 px-4 py-1.5 text-xs"
                     >
-                      <div className="flex items-center gap-2">
-                        {header.isPlaceholder
-                          ? null
-                          : flexRender(header.column.columnDef.header, header.getContext())}
-                        {header.column.getCanSort() && (
-                          <ArrowUpDown className="h-3 w-3 text-muted-foreground" />
-                        )}
-                      </div>
-                    </TableHead>
+                      {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                    </TableCell>
                   ))}
                 </TableRow>
-              ))}
-            </TableHeader>
-            <TableBody>
-              {table.getRowModel().rows.length > 0 ? (
-                table.getRowModel().rows.map((row) => (
-                  <TableRow
-                    key={row.id}
-                    onClick={() => setSelectedLog(row.original)}
-                    className="cursor-pointer transition-colors hover:bg-muted/40 group"
-                  >
-                    {row.getVisibleCells().map((cell) => (
-                      <TableCell
-                        key={cell.id}
-                        className="py-2.5 px-6 text-xs border-b border-muted/30"
-                      >
-                        {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                      </TableCell>
-                    ))}
-                  </TableRow>
-                ))
+              ))
+            ) : (
+              <TableRow>
+                <TableCell
+                  colSpan={columns.length}
+                  className="h-32 text-center text-sm italic text-muted-foreground"
+                >
+                  No matching audit events found.
+                </TableCell>
+              </TableRow>
+            )}
+          </TableBody>
+        </Table>
+      </div>
+
+      <div className="flex items-center justify-between border-t bg-background px-6 py-2">
+        <div className="text-xs text-muted-foreground">
+          Showing <strong>{pageStart}</strong> to <strong>{pageEnd}</strong> of{" "}
+          <strong>{totalAuditCount}</strong> items
+        </div>
+        <div className="flex items-center gap-2">
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1"
+            disabled={!canPrev}
+            onClick={() => setPage(currentPage - 1)}
+          >
+            <ChevronLeft size={16} />
+            Previous
+          </Button>
+          <div className="mx-2 flex items-center gap-1">
+            {pageNumbers.map((pageNumber, index) =>
+              pageNumber === "ellipsis" ? (
+                <span
+                  // biome-ignore lint/suspicious/noArrayIndexKey: separator positions are derived from page windows
+                  key={`audit-page-ellipsis-${index}`}
+                  className="px-1 text-xs text-muted-foreground"
+                >
+                  ...
+                </span>
               ) : (
-                <TableRow>
-                  <TableCell
-                    colSpan={4}
-                    className="h-32 text-center text-sm text-muted-foreground italic"
-                  >
-                    No matching audit events found.
-                  </TableCell>
-                </TableRow>
-              )}
-            </TableBody>
-          </Table>
-        </div>
-        <div className="border-t bg-muted/5 px-6 py-3 flex items-center justify-between text-xs text-muted-foreground">
-          <span>
-            Showing Page {pagination?.page ?? page} of {Math.max(1, pagination?.totalPages ?? 1)}
-          </span>
-          <div className="flex items-center gap-3">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 w-8 p-0"
-              disabled={!canPrev}
-              onClick={(e) => {
-                e.stopPropagation();
-                setPage(page - 1);
-              }}
-            >
-              <ChevronLeft className="h-4 w-4" />
-            </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-8 w-8 p-0"
-              disabled={!canNext}
-              onClick={(e) => {
-                e.stopPropagation();
-                setPage(page + 1);
-              }}
-            >
-              <ChevronRight className="h-4 w-4" />
-            </Button>
+                <button
+                  key={`audit-page-${pageNumber}`}
+                  type="button"
+                  onClick={() => setPage(pageNumber)}
+                  className={`h-7 w-7 rounded-md text-xs transition-colors ${
+                    currentPage === pageNumber
+                      ? "bg-primary font-bold text-primary-foreground"
+                      : "text-muted-foreground hover:bg-muted"
+                  }`}
+                >
+                  {pageNumber}
+                </button>
+              ),
+            )}
           </div>
+          <Button
+            variant="outline"
+            size="sm"
+            className="gap-1"
+            disabled={!canNext}
+            onClick={() => setPage(currentPage + 1)}
+          >
+            Next
+            <ChevronRight size={16} />
+          </Button>
         </div>
-      </Card>
+      </div>
 
       {/* Inline Modal for Payload Detail */}
       {selectedLog && (
@@ -283,9 +348,10 @@ export function AuditLogsPage() {
                 variant="ghost"
                 size="sm"
                 className="h-8 w-8 p-0 rounded-full"
+                aria-label="Close audit event detail"
                 onClick={() => setSelectedLog(null)}
               >
-                ✕
+                <X className="h-4 w-4" />
               </Button>
             </div>
             <div className="flex-1 overflow-auto p-6 space-y-4">

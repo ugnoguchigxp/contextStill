@@ -39,6 +39,12 @@ export type DistillationChatResponse = {
   content?: string | null;
   toolCalls: DistillationToolCall[];
   finishReason?: string;
+  usage?: {
+    promptTokens: number;
+    completionTokens: number;
+    totalTokens: number;
+    reasoningTokens?: number;
+  };
 };
 
 export type DistillationChatClient = (
@@ -66,6 +72,7 @@ export type DistillationRuntimeOptions = {
   requireToolCall?: boolean;
   toolNames?: readonly string[];
   toolDefinitions?: DistillationRuntimeToolDefinition[];
+  usageSource?: string;
   requireToolCallReminder?: string[];
   blankResponseReminder?: string[];
   signal?: AbortSignal;

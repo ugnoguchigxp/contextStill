@@ -10,6 +10,7 @@ export const overviewDistillationTargetKindSchema = z.enum([
   "vibe_memory",
   "knowledge_candidate",
 ]);
+export const overviewSearchApiStatusSchema = z.enum(["ok", "cooldown"]);
 
 export const overviewDashboardSchema = z.object({
   checkedAt: z.string().datetime(),
@@ -82,6 +83,67 @@ export const overviewDashboardSchema = z.object({
         failed: z.number().int().nonnegative(),
       }),
     ),
+  }),
+  llmUsage: z.object({
+    kpis: z.object({
+      totalCalls30d: z.number().int().nonnegative(),
+      measuredCalls30d: z.number().int().nonnegative(),
+      estimatedCalls30d: z.number().int().nonnegative(),
+      localTokensTotal30d: z.number().int().nonnegative(),
+      localPromptTokens30d: z.number().int().nonnegative(),
+      localCompletionTokens30d: z.number().int().nonnegative(),
+      cloudTokensTotal30d: z.number().int().nonnegative(),
+      cloudPromptTokens30d: z.number().int().nonnegative(),
+      cloudCompletionTokens30d: z.number().int().nonnegative(),
+      measuredTokensTotal30d: z.number().int().nonnegative(),
+      estimatedTokensTotal30d: z.number().int().nonnegative(),
+      measuredCoveragePercent30d: z.number().min(0).max(100),
+      reasoningTokensTotal30d: z.number().int().nonnegative(),
+      cloudCostJpyTotal30d: z.number().nonnegative(),
+      cloudModel: z.string().min(1),
+      cloudInputCostJpyPerMTokens: z.number().nonnegative(),
+      cloudOutputCostJpyPerMTokens: z.number().nonnegative(),
+    }),
+    daily: z.array(
+      z.object({
+        day: dayStringSchema,
+        localPromptTokens: z.number().int().nonnegative(),
+        localCompletionTokens: z.number().int().nonnegative(),
+        localReasoningTokens: z.number().int().nonnegative(),
+        cloudPromptTokens: z.number().int().nonnegative(),
+        cloudCompletionTokens: z.number().int().nonnegative(),
+        cloudReasoningTokens: z.number().int().nonnegative(),
+        totalTokens: z.number().int().nonnegative(),
+        measuredTokens: z.number().int().nonnegative(),
+        estimatedTokens: z.number().int().nonnegative(),
+        measuredCalls: z.number().int().nonnegative(),
+        estimatedCalls: z.number().int().nonnegative(),
+        costJpy: z.number().nonnegative(),
+      }),
+    ),
+    bySource: z.array(
+      z.object({
+        source: z.string().min(1),
+        calls: z.number().int().nonnegative(),
+        measuredCalls: z.number().int().nonnegative(),
+        estimatedCalls: z.number().int().nonnegative(),
+        promptTokens: z.number().int().nonnegative(),
+        completionTokens: z.number().int().nonnegative(),
+        totalTokens: z.number().int().nonnegative(),
+      }),
+    ),
+  }),
+  searchApiStatus: z.object({
+    brave: z.object({
+      status: overviewSearchApiStatusSchema,
+      cooldownUntil: z.string().datetime().nullable(),
+      lastError: z.string().nullable(),
+    }),
+    exa: z.object({
+      status: overviewSearchApiStatusSchema,
+      cooldownUntil: z.string().datetime().nullable(),
+      lastError: z.string().nullable(),
+    }),
   }),
 });
 

@@ -1,4 +1,5 @@
 import { groupedConfig } from "../../config.js";
+import { recordLlmUsage } from "../llm/llm-usage-logger.js";
 import {
   type DistillationToolCall,
   type DistillationToolResult,
@@ -81,6 +82,7 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 
 function createDefaultChatClient(
   providerSetting: DistillationProviderSetting = groupedConfig.distillation.provider,
+  usageSource = "distillation",
 ): DistillationChatClient {
   const order = resolveDistillationProviderOrder(providerSetting);
   let pinnedProvider: DistillationProviderName | null = null;
@@ -105,6 +107,19 @@ function createDefaultChatClient(
 
       try {
         const response = await callByProvider[provider]({ ...request, model });
+        recordLlmUsage({
+          provider,
+          model,
+          usage: response.usage,
+          promptMessages: request.messages,
+          promptMetadata: {
+            tools: request.tools,
+            toolChoice: request.toolChoice,
+          },
+          completionText: response.content ?? "",
+          completionMetadata: response.toolCalls,
+          source: usageSource,
+        });
         pinnedProvider = provider;
         return response;
       } catch (error) {
@@ -127,7 +142,10 @@ export async function runDistillationCompletion(
 ): Promise<DistillationCompletionResult> {
   const chatClient =
     options.chatClient ??
-    createDefaultChatClient(options.providerSetting ?? groupedConfig.distillation.provider);
+    createDefaultChatClient(
+      options.providerSetting ?? groupedConfig.distillation.provider,
+      options.usageSource ?? "distillation",
+    );
   const toolExecutor = options.toolExecutor ?? executeDistillationToolCall;
   const maxToolRounds = Math.max(
     0,
@@ -273,6 +291,7 @@ export async function callLocalLlmCompletionForDistillation(
   request: DistillationModelRequest,
 ): Promise<DistillationCompletionResult> {
   return runDistillationCompletion(request, {
-    chatClient: callLocalLlmChat,
+    providerSetting: "local-llm",
+    usageSource: "distillation",
   });
 }

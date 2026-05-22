@@ -91,6 +91,9 @@
 }
 
 .app-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100vh;
   min-height: 100vh;
   background: linear-gradient(180deg, rgba(245, 247, 250, 0.96), rgba(238, 241, 245, 0.96)),
     radial-gradient(circle at 20% 0%, rgba(20, 184, 166, 0.08), transparent 28%),
@@ -105,6 +108,7 @@
   align-items: center;
   justify-content: space-between;
   gap: 1rem;
+  flex-shrink: 0;
   border-bottom: 1px solid rgba(15, 23, 42, 0.1);
   background: rgba(255, 255, 255, 0.88);
   padding: 0.75rem 1.5rem;
@@ -160,9 +164,12 @@
 }
 
 .app-content.full-width {
+  flex: 1;
   max-width: none;
+  min-height: 0;
   padding: 0;
   margin: 0;
+  width: 100%;
 }
 
 .page-stack {
@@ -257,6 +264,51 @@
   min-width: 0;
 }
 
+.search-status-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.search-status-card {
+  min-width: 0;
+}
+
+.search-status-content {
+  display: grid;
+  gap: 0.35rem;
+}
+
+.search-status-main {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+  min-width: 0;
+}
+
+.search-status-dot {
+  background: currentColor;
+  border-radius: 999px;
+  display: inline-block;
+  height: 0.45rem;
+  width: 0.45rem;
+}
+
+.search-status-value {
+  color: #0f172a;
+  font-size: 1.35rem;
+  line-height: 1.1;
+}
+
+.search-status-card.cooldown {
+  border-color: rgba(220, 38, 38, 0.28);
+}
+
+.search-status-card.ok {
+  border-color: rgba(22, 163, 74, 0.22);
+}
+
 .overview-health-grid {
   display: grid;
   gap: 1rem;
@@ -344,6 +396,13 @@
 
 .overview-next-action {
   background: rgba(14, 165, 233, 0.06);
+}
+
+.overview-next-action-group {
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  display: grid;
+  gap: 0.5rem;
+  padding-top: 0.75rem;
 }
 
 .runtime-list {
@@ -465,7 +524,8 @@
 .knowledge-full-layout {
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 64px);
+  height: 100%;
+  min-height: 0;
   background: var(--background);
 }
 
@@ -933,6 +993,7 @@
   }
 
   .metric-grid,
+  .search-status-grid,
   .overview-chart-grid,
   .overview-health-grid,
   .doctor-chart-grid,

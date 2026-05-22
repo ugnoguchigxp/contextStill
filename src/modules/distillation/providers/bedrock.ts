@@ -8,6 +8,7 @@ import {
 } from "@aws-sdk/client-bedrock-runtime";
 import { groupedConfig } from "../../../config.js";
 import { parseLlmJsonLike } from "../../../lib/llm-output-parser.js";
+import { normalizeLlmUsage } from "../../llm/usage-normalizer.js";
 import type {
   DistillationChatRequest,
   DistillationChatResponse,
@@ -145,6 +146,11 @@ export function parseBedrockResponse(payload: unknown): DistillationChatResponse
       };
     };
     stopReason?: string;
+    usage?: {
+      inputTokens?: number;
+      outputTokens?: number;
+      totalTokens?: number;
+    };
   };
 
   const contentBlocks = response.output?.message?.content ?? [];
@@ -179,6 +185,11 @@ export function parseBedrockResponse(payload: unknown): DistillationChatResponse
     content: textSegments.length > 0 ? textSegments.join("\n") : null,
     toolCalls,
     finishReason: response.stopReason,
+    usage: normalizeLlmUsage({
+      promptTokens: response.usage?.inputTokens,
+      completionTokens: response.usage?.outputTokens,
+      totalTokens: response.usage?.totalTokens,
+    }),
   };
 }
 

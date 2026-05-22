@@ -5,12 +5,21 @@ import type {
   LlmHealthStatus,
   LlmProvider,
 } from "../llm-provider.js";
+import { normalizeLlmUsage } from "../usage-normalizer.js";
 
 type AzureOpenAiResponse = {
   choices?: Array<{
     message?: { content?: string | null };
     finish_reason?: string;
   }>;
+  usage?: {
+    prompt_tokens: number;
+    completion_tokens: number;
+    total_tokens: number;
+    completion_tokens_details?: {
+      reasoning_tokens?: number;
+    };
+  };
 };
 
 type AzureOpenAiProviderOptions = {
@@ -46,9 +55,18 @@ async function parseResponse(response: Response): Promise<LlmChatResponse> {
   if (typeof content !== "string" || !content.trim()) {
     throw new Error("Azure OpenAI returned empty response");
   }
+  const usage = payload.usage
+    ? normalizeLlmUsage({
+        promptTokens: payload.usage.prompt_tokens,
+        completionTokens: payload.usage.completion_tokens,
+        totalTokens: payload.usage.total_tokens,
+        reasoningTokens: payload.usage.completion_tokens_details?.reasoning_tokens,
+      })
+    : undefined;
   return {
     content,
     finishReason: payload.choices?.[0]?.finish_reason,
+    usage,
   };
 }
 

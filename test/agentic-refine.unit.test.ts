@@ -7,6 +7,10 @@ import {
 import { checkAgenticLlmHealth } from "../src/modules/llm/agentic-llm.service.js";
 import type { CompileInput } from "../src/shared/schemas/compile.schema.js";
 
+vi.mock("../src/modules/llm/llm-usage-logger.js", () => ({
+  recordLlmUsage: vi.fn(),
+}));
+
 const mockFetch = vi.fn();
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 global.fetch = mockFetch as any;

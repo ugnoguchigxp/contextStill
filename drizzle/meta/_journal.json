@@ -225,6 +225,20 @@
       "when": 1778925600000,
       "tag": "0031_register_candidate_target_kind",
       "breakpoints": true
+    },
+    {
+      "idx": 32,
+      "version": "7",
+      "when": 1779430149861,
+      "tag": "0032_known_mercury",
+      "breakpoints": true
+    },
+    {
+      "idx": 33,
+      "version": "7",
+      "when": 1779435600000,
+      "tag": "0033_llm_usage_mode",
+      "breakpoints": true
     }
   ]
 }
