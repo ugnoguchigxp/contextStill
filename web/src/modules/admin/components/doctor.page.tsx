@@ -78,7 +78,11 @@ export function DoctorPage() {
   const doctor = useQuery({ queryKey: ["doctor"], queryFn: () => fetchDoctorReport() });
   const report = doctor.data;
   const status = report?.status ?? "degraded";
-  const reasonDetails = (report?.reasons ?? []).map((reason) => formatDoctorReason(reason));
+  const reasonDetails = report
+    ? Array.isArray(report.reasonDetails) && report.reasonDetails.length > 0
+      ? report.reasonDetails
+      : report.reasons.map((reason) => formatDoctorReason(reason))
+    : [];
   const nextActions = report
     ? uniqueNonEmpty([
         ...report.mcp.nextActions,

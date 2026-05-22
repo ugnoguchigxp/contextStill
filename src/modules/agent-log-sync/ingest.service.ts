@@ -1,5 +1,6 @@
 import { createReadStream } from "node:fs";
 import fs from "node:fs/promises";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { groupedConfig } from "../../config.js";
@@ -765,6 +766,140 @@ function emptyIngestResult(cursor: IngestCursor, options?: { skipped?: boolean }
   };
 }
 
+const ANTIGRAVITY_PREFERRED_LOG_FILES = ["transcript.jsonl", "overview.txt"] as const;
+
+async function listAntigravitySessionLogFiles(logsDir: string): Promise<string[]> {
+  let entries: Array<{ name: string; isFile: () => boolean }> = [];
+  try {
+    entries = await fs.readdir(logsDir, { withFileTypes: true });
+  } catch (error) {
+    if (isIgnorableOptionalFileError(error)) return [];
+    throw error;
+  }
+
+  const files = entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+  for (const preferredFile of ANTIGRAVITY_PREFERRED_LOG_FILES) {
+    if (files.includes(preferredFile)) {
+      return [path.join(logsDir, preferredFile)];
+    }
+  }
+
+  return files
+    .filter(
+      (name) =>
+        /\.(jsonl|txt)$/i.test(name) &&
+        /(transcript|overview|history|conversation)/i.test(name),
+    )
+    .sort()
+    .map((name) => path.join(logsDir, name));
+}
+
+function parseAntigravityCliHistoryLine(
+  line: string,
+  historyFilePath: string,
+): ChatMessage | null {
+  try {
+    const data = JSON.parse(line) as {
+      display?: unknown;
+      timestamp?: unknown;
+      workspace?: unknown;
+      conversationId?: unknown;
+    };
+
+    if (typeof data.display !== "string" || !data.display.trim()) return null;
+    const workspace = typeof data.workspace === "string" ? data.workspace : undefined;
+    const projectContext = deriveProjectFromPath(workspace);
+    const timestampMs = Number(data.timestamp);
+    const timestamp =
+      Number.isFinite(timestampMs) && timestampMs > 0
+        ? new Date(timestampMs).toISOString()
+        : undefined;
+
+    return {
+      role: "user",
+      content: filterSensitiveData(data.display.trim()),
+      metadata: {
+        source: "Antigravity",
+        sourceId: "antigravity_logs",
+        sessionId:
+          typeof data.conversationId === "string" && data.conversationId.trim().length > 0
+            ? data.conversationId.trim()
+            : sessionIdFromFile(historyFilePath),
+        sessionFile: historyFilePath,
+        timestamp,
+        cwd: workspace,
+        ...projectContext,
+      },
+    };
+  } catch {
+    return null;
+  }
+}
+
+async function ingestAntigravityCliHistoryFallback(params: {
+  brainRoot: string;
+  since?: Date;
+  cursor: IngestCursor;
+  warnings: string[];
+  messages: ChatMessage[];
+  maxObservedMtimeMs: number;
+  checkedFiles: number;
+}): Promise<{ maxObservedMtimeMs: number; checkedFiles: number }> {
+  const cliRoot = path.dirname(params.brainRoot);
+  if (path.basename(cliRoot) !== "antigravity-cli") {
+    return {
+      maxObservedMtimeMs: params.maxObservedMtimeMs,
+      checkedFiles: params.checkedFiles,
+    };
+  }
+
+  const historyFilePath = path.join(cliRoot, "history.jsonl");
+  try {
+    const stat = await fs.stat(historyFilePath);
+    const nextMaxObservedMtimeMs = Math.max(params.maxObservedMtimeMs, stat.mtimeMs);
+    const prev = params.cursor[historyFilePath];
+    let startOffset = prev?.offset ?? 0;
+    if (startOffset > stat.size) startOffset = 0;
+    if (startOffset === stat.size) {
+      params.cursor[historyFilePath] = { offset: stat.size, mtimeMs: stat.mtimeMs };
+      return {
+        maxObservedMtimeMs: nextMaxObservedMtimeMs,
+        checkedFiles: params.checkedFiles + 1,
+      };
+    }
+
+    const content = await readTextDelta(historyFilePath, startOffset);
+    if (content.trim()) {
+      for (const line of content.split("\n").filter((entry) => entry.trim())) {
+        const parsed = parseAntigravityCliHistoryLine(line, historyFilePath);
+        if (!parsed) continue;
+        if (params.since) {
+          const timestamp = parsed.metadata.timestamp;
+          if (typeof timestamp === "string" && new Date(timestamp).getTime() < params.since.getTime()) {
+            continue;
+          }
+        }
+        params.messages.push(parsed);
+      }
+    }
+    params.cursor[historyFilePath] = { offset: stat.size, mtimeMs: stat.mtimeMs };
+    return {
+      maxObservedMtimeMs: nextMaxObservedMtimeMs,
+      checkedFiles: params.checkedFiles + 1,
+    };
+  } catch (error) {
+    if (!isIgnorableOptionalFileError(error)) {
+      params.warnings.push(
+        `Antigravity CLI history ingest failed (${historyFilePath}): ${toErrorMessage(error)}`,
+      );
+    }
+    return {
+      maxObservedMtimeMs: params.maxObservedMtimeMs,
+      checkedFiles: params.checkedFiles,
+    };
+  }
+}
+
 export async function ingestCodexLogsFromRoots(
   roots: string[],
   since?: Date,
@@ -885,50 +1020,74 @@ export async function ingestAntigravityLogsFromRoot(
     : Date.now() - Math.max(0, initialLookbackHours) * 60 * 60 * 1000;
 
   for (const session of sessions) {
-    const logPath = path.join(root, session, ".system_generated", "logs", "overview.txt");
+    const logsDir = path.join(root, session, ".system_generated", "logs");
+    let logPaths: string[] = [];
     try {
-      const stat = await fs.stat(logPath);
-      checkedFiles += 1;
-      maxObservedMtimeMs = Math.max(maxObservedMtimeMs, stat.mtimeMs);
-      const prev = nextCursor[logPath];
-
-      if (!prev && stat.mtimeMs < threshold) {
-        nextCursor[logPath] = { offset: stat.size, mtimeMs: stat.mtimeMs };
-        continue;
-      }
-
-      let startOffset = prev?.offset ?? 0;
-      if (startOffset > stat.size) {
-        startOffset = 0;
-      }
-      if (startOffset === stat.size) {
-        nextCursor[logPath] = { offset: stat.size, mtimeMs: stat.mtimeMs };
-        continue;
-      }
-
-      const content = await readTextDelta(logPath, startOffset);
-      if (content.trim()) {
-        const parsedMessages = await parseAntigravityOverviewMessages(content, logPath, session);
-        if (parsedMessages.length > 0) {
-          messages.push(...parsedMessages);
-        } else {
-          messages.push({
-            role: "assistant",
-            content: filterSensitiveData(content),
-            metadata: {
-              source: "Antigravity",
-              sourceId: "antigravity_logs",
-              sessionId: session,
-              sessionFile: logPath,
-            },
-          });
-        }
-      }
-      nextCursor[logPath] = { offset: stat.size, mtimeMs: stat.mtimeMs };
+      logPaths = await listAntigravitySessionLogFiles(logsDir);
     } catch (error) {
-      if (isIgnorableOptionalFileError(error)) continue;
-      warnings.push(`Antigravity file ingest failed (${logPath}): ${toErrorMessage(error)}`);
+      warnings.push(`Antigravity logs scan failed (${logsDir}): ${toErrorMessage(error)}`);
+      continue;
     }
+
+    for (const logPath of logPaths) {
+      try {
+        const stat = await fs.stat(logPath);
+        checkedFiles += 1;
+        maxObservedMtimeMs = Math.max(maxObservedMtimeMs, stat.mtimeMs);
+        const prev = nextCursor[logPath];
+
+        if (!prev && stat.mtimeMs < threshold) {
+          nextCursor[logPath] = { offset: stat.size, mtimeMs: stat.mtimeMs };
+          continue;
+        }
+
+        let startOffset = prev?.offset ?? 0;
+        if (startOffset > stat.size) {
+          startOffset = 0;
+        }
+        if (startOffset === stat.size) {
+          nextCursor[logPath] = { offset: stat.size, mtimeMs: stat.mtimeMs };
+          continue;
+        }
+
+        const content = await readTextDelta(logPath, startOffset);
+        if (content.trim()) {
+          const parsedMessages = await parseAntigravityOverviewMessages(content, logPath, session);
+          if (parsedMessages.length > 0) {
+            messages.push(...parsedMessages);
+          } else {
+            messages.push({
+              role: "assistant",
+              content: filterSensitiveData(content),
+              metadata: {
+                source: "Antigravity",
+                sourceId: "antigravity_logs",
+                sessionId: session,
+                sessionFile: logPath,
+              },
+            });
+          }
+        }
+        nextCursor[logPath] = { offset: stat.size, mtimeMs: stat.mtimeMs };
+      } catch (error) {
+        if (isIgnorableOptionalFileError(error)) continue;
+        warnings.push(`Antigravity file ingest failed (${logPath}): ${toErrorMessage(error)}`);
+      }
+    }
+  }
+
+  if (checkedFiles === 0) {
+    const fallback = await ingestAntigravityCliHistoryFallback({
+      brainRoot: root,
+      since,
+      cursor: nextCursor,
+      warnings,
+      messages,
+      maxObservedMtimeMs,
+      checkedFiles,
+    });
+    checkedFiles = fallback.checkedFiles;
+    maxObservedMtimeMs = fallback.maxObservedMtimeMs;
   }
 
   return {
@@ -942,12 +1101,65 @@ export async function ingestAntigravityLogsFromRoot(
   };
 }
 
+export async function ingestAntigravityLogsFromRoots(
+  roots: string[],
+  since?: Date,
+  cursor: IngestCursor = {},
+  initialLookbackHours = groupedConfig.antigravity.initialLookbackHours,
+): Promise<IngestResult> {
+  const normalizedCursor = normalizeIngestCursor(cursor);
+  const uniqueRoots = [...new Set(roots.filter((dir) => dir.trim().length > 0))];
+  if (uniqueRoots.length === 0) return emptyIngestResult(normalizedCursor, { skipped: true });
+
+  const messages: ChatMessage[] = [];
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  let checkedFiles = 0;
+  let maxObservedMtimeMs = since ? since.getTime() : 0;
+  let nextCursor = { ...normalizedCursor };
+  let ok = true;
+
+  for (const root of uniqueRoots) {
+    const result = await ingestAntigravityLogsFromRoot(
+      root,
+      since,
+      nextCursor,
+      initialLookbackHours,
+    );
+    ok = ok && result.ok;
+    messages.push(...result.messages);
+    warnings.push(...result.warnings);
+    errors.push(...result.errors);
+    checkedFiles += result.checkedFiles;
+    maxObservedMtimeMs = Math.max(maxObservedMtimeMs, result.maxObservedMtimeMs);
+    nextCursor = result.cursor;
+  }
+
+  return {
+    ok,
+    errors,
+    warnings,
+    messages,
+    cursor: nextCursor,
+    maxObservedMtimeMs,
+    checkedFiles,
+  };
+}
+
 export async function ingestAntigravityLogs(
   since?: Date,
   cursor: IngestCursor = {},
 ): Promise<IngestResult> {
-  return ingestAntigravityLogsFromRoot(
+  const homeGeminiDir = path.join(os.homedir(), ".gemini");
+  const roots = [
     groupedConfig.antigravity.logDir,
+    path.join(homeGeminiDir, "antigravity-cli", "brain"),
+    path.join(homeGeminiDir, "antigravity-ide", "brain"),
+    path.join(homeGeminiDir, "antigravity", "brain"),
+  ];
+
+  return ingestAntigravityLogsFromRoots(
+    roots,
     since,
     cursor,
     groupedConfig.antigravity.initialLookbackHours,

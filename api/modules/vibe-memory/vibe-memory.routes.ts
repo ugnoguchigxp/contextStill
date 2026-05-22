@@ -1,5 +1,5 @@
 import { zValidator } from "@hono/zod-validator";
-import { desc, eq } from "drizzle-orm";
+import { desc, eq, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../../../src/db/client.js";
 import { vibeMemories } from "../../../src/db/schema.js";
@@ -10,10 +10,14 @@ export const vibeMemoryRouter = new Hono();
 
 vibeMemoryRouter.get("/", async (c) => {
   const limit = Number(c.req.query("limit") ?? 100);
+  const effectiveTimestamp = sql<string>`coalesce(
+    nullif(${vibeMemories.metadata} ->> 'timestamp', ''),
+    nullif(${vibeMemories.metadata} ->> 'sessionStartedAt', '')
+  )`;
   const memories = await db
     .select()
     .from(vibeMemories)
-    .orderBy(desc(vibeMemories.createdAt))
+    .orderBy(desc(effectiveTimestamp), desc(vibeMemories.createdAt))
     .limit(limit);
   return c.json({ memories });
 });

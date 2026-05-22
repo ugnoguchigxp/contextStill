@@ -180,6 +180,7 @@ const validDoctorReport: DoctorReport = {
   status: "ok",
   checkedAt: "2026-05-15T00:00:00.000Z",
   reasons: [],
+  reasonDetails: [],
   db: { reachable: true, durationMs: 1 },
   vector: { installed: true },
   embedding: {

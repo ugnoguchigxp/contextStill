@@ -30,6 +30,7 @@ describe("Shared Schemas", () => {
       status: "ok",
       checkedAt: new Date().toISOString(),
       reasons: [],
+      reasonDetails: [],
       db: { reachable: true, durationMs: 10 },
       vector: { installed: true },
       embedding: {

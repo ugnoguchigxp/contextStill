@@ -142,10 +142,29 @@ export type SkippedRunReason = {
   count: number;
 };
 
+export type DoctorReasonSeverity = "critical" | "warning" | "info";
+export type DoctorReasonArea =
+  | "Knowledge"
+  | "Distillation"
+  | "Sync"
+  | "Runtime"
+  | "MCP"
+  | "Other";
+export type DoctorReasonDetail = {
+  code: string;
+  label: string;
+  severity: DoctorReasonSeverity;
+  area: DoctorReasonArea;
+  description: string;
+  impact: string;
+  action: string;
+};
+
 export type DoctorReport = {
   status: "ok" | "degraded" | "failed";
   checkedAt: string;
   reasons: string[];
+  reasonDetails?: DoctorReasonDetail[];
   db: { reachable: boolean; durationMs: number; error?: string };
   vector: { installed: boolean };
   embedding?: {

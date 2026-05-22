@@ -261,6 +261,56 @@ diff --git a/src/a.ts b/src/a.ts
     expect(transcript).not.toContain("The USER performed");
   });
 
+  test("ingestAntigravityLogsFromRoot reads transcript.jsonl in antigravity-cli style sessions", async () => {
+    const root = await makeTempDir();
+    const logDir = path.join(root, "session-cli", ".system_generated", "logs");
+    const filePath = path.join(logDir, "transcript.jsonl");
+    const userLine = JSON.stringify({
+      step_index: 0,
+      source: "USER_EXPLICIT",
+      type: "USER_INPUT",
+      created_at: "2026-05-21T14:18:29Z",
+      content: "<USER_REQUEST>\n履歴ログを確認してください\n</USER_REQUEST>",
+    });
+    await fs.mkdir(logDir, { recursive: true });
+    await fs.writeFile(filePath, `${userLine}\n`, "utf-8");
+
+    const result = await ingestAntigravityLogsFromRoot(root, undefined, {}, 1);
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]?.role).toBe("user");
+    expect(result.messages[0]?.content).toBe("履歴ログを確認してください");
+    expect(result.messages[0]?.metadata.sessionFile).toBe(filePath);
+  });
+
+  test("ingestAntigravityLogsFromRoot falls back to antigravity-cli history.jsonl when brain logs are absent", async () => {
+    const parent = await makeTempDir();
+    const cliRoot = path.join(parent, "antigravity-cli");
+    const brainRoot = path.join(cliRoot, "brain");
+    await fs.mkdir(brainRoot, { recursive: true });
+    const historyFilePath = path.join(cliRoot, "history.jsonl");
+    await fs.writeFile(
+      historyFilePath,
+      `${JSON.stringify({
+        display: "古いセッションの履歴を確認したい",
+        timestamp: Date.parse("2026-05-21T14:18:29Z"),
+        workspace: "/Users/y.noguchi/Code/memoryRouter",
+        conversationId: "history-conv-1",
+      })}\n`,
+      "utf-8",
+    );
+
+    const result = await ingestAntigravityLogsFromRoot(brainRoot, undefined, {}, 24);
+
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]?.role).toBe("user");
+    expect(result.messages[0]?.content).toBe("古いセッションの履歴を確認したい");
+    expect(result.messages[0]?.metadata.sessionFile).toBe(historyFilePath);
+    expect(result.messages[0]?.metadata.sessionId).toBe("history-conv-1");
+    expect(result.messages[0]?.metadata.projectName).toBe("memoryRouter");
+    expect(result.checkedFiles).toBe(1);
+  });
+
   test("chunkMessages obeys message and character limits", () => {
     const messages = [
       { role: "user" as const, content: "aaa", metadata: {} },

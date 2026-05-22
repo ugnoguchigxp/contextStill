@@ -21,6 +21,7 @@
     "distill:domain": "bun run src/cli/distill-domain.ts",
     "backfill:knowledge-project-context": "bun run src/cli/backfill-knowledge-project-context.ts",
     "backfill:knowledge-value": "bun run src/cli/backfill-knowledge-value.ts",
+    "knowledge:apply-feedback-quality": "bun run src/cli/apply-knowledge-quality.ts",
     "seed:knowledge-tags": "bun run src/cli/seed-knowledge-tags.ts",
     "doctor": "bun run src/cli/doctor.ts",
     "mcp:smoke": "DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@localhost:7889/memory_router_test} bun run src/cli/mcp-smoke.ts",

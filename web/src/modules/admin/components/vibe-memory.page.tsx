@@ -66,7 +66,7 @@ export function VibeMemoryPage() {
   const activeSession = sessions.find((session) => session.id === activeSessionId);
   const activeMemories = activeSessionId
     ? (sessionMap[activeSessionId] || []).sort(
-        (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+        (a, b) => resolveMemoryEventTime(a).getTime() - resolveMemoryEventTime(b).getTime(),
       )
     : [];
 
@@ -157,7 +157,7 @@ export function VibeMemoryPage() {
                         {m.memoryType}
                       </Badge>
                       <span className="vibe-timestamp">
-                        {new Date(m.createdAt).toLocaleString()}
+                        {resolveMemoryEventTime(m).toLocaleString()}
                       </span>
                     </div>
                     <div className="vibe-card-body">
@@ -194,14 +194,14 @@ export function VibeMemoryPage() {
 
 function buildSessionSummary(id: string, items: VibeMemory[]): SessionSummary {
   const sortedItems = [...items].sort(
-    (a, b) => new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime(),
+    (a, b) => resolveMemoryEventTime(a).getTime() - resolveMemoryEventTime(b).getTime(),
   );
 
   const lastCreatedAt =
     latestMetadataTime(items, "timestamp") ??
-    new Date(Math.max(...items.map((item) => new Date(item.createdAt).getTime())));
+    new Date(Math.max(...items.map((item) => resolveMemoryEventTime(item).getTime())));
   const firstCreatedAt = new Date(
-    Math.min(...items.map((item) => new Date(item.createdAt).getTime())),
+    Math.min(...items.map((item) => resolveMemoryEventTime(item).getTime())),
   );
   const projectName = firstMetadataString(items, "projectName") ?? "Unknown Project";
   const projectRoot = firstMetadataString(items, "projectRoot");
@@ -469,4 +469,21 @@ function readString(value: unknown): string | undefined {
 
 function readBoolean(value: unknown): boolean | undefined {
   return typeof value === "boolean" ? value : undefined;
+}
+
+function resolveMemoryEventTime(memory: VibeMemory): Date {
+  const timestamp = readString(memory.metadata?.timestamp);
+  if (timestamp) {
+    const parsed = new Date(timestamp);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+
+  const startedAt = readString(memory.metadata?.sessionStartedAt);
+  if (startedAt) {
+    const parsed = new Date(startedAt);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+
+  const createdAt = new Date(memory.createdAt);
+  return Number.isNaN(createdAt.getTime()) ? new Date(0) : createdAt;
 }

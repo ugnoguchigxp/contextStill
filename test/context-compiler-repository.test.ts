@@ -37,6 +37,25 @@ const validPack: ContextPack = {
   },
 };
 
+function createSelectChain<T>(input: { limitResult?: T; orderByResult?: T }) {
+  const chain = {
+    from: vi.fn(),
+    where: vi.fn(),
+    orderBy: vi.fn(),
+    limit: vi.fn(),
+  };
+  chain.from.mockReturnValue(chain);
+  chain.where.mockReturnValue(chain);
+  chain.orderBy.mockReturnValue(chain);
+  if (input.limitResult !== undefined) {
+    chain.limit.mockResolvedValue(input.limitResult);
+  }
+  if (input.orderByResult !== undefined) {
+    chain.orderBy.mockResolvedValue(input.orderByResult);
+  }
+  return chain;
+}
+
 describe("context-compiler repository", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -127,11 +146,7 @@ describe("context-compiler repository", () => {
         },
       ];
 
-      (db.select as any).mockReturnValue({
-        from: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue(mockRows),
-      });
+      (db.select as any).mockReturnValue(createSelectChain({ limitResult: mockRows }));
 
       const result = await listRecentCompileRuns(1);
 
@@ -156,11 +171,7 @@ describe("context-compiler repository", () => {
         },
       ];
 
-      (db.select as any).mockReturnValue({
-        from: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue(mockRows),
-      });
+      (db.select as any).mockReturnValue(createSelectChain({ limitResult: mockRows }));
 
       const result = await listRecentCompileRuns(1);
       expect(result[0].degradedReasons).toEqual([]);
@@ -171,11 +182,7 @@ describe("context-compiler repository", () => {
 
   describe("getCompileRunSnapshot", () => {
     test("returns null if run not found", async () => {
-      (db.select as any).mockReturnValue({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue([]),
-      });
+      (db.select as any).mockReturnValue(createSelectChain({ limitResult: [] }));
 
       const result = await getCompileRunSnapshot("missing");
       expect(result).toBeNull();
@@ -204,17 +211,9 @@ describe("context-compiler repository", () => {
         },
       ];
 
-      (db.select as any).mockReturnValueOnce({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue([mockRun]),
-      });
-
-      (db.select as any).mockReturnValueOnce({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockResolvedValue(mockItems),
-      });
+      (db.select as any)
+        .mockReturnValueOnce(createSelectChain({ limitResult: [mockRun] }))
+        .mockReturnValueOnce(createSelectChain({ orderByResult: mockItems }));
 
       const result = await getCompileRunSnapshot("r1");
 
@@ -226,11 +225,7 @@ describe("context-compiler repository", () => {
 
   describe("getCompileRunDetail", () => {
     test("returns null if run not found", async () => {
-      (db.select as any).mockReturnValue({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue([]),
-      });
+      (db.select as any).mockReturnValue(createSelectChain({ limitResult: [] }));
 
       const result = await getCompileRunDetail(validPack.runId);
       expect(result).toBeNull();
@@ -261,23 +256,10 @@ describe("context-compiler repository", () => {
         },
       ];
 
-      (db.select as any).mockReturnValueOnce({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue([mockRun]),
-      });
-
-      (db.select as any).mockReturnValueOnce({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockResolvedValue(mockItems),
-      });
-
-      (db.select as any).mockReturnValueOnce({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockResolvedValue([]),
-      });
+      (db.select as any)
+        .mockReturnValueOnce(createSelectChain({ limitResult: [mockRun] }))
+        .mockReturnValueOnce(createSelectChain({ orderByResult: mockItems }))
+        .mockReturnValueOnce(createSelectChain({ orderByResult: [] }));
 
       const result = await getCompileRunDetail(validPack.runId);
 
@@ -302,23 +284,10 @@ describe("context-compiler repository", () => {
         packSnapshot: null,
       };
 
-      (db.select as any).mockReturnValueOnce({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue([mockRun]),
-      });
-
-      (db.select as any).mockReturnValueOnce({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockResolvedValue([]),
-      });
-
-      (db.select as any).mockReturnValueOnce({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockResolvedValue([]),
-      });
+      (db.select as any)
+        .mockReturnValueOnce(createSelectChain({ limitResult: [mockRun] }))
+        .mockReturnValueOnce(createSelectChain({ orderByResult: [] }))
+        .mockReturnValueOnce(createSelectChain({ orderByResult: [] }));
 
       const result = await getCompileRunDetail(validPack.runId);
 
@@ -346,23 +315,10 @@ describe("context-compiler repository", () => {
         },
       };
 
-      (db.select as any).mockReturnValueOnce({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue([mockRun]),
-      });
-
-      (db.select as any).mockReturnValueOnce({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockResolvedValue([]),
-      });
-
-      (db.select as any).mockReturnValueOnce({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockResolvedValue([]),
-      });
+      (db.select as any)
+        .mockReturnValueOnce(createSelectChain({ limitResult: [mockRun] }))
+        .mockReturnValueOnce(createSelectChain({ orderByResult: [] }))
+        .mockReturnValueOnce(createSelectChain({ orderByResult: [] }));
 
       const result = await getCompileRunDetail(validPack.runId);
 

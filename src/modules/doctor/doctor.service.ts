@@ -1,6 +1,8 @@
 import { groupedConfig } from "../../config.js";
+import { formatDoctorReasonDetail } from "../../shared/doctor/doctor-reasons.js";
 import { type DoctorReport, doctorReportSchema } from "../../shared/schemas/doctor.schema.js";
 import { cleanupExpiredAuditLogsSafe } from "../audit/audit-log.service.js";
+import { isPipelineLockLikelyBlocking } from "./distillation-lock.util.js";
 import { checkAgenticLlmHealth } from "../llm/agentic-llm.service.js";
 import { requiredTables } from "./doctor.constants.js";
 import type { DoctorOptions, ResolvedDoctorOptions } from "./doctor.types.js";
@@ -67,7 +69,14 @@ function appendDistillationReasons(
   if (distillation.queueHealth.staleRunning > 0) {
     reasons.push(`${prefix}_QUEUE_STALE_RUNNING`);
   }
-  if (distillation.queueHealth.lock.staleByCreatedAge) {
+  const lockLikelyBlocking = isPipelineLockLikelyBlocking({
+    staleByCreatedAge: distillation.queueHealth.lock.staleByCreatedAge,
+    launchAgentLoaded: distillation.launchAgent.loaded,
+    staleRunning: distillation.queueHealth.staleRunning,
+    running: distillation.queueHealth.running,
+    blockedByHigherPriority: distillation.queueHealth.blockedByHigherPriority,
+  });
+  if (lockLikelyBlocking) {
     reasons.push(`${prefix}_PIPELINE_LOCK_STALE`);
   }
   const runnableQueued = distillation.queueHealth.queued + distillation.queueHealth.retryablePaused;
@@ -155,10 +164,12 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
       }),
     ]);
 
+    const mergedReasons = [...reasons, ...database.reasons];
     return doctorReportSchema.parse({
       status: "failed",
       checkedAt: nowIso(),
-      reasons: [...reasons, ...database.reasons],
+      reasons: mergedReasons,
+      reasonDetails: mergedReasons.map((reason) => formatDoctorReasonDetail(reason)),
       db: database.db,
       vector: { installed: database.vectorInstalled },
       embedding,
@@ -254,6 +265,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
     status,
     checkedAt: nowIso(),
     reasons,
+    reasonDetails: reasons.map((reason) => formatDoctorReasonDetail(reason)),
     db: database.db,
     vector: {
       installed: database.vectorInstalled,

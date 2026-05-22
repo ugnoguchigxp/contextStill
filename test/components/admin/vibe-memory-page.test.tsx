@@ -35,7 +35,7 @@ const mockVibeMemories = [
     id: "mem-1",
     sessionId: "session-1",
     memoryType: "vibe",
-    createdAt: "2026-05-21T08:00:00.000Z",
+    createdAt: "2026-05-01T08:00:00.000Z",
     content:
       "USER: <USER_REQUEST>How do I test React components?</USER_REQUEST>\nASSISTANT: You can use React Testing Library.",
     metadata: {
@@ -61,7 +61,7 @@ const mockVibeMemories = [
     id: "mem-2",
     sessionId: "session-2",
     memoryType: "distilled",
-    createdAt: "2026-05-20T10:00:00.000Z",
+    createdAt: "2026-05-22T10:00:00.000Z",
     content: "USER: ```markdown\n# GEMINI.md\nSome environment config\n```\nASSISTANT: I see.",
     metadata: {
       projectName: "Project Beta",

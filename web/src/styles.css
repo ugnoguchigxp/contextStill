@@ -1072,6 +1072,8 @@
   display: flex;
   flex-direction: column;
   background: var(--background);
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 .vibe-content-header {
@@ -1099,6 +1101,8 @@
   flex-direction: column;
   gap: 1.5rem;
   width: 100%;
+  min-width: 0;
+  overflow-x: hidden;
 }
 
 .vibe-card {
@@ -1108,6 +1112,7 @@
   padding: 1.25rem;
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
+  min-width: 0;
 }
 
 .vibe-card:hover {
@@ -1152,6 +1157,7 @@
   border-radius: var(--radius-sm);
   padding: 0.75rem 0.85rem;
   background: var(--muted);
+  min-width: 0;
 }
 
 .chat-turn-user {
@@ -1180,6 +1186,21 @@
   font-size: 0.94rem;
   line-height: 1.65;
   overflow-wrap: anywhere;
+  min-width: 0;
+}
+
+.chat-turn-content :where(pre) {
+  max-width: 100%;
+  overflow: hidden;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+.chat-turn-content :where(pre code) {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .vibe-muted-text {
@@ -1275,22 +1296,26 @@
 .tool-call-command {
   display: block;
   margin-top: 0.45rem;
-  overflow-x: auto;
+  overflow: hidden;
   border-radius: var(--radius-sm);
   background: var(--background);
   color: var(--foreground);
   padding: 0.45rem 0.55rem;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .tool-call-preview,
 .agent-diff-hunk {
   border-radius: var(--radius-sm);
   margin: 0.55rem 0 0;
-  max-height: 360px;
-  overflow: auto;
+  max-height: none;
+  overflow: hidden;
   padding: 0.7rem;
-  white-space: pre;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  word-break: break-word;
 }
 
 .tool-call-preview {
@@ -2044,8 +2069,8 @@
   font-size: 0.72rem;
   line-height: 1.5;
   margin: 0;
-  max-height: 200px;
-  overflow: auto;
+  max-height: none;
+  overflow: hidden;
   padding: 0.5rem 0.65rem;
   white-space: pre-wrap;
   overflow-wrap: anywhere;

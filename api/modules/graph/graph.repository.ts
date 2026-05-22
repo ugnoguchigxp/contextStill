@@ -138,11 +138,53 @@ function pickProjectKey(
     valueAsString(appliesTo.repoKey) ??
     valueAsString(metadata.repoKey) ??
     valueAsString(metadata.sourceProject);
-  return normalizeGroupKey(explicit);
+  const normalizedExplicit = normalizeGroupKey(explicit);
+  if (normalizedExplicit) return normalizedExplicit;
+
+  const pathCandidate =
+    valueAsString(appliesTo.repoPath) ??
+    valueAsString(metadata.repoPath) ??
+    valueAsString(metadata.sourceRepoPath) ??
+    valueAsString(metadata.workspacePath) ??
+    valueAsString(metadata.projectRoot);
+  return normalizeRepoKey(pathCandidate) ?? normalizeGroupKey(pathCandidate);
 }
 
 function extractSessionKey(metadata: Record<string, unknown>): string | undefined {
-  return valueAsString(metadata.sourceSessionId);
+  return valueAsString(metadata.sourceSessionId) ?? valueAsString(metadata.sessionId);
+}
+
+function sourceDocIdFromRef(value: unknown): string | undefined {
+  const raw = valueAsString(value);
+  if (!raw) return undefined;
+  const [source] = raw.split("#", 1);
+  const normalized = source?.trim();
+  if (!normalized) return undefined;
+  if (normalized.startsWith("cover-evidence-result://")) return undefined;
+  if (normalized.startsWith("agent://")) return undefined;
+  return normalized;
+}
+
+function sourceDocIdsFromMetadata(metadata: Record<string, unknown>): string[] {
+  const refs = new Set<string>();
+  for (const value of [
+    metadata.sourceDocumentUri,
+    metadata.sourceUri,
+    ...(Array.isArray(metadata.sourceRefs) ? metadata.sourceRefs : []),
+    ...(Array.isArray(metadata.candidateSourceRefs) ? metadata.candidateSourceRefs : []),
+  ]) {
+    const sourceDocId = sourceDocIdFromRef(value);
+    if (sourceDocId) refs.add(sourceDocId);
+  }
+
+  const references = Array.isArray(metadata.references) ? metadata.references : [];
+  for (const reference of references) {
+    const record = asRecord(reference);
+    const sourceDocId = sourceDocIdFromRef(record.uri);
+    if (sourceDocId) refs.add(sourceDocId);
+  }
+
+  return [...refs];
 }
 
 async function buildSessionProjectLookup(sessionIds: string[]): Promise<Map<string, string>> {
@@ -512,6 +554,7 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
       importance: normalizeKnowledgeScore(row.importance, 70),
       sessionKey: extractSessionKey(metadata),
       projectKey: pickProjectKey(appliesTo, metadata),
+      sourceDocIds: sourceDocIdsFromMetadata(metadata),
     };
   });
 
@@ -525,8 +568,13 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
   const nodeRawIds = nodes.map((node) => node.id.replace(/^knowledge:/, ""));
   const nodeRawIdSet = new Set(nodeRawIds);
 
-  // wiki source 軸用: knowledgeId → sources.id[] のマップを構築
+  // wiki source 軸用: knowledgeId → sources.id[] / legacy source URI[] のマップを構築
   const sourceDocIdsByKnowledge = new Map<string, string[]>();
+  for (const node of relationNodeContexts) {
+    if (node.sourceDocIds && node.sourceDocIds.length > 0) {
+      sourceDocIdsByKnowledge.set(node.id, [...node.sourceDocIds]);
+    }
+  }
   if (view === "relation" && nodeRawIds.length > 0) {
     const sourceLinks = await db
       .select({
@@ -580,6 +628,10 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
   const relationEdges = relationResult.edges;
   const edges = view === "semantic" ? semanticEdges : relationEdges;
   const stats = statsRows[0] ?? { totalKnowledgeCount: 0, embeddedKnowledgeCount: 0 };
+  const relationSourceRefCount = [...sourceDocIdsByKnowledge.values()].reduce(
+    (sum, refs) => sum + refs.length,
+    0,
+  );
   const relationEdgeCount =
     relationResult.sessionEdgeCount +
     relationResult.projectEdgeCount +
@@ -597,7 +649,10 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
       projectEdgeCount: relationResult.projectEdgeCount,
       sourceEdgeCount: relationResult.sourceEdgeCount,
       relationEdgeCount,
-      sourceRefCount: finiteOrFallback(sourceRefRows[0]?.sourceRefCount, 0),
+      sourceRefCount: Math.max(
+        relationSourceRefCount,
+        finiteOrFallback(sourceRefRows[0]?.sourceRefCount, 0),
+      ),
     },
   };
 }

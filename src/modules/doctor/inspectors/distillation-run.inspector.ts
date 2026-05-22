@@ -5,6 +5,7 @@ import { APP_CONSTANTS } from "../../../constants.js";
 import { getDb } from "../../../db/index.js";
 import { distillationTargetStates } from "../../../db/schema.js";
 import type { DoctorDistillationHealth } from "../../../shared/schemas/doctor.schema.js";
+import { isPipelineLockLikelyBlocking } from "../distillation-lock.util.js";
 import { minutesSince, normalizeReasonCounts } from "../doctor.utils.js";
 import { inspectLaunchAgent } from "../launch-agent.util.js";
 
@@ -377,6 +378,13 @@ function nextActionsForDistillation(
   queueHealth: DistillationQueueHealth,
 ): string[] {
   const nextActions: string[] = [];
+  const lockLikelyBlocking = isPipelineLockLikelyBlocking({
+    staleByCreatedAge: queueHealth.lock.staleByCreatedAge,
+    launchAgentLoaded: launchAgent.loaded,
+    staleRunning: queueHealth.staleRunning,
+    running: queueHealth.running,
+    blockedByHigherPriority: queueHealth.blockedByHigherPriority,
+  });
   if (!launchAgent.installed) {
     nextActions.push(`${config.setupScript} install で LaunchAgent を配置する`);
   } else if (!launchAgent.loaded) {
@@ -419,7 +427,7 @@ function nextActionsForDistillation(
       `${config.label} は stale running job があります。次回runでrequeue/skipされるか確認する`,
     );
   }
-  if (queueHealth.lock.staleByCreatedAge) {
+  if (lockLikelyBlocking) {
     nextActions.push(
       `${config.label} の pipeline lock が古いです。次回runで削除されない場合は ${queueHealth.lock.path} を確認する`,
     );

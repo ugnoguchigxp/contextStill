@@ -2,12 +2,11 @@ import { Link, Outlet, useRouterState } from "@tanstack/react-router";
 
 const navItems = [
   { to: "/", label: "Overview" },
-  { to: "/compile", label: "Compile" },
+  { to: "/sources", label: "Source" },
+  { to: "/vibe-memory", label: "Vibe Memory" },
+  { to: "/candidates", label: "Candidates" },
   { to: "/knowledge", label: "Knowledge" },
   { to: "/graph", label: "Graph" },
-  { to: "/vibe-memory", label: "Vibe Memory" },
-  { to: "/sources", label: "Sources" },
-  { to: "/candidates", label: "Candidates" },
   { to: "/audit", label: "Audit" },
   { to: "/doctor", label: "Doctor" },
 ] as const;

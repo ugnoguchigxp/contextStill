@@ -35,6 +35,25 @@ const distillationQueueHealthSchema = z.object({
   }),
 });
 
+const doctorReasonSeveritySchema = z.enum(["critical", "warning", "info"]);
+const doctorReasonAreaSchema = z.enum([
+  "Knowledge",
+  "Distillation",
+  "Sync",
+  "Runtime",
+  "MCP",
+  "Other",
+]);
+const doctorReasonDetailSchema = z.object({
+  code: z.string(),
+  label: z.string(),
+  severity: doctorReasonSeveritySchema,
+  area: doctorReasonAreaSchema,
+  description: z.string(),
+  impact: z.string(),
+  action: z.string(),
+});
+
 export const doctorDistillationHealthSchema = z.object({
   launchAgent: launchAgentSchema,
   runs: z.object({
@@ -65,6 +84,7 @@ export const doctorReportSchema = z.object({
   status: doctorStatusSchema,
   checkedAt: z.string().datetime(),
   reasons: z.array(z.string()),
+  reasonDetails: z.array(doctorReasonDetailSchema),
   db: z.object({
     reachable: z.boolean(),
     durationMs: z.number().int().nonnegative(),

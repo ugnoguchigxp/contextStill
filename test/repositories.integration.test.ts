@@ -419,6 +419,47 @@ index 0000000..1111111
       ),
     ).toBe(true);
 
+    const legacySourceA = await upsertKnowledgeFromSource({
+      sourceUri: "cover-evidence-result://legacy-source-a",
+      type: "rule",
+      status: "active",
+      scope: "repo",
+      title: "Graph Legacy Source A",
+      body: "graph legacy source body",
+      metadata: {
+        sourceDocumentUri: "file:///workspace/wiki/shared-source.md",
+      },
+    });
+    const legacySourceB = await upsertKnowledgeFromSource({
+      sourceUri: "cover-evidence-result://legacy-source-b",
+      type: "procedure",
+      status: "active",
+      scope: "repo",
+      title: "Graph Legacy Source B",
+      body: "graph legacy source body",
+      metadata: {
+        sourceDocumentUri: "file:///workspace/wiki/shared-source.md",
+      },
+    });
+    const sourceOnly = await buildGraphSnapshot({
+      limit: 30,
+      view: "relation",
+      relationAxes: ["source"],
+      status: "all",
+    });
+    const legacySourceNodeIds = new Set([
+      `knowledge:${legacySourceA}`,
+      `knowledge:${legacySourceB}`,
+    ]);
+    expect(
+      sourceOnly.edges.some(
+        (edge) =>
+          edge.edgeKind === "source" &&
+          legacySourceNodeIds.has(edge.source) &&
+          legacySourceNodeIds.has(edge.target),
+      ),
+    ).toBe(true);
+
     for (const id of knowledgeIds) {
       expect(relationSnapshot.nodes.some((node) => node.id === `knowledge:${id}`)).toBe(true);
     }

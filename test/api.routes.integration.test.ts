@@ -139,22 +139,48 @@ describeDb("api route integration", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        sessionId: "integration-session",
-        content: "integration vibe memory token",
+        sessionId: "integration-session-newer",
+        content: "integration vibe memory newer token",
+        metadata: {
+          timestamp: "2026-05-21T10:00:00.000Z",
+          sourceId: "codex_logs",
+        },
       }),
     });
     expect(createResponse.status).toBe(201);
+
+    const createOlderResponse = await app.request("/api/vibe-memory", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "integration-session-older",
+        content: "integration vibe memory older token",
+        metadata: {
+          timestamp: "2026-05-18T10:00:00.000Z",
+          sourceId: "codex_logs",
+        },
+      }),
+    });
+    expect(createOlderResponse.status).toBe(201);
 
     const listResponse = await app.request("/api/vibe-memory?limit=10");
     expect(listResponse.status).toBe(200);
     const json = (await listResponse.json()) as {
       memories: Array<{ sessionId: string; content: string }>;
     };
+    expect(json.memories[0]?.sessionId).toBe("integration-session-newer");
     expect(
       json.memories.some(
         (memory) =>
-          memory.sessionId === "integration-session" &&
-          memory.content.includes("integration vibe memory token"),
+          memory.sessionId === "integration-session-newer" &&
+          memory.content.includes("integration vibe memory newer token"),
+      ),
+    ).toBe(true);
+    expect(
+      json.memories.some(
+        (memory) =>
+          memory.sessionId === "integration-session-older" &&
+          memory.content.includes("integration vibe memory older token"),
       ),
     ).toBe(true);
   });

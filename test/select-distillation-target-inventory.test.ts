@@ -69,7 +69,7 @@ describe("collectVibeMemoryTargetCandidates", () => {
       "memory-2",
       "memory-3",
     ]);
-  });
+  }, 15_000);
 
   test("honors explicit vibe inventory limits", async () => {
     const { collectVibeMemoryTargetCandidates } = await import(

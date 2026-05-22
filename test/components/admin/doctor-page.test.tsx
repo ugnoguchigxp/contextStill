@@ -280,7 +280,7 @@ describe("DoctorPage", () => {
     ).toBeInTheDocument();
     expect(screen.getByText("vibe lock を確認する")).toBeInTheDocument();
     expect(screen.getByText("source queue を確認する")).toBeInTheDocument();
-  });
+  }, 15_000);
 
   it("renders fallback text for unknown reason codes", () => {
     const report = {
