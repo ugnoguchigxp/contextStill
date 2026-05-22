@@ -2,13 +2,13 @@ import path from "node:path";
 import { groupedConfig } from "../config.js";
 import { closeDbPool } from "../db/index.js";
 import {
-  runDistillationPipeline,
   type DistillationPipelineInput,
+  runDistillationPipeline,
 } from "../modules/distillationPipeline/runner.js";
-import { acquireFileLock, type FileLockHandle } from "./file-lock.js";
+import { type FileLockHandle, acquireFileLock } from "./file-lock.js";
 
 type CliOptions = {
-  kind: "auto" | "wiki" | "vibe";
+  kind: "auto" | "wiki" | "vibe" | "candidate";
   limit: number;
   write: boolean;
   refresh: boolean;
@@ -55,8 +55,8 @@ function parseArgs(args: string[]): CliOptions {
     if (arg === "--kind" || arg.startsWith("--kind=")) {
       const value = readArgValue(args, index, "--kind").trim();
       if (arg === "--kind") index += 1;
-      if (value !== "auto" && value !== "wiki" && value !== "vibe") {
-        throw new Error("--kind must be auto, wiki, or vibe");
+      if (value !== "auto" && value !== "wiki" && value !== "vibe" && value !== "candidate") {
+        throw new Error("--kind must be auto, wiki, vibe, or candidate");
       }
       options.kind = value;
     } else if (arg === "--limit" || arg.startsWith("--limit=")) {

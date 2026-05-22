@@ -1,14 +1,14 @@
-import { useQuery } from "@tanstack/react-query";
-import { RefreshCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { useQuery } from "@tanstack/react-query";
+import { RefreshCcw } from "lucide-react";
 import {
-  formatDoctorReasonDetail as formatDoctorReason,
   type DoctorReasonDetail,
+  formatDoctorReasonDetail as formatDoctorReason,
 } from "../../../../../src/shared/doctor/doctor-reasons";
-import { DoctorCharts } from "./doctor-charts";
 import { fetchDoctorReport } from "../repositories/admin.repository";
+import { DoctorCharts } from "./doctor-charts";
 
 function Metric({
   label,

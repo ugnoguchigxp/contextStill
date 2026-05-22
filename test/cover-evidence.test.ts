@@ -167,6 +167,47 @@ describe("coverEvidence parser", () => {
     expect(parsed.candidate).not.toHaveProperty("changeTypes");
   });
 
+  test("fills omitted candidate fields from caller defaults", () => {
+    const parsed = parseCoverEvidenceResult(
+      JSON.stringify({
+        schemaVersion: 1,
+        status: "knowledge_ready",
+        stage: "final",
+        candidate: {
+          title: "Preserve registration hints",
+          body: "Registration hints should survive when the assessor only rewrites title and body.",
+        },
+        references: [],
+        duplicateRefs: [],
+        toolEvents: [],
+        reason: null,
+      }),
+      {
+        candidateDefaults: {
+          type: "procedure",
+          importance: 91,
+          confidence: 77,
+          technologies: ["typescript"],
+          changeTypes: ["bugfix"],
+          domains: ["candidate-registration"],
+          repoPath: "/Users/y.noguchi/Code/memoryRouter",
+          repoKey: "memoryRouter",
+        },
+      },
+    );
+
+    expect(parsed.candidate).toMatchObject({
+      type: "procedure",
+      importance: 91,
+      confidence: 77,
+      technologies: ["typescript"],
+      changeTypes: ["bugfix"],
+      domains: ["candidate-registration"],
+      repoPath: "/Users/y.noguchi/Code/memoryRouter",
+      repoKey: "memoryRouter",
+    });
+  });
+
   test("accepts flat output and normalizes non-integer score scales", () => {
     const parsed = parseCoverEvidenceResult(
       JSON.stringify({
@@ -279,6 +320,65 @@ describe("runCoverEvidence", () => {
       evidenceRole: "supports_candidate",
     });
     expect(mocks.saveCoverEvidenceResult).not.toHaveBeenCalled();
+  });
+
+  test("preserves register_candidate origin hints through value assessment", async () => {
+    const body = skillLikeProcedureBody();
+    mocks.getFindCandidateResultById.mockResolvedValue(
+      candidateRow({
+        targetKind: "knowledge_candidate",
+        targetKey: "candidate-1",
+        sourceUri: "agent://candidate/candidate-1",
+        title: "Preserve register_candidate metadata",
+        content: body,
+        origin: {
+          candidateType: "procedure",
+          importance: 91,
+          confidence: 77,
+          technologies: ["typescript"],
+          changeTypes: ["bugfix"],
+          domains: ["candidate-registration"],
+          repoPath: "/Users/y.noguchi/Code/memoryRouter",
+          repoKey: "memoryRouter",
+        },
+      }),
+    );
+    mocks.runDistillationCompletion.mockResolvedValueOnce({
+      content: JSON.stringify({
+        schemaVersion: 1,
+        status: "knowledge_ready",
+        stage: "final",
+        candidate: {
+          title: "Preserve register_candidate metadata",
+          body,
+        },
+        references: [],
+        duplicateRefs: [],
+        toolEvents: [],
+        reason: null,
+      }),
+      toolEvents: [],
+      messages: [],
+    });
+
+    const result = await runCoverEvidence({ id: "find-1" });
+
+    expect(result.result.candidate).toMatchObject({
+      type: "procedure",
+      importance: 91,
+      confidence: 77,
+      technologies: ["typescript"],
+      changeTypes: ["bugfix"],
+      domains: ["candidate-registration"],
+      repoPath: "/Users/y.noguchi/Code/memoryRouter",
+      repoKey: "memoryRouter",
+    });
+    const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(request.messages[1]?.content).toContain('"technologies": [');
+    expect(request.messages[1]?.content).toContain('"candidate-registration"');
+    expect(request.messages[1]?.content).toContain('"/Users/y.noguchi/Code/memoryRouter"');
   });
 
   test("reclassifies command workflows as procedures when assessment returns rule", async () => {

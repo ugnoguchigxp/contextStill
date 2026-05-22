@@ -1,11 +1,11 @@
 import { describe, expect, test } from "vitest";
 import {
   extractAgentDiffContentFromText,
-  stripAgentDiffContentFromText,
-  parseUnifiedAgentDiffs,
-  parseApplyPatchAgentDiffs,
   extractAgentDiffSymbols,
   normalizeAgentDiffEntries,
+  parseApplyPatchAgentDiffs,
+  parseUnifiedAgentDiffs,
+  stripAgentDiffContentFromText,
 } from "../src/modules/vibe-memory/agent-diff-ingestion.service.js";
 
 describe("Agent Diff Ingestion Service", () => {

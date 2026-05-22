@@ -1,19 +1,19 @@
-import {
-  type VibeMemorySeed,
-  insertVibeMemory,
-  searchVibeMemories,
-} from "./vibe-memory.repository.js";
 import { db } from "../../db/client.js";
 import { agentDiffEntries, vibeMemories } from "../../db/schema.js";
 import {
-  recordVibeMemoryInputSchema,
   type RecordVibeMemoryInput,
+  recordVibeMemoryInputSchema,
 } from "../../shared/schemas/vibe-memory.schema.js";
 import {
   extractAgentDiffContentFromText,
   normalizeAgentDiffEntries,
   stripAgentDiffContentFromText,
 } from "./agent-diff-ingestion.service.js";
+import {
+  type VibeMemorySeed,
+  insertVibeMemory,
+  searchVibeMemories,
+} from "./vibe-memory.repository.js";
 
 export type RecordedVibeMemory = {
   memory: typeof vibeMemories.$inferSelect;

@@ -1,5 +1,5 @@
 import { calculateBigramSimilarity, findSimilarKnowledge } from "../../lib/knowledge-dedup.js";
-import { searchKnowledge, type KnowledgeSearchResult } from "../knowledge/knowledge.repository.js";
+import { type KnowledgeSearchResult, searchKnowledge } from "../knowledge/knowledge.repository.js";
 import type { CoverEvidenceCandidate, CoverEvidenceDuplicateRef } from "./types.js";
 
 export type CoverEvidenceDedupeResult =

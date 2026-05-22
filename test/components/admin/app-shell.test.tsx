@@ -1,7 +1,7 @@
 /** @vitest-environment jsdom */
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
 import React from "react";
+import { describe, expect, it, vi } from "vitest";
 import { AppShell } from "../../../web/src/modules/admin/components/app-shell";
 
 vi.mock("@tanstack/react-router", () => ({

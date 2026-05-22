@@ -1,8 +1,8 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { listStaticResources, readStaticResource } from "../src/mcp/server.js";
 import { contextCompileTool } from "../src/mcp/tools/context-compile.tool.js";
-import { searchKnowledgeTool } from "../src/mcp/tools/knowledge.tool.js";
 import { getExposedToolEntries } from "../src/mcp/tools/index.js";
+import { searchKnowledgeTool } from "../src/mcp/tools/knowledge.tool.js";
 import { initialInstructionsTool } from "../src/mcp/tools/system.tool.js";
 import {
   insertCompileRun,
@@ -56,7 +56,7 @@ describeDb("mcp contract", () => {
       "initial_instructions",
       "context_compile",
       "search_knowledge",
-      "register_knowledge",
+      "register_candidate",
       "list_knowledge",
       "update_knowledge",
       "read_file",
@@ -72,7 +72,8 @@ describeDb("mcp contract", () => {
     expect(text).toContain("## 常用ルール");
     expect(text).toContain("## MCPツール種別");
     expect(text).toContain("context_compile");
-    expect(text).toContain("register_knowledge");
+    expect(text).toContain("register_candidate");
+    expect(text).toContain("Use when:");
     expect(text).toContain("design.md");
   });
 

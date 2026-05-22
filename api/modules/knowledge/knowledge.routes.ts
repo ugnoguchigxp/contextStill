@@ -13,8 +13,8 @@ import {
   countKnowledgeItems,
   createKnowledgeItem,
   deleteKnowledgeItem,
-  listKnowledgeTagDefinitionsForApi,
   listKnowledgeItems,
+  listKnowledgeTagDefinitionsForApi,
   recordKnowledgeFeedback,
   updateKnowledgeItem,
 } from "./knowledge.repository.js";

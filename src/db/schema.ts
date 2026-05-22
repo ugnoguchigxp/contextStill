@@ -101,7 +101,11 @@ export const agentDiffEntries = pgTable(
 const toSqlList = (values: readonly string[]): string =>
   values.map((value) => `'${value}'`).join(", ");
 
-export const distillationTargetKindValues = ["wiki_file", "vibe_memory"] as const;
+export const distillationTargetKindValues = [
+  "wiki_file",
+  "vibe_memory",
+  "knowledge_candidate",
+] as const;
 
 export const distillationTargetStatusValues = [
   "pending",
@@ -121,7 +125,11 @@ export const distillationTargetPhaseValues = [
   "stored",
 ] as const;
 
-export const distillationTargetPriorityGroupValues = ["wiki", "vibe_memory"] as const;
+export const distillationTargetPriorityGroupValues = [
+  "knowledge_candidate",
+  "wiki",
+  "vibe_memory",
+] as const;
 
 export const findCandidateResultStatusValues = ["selected", "parse_failed"] as const;
 

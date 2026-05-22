@@ -3,7 +3,7 @@ import { closeDbPool } from "../db/index.js";
 import { previewNextDistillationTarget } from "../modules/selectDistillationTarget/inventory.service.js";
 
 type CliOptions = {
-  kind: "auto" | "wiki" | "vibe";
+  kind: "auto" | "wiki" | "vibe" | "candidate";
   rootPath?: string;
   vibeLimit?: number;
   fromStateTable: boolean;
@@ -30,8 +30,8 @@ function parseArgs(args: string[]): CliOptions {
     if (arg === "--kind" || arg.startsWith("--kind=")) {
       const value = readArgValue(args, index, "--kind").trim();
       if (arg === "--kind") index += 1;
-      if (value !== "auto" && value !== "wiki" && value !== "vibe") {
-        throw new Error("--kind must be auto, wiki, or vibe");
+      if (value !== "auto" && value !== "wiki" && value !== "vibe" && value !== "candidate") {
+        throw new Error("--kind must be auto, wiki, vibe, or candidate");
       }
       options.kind = value;
     } else if (arg === "--root" || arg.startsWith("--root=")) {

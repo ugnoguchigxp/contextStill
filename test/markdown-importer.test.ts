@@ -1,7 +1,7 @@
-import { describe, expect, test } from "vitest";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
+import { describe, expect, test } from "vitest";
 import { collectMarkdownFiles } from "../src/modules/sources/markdown-importer.service.js";
 
 describe("markdown importer file collection", () => {

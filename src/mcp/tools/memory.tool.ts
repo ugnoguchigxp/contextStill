@@ -1,8 +1,8 @@
+import { desc, eq } from "drizzle-orm";
 import { z } from "zod";
-import { retrieveVibeMemoryContext } from "../../modules/vibe-memory/vibe-memory.service.js";
 import { db } from "../../db/client.js";
 import { agentDiffEntries, vibeMemories } from "../../db/schema.js";
-import { desc, eq } from "drizzle-orm";
+import { retrieveVibeMemoryContext } from "../../modules/vibe-memory/vibe-memory.service.js";
 
 const memorySearchArgsSchema = z.object({
   query: z.string().trim().min(1),

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
-  selectDistillationTarget,
   type DistillationTargetCandidate,
+  selectDistillationTarget,
 } from "../src/modules/selectDistillationTarget/domain.js";
 
 function wiki(
@@ -33,7 +33,32 @@ function vibe(
   };
 }
 
+function candidate(
+  targetKey: string,
+  overrides: Partial<DistillationTargetCandidate> = {},
+): DistillationTargetCandidate {
+  return {
+    targetKind: "knowledge_candidate",
+    targetKey,
+    sourceUri: `agent://candidate/${targetKey}`,
+    status: "pending",
+    sortKey: targetKey,
+    ...overrides,
+  };
+}
+
 describe("selectDistillationTarget", () => {
+  it("selects registered knowledge candidates before wiki and vibe targets", () => {
+    const selected = selectDistillationTarget([
+      vibe("vibe-1", "2026-05-18T00:00:00.000Z"),
+      wiki("best-practice/hono.md"),
+      candidate("candidate-1"),
+    ]);
+
+    expect(selected?.targetKind).toBe("knowledge_candidate");
+    expect(selected?.targetKey).toBe("candidate-1");
+  });
+
   it("selects the first pending wiki file alphabetically before vibe memory", () => {
     const selected = selectDistillationTarget([
       vibe("vibe-1", "2026-05-18T00:00:00.000Z"),

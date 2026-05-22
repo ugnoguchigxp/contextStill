@@ -1,10 +1,10 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { listCandidateItems } from "../api/modules/candidates/candidates.repository.js";
-import { candidatesRouter } from "../api/modules/candidates/candidates.routes.js";
 import { z } from "zod";
 import { listAuditLogsForApi } from "../api/modules/audit/audit.repository.js";
 import { auditLogsRouter } from "../api/modules/audit/audit.routes.js";
+import { listCandidateItems } from "../api/modules/candidates/candidates.repository.js";
+import { candidatesRouter } from "../api/modules/candidates/candidates.routes.js";
 import { contextCompilerRouter } from "../api/modules/context-compiler/context-compiler.routes.js";
 import {
   compilePackForApi,
@@ -19,8 +19,8 @@ import {
   countKnowledgeItems,
   createKnowledgeItem,
   deleteKnowledgeItem,
-  listKnowledgeTagDefinitionsForApi,
   listKnowledgeItems,
+  listKnowledgeTagDefinitionsForApi,
   recordKnowledgeFeedback,
   updateKnowledgeItem,
 } from "../api/modules/knowledge/knowledge.repository.js";
@@ -33,8 +33,8 @@ import { compileRunDetailSchema } from "../src/shared/schemas/compile-run.schema
 import { type ContextPack, contextPackSchema } from "../src/shared/schemas/context-pack.schema.js";
 import { type DoctorReport, doctorReportSchema } from "../src/shared/schemas/doctor.schema.js";
 import {
-  overviewDashboardSchema,
   type OverviewDashboard,
+  overviewDashboardSchema,
 } from "../src/shared/schemas/overview.schema.js";
 
 vi.mock("../api/modules/context-compiler/context-compiler.service.js", () => ({

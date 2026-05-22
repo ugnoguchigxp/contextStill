@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 test("Knowledge and sources pages show core UI", async ({ page }) => {
   await page.goto("/sources");

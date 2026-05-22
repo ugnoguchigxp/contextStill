@@ -1,3 +1,4 @@
+import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
@@ -11,7 +12,6 @@ import { knowledgeRouter } from "./modules/knowledge/knowledge.routes.js";
 import { overviewRouter } from "./modules/overview/overview.routes.js";
 import { sourcesRouter } from "./modules/sources/sources.routes.js";
 import { vibeMemoryRouter } from "./modules/vibe-memory/vibe-memory.routes.js";
-import { Hono } from "hono";
 
 const app = new Hono();
 

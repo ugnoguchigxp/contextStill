@@ -1,14 +1,15 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { db } from "../src/db/client.js";
 import {
-  chunkMessages,
+  ingestAntigravityLogs,
+  ingestCodexLogs,
+} from "../src/modules/agent-log-sync/ingest.service.js";
+import {
   buildReadableTranscript,
+  chunkMessages,
+  isNonDistillableAgentTaskLogMessage,
   syncAllAgentLogs,
 } from "../src/modules/agent-log-sync/sync.service.js";
-import {
-  ingestCodexLogs,
-  ingestAntigravityLogs,
-} from "../src/modules/agent-log-sync/ingest.service.js";
-import { db } from "../src/db/client.js";
 
 vi.mock("../src/modules/agent-log-sync/ingest.service.js");
 vi.mock("../src/db/client.js", () => {
@@ -144,6 +145,71 @@ describe("Agent Log Sync Service", () => {
     const transcript = buildReadableTranscript(messages);
     expect(transcript).not.toContain("calling tool");
     expect(transcript).toContain("ASSISTANT: Result");
+  });
+
+  test("identifies Antigravity background task log messages as non-distillable", () => {
+    expect(
+      isNonDistillableAgentTaskLogMessage({
+        role: "assistant",
+        content: [
+          "Created At: 2026-05-22T05:20:27Z",
+          "Tool is running as a background task with task id: session/task-240",
+          "Task Description: build check",
+          "Log: /Users/y.noguchi/.gemini/antigravity/task-240.log",
+        ].join("\n"),
+        metadata: { sourceId: "antigravity_logs", projectName: "task-240.log" },
+      }),
+    ).toBe(true);
+
+    expect(
+      isNonDistillableAgentTaskLogMessage({
+        role: "assistant",
+        content:
+          "Created At: 2026-05-22T05:20:27Z\nTask: session/task-240\nStatus: DONE\nLog: /tmp/task-240.log",
+        metadata: { sourceId: "antigravity_logs" },
+      }),
+    ).toBe(true);
+  });
+
+  test("syncAllAgentLogs skips background task log messages", async () => {
+    vi.mocked(ingestAntigravityLogs).mockResolvedValue({
+      ok: true,
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            "Created At: 2026-05-22T05:20:27Z",
+            "Tool is running as a background task with task id: session/task-240",
+            "Task Description: build check",
+            "Log: /Users/y.noguchi/.gemini/antigravity/task-240.log",
+          ].join("\n"),
+          metadata: {
+            sourceId: "antigravity_logs",
+            projectName: "task-240.log",
+            sessionId: "antigravity-session",
+          },
+        },
+        {
+          role: "user",
+          content: "Keep this real user request",
+          metadata: {
+            sourceId: "antigravity_logs",
+            projectName: "memoryRouter",
+            sessionId: "antigravity-session",
+          },
+        },
+      ],
+      cursor: {},
+      maxObservedMtimeMs: 4000,
+      checkedFiles: 1,
+      errors: [],
+      warnings: [],
+    } as any);
+
+    const summary = await syncAllAgentLogs();
+
+    expect(summary.imported).toBe(1);
+    expect(summary.sources.find((source) => source.id === "antigravity_logs")?.messages).toBe(1);
   });
 
   test("syncAllAgentLogs inserts diff entries", async () => {

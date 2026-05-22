@@ -2,7 +2,7 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
 import { groupedConfig } from "../../../src/config.js";
-import { deleteSourceByUri } from "./sources.repository.js";
+import { upsertSourceDocument } from "../../../src/modules/sources/source.repository.js";
 import {
   commitDeleteChange,
   commitFileChange,
@@ -26,7 +26,7 @@ import {
   isSafeSlug,
   sanitizeSlug,
 } from "../../../src/modules/sources/wiki/slug.js";
-import { upsertSourceDocument } from "../../../src/modules/sources/source.repository.js";
+import { deleteSourceByUri } from "./sources.repository.js";
 
 const pageSlugSchema = z
   .string()

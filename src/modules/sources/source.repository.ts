@@ -1,9 +1,9 @@
-import { and, desc, eq, ilike, inArray, notInArray, or, sql, type SQL } from "drizzle-orm";
+import { type SQL, and, desc, eq, ilike, inArray, notInArray, or, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { sourceFragments, sources } from "../../db/schema.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
-import { embedOne } from "../embedding/embedding.service.js";
 import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
+import { embedOne } from "../embedding/embedding.service.js";
 
 export type SourceKind = "wiki";
 

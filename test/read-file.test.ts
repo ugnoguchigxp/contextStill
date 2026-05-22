@@ -20,9 +20,10 @@ if (typeof (globalThis as any).Bun === "undefined") {
   };
 }
 
-import { describe, it, expect, vi, beforeEach } from "vitest";
-import path from "node:path";
 import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { readFileDomain } from "../src/modules/readFile/domain.js";
 import { markdownifyContent } from "../src/modules/readFile/markdownify.service.js";
 import {
   maybeStripFrontmatter,
@@ -30,7 +31,6 @@ import {
   stripMarkdownFormatting,
 } from "../src/modules/readFile/normalize.service.js";
 import { sliceTextByTokenWindow } from "../src/modules/readFile/token-window.service.js";
-import { readFileDomain } from "../src/modules/readFile/domain.js";
 
 // fs と config をモックする
 vi.mock("node:fs/promises", () => ({

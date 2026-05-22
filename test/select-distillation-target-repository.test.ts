@@ -1,58 +1,224 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { db } from "../src/db/index.js";
+import { recordAuditLogSafe } from "../src/modules/audit/audit-log.service.js";
 import {
   claimNextDistillationTargetState,
+  findNextSelectableDistillationTargetState,
+  finishDistillationTargetState,
+  getDistillationTargetStateById,
+  listDistillationTargetStatesForCandidates,
+  pauseDistillationTargetState,
+  requeueDistillationTargetState,
+  updateDistillationTargetHeartbeat,
+  updateDistillationTargetPhase,
   upsertDistillationTargetState,
 } from "../src/modules/selectDistillationTarget/repository.js";
-import {
-  closeIntegrationDb,
-  ensureDbIntegrationReady,
-  isDbIntegrationEnabled,
-  truncateIntegrationTables,
-} from "./helpers/integration.js";
 
-const describeDb = isDbIntegrationEnabled() ? describe : describe.skip;
+const mockInsert = vi.fn();
+const mockSelect = vi.fn();
+const mockUpdate = vi.fn();
+const mockExecute = vi.fn();
 
-describeDb("selectDistillationTarget repository", () => {
-  beforeAll(async () => {
-    await ensureDbIntegrationReady();
+vi.mock("../src/db/index.js", () => {
+  const mockDb = {
+    insert: (...args: any[]) => mockInsert(...args),
+    select: (...args: any[]) => mockSelect(...args),
+    update: (...args: any[]) => mockUpdate(...args),
+    execute: (...args: any[]) => mockExecute(...args),
+    transaction: vi.fn().mockImplementation((callback) => callback(mockDb)),
+  };
+  return { db: mockDb };
+});
+
+vi.mock("../src/modules/audit/audit-log.service.js", () => ({
+  auditEventTypes: {
+    distillationTargetClaimed: "DISTILLATION_TARGET_CLAIMED",
+    distillationTargetHeartbeat: "DISTILLATION_TARGET_HEARTBEAT",
+    distillationTargetStatusChanged: "DISTILLATION_TARGET_STATUS_CHANGED",
+  },
+  recordAuditLogSafe: vi.fn().mockResolvedValue(undefined),
+}));
+
+const makeChain = (result: any) => {
+  const chain = {
+    values: vi.fn().mockImplementation(() => chain),
+    onConflictDoUpdate: vi.fn().mockImplementation(() => chain),
+    from: vi.fn().mockImplementation(() => chain),
+    where: vi.fn().mockImplementation(() => chain),
+    limit: vi.fn().mockImplementation(() => chain),
+    orderBy: vi.fn().mockImplementation(() => chain),
+    set: vi.fn().mockImplementation(() => chain),
+    returning: vi.fn().mockResolvedValue(result),
+    then: (onfulfilled: any) => Promise.resolve(result).then(onfulfilled),
+    catch: (onrejected: any) => Promise.resolve(result).catch(onrejected),
+  };
+  return chain;
+};
+
+describe("selectDistillationTarget repository unit tests", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
   });
 
-  beforeEach(async () => {
-    await truncateIntegrationTables();
+  const mockRow = {
+    id: "target-1",
+    targetKind: "wiki_file" as const,
+    targetKey: "test/key.md",
+    sourceUri: "/wiki/test/key.md",
+    distillationVersion: "select-distillation-target-v1",
+    status: "pending" as const,
+    phase: "selected" as const,
+    priorityGroup: "wiki",
+    sortKey: "key",
+    metadata: {},
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  };
+
+  describe("upsertDistillationTargetState", () => {
+    it("inserts or updates the target state", async () => {
+      mockInsert.mockReturnValueOnce(makeChain([mockRow]));
+
+      const result = await upsertDistillationTargetState({
+        candidate: {
+          targetKind: "wiki_file",
+          targetKey: "test/key.md",
+          sourceUri: "/wiki/test/key.md",
+          sortKey: "key",
+        },
+      });
+
+      expect(result).toEqual(mockRow);
+      expect(mockInsert).toHaveBeenCalled();
+    });
   });
 
-  afterAll(async () => {
-    await closeIntegrationDb();
+  describe("getDistillationTargetStateById", () => {
+    it("returns row by id", async () => {
+      mockSelect.mockReturnValueOnce(makeChain([mockRow]));
+
+      const result = await getDistillationTargetStateById("target-1");
+      expect(result).toEqual(mockRow);
+    });
+
+    it("returns null if not found", async () => {
+      mockSelect.mockReturnValueOnce(makeChain([]));
+
+      const result = await getDistillationTargetStateById("target-missing");
+      expect(result).toBeNull();
+    });
   });
 
-  it("upserts a distillation target state correctly", async () => {
-    const candidate = {
-      targetKind: "wiki_file" as const,
-      targetKey: "test/key.md",
-      sourceUri: "/wiki/test/key.md",
-      sortKey: "key",
-    };
+  describe("findNextSelectableDistillationTargetState", () => {
+    it("returns next selectable state", async () => {
+      mockSelect.mockReturnValueOnce(makeChain([mockRow]));
 
-    const state = await upsertDistillationTargetState({ candidate });
-
-    expect(state).toBeDefined();
-    expect(state.targetKey).toBe("test/key.md");
-    expect(state.status).toBe("pending");
+      const result = await findNextSelectableDistillationTargetState();
+      expect(result).toEqual(mockRow);
+    });
   });
 
-  it("claims a pending distillation target", async () => {
-    const candidate = {
-      targetKind: "wiki_file" as const,
-      targetKey: "test/claim.md",
-      sourceUri: "/wiki/test/claim.md",
-      sortKey: "claim",
-    };
-    await upsertDistillationTargetState({ candidate });
+  describe("listDistillationTargetStatesForCandidates", () => {
+    it("returns rows for candidates", async () => {
+      mockSelect.mockReturnValueOnce(makeChain([mockRow]));
 
-    const claimed = await claimNextDistillationTargetState({ worker: "test-worker" });
+      const result = await listDistillationTargetStatesForCandidates({
+        candidates: [
+          {
+            targetKind: "wiki_file",
+            targetKey: "test/key.md",
+            sourceUri: "/wiki/test/key.md",
+            sortKey: "key",
+          },
+        ],
+      });
+      expect(result).toEqual([mockRow]);
+    });
 
-    expect(claimed).toBeDefined();
-    expect(claimed?.status).toBe("running");
-    expect(claimed?.lockedBy).toBe("test-worker");
+    it("returns empty if candidates is empty", async () => {
+      const result = await listDistillationTargetStatesForCandidates({
+        candidates: [],
+      });
+      expect(result).toEqual([]);
+      expect(mockSelect).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("claimNextDistillationTargetState", () => {
+    it("claims and transitions status to running", async () => {
+      mockExecute.mockResolvedValueOnce({ rows: [{ id: "target-1" }] });
+      mockUpdate.mockReturnValueOnce(makeChain([mockRow]));
+
+      const result = await claimNextDistillationTargetState({ worker: "test-worker" });
+      expect(result).toEqual(mockRow);
+      expect(recordAuditLogSafe).toHaveBeenCalled();
+    });
+
+    it("returns null if execute returns no rows", async () => {
+      mockExecute.mockResolvedValueOnce({ rows: [] });
+
+      const result = await claimNextDistillationTargetState();
+      expect(result).toBeNull();
+      expect(mockUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("updateDistillationTargetHeartbeat", () => {
+    it("updates heartbeat", async () => {
+      mockUpdate.mockReturnValueOnce(makeChain([mockRow]));
+
+      const result = await updateDistillationTargetHeartbeat("target-1");
+      expect(result).toEqual(mockRow);
+      expect(recordAuditLogSafe).toHaveBeenCalled();
+    });
+  });
+
+  describe("updateDistillationTargetPhase", () => {
+    it("updates phase", async () => {
+      mockUpdate.mockReturnValueOnce(makeChain([mockRow]));
+
+      const result = await updateDistillationTargetPhase({ id: "target-1", phase: "stored" });
+      expect(result).toEqual(mockRow);
+    });
+  });
+
+  describe("finishDistillationTargetState", () => {
+    it("updates status to completed", async () => {
+      mockUpdate.mockReturnValueOnce(makeChain([mockRow]));
+
+      const result = await finishDistillationTargetState({
+        id: "target-1",
+        status: "completed",
+        outcomeKind: "success",
+      });
+      expect(result).toEqual(mockRow);
+      expect(recordAuditLogSafe).toHaveBeenCalled();
+    });
+  });
+
+  describe("pauseDistillationTargetState", () => {
+    it("updates status to paused", async () => {
+      mockUpdate.mockReturnValueOnce(makeChain([mockRow]));
+
+      const result = await pauseDistillationTargetState({
+        id: "target-1",
+        reason: "throttled",
+      });
+      expect(result).toEqual(mockRow);
+      expect(recordAuditLogSafe).toHaveBeenCalled();
+    });
+  });
+
+  describe("requeueDistillationTargetState", () => {
+    it("requeues the target state", async () => {
+      mockUpdate.mockReturnValueOnce(makeChain([mockRow]));
+
+      const result = await requeueDistillationTargetState({
+        id: "target-1",
+        reason: "retry",
+      });
+      expect(result).toEqual(mockRow);
+      expect(recordAuditLogSafe).toHaveBeenCalled();
+    });
   });
 });

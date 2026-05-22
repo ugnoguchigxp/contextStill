@@ -1,7 +1,7 @@
 import type { DoctorReport } from "../../../shared/schemas/doctor.schema.js";
 import {
-  inspectDistillationRunHealth,
   type DistillationRunInspectorOptions,
+  inspectDistillationRunHealth,
 } from "./distillation-run.inspector.js";
 
 export async function inspectSourceDistillation(

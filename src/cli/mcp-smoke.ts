@@ -12,7 +12,7 @@ const requiredPrimaryTools = [
   "initial_instructions",
   "context_compile",
   "search_knowledge",
-  "register_knowledge",
+  "register_candidate",
   "list_knowledge",
   "update_knowledge",
   "memory_search",

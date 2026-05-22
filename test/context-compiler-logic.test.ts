@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   estimateTokens,
   estimatedTokenWeight,
-} from "../src/modules/context-compiler/context-compiler.service.js";
+} from "../src/modules/context-compiler/token-budget.js";
 
 describe("ContextCompiler logic - Token Estimation Tests", () => {
   describe("estimatedTokenWeight", () => {

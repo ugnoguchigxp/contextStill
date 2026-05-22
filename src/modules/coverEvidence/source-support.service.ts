@@ -1,7 +1,7 @@
 import { groupedConfig } from "../../config.js";
+import type { FindCandidateResultRow } from "../findCandidate/repository.js";
 import { readVibeMemoryByTokenWindow } from "../memoryReader/reader.service.js";
 import { readFileDomain } from "../readFile/domain.js";
-import type { FindCandidateResultRow } from "../findCandidate/repository.js";
 import type { CoverEvidenceReference } from "./types.js";
 
 export type CoverEvidenceSourceRead = {
@@ -60,6 +60,22 @@ function readRangesFromOrigin(origin: unknown): Array<{ from: number; toExclusiv
 export async function readSourceEvidenceForCandidate(
   row: FindCandidateResultRow,
 ): Promise<CoverEvidenceSourceRead> {
+  if (row.targetKind === "knowledge_candidate") {
+    return {
+      content: row.content,
+      references: [
+        {
+          kind: "source",
+          uri: row.sourceUri,
+          locator: "candidate:content",
+          note: "registered candidate content",
+          evidenceRole: "supports_candidate",
+        },
+      ],
+      readRanges: [{ from: 0, toExclusive: row.content.length }],
+    };
+  }
+
   const ranges = readRangesFromOrigin(row.origin).slice(0, 8);
   const contentParts: string[] = [];
   const references: CoverEvidenceReference[] = [];

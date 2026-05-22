@@ -5,18 +5,15 @@ import {
 } from "../../../api/modules/knowledge/knowledge.repository.js";
 import { db } from "../../db/index.js";
 import { knowledgeItems } from "../../db/schema.js";
-import { checkKnowledgeDuplicate } from "../../lib/knowledge-dedup.js";
 import { normalizeKnowledgeScore } from "../../lib/score-scale.js";
 import { rankAndDedupe } from "../../modules/context-compiler/ranking.service.js";
-import {
-  registerKnowledgeFromMarkdown,
-  searchKnowledgeCandidates,
-} from "../../modules/knowledge/knowledge.service.js";
+import { searchKnowledgeCandidates } from "../../modules/knowledge/knowledge.service.js";
 import { canTransitionKnowledgeStatus } from "../../modules/lifecycle/lifecycle.service.js";
+import { registerCandidate } from "../../modules/registerCandidate/register-candidate.service.js";
 import {
   knowledgeSearchInputSchema,
   listKnowledgeInputSchema,
-  registerKnowledgeInputSchema,
+  registerCandidateInputSchema,
   updateKnowledgeInputSchema,
 } from "../../shared/schemas/knowledge.schema.js";
 import type { ToolEntry } from "../registry.js";
@@ -119,18 +116,25 @@ export const searchKnowledgeTool: ToolEntry = {
   },
 };
 
-export const registerKnowledgeTool: ToolEntry = {
-  name: "register_knowledge",
+export const registerCandidateTool: ToolEntry = {
+  name: "register_candidate",
   description:
-    "Directly register new rules or procedures (agent skills). Embedding is generated automatically.",
+    "Register a lightweight rule/procedure candidate for later distillation. No embedding or knowledge draft is created synchronously.",
   inputSchema: {
     type: "object",
     properties: {
-      title: { type: "string", description: "Clear, concise title of the knowledge." },
-      body: { type: "string", description: "The content of the rule or procedure." },
-      type: { type: "string", enum: ["rule", "procedure"], default: "rule" },
-      status: { type: "string", enum: ["draft", "active", "deprecated"], default: "draft" },
-      scope: { type: "string", enum: ["repo", "global"], default: "repo" },
+      title: { type: "string", description: "Clear, concise candidate title." },
+      body: {
+        type: "string",
+        description:
+          "Candidate body. For procedures, prefer Use when / Workflow / Verification / Avoid sections.",
+      },
+      text: {
+        type: "string",
+        description:
+          "Optional raw note or JSON-like text. The server will normalize the first candidate into title/body.",
+      },
+      type: { type: "string", enum: ["rule", "procedure"] },
       confidence: { type: "number", minimum: 0, maximum: 100 },
       importance: { type: "number", minimum: 0, maximum: 100 },
       appliesTo: { type: "object" },
@@ -142,33 +146,13 @@ export const registerKnowledgeTool: ToolEntry = {
       repoKey: { type: "string" },
       metadata: { type: "object" },
     },
-    required: ["title", "body"],
+    anyOf: [{ required: ["title", "body"] }, { required: ["text"] }],
   },
   handler: async (args) => {
-    const parsed = registerKnowledgeInputSchema.parse(args ?? {});
-
-    // 共通重複チェック（MCP 登録時は厳しめ: 0.95）
-    const dedupResult = await checkKnowledgeDuplicate(parsed.title, parsed.body, {
-      bodySimilarityThreshold: 0.95,
-      topK: 3,
-    });
-    if (dedupResult.isDuplicate) {
-      return {
-        content: [
-          {
-            type: "text",
-            text: `Registration skipped: Knowledge with identical content already exists (ID: ${dedupResult.existingId}, Match: ${(dedupResult.matchScore * 100).toFixed(1)}%, reason: ${dedupResult.reason}).`,
-          },
-        ],
-      };
-    }
-
-    const id = await registerKnowledgeFromMarkdown({
-      ...parsed,
-      sourceUri: "agent://register",
-    });
+    const parsed = registerCandidateInputSchema.parse(args ?? {});
+    const result = await registerCandidate(parsed);
     return {
-      content: [{ type: "text", text: `Knowledge registered successfully with ID: ${id}` }],
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
     };
   },
 };

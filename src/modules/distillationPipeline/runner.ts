@@ -1,28 +1,30 @@
 import { groupedConfig } from "../../config.js";
 import {
+  type CoverEvidenceResultRow,
   coverEvidenceResultFromRow,
   listCoverEvidenceResultsByTargetStateId,
   saveCoverEvidenceResult,
-  type CoverEvidenceResultRow,
 } from "../coverEvidence/repository.js";
+import { runCoverEvidenceForCandidate } from "../coverEvidence/runner.js";
+import type { DistillationProviderSetting } from "../distillation/distillation-runtime.service.js";
 import {
   PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
   hasSkillLikeProcedureBody,
   shouldDemoteProcedureToRule,
 } from "../distillation/procedure-quality.js";
-import type { DistillationProviderSetting } from "../distillation/distillation-runtime.service.js";
-import { runCoverEvidenceForCandidate } from "../coverEvidence/runner.js";
-import { runFinalizeDistille, type FinalizeDistilleResult } from "../finalizeDistille/domain.js";
+import { type FinalizeDistilleResult, runFinalizeDistille } from "../finalizeDistille/domain.js";
 import { runFindCandidate } from "../findCandidate/domain.js";
 import {
-  listFindCandidateResultsByTargetStateId,
   type FindCandidateResultRow,
+  listFindCandidateResultsByTargetStateId,
 } from "../findCandidate/repository.js";
 import type { DistillationTargetKind } from "../selectDistillationTarget/domain.js";
 import { refreshDistillationTargetInventory } from "../selectDistillationTarget/inventory.service.js";
 import {
-  claimNextDistillationTargetState,
   DEFAULT_DISTILLATION_TARGET_VERSION,
+  type DistillationTargetStateRow,
+  type TargetLease,
+  claimNextDistillationTargetState,
   finishDistillationTargetState,
   leaseFromTargetState,
   pauseDistillationTargetState,
@@ -30,12 +32,10 @@ import {
   releaseRetryablePausedDistillationTargets,
   updateDistillationTargetHeartbeat,
   updateDistillationTargetPhase,
-  type DistillationTargetStateRow,
-  type TargetLease,
 } from "../selectDistillationTarget/repository.js";
 
 export type DistillationPipelineInput = {
-  kind?: "auto" | "wiki" | "vibe";
+  kind?: "auto" | "wiki" | "vibe" | "candidate";
   limit?: number;
   worker?: string;
   provider?: DistillationProviderSetting;
@@ -92,6 +92,7 @@ const retryableCoverStatuses = new Set<string>(["tool_failed", "provider_failed"
 function targetKindFilter(
   kind: DistillationPipelineInput["kind"],
 ): DistillationTargetKind | undefined {
+  if (kind === "candidate") return "knowledge_candidate";
   if (kind === "wiki") return "wiki_file";
   if (kind === "vibe") return "vibe_memory";
   return undefined;

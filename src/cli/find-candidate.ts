@@ -1,9 +1,9 @@
 import { closeDbPool } from "../db/index.js";
 import {
-  formatCliTextCandidates,
-  runFindCandidate,
   type FindCandidateCallerMode,
   type FindCandidateInput,
+  formatCliTextCandidates,
+  runFindCandidate,
 } from "../modules/findCandidate/domain.js";
 
 type CliOptions = {

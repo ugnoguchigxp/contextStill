@@ -5,7 +5,11 @@ const dayStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 export const overviewKnowledgeStatusSchema = z.enum(["active", "draft", "deprecated"]);
 export const overviewDynamicScoreBucketSchema = z.enum(["0", "0-1", "1-5", "5-10", "10+"]);
 export const overviewSourceCoverageLabelSchema = z.enum(["linked", "unlinked"]);
-export const overviewDistillationTargetKindSchema = z.enum(["wiki_file", "vibe_memory"]);
+export const overviewDistillationTargetKindSchema = z.enum([
+  "wiki_file",
+  "vibe_memory",
+  "knowledge_candidate",
+]);
 
 export const overviewDashboardSchema = z.object({
   checkedAt: z.string().datetime(),

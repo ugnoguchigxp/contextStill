@@ -1,102 +1,56 @@
-import {
-  BedrockRuntimeClient,
-  ConverseCommand,
-  type ContentBlock,
-  type Message,
-  type SystemContentBlock,
-  type ToolConfiguration,
-} from "@aws-sdk/client-bedrock-runtime";
 import { groupedConfig } from "../../config.js";
-import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
 import {
-  distillationToolDefinitions,
-  distillationEvidenceToolNames,
-  executeDistillationToolCall,
   type DistillationToolCall,
   type DistillationToolResult,
+  distillationEvidenceToolNames,
+  distillationToolDefinitions,
+  executeDistillationToolCall,
 } from "./distillation-tools.service.js";
+import {
+  type DistillationProviderName,
+  type DistillationProviderSetting,
+  defaultModelForProvider,
+  isProviderConfigured,
+  resolveDistillationProviderOrder,
+} from "./llm-resolver.js";
+import { callLocalLlmChat } from "./providers/local-llm.js";
+import { callAzureOpenAiChat } from "./providers/azure-openai.js";
+import { callBedrockChat } from "./providers/bedrock.js";
 
-export type DistillationRuntimeToolDefinition = {
-  type: "function";
-  function: {
-    name: string;
-    description: string;
-    parameters: {
-      type: "object";
-      properties: Record<string, unknown>;
-      required: string[];
-      additionalProperties: false;
-    };
-  };
-};
+// Re-export types from types.ts to preserve public schema
+export type {
+  DistillationRuntimeToolDefinition,
+  DistillationMessage,
+  DistillationModelRequest,
+  DistillationChatClient,
+  DistillationToolExecutor,
+  DistillationCompletionResult,
+  DistillationRuntimeOptions,
+} from "./types.js";
 
-export type DistillationMessage = {
-  role: "system" | "user" | "assistant" | "tool";
-  content?: string | null;
-  name?: string;
-  tool_call_id?: string;
-  tool_calls?: DistillationToolCall[];
-};
+import type {
+  DistillationChatClient,
+  DistillationChatRequest,
+  DistillationChatResponse,
+  DistillationCompletionResult,
+  DistillationMessage,
+  DistillationModelRequest,
+  DistillationRuntimeOptions,
+} from "./types.js";
 
-export type DistillationModelRequest = {
-  model: string;
-  messages: DistillationMessage[];
-  maxTokens: number;
-};
+// Re-export resolveDistillationModel and ProviderSetting
+export { resolveDistillationModel, type DistillationProviderSetting } from "./llm-resolver.js";
 
-type DistillationChatRequest = DistillationModelRequest & {
-  tools?: DistillationRuntimeToolDefinition[];
-  toolChoice?: "auto" | "none" | "required";
-  signal?: AbortSignal;
-};
-
-type DistillationChatResponse = {
-  content?: string | null;
-  toolCalls: DistillationToolCall[];
-  finishReason?: string;
-};
-
-export type DistillationChatClient = (
-  request: DistillationChatRequest,
-) => Promise<DistillationChatResponse>;
-
-export type DistillationToolExecutor = (
-  toolCall: DistillationToolCall,
-  auditContext?: Record<string, unknown>,
-) => Promise<DistillationToolResult>;
-
-export type DistillationCompletionResult = {
-  content: string;
-  toolEvents: DistillationToolResult[];
-  messages: DistillationMessage[];
-};
+// Re-export internal utilities used by external libraries/tests
+export { parseToolCalls, parseOpenAiStyleResponse } from "./providers/helpers.js";
+export {
+  buildBedrockToolConfig,
+  buildBedrockConversation,
+  parseBedrockResponse,
+} from "./providers/bedrock.js";
 
 type DistillationErrorWithToolEvents = Error & {
   distillationToolEvents?: DistillationToolResult[];
-};
-
-export type DistillationRuntimeOptions = {
-  chatClient?: DistillationChatClient;
-  toolExecutor?: DistillationToolExecutor;
-  providerSetting?: DistillationProviderSetting;
-  enableTools?: boolean;
-  maxToolRounds?: number;
-  auditContext?: Record<string, unknown>;
-  requireToolCall?: boolean;
-  toolNames?: readonly string[];
-  toolDefinitions?: DistillationRuntimeToolDefinition[];
-  requireToolCallReminder?: string[];
-  blankResponseReminder?: string[];
-  signal?: AbortSignal;
-};
-
-type DistillationProviderName = "local-llm" | "azure-openai" | "bedrock";
-export type DistillationProviderSetting = "local-llm" | "azure-openai" | "bedrock" | "auto";
-
-type OpenAiToolCall = {
-  id?: unknown;
-  type?: unknown;
-  function?: { name?: unknown; arguments?: unknown };
 };
 
 export function distillationToolEventsFromError(error: unknown): DistillationToolResult[] {
@@ -117,466 +71,12 @@ export function errorWithDistillationToolEvents(
   return normalized;
 }
 
-function resolveDistillationProviderOrder(
-  setting: DistillationProviderSetting,
-): DistillationProviderName[] {
-  if (setting === "auto") {
-    return ["local-llm", "azure-openai", "bedrock"];
-  }
-  return [setting];
-}
-
-function defaultModelForProvider(provider: DistillationProviderName): string {
-  switch (provider) {
-    case "azure-openai":
-      return groupedConfig.azureOpenAi.model;
-    case "bedrock":
-      return groupedConfig.bedrock.model;
-    default:
-      return groupedConfig.localLlm.model;
-  }
-}
-
-function isProviderConfigured(provider: DistillationProviderName): boolean {
-  switch (provider) {
-    case "azure-openai":
-      return Boolean(
-        groupedConfig.azureOpenAi.apiKey.trim() &&
-          groupedConfig.azureOpenAi.apiBaseUrl.trim() &&
-          groupedConfig.azureOpenAi.model.trim(),
-      );
-    case "bedrock":
-      return Boolean(groupedConfig.bedrock.region.trim() && groupedConfig.bedrock.model.trim());
-    default:
-      return Boolean(
-        groupedConfig.localLlm.apiBaseUrl.trim() && groupedConfig.localLlm.model.trim(),
-      );
-  }
-}
-
-function resolveProviderForDistillation(
-  providerSetting: DistillationProviderSetting = groupedConfig.distillation.provider,
-): DistillationProviderName {
-  const order = resolveDistillationProviderOrder(providerSetting);
-  for (const provider of order) {
-    if (isProviderConfigured(provider)) {
-      return provider;
-    }
-  }
-  return order[0] ?? "local-llm";
-}
-
-export function resolveDistillationModel(
-  providerSetting: DistillationProviderSetting = groupedConfig.distillation.provider,
-): string {
-  return defaultModelForProvider(resolveProviderForDistillation(providerSetting));
-}
-
-function abortError(): Error {
-  const error = new Error("distillation request aborted");
-  error.name = "AbortError";
-  return error;
-}
-
 function throwIfAborted(signal: AbortSignal | undefined): void {
   if (signal?.aborted) {
-    throw abortError();
-  }
-}
-
-function withRequestTimeout<T>(
-  timeoutMs: number,
-  task: (signal: AbortSignal) => Promise<T>,
-  parentSignal?: AbortSignal,
-): Promise<T> {
-  const controller = new AbortController();
-  let timer: ReturnType<typeof setTimeout> | undefined;
-  let timedOut = false;
-  let parentAbortHandler: (() => void) | undefined;
-  const timeoutError = () => new Error(`distillation LLM request timed out after ${timeoutMs}ms`);
-  const timeout = new Promise<never>((_, reject) => {
-    timer = setTimeout(() => {
-      timedOut = true;
-      controller.abort();
-      reject(timeoutError());
-    }, timeoutMs);
-  });
-  const parentAbort = new Promise<never>((_, reject) => {
-    if (!parentSignal) return;
-    parentAbortHandler = () => {
-      controller.abort();
-      reject(abortError());
-    };
-    if (parentSignal.aborted) {
-      parentAbortHandler();
-      return;
-    }
-    parentSignal.addEventListener("abort", parentAbortHandler, { once: true });
-  });
-  const request = task(controller.signal).catch((error) => {
-    if (error instanceof Error && error.name === "AbortError") {
-      if (!timedOut && parentSignal?.aborted) {
-        throw abortError();
-      }
-      throw timeoutError();
-    }
+    const error = new Error("distillation request aborted");
+    error.name = "AbortError";
     throw error;
-  });
-
-  return Promise.race([request, timeout, parentAbort]).finally(() => {
-    if (timer) clearTimeout(timer);
-    if (parentSignal && parentAbortHandler) {
-      parentSignal.removeEventListener("abort", parentAbortHandler);
-    }
-  });
-}
-
-/** @internal */
-export function parseToolCalls(value: unknown): DistillationToolCall[] {
-  if (!Array.isArray(value)) return [];
-
-  return value.flatMap((rawCall, index) => {
-    if (!rawCall || typeof rawCall !== "object") return [];
-    const call = rawCall as OpenAiToolCall;
-    const name = call.function?.name;
-    if (typeof name !== "string" || !name.trim()) return [];
-    const rawArguments = call.function?.arguments;
-    const args =
-      typeof rawArguments === "string"
-        ? rawArguments
-        : rawArguments === undefined
-          ? "{}"
-          : JSON.stringify(rawArguments);
-    return [
-      {
-        id: typeof call.id === "string" && call.id.trim() ? call.id : `tool-call-${index + 1}`,
-        type: call.type === "function" ? "function" : undefined,
-        function: {
-          name,
-          arguments: args,
-        },
-      },
-    ];
-  });
-}
-
-function localLlmHeaders(): HeadersInit {
-  const headers: HeadersInit = { "content-type": "application/json" };
-  if (groupedConfig.localLlm.apiKey.trim()) {
-    headers.Authorization = `Bearer ${groupedConfig.localLlm.apiKey.trim()}`;
   }
-  return headers;
-}
-
-function azureHeaders(): HeadersInit {
-  return {
-    "api-key": groupedConfig.azureOpenAi.apiKey,
-    "content-type": "application/json",
-  };
-}
-
-function buildAzureOpenAiUrl(): string {
-  const path = `${groupedConfig.azureOpenAi.apiPath.replace(/\/+$/, "")}/${encodeURIComponent(
-    groupedConfig.azureOpenAi.model,
-  )}/chat/completions?api-version=${encodeURIComponent(groupedConfig.azureOpenAi.apiVersion)}`;
-  return new URL(path, groupedConfig.azureOpenAi.apiBaseUrl).toString();
-}
-
-/** @internal */
-export function parseOpenAiStyleResponse(payload: unknown): DistillationChatResponse {
-  const parsed = payload as {
-    choices?: Array<{
-      message?: { content?: unknown; tool_calls?: unknown };
-      finish_reason?: unknown;
-    }>;
-  };
-  const choice = parsed.choices?.[0];
-  const rawContent = choice?.message?.content;
-  return {
-    content: typeof rawContent === "string" ? rawContent : null,
-    toolCalls: parseToolCalls(choice?.message?.tool_calls),
-    finishReason: typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined,
-  };
-}
-
-function parseToolArguments(raw: string): unknown {
-  return parseLlmJsonLike(raw)?.value ?? { rawArguments: raw };
-}
-
-/** @internal */
-export function buildBedrockToolConfig(
-  tools: DistillationRuntimeToolDefinition[] | undefined,
-  toolChoice: DistillationChatRequest["toolChoice"] = "auto",
-): ToolConfiguration | undefined {
-  if (!tools || tools.length === 0) return undefined;
-  return {
-    tools: tools.map((tool) => ({
-      toolSpec: {
-        name: tool.function.name,
-        description: tool.function.description,
-        inputSchema: {
-          json: tool.function.parameters as unknown,
-        },
-      },
-    })) as ToolConfiguration["tools"],
-    toolChoice: (toolChoice === "required"
-      ? { any: {} }
-      : { auto: {} }) as ToolConfiguration["toolChoice"],
-  };
-}
-
-/** @internal */
-export function buildBedrockConversation(messages: DistillationMessage[]): {
-  system: SystemContentBlock[];
-  messages: Message[];
-} {
-  const system: SystemContentBlock[] = [];
-  const converted: Message[] = [];
-
-  let pendingToolResults: ContentBlock[] = [];
-
-  const flushPendingToolResults = () => {
-    if (pendingToolResults.length === 0) return;
-    converted.push({ role: "user", content: pendingToolResults });
-    pendingToolResults = [];
-  };
-
-  for (const message of messages) {
-    if (message.role === "system") {
-      flushPendingToolResults();
-      if (typeof message.content === "string" && message.content.trim()) {
-        system.push({ text: message.content });
-      }
-      continue;
-    }
-
-    if (message.role === "tool") {
-      const toolUseId = message.tool_call_id?.trim();
-      if (!toolUseId) {
-        continue;
-      }
-      pendingToolResults.push({
-        toolResult: {
-          toolUseId,
-          content: [
-            {
-              text: typeof message.content === "string" ? message.content : "",
-            },
-          ],
-          status: "success",
-        },
-      });
-      continue;
-    }
-
-    flushPendingToolResults();
-
-    if (message.role === "user") {
-      converted.push({
-        role: "user",
-        content: [{ text: typeof message.content === "string" ? message.content : "" }],
-      });
-      continue;
-    }
-
-    if (message.role === "assistant") {
-      const content: ContentBlock[] = [];
-      if (typeof message.content === "string" && message.content.trim()) {
-        content.push({ text: message.content });
-      }
-      for (const toolCall of message.tool_calls ?? []) {
-        const toolUseId =
-          typeof toolCall.id === "string" && toolCall.id.trim()
-            ? toolCall.id
-            : `tool-call-${content.length + 1}`;
-        content.push({
-          toolUse: {
-            toolUseId,
-            name: toolCall.function.name,
-            input: parseToolArguments(toolCall.function.arguments) as never,
-          },
-        } as ContentBlock);
-      }
-      if (content.length === 0) {
-        content.push({ text: "" });
-      }
-      converted.push({ role: "assistant", content });
-    }
-  }
-
-  flushPendingToolResults();
-
-  if (converted.length === 0) {
-    converted.push({
-      role: "user",
-      content: [{ text: "ping" }],
-    });
-  }
-
-  return { system, messages: converted };
-}
-
-/** @internal */
-export function parseBedrockResponse(payload: unknown): DistillationChatResponse {
-  const response = payload as {
-    output?: {
-      message?: {
-        content?: Array<{
-          text?: string;
-          toolUse?: { toolUseId?: string; name?: string; input?: unknown };
-        }>;
-      };
-    };
-    stopReason?: string;
-  };
-
-  const contentBlocks = response.output?.message?.content ?? [];
-  const textSegments: string[] = [];
-  const toolCalls: DistillationToolCall[] = [];
-
-  for (const block of contentBlocks) {
-    if (typeof block.text === "string" && block.text.trim()) {
-      textSegments.push(block.text);
-    }
-    if (block.toolUse) {
-      const toolUseId =
-        typeof block.toolUse.toolUseId === "string" && block.toolUse.toolUseId.trim()
-          ? block.toolUse.toolUseId
-          : `tool-call-${toolCalls.length + 1}`;
-      const toolName =
-        typeof block.toolUse.name === "string" && block.toolUse.name.trim()
-          ? block.toolUse.name
-          : "unknown_tool";
-      toolCalls.push({
-        id: toolUseId,
-        type: "function",
-        function: {
-          name: toolName,
-          arguments: JSON.stringify(block.toolUse.input ?? {}),
-        },
-      });
-    }
-  }
-
-  return {
-    content: textSegments.length > 0 ? textSegments.join("\n") : null,
-    toolCalls,
-    finishReason: response.stopReason,
-  };
-}
-
-async function callLocalLlmChat(
-  request: DistillationChatRequest,
-): Promise<DistillationChatResponse> {
-  return withRequestTimeout(
-    groupedConfig.distillation.timeoutMs,
-    async (signal) => {
-      const response = await fetch(`${groupedConfig.localLlm.apiBaseUrl}/v1/chat/completions`, {
-        method: "POST",
-        headers: localLlmHeaders(),
-        body: JSON.stringify({
-          model: request.model,
-          messages: request.messages,
-          stream: false,
-          temperature: 0,
-          max_tokens: request.maxTokens,
-          priority: "low",
-          ...(request.tools && request.tools.length > 0
-            ? {
-                tools: request.tools,
-                tool_choice: request.toolChoice ?? "auto",
-              }
-            : {
-                tool_choice: request.toolChoice ?? "none",
-              }),
-        }),
-        signal,
-      });
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        throw new Error(`local-llm HTTP ${response.status}: ${body.slice(0, 500)}`);
-      }
-
-      return parseOpenAiStyleResponse(await response.json());
-    },
-    request.signal,
-  );
-}
-
-async function callAzureOpenAiChat(
-  request: DistillationChatRequest,
-): Promise<DistillationChatResponse> {
-  return withRequestTimeout(
-    groupedConfig.distillation.timeoutMs,
-    async (signal) => {
-      const response = await fetch(buildAzureOpenAiUrl(), {
-        method: "POST",
-        headers: azureHeaders(),
-        body: JSON.stringify({
-          messages: request.messages,
-          temperature: 0,
-          max_completion_tokens: request.maxTokens,
-          ...(request.tools && request.tools.length > 0
-            ? {
-                tools: request.tools,
-                tool_choice: request.toolChoice ?? "auto",
-              }
-            : {
-                tool_choice: request.toolChoice ?? "none",
-              }),
-        }),
-        signal,
-      });
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        throw new Error(`Azure OpenAI HTTP ${response.status}: ${body.slice(0, 500)}`);
-      }
-
-      return parseOpenAiStyleResponse(await response.json());
-    },
-    request.signal,
-  );
-}
-
-async function callBedrockChat(
-  request: DistillationChatRequest,
-): Promise<DistillationChatResponse> {
-  return withRequestTimeout(
-    groupedConfig.distillation.timeoutMs,
-    async (signal) => {
-      const { system, messages } = buildBedrockConversation(request.messages);
-      const toolConfig =
-        request.toolChoice === "none"
-          ? undefined
-          : buildBedrockToolConfig(request.tools, request.toolChoice);
-
-      if (groupedConfig.bedrock.profile.trim()) {
-        process.env.AWS_PROFILE = groupedConfig.bedrock.profile.trim();
-      }
-      const client = new BedrockRuntimeClient({
-        region: groupedConfig.bedrock.region,
-      });
-
-      const response = await client.send(
-        new ConverseCommand({
-          modelId: request.model,
-          messages,
-          ...(system.length > 0 ? { system } : {}),
-          inferenceConfig: {
-            maxTokens: request.maxTokens,
-            temperature: 0,
-          },
-          ...(toolConfig ? { toolConfig } : {}),
-        }),
-        { abortSignal: signal },
-      );
-
-      return parseBedrockResponse(response);
-    },
-    request.signal,
-  );
 }
 
 function createDefaultChatClient(

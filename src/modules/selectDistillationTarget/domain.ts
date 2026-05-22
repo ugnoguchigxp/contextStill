@@ -1,4 +1,4 @@
-export type DistillationTargetKind = "wiki_file" | "vibe_memory";
+export type DistillationTargetKind = "wiki_file" | "vibe_memory" | "knowledge_candidate";
 
 export type DistillationTargetStatus =
   | "pending"
@@ -16,7 +16,7 @@ export type DistillationTargetPhase =
   | "finalizing"
   | "stored";
 
-export type DistillationTargetPriorityGroup = "wiki" | "vibe_memory";
+export type DistillationTargetPriorityGroup = "knowledge_candidate" | "wiki" | "vibe_memory";
 
 export type DistillationTargetCandidate = {
   targetKind: DistillationTargetKind;
@@ -63,6 +63,15 @@ function compareVibeMemoryTarget(
   return compareText(a.targetKey, b.targetKey);
 }
 
+function compareKnowledgeCandidateTarget(
+  a: DistillationTargetCandidate,
+  b: DistillationTargetCandidate,
+): number {
+  const sortKeyCompare = compareText(a.sortKey ?? a.targetKey, b.sortKey ?? b.targetKey);
+  if (sortKeyCompare !== 0) return sortKeyCompare;
+  return compareText(a.targetKey, b.targetKey);
+}
+
 function toSelected(candidate: DistillationTargetCandidate): SelectedDistillationTarget {
   return {
     targetKind: candidate.targetKind,
@@ -76,6 +85,11 @@ export function selectDistillationTarget(
   candidates: DistillationTargetCandidate[],
 ): SelectedDistillationTarget | null {
   const selectable = candidates.filter(isSelectable);
+  const knowledgeCandidateTarget = selectable
+    .filter((candidate) => candidate.targetKind === "knowledge_candidate")
+    .sort(compareKnowledgeCandidateTarget)[0];
+  if (knowledgeCandidateTarget) return toSelected(knowledgeCandidateTarget);
+
   const wikiTarget = selectable
     .filter((candidate) => candidate.targetKind === "wiki_file")
     .sort(compareWikiTarget)[0];
@@ -90,12 +104,14 @@ export function selectDistillationTarget(
 export function priorityGroupForTargetKind(
   targetKind: DistillationTargetKind,
 ): DistillationTargetPriorityGroup {
+  if (targetKind === "knowledge_candidate") return "knowledge_candidate";
   return targetKind === "wiki_file" ? "wiki" : "vibe_memory";
 }
 
 export function sortKeyForTarget(candidate: DistillationTargetCandidate): string {
   if (candidate.sortKey?.trim()) return candidate.sortKey.trim();
   if (candidate.targetKind === "wiki_file") return candidate.targetKey.toLowerCase();
+  if (candidate.targetKind === "knowledge_candidate") return candidate.targetKey;
   const createdAt = candidate.createdAt?.toISOString() ?? "9999-12-31T23:59:59.999Z";
   return `${createdAt}:${candidate.targetKey}`;
 }

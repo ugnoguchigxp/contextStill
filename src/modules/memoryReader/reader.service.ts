@@ -3,7 +3,7 @@ import { groupedConfig } from "../../config.js";
 import { db } from "../../db/index.js";
 import { agentDiffEntries, vibeMemories } from "../../db/schema.js";
 import { sliceTextByTokenWindow } from "../readFile/token-window.service.js";
-import { prepareMemoryReaderContent, type MemoryReaderMode } from "./domain.js";
+import { type MemoryReaderMode, prepareMemoryReaderContent } from "./domain.js";
 
 export type MemoryReaderReadInput = {
   vibeMemoryId: string;

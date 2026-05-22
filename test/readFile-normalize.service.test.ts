@@ -2,8 +2,8 @@ import { describe, expect, test } from "vitest";
 import {
   maybeStripFrontmatter,
   normalizeReadFileText,
-  stripMarkdownFormatting,
   plainTextRenderCallbacks,
+  stripMarkdownFormatting,
 } from "../src/modules/readFile/normalize.service.js";
 
 describe("read-file normalize service", () => {

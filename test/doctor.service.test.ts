@@ -32,7 +32,7 @@ describe("Doctor Service", () => {
       { name: "initial_instructions" },
       { name: "context_compile" },
       { name: "search_knowledge" },
-      { name: "register_knowledge" },
+      { name: "register_candidate" },
       { name: "memory_search" },
       { name: "memory_fetch" },
       { name: "doctor" },
@@ -233,5 +233,82 @@ describe("Doctor Service", () => {
 
     const report = await runDoctor();
     expect(report.reasons).toContain("KNOWLEDGE_VALUE_UPDATE_FAILED");
+  });
+
+  test("detects stale agent log sync state", async () => {
+    const mockDb = {
+      execute: vi
+        .fn()
+        .mockResolvedValueOnce({ rows: [{ ok: 1 }] })
+        .mockResolvedValueOnce({ rows: [{ installed: true }] })
+        .mockResolvedValueOnce({ rows: [{ table_name: "sync_states" }] }),
+      select: vi.fn().mockReturnThis(),
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue([
+        {
+          id: "codex_logs",
+          lastSyncedAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+          cursor: {},
+          metadata: { warnings: [] },
+        },
+      ]),
+    };
+    vi.mocked(getDb).mockReturnValue(mockDb as any);
+
+    const report = await runDoctor({ freshnessThresholdMinutes: 30 });
+    expect(report.reasons).toContain("CODEX_LOGS_SYNC_STALE");
+  });
+
+  test("detects embedding provider unavailable when daemon unreachable and cli unusable", async () => {
+    vi.mocked(embeddingHealth).mockResolvedValue({
+      configured: true,
+      provider: "daemon",
+      daemon: { url: "http://localhost:1234", reachable: false },
+      cli: { python: "python3", root: "/tmp", modelDir: "/tmp/models", usable: false },
+      openai: { configured: false, model: "" },
+    });
+
+    const mockDb = {
+      execute: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    vi.mocked(getDb).mockReturnValue(mockDb as any);
+
+    const report = await runDoctor();
+    expect(report.reasons).toContain("EMBEDDING_PROVIDER_UNAVAILABLE");
+  });
+
+  test("detects agentic llm issues when disabled or unreachable", async () => {
+    vi.mocked(checkAgenticLlmHealth).mockResolvedValue({
+      providerSetting: "azure-openai",
+      selectedProvider: "azure-openai",
+      fallbackOrder: [],
+      provider: "azure-openai",
+      configured: false,
+      reachable: false,
+      model: "",
+      endpoint: "",
+    });
+
+    const mockDb = {
+      execute: vi.fn().mockResolvedValue({ rows: [] }),
+    };
+    vi.mocked(getDb).mockReturnValue(mockDb as any);
+
+    let report = await runDoctor();
+    expect(report.reasons).toContain("AGENTIC_LLM_NOT_CONFIGURED");
+
+    vi.mocked(checkAgenticLlmHealth).mockResolvedValue({
+      providerSetting: "azure-openai",
+      selectedProvider: "azure-openai",
+      fallbackOrder: [],
+      provider: "azure-openai",
+      configured: true,
+      reachable: false,
+      model: "",
+      endpoint: "",
+    });
+
+    report = await runDoctor();
+    expect(report.reasons).toContain("AGENTIC_LLM_UNREACHABLE");
   });
 });

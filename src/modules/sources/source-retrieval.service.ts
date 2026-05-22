@@ -1,7 +1,7 @@
 import { groupedConfig } from "../../config.js";
 import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
-import { embedOne } from "../embedding/embedding.service.js";
 import { buildRetrievalQueryText } from "../context-compiler/query-context.js";
+import { embedOne } from "../embedding/embedding.service.js";
 import {
   type SourceKind,
   type SourceSearchResult,

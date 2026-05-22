@@ -1,26 +1,22 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
-import { memorySearchTool, memoryFetchTool } from "../src/mcp/tools/memory.tool.js";
-import {
-  listKnowledgeTool,
-  registerKnowledgeTool,
-  searchKnowledgeTool,
-  updateKnowledgeTool,
-} from "../src/mcp/tools/knowledge.tool.js";
-import { contextCompileTool } from "../src/mcp/tools/context-compile.tool.js";
-import { initialInstructionsTool, doctorTool } from "../src/mcp/tools/system.tool.js";
-import { retrieveVibeMemoryContext } from "../src/modules/vibe-memory/vibe-memory.service.js";
-import {
-  searchKnowledgeCandidates,
-  registerKnowledgeFromMarkdown,
-} from "../src/modules/knowledge/knowledge.service.js";
-import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
-import { runDoctor } from "../src/modules/doctor/doctor.service.js";
-import { embedOne } from "../src/modules/embedding/embedding.service.js";
-import { vectorSearchKnowledge } from "../src/modules/knowledge/knowledge.repository.js";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
   listKnowledgeItems,
   updateKnowledgeItem,
 } from "../api/modules/knowledge/knowledge.repository.js";
+import { contextCompileTool } from "../src/mcp/tools/context-compile.tool.js";
+import {
+  listKnowledgeTool,
+  registerCandidateTool,
+  searchKnowledgeTool,
+  updateKnowledgeTool,
+} from "../src/mcp/tools/knowledge.tool.js";
+import { memoryFetchTool, memorySearchTool } from "../src/mcp/tools/memory.tool.js";
+import { doctorTool, initialInstructionsTool } from "../src/mcp/tools/system.tool.js";
+import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
+import { runDoctor } from "../src/modules/doctor/doctor.service.js";
+import { searchKnowledgeCandidates } from "../src/modules/knowledge/knowledge.service.js";
+import { registerCandidate } from "../src/modules/registerCandidate/register-candidate.service.js";
+import { retrieveVibeMemoryContext } from "../src/modules/vibe-memory/vibe-memory.service.js";
 
 const { mockDb } = vi.hoisted(() => {
   return {
@@ -42,8 +38,7 @@ vi.mock("../src/modules/vibe-memory/vibe-memory.service.js");
 vi.mock("../src/modules/knowledge/knowledge.service.js");
 vi.mock("../src/modules/context-compiler/context-compiler.service.js");
 vi.mock("../src/modules/doctor/doctor.service.js");
-vi.mock("../src/modules/embedding/embedding.service.js");
-vi.mock("../src/modules/knowledge/knowledge.repository.js");
+vi.mock("../src/modules/registerCandidate/register-candidate.service.js");
 vi.mock("../api/modules/knowledge/knowledge.repository.js");
 
 vi.mock("../src/db/client.js", () => ({
@@ -146,35 +141,58 @@ describe("MCP Tools Handlers", () => {
     });
   });
 
-  describe("register_knowledge", () => {
-    test("registers knowledge after checking for duplicates", async () => {
-      vi.mocked(embedOne).mockResolvedValue([0.1, 0.2]);
-      vi.mocked(vectorSearchKnowledge).mockResolvedValue([]);
-      vi.mocked(registerKnowledgeFromMarkdown).mockResolvedValue("new-id");
+  describe("register_candidate", () => {
+    test("registers a lightweight candidate without synchronous knowledge persistence", async () => {
+      vi.mocked(registerCandidate).mockResolvedValue({
+        targetStateId: "target-id",
+        findCandidateResultId: "candidate-id",
+        sourceUri: "agent://candidate/candidate-id",
+        status: "candidate_registered",
+        title: "New Rule",
+        type: "rule",
+        warnings: [],
+        next: "distillation_pipeline",
+      });
 
-      const response = await registerKnowledgeTool.handler({
+      const response = await registerCandidateTool.handler({
         title: "New Rule",
         body: "Detailed body of the rule",
         type: "rule",
       });
 
-      expect(registerKnowledgeFromMarkdown).toHaveBeenCalled();
-      expect(response.content[0].text).toContain("new-id");
+      expect(registerCandidate).toHaveBeenCalledWith({
+        title: "New Rule",
+        body: "Detailed body of the rule",
+        type: "rule",
+        metadata: {},
+      });
+      expect(JSON.parse(response.content[0].text)).toMatchObject({
+        targetStateId: "target-id",
+        findCandidateResultId: "candidate-id",
+        status: "candidate_registered",
+      });
     });
 
-    test("skips registration if similar content exists", async () => {
-      vi.mocked(embedOne).mockResolvedValue([0.1, 0.2]);
-      vi.mocked(vectorSearchKnowledge).mockResolvedValue([
-        { id: "existing", body: "Detailed body of the rule" } as unknown as never,
-      ]);
-
-      const response = await registerKnowledgeTool.handler({
-        title: "Duplicate Rule",
-        body: "Detailed body of the rule",
+    test("accepts text-only candidate notes for normalization", async () => {
+      vi.mocked(registerCandidate).mockResolvedValue({
+        targetStateId: "target-id",
+        findCandidateResultId: "candidate-id",
+        sourceUri: "agent://candidate/candidate-id",
+        status: "candidate_registered",
+        title: "Failure note",
+        type: "procedure",
+        warnings: ["text_parsed_to_candidate_json"],
+        next: "distillation_pipeline",
       });
 
-      expect(registerKnowledgeFromMarkdown).not.toHaveBeenCalled();
-      expect(response.content[0].text).toContain("Registration skipped");
+      await registerCandidateTool.handler({
+        text: '{"type":"procedure","title":"Failure note","body":"Use when:\\n- ..."}',
+      });
+
+      expect(registerCandidate).toHaveBeenCalledWith({
+        text: '{"type":"procedure","title":"Failure note","body":"Use when:\\n- ..."}',
+        metadata: {},
+      });
     });
   });
 

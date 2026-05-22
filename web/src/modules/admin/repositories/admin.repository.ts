@@ -414,7 +414,7 @@ export type OverviewDashboard = {
       count: number;
     }>;
     distillationQueue: Array<{
-      targetKind: "wiki_file" | "vibe_memory";
+      targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate";
       pending: number;
       running: number;
       paused: number;
@@ -588,7 +588,7 @@ export type CandidateListItem = {
   id: string;
   targetStateId: string;
   candidateIndex: number;
-  targetKind: "wiki_file" | "vibe_memory";
+  targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate";
   targetKey: string;
   sourceUri: string;
   finalizeSourceUri: string;
@@ -660,7 +660,7 @@ export type CandidateListRequest = {
   page?: number;
   limit?: number;
   query?: string;
-  targetKind?: "all" | "wiki_file" | "vibe_memory";
+  targetKind?: "all" | "wiki_file" | "vibe_memory" | "knowledge_candidate";
   outcome?: "all" | CandidateOutcome;
   hasKnowledge?: "all" | "yes" | "no";
   targetStateId?: string;

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
 import {
-  hasSkillLikeProcedureBody,
   hasProcedureWorkflowSignal,
+  hasSkillLikeProcedureBody,
   shouldDemoteProcedureToRule,
 } from "../src/modules/distillation/procedure-quality.js";
 

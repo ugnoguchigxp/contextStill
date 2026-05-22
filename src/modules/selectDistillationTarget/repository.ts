@@ -1,111 +1,43 @@
-import os from "node:os";
-import { and, asc, count, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { APP_CONSTANTS } from "../../constants.js";
 import { db } from "../../db/index.js";
 import { distillationTargetStates } from "../../db/schema.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import {
-  priorityGroupForTargetKind,
-  sortKeyForTarget,
   type DistillationTargetCandidate,
   type DistillationTargetKind,
   type DistillationTargetPhase,
   type DistillationTargetStatus,
+  priorityGroupForTargetKind,
+  sortKeyForTarget,
 } from "./domain.js";
+import {
+  DEFAULT_DISTILLATION_TARGET_VERSION,
+  type DistillationTargetStateRow,
+  type TargetLease,
+  statusEligibility,
+  targetIdentity,
+  targetLeaseWhere,
+  workerId,
+} from "./repository-helpers.js";
 
-export const DEFAULT_DISTILLATION_TARGET_VERSION = APP_CONSTANTS.distillationTargetVersion;
+// Re-export constants, types and helpers from repository-helpers.js
+export {
+  DEFAULT_DISTILLATION_TARGET_VERSION,
+  type DistillationTargetStateRow,
+  type TargetLease,
+  leaseFromTargetState,
+} from "./repository-helpers.js";
 
-export type DistillationTargetStateRow = typeof distillationTargetStates.$inferSelect;
-
-export type TargetLease = {
-  targetStateId: string;
-  lockedBy: string;
-  attemptCount: number;
-};
-
-export type DistillationTargetSummary = {
-  version: string;
-  mode: "wiki_first" | "vibe_memory_fallback" | "idle";
-  queued: number;
-  pendingWiki: number;
-  pendingVibeMemory: number;
-  running: number;
-  paused: number;
-  staleRunning: number;
-  failed: number;
-  skipped: number;
-  completed: number;
-  lastCompleted: DistillationTargetStateRow | null;
-  lastSkipped: DistillationTargetStateRow | null;
-  lastFailed: DistillationTargetStateRow | null;
-};
-
-export type RecoveryResult = {
-  recoveredToPending: number;
-  failed: number;
-  skipped: number;
-};
-
-function workerId(): string {
-  return `${os.hostname()}:${process.pid}`;
-}
-
-function nowMinusSeconds(seconds: number, now = new Date()): Date {
-  return new Date(now.getTime() - Math.max(1, seconds) * 1000);
-}
-
-function staleThresholdMs(staleSeconds: number, now = new Date()): number {
-  return nowMinusSeconds(staleSeconds, now).getTime();
-}
-
-function rowHeartbeatMs(row: Pick<DistillationTargetStateRow, "heartbeatAt" | "lockedAt">): number {
-  const value = row.heartbeatAt ?? row.lockedAt;
-  if (!value) return Number.NEGATIVE_INFINITY;
-  return value.getTime();
-}
-
-function targetIdentity(row: DistillationTargetStateRow): Record<string, unknown> {
-  return {
-    id: row.id,
-    targetKind: row.targetKind,
-    targetKey: row.targetKey,
-    distillationVersion: row.distillationVersion,
-    status: row.status,
-  };
-}
-
-export function leaseFromTargetState(row: DistillationTargetStateRow): TargetLease {
-  return {
-    targetStateId: row.id,
-    lockedBy: row.lockedBy ?? "",
-    attemptCount: row.attemptCount,
-  };
-}
-
-function targetLeaseWhere(id: string, lease: TargetLease | undefined) {
-  const conditions = [eq(distillationTargetStates.id, id)];
-  if (lease) {
-    conditions.push(
-      eq(distillationTargetStates.status, "running"),
-      eq(distillationTargetStates.lockedBy, lease.lockedBy),
-      eq(distillationTargetStates.attemptCount, lease.attemptCount),
-    );
-  }
-  return and(...conditions);
-}
-
-function statusEligibility(now: Date) {
-  return or(
-    eq(distillationTargetStates.status, "pending"),
-    and(
-      eq(distillationTargetStates.status, "paused"),
-      or(
-        isNull(distillationTargetStates.nextRetryAt),
-        lte(distillationTargetStates.nextRetryAt, now),
-      ),
-    ),
-  );
-}
+// Re-export types and functions from repository-maintenance.js
+export {
+  type DistillationTargetSummary,
+  type RecoveryResult,
+  releaseRetryablePausedDistillationTargets,
+  recoverStaleDistillationTargets,
+  markMissingWikiTargetsSkipped,
+  getDistillationTargetSummary,
+} from "./repository-maintenance.js";
 
 export async function upsertDistillationTargetState(params: {
   candidate: DistillationTargetCandidate;
@@ -188,7 +120,11 @@ export async function findNextSelectableDistillationTargetState(
     .from(distillationTargetStates)
     .where(and(...conditions))
     .orderBy(
-      sql`case when ${distillationTargetStates.priorityGroup} = 'wiki' then 0 else 1 end`,
+      sql`case
+        when ${distillationTargetStates.priorityGroup} = 'knowledge_candidate' then 0
+        when ${distillationTargetStates.priorityGroup} = 'wiki' then 1
+        else 2
+      end`,
       asc(distillationTargetStates.sortKey),
       asc(distillationTargetStates.createdAt),
       asc(distillationTargetStates.id),
@@ -246,7 +182,11 @@ export async function claimNextDistillationTargetState(
           )
         )
       order by
-        case when priority_group = 'wiki' then 0 else 1 end asc,
+        case
+          when priority_group = 'knowledge_candidate' then 0
+          when priority_group = 'wiki' then 1
+          else 2
+        end asc,
         sort_key asc,
         created_at asc,
         id asc
@@ -452,252 +392,4 @@ export async function requeueDistillationTargetState(params: {
   }
 
   return row ?? null;
-}
-
-export async function releaseRetryablePausedDistillationTargets(
-  params: {
-    distillationVersion?: string;
-    now?: Date;
-  } = {},
-): Promise<number> {
-  const now = params.now ?? new Date();
-  const rows = await db
-    .update(distillationTargetStates)
-    .set({
-      status: "pending",
-      nextRetryAt: null,
-      updatedAt: now,
-    })
-    .where(
-      and(
-        eq(
-          distillationTargetStates.distillationVersion,
-          params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION,
-        ),
-        eq(distillationTargetStates.status, "paused"),
-        lte(distillationTargetStates.nextRetryAt, now),
-      ),
-    )
-    .returning({ id: distillationTargetStates.id });
-
-  return rows.length;
-}
-
-export async function recoverStaleDistillationTargets(
-  params: {
-    distillationVersion?: string;
-    staleSeconds?: number;
-    maxAttempts?: number;
-    now?: Date;
-  } = {},
-): Promise<RecoveryResult> {
-  const now = params.now ?? new Date();
-  const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
-  const thresholdMs = staleThresholdMs(
-    params.staleSeconds ?? APP_CONSTANTS.distillationTargetStaleSeconds,
-    now,
-  );
-  const maxAttempts = params.maxAttempts ?? APP_CONSTANTS.distillationTargetMaxAttempts;
-  const runningRows = await db
-    .select()
-    .from(distillationTargetStates)
-    .where(
-      and(
-        eq(distillationTargetStates.distillationVersion, distillationVersion),
-        eq(distillationTargetStates.status, "running"),
-      ),
-    );
-  const staleRows = runningRows.filter((row) => rowHeartbeatMs(row) <= thresholdMs);
-
-  let recoveredToPending = 0;
-  const failed = 0;
-  let skipped = 0;
-
-  for (const stale of staleRows) {
-    const nextStatus: DistillationTargetStatus =
-      stale.attemptCount >= maxAttempts ? "skipped" : "pending";
-    const [row] = await db
-      .update(distillationTargetStates)
-      .set({
-        status: nextStatus,
-        phase: nextStatus === "skipped" ? "stored" : "selected",
-        lockedBy: null,
-        lockedAt: null,
-        heartbeatAt: null,
-        nextRetryAt: null,
-        lastOutcomeKind: "stale_running_recovered",
-        lastError:
-          nextStatus === "skipped"
-            ? "stale_running_retry_limit_exceeded"
-            : "stale_running_recovered",
-        metadata: sql`${distillationTargetStates.metadata} || ${JSON.stringify({
-          staleRecovered: true,
-          staleRecoveredAt: now.toISOString(),
-        })}::jsonb` as never,
-        completedAt: nextStatus === "skipped" ? now : null,
-        updatedAt: now,
-      })
-      .where(eq(distillationTargetStates.id, stale.id))
-      .returning();
-    if (!row) continue;
-    if (nextStatus === "skipped") skipped += 1;
-    else recoveredToPending += 1;
-  }
-
-  if (recoveredToPending > 0 || failed > 0 || skipped > 0) {
-    await recordAuditLogSafe({
-      eventType: auditEventTypes.distillationTargetRecovered,
-      actor: "system",
-      payload: {
-        distillationVersion,
-        recoveredToPending,
-        failed,
-        skipped,
-        staleSeconds: params.staleSeconds ?? APP_CONSTANTS.distillationTargetStaleSeconds,
-      },
-    });
-  }
-
-  return { recoveredToPending, failed, skipped };
-}
-
-export async function markMissingWikiTargetsSkipped(params: {
-  currentTargetKeys: Set<string>;
-  rootPath: string;
-  distillationVersion?: string;
-}): Promise<number> {
-  const now = new Date();
-  const rows = await db
-    .select()
-    .from(distillationTargetStates)
-    .where(
-      and(
-        eq(
-          distillationTargetStates.distillationVersion,
-          params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION,
-        ),
-        eq(distillationTargetStates.targetKind, "wiki_file"),
-        inArray(distillationTargetStates.status, ["pending", "running", "paused", "failed"]),
-      ),
-    );
-
-  let updated = 0;
-  for (const row of rows) {
-    if (params.currentTargetKeys.has(row.targetKey)) continue;
-    const [skipped] = await db
-      .update(distillationTargetStates)
-      .set({
-        status: "skipped",
-        phase: "stored",
-        lockedBy: null,
-        lockedAt: null,
-        heartbeatAt: null,
-        nextRetryAt: null,
-        lastOutcomeKind: "missing_source",
-        lastError: "wiki_file_missing",
-        metadata: sql`${distillationTargetStates.metadata} || ${JSON.stringify({
-          missing: true,
-          missingDetectedAt: now.toISOString(),
-          rootPath: params.rootPath,
-        })}::jsonb` as never,
-        completedAt: now,
-        updatedAt: now,
-      })
-      .where(eq(distillationTargetStates.id, row.id))
-      .returning();
-    if (skipped) updated += 1;
-  }
-  return updated;
-}
-
-async function countStaleRunning(
-  distillationVersion: string,
-  staleSeconds: number,
-): Promise<number> {
-  const thresholdMs = staleThresholdMs(staleSeconds);
-  const rows = await db
-    .select({
-      heartbeatAt: distillationTargetStates.heartbeatAt,
-      lockedAt: distillationTargetStates.lockedAt,
-    })
-    .from(distillationTargetStates)
-    .where(
-      and(
-        eq(distillationTargetStates.distillationVersion, distillationVersion),
-        eq(distillationTargetStates.status, "running"),
-      ),
-    );
-  return rows.filter((row) => rowHeartbeatMs(row) <= thresholdMs).length;
-}
-
-async function lastTargetByStatus(
-  status: Extract<DistillationTargetStatus, "completed" | "skipped" | "failed">,
-  distillationVersion: string,
-): Promise<DistillationTargetStateRow | null> {
-  const [row] = await db
-    .select()
-    .from(distillationTargetStates)
-    .where(
-      and(
-        eq(distillationTargetStates.distillationVersion, distillationVersion),
-        eq(distillationTargetStates.status, status),
-      ),
-    )
-    .orderBy(
-      desc(
-        sql`coalesce(${distillationTargetStates.completedAt}, ${distillationTargetStates.updatedAt})`,
-      ),
-      desc(distillationTargetStates.id),
-    )
-    .limit(1);
-  return row ?? null;
-}
-
-export async function getDistillationTargetSummary(
-  params: {
-    distillationVersion?: string;
-    staleSeconds?: number;
-  } = {},
-): Promise<DistillationTargetSummary> {
-  const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
-  const rows = await db
-    .select({
-      targetKind: distillationTargetStates.targetKind,
-      status: distillationTargetStates.status,
-      value: count(),
-    })
-    .from(distillationTargetStates)
-    .where(eq(distillationTargetStates.distillationVersion, distillationVersion))
-    .groupBy(distillationTargetStates.targetKind, distillationTargetStates.status);
-
-  const value = (targetKind: DistillationTargetKind, status: DistillationTargetStatus) =>
-    Number(rows.find((row) => row.targetKind === targetKind && row.status === status)?.value ?? 0);
-  const statusTotal = (status: DistillationTargetStatus) =>
-    Number(
-      rows.filter((row) => row.status === status).reduce((sum, row) => sum + Number(row.value), 0),
-    );
-
-  const pendingWiki = value("wiki_file", "pending") + value("wiki_file", "paused");
-  const pendingVibeMemory = value("vibe_memory", "pending") + value("vibe_memory", "paused");
-  const queued = pendingWiki + pendingVibeMemory;
-
-  return {
-    version: distillationVersion,
-    mode: pendingWiki > 0 ? "wiki_first" : pendingVibeMemory > 0 ? "vibe_memory_fallback" : "idle",
-    queued,
-    pendingWiki,
-    pendingVibeMemory,
-    running: statusTotal("running"),
-    paused: statusTotal("paused"),
-    staleRunning: await countStaleRunning(
-      distillationVersion,
-      params.staleSeconds ?? APP_CONSTANTS.distillationTargetStaleSeconds,
-    ),
-    failed: statusTotal("failed"),
-    skipped: statusTotal("skipped"),
-    completed: statusTotal("completed"),
-    lastCompleted: await lastTargetByStatus("completed", distillationVersion),
-    lastSkipped: await lastTargetByStatus("skipped", distillationVersion),
-    lastFailed: await lastTargetByStatus("failed", distillationVersion),
-  };
 }

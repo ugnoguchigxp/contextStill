@@ -1,7 +1,7 @@
+import { eq, sql } from "drizzle-orm";
 import { db } from "../src/db/index.js";
-import { syncStates, vibeMemories, agentDiffEntries } from "../src/db/schema.js";
+import { agentDiffEntries, syncStates, vibeMemories } from "../src/db/schema.js";
 import { syncAllAgentLogs } from "../src/modules/agent-log-sync/sync.service.js";
-import { sql, eq } from "drizzle-orm";
 
 async function main() {
   console.log("Resetting sync states and clearing old agent log memories...");

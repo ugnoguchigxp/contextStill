@@ -1,12 +1,12 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
-import {
-  importMarkdownDirectory,
-  collectMarkdownFiles,
-} from "../src/modules/sources/markdown-importer.service.js";
 import { readFile, readdir } from "node:fs/promises";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
-  upsertSourceDocument,
+  collectMarkdownFiles,
+  importMarkdownDirectory,
+} from "../src/modules/sources/markdown-importer.service.js";
+import {
   deleteStaleSourcesForRoot,
+  upsertSourceDocument,
 } from "../src/modules/sources/source.repository.js";
 
 vi.mock("node:fs/promises");

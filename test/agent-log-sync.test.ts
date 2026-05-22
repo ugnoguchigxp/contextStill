@@ -1,7 +1,7 @@
-import { afterEach, describe, expect, test } from "vitest";
 import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
+import { afterEach, describe, expect, test } from "vitest";
 import {
   ingestAntigravityLogsFromRoot,
   ingestCodexLogsFromRoots,
@@ -9,8 +9,8 @@ import {
   processCodexJsonlDelta,
 } from "../src/modules/agent-log-sync/ingest.service.js";
 import {
-  buildReadableTranscript,
   buildDedupeKey,
+  buildReadableTranscript,
   chunkMessages,
   extractUnifiedDiffsFromText,
 } from "../src/modules/agent-log-sync/sync.service.js";

@@ -1,12 +1,12 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
-import { listStaticResources, readStaticResource, createMcpServer } from "../src/mcp/server.js";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { createMcpServer, listStaticResources, readStaticResource } from "../src/mcp/server.js";
+import { getExposedToolEntries } from "../src/mcp/tools/index.js";
 import {
-  listRecentCompileRuns,
-  getLatestCompileRunSnapshot,
   getCompileRunSnapshot,
+  getLatestCompileRunSnapshot,
+  listRecentCompileRuns,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
 import { runDoctor } from "../src/modules/doctor/doctor.service.js";
-import { getExposedToolEntries } from "../src/mcp/tools/index.js";
 
 vi.mock("../src/modules/context-compiler/context-compiler.repository.js");
 vi.mock("../src/modules/doctor/doctor.service.js");

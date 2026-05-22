@@ -1,9 +1,9 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
-import {
-  upsertSourceDocument,
-  searchSourceContent,
-} from "../src/modules/sources/source.repository.js";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { db } from "../src/db/index.js";
+import {
+  searchSourceContent,
+  upsertSourceDocument,
+} from "../src/modules/sources/source.repository.js";
 
 vi.mock("../src/modules/sources/source.repository.js", async (importOriginal) => {
   return {

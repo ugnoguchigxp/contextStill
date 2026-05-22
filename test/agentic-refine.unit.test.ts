@@ -1,8 +1,8 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { groupedConfig } from "../src/config.js";
 import {
-  agenticRefine,
   type AgenticCandidate,
+  agenticRefine,
 } from "../src/modules/context-compiler/agentic-refine.service.js";
 import { checkAgenticLlmHealth } from "../src/modules/llm/agentic-llm.service.js";
 import type { CompileInput } from "../src/shared/schemas/compile.schema.js";

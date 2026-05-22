@@ -3,6 +3,7 @@ import { compileInputSchema } from "../src/shared/schemas/compile.schema.ts";
 import { doctorReportSchema } from "../src/shared/schemas/doctor.schema.ts";
 import {
   knowledgeSearchInputSchema,
+  registerCandidateInputSchema,
   registerKnowledgeInputSchema,
   updateKnowledgeInputSchema,
 } from "../src/shared/schemas/knowledge.schema.ts";
@@ -18,6 +19,26 @@ describe("Shared Schemas", () => {
   test("registerKnowledgeInputSchema parses valid input", () => {
     const input = { title: "T", body: "B" };
     expect(registerKnowledgeInputSchema.parse(input)).toEqual(expect.objectContaining(input));
+  });
+
+  test("registerCandidateInputSchema accepts title/body or text", () => {
+    expect(
+      registerCandidateInputSchema.parse({
+        title: "T",
+        body: "B",
+        technologies: "bun,typescript",
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        title: "T",
+        body: "B",
+        technologies: ["bun", "typescript"],
+      }),
+    );
+    expect(registerCandidateInputSchema.parse({ text: "TITLE: T\nCONTENT: B" })).toEqual(
+      expect.objectContaining({ text: "TITLE: T\nCONTENT: B" }),
+    );
+    expect(registerCandidateInputSchema.safeParse({ title: "T" }).success).toBe(false);
   });
 
   test("compileInputSchema parses valid input", () => {

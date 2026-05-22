@@ -3,8 +3,8 @@ import { db } from "../../db/index.js";
 import { knowledgeItems, knowledgeSourceLinks, sourceFragments, sources } from "../../db/schema.js";
 import { normalizeKnowledgeScore } from "../../lib/score-scale.js";
 import type {
-  KnowledgeItem,
   KnowledgeApplicabilityInput,
+  KnowledgeItem,
   KnowledgeSearchInput,
   KnowledgeStatus,
 } from "../../shared/schemas/knowledge.schema.js";

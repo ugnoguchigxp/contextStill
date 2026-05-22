@@ -1,4 +1,4 @@
-import { test, expect } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 
 test("Admin can add and verify a new source", async ({ page }) => {
   await page.goto("/admin/sources");

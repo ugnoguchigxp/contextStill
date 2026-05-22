@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { parseLlmJsonLike, extractCompleteJsonValues } from "../src/lib/llm-output-parser.js";
+import { extractCompleteJsonValues, parseLlmJsonLike } from "../src/lib/llm-output-parser.js";
 
 describe("llm-output-parser extended", () => {
   describe("parseLlmJsonLike", () => {

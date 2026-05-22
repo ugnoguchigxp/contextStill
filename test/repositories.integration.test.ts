@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
-import { groupedConfig } from "../src/config.js";
 import { buildGraphSnapshot } from "../api/modules/graph/graph.repository.js";
+import { groupedConfig } from "../src/config.js";
 import {
   getCompileRunSnapshot,
   getLatestCompileRunSnapshot,
@@ -21,6 +21,7 @@ import {
   vectorSearchSourceContent,
 } from "../src/modules/sources/source.repository.js";
 
+import { vi } from "vitest";
 import {
   recordVibeMemory,
   recordVibeMemoryWithDiffEntries,
@@ -32,7 +33,6 @@ import {
   isDbIntegrationEnabled,
   truncateIntegrationTables,
 } from "./helpers/integration.js";
-import { vi } from "vitest";
 
 vi.mock("../src/modules/embedding/embedding.service.js", () => ({
   embedOne: vi.fn().mockImplementation(async (text: string) => {

@@ -1,10 +1,10 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { db } from "../src/db/client.js";
+import { searchVibeMemories } from "../src/modules/vibe-memory/vibe-memory.repository.js";
 import {
   recordVibeMemoryWithDiffEntries,
   retrieveVibeMemoryContext,
 } from "../src/modules/vibe-memory/vibe-memory.service.js";
-import { db } from "../src/db/client.js";
-import { searchVibeMemories } from "../src/modules/vibe-memory/vibe-memory.repository.js";
 
 vi.mock("../src/db/client.js", () => ({
   db: {

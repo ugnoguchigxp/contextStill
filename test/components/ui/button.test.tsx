@@ -2,8 +2,8 @@
  * @vitest-environment jsdom
  */
 import { render, screen } from "@testing-library/react";
-import { describe, expect, it, vi } from "vitest";
 import React from "react";
+import { describe, expect, it, vi } from "vitest";
 import { Button } from "../../../web/src/components/ui/button";
 
 describe("Button component", () => {

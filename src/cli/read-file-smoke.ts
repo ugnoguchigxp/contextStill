@@ -1,4 +1,4 @@
-import { readFileDomain, type ReadFileDomainResult } from "../modules/readFile/domain.js";
+import { type ReadFileDomainResult, readFileDomain } from "../modules/readFile/domain.js";
 
 const targetPath = "best-practice/hono_backend.md";
 

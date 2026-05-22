@@ -1,11 +1,12 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { distillationTargetStates, findCandidateResults } from "../../db/schema.js";
+import type { DistillationTargetKind } from "../selectDistillationTarget/domain.js";
 
 type FindCandidateBaseRow = typeof findCandidateResults.$inferSelect;
 
 export type FindCandidateResultRow = FindCandidateBaseRow & {
-  targetKind: "wiki_file" | "vibe_memory";
+  targetKind: DistillationTargetKind;
   targetKey: string;
   sourceUri: string;
 };
@@ -54,7 +55,7 @@ export async function getFindCandidateResultById(
   if (!row) return null;
   return {
     ...row,
-    targetKind: row.targetKind as "wiki_file" | "vibe_memory",
+    targetKind: row.targetKind as DistillationTargetKind,
   };
 }
 
@@ -86,7 +87,7 @@ export async function listFindCandidateResultsByTargetStateId(
 
   return rows.map((row) => ({
     ...row,
-    targetKind: row.targetKind as "wiki_file" | "vibe_memory",
+    targetKind: row.targetKind as DistillationTargetKind,
   }));
 }
 

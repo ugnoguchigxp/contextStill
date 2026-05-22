@@ -1,19 +1,19 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
-import {
-  ensureContentRoot,
-  listPages,
-  readPage,
-  writePage,
-  deletePage,
-  createFolder,
-  listFolders,
-  renameFolder,
-  getGitSummary,
-  getPageHistory,
-} from "../src/modules/sources/wiki/content-repo.js";
+import { execFile } from "node:child_process";
 import fs from "node:fs/promises";
 import path from "node:path";
-import { execFile } from "node:child_process";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import {
+  createFolder,
+  deletePage,
+  ensureContentRoot,
+  getGitSummary,
+  getPageHistory,
+  listFolders,
+  listPages,
+  readPage,
+  renameFolder,
+  writePage,
+} from "../src/modules/sources/wiki/content-repo.js";
 
 vi.mock("node:fs/promises");
 vi.mock("node:child_process", () => ({

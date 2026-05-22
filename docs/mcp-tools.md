@@ -5,7 +5,7 @@
 1. `initial_instructions`
 2. `context_compile`
 3. `search_knowledge`
-4. `register_knowledge`
+4. `register_candidate`
 5. `list_knowledge`
 6. `update_knowledge`
 7. `memory_search`
@@ -49,10 +49,25 @@
   - `diagnostics.degradedReasons`
   - `diagnostics.stats`（text/vector hit 数、repo scope fallback など）
 
-### `register_knowledge`
+### `register_candidate`
 
-- 入力: `title`（必須）, `body`（必須）, `type`（rule/procedure）, `status`, `scope`, `confidence`, `importance`, `metadata`
-- 役割: 新しいルールや手順（スキル）を直接登録。自動的に Embedding が生成されます。デフォルトは `draft` 状態となり、人間のレビュー後に `active` 化されてから `context_compile` で利用可能になります（確信がある場合は `status: "active"` を指定することも可能）。
+- 入力: `title` + `body`, または `text`（自由文/JSON風メモ）, `type`（rule/procedure）, `confidence`, `importance`, `appliesTo`, `technologies`, `changeTypes`, `domains`, `repoPath`, `repoKey`, `metadata`
+- 役割: 新しいルールや手順（スキル）の候補を即時登録する。登録時点では `knowledge_items` に保存せず、Embedding も生成しない。
+- 挙動:
+  - `distillation_target_states.target_kind = knowledge_candidate` と `find_candidate_results` に候補を保存して即返す
+  - その後の draft 化、Embedding 生成、重複判定、品質判定は蒸留パイプラインが行う
+  - `text` だけ渡された場合は、サーバー側で最初の candidate JSON / `TYPE:` `TITLE:` `CONTENT:` 風テキストを `title` / `body` / `type` へ正規化する
+- 推奨 JSON:
+
+```json
+{
+  "title": "修正完了報告前に再現条件で検証する",
+  "type": "procedure",
+  "body": "Use when:\n- 修正完了を報告する前\n\nWorkflow:\n1. 失敗した再現条件を明示する\n2. 修正後に同じ条件で検証する\n3. 実行結果を確認してから完了報告する\n\nVerification:\n- 失敗していたテストまたは操作が成功している\n\nAvoid:\n- ログやテストを確認せずに治ったと報告する",
+  "changeTypes": ["bugfix"],
+  "domains": ["verification"]
+}
+```
 
 ### `list_knowledge`
 

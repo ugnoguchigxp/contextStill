@@ -1,11 +1,11 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { db } from "../src/db/index.js";
 import {
+  getCompileRunSnapshot,
   insertCompileRun,
   insertContextPackItems,
   listRecentCompileRuns,
-  getCompileRunSnapshot,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
-import { db } from "../src/db/index.js";
 
 vi.mock("../src/db/index.js", () => ({
   db: {

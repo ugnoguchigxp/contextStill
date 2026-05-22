@@ -1,7 +1,7 @@
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { render, screen } from "@testing-library/react";
 /** @vitest-environment jsdom */
 import React from "react";
-import { render, screen } from "@testing-library/react";
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { DoctorPage } from "../../../web/src/modules/admin/components/doctor.page";
 

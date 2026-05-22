@@ -103,6 +103,32 @@ export const registerKnowledgeInputSchema = z.object({
   metadata: z.record(z.unknown()).default({}),
 });
 
+export const registerCandidateInputSchema = z
+  .object({
+    title: z.string().trim().min(1).optional(),
+    body: z.string().trim().min(1).optional(),
+    text: z.string().trim().min(1).optional(),
+    type: knowledgeTypeSchema.optional(),
+    confidence: optionalKnowledgeScoreSchema,
+    importance: optionalKnowledgeScoreSchema,
+    appliesTo: knowledgeApplicabilitySchema.optional(),
+    general: optionalApplicabilityBooleanSchema,
+    technologies: optionalApplicabilityArraySchema,
+    changeTypes: optionalApplicabilityArraySchema,
+    domains: optionalApplicabilityArraySchema,
+    repoPath: optionalApplicabilityStringSchema,
+    repoKey: optionalApplicabilityStringSchema,
+    metadata: z.record(z.unknown()).default({}),
+  })
+  .superRefine((value, context) => {
+    if (value.body || value.text) return;
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["body"],
+      message: "body or text is required",
+    });
+  });
+
 export const listKnowledgeInputSchema = z.object({
   limit: z.number().int().min(1).max(200).default(50),
   status: knowledgeStatusSchema.optional(),

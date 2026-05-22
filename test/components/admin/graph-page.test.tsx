@@ -1,14 +1,14 @@
-/** @vitest-environment jsdom */
-import { render, screen, fireEvent } from "@testing-library/react";
-import { describe, expect, it, vi, beforeEach } from "vitest";
-import React from "react";
-import { GraphPage } from "../../../web/src/modules/admin/components/graph.page";
 import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+/** @vitest-environment jsdom */
+import { fireEvent, render, screen } from "@testing-library/react";
+import React from "react";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import { GraphPage } from "../../../web/src/modules/admin/components/graph.page";
 import {
-  fetchGraphSnapshot,
-  fetchGraphNodeDetail,
-  type GraphSnapshot,
   type GraphNodeDetail,
+  type GraphSnapshot,
+  fetchGraphNodeDetail,
+  fetchGraphSnapshot,
 } from "../../../web/src/modules/admin/repositories/admin.repository";
 
 // ResizeObserver のモック

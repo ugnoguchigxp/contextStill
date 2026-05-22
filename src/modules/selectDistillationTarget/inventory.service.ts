@@ -6,12 +6,12 @@ import { db } from "../../db/index.js";
 import { vibeMemories } from "../../db/schema.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import {
-  selectDistillationTarget,
-  selectedTargetFromState,
   type DistillationTargetCandidate,
   type DistillationTargetKind,
   type DistillationTargetStatus,
   type SelectedDistillationTarget,
+  selectDistillationTarget,
+  selectedTargetFromState,
 } from "./domain.js";
 import {
   DEFAULT_DISTILLATION_TARGET_VERSION,
@@ -171,7 +171,7 @@ export type RefreshDistillationTargetInventoryResult = {
 
 export async function refreshDistillationTargetInventory(
   params: {
-    kind?: "auto" | "wiki" | "vibe";
+    kind?: "auto" | "wiki" | "vibe" | "candidate";
     rootPath?: string;
     vibeLimit?: number;
     distillationVersion?: string;
@@ -232,7 +232,7 @@ async function selectFromCandidatesWithPersistedStatuses(params: {
 
 export async function previewNextDistillationTarget(
   params: {
-    kind?: "auto" | "wiki" | "vibe";
+    kind?: "auto" | "wiki" | "vibe" | "candidate";
     rootPath?: string;
     vibeLimit?: number;
     distillationVersion?: string;
@@ -242,7 +242,13 @@ export async function previewNextDistillationTarget(
   const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
   if (params.fromStateTable) {
     const targetKind: DistillationTargetKind | undefined =
-      params.kind === "wiki" ? "wiki_file" : params.kind === "vibe" ? "vibe_memory" : undefined;
+      params.kind === "candidate"
+        ? "knowledge_candidate"
+        : params.kind === "wiki"
+          ? "wiki_file"
+          : params.kind === "vibe"
+            ? "vibe_memory"
+            : undefined;
     const state = await findNextSelectableDistillationTargetState({
       distillationVersion,
       targetKind,
@@ -251,6 +257,13 @@ export async function previewNextDistillationTarget(
   }
 
   const kind = params.kind ?? "auto";
+  if (kind === "candidate") {
+    const state = await findNextSelectableDistillationTargetState({
+      distillationVersion,
+      targetKind: "knowledge_candidate",
+    });
+    return state ? selectedTargetFromState(state) : null;
+  }
   const wikiCandidates =
     kind === "vibe" ? [] : await collectWikiFileTargetCandidates({ rootPath: params.rootPath });
   const wikiSelected =

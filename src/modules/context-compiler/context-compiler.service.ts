@@ -1,4 +1,5 @@
 import { groupedConfig } from "../../config.js";
+import type { CompileRunSource } from "../../shared/schemas/compile-run.schema.js";
 import {
   type CompileInput,
   type RetrievalMode,
@@ -28,7 +29,7 @@ import {
 import { composeContextResponse } from "./context-response-composer.service.js";
 import { renderContextPackMarkdown } from "./pack-renderer.js";
 import { type Rankable, rankAndDedupe } from "./ranking.service.js";
-import type { CompileRunSource } from "../../shared/schemas/compile-run.schema.js";
+import { applySectionTokenBudget, estimateTokens } from "./token-budget.js";
 
 const sectionRatios = {
   rules: 0.55,
@@ -44,78 +45,6 @@ const designDocumentPathPattern =
   /(?:^|[\s"'`(（])(?:file:\/\/\/[^\s"'`）)]+|(?:\.{1,2}\/)?(?:docs?|design|specs?|requirements?|roadmap|proposal|architecture)\/[^\s"'`）)]+)\.(?:md|mdx)(?=$|[\s"'`）).,])/i;
 const designDocumentFileNamePattern =
   /(?:^|[\s"'`(（])(?:design|spec|api-spec|requirements?|roadmap|proposal|architecture(?:-plan)?|plan|設計|仕様|要件)[\w.\-]*(?:\.md|\.mdx)(?=$|[\s"'`）).,])/iu;
-
-function isWhitespaceCodePoint(codePoint: number): boolean {
-  return (
-    codePoint <= 0x20 ||
-    codePoint === 0x00a0 ||
-    codePoint === 0x1680 ||
-    (codePoint >= 0x2000 && codePoint <= 0x200a) ||
-    codePoint === 0x2028 ||
-    codePoint === 0x2029 ||
-    codePoint === 0x202f ||
-    codePoint === 0x205f ||
-    codePoint === 0x3000 ||
-    codePoint === 0xfeff
-  );
-}
-
-function isCjkCodePoint(codePoint: number): boolean {
-  return (
-    (codePoint >= 0x3040 && codePoint <= 0x30ff) ||
-    (codePoint >= 0x31f0 && codePoint <= 0x31ff) ||
-    (codePoint >= 0x3400 && codePoint <= 0x4dbf) ||
-    (codePoint >= 0x4e00 && codePoint <= 0x9fff) ||
-    (codePoint >= 0xf900 && codePoint <= 0xfaff) ||
-    (codePoint >= 0xff61 && codePoint <= 0xff9f) ||
-    (codePoint >= 0xac00 && codePoint <= 0xd7af) ||
-    (codePoint >= 0x3130 && codePoint <= 0x318f)
-  );
-}
-
-export function estimatedTokenWeight(char: string): number {
-  const codePoint = char.codePointAt(0);
-  if (!codePoint) return 0;
-  if (isWhitespaceCodePoint(codePoint)) return 0.15;
-  if (codePoint <= 0x7f) return 0.25;
-  if (isCjkCodePoint(codePoint)) return 0.8;
-  if (codePoint > 0xffff) return 1;
-  return 0.5;
-}
-
-export function estimateTokens(text: string): number {
-  let total = 0;
-  for (const char of text) {
-    total += estimatedTokenWeight(char);
-  }
-  return Math.max(1, Math.ceil(total));
-}
-
-function truncateForBudget(content: string, maxTokens: number): string {
-  if (!content.trim()) return content;
-  if (maxTokens <= 0) return "...";
-  if (estimateTokens(content) <= maxTokens) return content;
-  const suffix = "...";
-  const suffixTokens = estimateTokens(suffix);
-  const maxContentTokens = Math.max(1, maxTokens - suffixTokens);
-  const selectedChars: string[] = [];
-  let usedTokens = 0;
-  for (const char of content) {
-    const tokenCost = estimatedTokenWeight(char);
-    if (usedTokens + tokenCost > maxContentTokens) break;
-    selectedChars.push(char);
-    usedTokens += tokenCost;
-  }
-  if (selectedChars.length === 0) return suffix;
-  while (
-    selectedChars.length > 0 &&
-    estimateTokens(`${selectedChars.join("")}${suffix}`) > maxTokens
-  ) {
-    selectedChars.pop();
-  }
-  if (selectedChars.length === 0) return suffix;
-  return `${selectedChars.join("")}${suffix}`;
-}
 
 function scoreSourceOverlap(text: string, candidateText: string): number {
   const baseTokens = text
@@ -177,31 +106,6 @@ function selectSourceRefsForKnowledge(
     .map((entry) => entry.ref);
   if (overlapRefs.length > 0) return [...new Set(overlapRefs)];
   return [];
-}
-
-function applySectionTokenBudget(
-  items: ContextPackItem[],
-  maxTokens: number,
-): { items: ContextPackItem[]; dropped: boolean } {
-  if (items.length === 0 || maxTokens <= 0) {
-    return { items: [], dropped: items.length > 0 };
-  }
-  const selected: ContextPackItem[] = [];
-  let usedTokens = 0;
-  for (const item of items) {
-    const itemCost = estimateTokens(`${item.title}\n${item.content}\n${item.rankingReason}`);
-    if (usedTokens + itemCost <= maxTokens) {
-      selected.push(item);
-      usedTokens += itemCost;
-      continue;
-    }
-    if (selected.length === 0) {
-      const remaining = Math.max(24, maxTokens - usedTokens);
-      selected.push({ ...item, content: truncateForBudget(item.content, remaining) });
-    }
-    break;
-  }
-  return { items: selected, dropped: selected.length < items.length };
 }
 
 function buildMinimalTasks(retrievalMode: RetrievalMode): string[] {

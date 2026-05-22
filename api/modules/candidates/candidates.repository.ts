@@ -1,4 +1,4 @@
-import { and, sql, type SQL } from "drizzle-orm";
+import { type SQL, and, sql } from "drizzle-orm";
 import { db } from "../../../src/db/index.js";
 
 export const candidateOutcomeValues = [
@@ -16,7 +16,7 @@ export type CandidateListQuery = {
   page: number;
   limit: number;
   query?: string;
-  targetKind?: "all" | "wiki_file" | "vibe_memory";
+  targetKind?: "all" | "wiki_file" | "vibe_memory" | "knowledge_candidate";
   outcome?: "all" | CandidateOutcome;
   hasKnowledge?: "all" | "yes" | "no";
   targetStateId?: string;
@@ -36,7 +36,7 @@ export type CandidateListItem = {
   id: string;
   targetStateId: string;
   candidateIndex: number;
-  targetKind: "wiki_file" | "vibe_memory";
+  targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate";
   targetKey: string;
   sourceUri: string;
   finalizeSourceUri: string;
@@ -252,6 +252,11 @@ function toNumber(value: unknown, fallback = 0): number {
   return Number.isFinite(num) ? num : fallback;
 }
 
+function toTargetKind(value: unknown): "wiki_file" | "vibe_memory" | "knowledge_candidate" {
+  if (value === "vibe_memory" || value === "knowledge_candidate") return value;
+  return "wiki_file";
+}
+
 function toIso(value: unknown): string {
   if (value instanceof Date) return value.toISOString();
   if (typeof value === "string") {
@@ -458,7 +463,7 @@ function mapRowToItem(row: CandidateSqlRow): CandidateListItem {
     id: row.id,
     targetStateId: row.target_state_id,
     candidateIndex: toNumber(row.candidate_index),
-    targetKind: row.target_kind === "vibe_memory" ? "vibe_memory" : "wiki_file",
+    targetKind: toTargetKind(row.target_kind),
     targetKey: row.target_key,
     sourceUri: row.source_uri,
     finalizeSourceUri: row.finalize_source_uri,

@@ -66,6 +66,26 @@ const sources: AgentLogSource[] = [
   { id: "antigravity_logs", label: "Antigravity", ingest: ingestAntigravityLogs },
 ];
 
+const AGENT_TASK_LOG_BASENAME_RE = /^task-\d+\.log$/i;
+const BACKGROUND_TASK_STARTED_RE =
+  /Tool is running as a background task with task id: [^\s]+\/task-\d+/i;
+const BACKGROUND_TASK_STATUS_RE = /(^|\n)Task:\s*[^\s]+\/task-\d+/i;
+const BACKGROUND_TASK_LOG_PATH_RE = /(^|\n)Log:\s*.*task-\d+\.log/i;
+
+export function isNonDistillableAgentTaskLogMessage(message: ChatMessage): boolean {
+  const projectName = message.metadata.projectName;
+  if (typeof projectName === "string" && AGENT_TASK_LOG_BASENAME_RE.test(projectName.trim())) {
+    return true;
+  }
+
+  const content = message.content.trim();
+  if (!content.startsWith("Created At:")) return false;
+  return (
+    BACKGROUND_TASK_STARTED_RE.test(content) ||
+    (BACKGROUND_TASK_STATUS_RE.test(content) && BACKGROUND_TASK_LOG_PATH_RE.test(content))
+  );
+}
+
 export function chunkMessages(
   messages: ChatMessage[],
   maxMessages = groupedConfig.agentLogSync.maxMessagesPerChunk,
@@ -377,7 +397,10 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
         continue;
       }
 
-      const messages = ingestResult.messages.filter((message) => message.content.trim().length > 0);
+      const messages = ingestResult.messages.filter(
+        (message) =>
+          message.content.trim().length > 0 && !isNonDistillableAgentTaskLogMessage(message),
+      );
       const checkpointDate = getCheckpointDate(ingestResult.maxObservedMtimeMs, since);
       const sourceMetadata = {
         checkedFiles: ingestResult.checkedFiles,

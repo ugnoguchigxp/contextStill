@@ -1,9 +1,10 @@
 import path from "node:path";
 import { closeDbPool } from "../db/index.js";
-import { refreshDistillationTargetInventory } from "../modules/selectDistillationTarget/inventory.service.js";
 import type { DistillationTargetKind } from "../modules/selectDistillationTarget/domain.js";
+import { refreshDistillationTargetInventory } from "../modules/selectDistillationTarget/inventory.service.js";
 import {
   DEFAULT_DISTILLATION_TARGET_VERSION,
+  type DistillationTargetStateRow,
   claimNextDistillationTargetState,
   finishDistillationTargetState,
   getDistillationTargetSummary,
@@ -12,7 +13,6 @@ import {
   releaseRetryablePausedDistillationTargets,
   requeueDistillationTargetState,
   updateDistillationTargetHeartbeat,
-  type DistillationTargetStateRow,
 } from "../modules/selectDistillationTarget/repository.js";
 
 type Command =
@@ -28,7 +28,7 @@ type Command =
 
 type CliOptions = {
   command: Command;
-  kind: "auto" | "wiki" | "vibe";
+  kind: "auto" | "wiki" | "vibe" | "candidate";
   rootPath?: string;
   vibeLimit?: number;
   refresh: boolean;
@@ -90,8 +90,8 @@ function parseArgs(args: string[]): CliOptions {
     if (arg === "--kind" || arg.startsWith("--kind=")) {
       const value = readArgValue(args, index, "--kind").trim();
       if (arg === "--kind") index += 1;
-      if (value !== "auto" && value !== "wiki" && value !== "vibe") {
-        throw new Error("--kind must be auto, wiki, or vibe");
+      if (value !== "auto" && value !== "wiki" && value !== "vibe" && value !== "candidate") {
+        throw new Error("--kind must be auto, wiki, vibe, or candidate");
       }
       options.kind = value;
     } else if (arg === "--root" || arg.startsWith("--root=")) {
@@ -169,6 +169,7 @@ function compactSummaryTarget(row: DistillationTargetStateRow | null) {
 }
 
 function targetKindFilter(kind: CliOptions["kind"]): DistillationTargetKind | undefined {
+  if (kind === "candidate") return "knowledge_candidate";
   if (kind === "wiki") return "wiki_file";
   if (kind === "vibe") return "vibe_memory";
   return undefined;
@@ -204,6 +205,7 @@ async function run(options: CliOptions): Promise<unknown> {
       version: summary.version,
       mode: summary.mode,
       queued: summary.queued,
+      pendingKnowledgeCandidates: summary.pendingKnowledgeCandidates,
       pendingWiki: summary.pendingWiki,
       pendingVibeMemory: summary.pendingVibeMemory,
       running: summary.running,

@@ -1,7 +1,3 @@
-import { Fragment, useState } from "react";
-import { useQuery } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
-import { ChevronLeft, ChevronRight, RefreshCw, Search } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
@@ -15,10 +11,14 @@ import {
   TableHeader,
   TableRow,
 } from "@/components/ui/table";
+import { useQuery } from "@tanstack/react-query";
+import { Link } from "@tanstack/react-router";
+import { ChevronLeft, ChevronRight, RefreshCw, Search } from "lucide-react";
+import { Fragment, useState } from "react";
 import {
-  fetchCandidateItems,
   type CandidateListItem,
   type CandidateOutcome,
+  fetchCandidateItems,
 } from "../repositories/admin.repository";
 
 const outcomeOptions: Array<"all" | CandidateOutcome> = [
@@ -114,7 +114,9 @@ export function CandidatesPage() {
   const [page, setPage] = useState(1);
   const [limit] = useState(50);
   const [queryText, setQueryText] = useState("");
-  const [targetKind, setTargetKind] = useState<"all" | "wiki_file" | "vibe_memory">("all");
+  const [targetKind, setTargetKind] = useState<
+    "all" | "wiki_file" | "vibe_memory" | "knowledge_candidate"
+  >("all");
   const [outcome, setOutcome] = useState<"all" | CandidateOutcome>("all");
   const [hasKnowledge, setHasKnowledge] = useState<"all" | "yes" | "no">("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -159,13 +161,16 @@ export function CandidatesPage() {
               aria-label="target-kind"
               value={targetKind}
               onChange={(event) => {
-                setTargetKind(event.target.value as "all" | "wiki_file" | "vibe_memory");
+                setTargetKind(
+                  event.target.value as "all" | "wiki_file" | "vibe_memory" | "knowledge_candidate",
+                );
                 setPage(1);
               }}
             >
               <option value="all">all target kinds</option>
               <option value="wiki_file">wiki_file</option>
               <option value="vibe_memory">vibe_memory</option>
+              <option value="knowledge_candidate">knowledge_candidate</option>
             </Select>
             <Select
               aria-label="outcome"

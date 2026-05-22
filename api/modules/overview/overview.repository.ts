@@ -4,13 +4,13 @@ import { APP_CONSTANTS } from "../../../src/constants.js";
 import { getDb } from "../../../src/db/index.js";
 import { ensureContentRoot, listPages } from "../../../src/modules/sources/wiki/content-repo.js";
 import {
-  overviewDashboardSchema,
   type OverviewDashboard,
+  overviewDashboardSchema,
 } from "../../../src/shared/schemas/overview.schema.js";
 
 const OVERVIEW_DAY_RANGE = 14;
 const KNOWLEDGE_STATUS_ORDER = ["active", "draft", "deprecated"] as const;
-const DISTILLATION_TARGET_KIND_ORDER = ["wiki_file", "vibe_memory"] as const;
+const DISTILLATION_TARGET_KIND_ORDER = ["knowledge_candidate", "wiki_file", "vibe_memory"] as const;
 
 function toNumber(value: unknown, fallback = 0): number {
   const converted = Number(value);

@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
 import {
+  assertSafeSlug,
   extractRemainderFromPathname,
   filePathToSlug,
-  sanitizeSlug,
   isSafeSlug,
-  assertSafeSlug,
+  sanitizeSlug,
 } from "../src/modules/sources/wiki/slug.js";
 
 describe("Slug Utilities", () => {

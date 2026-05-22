@@ -1,11 +1,11 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
+import { sql } from "drizzle-orm";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { db } from "../src/db/index.js";
 import {
   searchKnowledge,
   upsertKnowledgeFromSource,
   vectorSearchKnowledge,
 } from "../src/modules/knowledge/knowledge.repository.js";
-import { db } from "../src/db/index.js";
-import { sql } from "drizzle-orm";
 
 vi.mock("../src/db/index.js", () => {
   const selectChain = {

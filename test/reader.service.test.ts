@@ -1,7 +1,7 @@
-import { describe, expect, test, vi, beforeEach, afterEach } from "vitest";
-import { readVibeMemoryByTokenWindow } from "../src/modules/memoryReader/reader.service.js";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { db } from "../src/db/index.js";
-import { vibeMemories, agentDiffEntries } from "../src/db/schema.js";
+import { agentDiffEntries, vibeMemories } from "../src/db/schema.js";
+import { readVibeMemoryByTokenWindow } from "../src/modules/memoryReader/reader.service.js";
 
 const mockFrom = vi.fn();
 

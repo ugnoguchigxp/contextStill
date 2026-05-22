@@ -1,10 +1,10 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { embedOne } from "../src/modules/embedding/embedding.service.js";
 import { retrieveSources } from "../src/modules/sources/source-retrieval.service.js";
 import {
   searchSourceContent,
   vectorSearchSourceContent,
 } from "../src/modules/sources/source.repository.js";
-import { embedOne } from "../src/modules/embedding/embedding.service.js";
 
 vi.mock("../src/modules/sources/source.repository.js");
 vi.mock("../src/modules/embedding/embedding.service.js");

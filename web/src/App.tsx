@@ -1,10 +1,10 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import {
+  RouterProvider,
   createRootRouteWithContext,
   createRoute,
   createRouter,
   lazyRouteComponent,
-  RouterProvider,
 } from "@tanstack/react-router";
 import { AppShell } from "./modules/admin/components/app-shell";
 

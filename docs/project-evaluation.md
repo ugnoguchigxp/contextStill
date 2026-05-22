@@ -65,7 +65,7 @@ flowchart LR
     subgraph Collect
         A[Wiki / Docs] --> B[import:wiki]
         C[Agent Logs] --> D[sync:agent-logs]
-        E[Manual Rules] --> F[register_knowledge]
+        E[Manual Candidates] --> F[register_candidate]
     end
     subgraph Distill
         B --> G[selectTarget]

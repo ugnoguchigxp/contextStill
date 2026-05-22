@@ -7,7 +7,7 @@ const candidateQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
   limit: z.coerce.number().int().min(1).max(200).default(50),
   query: z.string().trim().max(200).optional(),
-  targetKind: z.enum(["all", "wiki_file", "vibe_memory"]).default("all"),
+  targetKind: z.enum(["all", "wiki_file", "vibe_memory", "knowledge_candidate"]).default("all"),
   outcome: z.enum(["all", ...candidateOutcomeValues]).default("all"),
   hasKnowledge: z.enum(["all", "yes", "no"]).default("all"),
   targetStateId: z.string().trim().min(1).optional(),

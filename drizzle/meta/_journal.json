@@ -218,6 +218,13 @@
       "when": 1778922000000,
       "tag": "0030_knowledge_feedback_learning",
       "breakpoints": true
+    },
+    {
+      "idx": 31,
+      "version": "7",
+      "when": 1778925600000,
+      "tag": "0031_register_candidate_target_kind",
+      "breakpoints": true
     }
   ]
 }

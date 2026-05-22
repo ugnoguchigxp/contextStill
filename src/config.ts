@@ -3,8 +3,8 @@ import path from "node:path";
 import { config as loadEnv } from "dotenv";
 import type {
   AgenticCompileProvider,
-  DistillationSearchProvider,
   DistillationProvider,
+  DistillationSearchProvider,
   EmbeddingProvider,
   GroupedConfig,
 } from "./config.types.js";

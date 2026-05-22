@@ -1,5 +1,5 @@
 import { closeDbPool } from "../db/index.js";
-import { runCoverEvidence, type CoverEvidenceRunInput } from "../modules/coverEvidence/domain.js";
+import { type CoverEvidenceRunInput, runCoverEvidence } from "../modules/coverEvidence/domain.js";
 
 type CliOptions = {
   id: string;

@@ -1,8 +1,8 @@
+import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
-import { releaseRetryablePausedDistillationTargets } from "../src/modules/selectDistillationTarget/repository.js";
 import { db } from "../src/db/index.js";
 import { distillationTargetStates } from "../src/db/schema.js";
-import { eq } from "drizzle-orm";
+import { releaseRetryablePausedDistillationTargets } from "../src/modules/selectDistillationTarget/repository.js";
 import {
   closeIntegrationDb,
   ensureDbIntegrationReady,

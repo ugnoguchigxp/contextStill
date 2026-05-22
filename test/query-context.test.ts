@@ -1,11 +1,11 @@
+import path from "node:path";
 import { describe, expect, test } from "vitest";
 import {
-  normalizeRepoPath,
-  normalizeRepoKey,
-  fileHintsFromInput,
   buildRetrievalQueryText,
+  fileHintsFromInput,
+  normalizeRepoKey,
+  normalizeRepoPath,
 } from "../src/modules/context-compiler/query-context.js";
-import path from "node:path";
 
 describe("Query Context Utility", () => {
   test("normalizeRepoPath handles various inputs", () => {

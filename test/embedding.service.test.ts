@@ -1,6 +1,6 @@
-import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { execFile } from "node:child_process";
 import { access } from "node:fs/promises";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { groupedConfig } from "../src/config.js";
 import { embedOne, embeddingHealth } from "../src/modules/embedding/embedding.service.js";
 

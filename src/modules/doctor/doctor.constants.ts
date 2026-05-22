@@ -21,7 +21,7 @@ export const requiredPrimaryMcpTools = [
   "initial_instructions",
   "context_compile",
   "search_knowledge",
-  "register_knowledge",
+  "register_candidate",
   "memory_search",
   "memory_fetch",
   "doctor",

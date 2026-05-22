@@ -1,14 +1,14 @@
 import { groupedConfig } from "../../config.js";
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
-import { recordAuditLogSafe, auditEventTypes } from "../audit/audit-log.service.js";
+import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import type { DistillationDomainSmokeResult } from "../distillation-domain.types.js";
 import {
-  runDistillationCompletion,
-  resolveDistillationModel,
   type DistillationMessage,
   type DistillationProviderSetting,
   type DistillationRuntimeToolDefinition,
   type DistillationToolExecutor,
+  resolveDistillationModel,
+  runDistillationCompletion,
 } from "../distillation/distillation-runtime.service.js";
 import type { DistillationToolCall } from "../distillation/distillation-tools.service.js";
 import { readVibeMemoryByTokenWindow } from "../memoryReader/reader.service.js";
@@ -16,9 +16,9 @@ import { readFileDomain } from "../readFile/domain.js";
 import { getDistillationTargetStateById } from "../selectDistillationTarget/repository.js";
 import { parseStorageCandidatesFromLlmOutput } from "./parser.js";
 import {
-  insertFindCandidateResult,
   type CandidateOrigin,
   type CandidateRecord,
+  insertFindCandidateResult,
 } from "./repository.js";
 
 export type FindCandidateCallerMode = "cli_text" | "storage";

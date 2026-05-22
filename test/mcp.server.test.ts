@@ -1,5 +1,5 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
-import { listStaticResources, readStaticResource, createMcpServer } from "../src/mcp/server.js";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { createMcpServer, listStaticResources, readStaticResource } from "../src/mcp/server.js";
 import * as repository from "../src/modules/context-compiler/context-compiler.repository.js";
 import * as doctorService from "../src/modules/doctor/doctor.service.js";
 

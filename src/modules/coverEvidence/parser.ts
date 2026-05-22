@@ -11,6 +11,10 @@ import {
   isCoverEvidenceStatus,
 } from "./types.js";
 
+export type ParseCoverEvidenceResultOptions = {
+  candidateDefaults?: Partial<CoverEvidenceCandidate>;
+};
+
 const MAX_REASON_LENGTH = 160;
 const DEFAULT_IMPORTANCE = 70;
 const DEFAULT_CONFIDENCE = 70;
@@ -77,6 +81,7 @@ function parseScore(value: unknown, fallback: number): number {
 
 function parseApplicability(
   record: Record<string, unknown>,
+  defaults: Partial<CoverEvidenceCandidate> = {},
 ): Pick<
   CoverEvidenceCandidate,
   "applicabilityGeneral" | "technologies" | "changeTypes" | "domains" | "repoPath" | "repoKey"
@@ -92,12 +97,28 @@ function parseApplicability(
   const repoKey = asOptionalString(record.repoKey ?? nested.repoKey);
 
   return {
-    ...(general !== undefined ? { applicabilityGeneral: general } : {}),
-    ...(technologies.length > 0 ? { technologies } : {}),
-    ...(changeTypes.length > 0 ? { changeTypes } : {}),
-    ...(domains.length > 0 ? { domains } : {}),
-    ...(repoPath ? { repoPath } : {}),
-    ...(repoKey ? { repoKey } : {}),
+    ...(general !== undefined
+      ? { applicabilityGeneral: general }
+      : defaults.applicabilityGeneral !== undefined
+        ? { applicabilityGeneral: defaults.applicabilityGeneral }
+        : {}),
+    ...(technologies.length > 0
+      ? { technologies }
+      : defaults.technologies && defaults.technologies.length > 0
+        ? { technologies: defaults.technologies }
+        : {}),
+    ...(changeTypes.length > 0
+      ? { changeTypes }
+      : defaults.changeTypes && defaults.changeTypes.length > 0
+        ? { changeTypes: defaults.changeTypes }
+        : {}),
+    ...(domains.length > 0
+      ? { domains }
+      : defaults.domains && defaults.domains.length > 0
+        ? { domains: defaults.domains }
+        : {}),
+    ...(repoPath ? { repoPath } : defaults.repoPath ? { repoPath: defaults.repoPath } : {}),
+    ...(repoKey ? { repoKey } : defaults.repoKey ? { repoKey: defaults.repoKey } : {}),
   };
 }
 
@@ -116,7 +137,10 @@ function inferTitleFromBody(body: string): string {
   return body.replace(/\s+/g, " ").trim().slice(0, 80);
 }
 
-function parseCandidate(record: Record<string, unknown>): CoverEvidenceCandidate | null {
+function parseCandidate(
+  record: Record<string, unknown>,
+  defaults: Partial<CoverEvidenceCandidate> = {},
+): CoverEvidenceCandidate | null {
   const candidateRecord = candidateRecordFromResult(record);
   const title = asString(candidateRecord.title ?? candidateRecord.candidateTitle);
   const body = asString(
@@ -131,18 +155,17 @@ function parseCandidate(record: Record<string, unknown>): CoverEvidenceCandidate
     return null;
   }
 
-  const type =
-    asString(candidateRecord.type ?? candidateRecord.candidateType ?? candidateRecord.kind) ===
-    "procedure"
-      ? "procedure"
-      : "rule";
-  const applicability = parseApplicability(candidateRecord);
+  const typeHint = asString(
+    candidateRecord.type ?? candidateRecord.candidateType ?? candidateRecord.kind,
+  );
+  const type = typeHint === "procedure" ? "procedure" : (defaults.type ?? "rule");
+  const applicability = parseApplicability(candidateRecord, defaults);
   return {
     type,
     title: normalizedTitle,
     body: normalizedBody,
-    importance: parseScore(candidateRecord.importance, DEFAULT_IMPORTANCE),
-    confidence: parseScore(candidateRecord.confidence, DEFAULT_CONFIDENCE),
+    importance: parseScore(candidateRecord.importance, defaults.importance ?? DEFAULT_IMPORTANCE),
+    confidence: parseScore(candidateRecord.confidence, defaults.confidence ?? DEFAULT_CONFIDENCE),
     ...applicability,
   };
 }
@@ -292,7 +315,10 @@ function parseLabelledResultRecord(text: string): Record<string, unknown> | null
   return record;
 }
 
-export function parseCoverEvidenceResult(llmOutput: string): CoverEvidenceResult {
+export function parseCoverEvidenceResult(
+  llmOutput: string,
+  options: ParseCoverEvidenceResultOptions = {},
+): CoverEvidenceResult {
   const parsed = parseLlmJsonLike(llmOutput);
   const labelledFallback = parseLabelledResultRecord(llmOutput);
   if ((!parsed || !parsed.value || typeof parsed.value !== "object") && !labelledFallback) {
@@ -326,7 +352,7 @@ export function parseCoverEvidenceResult(llmOutput: string): CoverEvidenceResult
   const toolEvents = Array.isArray(record.toolEvents)
     ? record.toolEvents.map(parseToolEvent).filter(isToolEvent)
     : [];
-  const candidate = parseCandidate(record);
+  const candidate = parseCandidate(record, options.candidateDefaults);
   const normalizedStatus: CoverEvidenceStatus =
     status === "knowledge_ready" && !candidate ? "insufficient" : status;
   const reason = asOptionalReason(record.reason);

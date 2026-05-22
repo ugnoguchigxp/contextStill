@@ -1,3 +1,4 @@
+import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Bar,
   BarChart,
@@ -10,7 +11,6 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import type { OverviewDashboard } from "../repositories/admin.repository";
 
 const knowledgeStatusLabel: Record<"active" | "draft" | "deprecated", string> = {
@@ -19,7 +19,8 @@ const knowledgeStatusLabel: Record<"active" | "draft" | "deprecated", string> = 
   deprecated: "deprecated",
 };
 
-const distillationLabel: Record<"wiki_file" | "vibe_memory", string> = {
+const distillationLabel: Record<"wiki_file" | "vibe_memory" | "knowledge_candidate", string> = {
+  knowledge_candidate: "candidate",
   wiki_file: "wiki",
   vibe_memory: "vibe",
 };
