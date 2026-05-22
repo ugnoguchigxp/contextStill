@@ -6,6 +6,8 @@ tsconfig.tsbuildinfo
 dist/
 dist-web/
 coverage/
+coverage.json
+.antigravitycli/
 playwright-report/
 test-results/
 /wiki/

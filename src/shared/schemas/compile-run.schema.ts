@@ -75,9 +75,7 @@ export const compileRunDetailSchema = z.object({
 });
 
 export type CompileRunSource = z.infer<typeof compileRunSourceSchema>;
-export type CompileRunSummaryPayload = z.infer<typeof compileRunSummarySchema>;
 export type CompileRunSelectedItem = z.infer<typeof compileRunSelectedItemSchema>;
-export type CompileRunKnowledgeFeedback = z.infer<typeof compileRunKnowledgeFeedbackSchema>;
 export type CompileRunKnowledgeFeedbackResult = z.infer<
   typeof compileRunKnowledgeFeedbackResultSchema
 >;

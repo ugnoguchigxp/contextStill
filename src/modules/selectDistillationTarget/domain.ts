@@ -34,27 +34,6 @@ export type SelectedDistillationTarget = {
   status: DistillationTargetStatus;
 };
 
-export type DistillationTargetStateView = SelectedDistillationTarget & {
-  id: string;
-  distillationVersion: string;
-  phase: DistillationTargetPhase;
-  priorityGroup: DistillationTargetPriorityGroup;
-  sortKey: string;
-  attemptCount: number;
-  lockedBy: string | null;
-  lockedAt: Date | null;
-  heartbeatAt: Date | null;
-  nextRetryAt: Date | null;
-  lastError: string | null;
-  lastOutcomeKind: string | null;
-  candidateCount: number;
-  knowledgeIds: string[];
-  metadata: Record<string, unknown>;
-  createdAt: Date;
-  updatedAt: Date;
-  completedAt: Date | null;
-};
-
 function statusOf(candidate: DistillationTargetCandidate): DistillationTargetStatus {
   return candidate.status ?? "pending";
 }

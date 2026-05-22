@@ -1,10 +1,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { describe, expect, test } from "vitest";
-import {
-  doctorReasonCatalog,
-  formatDoctorReasonDetail,
-} from "../src/shared/doctor/doctor-reasons";
+import { doctorReasonCatalog, formatDoctorReasonDetail } from "../src/shared/doctor/doctor-reasons";
 
 function read(filePath: string): string {
   return fs.readFileSync(path.resolve(process.cwd(), filePath), "utf-8");

@@ -101,7 +101,7 @@ function parseJsonOverviewTurns(content: string): ChatTurn[] {
  * environment_context や GEMINI.md 等のメタデータブロックを含むかどうか判定する。
  * 完全に除去するのではなく、isMetadata フラグで UI 側がアコーディオン非表示できるようにする。
  */
-export function isMetadataContent(content: string): boolean {
+function isMetadataContent(content: string): boolean {
   const trimmed = content.trim();
   // <environment_context> ブロックが含まれる場合
   if (/<environment_context[\s>]/i.test(trimmed)) return true;

@@ -30,18 +30,8 @@ function CardTitle({ className, ...props }: React.ComponentProps<"h3">) {
   );
 }
 
-function CardDescription({ className, ...props }: React.ComponentProps<"p">) {
-  return (
-    <p
-      data-slot="card-description"
-      className={cn("text-muted-foreground text-sm", className)}
-      {...props}
-    />
-  );
-}
-
 function CardContent({ className, ...props }: React.ComponentProps<"div">) {
   return <div data-slot="card-content" className={cn("px-6", className)} {...props} />;
 }
 
-export { Card, CardContent, CardDescription, CardHeader, CardTitle };
+export { Card, CardContent, CardHeader, CardTitle };

@@ -787,17 +787,13 @@ async function listAntigravitySessionLogFiles(logsDir: string): Promise<string[]
   return files
     .filter(
       (name) =>
-        /\.(jsonl|txt)$/i.test(name) &&
-        /(transcript|overview|history|conversation)/i.test(name),
+        /\.(jsonl|txt)$/i.test(name) && /(transcript|overview|history|conversation)/i.test(name),
     )
     .sort()
     .map((name) => path.join(logsDir, name));
 }
 
-function parseAntigravityCliHistoryLine(
-  line: string,
-  historyFilePath: string,
-): ChatMessage | null {
+function parseAntigravityCliHistoryLine(line: string, historyFilePath: string): ChatMessage | null {
   try {
     const data = JSON.parse(line) as {
       display?: unknown;
@@ -875,7 +871,10 @@ async function ingestAntigravityCliHistoryFallback(params: {
         if (!parsed) continue;
         if (params.since) {
           const timestamp = parsed.metadata.timestamp;
-          if (typeof timestamp === "string" && new Date(timestamp).getTime() < params.since.getTime()) {
+          if (
+            typeof timestamp === "string" &&
+            new Date(timestamp).getTime() < params.since.getTime()
+          ) {
             continue;
           }
         }

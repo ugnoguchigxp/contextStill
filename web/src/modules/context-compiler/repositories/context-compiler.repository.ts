@@ -1,12 +1,5 @@
 export type CompileRunSource = "ui" | "mcp" | "cli" | "unknown";
 export type CompileRunKnowledgeVerdict = "used" | "off_topic" | "wrong";
-export type CompileMode =
-  | "task_context"
-  | "review_context"
-  | "debug_context"
-  | "architecture_context"
-  | "procedure_context"
-  | "learning_context";
 
 export type CompileRequest = {
   goal: string;

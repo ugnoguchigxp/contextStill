@@ -3,8 +3,11 @@ import { RefreshCcw } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import {
+  formatDoctorReasonDetail as formatDoctorReason,
+  type DoctorReasonDetail,
+} from "../../../../../src/shared/doctor/doctor-reasons";
 import { DoctorCharts } from "./doctor-charts";
-import { formatDoctorReason, type DoctorReasonDetail } from "./doctor-reasons";
 import { fetchDoctorReport } from "../repositories/admin.repository";
 
 function Metric({

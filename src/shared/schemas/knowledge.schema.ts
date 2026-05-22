@@ -157,4 +157,3 @@ export type KnowledgeItem = z.infer<typeof knowledgeItemSchema>;
 export type KnowledgeApplicabilityInput = z.infer<typeof knowledgeApplicabilitySchema>;
 export type KnowledgeSearchInput = z.infer<typeof knowledgeSearchInputSchema>;
 export type KnowledgeStatus = z.infer<typeof knowledgeStatusSchema>;
-export type KnowledgeType = z.infer<typeof knowledgeTypeSchema>;

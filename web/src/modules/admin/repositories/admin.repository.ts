@@ -143,13 +143,7 @@ export type SkippedRunReason = {
 };
 
 export type DoctorReasonSeverity = "critical" | "warning" | "info";
-export type DoctorReasonArea =
-  | "Knowledge"
-  | "Distillation"
-  | "Sync"
-  | "Runtime"
-  | "MCP"
-  | "Other";
+export type DoctorReasonArea = "Knowledge" | "Distillation" | "Sync" | "Runtime" | "MCP" | "Other";
 export type DoctorReasonDetail = {
   code: string;
   label: string;
@@ -734,20 +728,6 @@ export async function updateKnowledgeItem(id: string, input: KnowledgeUpdateInpu
 
 export async function deleteKnowledgeItem(id: string): Promise<void> {
   await requestJson(`/api/knowledge/${id}`, "DELETE");
-}
-
-export async function fetchKnowledgeTagDefinitions(input?: {
-  kind?: KnowledgeTagDefinition["kind"];
-  status?: KnowledgeTagDefinition["status"];
-}): Promise<KnowledgeTagDefinition[]> {
-  const params = new URLSearchParams();
-  if (input?.kind) params.set("kind", input.kind);
-  if (input?.status) params.set("status", input.status);
-  const suffix = params.toString();
-  const json = await getJson<{ tags: KnowledgeTagDefinition[] }>(
-    `/api/knowledge/tags${suffix ? `?${suffix}` : ""}`,
-  );
-  return json.tags;
 }
 
 export async function bulkUpdateKnowledgeStatus(

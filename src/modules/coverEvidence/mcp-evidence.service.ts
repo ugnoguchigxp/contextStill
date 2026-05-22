@@ -24,10 +24,6 @@ export function configuredMcpEvidenceToolNames(): McpEvidenceToolName[] {
   });
 }
 
-export function hasConfiguredMcpEvidenceTool(): boolean {
-  return configuredMcpEvidenceToolNames().length > 0;
-}
-
 export function referencesFromMcpToolEvents(
   toolEvents: CoverEvidenceToolEvent[],
 ): CoverEvidenceReference[] {

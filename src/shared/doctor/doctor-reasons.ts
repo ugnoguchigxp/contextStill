@@ -376,8 +376,7 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     label: "Source distillation 成功実行が古い",
     severity: "warning",
     area: "Distillation",
-    description:
-      "Source distillation の最新成功 run が freshness threshold を超過しています。",
+    description: "Source distillation の最新成功 run が freshness threshold を超過しています。",
     impact: "wiki/source 更新が知識へ反映されにくくなります。",
     action: "run 履歴とキューを確認し、再実行してください。",
   },
