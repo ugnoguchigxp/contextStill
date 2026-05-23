@@ -50,8 +50,15 @@ describe("Shared Schemas", () => {
     const input = {
       status: "ok",
       checkedAt: new Date().toISOString(),
+      summary: {
+        blocking: 0,
+        degraded: 0,
+        maintenance: 0,
+        skipped: 0,
+      },
       reasons: [],
       reasonDetails: [],
+      skippedChecks: [],
       db: { reachable: true, durationMs: 10 },
       vector: { installed: true },
       embedding: {

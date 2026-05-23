@@ -15,12 +15,26 @@ const skippedRunReasonSchema = z.object({
   count: z.number().int().nonnegative(),
 });
 
+const distillationQueueBlockersSchema = z.object({
+  pendingKnowledgeCandidates: z.number().int().nonnegative(),
+  runningKnowledgeCandidates: z.number().int().nonnegative(),
+  staleRunningKnowledgeCandidates: z.number().int().nonnegative(),
+  retryableKnowledgeCandidates: z.number().int().nonnegative(),
+  manualPausedKnowledgeCandidates: z.number().int().nonnegative(),
+  pendingWiki: z.number().int().nonnegative(),
+  runningWiki: z.number().int().nonnegative(),
+  staleRunningWiki: z.number().int().nonnegative(),
+  retryableWiki: z.number().int().nonnegative(),
+  manualPausedWiki: z.number().int().nonnegative(),
+});
+
 const distillationQueueHealthSchema = z.object({
   queued: z.number().int().nonnegative(),
   running: z.number().int().nonnegative(),
   retryablePaused: z.number().int().nonnegative(),
   staleRunning: z.number().int().nonnegative(),
   blockedByHigherPriority: z.boolean(),
+  blockers: distillationQueueBlockersSchema.optional(),
   oldestQueuedAt: z.string().datetime().nullable(),
   oldestQueuedAgeMinutes: z.number().nonnegative().nullable(),
   oldestRunningAt: z.string().datetime().nullable(),
@@ -44,6 +58,18 @@ const doctorReasonAreaSchema = z.enum([
   "MCP",
   "Other",
 ]);
+const doctorReasonImpactLevelSchema = z.enum(["blocking", "degraded", "maintenance", "skipped"]);
+const doctorReasonEnvironmentScopeSchema = z.enum([
+  "all",
+  "configured_only",
+  "non_empty_db",
+  "strict_only",
+]);
+const doctorReasonCommandsSchema = z.object({
+  inspect: z.string().nullable(),
+  repairDryRun: z.string().nullable(),
+  repairApply: z.string().nullable(),
+});
 const doctorReasonDetailSchema = z.object({
   code: z.string(),
   label: z.string(),
@@ -52,6 +78,17 @@ const doctorReasonDetailSchema = z.object({
   description: z.string(),
   impact: z.string(),
   action: z.string(),
+  impactLevel: doctorReasonImpactLevelSchema.optional(),
+  environmentScope: doctorReasonEnvironmentScopeSchema.optional(),
+  commands: doctorReasonCommandsSchema.optional(),
+  evidence: z.record(z.unknown()).nullable().optional(),
+});
+
+const doctorReasonSummarySchema = z.object({
+  blocking: z.number().int().nonnegative(),
+  degraded: z.number().int().nonnegative(),
+  maintenance: z.number().int().nonnegative(),
+  skipped: z.number().int().nonnegative(),
 });
 
 export const doctorDistillationHealthSchema = z.object({
@@ -83,8 +120,10 @@ export const doctorDistillationHealthSchema = z.object({
 export const doctorReportSchema = z.object({
   status: doctorStatusSchema,
   checkedAt: z.string().datetime(),
+  summary: doctorReasonSummarySchema,
   reasons: z.array(z.string()),
   reasonDetails: z.array(doctorReasonDetailSchema),
+  skippedChecks: z.array(doctorReasonDetailSchema),
   db: z.object({
     reachable: z.boolean(),
     durationMs: z.number().int().nonnegative(),

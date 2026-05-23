@@ -13,6 +13,14 @@ function reasonBadgeVariant(
   return "secondary";
 }
 
+function impactBadgeVariant(
+  impactLevel: DoctorReasonDetail["impactLevel"],
+): "destructive" | "warning" | "secondary" {
+  if (impactLevel === "blocking") return "destructive";
+  if (impactLevel === "degraded") return "warning";
+  return "secondary";
+}
+
 function uniqueNonEmpty(items: string[]): string[] {
   return [...new Set(items.map((item) => item.trim()).filter((item) => item.length > 0))];
 }
@@ -48,6 +56,9 @@ export function DoctorReasonList({ reasons }: { reasons: DoctorReasonDetail[] })
         <article key={reason.code} className="doctor-reason-card">
           <div className="doctor-reason-head">
             <Badge variant={reasonBadgeVariant(reason.severity)}>{reason.severity}</Badge>
+            {reason.impactLevel ? (
+              <Badge variant={impactBadgeVariant(reason.impactLevel)}>{reason.impactLevel}</Badge>
+            ) : null}
             <Badge variant="outline">{reason.area}</Badge>
           </div>
           <strong className="doctor-reason-title">{reason.label}</strong>

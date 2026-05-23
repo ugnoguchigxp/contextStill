@@ -144,6 +144,12 @@ export type SkippedRunReason = {
 
 export type DoctorReasonSeverity = "critical" | "warning" | "info";
 export type DoctorReasonArea = "Knowledge" | "Distillation" | "Sync" | "Runtime" | "MCP" | "Other";
+export type DoctorReasonImpactLevel = "blocking" | "degraded" | "maintenance" | "skipped";
+export type DoctorReasonEnvironmentScope =
+  | "all"
+  | "configured_only"
+  | "non_empty_db"
+  | "strict_only";
 export type DoctorReasonDetail = {
   code: string;
   label: string;
@@ -152,13 +158,28 @@ export type DoctorReasonDetail = {
   description: string;
   impact: string;
   action: string;
+  impactLevel?: DoctorReasonImpactLevel;
+  environmentScope?: DoctorReasonEnvironmentScope;
+  commands?: {
+    inspect: string | null;
+    repairDryRun: string | null;
+    repairApply: string | null;
+  };
+  evidence?: Record<string, unknown> | null;
 };
 
 export type DoctorReport = {
   status: "ok" | "degraded" | "failed";
   checkedAt: string;
+  summary: {
+    blocking: number;
+    degraded: number;
+    maintenance: number;
+    skipped: number;
+  };
   reasons: string[];
   reasonDetails?: DoctorReasonDetail[];
+  skippedChecks?: DoctorReasonDetail[];
   db: { reachable: boolean; durationMs: number; error?: string };
   vector: { installed: boolean };
   embedding?: {
@@ -296,6 +317,18 @@ export type DoctorReport = {
       retryablePaused: number;
       staleRunning: number;
       blockedByHigherPriority: boolean;
+      blockers?: {
+        pendingKnowledgeCandidates: number;
+        runningKnowledgeCandidates: number;
+        staleRunningKnowledgeCandidates: number;
+        retryableKnowledgeCandidates: number;
+        manualPausedKnowledgeCandidates: number;
+        pendingWiki: number;
+        runningWiki: number;
+        staleRunningWiki: number;
+        retryableWiki: number;
+        manualPausedWiki: number;
+      };
       oldestQueuedAt: string | null;
       oldestQueuedAgeMinutes: number | null;
       oldestRunningAt: string | null;
@@ -345,6 +378,18 @@ export type DoctorReport = {
       retryablePaused: number;
       staleRunning: number;
       blockedByHigherPriority: boolean;
+      blockers?: {
+        pendingKnowledgeCandidates: number;
+        runningKnowledgeCandidates: number;
+        staleRunningKnowledgeCandidates: number;
+        retryableKnowledgeCandidates: number;
+        manualPausedKnowledgeCandidates: number;
+        pendingWiki: number;
+        runningWiki: number;
+        staleRunningWiki: number;
+        retryableWiki: number;
+        manualPausedWiki: number;
+      };
       oldestQueuedAt: string | null;
       oldestQueuedAgeMinutes: number | null;
       oldestRunningAt: string | null;

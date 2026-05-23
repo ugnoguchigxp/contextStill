@@ -56,6 +56,26 @@ describe("selectDistillationTarget repository-maintenance", () => {
       });
 
       expect(count).toBe(1);
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockUpdate).toHaveBeenCalled();
+    });
+
+    it("does not release manual paused targets when excludeManualPauseReasons is enabled", async () => {
+      mockSelect.mockReturnValueOnce(
+        makeChain([
+          { id: "manual", lastError: "manual_pause", metadata: {} },
+          { id: "retryable", lastError: "cover_evidence_retryable", metadata: {} },
+        ]),
+      );
+      mockUpdate.mockReturnValueOnce(makeChain([{ id: "retryable" }]));
+
+      const count = await releaseRetryablePausedDistillationTargets({
+        distillationVersion: "v1",
+        now: new Date(),
+        excludeManualPauseReasons: true,
+      });
+
+      expect(count).toBe(1);
       expect(mockUpdate).toHaveBeenCalled();
     });
   });

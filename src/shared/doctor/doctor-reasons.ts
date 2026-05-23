@@ -1,5 +1,17 @@
 export type DoctorReasonSeverity = "critical" | "warning" | "info";
 export type DoctorReasonArea = "Knowledge" | "Distillation" | "Sync" | "Runtime" | "MCP" | "Other";
+export type DoctorReasonImpactLevel = "blocking" | "degraded" | "maintenance" | "skipped";
+export type DoctorReasonEnvironmentScope =
+  | "all"
+  | "configured_only"
+  | "non_empty_db"
+  | "strict_only";
+
+export type DoctorReasonCommands = {
+  inspect: string | null;
+  repairDryRun: string | null;
+  repairApply: string | null;
+};
 
 export type DoctorReasonDetail = {
   code: string;
@@ -9,6 +21,10 @@ export type DoctorReasonDetail = {
   description: string;
   impact: string;
   action: string;
+  impactLevel?: DoctorReasonImpactLevel;
+  environmentScope?: DoctorReasonEnvironmentScope;
+  commands?: DoctorReasonCommands;
+  evidence?: Record<string, unknown> | null;
 };
 
 type DoctorReasonCatalogEntry = Omit<DoctorReasonDetail, "code">;
@@ -406,6 +422,82 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
   },
 };
 
+type ImpactRule = {
+  normal: Exclude<DoctorReasonImpactLevel, "skipped">;
+  strict?: Exclude<DoctorReasonImpactLevel, "skipped">;
+};
+
+const impactRules: Partial<Record<string, ImpactRule>> = {
+  DB_UNREACHABLE: { normal: "blocking" },
+  MISSING_REQUIRED_TABLES: { normal: "blocking" },
+  REQUIRED_TABLES_CHECK_FAILED: { normal: "blocking" },
+  MCP_PRIMARY_TOOLS_MISSING: { normal: "blocking" },
+  VIBE_DISTILLATION_QUEUE_STALE_RUNNING: { normal: "blocking" },
+  VIBE_DISTILLATION_PIPELINE_LOCK_STALE: { normal: "blocking" },
+  VIBE_DISTILLATION_QUEUE_STOPPED: { normal: "blocking" },
+  SOURCE_DISTILLATION_QUEUE_STALE_RUNNING: { normal: "blocking" },
+  SOURCE_DISTILLATION_PIPELINE_LOCK_STALE: { normal: "blocking" },
+  SOURCE_DISTILLATION_QUEUE_STOPPED: { normal: "blocking" },
+  AGENTIC_LLM_NOT_CONFIGURED: { normal: "maintenance", strict: "degraded" },
+  AGENTIC_LLM_UNREACHABLE: { normal: "maintenance", strict: "degraded" },
+  KNOWLEDGE_ZERO_USE_HIGH: { normal: "maintenance", strict: "degraded" },
+  HITL_DRAFT_BACKLOG_HIGH: { normal: "maintenance", strict: "degraded" },
+  HITL_DRAFT_REVIEW_STALE: { normal: "maintenance", strict: "degraded" },
+  KNOWLEDGE_DECAY_STALE_HIGH: { normal: "maintenance", strict: "degraded" },
+  NO_COMPILE_RUN_HISTORY: { normal: "maintenance" },
+  RUN_HEALTH_SKIPPED_TABLE_MISSING: { normal: "maintenance" },
+};
+
+const environmentScopeRules: Partial<Record<string, DoctorReasonEnvironmentScope>> = {
+  AGENT_LOG_SYNC_NEVER_RAN: "configured_only",
+  CODEX_LOGS_SYNC_STALE: "configured_only",
+  CODEX_LOGS_SYNC_WARNINGS: "configured_only",
+  ANTIGRAVITY_LOGS_SYNC_STALE: "configured_only",
+  ANTIGRAVITY_LOGS_SYNC_WARNINGS: "configured_only",
+  VIBE_DISTILLATION_NEVER_RAN: "configured_only",
+  VIBE_DISTILLATION_STALE: "configured_only",
+  SOURCE_DISTILLATION_NEVER_RAN: "configured_only",
+  SOURCE_DISTILLATION_STALE: "configured_only",
+  DEGRADED_RATE_HIGH: "non_empty_db",
+  USABLE_PACK_RATE_LOW: "non_empty_db",
+  KNOWLEDGE_ZERO_USE_HIGH: "non_empty_db",
+  HITL_DRAFT_BACKLOG_HIGH: "non_empty_db",
+  HITL_DRAFT_REVIEW_STALE: "non_empty_db",
+};
+
+const commandHints: Partial<Record<string, DoctorReasonCommands>> = {
+  VIBE_DISTILLATION_QUEUE_STALE_RUNNING: {
+    inspect: "bun run distill:repair -- --kind vibe --json",
+    repairDryRun: "bun run distill:repair -- --kind vibe --json",
+    repairApply: "bun run distill:repair -- --kind vibe --apply --limit 50 --json",
+  },
+  VIBE_DISTILLATION_PIPELINE_LOCK_STALE: {
+    inspect: "bun run distill:repair -- --kind vibe --json",
+    repairDryRun: "bun run distill:repair -- --kind vibe --json",
+    repairApply: "bun run distill:repair -- --kind vibe --apply --limit 50 --json",
+  },
+  VIBE_DISTILLATION_QUEUE_STOPPED: {
+    inspect: "bun run distill:repair -- --kind vibe --json",
+    repairDryRun: "bun run distill:repair -- --kind vibe --json",
+    repairApply: null,
+  },
+  SOURCE_DISTILLATION_QUEUE_STALE_RUNNING: {
+    inspect: "bun run distill:repair -- --kind wiki --json",
+    repairDryRun: "bun run distill:repair -- --kind wiki --json",
+    repairApply: "bun run distill:repair -- --kind wiki --apply --limit 50 --json",
+  },
+  SOURCE_DISTILLATION_PIPELINE_LOCK_STALE: {
+    inspect: "bun run distill:repair -- --kind wiki --json",
+    repairDryRun: "bun run distill:repair -- --kind wiki --json",
+    repairApply: "bun run distill:repair -- --kind wiki --apply --limit 50 --json",
+  },
+  SOURCE_DISTILLATION_QUEUE_STOPPED: {
+    inspect: "bun run distill:repair -- --kind wiki --json",
+    repairDryRun: "bun run distill:repair -- --kind wiki --json",
+    repairApply: null,
+  },
+};
+
 function titleCaseFromCode(code: string): string {
   return code
     .toLowerCase()
@@ -470,18 +562,65 @@ function inferSeverity(code: string): DoctorReasonSeverity {
   return "info";
 }
 
-export function formatDoctorReasonDetail(code: string): DoctorReasonDetail {
+function defaultImpactLevelFromSeverity(
+  severity: DoctorReasonSeverity,
+): Exclude<DoctorReasonImpactLevel, "skipped"> {
+  if (severity === "critical") return "blocking";
+  if (severity === "warning") return "degraded";
+  return "maintenance";
+}
+
+type FormatDoctorReasonDetailOptions = {
+  strict?: boolean;
+  impactLevel?: DoctorReasonImpactLevel;
+  environmentScope?: DoctorReasonEnvironmentScope;
+  commands?: DoctorReasonCommands;
+  evidence?: Record<string, unknown> | null;
+};
+
+export function resolveDoctorReasonImpactLevel(
+  code: string,
+  severity: DoctorReasonSeverity,
+  strict = false,
+): Exclude<DoctorReasonImpactLevel, "skipped"> {
+  const rule = impactRules[code];
+  if (!rule) return defaultImpactLevelFromSeverity(severity);
+  return strict ? (rule.strict ?? rule.normal) : rule.normal;
+}
+
+export function resolveDoctorReasonEnvironmentScope(code: string): DoctorReasonEnvironmentScope {
+  return environmentScopeRules[code] ?? "all";
+}
+
+export function resolveDoctorReasonCommands(code: string): DoctorReasonCommands | undefined {
+  return commandHints[code];
+}
+
+export function formatDoctorReasonDetail(
+  code: string,
+  options: FormatDoctorReasonDetailOptions = {},
+): DoctorReasonDetail {
   const fromCatalog = doctorReasonCatalog[code];
-  if (fromCatalog) {
-    return { code, ...fromCatalog };
-  }
+  const severity = fromCatalog?.severity ?? inferSeverity(code);
+  const detailBase =
+    fromCatalog ??
+    ({
+      label: titleCaseFromCode(code),
+      severity,
+      area: inferArea(code),
+      description: "Doctor が未定義の診断コードを返しました。",
+      impact: "原因の重要度や対応順序を判断しにくくなります。",
+      action: "raw code を検索し、doctor.service.ts の reason 生成箇所を確認してください。",
+    } satisfies DoctorReasonCatalogEntry);
+
   return {
     code,
-    label: titleCaseFromCode(code),
-    severity: inferSeverity(code),
-    area: inferArea(code),
-    description: "Doctor が未定義の診断コードを返しました。",
-    impact: "原因の重要度や対応順序を判断しにくくなります。",
-    action: "raw code を検索し、doctor.service.ts の reason 生成箇所を確認してください。",
+    ...detailBase,
+    impactLevel:
+      options.impactLevel ??
+      resolveDoctorReasonImpactLevel(code, detailBase.severity, options.strict),
+    environmentScope: options.environmentScope ?? resolveDoctorReasonEnvironmentScope(code),
+    commands: options.commands ?? resolveDoctorReasonCommands(code),
+    evidence: options.evidence ?? null,
   };
 }

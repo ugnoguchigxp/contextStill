@@ -1,9 +1,10 @@
-import fs from "node:fs/promises";
-import { and, eq, sql } from "drizzle-orm";
+import { and, eq, inArray, sql } from "drizzle-orm";
+import { readFileLockState } from "../../../cli/file-lock.js";
 import { groupedConfig } from "../../../config.js";
 import { APP_CONSTANTS } from "../../../constants.js";
 import { getDb } from "../../../db/index.js";
 import { distillationTargetStates } from "../../../db/schema.js";
+import { isManualPauseTarget } from "../../selectDistillationTarget/manual-pause.js";
 import type { DoctorDistillationHealth } from "../../../shared/schemas/doctor.schema.js";
 import { isPipelineLockLikelyBlocking } from "../distillation-lock.util.js";
 import { minutesSince, normalizeReasonCounts } from "../doctor.utils.js";
@@ -43,14 +44,19 @@ type DistillationRunsRow =
 type QueueHealthRow =
   | Pick<
       typeof distillationTargetStates.$inferSelect,
-      "status" | "createdAt" | "lockedAt" | "heartbeatAt" | "updatedAt" | "nextRetryAt"
+      | "status"
+      | "targetKind"
+      | "createdAt"
+      | "lockedAt"
+      | "heartbeatAt"
+      | "updatedAt"
+      | "nextRetryAt"
+      | "lastError"
+      | "metadata"
     >
   | undefined;
 
-type LockMetadata = {
-  pid?: unknown;
-  createdAt?: unknown;
-};
+type DistillationQueueBlockers = NonNullable<DistillationQueueHealth["blockers"]>;
 
 function emptyRuns(): DistillationRuns {
   return {
@@ -85,6 +91,18 @@ function emptyQueueHealth(): DistillationQueueHealth {
     retryablePaused: 0,
     staleRunning: 0,
     blockedByHigherPriority: false,
+    blockers: {
+      pendingKnowledgeCandidates: 0,
+      runningKnowledgeCandidates: 0,
+      staleRunningKnowledgeCandidates: 0,
+      retryableKnowledgeCandidates: 0,
+      manualPausedKnowledgeCandidates: 0,
+      pendingWiki: 0,
+      runningWiki: 0,
+      staleRunningWiki: 0,
+      retryableWiki: 0,
+      manualPausedWiki: 0,
+    },
     oldestQueuedAt: null,
     oldestQueuedAgeMinutes: null,
     oldestRunningAt: null,
@@ -103,11 +121,6 @@ function emptyQueueHealth(): DistillationQueueHealth {
 function toIsoString(value: Date | string | null | undefined): string | null {
   if (value instanceof Date) return value.toISOString();
   return value ? new Date(value).toISOString() : null;
-}
-
-function numberOrNull(value: unknown): number | null {
-  if (!Number.isInteger(value) || Number(value) <= 0) return null;
-  return Number(value);
 }
 
 function timestampMs(value: unknown): number | null {
@@ -241,6 +254,59 @@ async function loadDomainDistillationJobs(
   };
 }
 
+function emptyQueueBlockers(): DistillationQueueBlockers {
+  return {
+    pendingKnowledgeCandidates: 0,
+    runningKnowledgeCandidates: 0,
+    staleRunningKnowledgeCandidates: 0,
+    retryableKnowledgeCandidates: 0,
+    manualPausedKnowledgeCandidates: 0,
+    pendingWiki: 0,
+    runningWiki: 0,
+    staleRunningWiki: 0,
+    retryableWiki: 0,
+    manualPausedWiki: 0,
+  };
+}
+
+function accumulateBlocker(
+  blockers: DistillationQueueBlockers,
+  targetKind: "knowledge_candidate" | "wiki_file",
+  status: string,
+  row: QueueHealthRow,
+  nowMs: number,
+  staleAtMs: number,
+): void {
+  if (!row) return;
+  const isKnowledge = targetKind === "knowledge_candidate";
+  const runningMs =
+    timestampMs(row.heartbeatAt) ?? timestampMs(row.lockedAt) ?? timestampMs(row.updatedAt);
+  const staleRunning = (runningMs ?? Number.NEGATIVE_INFINITY) <= staleAtMs;
+  const manualPaused = status === "paused" && isManualPauseTarget(row);
+  const nextRetryMs = timestampMs(row.nextRetryAt);
+  const retryablePaused =
+    status === "paused" && !manualPaused && (nextRetryMs === null || nextRetryMs <= nowMs);
+
+  if (status === "pending") {
+    if (isKnowledge) blockers.pendingKnowledgeCandidates += 1;
+    else blockers.pendingWiki += 1;
+  } else if (status === "running") {
+    if (isKnowledge) {
+      blockers.runningKnowledgeCandidates += 1;
+      if (staleRunning) blockers.staleRunningKnowledgeCandidates += 1;
+    } else {
+      blockers.runningWiki += 1;
+      if (staleRunning) blockers.staleRunningWiki += 1;
+    }
+  } else if (retryablePaused) {
+    if (isKnowledge) blockers.retryableKnowledgeCandidates += 1;
+    else blockers.retryableWiki += 1;
+  } else if (manualPaused) {
+    if (isKnowledge) blockers.manualPausedKnowledgeCandidates += 1;
+    else blockers.manualPausedWiki += 1;
+  }
+}
+
 async function loadDomainQueueHealth(
   targetKind: "wiki_file" | "vibe_memory",
 ): Promise<Omit<DistillationQueueHealth, "lock">> {
@@ -250,11 +316,14 @@ async function loadDomainQueueHealth(
   const rows = await db
     .select({
       status: distillationTargetStates.status,
+      targetKind: distillationTargetStates.targetKind,
       createdAt: distillationTargetStates.createdAt,
       lockedAt: distillationTargetStates.lockedAt,
       heartbeatAt: distillationTargetStates.heartbeatAt,
       updatedAt: distillationTargetStates.updatedAt,
       nextRetryAt: distillationTargetStates.nextRetryAt,
+      lastError: distillationTargetStates.lastError,
+      metadata: distillationTargetStates.metadata,
     })
     .from(distillationTargetStates)
     .where(
@@ -268,6 +337,7 @@ async function loadDomainQueueHealth(
   let retryablePaused = 0;
   let staleRunning = 0;
   let blockedByHigherPriority = false;
+  let blockers = emptyQueueBlockers();
   let oldestQueuedMs: number | null = null;
   let oldestRunningMs: number | null = null;
 
@@ -276,10 +346,15 @@ async function loadDomainQueueHealth(
     const status = typeof row.status === "string" ? row.status : "";
     const createdMs = timestampMs(row.createdAt);
     const nextRetryMs = timestampMs(row.nextRetryAt);
+    const manualPaused = status === "paused" && isManualPauseTarget(row);
     if (status === "pending") {
       queued += 1;
       oldestQueuedMs = minTimestamp(oldestQueuedMs, createdMs);
-    } else if (status === "paused" && (nextRetryMs === null || nextRetryMs <= nowMs)) {
+    } else if (
+      status === "paused" &&
+      !manualPaused &&
+      (nextRetryMs === null || nextRetryMs <= nowMs)
+    ) {
       retryablePaused += 1;
       oldestQueuedMs = minTimestamp(oldestQueuedMs, createdMs);
     } else if (status === "running") {
@@ -293,25 +368,50 @@ async function loadDomainQueueHealth(
     }
   }
 
-  if (targetKind === "vibe_memory") {
-    const blockers = await db
+  const higherPriorityKinds =
+    targetKind === "vibe_memory"
+      ? (["knowledge_candidate", "wiki_file"] as const)
+      : targetKind === "wiki_file"
+        ? (["knowledge_candidate"] as const)
+        : ([] as const);
+
+  if (higherPriorityKinds.length > 0) {
+    const extraBlockers = await db
       .select({
         status: distillationTargetStates.status,
+        targetKind: distillationTargetStates.targetKind,
+        createdAt: distillationTargetStates.createdAt,
+        heartbeatAt: distillationTargetStates.heartbeatAt,
+        lockedAt: distillationTargetStates.lockedAt,
+        updatedAt: distillationTargetStates.updatedAt,
         nextRetryAt: distillationTargetStates.nextRetryAt,
+        lastError: distillationTargetStates.lastError,
+        metadata: distillationTargetStates.metadata,
       })
       .from(distillationTargetStates)
       .where(
         and(
           eq(distillationTargetStates.distillationVersion, APP_CONSTANTS.distillationTargetVersion),
-          eq(distillationTargetStates.targetKind, "wiki_file"),
+          inArray(distillationTargetStates.targetKind, [...higherPriorityKinds] as Array<
+            "knowledge_candidate" | "wiki_file"
+          >),
         ),
       );
-    blockedByHigherPriority = blockers.some((row) => {
-      if (row.status === "pending" || row.status === "running") return true;
-      if (row.status !== "paused") return false;
-      const nextRetryMs = timestampMs(row.nextRetryAt);
-      return nextRetryMs === null || nextRetryMs <= nowMs;
-    });
+
+    blockers = emptyQueueBlockers();
+    for (const row of extraBlockers) {
+      if (!row) continue;
+      if (row.targetKind !== "knowledge_candidate" && row.targetKind !== "wiki_file") continue;
+      accumulateBlocker(blockers, row.targetKind, row.status ?? "", row, nowMs, staleAtMs);
+    }
+    blockedByHigherPriority =
+      blockers.pendingKnowledgeCandidates +
+        blockers.runningKnowledgeCandidates +
+        blockers.retryableKnowledgeCandidates +
+        blockers.pendingWiki +
+        blockers.runningWiki +
+        blockers.retryableWiki >
+      0;
   }
 
   const oldestQueuedAt = oldestQueuedMs === null ? null : new Date(oldestQueuedMs).toISOString();
@@ -322,6 +422,7 @@ async function loadDomainQueueHealth(
     retryablePaused,
     staleRunning,
     blockedByHigherPriority,
+    blockers,
     oldestQueuedAt,
     oldestQueuedAgeMinutes: oldestQueuedAt ? minutesSince(oldestQueuedAt) : null,
     oldestRunningAt,
@@ -330,43 +431,17 @@ async function loadDomainQueueHealth(
 }
 
 async function inspectPipelineLock(): Promise<DistillationQueueHealth["lock"]> {
-  const lockPath = groupedConfig.distillation.pipelineLockFile;
-  let stat: Awaited<ReturnType<typeof fs.stat>> | null = null;
-  try {
-    stat = await fs.stat(lockPath);
-  } catch {
-    stat = null;
-  }
-  if (!stat) {
-    return {
-      path: lockPath,
-      exists: false,
-      pid: null,
-      createdAt: null,
-      ageSeconds: null,
-      staleByCreatedAge: false,
-    };
-  }
-
-  let metadata: LockMetadata = {};
-  try {
-    const parsed = JSON.parse(await fs.readFile(lockPath, "utf-8"));
-    if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
-      metadata = parsed as LockMetadata;
-    }
-  } catch {
-    metadata = {};
-  }
-
-  const createdMs = timestampMs(metadata.createdAt) ?? stat.mtimeMs;
-  const ageSeconds = Math.max(0, Math.floor((Date.now() - createdMs) / 1000));
+  const lockState = await readFileLockState(
+    groupedConfig.distillation.pipelineLockFile,
+    groupedConfig.distillation.pipelineLockStaleSeconds,
+  );
   return {
-    path: lockPath,
-    exists: true,
-    pid: numberOrNull(metadata.pid),
-    createdAt: new Date(createdMs).toISOString(),
-    ageSeconds,
-    staleByCreatedAge: ageSeconds > groupedConfig.distillation.pipelineLockStaleSeconds,
+    path: lockState.path,
+    exists: lockState.exists,
+    pid: lockState.pid,
+    createdAt: lockState.createdAt,
+    ageSeconds: lockState.ageSeconds,
+    staleByCreatedAge: lockState.staleByCreatedAge,
   };
 }
 
@@ -378,6 +453,9 @@ function nextActionsForDistillation(
   queueHealth: DistillationQueueHealth,
 ): string[] {
   const nextActions: string[] = [];
+  const kindArg = config.targetKind === "vibe_memory" ? "vibe" : "wiki";
+  const repairDryRunCommand = `bun run distill:repair -- --kind ${kindArg} --json`;
+  const repairApplyCommand = `bun run distill:repair -- --kind ${kindArg} --apply --limit 50 --json`;
   const lockLikelyBlocking = isPipelineLockLikelyBlocking({
     staleByCreatedAge: queueHealth.lock.staleByCreatedAge,
     launchAgentLoaded: launchAgent.loaded,
@@ -424,12 +502,12 @@ function nextActionsForDistillation(
   }
   if (queueHealth.staleRunning > 0) {
     nextActions.push(
-      `${config.label} は stale running job があります。次回runでrequeue/skipされるか確認する`,
+      `${config.label} は stale running job があります。${repairDryRunCommand} で対象を確認し、必要なら ${repairApplyCommand} を実行する`,
     );
   }
   if (lockLikelyBlocking) {
     nextActions.push(
-      `${config.label} の pipeline lock が古いです。次回runで削除されない場合は ${queueHealth.lock.path} を確認する`,
+      `${config.label} の pipeline lock が古いです。${repairDryRunCommand} で lock 判定を確認する`,
     );
   }
   if (
@@ -440,7 +518,13 @@ function nextActionsForDistillation(
     queueHealth.oldestQueuedAgeMinutes > groupedConfig.distillation.pipelineLockStaleSeconds / 60
   ) {
     nextActions.push(
-      `${config.label} のqueueが進んでいません。LaunchAgentの状態と ${config.logPath} を確認する`,
+      `${config.label} のqueueが進んでいません。${repairDryRunCommand} で queue 状態を確認し、LaunchAgent と ${config.logPath} を確認する`,
+    );
+  }
+  if (queueHealth.blockedByHigherPriority && queueHealth.blockers) {
+    const blockerSummary = `candidate pending=${queueHealth.blockers.pendingKnowledgeCandidates}, running=${queueHealth.blockers.runningKnowledgeCandidates}, retryable=${queueHealth.blockers.retryableKnowledgeCandidates}; wiki pending=${queueHealth.blockers.pendingWiki}, running=${queueHealth.blockers.runningWiki}, retryable=${queueHealth.blockers.retryableWiki}`;
+    nextActions.push(
+      `${config.label} は上位priorityにより待機中です（${blockerSummary}）。${repairDryRunCommand} で再確認する`,
     );
   }
   return nextActions;

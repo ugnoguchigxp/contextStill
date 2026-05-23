@@ -1,9 +1,10 @@
-import { and, count, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
 import { APP_CONSTANTS } from "../../constants.js";
 import { db } from "../../db/index.js";
 import { distillationTargetStates } from "../../db/schema.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import type { DistillationTargetKind, DistillationTargetStatus } from "./domain.js";
+import { isManualPauseTarget } from "./manual-pause.js";
 import {
   DEFAULT_DISTILLATION_TARGET_VERSION,
   type DistillationTargetStateRow,
@@ -40,9 +41,56 @@ export async function releaseRetryablePausedDistillationTargets(
   params: {
     distillationVersion?: string;
     now?: Date;
+    targetKind?: DistillationTargetKind;
+    limit?: number;
+    excludeManualPauseReasons?: boolean;
   } = {},
 ): Promise<number> {
   const now = params.now ?? new Date();
+  const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
+  const baseConditions = [
+    eq(distillationTargetStates.distillationVersion, distillationVersion),
+    eq(distillationTargetStates.status, "paused"),
+    or(
+      isNull(distillationTargetStates.nextRetryAt),
+      lte(distillationTargetStates.nextRetryAt, now),
+    ),
+  ];
+  if (params.targetKind) {
+    baseConditions.push(eq(distillationTargetStates.targetKind, params.targetKind));
+  }
+  const limit = typeof params.limit === "number" ? Math.max(1, params.limit) : null;
+
+  // Fast path: keep the original one-shot SQL update when additional filtering is not required.
+  if (!params.excludeManualPauseReasons && limit === null) {
+    const rows = await db
+      .update(distillationTargetStates)
+      .set({
+        status: "pending",
+        nextRetryAt: null,
+        updatedAt: now,
+      })
+      .where(and(...baseConditions))
+      .returning({ id: distillationTargetStates.id });
+    return rows.length;
+  }
+
+  const query = db
+    .select({
+      id: distillationTargetStates.id,
+      lastError: distillationTargetStates.lastError,
+      metadata: distillationTargetStates.metadata,
+    })
+    .from(distillationTargetStates)
+    .where(and(...baseConditions))
+    .orderBy(asc(distillationTargetStates.updatedAt));
+
+  const pausedRows = limit === null ? await query : await query.limit(limit);
+  const eligibleIds = pausedRows
+    .filter((row) => (params.excludeManualPauseReasons ? !isManualPauseTarget(row) : true))
+    .map((row) => row.id);
+  if (eligibleIds.length < 1) return 0;
+
   const rows = await db
     .update(distillationTargetStates)
     .set({
@@ -52,12 +100,8 @@ export async function releaseRetryablePausedDistillationTargets(
     })
     .where(
       and(
-        eq(
-          distillationTargetStates.distillationVersion,
-          params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION,
-        ),
-        eq(distillationTargetStates.status, "paused"),
-        lte(distillationTargetStates.nextRetryAt, now),
+        eq(distillationTargetStates.distillationVersion, distillationVersion),
+        inArray(distillationTargetStates.id, eligibleIds),
       ),
     )
     .returning({ id: distillationTargetStates.id });
@@ -71,6 +115,8 @@ export async function recoverStaleDistillationTargets(
     staleSeconds?: number;
     maxAttempts?: number;
     now?: Date;
+    targetKind?: DistillationTargetKind;
+    limit?: number;
   } = {},
 ): Promise<RecoveryResult> {
   const now = params.now ?? new Date();
@@ -80,16 +126,23 @@ export async function recoverStaleDistillationTargets(
     now,
   );
   const maxAttempts = params.maxAttempts ?? APP_CONSTANTS.distillationTargetMaxAttempts;
+  const runningConditions = [
+    eq(distillationTargetStates.distillationVersion, distillationVersion),
+    eq(distillationTargetStates.status, "running"),
+  ];
+  if (params.targetKind) {
+    runningConditions.push(eq(distillationTargetStates.targetKind, params.targetKind));
+  }
   const runningRows = await db
     .select()
     .from(distillationTargetStates)
-    .where(
-      and(
-        eq(distillationTargetStates.distillationVersion, distillationVersion),
-        eq(distillationTargetStates.status, "running"),
-      ),
+    .where(and(...runningConditions));
+  const staleRows = runningRows
+    .filter((row) => rowHeartbeatMs(row) <= thresholdMs)
+    .slice(
+      0,
+      typeof params.limit === "number" ? Math.max(1, params.limit) : Number.MAX_SAFE_INTEGER,
     );
-  const staleRows = runningRows.filter((row) => rowHeartbeatMs(row) <= thresholdMs);
 
   let recoveredToPending = 0;
   const failed = 0;
@@ -132,9 +185,11 @@ export async function recoverStaleDistillationTargets(
       actor: "system",
       payload: {
         distillationVersion,
+        targetKind: params.targetKind ?? null,
         recoveredToPending,
         failed,
         skipped,
+        limit: params.limit ?? null,
         staleSeconds: params.staleSeconds ?? APP_CONSTANTS.distillationTargetStaleSeconds,
       },
     });

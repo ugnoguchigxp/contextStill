@@ -22,6 +22,16 @@ export type AcquireFileLockOptions = {
   pollMs?: number;
 };
 
+export type FileLockState = {
+  path: string;
+  exists: boolean;
+  pid: number | null;
+  processAlive: boolean | null;
+  createdAt: string | null;
+  ageSeconds: number | null;
+  staleByCreatedAge: boolean;
+};
+
 function hasFsErrorCode(error: unknown, code: string): boolean {
   return (
     typeof error === "object" &&
@@ -61,6 +71,47 @@ function parseTimestampMs(value: unknown): number | null {
   return Number.isFinite(parsed) ? parsed : null;
 }
 
+export async function readFileLockState(
+  lockFile: string,
+  staleCreatedAgeSeconds?: number,
+): Promise<FileLockState> {
+  const metadata = await readLockMetadata(lockFile);
+  let stat: Awaited<ReturnType<typeof fs.stat>> | null = null;
+  try {
+    stat = await fs.stat(lockFile);
+  } catch {
+    stat = null;
+  }
+  if (!stat) {
+    return {
+      path: lockFile,
+      exists: false,
+      pid: null,
+      processAlive: null,
+      createdAt: null,
+      ageSeconds: null,
+      staleByCreatedAge: false,
+    };
+  }
+
+  const pid =
+    Number.isInteger(metadata.pid) && Number(metadata.pid) > 0 ? Number(metadata.pid) : null;
+  const createdAtMs = parseTimestampMs(metadata.createdAt) ?? stat.mtimeMs;
+  const ageSeconds = Math.max(0, Math.floor((Date.now() - createdAtMs) / 1000));
+  const staleByCreatedAge =
+    typeof staleCreatedAgeSeconds === "number" && ageSeconds > staleCreatedAgeSeconds;
+
+  return {
+    path: lockFile,
+    exists: true,
+    pid,
+    processAlive: pid === null ? null : isProcessAlive(pid),
+    createdAt: new Date(createdAtMs).toISOString(),
+    ageSeconds,
+    staleByCreatedAge,
+  };
+}
+
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -70,30 +121,21 @@ async function removeStaleLockIfSafe(
   ttlSeconds: number,
   options?: Pick<AcquireFileLockOptions, "staleCreatedAgeSeconds" | "removeWhenCreatedAgeExceeded">,
 ): Promise<boolean> {
-  const metadata = await readLockMetadata(lockFile);
-  const stat = await fs.stat(lockFile).catch(() => null);
-  const createdAtMs = parseTimestampMs(metadata.createdAt) ?? stat?.mtimeMs ?? null;
-  const createdAgeSeconds =
-    createdAtMs === null ? Number.POSITIVE_INFINITY : (Date.now() - createdAtMs) / 1000;
-  const staleCreatedAgeSeconds = options?.staleCreatedAgeSeconds;
-  if (
-    options?.removeWhenCreatedAgeExceeded &&
-    typeof staleCreatedAgeSeconds === "number" &&
-    createdAgeSeconds > staleCreatedAgeSeconds
-  ) {
+  const lockState = await readFileLockState(lockFile, options?.staleCreatedAgeSeconds);
+  if (!lockState.exists) return false;
+  if (lockState.processAlive === true) return false;
+
+  if (lockState.processAlive === false) {
     await fs.unlink(lockFile).catch(() => undefined);
     return true;
   }
 
-  const alive = isProcessAlive(metadata.pid);
-  if (alive === true) return false;
-  if (alive === false) {
+  if (options?.removeWhenCreatedAgeExceeded && lockState.staleByCreatedAge) {
     await fs.unlink(lockFile).catch(() => undefined);
     return true;
   }
 
-  const ageSeconds = stat ? (Date.now() - stat.mtimeMs) / 1000 : Number.POSITIVE_INFINITY;
-  if (ageSeconds > ttlSeconds) {
+  if ((lockState.ageSeconds ?? Number.POSITIVE_INFINITY) > ttlSeconds) {
     await fs.unlink(lockFile).catch(() => undefined);
     return true;
   }

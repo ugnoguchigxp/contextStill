@@ -1,5 +1,13 @@
 import { groupedConfig } from "../../config.js";
-import { formatDoctorReasonDetail } from "../../shared/doctor/doctor-reasons.js";
+import {
+  type DoctorReasonDetail,
+  type DoctorReasonEnvironmentScope,
+  type DoctorReasonImpactLevel,
+  formatDoctorReasonDetail,
+  resolveDoctorReasonCommands,
+  resolveDoctorReasonEnvironmentScope,
+  resolveDoctorReasonImpactLevel,
+} from "../../shared/doctor/doctor-reasons.js";
 import { type DoctorReport, doctorReportSchema } from "../../shared/schemas/doctor.schema.js";
 import { cleanupExpiredAuditLogsSafe } from "../audit/audit-log.service.js";
 import { checkAgenticLlmHealth } from "../llm/agentic-llm.service.js";
@@ -22,6 +30,7 @@ function resolveDoctorOptions(rawOptions?: DoctorOptions): ResolvedDoctorOptions
       rawOptions?.freshnessThresholdMinutes ?? groupedConfig.doctor.freshnessThresholdMinutes,
     degradedRateThreshold:
       rawOptions?.degradedRateThreshold ?? groupedConfig.doctor.degradedRateThreshold,
+    strict: rawOptions?.strict ?? false,
   };
 }
 
@@ -133,6 +142,237 @@ function appendAutomationReasons(
   }
 }
 
+const failedReasonCodes = new Set([
+  "DB_UNREACHABLE",
+  "MISSING_REQUIRED_TABLES",
+  "REQUIRED_TABLES_CHECK_FAILED",
+]);
+
+type ReasonResolutionContext = {
+  options: ResolvedDoctorOptions;
+  runs: DoctorReport["runs"];
+  hitl: DoctorReport["hitl"];
+  knowledgeLifecycle: DoctorReport["knowledgeLifecycle"];
+  agentLogSync: DoctorReport["agentLogSync"];
+  vibeDistillation: DoctorReport["vibeDistillation"];
+  sourceDistillation: DoctorReport["sourceDistillation"];
+};
+
+type ReasonResolutionResult = {
+  reasons: string[];
+  reasonDetails: DoctorReasonDetail[];
+  skippedChecks: DoctorReasonDetail[];
+  summary: DoctorReport["summary"];
+  status: DoctorReport["status"];
+};
+
+function distillationConfigured(distillation: DoctorReport["vibeDistillation"]): boolean {
+  const queueTotal =
+    distillation.jobs.queued +
+    distillation.jobs.running +
+    distillation.jobs.paused +
+    distillation.jobs.failed;
+  return (
+    queueTotal > 0 ||
+    distillation.runs.totalRuns > 0 ||
+    distillation.launchAgent.installed ||
+    distillation.launchAgent.loaded
+  );
+}
+
+function syncStateConfigured(
+  states: DoctorReport["agentLogSync"]["states"],
+  stateId: string,
+): boolean {
+  const state = states.find((item) => item.id === stateId);
+  if (!state) return false;
+  return state.cursorFiles > 0 || state.lastSyncedAt !== null;
+}
+
+function shouldActivateConfiguredReason(code: string, context: ReasonResolutionContext): boolean {
+  if (context.options.strict) return true;
+  if (code === "AGENT_LOG_SYNC_NEVER_RAN") {
+    return (
+      context.agentLogSync.launchAgent.installed ||
+      context.agentLogSync.launchAgent.loaded ||
+      context.agentLogSync.states.length > 0
+    );
+  }
+  if (code.startsWith("CODEX_LOGS_SYNC_")) {
+    return (
+      syncStateConfigured(context.agentLogSync.states, "codex_logs") ||
+      context.agentLogSync.launchAgent.installed ||
+      context.agentLogSync.launchAgent.loaded
+    );
+  }
+  if (code.startsWith("ANTIGRAVITY_LOGS_SYNC_")) {
+    return (
+      syncStateConfigured(context.agentLogSync.states, "antigravity_logs") ||
+      context.agentLogSync.launchAgent.installed ||
+      context.agentLogSync.launchAgent.loaded
+    );
+  }
+  if (code.startsWith("VIBE_DISTILLATION_")) {
+    return distillationConfigured(context.vibeDistillation);
+  }
+  if (code.startsWith("SOURCE_DISTILLATION_")) {
+    return distillationConfigured(context.sourceDistillation);
+  }
+  return false;
+}
+
+function shouldSkipReason(
+  code: string,
+  scope: DoctorReasonEnvironmentScope,
+  context: ReasonResolutionContext,
+): boolean {
+  if (!groupedConfig.agenticCompile.enabled && code.startsWith("AGENTIC_LLM_")) {
+    return true;
+  }
+  if (scope === "strict_only") {
+    return !context.options.strict;
+  }
+  if (scope === "configured_only") {
+    return !shouldActivateConfiguredReason(code, context);
+  }
+  if (scope === "non_empty_db") {
+    if (code === "DEGRADED_RATE_HIGH" || code === "USABLE_PACK_RATE_LOW") {
+      return context.runs.totalRuns < 1;
+    }
+    if (code === "KNOWLEDGE_ZERO_USE_HIGH") {
+      return (
+        context.knowledgeLifecycle.activeCount <
+        context.knowledgeLifecycle.thresholds.zeroUseWarningMinActiveCount
+      );
+    }
+    if (code === "HITL_DRAFT_BACKLOG_HIGH" || code === "HITL_DRAFT_REVIEW_STALE") {
+      return context.hitl.draftCount < 1;
+    }
+  }
+  return false;
+}
+
+function evidenceForReason(
+  code: string,
+  context: ReasonResolutionContext,
+): Record<string, unknown> | null {
+  if (code === "DEGRADED_RATE_HIGH") {
+    return {
+      totalRuns: context.runs.totalRuns,
+      blockingRate: context.runs.blockingRate ?? 0,
+      threshold: context.options.degradedRateThreshold,
+    };
+  }
+  if (code === "USABLE_PACK_RATE_LOW") {
+    return {
+      totalRuns: context.runs.totalRuns,
+      usableRate: context.runs.usableRate ?? 0,
+      threshold: 1 - context.options.degradedRateThreshold,
+    };
+  }
+  if (code === "KNOWLEDGE_ZERO_USE_HIGH") {
+    return {
+      activeCount: context.knowledgeLifecycle.activeCount,
+      zeroUseActiveCount: context.knowledgeLifecycle.zeroUseActiveCount,
+    };
+  }
+  if (code === "HITL_DRAFT_BACKLOG_HIGH" || code === "HITL_DRAFT_REVIEW_STALE") {
+    return {
+      draftCount: context.hitl.draftCount,
+      oldestDraftAgeMinutes: context.hitl.oldestDraftAgeMinutes,
+      thresholdCount: context.hitl.backlogThresholdCount,
+      thresholdAgeMinutes: context.hitl.backlogThresholdAgeMinutes,
+    };
+  }
+  if (code.startsWith("VIBE_DISTILLATION_")) {
+    return {
+      queued: context.vibeDistillation.queueHealth.queued,
+      running: context.vibeDistillation.queueHealth.running,
+      retryablePaused: context.vibeDistillation.queueHealth.retryablePaused,
+      staleRunning: context.vibeDistillation.queueHealth.staleRunning,
+      blockedByHigherPriority: context.vibeDistillation.queueHealth.blockedByHigherPriority,
+      lock: context.vibeDistillation.queueHealth.lock,
+    };
+  }
+  if (code.startsWith("SOURCE_DISTILLATION_")) {
+    return {
+      queued: context.sourceDistillation.queueHealth.queued,
+      running: context.sourceDistillation.queueHealth.running,
+      retryablePaused: context.sourceDistillation.queueHealth.retryablePaused,
+      staleRunning: context.sourceDistillation.queueHealth.staleRunning,
+      blockedByHigherPriority: context.sourceDistillation.queueHealth.blockedByHigherPriority,
+      lock: context.sourceDistillation.queueHealth.lock,
+    };
+  }
+  if (code.startsWith("CODEX_LOGS_SYNC_") || code.startsWith("ANTIGRAVITY_LOGS_SYNC_")) {
+    const stateId = code.startsWith("CODEX_") ? "codex_logs" : "antigravity_logs";
+    const state = context.agentLogSync.states.find((item) => item.id === stateId);
+    return state
+      ? {
+          stateId,
+          lastSyncedAgeMinutes: state.lastSyncedAgeMinutes,
+          cursorFiles: state.cursorFiles,
+          warnings: state.warnings.length,
+        }
+      : null;
+  }
+  return null;
+}
+
+function resolveReasonDetails(
+  rawReasons: string[],
+  context: ReasonResolutionContext,
+): ReasonResolutionResult {
+  const uniqueReasons = [...new Set(rawReasons)];
+  const reasons: string[] = [];
+  const reasonDetails: DoctorReasonDetail[] = [];
+  const skippedChecks: DoctorReasonDetail[] = [];
+  const summary: DoctorReport["summary"] = {
+    blocking: 0,
+    degraded: 0,
+    maintenance: 0,
+    skipped: 0,
+  };
+
+  for (const code of uniqueReasons) {
+    const defaultDetail = formatDoctorReasonDetail(code, { strict: context.options.strict });
+    const scope = resolveDoctorReasonEnvironmentScope(code);
+    const shouldSkip = shouldSkipReason(code, scope, context);
+    const impactLevel: DoctorReasonImpactLevel = shouldSkip
+      ? "skipped"
+      : resolveDoctorReasonImpactLevel(code, defaultDetail.severity, context.options.strict);
+    const detail = formatDoctorReasonDetail(code, {
+      strict: context.options.strict,
+      impactLevel,
+      environmentScope: scope,
+      commands: resolveDoctorReasonCommands(code),
+      evidence: evidenceForReason(code, context),
+    });
+
+    summary[impactLevel] += 1;
+    if (impactLevel === "skipped") {
+      skippedChecks.push(detail);
+      continue;
+    }
+    reasons.push(code);
+    reasonDetails.push(detail);
+  }
+
+  const status: DoctorReport["status"] = reasons.some((code) => failedReasonCodes.has(code))
+    ? "failed"
+    : summary.blocking > 0 || summary.degraded > 0
+      ? "degraded"
+      : "ok";
+
+  return {
+    reasons,
+    reasonDetails,
+    skippedChecks,
+    summary,
+    status,
+  };
+}
+
 export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorReport> {
   const options = resolveDoctorOptions(rawOptions);
   await cleanupExpiredAuditLogsSafe({ trigger: "doctor" });
@@ -165,11 +405,23 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
     ]);
 
     const mergedReasons = [...reasons, ...database.reasons];
+    const emptyRuns = createEmptyRuns(options);
+    const reasonResolution = resolveReasonDetails(mergedReasons, {
+      options,
+      runs: emptyRuns,
+      hitl: database.hitl,
+      knowledgeLifecycle: database.knowledgeLifecycle,
+      agentLogSync,
+      vibeDistillation,
+      sourceDistillation,
+    });
     return doctorReportSchema.parse({
-      status: "failed",
+      status: reasonResolution.status,
       checkedAt: nowIso(),
-      reasons: mergedReasons,
-      reasonDetails: mergedReasons.map((reason) => formatDoctorReasonDetail(reason)),
+      summary: reasonResolution.summary,
+      reasons: reasonResolution.reasons,
+      reasonDetails: reasonResolution.reasonDetails,
+      skippedChecks: reasonResolution.skippedChecks,
       db: database.db,
       vector: { installed: database.vectorInstalled },
       embedding,
@@ -179,7 +431,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
         existing: database.existingTables,
         missing: database.missingTables,
       },
-      runs: createEmptyRuns(options),
+      runs: emptyRuns,
       hitl: database.hitl,
       knowledgeLifecycle: database.knowledgeLifecycle,
       mcp,
@@ -223,13 +475,15 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
   ]);
 
   appendAutomationReasons(reasons, options, agentLogSync, vibeDistillation, sourceDistillation);
-
-  const status =
-    reasons.includes("MISSING_REQUIRED_TABLES") || reasons.includes("REQUIRED_TABLES_CHECK_FAILED")
-      ? "failed"
-      : reasons.length > 0
-        ? "degraded"
-        : "ok";
+  const reasonResolution = resolveReasonDetails(reasons, {
+    options,
+    runs: compile.runs,
+    hitl: database.hitl,
+    knowledgeLifecycle: database.knowledgeLifecycle,
+    agentLogSync,
+    vibeDistillation,
+    sourceDistillation,
+  });
 
   const mcpReport: DoctorReport["mcp"] = {
     ...mcp,
@@ -262,10 +516,12 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
   };
 
   return doctorReportSchema.parse({
-    status,
+    status: reasonResolution.status,
     checkedAt: nowIso(),
-    reasons,
-    reasonDetails: reasons.map((reason) => formatDoctorReasonDetail(reason)),
+    summary: reasonResolution.summary,
+    reasons: reasonResolution.reasons,
+    reasonDetails: reasonResolution.reasonDetails,
+    skippedChecks: reasonResolution.skippedChecks,
     db: database.db,
     vector: {
       installed: database.vectorInstalled,

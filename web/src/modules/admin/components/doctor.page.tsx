@@ -95,7 +95,11 @@ export function DoctorPage() {
               <AdminMetricCard
                 label="System Status"
                 value={report?.status ?? "-"}
-                hint={report ? `reasons ${report.reasons.length}` : undefined}
+                hint={
+                  report
+                    ? `blocking ${formatNumber(report.summary?.blocking ?? 0)} / degraded ${formatNumber(report.summary?.degraded ?? 0)} / maintenance ${formatNumber(report.summary?.maintenance ?? 0)}`
+                    : undefined
+                }
               />
               <AdminMetricCard
                 label="Compile Usable"

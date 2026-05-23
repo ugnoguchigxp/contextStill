@@ -56,7 +56,7 @@ describe("acquireFileLock", () => {
     await expect(fs.stat(lockFile)).rejects.toThrow();
   });
 
-  test("reclaims a created-age-expired lock even when the recorded pid is alive", async () => {
+  test("does not reclaim a created-age-expired lock when the recorded pid is alive", async () => {
     const lockFile = await createTempLockPath();
     await fs.mkdir(path.dirname(lockFile), { recursive: true });
     await fs.writeFile(
@@ -69,16 +69,15 @@ describe("acquireFileLock", () => {
       "utf-8",
     );
 
-    const lock = await acquireFileLock({
-      lockFile,
-      ttlSeconds: 660,
-      staleCreatedAgeSeconds: 660,
-      removeWhenCreatedAgeExceeded: true,
-      label: "distillation pipeline",
-    });
-
-    await lock.release();
-    await expect(fs.stat(lockFile)).rejects.toThrow();
+    await expect(
+      acquireFileLock({
+        lockFile,
+        ttlSeconds: 660,
+        staleCreatedAgeSeconds: 660,
+        removeWhenCreatedAgeExceeded: true,
+        label: "distillation pipeline",
+      }),
+    ).rejects.toThrow("distillation pipeline is already running");
   });
 
   test("waits for a held lock before acquiring", async () => {

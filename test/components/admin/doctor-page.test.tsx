@@ -18,6 +18,12 @@ const queryClient = new QueryClient();
 const baseReport = {
   status: "degraded",
   checkedAt: "2026-05-21T13:26:44.509Z",
+  summary: {
+    blocking: 2,
+    degraded: 2,
+    maintenance: 1,
+    skipped: 0,
+  },
   reasons: [
     "KNOWLEDGE_ZERO_USE_HIGH",
     "VIBE_DISTILLATION_NEVER_RAN",
@@ -25,6 +31,7 @@ const baseReport = {
     "SOURCE_DISTILLATION_PIPELINE_LOCK_STALE",
     "ANTIGRAVITY_LOGS_SYNC_STALE",
   ],
+  skippedChecks: [],
   db: { reachable: true, durationMs: 26 },
   vector: { installed: true },
   embedding: {

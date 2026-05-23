@@ -188,8 +188,15 @@ const validDistillationQueueHealth = {
 const validDoctorReport: DoctorReport = {
   status: "ok",
   checkedAt: "2026-05-15T00:00:00.000Z",
+  summary: {
+    blocking: 0,
+    degraded: 0,
+    maintenance: 0,
+    skipped: 0,
+  },
   reasons: [],
   reasonDetails: [],
+  skippedChecks: [],
   db: { reachable: true, durationMs: 1 },
   vector: { installed: true },
   embedding: {
