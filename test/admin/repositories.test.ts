@@ -1,39 +1,39 @@
-import { describe, expect, it, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
-  fetchKnowledgeItems,
-  createKnowledgeItem,
-  updateKnowledgeItem,
-  deleteKnowledgeItem,
   bulkUpdateKnowledgeStatus,
-  sendKnowledgeFeedback,
-  fetchVibeMemories,
+  createKnowledgeItem,
+  createSourceFolder,
+  createSourcePage,
+  deleteKnowledgeItem,
+  deleteSourceFolder,
+  deleteSourcePage,
   deleteVibeMemory,
   fetchAgentDiffEntries,
-  fetchDoctorReport,
-  fetchOverviewDashboard,
-  fetchGraphCommunityLabels,
-  fetchGraphSnapshot,
-  fetchGraphNodeDetail,
-  updateGraphCommunityLabel,
-  fetchSourceTree,
-  fetchSourceHealth,
-  fetchSourcePage,
-  createSourcePage,
-  updateSourcePage,
-  deleteSourcePage,
-  createSourceFolder,
-  renameSourceFolder,
-  deleteSourceFolder,
-  fetchSourceHistory,
-  fetchSourceDiff,
-  searchSourcePages,
-  runSourceReindex,
   fetchAuditLogs,
   fetchCandidateItems,
+  fetchDoctorReport,
+  fetchGraphCommunityLabels,
+  fetchGraphNodeDetail,
+  fetchGraphSnapshot,
+  fetchKnowledgeItems,
+  fetchOverviewDashboard,
   fetchRuntimeSettings,
-  updateRuntimeSettings,
-  testRuntimeProvider,
+  fetchSourceDiff,
+  fetchSourceHealth,
+  fetchSourceHistory,
+  fetchSourcePage,
+  fetchSourceTree,
+  fetchVibeMemories,
   reloadRuntimeSettingsCache,
+  renameSourceFolder,
+  runSourceReindex,
+  searchSourcePages,
+  sendKnowledgeFeedback,
+  testRuntimeProvider,
+  updateGraphCommunityLabel,
+  updateKnowledgeItem,
+  updateRuntimeSettings,
+  updateSourcePage,
 } from "../../web/src/modules/admin/repositories/admin.repository.js";
 
 describe("Admin Repository", () => {
@@ -311,6 +311,22 @@ describe("Admin Repository", () => {
       });
       expect(spy).toHaveBeenCalledWith(
         "/api/graph?limit=60&status=active&view=community&communityDisplay=supernode&relationAxes=session",
+      );
+    });
+
+    it("fetchGraphSnapshot with evidence view and sourceNodeLimit", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ nodes: [], edges: [] }),
+      } as Response);
+      await fetchGraphSnapshot({
+        limit: 120,
+        status: "all",
+        view: "evidence",
+        sourceNodeLimit: 300,
+      });
+      expect(spy).toHaveBeenCalledWith(
+        "/api/graph?limit=120&status=all&view=evidence&sourceNodeLimit=300",
       );
     });
 

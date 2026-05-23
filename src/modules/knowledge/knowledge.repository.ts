@@ -11,6 +11,7 @@ import type {
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
 import { parseApplicabilityFromRecord } from "./applicability.service.js";
+import { linkKnowledgeFromMetadata } from "./source-linking.service.js";
 import { computeDecayFactor } from "./knowledge-value.service.js";
 
 export type KnowledgeSearchResult = {
@@ -588,6 +589,12 @@ export async function upsertKnowledgeFromSource(
         },
       });
     }
+    await linkKnowledgeFromMetadata({
+      knowledgeId: existing.id,
+      metadata,
+      confidence: params.confidence,
+      linkMetadataSource: "upsertKnowledgeFromSource",
+    });
     return existing.id;
   }
 
@@ -619,6 +626,12 @@ export async function upsertKnowledgeFromSource(
       scope: params.scope,
       title: params.title,
     },
+  });
+  await linkKnowledgeFromMetadata({
+    knowledgeId: inserted.id,
+    metadata,
+    confidence: params.confidence,
+    linkMetadataSource: "upsertKnowledgeFromSource",
   });
 
   return inserted.id;

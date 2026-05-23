@@ -9,6 +9,7 @@ describe("isPipelineLockLikelyBlocking", () => {
         launchAgentLoaded: true,
         staleRunning: 0,
         running: 0,
+        runnableQueued: 0,
         blockedByHigherPriority: false,
       }),
     ).toBe(false);
@@ -21,6 +22,7 @@ describe("isPipelineLockLikelyBlocking", () => {
         launchAgentLoaded: false,
         staleRunning: 0,
         running: 1,
+        runnableQueued: 1,
         blockedByHigherPriority: false,
       }),
     ).toBe(true);
@@ -33,6 +35,7 @@ describe("isPipelineLockLikelyBlocking", () => {
         launchAgentLoaded: true,
         staleRunning: 1,
         running: 1,
+        runnableQueued: 1,
         blockedByHigherPriority: false,
       }),
     ).toBe(true);
@@ -45,18 +48,33 @@ describe("isPipelineLockLikelyBlocking", () => {
         launchAgentLoaded: true,
         staleRunning: 0,
         running: 0,
+        runnableQueued: 1,
         blockedByHigherPriority: true,
       }),
     ).toBe(false);
   });
 
-  test("returns true when queue is not blocked and no running job exists", () => {
+  test("returns false when runnable queue is empty", () => {
     expect(
       isPipelineLockLikelyBlocking({
         staleByCreatedAge: true,
         launchAgentLoaded: true,
         staleRunning: 0,
         running: 0,
+        runnableQueued: 0,
+        blockedByHigherPriority: false,
+      }),
+    ).toBe(false);
+  });
+
+  test("returns true when runnable queue exists and no running job exists", () => {
+    expect(
+      isPipelineLockLikelyBlocking({
+        staleByCreatedAge: true,
+        launchAgentLoaded: true,
+        staleRunning: 0,
+        running: 0,
+        runnableQueued: 2,
         blockedByHigherPriority: false,
       }),
     ).toBe(true);

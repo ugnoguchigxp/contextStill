@@ -273,7 +273,12 @@ describe("Shared Schemas", () => {
           { bucket: "0-1", count: 1 },
           { bucket: "1-5", count: 2 },
           { bucket: "5-10", count: 1 },
-          { bucket: "10+", count: 0 },
+          { bucket: "10-15", count: 0 },
+          { bucket: "15-20", count: 0 },
+          { bucket: "20-25", count: 0 },
+          { bucket: "25-30", count: 0 },
+          { bucket: "30-35", count: 0 },
+          { bucket: "35+", count: 0 },
         ],
         compileRunsByDay: [
           { day: "2026-05-20", ok: 2, degraded: 1, failed: 0, avgDurationMs: 1200 },

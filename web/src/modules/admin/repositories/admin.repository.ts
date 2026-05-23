@@ -443,6 +443,12 @@ export type OverviewDashboard = {
     compileOkRuns: number;
     compileDegradedRuns: number;
     compileFailedRuns: number;
+    graphNodes?: number;
+    graphEdges?: number;
+    graphEmbedded?: number;
+    graphSessionEdges?: number;
+    graphProjectEdges?: number;
+    graphSourceEdges?: number;
   };
   charts: {
     knowledgeByStatusType: Array<{
@@ -451,7 +457,17 @@ export type OverviewDashboard = {
       procedure: number;
     }>;
     dynamicScoreBuckets: Array<{
-      bucket: "0" | "0-1" | "1-5" | "5-10" | "10+";
+      bucket:
+        | "0"
+        | "0-1"
+        | "1-5"
+        | "5-10"
+        | "10-15"
+        | "15-20"
+        | "20-25"
+        | "25-30"
+        | "30-35"
+        | "35+";
       count: number;
     }>;
     compileRunsByDay: Array<{
@@ -544,7 +560,7 @@ export type OverviewDashboard = {
 export type GraphNode = {
   id: string;
   label: string;
-  kind: "knowledge";
+  kind: "knowledge" | "source";
   group: string;
   weight: number;
   status: string;
@@ -554,6 +570,11 @@ export type GraphNode = {
   communitySize?: number;
   communityKey?: string;
   communityLabel?: string;
+  sourceId?: string;
+  sourceKind?: string;
+  sourceUri?: string;
+  sourceTitle?: string | null;
+  linkedKnowledgeCount?: number;
 };
 
 export type GraphNodeDetail = {
@@ -578,15 +599,15 @@ export type GraphEdge = {
   source: string;
   target: string;
   relationType: string;
-  edgeKind: "semantic" | "session" | "project" | "source";
-  relationAxis: "semantic" | "session" | "project" | "source";
+  edgeKind: "semantic" | "session" | "project" | "source" | "evidence";
+  relationAxis: "semantic" | "session" | "project" | "source" | "evidence";
   derived: boolean;
   weight: number;
 };
 
 export type GraphStatusFilter = "current" | "active" | "draft" | "deprecated" | "all";
 
-export type GraphViewMode = "relation" | "semantic" | "community";
+export type GraphViewMode = "relation" | "semantic" | "community" | "evidence";
 export type GraphRelationAxis = "session" | "project" | "source";
 export type GraphCommunityDisplayMode = "detail" | "supernode";
 
@@ -654,6 +675,11 @@ export type GraphSnapshot = {
     sessionEdgeCount: number;
     projectEdgeCount: number;
     sourceEdgeCount: number;
+    sourceNodeCount: number;
+    evidenceEdgeCount: number;
+    evidenceLinkedKnowledgeCount: number;
+    evidenceUnlinkedKnowledgeCount: number;
+    truncatedSourceNodeCount: number;
     relationEdgeCount: number;
     sourceRefCount: number;
     communityCount: number;
@@ -1164,6 +1190,7 @@ export async function fetchGraphSnapshot(
         minSimilarity?: number;
         semanticTopK?: number;
         maxContextEdgesPerNode?: number;
+        sourceNodeLimit?: number;
       } = 1000,
 ): Promise<GraphSnapshot> {
   const params = new URLSearchParams();
@@ -1185,6 +1212,9 @@ export async function fetchGraphSnapshot(
     }
     if (input.maxContextEdgesPerNode !== undefined) {
       params.set("maxContextEdgesPerNode", String(input.maxContextEdgesPerNode));
+    }
+    if (input.sourceNodeLimit !== undefined) {
+      params.set("sourceNodeLimit", String(input.sourceNodeLimit));
     }
   }
   return getJson<GraphSnapshot>(`/api/graph?${params}`);

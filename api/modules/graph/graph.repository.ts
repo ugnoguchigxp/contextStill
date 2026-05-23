@@ -6,6 +6,7 @@ import {
   knowledgeItems,
   knowledgeSourceLinks,
   sourceFragments,
+  sources,
   vibeMemories,
 } from "../../../src/db/schema.js";
 import { normalizeKnowledgeScore, toUnitKnowledgeScore } from "../../../src/lib/score-scale.js";
@@ -16,7 +17,7 @@ import { computeDecayFactor } from "../../../src/modules/knowledge/knowledge-val
 export type GraphNode = {
   id: string;
   label: string;
-  kind: "knowledge";
+  kind: "knowledge" | "source";
   group: string;
   weight: number;
   status: string;
@@ -26,6 +27,11 @@ export type GraphNode = {
   communitySize?: number;
   communityKey?: string;
   communityLabel?: string;
+  sourceId?: string;
+  sourceKind?: string;
+  sourceUri?: string;
+  sourceTitle?: string | null;
+  linkedKnowledgeCount?: number;
 };
 
 /** ノードクリック時に取得する詳細型 */
@@ -51,8 +57,8 @@ export type GraphEdge = {
   source: string;
   target: string;
   relationType: string;
-  edgeKind: "semantic" | "session" | "project" | "source";
-  relationAxis: "semantic" | "session" | "project" | "source";
+  edgeKind: "semantic" | "session" | "project" | "source" | "evidence";
+  relationAxis: "semantic" | "session" | "project" | "source" | "evidence";
   derived: boolean;
   weight: number;
 };
@@ -99,7 +105,7 @@ export type GraphSuperedge = {
 
 type GraphStatusFilter = "current" | "active" | "draft" | "deprecated" | "all";
 
-type GraphViewMode = "relation" | "semantic" | "community";
+type GraphViewMode = "relation" | "semantic" | "community" | "evidence";
 export type GraphRelationAxis = "session" | "project" | "source";
 export type GraphCommunityDisplayMode = "detail" | "supernode";
 
@@ -112,6 +118,7 @@ export type GraphSnapshotParams = {
   minSimilarity?: number;
   semanticTopK?: number;
   maxContextEdgesPerNode?: number;
+  sourceNodeLimit?: number;
 };
 
 type RelationNodeContext = {
@@ -143,6 +150,15 @@ type CommunityLabelRecord = {
   label: string;
   note: string | null;
   updatedAt: Date;
+};
+
+type EvidenceLinkRow = {
+  knowledge_id: string;
+  source_id: string;
+  source_kind: string;
+  source_uri: string;
+  source_title: string | null;
+  link_count: number | string;
 };
 
 const COMMUNITY_MIN_EDGE_WEIGHT = 0.7;
@@ -205,6 +221,10 @@ function normalizeGroupKey(value: string | undefined): string | undefined {
 
 function knowledgeNodeId(id: string): string {
   return `knowledge:${id}`;
+}
+
+function sourceNodeId(id: string): string {
+  return `source:${id}`;
 }
 
 function rawKnowledgeId(nodeId: string): string {
@@ -921,6 +941,11 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
     sessionEdgeCount: number;
     projectEdgeCount: number;
     sourceEdgeCount: number;
+    sourceNodeCount: number;
+    evidenceEdgeCount: number;
+    evidenceLinkedKnowledgeCount: number;
+    evidenceUnlinkedKnowledgeCount: number;
+    truncatedSourceNodeCount: number;
     relationEdgeCount: number;
     sourceRefCount: number;
     communityCount: number;
@@ -935,6 +960,7 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
   const filters = statuses ? [inArray(knowledgeItems.status, statuses)] : [];
   const where = filters.length > 0 ? and(...filters) : undefined;
   const view = params.view ?? "relation";
+  const sourceNodeLimit = Math.max(1, Math.min(2000, Math.trunc(params.sourceNodeLimit ?? 800)));
   const relationAxes: GraphRelationAxis[] = params.relationAxes?.length
     ? params.relationAxes
     : ["session", "project", "source"];
@@ -1063,8 +1089,40 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
     );
   }
 
-  const [relationResult, semanticEdges, sourceRefRows] = await Promise.all([
-    view === "semantic"
+  const idsSql = sql.join(
+    nodeRawIds.map((id) => sql`${id}`),
+    sql`, `,
+  );
+
+  const evidenceLinksPromise =
+    view === "evidence" && nodeRawIds.length > 0
+      ? db.execute(sql`
+          select
+            ${knowledgeSourceLinks.knowledgeId}::text as knowledge_id,
+            ${sources.id}::text as source_id,
+            ${sources.sourceKind} as source_kind,
+            ${sources.uri} as source_uri,
+            ${sources.title} as source_title,
+            count(*)::int as link_count
+          from ${knowledgeSourceLinks}
+          inner join ${sourceFragments}
+            on ${sourceFragments.id} = ${knowledgeSourceLinks.sourceFragmentId}
+          inner join ${sources}
+            on ${sources.id} = ${sourceFragments.sourceId}
+          where ${knowledgeSourceLinks.knowledgeId} in (${idsSql})
+          group by
+            ${knowledgeSourceLinks.knowledgeId},
+            ${sources.id},
+            ${sources.sourceKind},
+            ${sources.uri},
+            ${sources.title}
+        `)
+      : Promise.resolve({
+          rows: [] as EvidenceLinkRow[],
+        });
+
+  const [relationResult, semanticEdges, sourceRefRows, evidenceLinkQuery] = await Promise.all([
+    view === "semantic" || view === "evidence"
       ? Promise.resolve({
           edges: [],
           sessionEdgeCount: 0,
@@ -1093,9 +1151,93 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
           })
           .from(knowledgeSourceLinks)
           .where(inArray(knowledgeSourceLinks.knowledgeId, nodeRawIds)),
+    evidenceLinksPromise,
   ]);
+
+  const evidenceRows = evidenceLinkQuery.rows as EvidenceLinkRow[];
+  const evidenceLinkedKnowledgeIdSet = new Set<string>();
+  const sourceInfoById = new Map<
+    string,
+    {
+      sourceKind: string;
+      sourceUri: string;
+      sourceTitle: string | null;
+      linkedKnowledgeIds: Set<string>;
+    }
+  >();
+  for (const row of evidenceRows) {
+    evidenceLinkedKnowledgeIdSet.add(row.knowledge_id);
+    const sourceInfo = sourceInfoById.get(row.source_id) ?? {
+      sourceKind: row.source_kind,
+      sourceUri: row.source_uri,
+      sourceTitle: row.source_title,
+      linkedKnowledgeIds: new Set<string>(),
+    };
+    sourceInfo.linkedKnowledgeIds.add(row.knowledge_id);
+    sourceInfoById.set(row.source_id, sourceInfo);
+  }
+
+  const sourceOrder = [...sourceInfoById.entries()]
+    .map(([sourceId, info]) => ({ sourceId, linkedKnowledgeCount: info.linkedKnowledgeIds.size }))
+    .sort(
+      (a, b) =>
+        b.linkedKnowledgeCount - a.linkedKnowledgeCount || a.sourceId.localeCompare(b.sourceId),
+    );
+  const visibleSourceIds = new Set(
+    sourceOrder.slice(0, sourceNodeLimit).map((entry) => entry.sourceId),
+  );
+  const truncatedSourceNodeCount = Math.max(0, sourceInfoById.size - visibleSourceIds.size);
+
+  const sourceNodes: GraphNode[] =
+    view === "evidence"
+      ? sourceOrder
+          .filter((entry) => visibleSourceIds.has(entry.sourceId))
+          .reduce<GraphNode[]>((acc, entry) => {
+            const sourceInfo = sourceInfoById.get(entry.sourceId);
+            if (!sourceInfo) return acc;
+            acc.push({
+              id: sourceNodeId(entry.sourceId),
+              label: sourceInfo.sourceTitle?.trim() || sourceInfo.sourceUri,
+              kind: "source" as const,
+              group: "source",
+              weight: Math.max(
+                0.3,
+                Math.min(2.2, 0.42 + Math.log2(entry.linkedKnowledgeCount + 1) * 0.25),
+              ),
+              status: "active",
+              embedded: true,
+              sourceId: entry.sourceId,
+              sourceKind: sourceInfo.sourceKind,
+              sourceUri: sourceInfo.sourceUri,
+              sourceTitle: sourceInfo.sourceTitle,
+              linkedKnowledgeCount: entry.linkedKnowledgeCount,
+            });
+            return acc;
+          }, [])
+      : [];
+
+  const evidenceEdges: GraphEdge[] =
+    view === "evidence"
+      ? evidenceRows
+          .filter((row) => visibleSourceIds.has(row.source_id))
+          .map((row) => {
+            const linkCount = Math.max(1, Math.trunc(finiteOrFallback(row.link_count, 1)));
+            return {
+              id: `evidence:${row.knowledge_id}:${row.source_id}`,
+              source: knowledgeNodeId(row.knowledge_id),
+              target: sourceNodeId(row.source_id),
+              relationType: "linked_source",
+              edgeKind: "evidence",
+              relationAxis: "evidence",
+              derived: false,
+              weight: Math.min(1, 0.35 + Math.log2(linkCount + 1) * 0.2),
+            };
+          })
+      : [];
+
   const relationEdges = relationResult.edges;
-  const edges = view === "semantic" ? semanticEdges : relationEdges;
+  const edges =
+    view === "semantic" ? semanticEdges : view === "evidence" ? evidenceEdges : relationEdges;
   const community =
     view === "community"
       ? buildCommunityAssignments({
@@ -1129,7 +1271,7 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
         })
       : [];
   const summariesById = new Map(communities.map((summary) => [summary.communityId, summary]));
-  const nodesWithCommunity =
+  const graphKnowledgeNodes =
     view === "community"
       ? buildCommunityNodesWithLabels({
           nodes,
@@ -1137,6 +1279,8 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
           summariesById,
         })
       : nodes;
+  const nodesWithCommunity =
+    view === "evidence" ? [...graphKnowledgeNodes, ...sourceNodes] : graphKnowledgeNodes;
   const supernodes = view === "community" ? buildSupernodes(communities) : [];
   const superedges =
     view === "community"
@@ -1152,6 +1296,9 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
     relationResult.projectEdgeCount +
     relationResult.sourceEdgeCount;
   const healthCounts = collectCommunityHealthCounts(communities);
+  const evidenceLinkedKnowledgeCount = view === "evidence" ? evidenceLinkedKnowledgeIdSet.size : 0;
+  const evidenceUnlinkedKnowledgeCount =
+    view === "evidence" ? Math.max(0, nodes.length - evidenceLinkedKnowledgeCount) : 0;
 
   return {
     nodes: nodesWithCommunity,
@@ -1167,6 +1314,11 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
       sessionEdgeCount: relationResult.sessionEdgeCount,
       projectEdgeCount: relationResult.projectEdgeCount,
       sourceEdgeCount: relationResult.sourceEdgeCount,
+      sourceNodeCount: sourceNodes.length,
+      evidenceEdgeCount: evidenceEdges.length,
+      evidenceLinkedKnowledgeCount,
+      evidenceUnlinkedKnowledgeCount,
+      truncatedSourceNodeCount,
       relationEdgeCount,
       sourceRefCount: Math.max(
         relationSourceRefCount,

@@ -146,7 +146,7 @@ function knowledgeUsageLifecycleData(report: DoctorReport | null | undefined) {
   ];
 }
 
-export function OverviewCharts({
+export function KnowledgeCharts({
   dashboard,
   doctorReport,
 }: {
@@ -157,19 +157,110 @@ export function OverviewCharts({
     ...item,
     statusLabel: knowledgeStatusLabel[item.status],
   }));
+  const knowledgeUsageLifecycle = knowledgeUsageLifecycleData(doctorReport);
+
+  return (
+    <div className="domain-charts-grid">
+      {knowledgeUsageLifecycle.length > 0 ? (
+        <AdminChartCard title="Knowledge Usage Lifecycle">
+          <div className="overview-chart-frame">
+            <BarChart
+              responsive
+              style={{ width: "100%", height: "100%" }}
+              data={knowledgeUsageLifecycle}
+            >
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" />
+              <YAxis allowDecimals={false} />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="count" fill="#10b981" name="items" />
+            </BarChart>
+          </div>
+        </AdminChartCard>
+      ) : null}
+
+      <AdminChartCard title="Knowledge Status by Type">
+        <div className="overview-chart-frame">
+          <BarChart responsive style={{ width: "100%", height: "100%" }} data={knowledgeData}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="statusLabel" />
+            <YAxis allowDecimals={false} />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="rule" stackId="knowledge" name="rule" fill="#059669" />
+            <Bar dataKey="procedure" stackId="knowledge" name="procedure" fill="#34d399" />
+          </BarChart>
+        </div>
+      </AdminChartCard>
+
+      <AdminChartCard title="Dynamic Score Distribution">
+        <div className="overview-chart-frame">
+          <BarChart
+            responsive
+            style={{ width: "100%", height: "100%" }}
+            data={dashboard.charts.dynamicScoreBuckets}
+          >
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="bucket" />
+            <YAxis allowDecimals={false} />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="count" fill="#047857" name="candidates" />
+          </BarChart>
+        </div>
+      </AdminChartCard>
+
+      <AdminChartCard title="Vibe Ingestion (14d)">
+        <div className="overview-chart-frame">
+          <LineChart
+            responsive
+            style={{ width: "100%", height: "100%" }}
+            data={dashboard.charts.vibeRecordsByDay}
+          >
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="day" minTickGap={24} />
+            <YAxis allowDecimals={false} />
+            <Tooltip />
+            <Legend />
+            <Line type="monotone" dataKey="records" name="vibe records" stroke="#10b981" strokeWidth={2} />
+          </LineChart>
+        </div>
+      </AdminChartCard>
+
+      <AdminChartCard title="Knowledge Source & Community Coverage">
+        <div className="overview-chart-frame">
+          <BarChart
+            responsive
+            style={{ width: "100%", height: "100%" }}
+            data={dashboard.charts.communitySourceCoverage}
+          >
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="label" />
+            <YAxis allowDecimals={false} />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="count" name="communities" fill="#10b981" />
+          </BarChart>
+        </div>
+      </AdminChartCard>
+    </div>
+  );
+}
+
+export function SystemHealthCharts({
+  dashboard,
+  doctorReport,
+}: {
+  dashboard: OverviewDashboard;
+  doctorReport?: DoctorReport | null;
+}) {
+  const compileMix = compileMixData(doctorReport);
+  const compileLatency = compileLatencyData(doctorReport);
   const queueData = dashboard.charts.distillationQueue.map((item) => ({
     ...item,
     targetLabel: distillationLabel[item.targetKind],
   }));
-  const llmData = dashboard.llmUsage.daily.map((item) => ({
-    ...item,
-    localTokens: item.localPromptTokens + item.localCompletionTokens,
-    cloudTokens: item.cloudPromptTokens + item.cloudCompletionTokens,
-    totalTokens: item.totalTokens,
-  }));
-  const compileMix = compileMixData(doctorReport);
-  const compileLatency = compileLatencyData(doctorReport);
-  const knowledgeUsageLifecycle = knowledgeUsageLifecycleData(doctorReport);
   const avgLatencyMs =
     typeof doctorReport?.runs.durationMsAvg === "number" &&
     Number.isFinite(doctorReport.runs.durationMsAvg)
@@ -178,107 +269,7 @@ export function OverviewCharts({
   const avgLatencyBucket = averageLatencyBucketLabel(avgLatencyMs);
 
   return (
-    <section className="overview-chart-grid">
-      <AdminChartCard title="Daily LLM Tokens (14d)">
-        <div className="overview-chart-frame">
-          <LineChart responsive style={{ width: "100%", height: "100%" }} data={llmData}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="day" minTickGap={24} />
-            <YAxis tickFormatter={formatCompactNumber} />
-            <Tooltip
-              formatter={(value, name, item) => {
-                const dataKey = String(item.dataKey ?? name);
-                if (dataKey === "localTokens" || dataKey === "cloudTokens") {
-                  const payload = item.payload as (typeof llmData)[number] | undefined;
-                  const promptTokens =
-                    dataKey === "localTokens"
-                      ? payload?.localPromptTokens
-                      : payload?.cloudPromptTokens;
-                  const completionTokens =
-                    dataKey === "localTokens"
-                      ? payload?.localCompletionTokens
-                      : payload?.cloudCompletionTokens;
-                  const reasoningTokens =
-                    dataKey === "localTokens"
-                      ? payload?.localReasoningTokens
-                      : payload?.cloudReasoningTokens;
-                  return [
-                    `in ${formatCompactNumber(promptTokens)} / out ${formatCompactNumber(completionTokens)} / reasoning ${formatCompactNumber(reasoningTokens)}`,
-                    llmTooltipLabel[dataKey],
-                  ];
-                }
-                return [formatCompactNumber(value), llmTooltipLabel[dataKey] ?? dataKey];
-              }}
-            />
-            <Legend />
-            <Line
-              type="monotone"
-              dataKey="totalTokens"
-              name="Total tokens"
-              stroke="#0f766e"
-              dot={false}
-              strokeWidth={2}
-            />
-            <Line
-              type="monotone"
-              dataKey="localTokens"
-              name="Local tokens"
-              stroke="#7c3aed"
-              dot={false}
-              strokeWidth={2}
-            />
-            <Line
-              type="monotone"
-              dataKey="cloudTokens"
-              name="Cloud tokens"
-              stroke="#2563eb"
-              dot={false}
-              strokeWidth={2}
-            />
-          </LineChart>
-        </div>
-      </AdminChartCard>
-
-      <AdminChartCard title="Cloud LLM Tokens & Cost (14d)">
-        <div className="overview-chart-frame">
-          <ComposedChart responsive style={{ width: "100%", height: "100%" }} data={llmData}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="day" minTickGap={24} />
-            <YAxis yAxisId="tokens" tickFormatter={formatCompactNumber} />
-            <YAxis yAxisId="cost" orientation="right" tickFormatter={formatJpy} />
-            <Tooltip
-              formatter={(value, name, item) => {
-                const dataKey = String(item.dataKey ?? name);
-                if (dataKey === "costJpy") return [formatJpy(value), llmTooltipLabel[dataKey]];
-                const payload = item.payload as (typeof llmData)[number] | undefined;
-                const detail =
-                  dataKey === "cloudTokens" && payload
-                    ? `in ${payload.cloudPromptTokens} / out ${payload.cloudCompletionTokens} / reasoning ${payload.cloudReasoningTokens}`
-                    : formatCompactNumber(value);
-                return [detail, llmTooltipLabel[dataKey] ?? dataKey];
-              }}
-            />
-            <Legend />
-            <Bar
-              yAxisId="tokens"
-              dataKey="cloudTokens"
-              name="Cloud tokens"
-              stackId="tokens"
-              fill="#2563eb"
-            />
-            <Line
-              yAxisId="cost"
-              type="monotone"
-              dataKey="costJpy"
-              name="Cloud cost"
-              stroke="#f97316"
-              dot={false}
-              strokeWidth={2}
-            />
-          </ComposedChart>
-        </div>
-      </AdminChartCard>
-
+    <div className="domain-charts-grid">
       {compileMix.length > 0 ? (
         <AdminChartCard title="Compile Quality Mix">
           <div className="overview-chart-frame">
@@ -328,61 +319,11 @@ export function OverviewCharts({
                   }}
                 />
               ) : null}
-              <Bar dataKey="count" name="runs" fill="#0f766e" />
+              <Bar dataKey="count" name="runs" fill="#06b6d4" />
             </BarChart>
           </div>
         </AdminChartCard>
       ) : null}
-
-      {knowledgeUsageLifecycle.length > 0 ? (
-        <AdminChartCard title="Knowledge Usage Lifecycle">
-          <div className="overview-chart-frame">
-            <BarChart
-              responsive
-              style={{ width: "100%", height: "100%" }}
-              data={knowledgeUsageLifecycle}
-            >
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="count" fill="#475569" />
-            </BarChart>
-          </div>
-        </AdminChartCard>
-      ) : null}
-
-      <AdminChartCard title="Knowledge Status by Type">
-        <div className="overview-chart-frame">
-          <BarChart responsive style={{ width: "100%", height: "100%" }} data={knowledgeData}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="statusLabel" />
-            <YAxis allowDecimals={false} />
-            <Tooltip />
-            <Legend />
-            <Bar dataKey="rule" stackId="knowledge" fill="#2563eb" />
-            <Bar dataKey="procedure" stackId="knowledge" fill="#06b6d4" />
-          </BarChart>
-        </div>
-      </AdminChartCard>
-
-      <AdminChartCard title="Dynamic Score Distribution">
-        <div className="overview-chart-frame">
-          <BarChart
-            responsive
-            style={{ width: "100%", height: "100%" }}
-            data={dashboard.charts.dynamicScoreBuckets}
-          >
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="bucket" />
-            <YAxis allowDecimals={false} />
-            <Tooltip />
-            <Legend />
-            <Bar dataKey="count" fill="#0f766e" />
-          </BarChart>
-        </div>
-      </AdminChartCard>
 
       <AdminChartCard title="Compile Health (14d)">
         <div className="overview-chart-frame">
@@ -401,14 +342,15 @@ export function OverviewCharts({
               }
             />
             <Legend />
-            <Bar yAxisId="runs" dataKey="ok" stackId="runs" fill="#16a34a" />
-            <Bar yAxisId="runs" dataKey="degraded" stackId="runs" fill="#f59e0b" />
-            <Bar yAxisId="runs" dataKey="failed" stackId="runs" fill="#dc2626" />
+            <Bar yAxisId="runs" dataKey="ok" stackId="runs" name="ok" fill="#10b981" />
+            <Bar yAxisId="runs" dataKey="degraded" stackId="runs" name="degraded" fill="#f59e0b" />
+            <Bar yAxisId="runs" dataKey="failed" stackId="runs" name="failed" fill="#ef4444" />
             <Line
               yAxisId="duration"
               type="monotone"
               dataKey="avgDurationMs"
-              stroke="#334155"
+              name="avg duration"
+              stroke="#06b6d4"
               dot={false}
               strokeWidth={2}
             />
@@ -416,58 +358,7 @@ export function OverviewCharts({
         </div>
       </AdminChartCard>
 
-      <AdminChartCard title="Vibe Ingestion (14d)">
-        <div className="overview-chart-frame">
-          <LineChart
-            responsive
-            style={{ width: "100%", height: "100%" }}
-            data={dashboard.charts.vibeRecordsByDay}
-          >
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="day" minTickGap={24} />
-            <YAxis allowDecimals={false} />
-            <Tooltip />
-            <Legend />
-            <Line type="monotone" dataKey="records" stroke="#0891b2" strokeWidth={2} />
-          </LineChart>
-        </div>
-      </AdminChartCard>
-
-      <AdminChartCard title="Source Coverage">
-        <div className="overview-chart-frame">
-          <BarChart
-            responsive
-            style={{ width: "100%", height: "100%" }}
-            data={dashboard.charts.sourceCoverage}
-          >
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="label" />
-            <YAxis allowDecimals={false} />
-            <Tooltip />
-            <Legend />
-            <Bar dataKey="count" fill="#475569" />
-          </BarChart>
-        </div>
-      </AdminChartCard>
-
-      <AdminChartCard title="Community Source Coverage">
-        <div className="overview-chart-frame">
-          <BarChart
-            responsive
-            style={{ width: "100%", height: "100%" }}
-            data={dashboard.charts.communitySourceCoverage}
-          >
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="label" />
-            <YAxis allowDecimals={false} />
-            <Tooltip />
-            <Legend />
-            <Bar dataKey="count" fill="#0f766e" />
-          </BarChart>
-        </div>
-      </AdminChartCard>
-
-      <AdminChartCard title="Distillation Queue">
+      <AdminChartCard title="Distillation Queue Status">
         <div className="overview-chart-frame">
           <BarChart responsive style={{ width: "100%", height: "100%" }} data={queueData}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -475,14 +366,85 @@ export function OverviewCharts({
             <YAxis allowDecimals={false} />
             <Tooltip />
             <Legend />
-            <Bar dataKey="pending" stackId="queue" fill="#2563eb" />
-            <Bar dataKey="running" stackId="queue" fill="#0891b2" />
-            <Bar dataKey="paused" stackId="queue" fill="#64748b" />
-            <Bar dataKey="completed" stackId="queue" fill="#16a34a" />
-            <Bar dataKey="failed" stackId="queue" fill="#dc2626" />
+            <Bar dataKey="pending" stackId="queue" name="pending" fill="#38bdf8" />
+            <Bar dataKey="running" stackId="queue" name="running" fill="#0284c7" />
+            <Bar dataKey="paused" stackId="queue" name="paused" fill="#94a3b8" />
+            <Bar dataKey="completed" stackId="queue" name="completed" fill="#10b981" />
+            <Bar dataKey="failed" stackId="queue" name="failed" fill="#ef4444" />
           </BarChart>
         </div>
       </AdminChartCard>
-    </section>
+    </div>
+  );
+}
+
+export function LlmCharts({
+  dashboard,
+}: {
+  dashboard: OverviewDashboard;
+}) {
+  const llmData = dashboard.llmUsage.daily.map((item) => ({
+    ...item,
+    localTokens: item.localPromptTokens + item.localCompletionTokens,
+    cloudTokens: item.cloudPromptTokens + item.cloudCompletionTokens,
+    totalTokens: item.totalTokens,
+  }));
+
+  return (
+    <div className="domain-charts-grid">
+      <AdminChartCard title="Daily LLM Tokens & Cloud Cost (14d)">
+        <div className="overview-chart-frame">
+          <ComposedChart responsive style={{ width: "100%", height: "100%" }} data={llmData}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="day" minTickGap={24} />
+            <YAxis yAxisId="tokens" tickFormatter={formatCompactNumber} />
+            <YAxis yAxisId="cost" orientation="right" tickFormatter={formatJpy} />
+            <Tooltip
+              formatter={(value, name, item) => {
+                const dataKey = String(item.dataKey ?? name);
+                if (dataKey === "costJpy") return [formatJpy(value), "Cloud Cost"];
+                const payload = item.payload as (typeof llmData)[number] | undefined;
+                const detail =
+                  (dataKey === "cloudTokens" || dataKey === "localTokens") && payload
+                    ? dataKey === "cloudTokens"
+                      ? `in ${formatCompactNumber(payload.cloudPromptTokens)} / out ${formatCompactNumber(payload.cloudCompletionTokens)} / reasoning ${formatCompactNumber(payload.cloudReasoningTokens)}`
+                      : `in ${formatCompactNumber(payload.localPromptTokens)} / out ${formatCompactNumber(payload.localCompletionTokens)}`
+                    : formatCompactNumber(value);
+                const labelMap: Record<string, string> = {
+                  localTokens: "Local Tokens",
+                  cloudTokens: "Cloud Tokens",
+                  totalTokens: "Total Tokens",
+                };
+                return [detail, labelMap[dataKey] ?? dataKey];
+              }}
+            />
+            <Legend />
+            <Bar
+              yAxisId="tokens"
+              dataKey="localTokens"
+              name="Local Tokens"
+              stackId="tokens"
+              fill="#a78bfa"
+            />
+            <Bar
+              yAxisId="tokens"
+              dataKey="cloudTokens"
+              name="Cloud Tokens"
+              stackId="tokens"
+              fill="#6d28d9"
+            />
+            <Line
+              yAxisId="cost"
+              type="monotone"
+              dataKey="costJpy"
+              name="Cloud Cost"
+              stroke="#f43f5e"
+              dot={false}
+              strokeWidth={2}
+            />
+          </ComposedChart>
+        </div>
+      </AdminChartCard>
+    </div>
   );
 }

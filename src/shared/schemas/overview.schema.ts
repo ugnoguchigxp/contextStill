@@ -3,7 +3,18 @@ import { z } from "zod";
 const dayStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
 export const overviewKnowledgeStatusSchema = z.enum(["active", "draft", "deprecated"]);
-export const overviewDynamicScoreBucketSchema = z.enum(["0", "0-1", "1-5", "5-10", "10+"]);
+export const overviewDynamicScoreBucketSchema = z.enum([
+  "0",
+  "0-1",
+  "1-5",
+  "5-10",
+  "10-15",
+  "15-20",
+  "20-25",
+  "25-30",
+  "30-35",
+  "35+",
+]);
 export const overviewSourceCoverageLabelSchema = z.enum(["linked", "unlinked"]);
 export const overviewCommunitySourceCoverageLabelSchema = z.enum([
   "covered",
@@ -46,6 +57,12 @@ export const overviewDashboardSchema = z.object({
     compileOkRuns: z.number().int().nonnegative(),
     compileDegradedRuns: z.number().int().nonnegative(),
     compileFailedRuns: z.number().int().nonnegative(),
+    graphNodes: z.number().int().nonnegative().optional(),
+    graphEdges: z.number().int().nonnegative().optional(),
+    graphEmbedded: z.number().int().nonnegative().optional(),
+    graphSessionEdges: z.number().int().nonnegative().optional(),
+    graphProjectEdges: z.number().int().nonnegative().optional(),
+    graphSourceEdges: z.number().int().nonnegative().optional(),
   }),
   charts: z.object({
     knowledgeByStatusType: z.array(

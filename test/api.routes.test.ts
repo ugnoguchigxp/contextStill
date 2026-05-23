@@ -418,7 +418,12 @@ const validOverviewDashboard: OverviewDashboard = overviewDashboardSchema.parse(
       { bucket: "0-1", count: 0 },
       { bucket: "1-5", count: 0 },
       { bucket: "5-10", count: 0 },
-      { bucket: "10+", count: 7 },
+      { bucket: "10-15", count: 7 },
+      { bucket: "15-20", count: 0 },
+      { bucket: "20-25", count: 0 },
+      { bucket: "25-30", count: 0 },
+      { bucket: "30-35", count: 0 },
+      { bucket: "35+", count: 0 },
     ],
     compileRunsByDay: [
       { day: "2026-05-19", ok: 0, degraded: 1, failed: 0, avgDurationMs: 1250 },
@@ -914,7 +919,7 @@ describe("API route contract tests", () => {
     const json = await response.json();
     const parsed = overviewDashboardSchema.parse(json);
     expect(parsed.kpis.knowledgeTotal).toBe(334);
-    expect(parsed.charts.dynamicScoreBuckets).toHaveLength(5);
+    expect(parsed.charts.dynamicScoreBuckets).toHaveLength(10);
     expect(fetchOverviewDashboardForApi).toHaveBeenCalledTimes(1);
   });
 

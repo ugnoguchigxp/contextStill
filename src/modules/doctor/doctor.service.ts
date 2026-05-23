@@ -88,6 +88,7 @@ function appendDistillationReasons(
     launchAgentLoaded: distillation.launchAgent.loaded,
     staleRunning: distillation.queueHealth.staleRunning,
     running: distillation.queueHealth.running,
+    runnableQueued: distillation.queueHealth.queued + distillation.queueHealth.retryablePaused,
     blockedByHigherPriority: distillation.queueHealth.blockedByHigherPriority,
   });
   if (lockLikelyBlocking) {

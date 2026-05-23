@@ -225,7 +225,12 @@ export async function fetchOverviewDashboardForApi(): Promise<OverviewDashboard>
         count(*) filter (where dynamic_score > 0 and dynamic_score <= 1)::int as bucket_0_1,
         count(*) filter (where dynamic_score > 1 and dynamic_score <= 5)::int as bucket_1_5,
         count(*) filter (where dynamic_score > 5 and dynamic_score <= 10)::int as bucket_5_10,
-        count(*) filter (where dynamic_score > 10)::int as bucket_10_plus
+        count(*) filter (where dynamic_score > 10 and dynamic_score <= 15)::int as bucket_10_15,
+        count(*) filter (where dynamic_score > 15 and dynamic_score <= 20)::int as bucket_15_20,
+        count(*) filter (where dynamic_score > 20 and dynamic_score <= 25)::int as bucket_20_25,
+        count(*) filter (where dynamic_score > 25 and dynamic_score <= 30)::int as bucket_25_30,
+        count(*) filter (where dynamic_score > 30 and dynamic_score <= 35)::int as bucket_30_35,
+        count(*) filter (where dynamic_score > 35)::int as bucket_35_plus
       from knowledge_items
       where status = 'active'
     `),
@@ -505,6 +510,12 @@ export async function fetchOverviewDashboardForApi(): Promise<OverviewDashboard>
       compileOkRuns,
       compileDegradedRuns,
       compileFailedRuns,
+      graphNodes: communityGraph.stats.visibleKnowledgeCount,
+      graphEdges: communityGraph.stats.relationEdgeCount,
+      graphEmbedded: communityGraph.stats.embeddedKnowledgeCount,
+      graphSessionEdges: communityGraph.stats.sessionEdgeCount,
+      graphProjectEdges: communityGraph.stats.projectEdgeCount,
+      graphSourceEdges: communityGraph.stats.sourceEdgeCount,
     },
     charts: {
       knowledgeByStatusType: KNOWLEDGE_STATUS_ORDER.map((status) => ({
@@ -517,7 +528,12 @@ export async function fetchOverviewDashboardForApi(): Promise<OverviewDashboard>
         { bucket: "0-1", count: toNumber(dynamicScoreBucketRow.bucket_0_1) },
         { bucket: "1-5", count: toNumber(dynamicScoreBucketRow.bucket_1_5) },
         { bucket: "5-10", count: toNumber(dynamicScoreBucketRow.bucket_5_10) },
-        { bucket: "10+", count: toNumber(dynamicScoreBucketRow.bucket_10_plus) },
+        { bucket: "10-15", count: toNumber(dynamicScoreBucketRow.bucket_10_15) },
+        { bucket: "15-20", count: toNumber(dynamicScoreBucketRow.bucket_15_20) },
+        { bucket: "20-25", count: toNumber(dynamicScoreBucketRow.bucket_20_25) },
+        { bucket: "25-30", count: toNumber(dynamicScoreBucketRow.bucket_25_30) },
+        { bucket: "30-35", count: toNumber(dynamicScoreBucketRow.bucket_30_35) },
+        { bucket: "35+", count: toNumber(dynamicScoreBucketRow.bucket_35_plus) },
       ],
       compileRunsByDay: (compileRunsByDayResult.rows as Array<Record<string, unknown>>).map(
         (row) => ({

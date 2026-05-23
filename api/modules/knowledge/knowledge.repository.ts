@@ -16,6 +16,7 @@ import {
   type KnowledgeTagStatus,
   listKnowledgeTagDefinitions,
 } from "../../../src/modules/knowledge/knowledge-tags.repository.js";
+import { linkKnowledgeFromMetadata } from "../../../src/modules/knowledge/source-linking.service.js";
 import {
   computeDecayFactor,
   computeDynamicScore,
@@ -471,6 +472,12 @@ export async function createKnowledgeItem(input: KnowledgeCreateInput) {
       scope: input.scope,
       title: input.title,
     },
+  });
+  await linkKnowledgeFromMetadata({
+    knowledgeId: inserted.id,
+    metadata,
+    confidence: confidence,
+    linkMetadataSource: "createKnowledgeItem",
   });
   return inserted;
 }

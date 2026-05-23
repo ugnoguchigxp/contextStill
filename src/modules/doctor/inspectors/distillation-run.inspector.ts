@@ -461,6 +461,7 @@ function nextActionsForDistillation(
     launchAgentLoaded: launchAgent.loaded,
     staleRunning: queueHealth.staleRunning,
     running: queueHealth.running,
+    runnableQueued: queueHealth.queued + queueHealth.retryablePaused,
     blockedByHigherPriority: queueHealth.blockedByHigherPriority,
   });
   if (!launchAgent.installed) {

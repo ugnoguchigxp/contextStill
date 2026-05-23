@@ -30,6 +30,16 @@ vi.mock("../src/modules/audit/audit-log.service.js", () => ({
   recordAuditLogSafe: vi.fn().mockResolvedValue(undefined),
 }));
 
+vi.mock("../src/modules/knowledge/source-linking.service.js", () => ({
+  linkKnowledgeFromMetadata: vi.fn().mockResolvedValue({
+    candidateReferenceCount: 0,
+    resolvedReferenceCount: 0,
+    insertedLinkCount: 0,
+    skippedExistingLinkCount: 0,
+    unresolvedReferenceCount: 0,
+  }),
+}));
+
 describe("knowledge repository", () => {
   beforeEach(() => {
     vi.clearAllMocks();

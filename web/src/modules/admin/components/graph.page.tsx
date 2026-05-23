@@ -24,6 +24,7 @@ import {
 const nodeColors: Record<string, string> = {
   rule: "#14b8a6",
   procedure: "#60a5fa",
+  source: "#22d3ee",
 };
 
 const communityPalette = [
@@ -52,6 +53,7 @@ type DisplayEdgeKind = GraphEdge["edgeKind"] | "community";
 type DisplayNode = {
   id: string;
   label: string;
+  kind: GraphNode["kind"] | "community";
   weight: number;
   group: string;
   status: string;
@@ -61,6 +63,11 @@ type DisplayNode = {
   communitySize?: number;
   communityKey?: string;
   communityLabel?: string;
+  sourceId?: string;
+  sourceKind?: string;
+  sourceUri?: string;
+  sourceTitle?: string | null;
+  linkedKnowledgeCount?: number;
   isSupernode: boolean;
   healthDead?: boolean;
   healthStale?: boolean;
@@ -80,6 +87,10 @@ function clamp(value: number, min: number, max: number): number {
 }
 
 function nodeColorForView(node: DisplayNode, viewMode: GraphViewMode): string {
+  if (node.kind === "source") {
+    return nodeColors.source;
+  }
+
   if (viewMode !== "community") {
     return nodeColors[node.group] ?? nodeColors.rule;
   }
@@ -99,6 +110,7 @@ function buildSupernodeDisplayNodes(supernodes: GraphSupernode[]): DisplayNode[]
   return supernodes.map((supernode) => ({
     id: supernode.id,
     label: supernode.label,
+    kind: "community",
     weight: clamp(0.35 + Math.log2(supernode.size + 1) * 0.24, 0.35, 2.2),
     group: "rule",
     status: "active",
@@ -129,6 +141,13 @@ function asDisplayEdgesFromSuperedges(superedges: GraphSuperedge[]): Array<{
     edgeKind: "community",
     weight: edge.weight,
   }));
+}
+
+function sourceNodeHalfSize(node: DisplayNode): { x: number; y: number } {
+  return {
+    x: clamp(14 + node.weight * 8, 14, 30),
+    y: clamp(8 + node.weight * 4, 8, 15),
+  };
 }
 
 function createInitialPositions(nodes: DisplayNode[]): PositionedDisplayNode[] {
@@ -297,12 +316,14 @@ function computeAutoFitTransform(nodes: PositionedDisplayNode[], viewport: Viewp
 
   for (const node of nodes) {
     const nodeRadius = 6 + node.weight * 4;
+    const halfSize =
+      node.kind === "source" ? sourceNodeHalfSize(node) : { x: nodeRadius, y: nodeRadius };
     const labelPadX = 64;
     const labelPadY = 28;
-    minX = Math.min(minX, node.x - nodeRadius - labelPadX);
-    maxX = Math.max(maxX, node.x + nodeRadius + labelPadX);
-    minY = Math.min(minY, node.y - nodeRadius - labelPadY);
-    maxY = Math.max(maxY, node.y + nodeRadius + labelPadY);
+    minX = Math.min(minX, node.x - halfSize.x - labelPadX);
+    maxX = Math.max(maxX, node.x + halfSize.x + labelPadX);
+    minY = Math.min(minY, node.y - halfSize.y - labelPadY);
+    maxY = Math.max(maxY, node.y + halfSize.y + labelPadY);
   }
 
   const graphWidth = Math.max(180, maxX - minX);
@@ -376,7 +397,9 @@ export function GraphPage() {
         status: statusFilter,
         view: viewMode,
         communityDisplay: viewMode === "community" ? communityDisplayMode : undefined,
-        relationAxes: viewMode === "semantic" ? undefined : relationAxes,
+        relationAxes:
+          viewMode === "relation" || viewMode === "community" ? relationAxes : undefined,
+        sourceNodeLimit: viewMode === "evidence" ? 800 : undefined,
       }),
   });
 
@@ -437,6 +460,10 @@ export function GraphPage() {
       : undefined) ?? communities[0];
   const activeId = selectedId ?? hoveredId;
   const totalEdges = displayEdgesSource.length;
+  const displayedNodeCount =
+    viewMode === "evidence"
+      ? (graph.data?.stats.visibleKnowledgeCount ?? 0) + (graph.data?.stats.sourceNodeCount ?? 0)
+      : (graph.data?.stats.visibleKnowledgeCount ?? 0);
 
   const saveCommunityLabel = useMutation({
     mutationFn: async (input: { communityKey: string; label: string }) =>
@@ -593,6 +620,7 @@ export function GraphPage() {
             <option value="relation">Relation</option>
             <option value="semantic">Semantic</option>
             <option value="community">Community</option>
+            <option value="evidence">Evidence</option>
           </Select>
           {viewMode === "community" ? (
             <Select
@@ -609,7 +637,7 @@ export function GraphPage() {
               <option value="supernode">Supernode</option>
             </Select>
           ) : null}
-          {viewMode !== "semantic" ? (
+          {viewMode === "relation" || viewMode === "community" ? (
             <div className="graph-axis-toggles">
               <label htmlFor="graph-axis-session" className="graph-axis-toggle">
                 <Checkbox
@@ -644,7 +672,7 @@ export function GraphPage() {
         <div className="graph-title-block">
           <h1 className="text-xl font-bold text-white">Knowledge Graph</h1>
           <p className="mb-4 text-xs text-slate-400">
-            Semantic / Relation / Community を切り替えて確認します。
+            Semantic / Relation / Community / Evidence を切り替えて確認します。
           </p>
         </div>
         <div className="graph-legend-overlay">
@@ -663,12 +691,28 @@ export function GraphPage() {
                 <span className="legend-dot procedure" />
                 <span>Procedure</span>
               </div>
+              {viewMode === "evidence" ? (
+                <div className="legend-item">
+                  <span className="legend-dot source" />
+                  <span>Source</span>
+                </div>
+              ) : null}
             </>
           )}
           {inCommunitySupernodeMode ? (
             <div className="legend-item">
               <span className="legend-line community" />
               <span>Community Link</span>
+            </div>
+          ) : viewMode === "semantic" ? (
+            <div className="legend-item">
+              <span className="legend-line semantic" />
+              <span>Semantic Edge</span>
+            </div>
+          ) : viewMode === "evidence" ? (
+            <div className="legend-item">
+              <span className="legend-line evidence" />
+              <span>Evidence Link</span>
             </div>
           ) : (
             <>
@@ -684,20 +728,18 @@ export function GraphPage() {
                 <span className="legend-line source" />
                 <span>Source Relation</span>
               </div>
-              <div className="legend-item">
-                <span className="legend-line semantic" />
-                <span>Semantic Edge</span>
-              </div>
             </>
           )}
           <p className="graph-legend-note">
             {viewMode === "semantic"
               ? "semantic: cosine 類似度（minSimilarity=0.72, topK=3）"
-              : viewMode === "community"
-                ? inCommunitySupernodeMode
-                  ? "community: cluster を supernode に圧縮して表示します"
-                  : "community: relation edge の連結成分で grouping します"
-                : "relation: session/project 軸を同時に表示できます"}
+              : viewMode === "evidence"
+                ? "evidence: knowledge_source_links 由来の knowledge -> source 直接リンク"
+                : viewMode === "community"
+                  ? inCommunitySupernodeMode
+                    ? "community: cluster を supernode に圧縮して表示します"
+                    : "community: relation edge の連結成分で grouping します"
+                  : "relation: session/project 軸を同時に表示できます"}
           </p>
         </div>
       </div>
@@ -706,7 +748,7 @@ export function GraphPage() {
         <div className="graph-stats-overlay">
           <div className="stat-row">
             <span>Nodes</span>
-            <strong>{graph.data?.stats.visibleKnowledgeCount ?? 0}</strong>
+            <strong>{displayedNodeCount}</strong>
           </div>
           <div className="stat-row">
             <span>Edges</span>
@@ -721,6 +763,31 @@ export function GraphPage() {
               <span>Semantic</span>
               <strong>{graph.data?.stats.semanticEdgeCount ?? 0}</strong>
             </div>
+          ) : viewMode === "evidence" ? (
+            <>
+              <div className="stat-row graph-stats-subtle">
+                <span>Source Nodes</span>
+                <strong>{graph.data?.stats.sourceNodeCount ?? 0}</strong>
+              </div>
+              <div className="stat-row graph-stats-subtle">
+                <span>Evidence Edges</span>
+                <strong>{graph.data?.stats.evidenceEdgeCount ?? 0}</strong>
+              </div>
+              <div className="stat-row graph-stats-subtle">
+                <span>Linked</span>
+                <strong>{graph.data?.stats.evidenceLinkedKnowledgeCount ?? 0}</strong>
+              </div>
+              <div className="stat-row graph-stats-subtle">
+                <span>Unlinked</span>
+                <strong>{graph.data?.stats.evidenceUnlinkedKnowledgeCount ?? 0}</strong>
+              </div>
+              {(graph.data?.stats.truncatedSourceNodeCount ?? 0) > 0 ? (
+                <div className="stat-row graph-stats-subtle">
+                  <span>Truncated Sources</span>
+                  <strong>{graph.data?.stats.truncatedSourceNodeCount ?? 0}</strong>
+                </div>
+              ) : null}
+            </>
           ) : (
             <>
               <div className="stat-row graph-stats-subtle">
@@ -775,9 +842,11 @@ export function GraphPage() {
             <strong>
               {viewMode === "semantic"
                 ? "Semantic"
-                : viewMode === "community"
-                  ? "Community"
-                  : "Relation"}
+                : viewMode === "evidence"
+                  ? "Evidence"
+                  : viewMode === "community"
+                    ? "Community"
+                    : "Relation"}
             </strong>
           </div>
           {selectedId ? (
@@ -874,65 +943,105 @@ export function GraphPage() {
                 </>
               ) : null
             ) : selectedNode ? (
-              <>
-                <div className="graph-detail-badges">
-                  <Badge variant="secondary" className="h-5 text-[11px]">
-                    Community
-                  </Badge>
-                  <Badge
-                    variant="outline"
-                    className="h-5 border-slate-400 text-[11px] text-slate-50"
-                  >
-                    {selectedNode.communityLabel ?? selectedNode.id}
-                  </Badge>
-                  {selectedNode.healthDead ? (
+              selectedNode.kind === "source" ? (
+                <>
+                  <div className="graph-detail-badges">
+                    <Badge variant="secondary" className="h-5 text-[11px]">
+                      Source
+                    </Badge>
                     <Badge
                       variant="outline"
-                      className="h-5 border-rose-300 text-[11px] text-rose-100"
+                      className="h-5 border-cyan-300 text-[11px] text-cyan-100"
                     >
-                      cold
+                      {selectedNode.sourceKind ?? "source"}
                     </Badge>
-                  ) : selectedNode.healthStale ? (
-                    <Badge
-                      variant="outline"
-                      className="h-5 border-amber-300 text-[11px] text-amber-100"
-                    >
-                      warm
-                    </Badge>
-                  ) : selectedNode.healthThinEvidence ? (
-                    <Badge
-                      variant="outline"
-                      className="h-5 border-sky-300 text-[11px] text-sky-100"
-                    >
-                      warm
-                    </Badge>
-                  ) : (
-                    <Badge
-                      variant="outline"
-                      className="h-5 border-emerald-300 text-[11px] text-emerald-100"
-                    >
-                      hot
-                    </Badge>
-                  )}
-                </div>
-                <h2 className="graph-detail-title">
-                  {selectedNode.communityLabel ?? selectedNode.label}
-                </h2>
-                <div className="graph-detail-meta-grid">
-                  <div className="graph-detail-metric">
-                    <span>Community</span>
-                    <strong>{selectedNode.communityId ?? selectedNode.id}</strong>
                   </div>
-                  <div className="graph-detail-metric">
-                    <span>Size</span>
-                    <strong>{selectedNode.communitySize ?? "-"}</strong>
+                  <h2 className="graph-detail-title">{selectedNode.label}</h2>
+                  <div className="graph-detail-meta-grid">
+                    <div className="graph-detail-metric">
+                      <span>Linked Knowledge</span>
+                      <strong>{selectedNode.linkedKnowledgeCount ?? 0}</strong>
+                    </div>
+                    <div className="graph-detail-metric">
+                      <span>Weight</span>
+                      <strong>{selectedNode.weight.toFixed(2)}</strong>
+                    </div>
+                    <div className="graph-detail-metric">
+                      <span>Source ID</span>
+                      <strong>{selectedNode.sourceId ?? "-"}</strong>
+                    </div>
+                    <div className="graph-detail-metric">
+                      <span>Kind</span>
+                      <strong>{selectedNode.kind}</strong>
+                    </div>
                   </div>
-                  <div className="graph-detail-metric">
-                    <span>Rank</span>
-                    <strong>{selectedNode.communityRank ?? "-"}</strong>
+                  <div className="graph-detail-body">
+                    <span>URI</span>
+                    <p>{selectedNode.sourceUri ?? "-"}</p>
                   </div>
-                </div>
-              </>
+                  <div className="graph-detail-id">{selectedId}</div>
+                </>
+              ) : (
+                <>
+                  <div className="graph-detail-badges">
+                    <Badge variant="secondary" className="h-5 text-[11px]">
+                      Community
+                    </Badge>
+                    <Badge
+                      variant="outline"
+                      className="h-5 border-slate-400 text-[11px] text-slate-50"
+                    >
+                      {selectedNode.communityLabel ?? selectedNode.id}
+                    </Badge>
+                    {selectedNode.healthDead ? (
+                      <Badge
+                        variant="outline"
+                        className="h-5 border-rose-300 text-[11px] text-rose-100"
+                      >
+                        cold
+                      </Badge>
+                    ) : selectedNode.healthStale ? (
+                      <Badge
+                        variant="outline"
+                        className="h-5 border-amber-300 text-[11px] text-amber-100"
+                      >
+                        warm
+                      </Badge>
+                    ) : selectedNode.healthThinEvidence ? (
+                      <Badge
+                        variant="outline"
+                        className="h-5 border-sky-300 text-[11px] text-sky-100"
+                      >
+                        warm
+                      </Badge>
+                    ) : (
+                      <Badge
+                        variant="outline"
+                        className="h-5 border-emerald-300 text-[11px] text-emerald-100"
+                      >
+                        hot
+                      </Badge>
+                    )}
+                  </div>
+                  <h2 className="graph-detail-title">
+                    {selectedNode.communityLabel ?? selectedNode.label}
+                  </h2>
+                  <div className="graph-detail-meta-grid">
+                    <div className="graph-detail-metric">
+                      <span>Community</span>
+                      <strong>{selectedNode.communityId ?? selectedNode.id}</strong>
+                    </div>
+                    <div className="graph-detail-metric">
+                      <span>Size</span>
+                      <strong>{selectedNode.communitySize ?? "-"}</strong>
+                    </div>
+                    <div className="graph-detail-metric">
+                      <span>Rank</span>
+                      <strong>{selectedNode.communityRank ?? "-"}</strong>
+                    </div>
+                  </div>
+                </>
+              )
             ) : (
               <div className="graph-detail-empty">Select a node to view details</div>
             )
@@ -1110,13 +1219,50 @@ export function GraphPage() {
               );
             })}
           </g>
-          {/* Nodes: Circles First */}
+          {/* Nodes */}
           <g>
             {nodes.map((node) => {
               const isSelected = selectedId === node.id;
               const isEmbedded = node.embedded;
               const screenNode = screenNodeById.get(node.id);
               if (!screenNode) return null;
+              const baseStroke = isSelected
+                ? "#fff"
+                : isEmbedded
+                  ? "rgba(255, 255, 255, 0.12)"
+                  : "rgba(251, 191, 36, 0.88)";
+
+              if (node.kind === "source") {
+                const halfSize = sourceNodeHalfSize(node);
+                return (
+                  <rect
+                    key={`source-${node.id}`}
+                    x={screenNode.x - halfSize.x}
+                    y={screenNode.y - halfSize.y}
+                    width={halfSize.x * 2}
+                    height={halfSize.y * 2}
+                    rx={4}
+                    fill={nodeColorForView(node, viewMode)}
+                    stroke={baseStroke}
+                    strokeWidth={isSelected ? 2.2 : isEmbedded ? 0.8 : 1.2}
+                    strokeDasharray={isEmbedded ? undefined : "2.5 2"}
+                    opacity={isEmbedded ? 1 : 0.9}
+                    className="graph-node-rect"
+                    role="button"
+                    tabIndex={0}
+                    aria-label={`Select ${node.label || node.id}`}
+                    onMouseEnter={() => setHoveredId(node.id)}
+                    onMouseLeave={() => setHoveredId(null)}
+                    onClick={() => setSelectedId(node.id)}
+                    onKeyDown={(event) => {
+                      if (event.key !== "Enter" && event.key !== " ") return;
+                      event.preventDefault();
+                      setSelectedId(node.id);
+                    }}
+                  />
+                );
+              }
+
               return (
                 <circle
                   key={`circle-${node.id}`}
@@ -1124,13 +1270,7 @@ export function GraphPage() {
                   cy={screenNode.y}
                   r={6 + node.weight * 4}
                   fill={nodeColorForView(node, viewMode)}
-                  stroke={
-                    isSelected
-                      ? "#fff"
-                      : isEmbedded
-                        ? "rgba(255, 255, 255, 0.12)"
-                        : "rgba(251, 191, 36, 0.88)"
-                  }
+                  stroke={baseStroke}
                   strokeWidth={isSelected ? 2.2 : isEmbedded ? 0.8 : 1.2}
                   strokeDasharray={isEmbedded ? undefined : "2.5 2"}
                   opacity={isEmbedded ? 1 : 0.9}
@@ -1154,7 +1294,8 @@ export function GraphPage() {
           <g pointerEvents="none">
             {nodes.map((node) => {
               const active = activeId === node.id;
-              const nodeRadius = 6 + node.weight * 4;
+              const nodeRadius =
+                node.kind === "source" ? sourceNodeHalfSize(node).y : 6 + node.weight * 4;
               const screenNode = screenNodeById.get(node.id);
               if (!screenNode) return null;
               return (

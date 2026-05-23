@@ -71,6 +71,11 @@ const mockGraphData: GraphSnapshot = {
     sessionEdgeCount: 0,
     projectEdgeCount: 0,
     sourceEdgeCount: 0,
+    sourceNodeCount: 0,
+    evidenceEdgeCount: 0,
+    evidenceLinkedKnowledgeCount: 0,
+    evidenceUnlinkedKnowledgeCount: 2,
+    truncatedSourceNodeCount: 0,
     relationEdgeCount: 0,
     sourceRefCount: 0,
     communityCount: 0,
@@ -321,6 +326,86 @@ describe("GraphPage", () => {
     });
   });
 
+  it("supports evidence view with source node detail and without knowledge detail fetch", async () => {
+    vi.mocked(fetchGraphSnapshot).mockImplementation(async (input) => {
+      const view =
+        typeof input === "number" || input === undefined ? "relation" : (input.view ?? "relation");
+      if (view !== "evidence") {
+        return mockGraphData;
+      }
+      return {
+        ...mockGraphData,
+        nodes: [
+          ...mockGraphData.nodes,
+          {
+            id: "source:s1",
+            label: "Evidence Source",
+            kind: "source",
+            group: "source",
+            weight: 0.8,
+            status: "active",
+            embedded: true,
+            sourceId: "s1",
+            sourceKind: "wiki",
+            sourceUri: "file:///evidence/source-1.md",
+            sourceTitle: "Evidence Source",
+            linkedKnowledgeCount: 1,
+          },
+        ],
+        edges: [
+          {
+            id: "evidence:n1:s1",
+            source: "knowledge:n1",
+            target: "source:s1",
+            relationType: "linked_source",
+            edgeKind: "evidence",
+            relationAxis: "evidence",
+            derived: false,
+            weight: 0.7,
+          },
+        ],
+        stats: {
+          ...mockGraphData.stats,
+          sourceNodeCount: 1,
+          evidenceEdgeCount: 1,
+          evidenceLinkedKnowledgeCount: 1,
+          evidenceUnlinkedKnowledgeCount: 1,
+          visibleKnowledgeCount: 2,
+        },
+      };
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GraphPage />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText("Node 1");
+    const selects = screen.getAllByRole("combobox");
+    const viewModeSelect = selects[1];
+    fireEvent.change(viewModeSelect, { target: { value: "evidence" } });
+
+    expect(fetchGraphSnapshot).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        view: "evidence",
+        sourceNodeLimit: 800,
+      }),
+    );
+    expect(await screen.findByText("Source Nodes")).toBeInTheDocument();
+    expect(screen.getByText("Evidence Edges")).toBeInTheDocument();
+    expect(screen.getByText("Unlinked")).toBeInTheDocument();
+
+    const sourceNodeButton = await screen.findByRole("button", {
+      name: "Select Evidence Source",
+    });
+    fireEvent.click(sourceNodeButton);
+
+    expect(await screen.findByText("file:///evidence/source-1.md")).toBeInTheDocument();
+    expect(screen.getByText("Linked Knowledge")).toBeInTheDocument();
+    expect(fetchGraphNodeDetail).not.toHaveBeenCalled();
+  });
+
   it("handles relation axis toggling in relation view mode", async () => {
     vi.mocked(fetchGraphSnapshot).mockResolvedValue(mockGraphData);
 
@@ -438,6 +523,11 @@ describe("GraphPage", () => {
         sessionEdgeCount: 0,
         projectEdgeCount: 0,
         sourceEdgeCount: 0,
+        sourceNodeCount: 0,
+        evidenceEdgeCount: 0,
+        evidenceLinkedKnowledgeCount: 0,
+        evidenceUnlinkedKnowledgeCount: 0,
+        truncatedSourceNodeCount: 0,
         relationEdgeCount: 0,
         sourceRefCount: 0,
         communityCount: 0,
@@ -484,6 +574,11 @@ describe("GraphPage", () => {
         sessionEdgeCount: 0,
         projectEdgeCount: 0,
         sourceEdgeCount: 0,
+        sourceNodeCount: 0,
+        evidenceEdgeCount: 0,
+        evidenceLinkedKnowledgeCount: 0,
+        evidenceUnlinkedKnowledgeCount: 1,
+        truncatedSourceNodeCount: 0,
         relationEdgeCount: 0,
         sourceRefCount: 0,
         communityCount: 1,
