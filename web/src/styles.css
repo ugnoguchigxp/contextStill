@@ -520,17 +520,220 @@
   font-size: 0.8rem;
 }
 
-.overview-metric-grid {
-  grid-template-columns: repeat(4, minmax(0, 1fr));
+/* Overview layout & domains */
+.overview-domain-layout {
+  display: grid;
+  gap: 1.25rem;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-bottom: 1.25rem;
+  align-items: start;
 }
 
+@media (max-width: 1200px) {
+  .overview-domain-layout {
+    grid-template-columns: 1fr;
+  }
+}
+
+.overview-domain-section {
+  background: rgba(255, 255, 255, 0.75);
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  border-radius: 0.75rem;
+  padding: 1.1rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  backdrop-filter: blur(8px);
+  transition: all 0.25s ease;
+  box-shadow: 0 4px 15px -3px rgba(15, 23, 42, 0.03);
+}
+
+.overview-domain-section:hover {
+  background: rgba(255, 255, 255, 0.85);
+  border-color: rgba(15, 23, 42, 0.12);
+  box-shadow: 0 6px 24px -4px rgba(15, 23, 42, 0.06);
+}
+
+.overview-domain-header {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  border-bottom: 1px solid rgba(15, 23, 42, 0.06);
+  padding-bottom: 0.5rem;
+}
+
+.overview-domain-title {
+  font-size: 0.86rem;
+  font-weight: 700;
+  color: #334155;
+  letter-spacing: 0.02em;
+}
+
+.overview-domain-icon {
+  width: 1.05rem;
+  height: 1.05rem;
+  color: #64748b;
+}
+
+/* Accent top-borders for sections to easily distinguish different vectors */
+.overview-domain-section.accent-emerald { border-top: 3px solid #10b981; }
+.overview-domain-section.accent-cyan { border-top: 3px solid #06b6d4; }
+.overview-domain-section.accent-violet { border-top: 3px solid #8b5cf6; }
+
+/* Grid within each domain section */
+.overview-domain-grid {
+  display: grid;
+  gap: 0.65rem;
+}
+
+/* Metric Cards style adjustments */
 .overview-metric-card {
-  min-height: 132px;
+  transition: all 0.2s ease-in-out;
+  border: 1px solid rgba(15, 23, 42, 0.08);
+  position: relative;
+  overflow: hidden;
+  background: var(--card);
+}
+
+.overview-metric-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 6px 16px -4px rgba(15, 23, 42, 0.06);
 }
 
 .overview-metric-content {
-  align-content: start;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+  padding: 0.85rem !important;
   height: 100%;
+}
+
+/* Large vs Small Card Styles */
+.overview-metric-card.size-lg {
+  min-height: 110px;
+}
+
+.overview-metric-card.size-sm {
+  min-height: 80px;
+}
+
+.metric-header-row {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 0.5rem;
+  width: 100%;
+}
+
+.metric-body-row {
+  display: flex;
+  align-items: baseline;
+  gap: 0.4rem;
+  margin-top: 0.2rem;
+  width: 100%;
+}
+
+.overview-metric-card.size-lg .metric-value {
+  font-size: 1.8rem;
+  font-weight: 800;
+  letter-spacing: -0.02em;
+}
+
+.overview-metric-card.size-sm .metric-value {
+  font-size: 1.3rem;
+  font-weight: 700;
+}
+
+.overview-metric-card.size-sm .metric-label {
+  font-size: 0.74rem;
+  font-weight: 600;
+}
+
+/* Icons */
+.metric-icon-lg {
+  width: 1.25rem;
+  height: 1.25rem;
+  color: #64748b;
+  opacity: 0.7;
+}
+
+.metric-icon-sm {
+  width: 0.85rem;
+  height: 0.85rem;
+  color: #64748b;
+  opacity: 0.8;
+  align-self: center;
+}
+
+/* Accent Colors */
+.accent-emerald .metric-icon-lg, .accent-emerald .metric-icon-sm { color: #10b981; }
+.accent-cyan .metric-icon-lg, .accent-cyan .metric-icon-sm { color: #06b6d4; }
+.accent-violet .metric-icon-lg, .accent-violet .metric-icon-sm { color: #8b5cf6; }
+.accent-amber .metric-icon-lg, .accent-amber .metric-icon-sm { color: #f59e0b; }
+
+/* Thin elegant progress bar */
+.metric-progress-container {
+  width: 100%;
+  height: 3px;
+  background: rgba(15, 23, 42, 0.04);
+  border-radius: 999px;
+  margin-top: 0.5rem;
+  overflow: hidden;
+}
+
+.metric-progress-bar {
+  height: 100%;
+  border-radius: 999px;
+  background: #64748b;
+  transition: width 0.4s ease-out;
+}
+
+.accent-emerald .metric-progress-bar {
+  background: linear-gradient(90deg, #34d399, #10b981);
+}
+.accent-cyan .metric-progress-bar {
+  background: linear-gradient(90deg, #22d3ee, #06b6d4);
+}
+.accent-violet .metric-progress-bar {
+  background: linear-gradient(90deg, #a78bfa, #8b5cf6);
+}
+.accent-amber .metric-progress-bar {
+  background: linear-gradient(90deg, #fbbf24, #f59e0b);
+}
+
+/* Pulse Dot for active queue items */
+.status-pulse-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  background-color: #f59e0b;
+  border-radius: 50%;
+  margin-left: 0.35rem;
+  vertical-align: middle;
+  animation: pulse-animation 1.5s infinite;
+}
+
+@keyframes pulse-animation {
+  0% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0.7);
+  }
+  70% {
+    transform: scale(1);
+    box-shadow: 0 0 0 5px rgba(245, 158, 11, 0);
+  }
+  100% {
+    transform: scale(0.95);
+    box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
+  }
+}
+
+
+.domain-charts-grid {
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr;
+  margin-top: 1rem;
 }
 
 .overview-chart-grid {
@@ -1051,6 +1254,10 @@
   border-top-color: rgba(34, 211, 238, 0.85);
 }
 
+.legend-line.evidence {
+  border-top-color: rgba(45, 212, 191, 0.9);
+}
+
 .graph-overlay-stats {
   position: absolute;
   bottom: 1.25rem;
@@ -1239,6 +1446,11 @@
   cursor: pointer;
 }
 
+.graph-node-rect {
+  transition: stroke-width 0.2s ease;
+  cursor: pointer;
+}
+
 .graph-node-group:hover .graph-node-circle {
   r: 12;
 }
@@ -1282,6 +1494,10 @@
 
 .graph-edge.community {
   stroke: rgba(34, 211, 238, 0.8);
+}
+
+.graph-edge.evidence {
+  stroke: rgba(45, 212, 191, 0.85);
 }
 
 .graph-community-summary-panel {
@@ -1361,6 +1577,10 @@
 
 .legend-dot.procedure {
   background: #60a5fa;
+}
+
+.legend-dot.source {
+  background: #22d3ee;
 }
 
 .truncate-text {
@@ -2610,4 +2830,28 @@
   .compile-metric-grid {
     grid-template-columns: 1fr;
   }
+}
+
+/* Recharts inside domain sections styling optimization */
+.recharts-cartesian-axis-tick text {
+  font-size: 11px !important;
+  fill: #64748b !important;
+}
+
+.recharts-legend-item-text {
+  font-size: 12px !important;
+  color: #475569 !important;
+}
+
+.recharts-default-tooltip {
+  font-size: 12.5px !important;
+  background-color: rgba(255, 255, 255, 0.95) !important;
+  border: 1px solid rgba(15, 23, 42, 0.08) !important;
+  border-radius: 0.5rem !important;
+  box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05) !important;
+  backdrop-filter: blur(4px) !important;
+}
+
+.overview-chart-frame {
+  margin-top: 0.25rem;
 }
