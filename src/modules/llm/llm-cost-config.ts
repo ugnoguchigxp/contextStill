@@ -6,6 +6,7 @@ export type CostRate = {
 // 100万トークンあたりの日本円（JPY）単価（1ドル = 150円換算ベースの代表値）
 export const LLM_COST_RATES: Record<string, CostRate> = {
   "gpt-4o": { inputJpyPerM: 375, outputJpyPerM: 1500 },
+  "5.4mini": { inputJpyPerM: 165, outputJpyPerM: 660 },
   "5.4-mini": { inputJpyPerM: 165, outputJpyPerM: 660 },
   "gpt-5-4-mini": { inputJpyPerM: 165, outputJpyPerM: 660 }, // o3-mini/o1-mini相当の想定
   "o3-mini": { inputJpyPerM: 165, outputJpyPerM: 660 },

@@ -21,7 +21,7 @@ export type LlmChatResponse = {
   };
 };
 
-export type LlmProviderName = "azure-openai" | "bedrock" | "local-llm";
+export type LlmProviderName = "openai" | "azure-openai" | "bedrock" | "local-llm";
 
 export type LlmHealthStatus = {
   provider: LlmProviderName;

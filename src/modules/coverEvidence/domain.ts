@@ -1,11 +1,12 @@
-import { groupedConfig } from "../../config.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import type { DistillationDomainSmokeResult } from "../distillation-domain.types.js";
 import {
   type DistillationChatClient,
+  type DistillationProviderSetting,
   type DistillationToolExecutor,
   resolveDistillationModel,
 } from "../distillation/distillation-runtime.service.js";
+import type { DistillationProviderName } from "../distillation/llm-resolver.js";
 import { getFindCandidateResultById } from "../findCandidate/repository.js";
 import { dedupeCoverEvidenceCandidate } from "./dedupe.service.js";
 import { parseCoverEvidenceResult } from "./parser.js";
@@ -32,6 +33,10 @@ import {
   runExternalEvidence,
   appendOptionalMcpEvidence,
 } from "./llm-runner.js";
+import {
+  ensureRuntimeSettingsLoaded,
+  resolveCoverEvidenceRoutes,
+} from "../settings/settings.service.js";
 
 export type CoverEvidenceRunInput = CoverEvidenceInput & {
   chatClient?: DistillationChatClient;
@@ -50,8 +55,27 @@ export async function runCoverEvidence(
   if (!id) {
     throw new Error("id is required");
   }
-  const provider = input.provider ?? groupedConfig.distillation.provider;
-  const model = resolveDistillationModel(provider);
+  await ensureRuntimeSettingsLoaded();
+  const routes = resolveCoverEvidenceRoutes();
+
+  const sourceSupportProvider =
+    input.provider ?? (routes.sourceSupport.provider as DistillationProviderSetting);
+  const sourceSupportFallbackOrder = input.provider
+    ? []
+    : ([...routes.sourceSupport.fallback] as DistillationProviderName[]);
+  const sourceSupportModel = resolveDistillationModel(sourceSupportProvider);
+  const externalEvidenceProvider =
+    input.provider ?? (routes.externalEvidence.provider as DistillationProviderSetting);
+  const externalEvidenceFallbackOrder = input.provider
+    ? []
+    : ([...routes.externalEvidence.fallback] as DistillationProviderName[]);
+  const externalEvidenceModel = resolveDistillationModel(externalEvidenceProvider);
+  const mcpEvidenceProvider =
+    input.provider ?? (routes.mcpEvidence.provider as DistillationProviderSetting);
+  const mcpEvidenceFallbackOrder = input.provider
+    ? []
+    : ([...routes.mcpEvidence.fallback] as DistillationProviderName[]);
+  const mcpEvidenceModel = resolveDistillationModel(mcpEvidenceProvider);
 
   if (input.write) {
     const existing = await selectCoverEvidenceResultById(id);
@@ -86,7 +110,7 @@ export async function runCoverEvidence(
       id,
       targetKind: row.targetKind,
       targetKey: row.targetKey,
-      provider,
+      provider: sourceSupportProvider,
     },
   });
 
@@ -162,8 +186,9 @@ export async function runCoverEvidence(
               candidate,
               sourceReferences: sourceRead.references,
               sourceContext,
-              provider,
-              model,
+              provider: externalEvidenceProvider,
+              model: externalEvidenceModel,
+              fallbackOrder: externalEvidenceFallbackOrder,
               forceRefreshEvidence: input.forceRefreshEvidence,
               chatClient: input.chatClient,
               toolExecutor: input.toolExecutor,
@@ -172,8 +197,9 @@ export async function runCoverEvidence(
             result = await appendOptionalMcpEvidence({
               id,
               result,
-              provider,
-              model,
+              provider: mcpEvidenceProvider,
+              model: mcpEvidenceModel,
+              fallbackOrder: mcpEvidenceFallbackOrder,
               chatClient: input.chatClient,
               toolExecutor: input.toolExecutor,
               signal: input.signal,
@@ -185,8 +211,9 @@ export async function runCoverEvidence(
               sourceReferences: sourceRead.references,
               sourceContentExcerpt: sourceRead.content,
               sourceContext,
-              provider,
-              model,
+              provider: sourceSupportProvider,
+              model: sourceSupportModel,
+              fallbackOrder: sourceSupportFallbackOrder,
               chatClient: input.chatClient,
               signal: input.signal,
             });

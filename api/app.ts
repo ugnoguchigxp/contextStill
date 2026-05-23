@@ -10,6 +10,7 @@ import { doctorRouter } from "./modules/doctor/doctor.routes.js";
 import { graphRouter } from "./modules/graph/graph.routes.js";
 import { knowledgeRouter } from "./modules/knowledge/knowledge.routes.js";
 import { overviewRouter } from "./modules/overview/overview.routes.js";
+import { settingsRouter } from "./modules/settings/settings.routes.js";
 import { sourcesRouter } from "./modules/sources/sources.routes.js";
 import { vibeMemoryRouter } from "./modules/vibe-memory/vibe-memory.routes.js";
 
@@ -28,5 +29,6 @@ app.route("/api/graph", graphRouter);
 app.route("/api/overview", overviewRouter);
 app.route("/api/audit-logs", auditLogsRouter);
 app.route("/api/candidates", candidatesRouter);
+app.route("/api/settings", settingsRouter);
 
 export default app;

@@ -15,8 +15,10 @@ import {
   resolveDistillationProviderOrder,
 } from "./llm-resolver.js";
 import { callLocalLlmChat } from "./providers/local-llm.js";
+import { callOpenAiChat } from "./providers/openai.js";
 import { callAzureOpenAiChat } from "./providers/azure-openai.js";
 import { callBedrockChat } from "./providers/bedrock.js";
+import { ensureRuntimeSettingsLoaded } from "../settings/settings.service.js";
 
 // Re-export types from types.ts to preserve public schema
 export type {
@@ -83,18 +85,23 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 function createDefaultChatClient(
   providerSetting: DistillationProviderSetting = groupedConfig.distillation.provider,
   usageSource = "distillation",
+  fallbackOrder: DistillationProviderName[] = [],
 ): DistillationChatClient {
-  const order = resolveDistillationProviderOrder(providerSetting);
+  const order = resolveDistillationProviderOrder(providerSetting, fallbackOrder);
   let pinnedProvider: DistillationProviderName | null = null;
 
   const callByProvider: Record<DistillationProviderName, DistillationChatClient> = {
     "local-llm": callLocalLlmChat,
+    openai: callOpenAiChat,
     "azure-openai": callAzureOpenAiChat,
     bedrock: callBedrockChat,
   };
 
   return async (request: DistillationChatRequest): Promise<DistillationChatResponse> => {
-    const providersToTry = pinnedProvider ? [pinnedProvider] : order;
+    const providersToTry = pinnedProvider
+      ? [pinnedProvider, ...order.filter((provider) => provider !== pinnedProvider)]
+      : order;
+    const allowFallback = providerSetting === "auto" || order.length > 1;
     const errors: string[] = [];
 
     for (const provider of providersToTry) {
@@ -125,7 +132,7 @@ function createDefaultChatClient(
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         errors.push(`${provider}: ${message}`);
-        if (providerSetting !== "auto") {
+        if (!allowFallback) {
           throw error;
         }
         pinnedProvider = null;
@@ -140,11 +147,13 @@ export async function runDistillationCompletion(
   request: DistillationModelRequest,
   options: DistillationRuntimeOptions = {},
 ): Promise<DistillationCompletionResult> {
+  await ensureRuntimeSettingsLoaded();
   const chatClient =
     options.chatClient ??
     createDefaultChatClient(
       options.providerSetting ?? groupedConfig.distillation.provider,
       options.usageSource ?? "distillation",
+      options.fallbackOrder,
     );
   const toolExecutor = options.toolExecutor ?? executeDistillationToolCall;
   const maxToolRounds = Math.max(

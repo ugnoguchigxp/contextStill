@@ -11,6 +11,10 @@ import {
 import { type DoctorReport, doctorReportSchema } from "../../shared/schemas/doctor.schema.js";
 import { cleanupExpiredAuditLogsSafe } from "../audit/audit-log.service.js";
 import { checkAgenticLlmHealth } from "../llm/agentic-llm.service.js";
+import {
+  ensureRuntimeSettingsLoaded,
+  resolveAgenticCompileRouting,
+} from "../settings/settings.service.js";
 import { isPipelineLockLikelyBlocking } from "./distillation-lock.util.js";
 import { requiredTables } from "./doctor.constants.js";
 import type { DoctorOptions, ResolvedDoctorOptions } from "./doctor.types.js";
@@ -407,7 +411,9 @@ function resolveReasonDetails(
 }
 
 export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorReport> {
+  await ensureRuntimeSettingsLoaded();
   const options = resolveDoctorOptions(rawOptions);
+  const agenticRouting = resolveAgenticCompileRouting();
   await cleanupExpiredAuditLogsSafe({ trigger: "doctor" });
   const reasons: string[] = [];
   const mcp = inspectMcpSurface();
@@ -416,7 +422,11 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
   }
 
   const embedding = await inspectEmbedding();
-  const agenticLlm = await checkAgenticLlmHealth(groupedConfig.agenticCompile.provider);
+  const agenticLlm = await checkAgenticLlmHealth(
+    agenticRouting.provider,
+    5000,
+    agenticRouting.fallback,
+  );
   const database = await inspectDatabase({
     freshnessThresholdMinutes: options.freshnessThresholdMinutes,
     staleDecayFactor: groupedConfig.doctor.knowledgeStaleDecayFactor,

@@ -17,5 +17,6 @@ describe("AppShell", () => {
     const labels = screen.getByLabelText("main navigation").textContent ?? "";
     expect(labels.indexOf("Graph")).toBeLessThan(labels.indexOf("Compile"));
     expect(labels.indexOf("Compile")).toBeLessThan(labels.indexOf("Audit"));
+    expect(labels.indexOf("Doctor")).toBeLessThan(labels.indexOf("Settings"));
   });
 });

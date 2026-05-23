@@ -1,5 +1,5 @@
 import type { DistillationToolCall, DistillationToolResult } from "./distillation-tools.service.js";
-import type { DistillationProviderSetting } from "./llm-resolver.js";
+import type { DistillationProviderName, DistillationProviderSetting } from "./llm-resolver.js";
 
 export type DistillationRuntimeToolDefinition = {
   type: "function";
@@ -66,6 +66,7 @@ export type DistillationRuntimeOptions = {
   chatClient?: DistillationChatClient;
   toolExecutor?: DistillationToolExecutor;
   providerSetting?: DistillationProviderSetting;
+  fallbackOrder?: DistillationProviderName[];
   enableTools?: boolean;
   maxToolRounds?: number;
   auditContext?: Record<string, unknown>;

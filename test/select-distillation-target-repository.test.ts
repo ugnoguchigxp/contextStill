@@ -55,6 +55,13 @@ const makeChain = (result: any) => {
   return chain;
 };
 
+const flattenSqlChunks = (value: any): string => {
+  if (!value || typeof value !== "object") return String(value ?? "");
+  if (Array.isArray(value.value)) return value.value.join("");
+  if (Array.isArray(value.queryChunks)) return value.queryChunks.map(flattenSqlChunks).join("");
+  return String(value);
+};
+
 describe("selectDistillationTarget repository unit tests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -151,6 +158,9 @@ describe("selectDistillationTarget repository unit tests", () => {
 
       const result = await claimNextDistillationTargetState({ worker: "test-worker" });
       expect(result).toEqual(mockRow);
+      expect(flattenSqlChunks(mockExecute.mock.calls[0]?.[0])).toContain(
+        "::timestamptz at time zone 'UTC'",
+      );
       expect(recordAuditLogSafe).toHaveBeenCalled();
     });
 

@@ -3,12 +3,20 @@ import { groupedConfig } from "../src/config.js";
 import { runFindCandidate } from "../src/modules/findCandidate/domain.js";
 import { parseStorageCandidatesFromLlmOutput } from "../src/modules/findCandidate/parser.js";
 
+type RuntimeProviderName = "openai" | "azure-openai" | "bedrock" | "local-llm";
+
 const mocks = vi.hoisted(() => ({
   getDistillationTargetStateById: vi.fn(),
   readFileDomain: vi.fn(),
   readVibeMemoryByTokenWindow: vi.fn(),
   runDistillationCompletion: vi.fn(),
   resolveDistillationModel: vi.fn(() => "test-model"),
+  ensureRuntimeSettingsLoaded: vi.fn(async () => {}),
+  resolveFindCandidateRoute: vi.fn(() => ({
+    provider: "local-llm",
+    model: "test-model",
+    fallback: [] as RuntimeProviderName[],
+  })),
   insertFindCandidateResult: vi.fn(),
   recordAuditLogSafe: vi.fn(),
 }));
@@ -44,10 +52,20 @@ vi.mock("../src/modules/audit/audit-log.service.js", () => ({
   recordAuditLogSafe: mocks.recordAuditLogSafe,
 }));
 
+vi.mock("../src/modules/settings/settings.service.js", () => ({
+  ensureRuntimeSettingsLoaded: mocks.ensureRuntimeSettingsLoaded,
+  resolveFindCandidateRoute: mocks.resolveFindCandidateRoute,
+}));
+
 describe("runFindCandidate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     groupedConfig.distillation.findCandidateProvider = "local-llm";
+    mocks.resolveFindCandidateRoute.mockImplementation(() => ({
+      provider: groupedConfig.distillation.findCandidateProvider,
+      model: "test-model",
+      fallback: [] as RuntimeProviderName[],
+    }));
     mocks.getDistillationTargetStateById.mockResolvedValue({
       id: "target-1",
       targetKind: "wiki_file",
@@ -105,6 +123,7 @@ describe("runFindCandidate", () => {
         ]),
       }),
       expect.objectContaining({
+        fallbackOrder: [],
         requireToolCall: true,
         usageSource: "find-candidate",
         toolDefinitions: [
@@ -153,7 +172,29 @@ describe("runFindCandidate", () => {
     expect(mocks.runDistillationCompletion).toHaveBeenCalledWith(
       expect.any(Object),
       expect.objectContaining({
+        fallbackOrder: [],
         providerSetting: "azure-openai",
+      }),
+    );
+  });
+
+  test("passes configured task-route fallback order when provider is not explicitly overridden", async () => {
+    mocks.resolveFindCandidateRoute.mockReturnValue({
+      provider: "openai",
+      model: "test-model",
+      fallback: ["local-llm", "bedrock"] as RuntimeProviderName[],
+    });
+
+    await runFindCandidate({
+      targetStateId: "target-1",
+      callerMode: "storage",
+    });
+
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        providerSetting: "openai",
+        fallbackOrder: ["local-llm", "bedrock"],
       }),
     );
   });

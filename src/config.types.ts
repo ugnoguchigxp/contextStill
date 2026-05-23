@@ -1,6 +1,6 @@
 export type EmbeddingProvider = "auto" | "daemon" | "cli" | "openai" | "disabled";
-export type AgenticCompileProvider = "azure-openai" | "bedrock" | "local-llm" | "auto";
-export type DistillationProvider = "local-llm" | "azure-openai" | "bedrock" | "auto";
+export type AgenticCompileProvider = "openai" | "azure-openai" | "bedrock" | "local-llm" | "auto";
+export type DistillationProvider = "openai" | "local-llm" | "azure-openai" | "bedrock" | "auto";
 export type DistillationSearchProvider = "brave" | "exa" | "duckduckgo";
 
 export type GroupedConfig = {
@@ -67,6 +67,11 @@ export type GroupedConfig = {
     readerMaxCharsPerRead: number;
   };
   compile: { defaultTokenBudget: number; enableVectorSearch: boolean };
+  openAi: {
+    apiKey: string;
+    apiBaseUrl: string;
+    model: string;
+  };
   azureOpenAi: {
     apiKey: string;
     apiBaseUrl: string;

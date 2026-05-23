@@ -1,8 +1,11 @@
-import { groupedConfig } from "../../config.js";
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
 import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
 import type { KnowledgeItem, KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
 import { getAgenticLlmProviders } from "../llm/agentic-llm.service.js";
+import {
+  ensureRuntimeSettingsLoaded,
+  resolveAgenticCompileRouting,
+} from "../settings/settings.service.js";
 
 export type AgenticCandidate = {
   id: string;
@@ -165,7 +168,10 @@ export async function agenticRefine(
   input: CompileInput,
   retrievalMode: RetrievalMode,
 ): Promise<AgenticRefineResult> {
-  if (!groupedConfig.agenticCompile.enabled) {
+  await ensureRuntimeSettingsLoaded();
+  const routing = resolveAgenticCompileRouting();
+
+  if (!routing.enabled) {
     return { items: candidates, agenticUsed: false };
   }
 
@@ -174,9 +180,10 @@ export async function agenticRefine(
   }
 
   const providers = getAgenticLlmProviders(
-    groupedConfig.agenticCompile.provider,
-    groupedConfig.agenticCompile.timeoutMs,
+    routing.provider,
+    routing.timeoutMs,
     "context-compiler",
+    routing.fallback,
   );
   const allowFallback = providers.length > 1;
   const fallbackErrors: string[] = [];
@@ -198,7 +205,7 @@ export async function agenticRefine(
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        maxTokens: groupedConfig.agenticCompile.maxTokens,
+        maxTokens: routing.maxTokens,
         temperature: 0,
       });
 

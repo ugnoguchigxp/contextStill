@@ -6,6 +6,7 @@ import {
   distillationToolEventsFromError,
   runDistillationCompletion,
 } from "../distillation/distillation-runtime.service.js";
+import type { DistillationProviderName } from "../distillation/llm-resolver.js";
 import {
   type McpEvidenceToolName,
   configuredMcpEvidenceToolNames,
@@ -48,6 +49,7 @@ export async function runValueAssessment(params: {
   sourceContext: CoverEvidenceSourceContext;
   provider: DistillationProviderSetting;
   model: string;
+  fallbackOrder?: DistillationProviderName[];
   chatClient?: DistillationChatClient;
   signal?: AbortSignal;
 }): Promise<CoverEvidenceResult> {
@@ -71,6 +73,7 @@ export async function runValueAssessment(params: {
       },
       {
         providerSetting: params.provider,
+        fallbackOrder: params.fallbackOrder,
         chatClient: params.chatClient,
         usageSource: "cover-evidence:value-assessment",
         enableTools: false,
@@ -120,6 +123,7 @@ export async function runExternalEvidence(params: {
   sourceContext: CoverEvidenceSourceContext;
   provider: DistillationProviderSetting;
   model: string;
+  fallbackOrder?: DistillationProviderName[];
   forceRefreshEvidence?: boolean;
   chatClient?: DistillationChatClient;
   toolExecutor?: DistillationToolExecutor;
@@ -144,6 +148,7 @@ export async function runExternalEvidence(params: {
       },
       {
         providerSetting: params.provider,
+        fallbackOrder: params.fallbackOrder,
         chatClient: params.chatClient,
         toolExecutor: params.toolExecutor,
         usageSource: "cover-evidence:external-evidence",
@@ -227,6 +232,7 @@ export async function runOptionalMcpEvidence(params: {
   candidate: CoverEvidenceCandidate;
   provider: DistillationProviderSetting;
   model: string;
+  fallbackOrder?: DistillationProviderName[];
   chatClient?: DistillationChatClient;
   toolExecutor?: DistillationToolExecutor;
   signal?: AbortSignal;
@@ -248,6 +254,7 @@ export async function runOptionalMcpEvidence(params: {
       },
       {
         providerSetting: params.provider,
+        fallbackOrder: params.fallbackOrder,
         chatClient: params.chatClient,
         toolExecutor: params.toolExecutor,
         usageSource: "cover-evidence:mcp-evidence",
@@ -291,6 +298,7 @@ export async function appendOptionalMcpEvidence(params: {
   result: CoverEvidenceResult;
   provider: DistillationProviderSetting;
   model: string;
+  fallbackOrder?: DistillationProviderName[];
   chatClient?: DistillationChatClient;
   toolExecutor?: DistillationToolExecutor;
   signal?: AbortSignal;
@@ -304,6 +312,7 @@ export async function appendOptionalMcpEvidence(params: {
     candidate: params.result.candidate,
     provider: params.provider,
     model: params.model,
+    fallbackOrder: params.fallbackOrder,
     chatClient: params.chatClient,
     toolExecutor: params.toolExecutor,
     signal: params.signal,

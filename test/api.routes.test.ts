@@ -27,6 +27,13 @@ import {
 import { knowledgeRouter } from "../api/modules/knowledge/knowledge.routes.js";
 import { fetchOverviewDashboardForApi } from "../api/modules/overview/overview.repository.js";
 import { overviewRouter } from "../api/modules/overview/overview.routes.js";
+import {
+  getSettingsForApi,
+  reloadRuntimeCacheForApi,
+  testProviderForApi,
+  updateSettingsForApi,
+} from "../api/modules/settings/settings.service.js";
+import { settingsRouter } from "../api/modules/settings/settings.routes.js";
 import { vibeMemoryRouter } from "../api/modules/vibe-memory/vibe-memory.routes.js";
 import { recordVibeMemoryWithDiffEntries } from "../src/modules/vibe-memory/vibe-memory.service.js";
 import { compileRunDetailSchema } from "../src/shared/schemas/compile-run.schema.js";
@@ -59,6 +66,13 @@ vi.mock("../api/modules/doctor/doctor.service.js", () => ({
 
 vi.mock("../api/modules/overview/overview.repository.js", () => ({
   fetchOverviewDashboardForApi: vi.fn(),
+}));
+
+vi.mock("../api/modules/settings/settings.service.js", () => ({
+  getSettingsForApi: vi.fn(),
+  updateSettingsForApi: vi.fn(),
+  testProviderForApi: vi.fn(),
+  reloadRuntimeCacheForApi: vi.fn(),
 }));
 
 vi.mock("../api/modules/candidates/candidates.repository.js", () => ({
@@ -109,6 +123,7 @@ const buildApp = () => {
   app.route("/api/doctor", doctorRouter);
   app.route("/api/knowledge", knowledgeRouter);
   app.route("/api/overview", overviewRouter);
+  app.route("/api/settings", settingsRouter);
   app.route("/api/vibe-memory", vibeMemoryRouter);
   return app;
 };
@@ -530,6 +545,34 @@ describe("API route contract tests", () => {
     vi.mocked(saveRunKnowledgeFeedbackForApi).mockResolvedValue(validRunKnowledgeFeedback);
     vi.mocked(getDoctorReportForApi).mockResolvedValue(validDoctorReport);
     vi.mocked(fetchOverviewDashboardForApi).mockResolvedValue(validOverviewDashboard);
+    vi.mocked(getSettingsForApi).mockResolvedValue({
+      settings: {},
+      effective: {},
+      sources: {},
+      revision: 1,
+      loadedAt: "2026-05-23T00:00:00.000Z",
+    } as any);
+    vi.mocked(updateSettingsForApi).mockResolvedValue({
+      settings: {},
+      effective: {},
+      sources: {},
+      revision: 2,
+      loadedAt: "2026-05-23T00:00:00.000Z",
+      updatedAt: "2026-05-23T00:00:00.000Z",
+      cacheInvalidated: true,
+      reloadRequired: true,
+    } as any);
+    vi.mocked(testProviderForApi).mockResolvedValue({
+      provider: "openai",
+      configured: true,
+      reachable: true,
+      model: "5.4mini",
+      endpoint: "https://api.openai.com/v1",
+    });
+    vi.mocked(reloadRuntimeCacheForApi).mockResolvedValue({
+      ok: true,
+      reloadedAt: "2026-05-23T00:00:00.000Z",
+    });
     vi.mocked(listCandidateItems).mockResolvedValue({
       items: [],
       total: 0,
@@ -873,6 +916,66 @@ describe("API route contract tests", () => {
     expect(parsed.kpis.knowledgeTotal).toBe(334);
     expect(parsed.charts.dynamicScoreBuckets).toHaveLength(5);
     expect(fetchOverviewDashboardForApi).toHaveBeenCalledTimes(1);
+  });
+
+  test("GET /api/settings returns payload", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/settings");
+    const json = (await response.json()) as {
+      settings: unknown;
+      revision: number;
+    };
+
+    expect(response.status).toBe(200);
+    expect(json.revision).toBe(1);
+    expect(getSettingsForApi).toHaveBeenCalledTimes(1);
+  });
+
+  test("PUT /api/settings rejects invalid payload", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/settings", {
+      method: "PUT",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ settings: {} }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(updateSettingsForApi).not.toHaveBeenCalled();
+  });
+
+  test("POST /api/settings/providers/:provider/test returns provider health", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/settings/providers/openai/test", {
+      method: "POST",
+    });
+    const json = (await response.json()) as {
+      provider: string;
+      health: {
+        configured: boolean;
+        reachable: boolean;
+      };
+    };
+
+    expect(response.status).toBe(200);
+    expect(json.provider).toBe("openai");
+    expect(json.health.configured).toBe(true);
+    expect(testProviderForApi).toHaveBeenCalledWith("openai");
+  });
+
+  test("POST /api/settings/reload-runtime-cache returns reload result", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/settings/reload-runtime-cache", {
+      method: "POST",
+    });
+    const json = (await response.json()) as {
+      ok: boolean;
+      reloadedAt: string;
+    };
+
+    expect(response.status).toBe(200);
+    expect(json.ok).toBe(true);
+    expect(json.reloadedAt).toBe("2026-05-23T00:00:00.000Z");
+    expect(reloadRuntimeCacheForApi).toHaveBeenCalledTimes(1);
   });
 
   test("GET /api/knowledge rejects invalid query", async () => {

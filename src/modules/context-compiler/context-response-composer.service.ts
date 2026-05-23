@@ -1,7 +1,10 @@
-import { groupedConfig } from "../../config.js";
 import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
 import type { ContextPackItem } from "../../shared/schemas/context-pack.schema.js";
 import { getAgenticLlmProviders } from "../llm/agentic-llm.service.js";
+import {
+  ensureRuntimeSettingsLoaded,
+  resolveAgenticCompileRouting,
+} from "../settings/settings.service.js";
 
 type ComposeInput = {
   input: CompileInput;
@@ -276,7 +279,10 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
     return { markdown: "No Content", agenticUsed: false, usedKnowledge: [] };
   }
 
-  if (!groupedConfig.agenticCompile.enabled) {
+  await ensureRuntimeSettingsLoaded();
+  const routing = resolveAgenticCompileRouting();
+
+  if (!routing.enabled) {
     return {
       markdown: fallback.markdown,
       agenticUsed: false,
@@ -285,9 +291,10 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
   }
 
   const providers = getAgenticLlmProviders(
-    groupedConfig.agenticCompile.provider,
-    groupedConfig.agenticCompile.timeoutMs,
+    routing.provider,
+    routing.timeoutMs,
     "context-response-composer",
+    routing.fallback,
   );
   const allowFallback = providers.length > 1;
   const fallbackErrors: string[] = [];
@@ -309,7 +316,7 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        maxTokens: Math.min(groupedConfig.agenticCompile.maxTokens, 1200),
+        maxTokens: Math.min(routing.maxTokens, 1200),
         temperature: 0,
         responseFormat: "text",
       });

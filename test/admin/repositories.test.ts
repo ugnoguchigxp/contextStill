@@ -30,6 +30,10 @@ import {
   runSourceReindex,
   fetchAuditLogs,
   fetchCandidateItems,
+  fetchRuntimeSettings,
+  updateRuntimeSettings,
+  testRuntimeProvider,
+  reloadRuntimeSettingsCache,
 } from "../../web/src/modules/admin/repositories/admin.repository.js";
 
 describe("Admin Repository", () => {
@@ -548,6 +552,153 @@ describe("Admin Repository", () => {
       expect(spy).toHaveBeenCalledWith(
         "/api/candidates?page=1&limit=20&query=candidate&targetKind=wiki_file&outcome=stored&hasKnowledge=yes&targetStateId=state-1&sortBy=candidateTitle&sortDir=asc",
       );
+    });
+  });
+
+  describe("settings", () => {
+    it("fetchRuntimeSettings", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          settings: {},
+          effective: {},
+          sources: {},
+          revision: 1,
+          loadedAt: null,
+        }),
+      } as Response);
+      await fetchRuntimeSettings();
+      expect(spy).toHaveBeenCalledWith("/api/settings");
+    });
+
+    it("updateRuntimeSettings", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          settings: {},
+          effective: {},
+          sources: {},
+          revision: 2,
+          loadedAt: null,
+        }),
+      } as Response);
+      const payload = {
+        settings: {
+          providers: {
+            openai: { enabled: true, apiBaseUrl: "https://api.openai.com/v1", model: "5.4mini" },
+            "azure-openai": {
+              enabled: false,
+              apiBaseUrl: "",
+              apiPath: "/openai/deployments",
+              apiVersion: "2025-04-01-preview",
+              model: "",
+            },
+            bedrock: {
+              enabled: false,
+              region: "us-east-1",
+              profile: "",
+              model: "anthropic.claude-3-5-haiku-20241022-v1:0",
+            },
+            "local-llm": {
+              enabled: true,
+              apiBaseUrl: "http://127.0.0.1:44448",
+              model: "gemma-4-e4b-it",
+            },
+          },
+          taskRouting: {
+            findCandidate: {
+              source: { provider: "openai", model: "5.4mini", fallback: [] },
+              vibe: { provider: "openai", model: "5.4mini", fallback: [] },
+            },
+            coverEvidence: {
+              sourceSupport: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },
+              externalEvidence: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },
+              mcpEvidence: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },
+            },
+            finalizeDistille: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },
+            agenticCompile: {
+              enabled: true,
+              provider: "openai",
+              model: "5.4mini",
+              fallback: ["local-llm"],
+              timeoutMs: 15000,
+              maxTokens: 4000,
+            },
+          },
+          search: {
+            providerOrder: ["brave", "exa", "duckduckgo"],
+            maxProviderAttempts: 2,
+            resultCount: 3,
+            timeoutMs: 10000,
+            rateLimitCooldownSeconds: 3600,
+            providers: {
+              brave: { enabled: true },
+              exa: { enabled: true },
+              duckduckgo: { enabled: true },
+            },
+          },
+          embedding: {
+            provider: "daemon",
+            daemonUrl: "http://127.0.0.1:44512",
+            openaiModel: "text-embedding-3-small",
+            timeoutMs: 30000,
+          },
+          distillationRuntime: {
+            timeoutMs: 30000,
+            candidateTimeoutMs: 15000,
+            maxToolRounds: 4,
+            toolTimeoutMs: 10000,
+            toolResultMaxChars: 12000,
+            failureRetryDelaySeconds: 90,
+            readerMaxReads: 12,
+            readerMaxCharsPerRead: 12000,
+            lowImportanceRejectThreshold: 40,
+          },
+          advanced: {
+            pipelineLockStaleSeconds: 1200,
+            lockTtlSeconds: 1800,
+            continuousIdleSleepMs: 5000,
+            continuousErrorSleepMs: 12000,
+            inventoryRefreshIntervalMs: 30000,
+            doctorFreshnessThresholdMinutes: 720,
+            doctorDegradedRateThreshold: 0.5,
+            doctorKnowledgeZeroUseWarningMinActiveCount: 10,
+          },
+        },
+      };
+
+      await updateRuntimeSettings(payload as any);
+      expect(spy).toHaveBeenCalledWith("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    });
+
+    it("testRuntimeProvider", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ provider: "openai", health: { configured: true, reachable: true } }),
+      } as Response);
+      await testRuntimeProvider("openai");
+      expect(spy).toHaveBeenCalledWith("/api/settings/providers/openai/test", {
+        method: "POST",
+        headers: undefined,
+        body: undefined,
+      });
+    });
+
+    it("reloadRuntimeSettingsCache", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, reloadedAt: "2026-05-23T00:00:00.000Z" }),
+      } as Response);
+      await reloadRuntimeSettingsCache();
+      expect(spy).toHaveBeenCalledWith("/api/settings/reload-runtime-cache", {
+        method: "POST",
+        headers: undefined,
+        body: undefined,
+      });
     });
   });
 });

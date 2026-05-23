@@ -13,6 +13,7 @@ export const requiredTables = [
   "context_compile_runs",
   "context_pack_items",
   "sync_states",
+  "settings",
 ] as const;
 
 export const requiredTableSqlList = requiredTables.map((tableName) => `'${tableName}'`).join(", ");

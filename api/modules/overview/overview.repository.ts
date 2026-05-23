@@ -8,6 +8,7 @@ import type {
 } from "../../../src/modules/distillation/search-providers.js";
 import { deriveSearchProviderCooldownUntil } from "../../../src/modules/distillation/search-rate-limit.js";
 import { resolveCostRate } from "../../../src/modules/llm/llm-cost-config.js";
+import { ensureRuntimeSettingsLoaded } from "../../../src/modules/settings/settings.service.js";
 import { ensureContentRoot, listPages } from "../../../src/modules/sources/wiki/content-repo.js";
 import {
   type OverviewDashboard,
@@ -150,6 +151,7 @@ export function normalizeSearchApiStatus(metadata: unknown): OverviewDashboard["
 }
 
 export async function fetchOverviewDashboardForApi(): Promise<OverviewDashboard> {
+  await ensureRuntimeSettingsLoaded();
   const db = getDb();
 
   const [

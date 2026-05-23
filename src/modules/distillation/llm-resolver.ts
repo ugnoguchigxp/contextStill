@@ -1,19 +1,38 @@
 import { groupedConfig } from "../../config.js";
 
-export type DistillationProviderName = "local-llm" | "azure-openai" | "bedrock";
-export type DistillationProviderSetting = "local-llm" | "azure-openai" | "bedrock" | "auto";
+export type DistillationProviderName = "local-llm" | "openai" | "azure-openai" | "bedrock";
+export type DistillationProviderSetting =
+  | "local-llm"
+  | "openai"
+  | "azure-openai"
+  | "bedrock"
+  | "auto";
+
+function dedupeProviderOrder(values: DistillationProviderName[]): DistillationProviderName[] {
+  const seen = new Set<DistillationProviderName>();
+  const ordered: DistillationProviderName[] = [];
+  for (const value of values) {
+    if (seen.has(value)) continue;
+    seen.add(value);
+    ordered.push(value);
+  }
+  return ordered;
+}
 
 export function resolveDistillationProviderOrder(
   setting: DistillationProviderSetting,
+  fallbackOrder: DistillationProviderName[] = [],
 ): DistillationProviderName[] {
   if (setting === "auto") {
-    return ["local-llm", "azure-openai", "bedrock"];
+    return ["local-llm", "openai", "azure-openai", "bedrock"];
   }
-  return [setting];
+  return dedupeProviderOrder([setting, ...fallbackOrder]);
 }
 
 export function defaultModelForProvider(provider: DistillationProviderName): string {
   switch (provider) {
+    case "openai":
+      return groupedConfig.openAi.model;
     case "azure-openai":
       return groupedConfig.azureOpenAi.model;
     case "bedrock":
@@ -25,6 +44,12 @@ export function defaultModelForProvider(provider: DistillationProviderName): str
 
 export function isProviderConfigured(provider: DistillationProviderName): boolean {
   switch (provider) {
+    case "openai":
+      return Boolean(
+        groupedConfig.openAi.apiKey.trim() &&
+          groupedConfig.openAi.apiBaseUrl.trim() &&
+          groupedConfig.openAi.model.trim(),
+      );
     case "azure-openai":
       return Boolean(
         groupedConfig.azureOpenAi.apiKey.trim() &&

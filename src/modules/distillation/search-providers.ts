@@ -3,6 +3,7 @@ import { groupedConfig } from "../../config.js";
 import type { DistillationSearchProvider } from "../../config.types.js";
 import { db } from "../../db/client.js";
 import { syncStates } from "../../db/schema.js";
+import { ensureRuntimeSettingsLoaded } from "../settings/settings.service.js";
 import {
   evidenceCacheFreshAfter,
   findDistillationEvidenceCache,
@@ -440,6 +441,7 @@ export async function searchWeb(
   query: unknown,
   options: { forceRefreshEvidence?: boolean } = {},
 ): Promise<DistillationToolResult> {
+  await ensureRuntimeSettingsLoaded();
   if (typeof query !== "string" || !query.trim()) {
     throw new Error("query must be a non-empty string");
   }

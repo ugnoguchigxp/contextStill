@@ -13,6 +13,9 @@ vi.mock("../src/modules/llm/llm-usage-logger.js", () => ({
 const originalConfig = {
   distillationProvider: groupedConfig.distillation.provider,
   distillationTimeoutMs: groupedConfig.distillation.timeoutMs,
+  openAiApiKey: groupedConfig.openAi.apiKey,
+  openAiApiBaseUrl: groupedConfig.openAi.apiBaseUrl,
+  openAiModel: groupedConfig.openAi.model,
   localLlmApiBaseUrl: groupedConfig.localLlm.apiBaseUrl,
   localLlmApiKey: groupedConfig.localLlm.apiKey,
   localLlmModel: groupedConfig.localLlm.model,
@@ -32,6 +35,9 @@ describe("Distillation Runtime Service", () => {
 
     groupedConfig.distillation.provider = "local-llm";
     groupedConfig.distillation.timeoutMs = 300_000;
+    groupedConfig.openAi.apiKey = "";
+    groupedConfig.openAi.apiBaseUrl = "https://api.openai.com/v1";
+    groupedConfig.openAi.model = "gpt-5-4-mini";
     groupedConfig.localLlm.apiBaseUrl = "http://llm";
     groupedConfig.localLlm.apiKey = "test-key";
     groupedConfig.localLlm.model = "mock-local-model";
@@ -278,9 +284,44 @@ describe("Distillation Runtime Service", () => {
 
     expect(resolveDistillationModel()).toBe("gpt-5-4-mini");
   });
+
+  test("runDistillationCompletion can fall back to the configured secondary provider", async () => {
+    groupedConfig.openAi.apiKey = "";
+    groupedConfig.localLlm.apiKey = "local-key";
+    groupedConfig.localLlm.apiBaseUrl = "http://127.0.0.1:44448";
+    groupedConfig.localLlm.model = "gemma-4-e4b-it";
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: '{"candidates":[]}', tool_calls: [] } }],
+      }),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await runDistillationCompletion(
+      {
+        model: "",
+        messages: [{ role: "user", content: "fallback smoke" }],
+        maxTokens: 128,
+      },
+      {
+        providerSetting: "openai",
+        fallbackOrder: ["local-llm"],
+        enableTools: false,
+      },
+    );
+
+    expect(result.content).toBe('{"candidates":[]}');
+    expect(mockFetch).toHaveBeenCalledTimes(1);
+    expect(String(mockFetch.mock.calls[0]?.[0])).toContain("127.0.0.1:44448");
+  });
   afterAll(() => {
     groupedConfig.distillation.provider = originalConfig.distillationProvider;
     groupedConfig.distillation.timeoutMs = originalConfig.distillationTimeoutMs;
+    groupedConfig.openAi.apiKey = originalConfig.openAiApiKey;
+    groupedConfig.openAi.apiBaseUrl = originalConfig.openAiApiBaseUrl;
+    groupedConfig.openAi.model = originalConfig.openAiModel;
     groupedConfig.localLlm.apiBaseUrl = originalConfig.localLlmApiBaseUrl;
     groupedConfig.localLlm.apiKey = originalConfig.localLlmApiKey;
     groupedConfig.localLlm.model = originalConfig.localLlmModel;

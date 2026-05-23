@@ -864,6 +864,183 @@ export type CandidateListRequest = {
   sortDir?: CandidateListSortDir;
 };
 
+export type RuntimeProviderName = "openai" | "azure-openai" | "bedrock" | "local-llm";
+export type RuntimeProviderSetting = RuntimeProviderName | "auto";
+export type RuntimeSearchProvider = "brave" | "exa" | "duckduckgo";
+export type RuntimeSecretKey =
+  | "openaiApiKey"
+  | "azureOpenAiApiKey"
+  | "localLlmApiKey"
+  | "braveApiKey"
+  | "exaApiKey";
+export type RuntimeSecretSource = "db" | "env" | "none" | "env-or-profile";
+
+export type RuntimeSecretStatus = {
+  configured: boolean;
+  source: RuntimeSecretSource;
+  maskedValue: string | null;
+  updatedAt: string | null;
+};
+
+export type RuntimeSettingsRoute = {
+  provider: RuntimeProviderSetting;
+  model?: string;
+  fallback: RuntimeProviderName[];
+};
+
+export type RuntimeSettingsEditable = {
+  providers: {
+    openai: {
+      enabled: boolean;
+      apiBaseUrl: string;
+      model: string;
+    };
+    "azure-openai": {
+      enabled: boolean;
+      apiBaseUrl: string;
+      apiPath: string;
+      apiVersion: string;
+      model: string;
+    };
+    bedrock: {
+      enabled: boolean;
+      region: string;
+      profile: string;
+      model: string;
+    };
+    "local-llm": {
+      enabled: boolean;
+      apiBaseUrl: string;
+      model: string;
+    };
+  };
+  taskRouting: {
+    findCandidate: {
+      source: RuntimeSettingsRoute;
+      vibe: RuntimeSettingsRoute;
+    };
+    coverEvidence: {
+      sourceSupport: RuntimeSettingsRoute;
+      externalEvidence: RuntimeSettingsRoute;
+      mcpEvidence: RuntimeSettingsRoute;
+    };
+    finalizeDistille: RuntimeSettingsRoute;
+    agenticCompile: {
+      enabled: boolean;
+      provider: RuntimeProviderName;
+      model: string;
+      fallback: RuntimeProviderName[];
+      timeoutMs: number;
+      maxTokens: number;
+    };
+  };
+  search: {
+    providerOrder: RuntimeSearchProvider[];
+    maxProviderAttempts: number;
+    resultCount: number;
+    timeoutMs: number;
+    rateLimitCooldownSeconds: number;
+    providers: {
+      brave: { enabled: boolean };
+      exa: { enabled: boolean };
+      duckduckgo: { enabled: boolean };
+    };
+  };
+  embedding: {
+    provider: "auto" | "daemon" | "cli" | "openai" | "disabled";
+    daemonUrl: string;
+    openaiModel: string;
+    timeoutMs: number;
+  };
+  distillationRuntime: {
+    timeoutMs: number;
+    candidateTimeoutMs: number;
+    maxToolRounds: number;
+    toolTimeoutMs: number;
+    toolResultMaxChars: number;
+    failureRetryDelaySeconds: number;
+    readerMaxReads: number;
+    readerMaxCharsPerRead: number;
+    lowImportanceRejectThreshold: number;
+  };
+  advanced: {
+    pipelineLockStaleSeconds: number;
+    lockTtlSeconds: number;
+    continuousIdleSleepMs: number;
+    continuousErrorSleepMs: number;
+    inventoryRefreshIntervalMs: number;
+    doctorFreshnessThresholdMinutes: number;
+    doctorDegradedRateThreshold: number;
+    doctorKnowledgeZeroUseWarningMinActiveCount: number;
+  };
+};
+
+export type RuntimeSettingsView = RuntimeSettingsEditable & {
+  providers: RuntimeSettingsEditable["providers"] & {
+    openai: RuntimeSettingsEditable["providers"]["openai"] & {
+      apiKeySecret: RuntimeSecretStatus;
+    };
+    "azure-openai": RuntimeSettingsEditable["providers"]["azure-openai"] & {
+      apiKeySecret: RuntimeSecretStatus;
+    };
+    bedrock: RuntimeSettingsEditable["providers"]["bedrock"] & {
+      credentialSecret: RuntimeSecretStatus;
+    };
+    "local-llm": RuntimeSettingsEditable["providers"]["local-llm"] & {
+      apiKeySecret: RuntimeSecretStatus;
+    };
+  };
+  search: RuntimeSettingsEditable["search"] & {
+    providers: RuntimeSettingsEditable["search"]["providers"] & {
+      brave: RuntimeSettingsEditable["search"]["providers"]["brave"] & {
+        apiKeySecret: RuntimeSecretStatus;
+      };
+      exa: RuntimeSettingsEditable["search"]["providers"]["exa"] & {
+        apiKeySecret: RuntimeSecretStatus;
+      };
+    };
+  };
+};
+
+export type RuntimeSettingsSnapshotResponse = {
+  settings: RuntimeSettingsView;
+  effective: RuntimeSettingsView;
+  sources: Record<string, string>;
+  revision: number;
+  loadedAt: string | null;
+};
+
+export type RuntimeSettingsUpdateRequest = {
+  settings: RuntimeSettingsEditable;
+  secrets?: Partial<Record<RuntimeSecretKey, { value?: string; clear?: boolean }>>;
+  updatedBy?: string;
+};
+
+export type RuntimeSettingsUpdateResponse = RuntimeSettingsSnapshotResponse & {
+  updatedAt: string;
+  cacheInvalidated: boolean;
+  reloadRequired: boolean;
+};
+
+export type RuntimeProviderHealth = {
+  provider: RuntimeProviderName;
+  configured: boolean;
+  reachable: boolean;
+  model: string;
+  endpoint: string;
+  error?: string;
+};
+
+export type RuntimeProviderHealthResponse = {
+  provider: RuntimeProviderName;
+  health: RuntimeProviderHealth;
+};
+
+export type RuntimeSettingsReloadResponse = {
+  ok: true;
+  reloadedAt: string;
+};
+
 async function getJson<T>(url: string): Promise<T> {
   const response = await fetch(url);
   if (!response.ok) {
@@ -1175,4 +1352,27 @@ export async function fetchCandidateItems(
   if (input.sortBy) query.set("sortBy", input.sortBy);
   if (input.sortDir) query.set("sortDir", input.sortDir);
   return getJson<CandidateListResponse>(`/api/candidates?${query.toString()}`);
+}
+
+export async function fetchRuntimeSettings(): Promise<RuntimeSettingsSnapshotResponse> {
+  return getJson<RuntimeSettingsSnapshotResponse>("/api/settings");
+}
+
+export async function updateRuntimeSettings(
+  input: RuntimeSettingsUpdateRequest,
+): Promise<RuntimeSettingsUpdateResponse> {
+  return requestJson<RuntimeSettingsUpdateResponse>("/api/settings", "PUT", input);
+}
+
+export async function testRuntimeProvider(
+  provider: RuntimeProviderName,
+): Promise<RuntimeProviderHealthResponse> {
+  return requestJson<RuntimeProviderHealthResponse>(
+    `/api/settings/providers/${provider}/test`,
+    "POST",
+  );
+}
+
+export async function reloadRuntimeSettingsCache(): Promise<RuntimeSettingsReloadResponse> {
+  return requestJson<RuntimeSettingsReloadResponse>("/api/settings/reload-runtime-cache", "POST");
 }

@@ -40,6 +40,7 @@ const parseDistillationProvider = (
   if (!value) return fallback;
   const normalized = value.trim().toLowerCase();
   if (
+    normalized === "openai" ||
     normalized === "local-llm" ||
     normalized === "azure-openai" ||
     normalized === "bedrock" ||
@@ -57,7 +58,7 @@ const distillationProvider = parseDistillationProvider(
 const findCandidateProvider = parseDistillationProvider(
   process.env.MEMORY_ROUTER_DISTILLATION_FIND_CANDIDATE_PROVIDER ||
     process.env.MEMORY_ROUTER_FIND_CANDIDATE_PROVIDER,
-  distillationProvider,
+  "openai",
 );
 
 const sourceContentRoot = path.resolve(process.cwd(), "wiki");
@@ -157,12 +158,16 @@ export const groupedConfig: GroupedConfig = {
     defaultTokenBudget: APP_CONSTANTS.defaultTokenBudget,
     enableVectorSearch: APP_CONSTANTS.enableVectorSearch,
   },
+  openAi: {
+    apiKey: process.env.MEMORY_ROUTER_OPENAI_API_KEY || process.env.OPENAI_API_KEY || "",
+    apiBaseUrl: (
+      process.env.MEMORY_ROUTER_OPENAI_API_BASE_URL || "https://api.openai.com/v1"
+    ).replace(/\/+$/, ""),
+    model: process.env.MEMORY_ROUTER_OPENAI_MODEL || "gpt-5-4-mini",
+  },
   azureOpenAi: {
     apiKey:
-      process.env.MEMORY_ROUTER_AZURE_OPENAI_API_KEY ||
-      process.env.AZURE_OPENAI_API_KEY ||
-      process.env.OPENAI_API_KEY ||
-      "",
+      process.env.MEMORY_ROUTER_AZURE_OPENAI_API_KEY || process.env.AZURE_OPENAI_API_KEY || "",
     apiBaseUrl: (
       process.env.MEMORY_ROUTER_AZURE_OPENAI_API_BASE_URL ||
       process.env.AZURE_OPENAI_API_BASE_URL ||
@@ -176,7 +181,9 @@ export const groupedConfig: GroupedConfig = {
       process.env.AZURE_OPENAI_API_VERSION ||
       "2025-04-01-preview",
     model:
-      process.env.MEMORY_ROUTER_AZURE_OPENAI_MODEL || process.env.AZURE_OPENAI_MODEL || "gpt-4o",
+      process.env.MEMORY_ROUTER_AZURE_OPENAI_MODEL ||
+      process.env.AZURE_OPENAI_MODEL ||
+      "gpt-5-4-mini",
   },
   bedrock: {
     model: "",
@@ -184,7 +191,7 @@ export const groupedConfig: GroupedConfig = {
     profile: process.env.MEMORY_ROUTER_BEDROCK_PROFILE || process.env.AWS_PROFILE || "",
   },
   agenticCompile: {
-    provider: "azure-openai",
+    provider: "openai",
     enabled: APP_CONSTANTS.agenticCompileEnabled,
     timeoutMs: APP_CONSTANTS.agenticCompileTimeoutMs,
     maxTokens: APP_CONSTANTS.agenticCompileMaxTokens,

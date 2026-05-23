@@ -11,6 +11,10 @@ import {
   runDistillationCompletion,
 } from "../distillation/distillation-runtime.service.js";
 import type { DistillationToolCall } from "../distillation/distillation-tools.service.js";
+import {
+  ensureRuntimeSettingsLoaded,
+  resolveFindCandidateRoute,
+} from "../settings/settings.service.js";
 import { readVibeMemoryByTokenWindow } from "../memoryReader/reader.service.js";
 import { readFileDomain } from "../readFile/domain.js";
 import { getDistillationTargetStateById } from "../selectDistillationTarget/repository.js";
@@ -87,8 +91,18 @@ function candidateOutputMaxTokens(): number {
   return Math.max(4096, groupedConfig.vibeDistillation.maxOutputTokens);
 }
 
-function defaultFindCandidateProvider(): DistillationProviderSetting {
-  return groupedConfig.distillation.findCandidateProvider;
+async function defaultFindCandidateRoute(
+  targetKind: FindCandidateTargetKind,
+): Promise<{
+  provider: DistillationProviderSetting;
+  fallback: Array<Exclude<DistillationProviderSetting, "auto">>;
+}> {
+  await ensureRuntimeSettingsLoaded();
+  const route = resolveFindCandidateRoute(targetKind);
+  return {
+    provider: route.provider as DistillationProviderSetting,
+    fallback: [...route.fallback] as Array<Exclude<DistillationProviderSetting, "auto">>,
+  };
 }
 
 function buildToolDefinitionForTarget(
@@ -267,7 +281,9 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
   }
 
   const callerMode = input.callerMode ?? "cli_text";
-  const provider = input.provider ?? defaultFindCandidateProvider();
+  const defaultRoute = await defaultFindCandidateRoute(target.targetKind);
+  const provider = input.provider ?? defaultRoute.provider;
+  const fallbackOrder = input.provider ? [] : defaultRoute.fallback;
   const model = resolveDistillationModel(provider);
   const toolDefinition = buildToolDefinitionForTarget(target.targetKind);
   const readLog: Array<{ from: number; toExclusive: number }> = [];
@@ -415,6 +431,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
       },
       {
         providerSetting: provider,
+        fallbackOrder,
         toolDefinitions: [toolDefinition],
         toolExecutor,
         usageSource: "find-candidate",

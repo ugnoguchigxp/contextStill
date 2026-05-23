@@ -10,6 +10,7 @@ const navItems = [
   { to: "/compile", label: "Compile" },
   { to: "/audit", label: "Audit" },
   { to: "/doctor", label: "Doctor" },
+  { to: "/setting", label: "Settings" },
 ] as const;
 
 export function AppShell() {
@@ -27,7 +28,15 @@ export function AppShell() {
             <Link
               key={item.to}
               to={item.to}
-              className={`nav-link ${pathname === item.to ? "active" : ""}`}
+              className={`nav-link ${
+                item.to === "/setting"
+                  ? pathname.startsWith("/setting") || pathname.startsWith("/settings")
+                    ? "active"
+                    : ""
+                  : pathname === item.to
+                    ? "active"
+                    : ""
+              }`}
             >
               {item.label}
             </Link>
@@ -44,7 +53,9 @@ export function AppShell() {
           pathname.startsWith("/knowledge") ||
           pathname.startsWith("/candidates") ||
           pathname.startsWith("/audit") ||
-          pathname.startsWith("/doctor")
+          pathname.startsWith("/doctor") ||
+          pathname.startsWith("/setting") ||
+          pathname.startsWith("/settings")
             ? "full-width"
             : ""
         }`}

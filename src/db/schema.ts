@@ -1,5 +1,6 @@
 import { sql } from "drizzle-orm";
 import {
+  boolean,
   check,
   index,
   integer,
@@ -28,6 +29,7 @@ export const knowledgeTagKindValues = [
 export const knowledgeTagStatusValues = ["active", "draft", "deprecated"] as const;
 
 export const sourceKindValues = ["wiki"] as const;
+export const settingValueKindValues = ["json", "string", "secret_ref", "encrypted"] as const;
 
 export const vibeMemories = pgTable(
   "vibe_memories",
@@ -67,6 +69,36 @@ export const syncStates = pgTable("sync_states", {
   createdAt: timestamp("created_at").defaultNow().notNull(),
   updatedAt: timestamp("updated_at").defaultNow().notNull(),
 });
+
+export const settings = pgTable(
+  "settings",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    namespace: text("namespace").notNull(),
+    key: text("key").notNull(),
+    value: jsonb("value").notNull().default({}),
+    valueKind: text("value_kind").notNull().default("json"),
+    secretRef: text("secret_ref"),
+    isSecret: boolean("is_secret").notNull().default(false),
+    description: text("description"),
+    schemaVersion: integer("schema_version").notNull().default(1),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    updatedBy: text("updated_by"),
+  },
+  (table) => ({
+    namespaceKeyUniqueIdx: uniqueIndex("settings_namespace_key_unique_idx").on(
+      table.namespace,
+      table.key,
+    ),
+    namespaceIdx: index("settings_namespace_idx").on(table.namespace),
+    keyIdx: index("settings_key_idx").on(table.key),
+    valueKindCheck: check(
+      "settings_value_kind_check",
+      sql`${table.valueKind} IN (${sql.raw(toSqlList(settingValueKindValues))})`,
+    ),
+  }),
+);
 
 export const agentDiffEntries = pgTable(
   "agent_diff_entries",
@@ -740,7 +772,7 @@ export const llmUsageLogs = pgTable(
   "llm_usage_logs",
   {
     id: uuid("id").primaryKey().defaultRandom(),
-    provider: text("provider").notNull(), // "local-llm" | "bedrock" | "azure-openai"
+    provider: text("provider").notNull(), // "local-llm" | "openai" | "bedrock" | "azure-openai"
     model: text("model").notNull(), // "gpt-4o", "gemma-4-e4b-it" などのモデル
     promptTokens: integer("prompt_tokens").notNull(),
     completionTokens: integer("completion_tokens").notNull(),

@@ -5,6 +5,7 @@ import {
   createRoute,
   createRouter,
   lazyRouteComponent,
+  redirect,
 } from "@tanstack/react-router";
 import { AppShell } from "./modules/admin/components/app-shell";
 
@@ -96,6 +97,69 @@ const auditRoute = createRoute({
   ),
 });
 
+const settingsSections = new Set([
+  "llmprovider",
+  "taskrouting",
+  "search",
+  "embedding",
+  "distillation-runtime",
+  "advanced",
+]);
+
+const settingsRedirectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/setting",
+  beforeLoad: () => {
+    throw redirect({
+      to: "/setting/$section",
+      params: { section: "llmprovider" },
+      replace: true,
+    });
+  },
+});
+
+const legacySettingsRedirectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings",
+  beforeLoad: () => {
+    throw redirect({
+      to: "/setting/$section",
+      params: { section: "llmprovider" },
+      replace: true,
+    });
+  },
+});
+
+const legacySettingsSectionRedirectRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/settings/$section",
+  beforeLoad: ({ params }) => {
+    throw redirect({
+      to: "/setting/$section",
+      params: { section: settingsSections.has(params.section) ? params.section : "llmprovider" },
+      replace: true,
+    });
+  },
+});
+
+const settingsRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/setting/$section",
+  beforeLoad: ({ params }) => {
+    if (!settingsSections.has(params.section)) {
+      throw redirect({
+        to: "/setting/$section",
+        params: { section: "llmprovider" },
+        replace: true,
+      });
+    }
+  },
+  component: lazyRouteComponent(
+    () => import("./modules/admin/components/settings.page"),
+    "SettingsPage",
+  ),
+});
+
 const routeTree = rootRoute.addChildren([
   indexRoute,
   compileRoute,
@@ -106,6 +170,10 @@ const routeTree = rootRoute.addChildren([
   sourcesRoute,
   auditRoute,
   doctorRoute,
+  settingsRedirectRoute,
+  legacySettingsRedirectRoute,
+  legacySettingsSectionRedirectRoute,
+  settingsRoute,
 ]);
 
 const router = createRouter({

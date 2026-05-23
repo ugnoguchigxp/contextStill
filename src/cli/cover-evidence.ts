@@ -33,12 +33,13 @@ function parseArgs(args: string[]): CliOptions {
       const value = readArgValue(args, index, "--provider").trim();
       if (arg === "--provider") index += 1;
       if (
+        value !== "openai" &&
         value !== "local-llm" &&
         value !== "azure-openai" &&
         value !== "bedrock" &&
         value !== "auto"
       ) {
-        throw new Error("--provider must be local-llm, azure-openai, bedrock, or auto");
+        throw new Error("--provider must be openai, local-llm, azure-openai, bedrock, or auto");
       }
       provider = value;
     } else if (arg === "--write") {

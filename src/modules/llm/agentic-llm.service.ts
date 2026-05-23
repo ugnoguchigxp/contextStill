@@ -1,11 +1,12 @@
 import { groupedConfig } from "../../config.js";
 import type { LlmHealthStatus, LlmProvider, LlmProviderName } from "./llm-provider.js";
 import { recordLlmUsage } from "./llm-usage-logger.js";
+import { createOpenAiProvider } from "./providers/openai.provider.js";
 import { createAzureOpenAiProvider } from "./providers/azure-openai.provider.js";
 import { createBedrockProvider } from "./providers/bedrock.provider.js";
 import { createLocalLlmProvider } from "./providers/local-llm.provider.js";
 
-export type AgenticCompileProvider = "azure-openai" | "bedrock" | "local-llm" | "auto";
+export type AgenticCompileProvider = "openai" | "azure-openai" | "bedrock" | "local-llm" | "auto";
 
 export type AgenticLlmHealthStatus = LlmHealthStatus & {
   providerSetting: AgenticCompileProvider;
@@ -13,24 +14,41 @@ export type AgenticLlmHealthStatus = LlmHealthStatus & {
   fallbackOrder: LlmProviderName[];
 };
 
-function resolveProviderOrder(providerSetting: AgenticCompileProvider): LlmProviderName[] {
-  if (providerSetting === "auto") {
-    return ["azure-openai", "bedrock", "local-llm"];
+function dedupeOrder(values: LlmProviderName[]): LlmProviderName[] {
+  const seen = new Set<LlmProviderName>();
+  const result: LlmProviderName[] = [];
+  for (const value of values) {
+    if (seen.has(value)) continue;
+    seen.add(value);
+    result.push(value);
   }
-  return [providerSetting];
+  return result;
+}
+
+function resolveProviderOrder(
+  providerSetting: AgenticCompileProvider,
+  fallbackOrder: LlmProviderName[] = [],
+): LlmProviderName[] {
+  if (providerSetting === "auto") {
+    return dedupeOrder(["openai", "azure-openai", "bedrock", "local-llm"]);
+  }
+  return dedupeOrder([providerSetting, ...fallbackOrder]);
 }
 
 function resolveDistillationProviderOrder(
   providerSetting: AgenticCompileProvider,
+  fallbackOrder: LlmProviderName[] = [],
 ): LlmProviderName[] {
   if (providerSetting === "auto") {
-    return ["local-llm", "azure-openai", "bedrock"];
+    return dedupeOrder(["local-llm", "openai", "azure-openai", "bedrock"]);
   }
-  return [providerSetting];
+  return dedupeOrder([providerSetting, ...fallbackOrder]);
 }
 
 function buildProvider(provider: LlmProviderName, timeoutMs: number): LlmProvider {
   switch (provider) {
+    case "openai":
+      return createOpenAiProvider({ timeoutMs });
     case "azure-openai":
       return createAzureOpenAiProvider({ timeoutMs });
     case "bedrock":
@@ -44,6 +62,8 @@ function buildProvider(provider: LlmProviderName, timeoutMs: number): LlmProvide
 
 function defaultModelForProvider(provider: LlmProviderName): string {
   switch (provider) {
+    case "openai":
+      return groupedConfig.openAi.model;
     case "azure-openai":
       return groupedConfig.azureOpenAi.model;
     case "bedrock":
@@ -75,9 +95,10 @@ export function getAgenticLlmProviders(
   providerSetting: AgenticCompileProvider = groupedConfig.agenticCompile.provider,
   timeoutMs = groupedConfig.agenticCompile.timeoutMs,
   usageSource?: string,
+  fallbackOrder: LlmProviderName[] = [],
 ): LlmProvider[] {
   const resolvedUsageSource = usageSource ?? "agentic-llm";
-  return resolveProviderOrder(providerSetting).map((providerName) => {
+  return resolveProviderOrder(providerSetting, fallbackOrder).map((providerName) => {
     const provider = buildProvider(providerName, timeoutMs);
     return withUsageLogging(provider, resolvedUsageSource);
   });
@@ -86,9 +107,15 @@ export function getAgenticLlmProviders(
 export async function checkAgenticLlmHealth(
   providerSetting: AgenticCompileProvider = groupedConfig.agenticCompile.provider,
   timeoutMs = 5000,
+  fallbackOrder: LlmProviderName[] = [],
 ): Promise<AgenticLlmHealthStatus> {
-  const fallbackOrder = resolveProviderOrder(providerSetting);
-  const providers = getAgenticLlmProviders(providerSetting, timeoutMs, "health-check:agentic-llm");
+  const resolvedFallbackOrder = resolveProviderOrder(providerSetting, fallbackOrder);
+  const providers = getAgenticLlmProviders(
+    providerSetting,
+    timeoutMs,
+    "health-check:agentic-llm",
+    fallbackOrder,
+  );
   let firstConfiguredStatus: LlmHealthStatus | null = null;
 
   for (const provider of providers) {
@@ -106,7 +133,7 @@ export async function checkAgenticLlmHealth(
         ...status,
         providerSetting,
         selectedProvider: provider.name,
-        fallbackOrder,
+        fallbackOrder: resolvedFallbackOrder,
       };
     }
 
@@ -115,7 +142,7 @@ export async function checkAgenticLlmHealth(
         ...status,
         providerSetting,
         selectedProvider: provider.name,
-        fallbackOrder,
+        fallbackOrder: resolvedFallbackOrder,
       };
     }
   }
@@ -125,7 +152,7 @@ export async function checkAgenticLlmHealth(
       ...firstConfiguredStatus,
       providerSetting,
       selectedProvider: firstConfiguredStatus.provider,
-      fallbackOrder,
+      fallbackOrder: resolvedFallbackOrder,
     };
   }
 
@@ -134,7 +161,7 @@ export async function checkAgenticLlmHealth(
   return {
     ...firstStatus,
     providerSetting,
-    fallbackOrder,
+    fallbackOrder: resolvedFallbackOrder,
     error:
       firstStatus.error ??
       (providerSetting === "auto"
@@ -146,9 +173,10 @@ export async function checkAgenticLlmHealth(
 export async function checkDistillationLlmHealth(
   providerSetting: AgenticCompileProvider = groupedConfig.distillation.provider,
   timeoutMs = groupedConfig.distillation.circuitBreakerHealthTimeoutMs,
+  fallbackOrder: LlmProviderName[] = [],
 ): Promise<AgenticLlmHealthStatus> {
-  const fallbackOrder = resolveDistillationProviderOrder(providerSetting);
-  const providers = fallbackOrder.map((providerName) =>
+  const resolvedFallbackOrder = resolveDistillationProviderOrder(providerSetting, fallbackOrder);
+  const providers = resolvedFallbackOrder.map((providerName) =>
     withUsageLogging(buildProvider(providerName, timeoutMs), "health-check:distillation-llm"),
   );
   let firstConfiguredStatus: LlmHealthStatus | null = null;
@@ -164,7 +192,7 @@ export async function checkDistillationLlmHealth(
         ...status,
         providerSetting,
         selectedProvider: provider.name,
-        fallbackOrder,
+        fallbackOrder: resolvedFallbackOrder,
       };
     }
     if (providerSetting !== "auto") {
@@ -172,7 +200,7 @@ export async function checkDistillationLlmHealth(
         ...status,
         providerSetting,
         selectedProvider: provider.name,
-        fallbackOrder,
+        fallbackOrder: resolvedFallbackOrder,
       };
     }
   }
@@ -182,7 +210,7 @@ export async function checkDistillationLlmHealth(
       ...firstConfiguredStatus,
       providerSetting,
       selectedProvider: firstConfiguredStatus.provider,
-      fallbackOrder,
+      fallbackOrder: resolvedFallbackOrder,
     };
   }
 
@@ -191,7 +219,7 @@ export async function checkDistillationLlmHealth(
   return {
     ...firstStatus,
     providerSetting,
-    fallbackOrder,
+    fallbackOrder: resolvedFallbackOrder,
     error:
       firstStatus.error ??
       (providerSetting === "auto"
