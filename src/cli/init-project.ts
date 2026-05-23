@@ -297,7 +297,7 @@ async function main(): Promise<void> {
 
   if (!options.runSmokeCompile) {
     summary.nextActions = [
-      '必要なら bun run compile --goal "<your task>" --intent edit --json で smoke を実行する',
+      '必要なら bun run compile --goal "<your task>" --change-types bugfix,backend --json で smoke を実行する',
       "bun run doctor でシステム健全性を確認する",
       "mcpConfigSnippet を MCP クライアント設定へ貼り付ける",
       "Admin UI で新規 draft knowledge を review し、必要なものだけ active に昇格する",
@@ -316,7 +316,7 @@ async function main(): Promise<void> {
       "bun run doctor でシステム健全性を確認する",
       "mcpConfigSnippet を MCP クライアント設定へ貼り付ける",
       "Admin UI で draft knowledge の根拠を確認して active/deprecated を整理する",
-      'bun run compile --goal "<your task>" --intent edit --json',
+      'bun run compile --goal "<your task>" --change-types bugfix,backend --json',
     ];
   }
 

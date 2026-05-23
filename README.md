@@ -84,6 +84,12 @@
 | Knowledge lifecycle | ✅ draft/active/deprecated | ❌ | ❌ |
 | MCP standard | ✅ Official SDK | ❌ | ❌ |
 
+### Project Status
+
+memory-router is an active local-first project for personal and team coding-agent workflows. It is usable as a local MCP server, REST API, and admin UI, but it is not a hosted multi-tenant SaaS product. Expect to run your own PostgreSQL/pgvector database and review distilled `draft` knowledge before promoting it to `active`.
+
+The project favors auditability over invisible automation: compile runs, selected knowledge, source links, distillation candidates, evidence checks, and health diagnostics are stored so you can inspect why a context pack was produced.
+
 ---
 
 ## Quick Start
@@ -112,7 +118,10 @@ Use these commands for a first health check:
 
 ```bash
 bun run doctor
-bun run compile --goal "understand this repository's development workflow" --intent plan --json
+bun run compile --goal "understand this repository's development workflow" \
+  --change-types docs,plan \
+  --domains onboarding,workflow \
+  --json
 ```
 
 ### Start Developing
@@ -172,11 +181,13 @@ Candidate outcomes are intentionally separated from final knowledge. `rejected` 
 Generate a token-budgeted context pack tailored to the current task:
 
 ```bash
-bun run compile --goal "fix the authentication middleware" --intent edit
+bun run compile --goal "fix the authentication middleware" \
+  --change-types bugfix,backend \
+  --domains auth
 ```
 
 The compiler:
-1. Resolves retrieval mode from intent and goal keywords
+1. Resolves retrieval mode from `changeTypes` and goal keywords
 2. Searches knowledge (hybrid: full-text + vector) scoped to the repository
 3. Ranks by weighted score (importance, confidence, source evidence)
 4. Allocates token budget across sections (rules → procedures → sources)
@@ -217,9 +228,10 @@ Add to your MCP client configuration:
 | `initial_instructions` | Operating guidance for the agent | Call once at session start |
 | `context_compile` | Generate context pack for current task | **Primary tool** — call before every task |
 | `search_knowledge` | Raw knowledge candidate inspection | When `context_compile` results need investigation |
-| `register_knowledge` | Register new rules or procedures | When the agent discovers reusable patterns |
+| `register_candidate` | Register a lightweight rule/procedure candidate | When the agent discovers reusable patterns |
 | `list_knowledge` | List draft/active/deprecated backlog | When triaging knowledge lifecycle |
 | `update_knowledge` | Update status/title/body/metadata | When promoting or deprecating knowledge |
+| `read_file` | Read wiki Markdown through token windows | When grounding work in long local docs |
 | `memory_search` | Search past conversations and diffs | When looking for specific past context |
 | `memory_fetch` | Fetch a specific memory by ID | When inspecting a specific conversation |
 | `doctor` | System health diagnostics | When compile is degraded/failed |
@@ -231,7 +243,7 @@ Add to your MCP client configuration:
 2. context_compile          → Get task-specific context (primary)
 3. search_knowledge         → Investigate if needed (supplementary)
 4. ... do the work ...
-5. register_knowledge       → Save reusable discoveries
+5. register_candidate       → Save reusable discoveries as candidates
 6. doctor                   → Check system health if issues arise
 ```
 
@@ -249,9 +261,13 @@ For the full MCP tool contract, see [docs/mcp-tools.md](docs/mcp-tools.md).
 | `bun run import:markdown <file>` | Import a single Markdown file |
 | `bun run sync:agent-logs` | Sync Codex / Antigravity logs |
 | `bun run distill:pipeline:once` | Run one wiki-first distillation cycle |
-| `bun run distill:status` | Show distillation target queue and progress |
+| `bun run distill:pipeline -- --write --limit 1 --kind wiki` | Run the staged distillation pipeline explicitly |
+| `bun run distill-target:refresh` | Refresh wiki/vibe/candidate distillation targets |
+| `bun run distill:status` | Show distillation target queue and progress counters |
+| `bun run distill-target:release-stale` | Release stale running distillation targets |
 | `bun run doctor` | Run system diagnostics |
 | `bun run backfill:knowledge-project-context` | Backfill project context on existing knowledge |
+| `./scripts/backup-db.sh` | Dump and zip the PostgreSQL database |
 
 ### Cold Start Flow
 
@@ -273,8 +289,12 @@ bun run distill:pipeline:once
 ### Examples
 
 ```bash
-# Compile with specific intent and JSON output
-bun run compile --goal "fix context compiler" --intent edit --json
+# Compile with task facets and JSON output
+bun run compile --goal "fix context compiler" \
+  --change-types bugfix,backend \
+  --technologies bun,typescript \
+  --domains context-compiler \
+  --json
 
 # Distill one cycle (wiki-first)
 bun run distill:pipeline:once
@@ -292,24 +312,38 @@ The REST API serves the Web UI and can be used independently.
 
 | Method | Endpoint | Description |
 |---|---|---|
+| `GET` | `/api/health` | API health check |
+| `GET` | `/api/overview` | Admin overview metrics |
 | `POST` | `/api/context/compile` | Compile a context pack |
 | `GET` | `/api/context/runs` | List recent compile runs |
+| `GET` | `/api/context/runs/:id` | Compile run detail |
+| `POST` | `/api/context/runs/:id/knowledge-feedback` | Save manual usage feedback for selected knowledge |
 | `GET` | `/api/doctor` | System health report |
 | `GET` | `/api/knowledge` | List / search knowledge items |
 | `POST` | `/api/knowledge` | Create a knowledge item |
+| `POST` | `/api/knowledge/bulk-status` | Bulk promote/deprecate knowledge items |
 | `PUT` | `/api/knowledge/:id` | Update a knowledge item |
+| `POST` | `/api/knowledge/:id/feedback` | Record direct up/down feedback |
 | `DELETE` | `/api/knowledge/:id` | Delete a knowledge item |
+| `GET` | `/api/knowledge/tags` | List applicability tag definitions |
+| `GET` | `/api/sources/health` | Source content health |
 | `GET` | `/api/sources/tree` | Wiki source tree |
+| `GET` | `/api/sources/search` | Search source pages |
+| `POST` | `/api/sources/reindex` | Rebuild source fragments |
 | `GET/POST` | `/api/sources/folders` | List / create folders |
-| `PUT/DELETE` | `/api/sources/folders/:id` | Update / delete a folder |
+| `PUT/DELETE` | `/api/sources/folders/*` | Update / delete a folder |
 | `GET/POST` | `/api/sources/pages` | List / create pages |
-| `GET/PUT/DELETE` | `/api/sources/pages/:id` | Get / update / delete a page |
-| `GET` | `/api/sources/history/:id` | Page Git history |
-| `GET` | `/api/sources/diff/:id` | Page diff between commits |
+| `GET/PUT/DELETE` | `/api/sources/pages/*` | Get / update / delete a page |
+| `GET` | `/api/sources/history/*` | Page Git history |
+| `GET` | `/api/sources/diff/*` | Page diff between commits |
 | `GET/POST` | `/api/vibe-memory` | List / create vibe memories |
 | `GET/DELETE` | `/api/vibe-memory/:id` | Get / delete a memory |
 | `GET` | `/api/agent-diffs` | List agent diff entries |
 | `GET` | `/api/graph` | Knowledge graph data |
+| `GET` | `/api/graph/community-labels` | List persisted community labels |
+| `PUT` | `/api/graph/community-labels/:communityId` | Update a community label |
+| `GET` | `/api/graph/nodes/:id` | Knowledge graph node detail |
+| `GET` | `/api/audit-logs` | Audit log timeline |
 | `GET` | `/api/candidates` | List distillation candidates with outcome stats |
 
 Start the API server:
@@ -414,6 +448,14 @@ bun run src/cli/distillation-target.ts release-paused
 
 The pipeline LaunchAgent load step boots out legacy `vibe/source` distillation jobs to avoid duplicate execution.
 
+### Database Backup
+
+```bash
+./scripts/backup-db.sh
+```
+
+The script uses the `memory-router-db` Docker container by default and writes `backup/db_backup_<timestamp>.zip`. Override `BACKUP_DIR`, `CONTAINER_NAME`, `DB_USER`, `DB_NAME`, or `DB_PASSWORD` when your local deployment differs from `docker-compose.yml`.
+
 ---
 
 ## Embedding
@@ -431,6 +473,26 @@ MEMORY_ROUTER_EMBEDDING_PROVIDER=auto|daemon|cli|disabled
 ```
 
 When set to `auto` (default), the daemon is tried first; on failure, the CLI fallback is used.
+
+---
+
+## Privacy and Safety
+
+- The primary datastore is your local PostgreSQL/pgvector database.
+- Wiki pages are stored under the local `MEMORY_ROUTER_SOURCE_CONTENT_ROOT` directory.
+- Agent log sync reads local Codex and Antigravity log directories when configured.
+- Distillation can call external search providers (`brave`, `exa`) and external LLM providers (`azure-openai`, `bedrock`) if you configure those providers.
+- Use `MEMORY_ROUTER_DISTILLATION_PROVIDER=local-llm` and omit search API keys for the most local setup.
+- `test:integration` is destructive and must target a dedicated database whose name includes `test`.
+
+---
+
+## Current Limitations
+
+- Authentication and multi-user authorization are not part of the local admin UI.
+- Distilled items enter the system as `draft` or candidate records; high-quality operation still depends on human review before promotion.
+- External evidence coverage depends on provider availability, API keys, and rate limits.
+- The web UI is an admin/control-plane surface, not a packaged desktop app or hosted service.
 
 ---
 
@@ -530,11 +592,14 @@ memory-router/
 | Document | Description |
 |---|---|
 | [MCP Tool Contract](docs/mcp-tools.md) | Full MCP tool input/output specifications |
-| [Distillation Conveyor](docs/distillation-conveyor.md) | Staged distillation queue and automation flow |
-| [Candidate List UI Plan](docs/candidate-list-ui-plan.md) | Candidate review API/UI read model |
-| [Cover Evidence Plan](docs/cover-evidence-plan.md) | Evidence coverage and external verification design |
-| [Context Compile/MCP Plan](docs/context-compile-mcp-improvement-plan.md) | Context Compile and MCP hardening plan |
-| [Knowledge Value Lifecycle](docs/knowledge-value-lifecycle.md) | Knowledge lifecycle operation policy |
+| [Project Evaluation](docs/project-evaluation.md) | Evidence-backed project value and current maturity notes |
+| [Knowledge Landscape Concept](docs/knowledge-landscape-concept-design.md) | Concept model for graph/community/knowledge-field views |
+| [Graph Community View Plan](docs/graph-community-view-mvp-plan.md) | Graph community UI/API implementation plan |
+| [Knowledge Usage Signal Redesign](docs/compile-knowledge-usage-signal-redesign-plan.md) | Compile-run usage signal and feedback redesign |
+| [Knowledge Feedback Staged Learning](docs/knowledge-feedback-staged-learning-plan.md) | Manual feedback and staged learning design |
+| [Doctor Operational Hardening](docs/doctor-distillation-operational-hardening-plan.md) | Doctor/distillation health and operational diagnostics |
+| [Failure Experience Candidates](docs/failure-experience-knowledge-candidate-plan.md) | `register_candidate` and failure-experience distillation plan |
+| [Web UI Component Refactor](docs/web-ui-component-dry-refactor-plan.md) | Admin UI component cleanup plan |
 
 ---
 
@@ -561,4 +626,4 @@ memory-router/
 
 ## License
 
-MIT
+[MIT](LICENSE)
