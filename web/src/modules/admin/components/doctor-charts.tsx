@@ -1,4 +1,3 @@
-import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import {
   Bar,
   BarChart,
@@ -12,6 +11,7 @@ import {
   YAxis,
 } from "recharts";
 import type { DoctorReport } from "../repositories/admin.repository";
+import { AdminChartCard } from "./admin-chart-card";
 
 const outcomeLabelMap: Record<string, string> = {
   candidate_rejected: "Rejected",
@@ -192,147 +192,117 @@ export function DoctorCharts({ report }: { report: DoctorReport }) {
 
   return (
     <section className="overview-chart-grid doctor-chart-grid">
-      <Card className="overview-chart-card">
-        <CardHeader>
-          <CardTitle>Compile Quality Mix</CardTitle>
-        </CardHeader>
-        <CardContent>
+      <AdminChartCard title="Compile Quality Mix">
+        <div className="overview-chart-frame">
+          <BarChart responsive style={{ width: "100%", height: "100%" }} data={mix}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="label" />
+            <YAxis allowDecimals={false} />
+            <Tooltip
+              formatter={(value, _name, item) => [
+                `${value} (${item.payload.rate})`,
+                item.payload.label,
+              ]}
+            />
+            <Legend />
+            <Bar dataKey="count">
+              {mix.map((item) => (
+                <Cell key={item.label} fill={item.color} />
+              ))}
+            </Bar>
+          </BarChart>
+        </div>
+      </AdminChartCard>
+
+      <AdminChartCard title="Compile Latency">
+        {hasLatency ? (
           <div className="overview-chart-frame">
-            <BarChart responsive style={{ width: "100%", height: "100%" }} data={mix}>
+            <BarChart responsive style={{ width: "100%", height: "100%" }} data={latency}>
               <CartesianGrid strokeDasharray="3 3" vertical={false} />
               <XAxis dataKey="label" />
               <YAxis allowDecimals={false} />
-              <Tooltip
-                formatter={(value, _name, item) => [
-                  `${value} (${item.payload.rate})`,
-                  item.payload.label,
-                ]}
-              />
+              <Tooltip formatter={(value) => `${value}ms`} />
               <Legend />
-              <Bar dataKey="count">
-                {mix.map((item) => (
-                  <Cell key={item.label} fill={item.color} />
-                ))}
-              </Bar>
+              <Bar dataKey="durationMs" fill="#0f766e" />
             </BarChart>
           </div>
-        </CardContent>
-      </Card>
+        ) : (
+          <p className="state-cell">No latency data</p>
+        )}
+      </AdminChartCard>
 
-      <Card className="overview-chart-card">
-        <CardHeader>
-          <CardTitle>Compile Latency</CardTitle>
-        </CardHeader>
-        <CardContent>
-          {hasLatency ? (
-            <div className="overview-chart-frame">
-              <BarChart responsive style={{ width: "100%", height: "100%" }} data={latency}>
-                <CartesianGrid strokeDasharray="3 3" vertical={false} />
-                <XAxis dataKey="label" />
-                <YAxis allowDecimals={false} />
-                <Tooltip formatter={(value) => `${value}ms`} />
-                <Legend />
-                <Bar dataKey="durationMs" fill="#0f766e" />
-              </BarChart>
-            </div>
-          ) : (
-            <p className="state-cell">No latency data</p>
-          )}
-        </CardContent>
-      </Card>
+      <AdminChartCard title="Distillation Queue">
+        <div className="overview-chart-frame">
+          <BarChart responsive style={{ width: "100%", height: "100%" }} data={queue}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="target" />
+            <YAxis allowDecimals={false} />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="queued" stackId="queue" fill="#2563eb" />
+            <Bar dataKey="running" stackId="queue" fill="#0891b2" />
+            <Bar dataKey="paused" stackId="queue" fill="#64748b" />
+            <Bar dataKey="failed" stackId="queue" fill="#dc2626" />
+          </BarChart>
+        </div>
+      </AdminChartCard>
 
-      <Card className="overview-chart-card">
-        <CardHeader>
-          <CardTitle>Distillation Queue</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overview-chart-frame">
-            <BarChart responsive style={{ width: "100%", height: "100%" }} data={queue}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="target" />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="queued" stackId="queue" fill="#2563eb" />
-              <Bar dataKey="running" stackId="queue" fill="#0891b2" />
-              <Bar dataKey="paused" stackId="queue" fill="#64748b" />
-              <Bar dataKey="failed" stackId="queue" fill="#dc2626" />
-            </BarChart>
-          </div>
-        </CardContent>
-      </Card>
+      <AdminChartCard title="Distillation Outcomes">
+        <div className="overview-chart-frame">
+          <BarChart
+            responsive
+            style={{ width: "100%", height: "100%" }}
+            data={
+              outcomes.length > 0
+                ? outcomes
+                : [{ reason: "none", label: "none", vibe: 0, source: 0, total: 0 }]
+            }
+          >
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="label" minTickGap={24} />
+            <YAxis allowDecimals={false} />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="vibe" stackId="outcome" fill="#14b8a6" />
+            <Bar dataKey="source" stackId="outcome" fill="#3b82f6" />
+          </BarChart>
+        </div>
+      </AdminChartCard>
 
-      <Card className="overview-chart-card">
-        <CardHeader>
-          <CardTitle>Distillation Outcomes</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overview-chart-frame">
-            <BarChart
-              responsive
-              style={{ width: "100%", height: "100%" }}
-              data={
-                outcomes.length > 0
-                  ? outcomes
-                  : [{ reason: "none", label: "none", vibe: 0, source: 0, total: 0 }]
-              }
-            >
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" minTickGap={24} />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="vibe" stackId="outcome" fill="#14b8a6" />
-              <Bar dataKey="source" stackId="outcome" fill="#3b82f6" />
-            </BarChart>
-          </div>
-        </CardContent>
-      </Card>
+      <AdminChartCard title="Knowledge Lifecycle Signals">
+        <div className="overview-chart-frame">
+          <BarChart responsive style={{ width: "100%", height: "100%" }} data={lifecycle}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="label" minTickGap={24} />
+            <YAxis allowDecimals={false} />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="count" fill="#475569" />
+          </BarChart>
+        </div>
+      </AdminChartCard>
 
-      <Card className="overview-chart-card">
-        <CardHeader>
-          <CardTitle>Knowledge Lifecycle Signals</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overview-chart-frame">
-            <BarChart responsive style={{ width: "100%", height: "100%" }} data={lifecycle}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" minTickGap={24} />
-              <YAxis allowDecimals={false} />
-              <Tooltip />
-              <Legend />
-              <Bar dataKey="count" fill="#475569" />
-            </BarChart>
-          </div>
-        </CardContent>
-      </Card>
-
-      <Card className="overview-chart-card">
-        <CardHeader>
-          <CardTitle>Sync Freshness</CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="overview-chart-frame">
-            <ComposedChart responsive style={{ width: "100%", height: "100%" }} data={sync}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="state" />
-              <YAxis yAxisId="files" allowDecimals={false} />
-              <YAxis yAxisId="age" orientation="right" />
-              <Tooltip />
-              <Legend />
-              <Bar yAxisId="files" dataKey="cursorFiles" fill="#2563eb" />
-              <Line
-                yAxisId="age"
-                type="monotone"
-                dataKey="syncAgeMinutes"
-                stroke="#f59e0b"
-                strokeWidth={2}
-                dot={false}
-              />
-            </ComposedChart>
-          </div>
-        </CardContent>
-      </Card>
+      <AdminChartCard title="Sync Freshness">
+        <div className="overview-chart-frame">
+          <ComposedChart responsive style={{ width: "100%", height: "100%" }} data={sync}>
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="state" />
+            <YAxis yAxisId="files" allowDecimals={false} />
+            <YAxis yAxisId="age" orientation="right" />
+            <Tooltip />
+            <Legend />
+            <Bar yAxisId="files" dataKey="cursorFiles" fill="#2563eb" />
+            <Line
+              yAxisId="age"
+              type="monotone"
+              dataKey="syncAgeMinutes"
+              stroke="#f59e0b"
+              strokeWidth={2}
+              dot={false}
+            />
+          </ComposedChart>
+        </div>
+      </AdminChartCard>
     </section>
   );
 }

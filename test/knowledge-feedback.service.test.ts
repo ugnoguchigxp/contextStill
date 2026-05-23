@@ -126,7 +126,17 @@ describe("knowledge-feedback.service", () => {
     mockSelect.mockReturnValueOnce(makeChain([{ itemId: "k1" }]));
     // 3. loadExistingFeedbackEvents -> existing verdict was 'off_topic'
     mockSelect.mockReturnValueOnce(
-      makeChain([{ id: "event-1", knowledgeId: "k1", verdict: "off_topic", reason: "old-reason" }]),
+      makeChain([
+        {
+          id: "event-1",
+          knowledgeId: "k1",
+          verdict: "off_topic",
+          actor: "user",
+          reason: "old-reason",
+          metadata: {},
+          updatedAt: new Date(),
+        },
+      ]),
     );
 
     // db.update Mock
@@ -151,7 +161,17 @@ describe("knowledge-feedback.service", () => {
     mockSelect.mockReturnValueOnce(makeChain([{ itemId: "k1" }]));
     // 3. loadExistingFeedbackEvents -> existing verdict is already 'used'
     mockSelect.mockReturnValueOnce(
-      makeChain([{ id: "event-1", knowledgeId: "k1", verdict: "used", reason: "helpful" }]),
+      makeChain([
+        {
+          id: "event-1",
+          knowledgeId: "k1",
+          verdict: "used",
+          actor: "user",
+          reason: "helpful",
+          metadata: {},
+          updatedAt: new Date(),
+        },
+      ]),
     );
 
     const result = await recordCompileRunKnowledgeFeedback({
@@ -218,7 +238,17 @@ describe("knowledge-feedback.service", () => {
     mockSelect.mockReturnValueOnce(makeChain([{ itemId: "k1" }]));
     // Existing verdict was 'wrong'
     mockSelect.mockReturnValueOnce(
-      makeChain([{ id: "event-1", knowledgeId: "k1", verdict: "wrong", reason: "flawed" }]),
+      makeChain([
+        {
+          id: "event-1",
+          knowledgeId: "k1",
+          verdict: "wrong",
+          actor: "user",
+          reason: "flawed",
+          metadata: {},
+          updatedAt: new Date(),
+        },
+      ]),
     );
 
     // db.update for changing knowledgeUsageEvents
@@ -236,5 +266,21 @@ describe("knowledge-feedback.service", () => {
     expect(result.updatedCount).toBe(1);
     expect(result.queueDismissedCount).toBe(1); // Dismissed!
     expect(mockUpdate).toHaveBeenCalledTimes(2); // 1 for event, 1 for queue dismissal
+  });
+
+  test("accepts not_used verdict and does not enqueue review queue", async () => {
+    mockSelect.mockReturnValueOnce(makeChain([{ id: "run-1" }]));
+    mockSelect.mockReturnValueOnce(makeChain([{ itemId: "k1" }]));
+    mockSelect.mockReturnValueOnce(makeChain([]));
+    mockInsert.mockReturnValueOnce(makeChain([{ id: "event-not-used-1" }]));
+
+    const result = await recordCompileRunKnowledgeFeedback({
+      runId: "run-1",
+      items: [{ knowledgeId: "k1", verdict: "not_used" }],
+    });
+
+    expect(result.savedCount).toBe(1);
+    expect(result.queueCreatedCount).toBe(0);
+    expect(result.queueDismissedCount).toBe(0);
   });
 });

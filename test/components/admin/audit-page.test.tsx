@@ -50,7 +50,7 @@ describe("AuditLogsPage", () => {
     // モックデータが表示されていることを確認
     expect(screen.getAllByText("test_event").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Audit Events")).toBeInTheDocument();
-    expect(screen.getByText("Previous")).toBeInTheDocument();
+    expect(screen.getByText("Prev")).toBeInTheDocument();
     expect(screen.getByText("Next")).toBeInTheDocument();
     expect(screen.getByText(/Showing/)).toBeInTheDocument();
   });

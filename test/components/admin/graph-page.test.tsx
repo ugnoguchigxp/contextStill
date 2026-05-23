@@ -1,6 +1,6 @@
-import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 /** @vitest-environment jsdom */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GraphPage } from "../../../web/src/modules/admin/components/graph.page";
@@ -9,6 +9,7 @@ import {
   type GraphSnapshot,
   fetchGraphNodeDetail,
   fetchGraphSnapshot,
+  updateGraphCommunityLabel,
 } from "../../../web/src/modules/admin/repositories/admin.repository";
 
 // ResizeObserver のモック
@@ -23,6 +24,7 @@ global.ResizeObserver = ResizeObserverMock as any;
 vi.mock("../../../web/src/modules/admin/repositories/admin.repository", () => ({
   fetchGraphSnapshot: vi.fn(),
   fetchGraphNodeDetail: vi.fn(),
+  updateGraphCommunityLabel: vi.fn(),
 }));
 
 const mockGraphData: GraphSnapshot = {
@@ -58,6 +60,9 @@ const mockGraphData: GraphSnapshot = {
       weight: 0.8,
     },
   ],
+  communities: [],
+  supernodes: [],
+  superedges: [],
   stats: {
     visibleKnowledgeCount: 2,
     totalKnowledgeCount: 2,
@@ -68,6 +73,12 @@ const mockGraphData: GraphSnapshot = {
     sourceEdgeCount: 0,
     relationEdgeCount: 0,
     sourceRefCount: 0,
+    communityCount: 0,
+    largestCommunitySize: 0,
+    orphanNodeCount: 0,
+    deadCommunityCount: 0,
+    staleCommunityCount: 0,
+    thinEvidenceCommunityCount: 0,
   },
 };
 
@@ -139,6 +150,175 @@ describe("GraphPage", () => {
 
     fireEvent.change(viewModeSelect, { target: { value: "semantic" } });
     expect(fetchGraphSnapshot).toHaveBeenCalled();
+  });
+
+  it("handles community view with relation axes and community stats", async () => {
+    vi.mocked(fetchGraphSnapshot).mockResolvedValue({
+      ...mockGraphData,
+      nodes: [
+        {
+          id: "knowledge:n1",
+          label: "Node 1",
+          kind: "knowledge",
+          group: "rule",
+          weight: 1,
+          status: "active",
+          embedded: true,
+          communityId: "community:1",
+          communityKey: "a".repeat(64),
+          communityLabel: "Core Reliability",
+          communityRank: 1,
+          communitySize: 2,
+        },
+        {
+          id: "knowledge:n2",
+          label: "Node 2",
+          kind: "knowledge",
+          group: "procedure",
+          weight: 0.5,
+          status: "draft",
+          embedded: false,
+          communityId: "community:1",
+          communityKey: "a".repeat(64),
+          communityLabel: "Core Reliability",
+          communityRank: 1,
+          communitySize: 2,
+        },
+      ],
+      communities: [
+        {
+          communityId: "community:1",
+          communityKey: "a".repeat(64),
+          communityLabel: "Core Reliability",
+          communityRank: 1,
+          size: 2,
+          typeCounts: { rule: 1, procedure: 1 },
+          statusCounts: { active: 1, draft: 1 },
+          embeddedCount: 1,
+          compileSelectCount: 0,
+          staleNodeCount: 0,
+          sourceRefCount: 1,
+          sourceRefDensity: 0.5,
+          health: { dead: true, stale: false, thinEvidence: true },
+        },
+      ],
+      stats: {
+        ...mockGraphData.stats,
+        communityCount: 1,
+        largestCommunitySize: 2,
+        orphanNodeCount: 0,
+        deadCommunityCount: 1,
+        staleCommunityCount: 0,
+        thinEvidenceCommunityCount: 1,
+      },
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GraphPage />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText("Node 1");
+    const selects = screen.getAllByRole("combobox");
+    const viewModeSelect = selects[1];
+    fireEvent.change(viewModeSelect, { target: { value: "community" } });
+
+    expect(fetchGraphSnapshot).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        view: "community",
+        communityDisplay: "detail",
+        relationAxes: ["session", "project", "source"],
+      }),
+    );
+    expect(await screen.findByText("Communities")).toBeInTheDocument();
+    expect(screen.getByText("Largest")).toBeInTheDocument();
+    expect(screen.getByText("Orphans")).toBeInTheDocument();
+    expect(screen.getByText("Cold")).toBeInTheDocument();
+    expect(screen.getByText("Thin")).toBeInTheDocument();
+    expect(screen.getByText("Community Summary")).toBeInTheDocument();
+  });
+
+  it("supports community supernode mode and label save", async () => {
+    vi.mocked(fetchGraphSnapshot).mockResolvedValue({
+      ...mockGraphData,
+      nodes: [],
+      edges: [],
+      communities: [
+        {
+          communityId: "community:1",
+          communityKey: "b".repeat(64),
+          communityLabel: "Legacy Label",
+          communityRank: 1,
+          size: 3,
+          typeCounts: { rule: 2, procedure: 1 },
+          statusCounts: { active: 3 },
+          embeddedCount: 2,
+          compileSelectCount: 4,
+          staleNodeCount: 1,
+          sourceRefCount: 2,
+          sourceRefDensity: 0.66,
+          health: { dead: false, stale: false, thinEvidence: false },
+        },
+      ],
+      supernodes: [
+        {
+          id: "community:1",
+          label: "Legacy Label",
+          communityKey: "b".repeat(64),
+          size: 3,
+          communityRank: 1,
+          health: { dead: false, stale: false, thinEvidence: false },
+        },
+      ],
+      superedges: [],
+      stats: {
+        ...mockGraphData.stats,
+        communityCount: 1,
+        largestCommunitySize: 3,
+        orphanNodeCount: 0,
+      },
+    });
+    vi.mocked(updateGraphCommunityLabel).mockResolvedValue({
+      communityKey: "b".repeat(64),
+      label: "New Label",
+      note: null,
+      updatedAt: "2026-05-23T00:00:00.000Z",
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GraphPage />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText("Node Detail");
+    const selects = screen.getAllByRole("combobox");
+    const viewModeSelect = selects[1];
+    fireEvent.change(viewModeSelect, { target: { value: "community" } });
+
+    const displaySelect = await screen.findByDisplayValue("Detail");
+    fireEvent.change(displaySelect, { target: { value: "supernode" } });
+
+    expect(fetchGraphSnapshot).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        view: "community",
+        communityDisplay: "supernode",
+      }),
+    );
+
+    const input = await screen.findByPlaceholderText("Community label");
+    fireEvent.change(input, { target: { value: "New Label" } });
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Save" })).toBeEnabled();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Save" }));
+    await waitFor(() => {
+      expect(updateGraphCommunityLabel).toHaveBeenCalledWith({
+        communityKey: "b".repeat(64),
+        label: "New Label",
+      });
+    });
   });
 
   it("handles relation axis toggling in relation view mode", async () => {
@@ -247,6 +427,9 @@ describe("GraphPage", () => {
     vi.mocked(fetchGraphSnapshot).mockResolvedValue({
       nodes: [],
       edges: [],
+      communities: [],
+      supernodes: [],
+      superedges: [],
       stats: {
         visibleKnowledgeCount: 0,
         totalKnowledgeCount: 0,
@@ -257,6 +440,12 @@ describe("GraphPage", () => {
         sourceEdgeCount: 0,
         relationEdgeCount: 0,
         sourceRefCount: 0,
+        communityCount: 0,
+        largestCommunitySize: 0,
+        orphanNodeCount: 0,
+        deadCommunityCount: 0,
+        staleCommunityCount: 0,
+        thinEvidenceCommunityCount: 0,
       },
     });
 
@@ -284,6 +473,9 @@ describe("GraphPage", () => {
         },
       ],
       edges: [],
+      communities: [],
+      supernodes: [],
+      superedges: [],
       stats: {
         visibleKnowledgeCount: 1,
         totalKnowledgeCount: 1,
@@ -294,6 +486,12 @@ describe("GraphPage", () => {
         sourceEdgeCount: 0,
         relationEdgeCount: 0,
         sourceRefCount: 0,
+        communityCount: 1,
+        largestCommunitySize: 1,
+        orphanNodeCount: 1,
+        deadCommunityCount: 0,
+        staleCommunityCount: 0,
+        thinEvidenceCommunityCount: 0,
       },
     });
 

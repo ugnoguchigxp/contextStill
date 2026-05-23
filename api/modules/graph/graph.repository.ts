@@ -1,6 +1,8 @@
-import { and, desc, inArray, sql } from "drizzle-orm";
+import { createHash } from "node:crypto";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../../../src/db/index.js";
 import {
+  knowledgeCommunityLabels,
   knowledgeItems,
   knowledgeSourceLinks,
   sourceFragments,
@@ -8,6 +10,7 @@ import {
 } from "../../../src/db/schema.js";
 import { normalizeKnowledgeScore, toUnitKnowledgeScore } from "../../../src/lib/score-scale.js";
 import { normalizeRepoKey } from "../../../src/modules/context-compiler/query-context.js";
+import { computeDecayFactor } from "../../../src/modules/knowledge/knowledge-value.service.js";
 
 /** グラフ表示専用の軽量ノード型（body 等の重いフィールドを除外） */
 export type GraphNode = {
@@ -18,6 +21,11 @@ export type GraphNode = {
   weight: number;
   status: string;
   embedded: boolean;
+  communityId?: string;
+  communityRank?: number;
+  communitySize?: number;
+  communityKey?: string;
+  communityLabel?: string;
 };
 
 /** ノードクリック時に取得する詳細型 */
@@ -33,6 +41,9 @@ export type GraphNodeDetail = {
   importance: number;
   bodyPreview: string;
   embedded: boolean;
+  communityId?: string;
+  communityRank?: number;
+  communitySize?: number;
 };
 
 export type GraphEdge = {
@@ -46,15 +57,57 @@ export type GraphEdge = {
   weight: number;
 };
 
+export type GraphCommunityHealth = {
+  dead: boolean;
+  stale: boolean;
+  thinEvidence: boolean;
+};
+
+export type GraphCommunitySummary = {
+  communityId: string;
+  communityKey: string;
+  communityLabel: string;
+  communityRank: number;
+  size: number;
+  typeCounts: Record<string, number>;
+  statusCounts: Record<string, number>;
+  embeddedCount: number;
+  compileSelectCount: number;
+  staleNodeCount: number;
+  sourceRefCount: number;
+  sourceRefDensity: number;
+  health: GraphCommunityHealth;
+  note?: string;
+  labelUpdatedAt?: string;
+};
+
+export type GraphSupernode = {
+  id: string;
+  label: string;
+  communityKey: string;
+  size: number;
+  communityRank: number;
+  health: GraphCommunityHealth;
+};
+
+export type GraphSuperedge = {
+  id: string;
+  source: string;
+  target: string;
+  weight: number;
+};
+
 type GraphStatusFilter = "current" | "active" | "draft" | "deprecated" | "all";
 
-type GraphViewMode = "relation" | "semantic";
+type GraphViewMode = "relation" | "semantic" | "community";
 export type GraphRelationAxis = "session" | "project" | "source";
+export type GraphCommunityDisplayMode = "detail" | "supernode";
 
 export type GraphSnapshotParams = {
   limit: number;
   status?: GraphStatusFilter;
   view?: GraphViewMode;
+  communityDisplay?: GraphCommunityDisplayMode;
   relationAxes?: GraphRelationAxis[];
   minSimilarity?: number;
   semanticTopK?: number;
@@ -68,6 +121,34 @@ type RelationNodeContext = {
   projectKey?: string;
   sourceDocIds?: string[];
 };
+
+type CommunityAssignment = {
+  communityId: string;
+  communityRank: number;
+  communitySize: number;
+  communityKey: string;
+  communityLabel: string;
+};
+
+type CommunityComponent = {
+  communityId: string;
+  communityRank: number;
+  communitySize: number;
+  communityKey: string;
+  members: string[];
+};
+
+type CommunityLabelRecord = {
+  communityKey: string;
+  label: string;
+  note: string | null;
+  updatedAt: Date;
+};
+
+const COMMUNITY_MIN_EDGE_WEIGHT = 0.7;
+const COMMUNITY_STALE_DECAY_THRESHOLD = 0.82;
+const COMMUNITY_STALE_RATIO_THRESHOLD = 0.5;
+const COMMUNITY_THIN_EVIDENCE_DENSITY_THRESHOLD = 0.6;
 
 function resolveStatusFilter(status: GraphStatusFilter | undefined): string[] | undefined {
   switch (status ?? "current") {
@@ -126,8 +207,32 @@ function knowledgeNodeId(id: string): string {
   return `knowledge:${id}`;
 }
 
+function rawKnowledgeId(nodeId: string): string {
+  return nodeId.replace(/^knowledge:/, "");
+}
+
 function unorderedPairKey(source: string, target: string): string {
   return [source, target].sort().join("::");
+}
+
+function hashCommunityMembers(memberNodeIds: string[]): string {
+  const digestSource = memberNodeIds
+    .map((id) => rawKnowledgeId(id))
+    .sort()
+    .join(",");
+  return createHash("sha256").update(digestSource).digest("hex");
+}
+
+function normalizeKnowledgeType(type: string): "rule" | "procedure" {
+  return type === "procedure" ? "procedure" : "rule";
+}
+
+function normalizeKnowledgeScope(scope: string): "repo" | "global" {
+  return scope === "global" ? "global" : "repo";
+}
+
+function incrementCount(map: Record<string, number>, key: string) {
+  map[key] = (map[key] ?? 0) + 1;
 }
 
 function pickProjectKey(
@@ -185,6 +290,11 @@ function sourceDocIdsFromMetadata(metadata: Record<string, unknown>): string[] {
   }
 
   return [...refs];
+}
+
+function isDistilledKnowledgeMetadata(metadata: Record<string, unknown>): boolean {
+  const coverEvidenceResultId = valueAsString(metadata.coverEvidenceResultId);
+  return Boolean(coverEvidenceResultId);
 }
 
 async function buildSessionProjectLookup(sessionIds: string[]): Promise<Map<string, string>> {
@@ -482,9 +592,327 @@ async function buildSemanticEdges(params: {
   return edges;
 }
 
+function buildCommunityAssignments(params: {
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  minEdgeWeight: number;
+}): {
+  assignments: Map<string, CommunityAssignment>;
+  components: CommunityComponent[];
+  communityCount: number;
+  largestCommunitySize: number;
+  orphanNodeCount: number;
+} {
+  const ids = params.nodes.map((node) => node.id);
+  if (ids.length === 0) {
+    return {
+      assignments: new Map(),
+      components: [],
+      communityCount: 0,
+      largestCommunitySize: 0,
+      orphanNodeCount: 0,
+    };
+  }
+
+  const parent = new Map<string, string>(ids.map((id) => [id, id]));
+  const rank = new Map<string, number>(ids.map((id) => [id, 0]));
+  const knownIds = new Set(ids);
+  const nodeWeightById = new Map(params.nodes.map((node) => [node.id, node.weight]));
+
+  const find = (id: string): string => {
+    let cursor = id;
+    while ((parent.get(cursor) ?? cursor) !== cursor) {
+      cursor = parent.get(cursor) ?? cursor;
+    }
+    let compress = id;
+    while ((parent.get(compress) ?? compress) !== cursor) {
+      const next = parent.get(compress) ?? compress;
+      parent.set(compress, cursor);
+      compress = next;
+    }
+    return cursor;
+  };
+
+  const union = (left: string, right: string) => {
+    const rootLeft = find(left);
+    const rootRight = find(right);
+    if (rootLeft === rootRight) return;
+    const leftRank = rank.get(rootLeft) ?? 0;
+    const rightRank = rank.get(rootRight) ?? 0;
+    if (leftRank < rightRank) {
+      parent.set(rootLeft, rootRight);
+      return;
+    }
+    if (leftRank > rightRank) {
+      parent.set(rootRight, rootLeft);
+      return;
+    }
+    parent.set(rootRight, rootLeft);
+    rank.set(rootLeft, leftRank + 1);
+  };
+
+  for (const edge of params.edges) {
+    if (edge.weight < params.minEdgeWeight) continue;
+    if (!knownIds.has(edge.source) || !knownIds.has(edge.target)) continue;
+    union(edge.source, edge.target);
+  }
+
+  const componentMembers = new Map<string, string[]>();
+  for (const id of ids) {
+    const root = find(id);
+    const members = componentMembers.get(root) ?? [];
+    members.push(id);
+    componentMembers.set(root, members);
+  }
+
+  const sortedComponentMembers = [...componentMembers.values()].map((members) =>
+    [...members].sort((a, b) => rawKnowledgeId(a).localeCompare(rawKnowledgeId(b))),
+  );
+  sortedComponentMembers.sort((a, b) => {
+    const sizeDiff = b.length - a.length;
+    if (sizeDiff !== 0) return sizeDiff;
+    const maxWeightA = Math.max(...a.map((id) => nodeWeightById.get(id) ?? 0));
+    const maxWeightB = Math.max(...b.map((id) => nodeWeightById.get(id) ?? 0));
+    const weightDiff = maxWeightB - maxWeightA;
+    if (Math.abs(weightDiff) > Number.EPSILON) return weightDiff;
+    const firstA = a[0] ?? "";
+    const firstB = b[0] ?? "";
+    return rawKnowledgeId(firstA).localeCompare(rawKnowledgeId(firstB));
+  });
+
+  const components: CommunityComponent[] = [];
+  const assignments = new Map<string, CommunityAssignment>();
+  let orphanNodeCount = 0;
+  for (let index = 0; index < sortedComponentMembers.length; index += 1) {
+    const members = sortedComponentMembers[index];
+    if (!members) continue;
+    const communityRank = index + 1;
+    const communityId = `community:${communityRank}`;
+    const communitySize = members.length;
+    const communityKey = hashCommunityMembers(members);
+    const communityLabel = communityId;
+    components.push({
+      communityId,
+      communityRank,
+      communitySize,
+      communityKey,
+      members,
+    });
+    if (communitySize === 1) orphanNodeCount += 1;
+    for (const member of members) {
+      assignments.set(member, {
+        communityId,
+        communityRank,
+        communitySize,
+        communityKey,
+        communityLabel,
+      });
+    }
+  }
+
+  return {
+    assignments,
+    components,
+    communityCount: components.length,
+    largestCommunitySize: components[0]?.communitySize ?? 0,
+    orphanNodeCount,
+  };
+}
+
+async function listCommunityLabelsByKeys(
+  communityKeys: string[],
+): Promise<Map<string, CommunityLabelRecord>> {
+  const keys = [...new Set(communityKeys.filter((key) => key.trim().length > 0))];
+  if (keys.length === 0) return new Map();
+  let rows: Array<{
+    communityKey: string;
+    label: string;
+    note: string | null;
+    updatedAt: Date;
+  }> = [];
+  try {
+    rows = await db
+      .select({
+        communityKey: knowledgeCommunityLabels.communityKey,
+        label: knowledgeCommunityLabels.label,
+        note: knowledgeCommunityLabels.note,
+        updatedAt: knowledgeCommunityLabels.updatedAt,
+      })
+      .from(knowledgeCommunityLabels)
+      .where(inArray(knowledgeCommunityLabels.communityKey, keys));
+  } catch {
+    return new Map();
+  }
+
+  const result = new Map<string, CommunityLabelRecord>();
+  for (const row of rows) {
+    result.set(row.communityKey, {
+      communityKey: row.communityKey,
+      label: row.label,
+      note: row.note,
+      updatedAt: row.updatedAt,
+    });
+  }
+  return result;
+}
+
+function buildCommunitySummaries(params: {
+  components: CommunityComponent[];
+  nodes: GraphNode[];
+  labelsByKey: Map<string, CommunityLabelRecord>;
+  sourceRefCountByNodeId: Map<string, number>;
+  compileSelectCountByNodeId: Map<string, number>;
+  decayFactorByNodeId: Map<string, number>;
+  distilledByNodeId: Map<string, boolean>;
+}): GraphCommunitySummary[] {
+  const nodeById = new Map(params.nodes.map((node) => [node.id, node]));
+  const summaries: GraphCommunitySummary[] = [];
+  for (const component of params.components) {
+    const typeCounts: Record<string, number> = {};
+    const statusCounts: Record<string, number> = {};
+    let embeddedCount = 0;
+    let compileSelectCount = 0;
+    let staleNodeCount = 0;
+    let sourceRefCount = 0;
+    const observedMemberNodeIds = component.members.filter(
+      (memberNodeId) => params.distilledByNodeId.get(memberNodeId) === true,
+    );
+    const healthMemberNodeIds =
+      observedMemberNodeIds.length > 0 ? observedMemberNodeIds : component.members;
+    const healthMemberNodeIdSet = new Set(healthMemberNodeIds);
+    let activeCount = 0;
+
+    for (const memberNodeId of component.members) {
+      const node = nodeById.get(memberNodeId);
+      if (!node) continue;
+      incrementCount(typeCounts, node.group);
+      incrementCount(statusCounts, node.status);
+      if (node.embedded) embeddedCount += 1;
+      if (healthMemberNodeIdSet.has(memberNodeId)) {
+        if (node.status === "active") activeCount += 1;
+        compileSelectCount += params.compileSelectCountByNodeId.get(memberNodeId) ?? 0;
+      }
+      const decayFactor = params.decayFactorByNodeId.get(memberNodeId) ?? 1;
+      if (decayFactor < COMMUNITY_STALE_DECAY_THRESHOLD) staleNodeCount += 1;
+      sourceRefCount += params.sourceRefCountByNodeId.get(memberNodeId) ?? 0;
+    }
+
+    const sourceRefDensity =
+      component.communitySize > 0 ? sourceRefCount / component.communitySize : 0;
+    const staleRatio = component.communitySize > 0 ? staleNodeCount / component.communitySize : 0;
+    const health = {
+      dead: activeCount > 0 && compileSelectCount === 0,
+      stale: staleRatio >= COMMUNITY_STALE_RATIO_THRESHOLD,
+      thinEvidence: sourceRefDensity < COMMUNITY_THIN_EVIDENCE_DENSITY_THRESHOLD,
+    };
+    const labelRow = params.labelsByKey.get(component.communityKey);
+    const communityLabel = labelRow?.label?.trim() ? labelRow.label.trim() : component.communityId;
+    summaries.push({
+      communityId: component.communityId,
+      communityKey: component.communityKey,
+      communityLabel,
+      communityRank: component.communityRank,
+      size: component.communitySize,
+      typeCounts,
+      statusCounts,
+      embeddedCount,
+      compileSelectCount,
+      staleNodeCount,
+      sourceRefCount,
+      sourceRefDensity,
+      health,
+      note: labelRow?.note ?? undefined,
+      labelUpdatedAt: labelRow?.updatedAt?.toISOString(),
+    });
+  }
+  return summaries.sort((a, b) => a.communityRank - b.communityRank);
+}
+
+function buildSupernodes(communities: GraphCommunitySummary[]): GraphSupernode[] {
+  return communities.map((community) => ({
+    id: community.communityId,
+    label: community.communityLabel,
+    communityKey: community.communityKey,
+    size: community.size,
+    communityRank: community.communityRank,
+    health: community.health,
+  }));
+}
+
+function buildSuperedges(params: {
+  edges: GraphEdge[];
+  assignmentByNodeId: Map<string, CommunityAssignment>;
+}): GraphSuperedge[] {
+  const countsByPair = new Map<string, { source: string; target: string; weight: number }>();
+  for (const edge of params.edges) {
+    const sourceCommunity = params.assignmentByNodeId.get(edge.source)?.communityId;
+    const targetCommunity = params.assignmentByNodeId.get(edge.target)?.communityId;
+    if (!sourceCommunity || !targetCommunity || sourceCommunity === targetCommunity) continue;
+    const [left, right] =
+      sourceCommunity < targetCommunity
+        ? [sourceCommunity, targetCommunity]
+        : [targetCommunity, sourceCommunity];
+    const pairKey = `${left}::${right}`;
+    const existing = countsByPair.get(pairKey);
+    if (existing) {
+      existing.weight += 1;
+      continue;
+    }
+    countsByPair.set(pairKey, { source: left, target: right, weight: 1 });
+  }
+
+  return [...countsByPair.values()]
+    .sort((a, b) => b.weight - a.weight || a.source.localeCompare(b.source))
+    .map((edge) => ({
+      id: `superedge:${edge.source}:${edge.target}`,
+      source: edge.source,
+      target: edge.target,
+      weight: edge.weight,
+    }));
+}
+
+function buildCommunityNodesWithLabels(params: {
+  nodes: GraphNode[];
+  assignments: Map<string, CommunityAssignment>;
+  summariesById: Map<string, GraphCommunitySummary>;
+}): GraphNode[] {
+  return params.nodes.map((node) => {
+    const assignment = params.assignments.get(node.id);
+    if (!assignment) return node;
+    const summary = params.summariesById.get(assignment.communityId);
+    return {
+      ...node,
+      communityId: assignment.communityId,
+      communityRank: assignment.communityRank,
+      communitySize: assignment.communitySize,
+      communityKey: assignment.communityKey,
+      communityLabel: summary?.communityLabel ?? assignment.communityLabel,
+    };
+  });
+}
+
+function collectCommunityHealthCounts(communities: GraphCommunitySummary[]): {
+  deadCommunityCount: number;
+  staleCommunityCount: number;
+  thinEvidenceCommunityCount: number;
+} {
+  let deadCommunityCount = 0;
+  let staleCommunityCount = 0;
+  let thinEvidenceCommunityCount = 0;
+  for (const community of communities) {
+    if (community.health.dead) deadCommunityCount += 1;
+    if (community.health.stale) staleCommunityCount += 1;
+    if (community.health.thinEvidence) thinEvidenceCommunityCount += 1;
+  }
+  return { deadCommunityCount, staleCommunityCount, thinEvidenceCommunityCount };
+}
+
 export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
   nodes: GraphNode[];
   edges: GraphEdge[];
+  communities: GraphCommunitySummary[];
+  supernodes: GraphSupernode[];
+  superedges: GraphSuperedge[];
   stats: {
     visibleKnowledgeCount: number;
     totalKnowledgeCount: number;
@@ -495,6 +923,12 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
     sourceEdgeCount: number;
     relationEdgeCount: number;
     sourceRefCount: number;
+    communityCount: number;
+    largestCommunitySize: number;
+    orphanNodeCount: number;
+    deadCommunityCount: number;
+    staleCommunityCount: number;
+    thinEvidenceCommunityCount: number;
   };
 }> {
   const statuses = resolveStatusFilter(params.status);
@@ -503,7 +937,7 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
   const view = params.view ?? "relation";
   const relationAxes: GraphRelationAxis[] = params.relationAxes?.length
     ? params.relationAxes
-    : ["session", "project"];
+    : ["session", "project", "source"];
   const maxContextEdgesPerNode = Math.max(
     1,
     Math.min(10, Math.trunc(params.maxContextEdgesPerNode ?? 3)),
@@ -517,7 +951,11 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
         title: knowledgeItems.title,
         type: knowledgeItems.type,
         status: knowledgeItems.status,
+        scope: knowledgeItems.scope,
         importance: knowledgeItems.importance,
+        compileSelectCount: knowledgeItems.compileSelectCount,
+        lastVerifiedAt: knowledgeItems.lastVerifiedAt,
+        updatedAt: knowledgeItems.updatedAt,
         embedded: sql<boolean>`${knowledgeItems.embedding} is not null`,
         appliesTo: knowledgeItems.appliesTo,
         metadata: knowledgeItems.metadata,
@@ -546,6 +984,24 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
       embedded: Boolean(row.embedded),
     })),
   ];
+  const compileSelectCountByNodeId = new Map<string, number>();
+  const decayFactorByNodeId = new Map<string, number>();
+  const distilledByNodeId = new Map<string, boolean>();
+  for (const row of knowledgeRows) {
+    const nodeId = knowledgeNodeId(row.id);
+    const metadata = asRecord(row.metadata);
+    compileSelectCountByNodeId.set(nodeId, Math.max(0, Math.trunc(row.compileSelectCount ?? 0)));
+    distilledByNodeId.set(nodeId, isDistilledKnowledgeMetadata(metadata));
+    decayFactorByNodeId.set(
+      nodeId,
+      computeDecayFactor({
+        type: normalizeKnowledgeType(row.type),
+        scope: normalizeKnowledgeScope(row.scope),
+        lastVerifiedAt: row.lastVerifiedAt,
+        updatedAt: row.updatedAt,
+      }),
+    );
+  }
   const relationNodeContexts: RelationNodeContext[] = knowledgeRows.map((row) => {
     const appliesTo = asRecord(row.appliesTo);
     const metadata = asRecord(row.metadata);
@@ -575,7 +1031,7 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
       sourceDocIdsByKnowledge.set(node.id, [...node.sourceDocIds]);
     }
   }
-  if (view === "relation" && nodeRawIds.length > 0) {
+  if (view !== "semantic" && nodeRawIds.length > 0) {
     const sourceLinks = await db
       .select({
         knowledgeId: knowledgeSourceLinks.knowledgeId,
@@ -599,23 +1055,36 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
     sourceDocIds: sourceDocIdsByKnowledge.get(node.id),
   }));
 
+  const sourceRefCountByNodeId = new Map<string, number>();
+  for (const nodeRawId of nodeRawIds) {
+    sourceRefCountByNodeId.set(
+      knowledgeNodeId(nodeRawId),
+      sourceDocIdsByKnowledge.get(nodeRawId)?.length ?? 0,
+    );
+  }
+
   const [relationResult, semanticEdges, sourceRefRows] = await Promise.all([
     view === "semantic"
-      ? Promise.resolve({ edges: [], sessionEdgeCount: 0, projectEdgeCount: 0, sourceEdgeCount: 0 })
+      ? Promise.resolve({
+          edges: [],
+          sessionEdgeCount: 0,
+          projectEdgeCount: 0,
+          sourceEdgeCount: 0,
+        })
       : buildRelationEdges({
           nodes: enrichedRelationContexts.filter((node) => nodeRawIdSet.has(node.id)),
           axes: relationAxes,
           maxEdges: params.limit * 2,
           maxContextEdgesPerNode,
         }),
-    view === "relation"
-      ? Promise.resolve([])
-      : buildSemanticEdges({
+    view === "semantic"
+      ? buildSemanticEdges({
           nodeIds: nodeRawIds,
           minSimilarity: params.minSimilarity ?? 0.72,
           topK: params.semanticTopK ?? 3,
           maxEdges: params.limit * 2,
-        }),
+        })
+      : Promise.resolve([]),
     nodeRawIds.length === 0
       ? [{ sourceRefCount: 0 }]
       : db
@@ -627,6 +1096,52 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
   ]);
   const relationEdges = relationResult.edges;
   const edges = view === "semantic" ? semanticEdges : relationEdges;
+  const community =
+    view === "community"
+      ? buildCommunityAssignments({
+          nodes,
+          edges: relationEdges,
+          minEdgeWeight: COMMUNITY_MIN_EDGE_WEIGHT,
+        })
+      : {
+          assignments: new Map<string, CommunityAssignment>(),
+          components: [] as CommunityComponent[],
+          communityCount: 0,
+          largestCommunitySize: 0,
+          orphanNodeCount: 0,
+        };
+  const labelsByKey =
+    view === "community" && community.components.length > 0
+      ? await listCommunityLabelsByKeys(
+          community.components.map((component) => component.communityKey),
+        )
+      : new Map<string, CommunityLabelRecord>();
+  const communities =
+    view === "community"
+      ? buildCommunitySummaries({
+          components: community.components,
+          nodes,
+          labelsByKey,
+          sourceRefCountByNodeId,
+          compileSelectCountByNodeId,
+          decayFactorByNodeId,
+          distilledByNodeId,
+        })
+      : [];
+  const summariesById = new Map(communities.map((summary) => [summary.communityId, summary]));
+  const nodesWithCommunity =
+    view === "community"
+      ? buildCommunityNodesWithLabels({
+          nodes,
+          assignments: community.assignments,
+          summariesById,
+        })
+      : nodes;
+  const supernodes = view === "community" ? buildSupernodes(communities) : [];
+  const superedges =
+    view === "community"
+      ? buildSuperedges({ edges: relationEdges, assignmentByNodeId: community.assignments })
+      : [];
   const stats = statsRows[0] ?? { totalKnowledgeCount: 0, embeddedKnowledgeCount: 0 };
   const relationSourceRefCount = [...sourceDocIdsByKnowledge.values()].reduce(
     (sum, refs) => sum + refs.length,
@@ -636,10 +1151,14 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
     relationResult.sessionEdgeCount +
     relationResult.projectEdgeCount +
     relationResult.sourceEdgeCount;
+  const healthCounts = collectCommunityHealthCounts(communities);
 
   return {
-    nodes,
+    nodes: nodesWithCommunity,
     edges,
+    communities,
+    supernodes,
+    superedges,
     stats: {
       visibleKnowledgeCount: nodes.length,
       totalKnowledgeCount: finiteOrFallback(stats.totalKnowledgeCount, 0),
@@ -653,7 +1172,100 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
         relationSourceRefCount,
         finiteOrFallback(sourceRefRows[0]?.sourceRefCount, 0),
       ),
+      communityCount: community.communityCount,
+      largestCommunitySize: community.largestCommunitySize,
+      orphanNodeCount: community.orphanNodeCount,
+      deadCommunityCount: healthCounts.deadCommunityCount,
+      staleCommunityCount: healthCounts.staleCommunityCount,
+      thinEvidenceCommunityCount: healthCounts.thinEvidenceCommunityCount,
     },
+  };
+}
+
+export async function listGraphCommunityLabels(params: {
+  limit?: number;
+  status?: GraphStatusFilter;
+  relationAxes?: GraphRelationAxis[];
+}): Promise<
+  Array<{
+    communityKey: string;
+    communityId: string;
+    communityLabel: string;
+    communityRank: number;
+    size: number;
+    note?: string;
+    labelUpdatedAt?: string;
+  }>
+> {
+  const snapshot = await buildGraphSnapshot({
+    limit: Math.max(1, Math.min(1000, Math.trunc(params.limit ?? 1000))),
+    status: params.status ?? "current",
+    view: "community",
+    relationAxes: params.relationAxes,
+    communityDisplay: "detail",
+  });
+  return snapshot.communities.map((community) => ({
+    communityKey: community.communityKey,
+    communityId: community.communityId,
+    communityLabel: community.communityLabel,
+    communityRank: community.communityRank,
+    size: community.size,
+    note: community.note,
+    labelUpdatedAt: community.labelUpdatedAt,
+  }));
+}
+
+export async function upsertGraphCommunityLabel(input: {
+  communityKey: string;
+  label: string;
+  note?: string | null;
+}): Promise<CommunityLabelRecord> {
+  const communityKey = input.communityKey.trim().toLowerCase();
+  const label = input.label.trim();
+  const noteValue =
+    typeof input.note === "string" && input.note.trim().length > 0 ? input.note.trim() : null;
+  const now = new Date();
+  await db
+    .insert(knowledgeCommunityLabels)
+    .values({
+      communityKey,
+      label,
+      note: noteValue,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: knowledgeCommunityLabels.communityKey,
+      set: {
+        label,
+        note: noteValue,
+        updatedAt: now,
+      },
+    });
+
+  const row = await db
+    .select({
+      communityKey: knowledgeCommunityLabels.communityKey,
+      label: knowledgeCommunityLabels.label,
+      note: knowledgeCommunityLabels.note,
+      updatedAt: knowledgeCommunityLabels.updatedAt,
+    })
+    .from(knowledgeCommunityLabels)
+    .where(eq(knowledgeCommunityLabels.communityKey, communityKey))
+    .limit(1);
+  const saved = row[0];
+  if (!saved) {
+    return {
+      communityKey,
+      label,
+      note: noteValue,
+      updatedAt: now,
+    };
+  }
+  return {
+    communityKey: saved.communityKey,
+    label: saved.label,
+    note: saved.note,
+    updatedAt: saved.updatedAt,
   };
 }
 

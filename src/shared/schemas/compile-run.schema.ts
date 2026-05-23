@@ -26,7 +26,7 @@ export const compileRunSelectedItemSchema = z.object({
   sourceRefs: z.array(z.string()),
 });
 
-export const knowledgeUsageVerdictSchema = z.enum(["used", "off_topic", "wrong"]);
+export const knowledgeUsageVerdictSchema = z.enum(["used", "not_used", "off_topic", "wrong"]);
 
 export const compileRunKnowledgeFeedbackSchema = z.object({
   id: z.string().uuid(),
@@ -60,6 +60,24 @@ export const compileRunKnowledgeFeedbackResultSchema = z.object({
   affectedKnowledgeIds: z.array(z.string().uuid()),
 });
 
+export const compileRunKnowledgeSignalSchema = z.object({
+  knowledgeId: z.string(),
+  rawId: z.string(),
+  itemKind: z.enum(["rule", "procedure"]),
+  section: z.enum(["rules", "procedures"]),
+  title: z.string(),
+  score: z.number(),
+  rankingReason: z.string(),
+  autoVerdict: knowledgeUsageVerdictSchema.nullable(),
+  autoActor: z.enum(["agent", "user", "system"]).nullable(),
+  autoReason: z.string().nullable(),
+  effectiveVerdict: knowledgeUsageVerdictSchema.nullable(),
+  effectiveActor: z.enum(["agent", "user", "system"]).nullable(),
+  effectiveReason: z.string().nullable(),
+  hasUserOverride: z.boolean(),
+  updatedAt: z.string().datetime().nullable(),
+});
+
 export const compileRunInputSnapshotSchema = z.record(z.string(), z.unknown());
 
 export const compileRunDetailSchema = z.object({
@@ -71,6 +89,7 @@ export const compileRunDetailSchema = z.object({
   outputMarkdown: z.string().nullable().optional(),
   selectedItems: z.array(compileRunSelectedItemSchema),
   knowledgeFeedback: z.array(compileRunKnowledgeFeedbackSchema).default([]),
+  knowledgeSignals: z.array(compileRunKnowledgeSignalSchema).default([]),
   snapshotAvailable: z.boolean(),
 });
 

@@ -239,6 +239,20 @@
       "when": 1779435600000,
       "tag": "0033_llm_usage_mode",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1779522000000,
+      "tag": "0034_knowledge_usage_not_used",
+      "breakpoints": true
+    },
+    {
+      "idx": 35,
+      "version": "7",
+      "when": 1779608400000,
+      "tag": "0035_knowledge_community_labels",
+      "breakpoints": true
     }
   ]
 }

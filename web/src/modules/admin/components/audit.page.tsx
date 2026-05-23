@@ -1,14 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Select } from "@/components/ui/select";
-import {
-  Table,
-  TableBody,
-  TableCell,
-  TableHead,
-  TableHeader,
-  TableRow,
-} from "@/components/ui/table";
+import { Table, TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table";
 import { useQuery } from "@tanstack/react-query";
 import {
   type ColumnDef,
@@ -18,13 +10,16 @@ import {
   getSortedRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { ArrowDown, ArrowUp, ArrowUpDown, ChevronLeft, ChevronRight, X } from "lucide-react";
-import { useMemo, useState } from "react";
+import { type ReactNode, useMemo, useState } from "react";
 import {
   type AuditLogActor,
   type AuditLogItem,
   fetchAuditLogs,
 } from "../repositories/admin.repository";
+import { AdminFilterChipSelect } from "./admin-filter-chip-select";
+import { AdminModalShell } from "./admin-modal-shell";
+import { AdminPaginationFooter } from "./admin-pagination-footer";
+import { AdminSortableTableHead } from "./admin-sortable-table-head";
 
 const actorOptions: Array<AuditLogActor | "all"> = ["all", "agent", "user", "system"];
 
@@ -40,31 +35,17 @@ function compactJson(value: Record<string, unknown>, maxChars = 160): string {
   return `${text.slice(0, Math.max(0, maxChars - 3))}...`;
 }
 
-function visiblePageNumbers(currentPage: number, totalPages: number): Array<number | "ellipsis"> {
-  if (totalPages <= 7) {
-    return Array.from({ length: totalPages }, (_, index) => index + 1);
-  }
-
-  const pages = new Set([1, totalPages, currentPage - 1, currentPage, currentPage + 1]);
-  if (currentPage <= 3) {
-    pages.add(2);
-    pages.add(3);
-    pages.add(4);
-  }
-  if (currentPage >= totalPages - 2) {
-    pages.add(totalPages - 3);
-    pages.add(totalPages - 2);
-    pages.add(totalPages - 1);
-  }
-
-  const sortedPages = Array.from(pages)
-    .filter((pageNumber) => pageNumber >= 1 && pageNumber <= totalPages)
-    .sort((a, b) => a - b);
-
-  return sortedPages.flatMap((pageNumber, index) => {
-    const previousPage = sortedPages[index - 1];
-    return previousPage && pageNumber - previousPage > 1 ? ["ellipsis", pageNumber] : [pageNumber];
-  });
+function eventTypeOptions(eventTypes: string[]): ReactNode[] {
+  return [
+    <option key="audit-event-type-all" value="all">
+      All Events
+    </option>,
+    ...eventTypes.map((eventType) => (
+      <option key={eventType} value={eventType}>
+        {eventType}
+      </option>
+    )),
+  ];
 }
 
 export function AuditLogsPage() {
@@ -146,7 +127,6 @@ export function AuditLogsPage() {
   const pageEnd = Math.min((currentPage - 1) * pageLimit + items.length, totalAuditCount);
   const canPrev = currentPage > 1;
   const canNext = Boolean(pagination?.hasNextPage);
-  const pageNumbers = visiblePageNumbers(currentPage, totalPages);
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
@@ -160,47 +140,34 @@ export function AuditLogsPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
-          <div className="flex items-center gap-2 rounded-lg border border-transparent bg-muted px-3 py-1">
-            <span className="shrink-0 whitespace-nowrap text-[10px] font-bold uppercase text-muted-foreground">
-              Event Type
-            </span>
-            <Select
-              aria-label="Event Type"
-              value={eventTypeFilter}
-              className="h-7 w-[170px] border-0 bg-transparent px-1 py-0 text-xs font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
-              onChange={(event) => {
-                setEventTypeFilter(event.target.value);
-                setPage(1);
-              }}
-            >
-              <option value="all">All Events</option>
-              {(auditQuery.data?.availableEventTypes ?? []).map((eventType) => (
-                <option key={eventType} value={eventType}>
-                  {eventType}
-                </option>
-              ))}
-            </Select>
-          </div>
-          <div className="flex items-center gap-2 rounded-lg border border-transparent bg-muted px-3 py-1">
-            <span className="shrink-0 whitespace-nowrap text-[10px] font-bold uppercase text-muted-foreground">
-              Actor
-            </span>
-            <Select
-              aria-label="Actor"
-              value={actorFilter}
-              className="h-7 w-[110px] border-0 bg-transparent px-1 py-0 text-xs font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
-              onChange={(event) => {
-                setActorFilter(event.target.value as AuditLogActor | "all");
-                setPage(1);
-              }}
-            >
-              {actorOptions.map((actor) => (
-                <option key={actor} value={actor}>
-                  {actor}
-                </option>
-              ))}
-            </Select>
-          </div>
+          <AdminFilterChipSelect
+            label="Event Type"
+            aria-label="Event Type"
+            value={eventTypeFilter}
+            className="w-[170px]"
+            onChange={(event) => {
+              setEventTypeFilter(event.target.value);
+              setPage(1);
+            }}
+          >
+            {eventTypeOptions(auditQuery.data?.availableEventTypes ?? [])}
+          </AdminFilterChipSelect>
+          <AdminFilterChipSelect
+            label="Actor"
+            aria-label="Actor"
+            value={actorFilter}
+            className="w-[110px]"
+            onChange={(event) => {
+              setActorFilter(event.target.value as AuditLogActor | "all");
+              setPage(1);
+            }}
+          >
+            {actorOptions.map((actor) => (
+              <option key={actor} value={actor}>
+                {actor}
+              </option>
+            ))}
+          </AdminFilterChipSelect>
         </div>
       </section>
 
@@ -210,30 +177,11 @@ export function AuditLogsPage() {
             {table.getHeaderGroups().map((headerGroup) => (
               <TableRow key={headerGroup.id}>
                 {headerGroup.headers.map((header) => (
-                  <TableHead
+                  <AdminSortableTableHead
                     key={header.id}
+                    header={header}
                     className="bg-background px-4 text-xs font-bold uppercase text-muted-foreground"
-                  >
-                    {header.isPlaceholder ? null : header.column.getCanSort() ? (
-                      <button
-                        type="button"
-                        className="flex cursor-pointer select-none items-center gap-2 transition-colors hover:text-foreground"
-                        onClick={header.column.getToggleSortingHandler()}
-                      >
-                        {flexRender(header.column.columnDef.header, header.getContext())}
-                        <span className="w-4">
-                          {{
-                            asc: <ArrowUp size={12} />,
-                            desc: <ArrowDown size={12} />,
-                          }[header.column.getIsSorted() as string] ?? (
-                            <ArrowUpDown size={12} className="opacity-30" />
-                          )}
-                        </span>
-                      </button>
-                    ) : (
-                      <div>{flexRender(header.column.columnDef.header, header.getContext())}</div>
-                    )}
-                  </TableHead>
+                  />
                 ))}
               </TableRow>
             ))}
@@ -270,120 +218,66 @@ export function AuditLogsPage() {
         </Table>
       </div>
 
-      <div className="flex items-center justify-between border-t bg-background px-6 py-2">
-        <div className="text-xs text-muted-foreground">
-          Showing <strong>{pageStart}</strong> to <strong>{pageEnd}</strong> of{" "}
-          <strong>{totalAuditCount}</strong> items
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1"
-            disabled={!canPrev}
-            onClick={() => setPage(currentPage - 1)}
-          >
-            <ChevronLeft size={16} />
-            Previous
-          </Button>
-          <div className="mx-2 flex items-center gap-1">
-            {pageNumbers.map((pageNumber, index) =>
-              pageNumber === "ellipsis" ? (
-                <span
-                  // biome-ignore lint/suspicious/noArrayIndexKey: separator positions are derived from page windows
-                  key={`audit-page-ellipsis-${index}`}
-                  className="px-1 text-xs text-muted-foreground"
-                >
-                  ...
-                </span>
-              ) : (
-                <button
-                  key={`audit-page-${pageNumber}`}
-                  type="button"
-                  onClick={() => setPage(pageNumber)}
-                  className={`h-7 w-7 rounded-md text-xs transition-colors ${
-                    currentPage === pageNumber
-                      ? "bg-primary font-bold text-primary-foreground"
-                      : "text-muted-foreground hover:bg-muted"
-                  }`}
-                >
-                  {pageNumber}
-                </button>
-              ),
-            )}
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            className="gap-1"
-            disabled={!canNext}
-            onClick={() => setPage(currentPage + 1)}
-          >
-            Next
-            <ChevronRight size={16} />
-          </Button>
-        </div>
-      </div>
+      <AdminPaginationFooter
+        keyPrefix="audit"
+        currentPage={currentPage}
+        totalPages={totalPages}
+        canPreviousPage={canPrev}
+        canNextPage={canNext}
+        onPreviousPage={() => setPage(currentPage - 1)}
+        onNextPage={() => setPage(currentPage + 1)}
+        onPageSelect={(pageNumber) => setPage(pageNumber)}
+        summaryItems={[
+          `Showing ${pageStart} to ${pageEnd} of ${totalAuditCount} items | Page ${currentPage} / ${totalPages}`,
+        ]}
+      />
 
       {/* Inline Modal for Payload Detail */}
-      {selectedLog && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm animate-in fade-in duration-200"
-          onMouseDown={(event) => {
-            if (event.target === event.currentTarget) {
-              setSelectedLog(null);
-            }
-          }}
-        >
-          <div
-            className="w-full max-w-3xl max-h-[85vh] flex flex-col bg-card border shadow-2xl rounded-xl overflow-hidden animate-in zoom-in-95 duration-200"
-            onMouseDown={(event) => event.stopPropagation()}
-          >
-            <div className="flex items-center justify-between px-6 py-4 border-b bg-muted/30">
-              <div className="flex items-center gap-3">
-                <Badge>{selectedLog.eventType}</Badge>
-                <span className="text-sm font-semibold">Event Detail</span>
-              </div>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-8 w-8 p-0 rounded-full"
-                aria-label="Close audit event detail"
-                onClick={() => setSelectedLog(null)}
-              >
-                <X className="h-4 w-4" />
-              </Button>
-            </div>
-            <div className="flex-1 overflow-auto p-6 space-y-4">
-              <div className="grid grid-cols-2 gap-4 text-xs bg-muted/20 p-4 rounded-lg border border-muted">
-                <div>
-                  <span className="text-muted-foreground block mb-1 font-bold uppercase tracking-tighter">
-                    Actor
-                  </span>
-                  <span className="font-semibold">{selectedLog.actor}</span>
-                </div>
-                <div>
-                  <span className="text-muted-foreground block mb-1 font-bold uppercase tracking-tighter">
-                    Created At
-                  </span>
-                  <span className="font-semibold">{formatAuditDate(selectedLog.createdAt)}</span>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
-                  Raw Payload
+      <AdminModalShell
+        isOpen={selectedLog !== null}
+        onClose={() => setSelectedLog(null)}
+        closeOnBackdrop
+        closeAriaLabel="Close audit event detail"
+        ariaLabel={
+          selectedLog ? `Audit event detail for ${selectedLog.eventType}` : "Audit event detail"
+        }
+        title={<span className="text-sm font-semibold">Event Detail</span>}
+        headerLeading={selectedLog ? <Badge>{selectedLog.eventType}</Badge> : undefined}
+        overlayClassName="animate-in fade-in duration-200"
+        panelClassName="max-w-3xl rounded-xl"
+        headerClassName="bg-muted/30"
+        bodyClassName="flex-1 p-6 space-y-4"
+      >
+        {selectedLog ? (
+          <>
+            <div className="grid grid-cols-2 gap-4 rounded-lg border border-muted bg-muted/20 p-4 text-xs">
+              <div>
+                <span className="text-muted-foreground block mb-1 font-bold uppercase tracking-tighter">
+                  Actor
                 </span>
-                <pre className="rounded-lg bg-zinc-950 text-zinc-100 p-5 text-[11px] leading-relaxed font-mono overflow-auto border border-white/10 shadow-inner">
-                  {JSON.stringify(selectedLog.payload, null, 2)}
-                </pre>
+                <span className="font-semibold">{selectedLog.actor}</span>
+              </div>
+              <div>
+                <span className="text-muted-foreground block mb-1 font-bold uppercase tracking-tighter">
+                  Created At
+                </span>
+                <span className="font-semibold">{formatAuditDate(selectedLog.createdAt)}</span>
               </div>
             </div>
-            <div className="px-6 py-3 border-t bg-muted/10 flex justify-end">
+            <div className="space-y-2">
+              <span className="text-[10px] font-bold uppercase tracking-widest text-muted-foreground">
+                Raw Payload
+              </span>
+              <pre className="rounded-lg bg-zinc-950 p-5 text-[11px] leading-relaxed font-mono text-zinc-100 overflow-auto border border-white/10 shadow-inner">
+                {JSON.stringify(selectedLog.payload, null, 2)}
+              </pre>
+            </div>
+            <div className="flex justify-end border-t bg-muted/10 px-0 py-3">
               <Button onClick={() => setSelectedLog(null)}>Close</Button>
             </div>
-          </div>
-        </div>
-      )}
+          </>
+        ) : null}
+      </AdminModalShell>
     </div>
   );
 }

@@ -9,8 +9,9 @@ import {
 import type { CompileRunKnowledgeFeedbackResult } from "../../shared/schemas/compile-run.schema.js";
 import { recalculateKnowledgeDynamicScoresSafe } from "./knowledge-value.service.js";
 
-type KnowledgeUsageVerdict = "used" | "off_topic" | "wrong";
+type KnowledgeUsageVerdict = "used" | "not_used" | "off_topic" | "wrong";
 type FeedbackActor = "agent" | "user" | "system";
+type FeedbackMetadata = Record<string, unknown>;
 
 type RecordCompileRunKnowledgeFeedbackInput = {
   runId: string;
@@ -18,15 +19,30 @@ type RecordCompileRunKnowledgeFeedbackInput = {
     knowledgeId: string;
     verdict: KnowledgeUsageVerdict;
     reason?: string;
+    metadata?: FeedbackMetadata;
   }>;
   actor?: FeedbackActor;
+};
+
+type RecordCompileRunKnowledgeUsageSignalsInput = {
+  runId: string;
+  items: Array<{
+    knowledgeId: string;
+    verdict: "used" | "not_used";
+    reason?: string;
+    metadata?: FeedbackMetadata;
+  }>;
+  actor?: Exclude<FeedbackActor, "user">;
 };
 
 type ExistingFeedbackEvent = {
   id: string;
   knowledgeId: string;
   verdict: KnowledgeUsageVerdict;
+  actor: FeedbackActor;
   reason: string | null;
+  metadata: FeedbackMetadata;
+  updatedAt: Date;
 };
 
 export class CompileRunKnowledgeFeedbackError extends Error {
@@ -43,6 +59,17 @@ function normalizeReason(reason: string | undefined): string | null {
   if (typeof reason !== "string") return null;
   const trimmed = reason.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function normalizeMetadata(metadata: unknown): FeedbackMetadata {
+  if (metadata && typeof metadata === "object" && !Array.isArray(metadata)) {
+    return metadata as FeedbackMetadata;
+  }
+  return {};
+}
+
+function isKnowledgeUsageVerdict(value: unknown): value is KnowledgeUsageVerdict {
+  return value === "used" || value === "not_used" || value === "off_topic" || value === "wrong";
 }
 
 async function assertCompileRunExists(runId: string): Promise<void> {
@@ -81,7 +108,10 @@ async function loadExistingFeedbackEvents(
       id: knowledgeUsageEvents.id,
       knowledgeId: knowledgeUsageEvents.knowledgeId,
       verdict: knowledgeUsageEvents.verdict,
+      actor: knowledgeUsageEvents.actor,
       reason: knowledgeUsageEvents.reason,
+      metadata: knowledgeUsageEvents.metadata,
+      updatedAt: knowledgeUsageEvents.updatedAt,
     })
     .from(knowledgeUsageEvents)
     .where(
@@ -92,12 +122,16 @@ async function loadExistingFeedbackEvents(
     );
   const map = new Map<string, ExistingFeedbackEvent>();
   for (const row of rows) {
-    if (row.verdict !== "used" && row.verdict !== "off_topic" && row.verdict !== "wrong") continue;
+    if (!isKnowledgeUsageVerdict(row.verdict)) continue;
+    if (row.actor !== "agent" && row.actor !== "user" && row.actor !== "system") continue;
     map.set(row.knowledgeId, {
       id: row.id,
       knowledgeId: row.knowledgeId,
       verdict: row.verdict,
+      actor: row.actor,
       reason: typeof row.reason === "string" ? row.reason : null,
+      metadata: normalizeMetadata(row.metadata),
+      updatedAt: row.updatedAt instanceof Date ? row.updatedAt : new Date(0),
     });
   }
   return map;
@@ -172,6 +206,7 @@ export async function recordCompileRunKnowledgeFeedback(
       knowledgeId,
       verdict: item.verdict,
       reason: normalizeReason(item.reason),
+      metadata: normalizeMetadata(item.metadata),
     };
   });
 
@@ -202,10 +237,23 @@ export async function recordCompileRunKnowledgeFeedback(
     const existing = existingFeedbackMap.get(item.knowledgeId);
     let eventId: string;
     let previousVerdict: KnowledgeUsageVerdict | null = null;
+    let nextMetadata = item.metadata;
 
     if (existing) {
       eventId = existing.id;
       previousVerdict = existing.verdict;
+      if (actor === "user" && existing.actor !== "user") {
+        nextMetadata = {
+          ...existing.metadata,
+          ...item.metadata,
+          autoVerdict: existing.verdict,
+          autoActor: existing.actor,
+          autoReason: existing.reason,
+          autoUpdatedAt: existing.updatedAt.toISOString(),
+        };
+      } else if (Object.keys(nextMetadata).length === 0) {
+        nextMetadata = existing.metadata;
+      }
       const hasChanged = existing.verdict !== item.verdict || existing.reason !== item.reason;
       if (hasChanged) {
         await db
@@ -214,6 +262,7 @@ export async function recordCompileRunKnowledgeFeedback(
             verdict: item.verdict,
             actor,
             reason: item.reason,
+            metadata: nextMetadata,
             updatedAt: now,
           })
           .where(eq(knowledgeUsageEvents.id, eventId));
@@ -229,7 +278,7 @@ export async function recordCompileRunKnowledgeFeedback(
           verdict: item.verdict,
           actor,
           reason: item.reason,
-          metadata: {},
+          metadata: nextMetadata,
           createdAt: now,
           updatedAt: now,
         })
@@ -264,4 +313,19 @@ export async function recordCompileRunKnowledgeFeedback(
     queueDismissedCount,
     affectedKnowledgeIds: affectedIds,
   };
+}
+
+export async function recordCompileRunKnowledgeUsageSignals(
+  input: RecordCompileRunKnowledgeUsageSignalsInput,
+): Promise<CompileRunKnowledgeFeedbackResult> {
+  return recordCompileRunKnowledgeFeedback({
+    runId: input.runId,
+    actor: input.actor ?? "agent",
+    items: input.items.map((item) => ({
+      knowledgeId: item.knowledgeId,
+      verdict: item.verdict,
+      reason: item.reason,
+      metadata: item.metadata,
+    })),
+  });
 }

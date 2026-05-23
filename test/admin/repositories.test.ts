@@ -11,8 +11,10 @@ import {
   fetchAgentDiffEntries,
   fetchDoctorReport,
   fetchOverviewDashboard,
+  fetchGraphCommunityLabels,
   fetchGraphSnapshot,
   fetchGraphNodeDetail,
+  updateGraphCommunityLabel,
   fetchSourceTree,
   fetchSourceHealth,
   fetchSourcePage,
@@ -273,6 +275,77 @@ describe("Admin Repository", () => {
       expect(spy).toHaveBeenCalledWith(
         "/api/graph?limit=100&status=active&view=semantic&relationAxes=session%2Csource&minSimilarity=0.5&semanticTopK=5&maxContextEdgesPerNode=3",
       );
+    });
+
+    it("fetchGraphSnapshot with community view", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ nodes: [], edges: [] }),
+      } as Response);
+      await fetchGraphSnapshot({
+        limit: 80,
+        status: "all",
+        view: "community",
+        relationAxes: ["project", "source"],
+      });
+      expect(spy).toHaveBeenCalledWith(
+        "/api/graph?limit=80&status=all&view=community&relationAxes=project%2Csource",
+      );
+    });
+
+    it("fetchGraphSnapshot with community supernode mode", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ nodes: [], edges: [] }),
+      } as Response);
+      await fetchGraphSnapshot({
+        limit: 60,
+        status: "active",
+        view: "community",
+        communityDisplay: "supernode",
+        relationAxes: ["session"],
+      });
+      expect(spy).toHaveBeenCalledWith(
+        "/api/graph?limit=60&status=active&view=community&communityDisplay=supernode&relationAxes=session",
+      );
+    });
+
+    it("fetchGraphCommunityLabels", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ labels: [] }),
+      } as Response);
+      await fetchGraphCommunityLabels({
+        limit: 100,
+        status: "all",
+        relationAxes: ["project", "source"],
+      });
+      expect(spy).toHaveBeenCalledWith(
+        "/api/graph/community-labels?limit=100&status=all&relationAxes=project%2Csource",
+      );
+    });
+
+    it("updateGraphCommunityLabel", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          label: {
+            communityKey: "a".repeat(64),
+            label: "Data Quality",
+            note: null,
+            updatedAt: "2026-05-23T00:00:00.000Z",
+          },
+        }),
+      } as Response);
+      await updateGraphCommunityLabel({
+        communityKey: "a".repeat(64),
+        label: "Data Quality",
+      });
+      expect(spy).toHaveBeenCalledWith(`/api/graph/community-labels/${"a".repeat(64)}`, {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ label: "Data Quality", note: "" }),
+      });
     });
 
     it("fetchGraphNodeDetail success", async () => {

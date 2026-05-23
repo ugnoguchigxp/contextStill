@@ -25,6 +25,7 @@ describe("context response composer", () => {
 
     expect(result.markdown).toBe("No Content");
     expect(result.agenticUsed).toBe(false);
+    expect(result.usedKnowledge).toEqual([]);
   });
 
   test("builds natural-language implementation context when knowledge exists", async () => {
@@ -68,5 +69,7 @@ describe("context response composer", () => {
     expect(result.markdown).toContain("## 検証観点");
     expect(result.markdown).not.toContain("## Rules");
     expect(result.markdown).not.toContain("## Procedures");
+    expect(result.usedKnowledge.length).toBeGreaterThan(0);
+    expect(result.usedKnowledge[0]?.id).toBeDefined();
   });
 });

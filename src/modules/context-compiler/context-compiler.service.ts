@@ -14,6 +14,7 @@ import {
 import type { KnowledgeItem, KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import { normalizeKnowledgeApplicability } from "../knowledge/applicability.service.js";
+import { recordCompileRunKnowledgeUsageSignals } from "../knowledge/knowledge-feedback.service.js";
 import { recordKnowledgeCompileSelectionSafe } from "../knowledge/knowledge-value.service.js";
 import {
   type KnowledgeCandidateEvidence,
@@ -297,6 +298,95 @@ function buildInputFacets(params: {
 
 function updateCompileRunSnapshotSafe(runId: string, pack: ContextPack): Promise<void> {
   return updateCompileRunSnapshot(runId, pack).catch(() => undefined);
+}
+
+function normalizeConfidence(value: unknown): number {
+  const numeric = typeof value === "number" ? value : Number(value);
+  if (!Number.isFinite(numeric)) return 0.5;
+  return Math.min(1, Math.max(0, numeric));
+}
+
+async function recordCompileRunKnowledgeUsageSignalsSafe(params: {
+  runId: string;
+  selectedKnowledgeIds: string[];
+  selectedRankMap: Map<string, number>;
+  usedKnowledge: Array<{
+    id: string;
+    confidence?: number;
+    evidence?: string;
+    outputSection?: string;
+    reason?: string;
+  }>;
+  actor: "agent" | "system";
+}): Promise<void> {
+  const selectedSet = new Set(params.selectedKnowledgeIds.map((id) => id.trim()).filter(Boolean));
+  if (selectedSet.size === 0) return;
+
+  const usedById = new Map<
+    string,
+    {
+      confidence: number;
+      evidence?: string;
+      outputSection?: string;
+      reason?: string;
+    }
+  >();
+  for (const item of params.usedKnowledge) {
+    const knowledgeId = item.id.trim();
+    if (!selectedSet.has(knowledgeId)) continue;
+    usedById.set(knowledgeId, {
+      confidence: normalizeConfidence(item.confidence),
+      ...(item.evidence ? { evidence: item.evidence } : {}),
+      ...(item.outputSection ? { outputSection: item.outputSection } : {}),
+      ...(item.reason ? { reason: item.reason } : {}),
+    });
+  }
+
+  const usageItems = [...selectedSet].map((knowledgeId) => {
+    const used = usedById.get(knowledgeId);
+    const selectedRank = params.selectedRankMap.get(knowledgeId);
+    if (used) {
+      return {
+        knowledgeId,
+        verdict: "used" as const,
+        reason: used.reason ?? "used_by_response_composer",
+        metadata: {
+          source: "response_composer",
+          confidence: used.confidence,
+          ...(used.evidence ? { evidence: used.evidence } : {}),
+          ...(used.outputSection ? { outputSection: used.outputSection } : {}),
+          ...(selectedRank ? { selectedRank } : {}),
+        },
+      };
+    }
+    return {
+      knowledgeId,
+      verdict: "not_used" as const,
+      reason: "selected_but_not_referenced",
+      metadata: {
+        source: "response_composer",
+        ...(selectedRank ? { selectedRank } : {}),
+      },
+    };
+  });
+
+  try {
+    await recordCompileRunKnowledgeUsageSignals({
+      runId: params.runId,
+      actor: params.actor,
+      items: usageItems,
+    });
+  } catch (error) {
+    await recordAuditLogSafe({
+      eventType: "KNOWLEDGE_USAGE_SIGNAL_SAVE_FAILED",
+      actor: "system",
+      payload: {
+        runId: params.runId,
+        selectedKnowledgeIds: params.selectedKnowledgeIds,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
+  }
 }
 
 function asStringArray(value: unknown): string[] {
@@ -647,6 +737,12 @@ export async function compileContextPack(
         .map((item) => item.itemId),
     ),
   ];
+  const selectedRankMap = new Map<string, number>();
+  for (const [index, item] of selectedPackItems.entries()) {
+    if (item.itemKind !== "rule" && item.itemKind !== "procedure") continue;
+    if (selectedRankMap.has(item.itemId)) continue;
+    selectedRankMap.set(item.itemId, index + 1);
+  }
   const agenticAcceptedKnowledgeIds = agenticResult.agenticUsed
     ? [...new Set(finalKnowledge.map((item) => item.id))]
     : [];
@@ -654,6 +750,13 @@ export async function compileContextPack(
     runId,
     selectedKnowledgeIds,
     agenticAcceptedKnowledgeIds,
+  });
+  await recordCompileRunKnowledgeUsageSignalsSafe({
+    runId,
+    selectedKnowledgeIds,
+    selectedRankMap,
+    usedKnowledge: composedResponse.usedKnowledge,
+    actor: composedResponse.agenticUsed ? "agent" : "system",
   });
 
   const sourceRefs =

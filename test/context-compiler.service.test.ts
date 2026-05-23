@@ -6,6 +6,7 @@ import {
   updateCompileRunSnapshot,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
+import { recordCompileRunKnowledgeUsageSignals } from "../src/modules/knowledge/knowledge-feedback.service.js";
 import { recordKnowledgeCompileSelectionSafe } from "../src/modules/knowledge/knowledge-value.service.js";
 import { retrieveKnowledge } from "../src/modules/knowledge/knowledge.service.js";
 import { retrieveSources } from "../src/modules/sources/source-retrieval.service.js";
@@ -13,6 +14,7 @@ import { retrieveSources } from "../src/modules/sources/source-retrieval.service
 vi.mock("../src/modules/knowledge/knowledge.service.js");
 vi.mock("../src/modules/sources/source-retrieval.service.js");
 vi.mock("../src/modules/context-compiler/context-compiler.repository.js");
+vi.mock("../src/modules/knowledge/knowledge-feedback.service.js");
 vi.mock("../src/modules/knowledge/knowledge-value.service.js");
 vi.mock("../src/modules/context-compiler/pack-renderer.js", () => ({
   renderContextPackMarkdown: vi.fn(() => "# Pack Content"),
@@ -29,6 +31,13 @@ describe("Context Compiler Service", () => {
     vi.mocked(insertCompileRun).mockResolvedValue("550e8400-e29b-41d4-a716-446655440000");
     vi.mocked(insertContextPackItems).mockResolvedValue();
     vi.mocked(updateCompileRunSnapshot).mockResolvedValue();
+    vi.mocked(recordCompileRunKnowledgeUsageSignals).mockResolvedValue({
+      savedCount: 0,
+      updatedCount: 0,
+      queueCreatedCount: 0,
+      queueDismissedCount: 0,
+      affectedKnowledgeIds: [],
+    });
     vi.mocked(recordKnowledgeCompileSelectionSafe).mockResolvedValue();
     vi.mocked(retrieveKnowledge).mockResolvedValue({
       items: [],
@@ -172,6 +181,77 @@ describe("Context Compiler Service", () => {
       "550e8400-e29b-41d4-a716-446655440000#task_context:NO_ACTIVE_KNOWLEDGE_MATCH",
     );
     expect(pack.status).toBe("degraded");
+  });
+
+  test("records compile usage signals from composed response", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [
+        {
+          id: "k1",
+          type: "rule",
+          status: "active",
+          title: "Rule 1",
+          body: "Keep API validation",
+          score: 0.91,
+          sourceRefs: [],
+          hasSourceLinks: false,
+        },
+        {
+          id: "k2",
+          type: "rule",
+          status: "active",
+          title: "Rule 2",
+          body: "Keep repository boundaries",
+          score: 0.9,
+          sourceRefs: [],
+          hasSourceLinks: false,
+        },
+        {
+          id: "k3",
+          type: "rule",
+          status: "active",
+          title: "Rule 3",
+          body: "Add targeted tests",
+          score: 0.89,
+          sourceRefs: [],
+          hasSourceLinks: false,
+        },
+        {
+          id: "k4",
+          type: "rule",
+          status: "active",
+          title: "Rule 4",
+          body: "Report verification output",
+          score: 0.88,
+          sourceRefs: [],
+          hasSourceLinks: false,
+        },
+      ],
+      degradedReasons: [],
+      stats: {
+        textHitCount: 4,
+        vectorHitCount: 0,
+        mergedCount: 4,
+        textFailed: false,
+        vectorFailed: false,
+        embeddingStatus: "generated",
+        scopedSearch: false,
+        repoScopeFallbackUsed: false,
+        queryText: "goal",
+      },
+    } as any);
+
+    await compileContextPack({ goal: "usage signal capture" });
+
+    expect(recordCompileRunKnowledgeUsageSignals).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "550e8400-e29b-41d4-a716-446655440000",
+        items: expect.arrayContaining([
+          expect.objectContaining({ knowledgeId: "k1", verdict: "used" }),
+          expect.objectContaining({ knowledgeId: "k4", verdict: "not_used" }),
+        ]),
+      }),
+    );
   });
 
   test("stores unknown facet candidates in diagnostics", async () => {

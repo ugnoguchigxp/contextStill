@@ -19,6 +19,8 @@ import { contextPackSchema } from "../../shared/schemas/context-pack.schema.js";
 import { renderContextPackMarkdown } from "./pack-renderer.js";
 
 const runStatusValues = new Set(["ok", "degraded", "failed"]);
+const knowledgeVerdictValues = new Set(["used", "not_used", "off_topic", "wrong"]);
+const feedbackActorValues = new Set(["agent", "user", "system"]);
 
 function normalizeRunStatus(value: unknown): "ok" | "degraded" | "failed" {
   return typeof value === "string" && runStatusValues.has(value)
@@ -54,6 +56,24 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function normalizeKnowledgeVerdict(value: unknown): "used" | "not_used" | "off_topic" | "wrong" {
+  return typeof value === "string" && knowledgeVerdictValues.has(value)
+    ? (value as "used" | "not_used" | "off_topic" | "wrong")
+    : "used";
+}
+
+function normalizeFeedbackActor(value: unknown): "agent" | "user" | "system" {
+  return typeof value === "string" && feedbackActorValues.has(value)
+    ? (value as "agent" | "user" | "system")
+    : "system";
+}
+
+function normalizeNullableString(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
 }
 
 function extractOutputMarkdown(pack: ContextPack | null): string | null {
@@ -278,6 +298,7 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
       verdict: knowledgeUsageEvents.verdict,
       actor: knowledgeUsageEvents.actor,
       reason: knowledgeUsageEvents.reason,
+      metadata: knowledgeUsageEvents.metadata,
       createdAt: knowledgeUsageEvents.createdAt,
       updatedAt: knowledgeUsageEvents.updatedAt,
     })
@@ -291,6 +312,57 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
       ? parsedPackSnapshot.data
       : null;
   const outputMarkdown = extractOutputMarkdown(packSnapshot);
+
+  const selectedKnowledgeRowsMap = new Map<
+    string,
+    {
+      knowledgeId: string;
+      itemKind: "rule" | "procedure";
+      section: "rules" | "procedures";
+      score: number;
+      rankingReason: string;
+    }
+  >();
+  for (const row of itemRows) {
+    if (row.itemKind !== "rule" && row.itemKind !== "procedure") continue;
+    if (selectedKnowledgeRowsMap.has(row.itemId)) continue;
+    selectedKnowledgeRowsMap.set(row.itemId, {
+      knowledgeId: row.itemId,
+      itemKind: row.itemKind,
+      section: row.section === "procedures" ? "procedures" : "rules",
+      score: row.score,
+      rankingReason: row.rankingReason,
+    });
+  }
+  const selectedKnowledgeRows = [...selectedKnowledgeRowsMap.values()];
+
+  const packTitleById = new Map<string, string>();
+  for (const item of [...(packSnapshot?.rules ?? []), ...(packSnapshot?.procedures ?? [])]) {
+    if (item.itemKind !== "rule" && item.itemKind !== "procedure") continue;
+    packTitleById.set(item.itemId, item.title);
+  }
+
+  const latestFeedbackByKnowledgeId = new Map<
+    string,
+    {
+      verdict: "used" | "not_used" | "off_topic" | "wrong";
+      actor: "agent" | "user" | "system";
+      reason: string | null;
+      metadata: Record<string, unknown>;
+      updatedAt: string | null;
+    }
+  >();
+  for (const row of feedbackRows) {
+    if (latestFeedbackByKnowledgeId.has(row.knowledgeId)) continue;
+    latestFeedbackByKnowledgeId.set(row.knowledgeId, {
+      verdict: normalizeKnowledgeVerdict(row.verdict),
+      actor: normalizeFeedbackActor(row.actor),
+      reason: normalizeNullableString(row.reason),
+      metadata: asRecord(row.metadata),
+      updatedAt: row.updatedAt ? normalizeDate(row.updatedAt).toISOString() : null,
+    });
+  }
+
   const detail = {
     run: {
       id: run.id,
@@ -321,18 +393,87 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
       id: row.id,
       runId: row.runId,
       knowledgeId: row.knowledgeId,
-      verdict:
-        row.verdict === "used" || row.verdict === "off_topic" || row.verdict === "wrong"
-          ? row.verdict
-          : "used",
-      actor:
-        row.actor === "agent" || row.actor === "user" || row.actor === "system"
-          ? row.actor
-          : "system",
-      reason: typeof row.reason === "string" ? row.reason : null,
+      verdict: normalizeKnowledgeVerdict(row.verdict),
+      actor: normalizeFeedbackActor(row.actor),
+      reason: normalizeNullableString(row.reason),
       createdAt: normalizeDate(row.createdAt).toISOString(),
       updatedAt: normalizeDate(row.updatedAt).toISOString(),
     })),
+    knowledgeSignals: selectedKnowledgeRows.map((row) => {
+      const latestFeedback = latestFeedbackByKnowledgeId.get(row.knowledgeId);
+      const metadata = asRecord(latestFeedback?.metadata);
+      const autoVerdict = normalizeKnowledgeVerdict(metadata.autoVerdict);
+      const autoVerdictPresent = knowledgeVerdictValues.has(String(metadata.autoVerdict));
+      const autoActor = normalizeFeedbackActor(metadata.autoActor);
+      const autoActorPresent = feedbackActorValues.has(String(metadata.autoActor));
+
+      if (!latestFeedback) {
+        return {
+          knowledgeId: row.knowledgeId,
+          rawId: row.knowledgeId,
+          itemKind: row.itemKind,
+          section: row.section,
+          title: packTitleById.get(row.knowledgeId) ?? `Knowledge ${row.knowledgeId.slice(0, 8)}`,
+          score: row.score,
+          rankingReason: row.rankingReason,
+          autoVerdict: null,
+          autoActor: null,
+          autoReason: null,
+          effectiveVerdict: null,
+          effectiveActor: null,
+          effectiveReason: null,
+          hasUserOverride: false,
+          updatedAt: null,
+        };
+      }
+
+      const effectiveVerdict = latestFeedback.verdict;
+      const effectiveActor = latestFeedback.actor;
+      const effectiveReason = latestFeedback.reason;
+
+      if (effectiveActor === "user") {
+        const resolvedAutoVerdict = autoVerdictPresent ? autoVerdict : null;
+        const resolvedAutoActor = autoActorPresent ? autoActor : null;
+        const resolvedAutoReason = normalizeNullableString(metadata.autoReason);
+        const hasUserOverride =
+          resolvedAutoVerdict !== null && resolvedAutoVerdict !== effectiveVerdict;
+        return {
+          knowledgeId: row.knowledgeId,
+          rawId: row.knowledgeId,
+          itemKind: row.itemKind,
+          section: row.section,
+          title: packTitleById.get(row.knowledgeId) ?? `Knowledge ${row.knowledgeId.slice(0, 8)}`,
+          score: row.score,
+          rankingReason: row.rankingReason,
+          autoVerdict: resolvedAutoVerdict,
+          autoActor: resolvedAutoActor,
+          autoReason: resolvedAutoReason,
+          effectiveVerdict,
+          effectiveActor,
+          effectiveReason,
+          hasUserOverride,
+          updatedAt: latestFeedback.updatedAt,
+        };
+      }
+
+      return {
+        knowledgeId: row.knowledgeId,
+        rawId: row.knowledgeId,
+        itemKind: row.itemKind,
+        section: row.section,
+        title: packTitleById.get(row.knowledgeId) ?? `Knowledge ${row.knowledgeId.slice(0, 8)}`,
+        score: row.score,
+        rankingReason: row.rankingReason,
+        autoVerdict: effectiveVerdict,
+        autoActor: effectiveActor,
+        autoReason: effectiveReason,
+        effectiveVerdict,
+        effectiveActor,
+        effectiveReason,
+        hasUserOverride: false,
+        updatedAt: latestFeedback.updatedAt,
+      };
+    }),
     snapshotAvailable: packSnapshot !== null,
   };
 

@@ -1,5 +1,5 @@
 export type CompileRunSource = "ui" | "mcp" | "cli" | "unknown";
-export type CompileRunKnowledgeVerdict = "used" | "off_topic" | "wrong";
+export type CompileRunKnowledgeVerdict = "used" | "not_used" | "off_topic" | "wrong";
 
 export type CompileRequest = {
   goal: string;
@@ -75,6 +75,24 @@ export type CompileRunKnowledgeFeedback = {
   updatedAt: string;
 };
 
+export type CompileRunKnowledgeSignal = {
+  knowledgeId: string;
+  rawId: string;
+  itemKind: "rule" | "procedure";
+  section: "rules" | "procedures";
+  title: string;
+  score: number;
+  rankingReason: string;
+  autoVerdict: CompileRunKnowledgeVerdict | null;
+  autoActor: "agent" | "user" | "system" | null;
+  autoReason: string | null;
+  effectiveVerdict: CompileRunKnowledgeVerdict | null;
+  effectiveActor: "agent" | "user" | "system" | null;
+  effectiveReason: string | null;
+  hasUserOverride: boolean;
+  updatedAt: string | null;
+};
+
 export type CompileRunDetail = {
   run: CompileRunSummary & {
     tokenBudget: number;
@@ -84,6 +102,7 @@ export type CompileRunDetail = {
   outputMarkdown?: string | null;
   selectedItems: CompileRunSelectedItem[];
   knowledgeFeedback: CompileRunKnowledgeFeedback[];
+  knowledgeSignals: CompileRunKnowledgeSignal[];
   snapshotAvailable: boolean;
 };
 

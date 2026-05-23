@@ -31,7 +31,7 @@ export async function saveRunKnowledgeFeedback(params: {
   runId: string;
   items: Array<{
     knowledgeId: string;
-    verdict: "used" | "off_topic" | "wrong";
+    verdict: "used" | "not_used" | "off_topic" | "wrong";
     reason?: string;
   }>;
 }): Promise<CompileRunKnowledgeFeedbackResult> {

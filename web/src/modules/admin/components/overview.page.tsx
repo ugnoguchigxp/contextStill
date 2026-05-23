@@ -1,14 +1,15 @@
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatCheckedAt, formatNumber } from "@/lib/admin-formatters";
 import { useQuery } from "@tanstack/react-query";
-import { RefreshCcw } from "lucide-react";
 import { useEffect, useState } from "react";
 import {
   type OverviewDashboard,
   fetchDoctorReport,
   fetchOverviewDashboard,
 } from "../repositories/admin.repository";
+import { AdminMetricCard } from "./admin-metric-card";
+import { AdminPageHeader } from "./admin-page-header";
 import {
   DoctorNextActionList,
   DoctorReasonList,
@@ -16,30 +17,6 @@ import {
   getDoctorReasonDetails,
 } from "./doctor-signals";
 import { OverviewCharts } from "./overview-charts";
-
-function Metric({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: string | number;
-  hint?: string;
-}) {
-  return (
-    <Card className="overview-metric-card">
-      <CardContent className="metric-card overview-metric-content">
-        <span className="metric-label">{label}</span>
-        <strong className="metric-value">{value}</strong>
-        {hint ? <span className="metric-hint">{hint}</span> : null}
-      </CardContent>
-    </Card>
-  );
-}
-
-function formatNumber(value: number): string {
-  return new Intl.NumberFormat("en-US").format(value);
-}
 
 function formatJpy(value: number): string {
   return new Intl.NumberFormat("ja-JP", {
@@ -51,13 +28,6 @@ function formatJpy(value: number): string {
 
 function formatJpyPerMillionTokens(value: number): string {
   return `${formatJpy(value)}/1M`;
-}
-
-function formatCheckedAt(value: string | undefined): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleString();
 }
 
 function toPercent(numerator: number, denominator: number): string {
@@ -167,32 +137,15 @@ export function OverviewPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
-      <section className="flex flex-wrap items-center justify-between gap-3 border-b bg-background px-6 py-2">
-        <div className="flex items-center gap-3">
-          <h1 className="text-lg font-bold">Overview</h1>
-        </div>
-        <div className="overview-heading-actions">
-          <span className="overview-checked-at">
-            checkedAt {formatCheckedAt(dashboard?.checkedAt)}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              void Promise.all([overview.refetch(), doctor.refetch()]);
-            }}
-            disabled={overview.isFetching || doctor.isFetching}
-          >
-            <RefreshCcw size={14} />
-            Refresh
-          </Button>
-          <Badge
-            variant={status === "ok" ? "success" : status === "failed" ? "destructive" : "warning"}
-          >
-            {status}
-          </Badge>
-        </div>
-      </section>
+      <AdminPageHeader
+        title="Overview"
+        checkedAtText={formatCheckedAt(dashboard?.checkedAt)}
+        onRefresh={() => {
+          void Promise.all([overview.refetch(), doctor.refetch()]);
+        }}
+        refreshDisabled={overview.isFetching || doctor.isFetching}
+        status={status}
+      />
 
       <div className="page-stack min-h-0 flex-1 overflow-y-auto p-4">
         {overview.isError ? (
@@ -208,7 +161,7 @@ export function OverviewPage() {
         ) : null}
 
         <section className="metric-grid overview-metric-grid">
-          <Metric
+          <AdminMetricCard
             label="Knowledge Items"
             value={dashboard ? formatNumber(dashboard.kpis.knowledgeTotal) : "-"}
             hint={
@@ -217,12 +170,12 @@ export function OverviewPage() {
                 : undefined
             }
           />
-          <Metric
+          <AdminMetricCard
             label="Knowledge Types"
             value={dashboard ? formatNumber(dashboard.kpis.rules) : "-"}
             hint={dashboard ? `procedures ${formatNumber(dashboard.kpis.procedures)}` : undefined}
           />
-          <Metric
+          <AdminMetricCard
             label="Usage Coverage"
             value={dashboard ? formatNumber(usedActiveKnowledge) : "-"}
             hint={
@@ -231,7 +184,7 @@ export function OverviewPage() {
                 : undefined
             }
           />
-          <Metric
+          <AdminMetricCard
             label="Wiki Pages"
             value={dashboard ? formatNumber(dashboard.kpis.wikiPages) : "-"}
             hint={
@@ -240,7 +193,7 @@ export function OverviewPage() {
                 : undefined
             }
           />
-          <Metric
+          <AdminMetricCard
             label="Vibe Records"
             value={dashboard ? formatNumber(dashboard.kpis.vibeRecords) : "-"}
             hint={
@@ -249,7 +202,7 @@ export function OverviewPage() {
                 : undefined
             }
           />
-          <Metric
+          <AdminMetricCard
             label="Compile Health"
             value={dashboard ? toPercent(compileDegradedRuns, compileRuns) : "-"}
             hint={
@@ -258,7 +211,7 @@ export function OverviewPage() {
                 : undefined
             }
           />
-          <Metric
+          <AdminMetricCard
             label="Local LLM 30d"
             value={dashboard ? formatNumber(dashboard.llmUsage.kpis.localTokensTotal30d) : "-"}
             hint={
@@ -267,7 +220,7 @@ export function OverviewPage() {
                 : undefined
             }
           />
-          <Metric
+          <AdminMetricCard
             label="Cloud LLM 30d"
             value={dashboard ? formatNumber(dashboard.llmUsage.kpis.cloudTokensTotal30d) : "-"}
             hint={
@@ -276,7 +229,7 @@ export function OverviewPage() {
                 : undefined
             }
           />
-          <Metric
+          <AdminMetricCard
             label="Cloud LLM Cost 30d"
             value={dashboard ? formatJpy(dashboard.llmUsage.kpis.cloudCostJpyTotal30d) : "-"}
             hint={
@@ -285,7 +238,7 @@ export function OverviewPage() {
                 : undefined
             }
           />
-          <Metric
+          <AdminMetricCard
             label="LLM Measured Ratio 30d"
             value={
               dashboard ? `${dashboard.llmUsage.kpis.measuredCoveragePercent30d.toFixed(1)}%` : "-"
@@ -296,7 +249,7 @@ export function OverviewPage() {
                 : undefined
             }
           />
-          <Metric
+          <AdminMetricCard
             label="Estimated Tokens 30d"
             value={dashboard ? formatNumber(dashboard.llmUsage.kpis.estimatedTokensTotal30d) : "-"}
             hint={
@@ -305,14 +258,14 @@ export function OverviewPage() {
                 : undefined
             }
           />
-          <Metric
+          <AdminMetricCard
             label="Source Coverage"
             value={dashboard ? formatNumber(dashboard.kpis.linkedKnowledge) : "-"}
             hint={
               dashboard ? `unlinked ${formatNumber(dashboard.kpis.unlinkedKnowledge)}` : undefined
             }
           />
-          <Metric
+          <AdminMetricCard
             label="Distillation Queue"
             value={
               dashboard

@@ -13,15 +13,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import {
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
-  ChevronLeft,
-  ChevronRight,
-  RefreshCw,
-  Search,
-} from "lucide-react";
+import { RefreshCw, Search } from "lucide-react";
 import { Fragment, useCallback, useMemo, useState } from "react";
 import {
   type CandidateListItem,
@@ -29,6 +21,8 @@ import {
   type CandidateOutcome,
   fetchCandidateItems,
 } from "../repositories/admin.repository";
+import { AdminPaginationFooter } from "./admin-pagination-footer";
+import { AdminSortableTableHead } from "./admin-sortable-table-head";
 
 const outcomeOptions: Array<"all" | CandidateOutcome> = [
   "all",
@@ -84,24 +78,6 @@ function textPreview(value: string, max = 120): string {
   const normalized = value.replace(/\s+/g, " ").trim();
   if (normalized.length <= max) return normalized;
   return `${normalized.slice(0, Math.max(0, max - 3))}...`;
-}
-
-function visiblePageNumbers(currentPage: number, totalPages: number): Array<number | "ellipsis"> {
-  if (totalPages <= 0) return [];
-  if (totalPages <= 9) {
-    return Array.from({ length: totalPages }, (_, index) => index + 1);
-  }
-
-  const pages = new Set<number>([1, totalPages]);
-  for (let pageNumber = currentPage - 2; pageNumber <= currentPage + 2; pageNumber += 1) {
-    if (pageNumber >= 1 && pageNumber <= totalPages) pages.add(pageNumber);
-  }
-
-  const sortedPages = Array.from(pages).sort((a, b) => a - b);
-  return sortedPages.flatMap((pageNumber, index) => {
-    const previousPage = sortedPages[index - 1];
-    return previousPage && pageNumber - previousPage > 1 ? ["ellipsis", pageNumber] : [pageNumber];
-  });
 }
 
 function CandidateColumnGroup() {
@@ -201,7 +177,6 @@ export function CandidatesPage() {
   const displayTotalPages = Math.max(1, totalPages);
   const hasPrev = currentPage > 1;
   const hasNext = totalPages > 0 && currentPage < totalPages;
-  const pageNumbers = visiblePageNumbers(currentPage, totalPages);
   const pageStart = total === 0 ? 0 : pagination.pageIndex * pagination.pageSize + 1;
   const pageEnd = Math.min(pagination.pageIndex * pagination.pageSize + items.length, total);
 
@@ -449,29 +424,11 @@ export function CandidatesPage() {
                 {table.getHeaderGroups().map((headerGroup) => (
                   <TableRow key={headerGroup.id}>
                     {headerGroup.headers.map((header) => (
-                      <TableHead key={header.id} className={tableHeadClass}>
-                        {header.isPlaceholder ? null : header.column.getCanSort() ? (
-                          <button
-                            type="button"
-                            className="flex cursor-pointer select-none items-center gap-2 transition-colors hover:text-foreground"
-                            onClick={header.column.getToggleSortingHandler()}
-                          >
-                            {flexRender(header.column.columnDef.header, header.getContext())}
-                            <span className="w-4">
-                              {{
-                                asc: <ArrowUp size={12} />,
-                                desc: <ArrowDown size={12} />,
-                              }[header.column.getIsSorted() as string] ?? (
-                                <ArrowUpDown size={12} className="opacity-30" />
-                              )}
-                            </span>
-                          </button>
-                        ) : (
-                          <div>
-                            {flexRender(header.column.columnDef.header, header.getContext())}
-                          </div>
-                        )}
-                      </TableHead>
+                      <AdminSortableTableHead
+                        key={header.id}
+                        header={header}
+                        className={tableHeadClass}
+                      />
                     ))}
                   </TableRow>
                 ))}
@@ -584,70 +541,20 @@ export function CandidatesPage() {
           </div>
         </div>
 
-        <div className="border-t bg-muted/10 px-4 py-1.5 flex flex-wrap items-center justify-between gap-3 text-[11px] leading-4">
-          <div className="min-w-0 flex flex-wrap items-center gap-x-3 gap-y-1 text-muted-foreground">
-            <span>
-              Showing {pageStart} to {pageEnd} of {total} candidates | Page {currentPage} /{" "}
-              {displayTotalPages}
-            </span>
-            <span>
-              total {stats?.total ?? 0} | stored {stats?.stored ?? 0} | ready{" "}
-              {stats?.readyNotFinalized ?? 0} | rejected {stats?.rejected ?? 0} | retryable{" "}
-              {stats?.retryable ?? 0} | pending {stats?.targetPending ?? 0}
-            </span>
-          </div>
-          <div className="flex items-center gap-2">
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 gap-1 px-2"
-              disabled={!hasPrev}
-              onClick={() => table.previousPage()}
-              aria-label="Previous page"
-            >
-              <ChevronLeft className="h-4 w-4" />
-              Prev
-            </Button>
-            <div className="flex items-center gap-1">
-              {pageNumbers.map((pageNumber, index) =>
-                pageNumber === "ellipsis" ? (
-                  <span
-                    // biome-ignore lint/suspicious/noArrayIndexKey: separator positions are derived from page windows
-                    key={`candidate-page-ellipsis-${index}`}
-                    className="px-1 text-xs text-muted-foreground"
-                  >
-                    ...
-                  </span>
-                ) : (
-                  <button
-                    key={`candidate-page-${pageNumber}`}
-                    type="button"
-                    className={`h-7 min-w-7 rounded-md px-2 text-xs transition-colors ${
-                      currentPage === pageNumber
-                        ? "bg-primary font-bold text-primary-foreground"
-                        : "text-muted-foreground hover:bg-muted"
-                    }`}
-                    onClick={() => table.setPageIndex(pageNumber - 1)}
-                    aria-current={currentPage === pageNumber ? "page" : undefined}
-                  >
-                    {pageNumber}
-                  </button>
-                ),
-              )}
-            </div>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 gap-1 px-2"
-              disabled={!hasNext}
-              onClick={() => table.nextPage()}
-              aria-label="Next page"
-            >
-              Next
-              <ChevronRight className="h-4 w-4" />
-            </Button>
-          </div>
-        </div>
+        <AdminPaginationFooter
+          keyPrefix="candidate"
+          currentPage={currentPage}
+          totalPages={totalPages}
+          canPreviousPage={hasPrev}
+          canNextPage={hasNext}
+          onPreviousPage={() => table.previousPage()}
+          onNextPage={() => table.nextPage()}
+          onPageSelect={(pageNumber) => table.setPageIndex(pageNumber - 1)}
+          summaryItems={[
+            `Showing ${pageStart} to ${pageEnd} of ${total} candidates | Page ${currentPage} / ${displayTotalPages}`,
+            `total ${stats?.total ?? 0} | stored ${stats?.stored ?? 0} | ready ${stats?.readyNotFinalized ?? 0} | rejected ${stats?.rejected ?? 0} | retryable ${stats?.retryable ?? 0} | pending ${stats?.targetPending ?? 0}`,
+          ]}
+        />
       </Card>
     </div>
   );

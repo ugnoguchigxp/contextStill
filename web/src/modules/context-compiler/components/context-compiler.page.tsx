@@ -5,10 +5,11 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Select } from "@/components/ui/select";
 import { Textarea } from "@/components/ui/textarea";
+import { asRecord, parseCsvListOptional } from "@/lib/data-utils";
 import { Plus, RefreshCw, Settings2 } from "lucide-react";
 import { MarkdownEditor } from "markdown-wysiwyg-editor";
 import mermaid from "mermaid";
-import { useEffect, useMemo, useState } from "react";
+import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import {
   useCompilePack,
@@ -61,22 +62,10 @@ function formatLatency(value: number): string {
   return `${value}ms`;
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null ? (value as Record<string, unknown>) : {};
-}
-
 function stringArrayValue(value: unknown): string[] {
   return Array.isArray(value)
     ? value.filter((item): item is string => typeof item === "string").map((item) => item.trim())
     : [];
-}
-
-function parseCsv(value: string): string[] | undefined {
-  const items = value
-    .split(",")
-    .map((item) => item.trim())
-    .filter((item) => item.length > 0);
-  return items.length > 0 ? items : undefined;
 }
 
 function StatusBadge({ status }: { status: CompileRunSummary["status"] }) {
@@ -104,7 +93,9 @@ function RunListItem({
       onClick={onSelect}
     >
       <div className="compile-run-item-top">
-        <span className="compile-run-title">{run.goal}</span>
+        <span className="compile-run-title" title={run.goal}>
+          {run.goal}
+        </span>
       </div>
       <div className="compile-run-meta">
         <StatusBadge status={run.status} />
@@ -355,13 +346,17 @@ function hasLegacyInput(input: Record<string, unknown>): boolean {
   );
 }
 
-function feedbackVariant(
-  selected: CompileRunKnowledgeVerdict | undefined,
-  current: CompileRunKnowledgeVerdict,
-) {
-  if (selected !== current) return "outline" as const;
+function verdictLabel(verdict: CompileRunKnowledgeVerdict): string {
+  if (verdict === "used") return "Used in output";
+  if (verdict === "not_used") return "Selected, not referenced";
+  if (verdict === "off_topic") return "Marked off-topic";
+  return "Needs review";
+}
+
+function feedbackVariant(current: CompileRunKnowledgeVerdict | null) {
   if (current === "wrong") return "destructive" as const;
   if (current === "off_topic") return "secondary" as const;
+  if (current === "not_used") return "outline" as const;
   return "default" as const;
 }
 
@@ -416,58 +411,23 @@ function RunDetailPane({
   const technologies = stringArrayValue(input.technologies);
   const domains = stringArrayValue(input.domains);
   const outputMarkdown = detail.outputMarkdown?.trim() || "No Content";
-  const selectedKnowledge = useMemo(() => {
-    const titleById = new Map<string, string>();
-    for (const item of [...(detail.pack?.rules ?? []), ...(detail.pack?.procedures ?? [])]) {
-      titleById.set(item.id, item.title);
-    }
-    const deduped = new Map<string, { knowledgeId: string; title: string; itemKind: string }>();
-    for (const item of detail.selectedItems) {
-      if (item.itemKind !== "rule" && item.itemKind !== "procedure") continue;
-      if (deduped.has(item.itemId)) continue;
-      deduped.set(item.itemId, {
-        knowledgeId: item.itemId,
-        title: titleById.get(item.itemId) ?? item.itemId,
-        itemKind: item.itemKind,
-      });
-    }
-    return [...deduped.values()];
-  }, [detail.pack, detail.selectedItems]);
-  const [feedbackDraft, setFeedbackDraft] = useState<Record<string, CompileRunKnowledgeVerdict>>(
-    {},
-  );
-  const [feedbackBase, setFeedbackBase] = useState<Record<string, CompileRunKnowledgeVerdict>>({});
+  const knowledgeSignals = detail.knowledgeSignals ?? [];
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
-  useEffect(() => {
-    const nextBase: Record<string, CompileRunKnowledgeVerdict> = {};
-    for (const item of detail.knowledgeFeedback) {
-      nextBase[item.knowledgeId] = item.verdict;
+  const applyKnowledgeFeedback = async (
+    knowledgeId: string,
+    verdict: CompileRunKnowledgeVerdict,
+  ) => {
+    try {
+      const result = await onSubmitKnowledgeFeedback(detail.run.id, [{ knowledgeId, verdict }]);
+      setFeedbackMessage(
+        `saved=${result.savedCount}, updated=${result.updatedCount}, queue+${result.queueCreatedCount}, queue-dismissed=${result.queueDismissedCount}`,
+      );
+    } catch (submitError) {
+      setFeedbackMessage(
+        submitError instanceof Error ? submitError.message : "Failed to save knowledge feedback",
+      );
     }
-    setFeedbackBase(nextBase);
-    setFeedbackDraft(nextBase);
-    setFeedbackMessage(null);
-  }, [detail.knowledgeFeedback]);
-
-  const feedbackDirtyItems = selectedKnowledge.filter((item) => {
-    const nextVerdict = feedbackDraft[item.knowledgeId];
-    const baseVerdict = feedbackBase[item.knowledgeId];
-    if (!nextVerdict) return false;
-    return nextVerdict !== baseVerdict;
-  });
-
-  const saveKnowledgeFeedback = async () => {
-    if (feedbackDirtyItems.length === 0) return;
-    const result = await onSubmitKnowledgeFeedback(
-      detail.run.id,
-      feedbackDirtyItems.map((item) => ({
-        knowledgeId: item.knowledgeId,
-        verdict: feedbackDraft[item.knowledgeId] as CompileRunKnowledgeVerdict,
-      })),
-    );
-    setFeedbackMessage(
-      `saved=${result.savedCount}, updated=${result.updatedCount}, queue+${result.queueCreatedCount}, queue-dismissed=${result.queueDismissedCount}`,
-    );
   };
 
   return (
@@ -526,56 +486,72 @@ function RunDetailPane({
             </section>
             <PackSection title="Rules" items={detail.pack.rules} />
             <PackSection title="Procedures" items={detail.pack.procedures} />
-            {selectedKnowledge.length > 0 ? (
+            {knowledgeSignals.length > 0 ? (
               <section className="compile-pack-section">
                 <div className="compile-pack-section-header">
-                  <h3>Knowledge Feedback</h3>
-                  <Badge variant="outline">{feedbackDirtyItems.length} pending</Badge>
+                  <h3>Knowledge Usage Signals</h3>
+                  <Badge variant="outline">{knowledgeSignals.length}</Badge>
                 </div>
+                <p className="compile-state-text">
+                  Auto verdicts are shown here. Save an override only when needed.
+                </p>
                 <div className="compile-pack-items">
-                  {selectedKnowledge.map((item) => (
+                  {knowledgeSignals.map((item) => (
                     <article key={item.knowledgeId} className="compile-pack-item">
                       <div className="compile-pack-item-header">
                         <strong>{item.title}</strong>
                         <Badge variant="secondary">{item.itemKind}</Badge>
                       </div>
+                      <div className="compile-pack-item-meta">
+                        <Badge variant={feedbackVariant(item.effectiveVerdict)}>
+                          {item.effectiveVerdict
+                            ? verdictLabel(item.effectiveVerdict)
+                            : "No signal"}
+                        </Badge>
+                        <span>{item.rankingReason}</span>
+                      </div>
+                      {item.hasUserOverride && item.autoVerdict ? (
+                        <p>
+                          Auto: {verdictLabel(item.autoVerdict)}
+                          {item.autoReason ? ` (${item.autoReason})` : ""}
+                        </p>
+                      ) : null}
+                      {item.effectiveReason ? <p>Signal: {item.effectiveReason}</p> : null}
+                      <p className="compile-pack-item-id">id: {item.rawId}</p>
                       <div className="compile-feedback-actions">
                         <Button
                           type="button"
                           size="sm"
-                          variant={feedbackVariant(feedbackDraft[item.knowledgeId], "used")}
-                          onClick={() =>
-                            setFeedbackDraft((current) => ({
-                              ...current,
-                              [item.knowledgeId]: "used",
-                            }))
-                          }
+                          variant={item.effectiveVerdict === "used" ? "default" : "outline"}
+                          onClick={() => void applyKnowledgeFeedback(item.knowledgeId, "used")}
+                          disabled={feedbackPending}
                         >
                           Used
                         </Button>
                         <Button
                           type="button"
                           size="sm"
-                          variant={feedbackVariant(feedbackDraft[item.knowledgeId], "off_topic")}
-                          onClick={() =>
-                            setFeedbackDraft((current) => ({
-                              ...current,
-                              [item.knowledgeId]: "off_topic",
-                            }))
-                          }
+                          variant={item.effectiveVerdict === "not_used" ? "default" : "outline"}
+                          onClick={() => void applyKnowledgeFeedback(item.knowledgeId, "not_used")}
+                          disabled={feedbackPending}
+                        >
+                          Not used
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={item.effectiveVerdict === "off_topic" ? "default" : "outline"}
+                          onClick={() => void applyKnowledgeFeedback(item.knowledgeId, "off_topic")}
+                          disabled={feedbackPending}
                         >
                           Off-topic
                         </Button>
                         <Button
                           type="button"
                           size="sm"
-                          variant={feedbackVariant(feedbackDraft[item.knowledgeId], "wrong")}
-                          onClick={() =>
-                            setFeedbackDraft((current) => ({
-                              ...current,
-                              [item.knowledgeId]: "wrong",
-                            }))
-                          }
+                          variant={item.effectiveVerdict === "wrong" ? "default" : "outline"}
+                          onClick={() => void applyKnowledgeFeedback(item.knowledgeId, "wrong")}
+                          disabled={feedbackPending}
                         >
                           Wrong
                         </Button>
@@ -583,18 +559,16 @@ function RunDetailPane({
                     </article>
                   ))}
                 </div>
-                <div className="compile-form-actions">
-                  <Button
-                    type="button"
-                    onClick={() => void saveKnowledgeFeedback()}
-                    disabled={feedbackPending || feedbackDirtyItems.length === 0}
-                  >
-                    {feedbackPending ? "Saving..." : "Save Feedback"}
-                  </Button>
-                  {feedbackMessage ? <p className="compile-state-text">{feedbackMessage}</p> : null}
-                </div>
+                {feedbackMessage ? <p className="compile-state-text">{feedbackMessage}</p> : null}
               </section>
-            ) : null}
+            ) : (
+              <section className="compile-pack-section">
+                <div className="compile-pack-section-header">
+                  <h3>Knowledge Usage Signals</h3>
+                </div>
+                <p className="compile-state-text">Usage signals were not recorded for this run.</p>
+              </section>
+            )}
             {detail.pack.diagnostics.degradedReasons.length > 0 ? (
               <section className="compile-pack-section">
                 <div className="compile-pack-section-header">
@@ -657,9 +631,9 @@ export function ContextCompilerPage() {
   const onSubmit = async (values: FormValues) => {
     const response: CompileResponse = await compile.mutateAsync({
       goal: values.goal,
-      changeTypes: parseCsv(values.changeTypesCsv),
-      technologies: parseCsv(values.technologiesCsv),
-      domains: parseCsv(values.domainsCsv),
+      changeTypes: parseCsvListOptional(values.changeTypesCsv),
+      technologies: parseCsvListOptional(values.technologiesCsv),
+      domains: parseCsvListOptional(values.domainsCsv),
     });
     setActiveRunId(response.pack.runId);
     setMode("detail");
@@ -704,6 +678,7 @@ export function ContextCompilerPage() {
           />
         ) : (
           <RunDetailPane
+            key={activeRunId ?? "compile-run-detail"}
             detail={detail.data}
             isLoading={detail.isLoading}
             error={detail.error}

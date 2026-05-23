@@ -522,6 +522,77 @@ index 0000000..1111111
     expect(edgePairs).toContain(expectedPair);
   });
 
+  test("graph community view assigns community metadata and orphan stats", async () => {
+    const sharedA = await upsertKnowledgeFromSource({
+      sourceUri: "cover-evidence-result://community-shared-a",
+      type: "rule",
+      status: "active",
+      scope: "repo",
+      title: "Community Shared A",
+      body: "community source shared body",
+      metadata: {
+        sourceDocumentUri: "file:///workspace/wiki/community-shared.md",
+      },
+    });
+    const sharedB = await upsertKnowledgeFromSource({
+      sourceUri: "cover-evidence-result://community-shared-b",
+      type: "procedure",
+      status: "active",
+      scope: "repo",
+      title: "Community Shared B",
+      body: "community source shared body",
+      metadata: {
+        sourceDocumentUri: "file:///workspace/wiki/community-shared.md",
+      },
+    });
+    const orphan = await upsertKnowledgeFromSource({
+      sourceUri: "cover-evidence-result://community-orphan",
+      type: "rule",
+      status: "active",
+      scope: "repo",
+      title: "Community Orphan",
+      body: "community orphan body",
+      metadata: {
+        sourceDocumentUri: "file:///workspace/wiki/community-orphan.md",
+      },
+    });
+
+    const snapshot = await buildGraphSnapshot({
+      limit: 20,
+      view: "community",
+      relationAxes: ["source"],
+      status: "all",
+    });
+
+    expect(snapshot.edges.length).toBeGreaterThan(0);
+    expect(snapshot.edges.every((edge) => edge.edgeKind === "source")).toBe(true);
+
+    const nodeA = snapshot.nodes.find((node) => node.id === `knowledge:${sharedA}`);
+    const nodeB = snapshot.nodes.find((node) => node.id === `knowledge:${sharedB}`);
+    const orphanNode = snapshot.nodes.find((node) => node.id === `knowledge:${orphan}`);
+
+    expect(nodeA).toBeDefined();
+    expect(nodeB).toBeDefined();
+    expect(orphanNode).toBeDefined();
+
+    expect(nodeA?.communityId).toBe(nodeB?.communityId);
+    expect(nodeA?.communitySize).toBeGreaterThanOrEqual(2);
+    expect(nodeA?.communityRank).toBeGreaterThanOrEqual(1);
+    expect(orphanNode?.communitySize).toBe(1);
+
+    expect(snapshot.stats.communityCount).toBeGreaterThanOrEqual(2);
+    expect(snapshot.stats.largestCommunitySize).toBeGreaterThanOrEqual(2);
+    expect(snapshot.stats.orphanNodeCount).toBeGreaterThanOrEqual(1);
+    expect(snapshot.communities.length).toBeGreaterThanOrEqual(2);
+    expect(snapshot.supernodes.length).toBe(snapshot.stats.communityCount);
+    const topCommunity = snapshot.communities[0];
+    expect(topCommunity?.size).toBeGreaterThanOrEqual(2);
+    expect(topCommunity?.typeCounts.rule ?? 0).toBeGreaterThanOrEqual(1);
+    expect(topCommunity?.compileSelectCount).toBeGreaterThanOrEqual(0);
+    expect(topCommunity?.health.dead).toBe(true);
+    expect(snapshot.stats.deadCommunityCount).toBeGreaterThanOrEqual(1);
+  });
+
   test("vectorSearchKnowledge returns results based on similarity", async () => {
     const vector = Array.from({ length: 384 }, (_, i) => (i === 0 ? 1 : 0));
     await upsertKnowledgeFromSource({

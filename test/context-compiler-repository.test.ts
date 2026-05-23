@@ -326,6 +326,67 @@ describe("context-compiler repository", () => {
       expect(result?.pack).toBeNull();
       expect(result?.selectedItems).toEqual([]);
     });
+
+    test("deduplicates knowledge signals for repeated selected knowledge IDs", async () => {
+      const mockRun = {
+        id: validPack.runId,
+        goal: validPack.goal,
+        retrievalMode: validPack.retrievalMode,
+        status: validPack.status,
+        degradedReasons: [],
+        durationMs: 100,
+        source: "ui",
+        createdAt: new Date("2026-05-15T00:00:00.000Z"),
+        tokenBudget: 5000,
+        input: { goal: validPack.goal, changeTypes: ["feature"] },
+        packSnapshot: {
+          ...validPack,
+          rules: [
+            {
+              id: "knowledge:i1",
+              itemKind: "rule",
+              itemId: "i1",
+              section: "rules",
+              title: "Dedup Rule",
+              content: "Rule content",
+              score: 0.9,
+              rankingReason: "ranked",
+              sourceRefs: [],
+            },
+          ],
+        },
+      };
+      const mockItems = [
+        {
+          itemKind: "rule",
+          itemId: "i1",
+          section: "rules",
+          score: 100,
+          rankingReason: "high score",
+          sourceRefs: ["s1"],
+        },
+        {
+          itemKind: "rule",
+          itemId: "i1",
+          section: "rules",
+          score: 90,
+          rankingReason: "duplicate lower score",
+          sourceRefs: ["s1"],
+        },
+      ];
+
+      (db.select as any)
+        .mockReturnValueOnce(createSelectChain({ limitResult: [mockRun] }))
+        .mockReturnValueOnce(createSelectChain({ orderByResult: mockItems }))
+        .mockReturnValueOnce(createSelectChain({ orderByResult: [] }));
+
+      const result = await getCompileRunDetail(validPack.runId);
+
+      expect(result?.selectedItems).toHaveLength(2);
+      expect(result?.knowledgeSignals).toHaveLength(1);
+      expect(result?.knowledgeSignals[0]?.knowledgeId).toBe("i1");
+      expect(result?.knowledgeSignals[0]?.title).toBe("Dedup Rule");
+    });
   });
 
   describe("getCompileFreshnessMarkers", () => {

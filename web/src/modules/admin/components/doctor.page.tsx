@@ -1,9 +1,10 @@
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
+import { formatCheckedAt, formatNumber, formatPercent } from "@/lib/admin-formatters";
 import { useQuery } from "@tanstack/react-query";
-import { RefreshCcw } from "lucide-react";
 import { fetchDoctorReport } from "../repositories/admin.repository";
+import { AdminMetricCard } from "./admin-metric-card";
+import { AdminPageHeader } from "./admin-page-header";
 import { DoctorCharts } from "./doctor-charts";
 import {
   DoctorNextActionList,
@@ -11,43 +12,6 @@ import {
   getDoctorNextActions,
   getDoctorReasonDetails,
 } from "./doctor-signals";
-
-function Metric({
-  label,
-  value,
-  hint,
-}: {
-  label: string;
-  value: string | number;
-  hint?: string;
-}) {
-  return (
-    <Card className="overview-metric-card">
-      <CardContent className="metric-card overview-metric-content">
-        <span className="metric-label">{label}</span>
-        <strong className="metric-value">{value}</strong>
-        {hint ? <span className="metric-hint">{hint}</span> : null}
-      </CardContent>
-    </Card>
-  );
-}
-
-function formatCheckedAt(value: string | undefined): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleString();
-}
-
-function formatPercent(value: number | null | undefined): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
-  return `${(value * 100).toFixed(1)}%`;
-}
-
-function formatNumber(value: number | null | undefined): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
-  return new Intl.NumberFormat("en-US").format(value);
-}
 
 function formatDurationMs(value: number | null | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "-";
@@ -107,32 +71,15 @@ export function DoctorPage() {
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
-      <section className="flex flex-wrap items-center justify-between gap-3 border-b bg-background px-6 py-2">
-        <div className="flex items-center gap-3">
-          <h1 className="text-lg font-bold">Doctor</h1>
-        </div>
-        <div className="overview-heading-actions">
-          <span className="overview-checked-at">
-            checkedAt {formatCheckedAt(report?.checkedAt)}
-          </span>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => {
-              void doctor.refetch();
-            }}
-            disabled={doctor.isFetching}
-          >
-            <RefreshCcw size={14} />
-            Refresh
-          </Button>
-          <Badge
-            variant={status === "ok" ? "success" : status === "failed" ? "destructive" : "warning"}
-          >
-            {status}
-          </Badge>
-        </div>
-      </section>
+      <AdminPageHeader
+        title="Doctor"
+        checkedAtText={formatCheckedAt(report?.checkedAt)}
+        onRefresh={() => {
+          void doctor.refetch();
+        }}
+        refreshDisabled={doctor.isFetching}
+        status={status}
+      />
 
       <div className="page-stack min-h-0 flex-1 overflow-y-auto p-4">
         {doctor.isError ? (
@@ -145,12 +92,12 @@ export function DoctorPage() {
         ) : (
           <>
             <section className="metric-grid overview-metric-grid doctor-metric-grid">
-              <Metric
+              <AdminMetricCard
                 label="System Status"
                 value={report?.status ?? "-"}
                 hint={report ? `reasons ${report.reasons.length}` : undefined}
               />
-              <Metric
+              <AdminMetricCard
                 label="Compile Usable"
                 value={formatPercent(report?.runs.usableRate)}
                 hint={
@@ -159,7 +106,7 @@ export function DoctorPage() {
                     : undefined
                 }
               />
-              <Metric
+              <AdminMetricCard
                 label="Blocking Rate"
                 value={formatPercent(report?.runs.blockingRate)}
                 hint={
@@ -168,7 +115,7 @@ export function DoctorPage() {
                     : undefined
                 }
               />
-              <Metric
+              <AdminMetricCard
                 label="DB Latency"
                 value={formatDurationMs(report?.db.durationMs)}
                 hint={
@@ -177,7 +124,7 @@ export function DoctorPage() {
                     : undefined
                 }
               />
-              <Metric
+              <AdminMetricCard
                 label="Knowledge Usage"
                 value={formatNumber(usedKnowledge)}
                 hint={
@@ -186,7 +133,7 @@ export function DoctorPage() {
                     : undefined
                 }
               />
-              <Metric
+              <AdminMetricCard
                 label="HITL Drafts"
                 value={formatNumber(report?.hitl.draftCount)}
                 hint={
@@ -195,7 +142,7 @@ export function DoctorPage() {
                     : undefined
                 }
               />
-              <Metric
+              <AdminMetricCard
                 label="Queue Pending"
                 value={
                   report ? `${formatNumber(queuePending)} / ${formatNumber(queueRunning)}` : "-"
@@ -206,7 +153,7 @@ export function DoctorPage() {
                     : undefined
                 }
               />
-              <Metric
+              <AdminMetricCard
                 label="Sync Freshness"
                 value={formatAgeMinutes(maxSyncAge)}
                 hint={report ? `stale states ${formatNumber(staleSyncCount)}` : undefined}

@@ -161,7 +161,7 @@ export const compileRunSourceValues = ["ui", "mcp", "cli", "unknown"] as const;
 
 export const packSectionValues = ["rules", "procedures", "code_context", "warnings"] as const;
 
-export const knowledgeUsageVerdictValues = ["used", "off_topic", "wrong"] as const;
+export const knowledgeUsageVerdictValues = ["used", "not_used", "off_topic", "wrong"] as const;
 export const knowledgeReviewQueueStatusValues = [
   "pending",
   "reviewing",
@@ -260,6 +260,19 @@ export const knowledgeItems = pgTable(
       "knowledge_items_scope_check",
       sql`${table.scope} IN (${sql.raw(toSqlList(scopeValues))})`,
     ),
+  }),
+);
+
+export const knowledgeCommunityLabels = pgTable(
+  "knowledge_community_labels",
+  {
+    communityKey: text("community_key").primaryKey(),
+    label: text("label").notNull(),
+    note: text("note"),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    updatedAtIdx: index("knowledge_community_labels_updated_at_idx").on(table.updatedAt),
   }),
 );
 

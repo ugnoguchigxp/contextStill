@@ -1,10 +1,11 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import { Card, CardContent } from "@/components/ui/card";
+import { CardContent } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
+import { asRecord, parseCsvList as parseCsv } from "@/lib/data-utils";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type ColumnDef,
@@ -15,12 +16,7 @@ import {
 } from "@tanstack/react-table";
 import {
   Archive,
-  ArrowDown,
-  ArrowUp,
-  ArrowUpDown,
   Check,
-  ChevronLeft,
-  ChevronRight,
   Globe,
   Home,
   Plus,
@@ -29,7 +25,6 @@ import {
   ThumbsDown,
   ThumbsUp,
   Trash2,
-  X,
 } from "lucide-react";
 import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react";
 import {
@@ -45,6 +40,10 @@ import {
   sendKnowledgeFeedback,
   updateKnowledgeItem,
 } from "../repositories/admin.repository";
+import { AdminFilterChipSelect } from "./admin-filter-chip-select";
+import { AdminModalShell } from "./admin-modal-shell";
+import { AdminPaginationFooter } from "./admin-pagination-footer";
+import { AdminSortableTableHead } from "./admin-sortable-table-head";
 
 const knowledgeTypes: KnowledgeType[] = ["rule", "procedure"];
 
@@ -81,24 +80,6 @@ const displayFilterOptions = [
 ] as const;
 const serverSelectableStatusFilters = new Set(["all", "draft", "active", "deprecated"]);
 
-function visiblePageNumbers(currentPage: number, totalPages: number): Array<number | "ellipsis"> {
-  if (totalPages <= 0) return [];
-  if (totalPages <= 9) {
-    return Array.from({ length: totalPages }, (_, index) => index + 1);
-  }
-
-  const pages = new Set<number>([1, totalPages]);
-  for (let pageNumber = currentPage - 2; pageNumber <= currentPage + 2; pageNumber += 1) {
-    if (pageNumber >= 1 && pageNumber <= totalPages) pages.add(pageNumber);
-  }
-
-  const sortedPages = Array.from(pages).sort((a, b) => a - b);
-  return sortedPages.flatMap((pageNumber, index) => {
-    const previousPage = sortedPages[index - 1];
-    return previousPage && pageNumber - previousPage > 1 ? ["ellipsis", pageNumber] : [pageNumber];
-  });
-}
-
 function KnowledgeColumnGroup() {
   return (
     <colgroup>
@@ -129,24 +110,11 @@ function formatDateTime(value: string | null): string {
   return date.toLocaleString("ja-JP", { hour12: false });
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
 function toStringArray(value: unknown): string[] {
   if (!Array.isArray(value)) return [];
   return value
     .filter((item): item is string => typeof item === "string")
     .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function parseCsv(value: string): string[] {
-  return value
-    .split(",")
-    .map((part) => part.trim())
     .filter(Boolean);
 }
 
@@ -790,7 +758,10 @@ export function KnowledgePage() {
     totalKnowledgeCount,
   );
   const currentPage = pagination.pageIndex + 1;
-  const pageNumbers = visiblePageNumbers(currentPage, table.getPageCount());
+  const totalPages = knowledge.data?.totalPages ?? 0;
+  const displayTotalPages = Math.max(1, totalPages);
+  const hasPrev = currentPage > 1;
+  const hasNext = totalPages > 0 && currentPage < totalPages;
   const hasCurrentPageFilters =
     minQuality > 0 || ["unused-active", "stale", "high-value"].includes(displayFilter);
 
@@ -813,44 +784,40 @@ export function KnowledgePage() {
           </form>
         </div>
         <div className="flex items-center gap-3">
-          <div className="flex items-center gap-2 px-3 py-1 bg-muted rounded-lg border border-transparent">
-            <span className="text-[10px] font-bold uppercase text-muted-foreground">Filter</span>
-            <Select
-              value={displayFilter}
-              onChange={(e) => {
-                setDisplayFilter(e.target.value);
-                setBulkSelection(null);
-                resetToFirstPage();
-              }}
-              className="h-7 w-[150px] border-0 bg-transparent px-1 py-0 text-xs font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
-            >
-              {displayFilterOptions.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </Select>
-          </div>
+          <AdminFilterChipSelect
+            label="Filter"
+            value={displayFilter}
+            className="w-[150px]"
+            onChange={(event) => {
+              setDisplayFilter(event.target.value);
+              setBulkSelection(null);
+              resetToFirstPage();
+            }}
+          >
+            {displayFilterOptions.map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
+              </option>
+            ))}
+          </AdminFilterChipSelect>
 
-          <div className="flex items-center gap-2 px-3 py-1 bg-muted rounded-lg border border-transparent">
-            <span className="text-[10px] font-bold uppercase text-muted-foreground">Quality</span>
-            <Select
-              value={minQuality}
-              onChange={(e) => {
-                setMinQuality(Number(e.target.value));
-                setBulkSelection(null);
-                resetToFirstPage();
-              }}
-              className="h-7 w-[74px] border-0 bg-transparent px-1 py-0 text-xs font-medium shadow-none focus-visible:ring-0 focus-visible:ring-offset-0"
-            >
-              <option value="0">All</option>
-              <option value="30">30+</option>
-              <option value="50">50+</option>
-              <option value="70">70+</option>
-              <option value="80">80+</option>
-              <option value="90">90+</option>
-            </Select>
-          </div>
+          <AdminFilterChipSelect
+            label="Quality"
+            value={minQuality}
+            className="w-[74px]"
+            onChange={(event) => {
+              setMinQuality(Number(event.target.value));
+              setBulkSelection(null);
+              resetToFirstPage();
+            }}
+          >
+            <option value="0">All</option>
+            <option value="30">30+</option>
+            <option value="50">50+</option>
+            <option value="70">70+</option>
+            <option value="80">80+</option>
+            <option value="90">90+</option>
+          </AdminFilterChipSelect>
 
           <div className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-1">
             <span className="whitespace-nowrap text-[10px] font-bold uppercase text-slate-300">
@@ -927,27 +894,7 @@ export function KnowledgePage() {
               {table.getHeaderGroups().map((headerGroup) => (
                 <TableRow key={headerGroup.id}>
                   {headerGroup.headers.map((header) => (
-                    <TableHead key={header.id}>
-                      {header.isPlaceholder ? null : header.column.getCanSort() ? (
-                        <button
-                          type="button"
-                          className="flex items-center gap-2 cursor-pointer select-none hover:text-foreground transition-colors"
-                          onClick={header.column.getToggleSortingHandler()}
-                        >
-                          {flexRender(header.column.columnDef.header, header.getContext())}
-                          <span className="w-4">
-                            {{
-                              asc: <ArrowUp size={12} />,
-                              desc: <ArrowDown size={12} />,
-                            }[header.column.getIsSorted() as string] ?? (
-                              <ArrowUpDown size={12} className="opacity-30" />
-                            )}
-                          </span>
-                        </button>
-                      ) : (
-                        <div>{flexRender(header.column.columnDef.header, header.getContext())}</div>
-                      )}
-                    </TableHead>
+                    <AdminSortableTableHead key={header.id} header={header} />
                   ))}
                 </TableRow>
               ))}
@@ -999,325 +946,272 @@ export function KnowledgePage() {
         </div>
       </div>
 
-      <div className="border-t bg-muted/10 px-4 py-1.5 flex flex-wrap items-center justify-between gap-3 text-[11px] leading-4">
-        <div className="min-w-0 text-muted-foreground">
-          {hasCurrentPageFilters ? (
-            <>
-              Showing <strong>{filteredItems.length}</strong> matching items on this page /{" "}
-              <strong>{totalKnowledgeCount}</strong> total
-            </>
-          ) : (
-            <>
-              Showing <strong>{pageStart}</strong> to <strong>{pageEnd}</strong> of{" "}
-              <strong>{totalKnowledgeCount}</strong> items
-            </>
-          )}
-        </div>
-        <div className="flex items-center gap-2">
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => table.previousPage()}
-            disabled={!table.getCanPreviousPage()}
-            className="h-7 gap-1 px-2"
-          >
-            <ChevronLeft size={16} />
-            Prev
-          </Button>
-          <div className="flex items-center gap-1 mx-2">
-            {pageNumbers.map((pageNumber, index) =>
-              pageNumber === "ellipsis" ? (
-                <span
-                  // biome-ignore lint/suspicious/noArrayIndexKey: separator positions are derived from page windows
-                  key={`knowledge-page-ellipsis-${index}`}
-                  className="px-1 text-xs text-muted-foreground"
-                >
-                  ...
-                </span>
-              ) : (
-                <button
-                  key={`knowledge-page-${pageNumber}`}
-                  type="button"
-                  onClick={() => table.setPageIndex(pageNumber - 1)}
-                  className={`w-7 h-7 text-xs rounded-md transition-colors ${
-                    currentPage === pageNumber
-                      ? "bg-primary text-primary-foreground font-bold"
-                      : "hover:bg-muted text-muted-foreground"
-                  }`}
-                  aria-current={currentPage === pageNumber ? "page" : undefined}
-                >
-                  {pageNumber}
-                </button>
-              ),
-            )}
-          </div>
-          <Button
-            variant="outline"
-            size="sm"
-            onClick={() => table.nextPage()}
-            disabled={!table.getCanNextPage()}
-            className="h-7 gap-1 px-2"
-          >
-            Next
-            <ChevronRight size={16} />
-          </Button>
-        </div>
-      </div>
+      <AdminPaginationFooter
+        keyPrefix="knowledge"
+        currentPage={currentPage}
+        totalPages={totalPages}
+        canPreviousPage={hasPrev}
+        canNextPage={hasNext}
+        onPreviousPage={() => table.previousPage()}
+        onNextPage={() => table.nextPage()}
+        onPageSelect={(pageNumber) => table.setPageIndex(pageNumber - 1)}
+        summaryItems={[
+          hasCurrentPageFilters
+            ? `Showing ${filteredItems.length} matching items on this page / ${totalKnowledgeCount} total | Page ${currentPage} / ${displayTotalPages}`
+            : `Showing ${pageStart} to ${pageEnd} of ${totalKnowledgeCount} items | Page ${currentPage} / ${displayTotalPages}`,
+        ]}
+      />
 
       {/* Modal / Dialog Overlay */}
-      {isModalOpen && (
-        <div className="fixed inset-0 z-50 flex items-start justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm">
-          <Card className="my-4 w-full max-w-2xl max-h-[calc(100vh-2rem)] overflow-hidden shadow-2xl animate-in zoom-in-95 duration-200">
-            <div className="flex items-center justify-between border-b px-6 py-4">
-              <h2 className="text-lg font-bold">
-                {editingId ? "Edit Knowledge" : "Create New Knowledge"}
-              </h2>
-              <Button variant="ghost" size="icon" onClick={() => setIsModalOpen(false)}>
-                <X size={20} />
-              </Button>
+      <AdminModalShell
+        isOpen={isModalOpen}
+        onClose={() => setIsModalOpen(false)}
+        ariaLabel={editingId ? "Edit Knowledge" : "Create New Knowledge"}
+        title={
+          <h2 className="text-lg font-bold">
+            {editingId ? "Edit Knowledge" : "Create New Knowledge"}
+          </h2>
+        }
+        overlayClassName="items-start justify-center overflow-y-auto p-4"
+        panelClassName="my-4 max-w-2xl max-h-[calc(100vh-2rem)]"
+        bodyClassName="p-6"
+      >
+        <CardContent className="space-y-4 overflow-y-auto p-0">
+          <div className="space-y-1">
+            <label
+              htmlFor="knowledge-title"
+              className="text-xs font-bold uppercase text-muted-foreground"
+            >
+              Title
+            </label>
+            <Input
+              id="knowledge-title"
+              placeholder="title"
+              value={form.title}
+              onChange={(event) => setForm({ ...form, title: event.target.value })}
+            />
+          </div>
+          <div className="space-y-1">
+            <label
+              htmlFor="knowledge-body"
+              className="text-xs font-bold uppercase text-muted-foreground"
+            >
+              Body Content
+            </label>
+            <Textarea
+              id="knowledge-body"
+              placeholder="body"
+              className="min-h-[200px]"
+              value={form.body}
+              onChange={(event) => setForm({ ...form, body: event.target.value })}
+            />
+          </div>
+          <div className="grid grid-cols-2 gap-4">
+            <div className="space-y-1">
+              <label
+                htmlFor="knowledge-type"
+                className="text-xs font-bold uppercase text-muted-foreground"
+              >
+                Type
+              </label>
+              <Select
+                id="knowledge-type"
+                value={form.type}
+                onChange={(event) => {
+                  setTypeChangedInForm(true);
+                  setForm({ ...form, type: event.target.value as KnowledgeType });
+                }}
+              >
+                {knowledgeTypes.map((type) => (
+                  <option key={type} value={type}>
+                    {type}
+                  </option>
+                ))}
+              </Select>
             </div>
-            <CardContent className="space-y-4 overflow-y-auto p-6">
+            <div className="space-y-1">
+              <label
+                htmlFor="knowledge-status"
+                className="text-xs font-bold uppercase text-muted-foreground"
+              >
+                Status
+              </label>
+              <Select
+                id="knowledge-status"
+                value={form.status}
+                onChange={(event) => setForm({ ...form, status: event.target.value })}
+              >
+                {["draft", "active", "deprecated"].map((status) => (
+                  <option key={status} value={status}>
+                    {status}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label
+                htmlFor="knowledge-scope"
+                className="text-xs font-bold uppercase text-muted-foreground"
+              >
+                Scope
+              </label>
+              <Select
+                id="knowledge-scope"
+                value={form.scope}
+                onChange={(event) => setForm({ ...form, scope: event.target.value })}
+              >
+                {["repo", "global"].map((scope) => (
+                  <option key={scope} value={scope}>
+                    {scope}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-1">
+              <label
+                htmlFor="knowledge-importance"
+                className="text-xs font-bold uppercase text-muted-foreground"
+              >
+                Importance (0-100)
+              </label>
+              <Input
+                id="knowledge-importance"
+                type="number"
+                min="0"
+                max="100"
+                step="1"
+                value={form.importance}
+                onChange={(event) => setForm({ ...form, importance: Number(event.target.value) })}
+              />
+            </div>
+            <div className="space-y-1">
+              <label
+                htmlFor="knowledge-confidence"
+                className="text-xs font-bold uppercase text-muted-foreground"
+              >
+                Confidence (0-100)
+              </label>
+              <Input
+                id="knowledge-confidence"
+                type="number"
+                min="0"
+                max="100"
+                step="1"
+                value={form.confidence}
+                onChange={(event) => setForm({ ...form, confidence: Number(event.target.value) })}
+              />
+            </div>
+          </div>
+
+          <div className="space-y-3 rounded-lg border border-border/60 p-3">
+            <div className="flex items-center justify-between">
+              <p className="text-xs font-bold uppercase text-muted-foreground">Applicability</p>
+              <label className="flex items-center gap-2 text-xs">
+                <input
+                  type="checkbox"
+                  checked={asRecord(form.appliesTo).general === true}
+                  onChange={(event) => updateAppliesTo({ general: event.target.checked })}
+                />
+                general
+              </label>
+            </div>
+            <div className="grid grid-cols-2 gap-3">
               <div className="space-y-1">
                 <label
-                  htmlFor="knowledge-title"
-                  className="text-xs font-bold uppercase text-muted-foreground"
+                  htmlFor="knowledge-applies-technologies"
+                  className="text-[11px] text-muted-foreground"
                 >
-                  Title
+                  Technologies
                 </label>
                 <Input
-                  id="knowledge-title"
-                  placeholder="title"
-                  value={form.title}
-                  onChange={(event) => setForm({ ...form, title: event.target.value })}
+                  id="knowledge-applies-technologies"
+                  className="placeholder:text-muted-foreground/60"
+                  placeholder="typescript, python"
+                  value={csvFrom(asRecord(form.appliesTo).technologies)}
+                  onChange={(event) =>
+                    updateAppliesTo({ technologies: parseCsv(event.target.value) })
+                  }
                 />
               </div>
               <div className="space-y-1">
                 <label
-                  htmlFor="knowledge-body"
-                  className="text-xs font-bold uppercase text-muted-foreground"
+                  htmlFor="knowledge-applies-change-types"
+                  className="text-[11px] text-muted-foreground"
                 >
-                  Body Content
+                  Change Types
                 </label>
-                <Textarea
-                  id="knowledge-body"
-                  placeholder="body"
-                  className="min-h-[200px]"
-                  value={form.body}
-                  onChange={(event) => setForm({ ...form, body: event.target.value })}
+                <Input
+                  id="knowledge-applies-change-types"
+                  className="placeholder:text-muted-foreground/60"
+                  placeholder="feature, bugfix, schema"
+                  value={csvFrom(asRecord(form.appliesTo).changeTypes)}
+                  onChange={(event) =>
+                    updateAppliesTo({ changeTypes: parseCsv(event.target.value) })
+                  }
                 />
               </div>
-              <div className="grid grid-cols-2 gap-4">
-                <div className="space-y-1">
-                  <label
-                    htmlFor="knowledge-type"
-                    className="text-xs font-bold uppercase text-muted-foreground"
-                  >
-                    Type
-                  </label>
-                  <Select
-                    id="knowledge-type"
-                    value={form.type}
-                    onChange={(event) => {
-                      setTypeChangedInForm(true);
-                      setForm({ ...form, type: event.target.value as KnowledgeType });
-                    }}
-                  >
-                    {knowledgeTypes.map((type) => (
-                      <option key={type} value={type}>
-                        {type}
-                      </option>
+            </div>
+          </div>
+          {editingId ? (
+            <div className="space-y-3 rounded-lg border border-border/60 p-3">
+              <p className="text-xs font-bold uppercase text-muted-foreground">Evidence</p>
+              <div className="space-y-1">
+                <p className="text-[11px] text-muted-foreground">source refs</p>
+                {modalEvidence && modalEvidence.sourceRefs.length > 0 ? (
+                  <ul className="list-disc space-y-1 pl-4 text-xs">
+                    {modalEvidence.sourceRefs.map((ref, index) => (
+                      // biome-ignore lint/suspicious/noArrayIndexKey: index is appropriate since elements are read-only evidence references
+                      <li key={`evidence-ref-${index}`} className="break-all">
+                        {ref}
+                      </li>
                     ))}
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <label
-                    htmlFor="knowledge-status"
-                    className="text-xs font-bold uppercase text-muted-foreground"
-                  >
-                    Status
-                  </label>
-                  <Select
-                    id="knowledge-status"
-                    value={form.status}
-                    onChange={(event) => setForm({ ...form, status: event.target.value })}
-                  >
-                    {["draft", "active", "deprecated"].map((status) => (
-                      <option key={status} value={status}>
-                        {status}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <label
-                    htmlFor="knowledge-scope"
-                    className="text-xs font-bold uppercase text-muted-foreground"
-                  >
-                    Scope
-                  </label>
-                  <Select
-                    id="knowledge-scope"
-                    value={form.scope}
-                    onChange={(event) => setForm({ ...form, scope: event.target.value })}
-                  >
-                    {["repo", "global"].map((scope) => (
-                      <option key={scope} value={scope}>
-                        {scope}
-                      </option>
-                    ))}
-                  </Select>
-                </div>
-                <div className="space-y-1">
-                  <label
-                    htmlFor="knowledge-importance"
-                    className="text-xs font-bold uppercase text-muted-foreground"
-                  >
-                    Importance (0-100)
-                  </label>
-                  <Input
-                    id="knowledge-importance"
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="1"
-                    value={form.importance}
-                    onChange={(event) =>
-                      setForm({ ...form, importance: Number(event.target.value) })
-                    }
-                  />
-                </div>
-                <div className="space-y-1">
-                  <label
-                    htmlFor="knowledge-confidence"
-                    className="text-xs font-bold uppercase text-muted-foreground"
-                  >
-                    Confidence (0-100)
-                  </label>
-                  <Input
-                    id="knowledge-confidence"
-                    type="number"
-                    min="0"
-                    max="100"
-                    step="1"
-                    value={form.confidence}
-                    onChange={(event) =>
-                      setForm({ ...form, confidence: Number(event.target.value) })
-                    }
-                  />
-                </div>
+                  </ul>
+                ) : (
+                  <p className="text-xs text-muted-foreground">none</p>
+                )}
               </div>
+              <div className="space-y-1">
+                <p className="text-[11px] text-muted-foreground">originating vibe memory</p>
+                {modalEvidence && modalEvidence.sourceVibeMemoryIds.length > 0 ? (
+                  <ul className="list-disc space-y-1 pl-4 text-xs">
+                    {modalEvidence.sourceVibeMemoryIds.map((memoryId, index) => (
+                      // biome-ignore lint/suspicious/noArrayIndexKey: index is appropriate since elements are read-only evidence memory IDs
+                      <li key={`evidence-memory-${index}`}>{memoryId}</li>
+                    ))}
+                  </ul>
+                ) : (
+                  <p className="text-xs text-muted-foreground">none</p>
+                )}
+              </div>
+            </div>
+          ) : null}
 
-              <div className="space-y-3 rounded-lg border border-border/60 p-3">
-                <div className="flex items-center justify-between">
-                  <p className="text-xs font-bold uppercase text-muted-foreground">Applicability</p>
-                  <label className="flex items-center gap-2 text-xs">
-                    <input
-                      type="checkbox"
-                      checked={asRecord(form.appliesTo).general === true}
-                      onChange={(event) => updateAppliesTo({ general: event.target.checked })}
-                    />
-                    general
-                  </label>
-                </div>
-                <div className="grid grid-cols-2 gap-3">
-                  <div className="space-y-1">
-                    <label
-                      htmlFor="knowledge-applies-technologies"
-                      className="text-[11px] text-muted-foreground"
-                    >
-                      Technologies
-                    </label>
-                    <Input
-                      id="knowledge-applies-technologies"
-                      className="placeholder:text-muted-foreground/60"
-                      placeholder="typescript, python"
-                      value={csvFrom(asRecord(form.appliesTo).technologies)}
-                      onChange={(event) =>
-                        updateAppliesTo({ technologies: parseCsv(event.target.value) })
-                      }
-                    />
-                  </div>
-                  <div className="space-y-1">
-                    <label
-                      htmlFor="knowledge-applies-change-types"
-                      className="text-[11px] text-muted-foreground"
-                    >
-                      Change Types
-                    </label>
-                    <Input
-                      id="knowledge-applies-change-types"
-                      className="placeholder:text-muted-foreground/60"
-                      placeholder="feature, bugfix, schema"
-                      value={csvFrom(asRecord(form.appliesTo).changeTypes)}
-                      onChange={(event) =>
-                        updateAppliesTo({ changeTypes: parseCsv(event.target.value) })
-                      }
-                    />
-                  </div>
-                </div>
-              </div>
+          <div className="pt-4 flex items-center justify-between gap-3 border-t">
+            <div>
               {editingId ? (
-                <div className="space-y-3 rounded-lg border border-border/60 p-3">
-                  <p className="text-xs font-bold uppercase text-muted-foreground">Evidence</p>
-                  <div className="space-y-1">
-                    <p className="text-[11px] text-muted-foreground">source refs</p>
-                    {modalEvidence && modalEvidence.sourceRefs.length > 0 ? (
-                      <ul className="list-disc space-y-1 pl-4 text-xs">
-                        {modalEvidence.sourceRefs.map((ref, index) => (
-                          // biome-ignore lint/suspicious/noArrayIndexKey: index is appropriate since elements are read-only evidence references
-                          <li key={`evidence-ref-${index}`} className="break-all">
-                            {ref}
-                          </li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">none</p>
-                    )}
-                  </div>
-                  <div className="space-y-1">
-                    <p className="text-[11px] text-muted-foreground">originating vibe memory</p>
-                    {modalEvidence && modalEvidence.sourceVibeMemoryIds.length > 0 ? (
-                      <ul className="list-disc space-y-1 pl-4 text-xs">
-                        {modalEvidence.sourceVibeMemoryIds.map((memoryId, index) => (
-                          // biome-ignore lint/suspicious/noArrayIndexKey: index is appropriate since elements are read-only evidence memory IDs
-                          <li key={`evidence-memory-${index}`}>{memoryId}</li>
-                        ))}
-                      </ul>
-                    ) : (
-                      <p className="text-xs text-muted-foreground">none</p>
-                    )}
-                  </div>
-                </div>
+                <Button
+                  variant="destructive"
+                  onClick={deleteEditingItem}
+                  disabled={remove.isPending}
+                  title="Delete"
+                >
+                  <Trash2 size={16} />
+                  {remove.isPending ? "Deleting..." : "Delete"}
+                </Button>
               ) : null}
-
-              <div className="pt-4 flex items-center justify-between gap-3 border-t">
-                <div>
-                  {editingId ? (
-                    <Button
-                      variant="destructive"
-                      onClick={deleteEditingItem}
-                      disabled={remove.isPending}
-                      title="Delete"
-                    >
-                      <Trash2 size={16} />
-                      {remove.isPending ? "Deleting..." : "Delete"}
-                    </Button>
-                  ) : null}
-                </div>
-                <div className="flex justify-end gap-3">
-                  <Button variant="outline" onClick={() => setIsModalOpen(false)}>
-                    Cancel
-                  </Button>
-                  <Button onClick={() => save.mutate()} disabled={save.isPending}>
-                    {save.isPending ? "Saving..." : editingId ? "Update Item" : "Create Item"}
-                  </Button>
-                </div>
-              </div>
-              {error ? <p className="text-xs text-destructive text-right mt-2">{error}</p> : null}
-            </CardContent>
-          </Card>
-        </div>
-      )}
+            </div>
+            <div className="flex justify-end gap-3">
+              <Button variant="outline" onClick={() => setIsModalOpen(false)}>
+                Cancel
+              </Button>
+              <Button onClick={() => save.mutate()} disabled={save.isPending}>
+                {save.isPending ? "Saving..." : editingId ? "Update Item" : "Create Item"}
+              </Button>
+            </div>
+          </div>
+          {error ? <p className="text-xs text-destructive text-right mt-2">{error}</p> : null}
+        </CardContent>
+      </AdminModalShell>
     </div>
   );
 }

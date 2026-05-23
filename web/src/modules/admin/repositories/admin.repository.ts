@@ -489,6 +489,11 @@ export type GraphNode = {
   weight: number;
   status: string;
   embedded: boolean;
+  communityId?: string;
+  communityRank?: number;
+  communitySize?: number;
+  communityKey?: string;
+  communityLabel?: string;
 };
 
 export type GraphNodeDetail = {
@@ -503,6 +508,9 @@ export type GraphNodeDetail = {
   importance: number;
   bodyPreview: string;
   embedded: boolean;
+  communityId?: string;
+  communityRank?: number;
+  communitySize?: number;
 };
 
 export type GraphEdge = {
@@ -518,12 +526,66 @@ export type GraphEdge = {
 
 export type GraphStatusFilter = "current" | "active" | "draft" | "deprecated" | "all";
 
-export type GraphViewMode = "relation" | "semantic";
+export type GraphViewMode = "relation" | "semantic" | "community";
 export type GraphRelationAxis = "session" | "project" | "source";
+export type GraphCommunityDisplayMode = "detail" | "supernode";
+
+export type GraphCommunityHealth = {
+  dead: boolean;
+  stale: boolean;
+  thinEvidence: boolean;
+};
+
+export type GraphCommunitySummary = {
+  communityId: string;
+  communityKey: string;
+  communityLabel: string;
+  communityRank: number;
+  size: number;
+  typeCounts: Record<string, number>;
+  statusCounts: Record<string, number>;
+  embeddedCount: number;
+  compileSelectCount: number;
+  staleNodeCount: number;
+  sourceRefCount: number;
+  sourceRefDensity: number;
+  health: GraphCommunityHealth;
+  note?: string;
+  labelUpdatedAt?: string;
+};
+
+export type GraphSupernode = {
+  id: string;
+  label: string;
+  communityKey: string;
+  size: number;
+  communityRank: number;
+  health: GraphCommunityHealth;
+};
+
+export type GraphSuperedge = {
+  id: string;
+  source: string;
+  target: string;
+  weight: number;
+};
+
+export type GraphCommunityLabel = {
+  communityKey: string;
+  communityId: string;
+  communityLabel: string;
+  communityRank: number;
+  size: number;
+  note?: string;
+  labelUpdatedAt?: string;
+};
 
 export type GraphSnapshot = {
   nodes: GraphNode[];
   edges: GraphEdge[];
+  communities: GraphCommunitySummary[];
+  supernodes: GraphSupernode[];
+  superedges: GraphSuperedge[];
   stats: {
     visibleKnowledgeCount: number;
     totalKnowledgeCount: number;
@@ -534,6 +596,12 @@ export type GraphSnapshot = {
     sourceEdgeCount: number;
     relationEdgeCount: number;
     sourceRefCount: number;
+    communityCount: number;
+    largestCommunitySize: number;
+    orphanNodeCount: number;
+    deadCommunityCount: number;
+    staleCommunityCount: number;
+    thinEvidenceCommunityCount: number;
   };
 };
 
@@ -854,6 +922,7 @@ export async function fetchGraphSnapshot(
         limit?: number;
         status?: GraphStatusFilter;
         view?: GraphViewMode;
+        communityDisplay?: GraphCommunityDisplayMode;
         relationAxes?: GraphRelationAxis[];
         minSimilarity?: number;
         semanticTopK?: number;
@@ -867,6 +936,7 @@ export async function fetchGraphSnapshot(
     params.set("limit", String(input.limit ?? 1000));
     if (input.status) params.set("status", input.status);
     if (input.view) params.set("view", input.view);
+    if (input.communityDisplay) params.set("communityDisplay", input.communityDisplay);
     if (input.relationAxes && input.relationAxes.length > 0) {
       params.set("relationAxes", input.relationAxes.join(","));
     }
@@ -881,6 +951,46 @@ export async function fetchGraphSnapshot(
     }
   }
   return getJson<GraphSnapshot>(`/api/graph?${params}`);
+}
+
+export async function fetchGraphCommunityLabels(input?: {
+  limit?: number;
+  status?: GraphStatusFilter;
+  relationAxes?: GraphRelationAxis[];
+}): Promise<GraphCommunityLabel[]> {
+  const params = new URLSearchParams();
+  if (input?.limit !== undefined) params.set("limit", String(input.limit));
+  if (input?.status) params.set("status", input.status);
+  if (input?.relationAxes?.length) params.set("relationAxes", input.relationAxes.join(","));
+  const query = params.toString();
+  const path = query ? `/api/graph/community-labels?${query}` : "/api/graph/community-labels";
+  const json = await getJson<{ labels: GraphCommunityLabel[] }>(path);
+  return json.labels;
+}
+
+export async function updateGraphCommunityLabel(input: {
+  communityKey: string;
+  label: string;
+  note?: string;
+}): Promise<{
+  communityKey: string;
+  label: string;
+  note: string | null;
+  updatedAt: string;
+}> {
+  const payload = {
+    label: input.label,
+    note: input.note ?? "",
+  };
+  const json = await requestJson<{
+    label: {
+      communityKey: string;
+      label: string;
+      note: string | null;
+      updatedAt: string;
+    };
+  }>(`/api/graph/community-labels/${encodeURIComponent(input.communityKey)}`, "PUT", payload);
+  return json.label;
 }
 
 export async function fetchGraphNodeDetail(rawId: string): Promise<GraphNodeDetail | null> {

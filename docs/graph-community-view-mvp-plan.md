@@ -437,18 +437,221 @@ bun run verify
 
 このレビュー結果により、MVP の実装方針は確定とする。後続実装では、この表の決定を前提にする。
 
-## 12. 後続候補
+## 12. 後続実装計画
 
-MVP で community の見え方が有用だった場合、次の順で拡張する。
+MVP 完了後の拡張を、実装可能なフェーズとして固定する。ここでは `context_compile` ranking 変更は扱わず、Graph 可視化の強化に限定する。
 
-1. semantic edge を混ぜた community と relation-only community の比較
-2. community summary panel
-3. representative knowledge 抽出
-4. community label の人間編集
-5. dead zone / stale zone / thin evidence zone の表示
-6. community supernode view
-7. `context_compile` run との overlay
-8. replay corpus を使った ranking 影響評価
-9. `context_compile` の diversity / exploration 反映
+---
 
-この順序を守る。MVP で直接 ranking に入れない。
+### Phase 2: Community Summary Panel
+
+#### 目的
+
+Community の「どこが大きいか」「何で構成されているか」を、ノード全体を目視しなくても読めるようにする。
+
+#### スコープ
+
+- Graph 右パネルに community summary セクションを追加
+- 表示項目:
+  - `communityId`
+  - `size`
+  - `type composition`（rule / procedure 件数）
+  - `status composition`（active / draft / deprecated 件数）
+  - `embedded ratio`
+- 表示対象:
+  - node 選択時は選択 node の community
+  - 非選択時は最大 community（rank 1）
+
+#### API/型変更
+
+- `GraphSnapshot` に `communities` 配列を追加
+- `GraphCommunitySummary` 型を追加
+
+```ts
+type GraphCommunitySummary = {
+  communityId: string;
+  communityRank: number;
+  size: number;
+  typeCounts: Record<string, number>;
+  statusCounts: Record<string, number>;
+  embeddedCount: number;
+};
+```
+
+#### 変更対象ファイル
+
+- `api/modules/graph/graph.repository.ts`
+- `web/src/modules/admin/repositories/admin.repository.ts`
+- `web/src/modules/admin/components/graph.page.tsx`
+- `test/components/admin/graph-page.test.tsx`
+- `test/repositories.integration.test.ts`
+
+#### 受け入れ条件
+
+- Community view で summary が表示される
+- node を切り替えると対象 community summary が切り替わる
+- summary 値が node 集計と一致する
+
+---
+
+### Phase 3: Supernode View
+
+#### 目的
+
+1000-2000 件規模での可読性を改善するため、community を 1 ノードに圧縮した表示を追加する。
+
+#### スコープ
+
+- `view=community` 内に表示モードを追加
+  - `community-detail`（現行 node 表示）
+  - `community-supernode`（圧縮表示）
+- supernode の定義:
+  - 1 community = 1 node
+  - node size = community size
+  - node color = community rank/palette
+- superedge の定義:
+  - 元 edge の source/target community が異なる場合に集約
+  - weight = community 間 edge 本数（または正規化値）
+
+#### API/型変更
+
+- `GraphSnapshot` に `supernodes` / `superedges` を追加（community view 時のみ）
+
+```ts
+type GraphSupernode = {
+  id: string; // community:<rank>
+  label: string;
+  size: number;
+  communityRank: number;
+};
+
+type GraphSuperedge = {
+  id: string;
+  source: string; // supernode id
+  target: string; // supernode id
+  weight: number;
+};
+```
+
+#### 変更対象ファイル
+
+- `api/modules/graph/graph.repository.ts`
+- `web/src/modules/admin/repositories/admin.repository.ts`
+- `web/src/modules/admin/components/graph.page.tsx`
+- `test/components/admin/graph-page.test.tsx`
+- `test/repositories.integration.test.ts`
+
+#### 受け入れ条件
+
+- supernode mode でノード数が community 数と一致する
+- superedge が 0 件でも UI が崩れない
+- detail mode / semantic / relation の既存表示に回帰しない
+
+---
+
+### Phase 4: Community Label 管理
+
+#### 目的
+
+`community:1` のような機械 ID ではなく、人間が理解しやすいラベルで運用できるようにする。
+
+#### スコープ
+
+- community label を保存する軽量テーブルを追加
+- Graph UI から label を編集可能にする
+- label 未設定時は `community:<rank>` を表示
+
+#### データモデル
+
+```txt
+knowledge_community_labels
+- community_key text primary key
+- label text not null
+- note text null
+- updated_at timestamp not null default now()
+```
+
+`community_key` は MVP と同じ計算ロジックで安定化させる。初期は次の連結キーを採用する。
+
+```txt
+community_key = sha256(sorted member raw knowledge ids)
+```
+
+#### API
+
+- `GET /api/graph/community-labels?status=...`
+- `PUT /api/graph/community-labels/:communityKey`
+
+#### 変更対象ファイル
+
+- `src/db/schema.ts`
+- `drizzle/*_community_labels.sql`
+- `api/modules/graph/graph.routes.ts`
+- `api/modules/graph/graph.repository.ts`
+- `web/src/modules/admin/repositories/admin.repository.ts`
+- `web/src/modules/admin/components/graph.page.tsx`
+- `test/admin/repositories.test.ts`
+- `test/repositories.integration.test.ts`
+
+#### 受け入れ条件
+
+- label の作成・更新ができる
+- 再読み込み後も label が保持される
+- community が再計算されても同一メンバーなら label が維持される
+
+---
+
+### Phase 5: Community Health Overlay
+
+#### 目的
+
+community 単位で dead/stale/thin-evidence を可視化し、どの領域の知識整備が必要かを判断できるようにする。
+
+#### スコープ
+
+- health signals を `GraphSnapshot` に追加
+- UI overlay:
+  - dead zone
+  - stale zone
+  - thin evidence zone
+- ここでは表示のみ。自動抑制・ランキング反映は行わない
+
+#### 初期定義（表示専用）
+
+- dead zone:
+  - `active` node を含む
+  - かつ `compileSelectCount` 合計が 0
+- stale zone:
+  - `decayFactor` が閾値未満の node 比率が高い
+- thin evidence zone:
+  - source ref 密度が閾値未満
+
+#### 変更対象ファイル
+
+- `api/modules/graph/graph.repository.ts`
+- `web/src/modules/admin/repositories/admin.repository.ts`
+- `web/src/modules/admin/components/graph.page.tsx`
+- `test/repositories.integration.test.ts`
+
+#### 受け入れ条件
+
+- community summary に health flag が出る
+- 閾値変更なしで再現可能なテストデータで判定を検証できる
+
+---
+
+### フェーズ実行順
+
+1. Phase 2: Community Summary Panel
+2. Phase 3: Supernode View
+3. Phase 4: Community Label 管理
+4. Phase 5: Community Health Overlay
+
+この順序を固定する。`context_compile` ranking や candidate gate への反映は、本計画の外とする。
+
+### 各フェーズ共通の検証
+
+```bash
+bunx vitest run test/admin/repositories.test.ts test/components/admin/graph-page.test.tsx test/repositories.integration.test.ts
+bun run verify
+```
