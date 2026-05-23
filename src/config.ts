@@ -50,6 +50,16 @@ const parseDistillationProvider = (
   return fallback;
 };
 
+const distillationProvider = parseDistillationProvider(
+  process.env.MEMORY_ROUTER_DISTILLATION_PROVIDER,
+  "local-llm",
+);
+const findCandidateProvider = parseDistillationProvider(
+  process.env.MEMORY_ROUTER_DISTILLATION_FIND_CANDIDATE_PROVIDER ||
+    process.env.MEMORY_ROUTER_FIND_CANDIDATE_PROVIDER,
+  distillationProvider,
+);
+
 const sourceContentRoot = path.resolve(process.cwd(), "wiki");
 const readFileRoot = path.resolve(sourceContentRoot, "pages");
 
@@ -180,10 +190,8 @@ export const groupedConfig: GroupedConfig = {
     maxTokens: APP_CONSTANTS.agenticCompileMaxTokens,
   },
   distillation: {
-    provider: parseDistillationProvider(
-      process.env.MEMORY_ROUTER_DISTILLATION_PROVIDER,
-      "local-llm",
-    ),
+    provider: distillationProvider,
+    findCandidateProvider,
     timeoutMs: APP_CONSTANTS.distillationTimeoutMs,
     lockTtlSeconds: APP_CONSTANTS.distillationLockTtlSeconds,
     lockFile: path.resolve(process.cwd(), "logs", "distillation.lock"),

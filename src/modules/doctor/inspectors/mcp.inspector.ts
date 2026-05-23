@@ -1,8 +1,9 @@
 import { getExposedToolEntries } from "../../../mcp/tools/index.js";
 import type { DoctorReport } from "../../../shared/schemas/doctor.schema.js";
-import { requiredPrimaryMcpTools } from "../doctor.constants.js";
+import { getRequiredPrimaryMcpTools } from "../doctor.constants.js";
 
 export function inspectMcpSurface(): DoctorReport["mcp"] {
+  const requiredPrimaryMcpTools = getRequiredPrimaryMcpTools();
   const exposedTools = getExposedToolEntries()
     .map((entry) => entry.name)
     .sort((a, b) => a.localeCompare(b));

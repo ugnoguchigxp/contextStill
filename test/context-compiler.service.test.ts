@@ -10,12 +10,14 @@ import { recordCompileRunKnowledgeUsageSignals } from "../src/modules/knowledge/
 import { recordKnowledgeCompileSelectionSafe } from "../src/modules/knowledge/knowledge-value.service.js";
 import { retrieveKnowledge } from "../src/modules/knowledge/knowledge.service.js";
 import { retrieveSources } from "../src/modules/sources/source-retrieval.service.js";
+import { recordAuditLogSafe } from "../src/modules/audit/audit-log.service.js";
 
 vi.mock("../src/modules/knowledge/knowledge.service.js");
 vi.mock("../src/modules/sources/source-retrieval.service.js");
 vi.mock("../src/modules/context-compiler/context-compiler.repository.js");
 vi.mock("../src/modules/knowledge/knowledge-feedback.service.js");
 vi.mock("../src/modules/knowledge/knowledge-value.service.js");
+vi.mock("../src/modules/audit/audit-log.service.js");
 vi.mock("../src/modules/context-compiler/pack-renderer.js", () => ({
   renderContextPackMarkdown: vi.fn(() => "# Pack Content"),
 }));
@@ -26,6 +28,7 @@ describe("Context Compiler Service", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    vi.mocked(recordAuditLogSafe).mockResolvedValue(undefined);
     groupedConfig.agenticCompile.enabled = false;
     groupedConfig.compile.defaultTokenBudget = 240;
     vi.mocked(insertCompileRun).mockResolvedValue("550e8400-e29b-41d4-a716-446655440000");
@@ -181,6 +184,59 @@ describe("Context Compiler Service", () => {
       "550e8400-e29b-41d4-a716-446655440000#task_context:NO_ACTIVE_KNOWLEDGE_MATCH",
     );
     expect(pack.status).toBe("degraded");
+  });
+
+  test("keeps source-only misses non-blocking when knowledge context is usable", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [
+        {
+          id: "k1",
+          type: "rule",
+          status: "active",
+          title: "Useful rule",
+          body: "Use the existing doctor signal categories.",
+          score: 0.9,
+          sourceRefs: [],
+          hasSourceLinks: false,
+        },
+      ],
+      degradedReasons: [],
+      stats: {
+        textHitCount: 1,
+        vectorHitCount: 0,
+        mergedCount: 1,
+        textFailed: false,
+        vectorFailed: false,
+        embeddingStatus: "generated",
+        scopedSearch: false,
+        repoScopeFallbackUsed: false,
+        queryText: "goal",
+      },
+    } as any);
+    vi.mocked(retrieveSources).mockResolvedValue({
+      items: [],
+      degradedReasons: ["NO_SOURCE_MATCH"],
+      stats: {
+        hitCount: 0,
+        textHitCount: 0,
+        vectorHitCount: 0,
+        searchFailed: false,
+        embeddingStatus: "generated",
+        scopedSearch: false,
+        repoScopeFallbackUsed: false,
+        queryText: "goal",
+      },
+    } as any);
+
+    const { pack } = await compileContextPack({ goal: "source miss with useful knowledge" });
+    const reasonBuckets = pack.diagnostics.retrievalStats.reasonBuckets as {
+      blocking: string[];
+      maintenanceWarnings: string[];
+    };
+    expect(pack.status).toBe("ok");
+    expect(pack.diagnostics.degradedReasons).toContain("NO_SOURCE_MATCH");
+    expect(reasonBuckets.blocking).not.toContain("NO_SOURCE_MATCH");
+    expect(reasonBuckets.maintenanceWarnings).toContain("NO_SOURCE_MATCH");
   });
 
   test("records compile usage signals from composed response", async () => {
@@ -358,5 +414,80 @@ describe("Context Compiler Service", () => {
     expect(pack.procedures).toEqual([]);
     expect(pack.diagnostics.degradedReasons).toContain("LOW_CONFIDENCE_VECTOR_ONLY_SUPPRESSED");
     expect(pack.diagnostics.degradedReasons).toContain("NO_RELEVANT_CONTEXT");
+  });
+
+  test("records compile usage signals error handling and records audit log", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [
+        {
+          id: "k1",
+          type: "rule",
+          status: "active",
+          title: "Rule 1",
+          body: "Body 1",
+          score: 0.9,
+          sourceRefs: [],
+          hasSourceLinks: false,
+        },
+      ],
+      degradedReasons: [],
+      stats: {} as any,
+    } as any);
+
+    // Force error in recordCompileRunKnowledgeUsageSignals
+    vi.mocked(recordCompileRunKnowledgeUsageSignals).mockRejectedValue(
+      new Error("Database write error"),
+    );
+
+    await compileContextPack({ goal: "trigger signal save error" });
+
+    // audit log should be recorded with KNOWLEDGE_USAGE_SIGNAL_SAVE_FAILED
+    expect(recordAuditLogSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "KNOWLEDGE_USAGE_SIGNAL_SAVE_FAILED",
+      }),
+    );
+  });
+
+  test("escalates status to failed when multiple hard failures occur", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [],
+      degradedReasons: ["QUERY_EMBEDDING_UNAVAILABLE", "AGENTIC_REFINE_FAILED"],
+      stats: {} as any,
+    } as any);
+    vi.mocked(retrieveSources).mockResolvedValue({
+      items: [],
+      degradedReasons: ["SOURCE_QUERY_EMBEDDING_UNAVAILABLE", "SOURCE_RETRIEVAL_FAILED"],
+      stats: {} as any,
+    } as any);
+
+    const { pack } = await compileContextPack({ goal: "failed status test" });
+    expect(pack.status).toBe("failed");
+    expect(pack.diagnostics.retrievalStats.suggestedNextCalls).toContain("doctor");
+  });
+
+  test("recommends next calls based on degraded reasons", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [],
+      degradedReasons: ["NO_ACTIVE_KNOWLEDGE_MATCH"],
+      stats: {} as any,
+    } as any);
+    vi.mocked(retrieveSources).mockResolvedValue({
+      items: [],
+      degradedReasons: ["NO_SOURCE_MATCH"],
+      stats: {} as any,
+    } as any);
+
+    const { pack } = await compileContextPack({ goal: "recommends next calls test" });
+    expect(pack.diagnostics.retrievalStats.suggestedNextCalls).toContain("search_knowledge");
+    expect(pack.diagnostics.retrievalStats.suggestedNextCalls).toContain("search_memory");
+  });
+
+  test("uses legacy intent mapping correctly", async () => {
+    const { pack: learningPack } = await compileContextPack({
+      goal: "learn python",
+      changeTypes: ["learning"],
+    });
+    expect(learningPack.retrievalMode).toBe("learning_context");
   });
 });

@@ -58,7 +58,7 @@ vi.mock("../src/modules/finalizeDistille/domain.js", () => ({
   runFinalizeDistille: mocks.runFinalizeDistille,
 }));
 
-function targetRow() {
+function targetRow(overrides: Record<string, unknown> = {}) {
   return {
     id: "target-1",
     targetKind: "wiki_file",
@@ -82,6 +82,7 @@ function targetRow() {
     createdAt: new Date(),
     updatedAt: new Date(),
     completedAt: null,
+    ...overrides,
   };
 }
 
@@ -262,5 +263,31 @@ describe("runDistillationPipeline", () => {
         outcomeKind: "no_candidate",
       }),
     );
+  });
+
+  test("skips retry-exhausted target after pipeline error", async () => {
+    mocks.claimNextDistillationTargetState.mockResolvedValue(targetRow({ attemptCount: 3 }));
+    mocks.runFindCandidate.mockRejectedValue(new Error("The operation timed out."));
+
+    const result = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
+
+    expect(result.results[0]).toMatchObject({
+      status: "skipped",
+      outcomeKind: "pipeline_retry_limit_exceeded",
+      error: "The operation timed out.",
+    });
+    expect(mocks.finishDistillationTargetState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "target-1",
+        status: "skipped",
+        outcomeKind: "pipeline_retry_limit_exceeded",
+        error: "The operation timed out.",
+        metadata: expect.objectContaining({
+          retryLimitExceeded: true,
+          maxAttempts: 3,
+        }),
+      }),
+    );
+    expect(mocks.pauseDistillationTargetState).not.toHaveBeenCalled();
   });
 });

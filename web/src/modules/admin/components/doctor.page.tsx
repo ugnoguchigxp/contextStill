@@ -1,11 +1,10 @@
 import { Badge } from "@/components/ui/badge";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
-import { formatCheckedAt, formatNumber, formatPercent } from "@/lib/admin-formatters";
+import { formatCheckedAt, formatNumber } from "@/lib/admin-formatters";
 import { useQuery } from "@tanstack/react-query";
 import { fetchDoctorReport } from "../repositories/admin.repository";
 import { AdminMetricCard } from "./admin-metric-card";
 import { AdminPageHeader } from "./admin-page-header";
-import { DoctorCharts } from "./doctor-charts";
 import {
   DoctorNextActionList,
   DoctorReasonList,
@@ -61,12 +60,6 @@ export function DoctorPage() {
         (state) => (state.lastSyncedAgeMinutes ?? 0) > syncStaleThresholdMinutes,
       ).length
     : null;
-  const usedKnowledge = report
-    ? Math.max(
-        0,
-        report.knowledgeLifecycle.activeCount - report.knowledgeLifecycle.zeroUseActiveCount,
-      )
-    : null;
   const missingTables = report?.tables?.missing.length ?? 0;
 
   return (
@@ -102,47 +95,11 @@ export function DoctorPage() {
                 }
               />
               <AdminMetricCard
-                label="Compile Usable"
-                value={formatPercent(report?.runs.usableRate)}
-                hint={
-                  report
-                    ? `usable ${formatNumber(report.runs.usableRuns)} / total ${formatNumber(report.runs.totalRuns)}`
-                    : undefined
-                }
-              />
-              <AdminMetricCard
-                label="Blocking Rate"
-                value={formatPercent(report?.runs.blockingRate)}
-                hint={
-                  report
-                    ? `blocking ${formatNumber(report.runs.blockingRuns)} / degraded ${formatNumber(report.runs.degradedRuns)}`
-                    : undefined
-                }
-              />
-              <AdminMetricCard
                 label="DB Latency"
                 value={formatDurationMs(report?.db.durationMs)}
                 hint={
                   report
                     ? `${report.db.reachable ? "reachable" : "unreachable"} / missing tables ${missingTables}`
-                    : undefined
-                }
-              />
-              <AdminMetricCard
-                label="Knowledge Usage"
-                value={formatNumber(usedKnowledge)}
-                hint={
-                  report
-                    ? `unused active ${formatNumber(report.knowledgeLifecycle.zeroUseActiveCount)}`
-                    : undefined
-                }
-              />
-              <AdminMetricCard
-                label="HITL Drafts"
-                value={formatNumber(report?.hitl.draftCount)}
-                hint={
-                  report
-                    ? `oldest ${formatAgeMinutes(report.hitl.oldestDraftAgeMinutes)}`
                     : undefined
                 }
               />
@@ -163,8 +120,6 @@ export function DoctorPage() {
                 hint={report ? `stale states ${formatNumber(staleSyncCount)}` : undefined}
               />
             </section>
-
-            {report ? <DoctorCharts report={report} /> : null}
 
             <section className="overview-health-grid doctor-health-grid">
               <Card>
@@ -218,7 +173,7 @@ export function DoctorPage() {
                     <span>Compile latency</span>
                     <strong>
                       {report
-                        ? `${formatDurationMs(report.runs.durationMsP50)} / ${formatDurationMs(report.runs.durationMsP95)}`
+                        ? `avg ${formatDurationMs(report.runs.durationMsAvg)} / p95 ${formatDurationMs(report.runs.durationMsP95)}`
                         : "-"}
                     </strong>
                   </div>

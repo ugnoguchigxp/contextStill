@@ -87,13 +87,8 @@ function candidateOutputMaxTokens(): number {
   return Math.max(4096, groupedConfig.vibeDistillation.maxOutputTokens);
 }
 
-function defaultFindCandidateProvider(
-  targetKind: "wiki_file" | "vibe_memory",
-): DistillationProviderSetting {
-  if (targetKind === "wiki_file") {
-    return "azure-openai";
-  }
-  return "local-llm";
+function defaultFindCandidateProvider(): DistillationProviderSetting {
+  return groupedConfig.distillation.findCandidateProvider;
 }
 
 function buildToolDefinitionForTarget(
@@ -272,7 +267,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
   }
 
   const callerMode = input.callerMode ?? "cli_text";
-  const provider = input.provider ?? defaultFindCandidateProvider(target.targetKind);
+  const provider = input.provider ?? defaultFindCandidateProvider();
   const model = resolveDistillationModel(provider);
   const toolDefinition = buildToolDefinitionForTarget(target.targetKind);
   const readLog: Array<{ from: number; toExclusive: number }> = [];

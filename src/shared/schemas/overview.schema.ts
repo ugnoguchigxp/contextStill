@@ -5,6 +5,11 @@ const dayStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 export const overviewKnowledgeStatusSchema = z.enum(["active", "draft", "deprecated"]);
 export const overviewDynamicScoreBucketSchema = z.enum(["0", "0-1", "1-5", "5-10", "10+"]);
 export const overviewSourceCoverageLabelSchema = z.enum(["linked", "unlinked"]);
+export const overviewCommunitySourceCoverageLabelSchema = z.enum([
+  "covered",
+  "thin",
+  "no-source",
+]);
 export const overviewDistillationTargetKindSchema = z.enum([
   "wiki_file",
   "vibe_memory",
@@ -29,6 +34,10 @@ export const overviewDashboardSchema = z.object({
     sourceLinks: z.number().int().nonnegative(),
     linkedKnowledge: z.number().int().nonnegative(),
     unlinkedKnowledge: z.number().int().nonnegative(),
+    sourceCommunities: z.number().int().nonnegative(),
+    sourceCoveredCommunities: z.number().int().nonnegative(),
+    sourceThinCommunities: z.number().int().nonnegative(),
+    sourceMissingCommunities: z.number().int().nonnegative(),
     vibeRecords: z.number().int().nonnegative(),
     vibeSessions: z.number().int().nonnegative(),
     vibeRecordsWithDiffs: z.number().int().nonnegative(),
@@ -70,6 +79,12 @@ export const overviewDashboardSchema = z.object({
     sourceCoverage: z.array(
       z.object({
         label: overviewSourceCoverageLabelSchema,
+        count: z.number().int().nonnegative(),
+      }),
+    ),
+    communitySourceCoverage: z.array(
+      z.object({
+        label: overviewCommunitySourceCoverageLabelSchema,
         count: z.number().int().nonnegative(),
       }),
     ),

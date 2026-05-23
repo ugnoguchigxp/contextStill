@@ -13,6 +13,7 @@ import {
   type OverviewDashboard,
   overviewDashboardSchema,
 } from "../../../src/shared/schemas/overview.schema.js";
+import { buildGraphSnapshot } from "../graph/graph.repository.js";
 
 const OVERVIEW_DAY_RANGE = 14;
 const LLM_KPI_DAY_RANGE = 30;
@@ -76,6 +77,42 @@ function latestFutureIso(values: Array<string | null>, now: number): string | nu
     })
     .sort((a, b) => b - a);
   return futureTimes[0] ? new Date(futureTimes[0]).toISOString() : null;
+}
+
+function buildCommunitySourceCoverage(
+  communities: Array<{
+    sourceRefCount: number;
+    health: { thinEvidence: boolean };
+  }>,
+): Pick<
+  OverviewDashboard["kpis"],
+  | "sourceCommunities"
+  | "sourceCoveredCommunities"
+  | "sourceThinCommunities"
+  | "sourceMissingCommunities"
+> {
+  let sourceCoveredCommunities = 0;
+  let sourceThinCommunities = 0;
+  let sourceMissingCommunities = 0;
+
+  for (const community of communities) {
+    if (community.sourceRefCount <= 0) {
+      sourceMissingCommunities += 1;
+      continue;
+    }
+    if (community.health.thinEvidence) {
+      sourceThinCommunities += 1;
+      continue;
+    }
+    sourceCoveredCommunities += 1;
+  }
+
+  return {
+    sourceCommunities: communities.length,
+    sourceCoveredCommunities,
+    sourceThinCommunities,
+    sourceMissingCommunities,
+  };
 }
 
 export function normalizeSearchApiStatus(metadata: unknown): OverviewDashboard["searchApiStatus"] {
@@ -411,6 +448,13 @@ export async function fetchOverviewDashboardForApi(): Promise<OverviewDashboard>
   const compileFailedRuns = toNumber(compileSummaryRow.compile_failed_runs);
   const zeroUseActiveKnowledge = toNumber(knowledgeSummaryRow.zero_use_active_knowledge);
   const activeKnowledge = toNumber(knowledgeSummaryRow.active_knowledge);
+  const communityGraph = await buildGraphSnapshot({
+    limit: Math.max(1, knowledgeTotal),
+    status: "all",
+    view: "community",
+    relationAxes: ["session", "project", "source"],
+  });
+  const communitySourceCoverage = buildCommunitySourceCoverage(communityGraph.communities);
 
   const statusTypeMap = new Map<string, { rule: number; procedure: number }>();
   for (const status of KNOWLEDGE_STATUS_ORDER) {
@@ -450,6 +494,7 @@ export async function fetchOverviewDashboardForApi(): Promise<OverviewDashboard>
       sourceLinks: toNumber(sourceSummaryRow.source_links),
       linkedKnowledge,
       unlinkedKnowledge: Math.max(0, knowledgeTotal - linkedKnowledge),
+      ...communitySourceCoverage,
       vibeRecords: toNumber(vibeSummaryRow.vibe_records),
       vibeSessions: toNumber(vibeSummaryRow.vibe_sessions),
       vibeRecordsWithDiffs: toNumber(vibeSummaryRow.vibe_records_with_diffs),
@@ -490,6 +535,11 @@ export async function fetchOverviewDashboardForApi(): Promise<OverviewDashboard>
       sourceCoverage: [
         { label: "linked", count: linkedKnowledge },
         { label: "unlinked", count: Math.max(0, knowledgeTotal - linkedKnowledge) },
+      ],
+      communitySourceCoverage: [
+        { label: "covered", count: communitySourceCoverage.sourceCoveredCommunities },
+        { label: "thin", count: communitySourceCoverage.sourceThinCommunities },
+        { label: "no-source", count: communitySourceCoverage.sourceMissingCommunities },
       ],
       distillationQueue: DISTILLATION_TARGET_KIND_ORDER.map((targetKind) => {
         const row = distillationQueueMap.get(targetKind);

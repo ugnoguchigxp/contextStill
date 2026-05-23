@@ -1,3 +1,4 @@
+import { APP_CONSTANTS } from "../../constants.js";
 import { groupedConfig } from "../../config.js";
 import {
   type CoverEvidenceResultRow,
@@ -527,6 +528,34 @@ async function runClaimedTarget(
     const candidateCount = await listFindCandidateResultsByTargetStateId(target.id)
       .then((rows) => rows.length)
       .catch(() => 0);
+    if (target.attemptCount >= APP_CONSTANTS.distillationTargetMaxAttempts) {
+      const skipped = await finishDistillationTargetState({
+        id: target.id,
+        status: "skipped",
+        outcomeKind: "pipeline_retry_limit_exceeded",
+        error: message,
+        candidateCount,
+        knowledgeIds: [],
+        metadata: {
+          pipelineError: message,
+          retryLimitExceeded: true,
+          maxAttempts: APP_CONSTANTS.distillationTargetMaxAttempts,
+        },
+        lease,
+      });
+      return {
+        targetStateId: target.id,
+        targetKind: target.targetKind,
+        targetKey: target.targetKey,
+        status: skipped ? "skipped" : "failed",
+        outcomeKind: skipped ? "pipeline_retry_limit_exceeded" : "lease_lost",
+        candidateCount,
+        knowledgeIds: [],
+        coverEvidence: [],
+        finalize: [],
+        error: skipped ? message : "distillation target lease lost during retry-limit skip",
+      };
+    }
     const paused = await pauseDistillationTargetState({
       id: target.id,
       reason: message,

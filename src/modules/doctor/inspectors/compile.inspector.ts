@@ -27,16 +27,18 @@ const warningReasonSet = new Set([
   "AGENTIC_REFINE_FAILED",
 ]);
 
-function isBlockingReason(reason: string): boolean {
+function isBlockingReason(reason: string, hasUsablePack: boolean): boolean {
   if (maintenanceReasonSet.has(reason)) return false;
   if (warningReasonSet.has(reason)) return false;
-  if (reason === "NO_ACTIVE_KNOWLEDGE_MATCH" || reason === "NO_SOURCE_MATCH") return true;
+  if (reason === "NO_ACTIVE_KNOWLEDGE_MATCH") return true;
+  if (reason === "NO_SOURCE_MATCH" && hasUsablePack) return false;
+  if (reason === "NO_SOURCE_MATCH") return true;
   if (reason.endsWith("_FAILED") || reason.includes("ERROR")) return true;
   return true;
 }
 
-function hasBlockingReason(degradedReasons: string[]): boolean {
-  return degradedReasons.some((reason) => isBlockingReason(reason));
+function hasBlockingReason(degradedReasons: string[], hasUsablePack: boolean): boolean {
+  return degradedReasons.some((reason) => isBlockingReason(reason, hasUsablePack));
 }
 
 function percentile(values: number[], quantile: number): number | null {
@@ -81,6 +83,7 @@ export async function inspectCompileRuns({
     durationMsP50: null,
     durationMsP95: null,
     durationMsAvg: null,
+    durationSamples: [],
     lastRunAt: null,
     lastRunAgeMinutes: null,
     freshnessThresholdMinutes,
@@ -105,7 +108,9 @@ export async function inspectCompileRuns({
     let noContentRuns = 0;
     for (const run of recentRuns) {
       const degradedReasons = [...new Set(run.degradedReasons)];
-      const blocking = run.status === "failed" || hasBlockingReason(degradedReasons);
+      const selectedItemCount = run.selectedItemCount ?? 0;
+      const hasUsablePack = selectedItemCount > 0 && run.outputMarkdownKind !== "no-content";
+      const blocking = run.status === "failed" || hasBlockingReason(degradedReasons, hasUsablePack);
       if (blocking) {
         blockingRuns += 1;
       } else {
@@ -129,6 +134,13 @@ export async function inspectCompileRuns({
     runs.warningOnlyRate = runs.totalRuns > 0 ? warningOnlyRuns / runs.totalRuns : 0;
     runs.noContentRuns = noContentRuns;
     runs.noContentRate = runs.totalRuns > 0 ? noContentRuns / runs.totalRuns : 0;
+    runs.durationSamples = [...recentRuns].reverse().map((run, index) => ({
+      runId: run.id,
+      label: `#${index + 1}`,
+      durationMs: run.durationMs,
+      status: run.status,
+      createdAt: run.createdAt.toISOString(),
+    }));
     const durations = recentRuns
       .map((run) => run.durationMs)
       .filter((duration) => Number.isFinite(duration) && duration >= 0);

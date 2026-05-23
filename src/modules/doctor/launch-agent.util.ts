@@ -17,6 +17,41 @@ export async function pathExists(filePath: string): Promise<boolean> {
 export async function inspectLaunchAgent(
   label: string,
 ): Promise<DoctorReport["agentLogSync"]["launchAgent"]> {
+  if (process.platform === "win32") {
+    const taskName = toWindowsTaskName(label);
+    if (!taskName) {
+      return { label, plistPath: label, installed: false, loaded: false, state: null };
+    }
+
+    let installed = false;
+    let loaded = false;
+    let state: string | null = null;
+    try {
+      const output = execFileSync("schtasks", ["/query", "/tn", taskName, "/fo", "LIST", "/v"], {
+        encoding: "utf-8",
+        stdio: ["ignore", "pipe", "ignore"],
+      });
+      installed = true;
+      const stateLine = output
+        .split(/\r?\n/)
+        .find((line) => line.toLowerCase().includes("scheduled task state"));
+      state = stateLine?.split(":").slice(1).join(":").trim() ?? "unknown";
+      loaded = state?.toLowerCase() === "enabled";
+    } catch {
+      installed = false;
+      loaded = false;
+      state = null;
+    }
+
+    return {
+      label,
+      plistPath: taskName,
+      installed,
+      loaded,
+      state,
+    };
+  }
+
   const plistPath = path.join(os.homedir(), "Library", "LaunchAgents", `${label}.plist`);
   const installed = await pathExists(plistPath);
   let loaded = false;
@@ -36,4 +71,10 @@ export async function inspectLaunchAgent(
   }
 
   return { label, plistPath, installed, loaded, state };
+}
+
+function toWindowsTaskName(label: string): string | null {
+  if (label === "com.memory-router.agent-log-sync") return "\\memory-router\\agent-log-sync";
+  if (label === "com.memory-router.distill-pipeline") return "\\memory-router\\distill-pipeline";
+  return null;
 }

@@ -7,17 +7,30 @@ import { normalizeRepoKey, normalizeRepoPath } from "../modules/context-compiler
 import { upsertKnowledgeFromSource } from "../modules/knowledge/knowledge.repository.js";
 import { upsertSourceDocument } from "../modules/sources/source.repository.js";
 
-const requiredPrimaryTools = [
-  "initial_instructions",
-  "context_compile",
-  "search_knowledge",
-  "register_candidate",
-  "list_knowledge",
-  "update_knowledge",
-  "memory_search",
-  "memory_fetch",
-  "doctor",
-] as const;
+function resolveRequiredPrimaryTools(): readonly string[] {
+  const raw = process.env.MEMORY_ROUTER_MCP_V2?.trim().toLowerCase();
+  const isV2 = !raw || !(raw === "0" || raw === "false" || raw === "no" || raw === "off");
+  if (!isV2) {
+    return [
+      "initial_instructions",
+      "context_compile",
+      "search_knowledge",
+      "register_candidate",
+      "memory_search",
+      "memory_fetch",
+      "doctor",
+    ] as const;
+  }
+  return [
+    "initial_instructions",
+    "context_compile",
+    "search_knowledge",
+    "register_candidate",
+    "search_memory",
+    "fetch_memory",
+    "doctor",
+  ] as const;
+}
 
 const disallowedTopLevelSchemaKeys = ["oneOf", "anyOf", "allOf", "enum", "not"] as const;
 
@@ -96,6 +109,7 @@ function findInvalidTopLevelSchemaKeys(inputSchema: unknown): string[] {
 
 async function main(): Promise<void> {
   const token = `mcp-smoke-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const requiredPrimaryTools = resolveRequiredPrimaryTools();
   const repoPath = normalizeRepoPath(process.cwd()) ?? process.cwd();
   const repoKey = normalizeRepoKey(process.cwd()) ?? repoPath.toLowerCase();
   const sourceUri = `${repoPath}/.mcp-smoke/${token}.md`;

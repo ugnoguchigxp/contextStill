@@ -10,7 +10,7 @@ export async function inspectVibeDistillation(
   return inspectDistillationRunHealth(options, {
     label: "vibe distillation",
     launchAgentLabel: "com.memory-router.distill-pipeline",
-    setupScript: "./scripts/setup-distill-pipeline-automation.sh",
+    setupScript: "bun run automation:distill-pipeline --",
     runCommand: "bun run distill:pipeline -- --write --limit 1 --kind vibe",
     logPath: "logs/distill-pipeline.log",
     targetKind: "vibe_memory",

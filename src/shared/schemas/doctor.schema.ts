@@ -1,6 +1,13 @@
 import { z } from "zod";
 
 const doctorStatusSchema = z.enum(["ok", "degraded", "failed"]);
+const compileRunDurationSampleSchema = z.object({
+  runId: z.string().uuid(),
+  label: z.string().min(1),
+  durationMs: z.number().int().nonnegative(),
+  status: doctorStatusSchema,
+  createdAt: z.string().datetime(),
+});
 
 const launchAgentSchema = z.object({
   label: z.string(),
@@ -180,6 +187,7 @@ export const doctorReportSchema = z.object({
     durationMsP50: z.number().nonnegative().nullable(),
     durationMsP95: z.number().nonnegative().nullable(),
     durationMsAvg: z.number().nonnegative().nullable(),
+    durationSamples: z.array(compileRunDurationSampleSchema).default([]),
     lastRunAt: z.string().datetime().nullable(),
     lastRunAgeMinutes: z.number().nonnegative().nullable(),
     freshnessThresholdMinutes: z.number().int().positive(),

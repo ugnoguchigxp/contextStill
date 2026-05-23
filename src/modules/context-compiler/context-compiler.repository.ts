@@ -88,6 +88,39 @@ function extractOutputMarkdown(pack: ContextPack | null): string | null {
   return renderContextPackMarkdown(pack);
 }
 
+function normalizeOutputMarkdownKind(value: unknown): "narrative" | "no-content" | null {
+  if (value === "narrative" || value === "no-content") return value;
+  return null;
+}
+
+function extractCompileRunSignals(packSnapshot: unknown): {
+  selectedItemCount: number;
+  outputMarkdownKind: "narrative" | "no-content" | null;
+} {
+  const pack = asRecord(packSnapshot);
+  const rules = Array.isArray(pack.rules) ? pack.rules.length : 0;
+  const procedures = Array.isArray(pack.procedures) ? pack.procedures.length : 0;
+  const diagnostics = asRecord(pack.diagnostics);
+  const retrievalStats = asRecord(diagnostics.retrievalStats);
+  const responseComposer = asRecord(retrievalStats.responseComposer);
+  const storedKind = normalizeOutputMarkdownKind(responseComposer.markdownKind);
+  if (storedKind) {
+    return {
+      selectedItemCount: rules + procedures,
+      outputMarkdownKind: storedKind,
+    };
+  }
+
+  const outputMarkdown =
+    typeof responseComposer.outputMarkdown === "string"
+      ? responseComposer.outputMarkdown.trim()
+      : "";
+  return {
+    selectedItemCount: rules + procedures,
+    outputMarkdownKind: outputMarkdown && outputMarkdown !== "No Content" ? "narrative" : null,
+  };
+}
+
 export async function insertCompileRun(params: {
   goal: string;
   intent: string;
@@ -160,6 +193,8 @@ export type CompileRunSummary = {
   degradedReasons: string[];
   durationMs: number;
   source: CompileRunSource;
+  selectedItemCount: number;
+  outputMarkdownKind: "narrative" | "no-content" | null;
   createdAt: Date;
 };
 
@@ -185,22 +220,28 @@ export async function listRecentCompileRuns(limit = 20): Promise<CompileRunSumma
       degradedReasons: contextCompileRuns.degradedReasons,
       durationMs: contextCompileRuns.durationMs,
       source: contextCompileRuns.source,
+      packSnapshot: contextCompileRuns.packSnapshot,
       createdAt: contextCompileRuns.createdAt,
     })
     .from(contextCompileRuns)
     .orderBy(desc(contextCompileRuns.createdAt))
     .limit(normalizedLimit);
 
-  return rows.map((row) => ({
-    id: row.id,
-    goal: row.goal,
-    retrievalMode: row.retrievalMode,
-    status: normalizeRunStatus(row.status),
-    degradedReasons: normalizeStringArray(row.degradedReasons),
-    durationMs: normalizeDuration(row.durationMs),
-    source: normalizeCompileRunSource(row.source),
-    createdAt: normalizeDate(row.createdAt),
-  }));
+  return rows.map((row) => {
+    const signals = extractCompileRunSignals(row.packSnapshot);
+    return {
+      id: row.id,
+      goal: row.goal,
+      retrievalMode: row.retrievalMode,
+      status: normalizeRunStatus(row.status),
+      degradedReasons: normalizeStringArray(row.degradedReasons),
+      durationMs: normalizeDuration(row.durationMs),
+      source: normalizeCompileRunSource(row.source),
+      selectedItemCount: signals.selectedItemCount,
+      outputMarkdownKind: signals.outputMarkdownKind,
+      createdAt: normalizeDate(row.createdAt),
+    };
+  });
 }
 
 export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSnapshot | null> {
@@ -213,6 +254,7 @@ export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSn
       degradedReasons: contextCompileRuns.degradedReasons,
       durationMs: contextCompileRuns.durationMs,
       source: contextCompileRuns.source,
+      packSnapshot: contextCompileRuns.packSnapshot,
       createdAt: contextCompileRuns.createdAt,
     })
     .from(contextCompileRuns)
@@ -234,6 +276,7 @@ export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSn
     .where(eq(contextPackItems.runId, runId))
     .orderBy(desc(contextPackItems.score), desc(contextPackItems.createdAt));
 
+  const signals = extractCompileRunSignals(run.packSnapshot);
   return {
     run: {
       id: run.id,
@@ -243,6 +286,8 @@ export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSn
       degradedReasons: normalizeStringArray(run.degradedReasons),
       durationMs: normalizeDuration(run.durationMs),
       source: normalizeCompileRunSource(run.source),
+      selectedItemCount: signals.selectedItemCount,
+      outputMarkdownKind: signals.outputMarkdownKind,
       createdAt: normalizeDate(run.createdAt),
     },
     items: itemRows.map((row) => ({

@@ -39,6 +39,8 @@ const sectionRatios = {
 
 const maintenanceReasonSet = new Set([
   "KNOWLEDGE_APPLIES_TO_FALLBACK",
+  "KNOWLEDGE_REPO_SCOPE_FALLBACK",
+  "SOURCE_REPO_SCOPE_FALLBACK",
   "TOKEN_BUDGET_SECTION_LIMIT_REACHED",
 ]);
 const vectorOnlyScoreFloor = 0.52;
@@ -225,6 +227,11 @@ function classifyCompileReasons(params: {
     }
     if (reason === "NO_ACTIVE_KNOWLEDGE_MATCH") {
       if (!hasKnowledge) blockingReasons.push(reason);
+      continue;
+    }
+    if (reason === "NO_SOURCE_MATCH") {
+      if (hasKnowledge) maintenanceWarnings.push(reason);
+      else blockingReasons.push(reason);
       continue;
     }
     if (reason.endsWith("_FAILED") || reason.includes("ERROR")) {
@@ -687,7 +694,7 @@ export async function compileContextPack(
     suggestedNextCalls.push("search_knowledge");
   }
   if (degradedReasons.includes("NO_SOURCE_MATCH")) {
-    suggestedNextCalls.push("memory_search");
+    suggestedNextCalls.push("search_memory");
   }
   if (
     degradedReasons.some(

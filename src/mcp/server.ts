@@ -14,7 +14,7 @@ import {
   listRecentCompileRuns,
 } from "../modules/context-compiler/context-compiler.repository.js";
 import { runDoctor } from "../modules/doctor/doctor.service.js";
-import { getExposedToolEntries } from "./tools/index.js";
+import { getCallableToolEntries, getExposedToolEntries } from "./tools/index.js";
 
 function toErrorResult(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
@@ -139,7 +139,7 @@ export function createMcpServer(): Server {
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
-    const tool = getExposedToolEntries().find((entry) => entry.name === request.params.name);
+    const tool = getCallableToolEntries().find((entry) => entry.name === request.params.name);
     if (!tool) {
       return {
         content: [{ type: "text", text: `Unknown tool: ${request.params.name}` }],

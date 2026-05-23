@@ -6,8 +6,9 @@
     <string>com.memory-router.distill-pipeline</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>{{PROJECT_ROOT}}/scripts/setup-distill-pipeline-automation.sh</string>
+        <string>{{BUN_PATH}}</string>
+        <string>run</string>
+        <string>src/cli/distill-pipeline-automation.ts</string>
         <string>run-continuous</string>
     </array>
     <key>WorkingDirectory</key>

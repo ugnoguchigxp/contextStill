@@ -10,7 +10,7 @@ export async function inspectSourceDistillation(
   return inspectDistillationRunHealth(options, {
     label: "wiki distillation",
     launchAgentLabel: "com.memory-router.distill-pipeline",
-    setupScript: "./scripts/setup-distill-pipeline-automation.sh",
+    setupScript: "bun run automation:distill-pipeline --",
     runCommand: "bun run distill:pipeline -- --write --limit 1 --kind wiki",
     logPath: "logs/distill-pipeline.log",
     targetKind: "wiki_file",

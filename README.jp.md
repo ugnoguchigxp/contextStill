@@ -238,12 +238,11 @@ MCP クライアントの設定に追加:
 | `context_compile` | タスク用コンテキストパック生成 | **主導線** — 毎タスクの作業前に |
 | `search_knowledge` | knowledge 候補の直接検索 | `context_compile` の結果を深掘りしたい時 |
 | `register_candidate` | 軽量な rule/procedure 候補の登録 | 再利用可能なパターンを発見した時 |
-| `list_knowledge` | draft/active/deprecated 一覧の取得 | 知識のライフサイクルを管理したい時 |
-| `update_knowledge` | 状態/タイトル/本文/メタデータの更新 | 知識の昇格や廃止を行いたい時 |
-| `read_file` | Wiki Markdown を token window で読む | 長いローカルドキュメントを根拠にしたい時 |
-| `memory_search` | 過去の会話・差分を検索 | 特定の過去コンテキストを探す時 |
-| `memory_fetch` | 特定メモリの詳細取得 | 特定の会話を精査する時 |
+| `search_memory` | 過去の会話・差分を検索 | 候補メモリを ID ベースで特定したい時 |
+| `fetch_memory` | 特定メモリの詳細取得 | 特定の会話を詳細に精査したい時 |
 | `doctor` | システム診断 | compile が degraded/failed の時 |
+
+旧名エイリアス: `memory_search` -> `search_memory`, `memory_fetch` -> `fetch_memory`。
 
 ### 推奨ワークフロー
 
@@ -251,9 +250,10 @@ MCP クライアントの設定に追加:
 1. initial_instructions     → 操作ルールを取得
 2. context_compile          → タスク固有のコンテキストを取得（主導線）
 3. search_knowledge         → 必要に応じて深掘り（補助）
-4. ... 作業を実行 ...
-5. register_candidate       → 再利用可能な発見を候補として保存
-6. doctor                   → 問題発生時にシステム状態を確認
+4. search_memory/fetch_memory → 必要時だけ過去会話を参照
+5. ... 作業を実行 ...
+6. register_candidate       → 再利用可能な発見を候補として保存
+7. doctor                   → 問題発生時にシステム状態を確認
 ```
 
 MCP ツールの完全な入出力仕様は [docs/mcp-tools.md](docs/mcp-tools.md) を参照してください。
@@ -420,14 +420,20 @@ Codex と Antigravity の会話ログを継続的に取り込みます。
 bun run sync:agent-logs
 
 # macOS LaunchAgent としてインストール
-./scripts/setup-automation.sh install
-./scripts/setup-automation.sh load
-./scripts/setup-automation.sh status
+bun run automation:agent-log-sync -- install
+bun run automation:agent-log-sync -- load
+bun run automation:agent-log-sync -- status
+
+# Windows Task Scheduler
+bun run automation:agent-log-sync -- install
+bun run automation:agent-log-sync -- load
+bun run automation:agent-log-sync -- status
 ```
 
 デフォルトのログ参照先:
 - Codex: `~/.codex/sessions` および `~/.codex/archived_sessions`
 - Antigravity: `~/.gemini/antigravity/brain`
+- Windows では既定パスに加えて `%APPDATA%` / `%LOCALAPPDATA%` 配下の候補も自動探索します。
 
 ### 蒸留の自動化（Conveyor）
 
@@ -438,9 +444,14 @@ staged distillation（`selectDistillationTarget -> findCandidate -> coverEvidenc
 bun run distill:pipeline:once
 
 # macOS LaunchAgent としてインストール
-./scripts/setup-distill-pipeline-automation.sh install
-./scripts/setup-distill-pipeline-automation.sh load
-./scripts/setup-distill-pipeline-automation.sh status
+bun run automation:distill-pipeline -- install
+bun run automation:distill-pipeline -- load
+bun run automation:distill-pipeline -- status
+
+# Windows Task Scheduler
+bun run automation:distill-pipeline -- install
+bun run automation:distill-pipeline -- load
+bun run automation:distill-pipeline -- status
 ```
 
 進捗確認と復旧:
@@ -548,6 +559,7 @@ bun run test:e2e
 |---|---|---|
 | `MEMORY_ROUTER_LOCAL_LLM_API_BASE_URL` | `http://127.0.0.1:44448` | ローカル LLM API エンドポイント |
 | `MEMORY_ROUTER_DISTILLATION_PROVIDER` | `local-llm` | `local-llm`、`azure-openai`、`bedrock`、`auto` |
+| `MEMORY_ROUTER_DISTILLATION_FIND_CANDIDATE_PROVIDER` | `MEMORY_ROUTER_DISTILLATION_PROVIDER` を継承 | `findCandidate` 専用 provider override。OpenAI/Azure で候補抽出する場合は `azure-openai`、必要に応じて `local-llm` / `bedrock` / `auto` |
 | `MEMORY_ROUTER_DISTILLATION_SEARCH_PROVIDERS` | `brave,exa` | `search_web` の provider 順序 |
 | `MEMORY_ROUTER_EXA_API_KEY` / `EXA_API_KEY` | 空 | Exa search API key |
 | `BRAVE_SEARCH_API_KEY` | 空 | Brave Search API key |
@@ -557,7 +569,10 @@ bun run test:e2e
 | 変数名 | デフォルト | 説明 |
 |---|---|---|
 | `MEMORY_ROUTER_CODEX_SESSION_DIR` | `~/.codex/sessions` | Codex セッションディレクトリ |
+| `MEMORY_ROUTER_CODEX_SESSION_DIRS` | 空 | 追加の Codex セッションディレクトリ（`,` / `;` 区切り） |
+| `MEMORY_ROUTER_CODEX_ARCHIVED_SESSION_DIRS` | 空 | 追加の Codex archived session ディレクトリ（`,` / `;` 区切り） |
 | `MEMORY_ROUTER_ANTIGRAVITY_LOG_DIR` | `~/.gemini/antigravity/brain` | Antigravity ログディレクトリ |
+| `MEMORY_ROUTER_ANTIGRAVITY_LOG_DIRS` | 空 | 追加の Antigravity ログディレクトリ（`,` / `;` 区切り） |
 | `MEMORY_ROUTER_AGENT_LOG_SYNC_INTERVAL_SECONDS` | `3600` | 同期間隔（秒） |
 | `MEMORY_ROUTER_AGENT_LOG_INITIAL_LOOKBACK_HOURS` | `168` | 初回取り込みの遡及時間 |
 

@@ -10,12 +10,6 @@ import {
 } from "../repositories/admin.repository";
 import { AdminMetricCard } from "./admin-metric-card";
 import { AdminPageHeader } from "./admin-page-header";
-import {
-  DoctorNextActionList,
-  DoctorReasonList,
-  getDoctorNextActions,
-  getDoctorReasonDetails,
-} from "./doctor-signals";
 import { OverviewCharts } from "./overview-charts";
 
 function formatJpy(value: number): string {
@@ -33,6 +27,11 @@ function formatJpyPerMillionTokens(value: number): string {
 function toPercent(numerator: number, denominator: number): string {
   if (denominator <= 0) return "0.0%";
   return `${((numerator / denominator) * 100).toFixed(1)}%`;
+}
+
+function formatRatePercent(value: number | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  return `${(value * 100).toFixed(1)}%`;
 }
 
 function formatCountdown(cooldownUntil: string | null, nowMs: number): string {
@@ -114,14 +113,13 @@ export function OverviewPage() {
   const dashboard = overview.data;
   const doctorReport = doctor.data;
   const status = doctorReport?.status ?? "degraded";
-  const reasonDetails = getDoctorReasonDetails(doctorReport);
-  const nextActions = getDoctorNextActions(doctorReport);
   const overviewErrorMessage =
     overview.error instanceof Error
       ? overview.error.message
       : "/api/overview response could not be loaded.";
   const compileRuns = dashboard?.kpis.compileRuns ?? 0;
   const compileDegradedRuns = dashboard?.kpis.compileDegradedRuns ?? 0;
+  const compileRunHealth = doctorReport?.runs;
   const activeKnowledge = dashboard?.kpis.activeKnowledge ?? 0;
   const zeroUseActiveKnowledge = dashboard?.kpis.zeroUseActiveKnowledge ?? 0;
   const usedActiveKnowledge = Math.max(0, activeKnowledge - zeroUseActiveKnowledge);
@@ -203,12 +201,20 @@ export function OverviewPage() {
             }
           />
           <AdminMetricCard
-            label="Compile Health"
-            value={dashboard ? toPercent(compileDegradedRuns, compileRuns) : "-"}
+            label="Compile Usable"
+            value={
+              compileRunHealth
+                ? formatRatePercent(compileRunHealth.usableRate)
+                : dashboard
+                  ? toPercent(dashboard.kpis.compileOkRuns, compileRuns)
+                  : "-"
+            }
             hint={
-              dashboard
-                ? `ok ${formatNumber(dashboard.kpis.compileOkRuns)} / degraded ${formatNumber(compileDegradedRuns)} / failed ${formatNumber(dashboard.kpis.compileFailedRuns)}`
-                : undefined
+              compileRunHealth
+                ? `usable ${formatNumber(compileRunHealth.usableRuns ?? 0)} / warning ${formatNumber(compileRunHealth.warningOnlyRuns ?? 0)} / blocking ${formatNumber(compileRunHealth.blockingRuns ?? 0)} / no content ${formatNumber(compileRunHealth.noContentRuns ?? 0)}`
+                : dashboard
+                  ? `ok ${formatNumber(dashboard.kpis.compileOkRuns)} / degraded ${formatNumber(compileDegradedRuns)} / failed ${formatNumber(dashboard.kpis.compileFailedRuns)}`
+                  : undefined
             }
           />
           <AdminMetricCard
@@ -262,7 +268,9 @@ export function OverviewPage() {
             label="Source Coverage"
             value={dashboard ? formatNumber(dashboard.kpis.linkedKnowledge) : "-"}
             hint={
-              dashboard ? `unlinked ${formatNumber(dashboard.kpis.unlinkedKnowledge)}` : undefined
+              dashboard
+                ? `unlinked ${formatNumber(dashboard.kpis.unlinkedKnowledge)} / communities ${formatNumber(dashboard.kpis.sourceCoveredCommunities)}/${formatNumber(dashboard.kpis.sourceCommunities)} covered, thin ${formatNumber(dashboard.kpis.sourceThinCommunities)}, no-source ${formatNumber(dashboard.kpis.sourceMissingCommunities)}`
+                : undefined
             }
           />
           <AdminMetricCard
@@ -321,58 +329,7 @@ export function OverviewPage() {
           </Card>
         ) : null}
 
-        {dashboard ? <OverviewCharts dashboard={dashboard} /> : null}
-
-        <section className="overview-health-grid">
-          <Card>
-            <CardHeader>
-              <CardTitle>Runtime</CardTitle>
-            </CardHeader>
-            <CardContent className="runtime-list">
-              <div>
-                <span>Database</span>
-                <strong>{doctor.data?.db.reachable ? "reachable" : "unknown"}</strong>
-              </div>
-              <div>
-                <span>pgvector</span>
-                <strong>{doctor.data?.vector.installed ? "installed" : "missing"}</strong>
-              </div>
-              <div>
-                <span>Embedding daemon</span>
-                <strong>
-                  {doctor.data?.embedding?.daemon.reachable ? "reachable" : "offline"}
-                </strong>
-              </div>
-              <div>
-                <span>Embedding CLI</span>
-                <strong>{doctor.data?.embedding?.cli.usable ? "usable" : "unavailable"}</strong>
-              </div>
-              <div>
-                <span>Agentic LLM</span>
-                <strong>
-                  {doctor.data?.agenticLlm?.reachable
-                    ? "reachable"
-                    : doctor.data?.agenticLlm?.configured
-                      ? "offline"
-                      : "unconfigured"}
-                </strong>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Doctor Signals</CardTitle>
-            </CardHeader>
-            <CardContent className="doctor-reason-list">
-              <DoctorReasonList reasons={reasonDetails} />
-              <div className="overview-next-action-group">
-                <span className="metric-label">Next Actions</span>
-                <DoctorNextActionList actions={nextActions} />
-              </div>
-            </CardContent>
-          </Card>
-        </section>
+        {dashboard ? <OverviewCharts dashboard={dashboard} doctorReport={doctorReport} /> : null}
       </div>
     </div>
   );

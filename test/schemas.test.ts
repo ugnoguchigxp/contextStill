@@ -249,6 +249,10 @@ describe("Shared Schemas", () => {
         sourceLinks: 12,
         linkedKnowledge: 6,
         unlinkedKnowledge: 4,
+        sourceCommunities: 3,
+        sourceCoveredCommunities: 1,
+        sourceThinCommunities: 1,
+        sourceMissingCommunities: 1,
         vibeRecords: 20,
         vibeSessions: 3,
         vibeRecordsWithDiffs: 14,
@@ -282,6 +286,11 @@ describe("Shared Schemas", () => {
         sourceCoverage: [
           { label: "linked", count: 6 },
           { label: "unlinked", count: 4 },
+        ],
+        communitySourceCoverage: [
+          { label: "covered", count: 1 },
+          { label: "thin", count: 1 },
+          { label: "no-source", count: 1 },
         ],
         distillationQueue: [
           {

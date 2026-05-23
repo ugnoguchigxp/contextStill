@@ -76,6 +76,22 @@ const baseReport = {
     durationMsP50: 1982,
     durationMsP95: 6871.1,
     durationMsAvg: 3094.9,
+    durationSamples: [
+      {
+        runId: "550e8400-e29b-41d4-a716-446655440011",
+        label: "#1",
+        durationMs: 1982,
+        status: "ok",
+        createdAt: "2026-05-21T13:20:54.789Z",
+      },
+      {
+        runId: "550e8400-e29b-41d4-a716-446655440012",
+        label: "#2",
+        durationMs: 6871,
+        status: "degraded",
+        createdAt: "2026-05-21T13:25:54.789Z",
+      },
+    ],
     lastRunAt: "2026-05-21T13:25:54.789Z",
     lastRunAgeMinutes: 1,
     freshnessThresholdMinutes: 720,
@@ -91,7 +107,7 @@ const baseReport = {
   knowledgeLifecycle: {
     activeCount: 671,
     zeroUseActiveCount: 658,
-    staleByDecayCount: 0,
+    staleByDecayCount: 7,
     staleProcedureCount: 0,
     dynamicScoreAvg: 0.4,
     dynamicScoreP95: 0,
@@ -106,7 +122,7 @@ const baseReport = {
     exposedTools: ["doctor"],
     requiredPrimaryTools: ["doctor"],
     missingPrimaryTools: [],
-    staleKnowledgeCount: 0,
+    staleKnowledgeCount: 4,
     staleSourceCount: 40,
     nextActions: ["stale source を再importまたは更新する（count: 40）"],
   },
@@ -271,13 +287,14 @@ describe("DoctorPage", () => {
     expect(screen.getByText("Doctor")).toBeInTheDocument();
     expect(screen.getAllByText("degraded").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("System Status")).toBeInTheDocument();
-    expect(screen.getByText("Compile Usable")).toBeInTheDocument();
     expect(screen.getByText("Runtime Matrix")).toBeInTheDocument();
     expect(screen.getByText("Automation Matrix")).toBeInTheDocument();
-    expect(screen.getByText("Compile Quality Mix")).toBeInTheDocument();
-    expect(screen.getByText("Distillation Queue")).toBeInTheDocument();
     expect(screen.getByText("Doctor Signals")).toBeInTheDocument();
     expect(screen.getByText("Next Actions")).toBeInTheDocument();
+    expect(screen.queryByText("Compile Usable")).not.toBeInTheDocument();
+    expect(screen.queryByText("Compile Quality Mix")).not.toBeInTheDocument();
+    expect(screen.queryByText("Knowledge Usage Lifecycle")).not.toBeInTheDocument();
+    expect(screen.queryByText("Distillation Queue")).not.toBeInTheDocument();
 
     expect(screen.getByText("未使用の active knowledge が多い")).toBeInTheDocument();
     expect(screen.getByText("会話ログ蒸留が未実行")).toBeInTheDocument();

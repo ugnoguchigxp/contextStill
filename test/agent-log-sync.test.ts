@@ -3,6 +3,8 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
 import {
+  buildAntigravityIngestRoots,
+  buildCodexIngestRoots,
   ingestAntigravityLogsFromRoot,
   ingestCodexLogsFromRoots,
   normalizeIngestCursor,
@@ -370,6 +372,52 @@ diff --git a/src/a.ts b/src/a.ts
 
     expect(diff).toContain("*** Begin Patch");
     expect(diff).toContain("src/a.ts");
+  });
+
+  test("buildCodexIngestRoots includes Windows fallback and additional env roots", () => {
+    const roots = buildCodexIngestRoots({
+      platform: "win32",
+      env: {
+        APPDATA: "C:\\Users\\test\\AppData\\Roaming",
+        LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local",
+        MEMORY_ROUTER_CODEX_SESSION_DIRS: "D:\\codex\\sessions-a;D:\\codex\\sessions-b",
+        MEMORY_ROUTER_CODEX_ARCHIVED_SESSION_DIRS: "D:\\codex\\archived-a,D:\\codex\\archived-b",
+      },
+      codexSessionDir: "C:\\Users\\test\\.codex\\sessions",
+      codexArchivedSessionDir: "C:\\Users\\test\\.codex\\archived_sessions",
+    });
+
+    expect(roots).toContain("C:\\Users\\test\\.codex\\sessions");
+    expect(roots).toContain("C:\\Users\\test\\.codex\\archived_sessions");
+    expect(roots).toContain(
+      path.join("C:\\Users\\test\\AppData\\Roaming", "OpenAI", "Codex", "sessions"),
+    );
+    expect(roots).toContain(
+      path.join("C:\\Users\\test\\AppData\\Local", "openai", "codex", "archived_sessions"),
+    );
+    expect(roots).toContain("D:\\codex\\sessions-a");
+    expect(roots).toContain("D:\\codex\\archived-b");
+  });
+
+  test("buildAntigravityIngestRoots includes Windows fallback and additional env roots", () => {
+    const roots = buildAntigravityIngestRoots({
+      platform: "win32",
+      env: {
+        APPDATA: "C:\\Users\\test\\AppData\\Roaming",
+        LOCALAPPDATA: "C:\\Users\\test\\AppData\\Local",
+        MEMORY_ROUTER_ANTIGRAVITY_LOG_DIRS: "D:\\gemini\\brain-a,D:\\gemini\\brain-b",
+      },
+      homeDir: "C:\\Users\\test",
+      antigravityLogDir: "C:\\Users\\test\\.gemini\\antigravity\\brain",
+    });
+
+    expect(roots).toContain("C:\\Users\\test\\.gemini\\antigravity\\brain");
+    expect(roots).toContain(path.join("C:\\Users\\test", ".gemini", "antigravity-cli", "brain"));
+    expect(roots).toContain(
+      path.join("C:\\Users\\test\\AppData\\Roaming", "Google", "Gemini", "antigravity", "brain"),
+    );
+    expect(roots).toContain("D:\\gemini\\brain-a");
+    expect(roots).toContain("D:\\gemini\\brain-b");
   });
 
   test("parseVibeMemoryTurns keeps only readable chat from raw Antigravity overview lines", () => {

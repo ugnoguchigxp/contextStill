@@ -1,25 +1,36 @@
 # MCP Tools
 
-`memory-router` の公開 MCP surface は次の 10 ツールです。
+`memory-router` の公開 MCP surface は次の 7 ツールです。
 
 1. `initial_instructions`
 2. `context_compile`
 3. `search_knowledge`
 4. `register_candidate`
-5. `list_knowledge`
-6. `update_knowledge`
-7. `memory_search`
-8. `memory_fetch`
-9. `read_file`
-10. `doctor`
+5. `search_memory`
+6. `fetch_memory`
+7. `doctor`
 
 ## 推奨フロー
 
 1. `initial_instructions`
 2. `context_compile`
-3. 必要時のみ `search_knowledge` / `list_knowledge` / `update_knowledge` / `memory_search` / `memory_fetch` / `read_file`
+3. 必要時のみ `search_knowledge` / `search_memory` / `fetch_memory`
 4. 実装・検証
 5. `doctor`
+
+## 命名ポリシー
+
+- `search_*`: 候補探索
+- `fetch_*`: 詳細取得
+
+`search_knowledge` に `fetch_knowledge` は追加しない。knowledge は 1 件あたりの情報が軽量で、`search_knowledge` 結果だけで十分に精査できるため。
+
+## Deprecated Alias
+
+互換のため、次の旧名は呼び出し可能な期間を残す（ListTools には表示しない）。
+
+- `memory_search` -> `search_memory`
+- `memory_fetch` -> `fetch_memory`
 
 ## Tool Contract
 
@@ -57,60 +68,25 @@
   - `distillation_target_states.target_kind = knowledge_candidate` と `find_candidate_results` に候補を保存して即返す
   - その後の draft 化、Embedding 生成、重複判定、品質判定は蒸留パイプラインが行う
   - `text` だけ渡された場合は、サーバー側で最初の candidate JSON / `TYPE:` `TITLE:` `CONTENT:` 風テキストを `title` / `body` / `type` へ正規化する
-- 推奨 JSON:
 
-```json
-{
-  "title": "修正完了報告前に再現条件で検証する",
-  "type": "procedure",
-  "body": "Use when:\n- 修正完了を報告する前\n\nWorkflow:\n1. 失敗した再現条件を明示する\n2. 修正後に同じ条件で検証する\n3. 実行結果を確認してから完了報告する\n\nVerification:\n- 失敗していたテストまたは操作が成功している\n\nAvoid:\n- ログやテストを確認せずに治ったと報告する",
-  "changeTypes": ["bugfix"],
-  "domains": ["verification"]
-}
-```
+### `search_memory`
 
-### `list_knowledge`
-
-- 入力: `limit`, `status`, `type`, `query`
-- 役割: draft backlog や active knowledge 一覧を確認する
-- 出力:
-  - `filters`（適用した条件）
-  - `count`
-  - `items`（knowledge 一覧。`sourceRefs` / `sourceVibeMemoryIds` を含む）
-
-### `update_knowledge`
-
-- 入力: `id`（必須）, `status`, `title`, `body`, `type`, `scope`, `confidence`, `importance`, `metadata`
-- 役割: 既存 knowledge のステータス/内容を更新する
-- 挙動:
-  - `draft -> active -> deprecated` の遷移制約を検証
-  - `metadata` 指定時は既存 metadata にマージ
-  - 更新内容に応じて監査ログ（knowledge updated/status changed）を記録
-
-### `memory_search`
-
-- 入力: `query`（必須）, `sessionId`, `limit`
+- 入力: `query`（必須）, `sessionId`, `limit`, `includeContent`, `previewChars`
 - 役割: 過去会話・差分の候補探索
-
-### `memory_fetch`
-
-- 入力: `id`（必須）, `start`, `end`, `maxChars`, `query`
-- 役割: 特定 memory の詳細参照
-
-### `read_file`
-
-- 入力: `path`（必須）, `fromToken`, `readTokens`, `includeFrontmatter`, `minify`, `minifiy`
-- 役割: wiki markdown を token 窓で部分読みする
 - 既定:
-  - `readTokens`: 1500
-  - `fromToken`: 0
-  - `minify`: true
-- 継続読み:
-  - 先頭 1500 token 以降を読むには `fromToken: 1500` を指定
-- `minify=false`:
-  - Markdown 装飾と改行や空白幅を保持して返す
-- 出力（最小メタ）:
-  - `content`, `totalTokens`, `from`, `toExclusive`, `returnedTokens`
+  - `includeContent=false`（本文は返さない）
+  - `includeContent=true` 時は `contentPreview` のみ返す（全文は返さない）
+
+### `fetch_memory`
+
+- 入力: `id`（必須）, `start`, `end`, `maxChars`, `query`, `includeAgentDiffs`, `returnMetaOnly`
+- 役割: 特定 memory の詳細参照
+- 既定:
+  - `includeAgentDiffs=false`
+  - `returnMetaOnly=false`
+- 出力:
+  - `content`（`returnMetaOnly=true` なら省略）
+  - `sliceStart`, `sliceEnd`, `truncated`, `contentLength`
 
 ### `doctor`
 

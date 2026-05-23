@@ -2,15 +2,17 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
+  Cell,
   ComposedChart,
   Legend,
   Line,
   LineChart,
+  ReferenceLine,
   Tooltip,
   XAxis,
   YAxis,
 } from "recharts";
-import type { OverviewDashboard } from "../repositories/admin.repository";
+import type { DoctorReport, OverviewDashboard } from "../repositories/admin.repository";
 import { AdminChartCard } from "./admin-chart-card";
 
 const knowledgeStatusLabel: Record<"active" | "draft" | "deprecated", string> = {
@@ -64,7 +66,93 @@ const llmTooltipLabel: Record<string, string> = {
   costJpy: "cloud cost",
 };
 
-export function OverviewCharts({ dashboard }: { dashboard: OverviewDashboard }) {
+function toPercent(value: number | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  return `${(value * 100).toFixed(1)}%`;
+}
+
+function formatDurationSeconds(value: number | null | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  return `${(value / 1000).toFixed(1)}s`;
+}
+
+function compileMixData(report: DoctorReport | null | undefined) {
+  if (!report) return [];
+  return [
+    {
+      label: "usable",
+      count: report.runs.usableRuns ?? 0,
+      rate: toPercent(report.runs.usableRate),
+      color: "#16a34a",
+    },
+    {
+      label: "warning",
+      count: report.runs.warningOnlyRuns ?? 0,
+      rate: toPercent(report.runs.warningOnlyRate),
+      color: "#f59e0b",
+    },
+    {
+      label: "blocking",
+      count: report.runs.blockingRuns ?? 0,
+      rate: toPercent(report.runs.blockingRate),
+      color: "#dc2626",
+    },
+    {
+      label: "no content",
+      count: report.runs.noContentRuns ?? 0,
+      rate: toPercent(report.runs.noContentRate),
+      color: "#64748b",
+    },
+  ];
+}
+
+function compileLatencyData(report: DoctorReport | null | undefined) {
+  const samples = report?.runs.durationSamples ?? [];
+  if (samples.length === 0) return [];
+  const maxBucketSec = Math.max(
+    1,
+    ...samples.map((sample) => Math.floor(sample.durationMs / 1000) + 1),
+  );
+  const buckets = Array.from({ length: maxBucketSec }, (_, index) => ({
+    label: `${index}-${index + 1}s`,
+    count: 0,
+  }));
+
+  for (const sample of samples) {
+    const index = Math.min(Math.floor(sample.durationMs / 1000), buckets.length - 1);
+    const bucket = buckets[index];
+    if (bucket) bucket.count += 1;
+  }
+
+  return buckets;
+}
+
+function averageLatencyBucketLabel(value: number | null): string | null {
+  if (value === null) return null;
+  const bucketStart = Math.floor(value / 1000);
+  return `${bucketStart}-${bucketStart + 1}s`;
+}
+
+function knowledgeUsageLifecycleData(report: DoctorReport | null | undefined) {
+  if (!report) return [];
+  const activeCount = report.knowledgeLifecycle.activeCount;
+  const zeroUseCount = report.knowledgeLifecycle.zeroUseActiveCount;
+  return [
+    { label: "active", count: activeCount },
+    { label: "used", count: Math.max(0, activeCount - zeroUseCount) },
+    { label: "zero-use", count: zeroUseCount },
+    { label: "stale", count: report.knowledgeLifecycle.staleByDecayCount },
+    { label: "deprecated", count: report.mcp.staleKnowledgeCount },
+  ];
+}
+
+export function OverviewCharts({
+  dashboard,
+  doctorReport,
+}: {
+  dashboard: OverviewDashboard;
+  doctorReport?: DoctorReport | null;
+}) {
   const knowledgeData = dashboard.charts.knowledgeByStatusType.map((item) => ({
     ...item,
     statusLabel: knowledgeStatusLabel[item.status],
@@ -79,6 +167,15 @@ export function OverviewCharts({ dashboard }: { dashboard: OverviewDashboard }) 
     cloudTokens: item.cloudPromptTokens + item.cloudCompletionTokens,
     totalTokens: item.totalTokens,
   }));
+  const compileMix = compileMixData(doctorReport);
+  const compileLatency = compileLatencyData(doctorReport);
+  const knowledgeUsageLifecycle = knowledgeUsageLifecycleData(doctorReport);
+  const avgLatencyMs =
+    typeof doctorReport?.runs.durationMsAvg === "number" &&
+    Number.isFinite(doctorReport.runs.durationMsAvg)
+      ? Math.round(doctorReport.runs.durationMsAvg)
+      : null;
+  const avgLatencyBucket = averageLatencyBucketLabel(avgLatencyMs);
 
   return (
     <section className="overview-chart-grid">
@@ -182,7 +279,81 @@ export function OverviewCharts({ dashboard }: { dashboard: OverviewDashboard }) 
         </div>
       </AdminChartCard>
 
-      <AdminChartCard title="Knowledge Lifecycle">
+      {compileMix.length > 0 ? (
+        <AdminChartCard title="Compile Quality Mix">
+          <div className="overview-chart-frame">
+            <BarChart responsive style={{ width: "100%", height: "100%" }} data={compileMix}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" />
+              <YAxis allowDecimals={false} />
+              <Tooltip
+                formatter={(value, _name, item) => [
+                  `${value} (${item.payload.rate})`,
+                  item.payload.label,
+                ]}
+              />
+              <Legend />
+              <Bar dataKey="count" name="runs">
+                {compileMix.map((item) => (
+                  <Cell key={item.label} fill={item.color} />
+                ))}
+              </Bar>
+            </BarChart>
+          </div>
+        </AdminChartCard>
+      ) : null}
+
+      {compileLatency.length > 0 ? (
+        <AdminChartCard title="Compile Latency">
+          <div className="overview-chart-frame">
+            <BarChart responsive style={{ width: "100%", height: "100%" }} data={compileLatency}>
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" minTickGap={12} />
+              <YAxis allowDecimals={false} />
+              <Tooltip
+                formatter={(value) => [`${value}`, "runs"]}
+                labelFormatter={(label) => `duration ${label}`}
+              />
+              <Legend />
+              {avgLatencyMs !== null && avgLatencyBucket !== null ? (
+                <ReferenceLine
+                  x={avgLatencyBucket}
+                  stroke="#334155"
+                  strokeDasharray="5 5"
+                  label={{
+                    value: `avg ${formatDurationSeconds(avgLatencyMs)}`,
+                    position: "insideTopRight",
+                    fill: "#334155",
+                    fontSize: 12,
+                  }}
+                />
+              ) : null}
+              <Bar dataKey="count" name="runs" fill="#0f766e" />
+            </BarChart>
+          </div>
+        </AdminChartCard>
+      ) : null}
+
+      {knowledgeUsageLifecycle.length > 0 ? (
+        <AdminChartCard title="Knowledge Usage Lifecycle">
+          <div className="overview-chart-frame">
+            <BarChart
+              responsive
+              style={{ width: "100%", height: "100%" }}
+              data={knowledgeUsageLifecycle}
+            >
+              <CartesianGrid strokeDasharray="3 3" vertical={false} />
+              <XAxis dataKey="label" />
+              <YAxis allowDecimals={false} />
+              <Tooltip />
+              <Legend />
+              <Bar dataKey="count" fill="#475569" />
+            </BarChart>
+          </div>
+        </AdminChartCard>
+      ) : null}
+
+      <AdminChartCard title="Knowledge Status by Type">
         <div className="overview-chart-frame">
           <BarChart responsive style={{ width: "100%", height: "100%" }} data={knowledgeData}>
             <CartesianGrid strokeDasharray="3 3" vertical={false} />
@@ -275,6 +446,23 @@ export function OverviewCharts({ dashboard }: { dashboard: OverviewDashboard }) 
             <Tooltip />
             <Legend />
             <Bar dataKey="count" fill="#475569" />
+          </BarChart>
+        </div>
+      </AdminChartCard>
+
+      <AdminChartCard title="Community Source Coverage">
+        <div className="overview-chart-frame">
+          <BarChart
+            responsive
+            style={{ width: "100%", height: "100%" }}
+            data={dashboard.charts.communitySourceCoverage}
+          >
+            <CartesianGrid strokeDasharray="3 3" vertical={false} />
+            <XAxis dataKey="label" />
+            <YAxis allowDecimals={false} />
+            <Tooltip />
+            <Legend />
+            <Bar dataKey="count" fill="#0f766e" />
           </BarChart>
         </div>
       </AdminChartCard>

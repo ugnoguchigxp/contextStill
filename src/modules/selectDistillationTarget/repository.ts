@@ -164,6 +164,7 @@ export async function claimNextDistillationTargetState(
   } = {},
 ): Promise<DistillationTargetStateRow | null> {
   const now = params.now ?? new Date();
+  const nowUtc = sql`${now.toISOString()}::timestamptz at time zone 'UTC'`;
   const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
   const targetKind = params.targetKind ?? null;
   const lockOwner = params.worker?.trim() || workerId();
@@ -178,7 +179,7 @@ export async function claimNextDistillationTargetState(
           status = 'pending'
           or (
             status = 'paused'
-            and (next_retry_at is null or next_retry_at <= ${now})
+            and (next_retry_at is null or next_retry_at <= ${nowUtc})
           )
         )
       order by

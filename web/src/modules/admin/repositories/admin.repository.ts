@@ -215,6 +215,13 @@ export type DoctorReport = {
     durationMsP50: number | null;
     durationMsP95: number | null;
     durationMsAvg: number | null;
+    durationSamples?: Array<{
+      runId: string;
+      label: string;
+      durationMs: number;
+      status: "ok" | "degraded" | "failed";
+      createdAt: string;
+    }>;
     lastRunAt: string | null;
     lastRunAgeMinutes?: number | null;
     freshnessThresholdMinutes?: number;
@@ -424,6 +431,10 @@ export type OverviewDashboard = {
     sourceLinks: number;
     linkedKnowledge: number;
     unlinkedKnowledge: number;
+    sourceCommunities: number;
+    sourceCoveredCommunities: number;
+    sourceThinCommunities: number;
+    sourceMissingCommunities: number;
     vibeRecords: number;
     vibeSessions: number;
     vibeRecordsWithDiffs: number;
@@ -456,6 +467,10 @@ export type OverviewDashboard = {
     }>;
     sourceCoverage: Array<{
       label: "linked" | "unlinked";
+      count: number;
+    }>;
+    communitySourceCoverage: Array<{
+      label: "covered" | "thin" | "no-source";
       count: number;
     }>;
     distillationQueue: Array<{

@@ -10,7 +10,12 @@ import {
   searchKnowledgeTool,
   updateKnowledgeTool,
 } from "../src/mcp/tools/knowledge.tool.js";
-import { memoryFetchTool, memorySearchTool } from "../src/mcp/tools/memory.tool.js";
+import {
+  fetchMemoryTool as fetchMemoryPrimaryTool,
+  memoryFetchTool as fetchMemoryLegacyTool,
+  memorySearchTool as searchMemoryLegacyTool,
+  searchMemoryTool as searchMemoryPrimaryTool,
+} from "../src/mcp/tools/memory.tool.js";
 import { doctorTool, initialInstructionsTool } from "../src/mcp/tools/system.tool.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
 import { runDoctor } from "../src/modules/doctor/doctor.service.js";
@@ -49,29 +54,62 @@ describe("MCP Tools Handlers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.MEMORY_ROUTER_LANG = undefined;
+    process.env.MEMORY_ROUTER_MCP_V2 = "1";
+    vi.mocked(mockDb.where).mockImplementation(() => {
+      return Object.assign(Promise.resolve([]), {
+        orderBy: vi.fn().mockResolvedValue([]),
+        limit: vi.fn().mockResolvedValue([]),
+      });
+    });
   });
 
-  describe("memory_search", () => {
+  describe("search_memory", () => {
     test("calls retrieveVibeMemoryContext and returns JSON", async () => {
-      const mockResults = [{ id: "1", content: "test" }];
+      const mockResults = [{ id: "1", content: "first line\ndetail body", score: 0.9 }];
       vi.mocked(retrieveVibeMemoryContext).mockResolvedValue(mockResults as unknown as never);
 
-      const response = await memorySearchTool.handler({ query: "test query", limit: 5 });
+      const response = await searchMemoryPrimaryTool.handler({ query: "test query", limit: 5 });
+      const payload = JSON.parse(response.content[0].text);
 
       expect(retrieveVibeMemoryContext).toHaveBeenCalledWith({
         query: "test query",
         limit: 5,
         sessionId: undefined,
       });
-      expect(JSON.parse(response.content[0].text)).toEqual({ items: mockResults });
+      expect(payload.items[0].id).toBe("1");
+      expect(payload.items[0].title).toBe("first line");
+      expect(payload.items[0].content).toBeUndefined();
     });
 
     test("throws if query is missing", async () => {
-      await expect(memorySearchTool.handler({})).rejects.toThrow();
+      await expect(searchMemoryPrimaryTool.handler({})).rejects.toThrow();
+    });
+
+    test("returns contentPreview when includeContent=true", async () => {
+      const mockResults = [{ id: "1", content: "hello world", score: 0.9 }];
+      vi.mocked(retrieveVibeMemoryContext).mockResolvedValue(mockResults as unknown as never);
+
+      const response = await searchMemoryPrimaryTool.handler({
+        query: "test query",
+        includeContent: true,
+        previewChars: 5,
+      });
+      const payload = JSON.parse(response.content[0].text);
+      expect(payload.items[0].contentPreview).toBe("hello");
+      expect(payload.items[0].contentTruncated).toBe(true);
+    });
+
+    test("legacy alias memory_search points to the same handler", async () => {
+      const mockResults = [{ id: "1", content: "test", score: 0.9 }];
+      vi.mocked(retrieveVibeMemoryContext).mockResolvedValue(mockResults as unknown as never);
+
+      const response = await searchMemoryLegacyTool.handler({ query: "test query" });
+      const payload = JSON.parse(response.content[0].text);
+      expect(payload.items[0].id).toBe("1");
     });
   });
 
-  describe("memory_fetch", () => {
+  describe("fetch_memory", () => {
     test("fetches memory and its diffs", async () => {
       vi.mocked(mockDb.where).mockImplementationOnce(() => {
         return Promise.resolve([
@@ -84,7 +122,7 @@ describe("MCP Tools Handlers", () => {
         }) as unknown as never;
       });
 
-      const response = await memoryFetchTool.handler({ id: "mem-1" });
+      const response = await fetchMemoryPrimaryTool.handler({ id: "mem-1", includeAgentDiffs: true });
       const data = JSON.parse(response.content[0].text);
       expect(data.id).toBe("mem-1");
       expect(data.agentDiffs).toBeDefined();
@@ -101,7 +139,7 @@ describe("MCP Tools Handlers", () => {
         }) as unknown as never;
       });
 
-      const response = await memoryFetchTool.handler({
+      const response = await fetchMemoryPrimaryTool.handler({
         id: "mem-1",
         query: "TARGET_KEYWORD",
         maxChars: 100,
@@ -109,13 +147,46 @@ describe("MCP Tools Handlers", () => {
       const data = JSON.parse(response.content[0].text);
       expect(data.content).toContain("TARGET_KEYWORD");
       expect(data.content.length).toBeLessThanOrEqual(100);
+      expect(data.sliceStart).toBeTypeOf("number");
+      expect(data.sliceEnd).toBeTypeOf("number");
     });
 
     test("returns error if memory not found", async () => {
       vi.mocked(mockDb.where).mockResolvedValueOnce([] as unknown as never);
-      const response = await memoryFetchTool.handler({ id: "non-existent" });
+      const response = await fetchMemoryPrimaryTool.handler({ id: "non-existent" });
       expect(response.isError).toBe(true);
       expect(response.content[0].text).toBe("Memory not found.");
+    });
+
+    test("supports returnMetaOnly", async () => {
+      vi.mocked(mockDb.select).mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            { id: "mem-1", content: "Memory content", sessionId: "session-1", memoryType: "chat" },
+          ]),
+        }),
+      } as unknown as never);
+      const response = await fetchMemoryPrimaryTool.handler({
+        id: "mem-1",
+        returnMetaOnly: true,
+      });
+      const data = JSON.parse(response.content[0].text);
+      expect(data.id).toBe("mem-1");
+      expect(data.content).toBeUndefined();
+      expect(data.contentLength).toBeGreaterThan(0);
+    });
+
+    test("legacy alias memory_fetch points to the same handler", async () => {
+      vi.mocked(mockDb.select).mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockResolvedValue([
+            { id: "mem-1", content: "Memory content", sessionId: "session-1", memoryType: "chat" },
+          ]),
+        }),
+      } as unknown as never);
+      const response = await fetchMemoryLegacyTool.handler({ id: "mem-1" });
+      const data = JSON.parse(response.content[0].text);
+      expect(data.id).toBe("mem-1");
     });
   });
 
@@ -220,23 +291,25 @@ describe("MCP Tools Handlers", () => {
 
   describe("update_knowledge", () => {
     test("updates knowledge with merged fields", async () => {
-      vi.mocked(mockDb.where).mockImplementationOnce(() => {
-        return {
-          limit: vi.fn().mockResolvedValue([
-            {
-              id: "k-1",
-              type: "rule",
-              status: "draft",
-              scope: "repo",
-              title: "Old title",
-              body: "Old body",
-              confidence: 70,
-              importance: 70,
-              metadata: { a: 1 },
-            },
-          ]),
-        } as unknown as never;
-      });
+      vi.mocked(mockDb.select).mockReturnValueOnce({
+        from: vi.fn().mockReturnValue({
+          where: vi.fn().mockReturnValue({
+            limit: vi.fn().mockResolvedValue([
+              {
+                id: "k-1",
+                type: "rule",
+                status: "draft",
+                scope: "repo",
+                title: "Old title",
+                body: "Old body",
+                confidence: 70,
+                importance: 70,
+                metadata: { a: 1 },
+              },
+            ]),
+          }),
+        }),
+      } as unknown as never);
       vi.mocked(updateKnowledgeItem).mockResolvedValue({ id: "k-1" } as unknown as never);
 
       const response = await updateKnowledgeTool.handler({

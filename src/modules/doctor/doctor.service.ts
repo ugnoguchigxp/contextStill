@@ -51,6 +51,7 @@ function createEmptyRuns(options: ResolvedDoctorOptions): DoctorReport["runs"] {
     durationMsP50: null,
     durationMsP95: null,
     durationMsAvg: null,
+    durationSamples: [],
     lastRunAt: null,
     lastRunAgeMinutes: null,
     freshnessThresholdMinutes: options.freshnessThresholdMinutes,
@@ -178,6 +179,38 @@ function distillationConfigured(distillation: DoctorReport["vibeDistillation"]):
     distillation.launchAgent.installed ||
     distillation.launchAgent.loaded
   );
+}
+
+function distillationForReason(
+  code: string,
+  context: ReasonResolutionContext,
+): DoctorReport["vibeDistillation"] | null {
+  if (code.startsWith("VIBE_DISTILLATION_")) return context.vibeDistillation;
+  if (code.startsWith("SOURCE_DISTILLATION_")) return context.sourceDistillation;
+  return null;
+}
+
+function shouldTreatNeverRanAsMaintenance(code: string, context: ReasonResolutionContext): boolean {
+  if (context.options.strict) return false;
+  if (!code.endsWith("_NEVER_RAN")) return false;
+  const distillation = distillationForReason(code, context);
+  if (!distillation) return false;
+  const queueTotal =
+    distillation.jobs.queued +
+    distillation.jobs.running +
+    distillation.jobs.paused +
+    distillation.jobs.failed;
+  if (distillation.queueHealth.blockedByHigherPriority) return true;
+  return queueTotal === 0 && distillation.runs.totalRuns === 0;
+}
+
+function resolveContextualImpactLevel(
+  code: string,
+  severity: DoctorReasonDetail["severity"],
+  context: ReasonResolutionContext,
+): Exclude<DoctorReasonImpactLevel, "skipped"> {
+  if (shouldTreatNeverRanAsMaintenance(code, context)) return "maintenance";
+  return resolveDoctorReasonImpactLevel(code, severity, context.options.strict);
 }
 
 function syncStateConfigured(
@@ -340,7 +373,7 @@ function resolveReasonDetails(
     const shouldSkip = shouldSkipReason(code, scope, context);
     const impactLevel: DoctorReasonImpactLevel = shouldSkip
       ? "skipped"
-      : resolveDoctorReasonImpactLevel(code, defaultDetail.severity, context.options.strict);
+      : resolveContextualImpactLevel(code, defaultDetail.severity, context);
     const detail = formatDoctorReasonDetail(code, {
       strict: context.options.strict,
       impactLevel,

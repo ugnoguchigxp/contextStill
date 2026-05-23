@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { listStaticResources, readStaticResource } from "../src/mcp/server.js";
 import { contextCompileTool } from "../src/mcp/tools/context-compile.tool.js";
-import { getExposedToolEntries } from "../src/mcp/tools/index.js";
+import { getCallableToolEntries, getExposedToolEntries } from "../src/mcp/tools/index.js";
 import { searchKnowledgeTool } from "../src/mcp/tools/knowledge.tool.js";
 import { initialInstructionsTool } from "../src/mcp/tools/system.tool.js";
 import {
@@ -23,6 +23,7 @@ describeDb("mcp contract", () => {
   });
 
   beforeEach(async () => {
+    process.env.MEMORY_ROUTER_MCP_V2 = "1";
     await truncateIntegrationTables();
   });
 
@@ -57,13 +58,19 @@ describeDb("mcp contract", () => {
       "context_compile",
       "search_knowledge",
       "register_candidate",
-      "list_knowledge",
-      "update_knowledge",
-      "read_file",
-      "memory_search",
-      "memory_fetch",
+      "search_memory",
+      "fetch_memory",
       "doctor",
     ]);
+  });
+
+  test("legacy memory aliases are callable but not exposed", () => {
+    const exposed = getExposedToolEntries().map((tool) => tool.name);
+    const callable = getCallableToolEntries().map((tool) => tool.name);
+    expect(exposed).not.toContain("memory_search");
+    expect(exposed).not.toContain("memory_fetch");
+    expect(callable).toContain("memory_search");
+    expect(callable).toContain("memory_fetch");
   });
 
   test("initial_instructions contains usage-first MCP flow", async () => {

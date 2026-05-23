@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { getDb } from "../src/db/index.js";
 import { getExposedToolEntries } from "../src/mcp/tools/index.js";
 import { runDoctor } from "../src/modules/doctor/doctor.service.js";
+import { inspectCompileRuns } from "../src/modules/doctor/inspectors/compile.inspector.js";
 import { embeddingHealth } from "../src/modules/embedding/embedding.service.js";
 import { checkAgenticLlmHealth } from "../src/modules/llm/agentic-llm.service.js";
 
@@ -20,6 +21,7 @@ vi.mock("../src/modules/context-compiler/context-compiler.repository.js", () => 
 describe("Doctor Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.MEMORY_ROUTER_MCP_V2 = "1";
     vi.mocked(embeddingHealth).mockResolvedValue({
       configured: true,
       provider: "daemon",
@@ -33,8 +35,8 @@ describe("Doctor Service", () => {
       { name: "context_compile" },
       { name: "search_knowledge" },
       { name: "register_candidate" },
-      { name: "memory_search" },
-      { name: "memory_fetch" },
+      { name: "search_memory" },
+      { name: "fetch_memory" },
       { name: "doctor" },
     ] as any);
     vi.mocked(checkAgenticLlmHealth).mockResolvedValue({
@@ -78,7 +80,15 @@ describe("Doctor Service", () => {
       "../src/modules/context-compiler/context-compiler.repository.js"
     );
     vi.mocked(listRecentCompileRuns).mockResolvedValue([
-      { createdAt: new Date(Date.now() - 60 * 60 * 1000), status: "ok" }, // 1 hour ago
+      {
+        id: "550e8400-e29b-41d4-a716-446655440001",
+        createdAt: new Date(Date.now() - 60 * 60 * 1000),
+        status: "ok",
+        degradedReasons: [],
+        durationMs: 120,
+        selectedItemCount: 1,
+        outputMarkdownKind: "narrative",
+      },
     ] as any);
 
     const mockDb = {
@@ -88,6 +98,35 @@ describe("Doctor Service", () => {
 
     const report = await runDoctor({ freshnessThresholdMinutes: 30 });
     expect(report.reasons).toContain("CONTEXT_COMPILE_STALE");
+  });
+
+  test("treats source-only misses with selected context as usable compile runs", async () => {
+    const { listRecentCompileRuns } = await import(
+      "../src/modules/context-compiler/context-compiler.repository.js"
+    );
+    vi.mocked(listRecentCompileRuns).mockResolvedValue([
+      {
+        createdAt: new Date(),
+        status: "degraded",
+        degradedReasons: ["NO_SOURCE_MATCH"],
+        selectedItemCount: 3,
+        outputMarkdownKind: "narrative",
+        durationMs: 100,
+      },
+    ] as any);
+
+    const inspection = await inspectCompileRuns({
+      windowSize: 20,
+      freshnessThresholdMinutes: 30,
+      degradedRateThreshold: 0.5,
+      compileRunsTableAvailable: true,
+    });
+
+    expect(inspection.runs.blockingRuns).toBe(0);
+    expect(inspection.runs.usableRuns).toBe(1);
+    expect(inspection.runs.warningOnlyRuns).toBe(1);
+    expect(inspection.reasons).not.toContain("DEGRADED_RATE_HIGH");
+    expect(inspection.reasons).not.toContain("USABLE_PACK_RATE_LOW");
   });
 
   test("detects missing vector extension and stale knowledge", async () => {

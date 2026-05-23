@@ -25,8 +25,42 @@ vi.mock("@tanstack/react-query", async () => {
             vector: { installed: true },
             mcp: {
               nextActions: ["unused active knowledge を確認する（103/112）"],
+              staleKnowledgeCount: 1,
             },
             reasons: ["KNOWLEDGE_ZERO_USE_HIGH", "DEGRADED_RATE_HIGH"],
+            runs: {
+              totalRuns: 10,
+              usableRuns: 8,
+              usableRate: 0.8,
+              warningOnlyRuns: 2,
+              warningOnlyRate: 0.2,
+              blockingRuns: 1,
+              blockingRate: 0.1,
+              noContentRuns: 1,
+              noContentRate: 0.1,
+              durationMsAvg: 2400,
+              durationSamples: [
+                {
+                  runId: "550e8400-e29b-41d4-a716-446655440021",
+                  label: "#1",
+                  durationMs: 900,
+                  status: "ok",
+                  createdAt: "2026-05-20T00:00:00.000Z",
+                },
+                {
+                  runId: "550e8400-e29b-41d4-a716-446655440022",
+                  label: "#2",
+                  durationMs: 2400,
+                  status: "degraded",
+                  createdAt: "2026-05-20T00:01:00.000Z",
+                },
+              ],
+            },
+            knowledgeLifecycle: {
+              activeCount: 8,
+              zeroUseActiveCount: 3,
+              staleByDecayCount: 1,
+            },
           },
           error: null,
           isError: false,
@@ -53,6 +87,10 @@ vi.mock("@tanstack/react-query", async () => {
             sourceLinks: 8,
             linkedKnowledge: 6,
             unlinkedKnowledge: 4,
+            sourceCommunities: 3,
+            sourceCoveredCommunities: 1,
+            sourceThinCommunities: 1,
+            sourceMissingCommunities: 1,
             vibeRecords: 12,
             vibeSessions: 3,
             vibeRecordsWithDiffs: 9,
@@ -69,6 +107,11 @@ vi.mock("@tanstack/react-query", async () => {
             compileRunsByDay: [],
             vibeRecordsByDay: [],
             sourceCoverage: [],
+            communitySourceCoverage: [
+              { label: "covered", count: 1 },
+              { label: "thin", count: 1 },
+              { label: "no-source", count: 1 },
+            ],
           },
           llmUsage: {
             kpis: {
@@ -155,18 +198,23 @@ describe("OverviewPage", () => {
       </QueryClientProvider>,
     );
     expect(screen.getByText(/overview/i)).toBeInTheDocument();
+    expect(screen.getByText("Compile Usable")).toBeInTheDocument();
+    expect(
+      screen.getByText("usable 8 / warning 2 / blocking 1 / no content 1"),
+    ).toBeInTheDocument();
     expect(screen.getByText("Local LLM 30d")).toBeInTheDocument();
     expect(screen.getByText("Cloud LLM Cost 30d")).toBeInTheDocument();
     expect(screen.getByText("gpt-5-4-mini / in ￥165/1M / out ￥660/1M")).toBeInTheDocument();
     expect(screen.getByText("Daily LLM Tokens (14d)")).toBeInTheDocument();
-    expect(screen.getByText("Brave Search")).toBeInTheDocument();
-    expect(screen.getByText("未使用の active knowledge が多い")).toBeInTheDocument();
-    expect(screen.getByText("Degraded rate が高い")).toBeInTheDocument();
-    expect(screen.getByText("KNOWLEDGE_ZERO_USE_HIGH")).toBeInTheDocument();
+    expect(screen.getByText("Compile Quality Mix")).toBeInTheDocument();
+    expect(screen.getByText("Compile Latency")).toBeInTheDocument();
+    expect(screen.getByText("Knowledge Usage Lifecycle")).toBeInTheDocument();
+    expect(screen.getByText("Community Source Coverage")).toBeInTheDocument();
     expect(
-      screen.getByText("対応: degraded reasons を上位から解消してください。"),
+      screen.getByText("unlinked 4 / communities 1/3 covered, thin 1, no-source 1"),
     ).toBeInTheDocument();
-    expect(screen.getByText("unused active knowledge を確認する（103/112）")).toBeInTheDocument();
+    expect(screen.getByText("Brave Search")).toBeInTheDocument();
+    expect(screen.queryByText("Doctor Signals")).not.toBeInTheDocument();
   });
 
   it("keeps existing overview content visible when the overview query reports an error", () => {
@@ -182,6 +230,6 @@ describe("OverviewPage", () => {
     expect(screen.getByText("/api/overview failed: 500")).toBeInTheDocument();
     expect(screen.getByText("Knowledge Items")).toBeInTheDocument();
     expect(screen.getByText("Daily LLM Tokens (14d)")).toBeInTheDocument();
-    expect(screen.getByText("Doctor Signals")).toBeInTheDocument();
+    expect(screen.queryByText("Doctor Signals")).not.toBeInTheDocument();
   });
 });

@@ -247,4 +247,172 @@ describe("Content Repo Service", () => {
   test("createFolder throws for empty path", async () => {
     await expect(createFolder(contentRoot, "")).rejects.toThrow("Invalid folder path");
   });
+
+  test("getPageHistory handles missing existing file pathspecs", async () => {
+    const error = new Error("Not found");
+    (error as any).code = "ENOENT";
+    vi.mocked(fs.stat).mockRejectedValue(error);
+
+    const logOutput = "commit1\tauthor1\t2023-01-01\tmsg1\n";
+    vi.mocked(execFile).mockImplementation((_cmd, _args, callback: any) => {
+      callback(null, { stdout: logOutput }, "");
+      return {} as any;
+    });
+
+    const history = await getPageHistory(contentRoot, "about");
+    expect(history).toHaveLength(1);
+    expect(history[0].commit).toBe("commit1");
+  });
+
+  test("getPageHistory returns empty array on git error", async () => {
+    vi.mocked(execFile).mockImplementation((_cmd, _args, callback: any) => {
+      callback(new Error("git error"), null, "");
+      return {} as any;
+    });
+    vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, isDirectory: () => false } as any);
+
+    const history = await getPageHistory(contentRoot, "about");
+    expect(history).toEqual([]);
+  });
+
+  test("getPageDiff returns empty string on git error", async () => {
+    vi.mocked(execFile).mockImplementation((_cmd, _args, callback: any) => {
+      callback(new Error("git error"), null, "");
+      return {} as any;
+    });
+    vi.mocked(fs.stat).mockResolvedValue({ isFile: () => true, isDirectory: () => false } as any);
+
+    const { getPageDiff } = await import("../src/modules/sources/wiki/content-repo.js");
+    const diff = await getPageDiff(contentRoot, "about", "v1", "v2");
+    expect(diff).toBe("");
+  });
+
+  test("commitDeleteChange stage and commit delete", async () => {
+    vi.mocked(execFile).mockImplementation((_cmd, _args, callback: any) => {
+      callback(null, { stdout: "commit-del\n" }, "");
+      return {} as any;
+    });
+
+    const { commitDeleteChange } = await import("../src/modules/sources/wiki/content-repo.js");
+    const commit = await commitDeleteChange(contentRoot, "/wiki-root/pages/delete-me.md", "feat: delete");
+    expect(commit).toBe("commit-del");
+  });
+
+  test("commitPathsChange throws error if staged changes remain on failure", async () => {
+    vi.mocked(execFile).mockImplementation((_cmd, args, callback: any) => {
+      if (args.includes("commit")) {
+        // commit fails
+        callback(new Error("commit failed"), null, "");
+      } else if (args.includes("diff") && args.includes("--cached")) {
+        // hasAnyStagedChanges returns true (meaning git diff --quiet failed, callback with error/non-zero status)
+        callback(new Error("diff failed"), null, "");
+      } else {
+        callback(null, { stdout: "" }, "");
+      }
+      return {} as any;
+    });
+
+    const { commitPathsChange } = await import("../src/modules/sources/wiki/content-repo.js");
+    await expect(
+      commitPathsChange(contentRoot, ["/wiki-root/pages/a.md"], "feat: fail"),
+    ).rejects.toThrow("commit failed");
+  });
+
+  test("commitFileChange throws error if staged changes remain on failure", async () => {
+    vi.mocked(execFile).mockImplementation((_cmd, args, callback: any) => {
+      if (args.includes("commit")) {
+        callback(new Error("commit failed"), null, "");
+      } else if (args.includes("diff") && args.includes("--cached")) {
+        callback(new Error("diff failed"), null, "");
+      } else {
+        callback(null, { stdout: "" }, "");
+      }
+      return {} as any;
+    });
+
+    const { commitFileChange } = await import("../src/modules/sources/wiki/content-repo.js");
+    await expect(
+      commitFileChange(contentRoot, "/wiki-root/pages/test.md", "feat: fail"),
+    ).rejects.toThrow("commit failed");
+  });
+
+  test("commitDeleteChange throws error if staged changes remain on failure", async () => {
+    vi.mocked(execFile).mockImplementation((_cmd, args, callback: any) => {
+      if (args.includes("commit")) {
+        callback(new Error("commit failed"), null, "");
+      } else if (args.includes("diff") && args.includes("--cached")) {
+        callback(new Error("diff failed"), null, "");
+      } else {
+        callback(null, { stdout: "" }, "");
+      }
+      return {} as any;
+    });
+
+    const { commitDeleteChange } = await import("../src/modules/sources/wiki/content-repo.js");
+    await expect(
+      commitDeleteChange(contentRoot, "/wiki-root/pages/delete-me.md", "feat: fail"),
+    ).rejects.toThrow("commit failed");
+  });
+
+  test("renameFolder calculates movedPages correctly when folder contains pages", async () => {
+    vi.mocked(fs.stat).mockResolvedValueOnce({ isDirectory: () => true, isFile: () => false } as any); // source folder check
+    const error = new Error("Not found");
+    (error as any).code = "ENOENT";
+    vi.mocked(fs.stat).mockRejectedValueOnce(error); // new path check
+    
+    // mock listPages -> readMarkdownFiles
+    // 1st readdir (pagesRoot) finds old-dir directory
+    vi.mocked(fs.readdir).mockResolvedValueOnce([
+      { isFile: () => false, isDirectory: () => true, name: "old-dir" }
+    ] as any);
+    // 2nd readdir (inside old-dir) finds my-page.md
+    vi.mocked(fs.readdir).mockResolvedValueOnce([
+      { isFile: () => true, isDirectory: () => false, name: "my-page.md" }
+    ] as any);
+    
+    vi.mocked(fs.stat).mockResolvedValue({
+      mtime: new Date(),
+      isFile: () => true,
+      isDirectory: () => false,
+    } as any);
+    
+    vi.mocked(fs.rename).mockResolvedValue(undefined);
+
+    const { renameFolder } = await import("../src/modules/sources/wiki/content-repo.js");
+    const result = await renameFolder(contentRoot, "old-dir", "new-dir");
+    expect(result.movedPages).toHaveLength(1);
+    expect(result.movedPages[0].from).toBe("old-dir/my-page");
+    expect(result.movedPages[0].to).toBe("new-dir/my-page");
+  });
+
+  test("renameFolder throws generic error if new path stat check throws non-ENOENT error", async () => {
+    vi.mocked(fs.stat).mockResolvedValueOnce({ isDirectory: () => true, isFile: () => false } as any); // old exists
+    const error = new Error("Generic error");
+    (error as any).code = "EACCES";
+    vi.mocked(fs.stat).mockRejectedValueOnce(error); // new stat check throws EACCES
+
+    const { renameFolder } = await import("../src/modules/sources/wiki/content-repo.js");
+    await expect(renameFolder(contentRoot, "old-dir", "new-dir")).rejects.toThrow("Generic error");
+  });
+
+  test("renameFolder throws error if old path is not a directory", async () => {
+    vi.mocked(fs.stat).mockResolvedValueOnce({ isDirectory: () => false, isFile: () => true } as any); // old exists but is not directory
+
+    const { renameFolder } = await import("../src/modules/sources/wiki/content-repo.js");
+    await expect(renameFolder(contentRoot, "old-dir", "new-dir")).rejects.toThrow("Folder not found");
+  });
+
+  test("getGitSummary returns null on git error", async () => {
+    vi.mocked(execFile).mockImplementation((_cmd, _args, callback: any) => {
+      callback(new Error("git error"), null, "");
+      return {} as any;
+    });
+
+    const summary = await getGitSummary(contentRoot);
+    expect(summary).toBeNull();
+  });
 });
+
+
+
+

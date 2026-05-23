@@ -34,5 +34,6 @@ export function deriveRetrievalModeFromChangeTypes(
     return "architecture_context";
   }
   if (hasChangeType(changeTypes, "procedure")) return "procedure_context";
+  if (hasChangeType(changeTypes, "learning")) return "learning_context";
   return "task_context";
 }

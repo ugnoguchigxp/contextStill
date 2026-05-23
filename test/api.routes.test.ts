@@ -233,6 +233,15 @@ const validDoctorReport: DoctorReport = {
     durationMsP50: 80,
     durationMsP95: 120,
     durationMsAvg: 90,
+    durationSamples: [
+      {
+        runId: "550e8400-e29b-41d4-a716-446655440002",
+        label: "#1",
+        durationMs: 90,
+        status: "ok",
+        createdAt: "2026-05-15T00:00:00.000Z",
+      },
+    ],
     lastRunAt: "2026-05-15T00:00:00.000Z",
     lastRunAgeMinutes: 1,
     freshnessThresholdMinutes: 720,
@@ -370,6 +379,10 @@ const validOverviewDashboard: OverviewDashboard = overviewDashboardSchema.parse(
     sourceLinks: 254,
     linkedKnowledge: 254,
     unlinkedKnowledge: 80,
+    sourceCommunities: 40,
+    sourceCoveredCommunities: 28,
+    sourceThinCommunities: 7,
+    sourceMissingCommunities: 5,
     vibeRecords: 1072,
     vibeSessions: 118,
     vibeRecordsWithDiffs: 963,
@@ -403,6 +416,11 @@ const validOverviewDashboard: OverviewDashboard = overviewDashboardSchema.parse(
     sourceCoverage: [
       { label: "linked", count: 254 },
       { label: "unlinked", count: 80 },
+    ],
+    communitySourceCoverage: [
+      { label: "covered", count: 28 },
+      { label: "thin", count: 7 },
+      { label: "no-source", count: 5 },
     ],
     distillationQueue: [
       { targetKind: "wiki_file", pending: 100, running: 1, paused: 0, completed: 20, failed: 0 },

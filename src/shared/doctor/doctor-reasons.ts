@@ -262,7 +262,7 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     area: "Sync",
     description: "agent-log-sync の LaunchAgent がインストールされていません。",
     impact: "定期同期が自動実行されません。",
-    action: "`./scripts/setup-automation.sh install` を実行してください。",
+    action: "`bun run automation:agent-log-sync -- install` を実行してください。",
   },
   AGENT_LOG_SYNC_LAUNCH_AGENT_NOT_LOADED: {
     label: "Agent log sync launch agent 未ロード",
@@ -270,7 +270,7 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     area: "Sync",
     description: "agent-log-sync の LaunchAgent がロードされていません。",
     impact: "定期同期が停止します。",
-    action: "`./scripts/setup-automation.sh load` を実行してください。",
+    action: "`bun run automation:agent-log-sync -- load` を実行してください。",
   },
   CODEX_LOGS_SYNC_STALE: {
     label: "Codex ログ同期が古い",
@@ -311,7 +311,7 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     area: "Distillation",
     description: "distillation pipeline の LaunchAgent が配置されていません。",
     impact: "vibe distillation が自動実行されません。",
-    action: "`./scripts/setup-distill-pipeline-automation.sh install` を実行してください。",
+    action: "`bun run automation:distill-pipeline -- install` を実行してください。",
   },
   VIBE_DISTILLATION_LAUNCH_AGENT_NOT_LOADED: {
     label: "Vibe distillation launch agent 未ロード",
@@ -319,7 +319,7 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     area: "Distillation",
     description: "distillation pipeline の LaunchAgent が未ロードです。",
     impact: "vibe distillation queue が処理されません。",
-    action: "`./scripts/setup-distill-pipeline-automation.sh load` を実行してください。",
+    action: "`bun run automation:distill-pipeline -- load` を実行してください。",
   },
   VIBE_DISTILLATION_NEVER_RAN: {
     label: "会話ログ蒸留が未実行",
@@ -369,7 +369,7 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     area: "Distillation",
     description: "distillation pipeline の LaunchAgent が配置されていません。",
     impact: "source distillation が自動実行されません。",
-    action: "`./scripts/setup-distill-pipeline-automation.sh install` を実行してください。",
+    action: "`bun run automation:distill-pipeline -- install` を実行してください。",
   },
   SOURCE_DISTILLATION_LAUNCH_AGENT_NOT_LOADED: {
     label: "Source distillation launch agent 未ロード",
@@ -377,7 +377,7 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     area: "Distillation",
     description: "distillation pipeline の LaunchAgent が未ロードです。",
     impact: "source distillation queue が処理されません。",
-    action: "`./scripts/setup-distill-pipeline-automation.sh load` を実行してください。",
+    action: "`bun run automation:distill-pipeline -- load` を実行してください。",
   },
   SOURCE_DISTILLATION_NEVER_RAN: {
     label: "Source distillation が未実行",

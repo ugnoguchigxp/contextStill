@@ -1,6 +1,6 @@
 import path from "node:path";
 import { readFile } from "node:fs/promises";
-import { runSetupChecks, type SetupCheck } from "./onboarding/checks.js";
+import { detectDockerComposeRunner, runSetupChecks, type SetupCheck } from "./onboarding/checks.js";
 import { runSetupCommand, type SetupCommandResult } from "./onboarding/command-runner.js";
 import { ensureEnvFile, parseEnvValues } from "./onboarding/env-file.js";
 import { buildMcpConfigSnippet } from "./onboarding/mcp-config.js";
@@ -145,7 +145,9 @@ async function buildSetupSummary(options: SetupOptions): Promise<SetupSummary> {
     cwd,
     env: commandEnv,
     envValues,
+    requireDockerCompose: options.startDb,
   });
+  const dockerComposeRunner = await detectDockerComposeRunner(cwd, commandEnv);
   checks.unshift({
     name: "env-file",
     ok: true,
@@ -156,22 +158,27 @@ async function buildSetupSummary(options: SetupOptions): Promise<SetupSummary> {
 
   commands.push(
     await runSetupCommand({
-      command: "docker",
-      args: ["compose", "ps"],
+      command: dockerComposeRunner?.command ?? "docker",
+      args: [...(dockerComposeRunner?.argsPrefix ?? ["compose"]), "ps"],
       cwd,
       env: commandEnv,
       dryRun: options.dryRun,
+      skipReason: dockerComposeRunner ? undefined : "docker compose is not available",
     }),
   );
 
   commands.push(
     await runSetupCommand({
-      command: "docker",
-      args: ["compose", "up", "-d"],
+      command: dockerComposeRunner?.command ?? "docker",
+      args: [...(dockerComposeRunner?.argsPrefix ?? ["compose"]), "up", "-d"],
       cwd,
       env: commandEnv,
       dryRun: options.dryRun,
-      skipReason: options.startDb ? undefined : "--start-db is not set",
+      skipReason: options.startDb
+        ? dockerComposeRunner
+          ? undefined
+          : "docker compose is not available"
+        : "--start-db is not set",
     }),
   );
 

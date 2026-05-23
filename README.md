@@ -229,12 +229,11 @@ Add to your MCP client configuration:
 | `context_compile` | Generate context pack for current task | **Primary tool** — call before every task |
 | `search_knowledge` | Raw knowledge candidate inspection | When `context_compile` results need investigation |
 | `register_candidate` | Register a lightweight rule/procedure candidate | When the agent discovers reusable patterns |
-| `list_knowledge` | List draft/active/deprecated backlog | When triaging knowledge lifecycle |
-| `update_knowledge` | Update status/title/body/metadata | When promoting or deprecating knowledge |
-| `read_file` | Read wiki Markdown through token windows | When grounding work in long local docs |
-| `memory_search` | Search past conversations and diffs | When looking for specific past context |
-| `memory_fetch` | Fetch a specific memory by ID | When inspecting a specific conversation |
+| `search_memory` | Search past conversations and diffs | When identifying candidate memories by ID |
+| `fetch_memory` | Fetch a specific memory by ID | When inspecting one memory in detail |
 | `doctor` | System health diagnostics | When compile is degraded/failed |
+
+Deprecated aliases: `memory_search` -> `search_memory`, `memory_fetch` -> `fetch_memory`.
 
 ### Recommended workflow
 
@@ -242,9 +241,10 @@ Add to your MCP client configuration:
 1. initial_instructions     → Get operating rules
 2. context_compile          → Get task-specific context (primary)
 3. search_knowledge         → Investigate if needed (supplementary)
-4. ... do the work ...
-5. register_candidate       → Save reusable discoveries as candidates
-6. doctor                   → Check system health if issues arise
+4. search_memory/fetch_memory → Inspect past conversations only when needed
+5. ... do the work ...
+6. register_candidate       → Save reusable discoveries as candidates
+7. doctor                   → Check system health if issues arise
 ```
 
 For the full MCP tool contract, see [docs/mcp-tools.md](docs/mcp-tools.md).
@@ -411,14 +411,20 @@ Continuously ingest conversation logs from Codex and Antigravity:
 bun run sync:agent-logs
 
 # Install as macOS LaunchAgent
-./scripts/setup-automation.sh install
-./scripts/setup-automation.sh load
-./scripts/setup-automation.sh status
+bun run automation:agent-log-sync -- install
+bun run automation:agent-log-sync -- load
+bun run automation:agent-log-sync -- status
+
+# Windows Task Scheduler
+bun run automation:agent-log-sync -- install
+bun run automation:agent-log-sync -- load
+bun run automation:agent-log-sync -- status
 ```
 
 Default log locations:
 - Codex: `~/.codex/sessions` and `~/.codex/archived_sessions`
 - Antigravity: `~/.gemini/antigravity/brain`
+- On Windows, fallback roots under `%APPDATA%` / `%LOCALAPPDATA%` are scanned in addition to defaults.
 
 ### Distillation Automation (Conveyor)
 
@@ -429,9 +435,14 @@ Run staged distillation (`selectDistillationTarget -> findCandidate -> coverEvid
 bun run distill:pipeline:once
 
 # Install and load as macOS LaunchAgent
-./scripts/setup-distill-pipeline-automation.sh install
-./scripts/setup-distill-pipeline-automation.sh load
-./scripts/setup-distill-pipeline-automation.sh status
+bun run automation:distill-pipeline -- install
+bun run automation:distill-pipeline -- load
+bun run automation:distill-pipeline -- status
+
+# Windows Task Scheduler
+bun run automation:distill-pipeline -- install
+bun run automation:distill-pipeline -- load
+bun run automation:distill-pipeline -- status
 ```
 
 Progress / recovery commands:
@@ -542,6 +553,7 @@ All configuration is done through environment variables. See [`.env.example`](.e
 |---|---|---|
 | `MEMORY_ROUTER_LOCAL_LLM_API_BASE_URL` | `http://127.0.0.1:44448` | Local LLM API endpoint |
 | `MEMORY_ROUTER_DISTILLATION_PROVIDER` | `local-llm` | `local-llm`, `azure-openai`, `bedrock`, or `auto` |
+| `MEMORY_ROUTER_DISTILLATION_FIND_CANDIDATE_PROVIDER` | inherits `MEMORY_ROUTER_DISTILLATION_PROVIDER` | Optional `findCandidate` provider override; use `azure-openai` for OpenAI/Azure extraction, or `local-llm` / `bedrock` / `auto` |
 | `MEMORY_ROUTER_DISTILLATION_SEARCH_PROVIDERS` | `brave,exa` | Ordered search providers for `search_web` |
 | `MEMORY_ROUTER_EXA_API_KEY` / `EXA_API_KEY` | empty | Exa search API key |
 | `BRAVE_SEARCH_API_KEY` | empty | Brave Search API key |
@@ -551,7 +563,10 @@ All configuration is done through environment variables. See [`.env.example`](.e
 | Variable | Default | Description |
 |---|---|---|
 | `MEMORY_ROUTER_CODEX_SESSION_DIR` | `~/.codex/sessions` | Codex sessions directory |
+| `MEMORY_ROUTER_CODEX_SESSION_DIRS` | empty | Additional Codex session roots (comma/semicolon-separated) |
+| `MEMORY_ROUTER_CODEX_ARCHIVED_SESSION_DIRS` | empty | Additional Codex archived-session roots (comma/semicolon-separated) |
 | `MEMORY_ROUTER_ANTIGRAVITY_LOG_DIR` | `~/.gemini/antigravity/brain` | Antigravity logs directory |
+| `MEMORY_ROUTER_ANTIGRAVITY_LOG_DIRS` | empty | Additional Antigravity log roots (comma/semicolon-separated) |
 | `MEMORY_ROUTER_AGENT_LOG_SYNC_INTERVAL_SECONDS` | `3600` | Sync interval |
 | `MEMORY_ROUTER_AGENT_LOG_INITIAL_LOOKBACK_HOURS` | `168` | Initial lookback window |
 

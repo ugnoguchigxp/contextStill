@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { groupedConfig } from "../src/config.js";
 import { runFindCandidate } from "../src/modules/findCandidate/domain.js";
 import { parseStorageCandidatesFromLlmOutput } from "../src/modules/findCandidate/parser.js";
 
@@ -46,6 +47,7 @@ vi.mock("../src/modules/audit/audit-log.service.js", () => ({
 describe("runFindCandidate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    groupedConfig.distillation.findCandidateProvider = "local-llm";
     mocks.getDistillationTargetStateById.mockResolvedValue({
       id: "target-1",
       targetKind: "wiki_file",
@@ -120,6 +122,38 @@ describe("runFindCandidate", () => {
     expect(mocks.insertFindCandidateResult).toHaveBeenCalledWith(
       expect.objectContaining({
         candidate: expect.objectContaining({ type: "procedure" }),
+      }),
+    );
+  });
+
+  test("defaults wiki candidate extraction to the configured findCandidate provider", async () => {
+    await runFindCandidate({
+      targetStateId: "target-1",
+      callerMode: "storage",
+    });
+
+    expect(mocks.resolveDistillationModel).toHaveBeenCalledWith("local-llm");
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        providerSetting: "local-llm",
+      }),
+    );
+  });
+
+  test("allows OpenAI/Azure candidate extraction by provider setting", async () => {
+    groupedConfig.distillation.findCandidateProvider = "azure-openai";
+
+    await runFindCandidate({
+      targetStateId: "target-1",
+      callerMode: "storage",
+    });
+
+    expect(mocks.resolveDistillationModel).toHaveBeenCalledWith("azure-openai");
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        providerSetting: "azure-openai",
       }),
     );
   });

@@ -7,12 +7,13 @@
 - 初回利用者が `README.md` の Quick Start から MCP 登録まで迷わず到達できる状態にする。
 - 既存の PostgreSQL + pgvector 前提を維持したまま、導入手順を `bun run setup` に集約する。
 - MCP tool contract を壊さず、`initial_instructions` とオンボーディング出力を英語/日本語で切り替えられるようにする。
+- macOS 専用 `sh` 導線に依存せず、Windows でも `bun run <script>` で同一の起動導線を使える状態にする。
 - OSS 公開前に必要な README / README.jp / MCP docs の導線を実装内容と一致させる。
 
 ## 現在の前提
 
 - `package.json` には `init:project` があり、初回 import、global preset、smoke compile、MCP 設定スニペット出力を既に担当している。
-- MCP の公開ツールは `docs/mcp-tools.md` 上で 10 個に固定されている。`initial_instructions` は引数なし、`context_compile` は `goal/changeTypes/technologies/domains` のみを受け取る。
+- MCP の公開ツールは `docs/mcp-tools.md` 上で 7 個（`initial_instructions`, `context_compile`, `search_knowledge`, `register_candidate`, `search_memory`, `fetch_memory`, `doctor`）に固定されている。`initial_instructions` は引数なし、`context_compile` は `goal/changeTypes/technologies/domains` のみを受け取る。
 - DB 層は `drizzle-orm/node-postgres`、`drizzle-orm/pg-core`、PostgreSQL dialect、`pgvector`、Postgres FTS、GIN/HNSW index に依存している。
 - Web UI は React + Vite + TanStack Router で、表示文言は各コンポーネントに直接書かれている。
 - 自動化は macOS LaunchAgent と shell script に寄っているが、Quick Start の必須手順ではない。
@@ -27,6 +28,7 @@
 | 3. MCP 設定支援 CLI | Planned | 1 PR | yes |
 | 4. README / docs の導線更新 | Planned | 1 PR | yes |
 | 5. Web UI i18n の最小入口 | Planned | 1 PR | optional |
+| 6. `sh` 依存の縮退と Windows 起動導線 | Done (2026-05-23) | 1 PR | yes |
 | 調査スパイク A/B/C | Planned | separate docs PRs | no |
 
 ## 実装メモ (2026-05-23)
@@ -40,6 +42,13 @@
   - `src/mcp/tools/system.tool.ts` を `MEMORY_ROUTER_LANG` ベースの `ja/en` 切替に変更した（input schema は未変更）。
   - `src/cli/init-project.ts` に `--lang en|ja` と env fallback を追加し、preset/smoke/nextActions を locale 切替対応した。
   - `.env.example` に `MEMORY_ROUTER_LANG=ja` を追加した。
+- Milestone 6:
+  - `src/cli/{agent-log-sync-automation,distill-pipeline-automation}.ts` を追加し、LaunchAgent の install/load/status と手動 run を TS CLI 化した。
+  - `package.json` に `automation:agent-log-sync` / `automation:distill-pipeline` を追加した。
+  - Windows Task Scheduler 用に `scripts/automation/windows/*.task.xml` を追加し、同じ CLI で install/load/status/uninstall を実行できるようにした。
+  - `agent-log-sync` の取り込みルートに Windows 候補パスと複数 root 上書き env (`MEMORY_ROUTER_*_DIRS`) を追加した。
+  - README / README.jp / Doctor action を `bun run ...` 導線へ統一し、`setup-automation.sh` / `setup-distill-pipeline-automation.sh` 参照を除去した。
+  - `scripts/automation/com.memory-router.distill-pipeline.plist` を script 呼び出しではなく TS CLI 呼び出しへ更新した。
 
 ## Phase 1 の非目標
 
@@ -54,6 +63,8 @@ Phase 1 では次を実装しない。
 - Docker Compose に LLM / embedding daemon まで含める all-in-one runtime。
 
 これらは既存アーキテクチャへの影響が大きく、OSS 公開前の導入改善とは別の調査・設計フェーズに分離する。
+
+ただし「Windows から `bun run` ベースで手動起動・初期運用ができること」は Phase 1 の対象として扱う。
 
 ## 実装方針
 

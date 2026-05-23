@@ -33,6 +33,31 @@ describe("Sanitize Utility", () => {
       expect(sanitized).toContain("https://example.com/img.png");
       expect(sanitized).toContain("#blocked-unsafe-url");
     });
+
+    test("allows empty or anchor-only URLs", () => {
+      const md = "[Anchor](#target-section) [Empty]()";
+      const sanitized = sanitizeMarkdownBody(md);
+      expect(sanitized).toContain("#target-section");
+      expect(sanitized).not.toContain("#blocked-unsafe-url");
+    });
+
+    test("blocks protocol-relative URLs starting with //", () => {
+      const md = "[Protocol Relative](//example.com)";
+      const sanitized = sanitizeMarkdownBody(md);
+      expect(sanitized).toContain("#blocked-unsafe-url");
+    });
+
+    test("handles reference-style markdown links and sanitizes unsafe ones", () => {
+      const md = [
+        "[safe]: https://example.com",
+        "[unsafe]: javascript:alert(1)",
+        "[traversal]: ../etc/passwd",
+      ].join("\n");
+      const sanitized = sanitizeMarkdownBody(md);
+      expect(sanitized).toContain("[safe]: https://example.com");
+      expect(sanitized).toContain("[unsafe]: #blocked-unsafe-url");
+      expect(sanitized).toContain("[traversal]: #blocked-unsafe-url");
+    });
   });
 
   describe("sanitizePlainText", () => {
