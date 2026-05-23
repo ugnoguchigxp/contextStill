@@ -48,6 +48,7 @@ vi.mock("../src/db/client.js", () => ({
 describe("MCP Tools Handlers", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.MEMORY_ROUTER_LANG = undefined;
   });
 
   describe("memory_search", () => {
@@ -300,9 +301,16 @@ describe("MCP Tools Handlers", () => {
   });
 
   describe("system tools", () => {
-    test("initial_instructions returns text", async () => {
+    test("initial_instructions returns Japanese text by default", async () => {
+      process.env.MEMORY_ROUTER_LANG = undefined;
       const response = await initialInstructionsTool.handler();
       expect(response.content[0].text).toContain("## 常用ルール");
+    });
+
+    test("initial_instructions returns English text when MEMORY_ROUTER_LANG=en", async () => {
+      process.env.MEMORY_ROUTER_LANG = "en";
+      const response = await initialInstructionsTool.handler();
+      expect(response.content[0].text).toContain("## Core Rules");
     });
 
     test("doctor calls runDoctor and returns JSON", async () => {

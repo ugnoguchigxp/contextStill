@@ -183,7 +183,7 @@ async function main(): Promise<void> {
       arguments: {},
     });
     const initialText = extractTextContent(initialInstructions);
-    if (!initialText.includes("## 常用ルール")) {
+    if (!initialText.includes("## 常用ルール") && !initialText.includes("## Core Rules")) {
       throw new Error("initial_instructions response is missing expected heading.");
     }
 

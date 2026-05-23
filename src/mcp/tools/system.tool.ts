@@ -1,37 +1,6 @@
 import { runDoctor } from "../../modules/doctor/doctor.service.js";
-
-function buildInitialInstructionsText(): string {
-  return [
-    "## 常用ルール",
-    "- 常に日本語で返答する。",
-    "- まず `context_compile` を呼び、作業の主導線とする。",
-    "- `context_compile` には `goal` を必ず渡す。可能なら `changeTypes` / `technologies` / `domains` を渡す。",
-    "- 入力はこの4項目のみを使う。追加フィールドは作らない。",
-    "- `goal` は達成したい状態を1-3文で具体的に書く。いま実装する1マイルストーンに絞る。",
-    "- `goal` に設計書パスや `design.md` / `spec.md` などの文書参照を書かない。",
-    "- 設計ドキュメントを使う場合は、必要部分を呼び出し側で読み、現在のマイルストーンへ要約してから渡す。",
-    "- `changeTypes` は作業種別、`technologies` は技術、`domains` は機能領域を表す。",
-    "- `memory_search` / `memory_fetch` は必要根拠の確認時だけ使う。",
-    "- `search_knowledge` は raw 候補確認用。通常は `context_compile` を優先する。",
-    "- draft backlog の整理や status 更新が必要な場合は `list_knowledge` / `update_knowledge` を使う。",
-    "- ユーザーに情報を提示する際、それが本当に有用（ゴールに直接的・具体的に関係する）であるかを厳格に評価すること。不確実な情報やノイズでコンテキストを圧迫してはならない。",
-    "- 毎回の長文ルール再出力はしない。必要最小限のみ返す。",
-    "- 作業中に再利用可能なルールや手順を発見・確立した場合は、`register_candidate` で candidate として即時登録する。",
-    "- `register_candidate` は正式 knowledge ではなく候補登録のみを行う。蒸留後に有効なものだけ draft knowledge へ昇格する。",
-    '- 失敗経験や修正手順は、次の JSON 形に整えて登録する: `{ "title": "...", "type": "procedure", "body": "Use when:\\n- ...\\n\\nWorkflow:\\n1. ...\\n2. ...\\n\\nVerification:\\n- ...\\n\\nAvoid:\\n- ...", "technologies": ["..."], "changeTypes": ["..."], "domains": ["..."] }`',
-    "- 自由文メモしかない場合も、登録前に `title` / `body` / `type` を持つ JSON へ要約する。難しい場合は `text` に原文を入れて `register_candidate` へ渡す。",
-    "- `context_compile` の結果が `degraded` / `failed` の場合や、期待した情報が得られない場合は `doctor` を呼び、システム状態（DB/同期/Embedding）を確認する。",
-    "",
-    "## MCPツール種別",
-    "- `context_compile`: 作業前の最小コンテキスト生成（主導線）。",
-    "- `search_knowledge`: knowledge 候補の直接検索（補助）。",
-    "- `register_candidate`: 新しいルールや手順（スキル）候補の即時登録。",
-    "- `list_knowledge` / `update_knowledge`: backlog 一覧と status/本文の更新（運用補助）。",
-    "- `memory_search` / `memory_fetch`: 過去会話・差分の参照（補助）。",
-    "- `read_file`: wiki markdown の token 窓読み（補助）。",
-    "- `doctor`: DB / embedding / automation / run health の診断。",
-  ].join("\n");
-}
+import { buildInitialInstructionsText } from "../../shared/locales/initial-instructions.js";
+import { resolveLocale } from "../../shared/locales/locale.js";
 
 export const initialInstructionsTool = {
   name: "initial_instructions",
@@ -41,8 +10,9 @@ export const initialInstructionsTool = {
     properties: {},
   },
   handler: async () => {
+    const locale = resolveLocale(process.env.MEMORY_ROUTER_LANG);
     return {
-      content: [{ type: "text", text: buildInitialInstructionsText() }],
+      content: [{ type: "text", text: buildInitialInstructionsText(locale) }],
     };
   },
 };

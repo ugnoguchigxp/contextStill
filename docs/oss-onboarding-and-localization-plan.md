@@ -22,12 +22,24 @@
 | Milestone | 状態 | 実装 PR の粒度 | 公開前必須 |
 |---|---|---|---|
 | 0. 実装前の安全柵 | Planned | docs only | yes |
-| 1. `bun run setup` の追加 | Planned | 1 PR | yes |
-| 2. MCP/CLI 文言の最小ローカライズ | Planned | 1 PR | yes |
+| 1. `bun run setup` の追加 | Done (2026-05-23) | 1 PR | yes |
+| 2. MCP/CLI 文言の最小ローカライズ | Done (2026-05-23) | 1 PR | yes |
 | 3. MCP 設定支援 CLI | Planned | 1 PR | yes |
 | 4. README / docs の導線更新 | Planned | 1 PR | yes |
 | 5. Web UI i18n の最小入口 | Planned | 1 PR | optional |
 | 調査スパイク A/B/C | Planned | separate docs PRs | no |
+
+## 実装メモ (2026-05-23)
+
+- Milestone 1:
+  - `src/cli/setup.ts` を追加し、`.env` 生成/補完、preflight check、`docker compose` 確認、`db:migrate`、`init:project` 呼び出しを順次実行できるようにした。
+  - `src/cli/onboarding/{env-file,checks,command-runner,mcp-config}.ts` を追加した。
+  - `package.json` に `setup` script を追加した。
+- Milestone 2:
+  - `src/shared/locales/{locale,initial-instructions}.ts` を追加した。
+  - `src/mcp/tools/system.tool.ts` を `MEMORY_ROUTER_LANG` ベースの `ja/en` 切替に変更した（input schema は未変更）。
+  - `src/cli/init-project.ts` に `--lang en|ja` と env fallback を追加し、preset/smoke/nextActions を locale 切替対応した。
+  - `.env.example` に `MEMORY_ROUTER_LANG=ja` を追加した。
 
 ## Phase 1 の非目標
 
