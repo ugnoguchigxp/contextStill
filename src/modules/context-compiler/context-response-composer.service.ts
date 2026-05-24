@@ -165,6 +165,7 @@ function buildSystemPrompt(): string {
     "- 入力knowledgeに無い事実を追加しない。",
     "- 回答は 5000 トークン以内に収める。",
     "- 5000 トークンを埋める必要はない。goal達成に必要な最小限だけ書く。",
+    "- できるだけ短く要点を伝えること。相手はAIなので、挨拶や丁寧語で無駄にコンテキストを消費しないこと。",
     "- goal と直接関係する指示が作れない場合は、`No Content` のみを返す。",
     "- ノイズを避け、実装者が次に行う行動へ変換する。",
   ].join("\n");
@@ -316,7 +317,7 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        maxTokens: Math.min(routing.maxTokens, 1200),
+        maxTokens: routing.maxTokens,
         temperature: 0,
         responseFormat: "text",
       });

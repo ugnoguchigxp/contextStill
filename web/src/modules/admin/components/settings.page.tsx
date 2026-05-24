@@ -24,8 +24,16 @@ import {
   updateRuntimeSettings,
 } from "../repositories/admin.repository";
 import { AdminPageHeader } from "./admin-page-header";
+import {
+  useTimezone,
+  formatDateTime as formatDateTimeTz,
+  getRawTimezoneSetting,
+  setTimezoneSetting,
+  timezoneOptions,
+} from "@/lib/timezone";
 
 type SettingsTabId =
+  | "general"
   | "providers"
   | "taskRouting"
   | "search"
@@ -33,6 +41,7 @@ type SettingsTabId =
   | "distillationRuntime"
   | "advanced";
 type SettingsTabPath =
+  | "general"
   | "llmprovider"
   | "taskrouting"
   | "search"
@@ -43,6 +52,7 @@ type SettingsTabPath =
 type SecretDraftState = Record<RuntimeSecretKey, { value: string; clear: boolean }>;
 
 const settingsTabs: Array<{ id: SettingsTabId; label: string; path: SettingsTabPath }> = [
+  { id: "general", label: "General", path: "general" },
   { id: "providers", label: "LLM Providers", path: "llmprovider" },
   { id: "taskRouting", label: "Task Routing", path: "taskrouting" },
   { id: "search", label: "Search", path: "search" },
@@ -54,13 +64,6 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string; path: SettingsTabP
 const runtimeProviders: RuntimeProviderName[] = ["openai", "azure-openai", "bedrock", "local-llm"];
 const runtimeProviderOptions: RuntimeProviderSetting[] = [...runtimeProviders, "auto"];
 const runtimeSearchProviders: RuntimeSearchProvider[] = ["brave", "exa", "duckduckgo"];
-
-function formatDateTime(value: string | null | undefined): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("ja-JP", { hour12: false });
-}
 
 function parseIntegerInput(value: string, fallback: number): number {
   const parsed = Number.parseInt(value, 10);
@@ -412,6 +415,11 @@ function RouteEditor({
 }
 
 export function SettingsPage() {
+  const tz = useTimezone();
+  const formatDateTime = (value: string | null | undefined): string => {
+    return formatDateTimeTz(value, tz);
+  };
+
   const queryClient = useQueryClient();
   const pathname = useRouterState({ select: (state) => state.location.pathname });
   const activeTab = useMemo(() => resolveActiveSettingsTab(pathname), [pathname]);
@@ -681,6 +689,42 @@ export function SettingsPage() {
                 </Link>
               ))}
             </section>
+
+            {activeTab === "general" ? (
+              <section className="settings-general-panel space-y-4">
+                <Card>
+                  <CardHeader>
+                    <CardTitle>General Settings</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-4">
+                    <div className="settings-field max-w-md">
+                      <label className="block text-sm font-medium mb-1">
+                        Application Timezone
+                      </label>
+                      <Select
+                        aria-label="Application Timezone"
+                        value={getRawTimezoneSetting()}
+                        onChange={(event) => {
+                          const val = event.target.value;
+                          setTimezoneSetting(val);
+                          setSaveError(null);
+                          setSaveMessage(`Timezone updated to ${val === "system" ? `System Default (${Intl.DateTimeFormat().resolvedOptions().timeZone})` : val}.`);
+                        }}
+                      >
+                        {timezoneOptions.map((opt) => (
+                          <option key={opt.value} value={opt.value}>
+                            {opt.label}
+                          </option>
+                        ))}
+                      </Select>
+                      <p className="text-xs text-muted-foreground mt-2">
+                        Configure the timezone used for displaying all timestamps across the dashboard.
+                      </p>
+                    </div>
+                  </CardContent>
+                </Card>
+              </section>
+            ) : null}
 
             {activeTab === "providers" ? (
               <section className="settings-provider-grid">

@@ -44,6 +44,7 @@ import { AdminFilterChipSelect } from "./admin-filter-chip-select";
 import { AdminModalShell } from "./admin-modal-shell";
 import { AdminPaginationFooter } from "./admin-pagination-footer";
 import { AdminSortableTableHead } from "./admin-sortable-table-head";
+import { useTimezone, formatDate as tzFormatDate, formatDateTime as tzFormatDateTime, formatInTimezone } from "@/lib/timezone";
 
 const knowledgeTypes: KnowledgeType[] = ["rule", "procedure"];
 
@@ -84,30 +85,16 @@ function KnowledgeColumnGroup() {
   return (
     <colgroup>
       <col className="w-[4%]" />
-      <col className="w-[29%]" />
-      <col className="w-[15%]" />
-      <col className="w-[6%]" />
-      <col className="w-[12%]" />
-      <col className="w-[7%]" />
-      <col className="w-[7%]" />
+      <col className="w-[25%]" />
       <col className="w-[14%]" />
       <col className="w-[6%]" />
+      <col className="w-[10%]" />
+      <col className="w-[7%]" />
+      <col className="w-[7%]" />
+      <col className="w-[17%]" />
+      <col className="w-[10%]" />
     </colgroup>
   );
-}
-
-function formatTimestamp(value: string | null): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return "-";
-  return date.toLocaleDateString("ja-JP");
-}
-
-function formatDateTime(value: string | null): string {
-  if (!value) return "-";
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  return date.toLocaleString("ja-JP", { hour12: false });
 }
 
 function toStringArray(value: unknown): string[] {
@@ -144,6 +131,15 @@ function summarizeApplicability(appliesTo: unknown): Array<{ label: string; valu
 }
 
 export function KnowledgePage() {
+  const tz = useTimezone();
+  const formatTimestamp = (value: string | null): string => {
+    if (!value) return "-";
+    return formatInTimezone(value, tz, { year: "numeric", month: "2-digit", day: "2-digit" });
+  };
+  const formatDateTime = (value: string | null): string => {
+    return tzFormatDateTime(value, tz);
+  };
+
   const queryClient = useQueryClient();
   const [editingId, setEditingId] = useState<string | null>(null);
   const [editingOriginalType, setEditingOriginalType] = useState<string | null>(null);
@@ -664,8 +660,8 @@ export function KnowledgePage() {
           const isHighValue = item.dynamicScore >= highValueThreshold;
           const isUnusedActive = item.status === "active" && item.compileSelectCount === 0;
           return (
-            <div className="font-mono text-xs space-y-1 min-w-[220px]">
-              <div className="flex items-center gap-2">
+            <div className="font-mono text-xs space-y-1 min-w-[160px]">
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
                 <span className="text-muted-foreground">use</span>
                 <strong>{item.compileSelectCount}</strong>
                 <span className="text-muted-foreground">dyn</span>
@@ -673,14 +669,15 @@ export function KnowledgePage() {
                 <span className="text-muted-foreground">decay</span>
                 <strong>{item.decayFactor.toFixed(2)}</strong>
               </div>
-              <div className="flex items-center gap-2 text-[11px]">
+              <div className="flex flex-wrap items-center gap-1 text-[10px]">
                 <Badge variant={isUnusedActive ? "warning" : "secondary"}>unused</Badge>
                 <Badge variant={isStale ? "destructive" : "secondary"}>stale</Badge>
                 <Badge variant={isHighValue ? "success" : "secondary"}>high value</Badge>
               </div>
-              <div className="text-muted-foreground">
-                compiled {formatTimestamp(item.lastCompiledAt)} / verified{" "}
-                {formatTimestamp(item.lastVerifiedAt)}
+              <div className="text-muted-foreground text-[10px] leading-tight">
+                compiled {formatTimestamp(item.lastCompiledAt)}
+                <br />
+                verified {formatTimestamp(item.lastVerifiedAt)}
               </div>
               <div className="flex items-center gap-1">
                 <Button

@@ -27,6 +27,7 @@ import type {
   CompileRunSource,
   CompileRunSummary,
 } from "../repositories/context-compiler.repository";
+import { useTimezone, formatDate as tzFormatDate } from "@/lib/timezone";
 
 type FormValues = {
   goal: string;
@@ -51,11 +52,6 @@ const sourceLabels: Record<CompileRunSource, string> = {
   cli: "CLI",
   unknown: "Unknown",
 };
-
-function formatDate(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? "Unknown" : date.toLocaleString();
-}
 
 function formatLatency(value: number): string {
   if (value >= 1000) return `${(value / 1000).toFixed(1)}s`;
@@ -85,6 +81,7 @@ function RunListItem({
   active: boolean;
   onSelect: () => void;
 }) {
+  const tz = useTimezone();
   return (
     <button
       type="button"
@@ -103,7 +100,7 @@ function RunListItem({
         <span>{run.retrievalMode}</span>
         <span>{formatLatency(run.durationMs)}</span>
       </div>
-      <time>{formatDate(run.createdAt)}</time>
+      <time>{tzFormatDate(run.createdAt, tz)}</time>
     </button>
   );
 }
@@ -296,10 +293,11 @@ function CompileFormPane({
 
 function SourceRefsList({ refs }: { refs: string[] }) {
   if (refs.length === 0) return <p className="compile-state-text">None</p>;
+  const uniqueRefs = useMemo(() => Array.from(new Set(refs)), [refs]);
   return (
     <ul className="compile-source-list">
-      {refs.map((ref) => (
-        <li key={ref}>{ref}</li>
+      {uniqueRefs.map((ref, index) => (
+        <li key={`${ref}-${index}`}>{ref}</li>
       ))}
     </ul>
   );
@@ -376,6 +374,9 @@ function RunDetailPane({
   ) => Promise<CompileRunKnowledgeFeedbackResult>;
   feedbackPending: boolean;
 }) {
+  const tz = useTimezone();
+  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+
   if (isLoading) {
     return (
       <Card className="compile-main-card">
@@ -412,7 +413,6 @@ function RunDetailPane({
   const domains = stringArrayValue(input.domains);
   const outputMarkdown = detail.outputMarkdown?.trim() || "No Content";
   const knowledgeSignals = detail.knowledgeSignals ?? [];
-  const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
 
   const applyKnowledgeFeedback = async (
     knowledgeId: string,
@@ -443,7 +443,7 @@ function RunDetailPane({
               <span>{formatLatency(detail.run.durationMs)}</span>
             </div>
           </div>
-          <time>{formatDate(detail.run.createdAt)}</time>
+          <time>{tzFormatDate(detail.run.createdAt, tz)}</time>
         </div>
 
         <section className="compile-pack-section">

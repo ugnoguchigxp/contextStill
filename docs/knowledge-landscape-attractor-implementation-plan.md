@@ -660,6 +660,8 @@ Control:
 
 Phase 1 の live calibration 後に扱う。
 
+Phase 2A の前半計画は `docs/knowledge-landscape-attractor-phase2-replay-basin-plan.md` に分離する。
+
 - Replay Corpus との接続
 - window 化された agentic acceptance signal
 - task facet ごとの basin analysis

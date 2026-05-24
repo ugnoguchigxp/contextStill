@@ -84,6 +84,21 @@ describe("landscape scoring", () => {
     expect(result.classification.primary).toBe("feedback_insufficient");
   });
 
+  test("feedback insufficient では over_selected_not_used にしない", () => {
+    const result = scoreLandscapeCommunity({
+      ...baseInput(),
+      selectedItemCountWindow: 10,
+      usedCountWindow: 0,
+      notUsedCountWindow: 1,
+      offTopicCountWindow: 0,
+      wrongCountWindow: 0,
+      minFeedbackCount: 3,
+    });
+
+    expect(result.feedbackConfidence).toBe("insufficient");
+    expect(result.classification.primary).toBe("feedback_insufficient");
+  });
+
   test("zero-use active + source evidence で dead_zone_reachability_risk になる", () => {
     const result = scoreLandscapeCommunity({
       ...baseInput(),

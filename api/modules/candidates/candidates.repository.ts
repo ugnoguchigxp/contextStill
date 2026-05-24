@@ -252,12 +252,7 @@ candidate_with_outcome as (
       when ck.cover_status is null then 'candidate_only'
       else 'candidate_only'
     end::text as outcome,
-    greatest(
-      ck.target_updated_at,
-      ck.original_updated_at,
-      coalesce(ck.cover_updated_at, ck.original_updated_at),
-      coalesce(ck.knowledge_updated_at, ck.original_updated_at)
-    ) as latest_updated_at
+    ck.original_updated_at as latest_updated_at
   from candidate_with_knowledge ck
 )
 `;
@@ -273,9 +268,20 @@ function toTargetKind(value: unknown): "wiki_file" | "vibe_memory" | "knowledge_
 }
 
 function toIso(value: unknown): string {
-  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Date) {
+    return value.toISOString();
+  }
   if (typeof value === "string") {
-    const parsed = new Date(value);
+    let str = value.trim();
+    if (!str.endsWith("Z") && !str.includes("+") && !/[-+]\d{2}:?\d{2}$/.test(str)) {
+      str = str.replace(" ", "T");
+      if (!str.includes("T")) {
+        str += "T00:00:00Z";
+      } else {
+        str += "Z";
+      }
+    }
+    const parsed = new Date(str);
     if (!Number.isNaN(parsed.getTime())) return parsed.toISOString();
   }
   return new Date(0).toISOString();

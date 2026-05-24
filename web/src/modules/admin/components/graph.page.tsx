@@ -552,7 +552,10 @@ export function GraphPage() {
     mutationFn: async (input: { communityKey: string; label: string }) =>
       updateGraphCommunityLabel({ communityKey: input.communityKey, label: input.label }),
     onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["graph"] });
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["graph"] }),
+        queryClient.invalidateQueries({ queryKey: ["graph-landscape"] }),
+      ]);
     },
   });
 

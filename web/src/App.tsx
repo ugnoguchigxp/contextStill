@@ -98,6 +98,7 @@ const auditRoute = createRoute({
 });
 
 const settingsSections = new Set([
+  "general",
   "llmprovider",
   "taskrouting",
   "search",
@@ -112,7 +113,7 @@ const settingsRedirectRoute = createRoute({
   beforeLoad: () => {
     throw redirect({
       to: "/setting/$section",
-      params: { section: "llmprovider" },
+      params: { section: "general" },
       replace: true,
     });
   },
@@ -124,7 +125,7 @@ const legacySettingsRedirectRoute = createRoute({
   beforeLoad: () => {
     throw redirect({
       to: "/setting/$section",
-      params: { section: "llmprovider" },
+      params: { section: "general" },
       replace: true,
     });
   },
@@ -136,7 +137,7 @@ const legacySettingsSectionRedirectRoute = createRoute({
   beforeLoad: ({ params }) => {
     throw redirect({
       to: "/setting/$section",
-      params: { section: settingsSections.has(params.section) ? params.section : "llmprovider" },
+      params: { section: settingsSections.has(params.section) ? params.section : "general" },
       replace: true,
     });
   },

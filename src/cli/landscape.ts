@@ -23,11 +23,15 @@ function parsePositiveInt(
   args: string[],
   index: number,
   name: string,
+  max?: number,
 ): { value: number; consumedNext: boolean } {
   const raw = readArgValue(args, index, name);
   const parsed = Number(raw);
   if (!Number.isInteger(parsed) || parsed < 1) {
     throw new Error(`${name} must be a positive integer`);
+  }
+  if (max !== undefined && parsed > max) {
+    throw new Error(`${name} must be ${max} or less`);
   }
   return { value: parsed, consumedNext: args[index] === name };
 }
@@ -74,25 +78,25 @@ function parseArgs(args: string[]): CliOptions {
       continue;
     }
     if (arg === "--window-days" || arg.startsWith("--window-days=")) {
-      const parsed = parsePositiveInt(args, index, "--window-days");
+      const parsed = parsePositiveInt(args, index, "--window-days", 180);
       options.windowDays = parsed.value;
       if (parsed.consumedNext) index += 1;
       continue;
     }
     if (arg === "--limit" || arg.startsWith("--limit=")) {
-      const parsed = parsePositiveInt(args, index, "--limit");
+      const parsed = parsePositiveInt(args, index, "--limit", 1000);
       options.limit = parsed.value;
       if (parsed.consumedNext) index += 1;
       continue;
     }
     if (arg === "--min-selected-count" || arg.startsWith("--min-selected-count=")) {
-      const parsed = parsePositiveInt(args, index, "--min-selected-count");
+      const parsed = parsePositiveInt(args, index, "--min-selected-count", 100);
       options.minSelectedCount = parsed.value;
       if (parsed.consumedNext) index += 1;
       continue;
     }
     if (arg === "--min-feedback-count" || arg.startsWith("--min-feedback-count=")) {
-      const parsed = parsePositiveInt(args, index, "--min-feedback-count");
+      const parsed = parsePositiveInt(args, index, "--min-feedback-count", 100);
       options.minFeedbackCount = parsed.value;
       if (parsed.consumedNext) index += 1;
       continue;
@@ -111,10 +115,6 @@ function parseArgs(args: string[]): CliOptions {
     }
 
     throw new Error(`Unknown argument: ${arg}`);
-  }
-
-  if (options.windowDays > 180) {
-    throw new Error("--window-days must be 180 or less");
   }
 
   return options;

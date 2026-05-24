@@ -705,6 +705,39 @@ export type LandscapeClassificationPrimary =
 
 export type LandscapeClassificationConfidence = "low" | "medium" | "high";
 
+export type LandscapeThresholds = {
+  minSelectedCount: number;
+  minFeedbackCount: number;
+  feedbackConfidence: {
+    mediumMin: number;
+    highMin: number;
+  };
+  feedbackFactor: Record<LandscapeFeedbackConfidence, number>;
+  attractor: {
+    strongUsedRateMin: number;
+    usefulUsedRateMin: number;
+    strongSourceRefDensityMin: number;
+  };
+  negative: {
+    offTopicWeight: number;
+    wrongWeight: number;
+    candidateOffTopicRateMin: number;
+  };
+  notUsed: {
+    overSelectedRateMin: number;
+  };
+  deadZone: {
+    reachabilityRiskMin: number;
+    staleSourceRefDensityMax: number;
+    staleFactorMin: number;
+  };
+  evidenceFactor: {
+    sourceRefDensityBaseline: number;
+    min: number;
+    max: number;
+  };
+};
+
 export type LandscapeCommunity = {
   communityId: string;
   communityKey: string;
@@ -771,10 +804,7 @@ export type LandscapeSnapshot = {
     relationAxes: GraphRelationAxis[];
     status: GraphStatusFilter;
   };
-  thresholds: {
-    minSelectedCount: number;
-    minFeedbackCount: number;
-  };
+  thresholds: LandscapeThresholds;
   stats: {
     totalCommunities: number;
     activeCommunities: number;

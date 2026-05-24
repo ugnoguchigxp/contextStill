@@ -115,6 +115,31 @@ const mockLandscapeData: LandscapeSnapshot = {
   thresholds: {
     minSelectedCount: 3,
     minFeedbackCount: 3,
+    feedbackConfidence: { mediumMin: 10, highMin: 30 },
+    feedbackFactor: { insufficient: 0.4, low: 0.7, medium: 0.9, high: 1 },
+    attractor: {
+      strongUsedRateMin: 0.7,
+      usefulUsedRateMin: 0.5,
+      strongSourceRefDensityMin: 0.6,
+    },
+    negative: {
+      offTopicWeight: 1,
+      wrongWeight: 3,
+      candidateOffTopicRateMin: 0.4,
+    },
+    notUsed: {
+      overSelectedRateMin: 0.6,
+    },
+    deadZone: {
+      reachabilityRiskMin: 0.3,
+      staleSourceRefDensityMax: 0.5,
+      staleFactorMin: 0.5,
+    },
+    evidenceFactor: {
+      sourceRefDensityBaseline: 1,
+      min: 0.25,
+      max: 1.25,
+    },
   },
   stats: {
     totalCommunities: 0,

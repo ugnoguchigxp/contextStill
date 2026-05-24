@@ -23,6 +23,7 @@ import {
 } from "../repositories/admin.repository";
 import { AdminPaginationFooter } from "./admin-pagination-footer";
 import { AdminSortableTableHead } from "./admin-sortable-table-head";
+import { useTimezone, formatDateTime as tzFormatDateTime } from "@/lib/timezone";
 
 const outcomeOptions: Array<"all" | CandidateOutcome> = [
   "all",
@@ -37,12 +38,6 @@ const outcomeOptions: Array<"all" | CandidateOutcome> = [
 const tableHeadClass = "px-3 whitespace-normal break-words [overflow-wrap:anywhere]";
 const tableCellClass = "px-3 py-3 align-top whitespace-normal break-words [overflow-wrap:anywhere]";
 const compactBadgeClass = "text-[10px] whitespace-normal break-words [overflow-wrap:anywhere]";
-
-function formatDate(value: string): string {
-  const parsed = new Date(value);
-  if (Number.isNaN(parsed.getTime())) return value;
-  return parsed.toLocaleString("ja-JP", { hour12: false });
-}
 
 function toPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
@@ -128,6 +123,11 @@ function CandidateDetailPane({
 }
 
 export function CandidatesPage() {
+  const tz = useTimezone();
+  const formatDate = (value: string | Date | null | undefined): string => {
+    return tzFormatDateTime(value, tz);
+  };
+
   const [sorting, setSorting] = useState<SortingState>([{ id: "latestUpdatedAt", desc: true }]);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 50 });
   const [queryText, setQueryText] = useState("");

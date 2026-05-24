@@ -165,6 +165,7 @@ function classify(params: {
     }
   } else if (
     input.selectedItemCountWindow >= input.minSelectedCount &&
+    params.feedbackConfidence !== "insufficient" &&
     params.notUsedRate >= thresholds.notUsed.overSelectedRateMin &&
     input.offTopicCountWindow === 0 &&
     input.wrongCountWindow === 0
