@@ -1654,6 +1654,76 @@
   word-break: break-word;
 }
 
+.graph-review-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.graph-review-section-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  color: #93c5fd;
+  font-size: 0.68rem;
+  font-weight: 800;
+  text-transform: uppercase;
+}
+
+.graph-review-section-header strong {
+  color: #f8fafc;
+  font-size: 0.78rem;
+}
+
+.graph-review-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.45rem;
+}
+
+.graph-review-row {
+  min-width: 0;
+  padding: 0.6rem 0.65rem;
+  border: 1px solid rgba(148, 163, 184, 0.2);
+  border-radius: 0.5rem;
+  background: rgba(15, 23, 42, 0.46);
+}
+
+.graph-review-row-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.graph-review-row-head span {
+  color: #cbd5e1;
+  font-size: 0.66rem;
+  font-weight: 700;
+}
+
+.graph-review-row p {
+  display: -webkit-box;
+  margin-top: 0.4rem;
+  overflow: hidden;
+  color: #f8fafc;
+  font-size: 0.74rem;
+  font-weight: 700;
+  line-height: 1.35;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+}
+
+.graph-review-row small {
+  display: block;
+  margin-top: 0.35rem;
+  color: #cbd5e1;
+  font-size: 0.66rem;
+  line-height: 1.35;
+  word-break: break-word;
+}
+
 .graph-empty-overlay {
   position: absolute;
   top: 50%;

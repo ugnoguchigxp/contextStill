@@ -10,6 +10,7 @@ import {
   type GraphCommunitySummary,
   type GraphEdge,
   type LandscapeCommunity,
+  type LandscapeReplayComparisonRun,
   type GraphNode,
   type GraphNodeDetail,
   type GraphRelationAxis,
@@ -18,6 +19,7 @@ import {
   type GraphSupernode,
   type GraphViewMode,
   fetchLandscapeSnapshot,
+  fetchLandscapeReplayComparison,
   fetchLandscapeReplaySnapshot,
   fetchGraphNodeDetail,
   fetchGraphSnapshot,
@@ -137,8 +139,8 @@ function asDisplayEdgesFromSuperedges(superedges: GraphSuperedge[]): Array<{
   edgeKind: DisplayEdgeKind;
   weight: number;
 }> {
-  return superedges.map((edge) => ({
-    id: edge.id,
+  return superedges.map((edge, index) => ({
+    id: `${edge.id}:${index}`,
     source: edge.source,
     target: edge.target,
     edgeKind: "community",
@@ -420,6 +422,40 @@ function communityComparisonLabel(
   }
 }
 
+function replayComparisonLabel(value: LandscapeReplayComparisonRun["comparison"]): string {
+  switch (value) {
+    case "lost_baseline":
+      return "Lost Baseline";
+    case "new_only":
+      return "New Only";
+    case "no_current_match":
+      return "No Current Match";
+    case "drifted":
+      return "Drifted";
+    default:
+      return "Stable";
+  }
+}
+
+function refineReasonLabel(
+  value:
+    | "used_baseline_lost"
+    | "baseline_off_topic"
+    | "baseline_wrong"
+    | "baseline_missing_after_recompile",
+): string {
+  switch (value) {
+    case "used_baseline_lost":
+      return "Used Lost";
+    case "baseline_off_topic":
+      return "Off Topic";
+    case "baseline_wrong":
+      return "Wrong";
+    default:
+      return "Missing";
+  }
+}
+
 function nodeLandscapeClass(
   node: DisplayNode,
   viewMode: GraphViewMode,
@@ -514,6 +550,20 @@ export function GraphPage() {
     staleTime: 60_000,
   });
 
+  const landscapeReplayComparison = useQuery({
+    queryKey: ["graph-landscape-replay-compare", 30, 25, 12],
+    queryFn: () =>
+      fetchLandscapeReplayComparison({
+        windowDays: 30,
+        limit: 25,
+        runStatus: "all",
+        currentLimit: 12,
+        includeRuns: true,
+      }),
+    enabled: viewMode === "community",
+    staleTime: 60_000,
+  });
+
   // ノードクリック時に詳細を取得
   const selectedRawId = selectedId?.startsWith("knowledge:")
     ? selectedId.replace(/^knowledge:/, "")
@@ -543,8 +593,8 @@ export function GraphPage() {
     if (inCommunitySupernodeMode) {
       return asDisplayEdgesFromSuperedges(graph.data?.superedges ?? []);
     }
-    return (graph.data?.edges ?? []).map((edge) => ({
-      id: edge.id,
+    return (graph.data?.edges ?? []).map((edge, index) => ({
+      id: `${edge.id}:${index}`,
       source: edge.source,
       target: edge.target,
       edgeKind: edge.edgeKind,
@@ -600,6 +650,24 @@ export function GraphPage() {
         .slice(0, 3),
     [landscapeReplay.data?.facetSummaries],
   );
+  const replayReviewQueue = useMemo(
+    () => (landscapeReplayComparison.data?.appliesToRefineCandidates ?? []).slice(0, 6),
+    [landscapeReplayComparison.data?.appliesToRefineCandidates],
+  );
+  const riskyReplayRuns = useMemo(
+    () =>
+      (landscapeReplayComparison.data?.runs ?? [])
+        .filter(
+          (run) =>
+            run.comparison === "lost_baseline" ||
+            run.comparison === "no_current_match" ||
+            run.comparison === "drifted" ||
+            run.usedBaselineLostKnowledgeIds.length > 0 ||
+            run.baselineVerdicts.offTopic + run.baselineVerdicts.wrong > 0,
+        )
+        .slice(0, 4),
+    [landscapeReplayComparison.data?.runs],
+  );
   const activeId = selectedId ?? hoveredId;
   const totalEdges = displayEdgesSource.length;
   const displayedNodeCount =
@@ -615,6 +683,7 @@ export function GraphPage() {
         queryClient.invalidateQueries({ queryKey: ["graph"] }),
         queryClient.invalidateQueries({ queryKey: ["graph-landscape"] }),
         queryClient.invalidateQueries({ queryKey: ["graph-landscape-replay"] }),
+        queryClient.invalidateQueries({ queryKey: ["graph-landscape-replay-compare"] }),
       ]);
     },
   });
@@ -1424,6 +1493,183 @@ export function GraphPage() {
                       </>
                     ) : (
                       <div className="graph-detail-empty">Replay snapshot is not available.</div>
+                    )}
+                  </div>
+                  <div className="graph-landscape-card">
+                    <div className="graph-landscape-card-header">
+                      <span className="graph-detail-kicker">Replay Review</span>
+                      <Badge
+                        variant="outline"
+                        className={`h-5 text-[11px] ${
+                          landscapeReplayComparison.data?.promotionGateSummary.gateMode ===
+                          "review_required"
+                            ? "border-rose-300 text-rose-100"
+                            : "border-emerald-300 text-emerald-100"
+                        }`}
+                      >
+                        {landscapeReplayComparison.data?.promotionGateSummary.gateMode ??
+                          "No compare"}
+                      </Badge>
+                    </div>
+                    {landscapeReplayComparison.isLoading ? (
+                      <div className="graph-detail-empty">Loading replay comparison...</div>
+                    ) : landscapeReplayComparison.data ? (
+                      <>
+                        <div className="graph-detail-meta-grid">
+                          <div className="graph-detail-metric">
+                            <span>Compared Runs</span>
+                            <strong>{landscapeReplayComparison.data.comparedRunCount}</strong>
+                          </div>
+                          <div className="graph-detail-metric">
+                            <span>Overlap</span>
+                            <strong>
+                              {formatPercent(landscapeReplayComparison.data.averageOverlapRate)}
+                            </strong>
+                          </div>
+                          <div className="graph-detail-metric">
+                            <span>Used Lost</span>
+                            <strong>
+                              {landscapeReplayComparison.data.usedBaselineLostItemCount}
+                            </strong>
+                          </div>
+                          <div className="graph-detail-metric">
+                            <span>Review Items</span>
+                            <strong>
+                              {landscapeReplayComparison.data.appliesToRefineCandidates.length}
+                            </strong>
+                          </div>
+                        </div>
+                        <div className="graph-community-summary-grid">
+                          <div className="graph-community-summary-item">
+                            <span>Promotion Gate</span>
+                            <p>
+                              {landscapeReplayComparison.data.promotionGateSummary.affectedRunCount}{" "}
+                              runs /{" "}
+                              {
+                                landscapeReplayComparison.data.promotionGateSummary
+                                  .riskyNewKnowledgeCount
+                              }{" "}
+                              new
+                            </p>
+                          </div>
+                          <div className="graph-community-summary-item">
+                            <span>Score Tuning</span>
+                            <p>
+                              churn {landscapeReplayComparison.data.scoreTuning.highChurnRunCount} /
+                              negative{" "}
+                              {landscapeReplayComparison.data.scoreTuning.negativeFeedbackRunCount}
+                            </p>
+                          </div>
+                          <div className="graph-community-summary-item">
+                            <span>Compile Plan</span>
+                            <p>
+                              {landscapeReplayComparison.data.compileInterventionPlan.strategy} (
+                              {
+                                landscapeReplayComparison.data.compileInterventionPlan
+                                  .candidateRunCount
+                              }
+                              )
+                            </p>
+                          </div>
+                          <div className="graph-community-summary-item">
+                            <span>Dry Run</span>
+                            <p>
+                              writes:
+                              {String(
+                                landscapeReplayComparison.data.recompilePlan.writesCompileRuns,
+                              )}{" "}
+                              / blockers:
+                              {landscapeReplayComparison.data.recompilePlan.blockers.length}
+                            </p>
+                          </div>
+                        </div>
+                        <div className="graph-review-section">
+                          <div className="graph-review-section-header">
+                            <span>Action Queue</span>
+                            <strong>{replayReviewQueue.length}</strong>
+                          </div>
+                          {replayReviewQueue.length > 0 ? (
+                            <div className="graph-review-list">
+                              {replayReviewQueue.map((candidate) => (
+                                <div
+                                  className="graph-review-row"
+                                  key={`${candidate.runId}:${candidate.knowledgeId}:${candidate.reason}`}
+                                >
+                                  <div className="graph-review-row-head">
+                                    <Badge
+                                      variant="outline"
+                                      className={`h-5 text-[11px] ${
+                                        candidate.reason === "baseline_wrong"
+                                          ? "border-rose-300 text-rose-100"
+                                          : candidate.reason === "baseline_off_topic"
+                                            ? "border-amber-300 text-amber-100"
+                                            : "border-sky-300 text-sky-100"
+                                      }`}
+                                    >
+                                      {refineReasonLabel(candidate.reason)}
+                                    </Badge>
+                                    <span>{candidate.confidence}</span>
+                                  </div>
+                                  <p>{candidate.knowledgeId}</p>
+                                  <small>
+                                    {[
+                                      candidate.suggestedAppliesTo.retrievalMode,
+                                      ...candidate.suggestedAppliesTo.changeTypes,
+                                      ...candidate.suggestedAppliesTo.technologies,
+                                      ...candidate.suggestedAppliesTo.domains,
+                                    ]
+                                      .slice(0, 5)
+                                      .join(" / ") || "no facets"}
+                                  </small>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="graph-detail-empty">No review items</div>
+                          )}
+                        </div>
+                        <div className="graph-review-section">
+                          <div className="graph-review-section-header">
+                            <span>Risky Runs</span>
+                            <strong>{riskyReplayRuns.length}</strong>
+                          </div>
+                          {riskyReplayRuns.length > 0 ? (
+                            <div className="graph-review-list">
+                              {riskyReplayRuns.map((run) => (
+                                <div className="graph-review-row" key={run.runId}>
+                                  <div className="graph-review-row-head">
+                                    <Badge
+                                      variant="outline"
+                                      className={`h-5 text-[11px] ${
+                                        run.comparison === "lost_baseline" ||
+                                        run.comparison === "no_current_match"
+                                          ? "border-rose-300 text-rose-100"
+                                          : run.comparison === "drifted"
+                                            ? "border-amber-300 text-amber-100"
+                                            : "border-slate-300 text-slate-100"
+                                      }`}
+                                    >
+                                      {replayComparisonLabel(run.comparison)}
+                                    </Badge>
+                                    <span>{formatPercent(run.overlapRate)}</span>
+                                  </div>
+                                  <p>{run.goal}</p>
+                                  <small>
+                                    baseline {run.baselineSelectedKnowledgeIds.length} / current{" "}
+                                    {run.currentRetrievedKnowledgeIds.length} / missing{" "}
+                                    {run.missingFromCurrentKnowledgeIds.length} / used lost{" "}
+                                    {run.usedBaselineLostKnowledgeIds.length}
+                                  </small>
+                                </div>
+                              ))}
+                            </div>
+                          ) : (
+                            <div className="graph-detail-empty">No risky runs</div>
+                          )}
+                        </div>
+                      </>
+                    ) : (
+                      <div className="graph-detail-empty">Replay comparison is not available.</div>
                     )}
                   </div>
                   <div className="graph-community-label-edit">

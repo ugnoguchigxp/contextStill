@@ -7,9 +7,11 @@ import { GraphPage } from "../../../web/src/modules/admin/components/graph.page"
 import {
   type GraphNodeDetail,
   type GraphSnapshot,
+  type LandscapeReplayComparisonResponse,
   type LandscapeReplaySnapshot,
   type LandscapeSnapshot,
   fetchLandscapeSnapshot,
+  fetchLandscapeReplayComparison,
   fetchLandscapeReplaySnapshot,
   fetchGraphNodeDetail,
   fetchGraphSnapshot,
@@ -28,6 +30,7 @@ global.ResizeObserver = ResizeObserverMock as any;
 vi.mock("../../../web/src/modules/admin/repositories/admin.repository", () => ({
   fetchGraphSnapshot: vi.fn(),
   fetchLandscapeSnapshot: vi.fn(),
+  fetchLandscapeReplayComparison: vi.fn(),
   fetchLandscapeReplaySnapshot: vi.fn(),
   fetchGraphNodeDetail: vi.fn(),
   updateGraphCommunityLabel: vi.fn(),
@@ -280,6 +283,159 @@ const mockReplayData: LandscapeReplaySnapshot = {
   },
 };
 
+const mockReplayComparisonData: LandscapeReplayComparisonResponse = {
+  generatedAt: "2026-05-24T00:00:00.000Z",
+  analysisAsOf: "2026-05-24T00:00:00.000Z",
+  windowDays: 30,
+  corpusWindow: {
+    startAt: "2026-04-24T00:00:00.000Z",
+    endAt: "2026-05-24T00:00:00.000Z",
+  },
+  basis: {
+    unit: "replay-comparison",
+    mode: "current_retrieval",
+    runStatus: "all",
+    currentLimit: 12,
+  },
+  replayRunCount: 4,
+  comparedRunCount: 4,
+  baselineSelectedItemCount: 8,
+  currentRetrievedItemCount: 48,
+  retainedItemCount: 6,
+  missingFromCurrentItemCount: 2,
+  newlyRetrievedItemCount: 42,
+  usedBaselineLostItemCount: 1,
+  averageOverlapRate: 0.75,
+  currentNoMatchRunCount: 0,
+  comparisonCounts: {
+    stable: 2,
+    drifted: 2,
+    lost_baseline: 0,
+    new_only: 0,
+    no_current_match: 0,
+  },
+  recompilePlan: {
+    mode: "current_retrieval_dry_run",
+    writesCompileRuns: false,
+    replayRunCount: 4,
+    comparedRunCount: 4,
+    blockers: [],
+  },
+  rankingExperiments: [
+    {
+      experiment: "used_baseline_retention",
+      productionEnabled: false,
+      targetRunCount: 1,
+      estimatedRetainedItemCount: 7,
+      estimatedMissingFromCurrentItemCount: 1,
+      estimatedUsedBaselineLostItemCount: 0,
+      estimatedAverageOverlapRate: 0.88,
+      riskReductionSignal: 0.5,
+      recommendation: "retain used baseline",
+    },
+  ],
+  appliesToRefineCandidates: [
+    {
+      runId: "run-1",
+      knowledgeId: "k-lost",
+      reason: "used_baseline_lost",
+      confidence: "medium",
+      suggestedAppliesTo: {
+        retrievalMode: "task_context",
+        technologies: ["typescript"],
+        changeTypes: ["feature"],
+        domains: ["graph-ui"],
+      },
+      evidence: ["used before"],
+    },
+    {
+      runId: "run-2",
+      knowledgeId: "k-off",
+      reason: "baseline_off_topic",
+      confidence: "medium",
+      suggestedAppliesTo: {
+        retrievalMode: "task_context",
+        technologies: ["react"],
+        changeTypes: ["ui"],
+        domains: ["graph-ui"],
+      },
+      evidence: ["off topic"],
+    },
+  ],
+  promotionGateSummary: {
+    productionEnabled: false,
+    gateMode: "review_required",
+    shouldTighten: true,
+    affectedRunCount: 2,
+    riskyNewKnowledgeCount: 3,
+    reason: "review required",
+  },
+  scoreTuning: {
+    productionEnabled: false,
+    stableRunCount: 2,
+    driftedRunCount: 2,
+    lostBaselineRunCount: 0,
+    negativeFeedbackRunCount: 1,
+    highChurnRunCount: 3,
+    lostUsedBaselineRunCount: 1,
+    noCurrentMatchRunCount: 0,
+    averageReplacementRate: 0.82,
+    recommendations: ["review churn"],
+  },
+  compileInterventionPlan: {
+    productionEnabled: false,
+    strategy: "retain_used_baseline",
+    candidateRunCount: 1,
+    reason: "used baseline lost",
+  },
+  runs: [
+    {
+      runId: "run-1",
+      createdAt: "2026-05-24T00:00:00.000Z",
+      goal: "Replay risky graph UI task",
+      retrievalMode: "task_context",
+      status: "ok",
+      taskFacets: {
+        retrievalMode: "task_context",
+        technologies: ["typescript"],
+        changeTypes: ["feature"],
+        domains: ["graph-ui"],
+        source: "mcp",
+        runStatus: "ok",
+        degradedReasonBuckets: [],
+      },
+      baselineSelectedKnowledgeIds: ["k-lost", "k-stable"],
+      currentRetrievedKnowledgeIds: ["k-stable", "k-new"],
+      retainedKnowledgeIds: ["k-stable"],
+      missingFromCurrentKnowledgeIds: ["k-lost"],
+      newlyRetrievedKnowledgeIds: ["k-new"],
+      baselineVerdicts: {
+        used: 1,
+        notUsed: 0,
+        offTopic: 0,
+        wrong: 0,
+      },
+      usedBaselineRetainedKnowledgeIds: [],
+      usedBaselineLostKnowledgeIds: ["k-lost"],
+      offTopicBaselineKnowledgeIds: [],
+      wrongBaselineKnowledgeIds: [],
+      overlapRate: 0.5,
+      replacementRate: 0.5,
+      comparison: "drifted",
+      currentDegradedReasons: [],
+      currentRetrievalStats: {
+        textHitCount: 2,
+        vectorHitCount: 2,
+        mergedCount: 2,
+        textFailed: false,
+        vectorFailed: false,
+        embeddingStatus: "generated",
+        repoScopeFallbackUsed: false,
+      },
+    },
+  ],
+};
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -294,6 +450,7 @@ describe("GraphPage", () => {
     vi.clearAllMocks();
     vi.mocked(fetchLandscapeSnapshot).mockResolvedValue(mockLandscapeData);
     vi.mocked(fetchLandscapeReplaySnapshot).mockResolvedValue(mockReplayData);
+    vi.mocked(fetchLandscapeReplayComparison).mockResolvedValue(mockReplayComparisonData);
   });
 
   it("renders graph visualization and statistics correctly", async () => {
@@ -350,12 +507,14 @@ describe("GraphPage", () => {
     await screen.findByText("Node 1");
     expect(fetchLandscapeSnapshot).not.toHaveBeenCalled();
     expect(fetchLandscapeReplaySnapshot).not.toHaveBeenCalled();
+    expect(fetchLandscapeReplayComparison).not.toHaveBeenCalled();
 
     const selects = screen.getAllByRole("combobox");
     const viewModeSelect = selects[1];
     fireEvent.change(viewModeSelect, { target: { value: "semantic" } });
     expect(fetchLandscapeSnapshot).not.toHaveBeenCalled();
     expect(fetchLandscapeReplaySnapshot).not.toHaveBeenCalled();
+    expect(fetchLandscapeReplayComparison).not.toHaveBeenCalled();
 
     fireEvent.change(viewModeSelect, { target: { value: "community" } });
     await waitFor(() => {
@@ -363,6 +522,9 @@ describe("GraphPage", () => {
     });
     await waitFor(() => {
       expect(fetchLandscapeReplaySnapshot).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(fetchLandscapeReplayComparison).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -530,6 +692,13 @@ describe("GraphPage", () => {
       relationAxes: ["session", "project", "source"],
       includeRuns: false,
     });
+    expect(fetchLandscapeReplayComparison).toHaveBeenCalledWith({
+      windowDays: 30,
+      limit: 25,
+      runStatus: "all",
+      currentLimit: 12,
+      includeRuns: true,
+    });
     expect(await screen.findByText("Communities")).toBeInTheDocument();
     expect(screen.getByText("Largest")).toBeInTheDocument();
     expect(screen.getByText("Orphans")).toBeInTheDocument();
@@ -539,6 +708,11 @@ describe("GraphPage", () => {
     expect(screen.getByText("Dynamic Health Card")).toBeInTheDocument();
     expect(screen.getByText("Replay Health")).toBeInTheDocument();
     expect(screen.getByText("Replay Used")).toBeInTheDocument();
+    expect(screen.getByText("Replay Review")).toBeInTheDocument();
+    expect(screen.getByText("Action Queue")).toBeInTheDocument();
+    expect(screen.getByText("Risky Runs")).toBeInTheDocument();
+    expect(screen.getByText("k-lost")).toBeInTheDocument();
+    expect(screen.getByText("Replay risky graph UI task")).toBeInTheDocument();
     expect(screen.getByText("Top Facet Risks")).toBeInTheDocument();
     expect(screen.getAllByText("Strong Attractor").length).toBeGreaterThan(0);
   });
