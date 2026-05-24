@@ -9,12 +9,16 @@ import {
   type GraphSnapshot,
   type LandscapeReplayComparisonResponse,
   type LandscapeReplaySnapshot,
+  type LandscapeReviewItemsListResponse,
   type LandscapeSnapshot,
+  fetchLandscapeReviewItems,
   fetchLandscapeSnapshot,
+  materializeLandscapeReviewItems,
   fetchLandscapeReplayComparison,
   fetchLandscapeReplaySnapshot,
   fetchGraphNodeDetail,
   fetchGraphSnapshot,
+  updateLandscapeReviewItemStatus,
   updateGraphCommunityLabel,
 } from "../../../web/src/modules/admin/repositories/admin.repository";
 
@@ -32,7 +36,10 @@ vi.mock("../../../web/src/modules/admin/repositories/admin.repository", () => ({
   fetchLandscapeSnapshot: vi.fn(),
   fetchLandscapeReplayComparison: vi.fn(),
   fetchLandscapeReplaySnapshot: vi.fn(),
+  fetchLandscapeReviewItems: vi.fn(),
+  materializeLandscapeReviewItems: vi.fn(),
   fetchGraphNodeDetail: vi.fn(),
+  updateLandscapeReviewItemStatus: vi.fn(),
   updateGraphCommunityLabel: vi.fn(),
 }));
 
@@ -436,6 +443,64 @@ const mockReplayComparisonData: LandscapeReplayComparisonResponse = {
   ],
 };
 
+const mockLandscapeReviewItems: LandscapeReviewItemsListResponse = {
+  count: 2,
+  items: [
+    {
+      id: "review-item-1",
+      source: "replay_compare",
+      reason: "used_baseline_lost",
+      status: "pending",
+      proposedAction: "refine_applies_to",
+      priority: 80,
+      confidence: "medium",
+      knowledgeId: "k-persisted-1",
+      runId: "run-1",
+      triggerEventId: null,
+      communityKey: "a".repeat(64),
+      communityLabel: "Core Reliability",
+      suggestedAppliesTo: {
+        retrievalMode: "task_context",
+        technologies: ["typescript"],
+        changeTypes: ["feature"],
+        domains: ["graph-ui"],
+      },
+      evidence: ["used baseline lost"],
+      payload: {},
+      note: null,
+      createdAt: "2026-05-24T00:00:00.000Z",
+      updatedAt: "2026-05-24T00:00:00.000Z",
+      resolvedAt: null,
+    },
+    {
+      id: "review-item-2",
+      source: "promotion_gate",
+      reason: "promotion_gate_review",
+      status: "pending",
+      proposedAction: "promotion_gate_review",
+      priority: 90,
+      confidence: "high",
+      knowledgeId: null,
+      runId: "run-2",
+      triggerEventId: null,
+      communityKey: null,
+      communityLabel: null,
+      suggestedAppliesTo: {
+        retrievalMode: "task_context",
+        technologies: ["react"],
+        changeTypes: ["ui"],
+        domains: ["graph-ui"],
+      },
+      evidence: ["promotion gate review required"],
+      payload: {},
+      note: null,
+      createdAt: "2026-05-24T00:00:00.000Z",
+      updatedAt: "2026-05-24T00:00:00.000Z",
+      resolvedAt: null,
+    },
+  ],
+};
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -451,6 +516,23 @@ describe("GraphPage", () => {
     vi.mocked(fetchLandscapeSnapshot).mockResolvedValue(mockLandscapeData);
     vi.mocked(fetchLandscapeReplaySnapshot).mockResolvedValue(mockReplayData);
     vi.mocked(fetchLandscapeReplayComparison).mockResolvedValue(mockReplayComparisonData);
+    vi.mocked(fetchLandscapeReviewItems).mockResolvedValue(mockLandscapeReviewItems);
+    vi.mocked(fetchGraphNodeDetail).mockResolvedValue(null);
+    vi.mocked(materializeLandscapeReviewItems).mockResolvedValue({
+      dryRun: false,
+      generatedAt: "2026-05-24T00:00:00.000Z",
+      candidateCount: 4,
+      insertedCount: 1,
+      existingCount: 1,
+      skippedCount: 0,
+      items: mockLandscapeReviewItems.items,
+      candidates: [],
+    });
+    vi.mocked(updateLandscapeReviewItemStatus).mockResolvedValue({
+      ...mockLandscapeReviewItems.items[0],
+      status: "resolved",
+      resolvedAt: "2026-05-24T01:00:00.000Z",
+    });
   });
 
   it("renders graph visualization and statistics correctly", async () => {
@@ -508,6 +590,7 @@ describe("GraphPage", () => {
     expect(fetchLandscapeSnapshot).not.toHaveBeenCalled();
     expect(fetchLandscapeReplaySnapshot).not.toHaveBeenCalled();
     expect(fetchLandscapeReplayComparison).not.toHaveBeenCalled();
+    expect(fetchLandscapeReviewItems).not.toHaveBeenCalled();
 
     const selects = screen.getAllByRole("combobox");
     const viewModeSelect = selects[1];
@@ -515,6 +598,7 @@ describe("GraphPage", () => {
     expect(fetchLandscapeSnapshot).not.toHaveBeenCalled();
     expect(fetchLandscapeReplaySnapshot).not.toHaveBeenCalled();
     expect(fetchLandscapeReplayComparison).not.toHaveBeenCalled();
+    expect(fetchLandscapeReviewItems).not.toHaveBeenCalled();
 
     fireEvent.change(viewModeSelect, { target: { value: "community" } });
     await waitFor(() => {
@@ -525,6 +609,9 @@ describe("GraphPage", () => {
     });
     await waitFor(() => {
       expect(fetchLandscapeReplayComparison).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(fetchLandscapeReviewItems).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -701,6 +788,14 @@ describe("GraphPage", () => {
       currentLimit: 12,
       includeRuns: true,
     });
+    expect(fetchLandscapeReviewItems).toHaveBeenCalledWith({
+      status: "pending",
+      source: "all",
+      reason: "all",
+      proposedAction: "all",
+      priorityMin: 0,
+      limit: 200,
+    });
     expect(await screen.findByText("Communities")).toBeInTheDocument();
     expect(screen.getByText("Largest")).toBeInTheDocument();
     expect(screen.getByText("Orphans")).toBeInTheDocument();
@@ -712,11 +807,109 @@ describe("GraphPage", () => {
     expect(screen.getByText("Replay Used")).toBeInTheDocument();
     expect(screen.getByText("Replay Review")).toBeInTheDocument();
     expect(screen.getByText("Action Queue")).toBeInTheDocument();
+    expect(screen.getByText("Candidate Only")).toBeInTheDocument();
     expect(screen.getByText("Risky Runs")).toBeInTheDocument();
+    expect(screen.getByText("k-persisted-1")).toBeInTheDocument();
     expect(screen.getByText("k-lost")).toBeInTheDocument();
     expect(screen.getByText("Replay risky graph UI task")).toBeInTheDocument();
     expect(screen.getByText("Top Facet Risks")).toBeInTheDocument();
     expect(screen.getAllByText("Strong Attractor").length).toBeGreaterThan(0);
+  });
+
+  it("creates persisted review items and updates status from replay review card", async () => {
+    vi.mocked(fetchGraphSnapshot).mockResolvedValue({
+      ...mockGraphData,
+      nodes: [
+        {
+          id: "knowledge:n1",
+          label: "Node 1",
+          kind: "knowledge",
+          group: "rule",
+          weight: 1,
+          status: "active",
+          embedded: true,
+          communityId: "community:1",
+          communityKey: "a".repeat(64),
+          communityLabel: "Core Reliability",
+          communityRank: 1,
+          communitySize: 2,
+        },
+      ],
+      communities: [
+        {
+          communityId: "community:1",
+          communityKey: "a".repeat(64),
+          communityLabel: "Core Reliability",
+          communityRank: 1,
+          size: 2,
+          typeCounts: { rule: 1, procedure: 1 },
+          statusCounts: { active: 1, draft: 1 },
+          embeddedCount: 1,
+          compileSelectCount: 0,
+          staleNodeCount: 0,
+          sourceRefCount: 1,
+          sourceRefDensity: 0.5,
+          health: { dead: false, stale: false, thinEvidence: false },
+        },
+      ],
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GraphPage />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText("Node 1");
+    const selects = screen.getAllByRole("combobox");
+    fireEvent.change(selects[1], { target: { value: "community" } });
+    const circles = await screen.findAllByRole("button", { name: /Select/i });
+    fireEvent.click(circles[0]);
+    await screen.findByText("Replay Review");
+
+    const createButton = await screen.findByRole("button", { name: "Create Review Items" });
+    fireEvent.click(createButton);
+    await waitFor(() => {
+      expect(materializeLandscapeReviewItems).toHaveBeenCalled();
+    });
+    const [materializeInput] = vi.mocked(materializeLandscapeReviewItems).mock.calls[0] ?? [];
+    expect(materializeInput).toEqual({
+      dryRun: false,
+      windowDays: 30,
+      limit: 25,
+      runStatus: "all",
+      currentLimit: 12,
+      landscapeLimit: 1000,
+      landscapeStatus: "current",
+      relationAxes: ["session", "project", "source"],
+      minSelectedCount: 3,
+      minFeedbackCount: 3,
+      minSimilarity: 0.72,
+      semanticTopK: 3,
+      sources: [
+        "replay_compare",
+        "landscape_snapshot",
+        "semantic_relation_comparison",
+        "promotion_gate",
+      ],
+      materializeLimit: 50,
+    });
+
+    const resolveButtons = await screen.findAllByRole("button", { name: "Resolve" });
+    fireEvent.click(resolveButtons[0]);
+    await waitFor(() => {
+      expect(updateLandscapeReviewItemStatus).toHaveBeenCalledWith("review-item-1", {
+        status: "resolved",
+      });
+    });
+
+    const dismissButtons = await screen.findAllByRole("button", { name: "Dismiss" });
+    fireEvent.click(dismissButtons[0]);
+    await waitFor(() => {
+      expect(updateLandscapeReviewItemStatus).toHaveBeenCalledWith("review-item-1", {
+        status: "dismissed",
+      });
+    });
   });
 
   it("supports community supernode mode and label save", async () => {

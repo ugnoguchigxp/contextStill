@@ -1683,6 +1683,19 @@
   font-size: 0.78rem;
 }
 
+.graph-review-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.graph-review-status-note {
+  color: #cbd5e1;
+  font-size: 0.66rem;
+  line-height: 1.35;
+}
+
 .graph-review-list {
   display: flex;
   flex-direction: column;
@@ -1729,6 +1742,14 @@
   font-size: 0.66rem;
   line-height: 1.35;
   word-break: break-word;
+}
+
+.graph-review-row-actions {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  margin-top: 0.45rem;
+  flex-wrap: wrap;
 }
 
 .graph-empty-overlay {

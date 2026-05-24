@@ -28,6 +28,68 @@ export type ComposeResult = {
   error?: string;
 };
 
+type HeadingConfig = {
+  focus: string;
+  steps: string;
+  verification: string;
+  avoid: string;
+};
+
+function resolveHeadings(goal: string, changeTypes?: string[]): HeadingConfig {
+  const text = goal.toLowerCase();
+  const types = (changeTypes ?? []).map((t) => t.toLowerCase());
+
+  if (
+    types.includes("docs") ||
+    types.includes("wiki") ||
+    types.includes("plan") ||
+    text.includes("ドキュメント") ||
+    text.includes("wiki") ||
+    text.includes("設計書") ||
+    text.includes("readme") ||
+    text.includes("仕様書")
+  ) {
+    return {
+      focus: "構成フォーカス",
+      steps: "執筆手順",
+      verification: "確認観点",
+      avoid: "注意点",
+    };
+  }
+  if (
+    types.includes("review") ||
+    text.includes("レビュー") ||
+    text.includes("review") ||
+    text.includes("監査")
+  ) {
+    return {
+      focus: "レビュー方針",
+      steps: "レビュー手順",
+      verification: "確認ポイント",
+      avoid: "見落とし注意",
+    };
+  }
+  if (
+    types.includes("bugfix") ||
+    types.includes("hotfix") ||
+    types.includes("investigate") ||
+    text.includes("バグ") ||
+    text.includes("デバッグ") ||
+    text.includes("調査") ||
+    text.includes("エラー") ||
+    text.includes("debug") ||
+    text.includes("障害")
+  ) {
+    return {
+      focus: "調査フォーカス",
+      steps: "デバッグ手順",
+      verification: "再現・検証観点",
+      avoid: "二次バグ注意",
+    };
+  }
+  return { focus: "実装フォーカス", steps: "実装手順", verification: "検証観点", avoid: "注意点" };
+}
+
 function normalizeLine(text: string): string {
   return text.replace(/\s+/g, " ").trim();
 }
@@ -88,6 +150,7 @@ function maxTokensWithJsonHeadroom(markdownTargetTokens: number): number {
 }
 
 function buildFallbackCompose(params: ComposeInput): FallbackComposeResult {
+  const headings = resolveHeadings(params.input.goal, params.input.changeTypes);
   const allItems = [...params.rules, ...params.procedures];
   if (allItems.length === 0) return { markdown: "No Content", usedKnowledge: [] };
   const usedKnowledgeIds = new Set<string>();
@@ -97,13 +160,17 @@ function buildFallbackCompose(params: ComposeInput): FallbackComposeResult {
     }
   };
 
-  const focusLines: string[] = ["## 実装フォーカス", "", `- ${normalizeLine(params.input.goal)}`];
+  const focusLines: string[] = [
+    `## ${headings.focus}`,
+    "",
+    `- ${normalizeLine(params.input.goal)}`,
+  ];
   for (const rule of params.rules.slice(0, 2)) {
-    focusLines.push(`- ${rule.title} を満たす実装境界を先に固定する。`);
+    focusLines.push(`- ${rule.title} を考慮して取り組む。`);
     trackUsed(rule);
   }
 
-  const stepLines: string[] = ["", "## 実装手順", ""];
+  const stepLines: string[] = ["", `## ${headings.steps}`, ""];
   if (params.procedures.length > 0) {
     let index = 1;
     for (const procedure of params.procedures.slice(0, 3)) {
@@ -116,13 +183,13 @@ function buildFallbackCompose(params: ComposeInput): FallbackComposeResult {
   } else {
     let index = 1;
     for (const rule of params.rules.slice(0, 3)) {
-      stepLines.push(`${index}. ${rule.title} を実装へ反映する。`);
+      stepLines.push(`${index}. ${rule.title} を反映する。`);
       trackUsed(rule);
       index += 1;
     }
   }
 
-  const verificationLines: string[] = ["", "## 検証観点", ""];
+  const verificationLines: string[] = ["", `## ${headings.verification}`, ""];
   const verificationCandidates = params.procedures
     .flatMap((item) => extractSectionLines(item.content, "Verification"))
     .map((line) => normalizeLine(line))
@@ -134,7 +201,7 @@ function buildFallbackCompose(params: ComposeInput): FallbackComposeResult {
     }
   } else {
     for (const item of [...params.rules, ...params.procedures].slice(0, 2)) {
-      verificationLines.push(`- ${item.title} の要件が実装後に成立していることを確認する。`);
+      verificationLines.push(`- ${item.title} の要件が成立していることを確認する。`);
       trackUsed(item);
     }
   }
@@ -146,7 +213,7 @@ function buildFallbackCompose(params: ComposeInput): FallbackComposeResult {
     .slice(0, 2);
   const avoidLines: string[] = [];
   if (avoidCandidates.length > 0) {
-    avoidLines.push("", "## 注意点", "");
+    avoidLines.push("", `## ${headings.avoid}`, "");
     for (const item of avoidCandidates) {
       avoidLines.push(`- ${item}`);
     }
@@ -165,18 +232,18 @@ function buildFallbackCompose(params: ComposeInput): FallbackComposeResult {
   };
 }
 
-function buildSystemPrompt(maxTokens: number): string {
+function buildSystemPrompt(maxTokens: number, headings: HeadingConfig): string {
   const normalizedMaxTokens = Math.max(128, Math.floor(maxTokens));
   return [
     "あなたは context_compile の最終コンテキスト編集者です。",
-    "入力された knowledge 候補をそのまま列挙せず、現在の goal に直結する実装指示へ統合してください。回答はJSONのみ返してください。",
+    "入力された knowledge 候補をそのまま列挙せず、現在の goal に直結する指示へ統合してください。回答はJSONのみ返してください。",
     "",
     "JSON 形式:",
     '{ "markdown": "...", "usedKnowledge": [{ "id": "knowledge-id", "confidence": 0.0-1.0, "evidence": "...", "outputSection": "...", "reason": "..." }] }',
     "",
     "必須ルール:",
     "- 出力は日本語 Markdown。",
-    "- 見出しは `実装フォーカス` / `実装手順` / `検証観点` を必須とし、必要時のみ `注意点` を追加。",
+    `- 見出しは \`${headings.focus}\` / \`${headings.steps}\` / \`${headings.verification}\` を必須とし、必要時のみ \`${headings.avoid}\` を追加。`,
     "- `Rules` や `Procedures` の見出しは使わない。",
     "- 入力knowledgeに無い事実を追加しない。",
     `- markdown フィールドの本文は ${normalizedMaxTokens} トークン以内を目標に収める。`,
@@ -184,7 +251,7 @@ function buildSystemPrompt(maxTokens: number): string {
     "- JSON は必ず完結させる。出力上限に近い場合は markdown 本文を短くしてでも、閉じ括弧・閉じ配列まで出し切る。",
     "- できるだけ短く要点を伝えること。相手はAIなので、挨拶や丁寧語で無駄にコンテキストを消費しないこと。",
     '- goal と直接関係する指示が作れない場合は、`{"markdown":"No Content","usedKnowledge":[]}` を返す。',
-    "- ノイズを避け、実装者が次に行う行動へ変換する。",
+    "- ノイズを避け、受け手が次に行う行動へ変換する。",
   ].join("\n");
 }
 
@@ -330,7 +397,8 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
   const fallbackErrors: string[] = [];
   let attempted = 0;
   const completionMaxTokens = maxTokensWithJsonHeadroom(routing.maxTokens);
-  const systemPrompt = buildSystemPrompt(routing.maxTokens);
+  const headings = resolveHeadings(params.input.goal, params.input.changeTypes);
+  const systemPrompt = buildSystemPrompt(routing.maxTokens, headings);
   const userPrompt = buildUserPrompt(params);
   const selectableKnowledgeIds = new Set(
     [...params.rules, ...params.procedures]

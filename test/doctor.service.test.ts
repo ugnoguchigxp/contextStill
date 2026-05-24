@@ -159,15 +159,14 @@ describe("Doctor Service", () => {
               last_compiled_at: new Date(),
             },
           ],
-        }) // knowledge lifecycle
-        .mockResolvedValueOnce({ rows: [{ count: 10 }] }), // stale sources
+        }),
     };
     vi.mocked(getDb).mockReturnValue(mockDb as any);
 
     const report = await runDoctor();
     expect(report.reasons).toContain("VECTOR_EXTENSION_MISSING");
     expect(report.mcp.staleKnowledgeCount).toBe(5);
-    expect(report.mcp.staleSourceCount).toBe(10);
+    expect(report.mcp.staleSourceCount).toBe(0);
   });
 
   test("inspects agent log sync states", async () => {
@@ -265,7 +264,6 @@ describe("Doctor Service", () => {
             },
           ],
         })
-        .mockResolvedValueOnce({ rows: [{ count: 0 }] })
         .mockResolvedValueOnce({ rows: [{ count: 2 }] }),
     };
     vi.mocked(getDb).mockReturnValue(mockDb as any);

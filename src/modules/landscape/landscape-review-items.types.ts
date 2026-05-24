@@ -8,8 +8,11 @@ import type {
 } from "../../shared/schemas/landscape-review.schema.js";
 import type {
   LandscapeAppliesToRefineCandidate,
+  LandscapeReplayComparisonResponse,
+  LandscapeReplaySnapshot,
   LandscapeRunStatusFilter,
 } from "./landscape-replay.types.js";
+import type { LandscapeSnapshot } from "./landscape.types.js";
 import type { LandscapeGraphRelationAxis, LandscapeGraphStatusFilter } from "./landscape.types.js";
 
 export type BuildLandscapeReviewItemCandidatesInput = {
@@ -17,6 +20,9 @@ export type BuildLandscapeReviewItemCandidatesInput = {
   runStatus: LandscapeRunStatusFilter;
   sources: LandscapeReviewItemSource[];
   appliesToRefineCandidates: LandscapeAppliesToRefineCandidate[];
+  landscapeSnapshot?: LandscapeSnapshot | null;
+  landscapeReplaySnapshot?: LandscapeReplaySnapshot | null;
+  landscapeReplayComparison?: LandscapeReplayComparisonResponse | null;
 };
 
 export type LandscapeReviewItemCandidateBuildResult = {

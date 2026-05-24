@@ -259,18 +259,8 @@ export async function inspectDatabase({
     }
   }
 
-  if (!missingTables.includes("sources")) {
-    try {
-      const result = await db.execute(sql`
-        select count(*)::int as count
-        from sources
-        where updated_at < now() - (${freshnessThresholdMinutes} * interval '1 minute')
-      `);
-      staleSourceCount = Number((result.rows as Array<{ count?: number }>)[0]?.count ?? 0);
-    } catch {
-      reasons.push("STALE_SOURCE_COUNT_QUERY_FAILED");
-    }
-  }
+  // sources は時間経過で stale と判定する必要がないため、検出を廃止します。
+  staleSourceCount = 0;
 
   if (!missingTables.includes("audit_logs")) {
     try {

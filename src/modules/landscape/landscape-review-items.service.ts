@@ -1,4 +1,6 @@
 import { buildLandscapeReplayComparison } from "./landscape-replay-comparison.service.js";
+import { buildLandscapeReplaySnapshot } from "./landscape-replay.service.js";
+import { buildLandscapeSnapshot } from "./landscape.service.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import {
   findLandscapeReviewItemRowById,
@@ -72,6 +74,79 @@ const replayCompareReasonMapping: Record<
     priority: 65,
   },
 };
+
+const landscapeSnapshotReasonMapping: Record<
+  | "negative_attractor_candidate"
+  | "wrong_review_required"
+  | "over_selected_not_used"
+  | "dead_zone_reachability_risk"
+  | "dead_zone_stale",
+  {
+    proposedAction: LandscapeReviewItemCandidate["proposedAction"];
+    priority: number;
+  }
+> = {
+  negative_attractor_candidate: {
+    proposedAction: "refine_applies_to",
+    priority: 85,
+  },
+  wrong_review_required: {
+    proposedAction: "review_wrong",
+    priority: 95,
+  },
+  over_selected_not_used: {
+    proposedAction: "review_only",
+    priority: 55,
+  },
+  dead_zone_reachability_risk: {
+    proposedAction: "repair_reachability",
+    priority: 70,
+  },
+  dead_zone_stale: {
+    proposedAction: "review_only",
+    priority: 45,
+  },
+};
+
+const semanticRelationReasonMapping: Record<
+  "semantic_reachable_dead_zone" | "semantic_split" | "semantic_merge" | "relation_orphan",
+  {
+    proposedAction: LandscapeReviewItemCandidate["proposedAction"];
+    priority: number;
+  }
+> = {
+  semantic_reachable_dead_zone: {
+    proposedAction: "repair_reachability",
+    priority: 75,
+  },
+  semantic_split: {
+    proposedAction: "split_or_merge_review",
+    priority: 55,
+  },
+  semantic_merge: {
+    proposedAction: "split_or_merge_review",
+    priority: 55,
+  },
+  relation_orphan: {
+    proposedAction: "review_only",
+    priority: 35,
+  },
+};
+
+function isSemanticComparisonKind(
+  value: string,
+): value is
+  | "semantic_reachable_dead_zone"
+  | "semantic_split"
+  | "semantic_merge"
+  | "relation_orphan" {
+  return (
+    value === "semantic_reachable_dead_zone" ||
+    value === "semantic_split" ||
+    value === "semantic_merge" ||
+    value === "relation_orphan"
+  );
+}
 
 const allowedTransitions: Record<LandscapeReviewItemStatus, LandscapeReviewItemStatus[]> = {
   pending: ["reviewing", "resolved", "dismissed"],
@@ -243,6 +318,200 @@ function buildReplayCompareCandidates(
     .filter((candidate): candidate is LandscapeReviewItemCandidate => Boolean(candidate));
 }
 
+function buildLandscapeSnapshotCandidates(
+  input: BuildLandscapeReviewItemCandidatesInput,
+): LandscapeReviewItemCandidate[] {
+  if (!input.sources.includes("landscape_snapshot")) return [];
+  if (!input.landscapeSnapshot) return [];
+
+  const generatedAt = input.generatedAt ?? new Date().toISOString();
+  const communityByKey = new Map(
+    input.landscapeSnapshot.communities.map(
+      (community) => [community.communityKey, community] as const,
+    ),
+  );
+
+  return input.landscapeSnapshot.risks
+    .map((risk) => {
+      const mapping = landscapeSnapshotReasonMapping[risk.type];
+      if (!mapping) return null;
+
+      const idempotencyKey = normalizeIdempotencyKey(
+        "landscape_snapshot",
+        risk.type,
+        risk.communityKey,
+        risk.communityKey,
+      );
+      const community = communityByKey.get(risk.communityKey);
+      const representativeKnowledgeIds = (community?.representativeKnowledgeIds ?? []).slice(0, 10);
+      const evidence = normalizeEvidence([
+        risk.reason,
+        ...(community?.recommendedActions ?? []),
+        community?.classification.reason ?? "",
+      ]);
+
+      return landscapeReviewItemCandidateSchema.parse({
+        source: "landscape_snapshot",
+        reason: risk.type,
+        proposedAction: mapping.proposedAction,
+        priority: clampPriority(mapping.priority),
+        confidence: risk.severity,
+        idempotencyKey,
+        knowledgeId: null,
+        runId: null,
+        triggerEventId: null,
+        communityKey: risk.communityKey,
+        communityLabel: risk.communityLabel,
+        suggestedAppliesTo: {},
+        evidence,
+        payload: {
+          generatedBy: "landscape_snapshot_risk",
+          generatedAt,
+          communityRank: risk.communityRank,
+          representativeKnowledgeIds,
+          classificationPrimary: community?.classification.primary ?? null,
+          classificationConfidence: community?.classification.confidence ?? null,
+          sourceRefDensity: community?.quality.sourceRefDensity ?? null,
+          selectedItemCountWindow: community?.selection.selectedItemCountWindow ?? null,
+          windowDays: input.landscapeSnapshot?.windowDays ?? null,
+        },
+        note: null,
+      });
+    })
+    .filter((candidate): candidate is LandscapeReviewItemCandidate => Boolean(candidate));
+}
+
+function toSemanticComparisonConfidence(
+  comparison:
+    | "semantic_reachable_dead_zone"
+    | "semantic_split"
+    | "semantic_merge"
+    | "relation_orphan",
+  deadZoneSemanticReachabilityScore: number,
+): LandscapeReviewItemCandidate["confidence"] {
+  if (comparison !== "semantic_reachable_dead_zone") return "medium";
+  if (deadZoneSemanticReachabilityScore >= 0.75) return "high";
+  if (deadZoneSemanticReachabilityScore >= 0.4) return "medium";
+  return "low";
+}
+
+function buildSemanticRelationComparisonCandidates(
+  input: BuildLandscapeReviewItemCandidatesInput,
+): LandscapeReviewItemCandidate[] {
+  if (!input.sources.includes("semantic_relation_comparison")) return [];
+  if (!input.landscapeReplaySnapshot) return [];
+
+  const generatedAt = input.generatedAt ?? new Date().toISOString();
+  return input.landscapeReplaySnapshot.communityComparison.communities
+    .map((comparison) => {
+      if (!isSemanticComparisonKind(comparison.comparison)) return null;
+      const mapping = semanticRelationReasonMapping[comparison.comparison];
+      if (!mapping) return null;
+
+      const idempotencyKey = normalizeIdempotencyKey(
+        "semantic_relation_comparison",
+        comparison.comparison,
+        comparison.relationCommunityKey,
+        comparison.relationCommunityKey,
+      );
+      const evidence = normalizeEvidence([
+        `comparison=${comparison.comparison}`,
+        `jaccardOverlap=${comparison.jaccardOverlap.toFixed(3)}`,
+        `selectedNeighborCountWindow=${comparison.selectedNeighborCountWindow}`,
+        `deadZoneSemanticReachabilityScore=${comparison.deadZoneSemanticReachabilityScore.toFixed(3)}`,
+      ]);
+      const representativeKnowledgeIds = comparison.selectedNeighborKnowledgeIds.slice(0, 10);
+
+      return landscapeReviewItemCandidateSchema.parse({
+        source: "semantic_relation_comparison",
+        reason: comparison.comparison,
+        proposedAction: mapping.proposedAction,
+        priority: clampPriority(mapping.priority),
+        confidence: toSemanticComparisonConfidence(
+          comparison.comparison,
+          comparison.deadZoneSemanticReachabilityScore,
+        ),
+        idempotencyKey,
+        knowledgeId: null,
+        runId: null,
+        triggerEventId: null,
+        communityKey: comparison.relationCommunityKey,
+        communityLabel: comparison.relationCommunityLabel,
+        suggestedAppliesTo: {},
+        evidence,
+        payload: {
+          generatedBy: "landscape_semantic_relation_comparison",
+          generatedAt,
+          relationCommunityRank: comparison.relationCommunityRank,
+          semanticCommunityKey: comparison.semanticCommunityKey ?? null,
+          jaccardOverlap: comparison.jaccardOverlap,
+          relationCommunitySize: comparison.relationCommunitySize,
+          semanticCommunitySize: comparison.semanticCommunitySize,
+          selectedNeighborCountWindow: comparison.selectedNeighborCountWindow,
+          deadZoneSemanticReachabilityScore: comparison.deadZoneSemanticReachabilityScore,
+          representativeKnowledgeIds,
+        },
+        note: null,
+      });
+    })
+    .filter((candidate): candidate is LandscapeReviewItemCandidate => Boolean(candidate));
+}
+
+function buildPromotionGateCandidates(
+  input: BuildLandscapeReviewItemCandidatesInput,
+): LandscapeReviewItemCandidate[] {
+  if (!input.sources.includes("promotion_gate")) return [];
+  if (!input.landscapeReplayComparison) return [];
+
+  const generatedAt = input.generatedAt ?? new Date().toISOString();
+  const summary = input.landscapeReplayComparison.promotionGateSummary;
+  if (summary.gateMode !== "review_required") return [];
+
+  const analysisDay = generatedAt.slice(0, 10);
+  const idempotencyKey = normalizeIdempotencyKey(
+    "promotion_gate",
+    "promotion_gate_review",
+    `${input.landscapeReplayComparison.windowDays}:${input.runStatus}:${input.landscapeReplayComparison.basis.currentLimit}:${analysisDay}`,
+    "global",
+  );
+
+  return [
+    landscapeReviewItemCandidateSchema.parse({
+      source: "promotion_gate",
+      reason: "promotion_gate_review",
+      proposedAction: "promotion_gate_review",
+      priority: 90,
+      confidence: summary.shouldTighten ? "high" : summary.affectedRunCount > 0 ? "medium" : "low",
+      idempotencyKey,
+      knowledgeId: null,
+      runId: null,
+      triggerEventId: null,
+      communityKey: null,
+      communityLabel: null,
+      suggestedAppliesTo: {},
+      evidence: normalizeEvidence([
+        summary.reason,
+        `affectedRunCount=${summary.affectedRunCount}`,
+        `riskyNewKnowledgeCount=${summary.riskyNewKnowledgeCount}`,
+      ]),
+      payload: {
+        generatedBy: "landscape_promotion_gate",
+        generatedAt,
+        gateMode: summary.gateMode,
+        shouldTighten: summary.shouldTighten,
+        affectedRunCount: summary.affectedRunCount,
+        riskyNewKnowledgeCount: summary.riskyNewKnowledgeCount,
+        reason: summary.reason,
+        runStatus: input.runStatus,
+        windowDays: input.landscapeReplayComparison.windowDays,
+        currentLimit: input.landscapeReplayComparison.basis.currentLimit,
+        analysisDay,
+      },
+      note: null,
+    }),
+  ];
+}
+
 function sortCandidatesForMaterialize(candidates: LandscapeReviewItemCandidate[]) {
   return [...candidates].sort((left, right) => {
     const priorityDiff = right.priority - left.priority;
@@ -274,7 +543,24 @@ export async function buildLandscapeReviewItemCandidates(
     ...input,
     generatedAt,
   });
-  const candidates = sortCandidatesForMaterialize(replayCompareCandidates);
+  const landscapeSnapshotCandidates = buildLandscapeSnapshotCandidates({
+    ...input,
+    generatedAt,
+  });
+  const semanticRelationComparisonCandidates = buildSemanticRelationComparisonCandidates({
+    ...input,
+    generatedAt,
+  });
+  const promotionGateCandidates = buildPromotionGateCandidates({
+    ...input,
+    generatedAt,
+  });
+  const candidates = sortCandidatesForMaterialize([
+    ...replayCompareCandidates,
+    ...landscapeSnapshotCandidates,
+    ...semanticRelationComparisonCandidates,
+    ...promotionGateCandidates,
+  ]);
 
   return {
     generatedAt,
@@ -286,28 +572,66 @@ export async function buildLandscapeReviewItemCandidates(
 export async function materializeLandscapeReviewItems(
   input: MaterializeLandscapeReviewItemsInput,
 ): Promise<LandscapeReviewItemMaterializeResult> {
-  const unsupportedSources = input.sources.filter((source) => source !== "replay_compare");
+  const supportedSources = new Set<LandscapeReviewItemCandidate["source"]>([
+    "replay_compare",
+    "landscape_snapshot",
+    "semantic_relation_comparison",
+    "promotion_gate",
+  ]);
+  const unsupportedSources = input.sources.filter((source) => !supportedSources.has(source));
   if (unsupportedSources.length > 0) {
     throw new LandscapeReviewItemsError(
       400,
-      `unsupported sources in AQ-1A: ${unsupportedSources.join(", ")}`,
+      `unsupported sources in current phase: ${unsupportedSources.join(", ")}`,
     );
   }
 
   const generatedAt = new Date().toISOString();
-  const comparison = await buildLandscapeReplayComparison({
-    windowDays: input.windowDays,
-    limit: input.limit,
-    runStatus: input.runStatus,
-    currentLimit: input.currentLimit,
-    includeRuns: false,
-  });
+  const [comparison, landscapeSnapshot, landscapeReplaySnapshot] = await Promise.all([
+    input.sources.includes("replay_compare") || input.sources.includes("promotion_gate")
+      ? buildLandscapeReplayComparison({
+          windowDays: input.windowDays,
+          limit: input.limit,
+          runStatus: input.runStatus,
+          currentLimit: input.currentLimit,
+          includeRuns: false,
+        })
+      : Promise.resolve(null),
+    input.sources.includes("landscape_snapshot")
+      ? buildLandscapeSnapshot({
+          windowDays: input.windowDays,
+          limit: input.landscapeLimit,
+          status: input.landscapeStatus,
+          relationAxes: input.relationAxes,
+          minSelectedCount: input.minSelectedCount,
+          minFeedbackCount: input.minFeedbackCount,
+        })
+      : Promise.resolve(null),
+    input.sources.includes("semantic_relation_comparison")
+      ? buildLandscapeReplaySnapshot({
+          windowDays: input.windowDays,
+          limit: input.limit,
+          landscapeLimit: input.landscapeLimit,
+          runStatus: input.runStatus,
+          landscapeStatus: input.landscapeStatus,
+          relationAxes: input.relationAxes,
+          minSelectedCount: input.minSelectedCount,
+          minFeedbackCount: input.minFeedbackCount,
+          minSimilarity: input.minSimilarity,
+          semanticTopK: input.semanticTopK,
+          includeRuns: false,
+        })
+      : Promise.resolve(null),
+  ]);
 
   const candidateBuild = await buildLandscapeReviewItemCandidates({
     generatedAt,
     runStatus: input.runStatus,
     sources: input.sources,
-    appliesToRefineCandidates: comparison.appliesToRefineCandidates,
+    appliesToRefineCandidates: comparison?.appliesToRefineCandidates ?? [],
+    landscapeSnapshot,
+    landscapeReplaySnapshot,
+    landscapeReplayComparison: comparison,
   });
   const prioritizedCandidates = sortCandidatesForMaterialize(
     uniqueCandidatesByIdempotencyKey(candidateBuild.candidates),
