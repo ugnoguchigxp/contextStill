@@ -13,6 +13,34 @@ export type LandscapeReviewItemCandidateSourceRow = typeof landscapeReviewItems.
 export type LandscapeReviewItemCandidateLinkRow =
   typeof landscapeReviewItemCandidateLinks.$inferSelect;
 
+type LandscapeReviewCandidateLinkStatus =
+  | "draft_created"
+  | "review_required"
+  | "approved"
+  | "rejected"
+  | "finalized";
+
+const allowedLinkTransitions: Record<
+  LandscapeReviewCandidateLinkStatus,
+  LandscapeReviewCandidateLinkStatus[]
+> = {
+  draft_created: ["review_required", "approved", "rejected"],
+  review_required: ["approved", "rejected"],
+  approved: ["finalized", "rejected"],
+  rejected: ["approved"],
+  finalized: [],
+};
+
+export class LandscapeReviewCandidateLinkError extends Error {
+  readonly statusCode: 400 | 409;
+
+  constructor(statusCode: 400 | 409, message: string) {
+    super(message);
+    this.name = "LandscapeReviewCandidateLinkError";
+    this.statusCode = statusCode;
+  }
+}
+
 export async function listLandscapeReviewItemsForCandidateDraft(input: {
   ids?: string[];
   status: "pending" | "reviewing";
@@ -220,4 +248,136 @@ export async function upsertLandscapeReviewItemCandidateDraft(params: {
       created: Boolean(insertedLink),
     };
   });
+}
+
+export async function findLandscapeReviewCandidateLinkByFindCandidateResultId(
+  findCandidateResultId: string,
+): Promise<LandscapeReviewItemCandidateLinkRow | null> {
+  const [link] = await db
+    .select()
+    .from(landscapeReviewItemCandidateLinks)
+    .where(eq(landscapeReviewItemCandidateLinks.findCandidateResultId, findCandidateResultId))
+    .limit(1);
+  return link ?? null;
+}
+
+export async function updateLandscapeReviewCandidateLinkStatus(params: {
+  reviewItemId: string;
+  linkId: string;
+  status: "approved" | "rejected";
+  note?: string;
+  actor?: string;
+}): Promise<LandscapeReviewItemCandidateLinkRow | null> {
+  const [current] = await db
+    .select()
+    .from(landscapeReviewItemCandidateLinks)
+    .where(
+      and(
+        eq(landscapeReviewItemCandidateLinks.id, params.linkId),
+        eq(landscapeReviewItemCandidateLinks.reviewItemId, params.reviewItemId),
+      ),
+    )
+    .limit(1);
+  if (!current) return null;
+
+  const currentStatus = current.status as LandscapeReviewCandidateLinkStatus;
+  const nextStatus = params.status;
+  if (
+    currentStatus !== nextStatus &&
+    !(allowedLinkTransitions[currentStatus] ?? []).includes(nextStatus)
+  ) {
+    throw new LandscapeReviewCandidateLinkError(
+      409,
+      `invalid link status transition: ${currentStatus} -> ${nextStatus}`,
+    );
+  }
+
+  const trimmedNote = params.note?.trim();
+  const trimmedActor = params.actor?.trim();
+  const [updated] = await db
+    .update(landscapeReviewItemCandidateLinks)
+    .set({
+      status: nextStatus,
+      approvalNote: trimmedNote && trimmedNote.length > 0 ? trimmedNote : null,
+      approvedBy: trimmedActor && trimmedActor.length > 0 ? trimmedActor : null,
+      approvedAt: new Date(),
+      updatedAt: new Date(),
+    })
+    .where(eq(landscapeReviewItemCandidateLinks.id, params.linkId))
+    .returning();
+
+  if (!updated) {
+    throw new LandscapeReviewCandidateLinkError(400, "failed to update candidate link status");
+  }
+  return updated;
+}
+
+export async function markLandscapeReviewCandidateLinkFinalized(
+  findCandidateResultId: string,
+): Promise<LandscapeReviewItemCandidateLinkRow | null> {
+  const existing =
+    await findLandscapeReviewCandidateLinkByFindCandidateResultId(findCandidateResultId);
+  if (!existing) return null;
+  if (existing.status === "finalized") return existing;
+  if (existing.status !== "approved") return existing;
+
+  const [updated] = await db
+    .update(landscapeReviewItemCandidateLinks)
+    .set({
+      status: "finalized",
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(landscapeReviewItemCandidateLinks.id, existing.id),
+        eq(landscapeReviewItemCandidateLinks.status, "approved"),
+      ),
+    )
+    .returning();
+
+  if (updated) return updated;
+  return (
+    (
+      await db
+        .select()
+        .from(landscapeReviewItemCandidateLinks)
+        .where(eq(landscapeReviewItemCandidateLinks.id, existing.id))
+        .limit(1)
+    )[0] ?? existing
+  );
+}
+
+export async function markLandscapeReviewCandidateLinkReviewRequired(
+  findCandidateResultId: string,
+): Promise<LandscapeReviewItemCandidateLinkRow | null> {
+  const existing =
+    await findLandscapeReviewCandidateLinkByFindCandidateResultId(findCandidateResultId);
+  if (!existing) return null;
+  if (existing.status === "review_required") return existing;
+  if (existing.status !== "draft_created") return existing;
+
+  const [updated] = await db
+    .update(landscapeReviewItemCandidateLinks)
+    .set({
+      status: "review_required",
+      updatedAt: new Date(),
+    })
+    .where(
+      and(
+        eq(landscapeReviewItemCandidateLinks.id, existing.id),
+        eq(landscapeReviewItemCandidateLinks.status, "draft_created"),
+      ),
+    )
+    .returning();
+
+  if (updated) return updated;
+  return (
+    (
+      await db
+        .select()
+        .from(landscapeReviewItemCandidateLinks)
+        .where(eq(landscapeReviewItemCandidateLinks.id, existing.id))
+        .limit(1)
+    )[0] ?? existing
+  );
 }

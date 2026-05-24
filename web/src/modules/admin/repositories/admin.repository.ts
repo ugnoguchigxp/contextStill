@@ -1245,7 +1245,7 @@ export type LandscapeReviewCandidateCreateItem = {
   targetStateId: string | null;
   findCandidateResultId: string | null;
   linkId: string | null;
-  linkStatus: "draft_created" | "review_required" | "approved" | "rejected" | "finalized" | null;
+  linkStatus: LandscapeReviewCandidateLinkStatus | null;
   draftLinked: boolean;
 };
 
@@ -1256,6 +1256,28 @@ export type LandscapeReviewCandidateCreateResult = {
   existingCount: number;
   missingIds: string[];
   items: LandscapeReviewCandidateCreateItem[];
+};
+
+export type LandscapeReviewCandidateLinkUpdateInput = {
+  status: "approved" | "rejected";
+  note?: string;
+  actor?: string;
+};
+
+export type LandscapeReviewCandidateLinkUpdateResult = {
+  link: {
+    id: string;
+    reviewItemId: string;
+    targetStateId: string;
+    findCandidateResultId: string;
+    candidateKey: string;
+    status: LandscapeReviewCandidateLinkStatus;
+    approvalNote: string | null;
+    approvedBy: string | null;
+    approvedAt: string | null;
+    createdAt: string;
+    updatedAt: string;
+  };
 };
 
 export type SourceTreeItem = {
@@ -1944,6 +1966,18 @@ export async function createLandscapeReviewCandidates(
     input,
   );
   return json.result;
+}
+
+export async function updateLandscapeReviewCandidateLink(
+  reviewItemId: string,
+  linkId: string,
+  input: LandscapeReviewCandidateLinkUpdateInput,
+): Promise<LandscapeReviewCandidateLinkUpdateResult> {
+  return requestJson<LandscapeReviewCandidateLinkUpdateResult>(
+    `/api/graph/landscape/review-items/${encodeURIComponent(reviewItemId)}/candidate-links/${encodeURIComponent(linkId)}`,
+    "PATCH",
+    input,
+  );
 }
 
 export async function fetchGraphCommunityLabels(input?: {

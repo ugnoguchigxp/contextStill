@@ -3,14 +3,37 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 const {
   listLandscapeReviewItemsForCandidateDraftMock,
   upsertLandscapeReviewItemCandidateDraftMock,
+  updateLandscapeReviewCandidateLinkStatusMock,
+  findLandscapeReviewCandidateLinkByFindCandidateResultIdMock,
+  markLandscapeReviewCandidateLinkFinalizedMock,
+  markLandscapeReviewCandidateLinkReviewRequiredMock,
 } = vi.hoisted(() => ({
   listLandscapeReviewItemsForCandidateDraftMock: vi.fn(),
   upsertLandscapeReviewItemCandidateDraftMock: vi.fn(),
+  updateLandscapeReviewCandidateLinkStatusMock: vi.fn(),
+  findLandscapeReviewCandidateLinkByFindCandidateResultIdMock: vi.fn(),
+  markLandscapeReviewCandidateLinkFinalizedMock: vi.fn(),
+  markLandscapeReviewCandidateLinkReviewRequiredMock: vi.fn(),
 }));
 
 vi.mock("../src/modules/landscape/landscape-review-candidate.repository.js", () => ({
   listLandscapeReviewItemsForCandidateDraft: listLandscapeReviewItemsForCandidateDraftMock,
   upsertLandscapeReviewItemCandidateDraft: upsertLandscapeReviewItemCandidateDraftMock,
+  updateLandscapeReviewCandidateLinkStatus: updateLandscapeReviewCandidateLinkStatusMock,
+  findLandscapeReviewCandidateLinkByFindCandidateResultId:
+    findLandscapeReviewCandidateLinkByFindCandidateResultIdMock,
+  markLandscapeReviewCandidateLinkFinalized: markLandscapeReviewCandidateLinkFinalizedMock,
+  markLandscapeReviewCandidateLinkReviewRequired:
+    markLandscapeReviewCandidateLinkReviewRequiredMock,
+  LandscapeReviewCandidateLinkError: class LandscapeReviewCandidateLinkError extends Error {
+    readonly statusCode: number;
+
+    constructor(statusCode: number, message: string) {
+      super(message);
+      this.name = "LandscapeReviewCandidateLinkError";
+      this.statusCode = statusCode;
+    }
+  },
 }));
 
 import { createLandscapeReviewCandidates } from "../src/modules/landscape/landscape-review-candidate.service.js";

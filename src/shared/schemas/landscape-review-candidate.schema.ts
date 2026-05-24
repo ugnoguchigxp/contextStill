@@ -44,9 +44,40 @@ export const landscapeReviewCandidateCreateResultSchema = z.object({
   items: z.array(landscapeReviewCandidateCreateItemSchema),
 });
 
+export const landscapeReviewCandidateLinkSchema = z.object({
+  id: z.string(),
+  reviewItemId: z.string(),
+  targetStateId: z.string(),
+  findCandidateResultId: z.string(),
+  candidateKey: z.string().min(1),
+  status: landscapeReviewCandidateLinkStatusSchema,
+  approvalNote: z.string().nullable(),
+  approvedBy: z.string().nullable(),
+  approvedAt: z.string().datetime().nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+});
+
+export const landscapeReviewCandidateLinkUpdateInputSchema = z.object({
+  status: z.enum(["approved", "rejected"]),
+  note: z.string().trim().max(500).optional(),
+  actor: z.string().trim().min(1).max(120).optional(),
+});
+
+export const landscapeReviewCandidateLinkUpdateResultSchema = z.object({
+  link: landscapeReviewCandidateLinkSchema,
+});
+
 export type LandscapeReviewCandidateCreateInput = z.infer<
   typeof landscapeReviewCandidateCreateInputSchema
 >;
 export type LandscapeReviewCandidateCreateResult = z.infer<
   typeof landscapeReviewCandidateCreateResultSchema
+>;
+export type LandscapeReviewCandidateLink = z.infer<typeof landscapeReviewCandidateLinkSchema>;
+export type LandscapeReviewCandidateLinkUpdateInput = z.infer<
+  typeof landscapeReviewCandidateLinkUpdateInputSchema
+>;
+export type LandscapeReviewCandidateLinkUpdateResult = z.infer<
+  typeof landscapeReviewCandidateLinkUpdateResultSchema
 >;

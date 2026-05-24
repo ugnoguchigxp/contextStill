@@ -14,7 +14,7 @@ import {
   getCoreRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { RefreshCw, Search } from "lucide-react";
+import { AlertTriangle, RefreshCw, Search } from "lucide-react";
 import { Fragment, useCallback, useMemo, useState } from "react";
 import {
   type CandidateListItem,
@@ -80,6 +80,23 @@ function textPreview(value: string, max = 120): string {
   return `${normalized.slice(0, Math.max(0, max - 3))}...`;
 }
 
+function initialTargetStateIdFromLocation(): string {
+  if (typeof window === "undefined") return "";
+  const value = new URLSearchParams(window.location.search).get("targetStateId") ?? "";
+  return value.trim();
+}
+
+function landscapeWarningSummary(item: CandidateListItem): string | null {
+  if (!item.landscapeWarning) return null;
+  if (item.landscapeWarning.warningReason === "promotion_gate_review") {
+    return "promotion gate review required";
+  }
+  if (item.landscapeWarning.warningReason === "review_required") {
+    return "manual review required";
+  }
+  return item.landscapeWarning.reason;
+}
+
 function CandidateColumnGroup() {
   return (
     <colgroup>
@@ -142,6 +159,7 @@ export function CandidatesPage() {
   const [targetKind, setTargetKind] = useState<
     "all" | "wiki_file" | "vibe_memory" | "knowledge_candidate"
   >("all");
+  const [targetStateIdFilter, setTargetStateIdFilter] = useState(initialTargetStateIdFromLocation);
   const [outcome, setOutcome] = useState<"all" | CandidateOutcome>("all");
   const [hasKnowledge, setHasKnowledge] = useState<"all" | "yes" | "no">("all");
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -158,6 +176,7 @@ export function CandidatesPage() {
         limit: pagination.pageSize,
         queryText,
         targetKind,
+        targetStateIdFilter,
         outcome,
         hasKnowledge,
         sortBy: serverSort.id,
@@ -170,6 +189,7 @@ export function CandidatesPage() {
         limit: pagination.pageSize,
         query: queryText || undefined,
         targetKind,
+        targetStateId: targetStateIdFilter || undefined,
         outcome,
         hasKnowledge,
         sortBy: serverSort.id as CandidateListSortBy,
@@ -210,6 +230,17 @@ export function CandidatesPage() {
                 {item.targetKey}
               </p>
               <p className="text-[11px] text-muted-foreground">idx: {item.candidateIndex}</p>
+              {item.landscapeWarning ? (
+                <div className="space-y-1 pt-1">
+                  <Badge variant="warning" className={compactBadgeClass}>
+                    <AlertTriangle size={11} className="mr-1" />
+                    Landscape warning
+                  </Badge>
+                  <p className="text-[11px] text-amber-700 dark:text-amber-300 break-words [overflow-wrap:anywhere]">
+                    {landscapeWarningSummary(item) ?? "manual approval required"}
+                  </p>
+                </div>
+              ) : null}
             </div>
           );
         },
@@ -422,6 +453,25 @@ export function CandidatesPage() {
               Refresh
             </Button>
           </div>
+          {targetStateIdFilter ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2">
+              <Badge variant="outline" className="text-[11px]">
+                targetStateId: {targetStateIdFilter}
+              </Badge>
+              <Button
+                type="button"
+                size="sm"
+                variant="ghost"
+                className="h-7 px-2 text-[11px]"
+                onClick={() => {
+                  setTargetStateIdFilter("");
+                  resetToFirstPage();
+                }}
+              >
+                Clear Target Filter
+              </Button>
+            </div>
+          ) : null}
         </CardHeader>
 
         <div className="min-w-0 flex flex-1 flex-col overflow-hidden">
@@ -529,6 +579,20 @@ export function CandidatesPage() {
                                 <p>findCandidateResultId: {item.id}</p>
                                 <p>coverEvidenceResultId: {item.id}</p>
                                 <p>knowledgeId: {item.knowledge?.id ?? "-"}</p>
+                                {item.landscapeWarning ? (
+                                  <>
+                                    <p>landscapeWarning: yes</p>
+                                    <p>
+                                      warningReason:{" "}
+                                      {landscapeWarningSummary(item) ??
+                                        item.landscapeWarning.warningReason}
+                                    </p>
+                                    <p>reviewItemId: {item.landscapeWarning.reviewItemId ?? "-"}</p>
+                                    <p>linkStatus: {item.landscapeWarning.linkStatus ?? "-"}</p>
+                                  </>
+                                ) : (
+                                  <p>landscapeWarning: no</p>
+                                )}
                               </div>
                               <div className="min-w-0 rounded-lg border bg-background px-3 py-2 break-words [overflow-wrap:anywhere]">
                                 <p>sourceUri: {item.sourceUri}</p>

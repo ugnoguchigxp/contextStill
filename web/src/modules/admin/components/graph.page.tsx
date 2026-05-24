@@ -498,6 +498,16 @@ function reviewItemActionLabel(value: LandscapeReviewItem["proposedAction"]): st
   }
 }
 
+function reviewItemNeedsPromotionGateWarning(item: LandscapeReviewItem): boolean {
+  return item.reason === "promotion_gate_review";
+}
+
+function reviewItemWarningSummary(item: LandscapeReviewItem): string {
+  const evidence = item.evidence.slice(0, 2).join(" / ");
+  if (evidence) return evidence;
+  return "manual review is required before promotion";
+}
+
 function nodeLandscapeClass(
   node: DisplayNode,
   viewMode: GraphViewMode,
@@ -1763,6 +1773,13 @@ export function GraphPage() {
                             ) : persistedPendingReviewItems.length > 0 ? (
                               <div className="graph-review-list">
                                 {persistedPendingReviewItems.map((item) => {
+                                  const payload = item.payload as Record<string, unknown>;
+                                  const linkedTargetStateId =
+                                    typeof payload.lastCandidateTargetStateId === "string"
+                                      ? payload.lastCandidateTargetStateId
+                                      : "";
+                                  const needsPromotionGateWarning =
+                                    reviewItemNeedsPromotionGateWarning(item);
                                   const suggestedAppliesTo = item.suggestedAppliesTo as {
                                     retrievalMode?: string;
                                     changeTypes?: unknown;
@@ -1807,8 +1824,15 @@ export function GraphPage() {
                                         <span>
                                           p{item.priority} / {item.confidence}
                                         </span>
-                                        {(item.payload as Record<string, unknown>)
-                                          .lastCandidateTargetStateId ? (
+                                        {needsPromotionGateWarning ? (
+                                          <Badge
+                                            variant="outline"
+                                            className="h-5 border-rose-300 text-[11px] text-rose-100"
+                                          >
+                                            Warning
+                                          </Badge>
+                                        ) : null}
+                                        {linkedTargetStateId ? (
                                           <Badge
                                             variant="outline"
                                             className="h-5 border-emerald-300 text-[11px] text-emerald-100"
@@ -1835,7 +1859,21 @@ export function GraphPage() {
                                           .slice(0, 5)
                                           .join(" / ") || "no facets"}
                                       </small>
+                                      {needsPromotionGateWarning ? (
+                                        <small>
+                                          warning: promotion gate review required / evidence:{" "}
+                                          {reviewItemWarningSummary(item)}
+                                        </small>
+                                      ) : null}
                                       <div className="graph-review-row-actions">
+                                        {linkedTargetStateId ? (
+                                          <a
+                                            href={`/candidates?targetStateId=${encodeURIComponent(linkedTargetStateId)}`}
+                                            className="inline-flex h-7 items-center rounded-md border border-emerald-300 px-2 text-[11px] text-emerald-100 hover:bg-emerald-500/15"
+                                          >
+                                            View Candidate
+                                          </a>
+                                        ) : null}
                                         <Button
                                           size="sm"
                                           variant="outline"

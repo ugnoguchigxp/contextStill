@@ -3,7 +3,11 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { buildLandscapeReplayComparison } from "../../../src/modules/landscape/landscape-replay-comparison.service.js";
 import { buildLandscapeReplaySnapshot } from "../../../src/modules/landscape/landscape-replay.service.js";
-import { createLandscapeReviewCandidates } from "../../../src/modules/landscape/landscape-review-candidate.service.js";
+import {
+  LandscapeReviewCandidateLinkError,
+  createLandscapeReviewCandidates,
+  updateLandscapeReviewCandidateLink,
+} from "../../../src/modules/landscape/landscape-review-candidate.service.js";
 import {
   LandscapeReviewItemsError,
   listLandscapeReviewItems,
@@ -18,6 +22,8 @@ import {
 import {
   landscapeReviewCandidateCreateInputSchema,
   landscapeReviewCandidateCreateResultSchema,
+  landscapeReviewCandidateLinkUpdateInputSchema,
+  landscapeReviewCandidateLinkUpdateResultSchema,
 } from "../../../src/shared/schemas/landscape-review-candidate.schema.js";
 import {
   landscapeReviewItemStatusUpdateSchema,
@@ -58,6 +64,10 @@ const communityLabelParamSchema = z.object({
 });
 const landscapeReviewItemParamSchema = z.object({
   id: z.string().trim().min(1),
+});
+const landscapeReviewItemCandidateLinkParamSchema = z.object({
+  id: z.string().trim().min(1),
+  linkId: z.string().trim().min(1),
 });
 
 const communityLabelBodySchema = z.object({
@@ -236,6 +246,25 @@ export const graphRouter = new Hono()
         limit: query.limit,
       });
       return c.json(result);
+    },
+  )
+  .patch(
+    "/landscape/review-items/:id/candidate-links/:linkId",
+    zValidator("param", landscapeReviewItemCandidateLinkParamSchema),
+    zValidator("json", landscapeReviewCandidateLinkUpdateInputSchema),
+    async (c) => {
+      const { id, linkId } = c.req.valid("param");
+      const input = c.req.valid("json");
+      try {
+        const result = await updateLandscapeReviewCandidateLink(id, linkId, input);
+        if (!result) return c.json({ error: "not found" }, 404);
+        return c.json(landscapeReviewCandidateLinkUpdateResultSchema.parse(result));
+      } catch (error) {
+        if (error instanceof LandscapeReviewCandidateLinkError) {
+          return c.json({ error: error.message }, error.statusCode);
+        }
+        throw error;
+      }
     },
   )
   .patch(

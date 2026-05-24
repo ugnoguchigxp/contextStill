@@ -27,13 +27,13 @@ import {
 import { knowledgeRouter } from "../api/modules/knowledge/knowledge.routes.js";
 import { fetchOverviewDashboardForApi } from "../api/modules/overview/overview.repository.js";
 import { overviewRouter } from "../api/modules/overview/overview.routes.js";
+import { settingsRouter } from "../api/modules/settings/settings.routes.js";
 import {
   getSettingsForApi,
   reloadRuntimeCacheForApi,
   testProviderForApi,
   updateSettingsForApi,
 } from "../api/modules/settings/settings.service.js";
-import { settingsRouter } from "../api/modules/settings/settings.routes.js";
 import { vibeMemoryRouter } from "../api/modules/vibe-memory/vibe-memory.routes.js";
 import { recordVibeMemoryWithDiffEntries } from "../src/modules/vibe-memory/vibe-memory.service.js";
 import { compileRunDetailSchema } from "../src/shared/schemas/compile-run.schema.js";
@@ -740,6 +740,7 @@ describe("API route contract tests", () => {
             updatedAt: "2026-05-20T00:00:00.000Z",
           },
           outcome: "stored",
+          landscapeWarning: null,
           diff: {
             originalToCover: {
               titleChanged: true,

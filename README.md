@@ -10,6 +10,7 @@
 <p align="center">
   <a href="#quick-start">Quick Start</a> ·
   <a href="#how-it-works">How It Works</a> ·
+  <a href="#knowledge-landscape--action-queue">Landscape & Queue</a> ·
   <a href="#mcp-integration">MCP Integration</a> ·
   <a href="#cli-reference">CLI</a> ·
   <a href="#api-reference">API</a> ·
@@ -24,13 +25,13 @@
 
 ## What is memory-router?
 
-**memory-router** is a local-first knowledge engine that distills your coding sessions, wikis, and documentation into reusable **rules** and **procedures**, then compiles just the right context for your AI coding agent — within any token budget.
+**memory-router** is a local-first knowledge engine for AI coding agents. It distills coding sessions, wikis, and documentation into reusable **rules** and **procedures**, compiles the right context for each task, and provides an admin control plane for reviewing candidates, graph health, landscape risks, and distillation queues.
 
 ```
 ┌─────────────┐   ┌──────────────┐   ┌──────────────────┐
 │  Wiki / Docs │   │ Agent Logs   │   │  Manual Rules    │
 │  (Markdown)  │   │ (Codex,      │   │  (register_      │
-│              │   │  Antigravity)│   │   knowledge)     │
+│              │   │  Antigravity)│   │   candidate)     │
 └──────┬───────┘   └──────┬───────┘   └────────┬─────────┘
        │                  │                    │
        ▼                  ▼                    │
@@ -53,23 +54,21 @@
         │   status: draft → active → deprecated     │
         │   scope: repo | global                    │
         │   + passage embedding (pgvector)          │
-        └──────────────────┬───────────────────────┘
-                           │
-                           ▼
-                ┌─────────────────────┐
-                │  context_compile    │
-                │  Token budget split │
-                │  rules:45%          │
-                │  procedures:35%     │
-                │  sources:20%        │
-                └─────────┬───────────┘
-                          │
-                          ▼
-                ┌─────────────────────┐
-                │  Context Pack       │
-                │  (Markdown output)  │
-                │  → Agent prompt     │
-                └─────────────────────┘
+        └───────────────┬──────────────┬───────────┘
+                        │              │
+                        ▼              ▼
+          ┌─────────────────────┐  ┌───────────────────────┐
+          │  context_compile    │  │ Knowledge Landscape    │
+          │  Token budget split │  │ graph / replay / queue │
+          │  rules/procedures   │  │ approval-gated fixes   │
+          └─────────┬───────────┘  └───────────┬───────────┘
+                    │                          │
+                    ▼                          ▼
+          ┌─────────────────────┐   ┌──────────────────────┐
+          │  Context Pack       │   │ Admin Control Plane   │
+          │  (Markdown output)  │   │ candidates / queue    │
+          │  → Agent prompt     │   │ doctor / settings     │
+          └─────────────────────┘   └──────────────────────┘
 ```
 
 ### Key Differentiators
@@ -82,13 +81,17 @@
 | Repo-scoped knowledge | ✅ DB-level | △ Namespace | ❌ Global only |
 | Compile quality tracking | ✅ Degraded reasons + run history | ❌ | ❌ |
 | Knowledge lifecycle | ✅ draft/active/deprecated | ❌ | ❌ |
+| Landscape diagnostics | ✅ Graph, replay, attractor/dead-zone, action queue | ❌ | ❌ |
+| Candidate approval workflow | ✅ Review item → candidate draft → manual approval gate | ❌ | ❌ |
 | MCP standard | ✅ Official SDK | ❌ | ❌ |
 
 ### Project Status
 
 memory-router is an active local-first project for personal and team coding-agent workflows. It is usable as a local MCP server, REST API, and admin UI, but it is not a hosted multi-tenant SaaS product. Expect to run your own PostgreSQL/pgvector database and review distilled `draft` knowledge before promoting it to `active`.
 
-The project favors auditability over invisible automation: compile runs, selected knowledge, source links, distillation candidates, evidence checks, and health diagnostics are stored so you can inspect why a context pack was produced.
+The current checkout includes the full staged distillation flow, knowledge graph exploration, Knowledge Landscape replay diagnostics, persisted landscape review items, candidate-draft generation from review items, a Queue control plane, candidate warning badges, and manual approval enforcement for landscape-origin candidates.
+
+The project favors auditability over invisible automation: compile runs, selected knowledge, source links, distillation targets, candidate rows, evidence checks, landscape review items, approval links, runtime settings, LLM usage logs, and health diagnostics are stored so you can inspect why a context pack was produced and why a candidate was or was not finalized.
 
 ---
 
@@ -134,7 +137,7 @@ bun run dev
 - **UI**: http://localhost:5173
 - **API**: Same origin at `/api/*`
 
-The admin UI includes views for knowledge, source pages, graph exploration, compile history, system health, audit logs, and distillation candidates. The Candidates view is the main place to inspect whether a candidate became stored knowledge, still needs finalization, was rejected, is retryable, or only exists as a raw candidate.
+The admin UI includes views for Overview, Source, Vibe Memory, Candidates, Queue, Knowledge, Graph, Compile, Audit, Doctor, and Settings. The Candidates view is the main place to inspect whether a candidate became stored knowledge, still needs finalization, was rejected, is retryable, only exists as a raw candidate, or requires landscape manual approval.
 
 ---
 
@@ -159,22 +162,28 @@ bun run sync:agent-logs
 Convert raw evidence into structured **rules** and **procedures** using a local LLM:
 
 ```bash
-# Run one distillation cycle (wiki-first auto selection)
+# Run one distillation cycle (auto selects wiki, vibe memory, or candidate targets)
 bun run distill:pipeline:once
 
 # Or target kind explicitly
 bun run distill:pipeline -- --write --limit 1 --kind wiki
 bun run distill:pipeline -- --write --limit 1 --kind vibe
+bun run distill:pipeline -- --write --limit 1 --kind candidate
+
+# Or run one exact queued target
+bun run distill:pipeline -- --write --kind candidate --target-state-id <uuid>
 ```
 
 The staged distillation pipeline:
-1. Selects a target from wiki files or agent memories.
+1. Selects a target from wiki files, agent memories, or landscape-generated knowledge candidates.
 2. Extracts minimal `find_candidate_results` rows.
 3. Checks source support, duplicate/near-duplicate matches, and external claims in `cover_evidence_results`.
 4. Uses `search_web` to find source URLs and `fetch_content` to ground external claims. Search and fetched content are cached in `distillation_evidence_cache`.
-5. Finalizes `knowledge_ready` candidates into `draft` knowledge when they remain valuable enough (`importance > 50`) and can be embedded.
+5. Finalizes `knowledge_ready` candidates into `draft` knowledge when they remain valuable enough (`importance > 50`), can be embedded, and pass any landscape manual-approval gate.
 
 Candidate outcomes are intentionally separated from final knowledge. `rejected` means the cover-evidence stage found a terminal reason such as `duplicate`, `near_duplicate`, `unsupported_by_source`, `not_actionable`, or `external_fetch_evidence_missing`; retryable provider/tool/parse failures are tracked separately.
+
+For `knowledge_candidate` targets created from Landscape review items, finalization is approval-gated. If the candidate link is not `approved`, `finalizeDistille` rejects it with `landscape_manual_approval_required` and marks the link as `review_required` when writing.
 
 ### Stage 3: Compile
 
@@ -192,6 +201,61 @@ The compiler:
 3. Ranks by weighted score (importance, confidence, source evidence)
 4. Allocates token budget across sections (rules → procedures → sources)
 5. Returns a structured Markdown context pack with diagnostics
+
+---
+
+## Knowledge Landscape & Action Queue
+
+Knowledge Landscape turns compile history, feedback, graph communities, and replay comparisons into an operational review loop.
+
+### What it surfaces
+
+| Area | What it answers |
+|---|---|
+| Graph view | How knowledge items, sources, sessions, projects, and semantic neighbors relate |
+| Community landscape | Which clusters are strong attractors, useful attractors, negative candidates, over-selected, stale, or dead-zone risks |
+| Replay comparison | Whether current retrieval loses previously used baseline knowledge, drifts, or has no current match |
+| Review items | Persisted action items for replay drift, landscape risks, semantic/relation splits, and promotion-gate concerns |
+| Candidate drafts | Deterministic `rule` / `procedure` drafts generated from review items |
+| Approval links | Traceability from review item to distillation target and candidate, with `draft_created -> review_required -> approved/rejected -> finalized` lifecycle |
+
+### CLI workflow
+
+```bash
+# Inspect the current landscape
+bun run landscape -- --window-days 30 --json
+
+# Materialize replay/landscape/promotion risks into persisted review items
+bun run landscape -- --queue --queue-source replay_compare,landscape_snapshot,semantic_relation_comparison,promotion_gate
+
+# List review items
+bun run landscape -- --queue-list --queue-status pending
+
+# Create candidate drafts from pending/reviewing review items
+bun run landscape -- --queue-create-candidates --queue-status pending --queue-limit 20
+
+# Run a single generated candidate through the distillation pipeline
+bun run distill:pipeline -- --write --kind candidate --target-state-id <targetStateId>
+```
+
+Approve a landscape candidate link before finalization when review is required:
+
+```bash
+curl -X PATCH http://localhost:5173/api/graph/landscape/review-items/<reviewItemId>/candidate-links/<linkId> \
+  -H "content-type: application/json" \
+  -d '{"status":"approved","note":"manual review complete","actor":"local-admin"}'
+```
+
+### Admin UI workflow
+
+1. Open **Graph** and switch to community view.
+2. Use **Create Review Items** to persist replay and landscape diagnostics.
+3. Use **Create Candidate Drafts** to turn pending review items into deterministic candidate targets.
+4. Open **Queue** to inspect active distillation targets, pause/requeue work, and monitor worker heartbeats.
+5. Open **Candidates** to inspect outcome diffs, landscape warnings, and `targetStateId` filtered candidates.
+6. Approve or reject landscape candidate links through the approval API before finalization when a promotion-gate or review-required warning is present.
+
+The queue and approval flow is deliberately explicit. Landscape diagnostics do not directly mutate `knowledge_items`, runtime ranking, or production behavior; they create reviewable artifacts that can be audited and promoted.
 
 ---
 
@@ -260,14 +324,18 @@ For the full MCP tool contract, see [docs/mcp-tools.md](docs/mcp-tools.md).
 | `bun run import:wiki <path>` | Import Markdown into sources |
 | `bun run import:markdown <file>` | Import a single Markdown file |
 | `bun run sync:agent-logs` | Sync Codex / Antigravity logs |
-| `bun run distill:pipeline:once` | Run one wiki-first distillation cycle |
+| `bun run distill:pipeline:once` | Run one auto-selected distillation cycle |
 | `bun run distill:pipeline -- --write --limit 1 --kind wiki` | Run the staged distillation pipeline explicitly |
+| `bun run distill:pipeline -- --write --kind candidate --target-state-id <uuid>` | Run one exact candidate target |
 | `bun run distill-target:refresh` | Refresh wiki/vibe/candidate distillation targets |
 | `bun run distill:status` | Show distillation target queue and progress counters |
 | `bun run distill-target:release-stale` | Release stale running distillation targets |
 | `bun run doctor` | Run system diagnostics |
 | `bun run landscape -- --window-days 30` | Generate a community-based landscape snapshot |
 | `bun run landscape -- --window-days 30 --json` | Emit full landscape snapshot JSON |
+| `bun run landscape -- --queue --queue-source ...` | Materialize landscape/replay diagnostics into review items |
+| `bun run landscape -- --queue-list --queue-status pending` | List persisted landscape review items |
+| `bun run landscape -- --queue-create-candidates --queue-status pending` | Create deterministic candidate drafts from review items |
 | `bun run backfill:knowledge-project-context` | Backfill project context on existing knowledge |
 | `./scripts/backup-db.sh` | Dump and zip the PostgreSQL database |
 
@@ -298,12 +366,17 @@ bun run compile --goal "fix context compiler" \
   --domains context-compiler \
   --json
 
-# Distill one cycle (wiki-first)
+# Distill one cycle (auto target selection)
 bun run distill:pipeline:once
 
 # Distill explicit target kind
 bun run distill:pipeline -- --write --limit 1 --kind wiki
 bun run distill:pipeline -- --write --limit 1 --kind vibe
+bun run distill:pipeline -- --write --limit 1 --kind candidate
+
+# Create and process review-item candidate drafts
+bun run landscape -- --queue-create-candidates --queue-status pending --queue-limit 20
+bun run distill:pipeline -- --write --kind candidate --target-state-id <targetStateId>
 ```
 
 ---
@@ -343,11 +416,26 @@ The REST API serves the Web UI and can be used independently.
 | `GET` | `/api/agent-diffs` | List agent diff entries |
 | `GET` | `/api/graph` | Knowledge graph data |
 | `GET` | `/api/graph/landscape` | Community landscape snapshot (attractor/dead-zone diagnostics) |
+| `GET` | `/api/graph/landscape/replay` | Replay-based community landscape diagnostics |
+| `GET` | `/api/graph/landscape/replay/compare` | Baseline-vs-current retrieval comparison |
+| `POST` | `/api/graph/landscape/replay/queue` | Materialize replay/landscape diagnostics into review items |
+| `GET` | `/api/graph/landscape/review-items` | List persisted landscape review items |
+| `POST` | `/api/graph/landscape/review-items/candidates` | Create deterministic candidate drafts from review items |
+| `PATCH` | `/api/graph/landscape/review-items/:id` | Resolve or dismiss a landscape review item |
+| `PATCH` | `/api/graph/landscape/review-items/:id/candidate-links/:linkId` | Approve or reject a landscape candidate link |
 | `GET` | `/api/graph/community-labels` | List persisted community labels |
 | `PUT` | `/api/graph/community-labels/:communityKey` | Update a community label |
 | `GET` | `/api/graph/nodes/:id` | Knowledge graph node detail |
+| `GET` | `/api/queue` | List distillation queue targets with filters |
+| `GET` | `/api/queue/stats` | Distillation queue status and kind counters |
+| `GET` | `/api/queue/active` | Active running distillation targets |
+| `POST` | `/api/queue/:id/pause` | Pause a target state |
+| `POST` | `/api/queue/:id/resume` | Requeue or resume a target state |
 | `GET` | `/api/audit-logs` | Audit log timeline |
-| `GET` | `/api/candidates` | List distillation candidates with outcome stats |
+| `GET` | `/api/candidates` | List distillation candidates with outcome stats, diffs, target filters, and landscape warnings |
+| `GET/PUT` | `/api/settings` | Read / update runtime settings |
+| `POST` | `/api/settings/providers/:provider/test` | Test an LLM provider configuration |
+| `POST` | `/api/settings/reload-runtime-cache` | Reload runtime settings cache |
 
 Start the API server:
 
@@ -376,6 +464,8 @@ memory-router separates **evidence** (raw data) from **instructions** (distilled
 |---|---|
 | `knowledge_items` | Distilled rules and procedures. `type: rule \| procedure`, `status: draft \| active \| deprecated`, `scope: repo \| global`. |
 | `knowledge_source_links` | Links knowledge back to its source evidence. |
+| `knowledge_tag_definitions` | Shared applicability tag definitions for technologies, change types, and domains. |
+| `knowledge_community_labels` | Persisted human labels for graph communities. |
 
 ### Processing layer
 
@@ -388,6 +478,12 @@ memory-router separates **evidence** (raw data) from **instructions** (distilled
 | `knowledge_items` metadata indexes | Fast joins from finalized knowledge back to candidate/cover-evidence IDs. |
 | `context_compile_runs` | Compile execution history with diagnostics. |
 | `context_pack_items` | Items selected for each compile run. |
+| `knowledge_usage_events` | Manual and observed feedback about selected knowledge usefulness. |
+| `knowledge_review_queue` | Review queue for explicit wrong-knowledge feedback. |
+| `landscape_review_items` | Persisted Knowledge Landscape action items from replay, attractor/dead-zone, semantic comparison, and promotion-gate signals. |
+| `landscape_review_item_candidate_links` | Traceability and approval state between review items, distillation targets, and candidate rows. |
+| `knowledge_quality_adjustments` | Quality adjustment records derived from review/feedback flows. |
+| `llm_usage_logs` | LLM request/usage telemetry for local/cloud provider observability. |
 | `sync_states` | Agent log sync cursors and timestamps. |
 
 ---
@@ -460,6 +556,8 @@ bun run distill-target:release-stale
 bun run src/cli/distillation-target.ts release-paused
 ```
 
+The **Queue** admin page shows the same target state from the browser: status counters, running locks, worker heartbeat age, target kind/status filters, pause, resume, and retry/requeue actions. It is the preferred operational view when diagnosing a running local daemon.
+
 The pipeline LaunchAgent load step boots out legacy `vibe/source` distillation jobs to avoid duplicate execution.
 
 ### Database Backup
@@ -506,6 +604,8 @@ When set to `auto` (default), the daemon is tried first; on failure, the CLI fal
 - Authentication and multi-user authorization are not part of the local admin UI.
 - Distilled items enter the system as `draft` or candidate records; high-quality operation still depends on human review before promotion.
 - External evidence coverage depends on provider availability, API keys, and rate limits.
+- Knowledge Landscape produces reviewable diagnostics and candidate drafts; it does not automatically change production ranking or mutate active knowledge without the normal review/finalization path.
+- Landscape-origin candidates require manual approval before finalization when a promotion-gate or review-required warning is present.
 - The web UI is an admin/control-plane surface, not a packaged desktop app or hosted service.
 
 ---
@@ -589,7 +689,10 @@ memory-router/
 │   │   ├── knowledge/          # Knowledge repository + service
 │   │   ├── vibe-memory/        # Conversation log ingestion + distillation
 │   │   ├── sources/            # Wiki management + source distillation
+│   │   ├── landscape/          # Knowledge Landscape, replay, review items, candidate links
+│   │   ├── distillationPipeline/# Staged target runner
 │   │   ├── distillation/       # Shared distillation runtime + prompts
+│   │   ├── finalizeDistille/   # Candidate finalization + approval gate
 │   │   ├── embedding/          # Embedding service (daemon / CLI)
 │   │   └── doctor/             # System diagnostics
 │   └── shared/schemas/   # Zod validation schemas
@@ -614,8 +717,12 @@ memory-router/
 | [Knowledge Landscape Concept](docs/knowledge-landscape-concept-design.md) | Concept model for graph/community/knowledge-field views |
 | [Graph Community View Plan](docs/graph-community-view-mvp-plan.md) | Graph community UI/API implementation plan |
 | [Knowledge Landscape Attractor Plan](docs/knowledge-landscape-attractor-implementation-plan.md) | Phase 1 implementation plan for attractor/negative/dead-zone snapshot |
+| [Knowledge Landscape Replay Basin Plan](docs/knowledge-landscape-attractor-phase2-replay-basin-plan.md) | Replay comparison, basin analysis, and retrieval drift plan |
+| [Knowledge Landscape Action Queue Plan](docs/knowledge-landscape-action-queue-implementation-plan.md) | Persisted review item and action queue implementation plan |
+| [Knowledge Landscape Action Queue Next Phase](docs/knowledge-landscape-action-queue-next-phase-implementation-plan.md) | Candidate draft, approval, and promotion-gate follow-up plan |
 | [Knowledge Usage Signal Redesign](docs/compile-knowledge-usage-signal-redesign-plan.md) | Compile-run usage signal and feedback redesign |
 | [Knowledge Feedback Staged Learning](docs/knowledge-feedback-staged-learning-plan.md) | Manual feedback and staged learning design |
+| [DB-backed Settings UI Plan](docs/db-backed-settings-ui-plan.md) | Runtime settings API/UI implementation plan |
 | [Doctor Operational Hardening](docs/doctor-distillation-operational-hardening-plan.md) | Doctor/distillation health and operational diagnostics |
 | [Failure Experience Candidates](docs/failure-experience-knowledge-candidate-plan.md) | `register_candidate` and failure-experience distillation plan |
 | [Web UI Component Refactor](docs/web-ui-component-dry-refactor-plan.md) | Admin UI component cleanup plan |

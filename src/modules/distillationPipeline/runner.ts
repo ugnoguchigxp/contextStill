@@ -15,6 +15,7 @@ import {
   validateCandidateQualityForStorage,
 } from "../distillation/procedure-quality.js";
 import { type FinalizeDistilleResult, runFinalizeDistille } from "../finalizeDistille/domain.js";
+import { listKnowledgeIdsByTargetStateId } from "../finalizeDistille/repository.js";
 import { runFindCandidate } from "../findCandidate/domain.js";
 import {
   type FindCandidateResultRow,
@@ -26,6 +27,7 @@ import {
   DEFAULT_DISTILLATION_TARGET_VERSION,
   type DistillationTargetStateRow,
   type TargetLease,
+  claimDistillationTargetStateById,
   claimNextDistillationTargetState,
   finishDistillationTargetState,
   leaseFromTargetState,
@@ -39,6 +41,7 @@ import {
 export type DistillationPipelineInput = {
   kind?: "auto" | "wiki" | "vibe" | "candidate";
   limit?: number;
+  targetStateId?: string;
   worker?: string;
   provider?: DistillationProviderSetting;
   distillationVersion?: string;
@@ -87,6 +90,7 @@ type CandidateProcessing = {
   coverResults: CoverResult[];
   finalizeResults: FinalizeDistilleResult[];
   finalizeErrors: Array<{ coverEvidenceResultId: string; error: string }>;
+  remainingCandidates: number;
 };
 
 const retryableCoverStatuses = new Set<string>([
@@ -95,6 +99,8 @@ const retryableCoverStatuses = new Set<string>([
   "provider_failed",
   "parse_failed",
 ]);
+const CHECKPOINT_RETRY_DELAY_SECONDS = 1;
+const CHECKPOINT_PAUSE_REASON = "cover_evidence_checkpoint";
 
 function targetKindFilter(
   kind: DistillationPipelineInput["kind"],
@@ -313,40 +319,12 @@ async function runOrResumeCandidates(
   const existingByCandidateId = new Map(
     existingRows.map((row) => [row.id, coverResultFromRow(row)] as const),
   );
+  const coverResultsByCandidateId = new Map(existingByCandidateId);
   const coverResults: CoverResult[] = [];
   const finalizeResults: FinalizeDistilleResult[] = [];
   const finalizeErrors: Array<{ coverEvidenceResultId: string; error: string }> = [];
 
-  for (const findCandidateId of candidateIds) {
-    let coverResult: CoverResult;
-    const existing = existingByCandidateId.get(findCandidateId);
-    if (existing && !input.forceRefreshEvidence && !existing.retryable) {
-      coverResult = existing;
-    } else {
-      try {
-        coverResult = await runWithCandidateTimeout(findCandidateId, (signal) =>
-          runCoverEvidenceForCandidate({
-            targetStateId: target.id,
-            findCandidateId,
-            provider: input.provider,
-            forceRefreshEvidence: input.forceRefreshEvidence,
-            signal,
-          }),
-        );
-      } catch (error) {
-        if (!isAbortError(error)) {
-          throw error;
-        }
-        coverResult = await saveCandidateTimeoutResult(findCandidateId);
-      }
-    }
-    coverResults.push(coverResult);
-    await heartbeat(target, lease);
-
-    if (coverResult.status !== "knowledge_ready") {
-      continue;
-    }
-
+  const finalizeReadyCandidate = async (coverResult: CoverResult): Promise<void> => {
     await updatePhase(target, lease, "finalizing");
     await heartbeat(target, lease);
     try {
@@ -367,9 +345,62 @@ async function runOrResumeCandidates(
     }
     await heartbeat(target, lease);
     await updatePhase(target, lease, "covering_evidence");
+  };
+
+  const runCoverOnce = async (findCandidateId: string): Promise<void> => {
+    let coverResult: CoverResult;
+    const existing = coverResultsByCandidateId.get(findCandidateId);
+    if (existing && !input.forceRefreshEvidence && !existing.retryable) {
+      coverResult = existing;
+    } else {
+      try {
+        coverResult = await runWithCandidateTimeout(findCandidateId, (signal) =>
+          runCoverEvidenceForCandidate({
+            targetStateId: target.id,
+            findCandidateId,
+            provider: input.provider,
+            forceRefreshEvidence: input.forceRefreshEvidence,
+            signal,
+          }),
+        );
+      } catch (error) {
+        if (!isAbortError(error)) {
+          throw error;
+        }
+        coverResult = await saveCandidateTimeoutResult(findCandidateId);
+      }
+    }
+    coverResultsByCandidateId.set(findCandidateId, coverResult);
+    await heartbeat(target, lease);
+
+    if (coverResult.status === "knowledge_ready") {
+      await finalizeReadyCandidate(coverResult);
+    }
+  };
+
+  let remainingCandidates = 0;
+  if (input.forceRefreshEvidence) {
+    for (const findCandidateId of candidateIds) {
+      await runCoverOnce(findCandidateId);
+    }
+  } else {
+    const pendingCandidateIds = candidateIds.filter((findCandidateId) => {
+      return !coverResultsByCandidateId.has(findCandidateId);
+    });
+    const nextCandidateId = pendingCandidateIds[0];
+    if (nextCandidateId) {
+      await runCoverOnce(nextCandidateId);
+    }
+    remainingCandidates = Math.max(0, pendingCandidateIds.length - (nextCandidateId ? 1 : 0));
   }
 
-  return { coverResults, finalizeResults, finalizeErrors };
+  for (const findCandidateId of candidateIds) {
+    const coverResult = coverResultsByCandidateId.get(findCandidateId);
+    if (!coverResult) continue;
+    coverResults.push(coverResult);
+  }
+
+  return { coverResults, finalizeResults, finalizeErrors, remainingCandidates };
 }
 
 async function finishSkipped(params: {
@@ -428,7 +459,34 @@ async function runClaimedTarget(
     }
 
     const processed = await runOrResumeCandidates(target, lease, input, candidateIds);
-    const { coverResults, finalizeResults, finalizeErrors } = processed;
+    const { coverResults, finalizeResults, finalizeErrors, remainingCandidates } = processed;
+    if (remainingCandidates > 0) {
+      await requireLease(
+        pauseDistillationTargetState({
+          id: target.id,
+          reason: CHECKPOINT_PAUSE_REASON,
+          retryDelaySeconds: CHECKPOINT_RETRY_DELAY_SECONDS,
+          metadata: {
+            remainingCandidates,
+            candidateCount,
+          },
+          lease,
+        }),
+        target,
+        "pause-cover-evidence-checkpoint",
+      );
+      return {
+        targetStateId: target.id,
+        targetKind: target.targetKind,
+        targetKey: target.targetKey,
+        status: "paused",
+        outcomeKind: CHECKPOINT_PAUSE_REASON,
+        candidateCount,
+        knowledgeIds: [],
+        coverEvidence: compactCoverResults(coverResults),
+        finalize: finalizeResults,
+      };
+    }
 
     const ready = coverResults.filter((result) => result.status === "knowledge_ready");
     const retryable = coverResults.filter((result) => result.retryable);
@@ -469,12 +527,7 @@ async function runClaimedTarget(
       });
     }
 
-    const stored = finalizeResults.filter(
-      (result) => result.status === "stored" && result.knowledgeId,
-    );
-    const knowledgeIds = stored
-      .map((result) => result.knowledgeId)
-      .filter((id): id is string => Boolean(id));
+    const knowledgeIds = await listKnowledgeIdsByTargetStateId(target.id);
     if (knowledgeIds.length === 0) {
       await requireLease(
         finishDistillationTargetState({
@@ -617,6 +670,30 @@ export async function runDistillationPipeline(
   }
   await recoverStaleDistillationTargets({ distillationVersion });
   await releaseRetryablePausedDistillationTargets({ distillationVersion });
+
+  const requestedTargetStateId = input.targetStateId?.trim();
+  if (requestedTargetStateId) {
+    const target = await claimDistillationTargetStateById({
+      id: requestedTargetStateId,
+      distillationVersion,
+      targetKind: targetKindFilter(input.kind),
+      worker: input.worker,
+    });
+    if (!target) {
+      return {
+        distillationVersion,
+        processed: 0,
+        idle: true,
+        results: [],
+      };
+    }
+    return {
+      distillationVersion,
+      processed: 1,
+      idle: false,
+      results: [await runClaimedTarget(target, input)],
+    };
+  }
 
   const results: DistillationPipelineTargetResult[] = [];
   for (let index = 0; index < positiveLimit(input.limit); index += 1) {

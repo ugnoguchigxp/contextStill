@@ -15,6 +15,11 @@ import {
 import { embedOne } from "../embedding/embedding.service.js";
 import { getFindCandidateResultById } from "../findCandidate/repository.js";
 import { upsertKnowledgeFromSource } from "../knowledge/knowledge.repository.js";
+import {
+  getLandscapeReviewLinkForFinalize,
+  markLandscapeReviewLinkFinalizedForCandidate,
+  markLandscapeReviewLinkReviewRequiredForCandidate,
+} from "../landscape/landscape-review-candidate.service.js";
 import { findSourceFragmentByReference, selectKnowledgeByFinalizeSourceUri } from "./repository.js";
 import { linkKnowledgeToSourceFragment } from "./source-link.repository.js";
 
@@ -192,6 +197,21 @@ export async function runFinalizeDistille(
     throw new Error(`find candidate result not found: ${coverEvidenceResultId}`);
   }
 
+  const landscapeLink = await getLandscapeReviewLinkForFinalize(coverEvidenceResultId);
+  const requiresLandscapeApproval =
+    candidateRow.targetKind === "knowledge_candidate" && Boolean(landscapeLink);
+  if (
+    requiresLandscapeApproval &&
+    landscapeLink &&
+    landscapeLink.status !== "approved" &&
+    landscapeLink.status !== "finalized"
+  ) {
+    if (input.write) {
+      await markLandscapeReviewLinkReviewRequiredForCandidate(coverEvidenceResultId);
+    }
+    return rejectedResult(coverEvidenceResultId, result, "landscape_manual_approval_required");
+  }
+
   const sourceUri = finalizeSourceUri(coverEvidenceResultId);
   const finalizedAt = new Date().toISOString();
   const metadata = {
@@ -266,6 +286,9 @@ export async function runFinalizeDistille(
       confidence: unitConfidence(candidate.confidence),
       coverEvidenceResultId,
     });
+    if (requiresLandscapeApproval && landscapeLink?.status === "approved") {
+      await markLandscapeReviewLinkFinalizedForCandidate(coverEvidenceResultId);
+    }
     await recordAuditLogSafe({
       eventType: auditEventTypes.finalizeDistilleCompleted,
       actor: "system",
@@ -342,6 +365,10 @@ export async function runFinalizeDistille(
       sourceLinkCount,
     },
   });
+
+  if (requiresLandscapeApproval && landscapeLink?.status === "approved") {
+    await markLandscapeReviewLinkFinalizedForCandidate(coverEvidenceResultId);
+  }
 
   return {
     coverEvidenceResultId,

@@ -71,6 +71,16 @@ const mockCandidateItems = [
         summary: ["Added specificity", "Cleaned syntax"],
       },
     },
+    landscapeWarning: {
+      source: "landscape_review_item",
+      linkId: "link-1",
+      reviewItemId: "review-item-1",
+      reason: "promotion_gate_review",
+      evidence: ["promotion gate review required"],
+      linkStatus: "review_required",
+      requiresManualApproval: true,
+      warningReason: "promotion_gate_review",
+    },
     latestUpdatedAt: "2026-05-21T08:00:00.000Z",
     targetStateId: "state-123",
     sourceUri: "file:///docs/architecture.md",
@@ -94,6 +104,7 @@ const mockCandidateItems = [
         summary: ["Low overlap"],
       },
     },
+    landscapeWarning: null,
     latestUpdatedAt: "invalid-date-format",
     targetStateId: "state-456",
     sourceUri: "file:///mem-vibe-abc",
@@ -108,6 +119,7 @@ const mockStats = {
   rejected: 0,
   retryable: 0,
   targetPending: 0,
+  candidateOnly: 0,
 };
 
 describe("CandidatesPage", () => {
@@ -116,6 +128,7 @@ describe("CandidatesPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRefetch.mockResolvedValue({} as any);
+    window.history.replaceState({}, "", "/candidates");
 
     vi.mocked(useQuery).mockReturnValue({
       data: {
@@ -151,9 +164,28 @@ describe("CandidatesPage", () => {
     // Coverage & Outcome バッジの検証
     expect(screen.getByText("knowledge_ready")).toBeInTheDocument();
     expect(screen.getAllByText("ready_not_finalized").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Landscape warning")).toBeInTheDocument();
+    expect(screen.getByText("promotion gate review required")).toBeInTheDocument();
 
     // Stats フッターの検証
     expect(screen.getByText(/total 2 \| stored 1 \| ready 1/)).toBeInTheDocument();
+  });
+
+  it("reads targetStateId from query and shows active filter", () => {
+    window.history.replaceState({}, "", "/candidates?targetStateId=state-999");
+    render(
+      <QueryClientProvider client={queryClient}>
+        <CandidatesPage />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("targetStateId: state-999")).toBeInTheDocument();
+
+    const latestCall = vi.mocked(useQuery).mock.calls.at(-1)?.[0] as
+      | { queryKey?: unknown[] }
+      | undefined;
+    const latestQueryState = latestCall?.queryKey?.[1] as Record<string, unknown> | undefined;
+    expect(latestQueryState?.targetStateIdFilter).toBe("state-999");
   });
 
   it("handles filtering elements and text queries interactively", () => {

@@ -225,6 +225,67 @@ export async function claimNextDistillationTargetState(
   return claimed;
 }
 
+export async function claimDistillationTargetStateById(params: {
+  id: string;
+  distillationVersion?: string;
+  targetKind?: DistillationTargetKind;
+  worker?: string;
+  now?: Date;
+}): Promise<DistillationTargetStateRow | null> {
+  const now = params.now ?? new Date();
+  const nowUtc = sql`${now.toISOString()}::timestamptz at time zone 'UTC'`;
+  const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
+  const targetKind = params.targetKind ?? null;
+  const lockOwner = params.worker?.trim() || workerId();
+
+  const claimed = await db.transaction(async (tx) => {
+    const selected = await tx.execute(sql`
+      select id
+      from distillation_target_states
+      where id = ${params.id}
+        and distillation_version = ${distillationVersion}
+        and (${targetKind}::text is null or target_kind = ${targetKind})
+        and (
+          status = 'pending'
+          or (
+            status = 'paused'
+            and (next_retry_at is null or next_retry_at <= ${nowUtc})
+          )
+        )
+      for update skip locked
+      limit 1
+    `);
+    const id = (selected.rows as Array<{ id?: string }>)[0]?.id;
+    if (!id) return null;
+
+    const [row] = await tx
+      .update(distillationTargetStates)
+      .set({
+        status: "running",
+        phase: "selected",
+        lockedBy: lockOwner,
+        lockedAt: now,
+        heartbeatAt: now,
+        nextRetryAt: null,
+        attemptCount: sql`${distillationTargetStates.attemptCount} + 1` as never,
+        updatedAt: now,
+      })
+      .where(eq(distillationTargetStates.id, id))
+      .returning();
+    return row ?? null;
+  });
+
+  if (claimed) {
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.distillationTargetClaimed,
+      actor: "system",
+      payload: targetIdentity(claimed),
+    });
+  }
+
+  return claimed;
+}
+
 export async function updateDistillationTargetHeartbeat(
   id: string,
   lease?: TargetLease,

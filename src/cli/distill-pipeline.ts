@@ -10,6 +10,7 @@ import { type FileLockHandle, acquireFileLock } from "./file-lock.js";
 type CliOptions = {
   kind: "auto" | "wiki" | "vibe" | "candidate";
   limit: number;
+  targetStateId?: string;
   write: boolean;
   refresh: boolean;
   continuous: boolean;
@@ -76,6 +77,11 @@ function parseArgs(args: string[]): CliOptions {
     } else if (arg === "--version" || arg.startsWith("--version=")) {
       options.distillationVersion = readArgValue(args, index, "--version").trim();
       if (arg === "--version") index += 1;
+    } else if (arg === "--target-state-id" || arg.startsWith("--target-state-id=")) {
+      const value = readArgValue(args, index, "--target-state-id").trim();
+      if (arg === "--target-state-id") index += 1;
+      if (!value) throw new Error("--target-state-id must not be empty");
+      options.targetStateId = value;
     } else if (arg === "--provider" || arg.startsWith("--provider=")) {
       const value = readArgValue(args, index, "--provider").trim();
       if (arg === "--provider") index += 1;
@@ -129,6 +135,7 @@ function pipelineInput(
   return {
     kind: options.kind,
     limit,
+    targetStateId: options.targetStateId,
     worker: options.worker,
     provider: options.provider,
     distillationVersion: options.distillationVersion,

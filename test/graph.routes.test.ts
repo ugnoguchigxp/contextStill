@@ -11,18 +11,30 @@ const {
   buildLandscapeReplaySnapshotMock,
   buildLandscapeSnapshotMock,
   createLandscapeReviewCandidatesMock,
+  updateLandscapeReviewCandidateLinkMock,
   listLandscapeReviewItemsMock,
   materializeLandscapeReviewItemsMock,
   updateLandscapeReviewItemStatusMock,
+  LandscapeReviewCandidateLinkErrorMock,
   LandscapeReviewItemsErrorMock,
 } = vi.hoisted(() => ({
   buildLandscapeReplayComparisonMock: vi.fn(),
   buildLandscapeReplaySnapshotMock: vi.fn(),
   buildLandscapeSnapshotMock: vi.fn(),
   createLandscapeReviewCandidatesMock: vi.fn(),
+  updateLandscapeReviewCandidateLinkMock: vi.fn(),
   listLandscapeReviewItemsMock: vi.fn(),
   materializeLandscapeReviewItemsMock: vi.fn(),
   updateLandscapeReviewItemStatusMock: vi.fn(),
+  LandscapeReviewCandidateLinkErrorMock: class LandscapeReviewCandidateLinkErrorMock extends Error {
+    readonly statusCode: number;
+
+    constructor(statusCode: number, message: string) {
+      super(message);
+      this.name = "LandscapeReviewCandidateLinkError";
+      this.statusCode = statusCode;
+    }
+  },
   LandscapeReviewItemsErrorMock: class LandscapeReviewItemsErrorMock extends Error {
     readonly statusCode: number;
 
@@ -55,6 +67,8 @@ vi.mock("../src/modules/landscape/landscape-review-items.service.js", () => ({
 
 vi.mock("../src/modules/landscape/landscape-review-candidate.service.js", () => ({
   createLandscapeReviewCandidates: createLandscapeReviewCandidatesMock,
+  updateLandscapeReviewCandidateLink: updateLandscapeReviewCandidateLinkMock,
+  LandscapeReviewCandidateLinkError: LandscapeReviewCandidateLinkErrorMock,
 }));
 
 vi.mock("../api/modules/graph/graph.repository.js", () => ({
@@ -379,6 +393,21 @@ describe("graph routes landscape", () => {
         },
       ],
     });
+    updateLandscapeReviewCandidateLinkMock.mockResolvedValue({
+      link: {
+        id: "link-1",
+        reviewItemId: "review-item-1",
+        targetStateId: "target-1",
+        findCandidateResultId: "candidate-1",
+        candidateKey: "landscape-review-item:review-item-1:baseline_wrong:abc",
+        status: "approved",
+        approvalNote: "approved manually",
+        approvedBy: "reviewer",
+        approvedAt: "2026-05-24T00:20:00.000Z",
+        createdAt: "2026-05-24T00:00:00.000Z",
+        updatedAt: "2026-05-24T00:20:00.000Z",
+      },
+    });
     listLandscapeReviewItemsMock.mockResolvedValue({
       count: 1,
       items: [
@@ -615,6 +644,59 @@ describe("graph routes landscape", () => {
     const json = await response.json();
     expect(json.result.processedCount).toBe(1);
     expect(json.result.items).toHaveLength(1);
+  });
+
+  test("PATCH /api/graph/landscape/review-items/:id/candidate-links/:linkId updates approval status", async () => {
+    const app = buildApp();
+    const response = await app.request(
+      "/api/graph/landscape/review-items/review-item-1/candidate-links/link-1",
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "approved",
+          note: "approved manually",
+          actor: "reviewer",
+        }),
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(updateLandscapeReviewCandidateLinkMock).toHaveBeenCalledWith("review-item-1", "link-1", {
+      status: "approved",
+      note: "approved manually",
+      actor: "reviewer",
+    });
+    const json = await response.json();
+    expect(json.link.status).toBe("approved");
+    expect(json.link.id).toBe("link-1");
+  });
+
+  test("PATCH /api/graph/landscape/review-items/:id/candidate-links/:linkId returns 409 on invalid transition", async () => {
+    const app = buildApp();
+    updateLandscapeReviewCandidateLinkMock.mockRejectedValueOnce(
+      new LandscapeReviewCandidateLinkErrorMock(
+        409,
+        "invalid link status transition: finalized -> approved",
+      ),
+    );
+    const response = await app.request(
+      "/api/graph/landscape/review-items/review-item-1/candidate-links/link-1",
+      {
+        method: "PATCH",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          status: "approved",
+        }),
+      },
+    );
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toEqual({
+      error: "invalid link status transition: finalized -> approved",
+    });
   });
 
   test("GET /api/graph/landscape/review-items parses filters", async () => {

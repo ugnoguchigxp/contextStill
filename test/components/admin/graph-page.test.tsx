@@ -940,6 +940,9 @@ describe("GraphPage", () => {
     });
 
     expect(await screen.findByText("Draft linked")).toBeInTheDocument();
+    expect(await screen.findByText(/warning: promotion gate review required/i)).toBeInTheDocument();
+    const candidateLinks = await screen.findAllByRole("link", { name: "View Candidate" });
+    expect(candidateLinks[0]).toHaveAttribute("href", "/candidates?targetStateId=target-1");
 
     const resolveButtons = await screen.findAllByRole("button", { name: "Resolve" });
     fireEvent.click(resolveButtons[0]);

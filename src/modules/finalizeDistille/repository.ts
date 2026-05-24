@@ -15,6 +15,16 @@ export async function selectKnowledgeByFinalizeSourceUri(
   return row ?? null;
 }
 
+export async function listKnowledgeIdsByTargetStateId(targetStateId: string): Promise<string[]> {
+  const normalized = targetStateId.trim();
+  if (!normalized) return [];
+  const rows = await db
+    .select({ id: knowledgeItems.id })
+    .from(knowledgeItems)
+    .where(sql`${knowledgeItems.metadata} ->> 'targetStateId' = ${normalized}`);
+  return rows.map((row) => row.id);
+}
+
 export async function findSourceFragmentByReference(params: {
   uri: string;
   locator?: string;

@@ -2,13 +2,25 @@ import { createHash } from "node:crypto";
 import {
   type LandscapeReviewCandidateCreateInput,
   type LandscapeReviewCandidateCreateResult,
+  type LandscapeReviewCandidateLink,
+  type LandscapeReviewCandidateLinkUpdateInput,
+  type LandscapeReviewCandidateLinkUpdateResult,
   landscapeReviewCandidateCreateInputSchema,
   landscapeReviewCandidateCreateResultSchema,
+  landscapeReviewCandidateLinkSchema,
+  landscapeReviewCandidateLinkUpdateInputSchema,
+  landscapeReviewCandidateLinkUpdateResultSchema,
 } from "../../shared/schemas/landscape-review-candidate.schema.js";
 import type { LandscapeReviewItemProposedAction } from "../../shared/schemas/landscape-review.schema.js";
 import {
+  LandscapeReviewCandidateLinkError,
+  type LandscapeReviewItemCandidateLinkRow,
   type LandscapeReviewItemCandidateSourceRow,
+  findLandscapeReviewCandidateLinkByFindCandidateResultId,
   listLandscapeReviewItemsForCandidateDraft,
+  markLandscapeReviewCandidateLinkFinalized,
+  markLandscapeReviewCandidateLinkReviewRequired,
+  updateLandscapeReviewCandidateLinkStatus,
   upsertLandscapeReviewItemCandidateDraft,
 } from "./landscape-review-candidate.repository.js";
 import type {
@@ -191,6 +203,22 @@ function buildDraftFromReviewItem(
   };
 }
 
+function mapLinkRow(row: LandscapeReviewItemCandidateLinkRow): LandscapeReviewCandidateLink {
+  return landscapeReviewCandidateLinkSchema.parse({
+    id: row.id,
+    reviewItemId: row.reviewItemId,
+    targetStateId: row.targetStateId,
+    findCandidateResultId: row.findCandidateResultId,
+    candidateKey: row.candidateKey,
+    status: row.status,
+    approvalNote: row.approvalNote ?? null,
+    approvedBy: row.approvedBy ?? null,
+    approvedAt: row.approvedAt ? row.approvedAt.toISOString() : null,
+    createdAt: row.createdAt.toISOString(),
+    updatedAt: row.updatedAt.toISOString(),
+  });
+}
+
 export async function createLandscapeReviewCandidates(
   input: LandscapeReviewCandidateCreateInput,
 ): Promise<CreateLandscapeReviewCandidatesResult> {
@@ -271,4 +299,53 @@ export async function createLandscapeReviewCandidates(
     missingIds,
     items: resultItems,
   });
+}
+
+export { LandscapeReviewCandidateLinkError };
+
+export async function updateLandscapeReviewCandidateLink(
+  reviewItemId: string,
+  linkId: string,
+  input: LandscapeReviewCandidateLinkUpdateInput,
+): Promise<LandscapeReviewCandidateLinkUpdateResult | null> {
+  const parsed = landscapeReviewCandidateLinkUpdateInputSchema.parse(input);
+  const updated = await updateLandscapeReviewCandidateLinkStatus({
+    reviewItemId,
+    linkId,
+    status: parsed.status,
+    note: parsed.note,
+    actor: parsed.actor,
+  });
+  if (!updated) return null;
+  return landscapeReviewCandidateLinkUpdateResultSchema.parse({
+    link: mapLinkRow(updated),
+  });
+}
+
+export async function getLandscapeReviewLinkForFinalize(findCandidateResultId: string): Promise<{
+  status: LandscapeReviewCandidateLink["status"];
+  linkId: string;
+} | null> {
+  const link = await findLandscapeReviewCandidateLinkByFindCandidateResultId(findCandidateResultId);
+  if (!link) return null;
+  return {
+    status: mapLinkRow(link).status,
+    linkId: link.id,
+  };
+}
+
+export async function markLandscapeReviewLinkFinalizedForCandidate(
+  findCandidateResultId: string,
+): Promise<LandscapeReviewCandidateLink["status"] | null> {
+  const link = await markLandscapeReviewCandidateLinkFinalized(findCandidateResultId);
+  if (!link) return null;
+  return mapLinkRow(link).status;
+}
+
+export async function markLandscapeReviewLinkReviewRequiredForCandidate(
+  findCandidateResultId: string,
+): Promise<LandscapeReviewCandidateLink["status"] | null> {
+  const link = await markLandscapeReviewCandidateLinkReviewRequired(findCandidateResultId);
+  if (!link) return null;
+  return mapLinkRow(link).status;
 }

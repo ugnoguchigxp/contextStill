@@ -5,6 +5,7 @@ const mocks = vi.hoisted(() => ({
   refreshDistillationTargetInventory: vi.fn(),
   recoverStaleDistillationTargets: vi.fn(),
   releaseRetryablePausedDistillationTargets: vi.fn(),
+  claimDistillationTargetStateById: vi.fn(),
   claimNextDistillationTargetState: vi.fn(),
   updateDistillationTargetPhase: vi.fn(),
   updateDistillationTargetHeartbeat: vi.fn(),
@@ -18,6 +19,7 @@ const mocks = vi.hoisted(() => ({
   coverEvidenceResultFromRow: vi.fn(),
   saveCoverEvidenceResult: vi.fn(),
   runFinalizeDistille: vi.fn(),
+  listKnowledgeIdsByTargetStateId: vi.fn(),
 }));
 
 vi.mock("../src/modules/selectDistillationTarget/inventory.service.js", () => ({
@@ -28,6 +30,7 @@ vi.mock("../src/modules/selectDistillationTarget/repository.js", () => ({
   DEFAULT_DISTILLATION_TARGET_VERSION: "test-version",
   recoverStaleDistillationTargets: mocks.recoverStaleDistillationTargets,
   releaseRetryablePausedDistillationTargets: mocks.releaseRetryablePausedDistillationTargets,
+  claimDistillationTargetStateById: mocks.claimDistillationTargetStateById,
   claimNextDistillationTargetState: mocks.claimNextDistillationTargetState,
   updateDistillationTargetPhase: mocks.updateDistillationTargetPhase,
   updateDistillationTargetHeartbeat: mocks.updateDistillationTargetHeartbeat,
@@ -56,6 +59,10 @@ vi.mock("../src/modules/coverEvidence/runner.js", () => ({
 
 vi.mock("../src/modules/finalizeDistille/domain.js", () => ({
   runFinalizeDistille: mocks.runFinalizeDistille,
+}));
+
+vi.mock("../src/modules/finalizeDistille/repository.js", () => ({
+  listKnowledgeIdsByTargetStateId: mocks.listKnowledgeIdsByTargetStateId,
 }));
 
 function targetRow(overrides: Record<string, unknown> = {}) {
@@ -92,6 +99,7 @@ describe("runDistillationPipeline", () => {
     mocks.refreshDistillationTargetInventory.mockResolvedValue({});
     mocks.recoverStaleDistillationTargets.mockResolvedValue({});
     mocks.releaseRetryablePausedDistillationTargets.mockResolvedValue({});
+    mocks.claimDistillationTargetStateById.mockResolvedValue(null);
     mocks.claimNextDistillationTargetState.mockResolvedValue(targetRow());
     mocks.updateDistillationTargetPhase.mockResolvedValue({});
     mocks.updateDistillationTargetHeartbeat.mockResolvedValue({});
@@ -115,6 +123,7 @@ describe("runDistillationPipeline", () => {
       reason: row.reason ?? null,
     }));
     mocks.saveCoverEvidenceResult.mockResolvedValue({});
+    mocks.listKnowledgeIdsByTargetStateId.mockResolvedValue(["knowledge-1"]);
     mocks.runFindCandidate.mockResolvedValue({
       targetStateId: "target-1",
       targetKind: "wiki_file",
@@ -162,7 +171,76 @@ describe("runDistillationPipeline", () => {
     );
   });
 
-  test("reruns reprocess_requested cover evidence instead of reusing it", async () => {
+  test("processes only the requested targetStateId when provided", async () => {
+    mocks.claimDistillationTargetStateById.mockResolvedValue(targetRow({ id: "target-specific" }));
+
+    const result = await runDistillationPipeline({
+      write: true,
+      refresh: false,
+      limit: 5,
+      targetStateId: "target-specific",
+    });
+
+    expect(mocks.claimDistillationTargetStateById).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "target-specific",
+        distillationVersion: "test-version",
+      }),
+    );
+    expect(mocks.claimNextDistillationTargetState).not.toHaveBeenCalled();
+    expect(result.processed).toBe(1);
+    expect(result.results[0]?.targetStateId).toBe("target-specific");
+  });
+
+  test("does not re-finalize already-ready candidates when knowledge is already stored", async () => {
+    mocks.listFindCandidateResultsByTargetStateId.mockResolvedValue([
+      {
+        id: "candidate-1",
+        targetStateId: "target-1",
+        candidateIndex: 0,
+        title: "T",
+        content: "B",
+        origin: { candidateType: "rule" },
+        status: "selected",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        targetKind: "wiki_file",
+        targetKey: "pipeline.md",
+        sourceUri: "/wiki/pages/pipeline.md",
+      },
+    ]);
+    mocks.listCoverEvidenceResultsByTargetStateId.mockResolvedValue([
+      {
+        id: "candidate-1",
+        status: "knowledge_ready",
+        stage: "final",
+        reason: null,
+      },
+    ]);
+    mocks.coverEvidenceResultFromRow.mockReturnValue({
+      schemaVersion: 1,
+      status: "knowledge_ready",
+      stage: "final",
+      candidate: null,
+      references: [],
+      duplicateRefs: [],
+      toolEvents: [],
+      reason: null,
+    });
+    mocks.listKnowledgeIdsByTargetStateId.mockResolvedValue(["knowledge-existing"]);
+
+    const result = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
+
+    expect(mocks.runCoverEvidenceForCandidate).not.toHaveBeenCalled();
+    expect(mocks.runFinalizeDistille).not.toHaveBeenCalled();
+    expect(result.results[0]).toMatchObject({
+      status: "completed",
+      outcomeKind: "knowledge_finalized",
+      knowledgeIds: ["knowledge-existing"],
+    });
+  });
+
+  test("pauses target when retryable cover evidence remains and nothing becomes ready", async () => {
     mocks.listFindCandidateResultsByTargetStateId.mockResolvedValue([
       {
         id: "candidate-1",
@@ -200,16 +278,14 @@ describe("runDistillationPipeline", () => {
 
     const result = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
 
-    expect(mocks.runCoverEvidenceForCandidate).toHaveBeenCalledWith(
-      expect.objectContaining({ findCandidateId: "candidate-1" }),
-    );
+    expect(mocks.runCoverEvidenceForCandidate).not.toHaveBeenCalled();
     expect(result.results[0]).toMatchObject({
-      status: "completed",
-      outcomeKind: "knowledge_finalized",
+      status: "paused",
+      outcomeKind: "cover_evidence_retryable",
     });
   });
 
-  test("times out one candidate and continues with the next candidate", async () => {
+  test("times out one candidate and completes after next run processes another candidate", async () => {
     vi.useFakeTimers();
     try {
       mocks.runFindCandidate.mockResolvedValue({
@@ -258,9 +334,9 @@ describe("runDistillationPipeline", () => {
         reason: null,
       });
 
-      const pending = runDistillationPipeline({ write: true, refresh: false, limit: 1 });
+      const firstPending = runDistillationPipeline({ write: true, refresh: false, limit: 1 });
       await vi.advanceTimersByTimeAsync(600_000);
-      const result = await pending;
+      const first = await firstPending;
 
       expect(mocks.saveCoverEvidenceResult).toHaveBeenCalledWith(
         expect.objectContaining({
@@ -271,13 +347,60 @@ describe("runDistillationPipeline", () => {
           }),
         }),
       );
+      expect(first.results[0]).toMatchObject({
+        status: "paused",
+        outcomeKind: "cover_evidence_checkpoint",
+      });
+
+      mocks.listFindCandidateResultsByTargetStateId.mockResolvedValue([
+        {
+          id: "candidate-slow",
+          targetStateId: "target-1",
+          candidateIndex: 0,
+          title: "Slow",
+          content: "Candidate that does not finish",
+          origin: { candidateType: "rule" },
+          status: "selected",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          targetKind: "wiki_file",
+          targetKey: "pipeline.md",
+          sourceUri: "/wiki/pages/pipeline.md",
+        },
+        {
+          id: "candidate-ready",
+          targetStateId: "target-1",
+          candidateIndex: 1,
+          title: "Ready",
+          content: "Candidate that should still be finalized",
+          origin: { candidateType: "rule" },
+          status: "selected",
+          createdAt: new Date(),
+          updatedAt: new Date(),
+          targetKind: "wiki_file",
+          targetKey: "pipeline.md",
+          sourceUri: "/wiki/pages/pipeline.md",
+        },
+      ]);
+      mocks.listCoverEvidenceResultsByTargetStateId.mockResolvedValue([
+        {
+          id: "candidate-slow",
+          status: "provider_failed",
+          stage: "final",
+          reason: "candidate_timeout",
+          updatedAt: new Date(),
+        },
+      ]);
+      mocks.listKnowledgeIdsByTargetStateId.mockResolvedValue(["knowledge-ready"]);
+      const second = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
+
       expect(mocks.runCoverEvidenceForCandidate).toHaveBeenCalledWith(
         expect.objectContaining({ findCandidateId: "candidate-ready" }),
       );
       expect(mocks.runFinalizeDistille).toHaveBeenCalledWith(
         expect.objectContaining({ coverEvidenceResultId: "candidate-ready" }),
       );
-      expect(result.results[0]).toMatchObject({
+      expect(second.results[0]).toMatchObject({
         status: "completed",
         outcomeKind: "knowledge_finalized_with_retryable_rejections",
         knowledgeIds: ["knowledge-ready"],

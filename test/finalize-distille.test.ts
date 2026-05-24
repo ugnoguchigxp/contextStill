@@ -10,6 +10,9 @@ const mocks = vi.hoisted(() => ({
   linkKnowledgeToSourceFragment: vi.fn(),
   findSourceFragmentByReference: vi.fn(),
   selectKnowledgeByFinalizeSourceUri: vi.fn(),
+  getLandscapeReviewLinkForFinalize: vi.fn(),
+  markLandscapeReviewLinkFinalizedForCandidate: vi.fn(),
+  markLandscapeReviewLinkReviewRequiredForCandidate: vi.fn(),
   recordAuditLogSafe: vi.fn(),
 }));
 
@@ -37,6 +40,13 @@ vi.mock("../src/modules/finalizeDistille/source-link.repository.js", () => ({
 vi.mock("../src/modules/finalizeDistille/repository.js", () => ({
   findSourceFragmentByReference: mocks.findSourceFragmentByReference,
   selectKnowledgeByFinalizeSourceUri: mocks.selectKnowledgeByFinalizeSourceUri,
+}));
+
+vi.mock("../src/modules/landscape/landscape-review-candidate.service.js", () => ({
+  getLandscapeReviewLinkForFinalize: mocks.getLandscapeReviewLinkForFinalize,
+  markLandscapeReviewLinkFinalizedForCandidate: mocks.markLandscapeReviewLinkFinalizedForCandidate,
+  markLandscapeReviewLinkReviewRequiredForCandidate:
+    mocks.markLandscapeReviewLinkReviewRequiredForCandidate,
 }));
 
 vi.mock("../src/modules/audit/audit-log.service.js", () => ({
@@ -105,6 +115,9 @@ describe("runFinalizeDistille", () => {
     mocks.upsertKnowledgeFromSource.mockResolvedValue("knowledge-1");
     mocks.findSourceFragmentByReference.mockResolvedValue(null);
     mocks.selectKnowledgeByFinalizeSourceUri.mockResolvedValue(null);
+    mocks.getLandscapeReviewLinkForFinalize.mockResolvedValue(null);
+    mocks.markLandscapeReviewLinkFinalizedForCandidate.mockResolvedValue(null);
+    mocks.markLandscapeReviewLinkReviewRequiredForCandidate.mockResolvedValue(null);
   });
 
   test("stores draft knowledge with cover evidence metadata", async () => {
@@ -249,6 +262,61 @@ describe("runFinalizeDistille", () => {
     expect(mocks.upsertKnowledgeFromSource).toHaveBeenCalledWith(
       expect.objectContaining({ embedding: undefined }),
     );
+  });
+
+  test("rejects landscape candidate until manual approval is granted", async () => {
+    mocks.getFindCandidateResultById.mockResolvedValue({
+      id: "find-1",
+      targetStateId: "target-landscape-1",
+      candidateIndex: 0,
+      title: "Landscape candidate",
+      content: "candidate body",
+      origin: { source: "landscape_review_item", reviewItemId: "review-item-1" },
+      status: "selected",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      targetKind: "knowledge_candidate",
+      targetKey: "landscape-review-item:review-item-1:baseline_wrong:hash",
+      sourceUri: "landscape://review-item/review-item-1/candidate/hash",
+    });
+    mocks.getLandscapeReviewLinkForFinalize.mockResolvedValue({
+      status: "draft_created",
+      linkId: "link-1",
+    });
+
+    const result = await runFinalizeDistille({ coverEvidenceResultId: "find-1", write: true });
+
+    expect(result.status).toBe("rejected");
+    expect(result.reason).toBe("landscape_manual_approval_required");
+    expect(mocks.markLandscapeReviewLinkReviewRequiredForCandidate).toHaveBeenCalledWith("find-1");
+    expect(mocks.upsertKnowledgeFromSource).not.toHaveBeenCalled();
+  });
+
+  test("finalizes landscape candidate after approval", async () => {
+    mocks.getFindCandidateResultById.mockResolvedValue({
+      id: "find-1",
+      targetStateId: "target-landscape-1",
+      candidateIndex: 0,
+      title: "Landscape candidate",
+      content: "candidate body",
+      origin: { source: "landscape_review_item", reviewItemId: "review-item-1" },
+      status: "selected",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      targetKind: "knowledge_candidate",
+      targetKey: "landscape-review-item:review-item-1:baseline_wrong:hash",
+      sourceUri: "landscape://review-item/review-item-1/candidate/hash",
+    });
+    mocks.getLandscapeReviewLinkForFinalize.mockResolvedValue({
+      status: "approved",
+      linkId: "link-1",
+    });
+
+    const result = await runFinalizeDistille({ coverEvidenceResultId: "find-1", write: true });
+
+    expect(result.status).toBe("stored");
+    expect(result.knowledgeId).toBe("knowledge-1");
+    expect(mocks.markLandscapeReviewLinkFinalizedForCandidate).toHaveBeenCalledWith("find-1");
   });
 
   test("links only resolvable source fragments", async () => {
