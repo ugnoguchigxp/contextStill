@@ -1,7 +1,7 @@
-import { and, asc, eq, inArray, sql } from "drizzle-orm";
+import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { APP_CONSTANTS } from "../../constants.js";
 import { db } from "../../db/index.js";
-import { distillationTargetStates } from "../../db/schema.js";
+import { distillationTargetStates, findCandidateResults } from "../../db/schema.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import {
   ensureRuntimeSettingsLoaded,
@@ -205,6 +205,7 @@ export async function claimNextDistillationTargetState(
     targetKind?: DistillationTargetKind;
     worker?: string;
     now?: Date;
+    requireCandidateResultsForSourceTargets?: boolean;
   } = {},
 ): Promise<DistillationTargetStateRow | null> {
   await ensureRuntimeSettingsLoaded();
@@ -215,6 +216,8 @@ export async function claimNextDistillationTargetState(
   const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
   const targetKind = params.targetKind ?? null;
   const lockOwner = params.worker?.trim() || workerId();
+  const requireCandidateResultsForSourceTargets =
+    params.requireCandidateResultsForSourceTargets ?? false;
 
   const claimed = await db.transaction(async (tx) => {
     const selected = await tx.execute(sql`
@@ -227,6 +230,15 @@ export async function claimNextDistillationTargetState(
           or (
             status = 'paused'
             and (next_retry_at is null or next_retry_at <= ${nowUtc})
+          )
+        )
+        and (
+          ${requireCandidateResultsForSourceTargets} = false
+          or target_kind = 'knowledge_candidate'
+          or exists (
+            select 1
+            from find_candidate_results
+            where target_state_id = distillation_target_states.id
           )
         )
       order by
@@ -329,6 +341,148 @@ export async function claimDistillationTargetStateById(params: {
   return claimed;
 }
 
+export async function findNextFindCandidateTargetState(params: {
+  distillationVersion?: string;
+  targetKinds: DistillationTargetKind[];
+  now?: Date;
+}): Promise<DistillationTargetStateRow | null> {
+  await ensureRuntimeSettingsLoaded();
+  if (params.targetKinds.length === 0) return null;
+  const now = params.now ?? new Date();
+  const priorityOrder = priorityGroupsFromRuntimeSettings();
+  const priorityRankCase = buildPriorityRankCase(priorityOrder);
+  const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
+
+  const rows = await db
+    .select()
+    .from(distillationTargetStates)
+    .where(
+      and(
+        eq(distillationTargetStates.distillationVersion, distillationVersion),
+        inArray(distillationTargetStates.targetKind, params.targetKinds),
+        statusEligibility(now),
+        sql`not exists (
+          select 1
+          from ${findCandidateResults}
+          where ${findCandidateResults.targetStateId} = ${distillationTargetStates.id}
+        )`,
+        sql`not exists (
+          select 1
+          from ${distillationTargetStates} running_target
+          where running_target.distillation_version = ${distillationVersion}
+            and running_target.status = 'running'
+            and running_target.phase = 'finding_candidate'
+        )`,
+      ),
+    )
+    .orderBy(
+      priorityRankCase,
+      asc(distillationTargetStates.sortKey),
+      asc(distillationTargetStates.createdAt),
+      asc(distillationTargetStates.id),
+    )
+    .limit(1);
+
+  return rows[0] ?? null;
+}
+
+export async function claimFindCandidateTargetStateById(params: {
+  id: string;
+  distillationVersion?: string;
+  targetKind: DistillationTargetKind;
+  worker?: string;
+  now?: Date;
+}): Promise<DistillationTargetStateRow | null> {
+  const now = params.now ?? new Date();
+  const nowUtc = sql`${now.toISOString()}::timestamptz at time zone 'UTC'`;
+  const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
+  const lockOwner = params.worker?.trim() || workerId();
+
+  const claimed = await db.transaction(async (tx) => {
+    await tx.execute(
+      sql`select pg_advisory_xact_lock(hashtext(${`distillation_find_candidate:${distillationVersion}`}))`,
+    );
+    const selected = await tx.execute(sql`
+      select id
+      from distillation_target_states
+      where id = ${params.id}
+        and distillation_version = ${distillationVersion}
+        and target_kind = ${params.targetKind}
+        and (
+          status = 'pending'
+          or (
+            status = 'paused'
+            and (next_retry_at is null or next_retry_at <= ${nowUtc})
+          )
+        )
+        and not exists (
+          select 1
+          from find_candidate_results
+          where target_state_id = distillation_target_states.id
+        )
+        and not exists (
+          select 1
+          from distillation_target_states running_target
+          where running_target.distillation_version = ${distillationVersion}
+            and running_target.status = 'running'
+            and running_target.phase = 'finding_candidate'
+        )
+      for update skip locked
+      limit 1
+    `);
+    const id = (selected.rows as Array<{ id?: string }>)[0]?.id;
+    if (!id) return null;
+
+    const [row] = await tx
+      .update(distillationTargetStates)
+      .set({
+        status: "running",
+        phase: "finding_candidate",
+        lockedBy: lockOwner,
+        lockedAt: now,
+        heartbeatAt: now,
+        nextRetryAt: null,
+        attemptCount: sql`${distillationTargetStates.attemptCount} + 1` as never,
+        updatedAt: now,
+      })
+      .where(eq(distillationTargetStates.id, id))
+      .returning();
+    return row ?? null;
+  });
+
+  if (claimed) {
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.distillationTargetClaimed,
+      actor: "system",
+      payload: targetIdentity(claimed),
+    });
+  }
+
+  return claimed;
+}
+
+export async function hasRunningFindCandidateTargetState(params: {
+  distillationVersion?: string;
+  excludeTargetStateId?: string;
+}): Promise<boolean> {
+  const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
+  const conditions: SQL[] = [
+    eq(distillationTargetStates.distillationVersion, distillationVersion),
+    eq(distillationTargetStates.status, "running"),
+    eq(distillationTargetStates.phase, "finding_candidate"),
+  ];
+  if (params.excludeTargetStateId) {
+    conditions.push(sql`${distillationTargetStates.id} <> ${params.excludeTargetStateId}`);
+  }
+
+  const [row] = await db
+    .select({ id: distillationTargetStates.id })
+    .from(distillationTargetStates)
+    .where(and(...conditions))
+    .limit(1);
+  return Boolean(row);
+}
+
 export async function updateDistillationTargetHeartbeat(
   id: string,
   lease?: TargetLease,
@@ -362,7 +516,41 @@ export async function updateDistillationTargetPhase(params: {
   id: string;
   phase: DistillationTargetPhase;
   lease?: TargetLease;
+  distillationVersion?: string;
+  requireNoOtherRunningFindCandidate?: boolean;
 }): Promise<DistillationTargetStateRow | null> {
+  const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
+  const findCandidateExclusive =
+    params.requireNoOtherRunningFindCandidate && params.phase === "finding_candidate";
+  if (findCandidateExclusive) {
+    return db.transaction(async (tx) => {
+      await tx.execute(
+        sql`select pg_advisory_xact_lock(hashtext(${`distillation_find_candidate:${distillationVersion}`}))`,
+      );
+      const [row] = await tx
+        .update(distillationTargetStates)
+        .set({
+          phase: params.phase,
+          updatedAt: new Date(),
+        })
+        .where(
+          and(
+            targetLeaseWhere(params.id, params.lease),
+            sql`not exists (
+              select 1
+              from ${distillationTargetStates} running_target
+              where running_target.distillation_version = ${distillationVersion}
+                and running_target.status = 'running'
+                and running_target.phase = 'finding_candidate'
+                and running_target.id <> ${params.id}
+            )`,
+          ),
+        )
+        .returning();
+      return row ?? null;
+    });
+  }
+
   const [row] = await db
     .update(distillationTargetStates)
     .set({
@@ -422,6 +610,49 @@ export async function finishDistillationTargetState(params: {
         ? (sql`${distillationTargetStates.metadata} || ${JSON.stringify(params.metadata)}::jsonb` as never)
         : undefined,
       completedAt: now,
+      updatedAt: now,
+    })
+    .where(targetLeaseWhere(params.id, params.lease))
+    .returning();
+
+  if (row) {
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.distillationTargetStatusChanged,
+      actor: "system",
+      payload: {
+        ...targetIdentity(row),
+        outcomeKind: params.outcomeKind ?? null,
+      },
+    });
+  }
+
+  return row ?? null;
+}
+
+export async function releaseDistillationTargetState(params: {
+  id: string;
+  phase: DistillationTargetPhase;
+  outcomeKind?: string | null;
+  candidateCount?: number;
+  metadata?: Record<string, unknown>;
+  lease?: TargetLease;
+}): Promise<DistillationTargetStateRow | null> {
+  const now = new Date();
+  const [row] = await db
+    .update(distillationTargetStates)
+    .set({
+      status: "pending",
+      phase: params.phase,
+      lockedBy: null,
+      lockedAt: null,
+      heartbeatAt: null,
+      nextRetryAt: null,
+      lastOutcomeKind: params.outcomeKind ?? null,
+      lastError: null,
+      candidateCount: params.candidateCount,
+      metadata: params.metadata
+        ? (sql`${distillationTargetStates.metadata} || ${JSON.stringify(params.metadata)}::jsonb` as never)
+        : undefined,
       updatedAt: now,
     })
     .where(targetLeaseWhere(params.id, params.lease))

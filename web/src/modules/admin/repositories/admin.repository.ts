@@ -2506,6 +2506,18 @@ export type DistillationTargetState = {
 export type QueueDashboardStats = {
   stats: Record<string, number>;
   kinds: Record<string, number>;
+  providerPressure: {
+    azureOpenai: {
+      provider: "azure-openai";
+      model: string | null;
+      status: "ok" | "cooldown";
+      cooldownUntil: string | null;
+      reason: string | null;
+      source: string | null;
+      lastRateLimitedAt: string | null;
+      updatedAt: string | null;
+    };
+  };
 };
 
 export type QueueListResponse = {

@@ -53,6 +53,23 @@ function formatRelativeTime(dateStr: string | null): string {
   });
 }
 
+function formatCooldownCountdown(cooldownUntil: string | null): string {
+  if (!cooldownUntil) return "active";
+  const untilMs = Date.parse(cooldownUntil);
+  if (!Number.isFinite(untilMs)) return "unknown";
+  const remainingMs = Math.max(0, untilMs - Date.now());
+  if (remainingMs <= 0) return "active";
+  const totalSeconds = Math.ceil(remainingMs / 1000);
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  if (minutes >= 60) {
+    const hours = Math.floor(minutes / 60);
+    const restMinutes = minutes % 60;
+    return `${hours}h ${restMinutes}m`;
+  }
+  return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+}
+
 // Maps Phase to visual progress checklist steps
 const STEPS_IN_PIPELINE = [
   { key: "selected", label: "Target Selected" },
@@ -132,6 +149,9 @@ export function QueuePage() {
   });
 
   const stats = statsQuery.data?.stats ?? {};
+  const azureOpenAiPressure = statsQuery.data?.providerPressure.azureOpenai;
+  const azureCooldownActive = azureOpenAiPressure?.status === "cooldown";
+  const azureCooldownLabel = formatCooldownCountdown(azureOpenAiPressure?.cooldownUntil ?? null);
   const activeTasks = activeQuery.data ?? [];
   const listData = itemsQuery.data;
   const runningCount = Number(stats.running ?? 0);
@@ -216,8 +236,8 @@ export function QueuePage() {
                 )}
               </div>
 
-              {/* Integrated 3-Column Stats inside Header */}
-              <div className="grid grid-cols-3 gap-2 border-b border-slate-100/60 pb-3.5 pt-1 text-left">
+              {/* Integrated queue stats and provider cooldown inside Header */}
+              <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 border-b border-slate-100/60 pb-3.5 pt-1 text-left">
                 <div className="flex flex-col">
                   <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">
                     Total Queue
@@ -433,6 +453,28 @@ export function QueuePage() {
                   <strong className="text-slate-800 text-[20px] font-extrabold mt-0.5 leading-none">
                     {(stats.paused ?? 0) + (stats.skipped ?? 0)}
                   </strong>
+                </div>
+                <div className="flex flex-col">
+                  <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">
+                    Azure OpenAI
+                  </span>
+                  <strong
+                    className={
+                      azureCooldownActive
+                        ? "text-amber-600 text-[20px] font-extrabold mt-0.5 leading-none"
+                        : "text-emerald-600 text-[20px] font-extrabold mt-0.5 leading-none"
+                    }
+                  >
+                    {azureCooldownLabel}
+                  </strong>
+                  <span
+                    className="text-[10.5px] text-slate-400 truncate max-w-[160px] font-semibold mt-1"
+                    title={azureOpenAiPressure?.source ?? azureOpenAiPressure?.model ?? undefined}
+                  >
+                    {azureCooldownActive
+                      ? azureOpenAiPressure?.reason || "cooldown"
+                      : azureOpenAiPressure?.model || "no pressure record"}
+                  </span>
                 </div>
               </div>
 

@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../src/db/index.js";
 import { recordAuditLogSafe } from "../src/modules/audit/audit-log.service.js";
 import {
+  claimFindCandidateTargetStateById,
   claimNextDistillationTargetState,
   findNextSelectableDistillationTargetState,
   finishDistillationTargetState,
@@ -164,12 +165,46 @@ describe("selectDistillationTarget repository unit tests", () => {
       expect(recordAuditLogSafe).toHaveBeenCalled();
     });
 
+    it("can restrict primary claims to targets with prepared candidates", async () => {
+      mockExecute.mockResolvedValueOnce({ rows: [{ id: "target-1" }] });
+      mockUpdate.mockReturnValueOnce(makeChain([mockRow]));
+
+      const result = await claimNextDistillationTargetState({
+        worker: "test-worker",
+        requireCandidateResultsForSourceTargets: true,
+      });
+
+      const selectSql = flattenSqlChunks(mockExecute.mock.calls[0]?.[0]);
+      expect(result).toEqual(mockRow);
+      expect(selectSql).toContain("target_kind = 'knowledge_candidate'");
+      expect(selectSql).toContain("find_candidate_results");
+    });
+
     it("returns null if execute returns no rows", async () => {
       mockExecute.mockResolvedValueOnce({ rows: [] });
 
       const result = await claimNextDistillationTargetState();
       expect(result).toBeNull();
       expect(mockUpdate).not.toHaveBeenCalled();
+    });
+  });
+
+  describe("claimFindCandidateTargetStateById", () => {
+    it("serializes findCandidate claims with an advisory lock", async () => {
+      mockExecute
+        .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [{ id: "target-1" }] });
+      mockUpdate.mockReturnValueOnce(makeChain([mockRow]));
+
+      const result = await claimFindCandidateTargetStateById({
+        id: "target-1",
+        targetKind: "wiki_file",
+        worker: "test-worker",
+      });
+
+      expect(result).toEqual(mockRow);
+      expect(flattenSqlChunks(mockExecute.mock.calls[0]?.[0])).toContain("pg_advisory_xact_lock");
+      expect(flattenSqlChunks(mockExecute.mock.calls[1]?.[0])).toContain("find_candidate_results");
     });
   });
 
@@ -189,6 +224,21 @@ describe("selectDistillationTarget repository unit tests", () => {
 
       const result = await updateDistillationTargetPhase({ id: "target-1", phase: "stored" });
       expect(result).toEqual(mockRow);
+    });
+
+    it("serializes exclusive findCandidate phase transitions", async () => {
+      mockExecute.mockResolvedValueOnce({ rows: [] });
+      mockUpdate.mockReturnValueOnce(makeChain([mockRow]));
+
+      const result = await updateDistillationTargetPhase({
+        id: "target-1",
+        phase: "finding_candidate",
+        distillationVersion: "select-distillation-target-v1",
+        requireNoOtherRunningFindCandidate: true,
+      });
+
+      expect(result).toEqual(mockRow);
+      expect(flattenSqlChunks(mockExecute.mock.calls[0]?.[0])).toContain("pg_advisory_xact_lock");
     });
   });
 

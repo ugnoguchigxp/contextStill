@@ -28,6 +28,7 @@ export type FindCandidateScheduleDecision = {
     | "provider_cooldown"
     | "recent_interactive_compile"
     | "interactive_pressure"
+    | "parallel_lane_busy"
     | "ready";
   diagnostics: {
     provider: DistillationProviderName;
@@ -44,6 +45,13 @@ function parseIsoAgeSeconds(value: string | null): number | null {
   const parsedMs = Date.parse(value);
   if (!Number.isFinite(parsedMs)) return null;
   return Math.max(0, Math.floor((Date.now() - parsedMs) / 1000));
+}
+
+function timestampAgeSeconds(value: unknown): number | null {
+  if (!value) return null;
+  const timestampMs = value instanceof Date ? value.getTime() : Date.parse(String(value));
+  if (!Number.isFinite(timestampMs)) return null;
+  return Math.max(0, Math.floor((Date.now() - timestampMs) / 1000));
 }
 
 function asNonNegativeInt(value: number): number {
@@ -81,9 +89,7 @@ async function collectInteractiveStats(params: {
       ),
     );
 
-  const lastCompileAgeSeconds = compileRow?.lastCreatedAt
-    ? Math.max(0, Math.floor((Date.now() - compileRow.lastCreatedAt.getTime()) / 1000))
-    : null;
+  const lastCompileAgeSeconds = timestampAgeSeconds(compileRow?.lastCreatedAt);
 
   return {
     compileCount: asNonNegativeInt(Number(compileRow?.count ?? 0)),

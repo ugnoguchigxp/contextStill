@@ -7,10 +7,14 @@ const mocks = vi.hoisted(() => ({
   releaseRetryablePausedDistillationTargets: vi.fn(),
   claimDistillationTargetStateById: vi.fn(),
   claimNextDistillationTargetState: vi.fn(),
+  findNextFindCandidateTargetState: vi.fn(),
+  claimFindCandidateTargetStateById: vi.fn(),
+  hasRunningFindCandidateTargetState: vi.fn(),
   updateDistillationTargetPhase: vi.fn(),
   updateDistillationTargetHeartbeat: vi.fn(),
   finishDistillationTargetState: vi.fn(),
   pauseDistillationTargetState: vi.fn(),
+  releaseDistillationTargetState: vi.fn(),
   leaseFromTargetState: vi.fn(),
   runFindCandidate: vi.fn(),
   decideFindCandidateSchedule: vi.fn(),
@@ -36,10 +40,14 @@ vi.mock("../src/modules/selectDistillationTarget/repository.js", () => ({
   releaseRetryablePausedDistillationTargets: mocks.releaseRetryablePausedDistillationTargets,
   claimDistillationTargetStateById: mocks.claimDistillationTargetStateById,
   claimNextDistillationTargetState: mocks.claimNextDistillationTargetState,
+  findNextFindCandidateTargetState: mocks.findNextFindCandidateTargetState,
+  claimFindCandidateTargetStateById: mocks.claimFindCandidateTargetStateById,
+  hasRunningFindCandidateTargetState: mocks.hasRunningFindCandidateTargetState,
   updateDistillationTargetPhase: mocks.updateDistillationTargetPhase,
   updateDistillationTargetHeartbeat: mocks.updateDistillationTargetHeartbeat,
   finishDistillationTargetState: mocks.finishDistillationTargetState,
   pauseDistillationTargetState: mocks.pauseDistillationTargetState,
+  releaseDistillationTargetState: mocks.releaseDistillationTargetState,
   leaseFromTargetState: mocks.leaseFromTargetState,
 }));
 
@@ -115,10 +123,14 @@ describe("runDistillationPipeline", () => {
     mocks.releaseRetryablePausedDistillationTargets.mockResolvedValue({});
     mocks.claimDistillationTargetStateById.mockResolvedValue(null);
     mocks.claimNextDistillationTargetState.mockResolvedValue(targetRow());
+    mocks.findNextFindCandidateTargetState.mockResolvedValue(null);
+    mocks.claimFindCandidateTargetStateById.mockResolvedValue(null);
+    mocks.hasRunningFindCandidateTargetState.mockResolvedValue(false);
     mocks.updateDistillationTargetPhase.mockResolvedValue({});
     mocks.updateDistillationTargetHeartbeat.mockResolvedValue({});
     mocks.finishDistillationTargetState.mockResolvedValue({});
     mocks.pauseDistillationTargetState.mockResolvedValue({});
+    mocks.releaseDistillationTargetState.mockResolvedValue({});
     mocks.leaseFromTargetState.mockImplementation((row) => ({
       targetStateId: row.id,
       lockedBy: row.lockedBy,
@@ -199,6 +211,87 @@ describe("runDistillationPipeline", () => {
         knowledgeIds: ["knowledge-1"],
       }),
     );
+    expect(mocks.claimNextDistillationTargetState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        requireCandidateResultsForSourceTargets: true,
+      }),
+    );
+  });
+
+  test("runs one background findCandidate target beside the primary pipeline", async () => {
+    const primaryTarget = targetRow({
+      id: "target-main",
+      targetKind: "knowledge_candidate",
+      targetKey: "candidate-target",
+      priorityGroup: "knowledge_candidate",
+    });
+    const findCandidateTarget = targetRow({
+      id: "target-find",
+      targetKind: "vibe_memory",
+      targetKey: "vibe-target",
+      sourceUri: "vibe-target",
+      priorityGroup: "vibe_memory",
+      phase: "finding_candidate",
+    });
+
+    mocks.claimNextDistillationTargetState.mockResolvedValue(primaryTarget);
+    mocks.findNextFindCandidateTargetState.mockResolvedValue(findCandidateTarget);
+    mocks.claimFindCandidateTargetStateById.mockResolvedValue(findCandidateTarget);
+    mocks.listFindCandidateResultsByTargetStateId.mockImplementation((targetStateId: string) => {
+      if (targetStateId === "target-main") {
+        return Promise.resolve([
+          {
+            id: "candidate-main",
+            targetStateId: "target-main",
+            candidateIndex: 0,
+            title: "Main",
+            content: "Main candidate",
+            origin: { candidateType: "rule" },
+            status: "selected",
+            createdAt: new Date(),
+            updatedAt: new Date(),
+            targetKind: "knowledge_candidate",
+            targetKey: "candidate-target",
+            sourceUri: "candidate-target",
+          },
+        ]);
+      }
+      return Promise.resolve([]);
+    });
+    mocks.runFindCandidate.mockResolvedValueOnce({
+      targetStateId: "target-find",
+      targetKind: "vibe_memory",
+      targetKey: "vibe-target",
+      callerMode: "storage",
+      candidates: [{ title: "Background", content: "Candidate prepared in parallel" }],
+      insertedIds: ["candidate-bg"],
+      readRanges: [],
+    });
+
+    const result = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
+
+    expect(mocks.claimFindCandidateTargetStateById).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "target-find",
+        targetKind: "vibe_memory",
+      }),
+    );
+    expect(mocks.runFindCandidate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetStateId: "target-find",
+        callerMode: "storage",
+      }),
+    );
+    expect(mocks.releaseDistillationTargetState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "target-find",
+        phase: "covering_evidence",
+        outcomeKind: "find_candidate_ready",
+        candidateCount: 1,
+      }),
+    );
+    expect(result.processed).toBe(2);
+    expect(result.results.map((item) => item.outcomeKind)).toContain("find_candidate_ready");
   });
 
   test("pauses target before findCandidate when scheduler requests wait", async () => {
@@ -231,6 +324,43 @@ describe("runDistillationPipeline", () => {
         retryDelaySeconds: 90,
       }),
     );
+  });
+
+  test("does not run primary findCandidate while the parallel lane is busy", async () => {
+    mocks.hasRunningFindCandidateTargetState.mockResolvedValue(true);
+
+    const result = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
+
+    expect(mocks.runFindCandidate).not.toHaveBeenCalled();
+    expect(mocks.pauseDistillationTargetState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "target-1",
+        reason: "find_candidate_throttled:parallel_lane_busy",
+      }),
+    );
+    expect(result.results[0]).toMatchObject({
+      status: "paused",
+      outcomeKind: "find_candidate_throttled",
+      candidateCount: 0,
+    });
+  });
+
+  test("does not run findCandidate when exclusive phase transition is denied", async () => {
+    mocks.updateDistillationTargetPhase.mockResolvedValueOnce(null);
+
+    const result = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
+
+    expect(mocks.runFindCandidate).not.toHaveBeenCalled();
+    expect(mocks.pauseDistillationTargetState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "target-1",
+        reason: "find_candidate_throttled:parallel_lane_busy",
+      }),
+    );
+    expect(result.results[0]).toMatchObject({
+      status: "paused",
+      outcomeKind: "find_candidate_throttled",
+    });
   });
 
   test("processes only the requested targetStateId when provided", async () => {

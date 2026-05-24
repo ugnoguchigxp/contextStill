@@ -36,12 +36,16 @@ import {
   DEFAULT_DISTILLATION_TARGET_VERSION,
   type DistillationTargetStateRow,
   type TargetLease,
+  claimFindCandidateTargetStateById,
   claimDistillationTargetStateById,
   claimNextDistillationTargetState,
+  findNextFindCandidateTargetState,
   finishDistillationTargetState,
+  hasRunningFindCandidateTargetState,
   leaseFromTargetState,
   pauseDistillationTargetState,
   recoverStaleDistillationTargets,
+  releaseDistillationTargetState,
   releaseRetryablePausedDistillationTargets,
   updateDistillationTargetHeartbeat,
   updateDistillationTargetPhase,
@@ -67,7 +71,7 @@ export type DistillationPipelineTargetResult = {
   targetStateId: string;
   targetKind: string;
   targetKey: string;
-  status: "completed" | "skipped" | "paused" | "failed";
+  status: "completed" | "skipped" | "paused" | "failed" | "pending";
   outcomeKind: string;
   candidateCount: number;
   knowledgeIds: string[];
@@ -115,6 +119,7 @@ const retryableCoverStatuses = new Set<string>([
 ]);
 const CHECKPOINT_RETRY_DELAY_SECONDS = 1;
 const CHECKPOINT_PAUSE_REASON = "cover_evidence_checkpoint";
+const PARALLEL_FIND_CANDIDATE_OUTCOME = "find_candidate_ready";
 
 function asScheduledFindCandidateTargetKind(
   value: DistillationTargetStateRow["targetKind"],
@@ -133,6 +138,16 @@ function targetKindFilter(
   if (kind === "wiki") return "wiki_file";
   if (kind === "vibe") return "vibe_memory";
   return undefined;
+}
+
+function findCandidateTargetKinds(
+  kind: DistillationPipelineInput["kind"],
+): ScheduledFindCandidateTargetKind[] {
+  if (kind === "candidate") return [];
+  if (kind === "web") return ["web_ingest"];
+  if (kind === "wiki") return ["wiki_file"];
+  if (kind === "vibe") return ["vibe_memory"];
+  return ["web_ingest", "wiki_file", "vibe_memory"];
 }
 
 function positiveLimit(value: number | undefined): number {
@@ -184,6 +199,11 @@ function candidateTimeoutResult(findCandidateId: string): CoverResult {
     retryable: true,
     reason: "candidate_timeout",
   };
+}
+
+function findCandidateWorker(input: DistillationPipelineInput): string | undefined {
+  const base = input.worker?.trim();
+  return base ? `${base}:find-candidate` : undefined;
 }
 
 async function saveCandidateTimeoutResult(findCandidateId: string): Promise<CoverResult> {
@@ -296,6 +316,17 @@ async function updatePhase(
   );
 }
 
+function parallelLaneBusyDecision(
+  scheduleDecision: FindCandidateScheduleDecision,
+): FindCandidateScheduleDecision {
+  return {
+    ...scheduleDecision,
+    shouldWait: true,
+    waitMs: Math.max(1, groupedConfig.distillation.findCandidateMinIntervalSeconds) * 1000,
+    reason: "parallel_lane_busy",
+  };
+}
+
 async function heartbeat(target: DistillationTargetStateRow, lease: TargetLease): Promise<void> {
   await requireLease(updateDistillationTargetHeartbeat(target.id, lease), target, "heartbeat");
 }
@@ -345,6 +376,31 @@ async function loadOrRunFindCandidate(
     };
   }
 
+  if (groupedConfig.distillation.findCandidateBackgroundEnabled) {
+    const parallelLaneBusy = await hasRunningFindCandidateTargetState({
+      distillationVersion: target.distillationVersion,
+      excludeTargetStateId: target.id,
+    });
+    if (parallelLaneBusy) {
+      return {
+        candidateIds: [],
+        candidateCount: 0,
+        reused: false,
+        deferred: parallelLaneBusyDecision(scheduleDecision),
+      };
+    }
+  }
+
+  return runFindCandidateForClaimedTarget(target, lease, input, scheduleDecision, signal);
+}
+
+async function runFindCandidateForClaimedTarget(
+  target: DistillationTargetStateRow,
+  lease: TargetLease,
+  input: DistillationPipelineInput,
+  scheduleDecision: FindCandidateScheduleDecision,
+  signal?: AbortSignal,
+): Promise<CandidateSelection> {
   void recordProviderUsage({
     provider: scheduleDecision.diagnostics.provider,
     model: scheduleDecision.diagnostics.model,
@@ -352,7 +408,21 @@ async function loadOrRunFindCandidate(
     kind: "background",
   }).catch(() => undefined);
 
-  await updatePhase(target, lease, "finding_candidate");
+  const phaseRow = await updateDistillationTargetPhase({
+    id: target.id,
+    phase: "finding_candidate",
+    distillationVersion: target.distillationVersion,
+    requireNoOtherRunningFindCandidate: true,
+    lease,
+  });
+  if (!phaseRow) {
+    return {
+      candidateIds: [],
+      candidateCount: 0,
+      reused: false,
+      deferred: parallelLaneBusyDecision(scheduleDecision),
+    };
+  }
   await heartbeat(target, lease);
   let findResult: Awaited<ReturnType<typeof runFindCandidate>>;
   try {
@@ -378,6 +448,185 @@ async function loadOrRunFindCandidate(
     candidateCount: findResult.candidates.length,
     reused: false,
   };
+}
+
+async function runParallelFindCandidateTarget(
+  target: DistillationTargetStateRow,
+  input: DistillationPipelineInput,
+  scheduleDecision: FindCandidateScheduleDecision,
+): Promise<DistillationPipelineTargetResult> {
+  const lease = leaseFromTargetState(target);
+  try {
+    await ensureWebIngestSourcePrepared({ target, lease, input });
+    const selection = await runFindCandidateForClaimedTarget(
+      target,
+      lease,
+      input,
+      scheduleDecision,
+      undefined,
+    );
+    if (selection.deferred) {
+      const retryDelaySeconds = Math.max(1, Math.ceil(selection.deferred.waitMs / 1000));
+      await requireLease(
+        pauseDistillationTargetState({
+          id: target.id,
+          reason: `find_candidate_throttled:${selection.deferred.reason}`,
+          retryDelaySeconds,
+          metadata: {
+            retryDelaySeconds,
+            scheduleDecision: selection.deferred,
+            parallelFindCandidate: true,
+          },
+          lease,
+        }),
+        target,
+        "pause-find-candidate-throttled",
+      );
+      return {
+        targetStateId: target.id,
+        targetKind: target.targetKind,
+        targetKey: target.targetKey,
+        status: "paused",
+        outcomeKind: "find_candidate_throttled",
+        candidateCount: 0,
+        knowledgeIds: [],
+        coverEvidence: [],
+        finalize: [],
+      };
+    }
+    const candidateIds = selection.candidateIds;
+    const candidateCount = selection.candidateCount;
+    if (candidateIds.length === 0) {
+      return finishSkipped({
+        target,
+        lease,
+        outcomeKind: "no_candidate",
+        candidateCount,
+        coverResults: [],
+      });
+    }
+
+    await requireLease(
+      releaseDistillationTargetState({
+        id: target.id,
+        phase: "covering_evidence",
+        outcomeKind: PARALLEL_FIND_CANDIDATE_OUTCOME,
+        candidateCount,
+        metadata: {
+          candidateIds,
+          parallelFindCandidate: true,
+          scheduleDecision,
+        },
+        lease,
+      }),
+      target,
+      "release-find-candidate-ready",
+    );
+
+    return {
+      targetStateId: target.id,
+      targetKind: target.targetKind,
+      targetKey: target.targetKey,
+      status: "pending",
+      outcomeKind: PARALLEL_FIND_CANDIDATE_OUTCOME,
+      candidateCount,
+      knowledgeIds: [],
+      coverEvidence: [],
+      finalize: [],
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    const candidateCount = await listFindCandidateResultsByTargetStateId(target.id)
+      .then((rows) => rows.length)
+      .catch(() => 0);
+    if (target.attemptCount >= APP_CONSTANTS.distillationTargetMaxAttempts) {
+      const skipped = await finishDistillationTargetState({
+        id: target.id,
+        status: "skipped",
+        outcomeKind: "pipeline_retry_limit_exceeded",
+        error: message,
+        candidateCount,
+        knowledgeIds: [],
+        metadata: {
+          pipelineError: message,
+          retryLimitExceeded: true,
+          maxAttempts: APP_CONSTANTS.distillationTargetMaxAttempts,
+          parallelFindCandidate: true,
+        },
+        lease,
+      });
+      return {
+        targetStateId: target.id,
+        targetKind: target.targetKind,
+        targetKey: target.targetKey,
+        status: skipped ? "skipped" : "failed",
+        outcomeKind: skipped ? "pipeline_retry_limit_exceeded" : "lease_lost",
+        candidateCount,
+        knowledgeIds: [],
+        coverEvidence: [],
+        finalize: [],
+        error: skipped ? message : "distillation target lease lost during retry-limit skip",
+      };
+    }
+    const paused = await pauseDistillationTargetState({
+      id: target.id,
+      reason: message,
+      retryDelaySeconds: groupedConfig.distillationTools.failureRetryDelaySeconds,
+      metadata: {
+        pipelineError: message,
+        parallelFindCandidate: true,
+      },
+      lease,
+    });
+    return {
+      targetStateId: target.id,
+      targetKind: target.targetKind,
+      targetKey: target.targetKey,
+      status: paused ? "paused" : "failed",
+      outcomeKind: paused ? "pipeline_paused" : "lease_lost",
+      candidateCount,
+      knowledgeIds: [],
+      coverEvidence: [],
+      finalize: [],
+      error: paused ? message : "distillation target lease lost during pipeline pause",
+    };
+  }
+}
+
+async function runParallelFindCandidateLane(
+  input: DistillationPipelineInput,
+  distillationVersion: string,
+): Promise<DistillationPipelineTargetResult | null> {
+  if (input.targetStateId?.trim()) return null;
+  if (!groupedConfig.distillation.findCandidateBackgroundEnabled) return null;
+
+  const targetKinds = findCandidateTargetKinds(input.kind);
+  if (targetKinds.length === 0) return null;
+
+  const preview = await findNextFindCandidateTargetState({
+    distillationVersion,
+    targetKinds,
+  });
+  if (!preview) return null;
+
+  const scheduledTargetKind = asScheduledFindCandidateTargetKind(preview.targetKind);
+  if (!scheduledTargetKind) return null;
+
+  const scheduleDecision = await decideFindCandidateSchedule({
+    targetKind: scheduledTargetKind,
+    providerOverride: input.provider,
+  });
+  if (scheduleDecision.shouldWait) return null;
+
+  const target = await claimFindCandidateTargetStateById({
+    id: preview.id,
+    distillationVersion,
+    targetKind: scheduledTargetKind,
+    worker: findCandidateWorker(input),
+  });
+  if (!target) return null;
+
+  return runParallelFindCandidateTarget(target, input, scheduleDecision);
 }
 
 function sourceUrlForWebIngestTarget(target: DistillationTargetStateRow): string {
@@ -866,15 +1115,26 @@ export async function runDistillationPipeline(
     };
   }
 
-  const results: DistillationPipelineTargetResult[] = [];
-  for (let index = 0; index < positiveLimit(input.limit); index += 1) {
-    const target = await claimNextDistillationTargetState({
-      distillationVersion,
-      targetKind: targetKindFilter(input.kind),
-      worker: input.worker,
-    });
-    if (!target) break;
-    results.push(await runClaimedTarget(target, input));
+  const findCandidateLane = runParallelFindCandidateLane(input, distillationVersion);
+  const primaryLane = (async (): Promise<DistillationPipelineTargetResult[]> => {
+    const results: DistillationPipelineTargetResult[] = [];
+    for (let index = 0; index < positiveLimit(input.limit); index += 1) {
+      const target = await claimNextDistillationTargetState({
+        distillationVersion,
+        targetKind: targetKindFilter(input.kind),
+        worker: input.worker,
+        requireCandidateResultsForSourceTargets:
+          groupedConfig.distillation.findCandidateBackgroundEnabled,
+      });
+      if (!target) break;
+      results.push(await runClaimedTarget(target, input));
+    }
+    return results;
+  })();
+
+  const [results, findCandidateResult] = await Promise.all([primaryLane, findCandidateLane]);
+  if (findCandidateResult) {
+    results.push(findCandidateResult);
   }
 
   return {

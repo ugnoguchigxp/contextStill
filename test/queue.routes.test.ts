@@ -32,6 +32,18 @@ describe("Queue route contract tests", () => {
     vi.mocked(fetchQueueDashboardStats).mockResolvedValueOnce({
       stats: { pending: 5, running: 1, completed: 10, failed: 2, paused: 0 },
       kinds: { wiki_file: 15, vibe_memory: 3 },
+      providerPressure: {
+        azureOpenai: {
+          provider: "azure-openai",
+          model: "gpt-5-4-mini",
+          status: "cooldown",
+          cooldownUntil: "2026-05-24T10:00:00.000Z",
+          reason: "rate_limit",
+          source: "find-candidate",
+          lastRateLimitedAt: "2026-05-24T09:50:00.000Z",
+          updatedAt: "2026-05-24T09:50:00.000Z",
+        },
+      },
     });
 
     const app = buildApp();
@@ -41,6 +53,18 @@ describe("Queue route contract tests", () => {
     expect(json).toEqual({
       stats: { pending: 5, running: 1, completed: 10, failed: 2, paused: 0 },
       kinds: { wiki_file: 15, vibe_memory: 3 },
+      providerPressure: {
+        azureOpenai: {
+          provider: "azure-openai",
+          model: "gpt-5-4-mini",
+          status: "cooldown",
+          cooldownUntil: "2026-05-24T10:00:00.000Z",
+          reason: "rate_limit",
+          source: "find-candidate",
+          lastRateLimitedAt: "2026-05-24T09:50:00.000Z",
+          updatedAt: "2026-05-24T09:50:00.000Z",
+        },
+      },
     });
     expect(fetchQueueDashboardStats).toHaveBeenCalled();
   });
