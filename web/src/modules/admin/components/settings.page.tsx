@@ -1884,7 +1884,8 @@ export function SettingsPage() {
             ) : null}
 
             {activeTab === "advanced" ? (
-              <Card>
+              <>
+                <Card>
                 <CardHeader>
                   <CardTitle>Advanced Runtime Controls</CardTitle>
                 </CardHeader>
@@ -2106,7 +2107,8 @@ export function SettingsPage() {
                   </label>
                 </CardContent>
               </Card>
-            ) : null}
+            </>
+          ) : null}
 
             <Card>
               <CardHeader>

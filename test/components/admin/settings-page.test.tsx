@@ -155,6 +155,9 @@ function buildSettingsView(): RuntimeSettingsView {
       doctorFreshnessThresholdMinutes: 720,
       doctorDegradedRateThreshold: 0.5,
       doctorKnowledgeZeroUseWarningMinActiveCount: 10,
+      codexLogSyncEnabled: true,
+      antigravityLogSyncEnabled: true,
+      claudeLogSyncEnabled: true,
     },
   };
 }
@@ -291,5 +294,31 @@ describe("SettingsPage", () => {
 
     await waitFor(() => expect(repositoryMocks.testRuntimeProvider).toHaveBeenCalledTimes(1));
     expect(repositoryMocks.testRuntimeProvider).toHaveBeenCalledWith("azure-openai");
+  });
+
+  it("renders Advanced sync settings and allows toggling them", async () => {
+    routerState.pathname = "/setting/advanced";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Advanced Runtime Controls" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "Agent Log Synchronization" })).toBeInTheDocument();
+
+    const codexCheckbox = screen.getByLabelText("Enable Codex (Cursor) Log Sync");
+    const antigravityCheckbox = screen.getByLabelText("Enable Antigravity Log Sync");
+    const claudeCheckbox = screen.getByLabelText("Enable Claude Code Log Sync");
+
+    expect(codexCheckbox).toBeChecked();
+    expect(antigravityCheckbox).toBeChecked();
+    expect(claudeCheckbox).toBeChecked();
+
+    fireEvent.click(claudeCheckbox);
+    expect(claudeCheckbox).not.toBeChecked();
+
+    const saveButton = screen.getByRole("button", { name: "Save Settings" });
+    expect(saveButton).toBeEnabled();
+    fireEvent.click(saveButton);
+
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    expect(payload.settings.advanced.claudeLogSyncEnabled).toBe(false);
   });
 });

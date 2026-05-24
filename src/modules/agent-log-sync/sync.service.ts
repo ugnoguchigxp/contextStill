@@ -22,8 +22,8 @@ import {
 } from "./ingest.service.js";
 
 type AgentLogSource = {
-  id: "codex_logs" | "antigravity_logs";
-  label: "Codex" | "Antigravity";
+  id: "codex_logs" | "antigravity_logs" | "claude_logs";
+  label: "Codex" | "Antigravity" | "Claude";
   ingest: (
     since?: Date,
     cursor?: IngestCursor,
