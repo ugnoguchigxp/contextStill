@@ -43,7 +43,7 @@ export function AdminMetricCard({
           <strong className="metric-value">{value}</strong>
         </div>
         {hint ? <span className="metric-hint">{hint}</span> : null}
-        
+
         {progress !== undefined && (
           <div className="metric-progress-container">
             <div
@@ -56,4 +56,3 @@ export function AdminMetricCard({
     </Card>
   );
 }
-

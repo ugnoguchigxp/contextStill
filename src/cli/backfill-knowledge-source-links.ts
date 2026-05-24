@@ -340,7 +340,11 @@ function resolveFragment(params: {
   sourceId: string;
   requestedLocator?: string;
   fragmentIndexBySourceId: Map<string, FragmentIndex>;
-}): { sourceFragmentId: string; resolvedLocator?: string; resolution: LinkPlan["resolution"] } | null {
+}): {
+  sourceFragmentId: string;
+  resolvedLocator?: string;
+  resolution: LinkPlan["resolution"];
+} | null {
   const fragmentIndex = params.fragmentIndexBySourceId.get(params.sourceId);
   if (!fragmentIndex) return null;
 
@@ -507,7 +511,9 @@ async function main(): Promise<void> {
     }
   }
 
-  const linkedKnowledgeIds = new Set<string>([...plannedLinks.values()].map((link) => link.knowledgeId));
+  const linkedKnowledgeIds = new Set<string>(
+    [...plannedLinks.values()].map((link) => link.knowledgeId),
+  );
 
   console.log(
     JSON.stringify(

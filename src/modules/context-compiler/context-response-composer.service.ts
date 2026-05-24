@@ -72,6 +72,21 @@ type FallbackComposeResult = {
   usedKnowledge: ComposeUsedKnowledge[];
 };
 
+const composerJsonCompletionMaxTokens = 16_384;
+const composerJsonCompletionHeadroomTokens = 512;
+const composerJsonCompletionHeadroomRatio = 1.15;
+
+function maxTokensWithJsonHeadroom(markdownTargetTokens: number): number {
+  const normalizedTarget = Math.max(128, Math.floor(markdownTargetTokens));
+  return Math.min(
+    composerJsonCompletionMaxTokens,
+    Math.max(
+      normalizedTarget + composerJsonCompletionHeadroomTokens,
+      Math.ceil(normalizedTarget * composerJsonCompletionHeadroomRatio),
+    ),
+  );
+}
+
 function buildFallbackCompose(params: ComposeInput): FallbackComposeResult {
   const allItems = [...params.rules, ...params.procedures];
   if (allItems.length === 0) return { markdown: "No Content", usedKnowledge: [] };
@@ -150,7 +165,8 @@ function buildFallbackCompose(params: ComposeInput): FallbackComposeResult {
   };
 }
 
-function buildSystemPrompt(): string {
+function buildSystemPrompt(maxTokens: number): string {
+  const normalizedMaxTokens = Math.max(128, Math.floor(maxTokens));
   return [
     "あなたは context_compile の最終コンテキスト編集者です。",
     "入力された knowledge 候補をそのまま列挙せず、現在の goal に直結する実装指示へ統合してください。回答はJSONのみ返してください。",
@@ -163,10 +179,11 @@ function buildSystemPrompt(): string {
     "- 見出しは `実装フォーカス` / `実装手順` / `検証観点` を必須とし、必要時のみ `注意点` を追加。",
     "- `Rules` や `Procedures` の見出しは使わない。",
     "- 入力knowledgeに無い事実を追加しない。",
-    "- 回答は 5000 トークン以内に収める。",
-    "- 5000 トークンを埋める必要はない。goal達成に必要な最小限だけ書く。",
+    `- markdown フィールドの本文は ${normalizedMaxTokens} トークン以内を目標に収める。`,
+    `- ${normalizedMaxTokens} トークンを埋める必要はない。goal達成に必要な最小限だけ書く。`,
+    "- JSON は必ず完結させる。出力上限に近い場合は markdown 本文を短くしてでも、閉じ括弧・閉じ配列まで出し切る。",
     "- できるだけ短く要点を伝えること。相手はAIなので、挨拶や丁寧語で無駄にコンテキストを消費しないこと。",
-    "- goal と直接関係する指示が作れない場合は、`No Content` のみを返す。",
+    '- goal と直接関係する指示が作れない場合は、`{"markdown":"No Content","usedKnowledge":[]}` を返す。',
     "- ノイズを避け、実装者が次に行う行動へ変換する。",
   ].join("\n");
 }
@@ -206,6 +223,11 @@ function normalizeComposerOutput(raw: string): string {
   if (!unfenced) return "No Content";
   if (/^no content$/i.test(unfenced)) return "No Content";
   return unfenced;
+}
+
+function looksLikeJsonPayload(value: string): boolean {
+  const normalized = normalizeComposerOutput(value);
+  return normalized.startsWith("{") || normalized.startsWith("[");
 }
 
 function parseUsedKnowledgeArray(
@@ -257,6 +279,13 @@ function parseAgenticComposerPayload(
       usedKnowledge,
     };
   } catch {
+    if (looksLikeJsonPayload(normalized)) {
+      return {
+        markdown: "No Content",
+        usedKnowledge: [],
+        error: "COMPOSER_JSON_PARSE_FAILED",
+      };
+    }
     return {
       markdown: normalized,
       usedKnowledge: [],
@@ -300,7 +329,8 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
   const allowFallback = providers.length > 1;
   const fallbackErrors: string[] = [];
   let attempted = 0;
-  const systemPrompt = buildSystemPrompt();
+  const completionMaxTokens = maxTokensWithJsonHeadroom(routing.maxTokens);
+  const systemPrompt = buildSystemPrompt(routing.maxTokens);
   const userPrompt = buildUserPrompt(params);
   const selectableKnowledgeIds = new Set(
     [...params.rules, ...params.procedures]
@@ -317,11 +347,23 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },
         ],
-        maxTokens: routing.maxTokens,
+        maxTokens: completionMaxTokens,
         temperature: 0,
-        responseFormat: "text",
+        responseFormat: "json",
       });
       const parsed = parseAgenticComposerPayload(response.content, selectableKnowledgeIds);
+      if (parsed.error) {
+        if (allowFallback) {
+          fallbackErrors.push(`${provider.name}:${parsed.error}`);
+          continue;
+        }
+        return {
+          markdown: fallback.markdown,
+          agenticUsed: false,
+          usedKnowledge: fallback.usedKnowledge,
+          error: parsed.error,
+        };
+      }
       if (parsed.markdown === "No Content") {
         return { markdown: "No Content", agenticUsed: true, usedKnowledge: [] };
       }

@@ -51,6 +51,7 @@ describe("Distillation Repair Service", () => {
       processAlive: false,
       path: "/tmp/lock",
       pid: 0,
+      createdAt: null,
       ageSeconds: 0,
     });
   });
@@ -85,6 +86,7 @@ describe("Distillation Repair Service", () => {
       processAlive: true,
       path: "/tmp/lock",
       pid: 1234,
+      createdAt: new Date(Date.now() - 1000 * 1000).toISOString(),
       ageSeconds: 1000,
     });
 
@@ -115,6 +117,7 @@ describe("Distillation Repair Service", () => {
       processAlive: false,
       path: "/tmp/lock",
       pid: 1234,
+      createdAt: new Date(Date.now() - 1000 * 1000).toISOString(),
       ageSeconds: 1000,
     });
 
@@ -132,6 +135,7 @@ describe("Distillation Repair Service", () => {
       processAlive: false,
       path: "/tmp/lock",
       pid: 1234,
+      createdAt: new Date(Date.now() - 1000 * 1000).toISOString(),
       ageSeconds: 1000,
     });
 
@@ -249,12 +253,14 @@ describe("Distillation Repair Service", () => {
       processAlive: false,
       path: "/tmp/lock",
       pid: 1234,
+      createdAt: new Date(Date.now() - 1000 * 1000).toISOString(),
       ageSeconds: 1000,
     });
 
     // モックの戻り値
     vi.mocked(recoverStaleDistillationTargets).mockResolvedValue({
       recoveredToPending: 3,
+      failed: 0,
       skipped: 1,
     });
     vi.mocked(releaseRetryablePausedDistillationTargets).mockResolvedValue(5);
@@ -306,6 +312,7 @@ describe("Distillation Repair Service", () => {
       processAlive: false,
       path: "/tmp/lock",
       pid: 1234,
+      createdAt: new Date(Date.now() - 1000 * 1000).toISOString(),
       ageSeconds: 1000,
     });
 

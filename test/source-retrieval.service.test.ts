@@ -96,12 +96,7 @@ describe("Source Retrieval Service", () => {
     for (const item of modes) {
       mockSearch.mockClear();
       await retrieveSources({ goal: "test" }, { retrievalMode: item.mode });
-      expect(mockSearch).toHaveBeenCalledWith(
-        expect.any(String),
-        item.limit,
-        undefined,
-        undefined
-      );
+      expect(mockSearch).toHaveBeenCalledWith(expect.any(String), item.limit, undefined, undefined);
     }
   });
 

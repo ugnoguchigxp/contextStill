@@ -1,4 +1,5 @@
 import { compileContextPack } from "../../modules/context-compiler/context-compiler.service.js";
+import { reloadRuntimeSettingsCache } from "../../modules/settings/settings.service.js";
 import { compileInputSchema } from "../../shared/schemas/compile.schema.js";
 import type { ToolEntry } from "../registry.js";
 
@@ -18,6 +19,7 @@ export const contextCompileTool: ToolEntry = {
   },
   handler: async (args) => {
     const parsed = compileInputSchema.parse(args ?? {});
+    await reloadRuntimeSettingsCache();
     const { markdown } = await compileContextPack(parsed, { source: "mcp" });
     return {
       content: [{ type: "text", text: markdown }],

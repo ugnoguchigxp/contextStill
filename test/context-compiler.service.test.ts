@@ -21,6 +21,23 @@ vi.mock("../src/modules/audit/audit-log.service.js");
 vi.mock("../src/modules/context-compiler/pack-renderer.js", () => ({
   renderContextPackMarkdown: vi.fn(() => "# Pack Content"),
 }));
+vi.mock("../src/modules/context-compiler/agentic-refine.service.js", () => ({
+  agenticRefine: vi.fn(async (items) => ({ items, agenticUsed: false })),
+}));
+vi.mock("../src/modules/context-compiler/context-response-composer.service.js", () => ({
+  composeContextResponse: vi.fn(({ rules, procedures }) => {
+    const items = [...rules, ...procedures];
+    return {
+      markdown: "# Pack Content",
+      agenticUsed: false,
+      usedKnowledge: items.slice(0, 3).map((item) => ({
+        id: item.itemId,
+        confidence: 0.35,
+        reason: "test_compose_reference",
+      })),
+    };
+  }),
+}));
 
 describe("Context Compiler Service", () => {
   const originalAgenticCompileEnabled = groupedConfig.agenticCompile.enabled;

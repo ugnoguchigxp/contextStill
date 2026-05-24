@@ -449,7 +449,7 @@ export function SettingsPage() {
     setSecretDrafts(createEmptySecretDraftState());
     setSaveError(null);
     setSaveMessage(null);
-  }, [snapshot?.revision, baseEditable]);
+  }, [baseEditable]);
 
   const hasSettingsDiff = useMemo(() => {
     if (!draft || !baseEditable) return false;
@@ -698,17 +698,23 @@ export function SettingsPage() {
                   </CardHeader>
                   <CardContent className="space-y-4">
                     <div className="settings-field max-w-md">
-                      <label className="block text-sm font-medium mb-1">
+                      <label
+                        className="block text-sm font-medium mb-1"
+                        htmlFor="application-timezone"
+                      >
                         Application Timezone
                       </label>
                       <Select
+                        id="application-timezone"
                         aria-label="Application Timezone"
                         value={getRawTimezoneSetting()}
                         onChange={(event) => {
                           const val = event.target.value;
                           setTimezoneSetting(val);
                           setSaveError(null);
-                          setSaveMessage(`Timezone updated to ${val === "system" ? `System Default (${Intl.DateTimeFormat().resolvedOptions().timeZone})` : val}.`);
+                          setSaveMessage(
+                            `Timezone updated to ${val === "system" ? `System Default (${Intl.DateTimeFormat().resolvedOptions().timeZone})` : val}.`,
+                          );
                         }}
                       >
                         {timezoneOptions.map((opt) => (
@@ -718,7 +724,8 @@ export function SettingsPage() {
                         ))}
                       </Select>
                       <p className="text-xs text-muted-foreground mt-2">
-                        Configure the timezone used for displaying all timestamps across the dashboard.
+                        Configure the timezone used for displaying all timestamps across the
+                        dashboard.
                       </p>
                     </div>
                   </CardContent>
@@ -1930,229 +1937,229 @@ export function SettingsPage() {
             {activeTab === "advanced" ? (
               <>
                 <Card>
-                <CardHeader>
-                  <CardTitle>Advanced Runtime Controls</CardTitle>
-                </CardHeader>
-                <CardContent className="settings-form-grid">
-                  <label className="settings-field">
-                    <span>Pipeline Lock Stale (sec)</span>
-                    <Input
-                      type="number"
-                      min={30}
-                      value={draft.advanced.pipelineLockStaleSeconds}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          advanced: {
-                            ...current.advanced,
-                            pipelineLockStaleSeconds: parseIntegerInput(
-                              event.target.value,
-                              current.advanced.pipelineLockStaleSeconds,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Lock TTL (sec)</span>
-                    <Input
-                      type="number"
-                      min={30}
-                      value={draft.advanced.lockTtlSeconds}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          advanced: {
-                            ...current.advanced,
-                            lockTtlSeconds: parseIntegerInput(
-                              event.target.value,
-                              current.advanced.lockTtlSeconds,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Continuous Idle Sleep (ms)</span>
-                    <Input
-                      type="number"
-                      min={100}
-                      value={draft.advanced.continuousIdleSleepMs}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          advanced: {
-                            ...current.advanced,
-                            continuousIdleSleepMs: parseIntegerInput(
-                              event.target.value,
-                              current.advanced.continuousIdleSleepMs,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Continuous Error Sleep (ms)</span>
-                    <Input
-                      type="number"
-                      min={100}
-                      value={draft.advanced.continuousErrorSleepMs}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          advanced: {
-                            ...current.advanced,
-                            continuousErrorSleepMs: parseIntegerInput(
-                              event.target.value,
-                              current.advanced.continuousErrorSleepMs,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Inventory Refresh Interval (ms)</span>
-                    <Input
-                      type="number"
-                      min={100}
-                      value={draft.advanced.inventoryRefreshIntervalMs}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          advanced: {
-                            ...current.advanced,
-                            inventoryRefreshIntervalMs: parseIntegerInput(
-                              event.target.value,
-                              current.advanced.inventoryRefreshIntervalMs,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Doctor Freshness Threshold (min)</span>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={draft.advanced.doctorFreshnessThresholdMinutes}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          advanced: {
-                            ...current.advanced,
-                            doctorFreshnessThresholdMinutes: parseIntegerInput(
-                              event.target.value,
-                              current.advanced.doctorFreshnessThresholdMinutes,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Doctor Degraded Rate Threshold</span>
-                    <Input
-                      type="number"
-                      min={0}
-                      max={1}
-                      step={0.01}
-                      value={draft.advanced.doctorDegradedRateThreshold}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          advanced: {
-                            ...current.advanced,
-                            doctorDegradedRateThreshold: parseFloatInput(
-                              event.target.value,
-                              current.advanced.doctorDegradedRateThreshold,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Doctor Zero-use Warning Min Active Count</span>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={draft.advanced.doctorKnowledgeZeroUseWarningMinActiveCount}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          advanced: {
-                            ...current.advanced,
-                            doctorKnowledgeZeroUseWarningMinActiveCount: parseIntegerInput(
-                              event.target.value,
-                              current.advanced.doctorKnowledgeZeroUseWarningMinActiveCount,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                </CardContent>
-              </Card>
+                  <CardHeader>
+                    <CardTitle>Advanced Runtime Controls</CardTitle>
+                  </CardHeader>
+                  <CardContent className="settings-form-grid">
+                    <label className="settings-field">
+                      <span>Pipeline Lock Stale (sec)</span>
+                      <Input
+                        type="number"
+                        min={30}
+                        value={draft.advanced.pipelineLockStaleSeconds}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            advanced: {
+                              ...current.advanced,
+                              pipelineLockStaleSeconds: parseIntegerInput(
+                                event.target.value,
+                                current.advanced.pipelineLockStaleSeconds,
+                              ),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="settings-field">
+                      <span>Lock TTL (sec)</span>
+                      <Input
+                        type="number"
+                        min={30}
+                        value={draft.advanced.lockTtlSeconds}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            advanced: {
+                              ...current.advanced,
+                              lockTtlSeconds: parseIntegerInput(
+                                event.target.value,
+                                current.advanced.lockTtlSeconds,
+                              ),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="settings-field">
+                      <span>Continuous Idle Sleep (ms)</span>
+                      <Input
+                        type="number"
+                        min={100}
+                        value={draft.advanced.continuousIdleSleepMs}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            advanced: {
+                              ...current.advanced,
+                              continuousIdleSleepMs: parseIntegerInput(
+                                event.target.value,
+                                current.advanced.continuousIdleSleepMs,
+                              ),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="settings-field">
+                      <span>Continuous Error Sleep (ms)</span>
+                      <Input
+                        type="number"
+                        min={100}
+                        value={draft.advanced.continuousErrorSleepMs}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            advanced: {
+                              ...current.advanced,
+                              continuousErrorSleepMs: parseIntegerInput(
+                                event.target.value,
+                                current.advanced.continuousErrorSleepMs,
+                              ),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="settings-field">
+                      <span>Inventory Refresh Interval (ms)</span>
+                      <Input
+                        type="number"
+                        min={100}
+                        value={draft.advanced.inventoryRefreshIntervalMs}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            advanced: {
+                              ...current.advanced,
+                              inventoryRefreshIntervalMs: parseIntegerInput(
+                                event.target.value,
+                                current.advanced.inventoryRefreshIntervalMs,
+                              ),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="settings-field">
+                      <span>Doctor Freshness Threshold (min)</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={draft.advanced.doctorFreshnessThresholdMinutes}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            advanced: {
+                              ...current.advanced,
+                              doctorFreshnessThresholdMinutes: parseIntegerInput(
+                                event.target.value,
+                                current.advanced.doctorFreshnessThresholdMinutes,
+                              ),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="settings-field">
+                      <span>Doctor Degraded Rate Threshold</span>
+                      <Input
+                        type="number"
+                        min={0}
+                        max={1}
+                        step={0.01}
+                        value={draft.advanced.doctorDegradedRateThreshold}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            advanced: {
+                              ...current.advanced,
+                              doctorDegradedRateThreshold: parseFloatInput(
+                                event.target.value,
+                                current.advanced.doctorDegradedRateThreshold,
+                              ),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="settings-field">
+                      <span>Doctor Zero-use Warning Min Active Count</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        value={draft.advanced.doctorKnowledgeZeroUseWarningMinActiveCount}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            advanced: {
+                              ...current.advanced,
+                              doctorKnowledgeZeroUseWarningMinActiveCount: parseIntegerInput(
+                                event.target.value,
+                                current.advanced.doctorKnowledgeZeroUseWarningMinActiveCount,
+                              ),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                  </CardContent>
+                </Card>
 
-              <Card>
-                <CardHeader>
-                  <CardTitle>Agent Log Synchronization</CardTitle>
-                </CardHeader>
-                <CardContent className="settings-form-grid">
-                  <label className="settings-check">
-                    <Checkbox
-                      checked={draft.advanced.codexLogSyncEnabled}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          advanced: {
-                            ...current.advanced,
-                            codexLogSyncEnabled: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                    Enable Codex (Cursor) Log Sync
-                  </label>
-                  <label className="settings-check">
-                    <Checkbox
-                      checked={draft.advanced.antigravityLogSyncEnabled}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          advanced: {
-                            ...current.advanced,
-                            antigravityLogSyncEnabled: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                    Enable Antigravity Log Sync
-                  </label>
-                  <label className="settings-check">
-                    <Checkbox
-                      checked={draft.advanced.claudeLogSyncEnabled}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          advanced: {
-                            ...current.advanced,
-                            claudeLogSyncEnabled: event.target.checked,
-                          },
-                        }))
-                      }
-                    />
-                    Enable Claude Code Log Sync
-                  </label>
-                </CardContent>
-              </Card>
-            </>
-          ) : null}
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Agent Log Synchronization</CardTitle>
+                  </CardHeader>
+                  <CardContent className="settings-form-grid">
+                    <label className="settings-check">
+                      <Checkbox
+                        checked={draft.advanced.codexLogSyncEnabled}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            advanced: {
+                              ...current.advanced,
+                              codexLogSyncEnabled: event.target.checked,
+                            },
+                          }))
+                        }
+                      />
+                      Enable Codex (Cursor) Log Sync
+                    </label>
+                    <label className="settings-check">
+                      <Checkbox
+                        checked={draft.advanced.antigravityLogSyncEnabled}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            advanced: {
+                              ...current.advanced,
+                              antigravityLogSyncEnabled: event.target.checked,
+                            },
+                          }))
+                        }
+                      />
+                      Enable Antigravity Log Sync
+                    </label>
+                    <label className="settings-check">
+                      <Checkbox
+                        checked={draft.advanced.claudeLogSyncEnabled}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            advanced: {
+                              ...current.advanced,
+                              claudeLogSyncEnabled: event.target.checked,
+                            },
+                          }))
+                        }
+                      />
+                      Enable Claude Code Log Sync
+                    </label>
+                  </CardContent>
+                </Card>
+              </>
+            ) : null}
 
             {activeTab === "providers" ? (
               <Card>

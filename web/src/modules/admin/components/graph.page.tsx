@@ -18,6 +18,7 @@ import {
   type GraphSupernode,
   type GraphViewMode,
   fetchLandscapeSnapshot,
+  fetchLandscapeReplaySnapshot,
   fetchGraphNodeDetail,
   fetchGraphSnapshot,
   updateGraphCommunityLabel,
@@ -397,6 +398,28 @@ function landscapeConfidenceLabel(
   return "Insufficient";
 }
 
+function communityComparisonLabel(
+  value:
+    | "aligned"
+    | "semantic_split"
+    | "semantic_merge"
+    | "relation_orphan"
+    | "semantic_reachable_dead_zone",
+): string {
+  switch (value) {
+    case "semantic_reachable_dead_zone":
+      return "Semantic Reachable Dead Zone";
+    case "semantic_split":
+      return "Semantic Split";
+    case "semantic_merge":
+      return "Semantic Merge";
+    case "relation_orphan":
+      return "Relation Orphan";
+    default:
+      return "Aligned";
+  }
+}
+
 function nodeLandscapeClass(
   node: DisplayNode,
   viewMode: GraphViewMode,
@@ -476,6 +499,21 @@ export function GraphPage() {
     staleTime: 60_000,
   });
 
+  const landscapeReplay = useQuery({
+    queryKey: ["graph-landscape-replay", 30, 500, 1000, statusFilter, relationAxes.join(",")],
+    queryFn: () =>
+      fetchLandscapeReplaySnapshot({
+        windowDays: 30,
+        limit: 500,
+        landscapeLimit: 1000,
+        landscapeStatus: statusFilter,
+        relationAxes,
+        includeRuns: false,
+      }),
+    enabled: viewMode === "community",
+    staleTime: 60_000,
+  });
+
   // ノードクリック時に詳細を取得
   const selectedRawId = selectedId?.startsWith("knowledge:")
     ? selectedId.replace(/^knowledge:/, "")
@@ -541,6 +579,27 @@ export function GraphPage() {
   const selectedLandscapeCommunity = selectedCommunity?.communityKey
     ? landscapeByCommunityKey.get(selectedCommunity.communityKey)
     : undefined;
+  const selectedReplayCommunity = selectedCommunity?.communityKey
+    ? landscapeReplay.data?.communityReplaySummaries.find(
+        (community) => community.communityKey === selectedCommunity.communityKey,
+      )
+    : undefined;
+  const selectedCommunityComparison = selectedCommunity?.communityKey
+    ? landscapeReplay.data?.communityComparison.communities.find(
+        (community) => community.relationCommunityKey === selectedCommunity.communityKey,
+      )
+    : undefined;
+  const topReplayFacetRisks = useMemo(
+    () =>
+      (landscapeReplay.data?.facetSummaries ?? [])
+        .filter(
+          (facet) =>
+            facet.negativeCandidateHitCount + facet.overSelectedHitCount + facet.deadZoneMissCount >
+            0,
+        )
+        .slice(0, 3),
+    [landscapeReplay.data?.facetSummaries],
+  );
   const activeId = selectedId ?? hoveredId;
   const totalEdges = displayEdgesSource.length;
   const displayedNodeCount =
@@ -555,6 +614,7 @@ export function GraphPage() {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["graph"] }),
         queryClient.invalidateQueries({ queryKey: ["graph-landscape"] }),
+        queryClient.invalidateQueries({ queryKey: ["graph-landscape-replay"] }),
       ]);
     },
   });
@@ -1269,6 +1329,101 @@ export function GraphPage() {
                       <div className="graph-detail-empty">
                         Landscape snapshot for this community is not available.
                       </div>
+                    )}
+                  </div>
+                  <div className="graph-landscape-card">
+                    <div className="graph-landscape-card-header">
+                      <span className="graph-detail-kicker">Replay Health</span>
+                      <Badge
+                        variant="outline"
+                        className={`h-5 text-[11px] ${
+                          selectedCommunityComparison?.comparison === "semantic_reachable_dead_zone"
+                            ? "border-rose-300 text-rose-100"
+                            : selectedCommunityComparison?.comparison === "semantic_split" ||
+                                selectedCommunityComparison?.comparison === "semantic_merge"
+                              ? "border-amber-300 text-amber-100"
+                              : "border-slate-300 text-slate-100"
+                        }`}
+                      >
+                        {selectedCommunityComparison
+                          ? communityComparisonLabel(selectedCommunityComparison.comparison)
+                          : "No replay"}
+                      </Badge>
+                    </div>
+                    {landscapeReplay.isLoading ? (
+                      <div className="graph-detail-empty">Loading replay snapshot...</div>
+                    ) : landscapeReplay.data ? (
+                      <>
+                        <div className="graph-detail-meta-grid">
+                          <div className="graph-detail-metric">
+                            <span>Replay Runs</span>
+                            <strong>{landscapeReplay.data.replayRunCount}</strong>
+                          </div>
+                          <div className="graph-detail-metric">
+                            <span>Selected</span>
+                            <strong>{selectedReplayCommunity?.selectedItemCount ?? 0}</strong>
+                          </div>
+                          <div className="graph-detail-metric">
+                            <span>Accepted</span>
+                            <strong>
+                              {selectedReplayCommunity?.acceptanceWindow.acceptedCountWindow ??
+                                landscapeReplay.data.acceptanceWindow.acceptedCountWindow}
+                            </strong>
+                          </div>
+                          <div className="graph-detail-metric">
+                            <span>Missing</span>
+                            <strong>{landscapeReplay.data.missingKnowledgeCount}</strong>
+                          </div>
+                        </div>
+                        {selectedReplayCommunity ? (
+                          <div className="graph-community-summary-grid">
+                            <div className="graph-community-summary-item">
+                              <span>Replay Used</span>
+                              <p>{selectedReplayCommunity.verdictMix.used}</p>
+                            </div>
+                            <div className="graph-community-summary-item">
+                              <span>Replay Off Topic</span>
+                              <p>{selectedReplayCommunity.verdictMix.offTopic}</p>
+                            </div>
+                            <div className="graph-community-summary-item">
+                              <span>Aligned</span>
+                              <p>{selectedReplayCommunity.explanationCounts.aligned_attractor}</p>
+                            </div>
+                            <div className="graph-community-summary-item">
+                              <span>Dead Miss</span>
+                              <p>{selectedReplayCommunity.explanationCounts.dead_zone_missed}</p>
+                            </div>
+                          </div>
+                        ) : (
+                          <div className="graph-detail-empty">
+                            Replay data for this community is not available.
+                          </div>
+                        )}
+                        {selectedCommunityComparison ? (
+                          <div className="graph-community-summary-item">
+                            <span>Semantic / Relation</span>
+                            <p>
+                              overlap {selectedCommunityComparison.jaccardOverlap.toFixed(2)} /
+                              neighbors {selectedCommunityComparison.selectedNeighborCountWindow}
+                            </p>
+                          </div>
+                        ) : null}
+                        {topReplayFacetRisks.length > 0 ? (
+                          <div className="graph-community-summary-item">
+                            <span>Top Facet Risks</span>
+                            <p>
+                              {topReplayFacetRisks
+                                .map(
+                                  (facet) =>
+                                    `${facet.facetKind}:${facet.facetValue} (${facet.negativeCandidateHitCount + facet.overSelectedHitCount + facet.deadZoneMissCount})`,
+                                )
+                                .join(" / ")}
+                            </p>
+                          </div>
+                        ) : null}
+                      </>
+                    ) : (
+                      <div className="graph-detail-empty">Replay snapshot is not available.</div>
                     )}
                   </div>
                   <div className="graph-community-label-edit">

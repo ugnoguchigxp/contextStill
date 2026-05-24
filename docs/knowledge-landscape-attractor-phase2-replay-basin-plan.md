@@ -38,7 +38,7 @@ Phase 2A でも本番 `context_compile` の ranking は変更しない。
 - candidate 自動 promotion / demotion
 - replay 結果を knowledge score に直接反映
 
-### 2.2 Replay は再実行ではなく replay annotation から始める
+### 2.2 Replay は再実行ではなく current diagnostic annotation から始める
 
 初期実装では、過去 run を再度 `context_compile` しない。
 
@@ -54,19 +54,28 @@ Phase 2A でも本番 `context_compile` の ranking は変更しない。
 - `context_pack_items`
 - `knowledge_usage_events`
 
-これに Phase 1 の landscape snapshot を重ねて、run ごとに次を注釈する。
+これに **analysis 時点の Phase 1 landscape snapshot** を重ねて、run ごとに次を注釈する。
 
 ```txt
 compile run
   -> selected knowledge ids
   -> community keys
-  -> landscape classifications
+  -> classificationAtAnalysis
   -> task facets
   -> observed verdicts
   -> replay explanation score
 ```
 
-本当の再コンパイル比較は Phase 2B 以降に分離する。
+Phase 2A の replay は「当時この run がどう分類されていたか」を復元するものではない。`analysisAsOf` 時点の地形が、既存 run の選択・feedback をどれだけ説明できるかを見る current diagnostic replay である。
+
+時系列の扱い:
+
+- `corpusWindow`: `context_compile_runs.created_at` の抽出期間
+- `landscapeWindow`: Phase 1 score / classification の集計期間
+- `analysisAsOf`: replay annotation を実行した時点
+- `classificationAtAnalysis`: 過去 run に重ねる現在地形の分類
+
+本当の historical replay（run 作成時点の knowledge 状態・community・score を再構成するもの）と actual recompile 比較は Phase 2B 以降に分離する。
 
 ### 2.3 Task facet は existing input から復元する
 
@@ -85,24 +94,49 @@ compile run
 
 欠損している facet は `unknown` として扱う。LLM による facet 推定は Phase 2A では行わない。
 
-### 2.4 Agentic acceptance は window signal にする
+### 2.4 Agentic acceptance は read-only window signal と future instrumentation に分ける
 
 `knowledge_items.agentic_accept_count` は累積 counter であり、Phase 1 の window score には混ぜなかった。
 
 Phase 2A では、run 単位で agentic acceptance を後追い分析できるようにする。
 
-初期方針:
+Milestone 3A の初期方針:
 
-- 既存 `knowledge_usage_events.actor = 'agent'` を window aggregation に含める
-- 追加実装では、agentic refine が選んだ knowledge に `metadata.agenticAccepted = true` を保存する
+- 既存 `knowledge_usage_events.metadata.agenticAccepted = true` を window aggregation に含める
+- 既存 `knowledge_usage_events.actor = 'agent'` は補助的な `agentActorEventCount` として別集計する
+- metadata がない既存 run は `unknown` として扱い、非 acceptance と断定しない
 - 既存 counter は引き続き all-time support signal として扱う
 - score へ混ぜる前に、window acceptance の説明力を replay report で確認する
+
+Milestone 3B 以降の instrumentation:
+
+- 新規 compile run では、agentic refine が選んだ knowledge に `metadata.agenticAccepted = true` を保存する
+- 既存 `knowledge_usage_events` を使い、新規 table は作らない
+- これは read-only replay の後続であり、Phase 2A の最初の受け入れ条件からは分離する
 
 ### 2.5 Semantic community comparison は read-time derived にする
 
 Phase 1 の community は relation edge 由来である。
 
 Phase 2A では、semantic edge 由来の community を read-time に導出し、relation community と比較する。永続 community id は作らない。
+
+比較対象 universe:
+
+- `replaySelectedKnowledgeIds`: replay corpus で実際に選ばれた knowledge
+- `relationLandscapeKnowledgeIds`: analysis 時点の relation community に含まれる knowledge
+- `semanticCandidateKnowledgeIds`: semantic edge 計算対象に含める retrieval 空間候補
+
+Phase 2A の比較 helper は `knowledgeIds` を明示入力に持つ。Graph UI の表示上限に偶然依存させない。
+
+```ts
+buildSemanticCommunityAssignments({
+  knowledgeIds,
+  minSimilarity,
+  semanticTopK,
+});
+```
+
+初期実装では `knowledgeIds = union(replaySelectedKnowledgeIds, relationLandscapeKnowledgeIds)` を最小 universe とし、semantic 近傍拡張は Phase 2B で追加する。
 
 比較対象:
 
@@ -156,6 +190,7 @@ type LandscapeReplayRun = {
   taskFacets: LandscapeTaskFacets;
   selectedKnowledgeIds: string[];
   selectedCommunityKeys: string[];
+  missingKnowledgeIds: string[];
   verdicts: {
     used: number;
     notUsed: number;
@@ -187,8 +222,12 @@ type LandscapeTaskFacets = {
 type LandscapeBasinTrace = {
   communityKey: string;
   communityLabel: string;
+  communityRank: number;
   selectedItemCount: number;
-  classificationAtReplay: LandscapeClassificationPrimary;
+  selectedRanks: number[];
+  classificationAtAnalysis: LandscapeClassificationPrimary;
+  classificationConfidenceAtAnalysis: LandscapeClassificationConfidence;
+  feedbackConfidenceAtAnalysis: LandscapeFeedbackConfidence;
   verdictMix: {
     used: number;
     notUsed: number;
@@ -204,17 +243,103 @@ type LandscapeBasinTrace = {
 };
 ```
 
+Explanation label の初期ルール:
+
+- `aligned_attractor`: `classificationAtAnalysis in ('strong_attractor', 'useful_attractor')` かつ `used > 0`
+- `negative_explained`: `classificationAtAnalysis = 'negative_attractor_candidate'` かつ `offTopic + wrong > 0`
+- `over_selected`: `classificationAtAnalysis = 'over_selected_not_used'` かつ `notUsed > 0`
+- `dead_zone_missed`: run 内では未選択だが、同一 semantic community に `dead_zone_*` relation community があり、選択済み近傍がある。ただし semantic over-merge を避けるため、relation/semantic の Jaccard overlap が `0.12` 未満なら候補にしない
+- `unexplained`: 上記以外。特に feedback 不足はここに落とし、summary 側の `feedbackCoverageRate` で弱さを明示する
+
 ### 4.4 Replay summary
 
 ```ts
 type LandscapeReplaySnapshot = {
   generatedAt: string;
+  analysisAsOf: string;
   windowDays: number;
+  corpusWindow: {
+    startAt: string;
+    endAt: string;
+  };
+  landscapeWindow: {
+    days: number;
+    analysisAsOf: string;
+  };
   replayRunCount: number;
+  selectedKnowledgeCount: number;
+  missingKnowledgeCount: number;
+  runs: LandscapeReplayRun[];
   facetSummaries: LandscapeFacetBasinSummary[];
   communityReplaySummaries: LandscapeCommunityReplaySummary[];
   acceptanceWindow: LandscapeAcceptanceWindowSummary;
   communityComparison: LandscapeCommunityComparisonSummary;
+};
+```
+
+```ts
+type LandscapeFacetBasinSummary = {
+  facetKind:
+    | "retrievalMode"
+    | "repoKey"
+    | "technology"
+    | "changeType"
+    | "domain"
+    | "source"
+    | "runStatus"
+    | "degradedReasonBucket";
+  facetValue: string;
+  replayRunCount: number;
+  selectedItemCount: number;
+  selectedCommunityCount: number;
+  attractorHitCount: number;
+  negativeCandidateHitCount: number;
+  overSelectedHitCount: number;
+  deadZoneMissCount: number;
+  usedRate: number;
+  offTopicRate: number;
+  wrongRate: number;
+  feedbackCoverageRate: number;
+};
+
+type LandscapeCommunityReplaySummary = {
+  communityKey: string;
+  communityLabel: string;
+  communityRank: number;
+  replayRunCount: number;
+  selectedItemCount: number;
+  classificationAtAnalysis: LandscapeClassificationPrimary;
+  verdictMix: {
+    used: number;
+    notUsed: number;
+    offTopic: number;
+    wrong: number;
+  };
+  explanationCounts: Record<LandscapeBasinExplanation, number>;
+  feedbackCoverageRate: number;
+};
+
+type LandscapeAcceptanceWindowSummary = {
+  eventCountWindow: number;
+  acceptedCountWindow: number;
+  acceptedRunCountWindow: number;
+  unknownAcceptanceCountWindow: number;
+  agentActorEventCountWindow: number;
+  acceptanceRateKnownWindow: number;
+  acceptanceCoverageRate: number;
+};
+
+type LandscapeCommunityComparisonSummary = {
+  universeKnowledgeCount: number;
+  comparedKnowledgeCount: number;
+  missingRelationAssignmentCount: number;
+  missingSemanticAssignmentCount: number;
+  alignedCount: number;
+  semanticSplitCount: number;
+  semanticMergeCount: number;
+  relationOrphanCount: number;
+  semanticReachableDeadZoneCount: number;
+  communities: LandscapeCommunityComparison[];
 };
 ```
 
@@ -267,6 +392,7 @@ API schema は Phase 1 と同じく `src/shared/schemas/*` に zod schema を置
 - `changeType`
 - `domain`
 - `source`
+- `runStatus`
 - `degradedReasonBucket`
 
 集計指標:
@@ -276,6 +402,7 @@ API schema は Phase 1 と同じく `src/shared/schemas/*` に zod schema を置
 - selectedCommunityCount
 - attractorHitCount
 - negativeCandidateHitCount
+- overSelectedHitCount
 - deadZoneMissCount
 - usedRate
 - offTopicRate
@@ -291,16 +418,31 @@ API schema は Phase 1 と同じく `src/shared/schemas/*` に zod schema を置
 
 ## 7. Milestone 3: Window Agentic Acceptance Signal
 
+### 7.1 Milestone 3A: Read-only aggregation
+
 目的: 累積 `agentic_accept_count` ではなく、window 内の agentic acceptance を landscape / replay で説明できるようにする。
+
+作業:
+
+- `knowledge_usage_events.metadata.agenticAccepted` を read-only に集計する
+- `metadata.agenticAccepted` がない event は `unknownAcceptanceCountWindow` に入れる
+- `actor = 'agent'` は `agentActorEventCountWindow` として補助表示に留める
+- replay snapshot に `acceptanceWindow` を追加する
+
+完了条件:
+
+- 既存 run は `unknown` として扱い、0 と断定しない
+- window acceptance が community / facet 単位で集計できる
+- all-time `agenticAcceptCount` と window acceptance が API response で混ざらない
+
+### 7.2 Milestone 3B: Future-run instrumentation
 
 作業:
 
 - `recordCompileRunKnowledgeUsageSignalsSafe` へ渡す metadata に `agenticAccepted` を追加する
 - `selectedRankMap` と同様に `agenticAcceptedKnowledgeIds` 由来の set を usage signal へ渡す
 - 既存 `knowledge_usage_events` に保存する。新規 table は作らない
-- `landscape.repository.ts` に window acceptance aggregate を追加する
 - `LandscapeCommunity.feedback` とは分けて `acceptance` セクションを追加する
-- replay snapshot に `acceptanceWindow` を追加する
 
 想定 metadata:
 
@@ -321,9 +463,7 @@ API schema は Phase 1 と同じく `src/shared/schemas/*` に zod schema を置
 完了条件:
 
 - 新しい run では `knowledge_usage_events.metadata.agenticAccepted` が保存される
-- 既存 run は `unknown` として扱い、0 と断定しない
-- window acceptance が community / facet 単位で集計できる
-- all-time `agenticAcceptCount` と window acceptance が API response で混ざらない
+- read-only replay の `unknown` 比率が、新規 run の蓄積に応じて下がる
 
 ## 8. Milestone 4: Semantic vs Relation Community Comparison
 
@@ -331,7 +471,7 @@ API schema は Phase 1 と同じく `src/shared/schemas/*` に zod schema を置
 
 作業:
 
-- `buildGraphSnapshot({ view: "semantic" })` の semantic edges を community builder に通す read-only helper を追加
+- `buildSemanticCommunityAssignments({ knowledgeIds, minSimilarity, semanticTopK })` を追加する
 - relation community key と semantic community key を knowledge id 経由で比較する
 - community comparison summary を landscape replay snapshot に追加する
 - Dead Zone に対して、semantic community 側で selected neighbor があるかを見る
@@ -377,7 +517,8 @@ Query:
 | --- | --- | --- |
 | `windowDays` | `30` | `1..180` |
 | `limit` | `500` | replay run limit |
-| `status` | `all` | compile run status |
+| `runStatus` | `all` | compile run status: `ok/degraded/failed/all` |
+| `landscapeStatus` | `active` | knowledge status for relation/semantic community |
 | `relationAxes` | `session,project,source` | Phase 1 basis |
 | `facet` | optional | future filter |
 | `format` | `full` | summary は後続 |
@@ -388,7 +529,7 @@ Query:
 
 ```bash
 bun run landscape -- --replay --window-days 30
-bun run landscape -- --replay --window-days 30 --json
+bun run landscape -- --replay --window-days 30 --run-status all --json
 bun run landscape -- --compare-communities --window-days 30
 ```
 
@@ -438,7 +579,7 @@ Unit tests:
 Route tests:
 
 - `/api/graph/landscape/replay` default query
-- custom window/status/limit
+- custom window/runStatus/landscapeStatus/limit
 - schema parse
 
 Component tests:
@@ -495,7 +636,7 @@ Risk: 過去 run が現在の corpus と一致しない。
 Control:
 
 - replay snapshot に `generatedAt` と `corpusWindow` を含める
-- run created time と current landscape time を分ける
+- run created time と current landscape time を分け、`analysisAsOf` と `classificationAtAnalysis` を返す
 - deleted / missing knowledge ids を `missingKnowledgeCount` として出す
 
 ### 12.2 Feedback sparsity

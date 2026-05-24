@@ -164,4 +164,3 @@ export async function upsertSettingsRow(input: {
 export async function deleteSettingsRow(namespace: string, key: string): Promise<void> {
   await db.delete(settings).where(and(eq(settings.namespace, namespace), eq(settings.key, key)));
 }
-

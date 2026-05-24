@@ -224,7 +224,7 @@ diff --git a/src/a.ts b/src/a.ts
       source: "MODEL",
       type: "VIEW_FILE",
       created_at: "2026-05-14T00:00:02.000Z",
-      content: `Created At: 2026-05-14T00:00:02.000Z\nSome file content.`,
+      content: "Created At: 2026-05-14T00:00:02.000Z\nSome file content.",
     });
     const assistantLine = JSON.stringify({
       step_index: 9,
@@ -254,24 +254,28 @@ diff --git a/src/a.ts b/src/a.ts
     const logDir = path.join(root, "session-c", ".system_generated", "logs");
     const overviewPath = path.join(logDir, "overview.txt");
     const transcriptPath = path.join(logDir, "transcript.jsonl");
-    
+
     await fs.mkdir(logDir, { recursive: true });
     await fs.writeFile(overviewPath, "dummy overview", "utf-8");
-    await fs.writeFile(transcriptPath, JSON.stringify({
-      step_index: 0,
-      source: "USER_EXPLICIT",
-      type: "USER_INPUT",
-      content: "<USER_REQUEST>test</USER_REQUEST>"
-    }) + "\n", "utf-8");
+    await fs.writeFile(
+      transcriptPath,
+      `${JSON.stringify({
+        step_index: 0,
+        source: "USER_EXPLICIT",
+        type: "USER_INPUT",
+        content: "<USER_REQUEST>test</USER_REQUEST>",
+      })}\n`,
+      "utf-8",
+    );
 
     const result = await ingestAntigravityLogsFromRoot(root, undefined, {}, 1);
 
     expect(result.ok).toBe(true);
-    
+
     // history.jsonl と overview.txt が削除されたか検証
     await expect(fs.stat(historyPath)).rejects.toThrow();
     await expect(fs.stat(overviewPath)).rejects.toThrow();
-    
+
     // transcript.jsonl は残っているか検証
     const stat = await fs.stat(transcriptPath);
     expect(stat.isFile()).toBe(true);

@@ -44,7 +44,12 @@ import { AdminFilterChipSelect } from "./admin-filter-chip-select";
 import { AdminModalShell } from "./admin-modal-shell";
 import { AdminPaginationFooter } from "./admin-pagination-footer";
 import { AdminSortableTableHead } from "./admin-sortable-table-head";
-import { useTimezone, formatDate as tzFormatDate, formatDateTime as tzFormatDateTime, formatInTimezone } from "@/lib/timezone";
+import {
+  useTimezone,
+  formatDate as tzFormatDate,
+  formatDateTime as tzFormatDateTime,
+  formatInTimezone,
+} from "@/lib/timezone";
 
 const knowledgeTypes: KnowledgeType[] = ["rule", "procedure"];
 
@@ -132,13 +137,19 @@ function summarizeApplicability(appliesTo: unknown): Array<{ label: string; valu
 
 export function KnowledgePage() {
   const tz = useTimezone();
-  const formatTimestamp = (value: string | null): string => {
-    if (!value) return "-";
-    return formatInTimezone(value, tz, { year: "numeric", month: "2-digit", day: "2-digit" });
-  };
-  const formatDateTime = (value: string | null): string => {
-    return tzFormatDateTime(value, tz);
-  };
+  const formatTimestamp = useCallback(
+    (value: string | null): string => {
+      if (!value) return "-";
+      return formatInTimezone(value, tz, { year: "numeric", month: "2-digit", day: "2-digit" });
+    },
+    [tz],
+  );
+  const formatDateTime = useCallback(
+    (value: string | null): string => {
+      return tzFormatDateTime(value, tz);
+    },
+    [tz],
+  );
 
   const queryClient = useQueryClient();
   const [editingId, setEditingId] = useState<string | null>(null);
@@ -722,6 +733,8 @@ export function KnowledgePage() {
       feedbackMutation.isPending,
       feedbackMutation.mutate,
       bulkSelection,
+      formatDateTime,
+      formatTimestamp,
       openEdit,
       quickScopeUpdate.isPending,
       quickScopeUpdate.mutate,

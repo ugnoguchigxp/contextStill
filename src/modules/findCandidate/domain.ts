@@ -91,9 +91,7 @@ function candidateOutputMaxTokens(): number {
   return Math.max(4096, groupedConfig.vibeDistillation.maxOutputTokens);
 }
 
-async function defaultFindCandidateRoute(
-  targetKind: FindCandidateTargetKind,
-): Promise<{
+async function defaultFindCandidateRoute(targetKind: FindCandidateTargetKind): Promise<{
   provider: DistillationProviderSetting;
   fallback: Array<Exclude<DistillationProviderSetting, "auto">>;
 }> {

@@ -7,8 +7,10 @@ import { GraphPage } from "../../../web/src/modules/admin/components/graph.page"
 import {
   type GraphNodeDetail,
   type GraphSnapshot,
+  type LandscapeReplaySnapshot,
   type LandscapeSnapshot,
   fetchLandscapeSnapshot,
+  fetchLandscapeReplaySnapshot,
   fetchGraphNodeDetail,
   fetchGraphSnapshot,
   updateGraphCommunityLabel,
@@ -26,6 +28,7 @@ global.ResizeObserver = ResizeObserverMock as any;
 vi.mock("../../../web/src/modules/admin/repositories/admin.repository", () => ({
   fetchGraphSnapshot: vi.fn(),
   fetchLandscapeSnapshot: vi.fn(),
+  fetchLandscapeReplaySnapshot: vi.fn(),
   fetchGraphNodeDetail: vi.fn(),
   updateGraphCommunityLabel: vi.fn(),
 }));
@@ -157,6 +160,126 @@ const mockLandscapeData: LandscapeSnapshot = {
   risks: [],
 };
 
+const mockReplayData: LandscapeReplaySnapshot = {
+  generatedAt: "2026-05-24T00:00:00.000Z",
+  analysisAsOf: "2026-05-24T00:00:00.000Z",
+  windowDays: 30,
+  corpusWindow: {
+    startAt: "2026-04-24T00:00:00.000Z",
+    endAt: "2026-05-24T00:00:00.000Z",
+  },
+  landscapeWindow: {
+    days: 30,
+    analysisAsOf: "2026-05-24T00:00:00.000Z",
+  },
+  basis: {
+    unit: "community-replay",
+    relationAxes: ["session", "project", "source"],
+    runStatus: "all",
+    landscapeStatus: "active",
+    minSimilarity: 0.72,
+    semanticTopK: 3,
+  },
+  replayRunCount: 4,
+  selectedKnowledgeCount: 6,
+  missingKnowledgeCount: 1,
+  runs: [],
+  facetSummaries: [
+    {
+      facetKind: "domain",
+      facetValue: "graph-ui",
+      replayRunCount: 4,
+      selectedItemCount: 6,
+      selectedCommunityCount: 1,
+      attractorHitCount: 2,
+      negativeCandidateHitCount: 1,
+      overSelectedHitCount: 0,
+      deadZoneMissCount: 1,
+      usedRate: 0.5,
+      offTopicRate: 0.25,
+      wrongRate: 0,
+      feedbackCoverageRate: 1,
+      acceptanceWindow: {
+        eventCountWindow: 6,
+        acceptedCountWindow: 2,
+        acceptedRunCountWindow: 2,
+        unknownAcceptanceCountWindow: 3,
+        agentActorEventCountWindow: 2,
+        acceptanceRateKnownWindow: 0.67,
+        acceptanceCoverageRate: 0.5,
+      },
+    },
+  ],
+  communityReplaySummaries: [
+    {
+      communityKey: "a".repeat(64),
+      communityLabel: "Core Reliability",
+      communityRank: 1,
+      replayRunCount: 4,
+      selectedItemCount: 6,
+      classificationAtAnalysis: "strong_attractor",
+      verdictMix: {
+        used: 4,
+        notUsed: 1,
+        offTopic: 1,
+        wrong: 0,
+      },
+      explanationCounts: {
+        aligned_attractor: 2,
+        negative_explained: 0,
+        dead_zone_missed: 1,
+        over_selected: 0,
+        unexplained: 1,
+      },
+      feedbackCoverageRate: 1,
+      acceptanceWindow: {
+        eventCountWindow: 6,
+        acceptedCountWindow: 2,
+        acceptedRunCountWindow: 2,
+        unknownAcceptanceCountWindow: 3,
+        agentActorEventCountWindow: 2,
+        acceptanceRateKnownWindow: 0.67,
+        acceptanceCoverageRate: 0.5,
+      },
+    },
+  ],
+  acceptanceWindow: {
+    eventCountWindow: 6,
+    acceptedCountWindow: 2,
+    acceptedRunCountWindow: 2,
+    unknownAcceptanceCountWindow: 3,
+    agentActorEventCountWindow: 2,
+    acceptanceRateKnownWindow: 0.67,
+    acceptanceCoverageRate: 0.5,
+  },
+  communityComparison: {
+    universeKnowledgeCount: 6,
+    comparedKnowledgeCount: 5,
+    missingRelationAssignmentCount: 1,
+    missingSemanticAssignmentCount: 0,
+    alignedCount: 1,
+    semanticSplitCount: 0,
+    semanticMergeCount: 0,
+    relationOrphanCount: 0,
+    semanticReachableDeadZoneCount: 0,
+    communities: [
+      {
+        relationCommunityKey: "a".repeat(64),
+        relationCommunityLabel: "Core Reliability",
+        relationCommunityRank: 1,
+        semanticCommunityKey: "s1",
+        comparison: "aligned",
+        jaccardOverlap: 0.83,
+        relationCommunitySize: 2,
+        semanticCommunitySize: 2,
+        selectedNeighborCountWindow: 0,
+        selectedNeighborKnowledgeIds: [],
+        deadZoneSemanticReachabilityScore: 0,
+      },
+    ],
+  },
+};
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -170,6 +293,7 @@ describe("GraphPage", () => {
     queryClient.clear();
     vi.clearAllMocks();
     vi.mocked(fetchLandscapeSnapshot).mockResolvedValue(mockLandscapeData);
+    vi.mocked(fetchLandscapeReplaySnapshot).mockResolvedValue(mockReplayData);
   });
 
   it("renders graph visualization and statistics correctly", async () => {
@@ -225,15 +349,20 @@ describe("GraphPage", () => {
 
     await screen.findByText("Node 1");
     expect(fetchLandscapeSnapshot).not.toHaveBeenCalled();
+    expect(fetchLandscapeReplaySnapshot).not.toHaveBeenCalled();
 
     const selects = screen.getAllByRole("combobox");
     const viewModeSelect = selects[1];
     fireEvent.change(viewModeSelect, { target: { value: "semantic" } });
     expect(fetchLandscapeSnapshot).not.toHaveBeenCalled();
+    expect(fetchLandscapeReplaySnapshot).not.toHaveBeenCalled();
 
     fireEvent.change(viewModeSelect, { target: { value: "community" } });
     await waitFor(() => {
       expect(fetchLandscapeSnapshot).toHaveBeenCalledTimes(1);
+    });
+    await waitFor(() => {
+      expect(fetchLandscapeReplaySnapshot).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -393,6 +522,14 @@ describe("GraphPage", () => {
       status: "current",
       relationAxes: ["session", "project", "source"],
     });
+    expect(fetchLandscapeReplaySnapshot).toHaveBeenCalledWith({
+      windowDays: 30,
+      limit: 500,
+      landscapeLimit: 1000,
+      landscapeStatus: "current",
+      relationAxes: ["session", "project", "source"],
+      includeRuns: false,
+    });
     expect(await screen.findByText("Communities")).toBeInTheDocument();
     expect(screen.getByText("Largest")).toBeInTheDocument();
     expect(screen.getByText("Orphans")).toBeInTheDocument();
@@ -400,6 +537,9 @@ describe("GraphPage", () => {
     expect(screen.getByText("Thin")).toBeInTheDocument();
     expect(screen.getByText("Community Summary")).toBeInTheDocument();
     expect(screen.getByText("Dynamic Health Card")).toBeInTheDocument();
+    expect(screen.getByText("Replay Health")).toBeInTheDocument();
+    expect(screen.getByText("Replay Used")).toBeInTheDocument();
+    expect(screen.getByText("Top Facet Risks")).toBeInTheDocument();
     expect(screen.getAllByText("Strong Attractor").length).toBeGreaterThan(0);
   });
 
@@ -475,6 +615,14 @@ describe("GraphPage", () => {
       limit: 1000,
       status: "current",
       relationAxes: ["session", "project", "source"],
+    });
+    expect(fetchLandscapeReplaySnapshot).toHaveBeenCalledWith({
+      windowDays: 30,
+      limit: 500,
+      landscapeLimit: 1000,
+      landscapeStatus: "current",
+      relationAxes: ["session", "project", "source"],
+      includeRuns: false,
     });
 
     const input = await screen.findByPlaceholderText("Community label");

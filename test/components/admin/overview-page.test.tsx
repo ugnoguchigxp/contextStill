@@ -83,9 +83,7 @@ const defaultOverviewData = {
     compileFailedRuns: 0,
   },
   charts: {
-    distillationQueue: [
-      { pending: 1, running: 2, completed: 5, failed: 0 }
-    ],
+    distillationQueue: [{ pending: 1, running: 2, completed: 5, failed: 0 }],
     knowledgeByStatusType: [],
     dynamicScoreBuckets: [],
     compileRunsByDay: [],

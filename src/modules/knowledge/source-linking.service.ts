@@ -93,7 +93,9 @@ export function normalizeLinkConfidence(confidence: number | undefined): number 
   return Math.max(0, Math.min(1, normalized / 100));
 }
 
-export function extractSourceReferenceCandidates(metadata: Record<string, unknown>): SourceReferenceCandidate[] {
+export function extractSourceReferenceCandidates(
+  metadata: Record<string, unknown>,
+): SourceReferenceCandidate[] {
   const refs = new Map<string, SourceReferenceCandidate>();
   const pushRef = (candidate: SourceReferenceCandidate | null) => {
     if (!candidate) return;

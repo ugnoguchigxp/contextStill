@@ -227,7 +227,10 @@ function emptyIngestResult(cursor: IngestCursor, options?: { skipped?: boolean }
 
 const ANTIGRAVITY_PREFERRED_LOG_FILES = ["transcript.jsonl"] as const;
 
-async function listAntigravitySessionLogFiles(logsDir: string, warnings: string[]): Promise<string[]> {
+async function listAntigravitySessionLogFiles(
+  logsDir: string,
+  warnings: string[],
+): Promise<string[]> {
   let entries: Array<{ name: string; isFile: () => boolean }> = [];
   try {
     entries = await fs.readdir(logsDir, { withFileTypes: true });
@@ -516,8 +519,11 @@ export async function ingestAntigravityLogs(
   );
 }
 
-export function decodeClaudeProjectPath(encoded: string): { projectName: string; projectRoot: string } {
-  const normalized = encoded.startsWith("-") ? encoded : "-" + encoded;
+export function decodeClaudeProjectPath(encoded: string): {
+  projectName: string;
+  projectRoot: string;
+} {
+  const normalized = encoded.startsWith("-") ? encoded : `-${encoded}`;
   const decoded = normalized.replace(/-/g, "/");
   const parts = decoded.split("/");
   const projectName = parts[parts.length - 1] || "Unknown";
@@ -574,7 +580,7 @@ export async function ingestClaudeLogsFromRoot(
 
   for (const projectDir of projectDirs) {
     const projectPath = path.join(root, projectDir);
-    let statProject;
+    let statProject: Awaited<ReturnType<typeof fs.stat>>;
     try {
       statProject = await fs.stat(projectPath);
       if (!statProject.isDirectory()) continue;
@@ -665,12 +671,7 @@ export async function ingestClaudeLogsFromRoots(
   let ok = true;
 
   for (const root of uniqueRoots) {
-    const result = await ingestClaudeLogsFromRoot(
-      root,
-      since,
-      nextCursor,
-      initialLookbackHours,
-    );
+    const result = await ingestClaudeLogsFromRoot(root, since, nextCursor, initialLookbackHours);
     ok = ok && result.ok;
     messages.push(...result.messages);
     warnings.push(...result.warnings);

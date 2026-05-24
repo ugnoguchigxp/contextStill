@@ -16,11 +16,7 @@ export const overviewDynamicScoreBucketSchema = z.enum([
   "35+",
 ]);
 export const overviewSourceCoverageLabelSchema = z.enum(["linked", "unlinked"]);
-export const overviewCommunitySourceCoverageLabelSchema = z.enum([
-  "covered",
-  "thin",
-  "no-source",
-]);
+export const overviewCommunitySourceCoverageLabelSchema = z.enum(["covered", "thin", "no-source"]);
 export const overviewDistillationTargetKindSchema = z.enum([
   "wiki_file",
   "vibe_memory",

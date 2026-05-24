@@ -317,6 +317,7 @@ async function recordCompileRunKnowledgeUsageSignalsSafe(params: {
   runId: string;
   selectedKnowledgeIds: string[];
   selectedRankMap: Map<string, number>;
+  agenticAcceptedKnowledgeIds: string[];
   usedKnowledge: Array<{
     id: string;
     confidence?: number;
@@ -328,6 +329,9 @@ async function recordCompileRunKnowledgeUsageSignalsSafe(params: {
 }): Promise<void> {
   const selectedSet = new Set(params.selectedKnowledgeIds.map((id) => id.trim()).filter(Boolean));
   if (selectedSet.size === 0) return;
+  const agenticAcceptedSet = new Set(
+    params.agenticAcceptedKnowledgeIds.map((id) => id.trim()).filter((id) => selectedSet.has(id)),
+  );
 
   const usedById = new Map<
     string,
@@ -359,6 +363,8 @@ async function recordCompileRunKnowledgeUsageSignalsSafe(params: {
         reason: used.reason ?? "used_by_response_composer",
         metadata: {
           source: "response_composer",
+          signalSource: "context_response_composer",
+          agenticAccepted: agenticAcceptedSet.has(knowledgeId),
           confidence: used.confidence,
           ...(used.evidence ? { evidence: used.evidence } : {}),
           ...(used.outputSection ? { outputSection: used.outputSection } : {}),
@@ -372,6 +378,8 @@ async function recordCompileRunKnowledgeUsageSignalsSafe(params: {
       reason: "selected_but_not_referenced",
       metadata: {
         source: "response_composer",
+        signalSource: "context_response_composer",
+        agenticAccepted: agenticAcceptedSet.has(knowledgeId),
         ...(selectedRank ? { selectedRank } : {}),
       },
     };
@@ -390,6 +398,7 @@ async function recordCompileRunKnowledgeUsageSignalsSafe(params: {
       payload: {
         runId: params.runId,
         selectedKnowledgeIds: params.selectedKnowledgeIds,
+        agenticAcceptedKnowledgeIds: params.agenticAcceptedKnowledgeIds,
         error: error instanceof Error ? error.message : String(error),
       },
     });
@@ -762,6 +771,7 @@ export async function compileContextPack(
     runId,
     selectedKnowledgeIds,
     selectedRankMap,
+    agenticAcceptedKnowledgeIds,
     usedKnowledge: composedResponse.usedKnowledge,
     actor: composedResponse.agenticUsed ? "agent" : "system",
   });

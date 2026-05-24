@@ -136,8 +136,20 @@ describe("context response composer", () => {
         id: "r1",
         confidence: 0.95,
         evidence: "Hono requirement matches",
-      })
+      }),
     );
+    expect(mockProvider.chat).toHaveBeenCalledWith(
+      expect.objectContaining({
+        responseFormat: "json",
+        maxTokens: expect.any(Number),
+      }),
+    );
+    const chatRequest = mockProvider.chat.mock.calls[0]?.[0];
+    const systemPrompt = chatRequest?.messages?.[0]?.content ?? "";
+    const markdownTargetTokens = Number(systemPrompt.match(/本文は (\d+) トークン/u)?.[1]);
+    expect(systemPrompt).toContain("JSON は必ず完結");
+    expect(markdownTargetTokens).toBeGreaterThan(0);
+    expect(chatRequest?.maxTokens).toBeGreaterThan(markdownTargetTokens);
   });
 
   test("falls back to plain markdown text when LLM outputs non-JSON content", async () => {
@@ -172,6 +184,78 @@ describe("context response composer", () => {
     expect(result.agenticUsed).toBe(true);
     expect(result.markdown).toBe("## 実装フォーカス\n- Hono APIを検証します。");
     expect(result.usedKnowledge).toEqual([]);
+  });
+
+  test("falls back to local template when LLM returns truncated JSON", async () => {
+    groupedConfig.agenticCompile.enabled = true;
+
+    mockProvider.chat.mockResolvedValue({
+      content:
+        '{"markdown":"## 実装フォーカス\\n- Hono APIを検証します。","usedKnowledge":[{"id":"r1"',
+    });
+
+    const result = await composeContextResponse({
+      input: {
+        goal: "Hono APIを検証する",
+      },
+      retrievalMode: "task_context",
+      rules: [
+        {
+          id: "knowledge:r1",
+          itemKind: "rule",
+          itemId: "r1",
+          section: "rules",
+          title: "Hono",
+          content: "Hono body",
+          score: 0.9,
+          rankingReason: "ranked",
+          sourceRefs: [],
+        },
+      ],
+      procedures: [],
+    });
+
+    expect(result.agenticUsed).toBe(false);
+    expect(result.markdown).toContain("## 実装フォーカス");
+    expect(result.markdown).not.toContain('{"markdown"');
+    expect(result.error).toBe("COMPOSER_JSON_PARSE_FAILED");
+  });
+
+  test("uses valid JSON even when LLM reports token limit finish reason", async () => {
+    groupedConfig.agenticCompile.enabled = true;
+
+    mockProvider.chat.mockResolvedValue({
+      content: JSON.stringify({
+        markdown: "## 実装フォーカス\n- Hono APIを検証します。",
+        usedKnowledge: [],
+      }),
+      finishReason: "length",
+    });
+
+    const result = await composeContextResponse({
+      input: {
+        goal: "Hono APIを検証する",
+      },
+      retrievalMode: "task_context",
+      rules: [
+        {
+          id: "knowledge:r1",
+          itemKind: "rule",
+          itemId: "r1",
+          section: "rules",
+          title: "Hono",
+          content: "Hono body",
+          score: 0.9,
+          rankingReason: "ranked",
+          sourceRefs: [],
+        },
+      ],
+      procedures: [],
+    });
+
+    expect(result.agenticUsed).toBe(true);
+    expect(result.markdown).toBe("## 実装フォーカス\n- Hono APIを検証します。");
+    expect(result.error).toBeUndefined();
   });
 
   test("returns No Content if agentic output is not aligned with goal", async () => {
@@ -259,10 +343,7 @@ describe("context response composer", () => {
       }),
     };
 
-    vi.mocked(getAgenticLlmProviders).mockReturnValue([
-      failingProvider,
-      succeedingProvider,
-    ] as any);
+    vi.mocked(getAgenticLlmProviders).mockReturnValue([failingProvider, succeedingProvider] as any);
 
     const result = await composeContextResponse({
       input: {
@@ -298,9 +379,7 @@ describe("context response composer", () => {
       chat: vi.fn(),
     };
 
-    vi.mocked(getAgenticLlmProviders).mockReturnValue([
-      unconfiguredProvider,
-    ] as any);
+    vi.mocked(getAgenticLlmProviders).mockReturnValue([unconfiguredProvider] as any);
 
     const result = await composeContextResponse({
       input: {

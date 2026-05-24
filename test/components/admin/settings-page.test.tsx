@@ -34,15 +34,19 @@ vi.mock("@tanstack/react-router", () => ({
       </a>
     );
   },
-  useRouterState: vi.fn().mockImplementation(({ select }: any) =>
-    typeof select === "function"
-      ? select({ location: { pathname: routerState.pathname } })
-      : routerState.pathname,
-  ),
+  useRouterState: vi
+    .fn()
+    .mockImplementation(({ select }: any) =>
+      typeof select === "function"
+        ? select({ location: { pathname: routerState.pathname } })
+        : routerState.pathname,
+    ),
 }));
 
 vi.mock("../../../web/src/modules/admin/repositories/admin.repository", async () => {
-  const actual = await vi.importActual("../../../web/src/modules/admin/repositories/admin.repository");
+  const actual = await vi.importActual(
+    "../../../web/src/modules/admin/repositories/admin.repository",
+  );
   return {
     ...actual,
     fetchRuntimeSettings: repositoryMocks.fetchRuntimeSettings,
@@ -214,16 +218,18 @@ describe("SettingsPage", () => {
       ok: true,
       reloadedAt: "2026-05-23T12:20:00.000Z",
     });
-    repositoryMocks.testRuntimeProvider.mockImplementation(async (provider: RuntimeProviderName) => ({
-      provider,
-      health: {
+    repositoryMocks.testRuntimeProvider.mockImplementation(
+      async (provider: RuntimeProviderName) => ({
         provider,
-        configured: true,
-        reachable: true,
-        model: "gpt-5-4-mini",
-        endpoint: "https://example.invalid",
-      },
-    }));
+        health: {
+          provider,
+          configured: true,
+          reachable: true,
+          model: "gpt-5-4-mini",
+          endpoint: "https://example.invalid",
+        },
+      }),
+    );
   });
 
   it("renders task-routing tab from URL and keeps tab links canonical", async () => {
@@ -299,7 +305,9 @@ describe("SettingsPage", () => {
   it("renders Advanced sync settings and allows toggling them", async () => {
     routerState.pathname = "/setting/advanced";
     renderPage();
-    expect(await screen.findByRole("heading", { name: "Advanced Runtime Controls" })).toBeInTheDocument();
+    expect(
+      await screen.findByRole("heading", { name: "Advanced Runtime Controls" }),
+    ).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Agent Log Synchronization" })).toBeInTheDocument();
 
     const codexCheckbox = screen.getByLabelText("Enable Codex (Cursor) Log Sync");

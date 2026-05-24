@@ -124,9 +124,12 @@ function CandidateDetailPane({
 
 export function CandidatesPage() {
   const tz = useTimezone();
-  const formatDate = (value: string | Date | null | undefined): string => {
-    return tzFormatDateTime(value, tz);
-  };
+  const formatDate = useCallback(
+    (value: string | Date | null | undefined): string => {
+      return tzFormatDateTime(value, tz);
+    },
+    [tz],
+  );
 
   const [sorting, setSorting] = useState<SortingState>([{ id: "latestUpdatedAt", desc: true }]);
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 50 });
@@ -322,7 +325,7 @@ export function CandidatesPage() {
         ),
       },
     ],
-    [],
+    [formatDate],
   );
 
   const table = useReactTable({

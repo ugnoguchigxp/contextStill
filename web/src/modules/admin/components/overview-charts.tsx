@@ -223,7 +223,13 @@ export function KnowledgeCharts({
             <YAxis allowDecimals={false} />
             <Tooltip />
             <Legend />
-            <Line type="monotone" dataKey="records" name="vibe records" stroke="#10b981" strokeWidth={2} />
+            <Line
+              type="monotone"
+              dataKey="records"
+              name="vibe records"
+              stroke="#10b981"
+              strokeWidth={2}
+            />
           </LineChart>
         </div>
       </AdminChartCard>

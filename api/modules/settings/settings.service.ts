@@ -56,4 +56,3 @@ export async function testProviderForApi(providerRaw: string) {
       return createLocalLlmProvider({ timeoutMs: 10_000 }).healthCheck();
   }
 }
-

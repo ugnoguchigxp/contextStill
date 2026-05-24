@@ -103,16 +103,18 @@ function parseJsonOverviewTurns(content: string): ChatTurn[] {
 
       // 2. アシスタント返答 (PLANNER_RESPONSE) の処理 (2.0仕様)
       if (source === "MODEL" && recordType === "PLANNER_RESPONSE") {
-        const textContent = 
-          typeof data.thinking === "string" ? data.thinking : 
-          typeof data.content === "string" ? data.content : "";
+        const textContent =
+          typeof data.thinking === "string"
+            ? data.thinking
+            : typeof data.content === "string"
+              ? data.content
+              : "";
 
         const text = cleanNaturalText(textContent);
         if (text) {
           const metadata = isMetadataContent(textContent) || undefined;
           turns.push({ role: "assistant", content: text, isMetadata: metadata });
         }
-        continue;
       }
     } catch {}
   }

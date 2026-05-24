@@ -385,7 +385,7 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
 
     for (const source of sources) {
       const [state] = await db.select().from(syncStates).where(eq(syncStates.id, source.id));
-      
+
       const enabled = enabledBySourceId[source.id] ?? true;
       if (!enabled) {
         summary.sources.push({
@@ -405,8 +405,10 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
       }
 
       // Antigravity ログの 2.0 移行自動クリーンアップ判定
-      const isFirst20Sync = source.id === "antigravity_logs" && 
-        (!state || (state.metadata as Record<string, unknown> | undefined)?.formatVersion !== "2.0");
+      const isFirst20Sync =
+        source.id === "antigravity_logs" &&
+        (!state ||
+          (state.metadata as Record<string, unknown> | undefined)?.formatVersion !== "2.0");
 
       const since = isFirst20Sync ? undefined : (state?.lastSyncedAt ?? undefined);
       const cursor = isFirst20Sync ? {} : normalizeIngestCursor(state?.cursor);
@@ -479,9 +481,7 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
         if (isFirst20Sync) {
           // 旧 Antigravity 会話ログに関連するメモリデータを DB から全削除
           if (typeof tx.delete === "function") {
-            await tx
-              .delete(vibeMemories)
-              .where(like(vibeMemories.sessionId, "antigravity_logs:%"));
+            await tx.delete(vibeMemories).where(like(vibeMemories.sessionId, "antigravity_logs:%"));
             console.log("[Cleanup] Deleted legacy Antigravity vibe memories from DB successfully.");
           }
         }

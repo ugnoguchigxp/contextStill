@@ -43,4 +43,3 @@ export async function reloadRuntimeSettings(): Promise<void> {
   cacheState.loadedAt = new Date();
   cacheState.version += 1;
 }
-

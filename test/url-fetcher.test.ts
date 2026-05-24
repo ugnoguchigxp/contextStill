@@ -144,12 +144,13 @@ describe("url-fetcher fetchContent", () => {
 
   it("fetches and sanitizes HTML content on cache miss", async () => {
     vi.mocked(findDistillationEvidenceCache).mockResolvedValue(null);
-    
+
     const mockResponse = {
       ok: true,
       status: 200,
       headers: new Map([["content-type", "text/html"]]),
-      text: async () => "<html><body><h1>Hello World</h1><script>console.log('noisy')</script></body></html>",
+      text: async () =>
+        "<html><body><h1>Hello World</h1><script>console.log('noisy')</script></body></html>",
     };
     mockFetch.mockResolvedValue(mockResponse);
 
@@ -272,6 +273,8 @@ describe("url-fetcher fetchContent", () => {
       headers: new Map([["location", "http://127.0.0.1/unsafe"]]),
     });
 
-    await expect(fetchContent("https://example.com")).rejects.toThrow("fetch_content blocked: redirect target private or loopback IPv4 is blocked");
+    await expect(fetchContent("https://example.com")).rejects.toThrow(
+      "fetch_content blocked: redirect target private or loopback IPv4 is blocked",
+    );
   });
 });

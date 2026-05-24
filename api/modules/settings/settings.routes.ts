@@ -31,4 +31,3 @@ export const settingsRouter = new Hono()
     const result = await reloadRuntimeCacheForApi();
     return c.json(result);
   });
-

@@ -27,14 +27,25 @@ export function sessionIdFromFile(filePath: string): string {
 
 function parseClaudeToolCall(toolUse: Record<string, unknown>): ToolCallSummary {
   const name = typeof toolUse.name === "string" ? toolUse.name : "tool";
-  const input = toolUse.input && typeof toolUse.input === "object" ? (toolUse.input as Record<string, unknown>) : {};
-  
-  const targetFile = typeof input.file_path === "string" ? input.file_path : 
-                     typeof input.filePath === "string" ? input.filePath : undefined;
-  
-  const contentPreview = typeof input.content === "string" ? input.content :
-                         typeof input.replacement === "string" ? input.replacement : undefined;
-                         
+  const input =
+    toolUse.input && typeof toolUse.input === "object"
+      ? (toolUse.input as Record<string, unknown>)
+      : {};
+
+  const targetFile =
+    typeof input.file_path === "string"
+      ? input.file_path
+      : typeof input.filePath === "string"
+        ? input.filePath
+        : undefined;
+
+  const contentPreview =
+    typeof input.content === "string"
+      ? input.content
+      : typeof input.replacement === "string"
+        ? input.replacement
+        : undefined;
+
   const commandLine = typeof input.command === "string" ? input.command : undefined;
 
   return {
@@ -62,7 +73,10 @@ export function parseClaudeLogLine(
     const type = typeof data.type === "string" ? data.type : "";
     if (type !== "user" && type !== "assistant") return null;
 
-    const message = data.message && typeof data.message === "object" ? (data.message as Record<string, unknown>) : null;
+    const message =
+      data.message && typeof data.message === "object"
+        ? (data.message as Record<string, unknown>)
+        : null;
     if (!message) return null;
 
     const timestamp = typeof data.timestamp === "string" ? data.timestamp : undefined;
@@ -119,9 +133,11 @@ export function parseClaudeLogLine(
           ]),
         ]);
 
-        const finalContent = strippedText 
-          ? strippedText 
-          : toolCalls.map(tc => `${tc.name}${tc.targetFile ? ` - file: ${tc.targetFile}` : ""}`).join("\n");
+        const finalContent = strippedText
+          ? strippedText
+          : toolCalls
+              .map((tc) => `${tc.name}${tc.targetFile ? ` - file: ${tc.targetFile}` : ""}`)
+              .join("\n");
 
         return {
           role: "assistant",

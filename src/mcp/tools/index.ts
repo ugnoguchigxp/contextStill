@@ -6,7 +6,12 @@ import {
   searchKnowledgeTool,
   updateKnowledgeTool,
 } from "./knowledge.tool.js";
-import { fetchMemoryTool, memoryFetchTool, memorySearchTool, searchMemoryTool } from "./memory.tool.js";
+import {
+  fetchMemoryTool,
+  memoryFetchTool,
+  memorySearchTool,
+  searchMemoryTool,
+} from "./memory.tool.js";
 import { readFileTool } from "./read-file.tool.js";
 import { doctorTool, initialInstructionsTool } from "./system.tool.js";
 

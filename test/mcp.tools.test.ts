@@ -11,8 +11,8 @@ import {
   updateKnowledgeTool,
 } from "../src/mcp/tools/knowledge.tool.js";
 import {
-  fetchMemoryTool as fetchMemoryPrimaryTool,
   memoryFetchTool as fetchMemoryLegacyTool,
+  fetchMemoryTool as fetchMemoryPrimaryTool,
   memorySearchTool as searchMemoryLegacyTool,
   searchMemoryTool as searchMemoryPrimaryTool,
 } from "../src/mcp/tools/memory.tool.js";
@@ -21,6 +21,7 @@ import { compileContextPack } from "../src/modules/context-compiler/context-comp
 import { runDoctor } from "../src/modules/doctor/doctor.service.js";
 import { searchKnowledgeCandidates } from "../src/modules/knowledge/knowledge.service.js";
 import { registerCandidate } from "../src/modules/registerCandidate/register-candidate.service.js";
+import { reloadRuntimeSettingsCache } from "../src/modules/settings/settings.service.js";
 import { retrieveVibeMemoryContext } from "../src/modules/vibe-memory/vibe-memory.service.js";
 
 const { mockDb } = vi.hoisted(() => {
@@ -44,6 +45,7 @@ vi.mock("../src/modules/knowledge/knowledge.service.js");
 vi.mock("../src/modules/context-compiler/context-compiler.service.js");
 vi.mock("../src/modules/doctor/doctor.service.js");
 vi.mock("../src/modules/registerCandidate/register-candidate.service.js");
+vi.mock("../src/modules/settings/settings.service.js");
 vi.mock("../api/modules/knowledge/knowledge.repository.js");
 
 vi.mock("../src/db/client.js", () => ({
@@ -55,6 +57,7 @@ describe("MCP Tools Handlers", () => {
     vi.clearAllMocks();
     process.env.MEMORY_ROUTER_LANG = undefined;
     process.env.MEMORY_ROUTER_MCP_V2 = "1";
+    vi.mocked(reloadRuntimeSettingsCache).mockResolvedValue();
     vi.mocked(mockDb.where).mockImplementation(() => {
       return Object.assign(Promise.resolve([]), {
         orderBy: vi.fn().mockResolvedValue([]),
@@ -122,7 +125,10 @@ describe("MCP Tools Handlers", () => {
         }) as unknown as never;
       });
 
-      const response = await fetchMemoryPrimaryTool.handler({ id: "mem-1", includeAgentDiffs: true });
+      const response = await fetchMemoryPrimaryTool.handler({
+        id: "mem-1",
+        includeAgentDiffs: true,
+      });
       const data = JSON.parse(response.content[0].text);
       expect(data.id).toBe("mem-1");
       expect(data.agentDiffs).toBeDefined();
@@ -162,7 +168,12 @@ describe("MCP Tools Handlers", () => {
       vi.mocked(mockDb.select).mockReturnValueOnce({
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockResolvedValue([
-            { id: "mem-1", content: "Memory content", sessionId: "session-1", memoryType: "chat" },
+            {
+              id: "mem-1",
+              content: "Memory content",
+              sessionId: "session-1",
+              memoryType: "chat",
+            },
           ]),
         }),
       } as unknown as never);
@@ -180,7 +191,12 @@ describe("MCP Tools Handlers", () => {
       vi.mocked(mockDb.select).mockReturnValueOnce({
         from: vi.fn().mockReturnValue({
           where: vi.fn().mockResolvedValue([
-            { id: "mem-1", content: "Memory content", sessionId: "session-1", memoryType: "chat" },
+            {
+              id: "mem-1",
+              content: "Memory content",
+              sessionId: "session-1",
+              memoryType: "chat",
+            },
           ]),
         }),
       } as unknown as never);
@@ -346,6 +362,10 @@ describe("MCP Tools Handlers", () => {
       const response = await contextCompileTool.handler({ goal: "test goal" });
       expect(response.content.length).toBe(1);
       expect(response.content[0].text).toBe("# Context");
+      expect(reloadRuntimeSettingsCache).toHaveBeenCalledTimes(1);
+      expect(vi.mocked(reloadRuntimeSettingsCache).mock.invocationCallOrder[0]).toBeLessThan(
+        vi.mocked(compileContextPack).mock.invocationCallOrder[0],
+      );
     });
 
     test("does not crash when pack fields are partially missing", async () => {

@@ -2,10 +2,7 @@ import React from "react";
 import { useQuery } from "@tanstack/react-query";
 import { Card, CardContent } from "@/components/ui/card";
 import { formatCheckedAt } from "@/lib/admin-formatters";
-import {
-  fetchDoctorReport,
-  fetchOverviewDashboard,
-} from "../repositories/admin.repository";
+import { fetchDoctorReport, fetchOverviewDashboard } from "../repositories/admin.repository";
 import { AdminPageHeader } from "./admin-page-header";
 import { KnowledgeAssetsDomain } from "./overview/knowledge-assets-domain";
 import { SystemQualityDomain } from "./overview/system-quality-domain";
@@ -21,7 +18,7 @@ export function OverviewPage() {
   const dashboard = overview.data;
   const doctorReport = doctor.data;
   const status = doctorReport?.status ?? "degraded";
-  
+
   const overviewErrorMessage =
     overview.error instanceof Error
       ? overview.error.message

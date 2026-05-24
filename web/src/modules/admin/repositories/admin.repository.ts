@@ -834,6 +834,130 @@ export type LandscapeSnapshot = {
   }>;
 };
 
+export type LandscapeRunStatusFilter = "ok" | "degraded" | "failed" | "all";
+
+export type LandscapeVerdictMix = {
+  used: number;
+  notUsed: number;
+  offTopic: number;
+  wrong: number;
+};
+
+export type LandscapeBasinExplanation =
+  | "aligned_attractor"
+  | "negative_explained"
+  | "dead_zone_missed"
+  | "over_selected"
+  | "unexplained";
+
+export type LandscapeFacetBasinSummary = {
+  facetKind:
+    | "retrievalMode"
+    | "repoKey"
+    | "technology"
+    | "changeType"
+    | "domain"
+    | "source"
+    | "runStatus"
+    | "degradedReasonBucket";
+  facetValue: string;
+  replayRunCount: number;
+  selectedItemCount: number;
+  selectedCommunityCount: number;
+  attractorHitCount: number;
+  negativeCandidateHitCount: number;
+  overSelectedHitCount: number;
+  deadZoneMissCount: number;
+  usedRate: number;
+  offTopicRate: number;
+  wrongRate: number;
+  feedbackCoverageRate: number;
+  acceptanceWindow: LandscapeAcceptanceWindowSummary;
+};
+
+export type LandscapeCommunityReplaySummary = {
+  communityKey: string;
+  communityLabel: string;
+  communityRank: number;
+  replayRunCount: number;
+  selectedItemCount: number;
+  classificationAtAnalysis: LandscapeClassificationPrimary;
+  verdictMix: LandscapeVerdictMix;
+  explanationCounts: Record<LandscapeBasinExplanation, number>;
+  feedbackCoverageRate: number;
+  acceptanceWindow: LandscapeAcceptanceWindowSummary;
+};
+
+export type LandscapeAcceptanceWindowSummary = {
+  eventCountWindow: number;
+  acceptedCountWindow: number;
+  acceptedRunCountWindow: number;
+  unknownAcceptanceCountWindow: number;
+  agentActorEventCountWindow: number;
+  acceptanceRateKnownWindow: number;
+  acceptanceCoverageRate: number;
+};
+
+export type LandscapeCommunityComparison = {
+  relationCommunityKey: string;
+  relationCommunityLabel: string;
+  relationCommunityRank: number;
+  semanticCommunityKey?: string;
+  comparison:
+    | "aligned"
+    | "semantic_split"
+    | "semantic_merge"
+    | "relation_orphan"
+    | "semantic_reachable_dead_zone";
+  jaccardOverlap: number;
+  relationCommunitySize: number;
+  semanticCommunitySize: number;
+  selectedNeighborCountWindow: number;
+  selectedNeighborKnowledgeIds: string[];
+  deadZoneSemanticReachabilityScore: number;
+};
+
+export type LandscapeReplaySnapshot = {
+  generatedAt: string;
+  analysisAsOf: string;
+  windowDays: number;
+  corpusWindow: {
+    startAt: string;
+    endAt: string;
+  };
+  landscapeWindow: {
+    days: number;
+    analysisAsOf: string;
+  };
+  basis: {
+    unit: "community-replay";
+    relationAxes: GraphRelationAxis[];
+    runStatus: LandscapeRunStatusFilter;
+    landscapeStatus: GraphStatusFilter;
+    minSimilarity: number;
+    semanticTopK: number;
+  };
+  replayRunCount: number;
+  selectedKnowledgeCount: number;
+  missingKnowledgeCount: number;
+  runs: unknown[];
+  facetSummaries: LandscapeFacetBasinSummary[];
+  communityReplaySummaries: LandscapeCommunityReplaySummary[];
+  acceptanceWindow: LandscapeAcceptanceWindowSummary;
+  communityComparison: {
+    universeKnowledgeCount: number;
+    comparedKnowledgeCount: number;
+    missingRelationAssignmentCount: number;
+    missingSemanticAssignmentCount: number;
+    alignedCount: number;
+    semanticSplitCount: number;
+    semanticMergeCount: number;
+    relationOrphanCount: number;
+    semanticReachableDeadZoneCount: number;
+    communities: LandscapeCommunityComparison[];
+  };
+};
+
 export type SourceTreeItem = {
   slug: string;
   title: string;
@@ -1391,6 +1515,47 @@ export async function fetchLandscapeSnapshot(input?: {
     params.set("minFeedbackCount", String(input.minFeedbackCount));
   }
   return getJson<LandscapeSnapshot>(`/api/graph/landscape?${params.toString()}`);
+}
+
+export async function fetchLandscapeReplaySnapshot(input?: {
+  windowDays?: number;
+  limit?: number;
+  landscapeLimit?: number;
+  runStatus?: LandscapeRunStatusFilter;
+  landscapeStatus?: GraphStatusFilter;
+  relationAxes?: GraphRelationAxis[];
+  minSelectedCount?: number;
+  minFeedbackCount?: number;
+  minSimilarity?: number;
+  semanticTopK?: number;
+  includeRuns?: boolean;
+}): Promise<LandscapeReplaySnapshot> {
+  const params = new URLSearchParams();
+  params.set("windowDays", String(input?.windowDays ?? 30));
+  params.set("limit", String(input?.limit ?? 500));
+  params.set("landscapeLimit", String(input?.landscapeLimit ?? 1000));
+  params.set("runStatus", input?.runStatus ?? "all");
+  params.set("landscapeStatus", input?.landscapeStatus ?? "active");
+  params.set("format", "full");
+  params.set("includeRuns", String(input?.includeRuns ?? false));
+  if (input?.relationAxes?.length) {
+    params.set("relationAxes", input.relationAxes.join(","));
+  } else {
+    params.set("relationAxes", "session,project,source");
+  }
+  if (input?.minSelectedCount !== undefined) {
+    params.set("minSelectedCount", String(input.minSelectedCount));
+  }
+  if (input?.minFeedbackCount !== undefined) {
+    params.set("minFeedbackCount", String(input.minFeedbackCount));
+  }
+  if (input?.minSimilarity !== undefined) {
+    params.set("minSimilarity", String(input.minSimilarity));
+  }
+  if (input?.semanticTopK !== undefined) {
+    params.set("semanticTopK", String(input.semanticTopK));
+  }
+  return getJson<LandscapeReplaySnapshot>(`/api/graph/landscape/replay?${params.toString()}`);
 }
 
 export async function fetchGraphCommunityLabels(input?: {

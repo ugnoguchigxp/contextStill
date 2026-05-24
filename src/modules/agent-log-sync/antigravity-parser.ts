@@ -262,7 +262,9 @@ export async function parseAntigravityOverviewMessages(
       if (source === "USER_EXPLICIT" && recordType === "USER_INPUT") {
         if (typeof data.content === "string") {
           const userRequest = extractTaggedContent(data.content, "USER_REQUEST");
-          const textContent = userRequest ? userRequest.trim() : stripAntigravityMetadata(data.content);
+          const textContent = userRequest
+            ? userRequest.trim()
+            : stripAntigravityMetadata(data.content);
           if (textContent.trim()) {
             const projectContext = deriveProjectContextFromValues([data.content]);
             messages.push({
@@ -287,12 +289,15 @@ export async function parseAntigravityOverviewMessages(
       // 2. アシスタント返答 (PLANNER_RESPONSE) の処理 (2.0仕様)
       if (source === "MODEL" && recordType === "PLANNER_RESPONSE") {
         const toolCalls = summarizeAntigravityToolCalls(data.tool_calls);
-        
+
         // ユーザーに見せるテキストは thinking または content フィールドから取得
-        const textContent = 
-          typeof data.thinking === "string" ? data.thinking : 
-          typeof data.content === "string" ? data.content : "";
-          
+        const textContent =
+          typeof data.thinking === "string"
+            ? data.thinking
+            : typeof data.content === "string"
+              ? data.content
+              : "";
+
         const strippedText = stripAntigravityMetadata(textContent);
 
         const projectContext = deriveProjectContextFromValues([
@@ -309,8 +314,8 @@ export async function parseAntigravityOverviewMessages(
 
         if (textExists || toolCallsExist) {
           // テキストメッセージを優先し、テキストがない場合はツールコールを羅列する
-          const finalContent = textExists 
-            ? strippedText.trim() 
+          const finalContent = textExists
+            ? strippedText.trim()
             : toolCalls.map(formatToolCallSummary).join("\n");
 
           messages.push({
@@ -330,7 +335,6 @@ export async function parseAntigravityOverviewMessages(
             },
           });
         }
-        continue;
       }
 
       // SYSTEMプロンプト、ツールの生実行結果、その他の中間レコードは
@@ -340,4 +344,3 @@ export async function parseAntigravityOverviewMessages(
 
   return messages;
 }
-

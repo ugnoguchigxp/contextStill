@@ -1,9 +1,15 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { landscapeReplaySnapshotSchema } from "../src/shared/schemas/landscape-replay.schema.js";
 import { landscapeSnapshotSchema } from "../src/shared/schemas/landscape.schema.js";
 
-const { buildLandscapeSnapshotMock } = vi.hoisted(() => ({
+const { buildLandscapeReplaySnapshotMock, buildLandscapeSnapshotMock } = vi.hoisted(() => ({
+  buildLandscapeReplaySnapshotMock: vi.fn(),
   buildLandscapeSnapshotMock: vi.fn(),
+}));
+
+vi.mock("../src/modules/landscape/landscape-replay.service.js", () => ({
+  buildLandscapeReplaySnapshot: buildLandscapeReplaySnapshotMock,
 }));
 
 vi.mock("../src/modules/landscape/landscape.service.js", () => ({
@@ -138,10 +144,62 @@ function validLandscapeSnapshot() {
   });
 }
 
+function validReplaySnapshot() {
+  return landscapeReplaySnapshotSchema.parse({
+    generatedAt: "2026-05-24T00:00:00.000Z",
+    analysisAsOf: "2026-05-24T00:00:00.000Z",
+    windowDays: 30,
+    corpusWindow: {
+      startAt: "2026-04-24T00:00:00.000Z",
+      endAt: "2026-05-24T00:00:00.000Z",
+    },
+    landscapeWindow: {
+      days: 30,
+      analysisAsOf: "2026-05-24T00:00:00.000Z",
+    },
+    basis: {
+      unit: "community-replay",
+      relationAxes: ["session", "project", "source"],
+      runStatus: "all",
+      landscapeStatus: "active",
+      minSimilarity: 0.72,
+      semanticTopK: 3,
+    },
+    replayRunCount: 0,
+    selectedKnowledgeCount: 0,
+    missingKnowledgeCount: 0,
+    runs: [],
+    facetSummaries: [],
+    communityReplaySummaries: [],
+    acceptanceWindow: {
+      eventCountWindow: 0,
+      acceptedCountWindow: 0,
+      acceptedRunCountWindow: 0,
+      unknownAcceptanceCountWindow: 0,
+      agentActorEventCountWindow: 0,
+      acceptanceRateKnownWindow: 0,
+      acceptanceCoverageRate: 0,
+    },
+    communityComparison: {
+      universeKnowledgeCount: 0,
+      comparedKnowledgeCount: 0,
+      missingRelationAssignmentCount: 0,
+      missingSemanticAssignmentCount: 0,
+      alignedCount: 0,
+      semanticSplitCount: 0,
+      semanticMergeCount: 0,
+      relationOrphanCount: 0,
+      semanticReachableDeadZoneCount: 0,
+      communities: [],
+    },
+  });
+}
+
 describe("graph routes landscape", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     buildLandscapeSnapshotMock.mockResolvedValue(validLandscapeSnapshot());
+    buildLandscapeReplaySnapshotMock.mockResolvedValue(validReplaySnapshot());
   });
 
   test("GET /api/graph/landscape applies defaults", async () => {
@@ -173,6 +231,48 @@ describe("graph routes landscape", () => {
       relationAxes: ["project", "source"],
       minSelectedCount: 5,
       minFeedbackCount: 7,
+    });
+  });
+
+  test("GET /api/graph/landscape/replay applies defaults", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/graph/landscape/replay");
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(landscapeReplaySnapshotSchema.safeParse(json).success).toBe(true);
+    expect(buildLandscapeReplaySnapshotMock).toHaveBeenCalledWith({
+      windowDays: 30,
+      limit: 500,
+      landscapeLimit: 1000,
+      runStatus: "all",
+      landscapeStatus: "active",
+      relationAxes: ["session", "project", "source"],
+      minSelectedCount: 3,
+      minFeedbackCount: 3,
+      minSimilarity: 0.72,
+      semanticTopK: 3,
+      includeRuns: true,
+    });
+  });
+
+  test("GET /api/graph/landscape/replay parses run and landscape filters separately", async () => {
+    const app = buildApp();
+    const response = await app.request(
+      "/api/graph/landscape/replay?windowDays=7&limit=20&landscapeLimit=200&runStatus=degraded&landscapeStatus=current&relationAxes=session&minSelectedCount=2&minFeedbackCount=4&minSimilarity=0.8&semanticTopK=5&includeRuns=false",
+    );
+    expect(response.status).toBe(200);
+    expect(buildLandscapeReplaySnapshotMock).toHaveBeenCalledWith({
+      windowDays: 7,
+      limit: 20,
+      landscapeLimit: 200,
+      runStatus: "degraded",
+      landscapeStatus: "current",
+      relationAxes: ["session"],
+      minSelectedCount: 2,
+      minFeedbackCount: 4,
+      minSimilarity: 0.8,
+      semanticTopK: 5,
+      includeRuns: false,
     });
   });
 });

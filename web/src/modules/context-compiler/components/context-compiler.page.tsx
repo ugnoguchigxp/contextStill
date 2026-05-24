@@ -296,8 +296,8 @@ function SourceRefsList({ refs }: { refs: string[] }) {
   const uniqueRefs = useMemo(() => Array.from(new Set(refs)), [refs]);
   return (
     <ul className="compile-source-list">
-      {uniqueRefs.map((ref, index) => (
-        <li key={`${ref}-${index}`}>{ref}</li>
+      {uniqueRefs.map((ref) => (
+        <li key={ref}>{ref}</li>
       ))}
     </ul>
   );

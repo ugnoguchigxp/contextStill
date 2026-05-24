@@ -7,8 +7,17 @@ import {
 import { checkAgenticLlmHealth } from "../src/modules/llm/agentic-llm.service.js";
 import type { CompileInput } from "../src/shared/schemas/compile.schema.js";
 
+const settingsMocks = vi.hoisted(() => ({
+  ensureRuntimeSettingsLoaded: vi.fn(async () => {}),
+  resolveAgenticCompileRouting: vi.fn(),
+}));
+
 vi.mock("../src/modules/llm/llm-usage-logger.js", () => ({
   recordLlmUsage: vi.fn(),
+}));
+vi.mock("../src/modules/settings/settings.service.js", () => ({
+  ensureRuntimeSettingsLoaded: settingsMocks.ensureRuntimeSettingsLoaded,
+  resolveAgenticCompileRouting: settingsMocks.resolveAgenticCompileRouting,
 }));
 
 const mockFetch = vi.fn();
@@ -19,6 +28,9 @@ describe("agentic-refine.service", () => {
   const originalConfig = {
     agenticCompileEnabled: groupedConfig.agenticCompile.enabled,
     agenticCompileProvider: groupedConfig.agenticCompile.provider,
+    openAiApiKey: groupedConfig.openAi.apiKey,
+    openAiApiBaseUrl: groupedConfig.openAi.apiBaseUrl,
+    openAiModel: groupedConfig.openAi.model,
     azureOpenAiApiKey: groupedConfig.azureOpenAi.apiKey,
     azureOpenAiApiBaseUrl: groupedConfig.azureOpenAi.apiBaseUrl,
     azureOpenAiApiPath: groupedConfig.azureOpenAi.apiPath,
@@ -35,6 +47,9 @@ describe("agentic-refine.service", () => {
     mockFetch.mockReset();
     groupedConfig.agenticCompile.enabled = true;
     groupedConfig.agenticCompile.provider = "azure-openai";
+    groupedConfig.openAi.apiKey = "";
+    groupedConfig.openAi.apiBaseUrl = "https://api.openai.com/v1";
+    groupedConfig.openAi.model = "gpt-4.1-mini";
     groupedConfig.azureOpenAi.apiKey = "test-key";
     groupedConfig.azureOpenAi.apiBaseUrl = "https://test.openai.azure.com";
     groupedConfig.azureOpenAi.apiPath = "/openai/deployments";
@@ -45,11 +60,29 @@ describe("agentic-refine.service", () => {
     groupedConfig.localLlm.model = "gemma-4-e4b-it";
     groupedConfig.bedrock.model = "";
     groupedConfig.bedrock.region = "us-east-1";
+    settingsMocks.resolveAgenticCompileRouting.mockImplementation(() => ({
+      enabled: groupedConfig.agenticCompile.enabled,
+      provider: groupedConfig.agenticCompile.provider as any,
+      model:
+        groupedConfig.agenticCompile.provider === "openai"
+          ? groupedConfig.openAi.model
+          : groupedConfig.agenticCompile.provider === "azure-openai"
+            ? groupedConfig.azureOpenAi.model
+            : groupedConfig.agenticCompile.provider === "bedrock"
+              ? groupedConfig.bedrock.model
+              : groupedConfig.localLlm.model,
+      fallback: [],
+      timeoutMs: groupedConfig.agenticCompile.timeoutMs,
+      maxTokens: groupedConfig.agenticCompile.maxTokens,
+    }));
   });
 
   afterEach(() => {
     groupedConfig.agenticCompile.enabled = originalConfig.agenticCompileEnabled;
     groupedConfig.agenticCompile.provider = originalConfig.agenticCompileProvider;
+    groupedConfig.openAi.apiKey = originalConfig.openAiApiKey;
+    groupedConfig.openAi.apiBaseUrl = originalConfig.openAiApiBaseUrl;
+    groupedConfig.openAi.model = originalConfig.openAiModel;
     groupedConfig.azureOpenAi.apiKey = originalConfig.azureOpenAiApiKey;
     groupedConfig.azureOpenAi.apiBaseUrl = originalConfig.azureOpenAiApiBaseUrl;
     groupedConfig.azureOpenAi.apiPath = originalConfig.azureOpenAiApiPath;
