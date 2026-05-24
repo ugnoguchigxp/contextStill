@@ -121,6 +121,9 @@ export type RuntimeSettingsEditable = {
     doctorFreshnessThresholdMinutes: number;
     doctorDegradedRateThreshold: number;
     doctorKnowledgeZeroUseWarningMinActiveCount: number;
+    codexLogSyncEnabled: boolean;
+    antigravityLogSyncEnabled: boolean;
+    claudeLogSyncEnabled: boolean;
   };
 };
 
@@ -247,6 +250,9 @@ export const runtimeSettingsEditableSchema = z.object({
     doctorFreshnessThresholdMinutes: z.number().int().min(1).max(43_200),
     doctorDegradedRateThreshold: z.number().min(0).max(1),
     doctorKnowledgeZeroUseWarningMinActiveCount: z.number().int().min(1).max(100_000),
+    codexLogSyncEnabled: z.boolean().default(true),
+    antigravityLogSyncEnabled: z.boolean().default(true),
+    claudeLogSyncEnabled: z.boolean().default(true),
   }),
 });
 

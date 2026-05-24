@@ -165,7 +165,7 @@ diff --git a/src/a.ts b/src/a.ts
   test("ingestAntigravityLogsFromRoot separates natural chat from tool calls", async () => {
     const root = await makeTempDir();
     const logDir = path.join(root, "session-a", ".system_generated", "logs");
-    const filePath = path.join(logDir, "overview.txt");
+    const filePath = path.join(logDir, "transcript.jsonl");
     const userLine = JSON.stringify({
       step_index: 0,
       source: "USER_EXPLICIT",
@@ -179,6 +179,7 @@ diff --git a/src/a.ts b/src/a.ts
       source: "MODEL",
       type: "PLANNER_RESPONSE",
       created_at: "2026-05-14T00:00:01.000Z",
+      thinking: "Gitのステータスを確認してコミットを準備します。",
       tool_calls: [
         {
           name: "run_command",
@@ -200,7 +201,7 @@ diff --git a/src/a.ts b/src/a.ts
     expect(result.messages).toHaveLength(2);
     expect(result.messages[0]?.content).toBe("全ての変更点をコミットしてください");
     expect(result.messages[0]?.metadata.projectName).toBeUndefined();
-    expect(result.messages[1]?.metadata.messageKind).toBe("tool_call");
+    expect(result.messages[1]?.content).toBe("Gitのステータスを確認してコミットを準備します。");
     expect(result.messages[1]?.metadata.toolCalls).toMatchObject([
       {
         name: "run_command",
@@ -210,28 +211,27 @@ diff --git a/src/a.ts b/src/a.ts
       },
     ]);
     expect(transcript).toContain("USER: 全ての変更点をコミットしてください");
-    expect(transcript).not.toContain("Git status check");
+    expect(transcript).toContain("ASSISTANT: Gitのステータスを確認してコミットを準備します。");
     expect(result.cursor[filePath]?.offset).toBe(Buffer.byteLength(content, "utf8"));
   });
 
-  test("ingestAntigravityLogsFromRoot hides file view actions from readable chat", async () => {
+  test("ingestAntigravityLogsFromRoot hides tool response clutter", async () => {
     const root = await makeTempDir();
     const logDir = path.join(root, "session-b", ".system_generated", "logs");
-    const filePath = path.join(logDir, "overview.txt");
-    const viewedFilePath = path.resolve("src/config.ts");
+    const filePath = path.join(logDir, "transcript.jsonl");
     const viewLine = JSON.stringify({
       step_index: 8,
-      source: "USER_EXPLICIT",
+      source: "MODEL",
       type: "VIEW_FILE",
       created_at: "2026-05-14T00:00:02.000Z",
-      content: `The USER performed the following action:\nShow the contents of file ${viewedFilePath} from lines 1 to 2\nFile Path: \`file://${viewedFilePath}\`\n<truncated 123 bytes>`,
+      content: `Created At: 2026-05-14T00:00:02.000Z\nSome file content.`,
     });
     const assistantLine = JSON.stringify({
       step_index: 9,
       source: "MODEL",
       type: "PLANNER_RESPONSE",
       created_at: "2026-05-14T00:00:03.000Z",
-      content: "確認しました。\n<truncated 99 bytes>",
+      thinking: "確認しました。\n<truncated 99 bytes>",
     });
     const content = `${viewLine}\n${assistantLine}\n`;
     await fs.mkdir(logDir, { recursive: true });
@@ -240,77 +240,41 @@ diff --git a/src/a.ts b/src/a.ts
     const result = await ingestAntigravityLogsFromRoot(root, undefined, {}, 1);
     const transcript = buildReadableTranscript(result.messages);
 
-    expect(result.messages).toHaveLength(2);
-    expect(result.messages[0]?.metadata.messageKind).toBe("tool_call");
-    expect(result.messages[0]?.metadata.toolCalls).toMatchObject([
-      {
-        name: "VIEW_FILE",
-        summary: "Show lines 1-2",
-        action: "VIEW_FILE",
-        targetFile: viewedFilePath,
-        sourceTruncated: true,
-        reconstructedFromFile: true,
-      },
-    ]);
-    expect(
-      String(
-        (result.messages[0]?.metadata.toolCalls as Array<{ contentPreview?: string }>)[0]
-          ?.contentPreview,
-      ),
-    ).toContain("1:");
-    expect(result.messages[0]?.metadata.projectName).toBe("memoryRouter");
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]?.content).toBe("確認しました。\n<truncated 99 bytes>");
     expect(transcript).toBe("ASSISTANT: 確認しました。\n<truncated 99 bytes>");
-    expect(transcript).not.toContain("The USER performed");
+    expect(transcript).not.toContain("Some file content");
   });
 
-  test("ingestAntigravityLogsFromRoot reads transcript.jsonl in antigravity-cli style sessions", async () => {
+  test("ingestAntigravityLogsFromRoot cleans up legacy files on disk", async () => {
     const root = await makeTempDir();
-    const logDir = path.join(root, "session-cli", ".system_generated", "logs");
-    const filePath = path.join(logDir, "transcript.jsonl");
-    const userLine = JSON.stringify({
+    const historyPath = path.join(root, "history.jsonl");
+    await fs.writeFile(historyPath, "dummy history", "utf-8");
+
+    const logDir = path.join(root, "session-c", ".system_generated", "logs");
+    const overviewPath = path.join(logDir, "overview.txt");
+    const transcriptPath = path.join(logDir, "transcript.jsonl");
+    
+    await fs.mkdir(logDir, { recursive: true });
+    await fs.writeFile(overviewPath, "dummy overview", "utf-8");
+    await fs.writeFile(transcriptPath, JSON.stringify({
       step_index: 0,
       source: "USER_EXPLICIT",
       type: "USER_INPUT",
-      created_at: "2026-05-21T14:18:29Z",
-      content: "<USER_REQUEST>\n履歴ログを確認してください\n</USER_REQUEST>",
-    });
-    await fs.mkdir(logDir, { recursive: true });
-    await fs.writeFile(filePath, `${userLine}\n`, "utf-8");
+      content: "<USER_REQUEST>test</USER_REQUEST>"
+    }) + "\n", "utf-8");
 
     const result = await ingestAntigravityLogsFromRoot(root, undefined, {}, 1);
 
-    expect(result.messages).toHaveLength(1);
-    expect(result.messages[0]?.role).toBe("user");
-    expect(result.messages[0]?.content).toBe("履歴ログを確認してください");
-    expect(result.messages[0]?.metadata.sessionFile).toBe(filePath);
-  });
-
-  test("ingestAntigravityLogsFromRoot falls back to antigravity-cli history.jsonl when brain logs are absent", async () => {
-    const parent = await makeTempDir();
-    const cliRoot = path.join(parent, "antigravity-cli");
-    const brainRoot = path.join(cliRoot, "brain");
-    await fs.mkdir(brainRoot, { recursive: true });
-    const historyFilePath = path.join(cliRoot, "history.jsonl");
-    await fs.writeFile(
-      historyFilePath,
-      `${JSON.stringify({
-        display: "古いセッションの履歴を確認したい",
-        timestamp: Date.parse("2026-05-21T14:18:29Z"),
-        workspace: "/Users/y.noguchi/Code/memoryRouter",
-        conversationId: "history-conv-1",
-      })}\n`,
-      "utf-8",
-    );
-
-    const result = await ingestAntigravityLogsFromRoot(brainRoot, undefined, {}, 24);
-
-    expect(result.messages).toHaveLength(1);
-    expect(result.messages[0]?.role).toBe("user");
-    expect(result.messages[0]?.content).toBe("古いセッションの履歴を確認したい");
-    expect(result.messages[0]?.metadata.sessionFile).toBe(historyFilePath);
-    expect(result.messages[0]?.metadata.sessionId).toBe("history-conv-1");
-    expect(result.messages[0]?.metadata.projectName).toBe("memoryRouter");
-    expect(result.checkedFiles).toBe(1);
+    expect(result.ok).toBe(true);
+    
+    // history.jsonl と overview.txt が削除されたか検証
+    await expect(fs.stat(historyPath)).rejects.toThrow();
+    await expect(fs.stat(overviewPath)).rejects.toThrow();
+    
+    // transcript.jsonl は残っているか検証
+    const stat = await fs.stat(transcriptPath);
+    expect(stat.isFile()).toBe(true);
   });
 
   test("chunkMessages obeys message and character limits", () => {

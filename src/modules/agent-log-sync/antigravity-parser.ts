@@ -251,124 +251,93 @@ export async function parseAntigravityOverviewMessages(
         type?: unknown;
         created_at?: unknown;
         content?: unknown;
+        thinking?: unknown;
         tool_calls?: unknown;
       };
-      const toolCalls = summarizeAntigravityToolCalls(data.tool_calls);
+
       const source = typeof data.source === "string" ? data.source : "";
       const recordType = typeof data.type === "string" ? data.type : "";
-      const isUserInput = source === "USER_EXPLICIT" && recordType === "USER_INPUT";
-      const projectContext = deriveProjectContextFromValues([
-        typeof data.content === "string" ? data.content : undefined,
-        ...toolCalls.flatMap((toolCall) => [
-          toolCall.cwd,
-          toolCall.targetFile,
-          toolCall.contentPreview,
-        ]),
-      ]);
 
-      if (typeof data.content !== "string") {
-        pushAntigravityToolMessage({
-          messages,
-          toolCalls,
-          logPath,
-          sessionId,
-          createdAt: data.created_at,
-          stepIndex: data.step_index,
-          recordType,
-        });
+      // 1. ユーザー入力の処理
+      if (source === "USER_EXPLICIT" && recordType === "USER_INPUT") {
+        if (typeof data.content === "string") {
+          const userRequest = extractTaggedContent(data.content, "USER_REQUEST");
+          const textContent = userRequest ? userRequest.trim() : stripAntigravityMetadata(data.content);
+          if (textContent.trim()) {
+            const projectContext = deriveProjectContextFromValues([data.content]);
+            messages.push({
+              role: "user",
+              content: filterSensitiveData(textContent),
+              metadata: {
+                source: "Antigravity",
+                sourceId: "antigravity_logs",
+                sessionId,
+                sessionFile: logPath,
+                timestamp: typeof data.created_at === "string" ? data.created_at : undefined,
+                stepIndex: data.step_index,
+                recordType,
+                ...projectContext,
+              },
+            });
+          }
+        }
         continue;
       }
 
-      if (source === "USER_EXPLICIT" && !isUserInput) {
-        const userAction = await summarizeAntigravityUserAction(recordType, data.content);
-        pushAntigravityToolMessage({
-          messages,
-          toolCalls: [userAction, ...toolCalls],
-          logPath,
-          sessionId,
-          createdAt: data.created_at,
-          stepIndex: data.step_index,
-          recordType,
-        });
+      // 2. アシスタント返答 (PLANNER_RESPONSE) の処理 (2.0仕様)
+      if (source === "MODEL" && recordType === "PLANNER_RESPONSE") {
+        const toolCalls = summarizeAntigravityToolCalls(data.tool_calls);
+        
+        // ユーザーに見せるテキストは thinking または content フィールドから取得
+        const textContent = 
+          typeof data.thinking === "string" ? data.thinking : 
+          typeof data.content === "string" ? data.content : "";
+          
+        const strippedText = stripAntigravityMetadata(textContent);
+
+        const projectContext = deriveProjectContextFromValues([
+          textContent,
+          ...toolCalls.flatMap((toolCall) => [
+            toolCall.cwd,
+            toolCall.targetFile,
+            toolCall.contentPreview,
+          ]),
+        ]);
+
+        const textExists = strippedText.trim().length > 0;
+        const toolCallsExist = toolCalls.length > 0;
+
+        if (textExists || toolCallsExist) {
+          // テキストメッセージを優先し、テキストがない場合はツールコールを羅列する
+          const finalContent = textExists 
+            ? strippedText.trim() 
+            : toolCalls.map(formatToolCallSummary).join("\n");
+
+          messages.push({
+            role: "assistant",
+            content: filterSensitiveData(finalContent),
+            metadata: {
+              source: "Antigravity",
+              sourceId: "antigravity_logs",
+              sessionId,
+              sessionFile: logPath,
+              timestamp: typeof data.created_at === "string" ? data.created_at : undefined,
+              stepIndex: data.step_index,
+              recordType,
+              ...projectContext,
+              ...(toolCallsExist ? { toolCalls } : {}),
+              messageKind: textExists ? "chat" : "tool_call",
+            },
+          });
+        }
         continue;
       }
 
-      const userRequest = extractTaggedContent(data.content, "USER_REQUEST");
-      const textContent = userRequest ? userRequest.trim() : stripAntigravityMetadata(data.content);
-      if (!textContent.trim()) {
-        pushAntigravityToolMessage({
-          messages,
-          toolCalls,
-          logPath,
-          sessionId,
-          createdAt: data.created_at,
-          stepIndex: data.step_index,
-          recordType,
-        });
-        continue;
-      }
-
-      const role: ChatRole = isUserInput ? "user" : "assistant";
-
-      messages.push({
-        role,
-        content: filterSensitiveData(textContent),
-        metadata: {
-          source: "Antigravity",
-          sourceId: "antigravity_logs",
-          sessionId,
-          sessionFile: logPath,
-          timestamp: typeof data.created_at === "string" ? data.created_at : undefined,
-          stepIndex: data.step_index,
-          recordType,
-          ...projectContext,
-          ...(toolCalls.length > 0 ? { toolCalls } : {}),
-        },
-      });
+      // SYSTEMプロンプト、ツールの生実行結果、その他の中間レコードは
+      // 会話ログとしては表示を汚すため、インジェスト対象外（スキップ）とする。
     } catch {}
   }
 
   return messages;
 }
 
-export function parseAntigravityCliHistoryLine(
-  line: string,
-  historyFilePath: string,
-): ChatMessage | null {
-  try {
-    const data = JSON.parse(line) as {
-      display?: unknown;
-      timestamp?: unknown;
-      workspace?: unknown;
-      conversationId?: unknown;
-    };
-
-    if (typeof data.display !== "string" || !data.display.trim()) return null;
-    const workspace = typeof data.workspace === "string" ? data.workspace : undefined;
-    const projectContext = deriveProjectFromPath(workspace);
-    const timestampMs = Number(data.timestamp);
-    const timestamp =
-      Number.isFinite(timestampMs) && timestampMs > 0
-        ? new Date(timestampMs).toISOString()
-        : undefined;
-
-    return {
-      role: "user",
-      content: filterSensitiveData(data.display.trim()),
-      metadata: {
-        source: "Antigravity",
-        sourceId: "antigravity_logs",
-        sessionId:
-          typeof data.conversationId === "string" && data.conversationId.trim().length > 0
-            ? data.conversationId.trim()
-            : sessionIdFromFile(historyFilePath),
-        sessionFile: historyFilePath,
-        timestamp,
-        cwd: workspace,
-        ...projectContext,
-      },
-    };
-  } catch {
-    return null;
-  }
-}

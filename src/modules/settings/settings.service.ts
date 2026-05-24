@@ -194,6 +194,9 @@ const bootstrap: BootstrapConfig = {
     doctorDegradedRateThreshold: groupedConfig.doctor.degradedRateThreshold,
     doctorKnowledgeZeroUseWarningMinActiveCount:
       groupedConfig.doctor.knowledgeZeroUseWarningMinActiveCount,
+    codexLogSyncEnabled: true,
+    antigravityLogSyncEnabled: true,
+    claudeLogSyncEnabled: true,
   },
   secrets: {
     openaiApiKey: groupedConfig.openAi.apiKey.trim() || undefined,

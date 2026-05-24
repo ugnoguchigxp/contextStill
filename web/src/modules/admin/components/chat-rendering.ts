@@ -82,16 +82,38 @@ function parseJsonOverviewTurns(content: string): ChatTurn[] {
         source?: unknown;
         type?: unknown;
         content?: unknown;
+        thinking?: unknown;
         tool_calls?: unknown;
       };
-      if (typeof data.content !== "string") continue;
-      const rawContent = data.content;
-      const text = cleanNaturalText(rawContent);
-      if (!text) continue;
-      const role =
-        data.source === "USER_EXPLICIT" || data.type === "USER_INPUT" ? "user" : "assistant";
-      const metadata = isMetadataContent(rawContent) || undefined;
-      turns.push({ role, content: text, isMetadata: metadata });
+
+      const source = typeof data.source === "string" ? data.source : "";
+      const recordType = typeof data.type === "string" ? data.type : "";
+
+      // 1. ユーザー入力の処理
+      if (source === "USER_EXPLICIT" && recordType === "USER_INPUT") {
+        if (typeof data.content === "string") {
+          const text = cleanNaturalText(data.content);
+          if (text) {
+            const metadata = isMetadataContent(data.content) || undefined;
+            turns.push({ role: "user", content: text, isMetadata: metadata });
+          }
+        }
+        continue;
+      }
+
+      // 2. アシスタント返答 (PLANNER_RESPONSE) の処理 (2.0仕様)
+      if (source === "MODEL" && recordType === "PLANNER_RESPONSE") {
+        const textContent = 
+          typeof data.thinking === "string" ? data.thinking : 
+          typeof data.content === "string" ? data.content : "";
+
+        const text = cleanNaturalText(textContent);
+        if (text) {
+          const metadata = isMetadataContent(textContent) || undefined;
+          turns.push({ role: "assistant", content: text, isMetadata: metadata });
+        }
+        continue;
+      }
     } catch {}
   }
   return turns;

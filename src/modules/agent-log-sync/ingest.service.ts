@@ -7,10 +7,10 @@ import { groupedConfig } from "../../config.js";
 import {
   type ChatMessage,
   type IngestCursor,
-  parseAntigravityCliHistoryLine,
   parseAntigravityOverviewMessages,
   sessionIdFromFile,
 } from "./antigravity-parser.js";
+import { parseClaudeSessionLog } from "./claude-parser.js";
 import {
   type CodexFileContext,
   processCodexJsonlDelta,
@@ -225,9 +225,9 @@ function emptyIngestResult(cursor: IngestCursor, options?: { skipped?: boolean }
   };
 }
 
-const ANTIGRAVITY_PREFERRED_LOG_FILES = ["transcript.jsonl", "overview.txt"] as const;
+const ANTIGRAVITY_PREFERRED_LOG_FILES = ["transcript.jsonl"] as const;
 
-async function listAntigravitySessionLogFiles(logsDir: string): Promise<string[]> {
+async function listAntigravitySessionLogFiles(logsDir: string, warnings: string[]): Promise<string[]> {
   let entries: Array<{ name: string; isFile: () => boolean }> = [];
   try {
     entries = await fs.readdir(logsDir, { withFileTypes: true });
@@ -237,6 +237,17 @@ async function listAntigravitySessionLogFiles(logsDir: string): Promise<string[]
   }
 
   const files = entries.filter((entry) => entry.isFile()).map((entry) => entry.name);
+
+  // overview.txt を検出したら自動削除
+  if (files.includes("overview.txt")) {
+    const overviewPath = path.join(logsDir, "overview.txt");
+    try {
+      await fs.rm(overviewPath, { force: true });
+    } catch (e) {
+      warnings.push(`Failed to delete legacy overview.txt: ${toErrorMessage(e)}`);
+    }
+  }
+
   for (const preferredFile of ANTIGRAVITY_PREFERRED_LOG_FILES) {
     if (files.includes(preferredFile)) {
       return [path.join(logsDir, preferredFile)];
@@ -252,70 +263,20 @@ async function listAntigravitySessionLogFiles(logsDir: string): Promise<string[]
     .map((name) => path.join(logsDir, name));
 }
 
-async function ingestAntigravityCliHistoryFallback(params: {
-  brainRoot: string;
-  since?: Date;
-  cursor: IngestCursor;
-  warnings: string[];
-  messages: ChatMessage[];
-  maxObservedMtimeMs: number;
-  checkedFiles: number;
-}): Promise<{ maxObservedMtimeMs: number; checkedFiles: number }> {
-  const cliRoot = path.dirname(params.brainRoot);
-  if (path.basename(cliRoot) !== "antigravity-cli") {
-    return {
-      maxObservedMtimeMs: params.maxObservedMtimeMs,
-      checkedFiles: params.checkedFiles,
-    };
-  }
+async function cleanUpLegacyFiles(root: string, warnings: string[]): Promise<void> {
+  const possibleHistoryPaths = [
+    path.join(root, "history.jsonl"),
+    path.join(path.dirname(root), "history.jsonl"),
+    path.join(path.dirname(root), "antigravity-cli", "history.jsonl"),
+  ];
 
-  const historyFilePath = path.join(cliRoot, "history.jsonl");
-  try {
-    const stat = await fs.stat(historyFilePath);
-    const nextMaxObservedMtimeMs = Math.max(params.maxObservedMtimeMs, stat.mtimeMs);
-    const prev = params.cursor[historyFilePath];
-    let startOffset = prev?.offset ?? 0;
-    if (startOffset > stat.size) startOffset = 0;
-    if (startOffset === stat.size) {
-      params.cursor[historyFilePath] = { offset: stat.size, mtimeMs: stat.mtimeMs };
-      return {
-        maxObservedMtimeMs: nextMaxObservedMtimeMs,
-        checkedFiles: params.checkedFiles + 1,
-      };
-    }
-
-    const content = await readTextDelta(historyFilePath, startOffset);
-    if (content.trim()) {
-      for (const line of content.split("\n").filter((entry) => entry.trim())) {
-        const parsed = parseAntigravityCliHistoryLine(line, historyFilePath);
-        if (!parsed) continue;
-        if (params.since) {
-          const timestamp = parsed.metadata.timestamp;
-          if (
-            typeof timestamp === "string" &&
-            new Date(timestamp).getTime() < params.since.getTime()
-          ) {
-            continue;
-          }
-        }
-        params.messages.push(parsed);
+  for (const historyPath of possibleHistoryPaths) {
+    try {
+      const stat = await fs.stat(historyPath);
+      if (stat.isFile()) {
+        await fs.rm(historyPath, { force: true });
       }
-    }
-    params.cursor[historyFilePath] = { offset: stat.size, mtimeMs: stat.mtimeMs };
-    return {
-      maxObservedMtimeMs: nextMaxObservedMtimeMs,
-      checkedFiles: params.checkedFiles + 1,
-    };
-  } catch (error) {
-    if (!isIgnorableOptionalFileError(error)) {
-      params.warnings.push(
-        `Antigravity CLI history ingest failed (${historyFilePath}): ${toErrorMessage(error)}`,
-      );
-    }
-    return {
-      maxObservedMtimeMs: params.maxObservedMtimeMs,
-      checkedFiles: params.checkedFiles,
-    };
+    } catch {}
   }
 }
 
@@ -414,6 +375,9 @@ export async function ingestAntigravityLogsFromRoot(
   let maxObservedMtimeMs = since ? since.getTime() : 0;
   let checkedFiles = 0;
 
+  // ディスク上のレガシーファイルをクリーンアップ
+  await cleanUpLegacyFiles(root, warnings);
+
   let sessions: string[] = [];
   try {
     sessions = await fs.readdir(root);
@@ -440,7 +404,7 @@ export async function ingestAntigravityLogsFromRoot(
     const logsDir = path.join(root, session, ".system_generated", "logs");
     let logPaths: string[] = [];
     try {
-      logPaths = await listAntigravitySessionLogFiles(logsDir);
+      logPaths = await listAntigravitySessionLogFiles(logsDir, warnings);
     } catch (error) {
       warnings.push(`Antigravity logs scan failed (${logsDir}): ${toErrorMessage(error)}`);
       continue;
@@ -472,17 +436,6 @@ export async function ingestAntigravityLogsFromRoot(
           const parsedMessages = await parseAntigravityOverviewMessages(content, logPath, session);
           if (parsedMessages.length > 0) {
             messages.push(...parsedMessages);
-          } else {
-            messages.push({
-              role: "assistant",
-              content: filterSensitiveData(content),
-              metadata: {
-                source: "Antigravity",
-                sourceId: "antigravity_logs",
-                sessionId: session,
-                sessionFile: logPath,
-              },
-            });
           }
         }
         nextCursor[logPath] = { offset: stat.size, mtimeMs: stat.mtimeMs };
@@ -491,20 +444,6 @@ export async function ingestAntigravityLogsFromRoot(
         warnings.push(`Antigravity file ingest failed (${logPath}): ${toErrorMessage(error)}`);
       }
     }
-  }
-
-  if (checkedFiles === 0) {
-    const fallback = await ingestAntigravityCliHistoryFallback({
-      brainRoot: root,
-      since,
-      cursor: nextCursor,
-      warnings,
-      messages,
-      maxObservedMtimeMs,
-      checkedFiles,
-    });
-    checkedFiles = fallback.checkedFiles;
-    maxObservedMtimeMs = fallback.maxObservedMtimeMs;
   }
 
   return {
@@ -570,6 +509,194 @@ export async function ingestAntigravityLogs(
   const roots = buildAntigravityIngestRoots();
 
   return ingestAntigravityLogsFromRoots(
+    roots,
+    since,
+    cursor,
+    groupedConfig.antigravity.initialLookbackHours,
+  );
+}
+
+export function decodeClaudeProjectPath(encoded: string): { projectName: string; projectRoot: string } {
+  const normalized = encoded.startsWith("-") ? encoded : "-" + encoded;
+  const decoded = normalized.replace(/-/g, "/");
+  const parts = decoded.split("/");
+  const projectName = parts[parts.length - 1] || "Unknown";
+  return { projectName, projectRoot: decoded };
+}
+
+export function buildClaudeIngestRoots(options?: RootBuildOptions): string[] {
+  const env = options?.env ?? process.env;
+  const homeDir = options?.homeDir ?? os.homedir();
+  const claudeProjectsDir = path.join(homeDir, ".claude", "projects");
+
+  return uniqueNonEmptyPaths([
+    claudeProjectsDir,
+    ...parseAdditionalRoots(env.MEMORY_ROUTER_CLAUDE_LOG_DIRS),
+  ]);
+}
+
+export async function ingestClaudeLogsFromRoot(
+  root: string,
+  since?: Date,
+  cursor: IngestCursor = {},
+  initialLookbackHours = 24,
+): Promise<IngestResult> {
+  const normalizedCursor = normalizeIngestCursor(cursor);
+  if (!root.trim()) return emptyIngestResult(normalizedCursor, { skipped: true });
+
+  const messages: ChatMessage[] = [];
+  const warnings: string[] = [];
+  const nextCursor = { ...normalizedCursor };
+  let maxObservedMtimeMs = since ? since.getTime() : 0;
+  let checkedFiles = 0;
+
+  let projectDirs: string[] = [];
+  try {
+    projectDirs = await fs.readdir(root);
+  } catch (error) {
+    if (isIgnorableOptionalFileError(error)) {
+      return { ...emptyIngestResult(nextCursor, { skipped: true }), warnings: [] };
+    }
+    return {
+      ok: false,
+      errors: [`Claude logs root ingest failed (${root}): ${toErrorMessage(error)}`],
+      warnings,
+      messages,
+      cursor: nextCursor,
+      maxObservedMtimeMs,
+      checkedFiles,
+    };
+  }
+
+  const threshold = since
+    ? since.getTime()
+    : Date.now() - Math.max(0, initialLookbackHours) * 60 * 60 * 1000;
+
+  for (const projectDir of projectDirs) {
+    const projectPath = path.join(root, projectDir);
+    let statProject;
+    try {
+      statProject = await fs.stat(projectPath);
+      if (!statProject.isDirectory()) continue;
+    } catch {
+      continue;
+    }
+
+    const { projectName, projectRoot } = decodeClaudeProjectPath(projectDir);
+
+    let sessionFiles: string[] = [];
+    try {
+      sessionFiles = await fs.readdir(projectPath);
+    } catch (error) {
+      warnings.push(`Claude logs scan failed (${projectPath}): ${toErrorMessage(error)}`);
+      continue;
+    }
+
+    const jsonlFiles = sessionFiles
+      .filter((name) => name.endsWith(".jsonl"))
+      .map((name) => path.join(projectPath, name));
+
+    for (const filePath of jsonlFiles) {
+      try {
+        const stat = await fs.stat(filePath);
+        checkedFiles += 1;
+        maxObservedMtimeMs = Math.max(maxObservedMtimeMs, stat.mtimeMs);
+        const prev = nextCursor[filePath];
+
+        if (!prev && stat.mtimeMs < threshold) {
+          nextCursor[filePath] = { offset: stat.size, mtimeMs: stat.mtimeMs };
+          continue;
+        }
+
+        let startOffset = prev?.offset ?? 0;
+        if (startOffset > stat.size) {
+          startOffset = 0;
+        }
+        if (startOffset === stat.size) {
+          nextCursor[filePath] = { offset: stat.size, mtimeMs: stat.mtimeMs };
+          continue;
+        }
+
+        const content = await readTextDelta(filePath, startOffset);
+        if (content.trim()) {
+          const session = sessionIdFromFile(filePath);
+          const parsedMessages = parseClaudeSessionLog(content, filePath, session);
+          for (const msg of parsedMessages) {
+            msg.metadata.projectName = projectName;
+            msg.metadata.projectRoot = projectRoot;
+            messages.push(msg);
+          }
+        }
+        nextCursor[filePath] = { offset: stat.size, mtimeMs: stat.mtimeMs };
+      } catch (error) {
+        if (isIgnorableOptionalFileError(error)) continue;
+        warnings.push(`Claude file ingest failed (${filePath}): ${toErrorMessage(error)}`);
+      }
+    }
+  }
+
+  return {
+    ok: true,
+    errors: [],
+    warnings,
+    messages,
+    cursor: nextCursor,
+    maxObservedMtimeMs,
+    checkedFiles,
+  };
+}
+
+export async function ingestClaudeLogsFromRoots(
+  roots: string[],
+  since?: Date,
+  cursor: IngestCursor = {},
+  initialLookbackHours = 24,
+): Promise<IngestResult> {
+  const normalizedCursor = normalizeIngestCursor(cursor);
+  const uniqueRoots = [...new Set(roots.filter((dir) => dir.trim().length > 0))];
+  if (uniqueRoots.length === 0) return emptyIngestResult(normalizedCursor, { skipped: true });
+
+  const messages: ChatMessage[] = [];
+  const warnings: string[] = [];
+  const errors: string[] = [];
+  let checkedFiles = 0;
+  let maxObservedMtimeMs = since ? since.getTime() : 0;
+  let nextCursor = { ...normalizedCursor };
+  let ok = true;
+
+  for (const root of uniqueRoots) {
+    const result = await ingestClaudeLogsFromRoot(
+      root,
+      since,
+      nextCursor,
+      initialLookbackHours,
+    );
+    ok = ok && result.ok;
+    messages.push(...result.messages);
+    warnings.push(...result.warnings);
+    errors.push(...result.errors);
+    checkedFiles += result.checkedFiles;
+    maxObservedMtimeMs = Math.max(maxObservedMtimeMs, result.maxObservedMtimeMs);
+    nextCursor = result.cursor;
+  }
+
+  return {
+    ok,
+    errors,
+    warnings,
+    messages,
+    cursor: nextCursor,
+    maxObservedMtimeMs,
+    checkedFiles,
+  };
+}
+
+export async function ingestClaudeLogs(
+  since?: Date,
+  cursor: IngestCursor = {},
+): Promise<IngestResult> {
+  const roots = buildClaudeIngestRoots();
+  return ingestClaudeLogsFromRoots(
     roots,
     since,
     cursor,

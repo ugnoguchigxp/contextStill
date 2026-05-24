@@ -998,6 +998,9 @@ export type RuntimeSettingsEditable = {
     doctorFreshnessThresholdMinutes: number;
     doctorDegradedRateThreshold: number;
     doctorKnowledgeZeroUseWarningMinActiveCount: number;
+    codexLogSyncEnabled: boolean;
+    antigravityLogSyncEnabled: boolean;
+    claudeLogSyncEnabled: boolean;
   };
 };
 

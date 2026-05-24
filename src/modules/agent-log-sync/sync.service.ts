@@ -1,4 +1,4 @@
-import { eq } from "drizzle-orm";
+import { eq, like } from "drizzle-orm";
 import { groupedConfig } from "../../config.js";
 import { db } from "../../db/client.js";
 import { agentDiffEntries, syncStates, vibeMemories } from "../../db/schema.js";
@@ -17,6 +17,7 @@ import {
   type IngestCursor,
   ingestAntigravityLogs,
   ingestCodexLogs,
+  ingestClaudeLogs,
   normalizeIngestCursor,
 } from "./ingest.service.js";
 
@@ -64,6 +65,7 @@ export type AgentLogSyncSummary = {
 const sources: AgentLogSource[] = [
   { id: "codex_logs", label: "Codex", ingest: ingestCodexLogs },
   { id: "antigravity_logs", label: "Antigravity", ingest: ingestAntigravityLogs },
+  { id: "claude_logs", label: "Claude", ingest: ingestClaudeLogs },
 ];
 
 const AGENT_TASK_LOG_BASENAME_RE = /^task-\d+\.log$/i;
@@ -373,10 +375,41 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
   });
 
   try {
+    const { getRuntimeSettings } = await import("../settings/runtime-settings.js");
+    const settings = await getRuntimeSettings();
+    const enabledBySourceId: Record<string, boolean> = {
+      codex_logs: settings.advanced.codexLogSyncEnabled,
+      antigravity_logs: settings.advanced.antigravityLogSyncEnabled,
+      claude_logs: settings.advanced.claudeLogSyncEnabled,
+    };
+
     for (const source of sources) {
       const [state] = await db.select().from(syncStates).where(eq(syncStates.id, source.id));
-      const since = state?.lastSyncedAt ?? undefined;
-      const cursor = normalizeIngestCursor(state?.cursor);
+      
+      const enabled = enabledBySourceId[source.id] ?? true;
+      if (!enabled) {
+        summary.sources.push({
+          id: source.id,
+          label: source.label,
+          ok: true,
+          skipped: true,
+          checkedFiles: 0,
+          messages: 0,
+          insertedMemories: 0,
+          insertedDiffs: 0,
+          warnings: [],
+          errors: [],
+          lastSyncedAt: state?.lastSyncedAt?.toISOString() ?? null,
+        });
+        continue;
+      }
+
+      // Antigravity ログの 2.0 移行自動クリーンアップ判定
+      const isFirst20Sync = source.id === "antigravity_logs" && 
+        (!state || (state.metadata as Record<string, unknown> | undefined)?.formatVersion !== "2.0");
+
+      const since = isFirst20Sync ? undefined : (state?.lastSyncedAt ?? undefined);
+      const cursor = isFirst20Sync ? {} : normalizeIngestCursor(state?.cursor);
       const ingestResult = await source.ingest(since, cursor);
 
       if (!ingestResult.ok) {
@@ -408,6 +441,7 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
         skipped: Boolean(ingestResult.skipped),
         messageCount: messages.length,
         syncedAt: new Date().toISOString(),
+        formatVersion: "2.0", // 2.0 移行の識別子
       };
 
       if (ingestResult.skipped) {
@@ -442,6 +476,16 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
       let insertedDiffs = 0;
 
       await db.transaction(async (tx) => {
+        if (isFirst20Sync) {
+          // 旧 Antigravity 会話ログに関連するメモリデータを DB から全削除
+          if (typeof tx.delete === "function") {
+            await tx
+              .delete(vibeMemories)
+              .where(like(vibeMemories.sessionId, "antigravity_logs:%"));
+            console.log("[Cleanup] Deleted legacy Antigravity vibe memories from DB successfully.");
+          }
+        }
+
         for (const [memorySessionId, sessionMessages] of messagesBySession.entries()) {
           const chunks = chunkMessages(sessionMessages);
 

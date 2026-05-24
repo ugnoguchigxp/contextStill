@@ -296,6 +296,9 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
       doctorDegradedRateThreshold: view.advanced.doctorDegradedRateThreshold,
       doctorKnowledgeZeroUseWarningMinActiveCount:
         view.advanced.doctorKnowledgeZeroUseWarningMinActiveCount,
+      codexLogSyncEnabled: view.advanced.codexLogSyncEnabled,
+      antigravityLogSyncEnabled: view.advanced.antigravityLogSyncEnabled,
+      claudeLogSyncEnabled: view.advanced.claudeLogSyncEnabled,
     },
   };
 }
@@ -2047,6 +2050,59 @@ export function SettingsPage() {
                         }))
                       }
                     />
+                  </label>
+                </CardContent>
+              </Card>
+
+              <Card>
+                <CardHeader>
+                  <CardTitle>Agent Log Synchronization</CardTitle>
+                </CardHeader>
+                <CardContent className="settings-form-grid">
+                  <label className="settings-check">
+                    <Checkbox
+                      checked={draft.advanced.codexLogSyncEnabled}
+                      onChange={(event) =>
+                        patchDraft((current) => ({
+                          ...current,
+                          advanced: {
+                            ...current.advanced,
+                            codexLogSyncEnabled: event.target.checked,
+                          },
+                        }))
+                      }
+                    />
+                    Enable Codex (Cursor) Log Sync
+                  </label>
+                  <label className="settings-check">
+                    <Checkbox
+                      checked={draft.advanced.antigravityLogSyncEnabled}
+                      onChange={(event) =>
+                        patchDraft((current) => ({
+                          ...current,
+                          advanced: {
+                            ...current.advanced,
+                            antigravityLogSyncEnabled: event.target.checked,
+                          },
+                        }))
+                      }
+                    />
+                    Enable Antigravity Log Sync
+                  </label>
+                  <label className="settings-check">
+                    <Checkbox
+                      checked={draft.advanced.claudeLogSyncEnabled}
+                      onChange={(event) =>
+                        patchDraft((current) => ({
+                          ...current,
+                          advanced: {
+                            ...current.advanced,
+                            claudeLogSyncEnabled: event.target.checked,
+                          },
+                        }))
+                      }
+                    />
+                    Enable Claude Code Log Sync
                   </label>
                 </CardContent>
               </Card>

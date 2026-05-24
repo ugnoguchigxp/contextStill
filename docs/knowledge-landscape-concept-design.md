@@ -3,6 +3,7 @@
 > Status: discussion draft
 > Scope: 実装計画の前段。ここでは概念、境界、優先対象を定義し、具体的なテーブル追加・API・CLI 手順はまだ決めない。
 > Date: 2026-05-22
+> Implementation plan: `docs/knowledge-landscape-attractor-implementation-plan.md`
 
 ## 1. 目的
 
