@@ -39,6 +39,7 @@ function resolveHeadings(goal: string, changeTypes?: string[]): HeadingConfig {
   const text = goal.toLowerCase();
   const types = (changeTypes ?? []).map((t) => t.toLowerCase());
 
+  // 1. ドキュメント系
   if (
     types.includes("docs") ||
     types.includes("wiki") ||
@@ -56,6 +57,8 @@ function resolveHeadings(goal: string, changeTypes?: string[]): HeadingConfig {
       avoid: "注意点",
     };
   }
+
+  // 2. レビュー系
   if (
     types.includes("review") ||
     text.includes("レビュー") ||
@@ -69,6 +72,67 @@ function resolveHeadings(goal: string, changeTypes?: string[]): HeadingConfig {
       avoid: "見落とし注意",
     };
   }
+
+  // 3. テスト系
+  if (
+    types.includes("test") ||
+    types.includes("qa") ||
+    types.includes("spec") ||
+    text.includes("テスト") ||
+    text.includes("試験") ||
+    text.includes("test") ||
+    text.includes("spec")
+  ) {
+    return {
+      focus: "テスト方針",
+      steps: "テスト実装手順",
+      verification: "アサーション・検証観点",
+      avoid: "モック・環境依存注意",
+    };
+  }
+
+  // 4. セットアップ・デプロイ・インフラ系
+  if (
+    types.includes("setup") ||
+    types.includes("devops") ||
+    types.includes("ci") ||
+    types.includes("cd") ||
+    types.includes("deploy") ||
+    text.includes("構築") ||
+    text.includes("設定") ||
+    text.includes("セットアップ") ||
+    text.includes("setup") ||
+    text.includes("deploy") ||
+    text.includes("ci/cd") ||
+    text.includes("docker")
+  ) {
+    return {
+      focus: "構築・設定方針",
+      steps: "セットアップ手順",
+      verification: "動作確認・疎通観点",
+      avoid: "環境差分・セキュリティ注意",
+    };
+  }
+
+  // 5. リファクタ・最適化系
+  if (
+    types.includes("refactor") ||
+    types.includes("optimize") ||
+    text.includes("リファクタ") ||
+    text.includes("最適化") ||
+    text.includes("refactor") ||
+    text.includes("clean") ||
+    text.includes("クリーンアップ")
+  ) {
+    return {
+      focus: "リファクタリング方針",
+      steps: "改善・変更手順",
+      verification: "デグレード・性能検証",
+      avoid: "挙動変更の防止",
+    };
+  }
+
+  // 6. デバッグ・調査系
   if (
     types.includes("bugfix") ||
     types.includes("hotfix") ||
@@ -87,6 +151,8 @@ function resolveHeadings(goal: string, changeTypes?: string[]): HeadingConfig {
       avoid: "二次バグ注意",
     };
   }
+
+  // 7. デフォルト：通常の実装
   return { focus: "実装フォーカス", steps: "実装手順", verification: "検証観点", avoid: "注意点" };
 }
 

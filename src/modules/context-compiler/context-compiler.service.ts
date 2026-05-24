@@ -633,7 +633,9 @@ export async function compileContextPack(
     retrievalMode,
   );
 
-  if (agenticResult.error) pushUnique(degradedReasons, "AGENTIC_REFINE_FAILED");
+  if (agenticResult.error) {
+    console.warn("[compileContextPack] agenticRefine failed, but falling back gracefully to original candidates. Error:", agenticResult.error);
+  }
 
   const refinedKnowledgeMap = new Map(filteredKnowledge.map((k) => [k.id, k]));
   const finalKnowledge = agenticResult.items

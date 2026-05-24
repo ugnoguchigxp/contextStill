@@ -3,6 +3,7 @@ import { buildLandscapeReplaySnapshot } from "./landscape-replay.service.js";
 import { buildLandscapeSnapshot } from "./landscape.service.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import {
+  countLandscapeReviewItemRows,
   findLandscapeReviewItemRowById,
   insertLandscapeReviewItemsIdempotent,
   listLandscapeReviewItemRows,
@@ -691,11 +692,14 @@ export async function materializeLandscapeReviewItems(
 export async function listLandscapeReviewItems(
   input: ListLandscapeReviewItemsInput,
 ): Promise<LandscapeReviewItemListResult> {
-  const rows = await listLandscapeReviewItemRows(input);
+  const [rows, count] = await Promise.all([
+    listLandscapeReviewItemRows(input),
+    countLandscapeReviewItemRows(input),
+  ]);
   const items = rows.map(mapReviewItemRow);
   return {
     items,
-    count: items.length,
+    count,
   };
 }
 

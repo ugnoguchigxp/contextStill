@@ -223,15 +223,11 @@ export async function agenticRefine(
       }
 
       const selected = selectCandidates(candidates, parsed.selectedIds);
-      if (selected.length === 0 && parsed.selectedIds.length > 0) {
-        if (allowFallback) {
-          fallbackErrors.push(`${provider.name}:AGENTIC_INVALID_SELECTION`);
-          continue;
-        }
+      if (selected.length === 0) {
         return {
           items: candidates,
           agenticUsed: false,
-          error: "AGENTIC_INVALID_SELECTION",
+          reasoning: parsed.reasoning ? `Fallback to all candidates: ${parsed.reasoning}` : undefined,
         };
       }
 

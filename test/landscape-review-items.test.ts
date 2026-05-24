@@ -4,6 +4,7 @@ const {
   buildLandscapeSnapshotMock,
   buildLandscapeReplaySnapshotMock,
   buildLandscapeReplayComparisonMock,
+  countLandscapeReviewItemRowsMock,
   findLandscapeReviewItemRowByIdMock,
   insertLandscapeReviewItemsIdempotentMock,
   listLandscapeReviewItemRowsMock,
@@ -13,6 +14,7 @@ const {
   buildLandscapeSnapshotMock: vi.fn(),
   buildLandscapeReplaySnapshotMock: vi.fn(),
   buildLandscapeReplayComparisonMock: vi.fn(),
+  countLandscapeReviewItemRowsMock: vi.fn(),
   findLandscapeReviewItemRowByIdMock: vi.fn(),
   insertLandscapeReviewItemsIdempotentMock: vi.fn(),
   listLandscapeReviewItemRowsMock: vi.fn(),
@@ -33,6 +35,7 @@ vi.mock("../src/modules/landscape/landscape-replay.service.js", () => ({
 }));
 
 vi.mock("../src/modules/landscape/landscape-review-items.repository.js", () => ({
+  countLandscapeReviewItemRows: countLandscapeReviewItemRowsMock,
   insertLandscapeReviewItemsIdempotent: insertLandscapeReviewItemsIdempotentMock,
   listLandscapeReviewItemRows: listLandscapeReviewItemRowsMock,
   findLandscapeReviewItemRowById: findLandscapeReviewItemRowByIdMock,
@@ -50,6 +53,7 @@ vi.mock("../src/modules/audit/audit-log.service.js", () => ({
 import {
   LandscapeReviewItemsError,
   buildLandscapeReviewItemCandidates,
+  listLandscapeReviewItems,
   materializeLandscapeReviewItems,
   updateLandscapeReviewItemStatus,
 } from "../src/modules/landscape/landscape-review-items.service.js";
@@ -378,6 +382,7 @@ describe("landscape review items service", () => {
       inserted: [],
       existing: [],
     });
+    countLandscapeReviewItemRowsMock.mockResolvedValue(0);
     listLandscapeReviewItemRowsMock.mockResolvedValue([]);
     findLandscapeReviewItemRowByIdMock.mockResolvedValue(null);
     updateLandscapeReviewItemRowMock.mockResolvedValue(null);
@@ -717,5 +722,22 @@ describe("landscape review items service", () => {
     expect(item).toEqual(expect.objectContaining({ id: "review-item-1", status: "reviewing" }));
     expect(updateLandscapeReviewItemRowMock).not.toHaveBeenCalled();
     expect(recordAuditLogSafeMock).not.toHaveBeenCalled();
+  });
+
+  test("list returns total count independent from page limit", async () => {
+    listLandscapeReviewItemRowsMock.mockResolvedValueOnce([reviewItemRowFixture()]);
+    countLandscapeReviewItemRowsMock.mockResolvedValueOnce(3);
+
+    const result = await listLandscapeReviewItems({
+      status: "pending",
+      source: "all",
+      reason: "all",
+      proposedAction: "all",
+      priorityMin: 0,
+      limit: 1,
+    });
+
+    expect(result.items).toHaveLength(1);
+    expect(result.count).toBe(3);
   });
 });

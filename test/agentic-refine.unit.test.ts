@@ -311,7 +311,7 @@ describe("agentic-refine.service", () => {
       expect(result.items[1].id).toBe("2");
     });
 
-    it("succeeds with empty selection when LLM actively selects nothing", async () => {
+    it("succeeds with empty selection and falls back to original candidates when LLM actively selects nothing", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -329,12 +329,12 @@ describe("agentic-refine.service", () => {
       });
 
       const result = await agenticRefine(candidates, input, "task_context");
-      expect(result.agenticUsed).toBe(true);
-      expect(result.reasoning).toBe("該当なし");
-      expect(result.items).toEqual([]);
+      expect(result.agenticUsed).toBe(false);
+      expect(result.reasoning).toBe("Fallback to all candidates: 該当なし");
+      expect(result.items).toEqual(candidates);
     });
 
-    it("falls back when LLM returns only invalid IDs", async () => {
+    it("falls back to original candidates without error when LLM returns only invalid IDs", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: true,
         json: async () => ({
@@ -353,7 +353,7 @@ describe("agentic-refine.service", () => {
 
       const result = await agenticRefine(candidates, input, "task_context");
       expect(result.agenticUsed).toBe(false);
-      expect(result.error).toBe("AGENTIC_INVALID_SELECTION");
+      expect(result.error).toBeUndefined();
       expect(result.items).toEqual(candidates);
     });
 

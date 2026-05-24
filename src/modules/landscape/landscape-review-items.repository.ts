@@ -1,4 +1,4 @@
-import { and, asc, desc, eq, gte, inArray } from "drizzle-orm";
+import { and, asc, desc, eq, gte, inArray, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { landscapeReviewItems } from "../../db/schema.js";
 import type {
@@ -103,6 +103,42 @@ export async function listLandscapeReviewItemRows(
       asc(landscapeReviewItems.id),
     )
     .limit(input.limit);
+}
+
+export async function countLandscapeReviewItemRows(
+  input: ListLandscapeReviewItemsInput,
+): Promise<number> {
+  const conditions = [gte(landscapeReviewItems.priority, input.priorityMin)];
+  if (input.status !== "all") {
+    conditions.push(eq(landscapeReviewItems.status, input.status));
+  }
+  if (input.source !== "all") {
+    conditions.push(eq(landscapeReviewItems.source, input.source));
+  }
+  if (input.reason !== "all") {
+    conditions.push(eq(landscapeReviewItems.reason, input.reason));
+  }
+  if (input.proposedAction !== "all") {
+    conditions.push(eq(landscapeReviewItems.proposedAction, input.proposedAction));
+  }
+  if (input.knowledgeId) {
+    conditions.push(eq(landscapeReviewItems.knowledgeId, input.knowledgeId));
+  }
+  if (input.runId) {
+    conditions.push(eq(landscapeReviewItems.runId, input.runId));
+  }
+  if (input.communityKey) {
+    conditions.push(eq(landscapeReviewItems.communityKey, input.communityKey));
+  }
+
+  const [result] = await db
+    .select({
+      count: sql<number>`count(*)::int`,
+    })
+    .from(landscapeReviewItems)
+    .where(and(...conditions));
+
+  return Number(result?.count ?? 0);
 }
 
 export async function findLandscapeReviewItemRowById(
