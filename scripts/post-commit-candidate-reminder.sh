@@ -68,9 +68,11 @@ Author: $AUTHOR
 Committed: $COMMITTED_AT
 Repository: $REPO_ROOT
 
-## Ask the coding agent
+## Required action for the coding agent
 
-Review this commit and register reusable lessons, rules, or procedures through the memory-router MCP tool \`register_candidate\` when there is a durable lesson.
+Review this commit and decide whether it contains durable lessons, rules, or procedures worth preserving.
+
+If durable knowledge exists, call the memory-router MCP tool \`register_candidate\` for each reusable candidate. Do not stop at summarizing the commit.
 
 Do not register one-off task notes, unverified guesses, file-specific trivia, or generic best practices that are not grounded in this commit.
 

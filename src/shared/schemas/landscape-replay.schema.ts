@@ -157,6 +157,170 @@ export const landscapeCommunityComparisonSummarySchema = z.object({
   communities: z.array(landscapeCommunityComparisonSchema),
 });
 
+export const landscapeReplayComparisonKindSchema = z.enum([
+  "stable",
+  "drifted",
+  "lost_baseline",
+  "new_only",
+  "no_current_match",
+]);
+
+export const landscapeReplayRecompilePlanSchema = z.object({
+  mode: z.literal("current_retrieval_dry_run"),
+  writesCompileRuns: z.literal(false),
+  replayRunCount: z.number().int().nonnegative(),
+  comparedRunCount: z.number().int().nonnegative(),
+  blockers: z.array(z.string()),
+});
+
+export const landscapeRankingExperimentKindSchema = z.enum([
+  "current_retrieval",
+  "used_baseline_retention",
+  "negative_repulsion",
+  "diversity_exploration",
+]);
+
+export const landscapeRankingExperimentSummarySchema = z.object({
+  experiment: landscapeRankingExperimentKindSchema,
+  productionEnabled: z.literal(false),
+  targetRunCount: z.number().int().nonnegative(),
+  estimatedRetainedItemCount: z.number().int().nonnegative(),
+  estimatedMissingFromCurrentItemCount: z.number().int().nonnegative(),
+  estimatedUsedBaselineLostItemCount: z.number().int().nonnegative(),
+  estimatedAverageOverlapRate: z.number().min(0).max(1),
+  riskReductionSignal: z.number().min(0).max(1),
+  recommendation: z.string(),
+});
+
+export const landscapeAppliesToRefineReasonSchema = z.enum([
+  "used_baseline_lost",
+  "baseline_off_topic",
+  "baseline_wrong",
+  "baseline_missing_after_recompile",
+]);
+
+export const landscapeAppliesToRefineCandidateSchema = z.object({
+  runId: z.string().min(1),
+  knowledgeId: z.string().min(1),
+  reason: landscapeAppliesToRefineReasonSchema,
+  confidence: z.enum(["low", "medium"]),
+  suggestedAppliesTo: z.object({
+    repoKey: z.string().optional(),
+    repoPath: z.string().optional(),
+    retrievalMode: z.string(),
+    technologies: z.array(z.string()),
+    changeTypes: z.array(z.string()),
+    domains: z.array(z.string()),
+  }),
+  evidence: z.array(z.string()),
+});
+
+export const landscapePromotionGateSummarySchema = z.object({
+  productionEnabled: z.literal(false),
+  gateMode: z.enum(["normal", "review_required"]),
+  shouldTighten: z.boolean(),
+  affectedRunCount: z.number().int().nonnegative(),
+  riskyNewKnowledgeCount: z.number().int().nonnegative(),
+  reason: z.string(),
+});
+
+export const landscapeScoreTuningSummarySchema = z.object({
+  productionEnabled: z.literal(false),
+  stableRunCount: z.number().int().nonnegative(),
+  driftedRunCount: z.number().int().nonnegative(),
+  lostBaselineRunCount: z.number().int().nonnegative(),
+  negativeFeedbackRunCount: z.number().int().nonnegative(),
+  highChurnRunCount: z.number().int().nonnegative(),
+  lostUsedBaselineRunCount: z.number().int().nonnegative(),
+  noCurrentMatchRunCount: z.number().int().nonnegative(),
+  averageReplacementRate: z.number().min(0).max(1),
+  recommendations: z.array(z.string()),
+});
+
+export const landscapeCompileInterventionPlanSchema = z.object({
+  productionEnabled: z.literal(false),
+  strategy: z.enum([
+    "observe_only",
+    "retain_used_baseline",
+    "repel_negative_candidates",
+    "diversity_exploration",
+  ]),
+  candidateRunCount: z.number().int().nonnegative(),
+  reason: z.string(),
+});
+
+export const landscapeReplayComparisonRunSchema = z.object({
+  runId: z.string().min(1),
+  createdAt: z.string().datetime(),
+  goal: z.string(),
+  retrievalMode: z.string(),
+  status: landscapeRunStatusSchema,
+  taskFacets: landscapeTaskFacetsSchema,
+  baselineSelectedKnowledgeIds: z.array(z.string()),
+  currentRetrievedKnowledgeIds: z.array(z.string()),
+  retainedKnowledgeIds: z.array(z.string()),
+  missingFromCurrentKnowledgeIds: z.array(z.string()),
+  newlyRetrievedKnowledgeIds: z.array(z.string()),
+  baselineVerdicts: landscapeVerdictMixSchema,
+  usedBaselineRetainedKnowledgeIds: z.array(z.string()),
+  usedBaselineLostKnowledgeIds: z.array(z.string()),
+  offTopicBaselineKnowledgeIds: z.array(z.string()),
+  wrongBaselineKnowledgeIds: z.array(z.string()),
+  overlapRate: z.number().min(0).max(1),
+  replacementRate: z.number().min(0).max(1),
+  comparison: landscapeReplayComparisonKindSchema,
+  currentDegradedReasons: z.array(z.string()),
+  currentRetrievalStats: z.object({
+    textHitCount: z.number().int().nonnegative(),
+    vectorHitCount: z.number().int().nonnegative(),
+    mergedCount: z.number().int().nonnegative(),
+    textFailed: z.boolean(),
+    vectorFailed: z.boolean(),
+    embeddingStatus: z.enum(["provided", "generated", "unavailable", "disabled"]),
+    repoScopeFallbackUsed: z.boolean(),
+  }),
+});
+
+export const landscapeReplayComparisonResponseSchema = z.object({
+  generatedAt: z.string().datetime(),
+  analysisAsOf: z.string().datetime(),
+  windowDays: z.number().int().min(1).max(180),
+  corpusWindow: z.object({
+    startAt: z.string().datetime(),
+    endAt: z.string().datetime(),
+  }),
+  basis: z.object({
+    unit: z.literal("replay-comparison"),
+    mode: z.literal("current_retrieval"),
+    runStatus: landscapeRunStatusFilterSchema,
+    currentLimit: z.number().int().min(1).max(50),
+  }),
+  replayRunCount: z.number().int().nonnegative(),
+  comparedRunCount: z.number().int().nonnegative(),
+  baselineSelectedItemCount: z.number().int().nonnegative(),
+  currentRetrievedItemCount: z.number().int().nonnegative(),
+  retainedItemCount: z.number().int().nonnegative(),
+  missingFromCurrentItemCount: z.number().int().nonnegative(),
+  newlyRetrievedItemCount: z.number().int().nonnegative(),
+  usedBaselineLostItemCount: z.number().int().nonnegative(),
+  averageOverlapRate: z.number().min(0).max(1),
+  currentNoMatchRunCount: z.number().int().nonnegative(),
+  comparisonCounts: z.object({
+    stable: z.number().int().nonnegative(),
+    drifted: z.number().int().nonnegative(),
+    lost_baseline: z.number().int().nonnegative(),
+    new_only: z.number().int().nonnegative(),
+    no_current_match: z.number().int().nonnegative(),
+  }),
+  recompilePlan: landscapeReplayRecompilePlanSchema,
+  rankingExperiments: z.array(landscapeRankingExperimentSummarySchema),
+  appliesToRefineCandidates: z.array(landscapeAppliesToRefineCandidateSchema),
+  promotionGateSummary: landscapePromotionGateSummarySchema,
+  scoreTuning: landscapeScoreTuningSummarySchema,
+  compileInterventionPlan: landscapeCompileInterventionPlanSchema,
+  runs: z.array(landscapeReplayComparisonRunSchema),
+});
+
 export const landscapeReplaySnapshotSchema = z.object({
   generatedAt: z.string().datetime(),
   analysisAsOf: z.string().datetime(),
@@ -188,3 +352,6 @@ export const landscapeReplaySnapshotSchema = z.object({
 });
 
 export type LandscapeReplaySnapshot = z.infer<typeof landscapeReplaySnapshotSchema>;
+export type LandscapeReplayComparisonResponse = z.infer<
+  typeof landscapeReplayComparisonResponseSchema
+>;

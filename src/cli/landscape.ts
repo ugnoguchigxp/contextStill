@@ -1,4 +1,5 @@
 import { closeDbPool } from "../db/index.js";
+import { buildLandscapeReplayComparison } from "../modules/landscape/landscape-replay-comparison.service.js";
 import { buildLandscapeReplaySnapshot } from "../modules/landscape/landscape-replay.service.js";
 import { buildLandscapeSnapshot } from "../modules/landscape/landscape.service.js";
 
@@ -14,7 +15,9 @@ type CliOptions = {
   minFeedbackCount: number;
   minSimilarity: number;
   semanticTopK: number;
+  currentLimit: number;
   replay: boolean;
+  replayCompare: boolean;
   compareCommunities: boolean;
   json: boolean;
 };
@@ -101,7 +104,9 @@ function parseArgs(args: string[]): CliOptions {
     minFeedbackCount: 3,
     minSimilarity: 0.72,
     semanticTopK: 3,
+    currentLimit: 12,
     replay: false,
+    replayCompare: false,
     compareCommunities: false,
     json: false,
   };
@@ -119,6 +124,10 @@ function parseArgs(args: string[]): CliOptions {
     if (arg === "--compare-communities") {
       options.replay = true;
       options.compareCommunities = true;
+      continue;
+    }
+    if (arg === "--replay-compare" || arg === "--recompile-compare") {
+      options.replayCompare = true;
       continue;
     }
     if (arg === "--window-days" || arg.startsWith("--window-days=")) {
@@ -188,6 +197,12 @@ function parseArgs(args: string[]): CliOptions {
       if (parsed.consumedNext) index += 1;
       continue;
     }
+    if (arg === "--current-limit" || arg.startsWith("--current-limit=")) {
+      const parsed = parsePositiveInt(args, index, "--current-limit", 50);
+      options.currentLimit = parsed.value;
+      if (parsed.consumedNext) index += 1;
+      continue;
+    }
 
     throw new Error(`Unknown argument: ${arg}`);
   }
@@ -212,6 +227,66 @@ function printSummary(snapshot: Awaited<ReturnType<typeof buildLandscapeSnapshot
   for (const risk of snapshot.risks.slice(0, 10)) {
     console.log(
       `- [${risk.severity}] #${risk.communityRank} ${risk.communityLabel} (${risk.type}) ${risk.reason}`,
+    );
+  }
+}
+
+function printReplayComparisonSummary(
+  comparison: Awaited<ReturnType<typeof buildLandscapeReplayComparison>>,
+) {
+  console.log(
+    `Landscape Replay Compare (${comparison.windowDays}d, runs=${comparison.basis.runStatus}, mode=${comparison.basis.mode})`,
+  );
+  console.log(`Runs: ${comparison.comparedRunCount}`);
+  console.log(`Baseline selected: ${comparison.baselineSelectedItemCount}`);
+  console.log(`Current retrieved: ${comparison.currentRetrievedItemCount}`);
+  console.log(`Retained: ${comparison.retainedItemCount}`);
+  console.log(`Missing from current: ${comparison.missingFromCurrentItemCount}`);
+  console.log(`Newly retrieved: ${comparison.newlyRetrievedItemCount}`);
+  console.log(`Used baseline lost: ${comparison.usedBaselineLostItemCount}`);
+  console.log(`Average overlap: ${comparison.averageOverlapRate.toFixed(2)}`);
+  console.log(`No current match runs: ${comparison.currentNoMatchRunCount}`);
+  console.log(
+    `Comparison counts: stable=${comparison.comparisonCounts.stable} drifted=${comparison.comparisonCounts.drifted} lost=${comparison.comparisonCounts.lost_baseline} new_only=${comparison.comparisonCounts.new_only} no_current=${comparison.comparisonCounts.no_current_match}`,
+  );
+  console.log(
+    `Dry-run recompile: writes=${comparison.recompilePlan.writesCompileRuns} blockers=${comparison.recompilePlan.blockers.length}`,
+  );
+  console.log(
+    `Score tuning: high_churn=${comparison.scoreTuning.highChurnRunCount} negative_feedback=${comparison.scoreTuning.negativeFeedbackRunCount} lost_used_runs=${comparison.scoreTuning.lostUsedBaselineRunCount} avg_replacement=${comparison.scoreTuning.averageReplacementRate.toFixed(2)}`,
+  );
+  console.log(
+    `Promotion gate: ${comparison.promotionGateSummary.gateMode} affected_runs=${comparison.promotionGateSummary.affectedRunCount} production=${comparison.promotionGateSummary.productionEnabled}`,
+  );
+  console.log(
+    `Compile intervention: ${comparison.compileInterventionPlan.strategy} candidates=${comparison.compileInterventionPlan.candidateRunCount} production=${comparison.compileInterventionPlan.productionEnabled}`,
+  );
+  console.log(`appliesTo refine candidates: ${comparison.appliesToRefineCandidates.length}`);
+
+  if (comparison.rankingExperiments.length > 0) {
+    console.log("");
+    console.log("Ranking experiments:");
+    for (const experiment of comparison.rankingExperiments) {
+      console.log(
+        `- ${experiment.experiment} target_runs=${experiment.targetRunCount} overlap=${experiment.estimatedAverageOverlapRate.toFixed(2)} used_lost=${experiment.estimatedUsedBaselineLostItemCount} production=${experiment.productionEnabled}`,
+      );
+    }
+  }
+
+  const riskyRuns = comparison.runs
+    .filter(
+      (run) =>
+        run.comparison === "lost_baseline" ||
+        run.comparison === "no_current_match" ||
+        run.usedBaselineLostKnowledgeIds.length > 0,
+    )
+    .slice(0, 10);
+  if (riskyRuns.length === 0) return;
+  console.log("");
+  console.log("Top replay drift:");
+  for (const run of riskyRuns) {
+    console.log(
+      `- ${run.runId} ${run.comparison} overlap=${run.overlapRate.toFixed(2)} used_lost=${run.usedBaselineLostKnowledgeIds.length} goal=${run.goal.slice(0, 80)}`,
     );
   }
 }
@@ -269,6 +344,22 @@ function printReplaySummary(snapshot: Awaited<ReturnType<typeof buildLandscapeRe
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+  if (options.replayCompare) {
+    const comparison = await buildLandscapeReplayComparison({
+      windowDays: options.windowDays,
+      limit: options.limit,
+      runStatus: options.runStatus,
+      currentLimit: options.currentLimit,
+      includeRuns: true,
+    });
+    if (options.json) {
+      console.log(JSON.stringify(comparison, null, 2));
+      return;
+    }
+    printReplayComparisonSummary(comparison);
+    return;
+  }
+
   if (options.replay) {
     const snapshot = await buildLandscapeReplaySnapshot({
       windowDays: options.windowDays,

@@ -397,6 +397,7 @@ export async function retrieveKnowledge(
   input: CompileInput,
   options: {
     retrievalMode: RetrievalMode;
+    limit?: number;
     facetFilters?: {
       changeTypes?: string[];
       technologies?: string[];
@@ -405,6 +406,10 @@ export async function retrieveKnowledge(
   },
 ): Promise<KnowledgeRetrievalResult> {
   const profile = getKnowledgeRetrievalProfile(options.retrievalMode);
+  const limit =
+    typeof options.limit === "number" && Number.isInteger(options.limit) && options.limit > 0
+      ? options.limit
+      : profile.limit;
   const statuses = resolveKnowledgeSearchStatuses({
     retrievalMode: options.retrievalMode,
     includeDraft: false,
@@ -412,7 +417,7 @@ export async function retrieveKnowledge(
   return executeKnowledgeSearch({
     primaryQuery: input.goal.trim(),
     queryText: buildRetrievalQueryText(input),
-    limit: profile.limit,
+    limit,
     statuses,
     status: "active",
     includeDraft: false,

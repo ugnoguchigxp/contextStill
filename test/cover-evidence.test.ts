@@ -503,6 +503,57 @@ describe("runCoverEvidence", () => {
     );
   });
 
+  test("keeps explicit rule candidates when value assessment misclassifies them as procedures", async () => {
+    mocks.getFindCandidateResultById.mockResolvedValue(
+      candidateRow({
+        targetKind: "knowledge_candidate",
+        targetKey: "candidate-rule-1",
+        sourceUri: "agent://candidate/candidate-rule-1",
+        title: "Test behavior, not implementation",
+        content:
+          "1. Run the nearest behavior test first.\n2. Then run the related test range.\nAvoid private method tests.",
+        origin: {
+          candidateType: "rule",
+          readRanges: [{ from: 0, toExclusive: 120 }],
+        },
+      }),
+    );
+    mocks.runDistillationCompletion.mockResolvedValueOnce({
+      content: JSON.stringify({
+        schemaVersion: 1,
+        status: "knowledge_ready",
+        stage: "final",
+        candidate: {
+          type: "procedure",
+          title: "Test behavior, not implementation",
+          body: "1. Run the nearest behavior test first.\n2. Then run the related test range.",
+          importance: 90,
+          confidence: 90,
+        },
+        references: [],
+        duplicateRefs: [],
+        toolEvents: [],
+        reason: null,
+      }),
+      toolEvents: [],
+      messages: [],
+    });
+
+    const result = await runCoverEvidence({ id: "find-1", write: true });
+
+    expect(result.result.status).toBe("knowledge_ready");
+    expect(result.result.candidate?.type).toBe("rule");
+    expect(mocks.saveCoverEvidenceResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "find-1",
+        result: expect.objectContaining({
+          status: "knowledge_ready",
+          candidate: expect.objectContaining({ type: "rule" }),
+        }),
+      }),
+    );
+  });
+
   test("demotes one-line procedure misclassifications to rules", async () => {
     mocks.runDistillationCompletion.mockResolvedValueOnce({
       content: JSON.stringify({

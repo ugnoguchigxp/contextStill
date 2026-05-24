@@ -20,6 +20,10 @@ import {
   type KnowledgeCandidateEvidence,
   retrieveKnowledge,
 } from "../knowledge/knowledge.service.js";
+import {
+  applyLandscapeCompileIntervention,
+  isLandscapeCompileInterventionEnabled,
+} from "../landscape/landscape-compile-intervention.service.js";
 import { retrieveSources } from "../sources/source-retrieval.service.js";
 import { agenticRefine } from "./agentic-refine.service.js";
 import {
@@ -578,7 +582,8 @@ export async function compileContextPack(
 
   const degradedReasons = [...knowledge.degradedReasons, ...sourceContext.degradedReasons];
 
-  const rankedKnowledge = rankAndDedupe<KnowledgeRankable>(
+  const normalRankingLimit = 15;
+  const rankedKnowledgeBeforeIntervention = rankAndDedupe<KnowledgeRankable>(
     knowledge.items.map((item) => ({
       id: item.id,
       title: item.title,
@@ -597,8 +602,13 @@ export async function compileContextPack(
       applicabilityScore: item.applicabilityScore,
       candidateEvidence: item.candidateEvidence,
     })),
-    15,
+    isLandscapeCompileInterventionEnabled() ? 24 : normalRankingLimit,
   );
+  const landscapeIntervention = applyLandscapeCompileIntervention(
+    rankedKnowledgeBeforeIntervention,
+    { limit: normalRankingLimit },
+  );
+  const rankedKnowledge = landscapeIntervention.items;
 
   const knowledgeFilterResult = filterByCandidateEvidence(rankedKnowledge);
   const filteredKnowledge = knowledgeFilterResult.items;
@@ -798,6 +808,7 @@ export async function compileContextPack(
         sources: sourceContext.stats,
         tokenBudget,
         compileDurationMs,
+        landscapeIntervention: landscapeIntervention.diagnostics,
         agenticUsed: agenticResult.agenticUsed,
         agenticReasoning: agenticResult.reasoning,
         reasonBuckets: {

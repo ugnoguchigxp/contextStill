@@ -168,6 +168,7 @@ export function inferCandidateType(
   body: string,
   typeHint?: CandidateKnowledgeType,
 ): CoverEvidenceCandidate["type"] {
+  if (typeHint === "rule") return "rule";
   if (typeHint === "procedure" && hasProcedureWorkflowSignal(title, body)) return "procedure";
   if (hasProcedureWorkflowSignal(title, body)) {
     return "procedure";
@@ -338,12 +339,16 @@ export function makeResult(params: {
   };
 }
 
-export function normalizeProcedureBodyQuality(result: CoverEvidenceResult): CoverEvidenceResult {
+export function normalizeProcedureBodyQuality(
+  result: CoverEvidenceResult,
+  options: { typeHint?: CandidateKnowledgeType } = {},
+): CoverEvidenceResult {
   if (result.status !== "knowledge_ready" || result.candidate?.type !== "procedure") {
     return result;
   }
   if (hasSkillLikeProcedureBody(result.candidate.body)) return result;
   if (
+    options.typeHint === "rule" ||
     shouldDemoteProcedureToRule({
       title: result.candidate.title,
       body: result.candidate.body,

@@ -7,6 +7,16 @@ import type {
 
 const UNKNOWN = "unknown";
 
+export type LandscapeReplayCompileRunInput = {
+  goal: string;
+  runInput: unknown;
+  repoPath: string | null;
+  retrievalMode: string;
+  source: string;
+  runStatus: LandscapeRunStatus;
+  degradedReasons: unknown;
+};
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)

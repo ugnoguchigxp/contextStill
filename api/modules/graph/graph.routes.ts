@@ -1,9 +1,13 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
+import { buildLandscapeReplayComparison } from "../../../src/modules/landscape/landscape-replay-comparison.service.js";
 import { buildLandscapeReplaySnapshot } from "../../../src/modules/landscape/landscape-replay.service.js";
 import { buildLandscapeSnapshot } from "../../../src/modules/landscape/landscape.service.js";
-import { landscapeReplaySnapshotSchema } from "../../../src/shared/schemas/landscape-replay.schema.js";
+import {
+  landscapeReplayComparisonResponseSchema,
+  landscapeReplaySnapshotSchema,
+} from "../../../src/shared/schemas/landscape-replay.schema.js";
 import { landscapeSnapshotSchema } from "../../../src/shared/schemas/landscape.schema.js";
 import {
   type GraphRelationAxis,
@@ -62,6 +66,19 @@ const landscapeReplayQuerySchema = z.object({
   minFeedbackCount: z.coerce.number().int().min(1).max(100).default(3),
   minSimilarity: z.coerce.number().min(0).max(1).default(0.72),
   semanticTopK: z.coerce.number().int().min(1).max(10).default(3),
+  includeRuns: z.preprocess((value) => {
+    if (value === "true" || value === true) return true;
+    if (value === "false" || value === false) return false;
+    return value;
+  }, z.boolean().default(true)),
+  format: z.enum(["full"]).default("full"),
+});
+
+const landscapeReplayComparisonQuerySchema = z.object({
+  windowDays: z.coerce.number().int().min(1).max(180).default(30),
+  limit: z.coerce.number().int().min(1).max(1000).default(100),
+  runStatus: z.enum(["ok", "degraded", "failed", "all"]).default("all"),
+  currentLimit: z.coerce.number().int().min(1).max(50).default(12),
   includeRuns: z.preprocess((value) => {
     if (value === "true" || value === true) return true;
     if (value === "false" || value === false) return false;
@@ -135,6 +152,24 @@ export const graphRouter = new Hono()
     }
     return c.json(landscapeReplaySnapshotSchema.parse(snapshot));
   })
+  .get(
+    "/landscape/replay/compare",
+    zValidator("query", landscapeReplayComparisonQuerySchema),
+    async (c) => {
+      const query = c.req.valid("query");
+      const comparison = await buildLandscapeReplayComparison({
+        windowDays: query.windowDays,
+        limit: query.limit,
+        runStatus: query.runStatus,
+        currentLimit: query.currentLimit,
+        includeRuns: query.includeRuns,
+      });
+      if (query.format === "full") {
+        return c.json(landscapeReplayComparisonResponseSchema.parse(comparison));
+      }
+      return c.json(landscapeReplayComparisonResponseSchema.parse(comparison));
+    },
+  )
   .put(
     "/community-labels/:communityKey",
     zValidator("param", communityLabelParamSchema),

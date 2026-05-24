@@ -29,6 +29,21 @@ describe("Knowledge Service", () => {
     );
   });
 
+  test("retrieveKnowledge honors explicit limit for replay comparison dry-runs", async () => {
+    groupedConfig.compile.enableVectorSearch = false;
+    vi.mocked(repo.searchKnowledge).mockResolvedValue([]);
+
+    await retrieveKnowledge({ goal: "test", includeDraft: false } as any, {
+      retrievalMode: "review_context",
+      limit: 20,
+    });
+
+    expect(repo.searchKnowledge).toHaveBeenCalledWith(
+      expect.objectContaining({ limit: 20 }),
+      expect.any(Object),
+    );
+  });
+
   test("retrieveKnowledge uses unscoped search in four-input mode", async () => {
     groupedConfig.compile.enableVectorSearch = false;
     vi.mocked(repo.searchKnowledge).mockResolvedValue([{ id: "item1", score: 0.9 }] as any);

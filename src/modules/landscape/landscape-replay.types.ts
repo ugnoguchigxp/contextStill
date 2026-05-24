@@ -155,6 +155,160 @@ export type LandscapeCommunityComparisonSummary = {
   communities: LandscapeCommunityComparison[];
 };
 
+export type LandscapeReplayComparisonKind =
+  | "stable"
+  | "drifted"
+  | "lost_baseline"
+  | "new_only"
+  | "no_current_match";
+
+export type LandscapeReplayRecompilePlan = {
+  mode: "current_retrieval_dry_run";
+  writesCompileRuns: false;
+  replayRunCount: number;
+  comparedRunCount: number;
+  blockers: string[];
+};
+
+export type LandscapeRankingExperimentKind =
+  | "current_retrieval"
+  | "used_baseline_retention"
+  | "negative_repulsion"
+  | "diversity_exploration";
+
+export type LandscapeRankingExperimentSummary = {
+  experiment: LandscapeRankingExperimentKind;
+  productionEnabled: false;
+  targetRunCount: number;
+  estimatedRetainedItemCount: number;
+  estimatedMissingFromCurrentItemCount: number;
+  estimatedUsedBaselineLostItemCount: number;
+  estimatedAverageOverlapRate: number;
+  riskReductionSignal: number;
+  recommendation: string;
+};
+
+export type LandscapeAppliesToRefineReason =
+  | "used_baseline_lost"
+  | "baseline_off_topic"
+  | "baseline_wrong"
+  | "baseline_missing_after_recompile";
+
+export type LandscapeAppliesToRefineCandidate = {
+  runId: string;
+  knowledgeId: string;
+  reason: LandscapeAppliesToRefineReason;
+  confidence: "low" | "medium";
+  suggestedAppliesTo: {
+    repoKey?: string;
+    repoPath?: string;
+    retrievalMode: string;
+    technologies: string[];
+    changeTypes: string[];
+    domains: string[];
+  };
+  evidence: string[];
+};
+
+export type LandscapePromotionGateSummary = {
+  productionEnabled: false;
+  gateMode: "normal" | "review_required";
+  shouldTighten: boolean;
+  affectedRunCount: number;
+  riskyNewKnowledgeCount: number;
+  reason: string;
+};
+
+export type LandscapeScoreTuningSummary = {
+  productionEnabled: false;
+  stableRunCount: number;
+  driftedRunCount: number;
+  lostBaselineRunCount: number;
+  negativeFeedbackRunCount: number;
+  highChurnRunCount: number;
+  lostUsedBaselineRunCount: number;
+  noCurrentMatchRunCount: number;
+  averageReplacementRate: number;
+  recommendations: string[];
+};
+
+export type LandscapeCompileInterventionPlan = {
+  productionEnabled: false;
+  strategy:
+    | "observe_only"
+    | "retain_used_baseline"
+    | "repel_negative_candidates"
+    | "diversity_exploration";
+  candidateRunCount: number;
+  reason: string;
+};
+
+export type LandscapeReplayComparisonRun = {
+  runId: string;
+  createdAt: string;
+  goal: string;
+  retrievalMode: string;
+  status: LandscapeRunStatus;
+  taskFacets: LandscapeTaskFacets;
+  baselineSelectedKnowledgeIds: string[];
+  currentRetrievedKnowledgeIds: string[];
+  retainedKnowledgeIds: string[];
+  missingFromCurrentKnowledgeIds: string[];
+  newlyRetrievedKnowledgeIds: string[];
+  baselineVerdicts: LandscapeVerdictMix;
+  usedBaselineRetainedKnowledgeIds: string[];
+  usedBaselineLostKnowledgeIds: string[];
+  offTopicBaselineKnowledgeIds: string[];
+  wrongBaselineKnowledgeIds: string[];
+  overlapRate: number;
+  replacementRate: number;
+  comparison: LandscapeReplayComparisonKind;
+  currentDegradedReasons: string[];
+  currentRetrievalStats: {
+    textHitCount: number;
+    vectorHitCount: number;
+    mergedCount: number;
+    textFailed: boolean;
+    vectorFailed: boolean;
+    embeddingStatus: "provided" | "generated" | "unavailable" | "disabled";
+    repoScopeFallbackUsed: boolean;
+  };
+};
+
+export type LandscapeReplayComparisonResponse = {
+  generatedAt: string;
+  analysisAsOf: string;
+  windowDays: number;
+  corpusWindow: {
+    startAt: string;
+    endAt: string;
+  };
+  basis: {
+    unit: "replay-comparison";
+    mode: "current_retrieval";
+    runStatus: LandscapeRunStatusFilter;
+    currentLimit: number;
+  };
+  replayRunCount: number;
+  comparedRunCount: number;
+  baselineSelectedItemCount: number;
+  currentRetrievedItemCount: number;
+  retainedItemCount: number;
+  missingFromCurrentItemCount: number;
+  newlyRetrievedItemCount: number;
+  usedBaselineLostItemCount: number;
+  averageOverlapRate: number;
+  currentNoMatchRunCount: number;
+  comparisonCounts: Record<LandscapeReplayComparisonKind, number>;
+  recompilePlan: LandscapeReplayRecompilePlan;
+  rankingExperiments: LandscapeRankingExperimentSummary[];
+  appliesToRefineCandidates: LandscapeAppliesToRefineCandidate[];
+  promotionGateSummary: LandscapePromotionGateSummary;
+  scoreTuning: LandscapeScoreTuningSummary;
+  compileInterventionPlan: LandscapeCompileInterventionPlan;
+  runs: LandscapeReplayComparisonRun[];
+};
+
 export type LandscapeReplaySnapshot = {
   generatedAt: string;
   analysisAsOf: string;
@@ -196,5 +350,13 @@ export type BuildLandscapeReplaySnapshotInput = {
   minFeedbackCount: number;
   minSimilarity: number;
   semanticTopK: number;
+  includeRuns: boolean;
+};
+
+export type BuildLandscapeReplayComparisonInput = {
+  windowDays: number;
+  limit: number;
+  runStatus: LandscapeRunStatusFilter;
+  currentLimit: number;
   includeRuns: boolean;
 };

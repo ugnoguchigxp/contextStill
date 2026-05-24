@@ -1,6 +1,6 @@
 # Knowledge Landscape Attractor Phase 2A 実装計画
 
-> Status: implementation plan
+> Status: implemented through Phase 2B Part B
 > Date: 2026-05-24 JST
 > Based on: `docs/knowledge-landscape-attractor-implementation-plan.md`
 
@@ -684,14 +684,57 @@ Phase 2A 完了条件:
 9. fixture tests が replay / facet / acceptance / comparison を固定している
 10. live DB で代表 run を手動確認できる
 
-## 14. Phase 2B 以降に回すもの
+## 14. Phase 2B Part B 実装済み範囲と後続 rollout 境界
 
-- replay による actual recompile
+Phase 2A 時点で後続に回していた次の項目は、Part B で read-only / sandbox / opt-in として実装済みである。
+
+- replay による actual recompile 前の `current_retrieval_dry_run`
 - ranking experiment sandbox
 - `appliesTo` refine candidate 生成
 - promotion gate summary
 - replay diff を使った score tuning
-- exploration / diversity boost の実 compile 投入
+- exploration / diversity boost の opt-in compile hook
 - `memory-router landscape` dispatcher
 
-Phase 2B へ進む条件は、Phase 2A の replay report が「どの basin 分類が何を説明しているか」を実データで示せることとする。
+後続 rollout でまだ実施しないこと:
+
+- production ranking のデフォルト変更
+- `appliesTo` の自動 DB 更新
+- candidate promotion gate の強制適用
+- replay score tuning の knowledge score への永続反映
+
+### 14.1 Phase 2B Part B: read-only replay comparison and sandbox actions
+
+Part B 実装では、production ranking や knowledge score は変更しない。
+
+過去 run の `context_pack_items` を baseline とし、同じ goal / task facet を使った現在の
+`retrieveKnowledge` 結果を current として比較する。これは DB に新規 compile run を書かない
+read-only sandbox であり、本当の actual recompile 投入前の差分検証である。
+
+成果物:
+
+- `buildLandscapeReplayComparison`
+- `GET /api/graph/landscape/replay/compare`
+- `bun run landscape -- --replay-compare`
+- `memory-router landscape ...` dispatcher
+- replay comparison response 内の sandbox action summaries
+
+比較指標:
+
+- baseline selected と current retrieved の overlap
+- baseline から current に残らなかった knowledge
+- current で新しく出る knowledge
+- baseline で `used` だった knowledge が current retrieval から落ちた件数
+- run 単位の `stable / drifted / lost_baseline / new_only / no_current_match`
+
+追加の read-only sandbox 出力:
+
+- `recompilePlan`: `current_retrieval_dry_run` として actual recompile 前の比較実行条件を返す。`writesCompileRuns=false` を固定し、blocker がない場合は空配列を返す。
+- `rankingExperiments`: `current_retrieval` / `used_baseline_retention` / `negative_repulsion` / `diversity_exploration` の実験候補を並べる。すべて `productionEnabled=false`。
+- `appliesToRefineCandidates`: replay drift で baseline から落ちた knowledge に対し、run facet 由来の `suggestedAppliesTo` を候補として返す。DB は更新しない。
+- `promotionGateSummary`: baseline loss または off_topic / wrong feedback がある場合に `review_required` を返す。candidate promotion の実処理にはまだ接続しない。
+- `scoreTuning`: high churn / used baseline loss / no current match を集計し、score tuning の候補シグナルだけを返す。
+- `compileInterventionPlan`: runtime compile へ入れる場合の候補 strategy を返す。デフォルトでは無効。
+- opt-in runtime hook: `MEMORY_ROUTER_LANDSCAPE_COMPILE_INTERVENTION=diversity_exploration` の場合だけ、通常 ranking window の外側にある vector+facet matched candidate を 1 件だけ差し込む。既定値では production compile の結果を変えない。
+
+これにより Phase 2B の「全部」は、実運用副作用を持たない形で API / CLI / dispatcher に露出する。production ranking へ接続する次段階は、sandbox 指標が replay corpus 上で十分に説明力を持つことを確認してから分離して実施する。

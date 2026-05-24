@@ -1,12 +1,12 @@
 import { describe, expect, test } from "vitest";
 import {
-  inferImportance,
-  inferCandidateType,
-  normalizeProcedureBodyQuality,
   compactReason,
+  inferCandidateType,
+  inferImportance,
   isRetryableCoverEvidenceStatus,
-  requiresExternalEvidence,
   makeResult,
+  normalizeProcedureBodyQuality,
+  requiresExternalEvidence,
 } from "../src/modules/coverEvidence/helpers.js";
 import { PROCEDURE_BODY_NOT_ACTIONABLE_REASON } from "../src/modules/distillation/procedure-quality.js";
 
@@ -49,10 +49,16 @@ describe("coverEvidence helpers", () => {
       expect(inferCandidateType(title, body, "procedure")).toBe("procedure");
     });
 
-    test("returns procedure if workflow signal is present regardless of typeHint", () => {
+    test("returns procedure if workflow signal is present without a type hint", () => {
       const title = "How to build";
       const body = "1. Run npm install\n2. Run npm test"; // command(npm) + verification(test) + sequence(1.)
       expect(inferCandidateType(title, body)).toBe("procedure");
+    });
+
+    test("respects an explicit rule type hint", () => {
+      const title = "Test behavior, not implementation";
+      const body = "1. Run the nearest test first\n2. Then run the related test range";
+      expect(inferCandidateType(title, body, "rule")).toBe("rule");
     });
 
     test("returns rule otherwise", () => {
@@ -135,6 +141,23 @@ describe("coverEvidence helpers", () => {
         },
       });
       const output = normalizeProcedureBodyQuality(input);
+      expect(output.candidate?.type).toBe("rule");
+    });
+
+    test("demotes non-skill procedure output to rule when the original candidate was explicitly a rule", () => {
+      const input = makeResult({
+        status: "knowledge_ready",
+        stage: "final",
+        candidate: {
+          type: "procedure",
+          title: "Test behavior, not implementation",
+          body: "1. Run the nearest test first.\n2. Then run the related test range.",
+          importance: 90,
+          confidence: 90,
+        },
+      });
+      const output = normalizeProcedureBodyQuality(input, { typeHint: "rule" });
+      expect(output.status).toBe("knowledge_ready");
       expect(output.candidate?.type).toBe("rule");
     });
 

@@ -4,6 +4,9 @@
   "description": "Local-first context compiler for coding agents",
   "license": "MIT",
   "type": "module",
+  "bin": {
+    "memory-router": "./src/cli/memory-router.ts"
+  },
   "packageManager": "bun@1.3.12",
   "scripts": {
     "dev": "bun ./node_modules/vite/bin/vite.js",
@@ -25,6 +28,7 @@
     "backfill:knowledge-source-links": "bun run src/cli/backfill-knowledge-source-links.ts",
     "knowledge:apply-feedback-quality": "bun run src/cli/apply-knowledge-quality.ts",
     "landscape": "bun run src/cli/landscape.ts",
+    "memory-router": "bun run src/cli/memory-router.ts",
     "seed:knowledge-tags": "bun run src/cli/seed-knowledge-tags.ts",
     "doctor": "bun run src/cli/doctor.ts",
     "mcp:smoke": "DATABASE_URL=${DATABASE_URL:-postgres://postgres:postgres@localhost:7889/memory_router_test} bun run src/cli/mcp-smoke.ts",

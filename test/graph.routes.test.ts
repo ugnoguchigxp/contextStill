@@ -1,11 +1,23 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { landscapeReplaySnapshotSchema } from "../src/shared/schemas/landscape-replay.schema.js";
+import {
+  landscapeReplayComparisonResponseSchema,
+  landscapeReplaySnapshotSchema,
+} from "../src/shared/schemas/landscape-replay.schema.js";
 import { landscapeSnapshotSchema } from "../src/shared/schemas/landscape.schema.js";
 
-const { buildLandscapeReplaySnapshotMock, buildLandscapeSnapshotMock } = vi.hoisted(() => ({
+const {
+  buildLandscapeReplayComparisonMock,
+  buildLandscapeReplaySnapshotMock,
+  buildLandscapeSnapshotMock,
+} = vi.hoisted(() => ({
+  buildLandscapeReplayComparisonMock: vi.fn(),
   buildLandscapeReplaySnapshotMock: vi.fn(),
   buildLandscapeSnapshotMock: vi.fn(),
+}));
+
+vi.mock("../src/modules/landscape/landscape-replay-comparison.service.js", () => ({
+  buildLandscapeReplayComparison: buildLandscapeReplayComparisonMock,
 }));
 
 vi.mock("../src/modules/landscape/landscape-replay.service.js", () => ({
@@ -195,11 +207,95 @@ function validReplaySnapshot() {
   });
 }
 
+function validReplayComparison() {
+  return landscapeReplayComparisonResponseSchema.parse({
+    generatedAt: "2026-05-24T00:00:00.000Z",
+    analysisAsOf: "2026-05-24T00:00:00.000Z",
+    windowDays: 30,
+    corpusWindow: {
+      startAt: "2026-04-24T00:00:00.000Z",
+      endAt: "2026-05-24T00:00:00.000Z",
+    },
+    basis: {
+      unit: "replay-comparison",
+      mode: "current_retrieval",
+      runStatus: "all",
+      currentLimit: 12,
+    },
+    replayRunCount: 0,
+    comparedRunCount: 0,
+    baselineSelectedItemCount: 0,
+    currentRetrievedItemCount: 0,
+    retainedItemCount: 0,
+    missingFromCurrentItemCount: 0,
+    newlyRetrievedItemCount: 0,
+    usedBaselineLostItemCount: 0,
+    averageOverlapRate: 0,
+    currentNoMatchRunCount: 0,
+    comparisonCounts: {
+      stable: 0,
+      drifted: 0,
+      lost_baseline: 0,
+      new_only: 0,
+      no_current_match: 0,
+    },
+    recompilePlan: {
+      mode: "current_retrieval_dry_run",
+      writesCompileRuns: false,
+      replayRunCount: 0,
+      comparedRunCount: 0,
+      blockers: [],
+    },
+    rankingExperiments: [
+      {
+        experiment: "current_retrieval",
+        productionEnabled: false,
+        targetRunCount: 0,
+        estimatedRetainedItemCount: 0,
+        estimatedMissingFromCurrentItemCount: 0,
+        estimatedUsedBaselineLostItemCount: 0,
+        estimatedAverageOverlapRate: 0,
+        riskReductionSignal: 0,
+        recommendation: "observe",
+      },
+    ],
+    appliesToRefineCandidates: [],
+    promotionGateSummary: {
+      productionEnabled: false,
+      gateMode: "normal",
+      shouldTighten: false,
+      affectedRunCount: 0,
+      riskyNewKnowledgeCount: 0,
+      reason: "none",
+    },
+    scoreTuning: {
+      productionEnabled: false,
+      stableRunCount: 0,
+      driftedRunCount: 0,
+      lostBaselineRunCount: 0,
+      negativeFeedbackRunCount: 0,
+      highChurnRunCount: 0,
+      lostUsedBaselineRunCount: 0,
+      noCurrentMatchRunCount: 0,
+      averageReplacementRate: 0,
+      recommendations: [],
+    },
+    compileInterventionPlan: {
+      productionEnabled: false,
+      strategy: "observe_only",
+      candidateRunCount: 0,
+      reason: "none",
+    },
+    runs: [],
+  });
+}
+
 describe("graph routes landscape", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     buildLandscapeSnapshotMock.mockResolvedValue(validLandscapeSnapshot());
     buildLandscapeReplaySnapshotMock.mockResolvedValue(validReplaySnapshot());
+    buildLandscapeReplayComparisonMock.mockResolvedValue(validReplayComparison());
   });
 
   test("GET /api/graph/landscape applies defaults", async () => {
@@ -272,6 +368,36 @@ describe("graph routes landscape", () => {
       minFeedbackCount: 4,
       minSimilarity: 0.8,
       semanticTopK: 5,
+      includeRuns: false,
+    });
+  });
+
+  test("GET /api/graph/landscape/replay/compare applies defaults", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/graph/landscape/replay/compare");
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(landscapeReplayComparisonResponseSchema.safeParse(json).success).toBe(true);
+    expect(buildLandscapeReplayComparisonMock).toHaveBeenCalledWith({
+      windowDays: 30,
+      limit: 100,
+      runStatus: "all",
+      currentLimit: 12,
+      includeRuns: true,
+    });
+  });
+
+  test("GET /api/graph/landscape/replay/compare parses comparison filters", async () => {
+    const app = buildApp();
+    const response = await app.request(
+      "/api/graph/landscape/replay/compare?windowDays=14&limit=25&runStatus=failed&currentLimit=8&includeRuns=false",
+    );
+    expect(response.status).toBe(200);
+    expect(buildLandscapeReplayComparisonMock).toHaveBeenCalledWith({
+      windowDays: 14,
+      limit: 25,
+      runStatus: "failed",
+      currentLimit: 8,
       includeRuns: false,
     });
   });

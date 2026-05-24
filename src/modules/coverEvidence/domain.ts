@@ -8,7 +8,27 @@ import {
 } from "../distillation/distillation-runtime.service.js";
 import type { DistillationProviderName } from "../distillation/llm-resolver.js";
 import { getFindCandidateResultById } from "../findCandidate/repository.js";
+import {
+  ensureRuntimeSettingsLoaded,
+  resolveCoverEvidenceRoutes,
+} from "../settings/settings.service.js";
 import { dedupeCoverEvidenceCandidate } from "./dedupe.service.js";
+import {
+  baseCandidate,
+  candidateOriginHintsFromOrigin,
+  isRetryableCoverEvidenceStatus,
+  makeResult,
+  mergeReferences,
+  normalizeProcedureBodyQuality,
+  referencesFromDuplicateRefs,
+  requiresExternalEvidence,
+  sourceContextForPrompts,
+} from "./helpers.js";
+import {
+  appendOptionalMcpEvidence,
+  runExternalEvidence,
+  runValueAssessment,
+} from "./llm-runner.js";
 import { parseCoverEvidenceResult } from "./parser.js";
 import {
   coverEvidenceResultFromRow,
@@ -17,26 +37,6 @@ import {
 } from "./repository.js";
 import { evaluateSourceSupport, readSourceEvidenceForCandidate } from "./source-support.service.js";
 import type { CoverEvidenceInput, CoverEvidenceResult } from "./types.js";
-import {
-  baseCandidate,
-  candidateOriginHintsFromOrigin,
-  mergeReferences,
-  referencesFromDuplicateRefs,
-  normalizeProcedureBodyQuality,
-  isRetryableCoverEvidenceStatus,
-  requiresExternalEvidence,
-  makeResult,
-  sourceContextForPrompts,
-} from "./helpers.js";
-import {
-  runValueAssessment,
-  runExternalEvidence,
-  appendOptionalMcpEvidence,
-} from "./llm-runner.js";
-import {
-  ensureRuntimeSettingsLoaded,
-  resolveCoverEvidenceRoutes,
-} from "../settings/settings.service.js";
 
 export type CoverEvidenceRunInput = CoverEvidenceInput & {
   chatClient?: DistillationChatClient;
@@ -161,11 +161,12 @@ export async function runCoverEvidence(
             row,
             readRanges: sourceRead.readRanges,
           });
+          const originHints = candidateOriginHintsFromOrigin(row.origin);
           const candidate = baseCandidate({
             title: row.title,
             body: row.content,
             confidence: support.confidence,
-            hints: candidateOriginHintsFromOrigin(row.origin),
+            hints: originHints,
           });
           const dedupe = await dedupeCoverEvidenceCandidate(candidate);
           if (dedupe.status !== "unique") {
@@ -186,6 +187,7 @@ export async function runCoverEvidence(
               candidate,
               sourceReferences: sourceRead.references,
               sourceContext,
+              candidateTypeHint: originHints.type,
               provider: externalEvidenceProvider,
               model: externalEvidenceModel,
               fallbackOrder: externalEvidenceFallbackOrder,
@@ -211,6 +213,7 @@ export async function runCoverEvidence(
               sourceReferences: sourceRead.references,
               sourceContentExcerpt: sourceRead.content,
               sourceContext,
+              candidateTypeHint: originHints.type,
               provider: sourceSupportProvider,
               model: sourceSupportModel,
               fallbackOrder: sourceSupportFallbackOrder,

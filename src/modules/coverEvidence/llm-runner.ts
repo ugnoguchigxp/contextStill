@@ -7,12 +7,33 @@ import {
   runDistillationCompletion,
 } from "../distillation/distillation-runtime.service.js";
 import type { DistillationProviderName } from "../distillation/llm-resolver.js";
+import type { CandidateKnowledgeType } from "../findCandidate/repository.js";
+import {
+  type CoverEvidenceSourceContext,
+  isAbortError,
+  makeResult,
+  mergeReferences,
+  normalizeProcedureBodyQuality,
+  reclassifyResultCandidate,
+  referencesFromToolEvents,
+  rejectLowImportance,
+  toolEventsForResult,
+} from "./helpers.js";
 import {
   type McpEvidenceToolName,
   configuredMcpEvidenceToolNames,
   referencesFromMcpToolEvents,
 } from "./mcp-evidence.service.js";
 import { parseCoverEvidenceResult } from "./parser.js";
+import {
+  applicabilityBlankResponseReminderLines,
+  externalEvidenceSystemPrompt,
+  externalEvidenceUserPrompt,
+  mcpEvidenceSystemPrompt,
+  mcpEvidenceUserPrompt,
+  valueAssessmentSystemPrompt,
+  valueAssessmentUserPrompt,
+} from "./prompts.js";
 import type {
   CoverEvidenceCandidate,
   CoverEvidenceReference,
@@ -20,26 +41,6 @@ import type {
   CoverEvidenceStatus,
   CoverEvidenceToolEvent,
 } from "./types.js";
-import {
-  type CoverEvidenceSourceContext,
-  toolEventsForResult,
-  normalizeProcedureBodyQuality,
-  rejectLowImportance,
-  reclassifyResultCandidate,
-  mergeReferences,
-  isAbortError,
-  makeResult,
-  referencesFromToolEvents,
-} from "./helpers.js";
-import {
-  valueAssessmentSystemPrompt,
-  valueAssessmentUserPrompt,
-  applicabilityBlankResponseReminderLines,
-  externalEvidenceSystemPrompt,
-  externalEvidenceUserPrompt,
-  mcpEvidenceSystemPrompt,
-  mcpEvidenceUserPrompt,
-} from "./prompts.js";
 
 export async function runValueAssessment(params: {
   id: string;
@@ -47,6 +48,7 @@ export async function runValueAssessment(params: {
   sourceReferences: CoverEvidenceReference[];
   sourceContentExcerpt: string;
   sourceContext: CoverEvidenceSourceContext;
+  candidateTypeHint?: CandidateKnowledgeType;
   provider: DistillationProviderSetting;
   model: string;
   fallbackOrder?: DistillationProviderName[];
@@ -98,6 +100,7 @@ export async function runValueAssessment(params: {
         references: mergeReferences(params.sourceReferences, parsed.references),
         toolEvents: toolEventsForResult(completion.toolEvents),
       }),
+      { typeHint: params.candidateTypeHint },
     );
   } catch (error) {
     if (isAbortError(error)) {
@@ -121,6 +124,7 @@ export async function runExternalEvidence(params: {
   candidate: CoverEvidenceCandidate;
   sourceReferences: CoverEvidenceReference[];
   sourceContext: CoverEvidenceSourceContext;
+  candidateTypeHint?: CandidateKnowledgeType;
   provider: DistillationProviderSetting;
   model: string;
   fallbackOrder?: DistillationProviderName[];
@@ -209,6 +213,7 @@ export async function runExternalEvidence(params: {
         references,
         toolEvents,
       }),
+      { typeHint: params.candidateTypeHint },
     );
   } catch (error) {
     if (isAbortError(error)) {
