@@ -1,30 +1,295 @@
-import { eq } from "drizzle-orm";
+import { readFile } from "node:fs/promises";
+import path from "node:path";
+import { sql } from "drizzle-orm";
 import { closeDbPool, db } from "./index.js";
-import { knowledgeItems } from "./schema.js";
+import {
+  knowledgeCommunityLabels,
+  knowledgeItems,
+  knowledgeSourceLinks,
+  knowledgeTagDefinitions,
+  sourceFragments,
+  sources,
+} from "./schema.js";
+
+type JsonRecord = Record<string, unknown>;
+
+type SeedPayload = {
+  schemaVersion: number;
+  generatedAt: string;
+  knowledgeItems: JsonRecord[];
+  sources: JsonRecord[];
+  sourceFragments: JsonRecord[];
+  knowledgeSourceLinks: JsonRecord[];
+  knowledgeTagDefinitions: JsonRecord[];
+  knowledgeCommunityLabels: JsonRecord[];
+};
+
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+function asArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : [];
+}
+
+function asString(value: unknown): string | null {
+  return typeof value === "string" ? value : null;
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  const parsed = typeof value === "number" ? value : Number(value);
+  return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function asDate(value: unknown): Date | null {
+  if (typeof value !== "string") return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function asSeedPayload(value: unknown): SeedPayload {
+  const record = asRecord(value);
+  return {
+    schemaVersion: asNumber(record.schemaVersion, 0),
+    generatedAt: asString(record.generatedAt) ?? "",
+    knowledgeItems: asArray(record.knowledgeItems).map(asRecord),
+    sources: asArray(record.sources).map(asRecord),
+    sourceFragments: asArray(record.sourceFragments).map(asRecord),
+    knowledgeSourceLinks: asArray(record.knowledgeSourceLinks).map(asRecord),
+    knowledgeTagDefinitions: asArray(record.knowledgeTagDefinitions).map(asRecord),
+    knowledgeCommunityLabels: asArray(record.knowledgeCommunityLabels).map(asRecord),
+  };
+}
+
+async function upsertInChunks<T>(
+  rows: T[],
+  chunkSize: number,
+  runner: (chunk: T[]) => Promise<void>,
+): Promise<void> {
+  if (rows.length === 0) return;
+  for (let index = 0; index < rows.length; index += chunkSize) {
+    await runner(rows.slice(index, index + chunkSize));
+  }
+}
 
 async function main(): Promise<void> {
-  const id = "00000000-0000-0000-0000-000000000001";
-  const existing = await db.query.knowledgeItems.findFirst({
-    where: eq(knowledgeItems.id, id),
-  });
-  if (existing) {
-    console.log("seed already applied");
-    return;
+  const seedFile = process.env.KNOWLEDGE_SEED_FILE
+    ? path.resolve(process.cwd(), process.env.KNOWLEDGE_SEED_FILE)
+    : path.resolve(process.cwd(), "src/db/seeds/knowledge-seed.json");
+  const raw = await readFile(seedFile, "utf-8");
+  const payload = asSeedPayload(JSON.parse(raw));
+
+  if (payload.schemaVersion !== 1) {
+    throw new Error(`Unsupported seed schemaVersion: ${payload.schemaVersion}`);
   }
 
-  await db.insert(knowledgeItems).values({
-    id,
-    type: "rule",
-    status: "active",
-    scope: "repo",
-    title: "Source Traceability",
-    body: "Separate distilled instructions from source material and include source refs in context packs.",
-    appliesTo: { repos: ["memory-router"] },
-    confidence: 95,
-    importance: 90,
+  const mappedSources = payload.sources.map((row) => ({
+    id: asString(row.id) ?? "",
+    sourceKind: asString(row.source_kind) ?? "wiki",
+    uri: asString(row.uri) ?? "",
+    title: asString(row.title),
+    body: asString(row.body) ?? "",
+    metadata: asRecord(row.metadata),
+    createdAt: asDate(row.created_at) ?? new Date(),
+    updatedAt: asDate(row.updated_at) ?? new Date(),
+    lastIndexedAt: asDate(row.last_indexed_at),
+  }));
+
+  const mappedSourceFragments = payload.sourceFragments.map((row) => ({
+    id: asString(row.id) ?? "",
+    sourceId: asString(row.source_id) ?? "",
+    locator: asString(row.locator) ?? "full",
+    heading: asString(row.heading),
+    content: asString(row.content) ?? "",
+    metadata: asRecord(row.metadata),
+    createdAt: asDate(row.created_at) ?? new Date(),
+  }));
+
+  const mappedKnowledgeItems = payload.knowledgeItems.map((row) => ({
+    id: asString(row.id) ?? "",
+    type: asString(row.type) ?? "rule",
+    status: asString(row.status) ?? "active",
+    scope: asString(row.scope) ?? "repo",
+    title: asString(row.title) ?? "",
+    body: asString(row.body) ?? "",
+    appliesTo: asRecord(row.applies_to),
+    confidence: asNumber(row.confidence, 70),
+    importance: asNumber(row.importance, 70),
+    compileSelectCount: Math.max(0, Math.floor(asNumber(row.compile_select_count, 0))),
+    lastCompiledAt: asDate(row.last_compiled_at),
+    agenticAcceptCount: Math.max(0, Math.floor(asNumber(row.agentic_accept_count, 0))),
+    explicitUpvoteCount: Math.max(0, Math.floor(asNumber(row.explicit_upvote_count, 0))),
+    explicitDownvoteCount: Math.max(0, Math.floor(asNumber(row.explicit_downvote_count, 0))),
+    dynamicScore: asNumber(row.dynamic_score, 0),
+    metadata: asRecord(row.metadata),
+    createdAt: asDate(row.created_at) ?? new Date(),
+    updatedAt: asDate(row.updated_at) ?? new Date(),
+    lastVerifiedAt: asDate(row.last_verified_at),
+  }));
+
+  const mappedKnowledgeSourceLinks = payload.knowledgeSourceLinks.map((row) => ({
+    id: asString(row.id) ?? "",
+    knowledgeId: asString(row.knowledge_id) ?? "",
+    sourceFragmentId: asString(row.source_fragment_id) ?? "",
+    linkType: asString(row.link_type) ?? "derived_from",
+    confidence: asNumber(row.confidence, 0.5),
+    metadata: asRecord(row.metadata),
+    createdAt: asDate(row.created_at) ?? new Date(),
+  }));
+
+  const mappedKnowledgeTagDefinitions = payload.knowledgeTagDefinitions.map((row) => ({
+    id: asString(row.id) ?? "",
+    kind: asString(row.kind) ?? "technology",
+    slug: asString(row.slug) ?? "",
+    label: asString(row.label) ?? "",
+    description: asString(row.description),
+    aliases: asArray(row.aliases),
+    status: asString(row.status) ?? "active",
+    sortOrder: Math.max(0, Math.floor(asNumber(row.sort_order, 1000))),
+    createdAt: asDate(row.created_at) ?? new Date(),
+    updatedAt: asDate(row.updated_at) ?? new Date(),
+  }));
+
+  const mappedKnowledgeCommunityLabels = payload.knowledgeCommunityLabels.map((row) => ({
+    communityKey: asString(row.community_key) ?? "",
+    label: asString(row.label) ?? "",
+    note: asString(row.note),
+    updatedAt: asDate(row.updated_at) ?? new Date(),
+  }));
+
+  await db.transaction(async (tx) => {
+    await upsertInChunks(mappedSources, 100, async (chunk) => {
+      await tx
+        .insert(sources)
+        .values(chunk)
+        .onConflictDoUpdate({
+          target: sources.id,
+          set: {
+            sourceKind: sql`excluded.source_kind`,
+            uri: sql`excluded.uri`,
+            title: sql`excluded.title`,
+            body: sql`excluded.body`,
+            metadata: sql`excluded.metadata`,
+            createdAt: sql`excluded.created_at`,
+            updatedAt: sql`excluded.updated_at`,
+            lastIndexedAt: sql`excluded.last_indexed_at`,
+          },
+        });
+    });
+
+    await upsertInChunks(mappedSourceFragments, 100, async (chunk) => {
+      await tx
+        .insert(sourceFragments)
+        .values(chunk)
+        .onConflictDoUpdate({
+          target: sourceFragments.id,
+          set: {
+            sourceId: sql`excluded.source_id`,
+            locator: sql`excluded.locator`,
+            heading: sql`excluded.heading`,
+            content: sql`excluded.content`,
+            metadata: sql`excluded.metadata`,
+            createdAt: sql`excluded.created_at`,
+          },
+        });
+    });
+
+    await upsertInChunks(mappedKnowledgeItems, 100, async (chunk) => {
+      await tx
+        .insert(knowledgeItems)
+        .values(chunk)
+        .onConflictDoUpdate({
+          target: knowledgeItems.id,
+          set: {
+            type: sql`excluded.type`,
+            status: sql`excluded.status`,
+            scope: sql`excluded.scope`,
+            title: sql`excluded.title`,
+            body: sql`excluded.body`,
+            appliesTo: sql`excluded.applies_to`,
+            confidence: sql`excluded.confidence`,
+            importance: sql`excluded.importance`,
+            compileSelectCount: sql`excluded.compile_select_count`,
+            lastCompiledAt: sql`excluded.last_compiled_at`,
+            agenticAcceptCount: sql`excluded.agentic_accept_count`,
+            explicitUpvoteCount: sql`excluded.explicit_upvote_count`,
+            explicitDownvoteCount: sql`excluded.explicit_downvote_count`,
+            dynamicScore: sql`excluded.dynamic_score`,
+            metadata: sql`excluded.metadata`,
+            createdAt: sql`excluded.created_at`,
+            updatedAt: sql`excluded.updated_at`,
+            lastVerifiedAt: sql`excluded.last_verified_at`,
+          },
+        });
+    });
+
+    await upsertInChunks(mappedKnowledgeSourceLinks, 100, async (chunk) => {
+      await tx
+        .insert(knowledgeSourceLinks)
+        .values(chunk)
+        .onConflictDoUpdate({
+          target: knowledgeSourceLinks.id,
+          set: {
+            knowledgeId: sql`excluded.knowledge_id`,
+            sourceFragmentId: sql`excluded.source_fragment_id`,
+            linkType: sql`excluded.link_type`,
+            confidence: sql`excluded.confidence`,
+            metadata: sql`excluded.metadata`,
+            createdAt: sql`excluded.created_at`,
+          },
+        });
+    });
+
+    await upsertInChunks(mappedKnowledgeTagDefinitions, 100, async (chunk) => {
+      await tx
+        .insert(knowledgeTagDefinitions)
+        .values(chunk)
+        .onConflictDoUpdate({
+          target: knowledgeTagDefinitions.id,
+          set: {
+            kind: sql`excluded.kind`,
+            slug: sql`excluded.slug`,
+            label: sql`excluded.label`,
+            description: sql`excluded.description`,
+            aliases: sql`excluded.aliases`,
+            status: sql`excluded.status`,
+            sortOrder: sql`excluded.sort_order`,
+            createdAt: sql`excluded.created_at`,
+            updatedAt: sql`excluded.updated_at`,
+          },
+        });
+    });
+
+    await upsertInChunks(mappedKnowledgeCommunityLabels, 100, async (chunk) => {
+      await tx
+        .insert(knowledgeCommunityLabels)
+        .values(chunk)
+        .onConflictDoUpdate({
+          target: knowledgeCommunityLabels.communityKey,
+          set: {
+            label: sql`excluded.label`,
+            note: sql`excluded.note`,
+            updatedAt: sql`excluded.updated_at`,
+          },
+        });
+    });
   });
 
-  console.log("seed inserted");
+  console.log(
+    [
+      `[seed] schemaVersion=${payload.schemaVersion}`,
+      `[seed] generatedAt=${payload.generatedAt}`,
+      `[seed] knowledgeItems=${mappedKnowledgeItems.length}`,
+      `[seed] knowledgeSourceLinks=${mappedKnowledgeSourceLinks.length}`,
+      `[seed] sources=${mappedSources.length}`,
+      `[seed] sourceFragments=${mappedSourceFragments.length}`,
+      `[seed] knowledgeTagDefinitions=${mappedKnowledgeTagDefinitions.length}`,
+      `[seed] knowledgeCommunityLabels=${mappedKnowledgeCommunityLabels.length}`,
+      "[seed] completed (audit/candidate tables are excluded)",
+    ].join("\n"),
+  );
 }
 
 main()

@@ -2,6 +2,8 @@ import { Hono } from "hono";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
+import { groupedConfig } from "../src/config.js";
+import { adminApiKeyAuth } from "./middleware/admin-auth.js";
 import { agentDiffsRouter } from "./modules/agent-diffs/agent-diffs.routes.js";
 import { auditLogsRouter } from "./modules/audit/audit.routes.js";
 import { candidatesRouter } from "./modules/candidates/candidates.routes.js";
@@ -17,8 +19,16 @@ import { vibeMemoryRouter } from "./modules/vibe-memory/vibe-memory.routes.js";
 
 const app = new Hono();
 
-app.use("*", logger(), prettyJSON(), cors());
+const corsMiddleware =
+  groupedConfig.admin.allowedOrigins.length > 0
+    ? cors({ origin: groupedConfig.admin.allowedOrigins })
+    : cors();
 
+app.use("*", logger(), prettyJSON(), corsMiddleware);
+app.use("/api/*", adminApiKeyAuth());
+
+app.get("/api/health/live", (c) => c.json({ status: "alive", service: "memory-router-api" }));
+app.get("/api/health/ready", (c) => c.json({ status: "ready", service: "memory-router-api" }));
 app.get("/api/health", (c) => c.json({ status: "ok", service: "memory-router-api" }));
 app.route("/api/context", contextCompilerRouter);
 app.route("/api/doctor", doctorRouter);

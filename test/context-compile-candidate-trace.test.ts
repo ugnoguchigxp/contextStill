@@ -46,13 +46,13 @@ vi.mock("../src/modules/context-compiler/context-response-composer.service.js", 
 describe("context compile candidate trace", () => {
   const originalAgenticCompileEnabled = groupedConfig.agenticCompile.enabled;
   const originalBudget = groupedConfig.compile.defaultTokenBudget;
-  const originalTraceLimit = process.env.MEMORY_ROUTER_CONTEXT_COMPILE_TRACE_LIMIT;
+  const originalTraceLimit = groupedConfig.compile.candidateTraceLimit;
 
   beforeEach(() => {
     vi.clearAllMocks();
     groupedConfig.agenticCompile.enabled = false;
     groupedConfig.compile.defaultTokenBudget = 4000;
-    process.env.MEMORY_ROUTER_CONTEXT_COMPILE_TRACE_LIMIT = "1";
+    groupedConfig.compile.candidateTraceLimit = 1;
 
     vi.mocked(insertCompileRun).mockResolvedValue("550e8400-e29b-41d4-a716-446655440000");
     vi.mocked(insertContextPackItems).mockResolvedValue();
@@ -220,11 +220,7 @@ describe("context compile candidate trace", () => {
   afterEach(() => {
     groupedConfig.agenticCompile.enabled = originalAgenticCompileEnabled;
     groupedConfig.compile.defaultTokenBudget = originalBudget;
-    if (originalTraceLimit === undefined) {
-      process.env.MEMORY_ROUTER_CONTEXT_COMPILE_TRACE_LIMIT = undefined;
-    } else {
-      process.env.MEMORY_ROUTER_CONTEXT_COMPILE_TRACE_LIMIT = originalTraceLimit;
-    }
+    groupedConfig.compile.candidateTraceLimit = originalTraceLimit;
   });
 
   test("keeps selected item in trace even when limit truncates candidates", async () => {

@@ -1,10 +1,26 @@
 import { describe, expect, it } from "vitest";
-// 内部関数をテストするために、エクスポートされていない場合は proxy 経由などで確認するか、
-// ファイルを読んで直接テスト可能な形にする。ここでは filterSensitiveData を想定。
+import { redactSecrets } from "../src/shared/utils/secret-redaction.js";
 
 describe("ingest service sensitive data filter", () => {
   it("removes API keys and secrets", () => {
-    // 実際の実装に合わせてテスト
-    expect(true).toBe(true);
+    const input = [
+      "api_key=sk-abcdefghijklmnopqrstuvwxyz0123456789",
+      "Authorization: Bearer abcdefghijklmnopqrstuvwxyz0123456789",
+      "normal line",
+    ].join("\n");
+    const redacted = redactSecrets(input);
+    expect(redacted).toContain("[REMOVED SENSITIVE DATA]");
+    expect(redacted).toContain("normal line");
+    expect(redacted).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789");
+  });
+
+  it("removes private key blocks", () => {
+    const input = [
+      "-----BEGIN PRIVATE KEY-----",
+      "MIIBVwIBADANBgkqhkiG9w0BAQEFAASCAT8wggE7AgEAAkEAz",
+      "-----END PRIVATE KEY-----",
+    ].join("\n");
+    const redacted = redactSecrets(input);
+    expect(redacted).toBe("[REMOVED SENSITIVE DATA]");
   });
 });

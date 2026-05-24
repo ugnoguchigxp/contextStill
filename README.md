@@ -338,6 +338,8 @@ For the full MCP tool contract, see [docs/mcp-tools.md](docs/mcp-tools.md).
 | `bun run landscape -- --queue-create-candidates --queue-status pending` | Create deterministic candidate drafts from review items |
 | `bun run backfill:knowledge-project-context` | Backfill project context on existing knowledge |
 | `./scripts/backup-db.sh` | Dump and zip the PostgreSQL database |
+| `bun run db:seed:export` | Export current knowledge-focused seed snapshot (`src/db/seeds/knowledge-seed.json`) |
+| `bun run db:seed` | Upsert knowledge-focused seed data (excludes audit/candidate tables) |
 
 ### Cold Start Flow
 

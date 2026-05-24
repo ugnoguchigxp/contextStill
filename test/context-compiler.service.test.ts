@@ -319,15 +319,17 @@ describe("Context Compiler Service", () => {
     await compileContextPack({ goal: "usage signal capture" });
 
     expect(insertContextCompileCandidateTraces).toHaveBeenCalled();
-    expect(recordCompileRunKnowledgeUsageSignals).toHaveBeenCalledWith(
-      expect.objectContaining({
-        runId: "550e8400-e29b-41d4-a716-446655440000",
-        items: expect.arrayContaining([
-          expect.objectContaining({ knowledgeId: "k1", verdict: "used" }),
-          expect.objectContaining({ knowledgeId: "k4", verdict: "not_used" }),
-        ]),
-      }),
-    );
+    await vi.waitFor(() => {
+      expect(recordCompileRunKnowledgeUsageSignals).toHaveBeenCalledWith(
+        expect.objectContaining({
+          runId: "550e8400-e29b-41d4-a716-446655440000",
+          items: expect.arrayContaining([
+            expect.objectContaining({ knowledgeId: "k1", verdict: "used" }),
+            expect.objectContaining({ knowledgeId: "k4", verdict: "not_used" }),
+          ]),
+        }),
+      );
+    });
   });
 
   test("stores unknown facet candidates in diagnostics", async () => {
@@ -461,12 +463,13 @@ describe("Context Compiler Service", () => {
 
     await compileContextPack({ goal: "trigger signal save error" });
 
-    // audit log should be recorded with KNOWLEDGE_USAGE_SIGNAL_SAVE_FAILED
-    expect(recordAuditLogSafe).toHaveBeenCalledWith(
-      expect.objectContaining({
-        eventType: "KNOWLEDGE_USAGE_SIGNAL_SAVE_FAILED",
-      }),
-    );
+    await vi.waitFor(() => {
+      expect(recordAuditLogSafe).toHaveBeenCalledWith(
+        expect.objectContaining({
+          eventType: "KNOWLEDGE_USAGE_SIGNAL_SAVE_FAILED",
+        }),
+      );
+    });
   });
 
   test("escalates status to failed when multiple hard failures occur", async () => {

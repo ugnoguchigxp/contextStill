@@ -1889,8 +1889,96 @@ export type RuntimeSettingsReloadResponse = {
   reloadedAt: string;
 };
 
+const ADMIN_API_KEY_STORAGE_KEY = "memory_router_admin_api_key";
+const ADMIN_API_KEY_QUERY_PARAM_KEYS = ["admin_api_key", "adminApiKey", "x-admin-api-key"];
+
+function normalizeAdminApiKey(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : null;
+}
+
+function persistAdminApiKey(apiKey: string): void {
+  if (typeof window === "undefined") return;
+  try {
+    window.localStorage.setItem(ADMIN_API_KEY_STORAGE_KEY, apiKey);
+  } catch {
+    // localStorage が使えない場合は無視する
+  }
+}
+
+function removeAdminApiKeyFromUrl(): void {
+  if (typeof window === "undefined") return;
+  try {
+    const currentUrl = new URL(window.location.href);
+    let mutated = false;
+    for (const key of ADMIN_API_KEY_QUERY_PARAM_KEYS) {
+      if (!currentUrl.searchParams.has(key)) continue;
+      currentUrl.searchParams.delete(key);
+      mutated = true;
+    }
+    if (!mutated) return;
+    const nextSearch = currentUrl.searchParams.toString();
+    const nextRelativeUrl = `${currentUrl.pathname}${nextSearch ? `?${nextSearch}` : ""}${currentUrl.hash}`;
+    window.history.replaceState(window.history.state, "", nextRelativeUrl);
+  } catch {
+    // URL の書き換えが失敗しても API キー自体は保持する
+  }
+}
+
+function readAdminApiKeyFromGlobal(): string | null {
+  const globalKey = normalizeAdminApiKey(
+    (globalThis as { __MEMORY_ROUTER_ADMIN_API_KEY__?: unknown }).__MEMORY_ROUTER_ADMIN_API_KEY__,
+  );
+  if (globalKey) {
+    persistAdminApiKey(globalKey);
+  }
+  return globalKey;
+}
+
+function readAdminApiKeyFromUrl(): string | null {
+  if (typeof window === "undefined") return null;
+  const params = new URLSearchParams(window.location.search);
+  for (const key of ADMIN_API_KEY_QUERY_PARAM_KEYS) {
+    const value = normalizeAdminApiKey(params.get(key));
+    if (!value) continue;
+    persistAdminApiKey(value);
+    removeAdminApiKeyFromUrl();
+    return value;
+  }
+  return null;
+}
+
+function readAdminApiKeyFromStorage(): string | null {
+  if (typeof window === "undefined") return null;
+  try {
+    return normalizeAdminApiKey(window.localStorage.getItem(ADMIN_API_KEY_STORAGE_KEY));
+  } catch {
+    return null;
+  }
+}
+
+function resolveAdminApiKey(): string | null {
+  return readAdminApiKeyFromGlobal() ?? readAdminApiKeyFromUrl() ?? readAdminApiKeyFromStorage();
+}
+
+function buildRequestHeaders(options?: {
+  includeJsonContentType?: boolean;
+}): Record<string, string> | undefined {
+  const headers: Record<string, string> = {};
+  if (options?.includeJsonContentType) {
+    headers["content-type"] = "application/json";
+  }
+  const adminApiKey = resolveAdminApiKey();
+  if (adminApiKey) {
+    headers["x-admin-api-key"] = adminApiKey;
+  }
+  return Object.keys(headers).length > 0 ? headers : undefined;
+}
+
 async function getJson<T>(url: string): Promise<T> {
-  const response = await fetch(url);
+  const headers = buildRequestHeaders();
+  const response = headers ? await fetch(url, { headers }) : await fetch(url);
   if (!response.ok) {
     throw new Error(`${url} failed: ${response.status}`);
   }
@@ -1911,14 +1999,18 @@ function parseRequestErrorMessage(
     if ("message" in payload && typeof (payload as { message?: unknown }).message === "string") {
       return (payload as { message: string }).message;
     }
+    if ("error" in payload && typeof (payload as { error?: unknown }).error === "string") {
+      return (payload as { error: string }).error;
+    }
   }
   return `${method} ${url} failed: ${status}`;
 }
 
 async function requestJson<T>(url: string, method: string, body?: unknown): Promise<T> {
+  const headers = buildRequestHeaders({ includeJsonContentType: body !== undefined });
   const response = await fetch(url, {
     method,
-    headers: body === undefined ? undefined : { "content-type": "application/json" },
+    headers,
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   if (!response.ok) {
@@ -1932,10 +2024,17 @@ async function requestJson<T>(url: string, method: string, body?: unknown): Prom
 }
 
 async function requestForm<T>(url: string, method: string, body: FormData): Promise<T> {
-  const response = await fetch(url, {
-    method,
-    body,
-  });
+  const headers = buildRequestHeaders();
+  const response = headers
+    ? await fetch(url, {
+        method,
+        headers,
+        body,
+      })
+    : await fetch(url, {
+        method,
+        body,
+      });
   if (!response.ok) {
     const message = await response
       .json()

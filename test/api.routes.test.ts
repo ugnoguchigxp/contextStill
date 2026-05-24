@@ -1,6 +1,8 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { z } from "zod";
+import app from "../api/app.js";
+import { adminApiKeyAuth } from "../api/middleware/admin-auth.js";
 import { listAuditLogsForApi } from "../api/modules/audit/audit.repository.js";
 import { auditLogsRouter } from "../api/modules/audit/audit.routes.js";
 import { listCandidateItems } from "../api/modules/candidates/candidates.repository.js";
@@ -35,6 +37,7 @@ import {
   updateSettingsForApi,
 } from "../api/modules/settings/settings.service.js";
 import { vibeMemoryRouter } from "../api/modules/vibe-memory/vibe-memory.routes.js";
+import { groupedConfig } from "../src/config.js";
 import { recordVibeMemoryWithDiffEntries } from "../src/modules/vibe-memory/vibe-memory.service.js";
 import { compileRunDetailSchema } from "../src/shared/schemas/compile-run.schema.js";
 import { type ContextPack, contextPackSchema } from "../src/shared/schemas/context-pack.schema.js";
@@ -626,6 +629,72 @@ describe("API route contract tests", () => {
       } as never,
       diffEntries: [],
     });
+  });
+
+  test("adminApiKeyAuth rejects missing key when configured", async () => {
+    const originalApiKey = groupedConfig.admin.apiKey;
+    groupedConfig.admin.apiKey = "test-admin-key";
+    try {
+      const app = new Hono();
+      app.use("/api/*", adminApiKeyAuth());
+      app.get("/api/knowledge", (ctx) => ctx.json({ ok: true }));
+
+      const unauthorized = await app.request("/api/knowledge");
+      expect(unauthorized.status).toBe(401);
+
+      const authorized = await app.request("/api/knowledge", {
+        headers: { "x-admin-api-key": "test-admin-key" },
+      });
+      expect(authorized.status).toBe(200);
+      await expect(authorized.json()).resolves.toEqual({ ok: true });
+
+      const authorizedByBearer = await app.request("/api/knowledge", {
+        headers: { authorization: "Bearer test-admin-key" },
+      });
+      expect(authorizedByBearer.status).toBe(200);
+
+      const rejectedQueryKey = await app.request("/api/knowledge?api_key=test-admin-key");
+      expect(rejectedQueryKey.status).toBe(401);
+    } finally {
+      groupedConfig.admin.apiKey = originalApiKey;
+    }
+  });
+
+  test("adminApiKeyAuth bypasses health endpoints and OPTIONS preflight", async () => {
+    const originalApiKey = groupedConfig.admin.apiKey;
+    groupedConfig.admin.apiKey = "test-admin-key";
+    try {
+      const app = new Hono();
+      app.use("/api/*", adminApiKeyAuth());
+      app.get("/api/health", (ctx) => ctx.json({ ok: true }));
+      app.get("/api/health/ready", (ctx) => ctx.json({ ok: true }));
+      app.options("/api/knowledge", (ctx) => ctx.body(null, 204));
+
+      const health = await app.request("/api/health");
+      expect(health.status).toBe(200);
+
+      const healthReady = await app.request("/api/health/ready");
+      expect(healthReady.status).toBe(200);
+
+      const preflight = await app.request("/api/knowledge", { method: "OPTIONS" });
+      expect(preflight.status).toBe(204);
+    } finally {
+      groupedConfig.admin.apiKey = originalApiKey;
+    }
+  });
+
+  test("app health endpoints return liveness/readiness payloads", async () => {
+    const health = await app.request("/api/health");
+    expect(health.status).toBe(200);
+    await expect(health.json()).resolves.toEqual({ status: "ok", service: "memory-router-api" });
+
+    const live = await app.request("/api/health/live");
+    expect(live.status).toBe(200);
+    await expect(live.json()).resolves.toEqual({ status: "alive", service: "memory-router-api" });
+
+    const ready = await app.request("/api/health/ready");
+    expect(ready.status).toBe(200);
+    await expect(ready.json()).resolves.toEqual({ status: "ready", service: "memory-router-api" });
   });
 
   test("GET /api/audit-logs rejects invalid query", async () => {

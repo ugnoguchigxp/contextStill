@@ -51,6 +51,27 @@ const parseDistillationProvider = (
   return fallback;
 };
 
+const parseCsvValues = (value: string | undefined): string[] => {
+  if (!value) return [];
+  return value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry.length > 0);
+};
+
+const resolvePositiveInt = (
+  value: string | undefined,
+  fallback: number,
+  options?: { min?: number; max?: number },
+): number => {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed)) return fallback;
+  const floored = Math.floor(parsed);
+  if (options?.min !== undefined && floored < options.min) return fallback;
+  if (options?.max !== undefined && floored > options.max) return options.max;
+  return Math.max(1, floored);
+};
+
 const distillationProvider = parseDistillationProvider(
   process.env.MEMORY_ROUTER_DISTILLATION_PROVIDER,
   "local-llm",
@@ -159,6 +180,13 @@ export const groupedConfig: GroupedConfig = {
   },
   compile: {
     defaultTokenBudget: APP_CONSTANTS.defaultTokenBudget,
+    candidateTraceLimit: resolvePositiveInt(
+      process.env.MEMORY_ROUTER_CONTEXT_COMPILE_TRACE_LIMIT ??
+        process.env.CONTEXT_COMPILE_TRACE_LIMIT,
+      APP_CONSTANTS.defaultCandidateTraceLimit,
+      { min: 1, max: APP_CONSTANTS.compileCandidateTraceLimitMax },
+    ),
+    candidateTraceLimitMax: APP_CONSTANTS.compileCandidateTraceLimitMax,
     enableVectorSearch: APP_CONSTANTS.enableVectorSearch,
   },
   openAi: {
@@ -205,6 +233,11 @@ export const groupedConfig: GroupedConfig = {
     timeoutMs: APP_CONSTANTS.distillationTimeoutMs,
     findCandidateTimeoutMs: APP_CONSTANTS.distillationFindCandidateTimeoutMs,
     coverEvidenceTimeoutMs: APP_CONSTANTS.distillationCoverEvidenceTimeoutMs,
+    coverEvidenceConcurrency: resolvePositiveInt(
+      process.env.MEMORY_ROUTER_COVER_EVIDENCE_CONCURRENCY,
+      APP_CONSTANTS.distillationCoverEvidenceConcurrency,
+      { min: 1, max: 8 },
+    ),
     lockTtlSeconds: APP_CONSTANTS.distillationLockTtlSeconds,
     lockFile: path.resolve(process.cwd(), "logs", "distillation.lock"),
     pipelineLockFile: path.resolve(process.cwd(), "logs", "distillation-pipeline.lock"),
@@ -231,6 +264,10 @@ export const groupedConfig: GroupedConfig = {
     sourceAgenticReaderManualEnabled: APP_CONSTANTS.sourceDistillationAgenticReaderManualEnabled,
     sourceAgenticReaderAutoEnabled: APP_CONSTANTS.sourceDistillationAgenticReaderAutoEnabled,
     vibeAgenticReaderManualEnabled: APP_CONSTANTS.vibeDistillationAgenticReaderManualEnabled,
+  },
+  admin: {
+    apiKey: (process.env.MEMORY_ROUTER_ADMIN_API_KEY ?? "").trim(),
+    allowedOrigins: parseCsvValues(process.env.MEMORY_ROUTER_ALLOWED_ORIGINS),
   },
   doctor: {
     freshnessThresholdMinutes: APP_CONSTANTS.doctorFreshnessThresholdMinutes,

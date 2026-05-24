@@ -1,5 +1,6 @@
 import { groupedConfig } from "../../config.js";
 import { APP_CONSTANTS } from "../../constants.js";
+import { parseWebIngestTargetMetadata } from "../../shared/schemas/distillation-target-metadata.schema.js";
 import {
   type CoverEvidenceResultRow,
   coverEvidenceResultFromRow,
@@ -630,11 +631,8 @@ async function runParallelFindCandidateLane(
 }
 
 function sourceUrlForWebIngestTarget(target: DistillationTargetStateRow): string {
-  const metadata =
-    target.metadata && typeof target.metadata === "object"
-      ? (target.metadata as Record<string, unknown>)
-      : {};
-  const sourceUrl = typeof metadata.sourceUrl === "string" ? metadata.sourceUrl.trim() : "";
+  const metadata = parseWebIngestTargetMetadata(target.metadata);
+  const sourceUrl = metadata.sourceUrl ?? metadata.sourceWebUrl ?? "";
   if (sourceUrl) return sourceUrl;
   return target.targetKey;
 }
@@ -647,12 +645,8 @@ async function ensureWebIngestSourcePrepared(params: {
   const { target, lease, input } = params;
   if (target.targetKind !== "web_ingest") return;
 
-  const metadata =
-    target.metadata && typeof target.metadata === "object"
-      ? (target.metadata as Record<string, unknown>)
-      : {};
-  const savedWikiTargetKey =
-    typeof metadata.savedWikiTargetKey === "string" ? metadata.savedWikiTargetKey.trim() : "";
+  const metadata = parseWebIngestTargetMetadata(target.metadata);
+  const savedWikiTargetKey = metadata.savedWikiTargetKey ?? "";
   if (savedWikiTargetKey) {
     await requireLease(
       updateDistillationTargetSource({
@@ -769,20 +763,31 @@ async function runOrResumeCandidates(
     }
   };
 
+  const runCoverBatch = async (candidateBatch: string[]): Promise<void> => {
+    if (candidateBatch.length === 0) return;
+    if (candidateBatch.length === 1) {
+      await runCoverOnce(candidateBatch[0]);
+      return;
+    }
+    await Promise.all(candidateBatch.map((findCandidateId) => runCoverOnce(findCandidateId)));
+    await heartbeat(target, lease);
+  };
+
   let remainingCandidates = 0;
+  const coverConcurrency = Math.max(1, groupedConfig.distillation.coverEvidenceConcurrency);
   if (input.forceRefreshEvidence) {
-    for (const findCandidateId of candidateIds) {
-      await runCoverOnce(findCandidateId);
+    for (let index = 0; index < candidateIds.length; index += coverConcurrency) {
+      await runCoverBatch(candidateIds.slice(index, index + coverConcurrency));
     }
   } else {
     const pendingCandidateIds = candidateIds.filter((findCandidateId) => {
       return !coverResultsByCandidateId.has(findCandidateId);
     });
-    const nextCandidateId = pendingCandidateIds[0];
-    if (nextCandidateId) {
-      await runCoverOnce(nextCandidateId);
+    const nextBatch = pendingCandidateIds.slice(0, coverConcurrency);
+    if (nextBatch.length > 0) {
+      await runCoverBatch(nextBatch);
     }
-    remainingCandidates = Math.max(0, pendingCandidateIds.length - (nextCandidateId ? 1 : 0));
+    remainingCandidates = Math.max(0, pendingCandidateIds.length - nextBatch.length);
   }
 
   for (const findCandidateId of candidateIds) {

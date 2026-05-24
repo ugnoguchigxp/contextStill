@@ -17,6 +17,7 @@ import {
 } from "../../shared/schemas/compile-run.schema.js";
 import type { ContextPack } from "../../shared/schemas/context-pack.schema.js";
 import { contextPackSchema } from "../../shared/schemas/context-pack.schema.js";
+import { asRecord, normalizeNullableString } from "../../shared/utils/normalize.js";
 import { renderContextPackMarkdown } from "./pack-renderer.js";
 
 const runStatusValues = new Set(["ok", "degraded", "failed"]);
@@ -53,12 +54,6 @@ function normalizeDuration(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
 function normalizeKnowledgeVerdict(value: unknown): "used" | "not_used" | "off_topic" | "wrong" {
   return typeof value === "string" && knowledgeVerdictValues.has(value)
     ? (value as "used" | "not_used" | "off_topic" | "wrong")
@@ -69,12 +64,6 @@ function normalizeFeedbackActor(value: unknown): "agent" | "user" | "system" {
   return typeof value === "string" && feedbackActorValues.has(value)
     ? (value as "agent" | "user" | "system")
     : "system";
-}
-
-function normalizeNullableString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
 }
 
 function extractOutputMarkdown(pack: ContextPack | null): string | null {

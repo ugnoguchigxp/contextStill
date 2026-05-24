@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { groupedConfig } from "../src/config.js";
 import { runDistillationPipeline } from "../src/modules/distillationPipeline/runner.js";
 
 const mocks = vi.hoisted(() => ({
@@ -118,6 +119,7 @@ function targetRow(overrides: Record<string, unknown> = {}) {
 describe("runDistillationPipeline", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    groupedConfig.distillation.coverEvidenceConcurrency = 1;
     mocks.refreshDistillationTargetInventory.mockResolvedValue({});
     mocks.recoverStaleDistillationTargets.mockResolvedValue({});
     mocks.releaseRetryablePausedDistillationTargets.mockResolvedValue({});
@@ -623,6 +625,86 @@ describe("runDistillationPipeline", () => {
       expect.objectContaining({
         status: "skipped",
         outcomeKind: "no_candidate",
+      }),
+    );
+  });
+
+  test("processes cover evidence in batches when concurrency is enabled", async () => {
+    groupedConfig.distillation.coverEvidenceConcurrency = 2;
+    mocks.listFindCandidateResultsByTargetStateId.mockResolvedValue([
+      {
+        id: "candidate-1",
+        targetStateId: "target-1",
+        candidateIndex: 0,
+        title: "C1",
+        content: "Candidate 1",
+        origin: { candidateType: "rule" },
+        status: "selected",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        targetKind: "wiki_file",
+        targetKey: "pipeline.md",
+        sourceUri: "/wiki/pages/pipeline.md",
+      },
+      {
+        id: "candidate-2",
+        targetStateId: "target-1",
+        candidateIndex: 1,
+        title: "C2",
+        content: "Candidate 2",
+        origin: { candidateType: "rule" },
+        status: "selected",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        targetKind: "wiki_file",
+        targetKey: "pipeline.md",
+        sourceUri: "/wiki/pages/pipeline.md",
+      },
+      {
+        id: "candidate-3",
+        targetStateId: "target-1",
+        candidateIndex: 2,
+        title: "C3",
+        content: "Candidate 3",
+        origin: { candidateType: "rule" },
+        status: "selected",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        targetKind: "wiki_file",
+        targetKey: "pipeline.md",
+        sourceUri: "/wiki/pages/pipeline.md",
+      },
+    ]);
+    mocks.runCoverEvidenceForCandidate.mockImplementation(async ({ findCandidateId }) => ({
+      coverEvidenceResultId: findCandidateId,
+      findCandidateId,
+      status: "knowledge_ready",
+      stage: "final",
+      retryable: false,
+      reason: null,
+    }));
+    mocks.runFinalizeDistille.mockImplementation(async ({ coverEvidenceResultId }) => ({
+      coverEvidenceResultId,
+      knowledgeId: `knowledge-${coverEvidenceResultId}`,
+      status: "stored",
+      embeddingStatus: "stored",
+      sourceReferenceCount: 1,
+      sourceLinkCount: 0,
+      reason: null,
+    }));
+
+    const result = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
+
+    expect(mocks.runCoverEvidenceForCandidate).toHaveBeenCalledTimes(2);
+    expect(result.results[0]).toMatchObject({
+      status: "paused",
+      outcomeKind: "cover_evidence_checkpoint",
+      candidateCount: 3,
+    });
+    expect(mocks.pauseDistillationTargetState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "cover_evidence_checkpoint",
+        metadata: expect.objectContaining({ remainingCandidates: 1, candidateCount: 3 }),
       }),
     );
   });

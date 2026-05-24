@@ -2,6 +2,7 @@ import { eq, like } from "drizzle-orm";
 import { groupedConfig } from "../../config.js";
 import { db } from "../../db/client.js";
 import { agentDiffEntries, syncStates, vibeMemories } from "../../db/schema.js";
+import { redactSecrets } from "../../shared/utils/secret-redaction.js";
 import {
   auditEventTypes,
   cleanupExpiredAuditLogsSafe,
@@ -144,18 +145,24 @@ function getBooleanMetadata(metadata: Record<string, unknown>, key: string): boo
   return typeof value === "boolean" ? value : undefined;
 }
 
+function sanitizeMetadataText(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const redacted = redactSecrets(value).trim();
+  return redacted.length > 0 ? redacted : undefined;
+}
+
 function sanitizeToolCallSummary(toolCall: unknown): Record<string, unknown> | null {
   if (!toolCall || typeof toolCall !== "object" || Array.isArray(toolCall)) return null;
   const record = toolCall as Record<string, unknown>;
   const name = getStringMetadata(record, "name") ?? "tool";
   return {
     name,
-    summary: getStringMetadata(record, "summary"),
-    commandLine: getStringMetadata(record, "commandLine"),
+    summary: sanitizeMetadataText(getStringMetadata(record, "summary")),
+    commandLine: sanitizeMetadataText(getStringMetadata(record, "commandLine")),
     cwd: getStringMetadata(record, "cwd"),
     action: getStringMetadata(record, "action"),
     targetFile: getStringMetadata(record, "targetFile"),
-    contentPreview: getStringMetadata(record, "contentPreview"),
+    contentPreview: sanitizeMetadataText(getStringMetadata(record, "contentPreview")),
     sourceTruncated: getBooleanMetadata(record, "sourceTruncated"),
     reconstructedFromFile: getBooleanMetadata(record, "reconstructedFromFile"),
   };
@@ -303,7 +310,7 @@ function extractAgentDiffsFromToolCalls(messages: ChatMessage[]): Array<{
 
       diffs.push({
         filePath: targetFile,
-        diffHunk: contentPreview,
+        diffHunk: redactSecrets(contentPreview),
         changeType: name === "write_to_file" ? "add" : "modify",
         metadata: { extractedFrom: "agent_tool_call", toolName },
       });

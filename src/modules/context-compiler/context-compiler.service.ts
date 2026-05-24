@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { groupedConfig } from "../../config.js";
 import type { CompileRunSource } from "../../shared/schemas/compile-run.schema.js";
+import { asRecord, asStringArray, normalizeFacetArray } from "../../shared/utils/normalize.js";
 import {
   type CompileInput,
   type RetrievalMode,
@@ -41,9 +42,14 @@ import { renderContextPackMarkdown } from "./pack-renderer.js";
 import { type Rankable, rankAndDedupe } from "./ranking.service.js";
 import { applySectionTokenBudget, estimateTokens } from "./token-budget.js";
 
-const sectionRatios = {
+const CONTEXT_COMPILE_SECTION_RATIOS = {
   rules: 0.55,
   procedures: 0.45,
+} as const;
+
+const CONTEXT_COMPILE_LIMITS = {
+  vectorOnlyScoreFloor: 0.52,
+  normalRankingLimit: 15,
 } as const;
 
 const maintenanceReasonSet = new Set([
@@ -52,8 +58,6 @@ const maintenanceReasonSet = new Set([
   "SOURCE_REPO_SCOPE_FALLBACK",
   "TOKEN_BUDGET_SECTION_LIMIT_REACHED",
 ]);
-const vectorOnlyScoreFloor = 0.52;
-const defaultCandidateTraceLimit = 200;
 const designDocumentPathPattern =
   /(?:^|[\s"'`(（])(?:file:\/\/\/[^\s"'`）)]+|(?:\.{1,2}\/)?(?:docs?|design|specs?|requirements?|roadmap|proposal|architecture)\/[^\s"'`）)]+)\.(?:md|mdx)(?=$|[\s"'`）).,])/i;
 const designDocumentFileNamePattern =
@@ -291,7 +295,7 @@ function isLowConfidenceVectorOnlyCandidate(evidence?: KnowledgeCandidateEvidenc
   if (!evidence?.vectorMatched) return false;
   if (evidence.textMatched || evidence.facetMatched) return false;
   const score = typeof evidence.vectorScore === "number" ? evidence.vectorScore : 0;
-  return score < vectorOnlyScoreFloor;
+  return score < CONTEXT_COMPILE_LIMITS.vectorOnlyScoreFloor;
 }
 
 function filterByCandidateEvidence(items: KnowledgeRankable[]): {
@@ -435,30 +439,6 @@ async function recordCompileRunKnowledgeUsageSignalsSafe(params: {
   }
 }
 
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value
-    .filter((item): item is string => typeof item === "string")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function normalizeFacetArray(values: string[]): string[] {
-  const deduped = new Set<string>();
-  for (const value of values) {
-    const normalized = value.trim().toLowerCase();
-    if (!normalized) continue;
-    deduped.add(normalized);
-  }
-  return [...deduped].sort((left, right) => left.localeCompare(right));
-}
-
 function goalHash(goal: string): string {
   return createHash("sha1").update(goal.trim()).digest("hex");
 }
@@ -505,15 +485,6 @@ async function persistCompileTaskTraceSafe(params: {
       },
     });
   }
-}
-
-function resolveCandidateTraceLimit(): number {
-  const raw =
-    process.env.MEMORY_ROUTER_CONTEXT_COMPILE_TRACE_LIMIT ??
-    process.env.CONTEXT_COMPILE_TRACE_LIMIT;
-  const parsed = Number(raw ?? defaultCandidateTraceLimit);
-  if (!Number.isFinite(parsed) || parsed < 1) return defaultCandidateTraceLimit;
-  return Math.min(1000, Math.max(1, Math.floor(parsed)));
 }
 
 function toStageRankMap(
@@ -805,7 +776,7 @@ export async function compileContextPack(
   const workspaceRepoKey =
     normalizeRepoKey(workspaceRepoPath) ?? normalizeRepoKey(process.cwd()) ?? null;
   const tokenBudget = groupedConfig.compile.defaultTokenBudget;
-  const candidateTraceLimit = resolveCandidateTraceLimit();
+  const candidateTraceLimit = groupedConfig.compile.candidateTraceLimit;
 
   const normalizedApplicability = await normalizeKnowledgeApplicability({
     technologies: input.technologies,
@@ -947,7 +918,6 @@ export async function compileContextPack(
 
   const degradedReasons = [...knowledge.degradedReasons, ...sourceContext.degradedReasons];
 
-  const normalRankingLimit = 15;
   const rankedKnowledgeBeforeIntervention = rankAndDedupe<KnowledgeRankable>(
     knowledge.items.map((item) => ({
       id: item.id,
@@ -967,11 +937,11 @@ export async function compileContextPack(
       applicabilityScore: item.applicabilityScore,
       candidateEvidence: item.candidateEvidence,
     })),
-    isLandscapeCompileInterventionEnabled() ? 24 : normalRankingLimit,
+    isLandscapeCompileInterventionEnabled() ? 24 : CONTEXT_COMPILE_LIMITS.normalRankingLimit,
   );
   const landscapeIntervention = applyLandscapeCompileIntervention(
     rankedKnowledgeBeforeIntervention,
-    { limit: normalRankingLimit },
+    { limit: CONTEXT_COMPILE_LIMITS.normalRankingLimit },
   );
   const rankedKnowledge = landscapeIntervention.items;
 
@@ -1038,11 +1008,11 @@ export async function compileContextPack(
 
   const budgetedRules = applySectionTokenBudget(
     packItems.filter((item) => item.section === "rules"),
-    Math.floor(tokenBudget * sectionRatios.rules),
+    Math.floor(tokenBudget * CONTEXT_COMPILE_SECTION_RATIOS.rules),
   );
   const budgetedProcedures = applySectionTokenBudget(
     packItems.filter((item) => item.section === "procedures"),
-    Math.floor(tokenBudget * sectionRatios.procedures),
+    Math.floor(tokenBudget * CONTEXT_COMPILE_SECTION_RATIOS.procedures),
   );
 
   if (budgetedRules.dropped || budgetedProcedures.dropped) {
@@ -1168,24 +1138,6 @@ export async function compileContextPack(
     embeddingDimensions: knowledge.stats.embeddingDimensions ?? null,
     embedding: knowledge.stats.queryEmbedding ?? null,
   });
-
-  await insertContextPackItems(
-    runId,
-    selectedPackItems.map((item) => ({
-      itemKind: item.itemKind,
-      itemId: item.itemId,
-      section: item.section,
-      score: item.score,
-      rankingReason: item.rankingReason,
-      sourceRefs: item.sourceRefs,
-    })),
-  );
-  const candidateTracePersistResult = await persistCandidateTraceRows({
-    runId,
-    rows: candidateTraceRows,
-    traceLimit: candidateTraceLimit,
-  });
-
   const selectedKnowledgeIds = [
     ...new Set(
       selectedPackItems
@@ -1202,12 +1154,32 @@ export async function compileContextPack(
   const agenticAcceptedKnowledgeIds = agenticResult.agenticUsed
     ? [...new Set(finalKnowledge.map((item) => item.id))]
     : [];
-  await recordKnowledgeCompileSelectionSafe({
-    runId,
-    selectedKnowledgeIds,
-    agenticAcceptedKnowledgeIds,
-  });
-  await recordCompileRunKnowledgeUsageSignalsSafe({
+
+  const [candidateTracePersistResult] = await Promise.all([
+    persistCandidateTraceRows({
+      runId,
+      rows: candidateTraceRows,
+      traceLimit: candidateTraceLimit,
+    }),
+    insertContextPackItems(
+      runId,
+      selectedPackItems.map((item) => ({
+        itemKind: item.itemKind,
+        itemId: item.itemId,
+        section: item.section,
+        score: item.score,
+        rankingReason: item.rankingReason,
+        sourceRefs: item.sourceRefs,
+      })),
+    ),
+    recordKnowledgeCompileSelectionSafe({
+      runId,
+      selectedKnowledgeIds,
+      agenticAcceptedKnowledgeIds,
+    }),
+  ]);
+
+  void recordCompileRunKnowledgeUsageSignalsSafe({
     runId,
     selectedKnowledgeIds,
     selectedRankMap,

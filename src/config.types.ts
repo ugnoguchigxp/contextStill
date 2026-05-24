@@ -69,7 +69,12 @@ export type GroupedConfig = {
     readerMaxReads: number;
     readerMaxCharsPerRead: number;
   };
-  compile: { defaultTokenBudget: number; enableVectorSearch: boolean };
+  compile: {
+    defaultTokenBudget: number;
+    candidateTraceLimit: number;
+    candidateTraceLimitMax: number;
+    enableVectorSearch: boolean;
+  };
   openAi: {
     apiKey: string;
     apiBaseUrl: string;
@@ -99,6 +104,7 @@ export type GroupedConfig = {
     timeoutMs: number;
     findCandidateTimeoutMs: number;
     coverEvidenceTimeoutMs: number;
+    coverEvidenceConcurrency: number;
     lockTtlSeconds: number;
     lockFile: string;
     pipelineLockFile: string;
@@ -125,6 +131,10 @@ export type GroupedConfig = {
     sourceAgenticReaderManualEnabled: boolean;
     sourceAgenticReaderAutoEnabled: boolean;
     vibeAgenticReaderManualEnabled: boolean;
+  };
+  admin: {
+    apiKey: string;
+    allowedOrigins: string[];
   };
   doctor: {
     freshnessThresholdMinutes: number;

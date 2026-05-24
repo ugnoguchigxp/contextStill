@@ -19,22 +19,46 @@ export type Rankable = {
   applicabilityScore?: number;
 };
 
+const RANKING_WEIGHTS = {
+  importance: 0.2,
+  confidence: 0.1,
+  dynamicBoost: 0.12,
+  decayPenalty: 0.12,
+  sourceLinkBoost: 0.05,
+  errorKeywordBoostPerHit: 0.03,
+  errorKeywordBoostMax: 0.18,
+  errorFileBoostPerHit: 0.04,
+  errorFileBoostMax: 0.16,
+  errorContextBoost: 0.06,
+  deprecatedPenalty: 0.5,
+  stalePenalty: 0.4,
+} as const;
+
 function weightedScore(item: Rankable): number {
   const decayFactor = Math.min(1, Math.max(0, Number(item.decayFactor ?? 1)));
   const baseScore =
     item.score +
-    toUnitKnowledgeScore(item.importance, 0) * 0.2 +
-    toUnitKnowledgeScore(item.confidence, 0) * 0.1;
-  const dynamicBoost = toUnitKnowledgeScore(item.dynamicScore, 0) * 0.12;
-  const decayPenalty = (1 - decayFactor) * 0.12;
-  const sourceLinkBoost = item.hasSourceLinks || (item.sourceRefCount ?? 0) > 0 ? 0.05 : 0;
-  const errorKeywordBoost = Math.min(0.18, Math.max(0, item.errorKeywordHits ?? 0) * 0.03);
-  const errorFileBoost = Math.min(0.16, Math.max(0, item.errorFileHits ?? 0) * 0.04);
+    toUnitKnowledgeScore(item.importance, 0) * RANKING_WEIGHTS.importance +
+    toUnitKnowledgeScore(item.confidence, 0) * RANKING_WEIGHTS.confidence;
+  const dynamicBoost = toUnitKnowledgeScore(item.dynamicScore, 0) * RANKING_WEIGHTS.dynamicBoost;
+  const decayPenalty = (1 - decayFactor) * RANKING_WEIGHTS.decayPenalty;
+  const sourceLinkBoost =
+    item.hasSourceLinks || (item.sourceRefCount ?? 0) > 0 ? RANKING_WEIGHTS.sourceLinkBoost : 0;
+  const errorKeywordBoost = Math.min(
+    RANKING_WEIGHTS.errorKeywordBoostMax,
+    Math.max(0, item.errorKeywordHits ?? 0) * RANKING_WEIGHTS.errorKeywordBoostPerHit,
+  );
+  const errorFileBoost = Math.min(
+    RANKING_WEIGHTS.errorFileBoostMax,
+    Math.max(0, item.errorFileHits ?? 0) * RANKING_WEIGHTS.errorFileBoostPerHit,
+  );
   const errorContextBoost =
-    (item.errorContextWeight ?? 0) > 0 && (errorKeywordBoost > 0 || errorFileBoost > 0) ? 0.06 : 0;
+    (item.errorContextWeight ?? 0) > 0 && (errorKeywordBoost > 0 || errorFileBoost > 0)
+      ? RANKING_WEIGHTS.errorContextBoost
+      : 0;
   const applicabilityBoost = Math.max(0, Number(item.applicabilityScore ?? 0));
-  const deprecatedPenalty = item.status === "deprecated" ? 0.5 : 0;
-  const stalePenalty = item.stale ? 0.4 : 0;
+  const deprecatedPenalty = item.status === "deprecated" ? RANKING_WEIGHTS.deprecatedPenalty : 0;
+  const stalePenalty = item.stale ? RANKING_WEIGHTS.stalePenalty : 0;
   return (
     baseScore +
     dynamicBoost +

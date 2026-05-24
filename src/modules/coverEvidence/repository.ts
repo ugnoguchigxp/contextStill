@@ -1,6 +1,7 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { coverEvidenceResults, findCandidateResults } from "../../db/schema.js";
+import { asRecord, asStringArray } from "../../shared/utils/normalize.js";
 import type { CoverEvidenceResult } from "./types.js";
 
 export type CoverEvidenceResultRow = typeof coverEvidenceResults.$inferSelect;
@@ -9,12 +10,6 @@ export type SaveCoverEvidenceResultInput = {
   id: string;
   result: CoverEvidenceResult;
 };
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
 
 function appliesToFromCandidate(
   candidate: CoverEvidenceResult["candidate"],
@@ -42,24 +37,14 @@ function candidateApplicabilityFromAppliesTo(
   NonNullable<CoverEvidenceResult["candidate"]>,
   "applicabilityGeneral" | "technologies" | "changeTypes" | "domains" | "repoPath" | "repoKey"
 > {
-  const toStringArray = (value: unknown): string[] =>
-    Array.isArray(value)
-      ? value
-          .filter((item): item is string => typeof item === "string")
-          .map((item) => item.trim())
-          .filter(Boolean)
-      : [];
+  const technologies = asStringArray(appliesTo.technologies);
+  const changeTypes = asStringArray(appliesTo.changeTypes);
+  const domains = asStringArray(appliesTo.domains);
   return {
     ...(typeof appliesTo.general === "boolean" ? { applicabilityGeneral: appliesTo.general } : {}),
-    ...(toStringArray(appliesTo.technologies).length > 0
-      ? { technologies: toStringArray(appliesTo.technologies) }
-      : {}),
-    ...(toStringArray(appliesTo.changeTypes).length > 0
-      ? { changeTypes: toStringArray(appliesTo.changeTypes) }
-      : {}),
-    ...(toStringArray(appliesTo.domains).length > 0
-      ? { domains: toStringArray(appliesTo.domains) }
-      : {}),
+    ...(technologies.length > 0 ? { technologies } : {}),
+    ...(changeTypes.length > 0 ? { changeTypes } : {}),
+    ...(domains.length > 0 ? { domains } : {}),
     ...(typeof appliesTo.repoPath === "string" && appliesTo.repoPath.trim()
       ? { repoPath: appliesTo.repoPath.trim() }
       : {}),

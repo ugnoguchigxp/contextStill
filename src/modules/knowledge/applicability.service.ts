@@ -1,4 +1,5 @@
 import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
+import { asRecord } from "../../shared/utils/normalize.js";
 import { type KnowledgeTagKind, listKnowledgeTagDefinitions } from "./knowledge-tags.repository.js";
 
 export type KnowledgeApplicabilityInput = {
@@ -30,12 +31,6 @@ const FACET_TO_KIND = {
   changeTypes: "change_type",
   domains: "domain",
 } satisfies Record<"technologies" | "changeTypes" | "domains", ApplicabilityFacetKind>;
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
 
 function asBoolean(value: unknown): boolean | undefined {
   if (typeof value === "boolean") return value;

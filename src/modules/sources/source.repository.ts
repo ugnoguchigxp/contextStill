@@ -1,6 +1,7 @@
 import { type SQL, and, desc, eq, ilike, inArray, notInArray, or, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { sourceFragments, sources } from "../../db/schema.js";
+import { redactSecrets } from "../../shared/utils/secret-redaction.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
 import { embedOne } from "../embedding/embedding.service.js";
@@ -146,6 +147,7 @@ async function replaceSourceFragments(params: {
 
 export async function upsertSourceDocument(params: UpsertSourceParams): Promise<string> {
   const actor = params.actor ?? "system";
+  const redactedBody = redactSecrets(params.body);
   const existing = await db.query.sources.findFirst({
     where: eq(sources.uri, params.uri),
     columns: { id: true },
@@ -158,7 +160,7 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
         sourceKind: params.sourceKind,
         uri: params.uri,
         title: params.title ?? null,
-        body: params.body,
+        body: redactedBody,
         metadata: params.metadata ?? {},
         updatedAt: new Date(),
       })
@@ -166,7 +168,7 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
     const fragmentCount = await replaceSourceFragments({
       sourceId: existing.id,
       title: params.title,
-      body: params.body,
+      body: redactedBody,
       metadata: params.metadata,
     });
     await recordAuditLogSafe({
@@ -189,14 +191,14 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
       sourceKind: params.sourceKind,
       uri: params.uri,
       title: params.title ?? null,
-      body: params.body,
+      body: redactedBody,
       metadata: params.metadata ?? {},
     })
     .returning({ id: sources.id });
   const fragmentCount = await replaceSourceFragments({
     sourceId: inserted.id,
     title: params.title,
-    body: params.body,
+    body: redactedBody,
     metadata: params.metadata,
   });
   await recordAuditLogSafe({

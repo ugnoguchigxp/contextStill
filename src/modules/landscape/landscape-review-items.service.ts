@@ -32,6 +32,12 @@ import type {
   UpdateLandscapeReviewItemStatusInput,
   ListLandscapeReviewItemsInput,
 } from "./landscape-review-items.types.js";
+import {
+  asRecord,
+  normalizeNullableString,
+  normalizeStringArray,
+  toIsoString,
+} from "../../shared/utils/normalize.js";
 
 const MAX_EVIDENCE_COUNT = 8;
 const MAX_GOAL_PREVIEW_LENGTH = 180;
@@ -172,25 +178,6 @@ export class LandscapeReviewItemsError extends Error {
   }
 }
 
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function normalizeFacetValues(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  const deduped = new Map<string, string>();
-  for (const item of value) {
-    if (typeof item !== "string") continue;
-    const trimmed = item.trim();
-    if (!trimmed) continue;
-    const key = trimmed.toLowerCase();
-    if (!deduped.has(key)) deduped.set(key, trimmed);
-  }
-  return [...deduped.values()].sort((a, b) => a.localeCompare(b));
-}
-
 function normalizeSuggestedAppliesTo(value: unknown): Record<string, unknown> {
   const source = asRecord(value);
   const normalized: Record<string, unknown> = {};
@@ -202,9 +189,21 @@ function normalizeSuggestedAppliesTo(value: unknown): Record<string, unknown> {
   if (repoPath) normalized.repoPath = repoPath;
   if (retrievalMode) normalized.retrievalMode = retrievalMode;
 
-  const technologies = normalizeFacetValues(source.technologies);
-  const changeTypes = normalizeFacetValues(source.changeTypes);
-  const domains = normalizeFacetValues(source.domains);
+  const technologies = normalizeStringArray(source.technologies, {
+    lowercase: false,
+    sort: true,
+    dedupeCaseInsensitive: true,
+  });
+  const changeTypes = normalizeStringArray(source.changeTypes, {
+    lowercase: false,
+    sort: true,
+    dedupeCaseInsensitive: true,
+  });
+  const domains = normalizeStringArray(source.domains, {
+    lowercase: false,
+    sort: true,
+    dedupeCaseInsensitive: true,
+  });
   if (technologies.length > 0) normalized.technologies = technologies;
   if (changeTypes.length > 0) normalized.changeTypes = changeTypes;
   if (domains.length > 0) normalized.domains = domains;
@@ -225,12 +224,6 @@ function normalizeEvidence(value: unknown): string[] {
   return [...deduped];
 }
 
-function normalizeNullableString(value: unknown): string | null {
-  if (typeof value !== "string") return null;
-  const trimmed = value.trim();
-  return trimmed.length > 0 ? trimmed : null;
-}
-
 function normalizeIdempotencyKey(
   source: string,
   reason: string,
@@ -243,12 +236,6 @@ function normalizeIdempotencyKey(
 
 function clampPriority(value: number): number {
   return Math.max(0, Math.min(100, Math.round(value)));
-}
-
-function toIsoString(value: unknown): string {
-  if (value instanceof Date) return value.toISOString();
-  if (typeof value === "string" && value.length > 0) return new Date(value).toISOString();
-  return new Date(0).toISOString();
 }
 
 function mapReviewItemRow(row: LandscapeReviewItemRow): LandscapeReviewItem {
