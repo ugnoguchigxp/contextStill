@@ -72,6 +72,7 @@ export {
   type RecoveryResult,
   releaseRetryablePausedDistillationTargets,
   recoverStaleDistillationTargets,
+  markMissingVibeMemoryTargetsSkipped,
   markMissingWikiTargetsSkipped,
   getDistillationTargetSummary,
 } from "./repository-maintenance.js";

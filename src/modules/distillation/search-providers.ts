@@ -581,7 +581,7 @@ export async function searchWeb(
           query: normalizedQuery,
           results,
           instruction:
-            "Use search results only to choose primary source URLs. Call fetch_content for 1-3 promising URLs before returning final JSON. Do not treat snippets as sufficient evidence for saved knowledge.",
+            "Use search results only to choose primary source URLs. Do not call search_web more than once; call fetch_content for up to 3 promising URLs before returning final JSON. Do not treat snippets as sufficient evidence for saved knowledge.",
         },
         null,
         2,

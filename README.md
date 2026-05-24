@@ -715,17 +715,7 @@ memory-router/
 | [MCP Tool Contract](docs/mcp-tools.md) | Full MCP tool input/output specifications |
 | [Project Evaluation](docs/project-evaluation.md) | Evidence-backed project value and current maturity notes |
 | [Knowledge Landscape Concept](docs/knowledge-landscape-concept-design.md) | Concept model for graph/community/knowledge-field views |
-| [Graph Community View Plan](docs/graph-community-view-mvp-plan.md) | Graph community UI/API implementation plan |
-| [Knowledge Landscape Attractor Plan](docs/knowledge-landscape-attractor-implementation-plan.md) | Phase 1 implementation plan for attractor/negative/dead-zone snapshot |
-| [Knowledge Landscape Replay Basin Plan](docs/knowledge-landscape-attractor-phase2-replay-basin-plan.md) | Replay comparison, basin analysis, and retrieval drift plan |
-| [Knowledge Landscape Action Queue Plan](docs/knowledge-landscape-action-queue-implementation-plan.md) | Persisted review item and action queue implementation plan |
-| [Knowledge Landscape Action Queue Next Phase](docs/knowledge-landscape-action-queue-next-phase-implementation-plan.md) | Candidate draft, approval, and promotion-gate follow-up plan |
-| [Knowledge Usage Signal Redesign](docs/compile-knowledge-usage-signal-redesign-plan.md) | Compile-run usage signal and feedback redesign |
-| [Knowledge Feedback Staged Learning](docs/knowledge-feedback-staged-learning-plan.md) | Manual feedback and staged learning design |
-| [DB-backed Settings UI Plan](docs/db-backed-settings-ui-plan.md) | Runtime settings API/UI implementation plan |
-| [Doctor Operational Hardening](docs/doctor-distillation-operational-hardening-plan.md) | Doctor/distillation health and operational diagnostics |
-| [Failure Experience Candidates](docs/failure-experience-knowledge-candidate-plan.md) | `register_candidate` and failure-experience distillation plan |
-| [Web UI Component Refactor](docs/web-ui-component-dry-refactor-plan.md) | Admin UI component cleanup plan |
+| [OSS Onboarding & Localization Plan](docs/oss-onboarding-and-localization-plan.md) | OSS onboarding flow and README localization rollout plan |
 
 ---
 

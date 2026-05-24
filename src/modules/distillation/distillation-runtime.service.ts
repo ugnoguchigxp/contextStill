@@ -38,6 +38,7 @@ import type {
   DistillationCompletionResult,
   DistillationMessage,
   DistillationModelRequest,
+  DistillationRuntimeToolDefinition,
   DistillationRuntimeOptions,
 } from "./types.js";
 
@@ -80,6 +81,49 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
     error.name = "AbortError";
     throw error;
   }
+}
+
+function normalizeToolCallLimits(limits: Record<string, number> | undefined): Map<string, number> {
+  const normalized = new Map<string, number>();
+  if (!limits) return normalized;
+  for (const [name, value] of Object.entries(limits)) {
+    const limit = Math.max(0, Math.floor(value));
+    normalized.set(name, limit);
+  }
+  return normalized;
+}
+
+function availableToolDefinitions(
+  toolDefinitions: DistillationRuntimeToolDefinition[],
+  limits: Map<string, number>,
+  counts: Map<string, number>,
+): DistillationRuntimeToolDefinition[] {
+  if (limits.size === 0) return toolDefinitions;
+  return toolDefinitions.filter((tool) => {
+    const limit = limits.get(tool.function.name);
+    return limit === undefined || (counts.get(tool.function.name) ?? 0) < limit;
+  });
+}
+
+function toolLimitExceededResult(
+  toolCall: DistillationToolCall,
+  limit: number,
+): DistillationToolResult {
+  const message = `distillation tool call limit exceeded for ${toolCall.function.name} (${limit})`;
+  return {
+    callId: toolCall.id,
+    name: toolCall.function.name,
+    ok: false,
+    content: JSON.stringify({
+      error: message,
+      instruction: "Stop calling this tool and return the best supported final JSON.",
+    }),
+    error: message,
+    metadata: {
+      limit,
+      limitExceeded: true,
+    },
+  };
 }
 
 function createDefaultChatClient(
@@ -173,6 +217,8 @@ export async function runDistillationCompletion(
   const requireToolCall = Boolean(options.requireToolCall);
   const messages = request.messages.map((message) => ({ ...message }));
   const toolEvents: DistillationToolResult[] = [];
+  const toolCallLimits = normalizeToolCallLimits(options.toolCallLimits);
+  const toolCallCounts = new Map<string, number>();
   let toolRounds = 0;
   let requiredToolReminderSent = false;
   let blankResponseReminderSent = false;
@@ -180,7 +226,12 @@ export async function runDistillationCompletion(
   try {
     while (true) {
       throwIfAborted(options.signal);
-      const allowTools = enableTools && toolRounds < maxToolRounds;
+      const roundToolDefinitions =
+        enableTools && toolRounds < maxToolRounds
+          ? availableToolDefinitions(toolDefinitions, toolCallLimits, toolCallCounts)
+          : [];
+      const allowTools =
+        enableTools && toolRounds < maxToolRounds && roundToolDefinitions.length > 0;
       const toolChoice = allowTools
         ? requireToolCall && toolRounds === 0
           ? "required"
@@ -189,8 +240,9 @@ export async function runDistillationCompletion(
       const response = await chatClient({
         ...request,
         messages,
-        tools: allowTools ? toolDefinitions : undefined,
+        tools: allowTools ? roundToolDefinitions : undefined,
         toolChoice,
+        timeoutMs: options.timeoutMs,
         signal: options.signal,
       });
 
@@ -203,7 +255,21 @@ export async function runDistillationCompletion(
 
         for (const toolCall of response.toolCalls) {
           throwIfAborted(options.signal);
+          const limit = toolCallLimits.get(toolCall.function.name);
+          const used = toolCallCounts.get(toolCall.function.name) ?? 0;
+          if (limit !== undefined && used >= limit) {
+            const limitResult = toolLimitExceededResult(toolCall, limit);
+            toolEvents.push(limitResult);
+            messages.push({
+              role: "tool",
+              tool_call_id: toolCall.id,
+              name: limitResult.name,
+              content: limitResult.content,
+            });
+            continue;
+          }
           const toolResult = await toolExecutor(toolCall, options.auditContext);
+          toolCallCounts.set(toolCall.function.name, used + 1);
           throwIfAborted(options.signal);
           toolEvents.push(toolResult);
           messages.push({
@@ -241,7 +307,7 @@ export async function runDistillationCompletion(
                 "直前の応答はまだ採用できません。",
                 "この検証 session は外部証拠の tool call が必須です。最終候補を返す前に search_web または fetch_content を少なくとも 1 回呼び出してください。",
                 "search_web の結果は URL 発見用です。検索結果を受け取った後は、有望な一次ソース URL を fetch_content してから最終候補を返してください。",
-                "fetch_content は複数回呼べます。同義の search_web query を繰り返すより、検索結果 URL を fetch_content してください。",
+                "search_web は最大 1 回、fetch_content は最大 3 回です。同義の search_web query を繰り返すより、検索結果 URL を fetch_content してください。",
                 'ローカル tool-call parser 向けには {"name":"search_web","arguments":{"query":"..."}} または {"name":"fetch_content","arguments":{"url":"https://..."}} だけを返してください。',
                 "この tool-call JSON は中間応答専用です。最終 candidates の title/body に tool 名だけを入れないでください。",
               ];

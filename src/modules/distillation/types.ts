@@ -33,6 +33,7 @@ export type DistillationChatRequest = DistillationModelRequest & {
   tools?: DistillationRuntimeToolDefinition[];
   toolChoice?: "auto" | "none" | "required";
   signal?: AbortSignal;
+  timeoutMs?: number;
 };
 
 export type DistillationChatResponse = {
@@ -69,6 +70,7 @@ export type DistillationRuntimeOptions = {
   fallbackOrder?: DistillationProviderName[];
   enableTools?: boolean;
   maxToolRounds?: number;
+  toolCallLimits?: Record<string, number>;
   auditContext?: Record<string, unknown>;
   requireToolCall?: boolean;
   toolNames?: readonly string[];
@@ -77,4 +79,5 @@ export type DistillationRuntimeOptions = {
   requireToolCallReminder?: string[];
   blankResponseReminder?: string[];
   signal?: AbortSignal;
+  timeoutMs?: number;
 };

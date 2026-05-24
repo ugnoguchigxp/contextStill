@@ -4,6 +4,7 @@ import { recordAuditLogSafe } from "../src/modules/audit/audit-log.service.js";
 import {
   releaseRetryablePausedDistillationTargets,
   recoverStaleDistillationTargets,
+  markMissingVibeMemoryTargetsSkipped,
   markMissingWikiTargetsSkipped,
   getDistillationTargetSummary,
 } from "../src/modules/selectDistillationTarget/repository-maintenance.js";
@@ -163,6 +164,24 @@ describe("selectDistillationTarget repository-maintenance", () => {
       const updatedCount = await markMissingWikiTargetsSkipped({
         currentTargetKeys: currentKeys,
         rootPath: "/workspace",
+      });
+
+      expect(updatedCount).toBe(1);
+      expect(mockUpdate).toHaveBeenCalled();
+    });
+  });
+
+  describe("markMissingVibeMemoryTargetsSkipped", () => {
+    it("skips missing vibe memory targets", async () => {
+      const mockVibeRows = [
+        { id: "vibe-1", targetKey: "missing-memory" },
+        { id: "vibe-2", targetKey: "existing-memory" },
+      ];
+      mockSelect.mockReturnValueOnce(makeChain(mockVibeRows));
+      mockUpdate.mockReturnValueOnce(makeChain([{ id: "vibe-1" }]));
+
+      const updatedCount = await markMissingVibeMemoryTargetsSkipped({
+        currentTargetKeys: new Set(["existing-memory"]),
       });
 
       expect(updatedCount).toBe(1);

@@ -5,6 +5,7 @@ import type {
   LlmHealthStatus,
   LlmProvider,
 } from "../llm-provider.js";
+import { LlmProviderHttpError, parseRetryAfterSeconds } from "../provider-http-error.js";
 import { normalizeLlmUsage } from "../usage-normalizer.js";
 
 type OpenAiResponse = {
@@ -97,7 +98,12 @@ export function createOpenAiProvider(options: OpenAiProviderOptions = {}): LlmPr
 
         if (!response.ok) {
           const body = await response.text().catch(() => "");
-          throw new Error(`OpenAI HTTP ${response.status}: ${body.slice(0, 500)}`);
+          throw new LlmProviderHttpError({
+            provider: "openai",
+            status: response.status,
+            retryAfterSeconds: parseRetryAfterSeconds(response.headers),
+            message: `OpenAI HTTP ${response.status}: ${body.slice(0, 500)}`,
+          });
         }
 
         return parseResponse(response);

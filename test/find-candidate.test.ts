@@ -61,6 +61,8 @@ describe("runFindCandidate", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     groupedConfig.distillation.findCandidateProvider = "local-llm";
+    groupedConfig.distillation.findCandidateTimeoutMs = 600_000;
+    groupedConfig.distillationTools.findCandidateMaxToolCalls = 8;
     mocks.resolveFindCandidateRoute.mockImplementation(() => ({
       provider: groupedConfig.distillation.findCandidateProvider,
       model: "test-model",
@@ -141,6 +143,25 @@ describe("runFindCandidate", () => {
     expect(mocks.insertFindCandidateResult).toHaveBeenCalledWith(
       expect.objectContaining({
         candidate: expect.objectContaining({ type: "procedure" }),
+      }),
+    );
+  });
+
+  test("uses configured findCandidate timeout and tool-call limit", async () => {
+    groupedConfig.distillation.findCandidateTimeoutMs = 123_000;
+    groupedConfig.distillationTools.findCandidateMaxToolCalls = 12;
+
+    await runFindCandidate({
+      targetStateId: "target-1",
+      callerMode: "storage",
+      provider: "local-llm",
+    });
+
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        maxToolRounds: 12,
+        timeoutMs: 123_000,
       }),
     );
   });

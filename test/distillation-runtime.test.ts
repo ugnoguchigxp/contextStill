@@ -126,6 +126,123 @@ describe("distillation runtime", () => {
     expect(seenToolChoices).toEqual(["required", "auto"]);
   });
 
+  test("forwards per-call timeout to the chat client", async () => {
+    const seenTimeouts: Array<number | undefined> = [];
+    const chatClient: DistillationChatClient = async (request) => {
+      seenTimeouts.push(request.timeoutMs);
+      return {
+        content: '{"candidates":[]}',
+        toolCalls: [],
+      };
+    };
+
+    await runDistillationCompletion(
+      { model: "m", messages: [{ role: "user", content: "verify" }], maxTokens: 10 },
+      { chatClient, timeoutMs: 123_456 },
+    );
+
+    expect(seenTimeouts).toEqual([123_456]);
+  });
+
+  test("feeds over-limit tool calls back without executing them", async () => {
+    let chatCalls = 0;
+    let executedTools = 0;
+    const offeredToolsByCall: string[][] = [];
+    const chatClient: DistillationChatClient = async (request) => {
+      chatCalls += 1;
+      offeredToolsByCall.push(request.tools?.map((tool) => tool.function.name) ?? []);
+      if (chatCalls === 3) {
+        return {
+          content: '{"candidates":[]}',
+          toolCalls: [],
+        };
+      }
+      return {
+        content: null,
+        toolCalls: [
+          {
+            id: `call_${chatCalls}`,
+            type: "function",
+            function: { name: "search_web", arguments: '{"query":"memory router"}' },
+          },
+        ],
+      };
+    };
+    const toolExecutor: DistillationToolExecutor = async (toolCall) => {
+      executedTools += 1;
+      return {
+        callId: toolCall.id,
+        name: toolCall.function.name,
+        ok: true,
+        content: "Search evidence",
+      };
+    };
+
+    const result = await runDistillationCompletion(
+      { model: "m", messages: [{ role: "user", content: "verify" }], maxTokens: 10 },
+      {
+        chatClient,
+        toolExecutor,
+        maxToolRounds: 4,
+        toolCallLimits: { search_web: 1, fetch_content: 3 },
+      },
+    );
+
+    expect(result.content).toBe('{"candidates":[]}');
+    expect(executedTools).toBe(1);
+    expect(offeredToolsByCall[0]).toContain("search_web");
+    expect(offeredToolsByCall[1]).not.toContain("search_web");
+    expect(offeredToolsByCall[1]).toContain("fetch_content");
+    expect(result.toolEvents).toHaveLength(2);
+    expect(result.toolEvents[1]).toMatchObject({
+      name: "search_web",
+      ok: false,
+      metadata: { limit: 1, limitExceeded: true },
+    });
+  });
+
+  test("does not offer zero-limit tools to a required tool call", async () => {
+    const offeredToolsByCall: string[][] = [];
+    const seenToolChoices: unknown[] = [];
+    const chatClient: DistillationChatClient = async (request) => {
+      offeredToolsByCall.push(request.tools?.map((tool) => tool.function.name) ?? []);
+      seenToolChoices.push(request.toolChoice);
+      return {
+        content: null,
+        toolCalls: [
+          {
+            id: "call_1",
+            type: "function",
+            function: { name: "fetch_content", arguments: '{"url":"https://example.com"}' },
+          },
+        ],
+      };
+    };
+    const toolExecutor: DistillationToolExecutor = async (toolCall) => ({
+      callId: toolCall.id,
+      name: toolCall.function.name,
+      ok: true,
+      content: "Fetched content",
+    });
+
+    await expect(
+      runDistillationCompletion(
+        { model: "m", messages: [{ role: "user", content: "verify" }], maxTokens: 10 },
+        {
+          chatClient,
+          toolExecutor,
+          maxToolRounds: 1,
+          requireToolCall: true,
+          toolCallLimits: { search_web: 0, fetch_content: 1 },
+        },
+      ),
+    ).rejects.toThrow("distillation tool loop exceeded max rounds");
+
+    expect(seenToolChoices[0]).toBe("required");
+    expect(offeredToolsByCall[0]).not.toContain("search_web");
+    expect(offeredToolsByCall[0]).toContain("fetch_content");
+  });
+
   test("reprompts once when required tool use is skipped", async () => {
     const seenToolChoices: unknown[] = [];
     const seenMessages: string[][] = [];
@@ -213,7 +330,7 @@ describe("distillation runtime", () => {
     expect(prompt).toContain("context_compile");
     expect(prompt).toContain("search_web");
     expect(prompt).toContain("fetch_content");
-    expect(prompt).toContain("fetch_content は複数回使ってよい");
+    expect(prompt).toContain("search_web は最大 1 回、fetch_content は最大 3 回");
     expect(prompt).toContain("search query は短く安定");
     expect(prompt).toContain("tool call JSON");
     expect(prompt).toContain("title/body に search_web や fetch_content");

@@ -171,6 +171,17 @@ const bootstrap: BootstrapConfig = {
     findCandidate: {
       source: { provider: "openai", model: groupedConfig.openAi.model, fallback: [] },
       vibe: { provider: "openai", model: groupedConfig.openAi.model, fallback: [] },
+      throttling: {
+        backgroundEnabled: groupedConfig.distillation.findCandidateBackgroundEnabled,
+        interactiveWindowSeconds: groupedConfig.distillation.findCandidateInteractiveWindowSeconds,
+        recentBlockSeconds: groupedConfig.distillation.findCandidateRecentBlockSeconds,
+        minIntervalSeconds: groupedConfig.distillation.findCandidateMinIntervalSeconds,
+        mediumIntervalSeconds: groupedConfig.distillation.findCandidateMediumIntervalSeconds,
+        busyIntervalSeconds: groupedConfig.distillation.findCandidateBusyIntervalSeconds,
+        maxIntervalSeconds: groupedConfig.distillation.findCandidateMaxIntervalSeconds,
+        rateLimitCooldownSeconds: groupedConfig.distillation.findCandidateRateLimitCooldownSeconds,
+        jitterSeconds: groupedConfig.distillation.findCandidateJitterSeconds,
+      },
     },
     webSourceResearch: {
       provider: "local-llm",
@@ -218,6 +229,11 @@ const bootstrap: BootstrapConfig = {
     timeoutMs: groupedConfig.distillation.timeoutMs,
     candidateTimeoutMs: groupedConfig.distillation.candidateTimeoutMs,
     maxToolRounds: groupedConfig.distillationTools.maxRounds,
+    findCandidateTimeoutMs: groupedConfig.distillation.findCandidateTimeoutMs,
+    findCandidateMaxToolCalls: groupedConfig.distillationTools.findCandidateMaxToolCalls,
+    coverEvidenceTimeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+    coverEvidenceSearchMaxCalls: groupedConfig.distillationTools.coverEvidenceSearchMaxCalls,
+    coverEvidenceFetchMaxCalls: groupedConfig.distillationTools.coverEvidenceFetchMaxCalls,
     toolTimeoutMs: groupedConfig.distillationTools.timeoutMs,
     toolResultMaxChars: groupedConfig.distillationTools.resultMaxChars,
     failureRetryDelaySeconds: groupedConfig.distillationTools.failureRetryDelaySeconds,
@@ -266,6 +282,7 @@ function cloneDefaultSettings(): RuntimeSettingsEditable {
       findCandidate: {
         source: { ...bootstrap.taskRouting.findCandidate.source },
         vibe: { ...bootstrap.taskRouting.findCandidate.vibe },
+        throttling: { ...bootstrap.taskRouting.findCandidate.throttling },
       },
       webSourceResearch: { ...bootstrap.taskRouting.webSourceResearch },
       coverEvidence: {
@@ -369,6 +386,10 @@ function mergeRuntimeSettings(
         vibe: {
           ...defaults.taskRouting.findCandidate.vibe,
           ...asRecord(asRecord(asRecord(input.taskRouting).findCandidate).vibe),
+        },
+        throttling: {
+          ...defaults.taskRouting.findCandidate.throttling,
+          ...asRecord(asRecord(asRecord(input.taskRouting).findCandidate).throttling),
         },
       },
       webSourceResearch: {
@@ -571,7 +592,29 @@ function applyRuntimeSettingsToProcess(
   groupedConfig.distillation.provider = settings.taskRouting.finalizeDistille.provider;
   groupedConfig.distillation.findCandidateProvider =
     settings.taskRouting.findCandidate.source.provider;
+  groupedConfig.distillation.findCandidateBackgroundEnabled =
+    settings.taskRouting.findCandidate.throttling.backgroundEnabled;
+  groupedConfig.distillation.findCandidateInteractiveWindowSeconds =
+    settings.taskRouting.findCandidate.throttling.interactiveWindowSeconds;
+  groupedConfig.distillation.findCandidateRecentBlockSeconds =
+    settings.taskRouting.findCandidate.throttling.recentBlockSeconds;
+  groupedConfig.distillation.findCandidateMinIntervalSeconds =
+    settings.taskRouting.findCandidate.throttling.minIntervalSeconds;
+  groupedConfig.distillation.findCandidateMediumIntervalSeconds =
+    settings.taskRouting.findCandidate.throttling.mediumIntervalSeconds;
+  groupedConfig.distillation.findCandidateBusyIntervalSeconds =
+    settings.taskRouting.findCandidate.throttling.busyIntervalSeconds;
+  groupedConfig.distillation.findCandidateMaxIntervalSeconds =
+    settings.taskRouting.findCandidate.throttling.maxIntervalSeconds;
+  groupedConfig.distillation.findCandidateRateLimitCooldownSeconds =
+    settings.taskRouting.findCandidate.throttling.rateLimitCooldownSeconds;
+  groupedConfig.distillation.findCandidateJitterSeconds =
+    settings.taskRouting.findCandidate.throttling.jitterSeconds;
   groupedConfig.distillation.timeoutMs = settings.distillationRuntime.timeoutMs;
+  groupedConfig.distillation.findCandidateTimeoutMs =
+    settings.distillationRuntime.findCandidateTimeoutMs;
+  groupedConfig.distillation.coverEvidenceTimeoutMs =
+    settings.distillationRuntime.coverEvidenceTimeoutMs;
   groupedConfig.distillation.candidateTimeoutMs = settings.distillationRuntime.candidateTimeoutMs;
   groupedConfig.distillation.lowImportanceRejectThreshold =
     settings.distillationRuntime.lowImportanceRejectThreshold;
@@ -595,6 +638,12 @@ function applyRuntimeSettingsToProcess(
   groupedConfig.distillationTools.searchRateLimitCooldownSeconds =
     settings.search.rateLimitCooldownSeconds;
   groupedConfig.distillationTools.maxRounds = settings.distillationRuntime.maxToolRounds;
+  groupedConfig.distillationTools.findCandidateMaxToolCalls =
+    settings.distillationRuntime.findCandidateMaxToolCalls;
+  groupedConfig.distillationTools.coverEvidenceSearchMaxCalls =
+    settings.distillationRuntime.coverEvidenceSearchMaxCalls;
+  groupedConfig.distillationTools.coverEvidenceFetchMaxCalls =
+    settings.distillationRuntime.coverEvidenceFetchMaxCalls;
   groupedConfig.distillationTools.resultMaxChars = settings.distillationRuntime.toolResultMaxChars;
   groupedConfig.distillationTools.failureRetryDelaySeconds =
     settings.distillationRuntime.failureRetryDelaySeconds;
@@ -666,10 +715,16 @@ function buildSourceMap(view: RuntimeSettingsView): Record<string, string> {
     "distillationPriority.targetPriorityOrder": "db",
     "findCandidate.source.provider": "db",
     "findCandidate.vibe.provider": "db",
+    "findCandidate.throttling": "db",
     "webSourceResearch.provider": "db",
     "coverEvidence.sourceSupport.provider": "db",
     "coverEvidence.externalEvidence.provider": "db",
     "coverEvidence.mcpEvidence.provider": "db",
+    "findCandidate.timeoutMs": "db",
+    "findCandidate.maxToolCalls": "db",
+    "coverEvidence.timeoutMs": "db",
+    "coverEvidence.searchMaxCalls": "db",
+    "coverEvidence.fetchMaxCalls": "db",
     "agenticCompile.provider": "db",
     "openai.apiKey": view.providers.openai.apiKeySecret.source,
     "azure-openai.apiKey": view.providers["azure-openai"].apiKeySecret.source,
@@ -930,6 +985,10 @@ export function resolveFindCandidateRoute(
   return targetKind === "vibe_memory"
     ? runtimeSettingsCache.settings.taskRouting.findCandidate.vibe
     : runtimeSettingsCache.settings.taskRouting.findCandidate.source;
+}
+
+export function resolveFindCandidateThrottlingSettings(): RuntimeSettingsEditable["taskRouting"]["findCandidate"]["throttling"] {
+  return runtimeSettingsCache.settings.taskRouting.findCandidate.throttling;
 }
 
 export function resolveWebSourceResearchRoute(): RuntimeSettingsRoute {

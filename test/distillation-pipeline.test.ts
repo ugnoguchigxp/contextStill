@@ -13,6 +13,10 @@ const mocks = vi.hoisted(() => ({
   pauseDistillationTargetState: vi.fn(),
   leaseFromTargetState: vi.fn(),
   runFindCandidate: vi.fn(),
+  decideFindCandidateSchedule: vi.fn(),
+  isRateLimitError: vi.fn(),
+  recordProviderRateLimit: vi.fn(),
+  recordProviderUsage: vi.fn(),
   listFindCandidateResultsByTargetStateId: vi.fn(),
   runCoverEvidenceForCandidate: vi.fn(),
   listCoverEvidenceResultsByTargetStateId: vi.fn(),
@@ -43,8 +47,18 @@ vi.mock("../src/modules/findCandidate/domain.js", () => ({
   runFindCandidate: mocks.runFindCandidate,
 }));
 
+vi.mock("../src/modules/findCandidate/find-candidate-scheduler.service.js", () => ({
+  decideFindCandidateSchedule: mocks.decideFindCandidateSchedule,
+}));
+
 vi.mock("../src/modules/findCandidate/repository.js", () => ({
   listFindCandidateResultsByTargetStateId: mocks.listFindCandidateResultsByTargetStateId,
+}));
+
+vi.mock("../src/modules/llm/provider-pressure.service.js", () => ({
+  isRateLimitError: mocks.isRateLimitError,
+  recordProviderRateLimit: mocks.recordProviderRateLimit,
+  recordProviderUsage: mocks.recordProviderUsage,
 }));
 
 vi.mock("../src/modules/coverEvidence/repository.js", () => ({
@@ -150,6 +164,22 @@ describe("runDistillationPipeline", () => {
       sourceLinkCount: 0,
       reason: null,
     });
+    mocks.decideFindCandidateSchedule.mockResolvedValue({
+      shouldWait: false,
+      waitMs: 0,
+      reason: "ready",
+      diagnostics: {
+        provider: "openai",
+        model: "gpt-5-4-mini",
+        compileCount: 0,
+        interactiveLlmCount: 0,
+        lastCompileAgeSeconds: null,
+        lastBackgroundAgeSeconds: null,
+      },
+    });
+    mocks.isRateLimitError.mockReturnValue(false);
+    mocks.recordProviderRateLimit.mockResolvedValue(undefined);
+    mocks.recordProviderUsage.mockResolvedValue(undefined);
   });
 
   test("claims a target and finalizes ready candidates", async () => {
@@ -167,6 +197,38 @@ describe("runDistillationPipeline", () => {
         status: "completed",
         outcomeKind: "knowledge_finalized",
         knowledgeIds: ["knowledge-1"],
+      }),
+    );
+  });
+
+  test("pauses target before findCandidate when scheduler requests wait", async () => {
+    mocks.decideFindCandidateSchedule.mockResolvedValue({
+      shouldWait: true,
+      waitMs: 90_000,
+      reason: "interactive_pressure",
+      diagnostics: {
+        provider: "openai",
+        model: "gpt-5-4-mini",
+        compileCount: 4,
+        interactiveLlmCount: 3,
+        lastCompileAgeSeconds: 10,
+        lastBackgroundAgeSeconds: 20,
+      },
+    });
+
+    const result = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
+
+    expect(mocks.runFindCandidate).not.toHaveBeenCalled();
+    expect(result.results[0]).toMatchObject({
+      status: "paused",
+      outcomeKind: "find_candidate_throttled",
+      candidateCount: 0,
+    });
+    expect(mocks.pauseDistillationTargetState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        id: "target-1",
+        reason: "find_candidate_throttled:interactive_pressure",
+        retryDelaySeconds: 90,
       }),
     );
   });
@@ -461,3 +523,19 @@ describe("runDistillationPipeline", () => {
     expect(mocks.pauseDistillationTargetState).not.toHaveBeenCalled();
   });
 });
+mocks.decideFindCandidateSchedule.mockResolvedValue({
+  shouldWait: false,
+  waitMs: 0,
+  reason: "ready",
+  diagnostics: {
+    provider: "openai",
+    model: "gpt-5-4-mini",
+    compileCount: 0,
+    interactiveLlmCount: 0,
+    lastCompileAgeSeconds: null,
+    lastBackgroundAgeSeconds: null,
+  },
+});
+mocks.isRateLimitError.mockReturnValue(false);
+mocks.recordProviderRateLimit.mockResolvedValue(undefined);
+mocks.recordProviderUsage.mockResolvedValue(undefined);

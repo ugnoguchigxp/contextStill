@@ -14,7 +14,7 @@ export async function callLocalLlmChat(
   request: DistillationChatRequest,
 ): Promise<DistillationChatResponse> {
   return withRequestTimeout(
-    groupedConfig.distillation.timeoutMs,
+    request.timeoutMs ?? groupedConfig.distillation.timeoutMs,
     async (signal) => {
       const response = await fetch(`${groupedConfig.localLlm.apiBaseUrl}/v1/chat/completions`, {
         method: "POST",

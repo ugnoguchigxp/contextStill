@@ -164,9 +164,18 @@ export function KnowledgePage() {
   const [submittedSearchQuery, setSubmittedSearchQuery] = useState("");
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [bulkSelection, setBulkSelection] = useState<KnowledgeBulkStatusSelection | null>(null);
-  const [modalEvidence, setModalEvidence] = useState<{
+  const [modalDetail, setModalDetail] = useState<{
     sourceRefs: string[];
     sourceVibeMemoryIds: string[];
+    compileSelectCount: number;
+    lastCompiledAt: string | null;
+    agenticAcceptCount: number;
+    explicitUpvoteCount: number;
+    explicitDownvoteCount: number;
+    dynamicScore: number;
+    decayFactor: number;
+    lastVerifiedAt: string | null;
+    updatedAt: string;
   } | null>(null);
 
   // TanStack Table states
@@ -260,7 +269,7 @@ export function KnowledgePage() {
       setEditingId(null);
       setEditingOriginalType(null);
       setTypeChangedInForm(false);
-      setModalEvidence(null);
+      setModalDetail(null);
       setError(null);
       setIsModalOpen(false);
       await queryClient.invalidateQueries({ queryKey: ["knowledge"] });
@@ -278,7 +287,7 @@ export function KnowledgePage() {
       setEditingId(null);
       setEditingOriginalType(null);
       setTypeChangedInForm(false);
-      setModalEvidence(null);
+      setModalDetail(null);
       setError(null);
       setIsModalOpen(false);
       await queryClient.invalidateQueries({ queryKey: ["knowledge"] });
@@ -358,9 +367,18 @@ export function KnowledgePage() {
     setEditingId(item.id);
     setEditingOriginalType(item.type);
     setTypeChangedInForm(false);
-    setModalEvidence({
+    setModalDetail({
       sourceRefs: item.sourceRefs ?? [],
       sourceVibeMemoryIds: item.sourceVibeMemoryIds ?? [],
+      compileSelectCount: item.compileSelectCount,
+      lastCompiledAt: item.lastCompiledAt,
+      agenticAcceptCount: item.agenticAcceptCount,
+      explicitUpvoteCount: item.explicitUpvoteCount,
+      explicitDownvoteCount: item.explicitDownvoteCount,
+      dynamicScore: item.dynamicScore,
+      decayFactor: item.decayFactor,
+      lastVerifiedAt: item.lastVerifiedAt,
+      updatedAt: item.updatedAt,
     });
     setForm({
       type: normalizeKnowledgeType(item.type),
@@ -380,7 +398,7 @@ export function KnowledgePage() {
     setEditingId(null);
     setEditingOriginalType(null);
     setTypeChangedInForm(false);
-    setModalEvidence(null);
+    setModalDetail(null);
     setForm(emptyForm);
     setIsModalOpen(true);
   };
@@ -1160,16 +1178,106 @@ export function KnowledgePage() {
                   }
                 />
               </div>
+              <div className="space-y-1">
+                <label
+                  htmlFor="knowledge-applies-domains"
+                  className="text-[11px] text-muted-foreground"
+                >
+                  Domains
+                </label>
+                <Input
+                  id="knowledge-applies-domains"
+                  className="placeholder:text-muted-foreground/60"
+                  placeholder="admin-ui, knowledge"
+                  value={csvFrom(asRecord(form.appliesTo).domains)}
+                  onChange={(event) => updateAppliesTo({ domains: parseCsv(event.target.value) })}
+                />
+              </div>
             </div>
           </div>
+          {editingId ? (
+            <div className="space-y-3 rounded-lg border border-border/60 p-3">
+              <p className="text-xs font-bold uppercase text-muted-foreground">Lifecycle</p>
+              {modalDetail ? (
+                <div className="grid grid-cols-2 gap-2 sm:grid-cols-4">
+                  <div className="rounded-md border border-border/60 bg-muted/20 px-2 py-1.5 text-center">
+                    <span className="block truncate text-[10px] font-semibold uppercase text-muted-foreground">
+                      Selected
+                    </span>
+                    <strong className="block truncate text-xs">
+                      {modalDetail.compileSelectCount}
+                    </strong>
+                  </div>
+                  <div className="rounded-md border border-border/60 bg-muted/20 px-2 py-1.5 text-center">
+                    <span className="block truncate text-[10px] font-semibold uppercase text-muted-foreground">
+                      Accepted
+                    </span>
+                    <strong className="block truncate text-xs">
+                      {modalDetail.agenticAcceptCount}
+                    </strong>
+                  </div>
+                  <div className="rounded-md border border-border/60 bg-muted/20 px-2 py-1.5 text-center">
+                    <span className="block truncate text-[10px] font-semibold uppercase text-muted-foreground">
+                      Dynamic
+                    </span>
+                    <strong className="block truncate text-xs">
+                      {modalDetail.dynamicScore.toFixed(1)}
+                    </strong>
+                  </div>
+                  <div className="rounded-md border border-border/60 bg-muted/20 px-2 py-1.5 text-center">
+                    <span className="block truncate text-[10px] font-semibold uppercase text-muted-foreground">
+                      Decay
+                    </span>
+                    <strong className="block truncate text-xs">
+                      {modalDetail.decayFactor.toFixed(2)}
+                    </strong>
+                  </div>
+                  <div className="rounded-md border border-border/60 bg-muted/20 px-2 py-1.5 text-center">
+                    <span className="block truncate text-[10px] font-semibold uppercase text-muted-foreground">
+                      Feedback
+                    </span>
+                    <strong className="block truncate text-xs">
+                      +{modalDetail.explicitUpvoteCount} / -{modalDetail.explicitDownvoteCount}
+                    </strong>
+                  </div>
+                  <div className="rounded-md border border-border/60 bg-muted/20 px-2 py-1.5 text-center">
+                    <span className="block truncate text-[10px] font-semibold uppercase text-muted-foreground">
+                      Compiled
+                    </span>
+                    <strong className="block truncate text-xs">
+                      {formatTimestamp(modalDetail.lastCompiledAt)}
+                    </strong>
+                  </div>
+                  <div className="rounded-md border border-border/60 bg-muted/20 px-2 py-1.5 text-center">
+                    <span className="block truncate text-[10px] font-semibold uppercase text-muted-foreground">
+                      Verified
+                    </span>
+                    <strong className="block truncate text-xs">
+                      {formatTimestamp(modalDetail.lastVerifiedAt)}
+                    </strong>
+                  </div>
+                  <div className="rounded-md border border-border/60 bg-muted/20 px-2 py-1.5 text-center">
+                    <span className="block truncate text-[10px] font-semibold uppercase text-muted-foreground">
+                      Updated
+                    </span>
+                    <strong className="block truncate text-xs">
+                      {formatTimestamp(modalDetail.updatedAt)}
+                    </strong>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-xs text-muted-foreground">none</p>
+              )}
+            </div>
+          ) : null}
           {editingId ? (
             <div className="space-y-3 rounded-lg border border-border/60 p-3">
               <p className="text-xs font-bold uppercase text-muted-foreground">Evidence</p>
               <div className="space-y-1">
                 <p className="text-[11px] text-muted-foreground">source refs</p>
-                {modalEvidence && modalEvidence.sourceRefs.length > 0 ? (
+                {modalDetail && modalDetail.sourceRefs.length > 0 ? (
                   <ul className="list-disc space-y-1 pl-4 text-xs">
-                    {modalEvidence.sourceRefs.map((ref, index) => (
+                    {modalDetail.sourceRefs.map((ref, index) => (
                       // biome-ignore lint/suspicious/noArrayIndexKey: index is appropriate since elements are read-only evidence references
                       <li key={`evidence-ref-${index}`} className="break-all">
                         {ref}
@@ -1182,9 +1290,9 @@ export function KnowledgePage() {
               </div>
               <div className="space-y-1">
                 <p className="text-[11px] text-muted-foreground">originating vibe memory</p>
-                {modalEvidence && modalEvidence.sourceVibeMemoryIds.length > 0 ? (
+                {modalDetail && modalDetail.sourceVibeMemoryIds.length > 0 ? (
                   <ul className="list-disc space-y-1 pl-4 text-xs">
-                    {modalEvidence.sourceVibeMemoryIds.map((memoryId, index) => (
+                    {modalDetail.sourceVibeMemoryIds.map((memoryId, index) => (
                       // biome-ignore lint/suspicious/noArrayIndexKey: index is appropriate since elements are read-only evidence memory IDs
                       <li key={`evidence-memory-${index}`}>{memoryId}</li>
                     ))}

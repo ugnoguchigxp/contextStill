@@ -5,6 +5,7 @@ import { recordAuditLogSafe } from "../src/modules/audit/audit-log.service.js";
 import {
   listDistillationTargetStatesForCandidates,
   upsertDistillationTargetState,
+  markMissingVibeMemoryTargetsSkipped,
   markMissingWikiTargetsSkipped,
   findNextSelectableDistillationTargetState,
 } from "../src/modules/selectDistillationTarget/repository.js";
@@ -58,6 +59,7 @@ vi.mock("../src/modules/selectDistillationTarget/repository.js", () => ({
   DEFAULT_DISTILLATION_TARGET_VERSION: "select-distillation-target-v1",
   listDistillationTargetStatesForCandidates: vi.fn(),
   upsertDistillationTargetState: vi.fn(),
+  markMissingVibeMemoryTargetsSkipped: vi.fn(),
   markMissingWikiTargetsSkipped: vi.fn(),
   findNextSelectableDistillationTargetState: vi.fn(),
 }));
@@ -197,6 +199,7 @@ describe("selectDistillationTarget inventory.service unit tests", () => {
       ]);
       vi.mocked(readFile).mockResolvedValueOnce("some content");
       vi.mocked(markMissingWikiTargetsSkipped).mockResolvedValueOnce(0);
+      vi.mocked(markMissingVibeMemoryTargetsSkipped).mockResolvedValueOnce(0);
 
       const result = await refreshDistillationTargetInventory({
         kind: "auto",
@@ -205,6 +208,7 @@ describe("selectDistillationTarget inventory.service unit tests", () => {
 
       expect(result.wikiTargets).toBe(1);
       expect(result.vibeMemoryTargets).toBe(3);
+      expect(result.missingVibeMemoryTargetsSkipped).toBe(0);
       expect(upsertDistillationTargetState).toHaveBeenCalled();
       expect(recordAuditLogSafe).toHaveBeenCalled();
     });

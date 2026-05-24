@@ -5,6 +5,7 @@ import type {
   LlmHealthStatus,
   LlmProvider,
 } from "../llm-provider.js";
+import { LlmProviderHttpError, parseRetryAfterSeconds } from "../provider-http-error.js";
 import { normalizeLlmUsage } from "../usage-normalizer.js";
 
 type AzureOpenAiResponse = {
@@ -100,7 +101,12 @@ export function createAzureOpenAiProvider(options: AzureOpenAiProviderOptions = 
 
         if (!response.ok) {
           const body = await response.text().catch(() => "");
-          throw new Error(`Azure OpenAI HTTP ${response.status}: ${body.slice(0, 500)}`);
+          throw new LlmProviderHttpError({
+            provider: "azure-openai",
+            status: response.status,
+            retryAfterSeconds: parseRetryAfterSeconds(response.headers),
+            message: `Azure OpenAI HTTP ${response.status}: ${body.slice(0, 500)}`,
+          });
         }
 
         return parseResponse(response);

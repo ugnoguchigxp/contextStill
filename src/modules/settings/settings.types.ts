@@ -37,6 +37,18 @@ export type RuntimeSettingsRoute = {
   fallback: RuntimeProviderName[];
 };
 
+export type FindCandidateThrottlingSettings = {
+  backgroundEnabled: boolean;
+  interactiveWindowSeconds: number;
+  recentBlockSeconds: number;
+  minIntervalSeconds: number;
+  mediumIntervalSeconds: number;
+  busyIntervalSeconds: number;
+  maxIntervalSeconds: number;
+  rateLimitCooldownSeconds: number;
+  jitterSeconds: number;
+};
+
 export const distillationPriorityTargetKindValues = [
   "knowledge_candidate",
   "web_ingest",
@@ -81,6 +93,7 @@ export type RuntimeSettingsEditable = {
     findCandidate: {
       source: RuntimeSettingsRoute;
       vibe: RuntimeSettingsRoute;
+      throttling: FindCandidateThrottlingSettings;
     };
     webSourceResearch: RuntimeSettingsRoute;
     coverEvidence: {
@@ -120,6 +133,11 @@ export type RuntimeSettingsEditable = {
     timeoutMs: number;
     candidateTimeoutMs: number;
     maxToolRounds: number;
+    findCandidateTimeoutMs: number;
+    findCandidateMaxToolCalls: number;
+    coverEvidenceTimeoutMs: number;
+    coverEvidenceSearchMaxCalls: number;
+    coverEvidenceFetchMaxCalls: number;
     toolTimeoutMs: number;
     toolResultMaxChars: number;
     failureRetryDelaySeconds: number;
@@ -216,6 +234,17 @@ export const runtimeSettingsEditableSchema = z.object({
     findCandidate: z.object({
       source: runtimeRouteSchema,
       vibe: runtimeRouteSchema,
+      throttling: z.object({
+        backgroundEnabled: z.boolean().default(true),
+        interactiveWindowSeconds: z.number().int().min(30).max(3_600).default(180),
+        recentBlockSeconds: z.number().int().min(0).max(600).default(30),
+        minIntervalSeconds: z.number().int().min(1).max(3_600).default(30),
+        mediumIntervalSeconds: z.number().int().min(1).max(7_200).default(90),
+        busyIntervalSeconds: z.number().int().min(1).max(21_600).default(180),
+        maxIntervalSeconds: z.number().int().min(1).max(86_400).default(300),
+        rateLimitCooldownSeconds: z.number().int().min(30).max(172_800).default(600),
+        jitterSeconds: z.number().int().min(0).max(600).default(10),
+      }),
     }),
     webSourceResearch: runtimeRouteSchema,
     coverEvidence: z.object({
@@ -255,6 +284,11 @@ export const runtimeSettingsEditableSchema = z.object({
     timeoutMs: z.number().int().min(1000).max(3_600_000),
     candidateTimeoutMs: z.number().int().min(1000).max(3_600_000),
     maxToolRounds: z.number().int().min(0).max(64),
+    findCandidateTimeoutMs: z.number().int().min(1000).max(3_600_000),
+    findCandidateMaxToolCalls: z.number().int().min(1).max(64),
+    coverEvidenceTimeoutMs: z.number().int().min(1000).max(3_600_000),
+    coverEvidenceSearchMaxCalls: z.number().int().min(0).max(16),
+    coverEvidenceFetchMaxCalls: z.number().int().min(0).max(16),
     toolTimeoutMs: z.number().int().min(1000).max(120_000),
     toolResultMaxChars: z.number().int().min(512).max(200_000),
     failureRetryDelaySeconds: z.number().int().min(1).max(604_800),

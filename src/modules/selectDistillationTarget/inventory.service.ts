@@ -17,6 +17,7 @@ import {
   DEFAULT_DISTILLATION_TARGET_VERSION,
   findNextSelectableDistillationTargetState,
   listDistillationTargetStatesForCandidates,
+  markMissingVibeMemoryTargetsSkipped,
   markMissingWikiTargetsSkipped,
   upsertDistillationTargetState,
 } from "./repository.js";
@@ -168,6 +169,7 @@ export type RefreshDistillationTargetInventoryResult = {
   vibeMemoryTargets: number;
   webIngestTargets: number;
   missingWikiTargetsSkipped: number;
+  missingVibeMemoryTargetsSkipped: number;
 };
 
 export async function refreshDistillationTargetInventory(
@@ -206,6 +208,12 @@ export async function refreshDistillationTargetInventory(
         distillationVersion,
       })
     : 0;
+  const missingVibeMemoryTargetsSkipped = includeVibe
+    ? await markMissingVibeMemoryTargetsSkipped({
+        currentTargetKeys: new Set(vibeCandidates.map((candidate) => candidate.targetKey)),
+        distillationVersion,
+      })
+    : 0;
 
   const result = {
     distillationVersion,
@@ -213,6 +221,7 @@ export async function refreshDistillationTargetInventory(
     vibeMemoryTargets: vibeCandidates.length,
     webIngestTargets: 0,
     missingWikiTargetsSkipped,
+    missingVibeMemoryTargetsSkipped,
   };
 
   await recordAuditLogSafe({

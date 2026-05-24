@@ -5,13 +5,26 @@ const { loadLandscapeTrajectoryMock } = vi.hoisted(() => ({
   loadLandscapeTrajectoryMock: vi.fn(),
 }));
 
+const { findContextCompileTaskTraceByRunIdMock, listRecentContextCompileTaskTracesMock } =
+  vi.hoisted(() => ({
+    findContextCompileTaskTraceByRunIdMock: vi.fn(),
+    listRecentContextCompileTaskTracesMock: vi.fn(),
+  }));
+
 vi.mock("../src/modules/landscape/landscape-trajectory.repository.js", () => ({
   loadLandscapeTrajectory: loadLandscapeTrajectoryMock,
+}));
+
+vi.mock("../src/modules/context-compiler/context-compile-task-trace.repository.js", () => ({
+  findContextCompileTaskTraceByRunId: findContextCompileTaskTraceByRunIdMock,
+  listRecentContextCompileTaskTraces: listRecentContextCompileTaskTracesMock,
 }));
 
 describe("landscape trajectory service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    findContextCompileTaskTraceByRunIdMock.mockResolvedValue(null);
+    listRecentContextCompileTaskTracesMock.mockResolvedValue([]);
   });
 
   test("returns trajectory payload with diagnostics and limit warning", async () => {

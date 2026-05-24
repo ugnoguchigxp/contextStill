@@ -55,6 +55,9 @@ export type GroupedConfig = {
   };
   distillationTools: {
     maxRounds: number;
+    findCandidateMaxToolCalls: number;
+    coverEvidenceSearchMaxCalls: number;
+    coverEvidenceFetchMaxCalls: number;
     timeoutMs: number;
     resultMaxChars: number;
     searchResultCount: number;
@@ -94,6 +97,8 @@ export type GroupedConfig = {
     provider: DistillationProvider;
     findCandidateProvider: DistillationProvider;
     timeoutMs: number;
+    findCandidateTimeoutMs: number;
+    coverEvidenceTimeoutMs: number;
     lockTtlSeconds: number;
     lockFile: string;
     pipelineLockFile: string;
@@ -102,6 +107,15 @@ export type GroupedConfig = {
     continuousIdleSleepMs: number;
     continuousErrorSleepMs: number;
     inventoryRefreshIntervalMs: number;
+    findCandidateBackgroundEnabled: boolean;
+    findCandidateInteractiveWindowSeconds: number;
+    findCandidateRecentBlockSeconds: number;
+    findCandidateMinIntervalSeconds: number;
+    findCandidateMediumIntervalSeconds: number;
+    findCandidateBusyIntervalSeconds: number;
+    findCandidateMaxIntervalSeconds: number;
+    findCandidateRateLimitCooldownSeconds: number;
+    findCandidateJitterSeconds: number;
     promotionBacklogThresholdCount: number;
     lowImportanceRejectThreshold: number;
     circuitBreakerEnabled: boolean;

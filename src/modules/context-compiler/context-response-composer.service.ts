@@ -1,6 +1,13 @@
 import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
 import type { ContextPackItem } from "../../shared/schemas/context-pack.schema.js";
+import { groupedConfig } from "../../config.js";
 import { getAgenticLlmProviders } from "../llm/agentic-llm.service.js";
+import {
+  isRateLimitError,
+  readProviderPressureState,
+  recordProviderRateLimit,
+  recordProviderUsage,
+} from "../llm/provider-pressure.service.js";
 import {
   ensureRuntimeSettingsLoaded,
   resolveAgenticCompileRouting,
@@ -213,6 +220,21 @@ function maxTokensWithJsonHeadroom(markdownTargetTokens: number): number {
       Math.ceil(normalizedTarget * composerJsonCompletionHeadroomRatio),
     ),
   );
+}
+
+function modelForProvider(provider: string): string {
+  switch (provider) {
+    case "openai":
+      return groupedConfig.openAi.model;
+    case "azure-openai":
+      return groupedConfig.azureOpenAi.model;
+    case "bedrock":
+      return groupedConfig.bedrock.model;
+    case "local-llm":
+      return groupedConfig.localLlm.model;
+    default:
+      return groupedConfig.openAi.model;
+  }
 }
 
 function buildFallbackCompose(params: ComposeInput): FallbackComposeResult {
@@ -459,6 +481,20 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
     "context-response-composer",
     routing.fallback,
   );
+  const primaryProviderName = providers[0]?.name ?? routing.provider;
+  const primaryModel = modelForProvider(primaryProviderName);
+  const pressure = await readProviderPressureState({
+    provider: routing.provider,
+    model: primaryModel,
+  });
+  if (pressure.cooldownActive) {
+    return {
+      markdown: fallback.markdown,
+      agenticUsed: false,
+      usedKnowledge: fallback.usedKnowledge,
+      error: "CONTEXT_RESPONSE_COMPOSER_SKIPPED_RATE_LIMIT",
+    };
+  }
   const allowFallback = providers.length > 1;
   const fallbackErrors: string[] = [];
   let attempted = 0;
@@ -475,6 +511,13 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
   for (const provider of providers) {
     if (!provider.isConfigured()) continue;
     attempted += 1;
+    const providerModel = modelForProvider(provider.name);
+    void recordProviderUsage({
+      provider: provider.name,
+      model: providerModel,
+      source: "context-response-composer",
+      kind: "interactive",
+    }).catch(() => undefined);
     try {
       const response = await provider.chat({
         messages: [
@@ -511,6 +554,14 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (isRateLimitError(error)) {
+        void recordProviderRateLimit({
+          provider: provider.name,
+          model: providerModel,
+          source: "context-response-composer",
+          error,
+        }).catch(() => undefined);
+      }
       if (allowFallback) {
         fallbackErrors.push(`${provider.name}:${message}`);
         continue;

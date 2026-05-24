@@ -248,6 +248,53 @@ export async function markMissingWikiTargetsSkipped(params: {
   return updated;
 }
 
+export async function markMissingVibeMemoryTargetsSkipped(params: {
+  currentTargetKeys: Set<string>;
+  distillationVersion?: string;
+}): Promise<number> {
+  const now = new Date();
+  const rows = await db
+    .select()
+    .from(distillationTargetStates)
+    .where(
+      and(
+        eq(
+          distillationTargetStates.distillationVersion,
+          params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION,
+        ),
+        eq(distillationTargetStates.targetKind, "vibe_memory"),
+        inArray(distillationTargetStates.status, ["pending", "running", "paused", "failed"]),
+      ),
+    );
+
+  let updated = 0;
+  for (const row of rows) {
+    if (params.currentTargetKeys.has(row.targetKey)) continue;
+    const [skipped] = await db
+      .update(distillationTargetStates)
+      .set({
+        status: "skipped",
+        phase: "stored",
+        lockedBy: null,
+        lockedAt: null,
+        heartbeatAt: null,
+        nextRetryAt: null,
+        lastOutcomeKind: "missing_source",
+        lastError: "vibe_memory_missing",
+        metadata: sql`${distillationTargetStates.metadata} || ${JSON.stringify({
+          missing: true,
+          missingDetectedAt: now.toISOString(),
+        })}::jsonb` as never,
+        completedAt: now,
+        updatedAt: now,
+      })
+      .where(eq(distillationTargetStates.id, row.id))
+      .returning();
+    if (skipped) updated += 1;
+  }
+  return updated;
+}
+
 async function countStaleRunning(
   distillationVersion: string,
   staleSeconds: number,

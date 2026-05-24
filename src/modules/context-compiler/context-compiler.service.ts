@@ -1003,6 +1003,12 @@ export async function compileContextPack(
       "[compileContextPack] agenticRefine failed, but falling back gracefully to original candidates. Error:",
       agenticResult.error,
     );
+    if (agenticResult.error === "AGENTIC_REFINE_SKIPPED_RATE_LIMIT") {
+      pushUnique(degradedReasons, "OPENAI_RATE_LIMIT_COOLDOWN_ACTIVE");
+      pushUnique(degradedReasons, "AGENTIC_REFINE_SKIPPED_RATE_LIMIT");
+    } else {
+      pushUnique(degradedReasons, "AGENTIC_REFINE_FAILED");
+    }
   }
 
   const refinedKnowledgeMap = new Map(filteredKnowledge.map((k) => [k.id, k]));
@@ -1072,9 +1078,19 @@ export async function compileContextPack(
   });
   if (composedResponse.error) {
     pushUnique(degradedReasons, "CONTEXT_RESPONSE_COMPOSE_FAILED");
+    if (composedResponse.error === "CONTEXT_RESPONSE_COMPOSER_SKIPPED_RATE_LIMIT") {
+      pushUnique(degradedReasons, "OPENAI_RATE_LIMIT_COOLDOWN_ACTIVE");
+      pushUnique(degradedReasons, "CONTEXT_RESPONSE_COMPOSER_SKIPPED_RATE_LIMIT");
+    }
   }
   if (composedResponse.markdown === "No Content" && selectedKnowledgeCount > 0) {
     pushUnique(degradedReasons, "COMPOSED_CONTEXT_NO_ALIGNMENT");
+  }
+  const forceNoContentDueToRateLimit =
+    agenticResult.error === "AGENTIC_REFINE_SKIPPED_RATE_LIMIT" ||
+    composedResponse.error === "CONTEXT_RESPONSE_COMPOSER_SKIPPED_RATE_LIMIT";
+  if (forceNoContentDueToRateLimit) {
+    pushUnique(degradedReasons, "CONTEXT_COMPILE_LLM_UNAVAILABLE_NO_CONTENT");
   }
   const sourceRefsCandidate = [
     ...new Set([
@@ -1245,7 +1261,9 @@ export async function compileContextPack(
     },
   });
 
-  const markdown = composedResponse.markdown || renderContextPackMarkdown(pack);
+  const markdown = forceNoContentDueToRateLimit
+    ? "No Content"
+    : composedResponse.markdown || renderContextPackMarkdown(pack);
   const packWithMarkdown = attachOutputMarkdownToPack(pack, markdown);
 
   await updateCompileRunSnapshotSafe(runId, packWithMarkdown);

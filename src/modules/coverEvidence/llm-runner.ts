@@ -48,6 +48,18 @@ import type {
   CoverEvidenceToolEvent,
 } from "./types.js";
 
+function coverEvidenceToolLimits(): Record<string, number> {
+  return {
+    search_web: groupedConfig.distillationTools.coverEvidenceSearchMaxCalls,
+    fetch_content: groupedConfig.distillationTools.coverEvidenceFetchMaxCalls,
+  };
+}
+
+function coverEvidenceMaxToolRounds(): number {
+  const limits = coverEvidenceToolLimits();
+  return Math.max(0, limits.search_web + limits.fetch_content);
+}
+
 async function normalizeOrRepairProcedureQuality(params: {
   id: string;
   result: CoverEvidenceResult;
@@ -58,6 +70,7 @@ async function normalizeOrRepairProcedureQuality(params: {
   fallbackOrder?: DistillationProviderName[];
   chatClient?: DistillationChatClient;
   signal?: AbortSignal;
+  timeoutMs?: number;
 }): Promise<CoverEvidenceResult> {
   const candidate = params.result.candidate;
   if (params.result.status !== "knowledge_ready" || candidate?.type !== "procedure") {
@@ -82,6 +95,7 @@ async function normalizeOrRepairProcedureQuality(params: {
     fallbackOrder: params.fallbackOrder,
     chatClient: params.chatClient,
     signal: params.signal,
+    timeoutMs: params.timeoutMs,
   });
   if (repair.status === "failed") {
     return makeResult({
@@ -202,6 +216,7 @@ export async function runValueAssessment(params: {
         chatClient: params.chatClient,
         usageSource: "cover-evidence:value-assessment",
         enableTools: false,
+        timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
         blankResponseReminder: applicabilityBlankResponseReminderLines(
           "final",
           "knowledge_ready|insufficient",
@@ -231,6 +246,7 @@ export async function runValueAssessment(params: {
       fallbackOrder: params.fallbackOrder,
       chatClient: params.chatClient,
       signal: params.signal,
+      timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
     });
   } catch (error) {
     if (isAbortError(error)) {
@@ -287,7 +303,9 @@ export async function runExternalEvidence(params: {
         toolExecutor: params.toolExecutor,
         usageSource: "cover-evidence:external-evidence",
         enableTools: true,
-        maxToolRounds: groupedConfig.distillationTools.maxRounds,
+        maxToolRounds: coverEvidenceMaxToolRounds(),
+        toolCallLimits: coverEvidenceToolLimits(),
+        timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
         requireToolCall: true,
         blankResponseReminder: applicabilityBlankResponseReminderLines(
           "web",
@@ -351,6 +369,7 @@ export async function runExternalEvidence(params: {
       fallbackOrder: params.fallbackOrder,
       chatClient: params.chatClient,
       signal: params.signal,
+      timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
     });
   } catch (error) {
     if (isAbortError(error)) {
@@ -402,6 +421,7 @@ export async function runOptionalMcpEvidence(params: {
         usageSource: "cover-evidence:mcp-evidence",
         enableTools: true,
         maxToolRounds: 2,
+        timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
         requireToolCall: true,
         toolNames,
         requireToolCallReminder: [

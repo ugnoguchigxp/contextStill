@@ -1,7 +1,14 @@
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
 import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
 import type { KnowledgeItem, KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
+import { groupedConfig } from "../../config.js";
 import { getAgenticLlmProviders } from "../llm/agentic-llm.service.js";
+import {
+  isRateLimitError,
+  readProviderPressureState,
+  recordProviderRateLimit,
+  recordProviderUsage,
+} from "../llm/provider-pressure.service.js";
 import {
   ensureRuntimeSettingsLoaded,
   resolveAgenticCompileRouting,
@@ -157,6 +164,21 @@ function formatAutoFallbackError(messages: string[]): string {
   return `AGENTIC_REFINE_FAILED: ${detail}`;
 }
 
+function modelForProvider(provider: string): string {
+  switch (provider) {
+    case "openai":
+      return groupedConfig.openAi.model;
+    case "azure-openai":
+      return groupedConfig.azureOpenAi.model;
+    case "bedrock":
+      return groupedConfig.bedrock.model;
+    case "local-llm":
+      return groupedConfig.localLlm.model;
+    default:
+      return groupedConfig.openAi.model;
+  }
+}
+
 /**
  * LLM を使って knowledge 候補を goal に対して選別・並べ替えする。
  *
@@ -185,6 +207,19 @@ export async function agenticRefine(
     "context-compiler",
     routing.fallback,
   );
+  const primaryProviderName = providers[0]?.name ?? routing.provider;
+  const primaryModel = modelForProvider(primaryProviderName);
+  const pressure = await readProviderPressureState({
+    provider: routing.provider,
+    model: primaryModel,
+  });
+  if (pressure.cooldownActive) {
+    return {
+      items: candidates,
+      agenticUsed: false,
+      error: "AGENTIC_REFINE_SKIPPED_RATE_LIMIT",
+    };
+  }
   const allowFallback = providers.length > 1;
   const fallbackErrors: string[] = [];
   let attempted = 0;
@@ -198,6 +233,13 @@ export async function agenticRefine(
     }
 
     attempted += 1;
+    const providerModel = modelForProvider(provider.name);
+    void recordProviderUsage({
+      provider: provider.name,
+      model: providerModel,
+      source: "context-compiler",
+      kind: "interactive",
+    }).catch(() => undefined);
 
     try {
       const response = await provider.chat({
@@ -240,6 +282,14 @@ export async function agenticRefine(
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
+      if (isRateLimitError(error)) {
+        void recordProviderRateLimit({
+          provider: provider.name,
+          model: providerModel,
+          source: "context-compiler",
+          error,
+        }).catch(() => undefined);
+      }
       if (allowFallback) {
         fallbackErrors.push(`${provider.name}:${message}`);
         continue;

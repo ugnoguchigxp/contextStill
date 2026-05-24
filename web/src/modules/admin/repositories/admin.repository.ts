@@ -1703,6 +1703,18 @@ export type RuntimeSettingsRoute = {
   fallback: RuntimeProviderName[];
 };
 
+export type FindCandidateThrottlingSettings = {
+  backgroundEnabled: boolean;
+  interactiveWindowSeconds: number;
+  recentBlockSeconds: number;
+  minIntervalSeconds: number;
+  mediumIntervalSeconds: number;
+  busyIntervalSeconds: number;
+  maxIntervalSeconds: number;
+  rateLimitCooldownSeconds: number;
+  jitterSeconds: number;
+};
+
 export type DistillationPriorityTargetKind =
   | "knowledge_candidate"
   | "web_ingest"
@@ -1744,6 +1756,7 @@ export type RuntimeSettingsEditable = {
     findCandidate: {
       source: RuntimeSettingsRoute;
       vibe: RuntimeSettingsRoute;
+      throttling: FindCandidateThrottlingSettings;
     };
     webSourceResearch: RuntimeSettingsRoute;
     coverEvidence: {
@@ -1783,6 +1796,11 @@ export type RuntimeSettingsEditable = {
     timeoutMs: number;
     candidateTimeoutMs: number;
     maxToolRounds: number;
+    findCandidateTimeoutMs: number;
+    findCandidateMaxToolCalls: number;
+    coverEvidenceTimeoutMs: number;
+    coverEvidenceSearchMaxCalls: number;
+    coverEvidenceFetchMaxCalls: number;
     toolTimeoutMs: number;
     toolResultMaxChars: number;
     failureRetryDelaySeconds: number;

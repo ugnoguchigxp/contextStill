@@ -79,7 +79,10 @@ function asBool(value: unknown, fallback: boolean): boolean {
 function maxReads(input: FindCandidateInput): number {
   return Math.max(
     1,
-    Math.min(20, Math.floor(input.maxReads ?? groupedConfig.distillationTools.readerMaxReads)),
+    Math.min(
+      64,
+      Math.floor(input.maxReads ?? groupedConfig.distillationTools.findCandidateMaxToolCalls),
+    ),
   );
 }
 
@@ -447,6 +450,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         usageSource: "find-candidate",
         enableTools: reads < readLimit,
         maxToolRounds: Math.max(0, readLimit - reads),
+        timeoutMs: groupedConfig.distillation.findCandidateTimeoutMs,
         requireToolCall: target.targetKind === "wiki_file" || target.targetKind === "web_ingest",
         requireToolCallReminder: [
           "まだ本文を読んでいません。",

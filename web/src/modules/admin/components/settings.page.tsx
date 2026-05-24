@@ -32,21 +32,13 @@ import {
   timezoneOptions,
 } from "@/lib/timezone";
 
-type SettingsTabId =
-  | "general"
-  | "providers"
-  | "taskRouting"
-  | "search"
-  | "embedding"
-  | "distillationRuntime"
-  | "advanced";
+type SettingsTabId = "general" | "providers" | "taskRouting" | "search" | "embedding" | "advanced";
 type SettingsTabPath =
   | "general"
   | "llmprovider"
   | "taskrouting"
   | "search"
   | "embedding"
-  | "distillation-runtime"
   | "advanced";
 
 type SecretDraftState = Record<RuntimeSecretKey, { value: string; clear: boolean }>;
@@ -57,7 +49,6 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string; path: SettingsTabP
   { id: "taskRouting", label: "Task Routing", path: "taskrouting" },
   { id: "search", label: "Search", path: "search" },
   { id: "embedding", label: "Embedding / Local Runtime", path: "embedding" },
-  { id: "distillationRuntime", label: "Distillation Runtime", path: "distillation-runtime" },
   { id: "advanced", label: "Advanced", path: "advanced" },
 ];
 
@@ -164,6 +155,7 @@ function resolveActiveSettingsTab(pathname: string): SettingsTabId {
   const match = pathname.match(/^\/(?:setting|settings)\/([^/]+)\/?$/);
   if (!match) return "providers";
   const slug = match[1];
+  if (slug === "distillation-runtime") return "taskRouting";
   const found = settingsTabs.find((tab) => tab.path === slug);
   return found?.id ?? "providers";
 }
@@ -240,6 +232,19 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
           model: view.taskRouting.findCandidate.vibe.model,
           fallback: [...view.taskRouting.findCandidate.vibe.fallback],
         },
+        throttling: {
+          backgroundEnabled: view.taskRouting.findCandidate.throttling.backgroundEnabled,
+          interactiveWindowSeconds:
+            view.taskRouting.findCandidate.throttling.interactiveWindowSeconds,
+          recentBlockSeconds: view.taskRouting.findCandidate.throttling.recentBlockSeconds,
+          minIntervalSeconds: view.taskRouting.findCandidate.throttling.minIntervalSeconds,
+          mediumIntervalSeconds: view.taskRouting.findCandidate.throttling.mediumIntervalSeconds,
+          busyIntervalSeconds: view.taskRouting.findCandidate.throttling.busyIntervalSeconds,
+          maxIntervalSeconds: view.taskRouting.findCandidate.throttling.maxIntervalSeconds,
+          rateLimitCooldownSeconds:
+            view.taskRouting.findCandidate.throttling.rateLimitCooldownSeconds,
+          jitterSeconds: view.taskRouting.findCandidate.throttling.jitterSeconds,
+        },
       },
       webSourceResearch: {
         provider: view.taskRouting.webSourceResearch.provider,
@@ -299,6 +304,11 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
       timeoutMs: view.distillationRuntime.timeoutMs,
       candidateTimeoutMs: view.distillationRuntime.candidateTimeoutMs,
       maxToolRounds: view.distillationRuntime.maxToolRounds,
+      findCandidateTimeoutMs: view.distillationRuntime.findCandidateTimeoutMs,
+      findCandidateMaxToolCalls: view.distillationRuntime.findCandidateMaxToolCalls,
+      coverEvidenceTimeoutMs: view.distillationRuntime.coverEvidenceTimeoutMs,
+      coverEvidenceSearchMaxCalls: view.distillationRuntime.coverEvidenceSearchMaxCalls,
+      coverEvidenceFetchMaxCalls: view.distillationRuntime.coverEvidenceFetchMaxCalls,
       toolTimeoutMs: view.distillationRuntime.toolTimeoutMs,
       toolResultMaxChars: view.distillationRuntime.toolResultMaxChars,
       failureRetryDelaySeconds: view.distillationRuntime.failureRetryDelaySeconds,
@@ -486,6 +496,42 @@ export function SettingsPage() {
   ): void => {
     setDraft((current) => (current ? next(current) : current));
   };
+
+  const renderDistillationRuntimeNumberField = ({
+    label,
+    settingKey,
+    min,
+    max,
+    step,
+    parse = parseIntegerInput,
+  }: {
+    label: string;
+    settingKey: keyof RuntimeSettingsEditable["distillationRuntime"];
+    min?: number;
+    max?: number;
+    step?: number;
+    parse?: (value: string, fallback: number) => number;
+  }) => (
+    <label className="settings-field">
+      <span>{label}</span>
+      <Input
+        type="number"
+        min={min}
+        max={max}
+        step={step}
+        value={draft?.distillationRuntime[settingKey] ?? 0}
+        onChange={(event) =>
+          patchDraft((current) => ({
+            ...current,
+            distillationRuntime: {
+              ...current.distillationRuntime,
+              [settingKey]: parse(event.target.value, current.distillationRuntime[settingKey]),
+            },
+          }))
+        }
+      />
+    </label>
+  );
 
   const saveMutation = useMutation({
     mutationFn: async () => {
@@ -1230,8 +1276,8 @@ export function SettingsPage() {
                 <CardHeader>
                   <CardTitle>Task Routing</CardTitle>
                   <p className="settings-task-routing-intro">
-                    Assign provider/model per pipeline step. Model options follow the selected LLM
-                    Provider settings.
+                    Assign provider/model and task-specific runtime limits per pipeline step. Model
+                    options follow the selected LLM Provider settings.
                   </p>
                 </CardHeader>
                 <CardContent className="settings-routes">
@@ -1278,6 +1324,286 @@ export function SettingsPage() {
                         }))
                       }
                     />
+                    <div className="settings-route-row">
+                      <div className="settings-route-header">
+                        <div className="settings-route-label">findCandidate.runtime</div>
+                        <p className="settings-route-description">
+                          Limit the candidate extraction LLM call and source reader loop.
+                        </p>
+                      </div>
+                      <div className="settings-route-fields">
+                        {renderDistillationRuntimeNumberField({
+                          label: "Find Candidate LLM Timeout (ms)",
+                          settingKey: "findCandidateTimeoutMs",
+                          min: 1000,
+                          max: 3_600_000,
+                        })}
+                        {renderDistillationRuntimeNumberField({
+                          label: "Find Candidate Tool Calls",
+                          settingKey: "findCandidateMaxToolCalls",
+                          min: 1,
+                          max: 64,
+                        })}
+                      </div>
+                    </div>
+                    <div className="settings-route-row">
+                      <div className="settings-route-header">
+                        <div className="settings-route-label">findCandidate.throttling</div>
+                        <p className="settings-route-description">
+                          Background interval and cooldown controls for findCandidate.
+                        </p>
+                      </div>
+                      <div className="settings-route-fields">
+                        <label className="settings-field">
+                          <span>Enable Background Scheduler</span>
+                          <Checkbox
+                            checked={draft.taskRouting.findCandidate.throttling.backgroundEnabled}
+                            onChange={(event) =>
+                              patchDraft((current) => ({
+                                ...current,
+                                taskRouting: {
+                                  ...current.taskRouting,
+                                  findCandidate: {
+                                    ...current.taskRouting.findCandidate,
+                                    throttling: {
+                                      ...current.taskRouting.findCandidate.throttling,
+                                      backgroundEnabled: event.target.checked,
+                                    },
+                                  },
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Interactive Window (sec)</span>
+                          <Input
+                            type="number"
+                            min={30}
+                            max={3600}
+                            value={
+                              draft.taskRouting.findCandidate.throttling.interactiveWindowSeconds
+                            }
+                            onChange={(event) =>
+                              patchDraft((current) => ({
+                                ...current,
+                                taskRouting: {
+                                  ...current.taskRouting,
+                                  findCandidate: {
+                                    ...current.taskRouting.findCandidate,
+                                    throttling: {
+                                      ...current.taskRouting.findCandidate.throttling,
+                                      interactiveWindowSeconds: parseIntegerInput(
+                                        event.target.value,
+                                        current.taskRouting.findCandidate.throttling
+                                          .interactiveWindowSeconds,
+                                      ),
+                                    },
+                                  },
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Recent Interactive Block (sec)</span>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={600}
+                            value={draft.taskRouting.findCandidate.throttling.recentBlockSeconds}
+                            onChange={(event) =>
+                              patchDraft((current) => ({
+                                ...current,
+                                taskRouting: {
+                                  ...current.taskRouting,
+                                  findCandidate: {
+                                    ...current.taskRouting.findCandidate,
+                                    throttling: {
+                                      ...current.taskRouting.findCandidate.throttling,
+                                      recentBlockSeconds: parseIntegerInput(
+                                        event.target.value,
+                                        current.taskRouting.findCandidate.throttling
+                                          .recentBlockSeconds,
+                                      ),
+                                    },
+                                  },
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Min Interval (sec)</span>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={3600}
+                            value={draft.taskRouting.findCandidate.throttling.minIntervalSeconds}
+                            onChange={(event) =>
+                              patchDraft((current) => ({
+                                ...current,
+                                taskRouting: {
+                                  ...current.taskRouting,
+                                  findCandidate: {
+                                    ...current.taskRouting.findCandidate,
+                                    throttling: {
+                                      ...current.taskRouting.findCandidate.throttling,
+                                      minIntervalSeconds: parseIntegerInput(
+                                        event.target.value,
+                                        current.taskRouting.findCandidate.throttling
+                                          .minIntervalSeconds,
+                                      ),
+                                    },
+                                  },
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Medium Interval (sec)</span>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={7200}
+                            value={draft.taskRouting.findCandidate.throttling.mediumIntervalSeconds}
+                            onChange={(event) =>
+                              patchDraft((current) => ({
+                                ...current,
+                                taskRouting: {
+                                  ...current.taskRouting,
+                                  findCandidate: {
+                                    ...current.taskRouting.findCandidate,
+                                    throttling: {
+                                      ...current.taskRouting.findCandidate.throttling,
+                                      mediumIntervalSeconds: parseIntegerInput(
+                                        event.target.value,
+                                        current.taskRouting.findCandidate.throttling
+                                          .mediumIntervalSeconds,
+                                      ),
+                                    },
+                                  },
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Busy Interval (sec)</span>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={21600}
+                            value={draft.taskRouting.findCandidate.throttling.busyIntervalSeconds}
+                            onChange={(event) =>
+                              patchDraft((current) => ({
+                                ...current,
+                                taskRouting: {
+                                  ...current.taskRouting,
+                                  findCandidate: {
+                                    ...current.taskRouting.findCandidate,
+                                    throttling: {
+                                      ...current.taskRouting.findCandidate.throttling,
+                                      busyIntervalSeconds: parseIntegerInput(
+                                        event.target.value,
+                                        current.taskRouting.findCandidate.throttling
+                                          .busyIntervalSeconds,
+                                      ),
+                                    },
+                                  },
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Max Interval (sec)</span>
+                          <Input
+                            type="number"
+                            min={1}
+                            max={86400}
+                            value={draft.taskRouting.findCandidate.throttling.maxIntervalSeconds}
+                            onChange={(event) =>
+                              patchDraft((current) => ({
+                                ...current,
+                                taskRouting: {
+                                  ...current.taskRouting,
+                                  findCandidate: {
+                                    ...current.taskRouting.findCandidate,
+                                    throttling: {
+                                      ...current.taskRouting.findCandidate.throttling,
+                                      maxIntervalSeconds: parseIntegerInput(
+                                        event.target.value,
+                                        current.taskRouting.findCandidate.throttling
+                                          .maxIntervalSeconds,
+                                      ),
+                                    },
+                                  },
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Rate Limit Cooldown (sec)</span>
+                          <Input
+                            type="number"
+                            min={30}
+                            max={172800}
+                            value={
+                              draft.taskRouting.findCandidate.throttling.rateLimitCooldownSeconds
+                            }
+                            onChange={(event) =>
+                              patchDraft((current) => ({
+                                ...current,
+                                taskRouting: {
+                                  ...current.taskRouting,
+                                  findCandidate: {
+                                    ...current.taskRouting.findCandidate,
+                                    throttling: {
+                                      ...current.taskRouting.findCandidate.throttling,
+                                      rateLimitCooldownSeconds: parseIntegerInput(
+                                        event.target.value,
+                                        current.taskRouting.findCandidate.throttling
+                                          .rateLimitCooldownSeconds,
+                                      ),
+                                    },
+                                  },
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Jitter (sec)</span>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={600}
+                            value={draft.taskRouting.findCandidate.throttling.jitterSeconds}
+                            onChange={(event) =>
+                              patchDraft((current) => ({
+                                ...current,
+                                taskRouting: {
+                                  ...current.taskRouting,
+                                  findCandidate: {
+                                    ...current.taskRouting.findCandidate,
+                                    throttling: {
+                                      ...current.taskRouting.findCandidate.throttling,
+                                      jitterSeconds: parseIntegerInput(
+                                        event.target.value,
+                                        current.taskRouting.findCandidate.throttling.jitterSeconds,
+                                      ),
+                                    },
+                                  },
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                      </div>
+                    </div>
                   </section>
 
                   <section className="settings-route-section">
@@ -1364,6 +1690,104 @@ export function SettingsPage() {
                         }))
                       }
                     />
+                    <div className="settings-route-row">
+                      <div className="settings-route-header">
+                        <div className="settings-route-label">coverEvidence.runtime</div>
+                        <p className="settings-route-description">
+                          Limit Cover Evidence LLM calls and external evidence tools.
+                        </p>
+                      </div>
+                      <div className="settings-route-fields">
+                        {renderDistillationRuntimeNumberField({
+                          label: "Cover Evidence LLM Timeout (ms)",
+                          settingKey: "coverEvidenceTimeoutMs",
+                          min: 1000,
+                          max: 3_600_000,
+                        })}
+                        {renderDistillationRuntimeNumberField({
+                          label: "Cover Evidence Search Calls",
+                          settingKey: "coverEvidenceSearchMaxCalls",
+                          min: 0,
+                          max: 16,
+                        })}
+                        {renderDistillationRuntimeNumberField({
+                          label: "Cover Evidence Fetch Calls",
+                          settingKey: "coverEvidenceFetchMaxCalls",
+                          min: 0,
+                          max: 16,
+                        })}
+                      </div>
+                    </div>
+                  </section>
+
+                  <section className="settings-route-section">
+                    <div className="settings-route-section-header">
+                      <h3>Shared Distillation Runtime</h3>
+                      <p>
+                        Cross-step defaults and fallback limits that are not owned by a single task.
+                      </p>
+                    </div>
+                    <div className="settings-route-row">
+                      <div className="settings-route-header">
+                        <div className="settings-route-label">distillation.sharedRuntime</div>
+                        <p className="settings-route-description">
+                          These values still save to distillationRuntime, but live beside routing so
+                          task behavior can be reviewed in one place.
+                        </p>
+                      </div>
+                      <div className="settings-route-fields">
+                        {renderDistillationRuntimeNumberField({
+                          label: "Distillation Timeout (ms)",
+                          settingKey: "timeoutMs",
+                          min: 1000,
+                          max: 3_600_000,
+                        })}
+                        {renderDistillationRuntimeNumberField({
+                          label: "Candidate Timeout (ms)",
+                          settingKey: "candidateTimeoutMs",
+                          min: 1000,
+                          max: 3_600_000,
+                        })}
+                        {renderDistillationRuntimeNumberField({
+                          label: "Max Tool Rounds",
+                          settingKey: "maxToolRounds",
+                          min: 0,
+                          max: 64,
+                        })}
+                        {renderDistillationRuntimeNumberField({
+                          label: "Tool Result Max Chars",
+                          settingKey: "toolResultMaxChars",
+                          min: 512,
+                          max: 200_000,
+                        })}
+                        {renderDistillationRuntimeNumberField({
+                          label: "Failure Retry Delay (sec)",
+                          settingKey: "failureRetryDelaySeconds",
+                          min: 1,
+                          max: 604_800,
+                        })}
+                        {renderDistillationRuntimeNumberField({
+                          label: "Reader Max Reads",
+                          settingKey: "readerMaxReads",
+                          min: 1,
+                          max: 64,
+                        })}
+                        {renderDistillationRuntimeNumberField({
+                          label: "Reader Max Chars Per Read",
+                          settingKey: "readerMaxCharsPerRead",
+                          min: 128,
+                          max: 200_000,
+                        })}
+                        {renderDistillationRuntimeNumberField({
+                          label: "Low Importance Reject Threshold",
+                          settingKey: "lowImportanceRejectThreshold",
+                          min: 0,
+                          max: 100,
+                          step: 0.1,
+                          parse: parseFloatInput,
+                        })}
+                      </div>
+                    </div>
                   </section>
 
                   <section className="settings-route-section">
@@ -1846,198 +2270,6 @@ export function SettingsPage() {
                             timeoutMs: parseIntegerInput(
                               event.target.value,
                               current.embedding.timeoutMs,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                </CardContent>
-              </Card>
-            ) : null}
-
-            {activeTab === "distillationRuntime" ? (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Distillation Runtime</CardTitle>
-                </CardHeader>
-                <CardContent className="settings-form-grid">
-                  <label className="settings-field">
-                    <span>Timeout (ms)</span>
-                    <Input
-                      type="number"
-                      min={1000}
-                      value={draft.distillationRuntime.timeoutMs}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          distillationRuntime: {
-                            ...current.distillationRuntime,
-                            timeoutMs: parseIntegerInput(
-                              event.target.value,
-                              current.distillationRuntime.timeoutMs,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Candidate Timeout (ms)</span>
-                    <Input
-                      type="number"
-                      min={1000}
-                      value={draft.distillationRuntime.candidateTimeoutMs}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          distillationRuntime: {
-                            ...current.distillationRuntime,
-                            candidateTimeoutMs: parseIntegerInput(
-                              event.target.value,
-                              current.distillationRuntime.candidateTimeoutMs,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Max Tool Rounds</span>
-                    <Input
-                      type="number"
-                      min={0}
-                      value={draft.distillationRuntime.maxToolRounds}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          distillationRuntime: {
-                            ...current.distillationRuntime,
-                            maxToolRounds: parseIntegerInput(
-                              event.target.value,
-                              current.distillationRuntime.maxToolRounds,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Tool Timeout (ms)</span>
-                    <Input
-                      type="number"
-                      min={1000}
-                      value={draft.distillationRuntime.toolTimeoutMs}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          distillationRuntime: {
-                            ...current.distillationRuntime,
-                            toolTimeoutMs: parseIntegerInput(
-                              event.target.value,
-                              current.distillationRuntime.toolTimeoutMs,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Tool Result Max Chars</span>
-                    <Input
-                      type="number"
-                      min={512}
-                      value={draft.distillationRuntime.toolResultMaxChars}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          distillationRuntime: {
-                            ...current.distillationRuntime,
-                            toolResultMaxChars: parseIntegerInput(
-                              event.target.value,
-                              current.distillationRuntime.toolResultMaxChars,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Failure Retry Delay (sec)</span>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={draft.distillationRuntime.failureRetryDelaySeconds}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          distillationRuntime: {
-                            ...current.distillationRuntime,
-                            failureRetryDelaySeconds: parseIntegerInput(
-                              event.target.value,
-                              current.distillationRuntime.failureRetryDelaySeconds,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Reader Max Reads</span>
-                    <Input
-                      type="number"
-                      min={1}
-                      value={draft.distillationRuntime.readerMaxReads}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          distillationRuntime: {
-                            ...current.distillationRuntime,
-                            readerMaxReads: parseIntegerInput(
-                              event.target.value,
-                              current.distillationRuntime.readerMaxReads,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Reader Max Chars Per Read</span>
-                    <Input
-                      type="number"
-                      min={128}
-                      value={draft.distillationRuntime.readerMaxCharsPerRead}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          distillationRuntime: {
-                            ...current.distillationRuntime,
-                            readerMaxCharsPerRead: parseIntegerInput(
-                              event.target.value,
-                              current.distillationRuntime.readerMaxCharsPerRead,
-                            ),
-                          },
-                        }))
-                      }
-                    />
-                  </label>
-                  <label className="settings-field">
-                    <span>Low Importance Reject Threshold</span>
-                    <Input
-                      type="number"
-                      min={0}
-                      max={100}
-                      step={0.1}
-                      value={draft.distillationRuntime.lowImportanceRejectThreshold}
-                      onChange={(event) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          distillationRuntime: {
-                            ...current.distillationRuntime,
-                            lowImportanceRejectThreshold: parseFloatInput(
-                              event.target.value,
-                              current.distillationRuntime.lowImportanceRejectThreshold,
                             ),
                           },
                         }))

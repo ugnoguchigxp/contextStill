@@ -42,7 +42,7 @@ const mockKnowledgeItems = [
     compileSelectCount: 3,
     explicitUpvoteCount: 2,
     explicitDownvoteCount: 0,
-    appliesTo: { general: true, technologies: ["react", "typescript"] },
+    appliesTo: { general: true, technologies: ["react", "typescript"], domains: ["admin-ui"] },
     metadata: { author: "Antigravity" },
     sourceRefs: ["src/main.ts"],
     sourceVibeMemoryIds: ["mem-1"],
@@ -254,6 +254,7 @@ describe("KnowledgePage", () => {
     const generalCheckbox = screen.getByLabelText("general");
     const techInput = screen.getByPlaceholderText("typescript, python");
     const changeTypesInput = screen.getByPlaceholderText("feature, bugfix, schema");
+    const domainsInput = screen.getByPlaceholderText("admin-ui, knowledge");
 
     // フォームに値を入力して onChange ハンドラをカバー
     fireEvent.change(titleInput, { target: { value: "New Custom Title" } });
@@ -266,6 +267,7 @@ describe("KnowledgePage", () => {
     fireEvent.click(generalCheckbox);
     fireEvent.change(techInput, { target: { value: "rust, go" } });
     fireEvent.change(changeTypesInput, { target: { value: "refactor" } });
+    fireEvent.change(domainsInput, { target: { value: "knowledge, lifecycle" } });
 
     // 保存ボタン (Create Item) をクリックして Mutation を発火
     const saveBtn = screen.getByText("Create Item");
@@ -282,6 +284,10 @@ describe("KnowledgePage", () => {
 
     // 編集モーダルのタイトルとエビデンス項目が表示されることを確認
     expect(screen.getByText("Edit Knowledge")).toBeInTheDocument();
+    expect(screen.getAllByText("Lifecycle").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("Selected")).toBeInTheDocument();
+    expect(screen.getByText("Accepted")).toBeInTheDocument();
+    expect(screen.getByDisplayValue("admin-ui")).toBeInTheDocument();
     expect(screen.getByText("Evidence")).toBeInTheDocument();
     expect(screen.getByText("src/main.ts")).toBeInTheDocument();
     expect(screen.getByText("mem-1")).toBeInTheDocument();

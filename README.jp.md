@@ -721,17 +721,7 @@ memory-router/
 | [MCP Tool Contract](docs/mcp-tools.md) | MCP ツールの完全な入出力仕様 |
 | [Project Evaluation](docs/project-evaluation.md) | エビデンスに基づくプロジェクト価値と現在の成熟度 |
 | [Knowledge Landscape Concept](docs/knowledge-landscape-concept-design.md) | graph/community/knowledge-field view のコンセプト |
-| [Graph Community View Plan](docs/graph-community-view-mvp-plan.md) | Graph community UI/API の実装計画 |
-| [Knowledge Landscape Attractor Plan](docs/knowledge-landscape-attractor-implementation-plan.md) | attractor/negative/dead-zone snapshot の Phase 1 実装計画 |
-| [Knowledge Landscape Replay Basin Plan](docs/knowledge-landscape-attractor-phase2-replay-basin-plan.md) | replay comparison、basin analysis、retrieval drift の計画 |
-| [Knowledge Landscape Action Queue Plan](docs/knowledge-landscape-action-queue-implementation-plan.md) | 永続 review item と action queue の実装計画 |
-| [Knowledge Landscape Action Queue Next Phase](docs/knowledge-landscape-action-queue-next-phase-implementation-plan.md) | candidate draft、approval、promotion-gate follow-up 計画 |
-| [Knowledge Usage Signal Redesign](docs/compile-knowledge-usage-signal-redesign-plan.md) | compile run の usage signal と feedback redesign |
-| [Knowledge Feedback Staged Learning](docs/knowledge-feedback-staged-learning-plan.md) | 手動 feedback と staged learning 設計 |
-| [DB-backed Settings UI Plan](docs/db-backed-settings-ui-plan.md) | runtime settings API/UI の実装計画 |
-| [Doctor Operational Hardening](docs/doctor-distillation-operational-hardening-plan.md) | doctor/distillation health と運用診断 |
-| [Failure Experience Candidates](docs/failure-experience-knowledge-candidate-plan.md) | `register_candidate` と失敗経験蒸留の計画 |
-| [Web UI Component Refactor](docs/web-ui-component-dry-refactor-plan.md) | 管理 UI コンポーネント整理計画 |
+| [OSS Onboarding & Localization Plan](docs/oss-onboarding-and-localization-plan.md) | OSS オンボーディングと README ローカライズ展開計画 |
 
 ---
 

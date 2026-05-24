@@ -197,7 +197,7 @@ export async function callBedrockChat(
   request: DistillationChatRequest,
 ): Promise<DistillationChatResponse> {
   return withRequestTimeout(
-    groupedConfig.distillation.timeoutMs,
+    request.timeoutMs ?? groupedConfig.distillation.timeoutMs,
     async (signal) => {
       const { system, messages } = buildBedrockConversation(request.messages);
       const toolConfig =

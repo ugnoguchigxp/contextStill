@@ -20,7 +20,7 @@ export async function callAzureOpenAiChat(
   request: DistillationChatRequest,
 ): Promise<DistillationChatResponse> {
   return withRequestTimeout(
-    groupedConfig.distillation.timeoutMs,
+    request.timeoutMs ?? groupedConfig.distillation.timeoutMs,
     async (signal) => {
       const response = await fetch(buildAzureOpenAiUrl(), {
         method: "POST",

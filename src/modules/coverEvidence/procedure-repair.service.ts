@@ -29,6 +29,7 @@ export type ProcedureRepairInput = {
   fallbackOrder?: DistillationProviderName[];
   chatClient?: DistillationChatClient;
   signal?: AbortSignal;
+  timeoutMs?: number;
 };
 
 export type ProcedureRepairResult =
@@ -169,6 +170,7 @@ export async function repairProcedureCandidate(
         chatClient: input.chatClient,
         usageSource: "cover-evidence:procedure-repair",
         enableTools: false,
+        timeoutMs: input.timeoutMs,
         blankResponseReminder: [
           "Return JSON only.",
           '{"title":"...","body":"Use when:\\n...\\n\\nWorkflow:\\n1. ...\\n2. ...\\n\\nVerification:\\n...\\n\\nAvoid:\\n..."}',

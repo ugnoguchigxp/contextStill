@@ -110,6 +110,17 @@ function buildSettingsView(): RuntimeSettingsView {
       findCandidate: {
         source: { provider: "openai", model: "gpt-5-4-mini", fallback: [] },
         vibe: { provider: "openai", model: "gpt-5-4-mini", fallback: [] },
+        throttling: {
+          backgroundEnabled: true,
+          interactiveWindowSeconds: 180,
+          recentBlockSeconds: 30,
+          minIntervalSeconds: 30,
+          mediumIntervalSeconds: 90,
+          busyIntervalSeconds: 180,
+          maxIntervalSeconds: 300,
+          rateLimitCooldownSeconds: 600,
+          jitterSeconds: 10,
+        },
       },
       webSourceResearch: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },
       coverEvidence: {
@@ -149,6 +160,11 @@ function buildSettingsView(): RuntimeSettingsView {
       timeoutMs: 30000,
       candidateTimeoutMs: 15000,
       maxToolRounds: 4,
+      findCandidateTimeoutMs: 600000,
+      findCandidateMaxToolCalls: 8,
+      coverEvidenceTimeoutMs: 600000,
+      coverEvidenceSearchMaxCalls: 1,
+      coverEvidenceFetchMaxCalls: 3,
       toolTimeoutMs: 10000,
       toolResultMaxChars: 12000,
       failureRetryDelaySeconds: 90,
@@ -245,7 +261,11 @@ describe("SettingsPage", () => {
     expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
     expect(screen.getByText("Find Candidate")).toBeInTheDocument();
     expect(screen.getByText("Cover Evidence")).toBeInTheDocument();
+    expect(screen.getByText("Shared Distillation Runtime")).toBeInTheDocument();
+    expect(screen.getByLabelText("Find Candidate Tool Calls")).toBeInTheDocument();
+    expect(screen.getByLabelText("Cover Evidence Search Calls")).toBeInTheDocument();
     expect(screen.getByText("Agentic Compile")).toBeInTheDocument();
+    expect(screen.queryByRole("link", { name: "Distillation Runtime" })).not.toBeInTheDocument();
 
     const tabLink = screen.getByRole("link", { name: "LLM Providers" });
     expect(tabLink).toHaveAttribute("href", "/setting/llmprovider");
@@ -267,6 +287,15 @@ describe("SettingsPage", () => {
     );
   });
 
+  it("renders the task-routing screen for the legacy distillation-runtime settings URL", async () => {
+    routerState.pathname = "/setting/distillation-runtime";
+    renderPage();
+
+    expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Task Routing" })).toHaveClass("active");
+    expect(screen.getByLabelText("Cover Evidence Fetch Calls")).toBeInTheDocument();
+  });
+
   it("saves task-routing changes with provider-model sync and deduped fallback", async () => {
     routerState.pathname = "/setting/taskrouting";
     renderPage();
@@ -282,6 +311,12 @@ describe("SettingsPage", () => {
     fireEvent.change(rowScope.getByLabelText("Provider"), { target: { value: "azure-openai" } });
     fireEvent.change(rowScope.getByLabelText("Fallback 1"), { target: { value: "local-llm" } });
     fireEvent.change(rowScope.getByLabelText("Fallback 2"), { target: { value: "local-llm" } });
+    fireEvent.change(screen.getByLabelText("Find Candidate Tool Calls"), {
+      target: { value: "6" },
+    });
+    fireEvent.change(screen.getByLabelText("Cover Evidence Fetch Calls"), {
+      target: { value: "2" },
+    });
 
     expect(saveButton).toBeEnabled();
     fireEvent.click(saveButton);
@@ -294,6 +329,8 @@ describe("SettingsPage", () => {
       model: "gpt-5-4-mini",
       fallback: ["local-llm"],
     });
+    expect(payload.settings.distillationRuntime.findCandidateMaxToolCalls).toBe(6);
+    expect(payload.settings.distillationRuntime.coverEvidenceFetchMaxCalls).toBe(2);
   });
 
   it("calls provider health test for selected provider card", async () => {

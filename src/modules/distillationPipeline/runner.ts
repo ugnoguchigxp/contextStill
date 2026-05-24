@@ -18,9 +18,18 @@ import { type FinalizeDistilleResult, runFinalizeDistille } from "../finalizeDis
 import { listKnowledgeIdsByTargetStateId } from "../finalizeDistille/repository.js";
 import { runFindCandidate } from "../findCandidate/domain.js";
 import {
+  decideFindCandidateSchedule,
+  type FindCandidateScheduleDecision,
+} from "../findCandidate/find-candidate-scheduler.service.js";
+import {
   type FindCandidateResultRow,
   listFindCandidateResultsByTargetStateId,
 } from "../findCandidate/repository.js";
+import {
+  isRateLimitError,
+  recordProviderRateLimit,
+  recordProviderUsage,
+} from "../llm/provider-pressure.service.js";
 import type { DistillationTargetKind } from "../selectDistillationTarget/domain.js";
 import { refreshDistillationTargetInventory } from "../selectDistillationTarget/inventory.service.js";
 import {
@@ -86,6 +95,7 @@ type CandidateSelection = {
   candidateIds: string[];
   candidateCount: number;
   reused: boolean;
+  deferred?: FindCandidateScheduleDecision;
 };
 
 type CandidateProcessing = {
@@ -95,6 +105,8 @@ type CandidateProcessing = {
   remainingCandidates: number;
 };
 
+type ScheduledFindCandidateTargetKind = "wiki_file" | "vibe_memory" | "web_ingest";
+
 const retryableCoverStatuses = new Set<string>([
   "reprocess_requested",
   "tool_failed",
@@ -103,6 +115,15 @@ const retryableCoverStatuses = new Set<string>([
 ]);
 const CHECKPOINT_RETRY_DELAY_SECONDS = 1;
 const CHECKPOINT_PAUSE_REASON = "cover_evidence_checkpoint";
+
+function asScheduledFindCandidateTargetKind(
+  value: DistillationTargetStateRow["targetKind"],
+): ScheduledFindCandidateTargetKind | null {
+  if (value === "wiki_file" || value === "vibe_memory" || value === "web_ingest") {
+    return value;
+  }
+  return null;
+}
 
 function targetKindFilter(
   kind: DistillationPipelineInput["kind"],
@@ -294,14 +315,64 @@ async function loadOrRunFindCandidate(
     };
   }
 
+  if (target.targetKind === "knowledge_candidate") {
+    return {
+      candidateIds: [],
+      candidateCount: 0,
+      reused: true,
+    };
+  }
+
+  const scheduledTargetKind = asScheduledFindCandidateTargetKind(target.targetKind);
+  if (!scheduledTargetKind) {
+    return {
+      candidateIds: [],
+      candidateCount: 0,
+      reused: true,
+    };
+  }
+
+  const scheduleDecision = await decideFindCandidateSchedule({
+    targetKind: scheduledTargetKind,
+    providerOverride: input.provider,
+  });
+  if (scheduleDecision.shouldWait) {
+    return {
+      candidateIds: [],
+      candidateCount: 0,
+      reused: false,
+      deferred: scheduleDecision,
+    };
+  }
+
+  void recordProviderUsage({
+    provider: scheduleDecision.diagnostics.provider,
+    model: scheduleDecision.diagnostics.model,
+    source: "find-candidate",
+    kind: "background",
+  }).catch(() => undefined);
+
   await updatePhase(target, lease, "finding_candidate");
   await heartbeat(target, lease);
-  const findResult = await runFindCandidate({
-    targetStateId: target.id,
-    provider: input.provider,
-    callerMode: "storage",
-    signal,
-  });
+  let findResult: Awaited<ReturnType<typeof runFindCandidate>>;
+  try {
+    findResult = await runFindCandidate({
+      targetStateId: target.id,
+      provider: input.provider,
+      callerMode: "storage",
+      signal,
+    });
+  } catch (error) {
+    if (isRateLimitError(error)) {
+      void recordProviderRateLimit({
+        provider: scheduleDecision.diagnostics.provider,
+        model: scheduleDecision.diagnostics.model,
+        source: "find-candidate",
+        error,
+      }).catch(() => undefined);
+    }
+    throw error;
+  }
   return {
     candidateIds: findResult.insertedIds ?? [],
     candidateCount: findResult.candidates.length,
@@ -518,6 +589,34 @@ async function runClaimedTarget(
   try {
     await ensureWebIngestSourcePrepared({ target, lease, input });
     const selection = await loadOrRunFindCandidate(target, lease, input, undefined);
+    if (selection.deferred) {
+      const retryDelaySeconds = Math.max(1, Math.ceil(selection.deferred.waitMs / 1000));
+      await requireLease(
+        pauseDistillationTargetState({
+          id: target.id,
+          reason: `find_candidate_throttled:${selection.deferred.reason}`,
+          retryDelaySeconds,
+          metadata: {
+            retryDelaySeconds,
+            scheduleDecision: selection.deferred,
+          },
+          lease,
+        }),
+        target,
+        "pause-find-candidate-throttled",
+      );
+      return {
+        targetStateId: target.id,
+        targetKind: target.targetKind,
+        targetKey: target.targetKey,
+        status: "paused",
+        outcomeKind: "find_candidate_throttled",
+        candidateCount: 0,
+        knowledgeIds: [],
+        coverEvidence: [],
+        finalize: [],
+      };
+    }
     const candidateIds = selection.candidateIds;
     const candidateCount = selection.candidateCount;
     if (candidateIds.length === 0) {

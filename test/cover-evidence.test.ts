@@ -905,8 +905,12 @@ describe("runCoverEvidence", () => {
     );
     const options = mocks.runDistillationCompletion.mock.calls[0]?.[1] as {
       maxToolRounds: number;
+      timeoutMs: number;
+      toolCallLimits: Record<string, number>;
     };
-    expect(options.maxToolRounds).toBeGreaterThan(3);
+    expect(options.maxToolRounds).toBe(4);
+    expect(options.timeoutMs).toBe(600_000);
+    expect(options.toolCallLimits).toEqual({ search_web: 1, fetch_content: 3 });
     const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
