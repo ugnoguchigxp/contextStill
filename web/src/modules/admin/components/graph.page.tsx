@@ -9,9 +9,6 @@ import {
   type GraphCommunityDisplayMode,
   type GraphCommunitySummary,
   type GraphEdge,
-  type LandscapeCommunity,
-  type LandscapeReplayComparisonRun,
-  type LandscapeReviewItem,
   type GraphNode,
   type GraphNodeDetail,
   type GraphRelationAxis,
@@ -19,15 +16,19 @@ import {
   type GraphSuperedge,
   type GraphSupernode,
   type GraphViewMode,
+  type LandscapeCommunity,
+  type LandscapeReplayComparisonRun,
+  type LandscapeReviewItem,
+  createLandscapeReviewCandidates,
+  fetchGraphNodeDetail,
+  fetchGraphSnapshot,
+  fetchLandscapeReplayComparison,
+  fetchLandscapeReplaySnapshot,
   fetchLandscapeReviewItems,
   fetchLandscapeSnapshot,
   materializeLandscapeReviewItems,
-  fetchLandscapeReplayComparison,
-  fetchLandscapeReplaySnapshot,
-  fetchGraphNodeDetail,
-  fetchGraphSnapshot,
-  updateLandscapeReviewItemStatus,
   updateGraphCommunityLabel,
+  updateLandscapeReviewItemStatus,
 } from "../repositories/admin.repository";
 
 const nodeColors: Record<string, string> = {
@@ -752,6 +753,16 @@ export function GraphPage() {
 
   const createReviewItems = useMutation({
     mutationFn: materializeLandscapeReviewItems,
+    onSuccess: async () => {
+      await Promise.all([
+        queryClient.invalidateQueries({ queryKey: ["graph-landscape-review-items"] }),
+        queryClient.invalidateQueries({ queryKey: ["graph-landscape-replay-compare"] }),
+      ]);
+    },
+  });
+
+  const createCandidateDrafts = useMutation({
+    mutationFn: createLandscapeReviewCandidates,
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["graph-landscape-review-items"] }),
@@ -1690,6 +1701,28 @@ export function GraphPage() {
                                 size="sm"
                                 className="h-7 px-2 text-[11px]"
                                 onClick={() =>
+                                  createCandidateDrafts.mutate({
+                                    status: "pending",
+                                    limit: 20,
+                                    dryRun: false,
+                                  })
+                                }
+                                disabled={createCandidateDrafts.isPending}
+                              >
+                                {createCandidateDrafts.isPending
+                                  ? "Creating..."
+                                  : "Create Candidate Drafts"}
+                              </Button>
+                              {createCandidateDrafts.data ? (
+                                <span className="graph-review-status-note">
+                                  created {createCandidateDrafts.data.createdCount} / existing{" "}
+                                  {createCandidateDrafts.data.existingCount}
+                                </span>
+                              ) : null}
+                              <Button
+                                size="sm"
+                                className="h-7 px-2 text-[11px]"
+                                onClick={() =>
                                   createReviewItems.mutate({
                                     dryRun: false,
                                     windowDays: 30,
@@ -1774,6 +1807,15 @@ export function GraphPage() {
                                         <span>
                                           p{item.priority} / {item.confidence}
                                         </span>
+                                        {(item.payload as Record<string, unknown>)
+                                          .lastCandidateTargetStateId ? (
+                                          <Badge
+                                            variant="outline"
+                                            className="h-5 border-emerald-300 text-[11px] text-emerald-100"
+                                          >
+                                            Draft linked
+                                          </Badge>
+                                        ) : null}
                                       </div>
                                       <p>
                                         {item.knowledgeId ??

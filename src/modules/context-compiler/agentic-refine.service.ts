@@ -227,7 +227,9 @@ export async function agenticRefine(
         return {
           items: candidates,
           agenticUsed: false,
-          reasoning: parsed.reasoning ? `Fallback to all candidates: ${parsed.reasoning}` : undefined,
+          reasoning: parsed.reasoning
+            ? `Fallback to all candidates: ${parsed.reasoning}`
+            : undefined,
         };
       }
 

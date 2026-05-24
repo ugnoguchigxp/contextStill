@@ -634,7 +634,10 @@ export async function compileContextPack(
   );
 
   if (agenticResult.error) {
-    console.warn("[compileContextPack] agenticRefine failed, but falling back gracefully to original candidates. Error:", agenticResult.error);
+    console.warn(
+      "[compileContextPack] agenticRefine failed, but falling back gracefully to original candidates. Error:",
+      agenticResult.error,
+    );
   }
 
   const refinedKnowledgeMap = new Map(filteredKnowledge.map((k) => [k.id, k]));

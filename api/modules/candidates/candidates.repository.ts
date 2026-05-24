@@ -47,6 +47,16 @@ export type CandidateDiffSummary = {
   summary: string[];
 };
 
+export const landscapeLinkStatusValues = [
+  "draft_created",
+  "review_required",
+  "approved",
+  "rejected",
+  "finalized",
+] as const;
+
+export type LandscapeLinkStatus = (typeof landscapeLinkStatusValues)[number];
+
 export type CandidateListItem = {
   id: string;
   targetStateId: string;
@@ -93,6 +103,16 @@ export type CandidateListItem = {
     updatedAt: string;
   };
   outcome: CandidateOutcome;
+  landscapeWarning: null | {
+    source: "landscape_review_item";
+    linkId: string | null;
+    reviewItemId: string | null;
+    reason: string | null;
+    evidence: string[];
+    linkStatus: LandscapeLinkStatus | null;
+    requiresManualApproval: boolean;
+    warningReason: "promotion_gate_review" | "review_required";
+  };
   diff: {
     originalToCover: CandidateDiffSummary | null;
     coverToKnowledge: CandidateDiffSummary | null;
@@ -155,6 +175,12 @@ type CandidateSqlRow = {
   knowledge_importance: number | string | null;
   knowledge_confidence: number | string | null;
   knowledge_updated_at: Date | string | null;
+  candidate_origin_source: string | null;
+  landscape_link_id: string | null;
+  landscape_review_item_id: string | null;
+  landscape_review_item_reason: string | null;
+  landscape_review_item_evidence: unknown;
+  landscape_link_status: string | null;
   outcome: CandidateOutcome;
 };
 
@@ -186,6 +212,12 @@ with candidate_base as (
     c.confidence as cover_confidence,
     c.reason as cover_reason,
     c.updated_at as cover_updated_at,
+    f.origin ->> 'source' as candidate_origin_source,
+    l.id::text as landscape_link_id,
+    coalesce(l.review_item_id::text, f.origin ->> 'reviewItemId') as landscape_review_item_id,
+    coalesce(ri.reason, f.origin ->> 'reason') as landscape_review_item_reason,
+    coalesce(ri.evidence, f.origin -> 'evidence', '[]'::jsonb) as landscape_review_item_evidence,
+    l.status as landscape_link_status,
     case
       when c.id is null then 0
       else jsonb_array_length(coalesce(c.references, '[]'::jsonb))
@@ -201,6 +233,8 @@ with candidate_base as (
   from find_candidate_results f
   inner join distillation_target_states t on t.id = f.target_state_id
   left join cover_evidence_results c on c.id = f.id
+  left join landscape_review_item_candidate_links l on l.find_candidate_result_id = f.id
+  left join landscape_review_items ri on ri.id = l.review_item_id
 ),
 candidate_with_knowledge as (
   select
@@ -296,6 +330,25 @@ function normalizeText(value: string | null | undefined): string {
   return (value ?? "").trim();
 }
 
+function normalizeStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const deduped = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    const trimmed = entry.trim();
+    if (!trimmed) continue;
+    deduped.add(trimmed);
+  }
+  return [...deduped];
+}
+
+function toLandscapeLinkStatus(value: unknown): LandscapeLinkStatus | null {
+  if (typeof value !== "string") return null;
+  return landscapeLinkStatusValues.includes(value as LandscapeLinkStatus)
+    ? (value as LandscapeLinkStatus)
+    : null;
+}
+
 function bodySimilarity(a: string | null | undefined, b: string | null | undefined): number {
   const left = normalizeText(a).toLowerCase();
   const right = normalizeText(b).toLowerCase();
@@ -375,6 +428,25 @@ function buildDiff(params: {
     confidenceDelta,
     bodySimilarity: bodySimilarity(params.from.body, params.to.body),
     summary,
+  };
+}
+
+function buildLandscapeWarning(row: CandidateSqlRow): CandidateListItem["landscapeWarning"] {
+  if (row.candidate_origin_source !== "landscape_review_item") return null;
+  const linkStatus = toLandscapeLinkStatus(row.landscape_link_status);
+  const reason = normalizeText(row.landscape_review_item_reason);
+  const hasPromotionGateReason = reason === "promotion_gate_review";
+  const hasReviewRequiredStatus = linkStatus === "review_required";
+  if (!hasPromotionGateReason && !hasReviewRequiredStatus) return null;
+  return {
+    source: "landscape_review_item",
+    linkId: row.landscape_link_id,
+    reviewItemId: row.landscape_review_item_id,
+    reason: reason || null,
+    evidence: normalizeStringArray(row.landscape_review_item_evidence),
+    linkStatus,
+    requiresManualApproval: true,
+    warningReason: hasPromotionGateReason ? "promotion_gate_review" : "review_required",
   };
 }
 
@@ -502,6 +574,7 @@ function mapRowToItem(row: CandidateSqlRow): CandidateListItem {
     cover,
     knowledge,
     outcome: row.outcome,
+    landscapeWarning: buildLandscapeWarning(row),
     diff: {
       originalToCover,
       coverToKnowledge,

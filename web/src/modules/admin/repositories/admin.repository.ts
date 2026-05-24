@@ -1228,6 +1228,36 @@ export type LandscapeReviewItemsListResponse = {
   count: number;
 };
 
+export type LandscapeReviewCandidateCreateInput = {
+  ids?: string[];
+  status?: "pending" | "reviewing";
+  limit?: number;
+  dryRun?: boolean;
+};
+
+export type LandscapeReviewCandidateCreateItem = {
+  reviewItemId: string;
+  reason: LandscapeReviewItemReason;
+  proposedAction: LandscapeReviewItemProposedAction;
+  candidateType: "rule" | "procedure";
+  candidateKey: string;
+  targetKey: string;
+  targetStateId: string | null;
+  findCandidateResultId: string | null;
+  linkId: string | null;
+  linkStatus: "draft_created" | "review_required" | "approved" | "rejected" | "finalized" | null;
+  draftLinked: boolean;
+};
+
+export type LandscapeReviewCandidateCreateResult = {
+  dryRun: boolean;
+  processedCount: number;
+  createdCount: number;
+  existingCount: number;
+  missingIds: string[];
+  items: LandscapeReviewCandidateCreateItem[];
+};
+
 export type SourceTreeItem = {
   slug: string;
   title: string;
@@ -1343,6 +1373,13 @@ export type CandidateDiffSummary = {
   summary: string[];
 };
 
+export type LandscapeReviewCandidateLinkStatus =
+  | "draft_created"
+  | "review_required"
+  | "approved"
+  | "rejected"
+  | "finalized";
+
 export type CandidateListItem = {
   id: string;
   targetStateId: string;
@@ -1389,6 +1426,16 @@ export type CandidateListItem = {
     updatedAt: string;
   };
   outcome: CandidateOutcome;
+  landscapeWarning: null | {
+    source: "landscape_review_item";
+    linkId: string | null;
+    reviewItemId: string | null;
+    reason: string | null;
+    evidence: string[];
+    linkStatus: LandscapeReviewCandidateLinkStatus | null;
+    requiresManualApproval: boolean;
+    warningReason: "promotion_gate_review" | "review_required";
+  };
   diff: {
     originalToCover: CandidateDiffSummary | null;
     coverToKnowledge: CandidateDiffSummary | null;
@@ -1888,6 +1935,17 @@ export async function updateLandscapeReviewItemStatus(
   return json.item;
 }
 
+export async function createLandscapeReviewCandidates(
+  input: LandscapeReviewCandidateCreateInput,
+): Promise<LandscapeReviewCandidateCreateResult> {
+  const json = await requestJson<{ result: LandscapeReviewCandidateCreateResult }>(
+    "/api/graph/landscape/review-items/candidates",
+    "POST",
+    input,
+  );
+  return json.result;
+}
+
 export async function fetchGraphCommunityLabels(input?: {
   limit?: number;
   status?: GraphStatusFilter;
@@ -2073,4 +2131,83 @@ export async function testRuntimeProvider(
 
 export async function reloadRuntimeSettingsCache(): Promise<RuntimeSettingsReloadResponse> {
   return requestJson<RuntimeSettingsReloadResponse>("/api/settings/reload-runtime-cache", "POST");
+}
+
+export type DistillationTargetState = {
+  id: string;
+  targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate";
+  targetKey: string;
+  sourceUri: string;
+  distillationVersion: string;
+  status: "pending" | "running" | "completed" | "skipped" | "failed" | "paused";
+  phase:
+    | "selected"
+    | "reading"
+    | "finding_candidate"
+    | "covering_evidence"
+    | "finalizing"
+    | "stored";
+  priorityGroup: string;
+  sortKey: string;
+  attemptCount: number;
+  lockedBy: string | null;
+  lockedAt: string | null;
+  heartbeatAt: string | null;
+  nextRetryAt: string | null;
+  lastError: string | null;
+  lastOutcomeKind: string | null;
+  candidateCount: number;
+  knowledgeIds: string[];
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+};
+
+export type QueueDashboardStats = {
+  stats: Record<string, number>;
+  kinds: Record<string, number>;
+};
+
+export type QueueListResponse = {
+  items: DistillationTargetState[];
+  total: number;
+  page: number;
+  limit: number;
+};
+export type QueueTargetKindFilter = DistillationTargetState["targetKind"] | "all";
+export type QueueTargetStatusFilter = DistillationTargetState["status"] | "all";
+
+export async function fetchQueueDashboardStats(): Promise<QueueDashboardStats> {
+  return getJson<QueueDashboardStats>("/api/queue/stats");
+}
+
+export async function fetchActiveQueueTasks(): Promise<DistillationTargetState[]> {
+  return getJson<DistillationTargetState[]>("/api/queue/active");
+}
+
+export async function fetchQueueItems(input: {
+  page: number;
+  limit: number;
+  query?: string;
+  targetKind?: QueueTargetKindFilter;
+  status?: QueueTargetStatusFilter;
+}): Promise<QueueListResponse> {
+  const query = new URLSearchParams();
+  query.set("page", String(input.page));
+  query.set("limit", String(input.limit));
+  if (input.query?.trim()) query.set("query", input.query.trim());
+  if (input.targetKind) query.set("targetKind", input.targetKind);
+  if (input.status) query.set("status", input.status);
+  return getJson<QueueListResponse>(`/api/queue?${query.toString()}`);
+}
+
+export async function pauseQueueTarget(id: string, reason?: string): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>(`/api/queue/${encodeURIComponent(id)}/pause`, "POST", {
+    reason,
+  });
+}
+
+export async function resumeQueueTarget(id: string): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>(`/api/queue/${encodeURIComponent(id)}/resume`, "POST");
 }

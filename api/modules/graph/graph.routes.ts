@@ -1,25 +1,30 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
+import { buildLandscapeReplayComparison } from "../../../src/modules/landscape/landscape-replay-comparison.service.js";
+import { buildLandscapeReplaySnapshot } from "../../../src/modules/landscape/landscape-replay.service.js";
+import { createLandscapeReviewCandidates } from "../../../src/modules/landscape/landscape-review-candidate.service.js";
 import {
   LandscapeReviewItemsError,
   listLandscapeReviewItems,
   materializeLandscapeReviewItems,
   updateLandscapeReviewItemStatus,
 } from "../../../src/modules/landscape/landscape-review-items.service.js";
-import { buildLandscapeReplayComparison } from "../../../src/modules/landscape/landscape-replay-comparison.service.js";
-import { buildLandscapeReplaySnapshot } from "../../../src/modules/landscape/landscape-replay.service.js";
 import { buildLandscapeSnapshot } from "../../../src/modules/landscape/landscape.service.js";
+import {
+  landscapeReplayComparisonResponseSchema,
+  landscapeReplaySnapshotSchema,
+} from "../../../src/shared/schemas/landscape-replay.schema.js";
+import {
+  landscapeReviewCandidateCreateInputSchema,
+  landscapeReviewCandidateCreateResultSchema,
+} from "../../../src/shared/schemas/landscape-review-candidate.schema.js";
 import {
   landscapeReviewItemStatusUpdateSchema,
   landscapeReviewItemsListQuerySchema,
   landscapeReviewItemsMaterializeInputSchema,
   landscapeReviewItemsMaterializeResultSchema,
 } from "../../../src/shared/schemas/landscape-review.schema.js";
-import {
-  landscapeReplayComparisonResponseSchema,
-  landscapeReplaySnapshotSchema,
-} from "../../../src/shared/schemas/landscape-replay.schema.js";
 import { landscapeSnapshotSchema } from "../../../src/shared/schemas/landscape.schema.js";
 import {
   type GraphRelationAxis,
@@ -201,6 +206,17 @@ export const graphRouter = new Hono()
         }
         throw error;
       }
+    },
+  )
+  .post(
+    "/landscape/review-items/candidates",
+    zValidator("json", landscapeReviewCandidateCreateInputSchema),
+    async (c) => {
+      const input = c.req.valid("json");
+      const result = await createLandscapeReviewCandidates(input);
+      return c.json({
+        result: landscapeReviewCandidateCreateResultSchema.parse(result),
+      });
     },
   )
   .get(

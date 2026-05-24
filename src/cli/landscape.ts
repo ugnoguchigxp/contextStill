@@ -1,10 +1,11 @@
 import { closeDbPool } from "../db/index.js";
+import { buildLandscapeReplayComparison } from "../modules/landscape/landscape-replay-comparison.service.js";
+import { buildLandscapeReplaySnapshot } from "../modules/landscape/landscape-replay.service.js";
+import { createLandscapeReviewCandidates } from "../modules/landscape/landscape-review-candidate.service.js";
 import {
   listLandscapeReviewItems,
   materializeLandscapeReviewItems,
 } from "../modules/landscape/landscape-review-items.service.js";
-import { buildLandscapeReplayComparison } from "../modules/landscape/landscape-replay-comparison.service.js";
-import { buildLandscapeReplaySnapshot } from "../modules/landscape/landscape-replay.service.js";
 import { buildLandscapeSnapshot } from "../modules/landscape/landscape.service.js";
 
 type CliOptions = {
@@ -25,6 +26,7 @@ type CliOptions = {
   compareCommunities: boolean;
   queue: boolean;
   queueDryRun: boolean;
+  queueCreateCandidates: boolean;
   queueList: boolean;
   queueStatus: "pending" | "reviewing" | "resolved" | "dismissed" | "all";
   queueSources: Array<
@@ -162,6 +164,7 @@ function parseArgs(args: string[]): CliOptions {
     compareCommunities: false,
     queue: false,
     queueDryRun: false,
+    queueCreateCandidates: false,
     queueList: false,
     queueStatus: "all",
     queueSources: ["replay_compare"],
@@ -194,6 +197,10 @@ function parseArgs(args: string[]): CliOptions {
     }
     if (arg === "--queue-dry-run") {
       options.queueDryRun = true;
+      continue;
+    }
+    if (arg === "--queue-create-candidates") {
+      options.queueCreateCandidates = true;
       continue;
     }
     if (arg === "--queue-list") {
@@ -472,6 +479,34 @@ function printQueueListSummary(result: Awaited<ReturnType<typeof listLandscapeRe
   }
 }
 
+function queueStatusForCandidateCreation(
+  value: CliOptions["queueStatus"],
+): "pending" | "reviewing" {
+  if (value === "all") return "pending";
+  if (value === "pending" || value === "reviewing") return value;
+  throw new Error("--queue-create-candidates requires --queue-status pending|reviewing");
+}
+
+function printQueueCreateCandidatesSummary(
+  result: Awaited<ReturnType<typeof createLandscapeReviewCandidates>>,
+) {
+  console.log(result.dryRun ? "Landscape Candidate Draft dry-run" : "Landscape Candidate Draft");
+  console.log(`Processed: ${result.processedCount}`);
+  console.log(`Created: ${result.createdCount}`);
+  console.log(`Existing: ${result.existingCount}`);
+  if (result.missingIds.length > 0) {
+    console.log(`Missing ids: ${result.missingIds.join(", ")}`);
+  }
+  const preview = result.items.slice(0, 10);
+  if (preview.length === 0) return;
+  console.log("");
+  for (const item of preview) {
+    console.log(
+      `- ${item.reviewItemId} ${item.reason} type=${item.candidateType} linked=${String(item.draftLinked)} key=${item.candidateKey}`,
+    );
+  }
+}
+
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
   if (options.queueList) {
@@ -488,6 +523,20 @@ async function main(): Promise<void> {
       return;
     }
     printQueueListSummary(result);
+    return;
+  }
+
+  if (options.queueCreateCandidates) {
+    const result = await createLandscapeReviewCandidates({
+      status: queueStatusForCandidateCreation(options.queueStatus),
+      limit: options.queueLimit,
+      dryRun: options.queueDryRun,
+    });
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    printQueueCreateCandidatesSummary(result);
     return;
   }
 

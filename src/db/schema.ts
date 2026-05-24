@@ -243,6 +243,13 @@ export const landscapeReviewItemProposedActionValues = [
   "demote_to_draft_candidate",
 ] as const;
 export const landscapeReviewItemConfidenceValues = ["low", "medium", "high"] as const;
+export const landscapeReviewItemCandidateLinkStatusValues = [
+  "draft_created",
+  "review_required",
+  "approved",
+  "rejected",
+  "finalized",
+] as const;
 export const knowledgeQualityAdjustmentKindValues = ["off_topic_quality_decrement"] as const;
 
 export const auditLogActorValues = ["agent", "user", "system"] as const;
@@ -868,6 +875,50 @@ export const landscapeReviewItems = pgTable(
     payloadObjectCheck: check(
       "landscape_review_items_payload_object_check",
       sql`jsonb_typeof(${table.payload}) = 'object'`,
+    ),
+  }),
+);
+
+export const landscapeReviewItemCandidateLinks = pgTable(
+  "landscape_review_item_candidate_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    reviewItemId: uuid("review_item_id")
+      .references(() => landscapeReviewItems.id, { onDelete: "cascade" })
+      .notNull(),
+    targetStateId: uuid("target_state_id")
+      .references(() => distillationTargetStates.id, { onDelete: "cascade" })
+      .notNull(),
+    findCandidateResultId: uuid("find_candidate_result_id")
+      .references(() => findCandidateResults.id, { onDelete: "cascade" })
+      .notNull(),
+    candidateKey: text("candidate_key").notNull(),
+    status: text("status").notNull().default("draft_created"),
+    approvalNote: text("approval_note"),
+    approvedBy: text("approved_by"),
+    approvedAt: timestamp("approved_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    reviewCandidateUnique: uniqueIndex(
+      "landscape_review_item_candidate_links_review_candidate_unique",
+    ).on(table.reviewItemId, table.candidateKey),
+    targetCandidateUnique: uniqueIndex(
+      "landscape_review_item_candidate_links_target_candidate_unique",
+    ).on(table.targetStateId, table.findCandidateResultId),
+    reviewStatusCreatedAtIdx: index(
+      "landscape_review_item_candidate_links_review_status_created_at_idx",
+    ).on(table.reviewItemId, table.status, table.createdAt),
+    targetStateIdx: index("landscape_review_item_candidate_links_target_state_idx").on(
+      table.targetStateId,
+    ),
+    findCandidateIdx: index("landscape_review_item_candidate_links_find_candidate_idx").on(
+      table.findCandidateResultId,
+    ),
+    statusCheck: check(
+      "landscape_review_item_candidate_links_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(landscapeReviewItemCandidateLinkStatusValues))})`,
     ),
   }),
 );

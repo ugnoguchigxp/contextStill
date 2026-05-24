@@ -55,6 +55,12 @@ const candidatesRoute = createRoute({
   ),
 });
 
+const queueRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/queue",
+  component: lazyRouteComponent(() => import("./modules/admin/components/queue.page"), "QueuePage"),
+});
+
 const sourcesRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/sources",
@@ -166,6 +172,7 @@ const routeTree = rootRoute.addChildren([
   compileRoute,
   knowledgeRoute,
   candidatesRoute,
+  queueRoute,
   graphRoute,
   vibeMemoryRoute,
   sourcesRoute,

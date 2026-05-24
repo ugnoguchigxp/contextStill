@@ -17,6 +17,7 @@ const requiredTables = [
   "knowledge_usage_events",
   "knowledge_review_queue",
   "landscape_review_items",
+  "landscape_review_item_candidate_links",
   "knowledge_quality_adjustments",
 ] as const;
 
@@ -77,6 +78,7 @@ export async function truncateIntegrationTables(): Promise<void> {
       context_pack_items,
       context_compile_runs,
       knowledge_quality_adjustments,
+      landscape_review_item_candidate_links,
       landscape_review_items,
       knowledge_review_queue,
       knowledge_usage_events,

@@ -11,15 +11,16 @@ import {
   type LandscapeReplaySnapshot,
   type LandscapeReviewItemsListResponse,
   type LandscapeSnapshot,
+  createLandscapeReviewCandidates,
+  fetchGraphNodeDetail,
+  fetchGraphSnapshot,
+  fetchLandscapeReplayComparison,
+  fetchLandscapeReplaySnapshot,
   fetchLandscapeReviewItems,
   fetchLandscapeSnapshot,
   materializeLandscapeReviewItems,
-  fetchLandscapeReplayComparison,
-  fetchLandscapeReplaySnapshot,
-  fetchGraphNodeDetail,
-  fetchGraphSnapshot,
-  updateLandscapeReviewItemStatus,
   updateGraphCommunityLabel,
+  updateLandscapeReviewItemStatus,
 } from "../../../web/src/modules/admin/repositories/admin.repository";
 
 // ResizeObserver のモック
@@ -37,6 +38,7 @@ vi.mock("../../../web/src/modules/admin/repositories/admin.repository", () => ({
   fetchLandscapeReplayComparison: vi.fn(),
   fetchLandscapeReplaySnapshot: vi.fn(),
   fetchLandscapeReviewItems: vi.fn(),
+  createLandscapeReviewCandidates: vi.fn(),
   materializeLandscapeReviewItems: vi.fn(),
   fetchGraphNodeDetail: vi.fn(),
   updateLandscapeReviewItemStatus: vi.fn(),
@@ -466,7 +468,11 @@ const mockLandscapeReviewItems: LandscapeReviewItemsListResponse = {
         domains: ["graph-ui"],
       },
       evidence: ["used baseline lost"],
-      payload: {},
+      payload: {
+        lastCandidateTargetStateId: "target-1",
+        lastCandidateResultId: "candidate-1",
+        lastCandidateCreatedAt: "2026-05-24T00:00:00.000Z",
+      },
       note: null,
       createdAt: "2026-05-24T00:00:00.000Z",
       updatedAt: "2026-05-24T00:00:00.000Z",
@@ -517,6 +523,28 @@ describe("GraphPage", () => {
     vi.mocked(fetchLandscapeReplaySnapshot).mockResolvedValue(mockReplayData);
     vi.mocked(fetchLandscapeReplayComparison).mockResolvedValue(mockReplayComparisonData);
     vi.mocked(fetchLandscapeReviewItems).mockResolvedValue(mockLandscapeReviewItems);
+    vi.mocked(createLandscapeReviewCandidates).mockResolvedValue({
+      dryRun: false,
+      processedCount: 1,
+      createdCount: 1,
+      existingCount: 0,
+      missingIds: [],
+      items: [
+        {
+          reviewItemId: "review-item-1",
+          reason: "baseline_wrong",
+          proposedAction: "review_wrong",
+          candidateType: "rule",
+          candidateKey: "landscape-review-item:review-item-1:baseline_wrong:hash",
+          targetKey: "landscape-review-item:review-item-1:baseline_wrong:hash",
+          targetStateId: "target-1",
+          findCandidateResultId: "candidate-1",
+          linkId: "link-1",
+          linkStatus: "draft_created",
+          draftLinked: true,
+        },
+      ],
+    });
     vi.mocked(fetchGraphNodeDetail).mockResolvedValue(null);
     vi.mocked(materializeLandscapeReviewItems).mockResolvedValue({
       dryRun: false,
@@ -867,8 +895,24 @@ describe("GraphPage", () => {
     fireEvent.click(circles[0]);
     await screen.findByText("Replay Review");
 
-    const createButton = await screen.findByRole("button", { name: "Create Review Items" });
-    fireEvent.click(createButton);
+    const createCandidateButton = await screen.findByRole("button", {
+      name: "Create Candidate Drafts",
+    });
+    fireEvent.click(createCandidateButton);
+    await waitFor(() => {
+      expect(createLandscapeReviewCandidates).toHaveBeenCalled();
+    });
+    const [candidateInput] = vi.mocked(createLandscapeReviewCandidates).mock.calls[0] ?? [];
+    expect(candidateInput).toEqual({
+      status: "pending",
+      limit: 20,
+      dryRun: false,
+    });
+
+    const createReviewItemsButton = await screen.findByRole("button", {
+      name: "Create Review Items",
+    });
+    fireEvent.click(createReviewItemsButton);
     await waitFor(() => {
       expect(materializeLandscapeReviewItems).toHaveBeenCalled();
     });
@@ -894,6 +938,8 @@ describe("GraphPage", () => {
       ],
       materializeLimit: 50,
     });
+
+    expect(await screen.findByText("Draft linked")).toBeInTheDocument();
 
     const resolveButtons = await screen.findAllByRole("button", { name: "Resolve" });
     fireEvent.click(resolveButtons[0]);

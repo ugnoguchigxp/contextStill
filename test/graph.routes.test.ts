@@ -10,6 +10,7 @@ const {
   buildLandscapeReplayComparisonMock,
   buildLandscapeReplaySnapshotMock,
   buildLandscapeSnapshotMock,
+  createLandscapeReviewCandidatesMock,
   listLandscapeReviewItemsMock,
   materializeLandscapeReviewItemsMock,
   updateLandscapeReviewItemStatusMock,
@@ -18,6 +19,7 @@ const {
   buildLandscapeReplayComparisonMock: vi.fn(),
   buildLandscapeReplaySnapshotMock: vi.fn(),
   buildLandscapeSnapshotMock: vi.fn(),
+  createLandscapeReviewCandidatesMock: vi.fn(),
   listLandscapeReviewItemsMock: vi.fn(),
   materializeLandscapeReviewItemsMock: vi.fn(),
   updateLandscapeReviewItemStatusMock: vi.fn(),
@@ -49,6 +51,10 @@ vi.mock("../src/modules/landscape/landscape-review-items.service.js", () => ({
   materializeLandscapeReviewItems: materializeLandscapeReviewItemsMock,
   updateLandscapeReviewItemStatus: updateLandscapeReviewItemStatusMock,
   LandscapeReviewItemsError: LandscapeReviewItemsErrorMock,
+}));
+
+vi.mock("../src/modules/landscape/landscape-review-candidate.service.js", () => ({
+  createLandscapeReviewCandidates: createLandscapeReviewCandidatesMock,
 }));
 
 vi.mock("../api/modules/graph/graph.repository.js", () => ({
@@ -351,6 +357,28 @@ describe("graph routes landscape", () => {
         },
       ],
     });
+    createLandscapeReviewCandidatesMock.mockResolvedValue({
+      dryRun: true,
+      processedCount: 1,
+      createdCount: 0,
+      existingCount: 0,
+      missingIds: [],
+      items: [
+        {
+          reviewItemId: "review-item-1",
+          reason: "baseline_wrong",
+          proposedAction: "review_wrong",
+          candidateType: "rule",
+          candidateKey: "landscape-review-item:review-item-1:baseline_wrong:abc",
+          targetKey: "landscape-review-item:review-item-1:baseline_wrong:abc",
+          targetStateId: null,
+          findCandidateResultId: null,
+          linkId: null,
+          linkStatus: null,
+          draftLinked: false,
+        },
+      ],
+    });
     listLandscapeReviewItemsMock.mockResolvedValue({
       count: 1,
       items: [
@@ -561,6 +589,32 @@ describe("graph routes landscape", () => {
     await expect(response.json()).resolves.toEqual({
       error: "unsupported sources in AQ-1A",
     });
+  });
+
+  test("POST /api/graph/landscape/review-items/candidates parses body and returns result", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/graph/landscape/review-items/candidates", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        status: "pending",
+        limit: 10,
+        dryRun: true,
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(createLandscapeReviewCandidatesMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "pending",
+        limit: 10,
+        dryRun: true,
+      }),
+    );
+    const json = await response.json();
+    expect(json.result.processedCount).toBe(1);
+    expect(json.result.items).toHaveLength(1);
   });
 
   test("GET /api/graph/landscape/review-items parses filters", async () => {
