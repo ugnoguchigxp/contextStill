@@ -365,6 +365,12 @@ export function parseCoverEvidenceResult(
     references,
     duplicateRefs,
     toolEvents,
-    reason: reason ?? (status === "knowledge_ready" && !candidate ? "candidate_missing" : null),
+    reason:
+      reason ??
+      (status === "knowledge_ready" && !candidate
+        ? "candidate_missing"
+        : normalizedStatus === "insufficient"
+          ? "insufficient"
+          : null),
   };
 }

@@ -388,14 +388,7 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     action:
       "`bun run distill:pipeline -- --write --limit 1 --kind wiki` で処理経路を確認してください。",
   },
-  SOURCE_DISTILLATION_STALE: {
-    label: "Source distillation 成功実行が古い",
-    severity: "warning",
-    area: "Distillation",
-    description: "Source distillation の最新成功 run が freshness threshold を超過しています。",
-    impact: "wiki/source 更新が知識へ反映されにくくなります。",
-    action: "run 履歴とキューを確認し、再実行してください。",
-  },
+
   SOURCE_DISTILLATION_QUEUE_STALE_RUNNING: {
     label: "Source distillation に stale running job",
     severity: "critical",
@@ -457,7 +450,7 @@ const environmentScopeRules: Partial<Record<string, DoctorReasonEnvironmentScope
   VIBE_DISTILLATION_NEVER_RAN: "configured_only",
   VIBE_DISTILLATION_STALE: "configured_only",
   SOURCE_DISTILLATION_NEVER_RAN: "configured_only",
-  SOURCE_DISTILLATION_STALE: "configured_only",
+
   DEGRADED_RATE_HIGH: "non_empty_db",
   USABLE_PACK_RATE_LOW: "non_empty_db",
   KNOWLEDGE_ZERO_USE_HIGH: "non_empty_db",

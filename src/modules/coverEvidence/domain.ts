@@ -48,6 +48,30 @@ export type CoverEvidenceRunResult = {
   result: CoverEvidenceResult;
 };
 
+async function recordProcedureDemotionAudit(params: {
+  id: string;
+  result: CoverEvidenceResult;
+  saved: boolean;
+  cached?: boolean;
+}): Promise<void> {
+  const events = params.result.toolEvents.filter(
+    (event) => event.name === "procedure_demoted_to_rule" && event.ok,
+  );
+  for (const event of events) {
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.coverEvidenceProcedureDemotedToRule,
+      actor: "system",
+      payload: {
+        id: params.id,
+        stage: params.result.stage,
+        saved: params.saved,
+        cached: Boolean(params.cached),
+        metadata: event.metadata ?? {},
+      },
+    });
+  }
+}
+
 export async function runCoverEvidence(
   input: CoverEvidenceRunInput,
 ): Promise<CoverEvidenceRunResult> {
@@ -89,6 +113,12 @@ export async function runCoverEvidence(
           await saveCoverEvidenceResult({
             id: existing.id,
             result: normalizedExistingResult,
+          });
+          await recordProcedureDemotionAudit({
+            id: existing.id,
+            result: normalizedExistingResult,
+            saved: true,
+            cached: true,
           });
         }
         return {
@@ -233,6 +263,11 @@ export async function runCoverEvidence(
       await saveCoverEvidenceResult({
         id,
         result,
+      });
+      await recordProcedureDemotionAudit({
+        id,
+        result,
+        saved: true,
       });
     }
 

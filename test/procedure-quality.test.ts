@@ -1,9 +1,11 @@
 import { describe, expect, test } from "vitest";
 import {
+  assessProcedureQuality,
   hasProcedureWorkflowSignal,
   hasSkillLikeProcedureBody,
   shouldDemoteProcedureToRule,
 } from "../src/modules/distillation/procedure-quality.js";
+import { assessRuleQuality, hasRuleLikeBody } from "../src/modules/distillation/rule-quality.js";
 
 describe("procedure-quality tests", () => {
   describe("hasSkillLikeProcedureBody", () => {
@@ -212,10 +214,18 @@ Avoid skipping tests.
   });
 
   describe("shouldDemoteProcedureToRule", () => {
-    test("returns true if both hasSkillLikeProcedureBody and hasProcedureWorkflowSignal are false", () => {
+    test("returns false if both procedure and rule quality are weak", () => {
       const params = {
         title: "Hello World",
         body: "Simple text content without any workflows or commands.",
+      };
+      expect(shouldDemoteProcedureToRule(params)).toBe(false);
+    });
+
+    test("returns true if body is not a procedure but is rule-like", () => {
+      const params = {
+        title: "Use prepared statements",
+        body: "Repeated queries should use prepared statements instead of raw string queries.",
       };
       expect(shouldDemoteProcedureToRule(params)).toBe(true);
     });
@@ -247,6 +257,64 @@ Avoid skipping tests.
         body: "次に bun コマンドを実行します。",
       };
       expect(shouldDemoteProcedureToRule(params)).toBe(false);
+    });
+  });
+
+  describe("rule quality", () => {
+    test("accepts explicit actionable rules", () => {
+      expect(
+        hasRuleLikeBody({
+          title: "Test behavior, not implementation",
+          body: "Run behavior tests first and avoid private method tests.",
+          explicitRule: true,
+        }),
+      ).toBe(true);
+      expect(
+        assessRuleQuality({
+          title: "Test behavior, not implementation",
+          body: "Run behavior tests first and avoid private method tests.",
+          explicitRule: true,
+        }).action,
+      ).toBe("accept_rule");
+    });
+
+    test("rejects vague rule bodies", () => {
+      expect(
+        assessRuleQuality({
+          title: "Maybe useful",
+          body: "This seems important.",
+          explicitRule: true,
+        }),
+      ).toMatchObject({
+        action: "reject_rule",
+        reason: "rule_body_not_actionable",
+      });
+    });
+  });
+
+  describe("assessProcedureQuality", () => {
+    test("routes explicit rule type through rule quality", () => {
+      expect(
+        assessProcedureQuality({
+          title: "Keep source evidence",
+          body: "coverEvidence must preserve source references before finalizeDistille stores drafts.",
+          typeHint: "rule",
+        }),
+      ).toMatchObject({
+        action: "demote_to_rule",
+        reason: "explicit_rule_type",
+      });
+    });
+
+    test("marks procedure-like non-skill bodies as repair candidates", () => {
+      expect(
+        assessProcedureQuality({
+          title: "Repair runbook",
+          body: "First run bun test, then verify the output.",
+        }),
+      ).toMatchObject({
+        action: "repair_procedure",
+      });
     });
   });
 });

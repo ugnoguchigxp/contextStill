@@ -162,6 +162,53 @@ describe("runDistillationPipeline", () => {
     );
   });
 
+  test("reruns reprocess_requested cover evidence instead of reusing it", async () => {
+    mocks.listFindCandidateResultsByTargetStateId.mockResolvedValue([
+      {
+        id: "candidate-1",
+        targetStateId: "target-1",
+        candidateIndex: 0,
+        title: "T",
+        content: "B",
+        origin: { candidateType: "rule" },
+        status: "selected",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        targetKind: "wiki_file",
+        targetKey: "pipeline.md",
+        sourceUri: "/wiki/pages/pipeline.md",
+      },
+    ]);
+    mocks.listCoverEvidenceResultsByTargetStateId.mockResolvedValue([
+      {
+        id: "candidate-1",
+        status: "reprocess_requested",
+        stage: "final",
+        reason: "reprocess_requested:procedure_body_not_actionable",
+      },
+    ]);
+    mocks.coverEvidenceResultFromRow.mockReturnValue({
+      schemaVersion: 1,
+      status: "reprocess_requested",
+      stage: "final",
+      candidate: null,
+      references: [],
+      duplicateRefs: [],
+      toolEvents: [],
+      reason: "reprocess_requested:procedure_body_not_actionable",
+    });
+
+    const result = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
+
+    expect(mocks.runCoverEvidenceForCandidate).toHaveBeenCalledWith(
+      expect.objectContaining({ findCandidateId: "candidate-1" }),
+    );
+    expect(result.results[0]).toMatchObject({
+      status: "completed",
+      outcomeKind: "knowledge_finalized",
+    });
+  });
+
   test("times out one candidate and continues with the next candidate", async () => {
     vi.useFakeTimers();
     try {

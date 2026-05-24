@@ -7,6 +7,11 @@ import {
   runDistillationCompletion,
 } from "../distillation/distillation-runtime.service.js";
 import type { DistillationProviderName } from "../distillation/llm-resolver.js";
+import {
+  PROCEDURE_REPAIR_FAILED_REASON,
+  assessProcedureQuality,
+  validateCandidateQualityForStorage,
+} from "../distillation/procedure-quality.js";
 import type { CandidateKnowledgeType } from "../findCandidate/repository.js";
 import {
   type CoverEvidenceSourceContext,
@@ -25,6 +30,7 @@ import {
   referencesFromMcpToolEvents,
 } from "./mcp-evidence.service.js";
 import { parseCoverEvidenceResult } from "./parser.js";
+import { repairProcedureCandidate } from "./procedure-repair.service.js";
 import {
   applicabilityBlankResponseReminderLines,
   externalEvidenceSystemPrompt,
@@ -41,6 +47,123 @@ import type {
   CoverEvidenceStatus,
   CoverEvidenceToolEvent,
 } from "./types.js";
+
+async function normalizeOrRepairProcedureQuality(params: {
+  id: string;
+  result: CoverEvidenceResult;
+  candidateTypeHint?: CandidateKnowledgeType;
+  sourceEvidence?: string;
+  provider: DistillationProviderSetting;
+  model: string;
+  fallbackOrder?: DistillationProviderName[];
+  chatClient?: DistillationChatClient;
+  signal?: AbortSignal;
+}): Promise<CoverEvidenceResult> {
+  const candidate = params.result.candidate;
+  if (params.result.status !== "knowledge_ready" || candidate?.type !== "procedure") {
+    return normalizeProcedureBodyQuality(params.result, { typeHint: params.candidateTypeHint });
+  }
+  const decision = assessProcedureQuality({
+    title: candidate.title,
+    body: candidate.body,
+    typeHint: params.candidateTypeHint,
+  });
+  if (decision.action !== "repair_procedure" || !params.sourceEvidence?.trim()) {
+    return normalizeProcedureBodyQuality(params.result, { typeHint: params.candidateTypeHint });
+  }
+
+  const repair = await repairProcedureCandidate({
+    id: params.id,
+    title: candidate.title,
+    body: candidate.body,
+    sourceEvidence: params.sourceEvidence,
+    provider: params.provider,
+    model: params.model,
+    fallbackOrder: params.fallbackOrder,
+    chatClient: params.chatClient,
+    signal: params.signal,
+  });
+  if (repair.status === "failed") {
+    return makeResult({
+      status: repair.reason === "repair_tool_failed" ? "tool_failed" : "provider_failed",
+      stage: params.result.stage,
+      candidate: null,
+      references: params.result.references,
+      duplicateRefs: params.result.duplicateRefs,
+      toolEvents: [...params.result.toolEvents, ...repair.toolEvents],
+      reason: repair.reason,
+    });
+  }
+  if (repair.status === "not_repairable") {
+    const toolEvents: CoverEvidenceToolEvent[] = [
+      ...params.result.toolEvents,
+      {
+        name: "procedure_repair",
+        ok: false,
+        metadata: { reason: repair.reason },
+      },
+    ];
+    const demotedRule = {
+      ...candidate,
+      type: "rule" as const,
+    };
+    const ruleValidation = validateCandidateQualityForStorage(demotedRule, {
+      typeHint: params.candidateTypeHint,
+    });
+    if (ruleValidation.action === "accept") {
+      return makeResult({
+        status: "knowledge_ready",
+        stage: params.result.stage,
+        candidate: demotedRule,
+        references: params.result.references,
+        duplicateRefs: params.result.duplicateRefs,
+        toolEvents: [
+          ...toolEvents,
+          {
+            name: "procedure_demoted_to_rule",
+            ok: true,
+            metadata: {
+              reason: ruleValidation.reason,
+              repairReason: repair.reason,
+              typeHint: params.candidateTypeHint ?? null,
+            },
+          },
+        ],
+        reason: null,
+      });
+    }
+    return makeResult({
+      status: "insufficient",
+      stage: params.result.stage,
+      candidate: null,
+      references: params.result.references,
+      duplicateRefs: params.result.duplicateRefs,
+      toolEvents,
+      reason: PROCEDURE_REPAIR_FAILED_REASON,
+    });
+  }
+  return normalizeProcedureBodyQuality(
+    {
+      ...params.result,
+      candidate: {
+        ...candidate,
+        title: repair.candidate.title,
+        body: repair.candidate.body,
+        type: "procedure",
+      },
+      toolEvents: [
+        ...params.result.toolEvents,
+        ...repair.toolEvents,
+        {
+          name: "procedure_repair",
+          ok: true,
+          metadata: { reason: repair.reason },
+        },
+      ],
+    },
+    { typeHint: params.candidateTypeHint },
+  );
+}
 
 export async function runValueAssessment(params: {
   id: string;
@@ -94,14 +217,21 @@ export async function runValueAssessment(params: {
     const parsed = parseCoverEvidenceResult(completion.content, {
       candidateDefaults: params.candidate,
     });
-    return normalizeProcedureBodyQuality(
-      rejectLowImportance({
+    return normalizeOrRepairProcedureQuality({
+      id: params.id,
+      result: rejectLowImportance({
         ...reclassifyResultCandidate(parsed),
         references: mergeReferences(params.sourceReferences, parsed.references),
         toolEvents: toolEventsForResult(completion.toolEvents),
       }),
-      { typeHint: params.candidateTypeHint },
-    );
+      candidateTypeHint: params.candidateTypeHint,
+      sourceEvidence: params.sourceContentExcerpt,
+      provider: params.provider,
+      model: params.model,
+      fallbackOrder: params.fallbackOrder,
+      chatClient: params.chatClient,
+      signal: params.signal,
+    });
   } catch (error) {
     if (isAbortError(error)) {
       throw error;
@@ -207,14 +337,21 @@ export async function runExternalEvidence(params: {
       });
     }
 
-    return normalizeProcedureBodyQuality(
-      rejectLowImportance({
+    return normalizeOrRepairProcedureQuality({
+      id: params.id,
+      result: rejectLowImportance({
         ...reclassifyResultCandidate(parsed),
         references,
         toolEvents,
       }),
-      { typeHint: params.candidateTypeHint },
-    );
+      candidateTypeHint: params.candidateTypeHint,
+      sourceEvidence: params.sourceContext.sourceUri,
+      provider: params.provider,
+      model: params.model,
+      fallbackOrder: params.fallbackOrder,
+      chatClient: params.chatClient,
+      signal: params.signal,
+    });
   } catch (error) {
     if (isAbortError(error)) {
       throw error;

@@ -119,6 +119,18 @@ describeDb("candidates repository integration", () => {
         sortKey: "target-7",
         updatedAt: iso("2026-05-20T00:07:00.000Z"),
       },
+      {
+        id: "00000000-0000-0000-0000-000000000008",
+        targetKind: "knowledge_candidate",
+        targetKey: "target-8",
+        sourceUri: "agent://candidate/target-8",
+        distillationVersion: "v1",
+        status: "pending",
+        phase: "selected",
+        priorityGroup: "knowledge_candidate",
+        sortKey: "target-8",
+        updatedAt: iso("2026-05-20T00:08:20.000Z"),
+      },
     ]);
 
     await db.insert(findCandidateResults).values([
@@ -185,6 +197,15 @@ describeDb("candidates repository integration", () => {
         status: "selected",
         updatedAt: iso("2026-05-20T00:07:10.000Z"),
       },
+      {
+        id: "10000000-0000-0000-0000-000000000008",
+        targetStateId: "00000000-0000-0000-0000-000000000008",
+        candidateIndex: 0,
+        title: "Candidate 8",
+        content: "Body 8",
+        status: "selected",
+        updatedAt: iso("2026-05-20T00:01:00.000Z"),
+      },
     ]);
 
     await db.insert(coverEvidenceResults).values([
@@ -229,6 +250,13 @@ describeDb("candidates repository integration", () => {
         body: "Covered body 7",
         importance: 82,
         confidence: 72,
+      },
+      {
+        id: "10000000-0000-0000-0000-000000000008",
+        status: "reprocess_requested",
+        stage: "final",
+        reason: "reprocess_requested:procedure_body_not_actionable",
+        updatedAt: iso("2026-05-20T00:08:30.000Z"),
       },
     ]);
 
@@ -287,13 +315,13 @@ describeDb("candidates repository integration", () => {
       hasKnowledge: "all",
     });
 
-    expect(result.total).toBe(7);
+    expect(result.total).toBe(8);
     expect(result.stats).toEqual({
-      total: 7,
+      total: 8,
       stored: 2,
       readyNotFinalized: 1,
       rejected: 1,
-      retryable: 1,
+      retryable: 2,
       targetPending: 1,
       candidateOnly: 1,
     });
@@ -306,6 +334,10 @@ describeDb("candidates repository integration", () => {
     expect(byId.get("10000000-0000-0000-0000-000000000005")?.outcome).toBe("retryable");
     expect(byId.get("10000000-0000-0000-0000-000000000006")?.outcome).toBe("stored");
     expect(byId.get("10000000-0000-0000-0000-000000000007")?.outcome).toBe("stored");
+    expect(byId.get("10000000-0000-0000-0000-000000000008")?.outcome).toBe("retryable");
+    expect(byId.get("10000000-0000-0000-0000-000000000008")?.latestUpdatedAt).toBe(
+      "2026-05-20T00:08:30.000Z",
+    );
 
     const storedSix = byId.get("10000000-0000-0000-0000-000000000006");
     expect(storedSix?.knowledge?.id).toBe("20000000-0000-0000-0000-000000000062");

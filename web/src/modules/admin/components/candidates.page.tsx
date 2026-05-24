@@ -4,6 +4,7 @@ import { Card, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { formatDateTime as tzFormatDateTime, useTimezone } from "@/lib/timezone";
 import { useQuery } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
@@ -23,7 +24,6 @@ import {
 } from "../repositories/admin.repository";
 import { AdminPaginationFooter } from "./admin-pagination-footer";
 import { AdminSortableTableHead } from "./admin-sortable-table-head";
-import { useTimezone, formatDateTime as tzFormatDateTime } from "@/lib/timezone";
 
 const outcomeOptions: Array<"all" | CandidateOutcome> = [
   "all",
@@ -45,7 +45,12 @@ function toPercent(value: number): string {
 
 function coverageBadge(status: string): "success" | "warning" | "destructive" | "secondary" {
   if (status === "knowledge_ready") return "success";
-  if (status === "duplicate" || status === "near_duplicate" || status === "insufficient") {
+  if (
+    status === "duplicate" ||
+    status === "near_duplicate" ||
+    status === "insufficient" ||
+    status === "reprocess_requested"
+  ) {
     return "warning";
   }
   if (status === "tool_failed" || status === "provider_failed" || status === "parse_failed") {

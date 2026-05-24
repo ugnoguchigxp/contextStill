@@ -8,7 +8,14 @@ import {
   normalizeProcedureBodyQuality,
   requiresExternalEvidence,
 } from "../src/modules/coverEvidence/helpers.js";
-import { PROCEDURE_BODY_NOT_ACTIONABLE_REASON } from "../src/modules/distillation/procedure-quality.js";
+import {
+  PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
+  assessProcedureQuality,
+} from "../src/modules/distillation/procedure-quality.js";
+import {
+  RULE_BODY_NOT_ACTIONABLE_REASON,
+  assessRuleQuality,
+} from "../src/modules/distillation/rule-quality.js";
 
 describe("coverEvidence helpers", () => {
   describe("compactReason", () => {
@@ -84,7 +91,7 @@ describe("coverEvidence helpers", () => {
       expect(normalizeProcedureBodyQuality(input)).toBe(input);
     });
 
-    test("returns input directly if candidate type is not procedure", () => {
+    test("rejects weak rule candidates", () => {
       const input = makeResult({
         status: "knowledge_ready",
         stage: "final",
@@ -96,7 +103,10 @@ describe("coverEvidence helpers", () => {
           confidence: 80,
         },
       });
-      expect(normalizeProcedureBodyQuality(input)).toBe(input);
+      const output = normalizeProcedureBodyQuality(input);
+      expect(output.status).toBe("insufficient");
+      expect(output.reason).toBe(RULE_BODY_NOT_ACTIONABLE_REASON);
+      expect(output.candidate).toBeNull();
     });
 
     test("returns input directly if body contains skill-like structure", () => {
@@ -178,10 +188,53 @@ describe("coverEvidence helpers", () => {
       expect(output.reason).toBe(PROCEDURE_BODY_NOT_ACTIONABLE_REASON);
       expect(output.candidate).toBeNull();
     });
+
+    test("rejects vague non-procedure bodies instead of demoting them to weak rules", () => {
+      const input = makeResult({
+        status: "knowledge_ready",
+        stage: "final",
+        candidate: {
+          type: "procedure",
+          title: "Important note",
+          body: "良さそうなので気をつける。",
+          importance: 80,
+          confidence: 80,
+        },
+      });
+      const output = normalizeProcedureBodyQuality(input);
+      expect(output.status).toBe("insufficient");
+      expect(output.reason).toBe(PROCEDURE_BODY_NOT_ACTIONABLE_REASON);
+      expect(output.candidate).toBeNull();
+    });
+  });
+
+  describe("quality decisions", () => {
+    test("classifies workflow-shaped non-skill procedures as repair candidates", () => {
+      expect(
+        assessProcedureQuality({
+          title: "Run smoke tests before finalizing coverEvidence",
+          body: "Run smoke tests, then inspect the returned source references before finalizing coverEvidence.",
+        }),
+      ).toMatchObject({
+        action: "repair_procedure",
+        reason: "procedure_has_workflow_signal",
+      });
+    });
+
+    test("accepts explicit rules with actionable imperative bodies", () => {
+      expect(
+        assessRuleQuality({
+          title: "Test behavior, not implementation",
+          body: "1. Run the nearest behavior test first.\n2. Then run the related test range.",
+          explicitRule: true,
+        }),
+      ).toMatchObject({ action: "accept_rule" });
+    });
   });
 
   describe("isRetryableCoverEvidenceStatus", () => {
     test("returns true for retryable statuses", () => {
+      expect(isRetryableCoverEvidenceStatus("reprocess_requested")).toBe(true);
       expect(isRetryableCoverEvidenceStatus("tool_failed")).toBe(true);
       expect(isRetryableCoverEvidenceStatus("provider_failed")).toBe(true);
       expect(isRetryableCoverEvidenceStatus("parse_failed")).toBe(true);

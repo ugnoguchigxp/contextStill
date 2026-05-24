@@ -47,6 +47,9 @@ vi.mock("../src/modules/audit/audit-log.service.js", () => ({
     coverEvidenceStarted: "COVER_EVIDENCE_STARTED",
     coverEvidenceCompleted: "COVER_EVIDENCE_COMPLETED",
     coverEvidenceFailed: "COVER_EVIDENCE_FAILED",
+    coverEvidenceProcedureRepairStarted: "COVER_EVIDENCE_PROCEDURE_REPAIR_STARTED",
+    coverEvidenceProcedureRepairCompleted: "COVER_EVIDENCE_PROCEDURE_REPAIR_COMPLETED",
+    coverEvidenceProcedureDemotedToRule: "COVER_EVIDENCE_PROCEDURE_DEMOTED_TO_RULE",
   },
   recordAuditLogSafe: mocks.recordAuditLogSafe,
 }));
@@ -490,16 +493,125 @@ describe("runCoverEvidence", () => {
     const result = await runCoverEvidence({ id: "find-1", write: true });
 
     expect(result.result.status).toBe("insufficient");
-    expect(result.result.reason).toBe("procedure_body_not_actionable");
+    expect(result.result.reason).toBe("procedure_repair_failed");
     expect(mocks.saveCoverEvidenceResult).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "find-1",
         result: expect.objectContaining({
           status: "insufficient",
-          reason: "procedure_body_not_actionable",
+          reason: "procedure_repair_failed",
           candidate: null,
         }),
       }),
+    );
+  });
+
+  test("demotes repair-failed procedures when the original body is a valid rule", async () => {
+    mocks.runDistillationCompletion.mockResolvedValueOnce({
+      content: JSON.stringify({
+        schemaVersion: 1,
+        status: "knowledge_ready",
+        stage: "final",
+        candidate: {
+          type: "procedure",
+          title: "Preserve source references during finalization",
+          body: "First, coverEvidence must preserve source references, then verify the saved result before finalization.",
+          importance: 86,
+          confidence: 84,
+        },
+        references: [],
+        duplicateRefs: [],
+        toolEvents: [],
+        reason: null,
+      }),
+      toolEvents: [],
+      messages: [],
+    });
+
+    const result = await runCoverEvidence({ id: "find-1", write: true });
+
+    expect(result.result.status).toBe("knowledge_ready");
+    expect(result.result.candidate?.type).toBe("rule");
+    expect(result.result.toolEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "procedure_repair",
+          ok: false,
+        }),
+        expect.objectContaining({
+          name: "procedure_demoted_to_rule",
+          ok: true,
+        }),
+      ]),
+    );
+  });
+
+  test("repairs procedure candidates when source evidence supports the required sections", async () => {
+    mocks.readFileDomain.mockResolvedValue({
+      content: [
+        "Use this when finalizing coverEvidence changes.",
+        "1. Run bunx vitest run test/cover-evidence.test.ts.",
+        "2. Inspect the saved cover evidence references.",
+        "Verification: confirm the test passes and references are preserved.",
+        "Avoid skipping source reference inspection.",
+      ].join("\n"),
+      totalTokens: 180,
+      from: 0,
+      toExclusive: 180,
+      returnedTokens: 180,
+    });
+    mocks.runDistillationCompletion
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          schemaVersion: 1,
+          status: "knowledge_ready",
+          stage: "final",
+          candidate: {
+            type: "procedure",
+            title: "Finalize coverEvidence safely",
+            body: "Run tests, then inspect references.",
+            importance: 88,
+            confidence: 86,
+          },
+          references: [],
+          duplicateRefs: [],
+          toolEvents: [],
+          reason: null,
+        }),
+        toolEvents: [],
+        messages: [],
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          title: "Finalize coverEvidence safely",
+          body: [
+            "Use when: Use this when finalizing coverEvidence changes.",
+            "",
+            "Workflow:",
+            "1. Run bunx vitest run test/cover-evidence.test.ts.",
+            "2. Inspect the saved cover evidence references.",
+            "",
+            "Verification: Confirm the test passes and references are preserved.",
+            "",
+            "Avoid: Do not skip source reference inspection.",
+          ].join("\n"),
+        }),
+        toolEvents: [],
+        messages: [],
+      });
+
+    const result = await runCoverEvidence({ id: "find-1", write: true });
+
+    expect(result.result.status).toBe("knowledge_ready");
+    expect(result.result.candidate?.type).toBe("procedure");
+    expect(result.result.candidate?.body).toContain("Use when:");
+    expect(result.result.toolEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "procedure_repair",
+          ok: true,
+        }),
+      ]),
     );
   });
 
@@ -543,6 +655,14 @@ describe("runCoverEvidence", () => {
 
     expect(result.result.status).toBe("knowledge_ready");
     expect(result.result.candidate?.type).toBe("rule");
+    expect(result.result.toolEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "procedure_demoted_to_rule",
+          ok: true,
+        }),
+      ]),
+    );
     expect(mocks.saveCoverEvidenceResult).toHaveBeenCalledWith(
       expect.objectContaining({
         id: "find-1",
@@ -550,6 +670,12 @@ describe("runCoverEvidence", () => {
           status: "knowledge_ready",
           candidate: expect.objectContaining({ type: "rule" }),
         }),
+      }),
+    );
+    expect(mocks.recordAuditLogSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "COVER_EVIDENCE_PROCEDURE_DEMOTED_TO_RULE",
+        payload: expect.objectContaining({ id: "find-1", saved: true }),
       }),
     );
   });

@@ -170,6 +170,7 @@ export const coverEvidenceStatusValues = [
   "duplicate",
   "near_duplicate",
   "insufficient",
+  "reprocess_requested",
   "parse_failed",
   "tool_failed",
   "provider_failed",

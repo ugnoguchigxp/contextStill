@@ -1,5 +1,5 @@
-import { APP_CONSTANTS } from "../../constants.js";
 import { groupedConfig } from "../../config.js";
+import { APP_CONSTANTS } from "../../constants.js";
 import {
   type CoverEvidenceResultRow,
   coverEvidenceResultFromRow,
@@ -10,8 +10,9 @@ import { runCoverEvidenceForCandidate } from "../coverEvidence/runner.js";
 import type { DistillationProviderSetting } from "../distillation/distillation-runtime.service.js";
 import {
   PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
+  assessProcedureQuality,
   hasSkillLikeProcedureBody,
-  shouldDemoteProcedureToRule,
+  validateCandidateQualityForStorage,
 } from "../distillation/procedure-quality.js";
 import { type FinalizeDistilleResult, runFinalizeDistille } from "../finalizeDistille/domain.js";
 import { runFindCandidate } from "../findCandidate/domain.js";
@@ -88,7 +89,12 @@ type CandidateProcessing = {
   finalizeErrors: Array<{ coverEvidenceResultId: string; error: string }>;
 };
 
-const retryableCoverStatuses = new Set<string>(["tool_failed", "provider_failed", "parse_failed"]);
+const retryableCoverStatuses = new Set<string>([
+  "reprocess_requested",
+  "tool_failed",
+  "provider_failed",
+  "parse_failed",
+]);
 
 function targetKindFilter(
   kind: DistillationPipelineInput["kind"],
@@ -194,23 +200,37 @@ async function runWithCandidateTimeout<T>(
 
 function coverResultFromRow(row: CoverEvidenceResultRow): CoverResult {
   const result = coverEvidenceResultFromRow(row);
-  if (
-    result.status === "knowledge_ready" &&
-    result.candidate?.type === "procedure" &&
-    !hasSkillLikeProcedureBody(result.candidate.body) &&
-    !shouldDemoteProcedureToRule({
+  if (result.status === "knowledge_ready" && result.candidate?.type === "rule") {
+    const validation = validateCandidateQualityForStorage(result.candidate);
+    if (validation.action === "reject") {
+      return {
+        coverEvidenceResultId: row.id,
+        findCandidateId: row.id,
+        status: "insufficient",
+        stage: result.stage,
+        retryable: false,
+        reason: validation.reason,
+      };
+    }
+  }
+  if (result.status === "knowledge_ready" && result.candidate?.type === "procedure") {
+    const decision = assessProcedureQuality({
       title: result.candidate.title,
       body: result.candidate.body,
-    })
-  ) {
-    return {
-      coverEvidenceResultId: row.id,
-      findCandidateId: row.id,
-      status: "insufficient",
-      stage: result.stage,
-      retryable: false,
-      reason: PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
-    };
+    });
+    if (!hasSkillLikeProcedureBody(result.candidate.body) && decision.action !== "demote_to_rule") {
+      return {
+        coverEvidenceResultId: row.id,
+        findCandidateId: row.id,
+        status: "insufficient",
+        stage: result.stage,
+        retryable: false,
+        reason:
+          decision.action === "reject_insufficient"
+            ? decision.reason
+            : PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
+      };
+    }
   }
   return {
     coverEvidenceResultId: row.id,

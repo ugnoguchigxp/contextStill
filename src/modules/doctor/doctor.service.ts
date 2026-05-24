@@ -77,7 +77,11 @@ function appendDistillationReasons(
   const ageMinutes = distillation.runs.lastOkRunAgeMinutes ?? distillation.runs.lastRunAgeMinutes;
   if (!distillation.runs.lastRunAt) {
     reasons.push(`${prefix}_NEVER_RAN`);
-  } else if (typeof ageMinutes === "number" && ageMinutes > options.freshnessThresholdMinutes) {
+  } else if (
+    prefix !== "SOURCE_DISTILLATION" &&
+    typeof ageMinutes === "number" &&
+    ageMinutes > options.freshnessThresholdMinutes
+  ) {
     reasons.push(`${prefix}_STALE`);
   }
   if (distillation.queueHealth.staleRunning > 0) {

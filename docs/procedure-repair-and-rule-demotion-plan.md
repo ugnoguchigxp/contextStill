@@ -586,3 +586,29 @@ bun run distill:reprocess-rejected -- --reason procedure_body_not_actionable --d
 8. admin UI / metrics を必要最小限で追従する
 
 この順序なら、Phase 1 の時点で今回の explicit rule 誤 reject を止められる。その後、procedure として本当に価値がある候補を repair で拾う。
+
+## 14. 実装済み範囲
+
+2026-05-24 時点で、次の範囲を実装済み。
+
+- `ProcedureQualityDecision` / `RuleQualityDecision` による deterministic quality decision
+- explicit `rule` candidate を procedure gate で落とさず、rule quality gate に通す経路
+- weak rule を `rule_body_not_actionable` として reject する保存前 safety check
+- `coverEvidence`, `finalizeDistille`, distillation pipeline の quality gate 共通化
+- evidence-bound procedure repair service
+- repair 不成立後に rule quality を通る場合の `knowledge_ready rule` demotion
+- repair 失敗時の `procedure_repair_failed` reason と retryable provider/tool failure の分離
+- `procedure_repair` / `procedure_demoted_to_rule` tool event と demotion audit event
+- `cover_evidence_results.status = reprocess_requested` と retryable handling
+- `distill:reprocess-rejected` CLI の dry-run / apply support
+- apply 時に cover evidence row が race で変わった場合は target requeue を行わない guard
+- `0037_cover_evidence_reprocess_requested.sql` migration
+
+初回 rollout は、DB backup 後に migration を適用し、まず dry-run で対象を確認する。
+
+```bash
+bun run distill:reprocess-rejected -- --reason procedure_body_not_actionable --candidate-type rule --dry-run --limit 20 --json
+```
+
+`completed` target を戻す場合は明示的に `--allow-completed` を付ける。既に knowledge 化済みの
+cover evidence result と running target は apply 対象から除外する。

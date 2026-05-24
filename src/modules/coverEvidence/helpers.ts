@@ -1,9 +1,9 @@
 import { groupedConfig } from "../../config.js";
 import {
   PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
+  assessProcedureQuality,
   hasProcedureWorkflowSignal,
-  hasSkillLikeProcedureBody,
-  shouldDemoteProcedureToRule,
+  validateCandidateQualityForStorage,
 } from "../distillation/procedure-quality.js";
 import { buildProcedureSystemContext } from "../distillation/procedure-system-context.js";
 import type {
@@ -327,6 +327,7 @@ export function makeResult(params: {
   toolEvents?: CoverEvidenceToolEvent[];
   reason?: string | null;
 }): CoverEvidenceResult {
+  const reason = compactReason(params.reason);
   return {
     schemaVersion: 1,
     status: params.status,
@@ -335,7 +336,7 @@ export function makeResult(params: {
     references: params.references ?? [],
     duplicateRefs: params.duplicateRefs ?? [],
     toolEvents: params.toolEvents ?? [],
-    reason: compactReason(params.reason),
+    reason: reason ?? (params.status === "insufficient" ? "insufficient" : null),
   };
 }
 
@@ -343,23 +344,49 @@ export function normalizeProcedureBodyQuality(
   result: CoverEvidenceResult,
   options: { typeHint?: CandidateKnowledgeType } = {},
 ): CoverEvidenceResult {
-  if (result.status !== "knowledge_ready" || result.candidate?.type !== "procedure") {
+  if (result.status !== "knowledge_ready" || !result.candidate) {
     return result;
   }
-  if (hasSkillLikeProcedureBody(result.candidate.body)) return result;
-  if (
-    options.typeHint === "rule" ||
-    shouldDemoteProcedureToRule({
-      title: result.candidate.title,
-      body: result.candidate.body,
-    })
-  ) {
+  if (result.candidate.type === "rule") {
+    const validation = validateCandidateQualityForStorage(result.candidate, {
+      typeHint: options.typeHint,
+    });
+    if (validation.action === "accept") return result;
+    return makeResult({
+      status: "insufficient",
+      stage: result.stage,
+      candidate: null,
+      references: result.references,
+      duplicateRefs: result.duplicateRefs,
+      toolEvents: result.toolEvents,
+      reason: validation.reason,
+    });
+  }
+  const decision = assessProcedureQuality({
+    title: result.candidate.title,
+    body: result.candidate.body,
+    typeHint: options.typeHint,
+  });
+  if (decision.action === "accept_procedure") return result;
+  if (decision.action === "demote_to_rule") {
+    const demotionEvent: CoverEvidenceToolEvent = {
+      name: "procedure_demoted_to_rule",
+      ok: true,
+      metadata: {
+        reason: decision.reason,
+        typeHint: options.typeHint ?? null,
+      },
+    };
+    const hasDemotionEvent = result.toolEvents.some(
+      (event) => event.name === demotionEvent.name && event.ok,
+    );
     return {
       ...result,
       candidate: {
         ...result.candidate,
         type: "rule",
       },
+      toolEvents: hasDemotionEvent ? result.toolEvents : [...result.toolEvents, demotionEvent],
     };
   }
   return makeResult({
@@ -369,7 +396,10 @@ export function normalizeProcedureBodyQuality(
     references: result.references,
     duplicateRefs: result.duplicateRefs,
     toolEvents: result.toolEvents,
-    reason: PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
+    reason:
+      decision.action === "reject_insufficient"
+        ? decision.reason
+        : PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
   });
 }
 
@@ -393,6 +423,7 @@ export function rejectLowImportance(result: CoverEvidenceResult): CoverEvidenceR
 }
 
 const retryableCoverEvidenceStatuses = new Set<CoverEvidenceStatus>([
+  "reprocess_requested",
   "tool_failed",
   "provider_failed",
   "parse_failed",

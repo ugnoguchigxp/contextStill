@@ -247,12 +247,17 @@ candidate_with_outcome as (
       when ck.knowledge_id is not null then 'stored'
       when ck.cover_status = 'knowledge_ready' and ck.knowledge_id is null then 'ready_not_finalized'
       when ck.cover_status in ('duplicate', 'near_duplicate', 'insufficient') then 'rejected'
-      when ck.cover_status in ('tool_failed', 'provider_failed', 'parse_failed') then 'retryable'
+      when ck.cover_status in ('reprocess_requested', 'tool_failed', 'provider_failed', 'parse_failed') then 'retryable'
       when ck.cover_status is null and ck.target_status in ('pending', 'running') then 'target_pending'
       when ck.cover_status is null then 'candidate_only'
       else 'candidate_only'
     end::text as outcome,
-    ck.original_updated_at as latest_updated_at
+    greatest(
+      ck.original_updated_at,
+      coalesce(ck.cover_updated_at, ck.original_updated_at),
+      coalesce(ck.target_updated_at, ck.original_updated_at),
+      coalesce(ck.knowledge_updated_at, ck.original_updated_at)
+    ) as latest_updated_at
   from candidate_with_knowledge ck
 )
 `;

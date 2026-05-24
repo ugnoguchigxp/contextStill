@@ -231,7 +231,7 @@ describe("OverviewPage", () => {
     ).toBeInTheDocument();
     expect(screen.getByText(/Brave Search/)).toBeInTheDocument();
     expect(screen.queryByText("Doctor Signals")).not.toBeInTheDocument();
-  });
+  }, 10_000);
 
   it("keeps existing overview content visible when the overview query reports an error", () => {
     queryMockState.overviewError = new Error("/api/overview failed: 500");

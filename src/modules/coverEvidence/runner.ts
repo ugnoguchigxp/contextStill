@@ -20,6 +20,7 @@ export type CoverEvidenceRunnerResult = {
 };
 
 const retryableStatuses = new Set<CoverEvidenceStatus>([
+  "reprocess_requested",
   "tool_failed",
   "provider_failed",
   "parse_failed",

@@ -44,6 +44,7 @@ vi.mock("../src/modules/audit/audit-log.service.js", () => ({
     finalizeDistilleStarted: "FINALIZE_DISTILLE_STARTED",
     finalizeDistilleCompleted: "FINALIZE_DISTILLE_COMPLETED",
     finalizeDistilleEmbeddingFailed: "FINALIZE_DISTILLE_EMBEDDING_FAILED",
+    coverEvidenceProcedureDemotedToRule: "COVER_EVIDENCE_PROCEDURE_DEMOTED_TO_RULE",
   },
   recordAuditLogSafe: mocks.recordAuditLogSafe,
 }));
@@ -197,6 +198,23 @@ describe("runFinalizeDistille", () => {
       expect.objectContaining({
         type: "rule",
         title: "頻出クエリは Prepared Statement を使う",
+        metadata: expect.objectContaining({
+          toolEvents: expect.arrayContaining([
+            expect.objectContaining({
+              name: "procedure_demoted_to_rule",
+              ok: true,
+            }),
+          ]),
+        }),
+      }),
+    );
+    expect(mocks.recordAuditLogSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "COVER_EVIDENCE_PROCEDURE_DEMOTED_TO_RULE",
+        payload: expect.objectContaining({
+          coverEvidenceResultId: "find-1",
+          reason: "rule_like_non_procedure",
+        }),
       }),
     );
   });

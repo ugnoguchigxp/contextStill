@@ -8,8 +8,9 @@ import type { CoverEvidenceReference, CoverEvidenceResult } from "../coverEviden
 import type { DistillationDomainSmokeResult } from "../distillation-domain.types.js";
 import {
   PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
+  assessProcedureQuality,
   hasSkillLikeProcedureBody,
-  shouldDemoteProcedureToRule,
+  validateCandidateQualityForStorage,
 } from "../distillation/procedure-quality.js";
 import { embedOne } from "../embedding/embedding.service.js";
 import { getFindCandidateResultById } from "../findCandidate/repository.js";
@@ -161,14 +162,28 @@ export async function runFinalizeDistille(
   }
 
   let candidate = result.candidate;
-  if (candidate.type === "procedure" && !hasSkillLikeProcedureBody(candidate.body)) {
-    if (shouldDemoteProcedureToRule({ title: candidate.title, body: candidate.body })) {
+  let demotionReason: string | null = null;
+  if (candidate.type === "rule") {
+    const validation = validateCandidateQualityForStorage(candidate);
+    if (validation.action === "reject") {
+      return rejectedResult(coverEvidenceResultId, result, validation.reason);
+    }
+  } else if (candidate.type === "procedure" && !hasSkillLikeProcedureBody(candidate.body)) {
+    const decision = assessProcedureQuality({ title: candidate.title, body: candidate.body });
+    if (decision.action === "demote_to_rule") {
       candidate = {
         ...candidate,
         type: "rule",
       };
+      demotionReason = decision.reason;
     } else {
-      return rejectedResult(coverEvidenceResultId, result, PROCEDURE_BODY_NOT_ACTIONABLE_REASON);
+      return rejectedResult(
+        coverEvidenceResultId,
+        result,
+        decision.action === "reject_insufficient"
+          ? decision.reason
+          : PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
+      );
     }
   }
 
@@ -189,7 +204,19 @@ export async function runFinalizeDistille(
     sourceDocumentUri: candidateRow.sourceUri,
     references: result.references,
     duplicateRefs: result.duplicateRefs,
-    toolEvents: result.toolEvents,
+    toolEvents: demotionReason
+      ? [
+          ...result.toolEvents,
+          {
+            name: "procedure_demoted_to_rule",
+            ok: true,
+            metadata: {
+              reason: demotionReason,
+              source: "finalizeDistille",
+            },
+          },
+        ]
+      : result.toolEvents,
     finalizedBy: "finalizeDistille",
     finalizedAt,
   };
@@ -216,6 +243,20 @@ export async function runFinalizeDistille(
       targetKey: candidateRow.targetKey,
     },
   });
+  if (demotionReason) {
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.coverEvidenceProcedureDemotedToRule,
+      actor: "system",
+      payload: {
+        coverEvidenceResultId,
+        targetStateId: candidateRow.targetStateId,
+        targetKind: candidateRow.targetKind,
+        targetKey: candidateRow.targetKey,
+        reason: demotionReason,
+        source: "finalizeDistille",
+      },
+    });
+  }
 
   const existing = await selectKnowledgeByFinalizeSourceUri(sourceUri);
   if (existing) {
