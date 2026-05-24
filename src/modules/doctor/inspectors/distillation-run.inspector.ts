@@ -5,6 +5,7 @@ import { APP_CONSTANTS } from "../../../constants.js";
 import { getDb } from "../../../db/index.js";
 import { distillationTargetStates } from "../../../db/schema.js";
 import { isManualPauseTarget } from "../../selectDistillationTarget/manual-pause.js";
+import { priorityGroupFromRowLike } from "../../selectDistillationTarget/priority-group.js";
 import type { DoctorDistillationHealth } from "../../../shared/schemas/doctor.schema.js";
 import { isPipelineLockLikelyBlocking } from "../distillation-lock.util.js";
 import { minutesSince, normalizeReasonCounts } from "../doctor.utils.js";
@@ -52,6 +53,7 @@ type QueueHealthRow =
       | "updatedAt"
       | "nextRetryAt"
       | "lastError"
+      | "priorityGroup"
       | "metadata"
     >
   | undefined;
@@ -271,14 +273,14 @@ function emptyQueueBlockers(): DistillationQueueBlockers {
 
 function accumulateBlocker(
   blockers: DistillationQueueBlockers,
-  targetKind: "knowledge_candidate" | "wiki_file",
+  blockerGroup: "knowledge_candidate" | "wiki",
   status: string,
   row: QueueHealthRow,
   nowMs: number,
   staleAtMs: number,
 ): void {
   if (!row) return;
-  const isKnowledge = targetKind === "knowledge_candidate";
+  const isKnowledge = blockerGroup === "knowledge_candidate";
   const runningMs =
     timestampMs(row.heartbeatAt) ?? timestampMs(row.lockedAt) ?? timestampMs(row.updatedAt);
   const staleRunning = (runningMs ?? Number.NEGATIVE_INFINITY) <= staleAtMs;
@@ -317,6 +319,7 @@ async function loadDomainQueueHealth(
     .select({
       status: distillationTargetStates.status,
       targetKind: distillationTargetStates.targetKind,
+      priorityGroup: distillationTargetStates.priorityGroup,
       createdAt: distillationTargetStates.createdAt,
       lockedAt: distillationTargetStates.lockedAt,
       heartbeatAt: distillationTargetStates.heartbeatAt,
@@ -370,7 +373,7 @@ async function loadDomainQueueHealth(
 
   const higherPriorityKinds =
     targetKind === "vibe_memory"
-      ? (["knowledge_candidate", "wiki_file"] as const)
+      ? (["knowledge_candidate", "wiki"] as const)
       : targetKind === "wiki_file"
         ? (["knowledge_candidate"] as const)
         : ([] as const);
@@ -380,6 +383,7 @@ async function loadDomainQueueHealth(
       .select({
         status: distillationTargetStates.status,
         targetKind: distillationTargetStates.targetKind,
+        priorityGroup: distillationTargetStates.priorityGroup,
         createdAt: distillationTargetStates.createdAt,
         heartbeatAt: distillationTargetStates.heartbeatAt,
         lockedAt: distillationTargetStates.lockedAt,
@@ -392,17 +396,16 @@ async function loadDomainQueueHealth(
       .where(
         and(
           eq(distillationTargetStates.distillationVersion, APP_CONSTANTS.distillationTargetVersion),
-          inArray(distillationTargetStates.targetKind, [...higherPriorityKinds] as Array<
-            "knowledge_candidate" | "wiki_file"
-          >),
+          inArray(distillationTargetStates.priorityGroup, [...higherPriorityKinds]),
         ),
       );
 
     blockers = emptyQueueBlockers();
     for (const row of extraBlockers) {
       if (!row) continue;
-      if (row.targetKind !== "knowledge_candidate" && row.targetKind !== "wiki_file") continue;
-      accumulateBlocker(blockers, row.targetKind, row.status ?? "", row, nowMs, staleAtMs);
+      const blockerGroup = priorityGroupFromRowLike(row);
+      if (blockerGroup !== "knowledge_candidate" && blockerGroup !== "wiki") continue;
+      accumulateBlocker(blockers, blockerGroup, row.status ?? "", row, nowMs, staleAtMs);
     }
     blockedByHigherPriority =
       blockers.pendingKnowledgeCandidates +

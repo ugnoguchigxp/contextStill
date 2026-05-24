@@ -9,6 +9,7 @@ import {
   type GraphSnapshot,
   type LandscapeReplayComparisonResponse,
   type LandscapeReplaySnapshot,
+  type LandscapeTrajectoryResult,
   type LandscapeReviewItemsListResponse,
   type LandscapeSnapshot,
   createLandscapeReviewCandidates,
@@ -16,6 +17,8 @@ import {
   fetchGraphSnapshot,
   fetchLandscapeReplayComparison,
   fetchLandscapeReplaySnapshot,
+  fetchLandscapeSnapshotCacheStatus,
+  fetchLandscapeTrajectory,
   fetchLandscapeReviewItems,
   fetchLandscapeSnapshot,
   materializeLandscapeReviewItems,
@@ -35,7 +38,9 @@ global.ResizeObserver = ResizeObserverMock as any;
 vi.mock("../../../web/src/modules/admin/repositories/admin.repository", () => ({
   fetchGraphSnapshot: vi.fn(),
   fetchLandscapeSnapshot: vi.fn(),
+  fetchLandscapeSnapshotCacheStatus: vi.fn(),
   fetchLandscapeReplayComparison: vi.fn(),
+  fetchLandscapeTrajectory: vi.fn(),
   fetchLandscapeReplaySnapshot: vi.fn(),
   fetchLandscapeReviewItems: vi.fn(),
   createLandscapeReviewCandidates: vi.fn(),
@@ -170,6 +175,35 @@ const mockLandscapeData: LandscapeSnapshot = {
   },
   communities: [],
   risks: [],
+};
+
+const mockLandscapeSnapshotCacheStatus = {
+  generatedAt: "2026-05-24T00:00:00.000Z",
+  enabled: true,
+  ttlSeconds: 300,
+  snapshots: [
+    {
+      snapshotType: "landscape_snapshot" as const,
+      readyCount: 2,
+      staleCount: 1,
+      latestGeneratedAt: "2026-05-24T00:00:00.000Z",
+      latestExpiresAt: "2026-05-24T00:05:00.000Z",
+    },
+    {
+      snapshotType: "landscape_replay_snapshot" as const,
+      readyCount: 1,
+      staleCount: 0,
+      latestGeneratedAt: "2026-05-24T00:00:00.000Z",
+      latestExpiresAt: "2026-05-24T00:05:00.000Z",
+    },
+    {
+      snapshotType: "landscape_replay_comparison" as const,
+      readyCount: 0,
+      staleCount: 0,
+      latestGeneratedAt: null,
+      latestExpiresAt: null,
+    },
+  ],
 };
 
 const mockReplayData: LandscapeReplaySnapshot = {
@@ -445,6 +479,37 @@ const mockReplayComparisonData: LandscapeReplayComparisonResponse = {
   ],
 };
 
+const mockTrajectoryData: LandscapeTrajectoryResult = {
+  run: {
+    id: "run-1",
+    goal: "Replay risky graph UI task",
+    retrievalMode: "task_context",
+    status: "ok",
+    source: "mcp",
+    createdAt: "2026-05-24T00:00:00.000Z",
+  },
+  traceAvailable: false,
+  warnings: ["trace unavailable"],
+  stageCounts: {
+    totalCandidates: 0,
+    textHit: 0,
+    vectorHit: 0,
+    merged: 0,
+    finalRanked: 0,
+    selected: 0,
+    suppressed: 0,
+  },
+  selectedKnowledgeIds: [],
+  diagnostics: {
+    candidateTraceSavedCount: 0,
+    candidateTraceTruncated: false,
+    candidateTraceLimit: 200,
+    candidateTraceSkippedReason: "trace disabled",
+  },
+  candidates: [],
+  communitySummary: [],
+};
+
 const mockLandscapeReviewItems: LandscapeReviewItemsListResponse = {
   count: 2,
   items: [
@@ -504,6 +569,39 @@ const mockLandscapeReviewItems: LandscapeReviewItemsListResponse = {
       updatedAt: "2026-05-24T00:00:00.000Z",
       resolvedAt: null,
     },
+    {
+      id: "review-item-3",
+      source: "contradiction_detection",
+      reason: "contradiction_review",
+      status: "pending",
+      proposedAction: "review_contradiction",
+      priority: 76,
+      confidence: "medium",
+      knowledgeId: "k-left",
+      runId: null,
+      triggerEventId: null,
+      communityKey: "a".repeat(64),
+      communityLabel: "Core Reliability",
+      suggestedAppliesTo: {},
+      evidence: ["pair=k-left::k-right", "polarity=conflict"],
+      payload: {
+        leftKnowledgeId: "k-left",
+        rightKnowledgeId: "k-right",
+        snippets: {
+          left: "must include timeout",
+          right: "avoid timeout retry",
+        },
+        confidenceBreakdown: {
+          scopeOverlap: 0.2,
+          semanticOrRelationNeighbor: 0.2,
+          polarityConflict: 0.3,
+        },
+      },
+      note: null,
+      createdAt: "2026-05-24T00:00:00.000Z",
+      updatedAt: "2026-05-24T00:00:00.000Z",
+      resolvedAt: null,
+    },
   ],
 };
 
@@ -520,9 +618,13 @@ describe("GraphPage", () => {
     queryClient.clear();
     vi.clearAllMocks();
     vi.mocked(fetchLandscapeSnapshot).mockResolvedValue(mockLandscapeData);
+    vi.mocked(fetchLandscapeSnapshotCacheStatus).mockResolvedValue(
+      mockLandscapeSnapshotCacheStatus,
+    );
     vi.mocked(fetchLandscapeReplaySnapshot).mockResolvedValue(mockReplayData);
     vi.mocked(fetchLandscapeReplayComparison).mockResolvedValue(mockReplayComparisonData);
     vi.mocked(fetchLandscapeReviewItems).mockResolvedValue(mockLandscapeReviewItems);
+    vi.mocked(fetchLandscapeTrajectory).mockResolvedValue(mockTrajectoryData);
     vi.mocked(createLandscapeReviewCandidates).mockResolvedValue({
       dryRun: false,
       processedCount: 1,
@@ -801,6 +903,7 @@ describe("GraphPage", () => {
       status: "current",
       relationAxes: ["session", "project", "source"],
     });
+    expect(fetchLandscapeSnapshotCacheStatus).toHaveBeenCalled();
     expect(fetchLandscapeReplaySnapshot).toHaveBeenCalledWith({
       windowDays: 30,
       limit: 500,
@@ -809,6 +912,7 @@ describe("GraphPage", () => {
       relationAxes: ["session", "project", "source"],
       includeRuns: false,
     });
+    expect(await screen.findByText(/enabled ttl=300s/i)).toBeInTheDocument();
     expect(fetchLandscapeReplayComparison).toHaveBeenCalledWith({
       windowDays: 30,
       limit: 25,
@@ -835,6 +939,7 @@ describe("GraphPage", () => {
     expect(screen.getByText("Replay Used")).toBeInTheDocument();
     expect(screen.getByText("Replay Review")).toBeInTheDocument();
     expect(screen.getByText("Action Queue")).toBeInTheDocument();
+    expect(screen.getByText("Contradiction Review")).toBeInTheDocument();
     expect(screen.getByText("Candidate Only")).toBeInTheDocument();
     expect(screen.getByText("Risky Runs")).toBeInTheDocument();
     expect(screen.getByText("k-persisted-1")).toBeInTheDocument();
@@ -935,14 +1040,34 @@ describe("GraphPage", () => {
         "landscape_snapshot",
         "semantic_relation_comparison",
         "promotion_gate",
+        "contradiction_detection",
       ],
       materializeLimit: 50,
     });
 
     expect(await screen.findByText("Draft linked")).toBeInTheDocument();
     expect(await screen.findByText(/warning: promotion gate review required/i)).toBeInTheDocument();
+    expect(await screen.findByText("k-left vs k-right")).toBeInTheDocument();
     const candidateLinks = await screen.findAllByRole("link", { name: "View Candidate" });
     expect(candidateLinks[0]).toHaveAttribute("href", "/candidates?targetStateId=target-1");
+
+    const trajectoryButtons = await screen.findAllByRole("button", { name: "View Trajectory" });
+    fireEvent.click(trajectoryButtons[0]);
+    await waitFor(() => {
+      expect(fetchLandscapeTrajectory).toHaveBeenCalledWith({
+        runId: "run-1",
+        includeCandidates: true,
+        limit: 200,
+      });
+    });
+    expect(await screen.findByText("trace unavailable")).toBeInTheDocument();
+
+    const sandboxButtons = await screen.findAllByRole("button", { name: "Compare Sandbox" });
+    fireEvent.click(sandboxButtons[0]);
+    expect(await screen.findByText("Sandbox Comparison")).toBeInTheDocument();
+    expect(screen.getByText(/Removed \(/)).toBeInTheDocument();
+    expect(screen.getByText(/Added \(/)).toBeInTheDocument();
+    expect(screen.getByText(/Retained \(/)).toBeInTheDocument();
 
     const resolveButtons = await screen.findAllByRole("button", { name: "Resolve" });
     fireEvent.click(resolveButtons[0]);

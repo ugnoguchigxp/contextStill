@@ -4,6 +4,7 @@ const {
   buildLandscapeSnapshotMock,
   buildLandscapeReplaySnapshotMock,
   buildLandscapeReplayComparisonMock,
+  buildLandscapeContradictionCandidatesMock,
   countLandscapeReviewItemRowsMock,
   findLandscapeReviewItemRowByIdMock,
   insertLandscapeReviewItemsIdempotentMock,
@@ -14,6 +15,7 @@ const {
   buildLandscapeSnapshotMock: vi.fn(),
   buildLandscapeReplaySnapshotMock: vi.fn(),
   buildLandscapeReplayComparisonMock: vi.fn(),
+  buildLandscapeContradictionCandidatesMock: vi.fn(),
   countLandscapeReviewItemRowsMock: vi.fn(),
   findLandscapeReviewItemRowByIdMock: vi.fn(),
   insertLandscapeReviewItemsIdempotentMock: vi.fn(),
@@ -32,6 +34,10 @@ vi.mock("../src/modules/landscape/landscape.service.js", () => ({
 
 vi.mock("../src/modules/landscape/landscape-replay.service.js", () => ({
   buildLandscapeReplaySnapshot: buildLandscapeReplaySnapshotMock,
+}));
+
+vi.mock("../src/modules/landscape/landscape-contradiction.service.js", () => ({
+  buildLandscapeContradictionCandidates: buildLandscapeContradictionCandidatesMock,
 }));
 
 vi.mock("../src/modules/landscape/landscape-review-items.repository.js", () => ({
@@ -378,6 +384,7 @@ describe("landscape review items service", () => {
     buildLandscapeReplayComparisonMock.mockResolvedValue(replayComparisonFixture());
     buildLandscapeSnapshotMock.mockResolvedValue(landscapeSnapshotFixture());
     buildLandscapeReplaySnapshotMock.mockResolvedValue(landscapeReplaySnapshotFixture());
+    buildLandscapeContradictionCandidatesMock.mockResolvedValue([]);
     insertLandscapeReviewItemsIdempotentMock.mockResolvedValue({
       inserted: [],
       existing: [],
@@ -602,6 +609,70 @@ describe("landscape review items service", () => {
 
     expect(result.candidateCount).toBe(1);
     expect(buildLandscapeReplayComparisonMock).toHaveBeenCalled();
+    expect(buildLandscapeReplaySnapshotMock).not.toHaveBeenCalled();
+    expect(buildLandscapeSnapshotMock).not.toHaveBeenCalled();
+  });
+
+  test("materializes contradiction_detection without replay/snapshot calls", async () => {
+    buildLandscapeContradictionCandidatesMock.mockResolvedValueOnce([
+      {
+        pairKey: "sha1:pair-1",
+        leftKnowledgeId: "knowledge-left",
+        rightKnowledgeId: "knowledge-right",
+        confidence: 0.79,
+        confidenceLabel: "medium",
+        priority: 78,
+        relationNeighbor: true,
+        semanticNeighbor: false,
+        scopeOverlap: {
+          repoPath: true,
+          repoKey: true,
+          technologies: ["typescript"],
+          changeTypes: ["implementation"],
+          domains: ["graph-ui"],
+        },
+        sharedConceptTokens: ["timeout", "retry"],
+        leftMarkers: ["must"],
+        rightMarkers: ["avoid"],
+        leftSnippet: "left snippet",
+        rightSnippet: "right snippet",
+        communityKey: "a".repeat(64),
+        communityLabel: "Core Reliability",
+        evidence: ["pair evidence"],
+        payload: {
+          generatedBy: "landscape_contradiction_detection",
+        },
+      },
+    ]);
+
+    const result = await materializeLandscapeReviewItems({
+      dryRun: true,
+      windowDays: 30,
+      limit: 100,
+      runStatus: "all",
+      currentLimit: 12,
+      landscapeLimit: 1000,
+      landscapeStatus: "active",
+      relationAxes: ["session", "project", "source"],
+      minSelectedCount: 3,
+      minFeedbackCount: 3,
+      minSimilarity: 0.72,
+      semanticTopK: 3,
+      sources: ["contradiction_detection"],
+      materializeLimit: 50,
+    });
+
+    expect(result.candidateCount).toBe(1);
+    expect(result.candidates[0]).toEqual(
+      expect.objectContaining({
+        source: "contradiction_detection",
+        reason: "contradiction_review",
+        proposedAction: "review_contradiction",
+        knowledgeId: "knowledge-left",
+      }),
+    );
+    expect(buildLandscapeContradictionCandidatesMock).toHaveBeenCalled();
+    expect(buildLandscapeReplayComparisonMock).not.toHaveBeenCalled();
     expect(buildLandscapeReplaySnapshotMock).not.toHaveBeenCalled();
     expect(buildLandscapeSnapshotMock).not.toHaveBeenCalled();
   });

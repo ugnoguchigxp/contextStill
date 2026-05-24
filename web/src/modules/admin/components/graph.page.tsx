@@ -5,6 +5,9 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
+import { ContradictionReviewList } from "./contradiction-review-list";
+import { SandboxComparisonPanel, sandboxChangedKnowledgeIds } from "./sandbox-comparison-panel";
+import { TrajectoryPanel } from "./trajectory-panel";
 import {
   type GraphCommunityDisplayMode,
   type GraphCommunitySummary,
@@ -19,11 +22,13 @@ import {
   type LandscapeCommunity,
   type LandscapeReplayComparisonRun,
   type LandscapeReviewItem,
+  fetchLandscapeTrajectory,
   createLandscapeReviewCandidates,
   fetchGraphNodeDetail,
   fetchGraphSnapshot,
   fetchLandscapeReplayComparison,
   fetchLandscapeReplaySnapshot,
+  fetchLandscapeSnapshotCacheStatus,
   fetchLandscapeReviewItems,
   fetchLandscapeSnapshot,
   materializeLandscapeReviewItems,
@@ -369,6 +374,13 @@ function formatPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
 }
 
+function landscapeSnapshotCacheTypeLabel(value: string): string {
+  if (value === "landscape_snapshot") return "snapshot";
+  if (value === "landscape_replay_snapshot") return "replay";
+  if (value === "landscape_replay_comparison") return "compare";
+  return value;
+}
+
 function healthLabel(summary: GraphCommunitySummary): string {
   if (summary.health.dead) return "cold";
   if (summary.health.stale || summary.health.thinEvidence) return "warm";
@@ -472,6 +484,8 @@ function reviewItemReasonLabel(value: LandscapeReviewItem["reason"]): string {
       return "Relation Orphan";
     case "promotion_gate_review":
       return "Promotion Gate Review";
+    case "contradiction_review":
+      return "Contradiction Review";
     default:
       return value;
   }
@@ -493,6 +507,8 @@ function reviewItemActionLabel(value: LandscapeReviewItem["proposedAction"]): st
       return "Promotion gate review";
     case "demote_to_draft_candidate":
       return "Demote to draft candidate";
+    case "review_contradiction":
+      return "Review contradiction";
     default:
       return value;
   }
@@ -512,25 +528,33 @@ function nodeLandscapeClass(
   node: DisplayNode,
   viewMode: GraphViewMode,
   landscapeByCommunityKey: Map<string, LandscapeCommunity>,
+  trajectoryHighlightCommunityKeys: Set<string>,
+  sandboxHighlightCommunityKeys: Set<string>,
 ): string[] {
   if (viewMode !== "community" || !node.communityKey) return [];
   const landscape = landscapeByCommunityKey.get(node.communityKey);
-  if (!landscape) return [];
-
   const classes: string[] = [];
-  if (landscape.classification.primary === "strong_attractor") {
-    classes.push("landscape-strong-attractor");
-  } else if (landscape.classification.primary === "negative_attractor_candidate") {
-    classes.push("landscape-negative-attractor");
-  } else if (
-    landscape.classification.primary === "dead_zone_reachability_risk" ||
-    landscape.classification.primary === "dead_zone_stale"
-  ) {
-    classes.push("landscape-dead-zone");
-  } else if (landscape.classification.primary === "over_selected_not_used") {
-    classes.push("landscape-over-selected");
-  } else if (landscape.classification.primary === "feedback_insufficient") {
-    classes.push("landscape-feedback-insufficient");
+  if (landscape) {
+    if (landscape.classification.primary === "strong_attractor") {
+      classes.push("landscape-strong-attractor");
+    } else if (landscape.classification.primary === "negative_attractor_candidate") {
+      classes.push("landscape-negative-attractor");
+    } else if (
+      landscape.classification.primary === "dead_zone_reachability_risk" ||
+      landscape.classification.primary === "dead_zone_stale"
+    ) {
+      classes.push("landscape-dead-zone");
+    } else if (landscape.classification.primary === "over_selected_not_used") {
+      classes.push("landscape-over-selected");
+    } else if (landscape.classification.primary === "feedback_insufficient") {
+      classes.push("landscape-feedback-insufficient");
+    }
+  }
+  if (trajectoryHighlightCommunityKeys.has(node.communityKey)) {
+    classes.push("landscape-trajectory-highlight");
+  }
+  if (sandboxHighlightCommunityKeys.has(node.communityKey)) {
+    classes.push("landscape-sandbox-affected");
   }
 
   return classes;
@@ -549,6 +573,8 @@ export function GraphPage() {
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [communityLabelDraft, setCommunityLabelDraft] = useState("");
+  const [selectedTrajectoryRunId, setSelectedTrajectoryRunId] = useState<string | null>(null);
+  const [selectedSandboxRunId, setSelectedSandboxRunId] = useState<string | null>(null);
 
   const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, scale: 1 });
   const [viewport, setViewport] = useState<Viewport>({ width: 0, height: 0 });
@@ -586,6 +612,13 @@ export function GraphPage() {
       }),
     enabled: viewMode === "community",
     staleTime: 60_000,
+  });
+
+  const landscapeSnapshotCacheStatus = useQuery({
+    queryKey: ["graph-landscape-cache-status"],
+    queryFn: () => fetchLandscapeSnapshotCacheStatus(),
+    enabled: viewMode === "community",
+    staleTime: 30_000,
   });
 
   const landscapeReplay = useQuery({
@@ -629,6 +662,20 @@ export function GraphPage() {
         limit: 200,
       }),
     enabled: viewMode === "community",
+    staleTime: 30_000,
+  });
+
+  const landscapeTrajectory = useQuery({
+    queryKey: ["graph-landscape-trajectory", selectedTrajectoryRunId, 200],
+    queryFn: () =>
+      selectedTrajectoryRunId
+        ? fetchLandscapeTrajectory({
+            runId: selectedTrajectoryRunId,
+            includeCandidates: true,
+            limit: 200,
+          })
+        : Promise.resolve(null),
+    enabled: viewMode === "community" && Boolean(selectedTrajectoryRunId),
     staleTime: 30_000,
   });
 
@@ -723,8 +770,22 @@ export function GraphPage() {
     [landscapeReplayComparison.data?.appliesToRefineCandidates],
   );
   const persistedPendingReviewItems = useMemo(
-    () => (landscapeReviewItems.data?.items ?? []).slice(0, 6),
+    () => landscapeReviewItems.data?.items ?? [],
     [landscapeReviewItems.data?.items],
+  );
+  const contradictionPendingReviewItems = useMemo(
+    () =>
+      persistedPendingReviewItems
+        .filter((item) => item.reason === "contradiction_review")
+        .slice(0, 6),
+    [persistedPendingReviewItems],
+  );
+  const nonContradictionPendingReviewItems = useMemo(
+    () =>
+      persistedPendingReviewItems
+        .filter((item) => item.reason !== "contradiction_review")
+        .slice(0, 6),
+    [persistedPendingReviewItems],
   );
   const persistedPendingReviewCount = landscapeReviewItems.data?.count ?? 0;
   const riskyReplayRuns = useMemo(
@@ -741,6 +802,39 @@ export function GraphPage() {
         .slice(0, 4),
     [landscapeReplayComparison.data?.runs],
   );
+  const selectedSandboxRun = useMemo(
+    () => riskyReplayRuns.find((run) => run.runId === selectedSandboxRunId) ?? null,
+    [riskyReplayRuns, selectedSandboxRunId],
+  );
+  const changedSandboxKnowledgeIds = useMemo(
+    () => sandboxChangedKnowledgeIds(selectedSandboxRun),
+    [selectedSandboxRun],
+  );
+  const communityKeyByKnowledgeId = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const node of graph.data?.nodes ?? []) {
+      if (node.kind !== "knowledge") continue;
+      if (!node.communityKey) continue;
+      const knowledgeId = node.id.replace(/^knowledge:/, "");
+      map.set(knowledgeId, node.communityKey);
+    }
+    return map;
+  }, [graph.data?.nodes]);
+  const trajectoryHighlightCommunityKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const summary of landscapeTrajectory.data?.communitySummary ?? []) {
+      if (summary.selectedCount > 0) keys.add(summary.communityKey);
+    }
+    return keys;
+  }, [landscapeTrajectory.data?.communitySummary]);
+  const sandboxHighlightCommunityKeys = useMemo(() => {
+    const keys = new Set<string>();
+    for (const knowledgeId of changedSandboxKnowledgeIds) {
+      const communityKey = communityKeyByKnowledgeId.get(knowledgeId);
+      if (communityKey) keys.add(communityKey);
+    }
+    return keys;
+  }, [changedSandboxKnowledgeIds, communityKeyByKnowledgeId]);
   const activeId = selectedId ?? hoveredId;
   const totalEdges = displayEdgesSource.length;
   const displayedNodeCount =
@@ -794,6 +888,26 @@ export function GraphPage() {
   useEffect(() => {
     setCommunityLabelDraft(selectedCommunity?.communityLabel ?? "");
   }, [selectedCommunity?.communityLabel]);
+
+  useEffect(() => {
+    if (viewMode !== "community") {
+      setSelectedTrajectoryRunId(null);
+      setSelectedSandboxRunId(null);
+      return;
+    }
+    if (
+      selectedTrajectoryRunId &&
+      !riskyReplayRuns.some((run) => run.runId === selectedTrajectoryRunId)
+    ) {
+      setSelectedTrajectoryRunId(null);
+    }
+    if (
+      selectedSandboxRunId &&
+      !riskyReplayRuns.some((run) => run.runId === selectedSandboxRunId)
+    ) {
+      setSelectedSandboxRunId(null);
+    }
+  }, [viewMode, riskyReplayRuns, selectedTrajectoryRunId, selectedSandboxRunId]);
 
   const toggleRelationAxis = (axis: GraphRelationAxis) => {
     setSelectedId(null);
@@ -1403,6 +1517,27 @@ export function GraphPage() {
                   <span className="graph-detail-kicker">Community Summary</span>
                   <strong>{selectedCommunity?.communityLabel ?? "-"}</strong>
                 </div>
+                <div className="graph-landscape-cache-status">
+                  <span className="graph-detail-kicker">Snapshot Cache</span>
+                  {landscapeSnapshotCacheStatus.isLoading ? (
+                    <p>Loading cache status...</p>
+                  ) : landscapeSnapshotCacheStatus.data ? (
+                    <p>
+                      {landscapeSnapshotCacheStatus.data.enabled
+                        ? `enabled ttl=${landscapeSnapshotCacheStatus.data.ttlSeconds}s`
+                        : "disabled"}{" "}
+                      /{" "}
+                      {landscapeSnapshotCacheStatus.data.snapshots
+                        .map(
+                          (snapshot) =>
+                            `${landscapeSnapshotCacheTypeLabel(snapshot.snapshotType)} ready ${snapshot.readyCount} stale ${snapshot.staleCount}`,
+                        )
+                        .join(" / ")}
+                    </p>
+                  ) : (
+                    <p>Cache status unavailable.</p>
+                  )}
+                </div>
                 {selectedCommunity ? (
                   <>
                     <div className="graph-landscape-card">
@@ -1751,6 +1886,7 @@ export function GraphPage() {
                                       "landscape_snapshot",
                                       "semantic_relation_comparison",
                                       "promotion_gate",
+                                      "contradiction_detection",
                                     ],
                                     materializeLimit: 50,
                                   })
@@ -1770,9 +1906,9 @@ export function GraphPage() {
                             </div>
                             {landscapeReviewItems.isLoading ? (
                               <div className="graph-detail-empty">Loading persisted items...</div>
-                            ) : persistedPendingReviewItems.length > 0 ? (
+                            ) : nonContradictionPendingReviewItems.length > 0 ? (
                               <div className="graph-review-list">
-                                {persistedPendingReviewItems.map((item) => {
+                                {nonContradictionPendingReviewItems.map((item) => {
                                   const payload = item.payload as Record<string, unknown>;
                                   const linkedTargetStateId =
                                     typeof payload.lastCandidateTargetStateId === "string"
@@ -1913,6 +2049,28 @@ export function GraphPage() {
                           </div>
                           <div className="graph-review-section">
                             <div className="graph-review-section-header">
+                              <span>Contradiction Review</span>
+                              <strong>{contradictionPendingReviewItems.length}</strong>
+                            </div>
+                            <ContradictionReviewList
+                              items={contradictionPendingReviewItems}
+                              isUpdating={updateReviewItemStatus.isPending}
+                              onResolve={(id) =>
+                                updateReviewItemStatus.mutate({
+                                  id,
+                                  status: "resolved",
+                                })
+                              }
+                              onDismiss={(id) =>
+                                updateReviewItemStatus.mutate({
+                                  id,
+                                  status: "dismissed",
+                                })
+                              }
+                            />
+                          </div>
+                          <div className="graph-review-section">
+                            <div className="graph-review-section-header">
                               <span>Candidate Only</span>
                               <strong>{replayReviewCandidateQueue.length}</strong>
                             </div>
@@ -1988,12 +2146,37 @@ export function GraphPage() {
                                       {run.missingFromCurrentKnowledgeIds.length} / used lost{" "}
                                       {run.usedBaselineLostKnowledgeIds.length}
                                     </small>
+                                    <div className="graph-review-row-actions">
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-7 px-2 text-[11px]"
+                                        onClick={() => setSelectedTrajectoryRunId(run.runId)}
+                                      >
+                                        View Trajectory
+                                      </Button>
+                                      <Button
+                                        size="sm"
+                                        variant="outline"
+                                        className="h-7 px-2 text-[11px]"
+                                        onClick={() => setSelectedSandboxRunId(run.runId)}
+                                      >
+                                        Compare Sandbox
+                                      </Button>
+                                    </div>
                                   </div>
                                 ))}
                               </div>
                             ) : (
                               <div className="graph-detail-empty">No risky runs</div>
                             )}
+                            <TrajectoryPanel
+                              runId={selectedTrajectoryRunId}
+                              trajectory={landscapeTrajectory.data}
+                              isLoading={landscapeTrajectory.isLoading}
+                              onClose={() => setSelectedTrajectoryRunId(null)}
+                            />
+                            <SandboxComparisonPanel run={selectedSandboxRun} />
                           </div>
                         </>
                       ) : (
@@ -2183,6 +2366,8 @@ export function GraphPage() {
                 node,
                 viewMode,
                 landscapeByCommunityKey,
+                trajectoryHighlightCommunityKeys,
+                sandboxHighlightCommunityKeys,
               ).join(" ");
               const baseStroke = isSelected
                 ? "#fff"

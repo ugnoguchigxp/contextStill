@@ -243,6 +243,36 @@ describe("Distillation Repair Service", () => {
     expect(report.skipped.blockedByHigherPriority).toBe(1);
   });
 
+  it("does not treat wiki-priority candidate rows as higher-priority blockers for wiki queue", async () => {
+    const row = {
+      id: "wiki-priority-candidate",
+      targetKind: "knowledge_candidate",
+      priorityGroup: "wiki",
+      status: "pending",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const firstQueryChain = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue([row]),
+    };
+    const secondQueryChain = {
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue([]),
+    };
+    mockDb.select
+      .mockReturnValueOnce(firstQueryChain as any)
+      .mockReturnValueOnce(secondQueryChain as any);
+
+    const report = await runDistillationRepair({
+      kind: "wiki",
+    });
+
+    const action = report.actions.find((a) => a.type === "blocked_by_higher_priority");
+    expect(action).toBeUndefined();
+    expect(report.skipped.blockedByHigherPriority).toBe(0);
+  });
+
   it("handles apply mode successfully for safe actions", async () => {
     setupDbMock([]);
 

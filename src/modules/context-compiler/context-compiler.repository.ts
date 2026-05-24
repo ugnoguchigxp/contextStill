@@ -1,6 +1,7 @@
 import { desc, eq, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import {
+  contextCompileCandidateTraces,
   contextCompileRuns,
   contextPackItems,
   knowledgeItems,
@@ -181,6 +182,54 @@ export async function insertContextPackItems(
       score: item.score,
       rankingReason: item.rankingReason,
       sourceRefs: item.sourceRefs,
+    })),
+  );
+}
+
+export async function insertContextCompileCandidateTraces(
+  runId: string,
+  items: Array<{
+    itemKind: "rule" | "procedure";
+    itemId: string;
+    textRank: number | null;
+    textScore: number | null;
+    vectorRank: number | null;
+    vectorScore: number | null;
+    mergedRank: number | null;
+    mergedScore: number | null;
+    finalRank: number | null;
+    finalScore: number | null;
+    selected: boolean;
+    suppressed: boolean;
+    suppressionReason: string | null;
+    agenticDecision: "not_evaluated" | "accepted" | "rejected" | "skipped";
+    rankingReason: string | null;
+    communityKey: string | null;
+    evidence: Record<string, unknown>;
+  }>,
+): Promise<void> {
+  if (items.length === 0) return;
+
+  await db.insert(contextCompileCandidateTraces).values(
+    items.map((item) => ({
+      runId,
+      itemKind: item.itemKind,
+      itemId: item.itemId,
+      textRank: item.textRank,
+      textScore: item.textScore,
+      vectorRank: item.vectorRank,
+      vectorScore: item.vectorScore,
+      mergedRank: item.mergedRank,
+      mergedScore: item.mergedScore,
+      finalRank: item.finalRank,
+      finalScore: item.finalScore,
+      selected: item.selected,
+      suppressed: item.suppressed,
+      suppressionReason: item.suppressionReason,
+      agenticDecision: item.agenticDecision,
+      rankingReason: item.rankingReason,
+      communityKey: item.communityKey,
+      evidence: item.evidence,
     })),
   );
 }

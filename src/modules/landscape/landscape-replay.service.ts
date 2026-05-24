@@ -8,6 +8,7 @@ import {
   type LandscapeRelationCommunityAssignment,
 } from "./landscape-community-comparison.js";
 import { loadLandscapeReplayCorpus } from "./landscape-replay.repository.js";
+import { runWithLandscapeSnapshotCache } from "./landscape-snapshot-cache.service.js";
 import type {
   BuildLandscapeReplaySnapshotInput,
   LandscapeAcceptanceWindowSummary,
@@ -369,242 +370,256 @@ function groupByRunId<T extends { runId: string }>(rows: T[]): Map<string, T[]> 
 export async function buildLandscapeReplaySnapshot(
   input: BuildLandscapeReplaySnapshotInput,
 ): Promise<LandscapeReplaySnapshot> {
-  const analysisDate = new Date();
-  const analysisAsOf = analysisDate.toISOString();
-  const corpusStartAt = new Date(analysisDate.getTime() - input.windowDays * 24 * 60 * 60 * 1000);
+  return runWithLandscapeSnapshotCache({
+    snapshotType: "landscape_replay_snapshot",
+    params: {
+      ...input,
+    },
+    build: async () => {
+      const analysisDate = new Date();
+      const analysisAsOf = analysisDate.toISOString();
+      const corpusStartAt = new Date(
+        analysisDate.getTime() - input.windowDays * 24 * 60 * 60 * 1000,
+      );
 
-  const [landscape, relationGraph, corpus] = await Promise.all([
-    buildLandscapeSnapshot({
-      windowDays: input.windowDays,
-      limit: input.landscapeLimit,
-      status: input.landscapeStatus,
-      relationAxes: input.relationAxes,
-      minSelectedCount: input.minSelectedCount,
-      minFeedbackCount: input.minFeedbackCount,
-    }),
-    buildGraphSnapshot({
-      limit: input.landscapeLimit,
-      status: input.landscapeStatus,
-      view: "community",
-      relationAxes: input.relationAxes,
-      communityDisplay: "detail",
-    }),
-    loadLandscapeReplayCorpus({
-      windowDays: input.windowDays,
-      limit: input.limit,
-      runStatus: input.runStatus,
-    }),
-  ]);
+      const [landscape, relationGraph, corpus] = await Promise.all([
+        buildLandscapeSnapshot({
+          windowDays: input.windowDays,
+          limit: input.landscapeLimit,
+          status: input.landscapeStatus,
+          relationAxes: input.relationAxes,
+          minSelectedCount: input.minSelectedCount,
+          minFeedbackCount: input.minFeedbackCount,
+        }),
+        buildGraphSnapshot({
+          limit: input.landscapeLimit,
+          status: input.landscapeStatus,
+          view: "community",
+          relationAxes: input.relationAxes,
+          communityDisplay: "detail",
+        }),
+        loadLandscapeReplayCorpus({
+          windowDays: input.windowDays,
+          limit: input.limit,
+          runStatus: input.runStatus,
+        }),
+      ]);
 
-  const communityByKey = new Map(
-    landscape.communities.map((community) => [community.communityKey, community]),
-  );
-  const relationAssignmentsByKnowledgeId = new Map<string, RelationCommunityAssignment>();
-  for (const node of relationGraph.nodes) {
-    if (node.kind !== "knowledge" || !node.communityKey) continue;
-    const community = communityByKey.get(node.communityKey);
-    const knowledgeId = asKnowledgeNodeId(node.id);
-    relationAssignmentsByKnowledgeId.set(knowledgeId, {
-      knowledgeId,
-      communityKey: node.communityKey,
-      communityLabel: node.communityLabel ?? community?.communityLabel ?? node.communityKey,
-      communityRank: node.communityRank ?? community?.communityRank ?? Number.MAX_SAFE_INTEGER,
-      communitySize: node.communitySize ?? community?.size ?? 1,
-      classificationAtAnalysis: community?.classification.primary ?? "neutral",
-    });
-  }
-
-  const packItemsByRunId = groupByRunId(corpus.packItems);
-  const usageEventsByRunId = groupByRunId(corpus.usageEvents);
-  const selectedItemCountByKnowledgeId = new Map<string, number>();
-  for (const item of corpus.packItems) {
-    selectedItemCountByKnowledgeId.set(
-      item.itemId,
-      (selectedItemCountByKnowledgeId.get(item.itemId) ?? 0) + 1,
-    );
-  }
-  const selectedKnowledgeIds = [...new Set(corpus.packItems.map((item) => item.itemId))];
-  const comparison = await buildLandscapeCommunityComparison({
-    knowledgeIds: [
-      ...new Set([...selectedKnowledgeIds, ...relationAssignmentsByKnowledgeId.keys()]),
-    ],
-    relationAssignmentsByKnowledgeId,
-    selectedItemCountByKnowledgeId,
-    minSimilarity: input.minSimilarity,
-    semanticTopK: input.semanticTopK,
-  });
-  const semanticDeadZonesByNeighborKnowledgeId = new Map<string, typeof comparison.communities>();
-  for (const communityComparison of comparison.communities) {
-    if (communityComparison.comparison !== "semantic_reachable_dead_zone") continue;
-    for (const knowledgeId of communityComparison.selectedNeighborKnowledgeIds) {
-      const existing = semanticDeadZonesByNeighborKnowledgeId.get(knowledgeId) ?? [];
-      existing.push(communityComparison);
-      semanticDeadZonesByNeighborKnowledgeId.set(knowledgeId, existing);
-    }
-  }
-
-  const replayRuns: LandscapeReplayRun[] = [];
-  const missingKnowledgeIds = new Set<string>();
-  for (const run of corpus.runs) {
-    const packItems = packItemsByRunId.get(run.id) ?? [];
-    const rankByKnowledgeId = buildSelectedRankMap(packItems);
-    const runSelectedKnowledgeIds = [...rankByKnowledgeId.keys()];
-    const runSelectedCommunityKeys = new Set<string>();
-    const runVerdicts = emptyVerdictMix();
-    const usageEvents = usageEventsByRunId.get(run.id) ?? [];
-    const usageEventsByKnowledgeId = new Map<string, UsageEventForReplay[]>();
-    for (const event of usageEvents) {
-      incrementVerdict(runVerdicts, event.verdict);
-      const events = usageEventsByKnowledgeId.get(event.knowledgeId) ?? [];
-      events.push(event);
-      usageEventsByKnowledgeId.set(event.knowledgeId, events);
-    }
-
-    const selectedKnowledgeIdsByCommunityKey = new Map<string, string[]>();
-    for (const knowledgeId of runSelectedKnowledgeIds) {
-      const assignment = relationAssignmentsByKnowledgeId.get(knowledgeId);
-      if (!assignment) {
-        missingKnowledgeIds.add(knowledgeId);
-        continue;
+      const communityByKey = new Map(
+        landscape.communities.map((community) => [community.communityKey, community]),
+      );
+      const relationAssignmentsByKnowledgeId = new Map<string, RelationCommunityAssignment>();
+      for (const node of relationGraph.nodes) {
+        if (node.kind !== "knowledge" || !node.communityKey) continue;
+        const community = communityByKey.get(node.communityKey);
+        const knowledgeId = asKnowledgeNodeId(node.id);
+        relationAssignmentsByKnowledgeId.set(knowledgeId, {
+          knowledgeId,
+          communityKey: node.communityKey,
+          communityLabel: node.communityLabel ?? community?.communityLabel ?? node.communityKey,
+          communityRank: node.communityRank ?? community?.communityRank ?? Number.MAX_SAFE_INTEGER,
+          communitySize: node.communitySize ?? community?.size ?? 1,
+          classificationAtAnalysis: community?.classification.primary ?? "neutral",
+        });
       }
-      runSelectedCommunityKeys.add(assignment.communityKey);
-      const communityKnowledgeIds =
-        selectedKnowledgeIdsByCommunityKey.get(assignment.communityKey) ?? [];
-      communityKnowledgeIds.push(knowledgeId);
-      selectedKnowledgeIdsByCommunityKey.set(assignment.communityKey, communityKnowledgeIds);
-    }
 
-    const basinTrace: LandscapeBasinTrace[] = [];
-    for (const [communityKey, communityKnowledgeIds] of selectedKnowledgeIdsByCommunityKey) {
-      const firstKnowledgeId = communityKnowledgeIds[0];
-      if (!firstKnowledgeId) continue;
-      const assignment = relationAssignmentsByKnowledgeId.get(firstKnowledgeId);
-      if (!assignment) continue;
-      const verdictMix = emptyVerdictMix();
-      const selectedRanks: number[] = [];
-      for (const knowledgeId of communityKnowledgeIds) {
-        const rank = rankByKnowledgeId.get(knowledgeId);
-        if (rank) selectedRanks.push(rank);
-        for (const event of usageEventsByKnowledgeId.get(knowledgeId) ?? []) {
-          incrementVerdict(verdictMix, event.verdict);
+      const packItemsByRunId = groupByRunId(corpus.packItems);
+      const usageEventsByRunId = groupByRunId(corpus.usageEvents);
+      const selectedItemCountByKnowledgeId = new Map<string, number>();
+      for (const item of corpus.packItems) {
+        selectedItemCountByKnowledgeId.set(
+          item.itemId,
+          (selectedItemCountByKnowledgeId.get(item.itemId) ?? 0) + 1,
+        );
+      }
+      const selectedKnowledgeIds = [...new Set(corpus.packItems.map((item) => item.itemId))];
+      const comparison = await buildLandscapeCommunityComparison({
+        knowledgeIds: [
+          ...new Set([...selectedKnowledgeIds, ...relationAssignmentsByKnowledgeId.keys()]),
+        ],
+        relationAssignmentsByKnowledgeId,
+        selectedItemCountByKnowledgeId,
+        minSimilarity: input.minSimilarity,
+        semanticTopK: input.semanticTopK,
+      });
+      const semanticDeadZonesByNeighborKnowledgeId = new Map<
+        string,
+        typeof comparison.communities
+      >();
+      for (const communityComparison of comparison.communities) {
+        if (communityComparison.comparison !== "semantic_reachable_dead_zone") continue;
+        for (const knowledgeId of communityComparison.selectedNeighborKnowledgeIds) {
+          const existing = semanticDeadZonesByNeighborKnowledgeId.get(knowledgeId) ?? [];
+          existing.push(communityComparison);
+          semanticDeadZonesByNeighborKnowledgeId.set(knowledgeId, existing);
         }
       }
-      basinTrace.push(
-        buildCommunityTrace({
-          assignment,
-          community: communityByKey.get(communityKey),
-          selectedItemCount: communityKnowledgeIds.length,
-          selectedRanks,
-          verdictMix,
-        }),
-      );
-    }
 
-    const existingTraceKeys = new Set(basinTrace.map((trace) => trace.communityKey));
-    for (const knowledgeId of runSelectedKnowledgeIds) {
-      for (const deadZoneComparison of semanticDeadZonesByNeighborKnowledgeId.get(knowledgeId) ??
-        []) {
-        if (existingTraceKeys.has(deadZoneComparison.relationCommunityKey)) continue;
-        const community = communityByKey.get(deadZoneComparison.relationCommunityKey);
-        basinTrace.push({
-          communityKey: deadZoneComparison.relationCommunityKey,
-          communityLabel: deadZoneComparison.relationCommunityLabel,
-          communityRank: deadZoneComparison.relationCommunityRank,
-          selectedItemCount: 0,
-          selectedRanks: [],
-          classificationAtAnalysis:
-            community?.classification.primary ?? "dead_zone_reachability_risk",
-          classificationConfidenceAtAnalysis: asClassificationConfidence(
-            community?.classification.confidence,
-          ),
-          feedbackConfidenceAtAnalysis: asFeedbackConfidence(
-            community?.feedback.feedbackConfidence,
-          ),
-          verdictMix: emptyVerdictMix(),
-          explanation: "dead_zone_missed",
+      const replayRuns: LandscapeReplayRun[] = [];
+      const missingKnowledgeIds = new Set<string>();
+      for (const run of corpus.runs) {
+        const packItems = packItemsByRunId.get(run.id) ?? [];
+        const rankByKnowledgeId = buildSelectedRankMap(packItems);
+        const runSelectedKnowledgeIds = [...rankByKnowledgeId.keys()];
+        const runSelectedCommunityKeys = new Set<string>();
+        const runVerdicts = emptyVerdictMix();
+        const usageEvents = usageEventsByRunId.get(run.id) ?? [];
+        const usageEventsByKnowledgeId = new Map<string, UsageEventForReplay[]>();
+        for (const event of usageEvents) {
+          incrementVerdict(runVerdicts, event.verdict);
+          const events = usageEventsByKnowledgeId.get(event.knowledgeId) ?? [];
+          events.push(event);
+          usageEventsByKnowledgeId.set(event.knowledgeId, events);
+        }
+
+        const selectedKnowledgeIdsByCommunityKey = new Map<string, string[]>();
+        for (const knowledgeId of runSelectedKnowledgeIds) {
+          const assignment = relationAssignmentsByKnowledgeId.get(knowledgeId);
+          if (!assignment) {
+            missingKnowledgeIds.add(knowledgeId);
+            continue;
+          }
+          runSelectedCommunityKeys.add(assignment.communityKey);
+          const communityKnowledgeIds =
+            selectedKnowledgeIdsByCommunityKey.get(assignment.communityKey) ?? [];
+          communityKnowledgeIds.push(knowledgeId);
+          selectedKnowledgeIdsByCommunityKey.set(assignment.communityKey, communityKnowledgeIds);
+        }
+
+        const basinTrace: LandscapeBasinTrace[] = [];
+        for (const [communityKey, communityKnowledgeIds] of selectedKnowledgeIdsByCommunityKey) {
+          const firstKnowledgeId = communityKnowledgeIds[0];
+          if (!firstKnowledgeId) continue;
+          const assignment = relationAssignmentsByKnowledgeId.get(firstKnowledgeId);
+          if (!assignment) continue;
+          const verdictMix = emptyVerdictMix();
+          const selectedRanks: number[] = [];
+          for (const knowledgeId of communityKnowledgeIds) {
+            const rank = rankByKnowledgeId.get(knowledgeId);
+            if (rank) selectedRanks.push(rank);
+            for (const event of usageEventsByKnowledgeId.get(knowledgeId) ?? []) {
+              incrementVerdict(verdictMix, event.verdict);
+            }
+          }
+          basinTrace.push(
+            buildCommunityTrace({
+              assignment,
+              community: communityByKey.get(communityKey),
+              selectedItemCount: communityKnowledgeIds.length,
+              selectedRanks,
+              verdictMix,
+            }),
+          );
+        }
+
+        const existingTraceKeys = new Set(basinTrace.map((trace) => trace.communityKey));
+        for (const knowledgeId of runSelectedKnowledgeIds) {
+          for (const deadZoneComparison of semanticDeadZonesByNeighborKnowledgeId.get(
+            knowledgeId,
+          ) ?? []) {
+            if (existingTraceKeys.has(deadZoneComparison.relationCommunityKey)) continue;
+            const community = communityByKey.get(deadZoneComparison.relationCommunityKey);
+            basinTrace.push({
+              communityKey: deadZoneComparison.relationCommunityKey,
+              communityLabel: deadZoneComparison.relationCommunityLabel,
+              communityRank: deadZoneComparison.relationCommunityRank,
+              selectedItemCount: 0,
+              selectedRanks: [],
+              classificationAtAnalysis:
+                community?.classification.primary ?? "dead_zone_reachability_risk",
+              classificationConfidenceAtAnalysis: asClassificationConfidence(
+                community?.classification.confidence,
+              ),
+              feedbackConfidenceAtAnalysis: asFeedbackConfidence(
+                community?.feedback.feedbackConfidence,
+              ),
+              verdictMix: emptyVerdictMix(),
+              explanation: "dead_zone_missed",
+            });
+            existingTraceKeys.add(deadZoneComparison.relationCommunityKey);
+          }
+        }
+
+        const taskFacets = extractLandscapeTaskFacets({
+          runInput: run.input,
+          repoPath: run.repoPath,
+          retrievalMode: run.retrievalMode,
+          source: run.source,
+          runStatus: run.status,
+          degradedReasons: run.degradedReasons,
         });
-        existingTraceKeys.add(deadZoneComparison.relationCommunityKey);
+        replayRuns.push({
+          runId: run.id,
+          createdAt: run.createdAt.toISOString(),
+          goal: run.goal,
+          retrievalMode: run.retrievalMode,
+          status: run.status,
+          source: run.source,
+          taskFacets,
+          selectedKnowledgeIds: runSelectedKnowledgeIds,
+          selectedCommunityKeys: [...runSelectedCommunityKeys].sort(),
+          missingKnowledgeIds: runSelectedKnowledgeIds.filter(
+            (knowledgeId) => !relationAssignmentsByKnowledgeId.has(knowledgeId),
+          ),
+          verdicts: runVerdicts,
+          basinTrace: basinTrace.sort(
+            (a, b) =>
+              a.communityRank - b.communityRank ||
+              b.selectedItemCount - a.selectedItemCount ||
+              a.communityKey.localeCompare(b.communityKey),
+          ),
+        });
       }
-    }
 
-    const taskFacets = extractLandscapeTaskFacets({
-      runInput: run.input,
-      repoPath: run.repoPath,
-      retrievalMode: run.retrievalMode,
-      source: run.source,
-      runStatus: run.status,
-      degradedReasons: run.degradedReasons,
-    });
-    replayRuns.push({
-      runId: run.id,
-      createdAt: run.createdAt.toISOString(),
-      goal: run.goal,
-      retrievalMode: run.retrievalMode,
-      status: run.status,
-      source: run.source,
-      taskFacets,
-      selectedKnowledgeIds: runSelectedKnowledgeIds,
-      selectedCommunityKeys: [...runSelectedCommunityKeys].sort(),
-      missingKnowledgeIds: runSelectedKnowledgeIds.filter(
-        (knowledgeId) => !relationAssignmentsByKnowledgeId.has(knowledgeId),
-      ),
-      verdicts: runVerdicts,
-      basinTrace: basinTrace.sort(
-        (a, b) =>
-          a.communityRank - b.communityRank ||
-          b.selectedItemCount - a.selectedItemCount ||
-          a.communityKey.localeCompare(b.communityKey),
-      ),
-    });
-  }
+      const eventsWithRunId = corpus.usageEvents.map((event) => ({
+        runId: event.runId,
+        knowledgeId: event.knowledgeId,
+        verdict: event.verdict,
+        actor: event.actor,
+        metadata: event.metadata,
+      }));
+      const acceptanceEventsByRunId = groupByRunId(eventsWithRunId);
+      const acceptanceEventsByCommunityKey = new Map<string, UsageEventForReplay[]>();
+      for (const event of eventsWithRunId) {
+        const assignment = relationAssignmentsByKnowledgeId.get(event.knowledgeId);
+        if (!assignment) continue;
+        const events = acceptanceEventsByCommunityKey.get(assignment.communityKey) ?? [];
+        events.push(event);
+        acceptanceEventsByCommunityKey.set(assignment.communityKey, events);
+      }
 
-  const eventsWithRunId = corpus.usageEvents.map((event) => ({
-    runId: event.runId,
-    knowledgeId: event.knowledgeId,
-    verdict: event.verdict,
-    actor: event.actor,
-    metadata: event.metadata,
-  }));
-  const acceptanceEventsByRunId = groupByRunId(eventsWithRunId);
-  const acceptanceEventsByCommunityKey = new Map<string, UsageEventForReplay[]>();
-  for (const event of eventsWithRunId) {
-    const assignment = relationAssignmentsByKnowledgeId.get(event.knowledgeId);
-    if (!assignment) continue;
-    const events = acceptanceEventsByCommunityKey.get(assignment.communityKey) ?? [];
-    events.push(event);
-    acceptanceEventsByCommunityKey.set(assignment.communityKey, events);
-  }
-
-  return {
-    generatedAt: analysisAsOf,
-    analysisAsOf,
-    windowDays: input.windowDays,
-    corpusWindow: {
-      startAt: corpusStartAt.toISOString(),
-      endAt: analysisAsOf,
+      return {
+        generatedAt: analysisAsOf,
+        analysisAsOf,
+        windowDays: input.windowDays,
+        corpusWindow: {
+          startAt: corpusStartAt.toISOString(),
+          endAt: analysisAsOf,
+        },
+        landscapeWindow: {
+          days: input.windowDays,
+          analysisAsOf,
+        },
+        basis: {
+          unit: "community-replay",
+          relationAxes: input.relationAxes,
+          runStatus: input.runStatus,
+          landscapeStatus: input.landscapeStatus,
+          minSimilarity: input.minSimilarity,
+          semanticTopK: input.semanticTopK,
+        },
+        replayRunCount: replayRuns.length,
+        selectedKnowledgeCount: selectedKnowledgeIds.length,
+        missingKnowledgeCount: missingKnowledgeIds.size,
+        runs: input.includeRuns ? replayRuns : [],
+        facetSummaries: summarizeFacets(replayRuns, acceptanceEventsByRunId),
+        communityReplaySummaries: summarizeReplayCommunities(
+          replayRuns,
+          acceptanceEventsByCommunityKey,
+        ),
+        acceptanceWindow: buildAcceptanceWindowSummary(eventsWithRunId),
+        communityComparison: comparison,
+      };
     },
-    landscapeWindow: {
-      days: input.windowDays,
-      analysisAsOf,
-    },
-    basis: {
-      unit: "community-replay",
-      relationAxes: input.relationAxes,
-      runStatus: input.runStatus,
-      landscapeStatus: input.landscapeStatus,
-      minSimilarity: input.minSimilarity,
-      semanticTopK: input.semanticTopK,
-    },
-    replayRunCount: replayRuns.length,
-    selectedKnowledgeCount: selectedKnowledgeIds.length,
-    missingKnowledgeCount: missingKnowledgeIds.size,
-    runs: input.includeRuns ? replayRuns : [],
-    facetSummaries: summarizeFacets(replayRuns, acceptanceEventsByRunId),
-    communityReplaySummaries: summarizeReplayCommunities(
-      replayRuns,
-      acceptanceEventsByCommunityKey,
-    ),
-    acceptanceWindow: buildAcceptanceWindowSummary(eventsWithRunId),
-    communityComparison: comparison,
-  };
+  });
 }

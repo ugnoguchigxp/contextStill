@@ -2,6 +2,7 @@ import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { groupedConfig } from "../src/config.js";
 import {
   insertCompileRun,
+  insertContextCompileCandidateTraces,
   insertContextPackItems,
   updateCompileRunSnapshot,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
@@ -50,6 +51,7 @@ describe("Context Compiler Service", () => {
     groupedConfig.compile.defaultTokenBudget = 240;
     vi.mocked(insertCompileRun).mockResolvedValue("550e8400-e29b-41d4-a716-446655440000");
     vi.mocked(insertContextPackItems).mockResolvedValue();
+    vi.mocked(insertContextCompileCandidateTraces).mockResolvedValue();
     vi.mocked(updateCompileRunSnapshot).mockResolvedValue();
     vi.mocked(recordCompileRunKnowledgeUsageSignals).mockResolvedValue({
       savedCount: 0,
@@ -316,6 +318,7 @@ describe("Context Compiler Service", () => {
 
     await compileContextPack({ goal: "usage signal capture" });
 
+    expect(insertContextCompileCandidateTraces).toHaveBeenCalled();
     expect(recordCompileRunKnowledgeUsageSignals).toHaveBeenCalledWith(
       expect.objectContaining({
         runId: "550e8400-e29b-41d4-a716-446655440000",

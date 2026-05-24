@@ -7,6 +7,7 @@ export const landscapeReviewItemSourceSchema = z.enum([
   "landscape_snapshot",
   "semantic_relation_comparison",
   "promotion_gate",
+  "contradiction_detection",
 ]);
 
 export const landscapeReviewItemReasonSchema = z.enum([
@@ -24,6 +25,7 @@ export const landscapeReviewItemReasonSchema = z.enum([
   "semantic_merge",
   "relation_orphan",
   "promotion_gate_review",
+  "contradiction_review",
 ]);
 
 export const landscapeReviewItemStatusSchema = z.enum([
@@ -41,6 +43,7 @@ export const landscapeReviewItemProposedActionSchema = z.enum([
   "split_or_merge_review",
   "promotion_gate_review",
   "demote_to_draft_candidate",
+  "review_contradiction",
 ]);
 
 export const landscapeReviewItemConfidenceSchema = z.enum(["low", "medium", "high"]);

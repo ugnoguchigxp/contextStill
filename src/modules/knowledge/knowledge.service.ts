@@ -30,9 +30,22 @@ type KnowledgeSearchResultWithEvidence = KnowledgeSearchResult & {
   candidateEvidence?: KnowledgeCandidateEvidence;
 };
 
+export type KnowledgeRetrievalTraceEntry = {
+  id: string;
+  rank: number;
+  score: number;
+};
+
+export type KnowledgeRetrievalTrace = {
+  text: KnowledgeRetrievalTraceEntry[];
+  vector: KnowledgeRetrievalTraceEntry[];
+  merged: KnowledgeRetrievalTraceEntry[];
+};
+
 export type KnowledgeRetrievalResult = {
   items: KnowledgeSearchResultWithEvidence[];
   degradedReasons: string[];
+  trace: KnowledgeRetrievalTrace;
   stats: {
     textHitCount: number;
     vectorHitCount: number;
@@ -185,6 +198,17 @@ function appendDegradedReason(reasons: string[], reason: string): void {
   if (!reasons.includes(reason)) {
     reasons.push(reason);
   }
+}
+
+function buildRankedTraceEntries(items: KnowledgeSearchResult[]): KnowledgeRetrievalTraceEntry[] {
+  const deduped = [...new Map(items.map((item) => [item.id, item])).values()].sort(
+    (a, b) => b.score - a.score,
+  );
+  return deduped.map((item, index) => ({
+    id: item.id,
+    rank: index + 1,
+    score: item.score,
+  }));
 }
 
 async function executeKnowledgeSearch(
@@ -372,16 +396,25 @@ async function executeKnowledgeSearch(
     merged,
   });
 
+  const textTrace = buildRankedTraceEntries(searchResult.textHits);
+  const vectorTrace = buildRankedTraceEntries(searchResult.vectorHits);
+  const mergedTrace = buildRankedTraceEntries(merged);
+
   return {
     items: merged.map((item) => ({
       ...item,
       candidateEvidence: evidenceById.get(item.id),
     })),
     degradedReasons,
+    trace: {
+      text: textTrace,
+      vector: vectorTrace,
+      merged: mergedTrace,
+    },
     stats: {
-      textHitCount: searchResult.textHits.length,
-      vectorHitCount: searchResult.vectorHits.length,
-      mergedCount: merged.length,
+      textHitCount: textTrace.length,
+      vectorHitCount: vectorTrace.length,
+      mergedCount: mergedTrace.length,
       textFailed: searchResult.textFailed,
       vectorFailed: searchResult.vectorFailed,
       embeddingStatus,

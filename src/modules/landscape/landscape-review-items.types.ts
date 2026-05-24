@@ -14,6 +14,7 @@ import type {
 } from "./landscape-replay.types.js";
 import type { LandscapeSnapshot } from "./landscape.types.js";
 import type { LandscapeGraphRelationAxis, LandscapeGraphStatusFilter } from "./landscape.types.js";
+import type { LandscapeContradictionCandidate } from "../../shared/schemas/landscape-contradiction.schema.js";
 
 export type BuildLandscapeReviewItemCandidatesInput = {
   generatedAt?: string;
@@ -23,6 +24,7 @@ export type BuildLandscapeReviewItemCandidatesInput = {
   landscapeSnapshot?: LandscapeSnapshot | null;
   landscapeReplaySnapshot?: LandscapeReplaySnapshot | null;
   landscapeReplayComparison?: LandscapeReplayComparisonResponse | null;
+  contradictionCandidates?: LandscapeContradictionCandidate[];
 };
 
 export type LandscapeReviewItemCandidateBuildResult = {

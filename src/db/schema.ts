@@ -193,6 +193,12 @@ export const runStatusValues = ["ok", "degraded", "failed"] as const;
 export const compileRunSourceValues = ["ui", "mcp", "cli", "unknown"] as const;
 
 export const packSectionValues = ["rules", "procedures", "code_context", "warnings"] as const;
+export const contextCompileCandidateTraceAgenticDecisionValues = [
+  "not_evaluated",
+  "accepted",
+  "rejected",
+  "skipped",
+] as const;
 
 export const knowledgeUsageVerdictValues = ["used", "not_used", "off_topic", "wrong"] as const;
 export const knowledgeReviewQueueStatusValues = [
@@ -210,6 +216,7 @@ export const landscapeReviewItemSourceValues = [
   "landscape_snapshot",
   "semantic_relation_comparison",
   "promotion_gate",
+  "contradiction_detection",
 ] as const;
 export const landscapeReviewItemReasonValues = [
   "used_baseline_lost",
@@ -226,6 +233,7 @@ export const landscapeReviewItemReasonValues = [
   "semantic_merge",
   "relation_orphan",
   "promotion_gate_review",
+  "contradiction_review",
 ] as const;
 export const landscapeReviewItemStatusValues = [
   "pending",
@@ -241,6 +249,7 @@ export const landscapeReviewItemProposedActionValues = [
   "split_or_merge_review",
   "promotion_gate_review",
   "demote_to_draft_candidate",
+  "review_contradiction",
 ] as const;
 export const landscapeReviewItemConfidenceValues = ["low", "medium", "high"] as const;
 export const landscapeReviewItemCandidateLinkStatusValues = [
@@ -250,6 +259,12 @@ export const landscapeReviewItemCandidateLinkStatusValues = [
   "rejected",
   "finalized",
 ] as const;
+export const landscapeSnapshotCacheTypeValues = [
+  "landscape_snapshot",
+  "landscape_replay_snapshot",
+  "landscape_replay_comparison",
+] as const;
+export const landscapeSnapshotCacheStatusValues = ["ready", "stale"] as const;
 export const knowledgeQualityAdjustmentKindValues = ["off_topic_quality_decrement"] as const;
 
 export const auditLogActorValues = ["agent", "user", "system"] as const;
@@ -696,6 +711,75 @@ export const contextPackItems = pgTable(
   }),
 );
 
+export const contextCompileCandidateTraces = pgTable(
+  "context_compile_candidate_traces",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .references(() => contextCompileRuns.id, { onDelete: "cascade" })
+      .notNull(),
+    itemKind: text("item_kind").notNull(),
+    itemId: uuid("item_id")
+      .references(() => knowledgeItems.id, { onDelete: "cascade" })
+      .notNull(),
+    textRank: integer("text_rank"),
+    textScore: real("text_score"),
+    vectorRank: integer("vector_rank"),
+    vectorScore: real("vector_score"),
+    mergedRank: integer("merged_rank"),
+    mergedScore: real("merged_score"),
+    finalRank: integer("final_rank"),
+    finalScore: real("final_score"),
+    selected: boolean("selected").notNull().default(false),
+    suppressed: boolean("suppressed").notNull().default(false),
+    suppressionReason: text("suppression_reason"),
+    agenticDecision: text("agentic_decision").notNull().default("not_evaluated"),
+    rankingReason: text("ranking_reason"),
+    communityKey: text("community_key"),
+    evidence: jsonb("evidence").notNull().default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    runItemUnique: uniqueIndex("context_compile_candidate_traces_run_item_unique").on(
+      table.runId,
+      table.itemKind,
+      table.itemId,
+    ),
+    runFinalRankIdx: index("context_compile_candidate_traces_run_final_rank_idx").on(
+      table.runId,
+      table.finalRank,
+    ),
+    itemCreatedAtIdx: index("context_compile_candidate_traces_item_created_at_idx").on(
+      table.itemId,
+      table.createdAt,
+    ),
+    runSelectedIdx: index("context_compile_candidate_traces_run_selected_idx").on(
+      table.runId,
+      table.selected,
+    ),
+    suppressionReasonIdx: index("context_compile_candidate_traces_suppression_reason_idx").on(
+      table.suppressionReason,
+    ),
+    communityKeyCreatedAtIdx: index(
+      "context_compile_candidate_traces_community_key_created_at_idx",
+    ).on(table.communityKey, table.createdAt),
+    itemKindCheck: check(
+      "context_compile_candidate_traces_item_kind_check",
+      sql`${table.itemKind} IN (${sql.raw(toSqlList(knowledgeTypeValues))})`,
+    ),
+    agenticDecisionCheck: check(
+      "context_compile_candidate_traces_agentic_decision_check",
+      sql`${table.agenticDecision} IN (${sql.raw(
+        toSqlList(contextCompileCandidateTraceAgenticDecisionValues),
+      )})`,
+    ),
+    evidenceObjectCheck: check(
+      "context_compile_candidate_traces_evidence_object_check",
+      sql`jsonb_typeof(${table.evidence}) = 'object'`,
+    ),
+  }),
+);
+
 export const knowledgeUsageEvents = pgTable(
   "knowledge_usage_events",
   {
@@ -919,6 +1003,49 @@ export const landscapeReviewItemCandidateLinks = pgTable(
     statusCheck: check(
       "landscape_review_item_candidate_links_status_check",
       sql`${table.status} IN (${sql.raw(toSqlList(landscapeReviewItemCandidateLinkStatusValues))})`,
+    ),
+  }),
+);
+
+export const landscapeSnapshots = pgTable(
+  "landscape_snapshots",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    snapshotType: text("snapshot_type").notNull(),
+    status: text("status").notNull().default("ready"),
+    paramsHash: text("params_hash").notNull(),
+    params: jsonb("params").notNull().default({}),
+    payload: jsonb("payload").notNull().default({}),
+    generatedAt: timestamp("generated_at").defaultNow().notNull(),
+    expiresAt: timestamp("expires_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    typeParamsHashUnique: uniqueIndex("landscape_snapshots_type_params_hash_unique").on(
+      table.snapshotType,
+      table.paramsHash,
+    ),
+    typeGeneratedAtIdx: index("landscape_snapshots_type_generated_at_idx").on(
+      table.snapshotType,
+      table.generatedAt,
+    ),
+    expiresAtIdx: index("landscape_snapshots_expires_at_idx").on(table.expiresAt),
+    statusCheck: check(
+      "landscape_snapshots_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(landscapeSnapshotCacheStatusValues))})`,
+    ),
+    typeCheck: check(
+      "landscape_snapshots_type_check",
+      sql`${table.snapshotType} IN (${sql.raw(toSqlList(landscapeSnapshotCacheTypeValues))})`,
+    ),
+    paramsObjectCheck: check(
+      "landscape_snapshots_params_object_check",
+      sql`jsonb_typeof(${table.params}) = 'object'`,
+    ),
+    payloadObjectCheck: check(
+      "landscape_snapshots_payload_object_check",
+      sql`jsonb_typeof(${table.payload}) = 'object'`,
     ),
   }),
 );

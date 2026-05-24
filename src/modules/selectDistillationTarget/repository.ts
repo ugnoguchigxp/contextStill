@@ -7,10 +7,12 @@ import {
   type DistillationTargetCandidate,
   type DistillationTargetKind,
   type DistillationTargetPhase,
+  type DistillationTargetPriorityGroup,
   type DistillationTargetStatus,
   priorityGroupForTargetKind,
   sortKeyForTarget,
 } from "./domain.js";
+import { resolveKnowledgeCandidatePriorityGroup } from "./priority-group.js";
 import {
   DEFAULT_DISTILLATION_TARGET_VERSION,
   type DistillationTargetStateRow,
@@ -43,12 +45,20 @@ export async function upsertDistillationTargetState(params: {
   candidate: DistillationTargetCandidate;
   distillationVersion?: string;
   metadata?: Record<string, unknown>;
+  priorityGroup?: DistillationTargetPriorityGroup;
 }): Promise<DistillationTargetStateRow> {
   const now = new Date();
   const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
-  const priorityGroup = priorityGroupForTargetKind(params.candidate.targetKind);
-  const sortKey = sortKeyForTarget(params.candidate);
   const metadata = params.metadata ?? {};
+  const priorityGroup =
+    params.priorityGroup ??
+    (params.candidate.targetKind === "knowledge_candidate"
+      ? resolveKnowledgeCandidatePriorityGroup({
+          sourceUri: params.candidate.sourceUri,
+          metadata,
+        })
+      : priorityGroupForTargetKind(params.candidate.targetKind));
+  const sortKey = sortKeyForTarget(params.candidate);
 
   const [state] = await db
     .insert(distillationTargetStates)

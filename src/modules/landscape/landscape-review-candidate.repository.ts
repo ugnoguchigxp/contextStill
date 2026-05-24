@@ -6,6 +6,7 @@ import {
   landscapeReviewItemCandidateLinks,
   landscapeReviewItems,
 } from "../../db/schema.js";
+import { resolveKnowledgeCandidatePriorityGroup } from "../selectDistillationTarget/priority-group.js";
 import { DEFAULT_DISTILLATION_TARGET_VERSION } from "../selectDistillationTarget/repository.js";
 import type { LandscapeReviewCandidateDraft } from "./landscape-review-candidate.types.js";
 
@@ -50,7 +51,12 @@ export async function listLandscapeReviewItemsForCandidateDraft(input: {
     return db
       .select()
       .from(landscapeReviewItems)
-      .where(inArray(landscapeReviewItems.id, input.ids))
+      .where(
+        and(
+          inArray(landscapeReviewItems.id, input.ids),
+          sql`${landscapeReviewItems.source} <> 'contradiction_detection'`,
+        ),
+      )
       .orderBy(
         desc(landscapeReviewItems.priority),
         asc(landscapeReviewItems.createdAt),
@@ -61,7 +67,12 @@ export async function listLandscapeReviewItemsForCandidateDraft(input: {
   return db
     .select()
     .from(landscapeReviewItems)
-    .where(eq(landscapeReviewItems.status, input.status))
+    .where(
+      and(
+        eq(landscapeReviewItems.status, input.status),
+        sql`${landscapeReviewItems.source} <> 'contradiction_detection'`,
+      ),
+    )
     .orderBy(
       desc(landscapeReviewItems.priority),
       asc(landscapeReviewItems.createdAt),
@@ -116,6 +127,10 @@ export async function upsertLandscapeReviewItemCandidateDraft(params: {
       proposedAction: params.reviewItem.proposedAction,
       generatedAt: params.generatedAt,
     };
+    const priorityGroup = resolveKnowledgeCandidatePriorityGroup({
+      sourceUri,
+      metadata: targetMetadata,
+    });
 
     const [targetState] = await tx
       .insert(distillationTargetStates)
@@ -126,7 +141,7 @@ export async function upsertLandscapeReviewItemCandidateDraft(params: {
         distillationVersion: DEFAULT_DISTILLATION_TARGET_VERSION,
         status: "pending",
         phase: "selected",
-        priorityGroup: "knowledge_candidate",
+        priorityGroup,
         sortKey,
         metadata: targetMetadata,
         updatedAt: now,
@@ -139,7 +154,7 @@ export async function upsertLandscapeReviewItemCandidateDraft(params: {
         ],
         set: {
           sourceUri,
-          priorityGroup: "knowledge_candidate",
+          priorityGroup,
           sortKey,
           metadata:
             sql`${distillationTargetStates.metadata} || ${JSON.stringify(targetMetadata)}::jsonb` as never,

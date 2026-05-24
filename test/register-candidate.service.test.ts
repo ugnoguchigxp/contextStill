@@ -220,4 +220,24 @@ Do not run on production database.
     // In our simplified mock makeChain, values() is just chaining, but we can verify mockInsert was called with findCandidateResults table schema.
     expect(mockInsert).toHaveBeenCalledTimes(2);
   });
+
+  test("assigns wiki priority when metadata indicates wiki parent", async () => {
+    const targetChain = makeChain([{ id: "target-1" }]);
+    const candidateChain = makeChain([{ id: "candidate-1" }]);
+    mockInsert.mockReturnValueOnce(targetChain).mockReturnValueOnce(candidateChain);
+
+    await registerCandidate({
+      title: "Wiki derived candidate",
+      body: "body",
+      metadata: {
+        parentTargetKind: "wiki_file",
+      },
+    });
+
+    expect(targetChain.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        priorityGroup: "wiki",
+      }),
+    );
+  });
 });

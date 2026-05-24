@@ -4,12 +4,16 @@ import {
   landscapeReplayComparisonResponseSchema,
   landscapeReplaySnapshotSchema,
 } from "../src/shared/schemas/landscape-replay.schema.js";
+import { landscapeSnapshotCacheStatusSchema } from "../src/shared/schemas/landscape-snapshot-cache.schema.js";
 import { landscapeSnapshotSchema } from "../src/shared/schemas/landscape.schema.js";
+import { landscapeTrajectoryResultSchema } from "../src/shared/schemas/landscape-trajectory.schema.js";
 
 const {
   buildLandscapeReplayComparisonMock,
   buildLandscapeReplaySnapshotMock,
   buildLandscapeSnapshotMock,
+  getLandscapeSnapshotCacheStatusMock,
+  buildLandscapeTrajectoryMock,
   createLandscapeReviewCandidatesMock,
   updateLandscapeReviewCandidateLinkMock,
   listLandscapeReviewItemsMock,
@@ -21,6 +25,8 @@ const {
   buildLandscapeReplayComparisonMock: vi.fn(),
   buildLandscapeReplaySnapshotMock: vi.fn(),
   buildLandscapeSnapshotMock: vi.fn(),
+  getLandscapeSnapshotCacheStatusMock: vi.fn(),
+  buildLandscapeTrajectoryMock: vi.fn(),
   createLandscapeReviewCandidatesMock: vi.fn(),
   updateLandscapeReviewCandidateLinkMock: vi.fn(),
   listLandscapeReviewItemsMock: vi.fn(),
@@ -56,6 +62,14 @@ vi.mock("../src/modules/landscape/landscape-replay.service.js", () => ({
 
 vi.mock("../src/modules/landscape/landscape.service.js", () => ({
   buildLandscapeSnapshot: buildLandscapeSnapshotMock,
+}));
+
+vi.mock("../src/modules/landscape/landscape-snapshot-cache.service.js", () => ({
+  getLandscapeSnapshotCacheStatus: getLandscapeSnapshotCacheStatusMock,
+}));
+
+vi.mock("../src/modules/landscape/landscape-trajectory.service.js", () => ({
+  buildLandscapeTrajectory: buildLandscapeTrajectoryMock,
 }));
 
 vi.mock("../src/modules/landscape/landscape-review-items.service.js", () => ({
@@ -250,6 +264,37 @@ function validReplaySnapshot() {
   });
 }
 
+function validLandscapeSnapshotCacheStatus() {
+  return landscapeSnapshotCacheStatusSchema.parse({
+    generatedAt: "2026-05-24T00:00:00.000Z",
+    enabled: true,
+    ttlSeconds: 300,
+    snapshots: [
+      {
+        snapshotType: "landscape_snapshot",
+        readyCount: 2,
+        staleCount: 1,
+        latestGeneratedAt: "2026-05-24T00:00:00.000Z",
+        latestExpiresAt: "2026-05-24T00:05:00.000Z",
+      },
+      {
+        snapshotType: "landscape_replay_snapshot",
+        readyCount: 1,
+        staleCount: 0,
+        latestGeneratedAt: "2026-05-24T00:00:00.000Z",
+        latestExpiresAt: "2026-05-24T00:05:00.000Z",
+      },
+      {
+        snapshotType: "landscape_replay_comparison",
+        readyCount: 0,
+        staleCount: 0,
+        latestGeneratedAt: null,
+        latestExpiresAt: null,
+      },
+    ],
+  });
+}
+
 function validReplayComparison() {
   return landscapeReplayComparisonResponseSchema.parse({
     generatedAt: "2026-05-24T00:00:00.000Z",
@@ -333,12 +378,66 @@ function validReplayComparison() {
   });
 }
 
+function validTrajectory() {
+  return landscapeTrajectoryResultSchema.parse({
+    run: {
+      id: "run-1",
+      goal: "inspect trajectory",
+      retrievalMode: "task_context",
+      status: "ok",
+      source: "mcp",
+      createdAt: "2026-05-24T00:00:00.000Z",
+    },
+    traceAvailable: true,
+    warnings: [],
+    stageCounts: {
+      totalCandidates: 2,
+      textHit: 1,
+      vectorHit: 1,
+      merged: 2,
+      finalRanked: 1,
+      selected: 1,
+      suppressed: 1,
+    },
+    selectedKnowledgeIds: ["knowledge-1"],
+    diagnostics: {
+      candidateTraceSavedCount: 2,
+      candidateTraceTruncated: false,
+      candidateTraceLimit: 200,
+      candidateTraceSkippedReason: null,
+    },
+    candidates: [
+      {
+        itemKind: "rule",
+        itemId: "knowledge-1",
+        textRank: 1,
+        textScore: 0.9,
+        vectorRank: null,
+        vectorScore: null,
+        mergedRank: 1,
+        mergedScore: 0.9,
+        finalRank: 1,
+        finalScore: 0.9,
+        selected: true,
+        suppressed: false,
+        suppressionReason: null,
+        agenticDecision: "accepted",
+        rankingReason: "selected",
+        communityKey: null,
+      },
+    ],
+    communitySummary: [],
+  });
+}
+
 describe("graph routes landscape", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     buildLandscapeSnapshotMock.mockResolvedValue(validLandscapeSnapshot());
+    getLandscapeSnapshotCacheStatusMock.mockResolvedValue(validLandscapeSnapshotCacheStatus());
     buildLandscapeReplaySnapshotMock.mockResolvedValue(validReplaySnapshot());
     buildLandscapeReplayComparisonMock.mockResolvedValue(validReplayComparison());
+    buildLandscapeTrajectoryMock.mockResolvedValue(validTrajectory());
     materializeLandscapeReviewItemsMock.mockResolvedValue({
       dryRun: true,
       generatedAt: "2026-05-24T00:00:00.000Z",
@@ -554,6 +653,15 @@ describe("graph routes landscape", () => {
     });
   });
 
+  test("GET /api/graph/landscape/cache-status returns cache status", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/graph/landscape/cache-status");
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(landscapeSnapshotCacheStatusSchema.safeParse(json).success).toBe(true);
+    expect(getLandscapeSnapshotCacheStatusMock).toHaveBeenCalledTimes(1);
+  });
+
   test("GET /api/graph/landscape/replay/compare parses comparison filters", async () => {
     const app = buildApp();
     const response = await app.request(
@@ -566,6 +674,32 @@ describe("graph routes landscape", () => {
       runStatus: "failed",
       currentLimit: 8,
       includeRuns: false,
+    });
+  });
+
+  test("GET /api/graph/landscape/trajectory/:runId applies defaults", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/graph/landscape/trajectory/run-1");
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(landscapeTrajectoryResultSchema.safeParse(json).success).toBe(true);
+    expect(buildLandscapeTrajectoryMock).toHaveBeenCalledWith({
+      runId: "run-1",
+      includeCandidates: true,
+      limit: 200,
+    });
+  });
+
+  test("GET /api/graph/landscape/trajectory/:runId parses query", async () => {
+    const app = buildApp();
+    const response = await app.request(
+      "/api/graph/landscape/trajectory/run-1?includeCandidates=false&limit=25",
+    );
+    expect(response.status).toBe(200);
+    expect(buildLandscapeTrajectoryMock).toHaveBeenCalledWith({
+      runId: "run-1",
+      includeCandidates: false,
+      limit: 25,
     });
   });
 
@@ -618,6 +752,27 @@ describe("graph routes landscape", () => {
     await expect(response.json()).resolves.toEqual({
       error: "unsupported sources in AQ-1A",
     });
+  });
+
+  test("POST /api/graph/landscape/replay/queue accepts contradiction source", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/graph/landscape/replay/queue", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        dryRun: true,
+        sources: ["contradiction_detection"],
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(materializeLandscapeReviewItemsMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        dryRun: true,
+        sources: ["contradiction_detection"],
+      }),
+    );
   });
 
   test("POST /api/graph/landscape/review-items/candidates parses body and returns result", async () => {

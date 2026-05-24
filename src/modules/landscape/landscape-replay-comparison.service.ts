@@ -10,6 +10,7 @@ import {
   type LandscapeReplayCompileRunInput,
 } from "./landscape-facets.js";
 import { loadLandscapeReplayCorpus } from "./landscape-replay.repository.js";
+import { runWithLandscapeSnapshotCache } from "./landscape-snapshot-cache.service.js";
 import type {
   BuildLandscapeReplayComparisonInput,
   LandscapeAppliesToRefineCandidate,
@@ -466,194 +467,206 @@ function buildCompileInterventionPlan(
 export async function buildLandscapeReplayComparison(
   input: BuildLandscapeReplayComparisonInput,
 ): Promise<LandscapeReplayComparisonResponse> {
-  const analysisDate = new Date();
-  const analysisAsOf = analysisDate.toISOString();
-  const corpusStartAt = new Date(analysisDate.getTime() - input.windowDays * 24 * 60 * 60 * 1000);
-  const corpus = await loadLandscapeReplayCorpus({
-    windowDays: input.windowDays,
-    limit: input.limit,
-    runStatus: input.runStatus,
+  return runWithLandscapeSnapshotCache({
+    snapshotType: "landscape_replay_comparison",
+    params: {
+      ...input,
+    },
+    build: async () => {
+      const analysisDate = new Date();
+      const analysisAsOf = analysisDate.toISOString();
+      const corpusStartAt = new Date(
+        analysisDate.getTime() - input.windowDays * 24 * 60 * 60 * 1000,
+      );
+      const corpus = await loadLandscapeReplayCorpus({
+        windowDays: input.windowDays,
+        limit: input.limit,
+        runStatus: input.runStatus,
+      });
+
+      const packItemsByRunId = groupByRunId(corpus.packItems);
+      const usageEventsByRunId = groupByRunId<UsageEventForComparison>(corpus.usageEvents);
+      const runs: LandscapeReplayComparisonRun[] = [];
+      const comparisonCounts = emptyComparisonCounts();
+      let baselineSelectedItemCount = 0;
+      let currentRetrievedItemCount = 0;
+      let retainedItemCount = 0;
+      let missingFromCurrentItemCount = 0;
+      let newlyRetrievedItemCount = 0;
+      let usedBaselineLostItemCount = 0;
+      let currentNoMatchRunCount = 0;
+
+      for (const run of corpus.runs) {
+        const taskFacets = extractLandscapeTaskFacets({
+          runInput: run.input,
+          repoPath: run.repoPath,
+          retrievalMode: run.retrievalMode,
+          source: run.source,
+          runStatus: run.status,
+          degradedReasons: run.degradedReasons,
+        });
+        const compileInput = compileInputFromRun({
+          goal: run.goal,
+          runInput: run.input,
+          repoPath: run.repoPath,
+          retrievalMode: run.retrievalMode,
+          source: run.source,
+          runStatus: run.status,
+          degradedReasons: run.degradedReasons,
+        });
+        const retrievalMode = normalizeRetrievalMode(run.retrievalMode, taskFacets.changeTypes);
+        const baselineSelectedKnowledgeIds = uniqueOrdered(
+          orderPackItems(packItemsByRunId.get(run.id) ?? []).map((item) => item.itemId),
+        );
+        const current = await retrieveKnowledge(compileInput, {
+          retrievalMode,
+          limit: input.currentLimit,
+          facetFilters: {
+            technologies: taskFacets.technologies,
+            changeTypes: taskFacets.changeTypes,
+            domains: taskFacets.domains,
+          },
+        });
+        const currentRetrievedKnowledgeIds = uniqueOrdered(
+          current.items.map((item) => item.id).slice(0, input.currentLimit),
+        );
+        const baselineSet = new Set(baselineSelectedKnowledgeIds);
+        const currentSet = new Set(currentRetrievedKnowledgeIds);
+        const retainedKnowledgeIds = baselineSelectedKnowledgeIds.filter((id) =>
+          currentSet.has(id),
+        );
+        const missingFromCurrentKnowledgeIds = baselineSelectedKnowledgeIds.filter(
+          (id) => !currentSet.has(id),
+        );
+        const newlyRetrievedKnowledgeIds = currentRetrievedKnowledgeIds.filter(
+          (id) => !baselineSet.has(id),
+        );
+        const baselineUsageEvents = (usageEventsByRunId.get(run.id) ?? []).filter((event) =>
+          baselineSet.has(event.knowledgeId),
+        );
+        const baselineVerdicts = buildVerdictMix(baselineUsageEvents);
+        const usedBaselineKnowledgeIds = uniqueOrdered(
+          baselineUsageEvents
+            .filter((event) => event.verdict === "used")
+            .map((event) => event.knowledgeId),
+        );
+        const offTopicBaselineKnowledgeIds = uniqueOrdered(
+          baselineUsageEvents
+            .filter((event) => event.verdict === "off_topic")
+            .map((event) => event.knowledgeId),
+        );
+        const wrongBaselineKnowledgeIds = uniqueOrdered(
+          baselineUsageEvents
+            .filter((event) => event.verdict === "wrong")
+            .map((event) => event.knowledgeId),
+        );
+        const usedBaselineRetainedKnowledgeIds = usedBaselineKnowledgeIds.filter((id) =>
+          currentSet.has(id),
+        );
+        const usedBaselineLostKnowledgeIds = usedBaselineKnowledgeIds.filter(
+          (id) => !currentSet.has(id),
+        );
+        const overlapRate = rate(retainedKnowledgeIds.length, baselineSelectedKnowledgeIds.length);
+        const replacementRate = rate(
+          newlyRetrievedKnowledgeIds.length,
+          currentRetrievedKnowledgeIds.length,
+        );
+        const comparison = classifyReplayComparison({
+          baselineCount: baselineSelectedKnowledgeIds.length,
+          currentCount: currentRetrievedKnowledgeIds.length,
+          retainedCount: retainedKnowledgeIds.length,
+          overlapRate,
+        });
+        comparisonCounts[comparison] += 1;
+        baselineSelectedItemCount += baselineSelectedKnowledgeIds.length;
+        currentRetrievedItemCount += currentRetrievedKnowledgeIds.length;
+        retainedItemCount += retainedKnowledgeIds.length;
+        missingFromCurrentItemCount += missingFromCurrentKnowledgeIds.length;
+        newlyRetrievedItemCount += newlyRetrievedKnowledgeIds.length;
+        usedBaselineLostItemCount += usedBaselineLostKnowledgeIds.length;
+        if (currentRetrievedKnowledgeIds.length === 0) currentNoMatchRunCount += 1;
+
+        runs.push({
+          runId: run.id,
+          createdAt: run.createdAt.toISOString(),
+          goal: run.goal,
+          retrievalMode,
+          status: run.status as LandscapeRunStatus,
+          taskFacets,
+          baselineSelectedKnowledgeIds,
+          currentRetrievedKnowledgeIds,
+          retainedKnowledgeIds,
+          missingFromCurrentKnowledgeIds,
+          newlyRetrievedKnowledgeIds,
+          baselineVerdicts,
+          usedBaselineRetainedKnowledgeIds,
+          usedBaselineLostKnowledgeIds,
+          offTopicBaselineKnowledgeIds,
+          wrongBaselineKnowledgeIds,
+          overlapRate,
+          replacementRate,
+          comparison,
+          currentDegradedReasons: current.degradedReasons,
+          currentRetrievalStats: {
+            textHitCount: current.stats.textHitCount,
+            vectorHitCount: current.stats.vectorHitCount,
+            mergedCount: current.stats.mergedCount,
+            textFailed: current.stats.textFailed,
+            vectorFailed: current.stats.vectorFailed,
+            embeddingStatus: current.stats.embeddingStatus,
+            repoScopeFallbackUsed: current.stats.repoScopeFallbackUsed,
+          },
+        });
+      }
+
+      const averageOverlapRate = rate(
+        runs.reduce((sum, run) => sum + run.overlapRate, 0),
+        runs.length,
+      );
+      const scoreTuning = buildScoreTuningSummary(runs);
+
+      return {
+        generatedAt: analysisAsOf,
+        analysisAsOf,
+        windowDays: input.windowDays,
+        corpusWindow: {
+          startAt: corpusStartAt.toISOString(),
+          endAt: analysisAsOf,
+        },
+        basis: {
+          unit: "replay-comparison",
+          mode: "current_retrieval",
+          runStatus: input.runStatus,
+          currentLimit: input.currentLimit,
+        },
+        replayRunCount: corpus.runs.length,
+        comparedRunCount: runs.length,
+        baselineSelectedItemCount,
+        currentRetrievedItemCount,
+        retainedItemCount,
+        missingFromCurrentItemCount,
+        newlyRetrievedItemCount,
+        usedBaselineLostItemCount,
+        averageOverlapRate,
+        currentNoMatchRunCount,
+        comparisonCounts,
+        recompilePlan: buildRecompilePlan({
+          replayRunCount: corpus.runs.length,
+          comparedRunCount: runs.length,
+        }),
+        rankingExperiments: buildRankingExperiments({
+          runs,
+          retainedItemCount,
+          missingFromCurrentItemCount,
+          usedBaselineLostItemCount,
+          averageOverlapRate,
+        }),
+        appliesToRefineCandidates: buildAppliesToRefineCandidates(runs),
+        promotionGateSummary: buildPromotionGateSummary(runs),
+        scoreTuning,
+        compileInterventionPlan: buildCompileInterventionPlan(scoreTuning),
+        runs: input.includeRuns ? runs : [],
+      };
+    },
   });
-
-  const packItemsByRunId = groupByRunId(corpus.packItems);
-  const usageEventsByRunId = groupByRunId<UsageEventForComparison>(corpus.usageEvents);
-  const runs: LandscapeReplayComparisonRun[] = [];
-  const comparisonCounts = emptyComparisonCounts();
-  let baselineSelectedItemCount = 0;
-  let currentRetrievedItemCount = 0;
-  let retainedItemCount = 0;
-  let missingFromCurrentItemCount = 0;
-  let newlyRetrievedItemCount = 0;
-  let usedBaselineLostItemCount = 0;
-  let currentNoMatchRunCount = 0;
-
-  for (const run of corpus.runs) {
-    const taskFacets = extractLandscapeTaskFacets({
-      runInput: run.input,
-      repoPath: run.repoPath,
-      retrievalMode: run.retrievalMode,
-      source: run.source,
-      runStatus: run.status,
-      degradedReasons: run.degradedReasons,
-    });
-    const compileInput = compileInputFromRun({
-      goal: run.goal,
-      runInput: run.input,
-      repoPath: run.repoPath,
-      retrievalMode: run.retrievalMode,
-      source: run.source,
-      runStatus: run.status,
-      degradedReasons: run.degradedReasons,
-    });
-    const retrievalMode = normalizeRetrievalMode(run.retrievalMode, taskFacets.changeTypes);
-    const baselineSelectedKnowledgeIds = uniqueOrdered(
-      orderPackItems(packItemsByRunId.get(run.id) ?? []).map((item) => item.itemId),
-    );
-    const current = await retrieveKnowledge(compileInput, {
-      retrievalMode,
-      limit: input.currentLimit,
-      facetFilters: {
-        technologies: taskFacets.technologies,
-        changeTypes: taskFacets.changeTypes,
-        domains: taskFacets.domains,
-      },
-    });
-    const currentRetrievedKnowledgeIds = uniqueOrdered(
-      current.items.map((item) => item.id).slice(0, input.currentLimit),
-    );
-    const baselineSet = new Set(baselineSelectedKnowledgeIds);
-    const currentSet = new Set(currentRetrievedKnowledgeIds);
-    const retainedKnowledgeIds = baselineSelectedKnowledgeIds.filter((id) => currentSet.has(id));
-    const missingFromCurrentKnowledgeIds = baselineSelectedKnowledgeIds.filter(
-      (id) => !currentSet.has(id),
-    );
-    const newlyRetrievedKnowledgeIds = currentRetrievedKnowledgeIds.filter(
-      (id) => !baselineSet.has(id),
-    );
-    const baselineUsageEvents = (usageEventsByRunId.get(run.id) ?? []).filter((event) =>
-      baselineSet.has(event.knowledgeId),
-    );
-    const baselineVerdicts = buildVerdictMix(baselineUsageEvents);
-    const usedBaselineKnowledgeIds = uniqueOrdered(
-      baselineUsageEvents
-        .filter((event) => event.verdict === "used")
-        .map((event) => event.knowledgeId),
-    );
-    const offTopicBaselineKnowledgeIds = uniqueOrdered(
-      baselineUsageEvents
-        .filter((event) => event.verdict === "off_topic")
-        .map((event) => event.knowledgeId),
-    );
-    const wrongBaselineKnowledgeIds = uniqueOrdered(
-      baselineUsageEvents
-        .filter((event) => event.verdict === "wrong")
-        .map((event) => event.knowledgeId),
-    );
-    const usedBaselineRetainedKnowledgeIds = usedBaselineKnowledgeIds.filter((id) =>
-      currentSet.has(id),
-    );
-    const usedBaselineLostKnowledgeIds = usedBaselineKnowledgeIds.filter(
-      (id) => !currentSet.has(id),
-    );
-    const overlapRate = rate(retainedKnowledgeIds.length, baselineSelectedKnowledgeIds.length);
-    const replacementRate = rate(
-      newlyRetrievedKnowledgeIds.length,
-      currentRetrievedKnowledgeIds.length,
-    );
-    const comparison = classifyReplayComparison({
-      baselineCount: baselineSelectedKnowledgeIds.length,
-      currentCount: currentRetrievedKnowledgeIds.length,
-      retainedCount: retainedKnowledgeIds.length,
-      overlapRate,
-    });
-    comparisonCounts[comparison] += 1;
-    baselineSelectedItemCount += baselineSelectedKnowledgeIds.length;
-    currentRetrievedItemCount += currentRetrievedKnowledgeIds.length;
-    retainedItemCount += retainedKnowledgeIds.length;
-    missingFromCurrentItemCount += missingFromCurrentKnowledgeIds.length;
-    newlyRetrievedItemCount += newlyRetrievedKnowledgeIds.length;
-    usedBaselineLostItemCount += usedBaselineLostKnowledgeIds.length;
-    if (currentRetrievedKnowledgeIds.length === 0) currentNoMatchRunCount += 1;
-
-    runs.push({
-      runId: run.id,
-      createdAt: run.createdAt.toISOString(),
-      goal: run.goal,
-      retrievalMode,
-      status: run.status as LandscapeRunStatus,
-      taskFacets,
-      baselineSelectedKnowledgeIds,
-      currentRetrievedKnowledgeIds,
-      retainedKnowledgeIds,
-      missingFromCurrentKnowledgeIds,
-      newlyRetrievedKnowledgeIds,
-      baselineVerdicts,
-      usedBaselineRetainedKnowledgeIds,
-      usedBaselineLostKnowledgeIds,
-      offTopicBaselineKnowledgeIds,
-      wrongBaselineKnowledgeIds,
-      overlapRate,
-      replacementRate,
-      comparison,
-      currentDegradedReasons: current.degradedReasons,
-      currentRetrievalStats: {
-        textHitCount: current.stats.textHitCount,
-        vectorHitCount: current.stats.vectorHitCount,
-        mergedCount: current.stats.mergedCount,
-        textFailed: current.stats.textFailed,
-        vectorFailed: current.stats.vectorFailed,
-        embeddingStatus: current.stats.embeddingStatus,
-        repoScopeFallbackUsed: current.stats.repoScopeFallbackUsed,
-      },
-    });
-  }
-
-  const averageOverlapRate = rate(
-    runs.reduce((sum, run) => sum + run.overlapRate, 0),
-    runs.length,
-  );
-  const scoreTuning = buildScoreTuningSummary(runs);
-
-  return {
-    generatedAt: analysisAsOf,
-    analysisAsOf,
-    windowDays: input.windowDays,
-    corpusWindow: {
-      startAt: corpusStartAt.toISOString(),
-      endAt: analysisAsOf,
-    },
-    basis: {
-      unit: "replay-comparison",
-      mode: "current_retrieval",
-      runStatus: input.runStatus,
-      currentLimit: input.currentLimit,
-    },
-    replayRunCount: corpus.runs.length,
-    comparedRunCount: runs.length,
-    baselineSelectedItemCount,
-    currentRetrievedItemCount,
-    retainedItemCount,
-    missingFromCurrentItemCount,
-    newlyRetrievedItemCount,
-    usedBaselineLostItemCount,
-    averageOverlapRate,
-    currentNoMatchRunCount,
-    comparisonCounts,
-    recompilePlan: buildRecompilePlan({
-      replayRunCount: corpus.runs.length,
-      comparedRunCount: runs.length,
-    }),
-    rankingExperiments: buildRankingExperiments({
-      runs,
-      retainedItemCount,
-      missingFromCurrentItemCount,
-      usedBaselineLostItemCount,
-      averageOverlapRate,
-    }),
-    appliesToRefineCandidates: buildAppliesToRefineCandidates(runs),
-    promotionGateSummary: buildPromotionGateSummary(runs),
-    scoreTuning,
-    compileInterventionPlan: buildCompileInterventionPlan(scoreTuning),
-    runs: input.includeRuns ? runs : [],
-  };
 }

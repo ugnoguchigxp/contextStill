@@ -1,5 +1,6 @@
 import { buildLandscapeReplayComparison } from "./landscape-replay-comparison.service.js";
 import { buildLandscapeReplaySnapshot } from "./landscape-replay.service.js";
+import { buildLandscapeContradictionCandidates } from "./landscape-contradiction.service.js";
 import { buildLandscapeSnapshot } from "./landscape.service.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import {
@@ -46,6 +47,7 @@ const reasonOrder: Record<string, number> = {
   semantic_merge: 11,
   relation_orphan: 12,
   promotion_gate_review: 13,
+  contradiction_review: 14,
 };
 
 const replayCompareReasonMapping: Record<
@@ -513,6 +515,36 @@ function buildPromotionGateCandidates(
   ];
 }
 
+function buildContradictionDetectionCandidates(
+  input: BuildLandscapeReviewItemCandidatesInput,
+): LandscapeReviewItemCandidate[] {
+  if (!input.sources.includes("contradiction_detection")) return [];
+  if (!input.contradictionCandidates || input.contradictionCandidates.length === 0) return [];
+
+  return input.contradictionCandidates.map((candidate) =>
+    landscapeReviewItemCandidateSchema.parse({
+      source: "contradiction_detection",
+      reason: "contradiction_review",
+      proposedAction: "review_contradiction",
+      priority: clampPriority(candidate.priority),
+      confidence: candidate.confidenceLabel,
+      idempotencyKey: `contradiction_detection:contradiction_review:${candidate.pairKey}`,
+      knowledgeId: candidate.leftKnowledgeId,
+      runId: null,
+      triggerEventId: null,
+      communityKey: candidate.communityKey,
+      communityLabel: candidate.communityLabel,
+      suggestedAppliesTo: normalizeSuggestedAppliesTo(candidate.scopeOverlap),
+      evidence: normalizeEvidence(candidate.evidence),
+      payload: {
+        ...candidate.payload,
+        confidence: candidate.confidence,
+      },
+      note: null,
+    }),
+  );
+}
+
 function sortCandidatesForMaterialize(candidates: LandscapeReviewItemCandidate[]) {
   return [...candidates].sort((left, right) => {
     const priorityDiff = right.priority - left.priority;
@@ -556,11 +588,16 @@ export async function buildLandscapeReviewItemCandidates(
     ...input,
     generatedAt,
   });
+  const contradictionCandidates = buildContradictionDetectionCandidates({
+    ...input,
+    generatedAt,
+  });
   const candidates = sortCandidatesForMaterialize([
     ...replayCompareCandidates,
     ...landscapeSnapshotCandidates,
     ...semanticRelationComparisonCandidates,
     ...promotionGateCandidates,
+    ...contradictionCandidates,
   ]);
 
   return {
@@ -578,6 +615,7 @@ export async function materializeLandscapeReviewItems(
     "landscape_snapshot",
     "semantic_relation_comparison",
     "promotion_gate",
+    "contradiction_detection",
   ]);
   const unsupportedSources = input.sources.filter((source) => !supportedSources.has(source));
   if (unsupportedSources.length > 0) {
@@ -588,42 +626,55 @@ export async function materializeLandscapeReviewItems(
   }
 
   const generatedAt = new Date().toISOString();
-  const [comparison, landscapeSnapshot, landscapeReplaySnapshot] = await Promise.all([
-    input.sources.includes("replay_compare") || input.sources.includes("promotion_gate")
-      ? buildLandscapeReplayComparison({
-          windowDays: input.windowDays,
-          limit: input.limit,
-          runStatus: input.runStatus,
-          currentLimit: input.currentLimit,
-          includeRuns: false,
-        })
-      : Promise.resolve(null),
-    input.sources.includes("landscape_snapshot")
-      ? buildLandscapeSnapshot({
-          windowDays: input.windowDays,
-          limit: input.landscapeLimit,
-          status: input.landscapeStatus,
-          relationAxes: input.relationAxes,
-          minSelectedCount: input.minSelectedCount,
-          minFeedbackCount: input.minFeedbackCount,
-        })
-      : Promise.resolve(null),
-    input.sources.includes("semantic_relation_comparison")
-      ? buildLandscapeReplaySnapshot({
-          windowDays: input.windowDays,
-          limit: input.limit,
-          landscapeLimit: input.landscapeLimit,
-          runStatus: input.runStatus,
-          landscapeStatus: input.landscapeStatus,
-          relationAxes: input.relationAxes,
-          minSelectedCount: input.minSelectedCount,
-          minFeedbackCount: input.minFeedbackCount,
-          minSimilarity: input.minSimilarity,
-          semanticTopK: input.semanticTopK,
-          includeRuns: false,
-        })
-      : Promise.resolve(null),
-  ]);
+  const [comparison, landscapeSnapshot, landscapeReplaySnapshot, contradictionCandidates] =
+    await Promise.all([
+      input.sources.includes("replay_compare") || input.sources.includes("promotion_gate")
+        ? buildLandscapeReplayComparison({
+            windowDays: input.windowDays,
+            limit: input.limit,
+            runStatus: input.runStatus,
+            currentLimit: input.currentLimit,
+            includeRuns: false,
+          })
+        : Promise.resolve(null),
+      input.sources.includes("landscape_snapshot")
+        ? buildLandscapeSnapshot({
+            windowDays: input.windowDays,
+            limit: input.landscapeLimit,
+            status: input.landscapeStatus,
+            relationAxes: input.relationAxes,
+            minSelectedCount: input.minSelectedCount,
+            minFeedbackCount: input.minFeedbackCount,
+          })
+        : Promise.resolve(null),
+      input.sources.includes("semantic_relation_comparison")
+        ? buildLandscapeReplaySnapshot({
+            windowDays: input.windowDays,
+            limit: input.limit,
+            landscapeLimit: input.landscapeLimit,
+            runStatus: input.runStatus,
+            landscapeStatus: input.landscapeStatus,
+            relationAxes: input.relationAxes,
+            minSelectedCount: input.minSelectedCount,
+            minFeedbackCount: input.minFeedbackCount,
+            minSimilarity: input.minSimilarity,
+            semanticTopK: input.semanticTopK,
+            includeRuns: false,
+          })
+        : Promise.resolve(null),
+      input.sources.includes("contradiction_detection")
+        ? buildLandscapeContradictionCandidates({
+            windowDays: input.windowDays,
+            knowledgeLimit: Math.max(input.materializeLimit * 6, 160),
+            candidateLimit: Math.max(input.materializeLimit * 3, 120),
+            landscapeStatus: input.landscapeStatus,
+            relationAxes: input.relationAxes,
+            semanticMinSimilarity: Math.max(input.minSimilarity, 0.82),
+            confidenceThreshold: 0.62,
+            recentSelectionMin: 2,
+          })
+        : Promise.resolve([]),
+    ]);
 
   const candidateBuild = await buildLandscapeReviewItemCandidates({
     generatedAt,
@@ -633,6 +684,7 @@ export async function materializeLandscapeReviewItems(
     landscapeSnapshot,
     landscapeReplaySnapshot,
     landscapeReplayComparison: comparison,
+    contradictionCandidates,
   });
   const prioritizedCandidates = sortCandidatesForMaterialize(
     uniqueCandidatesByIdempotencyKey(candidateBuild.candidates),

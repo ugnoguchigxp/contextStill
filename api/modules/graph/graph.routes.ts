@@ -3,6 +3,8 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { buildLandscapeReplayComparison } from "../../../src/modules/landscape/landscape-replay-comparison.service.js";
 import { buildLandscapeReplaySnapshot } from "../../../src/modules/landscape/landscape-replay.service.js";
+import { getLandscapeSnapshotCacheStatus } from "../../../src/modules/landscape/landscape-snapshot-cache.service.js";
+import { buildLandscapeTrajectory } from "../../../src/modules/landscape/landscape-trajectory.service.js";
 import {
   LandscapeReviewCandidateLinkError,
   createLandscapeReviewCandidates,
@@ -20,6 +22,10 @@ import {
   landscapeReplaySnapshotSchema,
 } from "../../../src/shared/schemas/landscape-replay.schema.js";
 import {
+  landscapeTrajectoryQuerySchema,
+  landscapeTrajectoryResultSchema,
+} from "../../../src/shared/schemas/landscape-trajectory.schema.js";
+import {
   landscapeReviewCandidateCreateInputSchema,
   landscapeReviewCandidateCreateResultSchema,
   landscapeReviewCandidateLinkUpdateInputSchema,
@@ -31,6 +37,7 @@ import {
   landscapeReviewItemsMaterializeInputSchema,
   landscapeReviewItemsMaterializeResultSchema,
 } from "../../../src/shared/schemas/landscape-review.schema.js";
+import { landscapeSnapshotCacheStatusSchema } from "../../../src/shared/schemas/landscape-snapshot-cache.schema.js";
 import { landscapeSnapshotSchema } from "../../../src/shared/schemas/landscape.schema.js";
 import {
   type GraphRelationAxis,
@@ -68,6 +75,9 @@ const landscapeReviewItemParamSchema = z.object({
 const landscapeReviewItemCandidateLinkParamSchema = z.object({
   id: z.string().trim().min(1),
   linkId: z.string().trim().min(1),
+});
+const landscapeTrajectoryParamSchema = z.object({
+  runId: z.string().trim().min(1),
 });
 
 const communityLabelBodySchema = z.object({
@@ -162,6 +172,10 @@ export const graphRouter = new Hono()
     }
     return c.json(landscapeSnapshotSchema.parse(snapshot));
   })
+  .get("/landscape/cache-status", async (c) => {
+    const cacheStatus = await getLandscapeSnapshotCacheStatus();
+    return c.json(landscapeSnapshotCacheStatusSchema.parse(cacheStatus));
+  })
   .get("/landscape/replay", zValidator("query", landscapeReplayQuerySchema), async (c) => {
     const query = c.req.valid("query");
     const snapshot = await buildLandscapeReplaySnapshot({
@@ -198,6 +212,22 @@ export const graphRouter = new Hono()
         return c.json(landscapeReplayComparisonResponseSchema.parse(comparison));
       }
       return c.json(landscapeReplayComparisonResponseSchema.parse(comparison));
+    },
+  )
+  .get(
+    "/landscape/trajectory/:runId",
+    zValidator("param", landscapeTrajectoryParamSchema),
+    zValidator("query", landscapeTrajectoryQuerySchema),
+    async (c) => {
+      const { runId } = c.req.valid("param");
+      const query = c.req.valid("query");
+      const trajectory = await buildLandscapeTrajectory({
+        runId,
+        includeCandidates: query.includeCandidates,
+        limit: query.limit,
+      });
+      if (!trajectory) return c.json({ error: "not found" }, 404);
+      return c.json(landscapeTrajectoryResultSchema.parse(trajectory));
     },
   )
   .post(

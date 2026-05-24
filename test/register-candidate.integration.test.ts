@@ -76,4 +76,27 @@ describeDb("registerCandidate", () => {
     });
     expect(knowledgeRows).toEqual([]);
   });
+
+  test("sets wiki priority when metadata indicates wiki parent", async () => {
+    const result = await registerCandidate({
+      title: "Keep wiki priority",
+      body: "Use when:\n- From wiki parent",
+      type: "rule",
+      metadata: {
+        parentTargetKind: "wiki_file",
+      },
+    });
+
+    const db = getDb();
+    const [target] = await db
+      .select()
+      .from(distillationTargetStates)
+      .where(eq(distillationTargetStates.id, result.targetStateId));
+
+    expect(target).toMatchObject({
+      targetKind: "knowledge_candidate",
+      priorityGroup: "wiki",
+      status: "pending",
+    });
+  });
 });

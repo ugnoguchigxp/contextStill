@@ -7,6 +7,7 @@ import { hasSkillLikeProcedureBody } from "../distillation/procedure-quality.js"
 import { parseStorageCandidatesFromLlmOutput } from "../findCandidate/parser.js";
 import type { CandidateKnowledgeType } from "../findCandidate/repository.js";
 import { DEFAULT_DISTILLATION_TARGET_VERSION } from "../selectDistillationTarget/repository.js";
+import { resolveKnowledgeCandidatePriorityGroup } from "../selectDistillationTarget/priority-group.js";
 
 export type RegisterCandidateInput = z.infer<typeof registerCandidateInputSchema>;
 
@@ -99,6 +100,15 @@ export async function registerCandidate(
   const candidateId = randomUUID();
   const sourceUri = `agent://candidate/${candidateId}`;
   const now = new Date();
+  const targetMetadata = {
+    ...(parsed.metadata ?? {}),
+    source: "mcp_register_candidate",
+    registeredAt: now.toISOString(),
+  } satisfies Record<string, unknown>;
+  const priorityGroup = resolveKnowledgeCandidatePriorityGroup({
+    sourceUri,
+    metadata: targetMetadata,
+  });
 
   return db.transaction(async (tx) => {
     const [target] = await tx
@@ -110,12 +120,9 @@ export async function registerCandidate(
         distillationVersion: DEFAULT_DISTILLATION_TARGET_VERSION,
         status: "pending",
         phase: "selected",
-        priorityGroup: "knowledge_candidate",
+        priorityGroup,
         sortKey: now.toISOString(),
-        metadata: {
-          source: "mcp_register_candidate",
-          registeredAt: now.toISOString(),
-        },
+        metadata: targetMetadata,
         updatedAt: now,
       })
       .returning();

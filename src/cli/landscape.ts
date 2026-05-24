@@ -6,6 +6,13 @@ import {
   listLandscapeReviewItems,
   materializeLandscapeReviewItems,
 } from "../modules/landscape/landscape-review-items.service.js";
+import {
+  clearLandscapeSnapshotCache,
+  getLandscapeSnapshotCacheStatus,
+  isLandscapeSnapshotCacheEnabled,
+  type LandscapeSnapshotCacheType,
+} from "../modules/landscape/landscape-snapshot-cache.service.js";
+import { buildLandscapeTrajectory } from "../modules/landscape/landscape-trajectory.service.js";
 import { buildLandscapeSnapshot } from "../modules/landscape/landscape.service.js";
 
 type CliOptions = {
@@ -21,6 +28,9 @@ type CliOptions = {
   minSimilarity: number;
   semanticTopK: number;
   currentLimit: number;
+  trajectoryRunId: string | null;
+  trajectoryLimit: number;
+  trajectoryIncludeCandidates: boolean;
   replay: boolean;
   replayCompare: boolean;
   compareCommunities: boolean;
@@ -30,9 +40,17 @@ type CliOptions = {
   queueList: boolean;
   queueStatus: "pending" | "reviewing" | "resolved" | "dismissed" | "all";
   queueSources: Array<
-    "replay_compare" | "landscape_snapshot" | "semantic_relation_comparison" | "promotion_gate"
+    | "replay_compare"
+    | "landscape_snapshot"
+    | "semantic_relation_comparison"
+    | "promotion_gate"
+    | "contradiction_detection"
   >;
   queueLimit: number;
+  snapshotCacheStatus: boolean;
+  snapshotCacheRefresh: boolean;
+  snapshotCacheWarmup: boolean;
+  snapshotCacheTypes: LandscapeSnapshotCacheType[];
   json: boolean;
 };
 
@@ -101,10 +119,18 @@ function parseQueueStatus(value: string): CliOptions["queueStatus"] {
 function parseQueueSources(
   value: string,
 ): Array<
-  "replay_compare" | "landscape_snapshot" | "semantic_relation_comparison" | "promotion_gate"
+  | "replay_compare"
+  | "landscape_snapshot"
+  | "semantic_relation_comparison"
+  | "promotion_gate"
+  | "contradiction_detection"
 > {
   const sources = new Set<
-    "replay_compare" | "landscape_snapshot" | "semantic_relation_comparison" | "promotion_gate"
+    | "replay_compare"
+    | "landscape_snapshot"
+    | "semantic_relation_comparison"
+    | "promotion_gate"
+    | "contradiction_detection"
   >();
   for (const token of value.split(",")) {
     const normalized = token.trim().toLowerCase();
@@ -112,17 +138,45 @@ function parseQueueSources(
       normalized === "replay_compare" ||
       normalized === "landscape_snapshot" ||
       normalized === "semantic_relation_comparison" ||
-      normalized === "promotion_gate"
+      normalized === "promotion_gate" ||
+      normalized === "contradiction_detection"
     ) {
       sources.add(normalized);
     }
   }
   if (sources.size === 0) {
     throw new Error(
-      "--queue-source must include replay_compare|landscape_snapshot|semantic_relation_comparison|promotion_gate",
+      "--queue-source must include replay_compare|landscape_snapshot|semantic_relation_comparison|promotion_gate|contradiction_detection",
     );
   }
   return [...sources];
+}
+
+function parseSnapshotCacheTypes(value: string): LandscapeSnapshotCacheType[] {
+  const types = new Set<LandscapeSnapshotCacheType>();
+  for (const token of value.split(",")) {
+    const normalized = token.trim().toLowerCase();
+    if (normalized === "all") {
+      types.add("landscape_snapshot");
+      types.add("landscape_replay_snapshot");
+      types.add("landscape_replay_comparison");
+      continue;
+    }
+    if (
+      normalized === "landscape_snapshot" ||
+      normalized === "landscape_replay_snapshot" ||
+      normalized === "landscape_replay_comparison"
+    ) {
+      types.add(normalized);
+    }
+  }
+
+  if (types.size === 0) {
+    throw new Error(
+      "--snapshot-cache-type must include landscape_snapshot|landscape_replay_snapshot|landscape_replay_comparison|all",
+    );
+  }
+  return [...types];
 }
 
 function parseRunStatus(value: string): CliOptions["runStatus"] {
@@ -159,6 +213,9 @@ function parseArgs(args: string[]): CliOptions {
     minSimilarity: 0.72,
     semanticTopK: 3,
     currentLimit: 12,
+    trajectoryRunId: null,
+    trajectoryLimit: 200,
+    trajectoryIncludeCandidates: true,
     replay: false,
     replayCompare: false,
     compareCommunities: false,
@@ -169,6 +226,14 @@ function parseArgs(args: string[]): CliOptions {
     queueStatus: "all",
     queueSources: ["replay_compare"],
     queueLimit: 100,
+    snapshotCacheStatus: false,
+    snapshotCacheRefresh: false,
+    snapshotCacheWarmup: true,
+    snapshotCacheTypes: [
+      "landscape_snapshot",
+      "landscape_replay_snapshot",
+      "landscape_replay_comparison",
+    ],
     json: false,
   };
 
@@ -176,6 +241,23 @@ function parseArgs(args: string[]): CliOptions {
     const arg = args[index];
     if (arg === "--json") {
       options.json = true;
+      continue;
+    }
+    if (arg === "--trajectory-no-candidates") {
+      options.trajectoryIncludeCandidates = false;
+      continue;
+    }
+    if (arg === "--trajectory-run-id" || arg.startsWith("--trajectory-run-id=")) {
+      const value = readArgValue(args, index, "--trajectory-run-id").trim();
+      if (!value) throw new Error("--trajectory-run-id must not be empty");
+      options.trajectoryRunId = value;
+      if (arg === "--trajectory-run-id") index += 1;
+      continue;
+    }
+    if (arg === "--trajectory-limit" || arg.startsWith("--trajectory-limit=")) {
+      const parsed = parsePositiveInt(args, index, "--trajectory-limit", 2000);
+      options.trajectoryLimit = parsed.value;
+      if (parsed.consumedNext) index += 1;
       continue;
     }
     if (arg === "--replay") {
@@ -296,6 +378,24 @@ function parseArgs(args: string[]): CliOptions {
       const parsed = parsePositiveInt(args, index, "--queue-limit", 500);
       options.queueLimit = parsed.value;
       if (parsed.consumedNext) index += 1;
+      continue;
+    }
+    if (arg === "--snapshot-cache-status") {
+      options.snapshotCacheStatus = true;
+      continue;
+    }
+    if (arg === "--snapshot-cache-refresh") {
+      options.snapshotCacheRefresh = true;
+      continue;
+    }
+    if (arg === "--snapshot-cache-no-warmup") {
+      options.snapshotCacheWarmup = false;
+      continue;
+    }
+    if (arg === "--snapshot-cache-type" || arg.startsWith("--snapshot-cache-type=")) {
+      const value = readArgValue(args, index, "--snapshot-cache-type");
+      options.snapshotCacheTypes = parseSnapshotCacheTypes(value);
+      if (arg === "--snapshot-cache-type") index += 1;
       continue;
     }
 
@@ -507,8 +607,179 @@ function printQueueCreateCandidatesSummary(
   }
 }
 
+function printTrajectorySummary(
+  trajectory: Awaited<ReturnType<typeof buildLandscapeTrajectory>>,
+): void {
+  if (!trajectory) return;
+  console.log(
+    `Landscape Trajectory run=${trajectory.run.id} status=${trajectory.run.status} mode=${trajectory.run.retrievalMode}`,
+  );
+  console.log(`Goal: ${trajectory.run.goal}`);
+  console.log(`Selected: ${trajectory.stageCounts.selected}`);
+  console.log(`Candidates: ${trajectory.stageCounts.totalCandidates}`);
+  console.log(
+    `Stage counts: text=${trajectory.stageCounts.textHit} vector=${trajectory.stageCounts.vectorHit} merged=${trajectory.stageCounts.merged} final=${trajectory.stageCounts.finalRanked} suppressed=${trajectory.stageCounts.suppressed}`,
+  );
+  if (trajectory.diagnostics.candidateTraceSavedCount !== null) {
+    console.log(`Trace saved: ${trajectory.diagnostics.candidateTraceSavedCount}`);
+  }
+  if (trajectory.diagnostics.candidateTraceTruncated) {
+    console.log("Trace truncated at compile time: true");
+  }
+
+  if (trajectory.warnings.length > 0) {
+    console.log("");
+    console.log("Warnings:");
+    for (const warning of trajectory.warnings) {
+      console.log(`- ${warning}`);
+    }
+  }
+
+  if (trajectory.candidates.length > 0) {
+    console.log("");
+    console.log("Top candidates:");
+    for (const candidate of trajectory.candidates.slice(0, 10)) {
+      console.log(
+        `- ${candidate.itemId} final=${candidate.finalRank ?? "-"} merged=${candidate.mergedRank ?? "-"} selected=${candidate.selected} suppressed=${candidate.suppressed}`,
+      );
+    }
+  }
+}
+
+function printSnapshotCacheStatus(
+  status: Awaited<ReturnType<typeof getLandscapeSnapshotCacheStatus>>,
+): void {
+  console.log(`Landscape Snapshot Cache: ${status.enabled ? "enabled" : "disabled"}`);
+  console.log(`TTL: ${status.ttlSeconds}s`);
+  for (const snapshot of status.snapshots) {
+    console.log(
+      `- ${snapshot.snapshotType} ready=${snapshot.readyCount} stale=${snapshot.staleCount} latest=${snapshot.latestGeneratedAt ?? "-"} expires=${snapshot.latestExpiresAt ?? "-"}`,
+    );
+  }
+}
+
+async function warmupLandscapeSnapshotCache(
+  types: LandscapeSnapshotCacheType[],
+  options: CliOptions,
+): Promise<LandscapeSnapshotCacheType[]> {
+  const warmed: LandscapeSnapshotCacheType[] = [];
+  for (const snapshotType of types) {
+    if (snapshotType === "landscape_snapshot") {
+      await buildLandscapeSnapshot({
+        windowDays: options.windowDays,
+        limit: options.limit,
+        status: options.status,
+        relationAxes: options.relationAxes,
+        minSelectedCount: options.minSelectedCount,
+        minFeedbackCount: options.minFeedbackCount,
+      });
+      warmed.push(snapshotType);
+      continue;
+    }
+    if (snapshotType === "landscape_replay_snapshot") {
+      await buildLandscapeReplaySnapshot({
+        windowDays: options.windowDays,
+        limit: options.limit,
+        landscapeLimit: options.landscapeLimit,
+        runStatus: options.runStatus,
+        landscapeStatus: options.landscapeStatus,
+        relationAxes: options.relationAxes,
+        minSelectedCount: options.minSelectedCount,
+        minFeedbackCount: options.minFeedbackCount,
+        minSimilarity: options.minSimilarity,
+        semanticTopK: options.semanticTopK,
+        includeRuns: false,
+      });
+      warmed.push(snapshotType);
+      continue;
+    }
+    await buildLandscapeReplayComparison({
+      windowDays: options.windowDays,
+      limit: options.limit,
+      runStatus: options.runStatus,
+      currentLimit: options.currentLimit,
+      includeRuns: true,
+    });
+    warmed.push(snapshotType);
+  }
+
+  return warmed;
+}
+
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+  if (options.snapshotCacheStatus) {
+    const status = await getLandscapeSnapshotCacheStatus();
+    if (options.json) {
+      console.log(JSON.stringify(status, null, 2));
+      return;
+    }
+    printSnapshotCacheStatus(status);
+    return;
+  }
+
+  if (options.snapshotCacheRefresh) {
+    const cacheEnabled = isLandscapeSnapshotCacheEnabled();
+    const deletedCount = await clearLandscapeSnapshotCache({
+      snapshotTypes: options.snapshotCacheTypes,
+    });
+    const warmedTypes =
+      options.snapshotCacheWarmup && cacheEnabled
+        ? await warmupLandscapeSnapshotCache(options.snapshotCacheTypes, options)
+        : [];
+    const status = await getLandscapeSnapshotCacheStatus();
+    if (options.json) {
+      console.log(
+        JSON.stringify(
+          {
+            refreshedAt: new Date().toISOString(),
+            cacheEnabled,
+            deletedCount,
+            requestedTypes: options.snapshotCacheTypes,
+            warmupRequested: options.snapshotCacheWarmup,
+            warmedTypes,
+            cacheStatus: status,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+    console.log(`Landscape Snapshot Cache refresh deleted rows=${deletedCount}`);
+    console.log(`Cache enabled: ${cacheEnabled}`);
+    if (options.snapshotCacheWarmup) {
+      if (cacheEnabled) {
+        console.log(
+          warmedTypes.length > 0
+            ? `Warmup completed: ${warmedTypes.join(", ")}`
+            : "Warmup completed: none",
+        );
+      } else {
+        console.log("Warmup skipped because LANDSCAPE_SNAPSHOT_CACHE_ENABLED is false");
+      }
+    }
+    printSnapshotCacheStatus(status);
+    return;
+  }
+
+  if (options.trajectoryRunId) {
+    const trajectory = await buildLandscapeTrajectory({
+      runId: options.trajectoryRunId,
+      includeCandidates: options.trajectoryIncludeCandidates,
+      limit: options.trajectoryLimit,
+    });
+    if (!trajectory) {
+      throw new Error(`trajectory run not found: ${options.trajectoryRunId}`);
+    }
+    if (options.json) {
+      console.log(JSON.stringify(trajectory, null, 2));
+      return;
+    }
+    printTrajectorySummary(trajectory);
+    return;
+  }
+
   if (options.queueList) {
     const result = await listLandscapeReviewItems({
       status: options.queueStatus,

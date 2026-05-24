@@ -5,6 +5,7 @@ import { groupedConfig } from "../../config.js";
 import { APP_CONSTANTS } from "../../constants.js";
 import { getDb } from "../../db/index.js";
 import { distillationTargetStates } from "../../db/schema.js";
+import { priorityGroupFromRowLike } from "../selectDistillationTarget/priority-group.js";
 import type { DistillationTargetKind } from "../selectDistillationTarget/domain.js";
 import { isManualPauseTarget } from "../selectDistillationTarget/manual-pause.js";
 import {
@@ -79,6 +80,7 @@ type ScopedStateRow = Pick<
   | "updatedAt"
   | "nextRetryAt"
   | "lastError"
+  | "priorityGroup"
   | "metadata"
 >;
 
@@ -187,7 +189,9 @@ function accumulateHigherPriorityBlocker(
   row: ScopedStateRow,
   nowMs: number,
 ): void {
-  const isKnowledge = row.targetKind === "knowledge_candidate";
+  const blockerGroup = priorityGroupFromRowLike(row);
+  if (blockerGroup !== "knowledge_candidate" && blockerGroup !== "wiki") return;
+  const isKnowledge = blockerGroup === "knowledge_candidate";
   const manualPaused = row.status === "paused" && isManualPauseTarget(row);
   const retryablePaused =
     row.status === "paused" &&
@@ -240,6 +244,7 @@ async function loadScopedRows(
     .select({
       id: distillationTargetStates.id,
       targetKind: distillationTargetStates.targetKind,
+      priorityGroup: distillationTargetStates.priorityGroup,
       status: distillationTargetStates.status,
       createdAt: distillationTargetStates.createdAt,
       lockedAt: distillationTargetStates.lockedAt,
@@ -258,15 +263,16 @@ async function loadHigherPriorityRows(
   targetKind?: DistillationTargetKind,
 ): Promise<ScopedStateRow[]> {
   if (!targetKind || targetKind === "knowledge_candidate") return [];
-  const kinds =
+  const groups =
     targetKind === "vibe_memory"
-      ? (["knowledge_candidate", "wiki_file"] as DistillationTargetKind[])
-      : (["knowledge_candidate"] as DistillationTargetKind[]);
+      ? (["knowledge_candidate", "wiki"] as const)
+      : (["knowledge_candidate"] as const);
   const db = getDb();
   return db
     .select({
       id: distillationTargetStates.id,
       targetKind: distillationTargetStates.targetKind,
+      priorityGroup: distillationTargetStates.priorityGroup,
       status: distillationTargetStates.status,
       createdAt: distillationTargetStates.createdAt,
       lockedAt: distillationTargetStates.lockedAt,
@@ -280,7 +286,7 @@ async function loadHigherPriorityRows(
     .where(
       and(
         eq(distillationTargetStates.distillationVersion, distillationVersion),
-        inArray(distillationTargetStates.targetKind, kinds),
+        inArray(distillationTargetStates.priorityGroup, [...groups]),
       ),
     );
 }
@@ -320,7 +326,6 @@ export async function runDistillationRepair(
   const higherPriorityRows = await loadHigherPriorityRows(distillationVersion, targetKind);
   const blockers = emptyHigherPriorityBlockers();
   for (const row of higherPriorityRows) {
-    if (row.targetKind !== "knowledge_candidate" && row.targetKind !== "wiki_file") continue;
     accumulateHigherPriorityBlocker(blockers, row, nowMs);
   }
   const blockedByHigherPriority = hasBlockingHigherPriority(blockers);

@@ -281,6 +281,27 @@
       "when": 1779708200000,
       "tag": "0039_landscape_review_item_candidate_links",
       "breakpoints": true
+    },
+    {
+      "idx": 40,
+      "version": "7",
+      "when": 1779709200000,
+      "tag": "0040_context_compile_candidate_traces",
+      "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1779710400000,
+      "tag": "0041_landscape_review_items_contradiction_enums",
+      "breakpoints": true
+    },
+    {
+      "idx": 42,
+      "version": "7",
+      "when": 1779711400000,
+      "tag": "0042_landscape_snapshots_cache",
+      "breakpoints": true
     }
   ]
 }

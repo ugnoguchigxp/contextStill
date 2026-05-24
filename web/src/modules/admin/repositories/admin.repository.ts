@@ -834,6 +834,24 @@ export type LandscapeSnapshot = {
   }>;
 };
 
+export type LandscapeSnapshotCacheType =
+  | "landscape_snapshot"
+  | "landscape_replay_snapshot"
+  | "landscape_replay_comparison";
+
+export type LandscapeSnapshotCacheStatus = {
+  generatedAt: string;
+  enabled: boolean;
+  ttlSeconds: number;
+  snapshots: Array<{
+    snapshotType: LandscapeSnapshotCacheType;
+    readyCount: number;
+    staleCount: number;
+    latestGeneratedAt: string | null;
+    latestExpiresAt: string | null;
+  }>;
+};
+
 export type LandscapeRunStatusFilter = "ok" | "degraded" | "failed" | "all";
 
 export type LandscapeVerdictMix = {
@@ -1108,11 +1126,67 @@ export type LandscapeReplayComparisonResponse = {
   runs: LandscapeReplayComparisonRun[];
 };
 
+export type LandscapeTrajectoryCandidate = {
+  itemKind: "rule" | "procedure";
+  itemId: string;
+  textRank: number | null;
+  textScore: number | null;
+  vectorRank: number | null;
+  vectorScore: number | null;
+  mergedRank: number | null;
+  mergedScore: number | null;
+  finalRank: number | null;
+  finalScore: number | null;
+  selected: boolean;
+  suppressed: boolean;
+  suppressionReason: string | null;
+  agenticDecision: "not_evaluated" | "accepted" | "rejected" | "skipped";
+  rankingReason: string | null;
+  communityKey: string | null;
+};
+
+export type LandscapeTrajectoryResult = {
+  run: {
+    id: string;
+    goal: string;
+    retrievalMode: string;
+    status: "ok" | "degraded" | "failed";
+    source: string;
+    createdAt: string;
+  };
+  traceAvailable: boolean;
+  warnings: string[];
+  stageCounts: {
+    totalCandidates: number;
+    textHit: number;
+    vectorHit: number;
+    merged: number;
+    finalRanked: number;
+    selected: number;
+    suppressed: number;
+  };
+  selectedKnowledgeIds: string[];
+  diagnostics: {
+    candidateTraceSavedCount: number | null;
+    candidateTraceTruncated: boolean | null;
+    candidateTraceLimit: number | null;
+    candidateTraceSkippedReason: string | null;
+  };
+  candidates: LandscapeTrajectoryCandidate[];
+  communitySummary: Array<{
+    communityKey: string;
+    candidateCount: number;
+    selectedCount: number;
+    suppressedCount: number;
+  }>;
+};
+
 export type LandscapeReviewItemSource =
   | "replay_compare"
   | "landscape_snapshot"
   | "semantic_relation_comparison"
-  | "promotion_gate";
+  | "promotion_gate"
+  | "contradiction_detection";
 
 export type LandscapeReviewItemReason =
   | "used_baseline_lost"
@@ -1128,7 +1202,8 @@ export type LandscapeReviewItemReason =
   | "semantic_split"
   | "semantic_merge"
   | "relation_orphan"
-  | "promotion_gate_review";
+  | "promotion_gate_review"
+  | "contradiction_review";
 
 export type LandscapeReviewItemStatus = "pending" | "reviewing" | "resolved" | "dismissed";
 
@@ -1139,7 +1214,8 @@ export type LandscapeReviewItemProposedAction =
   | "review_wrong"
   | "split_or_merge_review"
   | "promotion_gate_review"
-  | "demote_to_draft_candidate";
+  | "demote_to_draft_candidate"
+  | "review_contradiction";
 
 export type LandscapeReviewItemConfidence = "low" | "medium" | "high";
 
@@ -1856,6 +1932,10 @@ export async function fetchLandscapeSnapshot(input?: {
   return getJson<LandscapeSnapshot>(`/api/graph/landscape?${params.toString()}`);
 }
 
+export async function fetchLandscapeSnapshotCacheStatus(): Promise<LandscapeSnapshotCacheStatus> {
+  return getJson<LandscapeSnapshotCacheStatus>("/api/graph/landscape/cache-status");
+}
+
 export async function fetchLandscapeReplaySnapshot(input?: {
   windowDays?: number;
   limit?: number;
@@ -1914,6 +1994,23 @@ export async function fetchLandscapeReplayComparison(input?: {
   return getJson<LandscapeReplayComparisonResponse>(
     `/api/graph/landscape/replay/compare?${params.toString()}`,
   );
+}
+
+export async function fetchLandscapeTrajectory(input: {
+  runId: string;
+  includeCandidates?: boolean;
+  limit?: number;
+}): Promise<LandscapeTrajectoryResult | null> {
+  const params = new URLSearchParams();
+  params.set("includeCandidates", String(input.includeCandidates ?? true));
+  params.set("limit", String(input.limit ?? 200));
+  try {
+    return await getJson<LandscapeTrajectoryResult>(
+      `/api/graph/landscape/trajectory/${encodeURIComponent(input.runId)}?${params.toString()}`,
+    );
+  } catch {
+    return null;
+  }
 }
 
 export async function materializeLandscapeReviewItems(
