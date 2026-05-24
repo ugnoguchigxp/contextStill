@@ -576,9 +576,15 @@
 }
 
 /* Accent top-borders for sections to easily distinguish different vectors */
-.overview-domain-section.accent-emerald { border-top: 3px solid #10b981; }
-.overview-domain-section.accent-cyan { border-top: 3px solid #06b6d4; }
-.overview-domain-section.accent-violet { border-top: 3px solid #8b5cf6; }
+.overview-domain-section.accent-emerald {
+  border-top: 3px solid #10b981;
+}
+.overview-domain-section.accent-cyan {
+  border-top: 3px solid #06b6d4;
+}
+.overview-domain-section.accent-violet {
+  border-top: 3px solid #8b5cf6;
+}
 
 /* Grid within each domain section */
 .overview-domain-grid {
@@ -666,10 +672,22 @@
 }
 
 /* Accent Colors */
-.accent-emerald .metric-icon-lg, .accent-emerald .metric-icon-sm { color: #10b981; }
-.accent-cyan .metric-icon-lg, .accent-cyan .metric-icon-sm { color: #06b6d4; }
-.accent-violet .metric-icon-lg, .accent-violet .metric-icon-sm { color: #8b5cf6; }
-.accent-amber .metric-icon-lg, .accent-amber .metric-icon-sm { color: #f59e0b; }
+.accent-emerald .metric-icon-lg,
+.accent-emerald .metric-icon-sm {
+  color: #10b981;
+}
+.accent-cyan .metric-icon-lg,
+.accent-cyan .metric-icon-sm {
+  color: #06b6d4;
+}
+.accent-violet .metric-icon-lg,
+.accent-violet .metric-icon-sm {
+  color: #8b5cf6;
+}
+.accent-amber .metric-icon-lg,
+.accent-amber .metric-icon-sm {
+  color: #f59e0b;
+}
 
 /* Thin elegant progress bar */
 .metric-progress-container {
@@ -727,7 +745,6 @@
     box-shadow: 0 0 0 0 rgba(245, 158, 11, 0);
   }
 }
-
 
 .domain-charts-grid {
   display: grid;
@@ -1258,6 +1275,29 @@
   border-top-color: rgba(45, 212, 191, 0.9);
 }
 
+.legend-chip {
+  width: 1rem;
+  height: 0.62rem;
+  border-radius: 0.2rem;
+  border: 1px solid rgba(226, 232, 240, 0.5);
+  display: inline-flex;
+}
+
+.legend-chip.attractor {
+  background: rgba(16, 185, 129, 0.38);
+  box-shadow: 0 0 8px rgba(16, 185, 129, 0.6);
+}
+
+.legend-chip.negative {
+  background: rgba(239, 68, 68, 0.35);
+  border-style: dashed;
+}
+
+.legend-chip.dead-zone {
+  background: rgba(148, 163, 184, 0.2);
+  border-style: dashed;
+}
+
 .graph-overlay-stats {
   position: absolute;
   bottom: 1.25rem;
@@ -1451,6 +1491,41 @@
   cursor: pointer;
 }
 
+.graph-node-circle.landscape-strong-attractor,
+.graph-node-rect.landscape-strong-attractor {
+  filter: drop-shadow(0 0 8px rgba(16, 185, 129, 0.92));
+  stroke: rgba(16, 185, 129, 0.96);
+  stroke-width: 2.1;
+}
+
+.graph-node-circle.landscape-negative-attractor,
+.graph-node-rect.landscape-negative-attractor {
+  stroke: rgba(248, 113, 113, 0.95);
+  stroke-width: 2.1;
+  stroke-dasharray: 4 2;
+}
+
+.graph-node-circle.landscape-dead-zone,
+.graph-node-rect.landscape-dead-zone {
+  opacity: 0.5;
+  stroke: rgba(148, 163, 184, 0.86);
+  stroke-width: 1.8;
+  stroke-dasharray: 3 2;
+}
+
+.graph-node-circle.landscape-over-selected,
+.graph-node-rect.landscape-over-selected {
+  stroke: rgba(251, 191, 36, 0.95);
+  stroke-width: 2;
+}
+
+.graph-node-circle.landscape-feedback-insufficient,
+.graph-node-rect.landscape-feedback-insufficient {
+  stroke: rgba(148, 163, 184, 0.78);
+  stroke-width: 1.6;
+  stroke-dasharray: 2 2;
+}
+
 .graph-node-group:hover .graph-node-circle {
   r: 12;
 }
@@ -1507,6 +1582,23 @@
   margin-top: 0.2rem;
   padding-top: 0.8rem;
   border-top: 1px solid rgba(148, 163, 184, 0.2);
+}
+
+.graph-landscape-card {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.65rem;
+  border: 1px solid rgba(148, 163, 184, 0.24);
+  border-radius: 0.6rem;
+  background: rgba(15, 23, 42, 0.48);
+}
+
+.graph-landscape-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.6rem;
 }
 
 .graph-community-summary-header {

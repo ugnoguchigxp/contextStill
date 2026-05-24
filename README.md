@@ -266,6 +266,8 @@ For the full MCP tool contract, see [docs/mcp-tools.md](docs/mcp-tools.md).
 | `bun run distill:status` | Show distillation target queue and progress counters |
 | `bun run distill-target:release-stale` | Release stale running distillation targets |
 | `bun run doctor` | Run system diagnostics |
+| `bun run landscape -- --window-days 30` | Generate a community-based landscape snapshot |
+| `bun run landscape -- --window-days 30 --json` | Emit full landscape snapshot JSON |
 | `bun run backfill:knowledge-project-context` | Backfill project context on existing knowledge |
 | `./scripts/backup-db.sh` | Dump and zip the PostgreSQL database |
 
@@ -340,8 +342,9 @@ The REST API serves the Web UI and can be used independently.
 | `GET/DELETE` | `/api/vibe-memory/:id` | Get / delete a memory |
 | `GET` | `/api/agent-diffs` | List agent diff entries |
 | `GET` | `/api/graph` | Knowledge graph data |
+| `GET` | `/api/graph/landscape` | Community landscape snapshot (attractor/dead-zone diagnostics) |
 | `GET` | `/api/graph/community-labels` | List persisted community labels |
-| `PUT` | `/api/graph/community-labels/:communityId` | Update a community label |
+| `PUT` | `/api/graph/community-labels/:communityKey` | Update a community label |
 | `GET` | `/api/graph/nodes/:id` | Knowledge graph node detail |
 | `GET` | `/api/audit-logs` | Audit log timeline |
 | `GET` | `/api/candidates` | List distillation candidates with outcome stats |
@@ -610,6 +613,7 @@ memory-router/
 | [Project Evaluation](docs/project-evaluation.md) | Evidence-backed project value and current maturity notes |
 | [Knowledge Landscape Concept](docs/knowledge-landscape-concept-design.md) | Concept model for graph/community/knowledge-field views |
 | [Graph Community View Plan](docs/graph-community-view-mvp-plan.md) | Graph community UI/API implementation plan |
+| [Knowledge Landscape Attractor Plan](docs/knowledge-landscape-attractor-implementation-plan.md) | Phase 1 implementation plan for attractor/negative/dead-zone snapshot |
 | [Knowledge Usage Signal Redesign](docs/compile-knowledge-usage-signal-redesign-plan.md) | Compile-run usage signal and feedback redesign |
 | [Knowledge Feedback Staged Learning](docs/knowledge-feedback-staged-learning-plan.md) | Manual feedback and staged learning design |
 | [Doctor Operational Hardening](docs/doctor-distillation-operational-hardening-plan.md) | Doctor/distillation health and operational diagnostics |

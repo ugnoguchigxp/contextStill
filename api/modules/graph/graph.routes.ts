@@ -1,6 +1,8 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
+import { buildLandscapeSnapshot } from "../../../src/modules/landscape/landscape.service.js";
+import { landscapeSnapshotSchema } from "../../../src/shared/schemas/landscape.schema.js";
 import {
   type GraphRelationAxis,
   type GraphSnapshotParams,
@@ -37,6 +39,16 @@ const communityLabelBodySchema = z.object({
   note: z.string().trim().max(500).optional().or(z.literal("")),
 });
 
+const landscapeQuerySchema = z.object({
+  windowDays: z.coerce.number().int().min(1).max(180).default(30),
+  limit: z.coerce.number().int().min(1).max(1000).default(1000),
+  status: z.enum(["current", "active", "draft", "deprecated", "all"]).default("active"),
+  relationAxes: z.string().default("session,project,source"),
+  minSelectedCount: z.coerce.number().int().min(1).max(100).default(3),
+  minFeedbackCount: z.coerce.number().int().min(1).max(100).default(3),
+  format: z.enum(["full"]).default("full"),
+});
+
 function parseRelationAxes(input: string): GraphRelationAxis[] {
   const deduped = new Set<GraphRelationAxis>();
   for (const token of input.split(",")) {
@@ -66,6 +78,21 @@ export const graphRouter = new Hono()
       relationAxes: parseRelationAxes(query.relationAxes),
     });
     return c.json({ labels });
+  })
+  .get("/landscape", zValidator("query", landscapeQuerySchema), async (c) => {
+    const query = c.req.valid("query");
+    const snapshot = await buildLandscapeSnapshot({
+      windowDays: query.windowDays,
+      limit: query.limit,
+      status: query.status,
+      relationAxes: parseRelationAxes(query.relationAxes),
+      minSelectedCount: query.minSelectedCount,
+      minFeedbackCount: query.minFeedbackCount,
+    });
+    if (query.format === "full") {
+      return c.json(landscapeSnapshotSchema.parse(snapshot));
+    }
+    return c.json(landscapeSnapshotSchema.parse(snapshot));
   })
   .put(
     "/community-labels/:communityKey",

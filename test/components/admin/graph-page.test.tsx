@@ -7,6 +7,8 @@ import { GraphPage } from "../../../web/src/modules/admin/components/graph.page"
 import {
   type GraphNodeDetail,
   type GraphSnapshot,
+  type LandscapeSnapshot,
+  fetchLandscapeSnapshot,
   fetchGraphNodeDetail,
   fetchGraphSnapshot,
   updateGraphCommunityLabel,
@@ -23,6 +25,7 @@ global.ResizeObserver = ResizeObserverMock as any;
 // Repositories API のモック
 vi.mock("../../../web/src/modules/admin/repositories/admin.repository", () => ({
   fetchGraphSnapshot: vi.fn(),
+  fetchLandscapeSnapshot: vi.fn(),
   fetchGraphNodeDetail: vi.fn(),
   updateGraphCommunityLabel: vi.fn(),
 }));
@@ -101,6 +104,34 @@ const mockNodeDetail: GraphNodeDetail = {
   embedded: true,
 };
 
+const mockLandscapeData: LandscapeSnapshot = {
+  generatedAt: "2026-05-24T00:00:00.000Z",
+  windowDays: 30,
+  basis: {
+    unit: "community" as const,
+    relationAxes: ["session", "project", "source"],
+    status: "active" as const,
+  },
+  thresholds: {
+    minSelectedCount: 3,
+    minFeedbackCount: 3,
+  },
+  stats: {
+    totalCommunities: 0,
+    activeCommunities: 0,
+    selectedCommunities: 0,
+    insufficientFeedbackCommunities: 0,
+    strongAttractorCount: 0,
+    usefulAttractorCount: 0,
+    negativeCandidateCount: 0,
+    overSelectedNotUsedCount: 0,
+    deadZoneReachabilityCount: 0,
+    deadZoneStaleCount: 0,
+  },
+  communities: [],
+  risks: [],
+};
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -113,6 +144,7 @@ describe("GraphPage", () => {
   beforeEach(() => {
     queryClient.clear();
     vi.clearAllMocks();
+    vi.mocked(fetchLandscapeSnapshot).mockResolvedValue(mockLandscapeData);
   });
 
   it("renders graph visualization and statistics correctly", async () => {
@@ -155,6 +187,29 @@ describe("GraphPage", () => {
 
     fireEvent.change(viewModeSelect, { target: { value: "semantic" } });
     expect(fetchGraphSnapshot).toHaveBeenCalled();
+  });
+
+  it("community view 以外では landscape fetch を行わない", async () => {
+    vi.mocked(fetchGraphSnapshot).mockResolvedValue(mockGraphData);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GraphPage />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText("Node 1");
+    expect(fetchLandscapeSnapshot).not.toHaveBeenCalled();
+
+    const selects = screen.getAllByRole("combobox");
+    const viewModeSelect = selects[1];
+    fireEvent.change(viewModeSelect, { target: { value: "semantic" } });
+    expect(fetchLandscapeSnapshot).not.toHaveBeenCalled();
+
+    fireEvent.change(viewModeSelect, { target: { value: "community" } });
+    await waitFor(() => {
+      expect(fetchLandscapeSnapshot).toHaveBeenCalledTimes(1);
+    });
   });
 
   it("handles community view with relation axes and community stats", async () => {
@@ -217,6 +272,76 @@ describe("GraphPage", () => {
         thinEvidenceCommunityCount: 1,
       },
     });
+    vi.mocked(fetchLandscapeSnapshot).mockResolvedValue({
+      ...mockLandscapeData,
+      stats: {
+        ...mockLandscapeData.stats,
+        totalCommunities: 1,
+        activeCommunities: 1,
+        selectedCommunities: 1,
+        strongAttractorCount: 1,
+      },
+      communities: [
+        {
+          communityId: "community:1",
+          communityKey: "a".repeat(64),
+          communityLabel: "Core Reliability",
+          communityRank: 1,
+          size: 2,
+          memberCounts: {
+            active: 1,
+            draft: 1,
+            deprecated: 0,
+            rule: 1,
+            procedure: 1,
+            embedded: 1,
+          },
+          selection: {
+            selectedItemCountWindow: 6,
+            selectedRunCountWindow: 4,
+            cumulativeCompileSelectCount: 6,
+            zeroUseActiveCount: 0,
+            zeroUseActiveRatio: 0,
+          },
+          feedback: {
+            usedCountWindow: 4,
+            notUsedCountWindow: 1,
+            offTopicCountWindow: 1,
+            wrongCountWindow: 0,
+            feedbackCountWindow: 6,
+            usedRate: 0.667,
+            notUsedRate: 0.167,
+            offTopicRate: 0.167,
+            wrongRate: 0,
+            feedbackConfidence: "low",
+          },
+          quality: {
+            avgImportance: 80,
+            avgConfidence: 75,
+            avgDynamicScore: 20,
+            sourceRefCount: 2,
+            sourceRefDensity: 1,
+            avgFreshnessFactor: 0.9,
+            avgStalenessFactor: 0.1,
+          },
+          scores: {
+            activity: 6,
+            attractorScore: 2.8,
+            negativeScore: 0.7,
+            reachabilityRiskScore: 0.1,
+          },
+          classification: {
+            primary: "strong_attractor",
+            flags: [],
+            confidence: "medium",
+            reason: "used ratio is high",
+          },
+          recommendedActions: ["keep"],
+          representativeKnowledgeIds: ["n1", "n2"],
+        },
+      ],
+      risks: [],
+    });
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -228,6 +353,7 @@ describe("GraphPage", () => {
     const selects = screen.getAllByRole("combobox");
     const viewModeSelect = selects[1];
     fireEvent.change(viewModeSelect, { target: { value: "community" } });
+    await screen.findByText("Core Reliability");
 
     expect(fetchGraphSnapshot).toHaveBeenLastCalledWith(
       expect.objectContaining({
@@ -236,12 +362,20 @@ describe("GraphPage", () => {
         relationAxes: ["session", "project", "source"],
       }),
     );
+    expect(fetchLandscapeSnapshot).toHaveBeenCalledWith({
+      windowDays: 30,
+      limit: 1000,
+      status: "current",
+      relationAxes: ["session", "project", "source"],
+    });
     expect(await screen.findByText("Communities")).toBeInTheDocument();
     expect(screen.getByText("Largest")).toBeInTheDocument();
     expect(screen.getByText("Orphans")).toBeInTheDocument();
     expect(screen.getByText("Cold")).toBeInTheDocument();
     expect(screen.getByText("Thin")).toBeInTheDocument();
     expect(screen.getByText("Community Summary")).toBeInTheDocument();
+    expect(screen.getByText("Dynamic Health Card")).toBeInTheDocument();
+    expect(screen.getAllByText("Strong Attractor").length).toBeGreaterThan(0);
   });
 
   it("supports community supernode mode and label save", async () => {
@@ -311,6 +445,12 @@ describe("GraphPage", () => {
         communityDisplay: "supernode",
       }),
     );
+    expect(fetchLandscapeSnapshot).toHaveBeenCalledWith({
+      windowDays: 30,
+      limit: 1000,
+      status: "current",
+      relationAxes: ["session", "project", "source"],
+    });
 
     const input = await screen.findByPlaceholderText("Community label");
     fireEvent.change(input, { target: { value: "New Label" } });

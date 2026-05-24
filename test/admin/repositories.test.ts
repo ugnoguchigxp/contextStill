@@ -13,6 +13,7 @@ import {
   fetchCandidateItems,
   fetchDoctorReport,
   fetchGraphCommunityLabels,
+  fetchLandscapeSnapshot,
   fetchGraphNodeDetail,
   fetchGraphSnapshot,
   fetchKnowledgeItems,
@@ -327,6 +328,35 @@ describe("Admin Repository", () => {
       });
       expect(spy).toHaveBeenCalledWith(
         "/api/graph?limit=120&status=all&view=evidence&sourceNodeLimit=300",
+      );
+    });
+
+    it("fetchLandscapeSnapshot default params", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ communities: [] }),
+      } as Response);
+      await fetchLandscapeSnapshot();
+      expect(spy).toHaveBeenCalledWith(
+        "/api/graph/landscape?windowDays=30&limit=1000&status=active&format=full&relationAxes=session%2Cproject%2Csource",
+      );
+    });
+
+    it("fetchLandscapeSnapshot with custom params", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ communities: [] }),
+      } as Response);
+      await fetchLandscapeSnapshot({
+        windowDays: 14,
+        limit: 120,
+        status: "all",
+        relationAxes: ["project", "source"],
+        minSelectedCount: 5,
+        minFeedbackCount: 7,
+      });
+      expect(spy).toHaveBeenCalledWith(
+        "/api/graph/landscape?windowDays=14&limit=120&status=all&format=full&relationAxes=project%2Csource&minSelectedCount=5&minFeedbackCount=7",
       );
     });
 

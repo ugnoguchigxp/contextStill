@@ -7,6 +7,7 @@ import {
   registerKnowledgeInputSchema,
   updateKnowledgeInputSchema,
 } from "../src/shared/schemas/knowledge.schema.ts";
+import { landscapeSnapshotSchema } from "../src/shared/schemas/landscape.schema.ts";
 import { overviewDashboardSchema } from "../src/shared/schemas/overview.schema.ts";
 import { recordVibeMemoryInputSchema } from "../src/shared/schemas/vibe-memory.schema.ts";
 
@@ -380,6 +381,121 @@ describe("Shared Schemas", () => {
     };
 
     expect(overviewDashboardSchema.parse(input)).toEqual(expect.objectContaining(input));
+  });
+
+  test("landscapeSnapshotSchema parses valid input", () => {
+    const input = {
+      generatedAt: "2026-05-24T00:00:00.000Z",
+      windowDays: 30,
+      basis: {
+        unit: "community",
+        relationAxes: ["session", "project", "source"],
+        status: "active",
+      },
+      thresholds: {
+        minSelectedCount: 3,
+        minFeedbackCount: 3,
+        feedbackConfidence: { mediumMin: 10, highMin: 30 },
+        feedbackFactor: { insufficient: 0.4, low: 0.7, medium: 0.9, high: 1 },
+        attractor: {
+          strongUsedRateMin: 0.7,
+          usefulUsedRateMin: 0.5,
+          strongSourceRefDensityMin: 0.6,
+        },
+        negative: {
+          offTopicWeight: 1,
+          wrongWeight: 3,
+          candidateOffTopicRateMin: 0.4,
+        },
+        notUsed: {
+          overSelectedRateMin: 0.6,
+        },
+        deadZone: {
+          reachabilityRiskMin: 0.3,
+          staleSourceRefDensityMax: 0.5,
+          staleFactorMin: 0.5,
+        },
+        evidenceFactor: {
+          sourceRefDensityBaseline: 1,
+          min: 0.25,
+          max: 1.25,
+        },
+      },
+      stats: {
+        totalCommunities: 1,
+        activeCommunities: 1,
+        selectedCommunities: 1,
+        insufficientFeedbackCommunities: 0,
+        strongAttractorCount: 1,
+        usefulAttractorCount: 0,
+        negativeCandidateCount: 0,
+        overSelectedNotUsedCount: 0,
+        deadZoneReachabilityCount: 0,
+        deadZoneStaleCount: 0,
+      },
+      communities: [
+        {
+          communityId: "community:1",
+          communityKey: "a".repeat(64),
+          communityLabel: "Core",
+          communityRank: 1,
+          size: 2,
+          memberCounts: {
+            active: 2,
+            draft: 0,
+            deprecated: 0,
+            rule: 1,
+            procedure: 1,
+            embedded: 2,
+          },
+          selection: {
+            selectedItemCountWindow: 8,
+            selectedRunCountWindow: 6,
+            cumulativeCompileSelectCount: 20,
+            zeroUseActiveCount: 0,
+            zeroUseActiveRatio: 0,
+          },
+          feedback: {
+            usedCountWindow: 5,
+            notUsedCountWindow: 2,
+            offTopicCountWindow: 1,
+            wrongCountWindow: 0,
+            feedbackCountWindow: 8,
+            usedRate: 0.625,
+            notUsedRate: 0.25,
+            offTopicRate: 0.125,
+            wrongRate: 0,
+            feedbackConfidence: "low",
+          },
+          quality: {
+            avgImportance: 80,
+            avgConfidence: 75,
+            avgDynamicScore: 21,
+            sourceRefCount: 3,
+            sourceRefDensity: 1.5,
+            avgFreshnessFactor: 0.9,
+            avgStalenessFactor: 0.1,
+          },
+          scores: {
+            activity: 8,
+            attractorScore: 3.2,
+            negativeScore: 0.8,
+            reachabilityRiskScore: 0.1,
+          },
+          classification: {
+            primary: "useful_attractor",
+            flags: [],
+            confidence: "medium",
+            reason: "stable",
+          },
+          recommendedActions: ["keep"],
+          representativeKnowledgeIds: ["k1", "k2"],
+        },
+      ],
+      risks: [],
+    };
+
+    expect(landscapeSnapshotSchema.parse(input)).toEqual(expect.objectContaining(input));
   });
 
   test("contextPackSchema parses valid input", async () => {

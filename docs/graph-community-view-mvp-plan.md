@@ -93,6 +93,8 @@ semantic edge は初期 community には混ぜない。
 - attractor score
 - compile trajectory playback
 
+上記の attractor / dead-zone overlay は後続の `docs/knowledge-landscape-attractor-implementation-plan.md` で扱う。
+
 ## 5. API 変更
 
 ### 5.1 `GraphViewMode`

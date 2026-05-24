@@ -691,6 +691,119 @@ export type GraphSnapshot = {
   };
 };
 
+export type LandscapeFeedbackConfidence = "insufficient" | "low" | "medium" | "high";
+
+export type LandscapeClassificationPrimary =
+  | "strong_attractor"
+  | "useful_attractor"
+  | "negative_attractor_candidate"
+  | "over_selected_not_used"
+  | "dead_zone_reachability_risk"
+  | "dead_zone_stale"
+  | "feedback_insufficient"
+  | "neutral";
+
+export type LandscapeClassificationConfidence = "low" | "medium" | "high";
+
+export type LandscapeCommunity = {
+  communityId: string;
+  communityKey: string;
+  communityLabel: string;
+  communityRank: number;
+  size: number;
+  memberCounts: {
+    active: number;
+    draft: number;
+    deprecated: number;
+    rule: number;
+    procedure: number;
+    embedded: number;
+  };
+  selection: {
+    selectedItemCountWindow: number;
+    selectedRunCountWindow: number;
+    cumulativeCompileSelectCount: number;
+    zeroUseActiveCount: number;
+    zeroUseActiveRatio: number;
+  };
+  feedback: {
+    usedCountWindow: number;
+    notUsedCountWindow: number;
+    offTopicCountWindow: number;
+    wrongCountWindow: number;
+    feedbackCountWindow: number;
+    usedRate: number;
+    notUsedRate: number;
+    offTopicRate: number;
+    wrongRate: number;
+    feedbackConfidence: LandscapeFeedbackConfidence;
+  };
+  quality: {
+    avgImportance: number;
+    avgConfidence: number;
+    avgDynamicScore: number;
+    sourceRefCount: number;
+    sourceRefDensity: number;
+    avgFreshnessFactor: number;
+    avgStalenessFactor: number;
+  };
+  scores: {
+    activity: number;
+    attractorScore: number;
+    negativeScore: number;
+    reachabilityRiskScore: number;
+  };
+  classification: {
+    primary: LandscapeClassificationPrimary;
+    flags: string[];
+    confidence: LandscapeClassificationConfidence;
+    reason: string;
+  };
+  recommendedActions: string[];
+  representativeKnowledgeIds: string[];
+};
+
+export type LandscapeSnapshot = {
+  generatedAt: string;
+  windowDays: number;
+  basis: {
+    unit: "community";
+    relationAxes: GraphRelationAxis[];
+    status: GraphStatusFilter;
+  };
+  thresholds: {
+    minSelectedCount: number;
+    minFeedbackCount: number;
+  };
+  stats: {
+    totalCommunities: number;
+    activeCommunities: number;
+    selectedCommunities: number;
+    insufficientFeedbackCommunities: number;
+    strongAttractorCount: number;
+    usefulAttractorCount: number;
+    negativeCandidateCount: number;
+    overSelectedNotUsedCount: number;
+    deadZoneReachabilityCount: number;
+    deadZoneStaleCount: number;
+  };
+  communities: LandscapeCommunity[];
+  risks: Array<{
+    communityId: string;
+    communityKey: string;
+    communityLabel: string;
+    communityRank: number;
+    type:
+      | "negative_attractor_candidate"
+      | "wrong_review_required"
+      | "over_selected_not_used"
+      | "dead_zone_reachability_risk"
+      | "dead_zone_stale";
+    severity: LandscapeClassificationConfidence;
+    reason: string;
+  }>;
+};
+
 export type SourceTreeItem = {
   slug: string;
   title: string;
@@ -1221,6 +1334,33 @@ export async function fetchGraphSnapshot(
     }
   }
   return getJson<GraphSnapshot>(`/api/graph?${params}`);
+}
+
+export async function fetchLandscapeSnapshot(input?: {
+  windowDays?: number;
+  limit?: number;
+  status?: GraphStatusFilter;
+  relationAxes?: GraphRelationAxis[];
+  minSelectedCount?: number;
+  minFeedbackCount?: number;
+}): Promise<LandscapeSnapshot> {
+  const params = new URLSearchParams();
+  params.set("windowDays", String(input?.windowDays ?? 30));
+  params.set("limit", String(input?.limit ?? 1000));
+  params.set("status", input?.status ?? "active");
+  params.set("format", "full");
+  if (input?.relationAxes?.length) {
+    params.set("relationAxes", input.relationAxes.join(","));
+  } else {
+    params.set("relationAxes", "session,project,source");
+  }
+  if (input?.minSelectedCount !== undefined) {
+    params.set("minSelectedCount", String(input.minSelectedCount));
+  }
+  if (input?.minFeedbackCount !== undefined) {
+    params.set("minFeedbackCount", String(input.minFeedbackCount));
+  }
+  return getJson<LandscapeSnapshot>(`/api/graph/landscape?${params.toString()}`);
 }
 
 export async function fetchGraphCommunityLabels(input?: {

@@ -9,6 +9,7 @@ import {
   type GraphCommunityDisplayMode,
   type GraphCommunitySummary,
   type GraphEdge,
+  type LandscapeCommunity,
   type GraphNode,
   type GraphNodeDetail,
   type GraphRelationAxis,
@@ -16,6 +17,7 @@ import {
   type GraphSuperedge,
   type GraphSupernode,
   type GraphViewMode,
+  fetchLandscapeSnapshot,
   fetchGraphNodeDetail,
   fetchGraphSnapshot,
   updateGraphCommunityLabel,
@@ -365,6 +367,64 @@ function healthLabel(summary: GraphCommunitySummary): string {
   return "hot";
 }
 
+function landscapePrimaryLabel(value: LandscapeCommunity["classification"]["primary"]): string {
+  switch (value) {
+    case "strong_attractor":
+      return "Strong Attractor";
+    case "useful_attractor":
+      return "Useful Attractor";
+    case "negative_attractor_candidate":
+      return "Negative Candidate";
+    case "over_selected_not_used":
+      return "Over-selected Not-used";
+    case "dead_zone_reachability_risk":
+      return "Dead Zone (Reachability Risk)";
+    case "dead_zone_stale":
+      return "Dead Zone (Stale)";
+    case "feedback_insufficient":
+      return "Feedback Insufficient";
+    default:
+      return "Neutral";
+  }
+}
+
+function landscapeConfidenceLabel(
+  value: LandscapeCommunity["feedback"]["feedbackConfidence"],
+): string {
+  if (value === "high") return "High";
+  if (value === "medium") return "Medium";
+  if (value === "low") return "Low";
+  return "Insufficient";
+}
+
+function nodeLandscapeClass(
+  node: DisplayNode,
+  viewMode: GraphViewMode,
+  landscapeByCommunityKey: Map<string, LandscapeCommunity>,
+): string[] {
+  if (viewMode !== "community" || !node.communityKey) return [];
+  const landscape = landscapeByCommunityKey.get(node.communityKey);
+  if (!landscape) return [];
+
+  const classes: string[] = [];
+  if (landscape.classification.primary === "strong_attractor") {
+    classes.push("landscape-strong-attractor");
+  } else if (landscape.classification.primary === "negative_attractor_candidate") {
+    classes.push("landscape-negative-attractor");
+  } else if (
+    landscape.classification.primary === "dead_zone_reachability_risk" ||
+    landscape.classification.primary === "dead_zone_stale"
+  ) {
+    classes.push("landscape-dead-zone");
+  } else if (landscape.classification.primary === "over_selected_not_used") {
+    classes.push("landscape-over-selected");
+  } else if (landscape.classification.primary === "feedback_insufficient") {
+    classes.push("landscape-feedback-insufficient");
+  }
+
+  return classes;
+}
+
 export function GraphPage() {
   const [statusFilter, setStatusFilter] = useState<GraphStatusFilter>("current");
   const [viewMode, setViewMode] = useState<GraphViewMode>("relation");
@@ -401,6 +461,19 @@ export function GraphPage() {
           viewMode === "relation" || viewMode === "community" ? relationAxes : undefined,
         sourceNodeLimit: viewMode === "evidence" ? 800 : undefined,
       }),
+  });
+
+  const landscape = useQuery({
+    queryKey: ["graph-landscape", 30, 1000, statusFilter, relationAxes.join(",")],
+    queryFn: () =>
+      fetchLandscapeSnapshot({
+        windowDays: 30,
+        limit: 1000,
+        status: statusFilter,
+        relationAxes,
+      }),
+    enabled: viewMode === "community",
+    staleTime: 60_000,
   });
 
   // ノードクリック時に詳細を取得
@@ -458,6 +531,16 @@ export function GraphPage() {
     (selectedCommunityId
       ? communities.find((community) => community.communityId === selectedCommunityId)
       : undefined) ?? communities[0];
+  const landscapeByCommunityKey = useMemo(
+    () =>
+      new Map(
+        (landscape.data?.communities ?? []).map((community) => [community.communityKey, community]),
+      ),
+    [landscape.data?.communities],
+  );
+  const selectedLandscapeCommunity = selectedCommunity?.communityKey
+    ? landscapeByCommunityKey.get(selectedCommunity.communityKey)
+    : undefined;
   const activeId = selectedId ?? hoveredId;
   const totalEdges = displayEdgesSource.length;
   const displayedNodeCount =
@@ -677,10 +760,24 @@ export function GraphPage() {
         </div>
         <div className="graph-legend-overlay">
           {viewMode === "community" ? (
-            <div className="legend-item">
-              <span className="legend-dot procedure" />
-              <span>Node Color: Community</span>
-            </div>
+            <>
+              <div className="legend-item">
+                <span className="legend-dot procedure" />
+                <span>Node Color: Community</span>
+              </div>
+              <div className="legend-item">
+                <span className="legend-chip attractor" />
+                <span>Strong Attractor</span>
+              </div>
+              <div className="legend-item">
+                <span className="legend-chip negative" />
+                <span>Negative Candidate</span>
+              </div>
+              <div className="legend-item">
+                <span className="legend-chip dead-zone" />
+                <span>Dead Zone</span>
+              </div>
+            </>
           ) : (
             <>
               <div className="legend-item">
@@ -827,6 +924,18 @@ export function GraphPage() {
                   <div className="stat-row graph-stats-subtle">
                     <span>Thin</span>
                     <strong>{graph.data?.stats.thinEvidenceCommunityCount ?? 0}</strong>
+                  </div>
+                  <div className="stat-row graph-stats-subtle">
+                    <span>Strong Attractor</span>
+                    <strong>{landscape.data?.stats.strongAttractorCount ?? 0}</strong>
+                  </div>
+                  <div className="stat-row graph-stats-subtle">
+                    <span>Negative Candidate</span>
+                    <strong>{landscape.data?.stats.negativeCandidateCount ?? 0}</strong>
+                  </div>
+                  <div className="stat-row graph-stats-subtle">
+                    <span>Dead Reachability</span>
+                    <strong>{landscape.data?.stats.deadZoneReachabilityCount ?? 0}</strong>
                   </div>
                 </>
               ) : null}
@@ -1056,6 +1165,109 @@ export function GraphPage() {
               </div>
               {selectedCommunity ? (
                 <>
+                  <div className="graph-landscape-card">
+                    <div className="graph-landscape-card-header">
+                      <span className="graph-detail-kicker">Dynamic Health Card</span>
+                      <Badge
+                        variant="outline"
+                        className={`h-5 text-[11px] ${
+                          selectedLandscapeCommunity?.classification.primary === "strong_attractor"
+                            ? "border-emerald-300 text-emerald-100"
+                            : selectedLandscapeCommunity?.classification.primary ===
+                                  "negative_attractor_candidate" ||
+                                selectedLandscapeCommunity?.classification.primary ===
+                                  "dead_zone_reachability_risk" ||
+                                selectedLandscapeCommunity?.classification.primary ===
+                                  "dead_zone_stale"
+                              ? "border-rose-300 text-rose-100"
+                              : selectedLandscapeCommunity?.classification.primary ===
+                                  "over_selected_not_used"
+                                ? "border-amber-300 text-amber-100"
+                                : "border-slate-300 text-slate-100"
+                        }`}
+                      >
+                        {selectedLandscapeCommunity
+                          ? landscapePrimaryLabel(selectedLandscapeCommunity.classification.primary)
+                          : "No snapshot"}
+                      </Badge>
+                    </div>
+                    {landscape.isLoading ? (
+                      <div className="graph-detail-empty">Loading landscape snapshot...</div>
+                    ) : selectedLandscapeCommunity ? (
+                      <>
+                        <div className="graph-detail-meta-grid">
+                          <div className="graph-detail-metric">
+                            <span>Selected (30d)</span>
+                            <strong>
+                              {selectedLandscapeCommunity.selection.selectedItemCountWindow}
+                            </strong>
+                          </div>
+                          <div className="graph-detail-metric">
+                            <span>Runs (30d)</span>
+                            <strong>
+                              {selectedLandscapeCommunity.selection.selectedRunCountWindow}
+                            </strong>
+                          </div>
+                          <div className="graph-detail-metric">
+                            <span>Feedback</span>
+                            <strong>
+                              {landscapeConfidenceLabel(
+                                selectedLandscapeCommunity.feedback.feedbackConfidence,
+                              )}
+                            </strong>
+                          </div>
+                          <div className="graph-detail-metric">
+                            <span>Source Density</span>
+                            <strong>
+                              {selectedLandscapeCommunity.quality.sourceRefDensity.toFixed(2)}
+                            </strong>
+                          </div>
+                        </div>
+                        <div className="graph-community-summary-grid">
+                          <div className="graph-community-summary-item">
+                            <span>Used</span>
+                            <p>
+                              {selectedLandscapeCommunity.feedback.usedCountWindow} (
+                              {Math.round(selectedLandscapeCommunity.feedback.usedRate * 100)}%)
+                            </p>
+                          </div>
+                          <div className="graph-community-summary-item">
+                            <span>Not Used</span>
+                            <p>
+                              {selectedLandscapeCommunity.feedback.notUsedCountWindow} (
+                              {Math.round(selectedLandscapeCommunity.feedback.notUsedRate * 100)}%)
+                            </p>
+                          </div>
+                          <div className="graph-community-summary-item">
+                            <span>Off Topic</span>
+                            <p>
+                              {selectedLandscapeCommunity.feedback.offTopicCountWindow} (
+                              {Math.round(selectedLandscapeCommunity.feedback.offTopicRate * 100)}%)
+                            </p>
+                          </div>
+                          <div className="graph-community-summary-item">
+                            <span>Wrong</span>
+                            <p>
+                              {selectedLandscapeCommunity.feedback.wrongCountWindow} (
+                              {Math.round(selectedLandscapeCommunity.feedback.wrongRate * 100)}%)
+                            </p>
+                          </div>
+                        </div>
+                        <div className="graph-community-summary-item">
+                          <span>Reason</span>
+                          <p>{selectedLandscapeCommunity.classification.reason}</p>
+                        </div>
+                        <div className="graph-community-summary-item">
+                          <span>Recommended Actions</span>
+                          <p>{selectedLandscapeCommunity.recommendedActions.join(" / ")}</p>
+                        </div>
+                      </>
+                    ) : (
+                      <div className="graph-detail-empty">
+                        Landscape snapshot for this community is not available.
+                      </div>
+                    )}
+                  </div>
                   <div className="graph-community-label-edit">
                     <Input
                       value={communityLabelDraft}
@@ -1226,6 +1438,11 @@ export function GraphPage() {
               const isEmbedded = node.embedded;
               const screenNode = screenNodeById.get(node.id);
               if (!screenNode) return null;
+              const landscapeClasses = nodeLandscapeClass(
+                node,
+                viewMode,
+                landscapeByCommunityKey,
+              ).join(" ");
               const baseStroke = isSelected
                 ? "#fff"
                 : isEmbedded
@@ -1247,7 +1464,7 @@ export function GraphPage() {
                     strokeWidth={isSelected ? 2.2 : isEmbedded ? 0.8 : 1.2}
                     strokeDasharray={isEmbedded ? undefined : "2.5 2"}
                     opacity={isEmbedded ? 1 : 0.9}
-                    className="graph-node-rect"
+                    className={`graph-node-rect ${landscapeClasses}`}
                     role="button"
                     tabIndex={0}
                     aria-label={`Select ${node.label || node.id}`}
@@ -1274,7 +1491,7 @@ export function GraphPage() {
                   strokeWidth={isSelected ? 2.2 : isEmbedded ? 0.8 : 1.2}
                   strokeDasharray={isEmbedded ? undefined : "2.5 2"}
                   opacity={isEmbedded ? 1 : 0.9}
-                  className="graph-node-circle"
+                  className={`graph-node-circle ${landscapeClasses}`}
                   role="button"
                   tabIndex={0}
                   aria-label={`Select ${node.label || node.id}`}
