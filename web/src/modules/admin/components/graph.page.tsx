@@ -1081,720 +1081,736 @@ export function GraphPage() {
 
       {selectedId ? (
         <div className="graph-overlay-right-detail" style={{ top: detailPanelTop }}>
-        <aside className="graph-detail-panel" aria-live="polite">
-          <div className="graph-detail-panel-header">
-            <span className="graph-detail-kicker">Node Detail</span>
-            <strong>
-              {viewMode === "semantic"
-                ? "Semantic"
-                : viewMode === "evidence"
-                  ? "Evidence"
-                  : viewMode === "community"
-                    ? "Community"
-                    : "Relation"}
-            </strong>
-          </div>
-          {selectedId ? (
-            selectedRawId ? (
-              nodeDetail.isLoading ? (
-                <div className="graph-detail-empty">Loading node detail...</div>
-              ) : nodeDetail.data ? (
-                <>
-                  <div className="graph-detail-badges">
-                    <Badge variant="secondary" className="h-5 text-[11px]">
-                      {nodeDetail.data.group}
-                    </Badge>
-                    <Badge
-                      variant="outline"
-                      className="h-5 border-slate-400 text-[11px] text-slate-50"
-                    >
-                      {nodeDetail.data.status}
-                    </Badge>
-                    <Badge
-                      variant={selectedNode?.embedded ? "secondary" : "outline"}
-                      className={`h-5 text-[11px] ${
-                        selectedNode?.embedded ? "" : "border-amber-300 text-amber-100"
-                      }`}
-                    >
-                      {selectedNode?.embedded ? "embedded" : "no-embedding"}
-                    </Badge>
-                  </div>
-                  <h2 className="graph-detail-title">{nodeDetail.data.label}</h2>
-                  <div className="graph-detail-meta-grid">
-                    <div className="graph-detail-metric">
-                      <span>Confidence</span>
-                      <strong>{nodeDetail.data.confidence.toFixed(0)}</strong>
+          <aside className="graph-detail-panel" aria-live="polite">
+            <div className="graph-detail-panel-header">
+              <span className="graph-detail-kicker">Node Detail</span>
+              <strong>
+                {viewMode === "semantic"
+                  ? "Semantic"
+                  : viewMode === "evidence"
+                    ? "Evidence"
+                    : viewMode === "community"
+                      ? "Community"
+                      : "Relation"}
+              </strong>
+            </div>
+            {selectedId ? (
+              selectedRawId ? (
+                nodeDetail.isLoading ? (
+                  <div className="graph-detail-empty">Loading node detail...</div>
+                ) : nodeDetail.data ? (
+                  <>
+                    <div className="graph-detail-badges">
+                      <Badge variant="secondary" className="h-5 text-[11px]">
+                        {nodeDetail.data.group}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="h-5 border-slate-400 text-[11px] text-slate-50"
+                      >
+                        {nodeDetail.data.status}
+                      </Badge>
+                      <Badge
+                        variant={selectedNode?.embedded ? "secondary" : "outline"}
+                        className={`h-5 text-[11px] ${
+                          selectedNode?.embedded ? "" : "border-amber-300 text-amber-100"
+                        }`}
+                      >
+                        {selectedNode?.embedded ? "embedded" : "no-embedding"}
+                      </Badge>
                     </div>
-                    <div className="graph-detail-metric">
-                      <span>Importance</span>
-                      <strong>{nodeDetail.data.importance.toFixed(0)}</strong>
+                    <h2 className="graph-detail-title">{nodeDetail.data.label}</h2>
+                    <div className="graph-detail-meta-grid">
+                      <div className="graph-detail-metric">
+                        <span>Confidence</span>
+                        <strong>{nodeDetail.data.confidence.toFixed(0)}</strong>
+                      </div>
+                      <div className="graph-detail-metric">
+                        <span>Importance</span>
+                        <strong>{nodeDetail.data.importance.toFixed(0)}</strong>
+                      </div>
+                      <div className="graph-detail-metric">
+                        <span>Weight</span>
+                        <strong>{nodeDetail.data.weight.toFixed(2)}</strong>
+                      </div>
+                      <div className="graph-detail-metric">
+                        <span>Kind</span>
+                        <strong>{nodeDetail.data.kind}</strong>
+                      </div>
+                      {viewMode === "community" ? (
+                        <>
+                          <div className="graph-detail-metric">
+                            <span>Community</span>
+                            <strong>
+                              {selectedNode?.communityLabel ?? selectedNode?.communityId ?? "-"}
+                            </strong>
+                          </div>
+                          <div className="graph-detail-metric">
+                            <span>Rank</span>
+                            <strong>{selectedNode?.communityRank ?? "-"}</strong>
+                          </div>
+                          <div className="graph-detail-metric">
+                            <span>Size</span>
+                            <strong>{selectedNode?.communitySize ?? "-"}</strong>
+                          </div>
+                        </>
+                      ) : null}
                     </div>
-                    <div className="graph-detail-metric">
-                      <span>Weight</span>
-                      <strong>{nodeDetail.data.weight.toFixed(2)}</strong>
+                    <div className="graph-detail-body">
+                      <span>Preview</span>
+                      <p>{nodeDetail.data.bodyPreview}</p>
                     </div>
-                    <div className="graph-detail-metric">
-                      <span>Kind</span>
-                      <strong>{nodeDetail.data.kind}</strong>
+                    <div className="graph-detail-id">{selectedId}</div>
+                  </>
+                ) : selectedNode ? (
+                  <>
+                    <div className="graph-detail-badges">
+                      <Badge variant="secondary" className="h-5 text-[11px]">
+                        {selectedNode.group}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="h-5 border-slate-400 text-[11px] text-slate-50"
+                      >
+                        {selectedNode.status}
+                      </Badge>
+                      {viewMode === "community" ? (
+                        <Badge
+                          variant="outline"
+                          className="h-5 border-sky-300 text-[11px] text-sky-100"
+                        >
+                          {selectedNode.communityLabel ?? selectedNode.communityId ?? "community:-"}
+                        </Badge>
+                      ) : null}
                     </div>
-                    {viewMode === "community" ? (
-                      <>
-                        <div className="graph-detail-metric">
-                          <span>Community</span>
-                          <strong>
-                            {selectedNode?.communityLabel ?? selectedNode?.communityId ?? "-"}
-                          </strong>
-                        </div>
-                        <div className="graph-detail-metric">
-                          <span>Rank</span>
-                          <strong>{selectedNode?.communityRank ?? "-"}</strong>
-                        </div>
-                        <div className="graph-detail-metric">
-                          <span>Size</span>
-                          <strong>{selectedNode?.communitySize ?? "-"}</strong>
-                        </div>
-                      </>
-                    ) : null}
-                  </div>
-                  <div className="graph-detail-body">
-                    <span>Preview</span>
-                    <p>{nodeDetail.data.bodyPreview}</p>
-                  </div>
-                  <div className="graph-detail-id">{selectedId}</div>
-                </>
+                    <h2 className="graph-detail-title">{selectedNode.label}</h2>
+                    <div className="graph-detail-empty">
+                      Detail fetch failed. Showing graph data.
+                    </div>
+                  </>
+                ) : null
               ) : selectedNode ? (
-                <>
-                  <div className="graph-detail-badges">
-                    <Badge variant="secondary" className="h-5 text-[11px]">
-                      {selectedNode.group}
-                    </Badge>
-                    <Badge
-                      variant="outline"
-                      className="h-5 border-slate-400 text-[11px] text-slate-50"
-                    >
-                      {selectedNode.status}
-                    </Badge>
-                    {viewMode === "community" ? (
+                selectedNode.kind === "source" ? (
+                  <>
+                    <div className="graph-detail-badges">
+                      <Badge variant="secondary" className="h-5 text-[11px]">
+                        Source
+                      </Badge>
                       <Badge
                         variant="outline"
-                        className="h-5 border-sky-300 text-[11px] text-sky-100"
+                        className="h-5 border-cyan-300 text-[11px] text-cyan-100"
                       >
-                        {selectedNode.communityLabel ?? selectedNode.communityId ?? "community:-"}
+                        {selectedNode.sourceKind ?? "source"}
                       </Badge>
-                    ) : null}
-                  </div>
-                  <h2 className="graph-detail-title">{selectedNode.label}</h2>
-                  <div className="graph-detail-empty">Detail fetch failed. Showing graph data.</div>
-                </>
-              ) : null
-            ) : selectedNode ? (
-              selectedNode.kind === "source" ? (
-                <>
-                  <div className="graph-detail-badges">
-                    <Badge variant="secondary" className="h-5 text-[11px]">
-                      Source
-                    </Badge>
-                    <Badge
-                      variant="outline"
-                      className="h-5 border-cyan-300 text-[11px] text-cyan-100"
-                    >
-                      {selectedNode.sourceKind ?? "source"}
-                    </Badge>
-                  </div>
-                  <h2 className="graph-detail-title">{selectedNode.label}</h2>
-                  <div className="graph-detail-meta-grid">
-                    <div className="graph-detail-metric">
-                      <span>Linked Knowledge</span>
-                      <strong>{selectedNode.linkedKnowledgeCount ?? 0}</strong>
                     </div>
-                    <div className="graph-detail-metric">
-                      <span>Weight</span>
-                      <strong>{selectedNode.weight.toFixed(2)}</strong>
+                    <h2 className="graph-detail-title">{selectedNode.label}</h2>
+                    <div className="graph-detail-meta-grid">
+                      <div className="graph-detail-metric">
+                        <span>Linked Knowledge</span>
+                        <strong>{selectedNode.linkedKnowledgeCount ?? 0}</strong>
+                      </div>
+                      <div className="graph-detail-metric">
+                        <span>Weight</span>
+                        <strong>{selectedNode.weight.toFixed(2)}</strong>
+                      </div>
+                      <div className="graph-detail-metric">
+                        <span>Source ID</span>
+                        <strong>{selectedNode.sourceId ?? "-"}</strong>
+                      </div>
+                      <div className="graph-detail-metric">
+                        <span>Kind</span>
+                        <strong>{selectedNode.kind}</strong>
+                      </div>
                     </div>
-                    <div className="graph-detail-metric">
-                      <span>Source ID</span>
-                      <strong>{selectedNode.sourceId ?? "-"}</strong>
+                    <div className="graph-detail-body">
+                      <span>URI</span>
+                      <p>{selectedNode.sourceUri ?? "-"}</p>
                     </div>
-                    <div className="graph-detail-metric">
-                      <span>Kind</span>
-                      <strong>{selectedNode.kind}</strong>
+                    <div className="graph-detail-id">{selectedId}</div>
+                  </>
+                ) : (
+                  <>
+                    <div className="graph-detail-badges">
+                      <Badge variant="secondary" className="h-5 text-[11px]">
+                        Community
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className="h-5 border-slate-400 text-[11px] text-slate-50"
+                      >
+                        {selectedNode.communityLabel ?? selectedNode.id}
+                      </Badge>
+                      {selectedNode.healthDead ? (
+                        <Badge
+                          variant="outline"
+                          className="h-5 border-rose-300 text-[11px] text-rose-100"
+                        >
+                          cold
+                        </Badge>
+                      ) : selectedNode.healthStale ? (
+                        <Badge
+                          variant="outline"
+                          className="h-5 border-amber-300 text-[11px] text-amber-100"
+                        >
+                          warm
+                        </Badge>
+                      ) : selectedNode.healthThinEvidence ? (
+                        <Badge
+                          variant="outline"
+                          className="h-5 border-sky-300 text-[11px] text-sky-100"
+                        >
+                          warm
+                        </Badge>
+                      ) : (
+                        <Badge
+                          variant="outline"
+                          className="h-5 border-emerald-300 text-[11px] text-emerald-100"
+                        >
+                          hot
+                        </Badge>
+                      )}
                     </div>
-                  </div>
-                  <div className="graph-detail-body">
-                    <span>URI</span>
-                    <p>{selectedNode.sourceUri ?? "-"}</p>
-                  </div>
-                  <div className="graph-detail-id">{selectedId}</div>
-                </>
+                    <h2 className="graph-detail-title">
+                      {selectedNode.communityLabel ?? selectedNode.label}
+                    </h2>
+                    <div className="graph-detail-meta-grid">
+                      <div className="graph-detail-metric">
+                        <span>Community</span>
+                        <strong>{selectedNode.communityId ?? selectedNode.id}</strong>
+                      </div>
+                      <div className="graph-detail-metric">
+                        <span>Size</span>
+                        <strong>{selectedNode.communitySize ?? "-"}</strong>
+                      </div>
+                      <div className="graph-detail-metric">
+                        <span>Rank</span>
+                        <strong>{selectedNode.communityRank ?? "-"}</strong>
+                      </div>
+                    </div>
+                  </>
+                )
               ) : (
-                <>
-                  <div className="graph-detail-badges">
-                    <Badge variant="secondary" className="h-5 text-[11px]">
-                      Community
-                    </Badge>
-                    <Badge
-                      variant="outline"
-                      className="h-5 border-slate-400 text-[11px] text-slate-50"
-                    >
-                      {selectedNode.communityLabel ?? selectedNode.id}
-                    </Badge>
-                    {selectedNode.healthDead ? (
-                      <Badge
-                        variant="outline"
-                        className="h-5 border-rose-300 text-[11px] text-rose-100"
-                      >
-                        cold
-                      </Badge>
-                    ) : selectedNode.healthStale ? (
-                      <Badge
-                        variant="outline"
-                        className="h-5 border-amber-300 text-[11px] text-amber-100"
-                      >
-                        warm
-                      </Badge>
-                    ) : selectedNode.healthThinEvidence ? (
-                      <Badge
-                        variant="outline"
-                        className="h-5 border-sky-300 text-[11px] text-sky-100"
-                      >
-                        warm
-                      </Badge>
-                    ) : (
-                      <Badge
-                        variant="outline"
-                        className="h-5 border-emerald-300 text-[11px] text-emerald-100"
-                      >
-                        hot
-                      </Badge>
-                    )}
-                  </div>
-                  <h2 className="graph-detail-title">
-                    {selectedNode.communityLabel ?? selectedNode.label}
-                  </h2>
-                  <div className="graph-detail-meta-grid">
-                    <div className="graph-detail-metric">
-                      <span>Community</span>
-                      <strong>{selectedNode.communityId ?? selectedNode.id}</strong>
-                    </div>
-                    <div className="graph-detail-metric">
-                      <span>Size</span>
-                      <strong>{selectedNode.communitySize ?? "-"}</strong>
-                    </div>
-                    <div className="graph-detail-metric">
-                      <span>Rank</span>
-                      <strong>{selectedNode.communityRank ?? "-"}</strong>
-                    </div>
-                  </div>
-                </>
+                <div className="graph-detail-empty">Select a node to view details</div>
               )
             ) : (
               <div className="graph-detail-empty">Select a node to view details</div>
-            )
-          ) : (
-            <div className="graph-detail-empty">Select a node to view details</div>
-          )}
-          {viewMode === "community" ? (
-            <section className="graph-community-summary-panel">
-              <div className="graph-community-summary-header">
-                <span className="graph-detail-kicker">Community Summary</span>
-                <strong>{selectedCommunity?.communityLabel ?? "-"}</strong>
-              </div>
-              {selectedCommunity ? (
-                <>
-                  <div className="graph-landscape-card">
-                    <div className="graph-landscape-card-header">
-                      <span className="graph-detail-kicker">Dynamic Health Card</span>
-                      <Badge
-                        variant="outline"
-                        className={`h-5 text-[11px] ${
-                          selectedLandscapeCommunity?.classification.primary === "strong_attractor"
-                            ? "border-emerald-300 text-emerald-100"
-                            : selectedLandscapeCommunity?.classification.primary ===
-                                  "negative_attractor_candidate" ||
-                                selectedLandscapeCommunity?.classification.primary ===
-                                  "dead_zone_reachability_risk" ||
-                                selectedLandscapeCommunity?.classification.primary ===
-                                  "dead_zone_stale"
-                              ? "border-rose-300 text-rose-100"
+            )}
+            {viewMode === "community" ? (
+              <section className="graph-community-summary-panel">
+                <div className="graph-community-summary-header">
+                  <span className="graph-detail-kicker">Community Summary</span>
+                  <strong>{selectedCommunity?.communityLabel ?? "-"}</strong>
+                </div>
+                {selectedCommunity ? (
+                  <>
+                    <div className="graph-landscape-card">
+                      <div className="graph-landscape-card-header">
+                        <span className="graph-detail-kicker">Dynamic Health Card</span>
+                        <Badge
+                          variant="outline"
+                          className={`h-5 text-[11px] ${
+                            selectedLandscapeCommunity?.classification.primary ===
+                            "strong_attractor"
+                              ? "border-emerald-300 text-emerald-100"
                               : selectedLandscapeCommunity?.classification.primary ===
-                                  "over_selected_not_used"
-                                ? "border-amber-300 text-amber-100"
-                                : "border-slate-300 text-slate-100"
-                        }`}
-                      >
-                        {selectedLandscapeCommunity
-                          ? landscapePrimaryLabel(selectedLandscapeCommunity.classification.primary)
-                          : "No snapshot"}
-                      </Badge>
-                    </div>
-                    {landscape.isLoading ? (
-                      <div className="graph-detail-empty">Loading landscape snapshot...</div>
-                    ) : selectedLandscapeCommunity ? (
-                      <>
-                        <div className="graph-detail-meta-grid">
-                          <div className="graph-detail-metric">
-                            <span>Selected (30d)</span>
-                            <strong>
-                              {selectedLandscapeCommunity.selection.selectedItemCountWindow}
-                            </strong>
-                          </div>
-                          <div className="graph-detail-metric">
-                            <span>Runs (30d)</span>
-                            <strong>
-                              {selectedLandscapeCommunity.selection.selectedRunCountWindow}
-                            </strong>
-                          </div>
-                          <div className="graph-detail-metric">
-                            <span>Feedback</span>
-                            <strong>
-                              {landscapeConfidenceLabel(
-                                selectedLandscapeCommunity.feedback.feedbackConfidence,
-                              )}
-                            </strong>
-                          </div>
-                          <div className="graph-detail-metric">
-                            <span>Source Density</span>
-                            <strong>
-                              {selectedLandscapeCommunity.quality.sourceRefDensity.toFixed(2)}
-                            </strong>
-                          </div>
-                        </div>
-                        <div className="graph-community-summary-grid">
-                          <div className="graph-community-summary-item">
-                            <span>Used</span>
-                            <p>
-                              {selectedLandscapeCommunity.feedback.usedCountWindow} (
-                              {Math.round(selectedLandscapeCommunity.feedback.usedRate * 100)}%)
-                            </p>
-                          </div>
-                          <div className="graph-community-summary-item">
-                            <span>Not Used</span>
-                            <p>
-                              {selectedLandscapeCommunity.feedback.notUsedCountWindow} (
-                              {Math.round(selectedLandscapeCommunity.feedback.notUsedRate * 100)}%)
-                            </p>
-                          </div>
-                          <div className="graph-community-summary-item">
-                            <span>Off Topic</span>
-                            <p>
-                              {selectedLandscapeCommunity.feedback.offTopicCountWindow} (
-                              {Math.round(selectedLandscapeCommunity.feedback.offTopicRate * 100)}%)
-                            </p>
-                          </div>
-                          <div className="graph-community-summary-item">
-                            <span>Wrong</span>
-                            <p>
-                              {selectedLandscapeCommunity.feedback.wrongCountWindow} (
-                              {Math.round(selectedLandscapeCommunity.feedback.wrongRate * 100)}%)
-                            </p>
-                          </div>
-                        </div>
-                        <div className="graph-community-summary-item">
-                          <span>Reason</span>
-                          <p>{selectedLandscapeCommunity.classification.reason}</p>
-                        </div>
-                        <div className="graph-community-summary-item">
-                          <span>Recommended Actions</span>
-                          <p>{selectedLandscapeCommunity.recommendedActions.join(" / ")}</p>
-                        </div>
-                      </>
-                    ) : (
-                      <div className="graph-detail-empty">
-                        Landscape snapshot for this community is not available.
+                                    "negative_attractor_candidate" ||
+                                  selectedLandscapeCommunity?.classification.primary ===
+                                    "dead_zone_reachability_risk" ||
+                                  selectedLandscapeCommunity?.classification.primary ===
+                                    "dead_zone_stale"
+                                ? "border-rose-300 text-rose-100"
+                                : selectedLandscapeCommunity?.classification.primary ===
+                                    "over_selected_not_used"
+                                  ? "border-amber-300 text-amber-100"
+                                  : "border-slate-300 text-slate-100"
+                          }`}
+                        >
+                          {selectedLandscapeCommunity
+                            ? landscapePrimaryLabel(
+                                selectedLandscapeCommunity.classification.primary,
+                              )
+                            : "No snapshot"}
+                        </Badge>
                       </div>
-                    )}
-                  </div>
-                  <div className="graph-landscape-card">
-                    <div className="graph-landscape-card-header">
-                      <span className="graph-detail-kicker">Replay Health</span>
-                      <Badge
-                        variant="outline"
-                        className={`h-5 text-[11px] ${
-                          selectedCommunityComparison?.comparison === "semantic_reachable_dead_zone"
-                            ? "border-rose-300 text-rose-100"
-                            : selectedCommunityComparison?.comparison === "semantic_split" ||
-                                selectedCommunityComparison?.comparison === "semantic_merge"
-                              ? "border-amber-300 text-amber-100"
-                              : "border-slate-300 text-slate-100"
-                        }`}
-                      >
-                        {selectedCommunityComparison
-                          ? communityComparisonLabel(selectedCommunityComparison.comparison)
-                          : "No replay"}
-                      </Badge>
-                    </div>
-                    {landscapeReplay.isLoading ? (
-                      <div className="graph-detail-empty">Loading replay snapshot...</div>
-                    ) : landscapeReplay.data ? (
-                      <>
-                        <div className="graph-detail-meta-grid">
-                          <div className="graph-detail-metric">
-                            <span>Replay Runs</span>
-                            <strong>{landscapeReplay.data.replayRunCount}</strong>
+                      {landscape.isLoading ? (
+                        <div className="graph-detail-empty">Loading landscape snapshot...</div>
+                      ) : selectedLandscapeCommunity ? (
+                        <>
+                          <div className="graph-detail-meta-grid">
+                            <div className="graph-detail-metric">
+                              <span>Selected (30d)</span>
+                              <strong>
+                                {selectedLandscapeCommunity.selection.selectedItemCountWindow}
+                              </strong>
+                            </div>
+                            <div className="graph-detail-metric">
+                              <span>Runs (30d)</span>
+                              <strong>
+                                {selectedLandscapeCommunity.selection.selectedRunCountWindow}
+                              </strong>
+                            </div>
+                            <div className="graph-detail-metric">
+                              <span>Feedback</span>
+                              <strong>
+                                {landscapeConfidenceLabel(
+                                  selectedLandscapeCommunity.feedback.feedbackConfidence,
+                                )}
+                              </strong>
+                            </div>
+                            <div className="graph-detail-metric">
+                              <span>Source Density</span>
+                              <strong>
+                                {selectedLandscapeCommunity.quality.sourceRefDensity.toFixed(2)}
+                              </strong>
+                            </div>
                           </div>
-                          <div className="graph-detail-metric">
-                            <span>Selected</span>
-                            <strong>{selectedReplayCommunity?.selectedItemCount ?? 0}</strong>
-                          </div>
-                          <div className="graph-detail-metric">
-                            <span>Accepted</span>
-                            <strong>
-                              {selectedReplayCommunity?.acceptanceWindow.acceptedCountWindow ??
-                                landscapeReplay.data.acceptanceWindow.acceptedCountWindow}
-                            </strong>
-                          </div>
-                          <div className="graph-detail-metric">
-                            <span>Missing</span>
-                            <strong>{landscapeReplay.data.missingKnowledgeCount}</strong>
-                          </div>
-                        </div>
-                        {selectedReplayCommunity ? (
                           <div className="graph-community-summary-grid">
                             <div className="graph-community-summary-item">
-                              <span>Replay Used</span>
-                              <p>{selectedReplayCommunity.verdictMix.used}</p>
+                              <span>Used</span>
+                              <p>
+                                {selectedLandscapeCommunity.feedback.usedCountWindow} (
+                                {Math.round(selectedLandscapeCommunity.feedback.usedRate * 100)}%)
+                              </p>
                             </div>
                             <div className="graph-community-summary-item">
-                              <span>Replay Off Topic</span>
-                              <p>{selectedReplayCommunity.verdictMix.offTopic}</p>
+                              <span>Not Used</span>
+                              <p>
+                                {selectedLandscapeCommunity.feedback.notUsedCountWindow} (
+                                {Math.round(selectedLandscapeCommunity.feedback.notUsedRate * 100)}
+                                %)
+                              </p>
                             </div>
                             <div className="graph-community-summary-item">
-                              <span>Aligned</span>
-                              <p>{selectedReplayCommunity.explanationCounts.aligned_attractor}</p>
+                              <span>Off Topic</span>
+                              <p>
+                                {selectedLandscapeCommunity.feedback.offTopicCountWindow} (
+                                {Math.round(selectedLandscapeCommunity.feedback.offTopicRate * 100)}
+                                %)
+                              </p>
                             </div>
                             <div className="graph-community-summary-item">
-                              <span>Dead Miss</span>
-                              <p>{selectedReplayCommunity.explanationCounts.dead_zone_missed}</p>
+                              <span>Wrong</span>
+                              <p>
+                                {selectedLandscapeCommunity.feedback.wrongCountWindow} (
+                                {Math.round(selectedLandscapeCommunity.feedback.wrongRate * 100)}%)
+                              </p>
                             </div>
                           </div>
-                        ) : (
-                          <div className="graph-detail-empty">
-                            Replay data for this community is not available.
-                          </div>
-                        )}
-                        {selectedCommunityComparison ? (
                           <div className="graph-community-summary-item">
-                            <span>Semantic / Relation</span>
-                            <p>
-                              overlap {selectedCommunityComparison.jaccardOverlap.toFixed(2)} /
-                              neighbors {selectedCommunityComparison.selectedNeighborCountWindow}
-                            </p>
+                            <span>Reason</span>
+                            <p>{selectedLandscapeCommunity.classification.reason}</p>
                           </div>
-                        ) : null}
-                        {topReplayFacetRisks.length > 0 ? (
                           <div className="graph-community-summary-item">
-                            <span>Top Facet Risks</span>
-                            <p>
-                              {topReplayFacetRisks
-                                .map(
-                                  (facet) =>
-                                    `${facet.facetKind}:${facet.facetValue} (${facet.negativeCandidateHitCount + facet.overSelectedHitCount + facet.deadZoneMissCount})`,
+                            <span>Recommended Actions</span>
+                            <p>{selectedLandscapeCommunity.recommendedActions.join(" / ")}</p>
+                          </div>
+                        </>
+                      ) : (
+                        <div className="graph-detail-empty">
+                          Landscape snapshot for this community is not available.
+                        </div>
+                      )}
+                    </div>
+                    <div className="graph-landscape-card">
+                      <div className="graph-landscape-card-header">
+                        <span className="graph-detail-kicker">Replay Health</span>
+                        <Badge
+                          variant="outline"
+                          className={`h-5 text-[11px] ${
+                            selectedCommunityComparison?.comparison ===
+                            "semantic_reachable_dead_zone"
+                              ? "border-rose-300 text-rose-100"
+                              : selectedCommunityComparison?.comparison === "semantic_split" ||
+                                  selectedCommunityComparison?.comparison === "semantic_merge"
+                                ? "border-amber-300 text-amber-100"
+                                : "border-slate-300 text-slate-100"
+                          }`}
+                        >
+                          {selectedCommunityComparison
+                            ? communityComparisonLabel(selectedCommunityComparison.comparison)
+                            : "No replay"}
+                        </Badge>
+                      </div>
+                      {landscapeReplay.isLoading ? (
+                        <div className="graph-detail-empty">Loading replay snapshot...</div>
+                      ) : landscapeReplay.data ? (
+                        <>
+                          <div className="graph-detail-meta-grid">
+                            <div className="graph-detail-metric">
+                              <span>Replay Runs</span>
+                              <strong>{landscapeReplay.data.replayRunCount}</strong>
+                            </div>
+                            <div className="graph-detail-metric">
+                              <span>Selected</span>
+                              <strong>{selectedReplayCommunity?.selectedItemCount ?? 0}</strong>
+                            </div>
+                            <div className="graph-detail-metric">
+                              <span>Accepted</span>
+                              <strong>
+                                {selectedReplayCommunity?.acceptanceWindow.acceptedCountWindow ??
+                                  landscapeReplay.data.acceptanceWindow.acceptedCountWindow}
+                              </strong>
+                            </div>
+                            <div className="graph-detail-metric">
+                              <span>Missing</span>
+                              <strong>{landscapeReplay.data.missingKnowledgeCount}</strong>
+                            </div>
+                          </div>
+                          {selectedReplayCommunity ? (
+                            <div className="graph-community-summary-grid">
+                              <div className="graph-community-summary-item">
+                                <span>Replay Used</span>
+                                <p>{selectedReplayCommunity.verdictMix.used}</p>
+                              </div>
+                              <div className="graph-community-summary-item">
+                                <span>Replay Off Topic</span>
+                                <p>{selectedReplayCommunity.verdictMix.offTopic}</p>
+                              </div>
+                              <div className="graph-community-summary-item">
+                                <span>Aligned</span>
+                                <p>{selectedReplayCommunity.explanationCounts.aligned_attractor}</p>
+                              </div>
+                              <div className="graph-community-summary-item">
+                                <span>Dead Miss</span>
+                                <p>{selectedReplayCommunity.explanationCounts.dead_zone_missed}</p>
+                              </div>
+                            </div>
+                          ) : (
+                            <div className="graph-detail-empty">
+                              Replay data for this community is not available.
+                            </div>
+                          )}
+                          {selectedCommunityComparison ? (
+                            <div className="graph-community-summary-item">
+                              <span>Semantic / Relation</span>
+                              <p>
+                                overlap {selectedCommunityComparison.jaccardOverlap.toFixed(2)} /
+                                neighbors {selectedCommunityComparison.selectedNeighborCountWindow}
+                              </p>
+                            </div>
+                          ) : null}
+                          {topReplayFacetRisks.length > 0 ? (
+                            <div className="graph-community-summary-item">
+                              <span>Top Facet Risks</span>
+                              <p>
+                                {topReplayFacetRisks
+                                  .map(
+                                    (facet) =>
+                                      `${facet.facetKind}:${facet.facetValue} (${facet.negativeCandidateHitCount + facet.overSelectedHitCount + facet.deadZoneMissCount})`,
+                                  )
+                                  .join(" / ")}
+                              </p>
+                            </div>
+                          ) : null}
+                        </>
+                      ) : (
+                        <div className="graph-detail-empty">Replay snapshot is not available.</div>
+                      )}
+                    </div>
+                    <div className="graph-landscape-card">
+                      <div className="graph-landscape-card-header">
+                        <span className="graph-detail-kicker">Replay Review</span>
+                        <Badge
+                          variant="outline"
+                          className={`h-5 text-[11px] ${
+                            landscapeReplayComparison.data?.promotionGateSummary.gateMode ===
+                            "review_required"
+                              ? "border-rose-300 text-rose-100"
+                              : "border-emerald-300 text-emerald-100"
+                          }`}
+                        >
+                          {landscapeReplayComparison.data?.promotionGateSummary.gateMode ??
+                            "No compare"}
+                        </Badge>
+                      </div>
+                      {landscapeReplayComparison.isLoading ? (
+                        <div className="graph-detail-empty">Loading replay comparison...</div>
+                      ) : landscapeReplayComparison.data ? (
+                        <>
+                          <div className="graph-detail-meta-grid">
+                            <div className="graph-detail-metric">
+                              <span>Compared Runs</span>
+                              <strong>{landscapeReplayComparison.data.comparedRunCount}</strong>
+                            </div>
+                            <div className="graph-detail-metric">
+                              <span>Overlap</span>
+                              <strong>
+                                {formatPercent(landscapeReplayComparison.data.averageOverlapRate)}
+                              </strong>
+                            </div>
+                            <div className="graph-detail-metric">
+                              <span>Used Lost</span>
+                              <strong>
+                                {landscapeReplayComparison.data.usedBaselineLostItemCount}
+                              </strong>
+                            </div>
+                            <div className="graph-detail-metric">
+                              <span>Review Items</span>
+                              <strong>
+                                {landscapeReplayComparison.data.appliesToRefineCandidates.length}
+                              </strong>
+                            </div>
+                          </div>
+                          <div className="graph-community-summary-grid">
+                            <div className="graph-community-summary-item">
+                              <span>Promotion Gate</span>
+                              <p>
+                                {
+                                  landscapeReplayComparison.data.promotionGateSummary
+                                    .affectedRunCount
+                                }{" "}
+                                runs /{" "}
+                                {
+                                  landscapeReplayComparison.data.promotionGateSummary
+                                    .riskyNewKnowledgeCount
+                                }{" "}
+                                new
+                              </p>
+                            </div>
+                            <div className="graph-community-summary-item">
+                              <span>Score Tuning</span>
+                              <p>
+                                churn {landscapeReplayComparison.data.scoreTuning.highChurnRunCount}{" "}
+                                / negative{" "}
+                                {
+                                  landscapeReplayComparison.data.scoreTuning
+                                    .negativeFeedbackRunCount
+                                }
+                              </p>
+                            </div>
+                            <div className="graph-community-summary-item">
+                              <span>Compile Plan</span>
+                              <p>
+                                {landscapeReplayComparison.data.compileInterventionPlan.strategy} (
+                                {
+                                  landscapeReplayComparison.data.compileInterventionPlan
+                                    .candidateRunCount
+                                }
                                 )
-                                .join(" / ")}
-                            </p>
+                              </p>
+                            </div>
+                            <div className="graph-community-summary-item">
+                              <span>Dry Run</span>
+                              <p>
+                                writes:
+                                {String(
+                                  landscapeReplayComparison.data.recompilePlan.writesCompileRuns,
+                                )}{" "}
+                                / blockers:
+                                {landscapeReplayComparison.data.recompilePlan.blockers.length}
+                              </p>
+                            </div>
                           </div>
-                        ) : null}
-                      </>
-                    ) : (
-                      <div className="graph-detail-empty">Replay snapshot is not available.</div>
-                    )}
-                  </div>
-                  <div className="graph-landscape-card">
-                    <div className="graph-landscape-card-header">
-                      <span className="graph-detail-kicker">Replay Review</span>
+                          <div className="graph-review-section">
+                            <div className="graph-review-section-header">
+                              <span>Action Queue</span>
+                              <strong>{replayReviewQueue.length}</strong>
+                            </div>
+                            {replayReviewQueue.length > 0 ? (
+                              <div className="graph-review-list">
+                                {replayReviewQueue.map((candidate) => (
+                                  <div
+                                    className="graph-review-row"
+                                    key={`${candidate.runId}:${candidate.knowledgeId}:${candidate.reason}`}
+                                  >
+                                    <div className="graph-review-row-head">
+                                      <Badge
+                                        variant="outline"
+                                        className={`h-5 text-[11px] ${
+                                          candidate.reason === "baseline_wrong"
+                                            ? "border-rose-300 text-rose-100"
+                                            : candidate.reason === "baseline_off_topic"
+                                              ? "border-amber-300 text-amber-100"
+                                              : "border-sky-300 text-sky-100"
+                                        }`}
+                                      >
+                                        {refineReasonLabel(candidate.reason)}
+                                      </Badge>
+                                      <span>{candidate.confidence}</span>
+                                    </div>
+                                    <p>{candidate.knowledgeId}</p>
+                                    <small>
+                                      {[
+                                        candidate.suggestedAppliesTo.retrievalMode,
+                                        ...candidate.suggestedAppliesTo.changeTypes,
+                                        ...candidate.suggestedAppliesTo.technologies,
+                                        ...candidate.suggestedAppliesTo.domains,
+                                      ]
+                                        .slice(0, 5)
+                                        .join(" / ") || "no facets"}
+                                    </small>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="graph-detail-empty">No review items</div>
+                            )}
+                          </div>
+                          <div className="graph-review-section">
+                            <div className="graph-review-section-header">
+                              <span>Risky Runs</span>
+                              <strong>{riskyReplayRuns.length}</strong>
+                            </div>
+                            {riskyReplayRuns.length > 0 ? (
+                              <div className="graph-review-list">
+                                {riskyReplayRuns.map((run) => (
+                                  <div className="graph-review-row" key={run.runId}>
+                                    <div className="graph-review-row-head">
+                                      <Badge
+                                        variant="outline"
+                                        className={`h-5 text-[11px] ${
+                                          run.comparison === "lost_baseline" ||
+                                          run.comparison === "no_current_match"
+                                            ? "border-rose-300 text-rose-100"
+                                            : run.comparison === "drifted"
+                                              ? "border-amber-300 text-amber-100"
+                                              : "border-slate-300 text-slate-100"
+                                        }`}
+                                      >
+                                        {replayComparisonLabel(run.comparison)}
+                                      </Badge>
+                                      <span>{formatPercent(run.overlapRate)}</span>
+                                    </div>
+                                    <p>{run.goal}</p>
+                                    <small>
+                                      baseline {run.baselineSelectedKnowledgeIds.length} / current{" "}
+                                      {run.currentRetrievedKnowledgeIds.length} / missing{" "}
+                                      {run.missingFromCurrentKnowledgeIds.length} / used lost{" "}
+                                      {run.usedBaselineLostKnowledgeIds.length}
+                                    </small>
+                                  </div>
+                                ))}
+                              </div>
+                            ) : (
+                              <div className="graph-detail-empty">No risky runs</div>
+                            )}
+                          </div>
+                        </>
+                      ) : (
+                        <div className="graph-detail-empty">
+                          Replay comparison is not available.
+                        </div>
+                      )}
+                    </div>
+                    <div className="graph-community-label-edit">
+                      <Input
+                        value={communityLabelDraft}
+                        onChange={(event) => setCommunityLabelDraft(event.target.value)}
+                        maxLength={120}
+                        placeholder="Community label"
+                        className="h-8 text-xs"
+                      />
+                      <Button
+                        size="sm"
+                        onClick={() => {
+                          if (!selectedCommunity.communityKey) return;
+                          const nextLabel = communityLabelDraft.trim();
+                          if (!nextLabel || nextLabel === selectedCommunity.communityLabel) return;
+                          saveCommunityLabel.mutate({
+                            communityKey: selectedCommunity.communityKey,
+                            label: nextLabel,
+                          });
+                        }}
+                        disabled={
+                          saveCommunityLabel.isPending ||
+                          communityLabelDraft.trim().length === 0 ||
+                          communityLabelDraft.trim() === selectedCommunity.communityLabel
+                        }
+                      >
+                        Save
+                      </Button>
+                    </div>
+                    <div className="graph-detail-meta-grid">
+                      <div className="graph-detail-metric">
+                        <span>ID</span>
+                        <strong>{selectedCommunity.communityId}</strong>
+                      </div>
+                      <div className="graph-detail-metric">
+                        <span>Size</span>
+                        <strong>{selectedCommunity.size}</strong>
+                      </div>
+                      <div className="graph-detail-metric">
+                        <span>Embedded</span>
+                        <strong>
+                          {formatPercent(
+                            selectedCommunity.size > 0
+                              ? selectedCommunity.embeddedCount / selectedCommunity.size
+                              : 0,
+                          )}
+                        </strong>
+                      </div>
+                      <div className="graph-detail-metric">
+                        <span>Source Density</span>
+                        <strong>{selectedCommunity.sourceRefDensity.toFixed(2)}</strong>
+                      </div>
+                    </div>
+                    <div className="graph-community-health-badges">
                       <Badge
                         variant="outline"
                         className={`h-5 text-[11px] ${
-                          landscapeReplayComparison.data?.promotionGateSummary.gateMode ===
-                          "review_required"
+                          selectedCommunity.health.dead
                             ? "border-rose-300 text-rose-100"
                             : "border-emerald-300 text-emerald-100"
                         }`}
                       >
-                        {landscapeReplayComparison.data?.promotionGateSummary.gateMode ??
-                          "No compare"}
+                        cold:{selectedCommunity.health.dead ? "yes" : "no"}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className={`h-5 text-[11px] ${
+                          selectedCommunity.health.stale
+                            ? "border-amber-300 text-amber-100"
+                            : "border-emerald-300 text-emerald-100"
+                        }`}
+                      >
+                        stale:{selectedCommunity.health.stale ? "yes" : "no"}
+                      </Badge>
+                      <Badge
+                        variant="outline"
+                        className={`h-5 text-[11px] ${
+                          selectedCommunity.health.thinEvidence
+                            ? "border-sky-300 text-sky-100"
+                            : "border-emerald-300 text-emerald-100"
+                        }`}
+                      >
+                        thin:{selectedCommunity.health.thinEvidence ? "yes" : "no"}
                       </Badge>
                     </div>
-                    {landscapeReplayComparison.isLoading ? (
-                      <div className="graph-detail-empty">Loading replay comparison...</div>
-                    ) : landscapeReplayComparison.data ? (
-                      <>
-                        <div className="graph-detail-meta-grid">
-                          <div className="graph-detail-metric">
-                            <span>Compared Runs</span>
-                            <strong>{landscapeReplayComparison.data.comparedRunCount}</strong>
-                          </div>
-                          <div className="graph-detail-metric">
-                            <span>Overlap</span>
-                            <strong>
-                              {formatPercent(landscapeReplayComparison.data.averageOverlapRate)}
-                            </strong>
-                          </div>
-                          <div className="graph-detail-metric">
-                            <span>Used Lost</span>
-                            <strong>
-                              {landscapeReplayComparison.data.usedBaselineLostItemCount}
-                            </strong>
-                          </div>
-                          <div className="graph-detail-metric">
-                            <span>Review Items</span>
-                            <strong>
-                              {landscapeReplayComparison.data.appliesToRefineCandidates.length}
-                            </strong>
-                          </div>
-                        </div>
-                        <div className="graph-community-summary-grid">
-                          <div className="graph-community-summary-item">
-                            <span>Promotion Gate</span>
-                            <p>
-                              {landscapeReplayComparison.data.promotionGateSummary.affectedRunCount}{" "}
-                              runs /{" "}
-                              {
-                                landscapeReplayComparison.data.promotionGateSummary
-                                  .riskyNewKnowledgeCount
-                              }{" "}
-                              new
-                            </p>
-                          </div>
-                          <div className="graph-community-summary-item">
-                            <span>Score Tuning</span>
-                            <p>
-                              churn {landscapeReplayComparison.data.scoreTuning.highChurnRunCount} /
-                              negative{" "}
-                              {landscapeReplayComparison.data.scoreTuning.negativeFeedbackRunCount}
-                            </p>
-                          </div>
-                          <div className="graph-community-summary-item">
-                            <span>Compile Plan</span>
-                            <p>
-                              {landscapeReplayComparison.data.compileInterventionPlan.strategy} (
-                              {
-                                landscapeReplayComparison.data.compileInterventionPlan
-                                  .candidateRunCount
-                              }
-                              )
-                            </p>
-                          </div>
-                          <div className="graph-community-summary-item">
-                            <span>Dry Run</span>
-                            <p>
-                              writes:
-                              {String(
-                                landscapeReplayComparison.data.recompilePlan.writesCompileRuns,
-                              )}{" "}
-                              / blockers:
-                              {landscapeReplayComparison.data.recompilePlan.blockers.length}
-                            </p>
-                          </div>
-                        </div>
-                        <div className="graph-review-section">
-                          <div className="graph-review-section-header">
-                            <span>Action Queue</span>
-                            <strong>{replayReviewQueue.length}</strong>
-                          </div>
-                          {replayReviewQueue.length > 0 ? (
-                            <div className="graph-review-list">
-                              {replayReviewQueue.map((candidate) => (
-                                <div
-                                  className="graph-review-row"
-                                  key={`${candidate.runId}:${candidate.knowledgeId}:${candidate.reason}`}
-                                >
-                                  <div className="graph-review-row-head">
-                                    <Badge
-                                      variant="outline"
-                                      className={`h-5 text-[11px] ${
-                                        candidate.reason === "baseline_wrong"
-                                          ? "border-rose-300 text-rose-100"
-                                          : candidate.reason === "baseline_off_topic"
-                                            ? "border-amber-300 text-amber-100"
-                                            : "border-sky-300 text-sky-100"
-                                      }`}
-                                    >
-                                      {refineReasonLabel(candidate.reason)}
-                                    </Badge>
-                                    <span>{candidate.confidence}</span>
-                                  </div>
-                                  <p>{candidate.knowledgeId}</p>
-                                  <small>
-                                    {[
-                                      candidate.suggestedAppliesTo.retrievalMode,
-                                      ...candidate.suggestedAppliesTo.changeTypes,
-                                      ...candidate.suggestedAppliesTo.technologies,
-                                      ...candidate.suggestedAppliesTo.domains,
-                                    ]
-                                      .slice(0, 5)
-                                      .join(" / ") || "no facets"}
-                                  </small>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="graph-detail-empty">No review items</div>
-                          )}
-                        </div>
-                        <div className="graph-review-section">
-                          <div className="graph-review-section-header">
-                            <span>Risky Runs</span>
-                            <strong>{riskyReplayRuns.length}</strong>
-                          </div>
-                          {riskyReplayRuns.length > 0 ? (
-                            <div className="graph-review-list">
-                              {riskyReplayRuns.map((run) => (
-                                <div className="graph-review-row" key={run.runId}>
-                                  <div className="graph-review-row-head">
-                                    <Badge
-                                      variant="outline"
-                                      className={`h-5 text-[11px] ${
-                                        run.comparison === "lost_baseline" ||
-                                        run.comparison === "no_current_match"
-                                          ? "border-rose-300 text-rose-100"
-                                          : run.comparison === "drifted"
-                                            ? "border-amber-300 text-amber-100"
-                                            : "border-slate-300 text-slate-100"
-                                      }`}
-                                    >
-                                      {replayComparisonLabel(run.comparison)}
-                                    </Badge>
-                                    <span>{formatPercent(run.overlapRate)}</span>
-                                  </div>
-                                  <p>{run.goal}</p>
-                                  <small>
-                                    baseline {run.baselineSelectedKnowledgeIds.length} / current{" "}
-                                    {run.currentRetrievedKnowledgeIds.length} / missing{" "}
-                                    {run.missingFromCurrentKnowledgeIds.length} / used lost{" "}
-                                    {run.usedBaselineLostKnowledgeIds.length}
-                                  </small>
-                                </div>
-                              ))}
-                            </div>
-                          ) : (
-                            <div className="graph-detail-empty">No risky runs</div>
-                          )}
-                        </div>
-                      </>
-                    ) : (
-                      <div className="graph-detail-empty">Replay comparison is not available.</div>
-                    )}
-                  </div>
-                  <div className="graph-community-label-edit">
-                    <Input
-                      value={communityLabelDraft}
-                      onChange={(event) => setCommunityLabelDraft(event.target.value)}
-                      maxLength={120}
-                      placeholder="Community label"
-                      className="h-8 text-xs"
-                    />
-                    <Button
-                      size="sm"
-                      onClick={() => {
-                        if (!selectedCommunity.communityKey) return;
-                        const nextLabel = communityLabelDraft.trim();
-                        if (!nextLabel || nextLabel === selectedCommunity.communityLabel) return;
-                        saveCommunityLabel.mutate({
-                          communityKey: selectedCommunity.communityKey,
-                          label: nextLabel,
-                        });
-                      }}
-                      disabled={
-                        saveCommunityLabel.isPending ||
-                        communityLabelDraft.trim().length === 0 ||
-                        communityLabelDraft.trim() === selectedCommunity.communityLabel
-                      }
-                    >
-                      Save
-                    </Button>
-                  </div>
-                  <div className="graph-detail-meta-grid">
-                    <div className="graph-detail-metric">
-                      <span>ID</span>
-                      <strong>{selectedCommunity.communityId}</strong>
+                    <div className="graph-community-summary-grid">
+                      <div className="graph-community-summary-item">
+                        <span>Type</span>
+                        <p>
+                          {Object.entries(selectedCommunity.typeCounts)
+                            .map(([key, count]) => `${key}:${count}`)
+                            .join(" / ") || "-"}
+                        </p>
+                      </div>
+                      <div className="graph-community-summary-item">
+                        <span>Status</span>
+                        <p>
+                          {Object.entries(selectedCommunity.statusCounts)
+                            .map(([key, count]) => `${key}:${count}`)
+                            .join(" / ") || "-"}
+                        </p>
+                      </div>
+                      <div className="graph-community-summary-item">
+                        <span>Compile</span>
+                        <p>{selectedCommunity.compileSelectCount}</p>
+                      </div>
+                      <div className="graph-community-summary-item">
+                        <span>State</span>
+                        <p>{healthLabel(selectedCommunity)}</p>
+                      </div>
                     </div>
-                    <div className="graph-detail-metric">
-                      <span>Size</span>
-                      <strong>{selectedCommunity.size}</strong>
-                    </div>
-                    <div className="graph-detail-metric">
-                      <span>Embedded</span>
-                      <strong>
-                        {formatPercent(
-                          selectedCommunity.size > 0
-                            ? selectedCommunity.embeddedCount / selectedCommunity.size
-                            : 0,
-                        )}
-                      </strong>
-                    </div>
-                    <div className="graph-detail-metric">
-                      <span>Source Density</span>
-                      <strong>{selectedCommunity.sourceRefDensity.toFixed(2)}</strong>
-                    </div>
-                  </div>
-                  <div className="graph-community-health-badges">
-                    <Badge
-                      variant="outline"
-                      className={`h-5 text-[11px] ${
-                        selectedCommunity.health.dead
-                          ? "border-rose-300 text-rose-100"
-                          : "border-emerald-300 text-emerald-100"
-                      }`}
-                    >
-                      cold:{selectedCommunity.health.dead ? "yes" : "no"}
-                    </Badge>
-                    <Badge
-                      variant="outline"
-                      className={`h-5 text-[11px] ${
-                        selectedCommunity.health.stale
-                          ? "border-amber-300 text-amber-100"
-                          : "border-emerald-300 text-emerald-100"
-                      }`}
-                    >
-                      stale:{selectedCommunity.health.stale ? "yes" : "no"}
-                    </Badge>
-                    <Badge
-                      variant="outline"
-                      className={`h-5 text-[11px] ${
-                        selectedCommunity.health.thinEvidence
-                          ? "border-sky-300 text-sky-100"
-                          : "border-emerald-300 text-emerald-100"
-                      }`}
-                    >
-                      thin:{selectedCommunity.health.thinEvidence ? "yes" : "no"}
-                    </Badge>
-                  </div>
-                  <div className="graph-community-summary-grid">
-                    <div className="graph-community-summary-item">
-                      <span>Type</span>
-                      <p>
-                        {Object.entries(selectedCommunity.typeCounts)
-                          .map(([key, count]) => `${key}:${count}`)
-                          .join(" / ") || "-"}
-                      </p>
-                    </div>
-                    <div className="graph-community-summary-item">
-                      <span>Status</span>
-                      <p>
-                        {Object.entries(selectedCommunity.statusCounts)
-                          .map(([key, count]) => `${key}:${count}`)
-                          .join(" / ") || "-"}
-                      </p>
-                    </div>
-                    <div className="graph-community-summary-item">
-                      <span>Compile</span>
-                      <p>{selectedCommunity.compileSelectCount}</p>
-                    </div>
-                    <div className="graph-community-summary-item">
-                      <span>State</span>
-                      <p>{healthLabel(selectedCommunity)}</p>
-                    </div>
-                  </div>
-                </>
-              ) : (
-                <div className="graph-detail-empty">Community data is not available.</div>
-              )}
-            </section>
-          ) : null}
-        </aside>
-      </div>
-    ) : null}
+                  </>
+                ) : (
+                  <div className="graph-detail-empty">Community data is not available.</div>
+                )}
+              </section>
+            ) : null}
+          </aside>
+        </div>
+      ) : null}
 
       {/* biome-ignore lint/a11y/useKeyWithClickEvents: Canvas click is for pointer selection clear only */}
       <div

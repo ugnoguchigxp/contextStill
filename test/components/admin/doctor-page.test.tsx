@@ -286,19 +286,15 @@ describe("DoctorPage", () => {
 
     expect(screen.getByText("Doctor")).toBeInTheDocument();
     expect(screen.getAllByText("degraded").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("System Status")).toBeInTheDocument();
-    expect(screen.getByText("Runtime Matrix")).toBeInTheDocument();
-    expect(screen.getByText("Automation Matrix")).toBeInTheDocument();
-    expect(screen.getByText("Doctor Signals")).toBeInTheDocument();
-    expect(screen.getByText("Next Actions")).toBeInTheDocument();
-    expect(screen.queryByText("Compile Usable")).not.toBeInTheDocument();
-    expect(screen.queryByText("Compile Quality Mix")).not.toBeInTheDocument();
-    expect(screen.queryByText("Knowledge Usage Lifecycle")).not.toBeInTheDocument();
-    expect(screen.queryByText("Distillation Queue")).not.toBeInTheDocument();
+    expect(screen.getByText("Core Infrastructure")).toBeInTheDocument();
+    expect(screen.getByText("AI & Service Tools")).toBeInTheDocument();
+    expect(screen.getByText("Pipeline & Automation")).toBeInTheDocument();
+    expect(screen.getByText(/システム緊急警告/)).toBeInTheDocument();
 
     expect(screen.getByText("未使用の active knowledge が多い")).toBeInTheDocument();
-    expect(screen.getByText("会話ログ蒸留が未実行")).toBeInTheDocument();
-    expect(screen.getByText("KNOWLEDGE_ZERO_USE_HIGH")).toBeInTheDocument();
+    expect(screen.getAllByText("会話ログ蒸留ロックが古い").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("AI 推奨アクション:")).toBeInTheDocument();
+    expect(screen.getByText("パイプライン推奨アクション:")).toBeInTheDocument();
     expect(
       screen.getByText("stale source を再importまたは更新する（count: 40）"),
     ).toBeInTheDocument();
@@ -330,7 +326,8 @@ describe("DoctorPage", () => {
 
     expect(screen.getByText("Unmapped Custom Reason")).toBeInTheDocument();
     expect(screen.getByText("Doctor が未定義の診断コードを返しました。")).toBeInTheDocument();
-    expect(screen.getByText("No pending actions")).toBeInTheDocument();
+    expect(screen.queryByText("AI 推奨アクション:")).not.toBeInTheDocument();
+    expect(screen.queryByText("パイプライン推奨アクション:")).not.toBeInTheDocument();
   });
 
   it("renders error card when doctor query fails", () => {

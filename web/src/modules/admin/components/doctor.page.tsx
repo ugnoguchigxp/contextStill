@@ -41,7 +41,7 @@ export function DoctorPage() {
 
   // 1. 各カテゴリへの分類
   const emergencySignals = getEmergencySignals(reasonDetails);
-  
+
   const infraSignals = getDomainSignals(reasonDetails, "infrastructure");
   const aiSignals = getDomainSignals(reasonDetails, "ai");
   const pipelineSignals = getDomainSignals(reasonDetails, "pipeline");
@@ -52,10 +52,10 @@ export function DoctorPage() {
   // 主要メトリクスの計算（既存ロジック）
   const queuePending = report
     ? report.vibeDistillation.jobs.queued + report.sourceDistillation.jobs.queued
-    : null;
+    : 0;
   const queueRunning = report
     ? report.vibeDistillation.jobs.running + report.sourceDistillation.jobs.running
-    : null;
+    : 0;
   const maxSyncAge = report
     ? report.agentLogSync.states.length > 0
       ? Math.max(...report.agentLogSync.states.map((item) => item.lastSyncedAgeMinutes ?? 0))
@@ -66,7 +66,7 @@ export function DoctorPage() {
     ? report.agentLogSync.states.filter(
         (state) => (state.lastSyncedAgeMinutes ?? 0) > syncStaleThresholdMinutes,
       ).length
-    : null;
+    : 0;
   const missingTables = report?.tables?.missing.length ?? 0;
 
   return (
@@ -96,14 +96,16 @@ export function DoctorPage() {
 
             {/* 📂 ドメインレイアウト（Overviewと同様の2カラム） */}
             <div className="overview-domain-layout">
-              
               {/* 📂 左カラム: Core Infrastructure (Emerald) */}
               <div className="flex flex-col gap-6 w-full">
                 <section className="overview-domain-section accent-emerald">
                   <div className="overview-domain-header justify-between items-center border-b border-emerald-500/10 pb-3">
                     <div className="flex items-center gap-2">
                       <div className="p-1.5 bg-emerald-50 rounded-lg">
-                        <Database className="overview-domain-icon text-emerald-500 w-4 h-4" style={{ color: "#10b981" }} />
+                        <Database
+                          className="overview-domain-icon text-emerald-500 w-4 h-4"
+                          style={{ color: "#10b981" }}
+                        />
                       </div>
                       <div className="flex flex-col">
                         <h2 className="overview-domain-title text-[16px] font-bold text-slate-800 leading-none">
@@ -114,7 +116,10 @@ export function DoctorPage() {
                         </span>
                       </div>
                     </div>
-                    <Badge variant="outline" className="text-[12px] font-bold border-emerald-500/20 text-emerald-700 bg-emerald-50/50 py-0.5 px-2">
+                    <Badge
+                      variant="outline"
+                      className="text-[12px] font-bold border-emerald-500/20 text-emerald-700 bg-emerald-50/50 py-0.5 px-2"
+                    >
                       Latency: {formatDurationMs(report.db.durationMs)}
                     </Badge>
                   </div>
@@ -127,7 +132,9 @@ export function DoctorPage() {
                         <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
                           DB Status
                         </span>
-                        <strong className={`text-2xl font-extrabold mt-1 leading-none ${report.db.reachable ? "text-emerald-600" : "text-red-600"}`}>
+                        <strong
+                          className={`text-2xl font-extrabold mt-1 leading-none ${report.db.reachable ? "text-emerald-600" : "text-red-600"}`}
+                        >
                           {report.db.reachable ? "Online" : "Offline"}
                         </strong>
                       </div>
@@ -143,7 +150,9 @@ export function DoctorPage() {
                         <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
                           pgvector
                         </span>
-                        <strong className={`text-2xl font-extrabold mt-1 leading-none ${report.vector.installed ? "text-emerald-600" : "text-amber-600"}`}>
+                        <strong
+                          className={`text-2xl font-extrabold mt-1 leading-none ${report.vector.installed ? "text-emerald-600" : "text-amber-600"}`}
+                        >
                           {report.vector.installed ? "Installed" : "Missing"}
                         </strong>
                       </div>
@@ -159,13 +168,23 @@ export function DoctorPage() {
                       </div>
                       <div className="flex items-center justify-between">
                         <span>Embedding Daemon</span>
-                        <strong className={report.embedding?.daemon.reachable ? "text-emerald-600" : "text-amber-600"}>
+                        <strong
+                          className={
+                            report.embedding?.daemon.reachable
+                              ? "text-emerald-600"
+                              : "text-amber-600"
+                          }
+                        >
                           {report.embedding?.daemon.reachable ? "Reachable" : "Offline"}
                         </strong>
                       </div>
                       <div className="flex items-center justify-between">
                         <span>Embedding CLI</span>
-                        <strong className={report.embedding?.cli.usable ? "text-emerald-600" : "text-amber-600"}>
+                        <strong
+                          className={
+                            report.embedding?.cli.usable ? "text-emerald-600" : "text-amber-600"
+                          }
+                        >
                           {report.embedding?.cli.usable ? "Usable" : "Unavailable"}
                         </strong>
                       </div>
@@ -179,13 +198,15 @@ export function DoctorPage() {
 
               {/* 📂 右カラム: AI & Service Tools ＆ Pipeline & Automation を縦並びに */}
               <div className="flex flex-col gap-6 w-full">
-                
                 {/* 🟣 AI & Service Tools (Violet) */}
                 <section className="overview-domain-section accent-violet">
                   <div className="overview-domain-header justify-between items-center border-b border-violet-500/10 pb-3">
                     <div className="flex items-center gap-2">
                       <div className="p-1.5 bg-violet-50 rounded-lg">
-                        <Cpu className="overview-domain-icon text-violet-500 w-4 h-4" style={{ color: "#8b5cf6" }} />
+                        <Cpu
+                          className="overview-domain-icon text-violet-500 w-4 h-4"
+                          style={{ color: "#8b5cf6" }}
+                        />
                       </div>
                       <div className="flex flex-col">
                         <h2 className="overview-domain-title text-[16px] font-bold text-slate-800 leading-none">
@@ -196,7 +217,10 @@ export function DoctorPage() {
                         </span>
                       </div>
                     </div>
-                    <Badge variant="outline" className="text-[12px] font-bold border-violet-500/20 text-violet-700 bg-violet-50/50 py-0.5 px-2">
+                    <Badge
+                      variant="outline"
+                      className="text-[12px] font-bold border-violet-500/20 text-violet-700 bg-violet-50/50 py-0.5 px-2"
+                    >
                       Tools: {report.mcp.exposedTools.length} Exposed
                     </Badge>
                   </div>
@@ -209,16 +233,26 @@ export function DoctorPage() {
                         <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
                           Agentic LLM
                         </span>
-                        <strong className={`text-[19px] font-extrabold mt-1 leading-none ${report.agenticLlm?.reachable ? "text-violet-600" : "text-amber-600"}`}>
-                          {report.agenticLlm?.reachable ? "Reachable" : report.agenticLlm?.configured ? "Offline" : "Unconfigured"}
+                        <strong
+                          className={`text-[19px] font-extrabold mt-1 leading-none ${report.agenticLlm?.reachable ? "text-violet-600" : "text-amber-600"}`}
+                        >
+                          {report.agenticLlm?.reachable
+                            ? "Reachable"
+                            : report.agenticLlm?.configured
+                              ? "Offline"
+                              : "Unconfigured"}
                         </strong>
                       </div>
                       <div className="flex flex-col">
                         <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
                           MCP Tools
                         </span>
-                        <strong className={`text-2xl font-extrabold mt-1 leading-none ${report.mcp.missingPrimaryTools.length > 0 ? "text-amber-600" : "text-violet-600"}`}>
-                          {report.mcp.missingPrimaryTools.length > 0 ? `Missing ${report.mcp.missingPrimaryTools.length}` : "OK"}
+                        <strong
+                          className={`text-2xl font-extrabold mt-1 leading-none ${report.mcp.missingPrimaryTools.length > 0 ? "text-amber-600" : "text-violet-600"}`}
+                        >
+                          {report.mcp.missingPrimaryTools.length > 0
+                            ? `Missing ${report.mcp.missingPrimaryTools.length}`
+                            : "OK"}
                         </strong>
                       </div>
                       <div className="flex flex-col">
@@ -235,15 +269,24 @@ export function DoctorPage() {
                     <div className="flex flex-col gap-2.5 pb-2 text-[13px] text-slate-500 font-medium">
                       <div className="flex items-center justify-between">
                         <span>LLM Provider</span>
-                        <strong className="text-slate-700 capitalize">{report.agenticLlm?.provider || "None"}</strong>
+                        <strong className="text-slate-700 capitalize">
+                          {report.agenticLlm?.provider || "None"}
+                        </strong>
                       </div>
                       <div className="flex items-center justify-between">
                         <span>LLM Model</span>
-                        <strong className="text-slate-700 text-xs truncate max-w-[150px]" title={report.agenticLlm?.model}>{report.agenticLlm?.model || "None"}</strong>
+                        <strong
+                          className="text-slate-700 text-xs truncate max-w-[150px]"
+                          title={report.agenticLlm?.model}
+                        >
+                          {report.agenticLlm?.model || "None"}
+                        </strong>
                       </div>
                       <div className="flex items-center justify-between">
                         <span>Required MCP Tools</span>
-                        <strong className="text-slate-700">{report.mcp.requiredPrimaryTools.length} loaded</strong>
+                        <strong className="text-slate-700">
+                          {report.mcp.requiredPrimaryTools.length} loaded
+                        </strong>
                       </div>
                     </div>
 
@@ -256,8 +299,11 @@ export function DoctorPage() {
                         <div className="text-[12px] font-bold text-violet-600 uppercase tracking-wider">
                           AI 推奨アクション:
                         </div>
-                        {aiNextActions.map((action, idx) => (
-                          <div key={idx} className="text-[12px] text-slate-600 bg-violet-50/30 border border-violet-100 rounded p-2">
+                        {aiNextActions.map((action) => (
+                          <div
+                            key={action}
+                            className="text-[12px] text-slate-600 bg-violet-50/30 border border-violet-100 rounded p-2"
+                          >
                             {action}
                           </div>
                         ))}
@@ -271,7 +317,10 @@ export function DoctorPage() {
                   <div className="overview-domain-header justify-between items-center border-b border-cyan-500/10 pb-3">
                     <div className="flex items-center gap-2">
                       <div className="p-1.5 bg-cyan-50 rounded-lg">
-                        <Activity className="overview-domain-icon text-cyan-500 w-4 h-4" style={{ color: "#06b6d4" }} />
+                        <Activity
+                          className="overview-domain-icon text-cyan-500 w-4 h-4"
+                          style={{ color: "#06b6d4" }}
+                        />
                       </div>
                       <div className="flex flex-col">
                         <h2 className="overview-domain-title text-[16px] font-bold text-slate-800 leading-none">
@@ -282,7 +331,10 @@ export function DoctorPage() {
                         </span>
                       </div>
                     </div>
-                    <Badge variant="outline" className="text-[12px] font-bold border-cyan-500/20 text-cyan-700 bg-cyan-50/50 py-0.5 px-2">
+                    <Badge
+                      variant="outline"
+                      className="text-[12px] font-bold border-cyan-500/20 text-cyan-700 bg-cyan-50/50 py-0.5 px-2"
+                    >
                       Sync Freshness: {formatAgeMinutes(maxSyncAge)}
                     </Badge>
                   </div>
@@ -295,7 +347,9 @@ export function DoctorPage() {
                         <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
                           Sync Status
                         </span>
-                        <strong className={`text-2xl font-extrabold mt-1 leading-none ${staleSyncCount > 0 ? "text-amber-600" : "text-cyan-600"}`}>
+                        <strong
+                          className={`text-2xl font-extrabold mt-1 leading-none ${staleSyncCount > 0 ? "text-amber-600" : "text-cyan-600"}`}
+                        >
                           {staleSyncCount > 0 ? "Stale" : "Fresh"}
                         </strong>
                       </div>
@@ -311,7 +365,9 @@ export function DoctorPage() {
                         <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
                           Queue Running
                         </span>
-                        <strong className={`text-2xl font-extrabold mt-1 leading-none ${queueRunning > 0 ? "text-amber-600 animate-pulse" : "text-slate-800"}`}>
+                        <strong
+                          className={`text-2xl font-extrabold mt-1 leading-none ${queueRunning > 0 ? "text-amber-600 animate-pulse" : "text-slate-800"}`}
+                        >
                           {formatNumber(queueRunning)}
                         </strong>
                       </div>
@@ -321,21 +377,28 @@ export function DoctorPage() {
                     <div className="flex flex-col gap-2.5 pb-2 text-[13px] text-slate-500 font-medium">
                       <div className="flex justify-between items-center">
                         <span>Log Sync Agent</span>
-                        <strong className="capitalize">{report ? launchAgentLabel(report.agentLogSync.launchAgent) : "-"}</strong>
+                        <strong className="capitalize">
+                          {report ? launchAgentLabel(report.agentLogSync.launchAgent) : "-"}
+                        </strong>
                       </div>
                       <div className="flex justify-between items-center">
                         <span>Vibe Distill Agent</span>
-                        <strong className="capitalize">{report ? launchAgentLabel(report.vibeDistillation.launchAgent) : "-"}</strong>
+                        <strong className="capitalize">
+                          {report ? launchAgentLabel(report.vibeDistillation.launchAgent) : "-"}
+                        </strong>
                       </div>
                       <div className="flex justify-between items-center">
                         <span>Source Distill Agent</span>
-                        <strong className="capitalize">{report ? launchAgentLabel(report.sourceDistillation.launchAgent) : "-"}</strong>
+                        <strong className="capitalize">
+                          {report ? launchAgentLabel(report.sourceDistillation.launchAgent) : "-"}
+                        </strong>
                       </div>
                       <div className="flex justify-between items-center">
                         <span>Vibe/Source Locks</span>
                         <strong className="text-slate-700">
-                          Vibe: {report.vibeDistillation.queueHealth.lock.exists ? "Held" : "Clear"} / 
-                          Source: {report.sourceDistillation.queueHealth.lock.exists ? "Held" : "Clear"}
+                          Vibe: {report.vibeDistillation.queueHealth.lock.exists ? "Held" : "Clear"}{" "}
+                          / Source:{" "}
+                          {report.sourceDistillation.queueHealth.lock.exists ? "Held" : "Clear"}
                         </strong>
                       </div>
                     </div>
@@ -349,8 +412,11 @@ export function DoctorPage() {
                         <div className="text-[12px] font-bold text-cyan-600 uppercase tracking-wider">
                           パイプライン推奨アクション:
                         </div>
-                        {pipelineNextActions.map((action, idx) => (
-                          <div key={idx} className="text-[12px] text-slate-600 bg-cyan-50/30 border border-cyan-100 rounded p-2">
+                        {pipelineNextActions.map((action) => (
+                          <div
+                            key={action}
+                            className="text-[12px] text-slate-600 bg-cyan-50/30 border border-cyan-100 rounded p-2"
+                          >
                             {action}
                           </div>
                         ))}
@@ -358,7 +424,6 @@ export function DoctorPage() {
                     )}
                   </div>
                 </section>
-
               </div>
             </div>
           </>

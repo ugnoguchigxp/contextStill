@@ -205,6 +205,44 @@ export const knowledgeReviewProposedActionValues = [
   "review_only",
   "demote_to_draft_candidate",
 ] as const;
+export const landscapeReviewItemSourceValues = [
+  "replay_compare",
+  "landscape_snapshot",
+  "semantic_relation_comparison",
+  "promotion_gate",
+] as const;
+export const landscapeReviewItemReasonValues = [
+  "used_baseline_lost",
+  "baseline_off_topic",
+  "baseline_wrong",
+  "baseline_missing_after_recompile",
+  "negative_attractor_candidate",
+  "wrong_review_required",
+  "over_selected_not_used",
+  "dead_zone_reachability_risk",
+  "dead_zone_stale",
+  "semantic_reachable_dead_zone",
+  "semantic_split",
+  "semantic_merge",
+  "relation_orphan",
+  "promotion_gate_review",
+] as const;
+export const landscapeReviewItemStatusValues = [
+  "pending",
+  "reviewing",
+  "resolved",
+  "dismissed",
+] as const;
+export const landscapeReviewItemProposedActionValues = [
+  "review_only",
+  "refine_applies_to",
+  "repair_reachability",
+  "review_wrong",
+  "split_or_merge_review",
+  "promotion_gate_review",
+  "demote_to_draft_candidate",
+] as const;
+export const landscapeReviewItemConfidenceValues = ["low", "medium", "high"] as const;
 export const knowledgeQualityAdjustmentKindValues = ["off_topic_quality_decrement"] as const;
 
 export const auditLogActorValues = ["agent", "user", "system"] as const;
@@ -737,6 +775,99 @@ export const knowledgeReviewQueue = pgTable(
     proposedActionCheck: check(
       "knowledge_review_queue_proposed_action_check",
       sql`${table.proposedAction} IN (${sql.raw(toSqlList(knowledgeReviewProposedActionValues))})`,
+    ),
+  }),
+);
+
+export const landscapeReviewItems = pgTable(
+  "landscape_review_items",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    source: text("source").notNull(),
+    reason: text("reason").notNull(),
+    status: text("status").notNull().default("pending"),
+    proposedAction: text("proposed_action").notNull().default("review_only"),
+    priority: integer("priority").notNull().default(50),
+    confidence: text("confidence").notNull().default("low"),
+    idempotencyKey: text("idempotency_key").notNull(),
+    knowledgeId: uuid("knowledge_id").references(() => knowledgeItems.id, {
+      onDelete: "cascade",
+    }),
+    runId: uuid("run_id").references(() => contextCompileRuns.id, {
+      onDelete: "set null",
+    }),
+    triggerEventId: uuid("trigger_event_id").references(() => knowledgeUsageEvents.id, {
+      onDelete: "set null",
+    }),
+    communityKey: text("community_key"),
+    communityLabel: text("community_label"),
+    suggestedAppliesTo: jsonb("suggested_applies_to").default({}).notNull(),
+    evidence: jsonb("evidence").default([]).notNull(),
+    payload: jsonb("payload").default({}).notNull(),
+    note: text("note"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    resolvedAt: timestamp("resolved_at"),
+  },
+  (table) => ({
+    idempotencyKeyUnique: uniqueIndex("landscape_review_items_idempotency_key_unique").on(
+      table.idempotencyKey,
+    ),
+    statusPriorityCreatedAtIdx: index("landscape_review_items_status_priority_created_at_idx").on(
+      table.status,
+      table.priority.desc(),
+      table.createdAt,
+    ),
+    knowledgeStatusIdx: index("landscape_review_items_knowledge_status_idx").on(
+      table.knowledgeId,
+      table.status,
+    ),
+    communityStatusIdx: index("landscape_review_items_community_status_idx").on(
+      table.communityKey,
+      table.status,
+    ),
+    runStatusIdx: index("landscape_review_items_run_status_idx").on(table.runId, table.status),
+    reasonStatusIdx: index("landscape_review_items_reason_status_idx").on(
+      table.reason,
+      table.status,
+    ),
+    sourceCheck: check(
+      "landscape_review_items_source_check",
+      sql`${table.source} IN (${sql.raw(toSqlList(landscapeReviewItemSourceValues))})`,
+    ),
+    reasonCheck: check(
+      "landscape_review_items_reason_check",
+      sql`${table.reason} IN (${sql.raw(toSqlList(landscapeReviewItemReasonValues))})`,
+    ),
+    statusCheck: check(
+      "landscape_review_items_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(landscapeReviewItemStatusValues))})`,
+    ),
+    proposedActionCheck: check(
+      "landscape_review_items_proposed_action_check",
+      sql`${table.proposedAction} IN (${sql.raw(
+        toSqlList(landscapeReviewItemProposedActionValues),
+      )})`,
+    ),
+    confidenceCheck: check(
+      "landscape_review_items_confidence_check",
+      sql`${table.confidence} IN (${sql.raw(toSqlList(landscapeReviewItemConfidenceValues))})`,
+    ),
+    priorityCheck: check(
+      "landscape_review_items_priority_check",
+      sql`${table.priority} >= 0 AND ${table.priority} <= 100`,
+    ),
+    evidenceArrayCheck: check(
+      "landscape_review_items_evidence_array_check",
+      sql`jsonb_typeof(${table.evidence}) = 'array'`,
+    ),
+    suggestedAppliesToObjectCheck: check(
+      "landscape_review_items_suggested_applies_to_object_check",
+      sql`jsonb_typeof(${table.suggestedAppliesTo}) = 'object'`,
+    ),
+    payloadObjectCheck: check(
+      "landscape_review_items_payload_object_check",
+      sql`jsonb_typeof(${table.payload}) = 'object'`,
     ),
   }),
 );

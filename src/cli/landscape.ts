@@ -1,4 +1,8 @@
 import { closeDbPool } from "../db/index.js";
+import {
+  listLandscapeReviewItems,
+  materializeLandscapeReviewItems,
+} from "../modules/landscape/landscape-review-items.service.js";
 import { buildLandscapeReplayComparison } from "../modules/landscape/landscape-replay-comparison.service.js";
 import { buildLandscapeReplaySnapshot } from "../modules/landscape/landscape-replay.service.js";
 import { buildLandscapeSnapshot } from "../modules/landscape/landscape.service.js";
@@ -19,6 +23,14 @@ type CliOptions = {
   replay: boolean;
   replayCompare: boolean;
   compareCommunities: boolean;
+  queue: boolean;
+  queueDryRun: boolean;
+  queueList: boolean;
+  queueStatus: "pending" | "reviewing" | "resolved" | "dismissed" | "all";
+  queueSources: Array<
+    "replay_compare" | "landscape_snapshot" | "semantic_relation_comparison" | "promotion_gate"
+  >;
+  queueLimit: number;
   json: boolean;
 };
 
@@ -71,6 +83,46 @@ function parseStatus(value: string): CliOptions["status"] {
   throw new Error("--status must be one of current|active|draft|deprecated|all");
 }
 
+function parseQueueStatus(value: string): CliOptions["queueStatus"] {
+  if (
+    value === "pending" ||
+    value === "reviewing" ||
+    value === "resolved" ||
+    value === "dismissed" ||
+    value === "all"
+  ) {
+    return value;
+  }
+  throw new Error("--queue-status must be one of pending|reviewing|resolved|dismissed|all");
+}
+
+function parseQueueSources(
+  value: string,
+): Array<
+  "replay_compare" | "landscape_snapshot" | "semantic_relation_comparison" | "promotion_gate"
+> {
+  const sources = new Set<
+    "replay_compare" | "landscape_snapshot" | "semantic_relation_comparison" | "promotion_gate"
+  >();
+  for (const token of value.split(",")) {
+    const normalized = token.trim().toLowerCase();
+    if (
+      normalized === "replay_compare" ||
+      normalized === "landscape_snapshot" ||
+      normalized === "semantic_relation_comparison" ||
+      normalized === "promotion_gate"
+    ) {
+      sources.add(normalized);
+    }
+  }
+  if (sources.size === 0) {
+    throw new Error(
+      "--queue-source must include replay_compare|landscape_snapshot|semantic_relation_comparison|promotion_gate",
+    );
+  }
+  return [...sources];
+}
+
 function parseRunStatus(value: string): CliOptions["runStatus"] {
   if (value === "ok" || value === "degraded" || value === "failed" || value === "all") {
     return value;
@@ -108,6 +160,12 @@ function parseArgs(args: string[]): CliOptions {
     replay: false,
     replayCompare: false,
     compareCommunities: false,
+    queue: false,
+    queueDryRun: false,
+    queueList: false,
+    queueStatus: "all",
+    queueSources: ["replay_compare"],
+    queueLimit: 100,
     json: false,
   };
 
@@ -128,6 +186,18 @@ function parseArgs(args: string[]): CliOptions {
     }
     if (arg === "--replay-compare" || arg === "--recompile-compare") {
       options.replayCompare = true;
+      continue;
+    }
+    if (arg === "--queue") {
+      options.queue = true;
+      continue;
+    }
+    if (arg === "--queue-dry-run") {
+      options.queueDryRun = true;
+      continue;
+    }
+    if (arg === "--queue-list") {
+      options.queueList = true;
       continue;
     }
     if (arg === "--window-days" || arg.startsWith("--window-days=")) {
@@ -200,6 +270,24 @@ function parseArgs(args: string[]): CliOptions {
     if (arg === "--current-limit" || arg.startsWith("--current-limit=")) {
       const parsed = parsePositiveInt(args, index, "--current-limit", 50);
       options.currentLimit = parsed.value;
+      if (parsed.consumedNext) index += 1;
+      continue;
+    }
+    if (arg === "--queue-status" || arg.startsWith("--queue-status=")) {
+      const value = readArgValue(args, index, "--queue-status");
+      options.queueStatus = parseQueueStatus(value);
+      if (arg === "--queue-status") index += 1;
+      continue;
+    }
+    if (arg === "--queue-source" || arg.startsWith("--queue-source=")) {
+      const value = readArgValue(args, index, "--queue-source");
+      options.queueSources = parseQueueSources(value);
+      if (arg === "--queue-source") index += 1;
+      continue;
+    }
+    if (arg === "--queue-limit" || arg.startsWith("--queue-limit=")) {
+      const parsed = parsePositiveInt(args, index, "--queue-limit", 500);
+      options.queueLimit = parsed.value;
       if (parsed.consumedNext) index += 1;
       continue;
     }
@@ -342,8 +430,92 @@ function printReplaySummary(snapshot: Awaited<ReturnType<typeof buildLandscapeRe
   }
 }
 
+function printQueueMaterializeSummary(
+  result: Awaited<ReturnType<typeof materializeLandscapeReviewItems>>,
+) {
+  console.log(result.dryRun ? "Landscape Action Queue dry-run" : "Landscape Action Queue");
+  console.log(`Candidates: ${result.candidateCount}`);
+  console.log(`Inserted: ${result.insertedCount}`);
+  console.log(`Existing: ${result.existingCount}`);
+  console.log(`Skipped: ${result.skippedCount}`);
+
+  const preview = result.candidates.slice(0, 10);
+  if (preview.length === 0) return;
+
+  console.log("");
+  for (const candidate of preview) {
+    const label = candidate.communityLabel
+      ? `community=${candidate.communityLabel}`
+      : candidate.knowledgeId
+        ? `knowledge=${candidate.knowledgeId}`
+        : "scope=global";
+    const run = candidate.runId ? ` run=${candidate.runId}` : "";
+    console.log(
+      `- [${candidate.priority}] ${candidate.reason} ${label}${run} action=${candidate.proposedAction}`,
+    );
+  }
+}
+
+function printQueueListSummary(result: Awaited<ReturnType<typeof listLandscapeReviewItems>>) {
+  console.log(`Landscape Action Queue items: ${result.count}`);
+  if (result.items.length === 0) return;
+  console.log("");
+  for (const item of result.items.slice(0, 20)) {
+    const label = item.communityLabel
+      ? `community=${item.communityLabel}`
+      : item.knowledgeId
+        ? `knowledge=${item.knowledgeId}`
+        : "scope=global";
+    console.log(
+      `- [${item.priority}] ${item.status} ${item.reason} ${label} action=${item.proposedAction}`,
+    );
+  }
+}
+
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+  if (options.queueList) {
+    const result = await listLandscapeReviewItems({
+      status: options.queueStatus,
+      source: "all",
+      reason: "all",
+      proposedAction: "all",
+      priorityMin: 0,
+      limit: options.queueLimit,
+    });
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    printQueueListSummary(result);
+    return;
+  }
+
+  if (options.queue || options.queueDryRun) {
+    const result = await materializeLandscapeReviewItems({
+      dryRun: options.queueDryRun || !options.queue,
+      windowDays: options.windowDays,
+      limit: options.limit,
+      runStatus: options.runStatus,
+      currentLimit: options.currentLimit,
+      landscapeLimit: options.landscapeLimit,
+      landscapeStatus: options.landscapeStatus,
+      relationAxes: options.relationAxes,
+      minSelectedCount: options.minSelectedCount,
+      minFeedbackCount: options.minFeedbackCount,
+      minSimilarity: options.minSimilarity,
+      semanticTopK: options.semanticTopK,
+      sources: options.queueSources,
+      materializeLimit: options.queueLimit,
+    });
+    if (options.json) {
+      console.log(JSON.stringify(result, null, 2));
+      return;
+    }
+    printQueueMaterializeSummary(result);
+    return;
+  }
+
   if (options.replayCompare) {
     const comparison = await buildLandscapeReplayComparison({
       windowDays: options.windowDays,

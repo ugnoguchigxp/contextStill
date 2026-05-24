@@ -1,9 +1,21 @@
 import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
+import {
+  LandscapeReviewItemsError,
+  listLandscapeReviewItems,
+  materializeLandscapeReviewItems,
+  updateLandscapeReviewItemStatus,
+} from "../../../src/modules/landscape/landscape-review-items.service.js";
 import { buildLandscapeReplayComparison } from "../../../src/modules/landscape/landscape-replay-comparison.service.js";
 import { buildLandscapeReplaySnapshot } from "../../../src/modules/landscape/landscape-replay.service.js";
 import { buildLandscapeSnapshot } from "../../../src/modules/landscape/landscape.service.js";
+import {
+  landscapeReviewItemStatusUpdateSchema,
+  landscapeReviewItemsListQuerySchema,
+  landscapeReviewItemsMaterializeInputSchema,
+  landscapeReviewItemsMaterializeResultSchema,
+} from "../../../src/shared/schemas/landscape-review.schema.js";
 import {
   landscapeReplayComparisonResponseSchema,
   landscapeReplaySnapshotSchema,
@@ -38,6 +50,9 @@ const communityLabelsQuerySchema = z.object({
 
 const communityLabelParamSchema = z.object({
   communityKey: z.string().regex(/^[a-fA-F0-9]{64}$/),
+});
+const landscapeReviewItemParamSchema = z.object({
+  id: z.string().trim().min(1),
 });
 
 const communityLabelBodySchema = z.object({
@@ -168,6 +183,66 @@ export const graphRouter = new Hono()
         return c.json(landscapeReplayComparisonResponseSchema.parse(comparison));
       }
       return c.json(landscapeReplayComparisonResponseSchema.parse(comparison));
+    },
+  )
+  .post(
+    "/landscape/replay/queue",
+    zValidator("json", landscapeReviewItemsMaterializeInputSchema),
+    async (c) => {
+      const input = c.req.valid("json");
+      try {
+        const result = await materializeLandscapeReviewItems(input);
+        return c.json({
+          result: landscapeReviewItemsMaterializeResultSchema.parse(result),
+        });
+      } catch (error) {
+        if (error instanceof LandscapeReviewItemsError) {
+          return c.json({ error: error.message }, error.statusCode);
+        }
+        throw error;
+      }
+    },
+  )
+  .get(
+    "/landscape/review-items",
+    zValidator("query", landscapeReviewItemsListQuerySchema),
+    async (c) => {
+      const query = c.req.valid("query");
+      const result = await listLandscapeReviewItems({
+        status: query.status,
+        source: query.source,
+        reason: query.reason,
+        proposedAction: query.proposedAction,
+        knowledgeId: query.knowledgeId,
+        runId: query.runId,
+        communityKey: query.communityKey,
+        priorityMin: query.priorityMin,
+        limit: query.limit,
+      });
+      return c.json(result);
+    },
+  )
+  .patch(
+    "/landscape/review-items/:id",
+    zValidator("param", landscapeReviewItemParamSchema),
+    zValidator("json", landscapeReviewItemStatusUpdateSchema),
+    async (c) => {
+      const { id } = c.req.valid("param");
+      const input = c.req.valid("json");
+      try {
+        const item = await updateLandscapeReviewItemStatus({
+          id,
+          status: input.status,
+          note: input.note,
+        });
+        if (!item) return c.json({ error: "not found" }, 404);
+        return c.json({ item });
+      } catch (error) {
+        if (error instanceof LandscapeReviewItemsError) {
+          return c.json({ error: error.message }, error.statusCode);
+        }
+        throw error;
+      }
     },
   )
   .put(

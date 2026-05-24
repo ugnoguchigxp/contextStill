@@ -27,7 +27,7 @@ function uniqueNonEmpty(items: (string | null | undefined)[]): string[] {
       items
         .filter((item): item is string => typeof item === "string")
         .map((item) => item.trim())
-        .filter((item) => item.length > 0)
+        .filter((item) => item.length > 0),
     ),
   ];
 }
@@ -97,17 +97,13 @@ export function DoctorNextActionList({ actions }: { actions: string[] }) {
 
 // 🚨 緊急シグナル（critical / blocking）の抽出
 export function getEmergencySignals(reasons: DoctorReasonDetail[]): DoctorReasonDetail[] {
-  return reasons.filter(
-    (r) =>
-      r.severity === "critical" ||
-      r.impactLevel === "blocking"
-  );
+  return reasons.filter((r) => r.severity === "critical" || r.impactLevel === "blocking");
 }
 
 // 🟢🟣🔵 各ドメイン別に診断理由（シグナル）をフィルタリング
 export function getDomainSignals(
   reasons: DoctorReasonDetail[],
-  domain: "infrastructure" | "ai" | "pipeline"
+  domain: "infrastructure" | "ai" | "pipeline",
 ): DoctorReasonDetail[] {
   return reasons.filter((r) => {
     if (domain === "infrastructure") {
@@ -126,7 +122,7 @@ export function getDomainSignals(
 // 🟢🟣🔵 各ドメイン別にNext Actionsを抽出
 export function getDomainNextActions(
   report: DoctorReport | null | undefined,
-  domain: "infrastructure" | "ai" | "pipeline"
+  domain: "infrastructure" | "ai" | "pipeline",
 ): string[] {
   if (!report) return [];
   if (domain === "infrastructure") {
@@ -155,15 +151,12 @@ export function SlimDoctorReasonList({ reasons }: { reasons: DoctorReasonDetail[
         領域の警告・シグナル:
       </div>
       {reasons.map((reason, index) => {
-        const isCritical =
-          reason.severity === "critical" || reason.impactLevel === "blocking";
+        const isCritical = reason.severity === "critical" || reason.impactLevel === "blocking";
         return (
           <div
             key={`${reason.code}-${index}`}
             className={`text-[12.5px] border-l-2 pl-2.5 py-1 flex flex-col gap-0.5 rounded-r transition-all ${
-              isCritical
-                ? "border-red-500 bg-red-50/10"
-                : "border-amber-400 bg-amber-50/5"
+              isCritical ? "border-red-500 bg-red-50/10" : "border-amber-400 bg-amber-50/5"
             }`}
           >
             <div className="flex flex-wrap items-center gap-1.5">
@@ -185,9 +178,7 @@ export function SlimDoctorReasonList({ reasons }: { reasons: DoctorReasonDetail[
                 </Badge>
               ) : null}
             </div>
-            <p className="text-slate-500 text-[11.5px] leading-relaxed">
-              {reason.description}
-            </p>
+            <p className="text-slate-500 text-[11.5px] leading-relaxed">{reason.description}</p>
             {reason.action && (
               <div
                 className={`text-[11.5px] font-medium px-2 py-0.5 rounded border mt-1.5 w-fit ${
@@ -213,8 +204,8 @@ export function EmergencyBanner({ reasons }: { reasons: DoctorReasonDetail[] }) 
   return (
     <div className="mb-6 p-4 bg-red-50/80 border border-red-200/60 rounded-xl flex flex-col gap-3 shadow-3xs">
       <div className="flex items-center gap-2 text-red-800 font-extrabold text-[14px] tracking-wide">
-        <span className="w-2 h-2 rounded-full bg-red-600 inline-block" />
-        🚨 システム緊急警告 ({reasons.length}件)
+        <span className="w-2 h-2 rounded-full bg-red-600 inline-block" />🚨 システム緊急警告 (
+        {reasons.length}件)
       </div>
       <div className="flex flex-col gap-2">
         {reasons.map((reason, index) => (
@@ -224,11 +215,17 @@ export function EmergencyBanner({ reasons }: { reasons: DoctorReasonDetail[] }) 
           >
             <div className="flex flex-wrap items-center gap-2">
               <strong className="text-[13.5px] text-red-950">{reason.label}</strong>
-              <Badge variant="destructive" className="h-4 text-[9px] uppercase font-bold py-0 px-1.5">
+              <Badge
+                variant="destructive"
+                className="h-4 text-[9px] uppercase font-bold py-0 px-1.5"
+              >
                 {reason.severity}
               </Badge>
               {reason.impactLevel && (
-                <Badge variant="outline" className="h-4 text-[9px] border-red-200 text-red-700 bg-red-50/50 py-0 px-1.5 uppercase font-bold">
+                <Badge
+                  variant="outline"
+                  className="h-4 text-[9px] border-red-200 text-red-700 bg-red-50/50 py-0 px-1.5 uppercase font-bold"
+                >
                   {reason.impactLevel}
                 </Badge>
               )}

@@ -10,10 +10,26 @@ const {
   buildLandscapeReplayComparisonMock,
   buildLandscapeReplaySnapshotMock,
   buildLandscapeSnapshotMock,
+  listLandscapeReviewItemsMock,
+  materializeLandscapeReviewItemsMock,
+  updateLandscapeReviewItemStatusMock,
+  LandscapeReviewItemsErrorMock,
 } = vi.hoisted(() => ({
   buildLandscapeReplayComparisonMock: vi.fn(),
   buildLandscapeReplaySnapshotMock: vi.fn(),
   buildLandscapeSnapshotMock: vi.fn(),
+  listLandscapeReviewItemsMock: vi.fn(),
+  materializeLandscapeReviewItemsMock: vi.fn(),
+  updateLandscapeReviewItemStatusMock: vi.fn(),
+  LandscapeReviewItemsErrorMock: class LandscapeReviewItemsErrorMock extends Error {
+    readonly statusCode: number;
+
+    constructor(statusCode: number, message: string) {
+      super(message);
+      this.name = "LandscapeReviewItemsError";
+      this.statusCode = statusCode;
+    }
+  },
 }));
 
 vi.mock("../src/modules/landscape/landscape-replay-comparison.service.js", () => ({
@@ -26,6 +42,13 @@ vi.mock("../src/modules/landscape/landscape-replay.service.js", () => ({
 
 vi.mock("../src/modules/landscape/landscape.service.js", () => ({
   buildLandscapeSnapshot: buildLandscapeSnapshotMock,
+}));
+
+vi.mock("../src/modules/landscape/landscape-review-items.service.js", () => ({
+  listLandscapeReviewItems: listLandscapeReviewItemsMock,
+  materializeLandscapeReviewItems: materializeLandscapeReviewItemsMock,
+  updateLandscapeReviewItemStatus: updateLandscapeReviewItemStatusMock,
+  LandscapeReviewItemsError: LandscapeReviewItemsErrorMock,
 }));
 
 vi.mock("../api/modules/graph/graph.repository.js", () => ({
@@ -296,6 +319,93 @@ describe("graph routes landscape", () => {
     buildLandscapeSnapshotMock.mockResolvedValue(validLandscapeSnapshot());
     buildLandscapeReplaySnapshotMock.mockResolvedValue(validReplaySnapshot());
     buildLandscapeReplayComparisonMock.mockResolvedValue(validReplayComparison());
+    materializeLandscapeReviewItemsMock.mockResolvedValue({
+      dryRun: true,
+      generatedAt: "2026-05-24T00:00:00.000Z",
+      candidateCount: 1,
+      insertedCount: 0,
+      existingCount: 0,
+      skippedCount: 0,
+      items: [],
+      candidates: [
+        {
+          source: "replay_compare",
+          reason: "baseline_wrong",
+          proposedAction: "review_wrong",
+          priority: 95,
+          confidence: "medium",
+          idempotencyKey: "replay_compare:baseline_wrong:run-1:knowledge-1",
+          knowledgeId: "knowledge-1",
+          runId: "run-1",
+          triggerEventId: null,
+          communityKey: null,
+          communityLabel: null,
+          suggestedAppliesTo: {
+            retrievalMode: "task_context",
+          },
+          evidence: ["wrong baseline"],
+          payload: {
+            generatedBy: "landscape_replay_compare",
+          },
+          note: null,
+        },
+      ],
+    });
+    listLandscapeReviewItemsMock.mockResolvedValue({
+      count: 1,
+      items: [
+        {
+          id: "review-item-1",
+          source: "replay_compare",
+          reason: "baseline_wrong",
+          status: "pending",
+          proposedAction: "review_wrong",
+          priority: 95,
+          confidence: "medium",
+          knowledgeId: "knowledge-1",
+          runId: "run-1",
+          triggerEventId: null,
+          communityKey: null,
+          communityLabel: null,
+          suggestedAppliesTo: {
+            retrievalMode: "task_context",
+          },
+          evidence: ["wrong baseline"],
+          payload: {
+            generatedBy: "landscape_replay_compare",
+          },
+          note: null,
+          createdAt: "2026-05-24T00:00:00.000Z",
+          updatedAt: "2026-05-24T00:00:00.000Z",
+          resolvedAt: null,
+        },
+      ],
+    });
+    updateLandscapeReviewItemStatusMock.mockResolvedValue({
+      id: "review-item-1",
+      source: "replay_compare",
+      reason: "baseline_wrong",
+      status: "resolved",
+      proposedAction: "review_wrong",
+      priority: 95,
+      confidence: "medium",
+      knowledgeId: "knowledge-1",
+      runId: "run-1",
+      triggerEventId: null,
+      communityKey: null,
+      communityLabel: null,
+      suggestedAppliesTo: {
+        retrievalMode: "task_context",
+      },
+      evidence: ["wrong baseline"],
+      payload: {
+        generatedBy: "landscape_replay_compare",
+      },
+      note: "manually reviewed",
+      createdAt: "2026-05-24T00:00:00.000Z",
+      updatedAt: "2026-05-24T00:10:00.000Z",
+      resolvedAt: "2026-05-24T00:10:00.000Z",
+    });
   });
 
   test("GET /api/graph/landscape applies defaults", async () => {
@@ -400,5 +510,112 @@ describe("graph routes landscape", () => {
       currentLimit: 8,
       includeRuns: false,
     });
+  });
+
+  test("POST /api/graph/landscape/replay/queue applies defaults", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/graph/landscape/replay/queue", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    expect(response.status).toBe(200);
+    expect(materializeLandscapeReviewItemsMock).toHaveBeenCalledWith({
+      dryRun: true,
+      windowDays: 30,
+      limit: 100,
+      runStatus: "all",
+      currentLimit: 12,
+      landscapeLimit: 1000,
+      landscapeStatus: "active",
+      relationAxes: ["session", "project", "source"],
+      minSelectedCount: 3,
+      minFeedbackCount: 3,
+      minSimilarity: 0.72,
+      semanticTopK: 3,
+      sources: ["replay_compare"],
+      materializeLimit: 50,
+    });
+  });
+
+  test("POST /api/graph/landscape/replay/queue returns status from review-items error", async () => {
+    const app = buildApp();
+    materializeLandscapeReviewItemsMock.mockRejectedValueOnce(
+      new LandscapeReviewItemsErrorMock(400, "unsupported sources in AQ-1A"),
+    );
+
+    const response = await app.request("/api/graph/landscape/replay/queue", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        dryRun: true,
+        sources: ["landscape_snapshot"],
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "unsupported sources in AQ-1A",
+    });
+  });
+
+  test("GET /api/graph/landscape/review-items parses filters", async () => {
+    const app = buildApp();
+    const response = await app.request(
+      "/api/graph/landscape/review-items?status=pending&source=replay_compare&reason=baseline_wrong&proposedAction=review_wrong&knowledgeId=knowledge-1&runId=run-1&communityKey=community-a&priorityMin=70&limit=20",
+    );
+    expect(response.status).toBe(200);
+    expect(listLandscapeReviewItemsMock).toHaveBeenCalledWith({
+      status: "pending",
+      source: "replay_compare",
+      reason: "baseline_wrong",
+      proposedAction: "review_wrong",
+      knowledgeId: "knowledge-1",
+      runId: "run-1",
+      communityKey: "community-a",
+      priorityMin: 70,
+      limit: 20,
+    });
+  });
+
+  test("PATCH /api/graph/landscape/review-items/:id updates status", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/graph/landscape/review-items/review-item-1", {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        status: "resolved",
+        note: "manually reviewed",
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(updateLandscapeReviewItemStatusMock).toHaveBeenCalledWith({
+      id: "review-item-1",
+      status: "resolved",
+      note: "manually reviewed",
+    });
+  });
+
+  test("PATCH /api/graph/landscape/review-items/:id returns 409 on invalid transition", async () => {
+    const app = buildApp();
+    updateLandscapeReviewItemStatusMock.mockRejectedValueOnce(
+      new LandscapeReviewItemsErrorMock(409, "invalid status transition: resolved -> pending"),
+    );
+    const response = await app.request("/api/graph/landscape/review-items/review-item-1", {
+      method: "PATCH",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({
+        status: "pending",
+      }),
+    });
+    expect(response.status).toBe(409);
   });
 });

@@ -8,6 +8,10 @@ import {
   updateKnowledgeInputSchema,
 } from "../src/shared/schemas/knowledge.schema.ts";
 import { landscapeSnapshotSchema } from "../src/shared/schemas/landscape.schema.ts";
+import {
+  landscapeReviewItemSchema,
+  landscapeReviewItemsMaterializeInputSchema,
+} from "../src/shared/schemas/landscape-review.schema.ts";
 import { overviewDashboardSchema } from "../src/shared/schemas/overview.schema.ts";
 import { recordVibeMemoryInputSchema } from "../src/shared/schemas/vibe-memory.schema.ts";
 
@@ -381,6 +385,53 @@ describe("Shared Schemas", () => {
     };
 
     expect(overviewDashboardSchema.parse(input)).toEqual(expect.objectContaining(input));
+  });
+
+  test("landscape review schemas parse valid input", () => {
+    const item = {
+      id: "review-item-1",
+      source: "replay_compare",
+      reason: "baseline_wrong",
+      status: "pending",
+      proposedAction: "review_wrong",
+      priority: 95,
+      confidence: "medium",
+      knowledgeId: "knowledge-1",
+      runId: "run-1",
+      triggerEventId: null,
+      communityKey: null,
+      communityLabel: null,
+      suggestedAppliesTo: {
+        retrievalMode: "task_context",
+      },
+      evidence: ["wrong feedback observed in baseline replay"],
+      payload: {
+        generatedBy: "landscape_replay_compare",
+      },
+      note: null,
+      createdAt: "2026-05-24T00:00:00.000Z",
+      updatedAt: "2026-05-24T00:00:00.000Z",
+      resolvedAt: null,
+    };
+    expect(landscapeReviewItemSchema.parse(item)).toEqual(expect.objectContaining(item));
+
+    const materializeInput = {
+      dryRun: true,
+      windowDays: 30,
+      limit: 100,
+      runStatus: "all",
+      currentLimit: 12,
+      relationAxes: "session,project,source",
+      sources: ["replay_compare"],
+      materializeLimit: 50,
+    };
+    expect(landscapeReviewItemsMaterializeInputSchema.parse(materializeInput)).toEqual(
+      expect.objectContaining({
+        dryRun: true,
+        relationAxes: ["session", "project", "source"],
+        sources: ["replay_compare"],
+      }),
+    );
   });
 
   test("landscapeSnapshotSchema parses valid input", () => {

@@ -41,6 +41,8 @@ export const auditEventTypes = {
   distillationMcpEvidence: "DISTILLATION_MCP_EVIDENCE",
   vibeDistillationRunStarted: "VIBE_DISTILLATION_RUN_STARTED",
   vibeDistillationRunFinished: "VIBE_DISTILLATION_RUN_FINISHED",
+  landscapeReviewItemsMaterialized: "LANDSCAPE_REVIEW_ITEMS_MATERIALIZED",
+  landscapeReviewItemStatusChanged: "LANDSCAPE_REVIEW_ITEM_STATUS_CHANGED",
   contextCompileRun: "CONTEXT_COMPILE_RUN",
   syncRunStarted: "SYNC_RUN_STARTED",
   syncRunFinished: "SYNC_RUN_FINISHED",
