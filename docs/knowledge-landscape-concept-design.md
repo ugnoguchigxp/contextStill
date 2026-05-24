@@ -1,9 +1,105 @@
 # Knowledge Landscape コンセプトデザイン
 
-> Status: discussion draft
-> Scope: 実装計画の前段。ここでは概念、境界、優先対象を定義し、具体的なテーブル追加・API・CLI 手順はまだ決めない。
+> Status: implementation status map
+> Scope: 当初のコンセプトを残しつつ、2026-05-24 時点で実装済み/部分実装/未実装の境界を明示する。
 > Date: 2026-05-22
-> Implementation plan: `docs/knowledge-landscape-attractor-implementation-plan.md`
+> Last reviewed: 2026-05-24
+> Implementation plans:
+> - `docs/knowledge-landscape-attractor-implementation-plan.md`
+> - `docs/knowledge-landscape-attractor-phase2-replay-basin-plan.md`
+> - `docs/knowledge-landscape-action-queue-implementation-plan.md`
+
+## 0. 実装状況サマリー (2026-05-24)
+
+この文書はもともと concept draft として作成したが、現在は実装の棚卸しにも使う。結論として、`observe first -> explain -> replay -> rank` のうち、**observe / explain / replay / sandbox compare は実装済み**であり、**rank / auto-write / auto-mutate は未実装または default off**である。
+
+ステータス凡例:
+
+| Status | 意味 |
+|---|---|
+| 実装済み | API/CLI/UI または service と test が存在し、read-only に利用できる |
+| 部分実装 | backend data はあるが UI/永続化/中間 trace が不足している、または default off |
+| 未実装 | concept として残っているが実行可能な機能はまだない |
+| 意図的に未実装 | safety/信頼性の理由で、現時点では production 挙動に入れていない |
+
+### 0.1 現在の実装到達点
+
+| 領域 | Status | 実装済みの内容 | 主な実装箇所 |
+|---|---|---|---|
+| Landscape Snapshot | 実装済み | community 単位で activity、selection、feedback、source density、freshness、dead zone、risk を算出する | `src/modules/landscape/landscape.service.ts`, `src/modules/landscape/landscape.repository.ts` |
+| Attractor / Negative / Dead Zone scoring | 実装済み | `strong_attractor`, `useful_attractor`, `negative_attractor_candidate`, `over_selected_not_used`, `dead_zone_reachability_risk`, `dead_zone_stale`, `feedback_insufficient` を分類する | `src/modules/landscape/landscape.scoring.ts`, `src/modules/landscape/landscape.types.ts` |
+| Snapshot API | 実装済み | `GET /api/graph/landscape` が schema validation 付きで snapshot を返す | `api/modules/graph/graph.routes.ts`, `src/shared/schemas/landscape.schema.ts` |
+| Landscape CLI | 実装済み | `memory-router landscape` 相当の CLI で summary / JSON / replay / replay compare を出力する | `src/cli/landscape.ts` |
+| Graph Community View | 実装済み | relation community view、supernode/detail 切替、community label 更新、landscape overlay を表示する | `api/modules/graph/graph.repository.ts`, `web/src/modules/admin/components/graph.page.tsx` |
+| Risk / Health Overlay | 実装済み | attractor glow、negative dashed red outline、dead zone opacity/dashed outline、legend を表示する | `web/src/modules/admin/components/graph.page.tsx`, `web/src/styles.css` |
+| Dynamic Health Card | 実装済み | community 選択時に selected/run/feedback/source density/reason/recommended actions を表示する | `web/src/modules/admin/components/graph.page.tsx` |
+| Replay Corpus | 実装済み | 過去 compile run、context pack item、usage feedback を replay corpus として読み、basin trace に変換する | `src/modules/landscape/landscape-replay.service.ts`, `src/modules/landscape/landscape-replay.repository.ts` |
+| Task facet ごとの basin analysis | 実装済み | repo/retrieval mode/technology/change type/domain/source/run status/degraded reason ごとに attractor/negative/dead-zone hit を集計する | `src/modules/landscape/landscape-facets.ts`, `src/modules/landscape/landscape-replay.service.ts` |
+| Windowed agentic acceptance signal | 実装済み | `knowledge_usage_events.metadata.agenticAccepted` を window 集計し、acceptance coverage/rate を出す | `src/modules/context-compiler/context-compiler.service.ts`, `src/modules/landscape/landscape-replay.service.ts` |
+| Semantic community vs relation community comparison | 実装済み | relation community と embedding semantic community の alignment/split/merge/orphan/reachable dead zone を比較する | `src/modules/landscape/landscape-community-comparison.ts` |
+| Replay comparison / ranking sandbox | 実装済み | baseline selected items と current retrieval dry-run を比較し、ranking experiment summary、promotion gate summary、appliesTo refine candidate を返す | `src/modules/landscape/landscape-replay-comparison.service.ts`, `src/shared/schemas/landscape-replay.schema.ts` |
+| Graph Replay panels | 実装済み | Replay Health、Replay Review、Action Queue、risky replay runs を community panel に表示する | `web/src/modules/admin/components/graph.page.tsx` |
+| Compile intervention diagnostics | 部分実装 | default は observe-only。env opt-in で diversity candidate を 1 件差し込む実験 hook はあるが、Attractor/Negative score は production ranking に反映しない | `src/modules/landscape/landscape-compile-intervention.service.ts`, `src/modules/context-compiler/context-compiler.service.ts` |
+
+### 0.2 未実装または部分実装として残るもの
+
+| 領域 | Status | 残っている理由 / 次の論点 |
+|---|---|---|
+| Full compile trajectory playback | 部分実装 | run-level basin trace はあるが、Graph 上で text hit -> vector hit -> merged -> agentic refine -> final pack を時系列再生する UI は未実装。全候補 ID の永続 trace も不足している。 |
+| 全候補の中間 ranking trace | 部分実装 | diagnostics は text/vector/merged/suppressed/selected count を持つが、候補全体の順位変化や suppression 理由を長期 replay できる粒度では保存していない。 |
+| Contradictory cluster detection | 未実装 | semantic/relation split/merge はあるが、`must` vs `avoid` の意味矛盾検出や lightning edge 表示はない。LLM/ルールベースの検出設計が必要。 |
+| Dead zone repair workflow | 部分実装 | dead zone/reachability risk の分類と recommended actions はあるが、title/body/appliesTo 修正 queue や repair candidate の永続化は未実装。 |
+| AppliesTo refine の自動作成/保存 | 部分実装 | replay compare は review candidate を返すが、`knowledge_candidates` や `knowledge_review_queue` に自動登録しない。現時点では UI 上の Action Queue に留めている。 |
+| Promotion gate enforcement | 部分実装 | promotion gate summary は出るが、candidate promotion の実処理を止める gate としてはまだ接続していない。 |
+| Production ranking boost/repulsion | 意図的に未実装 | replay/sandbox summary まではあるが、Attractor boost、Negative repulsion、used-baseline retention は production ranking に入れていない。 |
+| Basin-aware query expansion | 未実装 | known basin に基づく query hint / facet expansion は compile の挙動を変えるため、replay validation 後に扱う。 |
+| Automatic candidate generation | 未実装 | off-topic 分解、merge/split、missing procedure 生成は concept のまま。source grounding と human review queue が先に必要。 |
+| Query/Task embedding 永続化 | 未実装 | compile task state の embedding 保存方針は未決定。現状は knowledge embedding と compile input/facets から復元する。 |
+| Mutable sandbox graph UI | 部分実装 | backend の replay comparison/dry-run はあるが、Graph 上で baseline vs sandbox の差分を編集・比較する専用 UI はない。 |
+| Landscape snapshot の永続 cache/table | 未実装 | 現状は derived/read-only live calculation。高負荷化したら snapshot table/cache を検討する。 |
+
+### 0.3 Tier 別トレーサビリティ
+
+| Original item | Status | 現在の評価 |
+|---|---|---|
+| 1. Knowledge Landscape Snapshot | 実装済み | community 単位 snapshot と API/CLI/schema/test がある。単位は当初の generic cluster ではなく relation community が primary。 |
+| 2. Attractor Candidate Report | 実装済み | attractor/negative/over-selected/dead-zone 分類と risk list がある。feedback sparse のため confidence 付き。 |
+| 3. Graph Community View | 実装済み | relation/semantic/community/evidence view、community display detail/supernode、label edit がある。 |
+| 4. Task-to-Knowledge Trajectory の最小記録 | 部分実装 | run diagnostics と final selected knowledge IDs はある。全候補の経路保存はまだない。 |
+| 5. Ranking にはまだ入れない | 実装済み方針 | default production ranking は変えていない。env opt-in の diversity exploration hook はあるが、通常は disabled。 |
+| 6. Attractor Health | 実装済み | Dynamic Health Card と risk/recommended actions がある。 |
+| 7. Community Supernode View | 実装済み | communityDisplay=`supernode` と Graph UI 切替がある。 |
+| 8. Risk / Health Overlay | 実装済み | glow/outline/opacity/legend がある。warning icon や contradiction edge は未実装。 |
+| 9. Dead Zone / Reachability Review | 部分実装 | 分類・risk・Action Queue 表示はあるが、repair workflow と永続 queue は未実装。 |
+| 10. Knowledge Merge / Split Suggestion | 部分実装 | semantic split/merge/orphan/reachable dead zone 比較はある。自然言語 conflict/merge/split candidate 作成は未実装。 |
+| 11. Compile Trajectory Playback | 部分実装 | replay basin trace はあるが、Graph 上の時系列 playback は未実装。 |
+| 12. Replay Corpus | 実装済み | replay snapshot と replay comparison API/CLI/UI panel がある。 |
+| 13. Exploration / Diversity Boost | 部分実装 | default off の compile intervention hook と sandbox summary はある。production rollout は未実装。 |
+| 14. Cluster-aware Ranking | 意図的に未実装 | experiment summary のみ。production ranking には未接続。 |
+| 15. Basin-aware Query Expansion | 未実装 | 後続対象。 |
+| 16. Sandbox Comparison View | 部分実装 | backend dry-run comparison と UI summary はある。差分を操作する専用 view は未実装。 |
+| 17. Automatic Candidate Generation | 未実装 | 後続対象。 |
+
+### 0.4 次の実装ターゲット候補
+
+次に狙うなら、production ranking を変える前に次の順が妥当である。
+
+1. **Replay Action Queue の永続化**
+   - `appliesToRefineCandidates`、dead-zone repair、wrong/off-topic 起点の候補を review queue へ接続する。
+   - ただし自動適用はしない。人間レビュー可能な candidate 化までに留める。
+2. **Compile Trajectory Playback UI**
+   - 既存の replay basin trace を使って、run 単位で selected communities と feedback を Graph 上に表示する。
+   - 全候補 trace がない部分は「current data unavailable」として明示し、後続の instrumentation 要件にする。
+3. **Contradiction Detection の read-only 実験**
+   - relation/semantic 近傍内で `must` / `avoid` / deprecated vs active の衝突を候補抽出する。
+   - 最初は deterministic heuristic + review queue で、LLM 判定は補助にする。
+4. **Promotion Gate の実接続**
+   - replay compare の `promotionGateSummary` を candidate promotion flow に read-only warning として表示し、次に manual approval 必須 gate へ進める。
+5. **Landscape Snapshot cache**
+   - API/UI の負荷が高くなった場合だけ、daily/on-demand snapshot table を追加する。
+   - 現時点では live derived calculation を維持する。
+
+Production ranking 変更、Negative repulsion の自動適用、Basin-aware query expansion は、この 1-4 の review/observability が安定してから扱う。
 
 ## 1. 目的
 
@@ -730,16 +826,27 @@ compile run ごとの query embedding を保存するかは未決定。
 12. candidate promotion gate に dead zone signal を使う場合、どの条件で抑制するか
 13. exploration / diversity boost を replay 限定にするか、実 compile に小さく入れるか
 
-推奨回答は次である。
+2026-05-24 時点では、これらの問いの多くは実装で回答済みである。
 
-```txt
-最初の実装計画では read-only CLI/API snapshot まで。
-Graph は community coloring の設計まで。
-non-use は metric と分類まで。
-ranking 変更、query embedding 永続化、supernode UI、自動 candidate 生成、exploration 実投入は後続。
-```
+| 問い | 現在の回答 |
+|---|---|
+| 1. 初期 snapshot は CLI か API か UI か | CLI、API、Graph UI の 3 つすべてで read-only に実装済み。 |
+| 2. cluster はどの単位で作るか | primary は relation community。semantic community は比較・診断用。 |
+| 3. feedback が少ない knowledge をどう扱うか | confidence band を付け、`feedback_insufficient` として別分類する。 |
+| 4. `wrong` queue 中の knowledge をどう見せるか | negative score / replay compare / Action Queue の signal として扱う。自動減点や自動 suppression はしない。 |
+| 5. source evidence density をどう定義するか | source links と metadata source refs を community size で割った density として扱う。 |
+| 6. ranking 変更を含めるか | default では含めない。compile intervention hook は env opt-in で、Attractor score の production 反映ではない。 |
+| 7. replay corpus を同時に作るか | 実装済み。`/api/graph/landscape/replay` と CLI `--replay` で見られる。 |
+| 8. Graph community は何で作るか | relation edge 由来の connected component を primary にし、semantic community は差分比較に使う。 |
+| 9. community supernode を最初から出すか | 実装済み。Graph UI に detail/supernode 切替がある。 |
+| 10. compile trajectory playback を replay corpus と同時に扱うか | data 側は basin trace まで実装済み。時系列 playback UI は未実装。 |
+| 11. non-use をどう分類するか | dead zone reachability risk / stale zone / neutral に分ける。削除や減点には直結しない。 |
+| 12. candidate promotion gate に dead zone signal を使うか | summary は実装済み。promotion flow の実 enforcement は未実装。 |
+| 13. exploration / diversity boost をどう扱うか | replay/sandbox summary と env opt-in hook まで。通常 compile への default 適用はしない。 |
 
-## 11. 推奨される最初の到達点
+このため、次の計画では「read-only snapshot を作る」ではなく、**read-only signal を人間レビュー可能な action queue / trajectory view / gate warning に接続する**ことを主眼にする。
+
+## 11. 最初の到達点と現在の到達状況
 
 最初の到達点は次の 1 文で表せる。
 
@@ -748,6 +855,8 @@ memory-router doctor/overview とは独立に、
 現在の knowledge corpus がどのような semantic cluster と feedback 地形を持つかを
 read-only に観測できる。
 ```
+
+この到達点は、2026-05-24 時点でほぼ到達済みである。実際の実装では、出力単位は `clusters` ではなく `communities` であり、relation community を primary、semantic community を比較用として扱う。
 
 期待する出力例:
 

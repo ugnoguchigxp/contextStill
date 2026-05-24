@@ -504,6 +504,7 @@ export function GraphPage() {
   const [hasInteracted, setHasInteracted] = useState(false);
   const [isDragging, setIsDragging] = useState(false);
   const dragStart = useRef({ x: 0, y: 0 });
+  const dragged = useRef(false);
   const containerRef = useRef<HTMLDivElement>(null);
   const controlsRef = useRef<HTMLDivElement>(null);
   const queryClient = useQueryClient();
@@ -788,11 +789,13 @@ export function GraphPage() {
     if (e.button !== 0) return;
     setHasInteracted(true);
     setIsDragging(true);
+    dragged.current = false;
     dragStart.current = { x: e.clientX - transform.x, y: e.clientY - transform.y };
   };
 
   const onMouseMove = (e: React.MouseEvent) => {
     if (!isDragging) return;
+    dragged.current = true;
     setTransform((prev) => ({
       ...prev,
       x: e.clientX - dragStart.current.x,
@@ -1076,7 +1079,8 @@ export function GraphPage() {
         </div>
       </div>
 
-      <div className="graph-overlay-right-detail" style={{ top: detailPanelTop }}>
+      {selectedId ? (
+        <div className="graph-overlay-right-detail" style={{ top: detailPanelTop }}>
         <aside className="graph-detail-panel" aria-live="polite">
           <div className="graph-detail-panel-header">
             <span className="graph-detail-kicker">Node Detail</span>
@@ -1790,7 +1794,9 @@ export function GraphPage() {
           ) : null}
         </aside>
       </div>
+    ) : null}
 
+      {/* biome-ignore lint/a11y/useKeyWithClickEvents: Canvas click is for pointer selection clear only */}
       <div
         className="graph-canvas"
         onMouseDown={onMouseDown}
@@ -1800,6 +1806,11 @@ export function GraphPage() {
         onDoubleClick={() => {
           setHasInteracted(false);
           setTransform(computeAutoFitTransform(nodes, viewport));
+        }}
+        onClick={() => {
+          if (!dragged.current) {
+            setSelectedId(null);
+          }
         }}
         style={{ cursor: isDragging ? "grabbing" : "grab" }}
       >
@@ -1874,10 +1885,14 @@ export function GraphPage() {
                     aria-label={`Select ${node.label || node.id}`}
                     onMouseEnter={() => setHoveredId(node.id)}
                     onMouseLeave={() => setHoveredId(null)}
-                    onClick={() => setSelectedId(node.id)}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      setSelectedId(node.id);
+                    }}
                     onKeyDown={(event) => {
                       if (event.key !== "Enter" && event.key !== " ") return;
                       event.preventDefault();
+                      event.stopPropagation();
                       setSelectedId(node.id);
                     }}
                   />
@@ -1901,10 +1916,14 @@ export function GraphPage() {
                   aria-label={`Select ${node.label || node.id}`}
                   onMouseEnter={() => setHoveredId(node.id)}
                   onMouseLeave={() => setHoveredId(null)}
-                  onClick={() => setSelectedId(node.id)}
+                  onClick={(event) => {
+                    event.stopPropagation();
+                    setSelectedId(node.id);
+                  }}
                   onKeyDown={(event) => {
                     if (event.key !== "Enter" && event.key !== " ") return;
                     event.preventDefault();
+                    event.stopPropagation();
                     setSelectedId(node.id);
                   }}
                 />

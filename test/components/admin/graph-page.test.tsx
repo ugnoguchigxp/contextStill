@@ -669,6 +669,8 @@ describe("GraphPage", () => {
     const selects = screen.getAllByRole("combobox");
     const viewModeSelect = selects[1];
     fireEvent.change(viewModeSelect, { target: { value: "community" } });
+    const circles = await screen.findAllByRole("button", { name: /Select/i });
+    fireEvent.click(circles[0]);
     await screen.findByText("Core Reliability");
 
     expect(fetchGraphSnapshot).toHaveBeenLastCalledWith(
@@ -770,7 +772,7 @@ describe("GraphPage", () => {
       </QueryClientProvider>,
     );
 
-    await screen.findByText("Node Detail");
+    await screen.findByText("Knowledge Graph");
     const selects = screen.getAllByRole("combobox");
     const viewModeSelect = selects[1];
     fireEvent.change(viewModeSelect, { target: { value: "community" } });
@@ -798,6 +800,11 @@ describe("GraphPage", () => {
       relationAxes: ["session", "project", "source"],
       includeRuns: false,
     });
+
+    const supernodeButton = await screen.findByRole("button", {
+      name: "Select Legacy Label",
+    });
+    fireEvent.click(supernodeButton);
 
     const input = await screen.findByPlaceholderText("Community label");
     fireEvent.change(input, { target: { value: "New Label" } });

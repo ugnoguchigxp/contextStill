@@ -1408,37 +1408,44 @@
 
 .graph-detail-meta-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 0.7rem;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.4rem;
 }
 
 .graph-detail-metric {
   min-width: 0;
-  padding: 0.7rem 0.75rem;
-  border: 1px solid rgba(148, 163, 184, 0.22);
-  border-radius: 0.5rem;
-  background: rgba(15, 23, 42, 0.58);
+  padding: 0.35rem 0.45rem;
+  border: 1px solid rgba(148, 163, 184, 0.16);
+  border-radius: 0.35rem;
+  background: rgba(15, 23, 42, 0.48);
+  text-align: center;
 }
 
 .graph-detail-metric span {
   display: block;
-  color: #cbd5e1;
-  font-size: 0.68rem;
+  color: #94a3b8;
+  font-size: 0.62rem;
   font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .graph-detail-metric strong {
   display: block;
-  margin-top: 0.25rem;
+  margin-top: 0.15rem;
   color: #ffffff;
-  font-size: 1rem;
-  font-weight: 800;
+  font-size: 0.82rem;
+  font-weight: 700;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .graph-detail-body {
-  min-height: 0;
-  flex: 1 1 8rem;
-  overflow: auto;
+  flex: none;
+  overflow: visible;
+  min-height: auto;
   padding: 0.9rem;
   border: 1px solid rgba(148, 163, 184, 0.22);
   border-radius: 0.6rem;
@@ -1807,8 +1814,9 @@
 .vibe-layout {
   display: grid;
   grid-template-columns: 320px 1fr;
-  min-height: calc(100vh - 64px);
+  height: calc(100vh - 64px);
   background: var(--background);
+  overflow: hidden;
 }
 
 .vibe-sidebar {
@@ -1816,9 +1824,7 @@
   background: var(--muted);
   display: flex;
   flex-direction: column;
-  position: sticky;
-  top: 64px;
-  height: calc(100vh - 64px);
+  height: 100%;
   overflow-y: auto;
 }
 
@@ -1918,6 +1924,8 @@
   background: var(--background);
   min-width: 0;
   overflow-x: hidden;
+  height: 100%;
+  overflow-y: auto;
 }
 
 .vibe-content-header {
@@ -2367,8 +2375,9 @@
 .context-compiler-shell {
   display: grid;
   grid-template-columns: 320px minmax(0, 1fr);
-  min-height: calc(100vh - 64px);
+  height: calc(100vh - 64px);
   background: var(--background);
+  overflow: hidden;
 }
 
 .compile-main-card {
@@ -2383,12 +2392,10 @@
   border-right: 1px solid var(--border);
   display: flex;
   flex-direction: column;
-  height: calc(100vh - 64px);
+  height: 100%;
   min-height: 0;
   overflow-x: hidden;
   overflow-y: auto;
-  position: sticky;
-  top: 64px;
 }
 
 .compile-sidebar-header {
@@ -2522,6 +2529,8 @@
   display: flex;
   flex-direction: column;
   min-width: 0;
+  height: 100%;
+  overflow-y: auto;
 }
 
 .compile-page-title {
@@ -2952,7 +2961,12 @@
 }
 
 @media (max-width: 980px) {
-  .context-compiler-shell,
+  .context-compiler-shell {
+    grid-template-columns: 1fr;
+    height: auto;
+    overflow: visible;
+  }
+
   .compile-form-grid {
     grid-template-columns: 1fr;
   }
@@ -2961,6 +2975,12 @@
     height: auto;
     max-height: 18rem;
     position: static;
+    overflow-y: auto;
+  }
+
+  .compile-main {
+    height: auto;
+    overflow-y: visible;
   }
 
   .compile-main-card {
