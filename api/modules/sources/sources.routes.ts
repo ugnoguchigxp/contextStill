@@ -4,6 +4,11 @@ import { z } from "zod";
 import { groupedConfig } from "../../../src/config.js";
 import { upsertSourceDocument } from "../../../src/modules/sources/source.repository.js";
 import {
+  queueWebSourceUrl,
+  queueWebSourceUrls,
+} from "../../../src/modules/sources/web/source-queue.service.js";
+import { extractWebSourceUrlsFromUpload } from "../../../src/modules/sources/web/source-upload-parser.service.js";
+import {
   commitDeleteChange,
   commitFileChange,
   commitPathsChange,
@@ -65,6 +70,16 @@ const diffQuerySchema = z.object({
 
 const searchQuerySchema = z.object({
   q: z.string().optional(),
+});
+
+const webSourceCreateSchema = z.object({
+  url: z.string().trim().min(1),
+  distillationVersion: z.string().trim().min(1).optional(),
+});
+
+const webSourceBulkSchema = z.object({
+  urls: z.array(z.string().trim().min(1)).min(1).max(1000),
+  distillationVersion: z.string().trim().min(1).optional(),
 });
 
 const slugFromRequestPath = (url: string, prefix: string): string => {
@@ -192,6 +207,94 @@ export const sourcesRouter = new Hono()
       ok: true,
       indexed,
       removed: 0,
+    });
+  })
+  .post("/web", zValidator("json", webSourceCreateSchema), async (c) => {
+    const payload = c.req.valid("json");
+    const queued = await queueWebSourceUrl({
+      url: payload.url,
+      distillationVersion: payload.distillationVersion,
+    });
+    if (!queued.ok) {
+      return c.json(
+        {
+          ok: false,
+          url: queued.url,
+          reason: queued.reason,
+        },
+        400,
+      );
+    }
+    return c.json({
+      ok: true,
+      item: queued.item,
+    });
+  })
+  .post("/web/bulk", zValidator("json", webSourceBulkSchema), async (c) => {
+    const payload = c.req.valid("json");
+    const result = await queueWebSourceUrls({
+      urls: payload.urls,
+      distillationVersion: payload.distillationVersion,
+    });
+    return c.json({
+      ok: true,
+      ...result,
+    });
+  })
+  .post("/web/upload", async (c) => {
+    const formData = await c.req.formData();
+    const file = formData.get("file");
+    if (!(file instanceof File)) {
+      return c.json(
+        {
+          ok: false,
+          reason: "file is required",
+        },
+        400,
+      );
+    }
+    const distillationVersionRaw = formData.get("distillationVersion");
+    const distillationVersion =
+      typeof distillationVersionRaw === "string" && distillationVersionRaw.trim()
+        ? distillationVersionRaw.trim()
+        : undefined;
+    const bytes = Buffer.from(await file.arrayBuffer());
+    let urls: string[];
+    try {
+      urls = await extractWebSourceUrlsFromUpload({
+        filename: file.name,
+        bytes,
+      });
+    } catch (error) {
+      return c.json(
+        {
+          ok: false,
+          reason: error instanceof Error ? error.message : "failed to parse upload file",
+        },
+        400,
+      );
+    }
+    if (urls.length === 0) {
+      return c.json(
+        {
+          ok: false,
+          reason: "no url found in upload file",
+        },
+        400,
+      );
+    }
+    const result = await queueWebSourceUrls({
+      urls,
+      distillationVersion,
+    });
+    return c.json({
+      ok: true,
+      file: {
+        name: file.name,
+        size: file.size,
+        extractedUrls: urls.length,
+      },
+      ...result,
     });
   })
   .get("/folders", async (c) => {

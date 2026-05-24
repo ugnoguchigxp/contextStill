@@ -36,10 +36,12 @@ import {
   releaseRetryablePausedDistillationTargets,
   updateDistillationTargetHeartbeat,
   updateDistillationTargetPhase,
+  updateDistillationTargetSource,
 } from "../selectDistillationTarget/repository.js";
+import { researchWebSourceToMarkdown } from "../sources/web/source-research.service.js";
 
 export type DistillationPipelineInput = {
-  kind?: "auto" | "wiki" | "vibe" | "candidate";
+  kind?: "auto" | "wiki" | "vibe" | "candidate" | "web";
   limit?: number;
   targetStateId?: string;
   worker?: string;
@@ -106,6 +108,7 @@ function targetKindFilter(
   kind: DistillationPipelineInput["kind"],
 ): DistillationTargetKind | undefined {
   if (kind === "candidate") return "knowledge_candidate";
+  if (kind === "web") return "web_ingest";
   if (kind === "wiki") return "wiki_file";
   if (kind === "vibe") return "vibe_memory";
   return undefined;
@@ -306,6 +309,74 @@ async function loadOrRunFindCandidate(
   };
 }
 
+function sourceUrlForWebIngestTarget(target: DistillationTargetStateRow): string {
+  const metadata =
+    target.metadata && typeof target.metadata === "object"
+      ? (target.metadata as Record<string, unknown>)
+      : {};
+  const sourceUrl = typeof metadata.sourceUrl === "string" ? metadata.sourceUrl.trim() : "";
+  if (sourceUrl) return sourceUrl;
+  return target.targetKey;
+}
+
+async function ensureWebIngestSourcePrepared(params: {
+  target: DistillationTargetStateRow;
+  lease: TargetLease;
+  input: DistillationPipelineInput;
+}): Promise<void> {
+  const { target, lease, input } = params;
+  if (target.targetKind !== "web_ingest") return;
+
+  const metadata =
+    target.metadata && typeof target.metadata === "object"
+      ? (target.metadata as Record<string, unknown>)
+      : {};
+  const savedWikiTargetKey =
+    typeof metadata.savedWikiTargetKey === "string" ? metadata.savedWikiTargetKey.trim() : "";
+  if (savedWikiTargetKey) {
+    await requireLease(
+      updateDistillationTargetSource({
+        id: target.id,
+        sourceUri: savedWikiTargetKey,
+        lease,
+      }),
+      target,
+      "web-source-ready",
+    );
+    return;
+  }
+
+  await updatePhase(target, lease, "researching_source");
+  await heartbeat(target, lease);
+  const sourceUrl = sourceUrlForWebIngestTarget(target);
+  const research = await researchWebSourceToMarkdown({
+    url: sourceUrl,
+    normalizedUrl: target.targetKey,
+    provider: input.provider,
+  });
+  await updatePhase(target, lease, "writing_source");
+  await heartbeat(target, lease);
+  await requireLease(
+    updateDistillationTargetSource({
+      id: target.id,
+      sourceUri: research.savedWikiTargetKey,
+      metadata: {
+        sourceWebUrl: sourceUrl,
+        savedWikiSlug: research.savedWikiSlug,
+        savedWikiTargetKey: research.savedWikiTargetKey,
+        savedWikiPath: research.savedWikiPath,
+        researchGeneratedAt: new Date().toISOString(),
+        llmProvider: research.llmProvider,
+        llmModel: research.llmModel,
+        fetchFinalUrl: research.fetchFinalUrl,
+      },
+      lease,
+    }),
+    target,
+    "web-source-update",
+  );
+}
+
 async function runOrResumeCandidates(
   target: DistillationTargetStateRow,
   lease: TargetLease,
@@ -445,6 +516,7 @@ async function runClaimedTarget(
   const lease = leaseFromTargetState(target);
 
   try {
+    await ensureWebIngestSourcePrepared({ target, lease, input });
     const selection = await loadOrRunFindCandidate(target, lease, input, undefined);
     const candidateIds = selection.candidateIds;
     const candidateCount = selection.candidateCount;

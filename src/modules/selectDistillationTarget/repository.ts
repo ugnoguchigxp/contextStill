@@ -4,6 +4,10 @@ import { db } from "../../db/index.js";
 import { distillationTargetStates } from "../../db/schema.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import {
+  ensureRuntimeSettingsLoaded,
+  resolveDistillationTargetPriorityOrder,
+} from "../settings/settings.service.js";
+import {
   type DistillationTargetCandidate,
   type DistillationTargetKind,
   type DistillationTargetPhase,
@@ -22,6 +26,37 @@ import {
   targetLeaseWhere,
   workerId,
 } from "./repository-helpers.js";
+
+const priorityGroupByTargetKind = {
+  knowledge_candidate: "knowledge_candidate",
+  web_ingest: "web_ingest",
+  wiki_file: "wiki",
+  vibe_memory: "vibe_memory",
+} as const satisfies Record<DistillationTargetKind, DistillationTargetPriorityGroup>;
+
+function priorityGroupsFromRuntimeSettings(): DistillationTargetPriorityGroup[] {
+  const order = resolveDistillationTargetPriorityOrder();
+  const groups: DistillationTargetPriorityGroup[] = [];
+  for (const kind of order) {
+    const group = priorityGroupByTargetKind[kind];
+    if (!groups.includes(group)) groups.push(group);
+  }
+  return groups;
+}
+
+function buildPriorityRankCase(order: DistillationTargetPriorityGroup[]) {
+  const clauses = order.map((group, index) =>
+    sql`when ${distillationTargetStates.priorityGroup} = ${group} then ${index}`,
+  );
+  return sql`case ${sql.join(clauses, sql` `)} else ${order.length} end`;
+}
+
+function buildPriorityRankCaseRaw(order: DistillationTargetPriorityGroup[]): string {
+  const clauses = order
+    .map((group, index) => `when priority_group = '${group}' then ${index}`)
+    .join(" ");
+  return `case ${clauses} else ${order.length} end`;
+}
 
 // Re-export constants, types and helpers from repository-helpers.js
 export {
@@ -113,7 +148,9 @@ export async function findNextSelectableDistillationTargetState(
     now?: Date;
   } = {},
 ): Promise<DistillationTargetStateRow | null> {
+  await ensureRuntimeSettingsLoaded();
   const now = params.now ?? new Date();
+  const priorityOrder = priorityGroupsFromRuntimeSettings();
   const conditions = [
     eq(
       distillationTargetStates.distillationVersion,
@@ -130,11 +167,7 @@ export async function findNextSelectableDistillationTargetState(
     .from(distillationTargetStates)
     .where(and(...conditions))
     .orderBy(
-      sql`case
-        when ${distillationTargetStates.priorityGroup} = 'knowledge_candidate' then 0
-        when ${distillationTargetStates.priorityGroup} = 'wiki' then 1
-        else 2
-      end`,
+      buildPriorityRankCase(priorityOrder),
       asc(distillationTargetStates.sortKey),
       asc(distillationTargetStates.createdAt),
       asc(distillationTargetStates.id),
@@ -173,7 +206,10 @@ export async function claimNextDistillationTargetState(
     now?: Date;
   } = {},
 ): Promise<DistillationTargetStateRow | null> {
+  await ensureRuntimeSettingsLoaded();
   const now = params.now ?? new Date();
+  const priorityOrder = priorityGroupsFromRuntimeSettings();
+  const priorityRankCase = buildPriorityRankCaseRaw(priorityOrder);
   const nowUtc = sql`${now.toISOString()}::timestamptz at time zone 'UTC'`;
   const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
   const targetKind = params.targetKind ?? null;
@@ -193,11 +229,7 @@ export async function claimNextDistillationTargetState(
           )
         )
       order by
-        case
-          when priority_group = 'knowledge_candidate' then 0
-          when priority_group = 'wiki' then 1
-          else 2
-        end asc,
+        ${sql.raw(priorityRankCase)} asc,
         sort_key asc,
         created_at asc,
         id asc
@@ -334,6 +366,26 @@ export async function updateDistillationTargetPhase(params: {
     .update(distillationTargetStates)
     .set({
       phase: params.phase,
+      updatedAt: new Date(),
+    })
+    .where(targetLeaseWhere(params.id, params.lease))
+    .returning();
+  return row ?? null;
+}
+
+export async function updateDistillationTargetSource(params: {
+  id: string;
+  sourceUri: string;
+  metadata?: Record<string, unknown>;
+  lease?: TargetLease;
+}): Promise<DistillationTargetStateRow | null> {
+  const [row] = await db
+    .update(distillationTargetStates)
+    .set({
+      sourceUri: params.sourceUri,
+      metadata: params.metadata
+        ? (sql`${distillationTargetStates.metadata} || ${JSON.stringify(params.metadata)}::jsonb` as never)
+        : undefined,
       updatedAt: new Date(),
     })
     .where(targetLeaseWhere(params.id, params.lease))

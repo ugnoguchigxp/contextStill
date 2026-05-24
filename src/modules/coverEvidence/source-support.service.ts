@@ -84,9 +84,9 @@ export async function readSourceEvidenceForCandidate(
   for (const range of ranges) {
     const readTokens = Math.max(1, range.toExclusive - range.from);
     const read =
-      row.targetKind === "wiki_file"
+      row.targetKind === "wiki_file" || row.targetKind === "web_ingest"
         ? await readFileDomain({
-            path: row.targetKey,
+            path: row.targetKind === "web_ingest" ? row.sourceUri : row.targetKey,
             fromToken: range.from,
             readTokens,
             minify: true,

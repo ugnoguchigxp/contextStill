@@ -21,8 +21,12 @@ const knowledgeStatusLabel: Record<"active" | "draft" | "deprecated", string> = 
   deprecated: "deprecated",
 };
 
-const distillationLabel: Record<"wiki_file" | "vibe_memory" | "knowledge_candidate", string> = {
+const distillationLabel: Record<
+  "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest",
+  string
+> = {
   knowledge_candidate: "candidate",
+  web_ingest: "web",
   wiki_file: "wiki",
   vibe_memory: "vibe",
 };

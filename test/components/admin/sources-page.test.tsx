@@ -9,6 +9,9 @@ import {
   deleteSourceFolder,
   deleteSourcePage,
   fetchSourcePage,
+  queueWebSourceUrl,
+  queueWebSourceUrlsBulk,
+  queueWebSourceUrlsUpload,
   renameSourceFolder,
   updateSourcePage,
 } from "../../../web/src/modules/admin/repositories/admin.repository";
@@ -54,6 +57,9 @@ vi.mock("../../../web/src/modules/admin/repositories/admin.repository", () => ({
   fetchSourceHistory: vi.fn(),
   fetchSourcePage: vi.fn(),
   fetchSourceTree: vi.fn(),
+  queueWebSourceUrl: vi.fn(),
+  queueWebSourceUrlsBulk: vi.fn(),
+  queueWebSourceUrlsUpload: vi.fn(),
   renameSourceFolder: vi.fn(),
   runSourceReindex: vi.fn(),
   searchSourcePages: vi.fn(),
@@ -163,6 +169,49 @@ describe("SourcesPage", () => {
       deletedSlugs: [],
       commit: null,
     });
+    vi.mocked(queueWebSourceUrl).mockResolvedValue({
+      ok: true,
+      item: {
+        url: "https://example.com/a",
+        normalizedUrl: "https://example.com/a",
+        existing: false,
+        state: {
+          id: "state-1",
+          targetKind: "web_ingest",
+          targetKey: "https://example.com/a",
+          sourceUri: "https://example.com/a",
+          distillationVersion: "1",
+          status: "pending",
+          phase: "selected",
+          priorityGroup: "web_ingest",
+          sortKey: "https://example.com/a",
+          metadata: {},
+          createdAt: "2026-05-24T00:00:00.000Z",
+          updatedAt: "2026-05-24T00:00:00.000Z",
+        },
+      },
+    });
+    vi.mocked(queueWebSourceUrlsBulk).mockResolvedValue({
+      ok: true,
+      total: 1,
+      queued: 1,
+      invalid: 0,
+      duplicateInRequest: 0,
+      items: [],
+    });
+    vi.mocked(queueWebSourceUrlsUpload).mockResolvedValue({
+      ok: true,
+      total: 1,
+      queued: 1,
+      invalid: 0,
+      duplicateInRequest: 0,
+      items: [],
+      file: {
+        name: "urls.csv",
+        size: 16,
+        extractedUrls: 1,
+      },
+    });
 
     vi.mocked(useQuery).mockImplementation(({ queryKey }: any) => {
       if (queryKey[0] === "health") {
@@ -184,37 +233,41 @@ describe("SourcesPage", () => {
     });
 
     vi.mocked(useMutation).mockImplementation((options: any) => {
+      const buildResult = (variables: any) => ({
+        ok: true,
+        slug: "docs/getting-started",
+        commit: "commit-abc",
+        path: variables?.path || "docs/getting-started",
+        indexed: 1,
+        removed: 0,
+        item: {
+          normalizedUrl: "https://example.com/a",
+          existing: false,
+        },
+        total: 1,
+        queued: 1,
+        invalid: 0,
+        duplicateInRequest: 0,
+        items: [],
+        file: {
+          name: "urls.csv",
+          size: 16,
+          extractedUrls: 1,
+        },
+      });
       return {
         mutate: vi.fn().mockImplementation((variables: any) => {
           mockMutate(variables);
           if (options?.onSuccess) {
-            options.onSuccess(
-              {
-                slug: "docs/getting-started",
-                commit: "commit-abc",
-                path: variables?.path || "docs/getting-started",
-              },
-              variables,
-            );
+            options.onSuccess(buildResult(variables), variables);
           }
         }),
         mutateAsync: vi.fn().mockImplementation(async (variables: any) => {
           mockMutate(variables);
           if (options?.onSuccess) {
-            await options.onSuccess(
-              {
-                slug: "docs/getting-started",
-                commit: "commit-abc",
-                path: variables?.path || "docs/getting-started",
-              },
-              variables,
-            );
+            await options.onSuccess(buildResult(variables), variables);
           }
-          return {
-            slug: "docs/getting-started",
-            commit: "commit-abc",
-            path: variables?.path || "docs/getting-started",
-          };
+          return buildResult(variables);
         }),
         isPending: false,
       } as any;

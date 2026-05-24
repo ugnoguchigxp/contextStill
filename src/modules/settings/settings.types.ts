@@ -37,7 +37,21 @@ export type RuntimeSettingsRoute = {
   fallback: RuntimeProviderName[];
 };
 
+export const distillationPriorityTargetKindValues = [
+  "knowledge_candidate",
+  "web_ingest",
+  "wiki_file",
+  "vibe_memory",
+] as const;
+
+export type DistillationPriorityTargetKind = (typeof distillationPriorityTargetKindValues)[number];
+
 export type RuntimeSettingsEditable = {
+  general: {
+    distillationPriority: {
+      targetPriorityOrder: DistillationPriorityTargetKind[];
+    };
+  };
   providers: {
     openai: {
       enabled: boolean;
@@ -68,6 +82,7 @@ export type RuntimeSettingsEditable = {
       source: RuntimeSettingsRoute;
       vibe: RuntimeSettingsRoute;
     };
+    webSourceResearch: RuntimeSettingsRoute;
     coverEvidence: {
       sourceSupport: RuntimeSettingsRoute;
       externalEvidence: RuntimeSettingsRoute;
@@ -167,6 +182,11 @@ const runtimeRouteSchema = z.object({
 });
 
 export const runtimeSettingsEditableSchema = z.object({
+  general: z.object({
+    distillationPriority: z.object({
+      targetPriorityOrder: z.array(z.enum(distillationPriorityTargetKindValues)).min(1).max(4),
+    }),
+  }),
   providers: z.object({
     openai: z.object({
       enabled: z.boolean().default(true),
@@ -197,6 +217,7 @@ export const runtimeSettingsEditableSchema = z.object({
       source: runtimeRouteSchema,
       vibe: runtimeRouteSchema,
     }),
+    webSourceResearch: runtimeRouteSchema,
     coverEvidence: z.object({
       sourceSupport: runtimeRouteSchema,
       externalEvidence: runtimeRouteSchema,

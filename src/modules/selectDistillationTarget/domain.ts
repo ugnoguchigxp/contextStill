@@ -1,4 +1,8 @@
-export type DistillationTargetKind = "wiki_file" | "vibe_memory" | "knowledge_candidate";
+export type DistillationTargetKind =
+  | "wiki_file"
+  | "vibe_memory"
+  | "knowledge_candidate"
+  | "web_ingest";
 
 export type DistillationTargetStatus =
   | "pending"
@@ -11,12 +15,18 @@ export type DistillationTargetStatus =
 export type DistillationTargetPhase =
   | "selected"
   | "reading"
+  | "researching_source"
+  | "writing_source"
   | "finding_candidate"
   | "covering_evidence"
   | "finalizing"
   | "stored";
 
-export type DistillationTargetPriorityGroup = "knowledge_candidate" | "wiki" | "vibe_memory";
+export type DistillationTargetPriorityGroup =
+  | "knowledge_candidate"
+  | "web_ingest"
+  | "wiki"
+  | "vibe_memory";
 
 export type DistillationTargetCandidate = {
   targetKind: DistillationTargetKind;
@@ -90,6 +100,11 @@ export function selectDistillationTarget(
     .sort(compareKnowledgeCandidateTarget)[0];
   if (knowledgeCandidateTarget) return toSelected(knowledgeCandidateTarget);
 
+  const webIngestTarget = selectable
+    .filter((candidate) => candidate.targetKind === "web_ingest")
+    .sort(compareWikiTarget)[0];
+  if (webIngestTarget) return toSelected(webIngestTarget);
+
   const wikiTarget = selectable
     .filter((candidate) => candidate.targetKind === "wiki_file")
     .sort(compareWikiTarget)[0];
@@ -105,12 +120,14 @@ export function priorityGroupForTargetKind(
   targetKind: DistillationTargetKind,
 ): DistillationTargetPriorityGroup {
   if (targetKind === "knowledge_candidate") return "knowledge_candidate";
+  if (targetKind === "web_ingest") return "web_ingest";
   return targetKind === "wiki_file" ? "wiki" : "vibe_memory";
 }
 
 export function sortKeyForTarget(candidate: DistillationTargetCandidate): string {
   if (candidate.sortKey?.trim()) return candidate.sortKey.trim();
   if (candidate.targetKind === "wiki_file") return candidate.targetKey.toLowerCase();
+  if (candidate.targetKind === "web_ingest") return candidate.targetKey.toLowerCase();
   if (candidate.targetKind === "knowledge_candidate") return candidate.targetKey;
   const createdAt = candidate.createdAt?.toISOString() ?? "9999-12-31T23:59:59.999Z";
   return `${createdAt}:${candidate.targetKey}`;

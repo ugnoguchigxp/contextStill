@@ -64,6 +64,13 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string; path: SettingsTabP
 const runtimeProviders: RuntimeProviderName[] = ["openai", "azure-openai", "bedrock", "local-llm"];
 const runtimeProviderOptions: RuntimeProviderSetting[] = [...runtimeProviders, "auto"];
 const runtimeSearchProviders: RuntimeSearchProvider[] = ["brave", "exa", "duckduckgo"];
+const distillationPriorityTargetKinds = [
+  "knowledge_candidate",
+  "web_ingest",
+  "wiki_file",
+  "vibe_memory",
+] as const;
+type DistillationPriorityTargetKind = (typeof distillationPriorityTargetKinds)[number];
 
 function parseIntegerInput(value: string, fallback: number): number {
   const parsed = Number.parseInt(value, 10);
@@ -191,6 +198,11 @@ function buildSecretPayload(
 
 function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEditable {
   return {
+    general: {
+      distillationPriority: {
+        targetPriorityOrder: [...view.general.distillationPriority.targetPriorityOrder],
+      },
+    },
     providers: {
       openai: {
         enabled: view.providers.openai.enabled,
@@ -228,6 +240,11 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
           model: view.taskRouting.findCandidate.vibe.model,
           fallback: [...view.taskRouting.findCandidate.vibe.fallback],
         },
+      },
+      webSourceResearch: {
+        provider: view.taskRouting.webSourceResearch.provider,
+        model: view.taskRouting.webSourceResearch.model,
+        fallback: [...view.taskRouting.webSourceResearch.fallback],
       },
       coverEvidence: {
         sourceSupport: {
@@ -596,6 +613,32 @@ export function SettingsPage() {
     });
   };
 
+  const movePriorityTargetKind = (
+    kind: DistillationPriorityTargetKind,
+    direction: -1 | 1,
+  ): void => {
+    patchDraft((current) => {
+      const order = [...current.general.distillationPriority.targetPriorityOrder];
+      const index = order.indexOf(kind);
+      if (index < 0) return current;
+      const nextIndex = index + direction;
+      if (nextIndex < 0 || nextIndex >= order.length) return current;
+      const swap = order[nextIndex];
+      order[nextIndex] = order[index];
+      order[index] = swap;
+      return {
+        ...current,
+        general: {
+          ...current.general,
+          distillationPriority: {
+            ...current.general.distillationPriority,
+            targetPriorityOrder: order,
+          },
+        },
+      };
+    });
+  };
+
   const providerTitle = (provider: RuntimeProviderName): string => {
     switch (provider) {
       case "openai":
@@ -728,6 +771,54 @@ export function SettingsPage() {
                         dashboard.
                       </p>
                     </div>
+                  </CardContent>
+                </Card>
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Distillation Target Priority Order</CardTitle>
+                  </CardHeader>
+                  <CardContent className="space-y-3">
+                    <p className="text-xs text-muted-foreground">
+                      Queue claim order. Top item is highest priority.
+                    </p>
+                    <div className="space-y-2">
+                      {draft.general.distillationPriority.targetPriorityOrder.map((kind, index) => (
+                        <div
+                          key={kind}
+                          className="flex items-center justify-between rounded-md border p-2"
+                        >
+                          <div className="flex items-center gap-2">
+                            <Badge variant="outline">#{index + 1}</Badge>
+                            <span className="text-sm font-medium">{kind}</span>
+                          </div>
+                          <div className="flex items-center gap-1">
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => movePriorityTargetKind(kind, -1)}
+                              disabled={index === 0}
+                            >
+                              <ArrowUp size={14} />
+                            </Button>
+                            <Button
+                              type="button"
+                              size="icon"
+                              variant="ghost"
+                              onClick={() => movePriorityTargetKind(kind, 1)}
+                              disabled={
+                                index === draft.general.distillationPriority.targetPriorityOrder.length - 1
+                              }
+                            >
+                              <ArrowDown size={14} />
+                            </Button>
+                          </div>
+                        </div>
+                      ))}
+                    </div>
+                    <p className="text-xs text-muted-foreground">
+                      Available kinds: {distillationPriorityTargetKinds.join(", ")}
+                    </p>
                   </CardContent>
                 </Card>
               </section>
@@ -1182,6 +1273,28 @@ export function SettingsPage() {
                               ...current.taskRouting.findCandidate,
                               vibe: next,
                             },
+                          },
+                        }))
+                      }
+                    />
+                  </section>
+
+                  <section className="settings-route-section">
+                    <div className="settings-route-section-header">
+                      <h3>Web Source Research</h3>
+                      <p>URL ingest 時に fetch して調査 Markdown を作るルート設定です。</p>
+                    </div>
+                    <RouteEditor
+                      label="webSourceResearch"
+                      description="Fetch URL content and generate websource markdown."
+                      settings={draft}
+                      route={draft.taskRouting.webSourceResearch}
+                      onChange={(next) =>
+                        patchDraft((current) => ({
+                          ...current,
+                          taskRouting: {
+                            ...current.taskRouting,
+                            webSourceResearch: next,
                           },
                         }))
                       }

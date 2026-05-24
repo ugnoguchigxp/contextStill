@@ -20,7 +20,12 @@ const OVERVIEW_DAY_RANGE = 14;
 const LLM_KPI_DAY_RANGE = 30;
 const DASHBOARD_TIMEZONE = "Asia/Tokyo";
 const KNOWLEDGE_STATUS_ORDER = ["active", "draft", "deprecated"] as const;
-const DISTILLATION_TARGET_KIND_ORDER = ["knowledge_candidate", "wiki_file", "vibe_memory"] as const;
+const DISTILLATION_TARGET_KIND_ORDER = [
+  "knowledge_candidate",
+  "web_ingest",
+  "wiki_file",
+  "vibe_memory",
+] as const;
 
 function toNumber(value: unknown, fallback = 0): number {
   const converted = Number(value);

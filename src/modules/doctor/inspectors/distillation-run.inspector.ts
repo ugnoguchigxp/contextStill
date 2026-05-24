@@ -373,9 +373,9 @@ async function loadDomainQueueHealth(
 
   const higherPriorityKinds =
     targetKind === "vibe_memory"
-      ? (["knowledge_candidate", "wiki"] as const)
+      ? (["knowledge_candidate", "web_ingest", "wiki"] as const)
       : targetKind === "wiki_file"
-        ? (["knowledge_candidate"] as const)
+        ? (["knowledge_candidate", "web_ingest"] as const)
         : ([] as const);
 
   if (higherPriorityKinds.length > 0) {
@@ -404,8 +404,11 @@ async function loadDomainQueueHealth(
     for (const row of extraBlockers) {
       if (!row) continue;
       const blockerGroup = priorityGroupFromRowLike(row);
-      if (blockerGroup !== "knowledge_candidate" && blockerGroup !== "wiki") continue;
-      accumulateBlocker(blockers, blockerGroup, row.status ?? "", row, nowMs, staleAtMs);
+      const normalizedBlockerGroup = blockerGroup === "web_ingest" ? "wiki" : blockerGroup;
+      if (normalizedBlockerGroup !== "knowledge_candidate" && normalizedBlockerGroup !== "wiki") {
+        continue;
+      }
+      accumulateBlocker(blockers, normalizedBlockerGroup, row.status ?? "", row, nowMs, staleAtMs);
     }
     blockedByHigherPriority =
       blockers.pendingKnowledgeCandidates +

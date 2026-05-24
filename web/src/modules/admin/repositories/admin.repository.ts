@@ -490,7 +490,7 @@ export type OverviewDashboard = {
       count: number;
     }>;
     distillationQueue: Array<{
-      targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate";
+      targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest";
       pending: number;
       running: number;
       paused: number;
@@ -1143,6 +1143,15 @@ export type LandscapeTrajectoryCandidate = {
   agenticDecision: "not_evaluated" | "accepted" | "rejected" | "skipped";
   rankingReason: string | null;
   communityKey: string | null;
+  evidence: {
+    status: string | null;
+    candidateEvidence: {
+      textMatched: boolean;
+      vectorMatched: boolean;
+      vectorScore?: number | null;
+      facetMatched: boolean;
+    } | null;
+  };
 };
 
 export type LandscapeTrajectoryResult = {
@@ -1178,6 +1187,32 @@ export type LandscapeTrajectoryResult = {
     candidateCount: number;
     selectedCount: number;
     suppressedCount: number;
+  }>;
+  taskTrace: {
+    runId: string;
+    retrievalMode: string;
+    repoPath: string | null;
+    repoKey: string | null;
+    technologies: string[];
+    changeTypes: string[];
+    domains: string[];
+    embeddingStatus: "facets_only" | "embedding_available" | "embedding_unavailable";
+    embeddingProvider: string | null;
+    embeddingModel: string | null;
+    embeddingDimensions: number | null;
+    goalHash: string;
+    createdAt: string;
+  } | null;
+  taskSimilarity: Array<{
+    runId: string;
+    similarity: number;
+    mode: "embedding" | "facets";
+    retrievalMode: string;
+    repoPath: string | null;
+    repoKey: string | null;
+    goalHash: string;
+    embeddingStatus: "facets_only" | "embedding_available" | "embedding_unavailable";
+    createdAt: string;
   }>;
 };
 
@@ -1304,6 +1339,25 @@ export type LandscapeReviewItemsListResponse = {
   count: number;
 };
 
+export type LandscapeContradictionOverlayItem = {
+  reviewItemId: string;
+  leftKnowledgeId: string;
+  rightKnowledgeId: string;
+  pairKey: string;
+  confidence: number;
+  confidenceLabel: "low" | "medium" | "high";
+  status: LandscapeReviewItemStatus;
+  evidence: string[];
+  communityKey: string | null;
+  createdAt: string;
+  updatedAt: string;
+};
+
+export type LandscapeContradictionOverlayList = {
+  items: LandscapeContradictionOverlayItem[];
+  count: number;
+};
+
 export type LandscapeReviewCandidateCreateInput = {
   ids?: string[];
   status?: "pending" | "reviewing";
@@ -1412,6 +1466,47 @@ export type SourceSearchItem = {
   excerpt: string;
 };
 
+export type WebSourceQueueItem = {
+  url: string;
+  normalizedUrl: string;
+  state: {
+    id: string;
+    targetKind: "web_ingest";
+    targetKey: string;
+    sourceUri: string;
+    distillationVersion: string;
+    status: string;
+    phase: string;
+    priorityGroup: string;
+    sortKey: string;
+    metadata: Record<string, unknown>;
+    createdAt: string;
+    updatedAt: string;
+  };
+  existing: boolean;
+};
+
+export type QueueWebSourceResult =
+  | { ok: true; item: WebSourceQueueItem }
+  | { ok: false; url: string; reason: string };
+
+export type QueueWebSourcesBulkResponse = {
+  ok: true;
+  total: number;
+  queued: number;
+  invalid: number;
+  duplicateInRequest: number;
+  items: QueueWebSourceResult[];
+};
+
+export type QueueWebSourceUploadResponse = QueueWebSourcesBulkResponse & {
+  file: {
+    name: string;
+    size: number;
+    extractedUrls: number;
+  };
+};
+
 export type AuditLogActor = "agent" | "user" | "system";
 
 export type AuditLogItem = {
@@ -1482,7 +1577,7 @@ export type CandidateListItem = {
   id: string;
   targetStateId: string;
   candidateIndex: number;
-  targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate";
+  targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest";
   targetKey: string;
   sourceUri: string;
   finalizeSourceUri: string;
@@ -1564,7 +1659,7 @@ export type CandidateListRequest = {
   page?: number;
   limit?: number;
   query?: string;
-  targetKind?: "all" | "wiki_file" | "vibe_memory" | "knowledge_candidate";
+  targetKind?: "all" | "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest";
   outcome?: "all" | CandidateOutcome;
   hasKnowledge?: "all" | "yes" | "no";
   targetStateId?: string;
@@ -1596,7 +1691,18 @@ export type RuntimeSettingsRoute = {
   fallback: RuntimeProviderName[];
 };
 
+export type DistillationPriorityTargetKind =
+  | "knowledge_candidate"
+  | "web_ingest"
+  | "wiki_file"
+  | "vibe_memory";
+
 export type RuntimeSettingsEditable = {
+  general: {
+    distillationPriority: {
+      targetPriorityOrder: DistillationPriorityTargetKind[];
+    };
+  };
   providers: {
     openai: {
       enabled: boolean;
@@ -1627,6 +1733,7 @@ export type RuntimeSettingsEditable = {
       source: RuntimeSettingsRoute;
       vibe: RuntimeSettingsRoute;
     };
+    webSourceResearch: RuntimeSettingsRoute;
     coverEvidence: {
       sourceSupport: RuntimeSettingsRoute;
       externalEvidence: RuntimeSettingsRoute;
@@ -1765,6 +1872,25 @@ async function requestJson<T>(url: string, method: string, body?: unknown): Prom
     method,
     headers: body === undefined ? undefined : { "content-type": "application/json" },
     body: body === undefined ? undefined : JSON.stringify(body),
+  });
+  if (!response.ok) {
+    const message = await response
+      .json()
+      .then((payload) =>
+        typeof payload === "object" && payload && "outcome" in payload
+          ? JSON.stringify(payload)
+          : `${method} ${url} failed: ${response.status}`,
+      )
+      .catch(() => `${method} ${url} failed: ${response.status}`);
+    throw new Error(message);
+  }
+  return response.json() as Promise<T>;
+}
+
+async function requestForm<T>(url: string, method: string, body: FormData): Promise<T> {
+  const response = await fetch(url, {
+    method,
+    body,
   });
   if (!response.ok) {
     const message = await response
@@ -2042,6 +2168,20 @@ export async function fetchLandscapeReviewItems(
   );
 }
 
+export async function fetchLandscapeContradictionOverlay(input?: {
+  status?: LandscapeReviewItemStatus | "all";
+  confidenceMin?: number;
+  limit?: number;
+}): Promise<LandscapeContradictionOverlayList> {
+  const params = new URLSearchParams();
+  params.set("status", input?.status ?? "pending");
+  params.set("confidenceMin", String(input?.confidenceMin ?? 0.62));
+  params.set("limit", String(input?.limit ?? 80));
+  return getJson<LandscapeContradictionOverlayList>(
+    `/api/graph/landscape/contradictions?${params.toString()}`,
+  );
+}
+
 export async function updateLandscapeReviewItemStatus(
   id: string,
   input: { status: LandscapeReviewItemStatus; note?: string },
@@ -2208,6 +2348,32 @@ export async function runSourceReindex(): Promise<SourceReindexResponse> {
   return requestJson<SourceReindexResponse>("/api/sources/reindex", "POST");
 }
 
+export async function queueWebSourceUrl(input: {
+  url: string;
+  distillationVersion?: string;
+}): Promise<{ ok: true; item: WebSourceQueueItem }> {
+  return requestJson<{ ok: true; item: WebSourceQueueItem }>("/api/sources/web", "POST", input);
+}
+
+export async function queueWebSourceUrlsBulk(input: {
+  urls: string[];
+  distillationVersion?: string;
+}): Promise<QueueWebSourcesBulkResponse> {
+  return requestJson<QueueWebSourcesBulkResponse>("/api/sources/web/bulk", "POST", input);
+}
+
+export async function queueWebSourceUrlsUpload(input: {
+  file: File;
+  distillationVersion?: string;
+}): Promise<QueueWebSourceUploadResponse> {
+  const formData = new FormData();
+  formData.set("file", input.file);
+  if (input.distillationVersion?.trim()) {
+    formData.set("distillationVersion", input.distillationVersion.trim());
+  }
+  return requestForm<QueueWebSourceUploadResponse>("/api/sources/web/upload", "POST", formData);
+}
+
 export async function fetchAuditLogs(input?: {
   page?: number;
   limit?: number;
@@ -2266,7 +2432,7 @@ export async function reloadRuntimeSettingsCache(): Promise<RuntimeSettingsReloa
 
 export type DistillationTargetState = {
   id: string;
-  targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate";
+  targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest";
   targetKey: string;
   sourceUri: string;
   distillationVersion: string;
@@ -2274,6 +2440,8 @@ export type DistillationTargetState = {
   phase:
     | "selected"
     | "reading"
+    | "researching_source"
+    | "writing_source"
     | "finding_candidate"
     | "covering_evidence"
     | "finalizing"

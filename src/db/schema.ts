@@ -137,6 +137,7 @@ export const distillationTargetKindValues = [
   "wiki_file",
   "vibe_memory",
   "knowledge_candidate",
+  "web_ingest",
 ] as const;
 
 export const distillationTargetStatusValues = [
@@ -151,6 +152,8 @@ export const distillationTargetStatusValues = [
 export const distillationTargetPhaseValues = [
   "selected",
   "reading",
+  "researching_source",
+  "writing_source",
   "finding_candidate",
   "covering_evidence",
   "finalizing",
@@ -159,6 +162,7 @@ export const distillationTargetPhaseValues = [
 
 export const distillationTargetPriorityGroupValues = [
   "knowledge_candidate",
+  "web_ingest",
   "wiki",
   "vibe_memory",
 ] as const;
@@ -198,6 +202,11 @@ export const contextCompileCandidateTraceAgenticDecisionValues = [
   "accepted",
   "rejected",
   "skipped",
+] as const;
+export const contextCompileTaskTraceEmbeddingStatusValues = [
+  "facets_only",
+  "embedding_available",
+  "embedding_unavailable",
 ] as const;
 
 export const knowledgeUsageVerdictValues = ["used", "not_used", "off_topic", "wrong"] as const;
@@ -682,6 +691,58 @@ export const contextCompileRuns = pgTable(
     sourceCheck: check(
       "context_compile_runs_source_check",
       sql`${table.source} IN (${sql.raw(toSqlList(compileRunSourceValues))})`,
+    ),
+  }),
+);
+
+export const contextCompileTaskTraces = pgTable(
+  "context_compile_task_traces",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .references(() => contextCompileRuns.id, { onDelete: "cascade" })
+      .notNull(),
+    retrievalMode: text("retrieval_mode").notNull(),
+    repoPath: text("repo_path"),
+    repoKey: text("repo_key"),
+    technologies: jsonb("technologies").notNull().default([]),
+    changeTypes: jsonb("change_types").notNull().default([]),
+    domains: jsonb("domains").notNull().default([]),
+    embeddingStatus: text("embedding_status").notNull().default("facets_only"),
+    embeddingProvider: text("embedding_provider"),
+    embeddingModel: text("embedding_model"),
+    embeddingDimensions: integer("embedding_dimensions"),
+    embedding: vector("embedding", { dimensions: groupedConfig.embedding.dimension }),
+    goalHash: text("goal_hash").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    runIdUnique: uniqueIndex("context_compile_task_traces_run_id_unique").on(table.runId),
+    createdAtIdx: index("context_compile_task_traces_created_at_idx").on(table.createdAt),
+    repoPathIdx: index("context_compile_task_traces_repo_path_idx").on(table.repoPath),
+    repoKeyIdx: index("context_compile_task_traces_repo_key_idx").on(table.repoKey),
+    embeddingStatusIdx: index("context_compile_task_traces_embedding_status_idx").on(
+      table.embeddingStatus,
+    ),
+    goalHashIdx: index("context_compile_task_traces_goal_hash_idx").on(table.goalHash),
+    technologiesArrayCheck: check(
+      "context_compile_task_traces_technologies_array_check",
+      sql`jsonb_typeof(${table.technologies}) = 'array'`,
+    ),
+    changeTypesArrayCheck: check(
+      "context_compile_task_traces_change_types_array_check",
+      sql`jsonb_typeof(${table.changeTypes}) = 'array'`,
+    ),
+    domainsArrayCheck: check(
+      "context_compile_task_traces_domains_array_check",
+      sql`jsonb_typeof(${table.domains}) = 'array'`,
+    ),
+    embeddingStatusCheck: check(
+      "context_compile_task_traces_embedding_status_check",
+      sql`${table.embeddingStatus} IN (${sql.raw(
+        toSqlList(contextCompileTaskTraceEmbeddingStatusValues),
+      )})`,
     ),
   }),
 );

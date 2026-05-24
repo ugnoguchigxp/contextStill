@@ -1,11 +1,23 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
-import type { LandscapeTrajectoryResult } from "../repositories/admin.repository";
+import { Select } from "@/components/ui/select";
+import type { LandscapeTrajectoryCandidate, LandscapeTrajectoryResult } from "../repositories/admin.repository";
+
+export type TrajectoryStageFilter =
+  | "all"
+  | "text"
+  | "vector"
+  | "merged"
+  | "final"
+  | "selected"
+  | "suppressed";
 
 type TrajectoryPanelProps = {
   runId: string | null;
   trajectory: LandscapeTrajectoryResult | null | undefined;
   isLoading: boolean;
+  stage: TrajectoryStageFilter;
+  onStageChange: (next: TrajectoryStageFilter) => void;
   onClose: () => void;
 };
 
@@ -17,8 +29,71 @@ function scoreLabel(value: number | null): string {
   return value === null ? "-" : value.toFixed(3);
 }
 
+function stageLabel(stage: TrajectoryStageFilter): string {
+  switch (stage) {
+    case "text":
+      return "text";
+    case "vector":
+      return "vector";
+    case "merged":
+      return "merged";
+    case "final":
+      return "final";
+    case "selected":
+      return "selected";
+    case "suppressed":
+      return "suppressed";
+    default:
+      return "all";
+  }
+}
+
+function matchesStage(candidate: LandscapeTrajectoryCandidate, stage: TrajectoryStageFilter): boolean {
+  switch (stage) {
+    case "text":
+      return candidate.textRank !== null;
+    case "vector":
+      return candidate.vectorRank !== null;
+    case "merged":
+      return candidate.mergedRank !== null;
+    case "final":
+      return candidate.finalRank !== null;
+    case "selected":
+      return candidate.selected;
+    case "suppressed":
+      return candidate.suppressed;
+    default:
+      return true;
+  }
+}
+
+function candidateEvidenceLabel(candidate: LandscapeTrajectoryCandidate): string {
+  const evidence = candidate.evidence.candidateEvidence;
+  if (!evidence) return "-";
+  return [
+    `text=${String(evidence.textMatched)}`,
+    `vector=${String(evidence.vectorMatched)}`,
+    `score=${evidence.vectorScore ?? "-"}`,
+    `facet=${String(evidence.facetMatched)}`,
+  ].join(" ");
+}
+
+function whySelectedLabel(candidate: LandscapeTrajectoryCandidate): string {
+  if (!candidate.selected) return "-";
+  return candidate.rankingReason ?? "selected";
+}
+
+function whySuppressedLabel(candidate: LandscapeTrajectoryCandidate): string {
+  if (!candidate.suppressed) return "-";
+  return candidate.suppressionReason ?? "suppressed";
+}
+
 export function TrajectoryPanel(props: TrajectoryPanelProps) {
   if (!props.runId) return null;
+
+  const filteredCandidates = (props.trajectory?.candidates ?? []).filter((candidate) =>
+    matchesStage(candidate, props.stage),
+  );
 
   return (
     <div className="graph-trajectory-panel">
@@ -28,6 +103,20 @@ export function TrajectoryPanel(props: TrajectoryPanelProps) {
           <Badge variant="outline" className="h-5 border-sky-300 text-[11px] text-sky-100">
             run {props.runId}
           </Badge>
+          <Select
+            aria-label="trajectory-stage-filter"
+            value={props.stage}
+            className="h-7 text-[11px]"
+            onChange={(event) => props.onStageChange(event.target.value as TrajectoryStageFilter)}
+          >
+            <option value="all">all stages</option>
+            <option value="text">text</option>
+            <option value="vector">vector</option>
+            <option value="merged">merged</option>
+            <option value="final">final</option>
+            <option value="selected">selected</option>
+            <option value="suppressed">suppressed</option>
+          </Select>
           <Button
             size="sm"
             variant="outline"
@@ -60,19 +149,39 @@ export function TrajectoryPanel(props: TrajectoryPanelProps) {
               <span>Stages</span>
               <p>
                 text {props.trajectory.stageCounts.textHit} / vector{" "}
-                {props.trajectory.stageCounts.vectorHit} / merged{" "}
-                {props.trajectory.stageCounts.merged} / final{" "}
-                {props.trajectory.stageCounts.finalRanked}
+                {props.trajectory.stageCounts.vectorHit} / merged {props.trajectory.stageCounts.merged}
+                / final {props.trajectory.stageCounts.finalRanked}
               </p>
             </div>
             <div className="graph-community-summary-item">
-              <span>Selected</span>
+              <span>Filter</span>
               <p>
-                {props.trajectory.stageCounts.selected} / suppressed{" "}
-                {props.trajectory.stageCounts.suppressed}
+                {stageLabel(props.stage)} ({filteredCandidates.length})
               </p>
             </div>
           </div>
+
+          {props.trajectory.taskTrace ? (
+            <div className="graph-review-status-note">
+              task facets: retrieval={props.trajectory.taskTrace.retrievalMode} repo=
+              {props.trajectory.taskTrace.repoKey ?? props.trajectory.taskTrace.repoPath ?? "-"} /
+              tech={props.trajectory.taskTrace.technologies.join(",") || "-"} /
+              change={props.trajectory.taskTrace.changeTypes.join(",") || "-"} /
+              domain={props.trajectory.taskTrace.domains.join(",") || "-"} / embedding=
+              {props.trajectory.taskTrace.embeddingStatus}
+            </div>
+          ) : null}
+
+          {props.trajectory.taskSimilarity.length > 0 ? (
+            <div className="graph-review-status-note">
+              task similarity: {props.trajectory.taskSimilarity
+                .slice(0, 3)
+                .map((item) => `${item.runId}:${item.mode}:${item.similarity.toFixed(2)}`)
+                .join(" / ")}
+            </div>
+          ) : props.trajectory.taskTrace ? (
+            <div className="graph-review-status-note">task similarity: no comparable runs yet</div>
+          ) : null}
 
           {props.trajectory.warnings.length > 0 ? (
             <div className="graph-trajectory-warning-box">
@@ -86,7 +195,7 @@ export function TrajectoryPanel(props: TrajectoryPanelProps) {
             {String(props.trajectory.diagnostics.candidateTraceTruncated ?? false)}
           </div>
 
-          {props.trajectory.candidates.length > 0 ? (
+          {filteredCandidates.length > 0 ? (
             <div className="graph-trajectory-table-wrap">
               <table className="graph-trajectory-table">
                 <thead>
@@ -96,13 +205,15 @@ export function TrajectoryPanel(props: TrajectoryPanelProps) {
                     <th>Vector</th>
                     <th>Merged</th>
                     <th>Final</th>
-                    <th>Selected</th>
-                    <th>Suppressed</th>
+                    <th>Why selected</th>
+                    <th>Why suppressed</th>
+                    <th>Agentic</th>
+                    <th>Evidence</th>
                     <th>Community</th>
                   </tr>
                 </thead>
                 <tbody>
-                  {props.trajectory.candidates.map((candidate) => (
+                  {filteredCandidates.map((candidate) => (
                     <tr key={`${candidate.itemKind}:${candidate.itemId}`}>
                       <td>
                         <span className="graph-trajectory-item">{candidate.itemId}</span>
@@ -119,8 +230,10 @@ export function TrajectoryPanel(props: TrajectoryPanelProps) {
                       <td>
                         {rankLabel(candidate.finalRank)} / {scoreLabel(candidate.finalScore)}
                       </td>
-                      <td>{candidate.selected ? "yes" : "no"}</td>
-                      <td>{candidate.suppressed ? (candidate.suppressionReason ?? "yes") : "-"}</td>
+                      <td>{whySelectedLabel(candidate)}</td>
+                      <td>{whySuppressedLabel(candidate)}</td>
+                      <td>{candidate.agenticDecision}</td>
+                      <td>{candidateEvidenceLabel(candidate)}</td>
                       <td>{candidate.communityKey ?? "-"}</td>
                     </tr>
                   ))}
@@ -128,7 +241,9 @@ export function TrajectoryPanel(props: TrajectoryPanelProps) {
               </table>
             </div>
           ) : (
-            <div className="graph-detail-empty">No candidate trace rows.</div>
+            <div className="graph-detail-empty">
+              No candidate rows for stage: {stageLabel(props.stage)}
+            </div>
           )}
         </>
       )}

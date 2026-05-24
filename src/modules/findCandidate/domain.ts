@@ -41,7 +41,7 @@ export type FindCandidateInput = {
 
 export type FindCandidateResult = {
   targetStateId: string;
-  targetKind: "wiki_file" | "vibe_memory";
+  targetKind: "wiki_file" | "vibe_memory" | "web_ingest";
   targetKey: string;
   callerMode: FindCandidateCallerMode;
   candidates: CandidateRecord[];
@@ -104,9 +104,9 @@ async function defaultFindCandidateRoute(targetKind: FindCandidateTargetKind): P
 }
 
 function buildToolDefinitionForTarget(
-  targetKind: "wiki_file" | "vibe_memory",
+  targetKind: "wiki_file" | "vibe_memory" | "web_ingest",
 ): DistillationRuntimeToolDefinition {
-  if (targetKind === "wiki_file") {
+  if (targetKind === "wiki_file" || targetKind === "web_ingest") {
     return {
       type: "function",
       function: {
@@ -274,7 +274,11 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
     throw new Error(`distillation target state not found: ${targetStateId}`);
   }
 
-  if (target.targetKind !== "wiki_file" && target.targetKind !== "vibe_memory") {
+  if (
+    target.targetKind !== "wiki_file" &&
+    target.targetKind !== "vibe_memory" &&
+    target.targetKind !== "web_ingest"
+  ) {
     throw new Error(`unsupported target kind for findCandidate: ${target.targetKind}`);
   }
 
@@ -287,6 +291,11 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
   const readLog: Array<{ from: number; toExclusive: number }> = [];
   const readLimit = maxReads(input);
   let reads = 0;
+  const targetReadPath =
+    target.targetKind === "web_ingest" ? target.sourceUri.trim() : target.targetKey;
+  if ((target.targetKind === "wiki_file" || target.targetKind === "web_ingest") && !targetReadPath) {
+    throw new Error(`missing readable source path for target: ${targetStateId}`);
+  }
 
   const toolExecutor: DistillationToolExecutor = async (toolCall) => {
     const args = parseToolArgs(toolCall.function.arguments);
@@ -300,7 +309,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
       };
     }
 
-    if (target.targetKind === "wiki_file") {
+    if (target.targetKind === "wiki_file" || target.targetKind === "web_ingest") {
       if (toolCall.function.name !== "read_file") {
         return {
           callId: toolCall.id,
@@ -312,7 +321,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
       }
 
       const result = await readFileDomain({
-        path: target.targetKey,
+        path: targetReadPath,
         fromToken: Math.max(0, asInt(args.fromToken, asInt(input.fromToken, 0))),
         readTokens: Math.max(1, asInt(args.readTokens, readTokens(input))),
         minify: asBool(args.minify, input.wikiMinify ?? true),
@@ -435,7 +444,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         usageSource: "find-candidate",
         enableTools: reads < readLimit,
         maxToolRounds: Math.max(0, readLimit - reads),
-        requireToolCall: target.targetKind === "wiki_file",
+        requireToolCall: target.targetKind === "wiki_file" || target.targetKind === "web_ingest",
         requireToolCallReminder: [
           "まだ本文を読んでいません。",
           "まず提供された reader tool を呼び出して本文 content を読んでください。",

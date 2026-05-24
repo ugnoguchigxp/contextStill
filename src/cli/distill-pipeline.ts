@@ -8,7 +8,7 @@ import {
 import { type FileLockHandle, acquireFileLock } from "./file-lock.js";
 
 type CliOptions = {
-  kind: "auto" | "wiki" | "vibe" | "candidate";
+  kind: "auto" | "wiki" | "vibe" | "candidate" | "web";
   limit: number;
   targetStateId?: string;
   write: boolean;
@@ -56,8 +56,14 @@ function parseArgs(args: string[]): CliOptions {
     if (arg === "--kind" || arg.startsWith("--kind=")) {
       const value = readArgValue(args, index, "--kind").trim();
       if (arg === "--kind") index += 1;
-      if (value !== "auto" && value !== "wiki" && value !== "vibe" && value !== "candidate") {
-        throw new Error("--kind must be auto, wiki, vibe, or candidate");
+      if (
+        value !== "auto" &&
+        value !== "wiki" &&
+        value !== "vibe" &&
+        value !== "candidate" &&
+        value !== "web"
+      ) {
+        throw new Error("--kind must be auto, wiki, vibe, candidate, or web");
       }
       options.kind = value;
     } else if (arg === "--limit" || arg.startsWith("--limit=")) {

@@ -7,7 +7,7 @@ import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ContradictionReviewList } from "./contradiction-review-list";
 import { SandboxComparisonPanel, sandboxChangedKnowledgeIds } from "./sandbox-comparison-panel";
-import { TrajectoryPanel } from "./trajectory-panel";
+import { TrajectoryPanel, type TrajectoryStageFilter } from "./trajectory-panel";
 import {
   type GraphCommunityDisplayMode,
   type GraphCommunitySummary,
@@ -20,8 +20,11 @@ import {
   type GraphSupernode,
   type GraphViewMode,
   type LandscapeCommunity,
+  type LandscapeContradictionOverlayItem,
+  type LandscapeTrajectoryCandidate,
   type LandscapeReplayComparisonRun,
   type LandscapeReviewItem,
+  fetchLandscapeContradictionOverlay,
   fetchLandscapeTrajectory,
   createLandscapeReviewCandidates,
   fetchGraphNodeDetail,
@@ -524,11 +527,17 @@ function reviewItemWarningSummary(item: LandscapeReviewItem): string {
   return "manual review is required before promotion";
 }
 
+function reviewConfidenceRank(value: LandscapeReviewItem["confidence"]): number {
+  if (value === "high") return 3;
+  if (value === "medium") return 2;
+  return 1;
+}
+
 function nodeLandscapeClass(
   node: DisplayNode,
   viewMode: GraphViewMode,
   landscapeByCommunityKey: Map<string, LandscapeCommunity>,
-  trajectoryHighlightCommunityKeys: Set<string>,
+  trajectoryHighlightKnowledgeIds: Set<string>,
   sandboxHighlightCommunityKeys: Set<string>,
 ): string[] {
   if (viewMode !== "community" || !node.communityKey) return [];
@@ -550,7 +559,8 @@ function nodeLandscapeClass(
       classes.push("landscape-feedback-insufficient");
     }
   }
-  if (trajectoryHighlightCommunityKeys.has(node.communityKey)) {
+  const knowledgeId = node.id.startsWith("knowledge:") ? node.id.replace(/^knowledge:/, "") : null;
+  if (knowledgeId && trajectoryHighlightKnowledgeIds.has(knowledgeId)) {
     classes.push("landscape-trajectory-highlight");
   }
   if (sandboxHighlightCommunityKeys.has(node.communityKey)) {
@@ -558,6 +568,28 @@ function nodeLandscapeClass(
   }
 
   return classes;
+}
+
+function matchesTrajectoryStage(
+  candidate: LandscapeTrajectoryCandidate,
+  stage: TrajectoryStageFilter,
+): boolean {
+  switch (stage) {
+    case "text":
+      return candidate.textRank !== null;
+    case "vector":
+      return candidate.vectorRank !== null;
+    case "merged":
+      return candidate.mergedRank !== null;
+    case "final":
+      return candidate.finalRank !== null;
+    case "selected":
+      return candidate.selected;
+    case "suppressed":
+      return candidate.suppressed;
+    default:
+      return true;
+  }
 }
 
 export function GraphPage() {
@@ -574,7 +606,17 @@ export function GraphPage() {
   const [hoveredId, setHoveredId] = useState<string | null>(null);
   const [communityLabelDraft, setCommunityLabelDraft] = useState("");
   const [selectedTrajectoryRunId, setSelectedTrajectoryRunId] = useState<string | null>(null);
+  const [selectedTrajectoryStage, setSelectedTrajectoryStage] =
+    useState<TrajectoryStageFilter>("all");
   const [selectedSandboxRunId, setSelectedSandboxRunId] = useState<string | null>(null);
+  const [showContradictionOverlay, setShowContradictionOverlay] = useState(false);
+  const [contradictionStatus, setContradictionStatus] = useState<
+    "pending" | "reviewing" | "resolved" | "dismissed" | "all"
+  >("pending");
+  const [contradictionConfidenceMin, setContradictionConfidenceMin] = useState(0.62);
+  const [contradictionQueueConfidence, setContradictionQueueConfidence] = useState<
+    "all" | "medium" | "high"
+  >("all");
 
   const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, scale: 1 });
   const [viewport, setViewport] = useState<Viewport>({ width: 0, height: 0 });
@@ -662,6 +704,23 @@ export function GraphPage() {
         limit: 200,
       }),
     enabled: viewMode === "community",
+    staleTime: 30_000,
+  });
+
+  const landscapeContradictions = useQuery({
+    queryKey: [
+      "graph-landscape-contradictions",
+      contradictionStatus,
+      contradictionConfidenceMin,
+      80,
+    ],
+    queryFn: () =>
+      fetchLandscapeContradictionOverlay({
+        status: contradictionStatus,
+        confidenceMin: contradictionConfidenceMin,
+        limit: 80,
+      }),
+    enabled: viewMode === "community" && showContradictionOverlay,
     staleTime: 30_000,
   });
 
@@ -780,6 +839,13 @@ export function GraphPage() {
         .slice(0, 6),
     [persistedPendingReviewItems],
   );
+  const filteredContradictionPendingReviewItems = useMemo(() => {
+    if (contradictionQueueConfidence === "all") return contradictionPendingReviewItems;
+    const minRank = contradictionQueueConfidence === "high" ? 3 : 2;
+    return contradictionPendingReviewItems.filter(
+      (item) => reviewConfidenceRank(item.confidence) >= minRank,
+    );
+  }, [contradictionPendingReviewItems, contradictionQueueConfidence]);
   const nonContradictionPendingReviewItems = useMemo(
     () =>
       persistedPendingReviewItems
@@ -820,13 +886,14 @@ export function GraphPage() {
     }
     return map;
   }, [graph.data?.nodes]);
-  const trajectoryHighlightCommunityKeys = useMemo(() => {
-    const keys = new Set<string>();
-    for (const summary of landscapeTrajectory.data?.communitySummary ?? []) {
-      if (summary.selectedCount > 0) keys.add(summary.communityKey);
+  const trajectoryHighlightKnowledgeIds = useMemo(() => {
+    const ids = new Set<string>();
+    for (const candidate of landscapeTrajectory.data?.candidates ?? []) {
+      if (!matchesTrajectoryStage(candidate, selectedTrajectoryStage)) continue;
+      ids.add(candidate.itemId);
     }
-    return keys;
-  }, [landscapeTrajectory.data?.communitySummary]);
+    return ids;
+  }, [landscapeTrajectory.data?.candidates, selectedTrajectoryStage]);
   const sandboxHighlightCommunityKeys = useMemo(() => {
     const keys = new Set<string>();
     for (const knowledgeId of changedSandboxKnowledgeIds) {
@@ -835,8 +902,42 @@ export function GraphPage() {
     }
     return keys;
   }, [changedSandboxKnowledgeIds, communityKeyByKnowledgeId]);
+  const contradictionOverlayItems = landscapeContradictions.data?.items ?? [];
+  const contradictionOverlayEdges = useMemo(() => {
+    if (inCommunitySupernodeMode)
+      return [] as Array<{
+        id: string;
+        sourceNodeId: string;
+        targetNodeId: string;
+        confidence: number;
+        status: LandscapeContradictionOverlayItem["status"];
+        confidenceLabel: LandscapeContradictionOverlayItem["confidenceLabel"];
+      }>;
+
+    return contradictionOverlayItems
+      .map((item) => {
+        const sourceNodeId = `knowledge:${item.leftKnowledgeId}`;
+        const targetNodeId = `knowledge:${item.rightKnowledgeId}`;
+        return {
+          id: item.pairKey,
+          sourceNodeId,
+          targetNodeId,
+          confidence: item.confidence,
+          status: item.status,
+          confidenceLabel: item.confidenceLabel,
+        };
+      })
+      .filter(
+        (edge) =>
+          Boolean(nodeById.get(edge.sourceNodeId)) &&
+          Boolean(nodeById.get(edge.targetNodeId)) &&
+          edge.sourceNodeId !== edge.targetNodeId,
+      );
+  }, [contradictionOverlayItems, inCommunitySupernodeMode, nodeById]);
   const activeId = selectedId ?? hoveredId;
-  const totalEdges = displayEdgesSource.length;
+  const totalEdges =
+    displayEdgesSource.length +
+    (viewMode === "community" && showContradictionOverlay ? contradictionOverlayEdges.length : 0);
   const displayedNodeCount =
     viewMode === "evidence"
       ? (graph.data?.stats.visibleKnowledgeCount ?? 0) + (graph.data?.stats.sourceNodeCount ?? 0)
@@ -892,6 +993,7 @@ export function GraphPage() {
   useEffect(() => {
     if (viewMode !== "community") {
       setSelectedTrajectoryRunId(null);
+      setSelectedTrajectoryStage("all");
       setSelectedSandboxRunId(null);
       return;
     }
@@ -900,6 +1002,7 @@ export function GraphPage() {
       !riskyReplayRuns.some((run) => run.runId === selectedTrajectoryRunId)
     ) {
       setSelectedTrajectoryRunId(null);
+      setSelectedTrajectoryStage("all");
     }
     if (
       selectedSandboxRunId &&
@@ -1071,6 +1174,56 @@ export function GraphPage() {
               <option value="supernode">Supernode</option>
             </Select>
           ) : null}
+          {viewMode === "community" ? (
+            <div className="graph-contradiction-controls">
+              <label htmlFor="graph-contradiction-overlay" className="graph-axis-toggle">
+                <Checkbox
+                  id="graph-contradiction-overlay"
+                  checked={showContradictionOverlay}
+                  onChange={() => setShowContradictionOverlay((prev) => !prev)}
+                />
+                <span className="graph-axis-label semantic">Contradiction</span>
+              </label>
+              {showContradictionOverlay ? (
+                <>
+                  <Select
+                    aria-label="contradiction-status-filter"
+                    value={contradictionStatus}
+                    onChange={(event) =>
+                      setContradictionStatus(
+                        event.target.value as
+                          | "pending"
+                          | "reviewing"
+                          | "resolved"
+                          | "dismissed"
+                          | "all",
+                      )
+                    }
+                    className="h-8 text-xs"
+                  >
+                    <option value="pending">pending</option>
+                    <option value="reviewing">reviewing</option>
+                    <option value="all">all</option>
+                    <option value="resolved">resolved</option>
+                    <option value="dismissed">dismissed</option>
+                  </Select>
+                  <Select
+                    aria-label="contradiction-confidence-filter"
+                    value={String(contradictionConfidenceMin)}
+                    onChange={(event) =>
+                      setContradictionConfidenceMin(Number.parseFloat(event.target.value) || 0.62)
+                    }
+                    className="h-8 text-xs"
+                  >
+                    <option value="0.5">conf ≥ 0.50</option>
+                    <option value="0.62">conf ≥ 0.62</option>
+                    <option value="0.72">conf ≥ 0.72</option>
+                    <option value="0.82">conf ≥ 0.82</option>
+                  </Select>
+                </>
+              ) : null}
+            </div>
+          ) : null}
           {viewMode === "relation" || viewMode === "community" ? (
             <div className="graph-axis-toggles">
               <label htmlFor="graph-axis-session" className="graph-axis-toggle">
@@ -1178,6 +1331,12 @@ export function GraphPage() {
               </div>
             </>
           )}
+          {viewMode === "community" && showContradictionOverlay ? (
+            <div className="legend-item">
+              <span className="legend-line contradiction" />
+              <span>Contradiction Edge</span>
+            </div>
+          ) : null}
           <p className="graph-legend-note">
             {viewMode === "semantic"
               ? "semantic: cosine 類似度（minSimilarity=0.72, topK=3）"
@@ -1202,6 +1361,12 @@ export function GraphPage() {
             <span>Edges</span>
             <strong>{totalEdges}</strong>
           </div>
+          {viewMode === "community" && showContradictionOverlay ? (
+            <div className="stat-row graph-stats-subtle">
+              <span>Contradictions</span>
+              <strong>{contradictionOverlayEdges.length}</strong>
+            </div>
+          ) : null}
           <div className="stat-row">
             <span>Embedded</span>
             <strong>{graph.data?.stats.embeddedKnowledgeCount ?? 0}</strong>
@@ -2050,10 +2215,26 @@ export function GraphPage() {
                           <div className="graph-review-section">
                             <div className="graph-review-section-header">
                               <span>Contradiction Review</span>
-                              <strong>{contradictionPendingReviewItems.length}</strong>
+                              <strong>{filteredContradictionPendingReviewItems.length}</strong>
+                            </div>
+                            <div className="graph-review-actions">
+                              <Select
+                                aria-label="contradiction-queue-confidence-filter"
+                                value={contradictionQueueConfidence}
+                                onChange={(event) =>
+                                  setContradictionQueueConfidence(
+                                    event.target.value as "all" | "medium" | "high",
+                                  )
+                                }
+                                className="h-7 text-[11px]"
+                              >
+                                <option value="all">all confidence</option>
+                                <option value="medium">medium+</option>
+                                <option value="high">high only</option>
+                              </Select>
                             </div>
                             <ContradictionReviewList
-                              items={contradictionPendingReviewItems}
+                              items={filteredContradictionPendingReviewItems}
                               isUpdating={updateReviewItemStatus.isPending}
                               onResolve={(id) =>
                                 updateReviewItemStatus.mutate({
@@ -2151,7 +2332,10 @@ export function GraphPage() {
                                         size="sm"
                                         variant="outline"
                                         className="h-7 px-2 text-[11px]"
-                                        onClick={() => setSelectedTrajectoryRunId(run.runId)}
+                                        onClick={() => {
+                                          setSelectedTrajectoryRunId(run.runId);
+                                          setSelectedTrajectoryStage("all");
+                                        }}
                                       >
                                         View Trajectory
                                       </Button>
@@ -2174,7 +2358,12 @@ export function GraphPage() {
                               runId={selectedTrajectoryRunId}
                               trajectory={landscapeTrajectory.data}
                               isLoading={landscapeTrajectory.isLoading}
-                              onClose={() => setSelectedTrajectoryRunId(null)}
+                              stage={selectedTrajectoryStage}
+                              onStageChange={setSelectedTrajectoryStage}
+                              onClose={() => {
+                                setSelectedTrajectoryRunId(null);
+                                setSelectedTrajectoryStage("all");
+                              }}
                             />
                             <SandboxComparisonPanel run={selectedSandboxRun} />
                           </div>
@@ -2354,6 +2543,34 @@ export function GraphPage() {
                 />
               );
             })}
+            {viewMode === "community" && showContradictionOverlay
+              ? contradictionOverlayEdges.map((edge) => {
+                  const source = screenNodeById.get(edge.sourceNodeId);
+                  const target = screenNodeById.get(edge.targetNodeId);
+                  if (!source || !target) return null;
+                  const strokeWidth = clamp(edge.confidence * 4, 1.1, 3.6);
+                  const opacity =
+                    edge.status === "resolved" || edge.status === "dismissed"
+                      ? 0.2
+                      : edge.confidenceLabel === "high"
+                        ? 0.86
+                        : edge.confidenceLabel === "medium"
+                          ? 0.62
+                          : 0.38;
+                  return (
+                    <line
+                      key={`contradiction-${edge.id}`}
+                      x1={source.x}
+                      y1={source.y}
+                      x2={target.x}
+                      y2={target.y}
+                      className="graph-edge contradiction"
+                      strokeWidth={strokeWidth}
+                      opacity={opacity}
+                    />
+                  );
+                })
+              : null}
           </g>
           {/* Nodes */}
           <g>
@@ -2366,7 +2583,7 @@ export function GraphPage() {
                 node,
                 viewMode,
                 landscapeByCommunityKey,
-                trajectoryHighlightCommunityKeys,
+                trajectoryHighlightKnowledgeIds,
                 sandboxHighlightCommunityKeys,
               ).join(" ");
               const baseStroke = isSelected

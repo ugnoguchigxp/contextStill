@@ -20,6 +20,10 @@ import {
   type LandscapeReviewItemStatus,
 } from "../../shared/schemas/landscape-review.schema.js";
 import type {
+  LandscapeContradictionOverlayList,
+  LandscapeContradictionOverlayQuery,
+} from "../../shared/schemas/landscape-contradiction-overlay.schema.js";
+import type {
   BuildLandscapeReviewItemCandidatesInput,
   LandscapeReviewItemCandidateBuildResult,
   LandscapeReviewItemListResult,
@@ -752,6 +756,86 @@ export async function listLandscapeReviewItems(
   return {
     items,
     count,
+  };
+}
+
+function labelToConfidenceScore(value: LandscapeReviewItem["confidence"]): number {
+  if (value === "high") return 0.9;
+  if (value === "medium") return 0.75;
+  return 0.5;
+}
+
+function parseConfidenceFromPayload(payload: Record<string, unknown>): number | null {
+  const raw = Number(payload.confidence);
+  if (!Number.isFinite(raw)) return null;
+  return Math.max(0, Math.min(1, raw));
+}
+
+function contradictionIdsFromPayload(
+  item: LandscapeReviewItem,
+  payload: Record<string, unknown>,
+): { leftKnowledgeId: string; rightKnowledgeId: string } | null {
+  const leftKnowledgeId =
+    typeof payload.leftKnowledgeId === "string"
+      ? payload.leftKnowledgeId.trim()
+      : (item.knowledgeId ?? "").trim();
+  const rightKnowledgeId =
+    typeof payload.rightKnowledgeId === "string" ? payload.rightKnowledgeId.trim() : "";
+
+  if (!leftKnowledgeId || !rightKnowledgeId) return null;
+  return {
+    leftKnowledgeId,
+    rightKnowledgeId,
+  };
+}
+
+export async function listLandscapeContradictionOverlay(
+  input: LandscapeContradictionOverlayQuery,
+): Promise<LandscapeContradictionOverlayList> {
+  const list = await listLandscapeReviewItems({
+    status: input.status,
+    source: "contradiction_detection",
+    reason: "contradiction_review",
+    proposedAction: "all",
+    priorityMin: 0,
+    limit: input.limit,
+  });
+
+  const items = list.items
+    .map((item) => {
+      const payload = asRecord(item.payload);
+      const ids = contradictionIdsFromPayload(item, payload);
+      if (!ids) return null;
+
+      const confidence = parseConfidenceFromPayload(payload) ?? labelToConfidenceScore(item.confidence);
+      if (confidence < input.confidenceMin) return null;
+
+      const pairKeyRaw = typeof payload.pairKey === "string" ? payload.pairKey.trim() : "";
+      const pairKey = pairKeyRaw || `${ids.leftKnowledgeId}::${ids.rightKnowledgeId}`;
+
+      return {
+        reviewItemId: item.id,
+        leftKnowledgeId: ids.leftKnowledgeId,
+        rightKnowledgeId: ids.rightKnowledgeId,
+        pairKey,
+        confidence: Number(confidence.toFixed(4)),
+        confidenceLabel: item.confidence,
+        status: item.status,
+        evidence: item.evidence,
+        communityKey: item.communityKey,
+        createdAt: item.createdAt,
+        updatedAt: item.updatedAt,
+      };
+    })
+    .filter(
+      (
+        item,
+      ): item is LandscapeContradictionOverlayList["items"][number] => item !== null,
+    );
+
+  return {
+    items,
+    count: items.length,
   };
 }
 

@@ -14,7 +14,7 @@ import {
   releaseRetryablePausedDistillationTargets,
 } from "../selectDistillationTarget/repository.js";
 
-export type DistillationRepairKind = "auto" | "wiki" | "vibe" | "candidate";
+export type DistillationRepairKind = "auto" | "wiki" | "vibe" | "candidate" | "web";
 export type DistillationRepairMode = "dry-run" | "apply";
 export type DistillationRepairActionType =
   | "remove_stale_file_lock"
@@ -99,6 +99,10 @@ type HigherPriorityBlockers = {
   runningKnowledgeCandidates: number;
   retryableKnowledgeCandidates: number;
   manualPausedKnowledgeCandidates: number;
+  pendingWebIngest: number;
+  runningWebIngest: number;
+  retryableWebIngest: number;
+  manualPausedWebIngest: number;
   pendingWiki: number;
   runningWiki: number;
   retryableWiki: number;
@@ -108,6 +112,7 @@ type HigherPriorityBlockers = {
 function resolveTargetKind(kind: DistillationRepairKind): DistillationTargetKind | undefined {
   if (kind === "wiki") return "wiki_file";
   if (kind === "vibe") return "vibe_memory";
+  if (kind === "web") return "web_ingest";
   if (kind === "candidate") return "knowledge_candidate";
   return undefined;
 }
@@ -177,6 +182,10 @@ function emptyHigherPriorityBlockers(): HigherPriorityBlockers {
     runningKnowledgeCandidates: 0,
     retryableKnowledgeCandidates: 0,
     manualPausedKnowledgeCandidates: 0,
+    pendingWebIngest: 0,
+    runningWebIngest: 0,
+    retryableWebIngest: 0,
+    manualPausedWebIngest: 0,
     pendingWiki: 0,
     runningWiki: 0,
     retryableWiki: 0,
@@ -190,8 +199,15 @@ function accumulateHigherPriorityBlocker(
   nowMs: number,
 ): void {
   const blockerGroup = priorityGroupFromRowLike(row);
-  if (blockerGroup !== "knowledge_candidate" && blockerGroup !== "wiki") return;
+  if (
+    blockerGroup !== "knowledge_candidate" &&
+    blockerGroup !== "web_ingest" &&
+    blockerGroup !== "wiki"
+  ) {
+    return;
+  }
   const isKnowledge = blockerGroup === "knowledge_candidate";
+  const isWebIngest = blockerGroup === "web_ingest";
   const manualPaused = row.status === "paused" && isManualPauseTarget(row);
   const retryablePaused =
     row.status === "paused" &&
@@ -200,21 +216,25 @@ function accumulateHigherPriorityBlocker(
 
   if (row.status === "pending") {
     if (isKnowledge) blockers.pendingKnowledgeCandidates += 1;
+    else if (isWebIngest) blockers.pendingWebIngest += 1;
     else blockers.pendingWiki += 1;
     return;
   }
   if (row.status === "running") {
     if (isKnowledge) blockers.runningKnowledgeCandidates += 1;
+    else if (isWebIngest) blockers.runningWebIngest += 1;
     else blockers.runningWiki += 1;
     return;
   }
   if (retryablePaused) {
     if (isKnowledge) blockers.retryableKnowledgeCandidates += 1;
+    else if (isWebIngest) blockers.retryableWebIngest += 1;
     else blockers.retryableWiki += 1;
     return;
   }
   if (manualPaused) {
     if (isKnowledge) blockers.manualPausedKnowledgeCandidates += 1;
+    else if (isWebIngest) blockers.manualPausedWebIngest += 1;
     else blockers.manualPausedWiki += 1;
   }
 }
@@ -224,6 +244,9 @@ function hasBlockingHigherPriority(blockers: HigherPriorityBlockers): boolean {
     blockers.pendingKnowledgeCandidates +
       blockers.runningKnowledgeCandidates +
       blockers.retryableKnowledgeCandidates +
+      blockers.pendingWebIngest +
+      blockers.runningWebIngest +
+      blockers.retryableWebIngest +
       blockers.pendingWiki +
       blockers.runningWiki +
       blockers.retryableWiki >
@@ -265,8 +288,12 @@ async function loadHigherPriorityRows(
   if (!targetKind || targetKind === "knowledge_candidate") return [];
   const groups =
     targetKind === "vibe_memory"
-      ? (["knowledge_candidate", "wiki"] as const)
-      : (["knowledge_candidate"] as const);
+      ? (["knowledge_candidate", "web_ingest", "wiki"] as const)
+      : targetKind === "wiki_file"
+        ? (["knowledge_candidate", "web_ingest"] as const)
+        : targetKind === "web_ingest"
+          ? (["knowledge_candidate"] as const)
+          : (["knowledge_candidate"] as const);
   const db = getDb();
   return db
     .select({

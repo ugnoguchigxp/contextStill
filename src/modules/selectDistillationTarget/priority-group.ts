@@ -2,6 +2,7 @@ import type { DistillationTargetPriorityGroup } from "./domain.js";
 
 const PRIORITY_GROUP_SET = new Set<DistillationTargetPriorityGroup>([
   "knowledge_candidate",
+  "web_ingest",
   "wiki",
   "vibe_memory",
 ]);
@@ -55,6 +56,7 @@ export function priorityGroupFromRowLike(row: {
   const fromPriority = normalizedPriorityGroup(row.priorityGroup);
   if (fromPriority) return fromPriority;
   const targetKind = normalizedLowerText(row.targetKind);
+  if (targetKind === "web_ingest") return "web_ingest";
   if (targetKind === "wiki_file") return "wiki";
   if (targetKind === "vibe_memory") return "vibe_memory";
   return "knowledge_candidate";

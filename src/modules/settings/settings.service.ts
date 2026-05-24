@@ -12,6 +12,7 @@ import {
   upsertSettingsRow,
 } from "./settings.repository.js";
 import {
+  type DistillationPriorityTargetKind,
   type RuntimeProviderName,
   type RuntimeProviderSetting,
   type RuntimeSecretKey,
@@ -22,6 +23,7 @@ import {
   type RuntimeSettingsSecrets,
   type RuntimeSettingsUpdateRequest,
   type RuntimeSettingsView,
+  distillationPriorityTargetKindValues,
   runtimeProviderNames,
   runtimeSettingsEditableSchema,
 } from "./settings.types.js";
@@ -49,6 +51,7 @@ type RuntimeSettingsCache = {
 };
 
 type BootstrapConfig = {
+  general: RuntimeSettingsEditable["general"];
   providers: RuntimeSettingsEditable["providers"];
   taskRouting: RuntimeSettingsEditable["taskRouting"];
   search: RuntimeSettingsEditable["search"];
@@ -85,6 +88,34 @@ function normalizeProviderList(values: unknown[]): RuntimeProviderName[] {
   return [...deduped];
 }
 
+const defaultDistillationTargetPriorityOrder: DistillationPriorityTargetKind[] = [
+  "knowledge_candidate",
+  "web_ingest",
+  "wiki_file",
+  "vibe_memory",
+];
+
+const distillationPriorityTargetKindSet = new Set<DistillationPriorityTargetKind>(
+  distillationPriorityTargetKindValues,
+);
+
+function normalizeDistillationTargetPriorityOrder(
+  values: unknown,
+): DistillationPriorityTargetKind[] {
+  const source = Array.isArray(values) ? values : [];
+  const deduped: DistillationPriorityTargetKind[] = [];
+  for (const raw of source) {
+    if (typeof raw !== "string") continue;
+    if (!distillationPriorityTargetKindSet.has(raw as DistillationPriorityTargetKind)) continue;
+    const next = raw as DistillationPriorityTargetKind;
+    if (!deduped.includes(next)) deduped.push(next);
+  }
+  for (const fallback of defaultDistillationTargetPriorityOrder) {
+    if (!deduped.includes(fallback)) deduped.push(fallback);
+  }
+  return deduped;
+}
+
 function maskSecret(value: string | undefined): string | null {
   if (!value || !value.trim()) return null;
   const trimmed = value.trim();
@@ -100,6 +131,11 @@ function getSecretStringFromRow(row: SettingsRow | undefined): string | undefine
 }
 
 const bootstrap: BootstrapConfig = {
+  general: {
+    distillationPriority: {
+      targetPriorityOrder: [...defaultDistillationTargetPriorityOrder],
+    },
+  },
   providers: {
     openai: {
       enabled: true,
@@ -135,6 +171,11 @@ const bootstrap: BootstrapConfig = {
     findCandidate: {
       source: { provider: "openai", model: groupedConfig.openAi.model, fallback: [] },
       vibe: { provider: "openai", model: groupedConfig.openAi.model, fallback: [] },
+    },
+    webSourceResearch: {
+      provider: "local-llm",
+      model: groupedConfig.localLlm.model,
+      fallback: [],
     },
     coverEvidence: {
       sourceSupport: { provider: "local-llm", model: groupedConfig.localLlm.model, fallback: [] },
@@ -210,6 +251,11 @@ const bootstrap: BootstrapConfig = {
 
 function cloneDefaultSettings(): RuntimeSettingsEditable {
   return {
+    general: {
+      distillationPriority: {
+        targetPriorityOrder: [...bootstrap.general.distillationPriority.targetPriorityOrder],
+      },
+    },
     providers: {
       openai: { ...bootstrap.providers.openai },
       "azure-openai": { ...bootstrap.providers["azure-openai"] },
@@ -221,6 +267,7 @@ function cloneDefaultSettings(): RuntimeSettingsEditable {
         source: { ...bootstrap.taskRouting.findCandidate.source },
         vibe: { ...bootstrap.taskRouting.findCandidate.vibe },
       },
+      webSourceResearch: { ...bootstrap.taskRouting.webSourceResearch },
       coverEvidence: {
         sourceSupport: { ...bootstrap.taskRouting.coverEvidence.sourceSupport },
         externalEvidence: { ...bootstrap.taskRouting.coverEvidence.externalEvidence },
@@ -281,6 +328,14 @@ function mergeRuntimeSettings(
 ): RuntimeSettingsEditable {
   const merged: RuntimeSettingsEditable = {
     ...defaults,
+    general: {
+      ...defaults.general,
+      ...asRecord(input.general),
+      distillationPriority: {
+        ...defaults.general.distillationPriority,
+        ...asRecord(asRecord(input.general).distillationPriority),
+      },
+    },
     providers: {
       ...defaults.providers,
       ...asRecord(input.providers),
@@ -315,6 +370,10 @@ function mergeRuntimeSettings(
           ...defaults.taskRouting.findCandidate.vibe,
           ...asRecord(asRecord(asRecord(input.taskRouting).findCandidate).vibe),
         },
+      },
+      webSourceResearch: {
+        ...defaults.taskRouting.webSourceResearch,
+        ...asRecord(asRecord(input.taskRouting).webSourceResearch),
       },
       coverEvidence: {
         ...defaults.taskRouting.coverEvidence,
@@ -383,6 +442,10 @@ function mergeRuntimeSettings(
     merged,
     merged.taskRouting.findCandidate.vibe,
   );
+  merged.taskRouting.webSourceResearch = sanitizeRoute(
+    merged,
+    merged.taskRouting.webSourceResearch,
+  );
   merged.taskRouting.coverEvidence.sourceSupport = sanitizeRoute(
     merged,
     merged.taskRouting.coverEvidence.sourceSupport,
@@ -402,6 +465,9 @@ function mergeRuntimeSettings(
     merged.providers.openai.model.trim();
   merged.taskRouting.agenticCompile.fallback = normalizeProviderList(
     merged.taskRouting.agenticCompile.fallback,
+  );
+  merged.general.distillationPriority.targetPriorityOrder = normalizeDistillationTargetPriorityOrder(
+    merged.general.distillationPriority.targetPriorityOrder,
   );
   merged.search.providerOrder = [...new Set(merged.search.providerOrder)];
   return merged;
@@ -596,8 +662,10 @@ function buildRuntimeSettingsView(
 
 function buildSourceMap(view: RuntimeSettingsView): Record<string, string> {
   return {
+    "distillationPriority.targetPriorityOrder": "db",
     "findCandidate.source.provider": "db",
     "findCandidate.vibe.provider": "db",
+    "webSourceResearch.provider": "db",
     "coverEvidence.sourceSupport.provider": "db",
     "coverEvidence.externalEvidence.provider": "db",
     "coverEvidence.mcpEvidence.provider": "db",
@@ -856,11 +924,23 @@ export async function saveRuntimeSettings(
 }
 
 export function resolveFindCandidateRoute(
-  targetKind: "wiki_file" | "vibe_memory",
+  targetKind: "wiki_file" | "vibe_memory" | "web_ingest",
 ): RuntimeSettingsRoute {
   return targetKind === "vibe_memory"
     ? runtimeSettingsCache.settings.taskRouting.findCandidate.vibe
     : runtimeSettingsCache.settings.taskRouting.findCandidate.source;
+}
+
+export function resolveWebSourceResearchRoute(): RuntimeSettingsRoute {
+  return runtimeSettingsCache.settings.taskRouting.webSourceResearch;
+}
+
+export function resolveDistillationTargetPriorityOrder(): DistillationPriorityTargetKind[] {
+  return [
+    ...normalizeDistillationTargetPriorityOrder(
+      runtimeSettingsCache.settings.general.distillationPriority.targetPriorityOrder,
+    ),
+  ];
 }
 
 export function resolveCoverEvidenceRoutes(): {

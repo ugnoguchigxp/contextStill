@@ -18,6 +18,17 @@ export const landscapeTrajectoryCandidateSchema = z.object({
   agenticDecision: z.enum(["not_evaluated", "accepted", "rejected", "skipped"]),
   rankingReason: z.string().nullable(),
   communityKey: z.string().nullable(),
+  evidence: z.object({
+    status: z.string().nullable(),
+    candidateEvidence: z
+      .object({
+        textMatched: z.boolean(),
+        vectorMatched: z.boolean(),
+        vectorScore: z.number().nullable().optional(),
+        facetMatched: z.boolean(),
+      })
+      .nullable(),
+  }),
 });
 
 export const landscapeTrajectoryStageCountsSchema = z.object({
@@ -44,6 +55,34 @@ export const landscapeTrajectoryDiagnosticsSchema = z.object({
   candidateTraceSkippedReason: z.string().nullable(),
 });
 
+export const landscapeTrajectoryTaskTraceSchema = z.object({
+  runId: z.string().min(1),
+  retrievalMode: z.string().min(1),
+  repoPath: z.string().nullable(),
+  repoKey: z.string().nullable(),
+  technologies: z.array(z.string()),
+  changeTypes: z.array(z.string()),
+  domains: z.array(z.string()),
+  embeddingStatus: z.enum(["facets_only", "embedding_available", "embedding_unavailable"]),
+  embeddingProvider: z.string().nullable(),
+  embeddingModel: z.string().nullable(),
+  embeddingDimensions: z.number().int().positive().nullable(),
+  goalHash: z.string().min(1),
+  createdAt: z.string().datetime(),
+});
+
+export const landscapeTrajectoryTaskSimilaritySchema = z.object({
+  runId: z.string().min(1),
+  similarity: z.number().min(0).max(1),
+  mode: z.enum(["embedding", "facets"]),
+  retrievalMode: z.string().min(1),
+  repoPath: z.string().nullable(),
+  repoKey: z.string().nullable(),
+  goalHash: z.string().min(1),
+  embeddingStatus: z.enum(["facets_only", "embedding_available", "embedding_unavailable"]),
+  createdAt: z.string().datetime(),
+});
+
 export const landscapeTrajectoryResultSchema = z.object({
   run: z.object({
     id: z.string().min(1),
@@ -60,6 +99,8 @@ export const landscapeTrajectoryResultSchema = z.object({
   diagnostics: landscapeTrajectoryDiagnosticsSchema,
   candidates: z.array(landscapeTrajectoryCandidateSchema),
   communitySummary: z.array(landscapeTrajectoryCommunitySummarySchema),
+  taskTrace: landscapeTrajectoryTaskTraceSchema.nullable(),
+  taskSimilarity: z.array(landscapeTrajectoryTaskSimilaritySchema),
 });
 
 export const landscapeTrajectoryQuerySchema = z.object({

@@ -29,7 +29,7 @@ export type CandidateListQuery = {
   page: number;
   limit: number;
   query?: string;
-  targetKind?: "all" | "wiki_file" | "vibe_memory" | "knowledge_candidate";
+  targetKind?: "all" | "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest";
   outcome?: "all" | CandidateOutcome;
   hasKnowledge?: "all" | "yes" | "no";
   targetStateId?: string;
@@ -61,7 +61,7 @@ export type CandidateListItem = {
   id: string;
   targetStateId: string;
   candidateIndex: number;
-  targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate";
+  targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest";
   targetKey: string;
   sourceUri: string;
   finalizeSourceUri: string;
@@ -301,8 +301,16 @@ function toNumber(value: unknown, fallback = 0): number {
   return Number.isFinite(num) ? num : fallback;
 }
 
-function toTargetKind(value: unknown): "wiki_file" | "vibe_memory" | "knowledge_candidate" {
-  if (value === "vibe_memory" || value === "knowledge_candidate") return value;
+function toTargetKind(
+  value: unknown,
+): "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest" {
+  if (
+    value === "vibe_memory" ||
+    value === "knowledge_candidate" ||
+    value === "web_ingest"
+  ) {
+    return value;
+  }
   return "wiki_file";
 }
 

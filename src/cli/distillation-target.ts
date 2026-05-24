@@ -28,7 +28,7 @@ type Command =
 
 type CliOptions = {
   command: Command;
-  kind: "auto" | "wiki" | "vibe" | "candidate";
+  kind: "auto" | "wiki" | "vibe" | "candidate" | "web";
   rootPath?: string;
   vibeLimit?: number;
   refresh: boolean;
@@ -90,8 +90,14 @@ function parseArgs(args: string[]): CliOptions {
     if (arg === "--kind" || arg.startsWith("--kind=")) {
       const value = readArgValue(args, index, "--kind").trim();
       if (arg === "--kind") index += 1;
-      if (value !== "auto" && value !== "wiki" && value !== "vibe" && value !== "candidate") {
-        throw new Error("--kind must be auto, wiki, vibe, or candidate");
+      if (
+        value !== "auto" &&
+        value !== "wiki" &&
+        value !== "vibe" &&
+        value !== "candidate" &&
+        value !== "web"
+      ) {
+        throw new Error("--kind must be auto, wiki, vibe, candidate, or web");
       }
       options.kind = value;
     } else if (arg === "--root" || arg.startsWith("--root=")) {
@@ -170,6 +176,7 @@ function compactSummaryTarget(row: DistillationTargetStateRow | null) {
 
 function targetKindFilter(kind: CliOptions["kind"]): DistillationTargetKind | undefined {
   if (kind === "candidate") return "knowledge_candidate";
+  if (kind === "web") return "web_ingest";
   if (kind === "wiki") return "wiki_file";
   if (kind === "vibe") return "vibe_memory";
   return undefined;
@@ -206,6 +213,7 @@ async function run(options: CliOptions): Promise<unknown> {
       mode: summary.mode,
       queued: summary.queued,
       pendingKnowledgeCandidates: summary.pendingKnowledgeCandidates,
+      pendingWebIngest: summary.pendingWebIngest,
       pendingWiki: summary.pendingWiki,
       pendingVibeMemory: summary.pendingVibeMemory,
       running: summary.running,

@@ -166,12 +166,13 @@ export type RefreshDistillationTargetInventoryResult = {
   distillationVersion: string;
   wikiTargets: number;
   vibeMemoryTargets: number;
+  webIngestTargets: number;
   missingWikiTargetsSkipped: number;
 };
 
 export async function refreshDistillationTargetInventory(
   params: {
-    kind?: "auto" | "wiki" | "vibe" | "candidate";
+    kind?: "auto" | "wiki" | "vibe" | "candidate" | "web";
     rootPath?: string;
     vibeLimit?: number;
     distillationVersion?: string;
@@ -210,6 +211,7 @@ export async function refreshDistillationTargetInventory(
     distillationVersion,
     wikiTargets: wikiCandidates.length,
     vibeMemoryTargets: vibeCandidates.length,
+    webIngestTargets: 0,
     missingWikiTargetsSkipped,
   };
 
@@ -232,7 +234,7 @@ async function selectFromCandidatesWithPersistedStatuses(params: {
 
 export async function previewNextDistillationTarget(
   params: {
-    kind?: "auto" | "wiki" | "vibe" | "candidate";
+    kind?: "auto" | "wiki" | "vibe" | "candidate" | "web";
     rootPath?: string;
     vibeLimit?: number;
     distillationVersion?: string;
@@ -244,6 +246,8 @@ export async function previewNextDistillationTarget(
     const targetKind: DistillationTargetKind | undefined =
       params.kind === "candidate"
         ? "knowledge_candidate"
+        : params.kind === "web"
+          ? "web_ingest"
         : params.kind === "wiki"
           ? "wiki_file"
           : params.kind === "vibe"
@@ -261,6 +265,13 @@ export async function previewNextDistillationTarget(
     const state = await findNextSelectableDistillationTargetState({
       distillationVersion,
       targetKind: "knowledge_candidate",
+    });
+    return state ? selectedTargetFromState(state) : null;
+  }
+  if (kind === "web") {
+    const state = await findNextSelectableDistillationTargetState({
+      distillationVersion,
+      targetKind: "web_ingest",
     });
     return state ? selectedTargetFromState(state) : null;
   }

@@ -36,8 +36,14 @@ function parseArgs(args: string[]): CliOptions {
     if (arg === "--kind" || arg.startsWith("--kind=")) {
       const value = readArgValue(args, index, "--kind").trim();
       if (arg === "--kind") index += 1;
-      if (value !== "auto" && value !== "wiki" && value !== "vibe" && value !== "candidate") {
-        throw new Error("--kind must be auto, wiki, vibe, or candidate");
+      if (
+        value !== "auto" &&
+        value !== "wiki" &&
+        value !== "vibe" &&
+        value !== "candidate" &&
+        value !== "web"
+      ) {
+        throw new Error("--kind must be auto, wiki, vibe, candidate, or web");
       }
       options.kind = value;
     } else if (arg === "--version" || arg.startsWith("--version=")) {

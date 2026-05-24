@@ -157,7 +157,7 @@ export function CandidatesPage() {
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 50 });
   const [queryText, setQueryText] = useState("");
   const [targetKind, setTargetKind] = useState<
-    "all" | "wiki_file" | "vibe_memory" | "knowledge_candidate"
+    "all" | "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest"
   >("all");
   const [targetStateIdFilter, setTargetStateIdFilter] = useState(initialTargetStateIdFromLocation);
   const [outcome, setOutcome] = useState<"all" | CandidateOutcome>("all");
@@ -406,13 +406,19 @@ export function CandidatesPage() {
               value={targetKind}
               onChange={(event) => {
                 setTargetKind(
-                  event.target.value as "all" | "wiki_file" | "vibe_memory" | "knowledge_candidate",
+                  event.target.value as
+                    | "all"
+                    | "wiki_file"
+                    | "vibe_memory"
+                    | "knowledge_candidate"
+                    | "web_ingest",
                 );
                 resetToFirstPage();
               }}
             >
               <option value="all">all target kinds</option>
               <option value="wiki_file">wiki_file</option>
+              <option value="web_ingest">web_ingest</option>
               <option value="vibe_memory">vibe_memory</option>
               <option value="knowledge_candidate">knowledge_candidate</option>
             </Select>

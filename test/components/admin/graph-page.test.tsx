@@ -508,6 +508,8 @@ const mockTrajectoryData: LandscapeTrajectoryResult = {
   },
   candidates: [],
   communitySummary: [],
+  taskTrace: null,
+  taskSimilarity: [],
 };
 
 const mockLandscapeReviewItems: LandscapeReviewItemsListResponse = {

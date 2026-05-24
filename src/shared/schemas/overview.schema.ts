@@ -21,6 +21,7 @@ export const overviewDistillationTargetKindSchema = z.enum([
   "wiki_file",
   "vibe_memory",
   "knowledge_candidate",
+  "web_ingest",
 ]);
 export const overviewSearchApiStatusSchema = z.enum(["ok", "cooldown"]);
 

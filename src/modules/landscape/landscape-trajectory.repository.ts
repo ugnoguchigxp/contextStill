@@ -43,6 +43,7 @@ type LandscapeTrajectoryCandidateRow = {
   agenticDecision: "not_evaluated" | "accepted" | "rejected" | "skipped";
   rankingReason: string | null;
   communityKey: string | null;
+  evidence: Record<string, unknown>;
 };
 
 type LandscapeTrajectoryCommunitySummaryRow = {
@@ -183,6 +184,7 @@ export async function loadLandscapeTrajectory(params: {
         agenticDecision: contextCompileCandidateTraces.agenticDecision,
         rankingReason: contextCompileCandidateTraces.rankingReason,
         communityKey: contextCompileCandidateTraces.communityKey,
+        evidence: contextCompileCandidateTraces.evidence,
       })
       .from(contextCompileCandidateTraces)
       .where(eq(contextCompileCandidateTraces.runId, params.runId))
@@ -227,6 +229,10 @@ export async function loadLandscapeTrajectory(params: {
         agenticDecision: row.agenticDecision,
         rankingReason: row.rankingReason,
         communityKey: row.communityKey,
+        evidence:
+          row.evidence && typeof row.evidence === "object" && !Array.isArray(row.evidence)
+            ? (row.evidence as Record<string, unknown>)
+            : {},
       }));
   }
 

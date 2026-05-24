@@ -57,6 +57,8 @@ function formatRelativeTime(dateStr: string | null): string {
 const STEPS_IN_PIPELINE = [
   { key: "selected", label: "Target Selected" },
   { key: "reading", label: "Reading Content" },
+  { key: "researching_source", label: "Researching Source" },
+  { key: "writing_source", label: "Writing Source Markdown" },
   { key: "finding_candidate", label: "Finding Candidates" },
   { key: "covering_evidence", label: "Covering Evidence" },
   { key: "finalizing", label: "Finalizing States" },
@@ -66,6 +68,8 @@ const STEPS_IN_PIPELINE = [
 const PHASE_MAP: Record<string, { label: string }> = {
   selected: { label: "Target Selected" },
   reading: { label: "Reading Content" },
+  researching_source: { label: "Researching Source" },
+  writing_source: { label: "Writing Source Markdown" },
   finding_candidate: { label: "Finding Candidates" },
   covering_evidence: { label: "Covering Evidence" },
   finalizing: { label: "Finalizing States" },
@@ -457,6 +461,7 @@ export function QueuePage() {
                 >
                   <option value="all">All Kinds</option>
                   <option value="wiki_file">Wiki Files</option>
+                  <option value="web_ingest">Web Ingest</option>
                   <option value="vibe_memory">Vibe Memory</option>
                   <option value="knowledge_candidate">Candidates</option>
                 </Select>
@@ -527,6 +532,8 @@ export function QueuePage() {
                           let kindBadgeBg = "bg-slate-50 text-slate-600 border-slate-200/50";
                           if (item.targetKind === "wiki_file") {
                             kindBadgeBg = "bg-sky-50/80 text-sky-700 border-sky-200/30";
+                          } else if (item.targetKind === "web_ingest") {
+                            kindBadgeBg = "bg-indigo-50/80 text-indigo-700 border-indigo-200/30";
                           } else if (item.targetKind === "vibe_memory") {
                             kindBadgeBg = "bg-emerald-50/80 text-emerald-700 border-emerald-200/30";
                           } else if (item.targetKind === "knowledge_candidate") {

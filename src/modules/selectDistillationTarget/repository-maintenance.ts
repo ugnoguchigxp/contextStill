@@ -15,9 +15,10 @@ import {
 
 export type DistillationTargetSummary = {
   version: string;
-  mode: "candidate_first" | "wiki_first" | "vibe_memory_fallback" | "idle";
+  mode: "candidate_first" | "web_first" | "wiki_first" | "vibe_memory_fallback" | "idle";
   queued: number;
   pendingKnowledgeCandidates: number;
+  pendingWebIngest: number;
   pendingWiki: number;
   pendingVibeMemory: number;
   running: number;
@@ -316,15 +317,18 @@ export async function getDistillationTargetSummary(
 
   const pendingKnowledgeCandidates =
     value("knowledge_candidate", "pending") + value("knowledge_candidate", "paused");
+  const pendingWebIngest = value("web_ingest", "pending") + value("web_ingest", "paused");
   const pendingWiki = value("wiki_file", "pending") + value("wiki_file", "paused");
   const pendingVibeMemory = value("vibe_memory", "pending") + value("vibe_memory", "paused");
-  const queued = pendingKnowledgeCandidates + pendingWiki + pendingVibeMemory;
+  const queued = pendingKnowledgeCandidates + pendingWebIngest + pendingWiki + pendingVibeMemory;
 
   return {
     version: distillationVersion,
     mode:
       pendingKnowledgeCandidates > 0
         ? "candidate_first"
+        : pendingWebIngest > 0
+          ? "web_first"
         : pendingWiki > 0
           ? "wiki_first"
           : pendingVibeMemory > 0
@@ -332,6 +336,7 @@ export async function getDistillationTargetSummary(
             : "idle",
     queued,
     pendingKnowledgeCandidates,
+    pendingWebIngest,
     pendingWiki,
     pendingVibeMemory,
     running: statusTotal("running"),

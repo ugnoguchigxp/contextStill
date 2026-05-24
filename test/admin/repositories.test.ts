@@ -29,6 +29,9 @@ import {
   renameSourceFolder,
   runSourceReindex,
   searchSourcePages,
+  queueWebSourceUrl,
+  queueWebSourceUrlsBulk,
+  queueWebSourceUrlsUpload,
   sendKnowledgeFeedback,
   testRuntimeProvider,
   updateGraphCommunityLabel,
@@ -563,6 +566,62 @@ describe("Admin Repository", () => {
         method: "POST",
         headers: undefined,
         body: undefined,
+      });
+    });
+
+    it("queueWebSourceUrl", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ ok: true, item: {} }),
+      } as Response);
+      const payload = { url: "https://example.com/a" };
+      await queueWebSourceUrl(payload);
+      expect(spy).toHaveBeenCalledWith("/api/sources/web", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    });
+
+    it("queueWebSourceUrlsBulk", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          total: 1,
+          queued: 1,
+          invalid: 0,
+          duplicateInRequest: 0,
+          items: [],
+        }),
+      } as Response);
+      const payload = { urls: ["https://example.com/a", "https://example.com/b"] };
+      await queueWebSourceUrlsBulk(payload);
+      expect(spy).toHaveBeenCalledWith("/api/sources/web/bulk", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify(payload),
+      });
+    });
+
+    it("queueWebSourceUrlsUpload", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          ok: true,
+          total: 1,
+          queued: 1,
+          invalid: 0,
+          duplicateInRequest: 0,
+          items: [],
+          file: { name: "urls.csv", size: 12, extractedUrls: 1 },
+        }),
+      } as Response);
+      const file = new File(["https://example.com/a"], "urls.csv", { type: "text/csv" });
+      await queueWebSourceUrlsUpload({ file });
+      expect(spy).toHaveBeenCalledWith("/api/sources/web/upload", {
+        method: "POST",
+        body: expect.any(FormData),
       });
     });
   });

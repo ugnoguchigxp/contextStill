@@ -67,6 +67,11 @@ function secretStatus(configured: boolean) {
 
 function buildSettingsView(): RuntimeSettingsView {
   return {
+    general: {
+      distillationPriority: {
+        targetPriorityOrder: ["knowledge_candidate", "web_ingest", "wiki_file", "vibe_memory"],
+      },
+    },
     providers: {
       openai: {
         enabled: true,
@@ -106,6 +111,7 @@ function buildSettingsView(): RuntimeSettingsView {
         source: { provider: "openai", model: "gpt-5-4-mini", fallback: [] },
         vibe: { provider: "openai", model: "gpt-5-4-mini", fallback: [] },
       },
+      webSourceResearch: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },
       coverEvidence: {
         sourceSupport: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },
         externalEvidence: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },

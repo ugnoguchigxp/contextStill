@@ -54,6 +54,9 @@ export type KnowledgeRetrievalResult = {
     vectorFailed: boolean;
     embeddingStatus: "provided" | "generated" | "unavailable" | "disabled";
     embeddingProvider?: string;
+    embeddingModel?: string;
+    embeddingDimensions?: number;
+    queryEmbedding?: number[];
     scopedSearch: boolean;
     repoScopeFallbackUsed: boolean;
     queryText: string;
@@ -218,7 +221,16 @@ async function executeKnowledgeSearch(
   let workingEmbedding = params.queryEmbedding;
   let embeddingStatus: KnowledgeRetrievalResult["stats"]["embeddingStatus"] =
     workingEmbedding && workingEmbedding.length > 0 ? "provided" : "disabled";
-  let embeddingProvider: string | undefined;
+  let embeddingProvider: string | undefined =
+    workingEmbedding && workingEmbedding.length > 0 ? groupedConfig.embedding.provider : undefined;
+  let embeddingModel: string | undefined =
+    workingEmbedding && workingEmbedding.length > 0
+      ? groupedConfig.embedding.provider === "openai"
+        ? groupedConfig.embedding.openaiModel
+        : undefined
+      : undefined;
+  let embeddingDimensions: number | undefined =
+    workingEmbedding && workingEmbedding.length > 0 ? workingEmbedding.length : undefined;
 
   const buildSearchInput = (query: string, limit: number, repoPath?: string) =>
     knowledgeSearchInputSchema.parse({
@@ -298,6 +310,11 @@ async function executeKnowledgeSearch(
           workingEmbedding = await embedOne(params.primaryQuery, "query");
           embeddingStatus = "generated";
           embeddingProvider = groupedConfig.embedding.provider;
+          embeddingModel =
+            groupedConfig.embedding.provider === "openai"
+              ? groupedConfig.embedding.openaiModel
+              : undefined;
+          embeddingDimensions = workingEmbedding.length;
         } catch {
           embeddingStatus = "unavailable";
           appendDegradedReason(degradedReasons, "QUERY_EMBEDDING_UNAVAILABLE");
@@ -419,6 +436,10 @@ async function executeKnowledgeSearch(
       vectorFailed: searchResult.vectorFailed,
       embeddingStatus,
       embeddingProvider,
+      embeddingModel,
+      embeddingDimensions,
+      queryEmbedding:
+        workingEmbedding && workingEmbedding.length > 0 ? [...workingEmbedding] : undefined,
       scopedSearch: params.scopedSearch,
       repoScopeFallbackUsed,
       queryText: params.queryText,

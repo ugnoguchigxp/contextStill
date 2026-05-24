@@ -302,6 +302,20 @@
       "when": 1779711400000,
       "tag": "0042_landscape_snapshots_cache",
       "breakpoints": true
+    },
+    {
+      "idx": 43,
+      "version": "7",
+      "when": 1779712400000,
+      "tag": "0043_context_compile_task_traces",
+      "breakpoints": true
+    },
+    {
+      "idx": 44,
+      "version": "7",
+      "when": 1779713400000,
+      "tag": "0044_web_ingest_target_constraints",
+      "breakpoints": true
     }
   ]
 }

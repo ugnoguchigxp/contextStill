@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { groupedConfig } from "../../config.js";
 import type { CompileRunSource } from "../../shared/schemas/compile-run.schema.js";
 import {
@@ -27,12 +28,14 @@ import {
 } from "../landscape/landscape-compile-intervention.service.js";
 import { retrieveSources } from "../sources/source-retrieval.service.js";
 import { agenticRefine } from "./agentic-refine.service.js";
+import { normalizeRepoKey, normalizeRepoPath } from "./query-context.js";
 import {
   insertCompileRun,
   insertContextCompileCandidateTraces,
   insertContextPackItems,
   updateCompileRunSnapshot,
 } from "./context-compiler.repository.js";
+import { upsertContextCompileTaskTrace } from "./context-compile-task-trace.repository.js";
 import { composeContextResponse } from "./context-response-composer.service.js";
 import { renderContextPackMarkdown } from "./pack-renderer.js";
 import { type Rankable, rankAndDedupe } from "./ranking.service.js";
@@ -446,6 +449,64 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function normalizeFacetArray(values: string[]): string[] {
+  const deduped = new Set<string>();
+  for (const value of values) {
+    const normalized = value.trim().toLowerCase();
+    if (!normalized) continue;
+    deduped.add(normalized);
+  }
+  return [...deduped].sort((left, right) => left.localeCompare(right));
+}
+
+function goalHash(goal: string): string {
+  return createHash("sha1").update(goal.trim()).digest("hex");
+}
+
+async function persistCompileTaskTraceSafe(params: {
+  runId: string;
+  retrievalMode: RetrievalMode;
+  repoPath: string | null;
+  repoKey: string | null;
+  technologies: string[];
+  changeTypes: string[];
+  domains: string[];
+  goal: string;
+  embeddingStatus: "facets_only" | "embedding_available" | "embedding_unavailable";
+  embeddingProvider: string | null;
+  embeddingModel: string | null;
+  embeddingDimensions: number | null;
+  embedding: number[] | null;
+}): Promise<void> {
+  try {
+    await upsertContextCompileTaskTrace({
+      runId: params.runId,
+      retrievalMode: params.retrievalMode,
+      repoPath: params.repoPath,
+      repoKey: params.repoKey,
+      technologies: normalizeFacetArray(params.technologies),
+      changeTypes: normalizeFacetArray(params.changeTypes),
+      domains: normalizeFacetArray(params.domains),
+      embeddingStatus: params.embeddingStatus,
+      embeddingProvider: params.embeddingProvider,
+      embeddingModel: params.embeddingModel,
+      embeddingDimensions: params.embeddingDimensions,
+      embedding: params.embedding,
+      goalHash: goalHash(params.goal),
+    });
+  } catch (error) {
+    await recordAuditLogSafe({
+      eventType: "CONTEXT_COMPILE_TASK_TRACE_SAVE_FAILED",
+      actor: "system",
+      payload: {
+        runId: params.runId,
+        retrievalMode: params.retrievalMode,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    });
+  }
+}
+
 function resolveCandidateTraceLimit(): number {
   const raw =
     process.env.MEMORY_ROUTER_CONTEXT_COMPILE_TRACE_LIMIT ??
@@ -740,6 +801,9 @@ export async function compileContextPack(
   const compileStartedAt = Date.now();
   const input = compileInputSchema.parse(rawInput);
   const retrievalMode = deriveRetrievalModeFromChangeTypes(input.changeTypes);
+  const workspaceRepoPath = normalizeRepoPath(process.cwd()) ?? process.cwd();
+  const workspaceRepoKey =
+    normalizeRepoKey(workspaceRepoPath) ?? normalizeRepoKey(process.cwd()) ?? null;
   const tokenBudget = groupedConfig.compile.defaultTokenBudget;
   const candidateTraceLimit = resolveCandidateTraceLimit();
 
@@ -779,6 +843,7 @@ export async function compileContextPack(
     const runId = await insertCompileRun({
       goal: input.goal,
       intent: legacyIntentFromRetrievalMode(retrievalMode),
+      repoPath: workspaceRepoPath,
       input: {
         goal: input.goal,
         ...(input.changeTypes ? { changeTypes: input.changeTypes } : {}),
@@ -791,6 +856,21 @@ export async function compileContextPack(
       tokenBudget,
       durationMs: compileDurationMs,
       source: options?.source ?? "unknown",
+    });
+    await persistCompileTaskTraceSafe({
+      runId,
+      retrievalMode,
+      repoPath: workspaceRepoPath,
+      repoKey: workspaceRepoKey,
+      technologies: matchedTechnologies,
+      changeTypes: matchedChangeTypes,
+      domains: matchedDomains,
+      goal: input.goal,
+      embeddingStatus: "facets_only",
+      embeddingProvider: null,
+      embeddingModel: null,
+      embeddingDimensions: null,
+      embedding: null,
     });
 
     const pack = contextPackSchema.parse({
@@ -1036,6 +1116,7 @@ export async function compileContextPack(
   const runId = await insertCompileRun({
     goal: input.goal,
     intent: legacyIntentFromRetrievalMode(retrievalMode),
+    repoPath: workspaceRepoPath,
     input: {
       goal: input.goal,
       ...(input.changeTypes ? { changeTypes: input.changeTypes } : {}),
@@ -1048,6 +1129,27 @@ export async function compileContextPack(
     tokenBudget,
     durationMs: compileDurationMs,
     source: options?.source ?? "unknown",
+  });
+  const taskTraceEmbeddingStatus =
+    knowledge.stats.embeddingStatus === "provided" || knowledge.stats.embeddingStatus === "generated"
+      ? "embedding_available"
+      : knowledge.stats.embeddingStatus === "unavailable"
+        ? "embedding_unavailable"
+        : "facets_only";
+  await persistCompileTaskTraceSafe({
+    runId,
+    retrievalMode,
+    repoPath: workspaceRepoPath,
+    repoKey: workspaceRepoKey,
+    technologies: matchedTechnologies,
+    changeTypes: matchedChangeTypes,
+    domains: matchedDomains,
+    goal: input.goal,
+    embeddingStatus: taskTraceEmbeddingStatus,
+    embeddingProvider: knowledge.stats.embeddingProvider ?? null,
+    embeddingModel: knowledge.stats.embeddingModel ?? null,
+    embeddingDimensions: knowledge.stats.embeddingDimensions ?? null,
+    embedding: knowledge.stats.queryEmbedding ?? null,
   });
 
   await insertContextPackItems(

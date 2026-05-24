@@ -14,16 +14,18 @@ import {
   FolderOpen,
   FolderPlus,
   Home,
+  Link2,
   Monitor,
   Pencil,
   RefreshCw,
   Save,
   Search,
   Trash2,
+  Upload,
 } from "lucide-react";
 import { MarkdownEditor } from "markdown-wysiwyg-editor";
 import mermaid from "mermaid";
-import type { ComponentProps, DragEvent, ReactElement } from "react";
+import type { ChangeEvent, ComponentProps, DragEvent, ReactElement } from "react";
 import { useEffect, useMemo, useState } from "react";
 import {
   type SourceFolderItem,
@@ -37,6 +39,10 @@ import {
   fetchSourceHistory,
   fetchSourcePage,
   fetchSourceTree,
+  type QueueWebSourcesBulkResponse,
+  queueWebSourceUrl,
+  queueWebSourceUrlsBulk,
+  queueWebSourceUrlsUpload,
   renameSourceFolder,
   runSourceReindex,
   searchSourcePages,
@@ -161,6 +167,40 @@ const parseTagsInput = (value: string): string[] =>
     .filter((entry) => entry.length > 0)
     .slice(0, 50);
 
+const webUrlPattern = /https?:\/\/[^\s<>"'`]+/gi;
+
+const normalizeWebUrlCandidate = (raw: string): string | null => {
+  const cleaned = raw
+    .trim()
+    .replace(/^[\s"'`([{<]+/, "")
+    .replace(/[\s"'`)\]}>.,;:!?]+$/, "");
+  if (!cleaned) return null;
+  try {
+    const parsed = new URL(cleaned);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return null;
+    }
+    return parsed.toString();
+  } catch {
+    return null;
+  }
+};
+
+const extractWebUrlsFromText = (raw: string): string[] => {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  for (const match of raw.match(webUrlPattern) ?? []) {
+    const normalized = normalizeWebUrlCandidate(match);
+    if (!normalized || seen.has(normalized)) continue;
+    seen.add(normalized);
+    urls.push(normalized);
+  }
+  return urls;
+};
+
+const summarizeWebQueueBulkResult = (result: QueueWebSourcesBulkResponse): string =>
+  `Web queue done: queued=${result.queued}/${result.total}, invalid=${result.invalid}, duplicate=${result.duplicateInRequest}`;
+
 type ExplorerNode =
   | {
       kind: "folder";
@@ -284,6 +324,9 @@ export function SourcesPage() {
   const [searchText, setSearchText] = useState("");
   const [statusText, setStatusText] = useState("");
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
+  const [webSingleUrlInput, setWebSingleUrlInput] = useState("");
+  const [webBulkInput, setWebBulkInput] = useState("");
+  const [webUploadFilename, setWebUploadFilename] = useState("");
 
   const [draftSlug, setDraftSlug] = useState("");
   const [draftTitle, setDraftTitle] = useState("");
@@ -561,6 +604,42 @@ export function SourcesPage() {
     },
   });
 
+  const queueWebSourceMutation = useMutation({
+    mutationFn: queueWebSourceUrl,
+    onSuccess: (result) => {
+      setStatusText(
+        `Web queued: ${result.item.normalizedUrl} (${result.item.existing ? "existing" : "new"})`,
+      );
+      setWebSingleUrlInput("");
+    },
+    onError: (error) => {
+      setStatusText(`Web queue failed: ${String(error)}`);
+    },
+  });
+
+  const queueWebBulkMutation = useMutation({
+    mutationFn: queueWebSourceUrlsBulk,
+    onSuccess: (result) => {
+      setStatusText(summarizeWebQueueBulkResult(result));
+    },
+    onError: (error) => {
+      setStatusText(`Web bulk queue failed: ${String(error)}`);
+    },
+  });
+
+  const uploadWebBulkMutation = useMutation({
+    mutationFn: queueWebSourceUrlsUpload,
+    onSuccess: (result) => {
+      setStatusText(
+        `${summarizeWebQueueBulkResult(result)} [file=${result.file.name}, extracted=${result.file.extractedUrls}]`,
+      );
+      setWebUploadFilename(result.file.name);
+    },
+    onError: (error) => {
+      setStatusText(`Web upload queue failed: ${String(error)}`);
+    },
+  });
+
   const busy =
     createMutation.isPending ||
     updateMutation.isPending ||
@@ -568,7 +647,10 @@ export function SourcesPage() {
     createFolderMutation.isPending ||
     renameFolderMutation.isPending ||
     deleteFolderMutation.isPending ||
-    reindexMutation.isPending;
+    reindexMutation.isPending ||
+    queueWebSourceMutation.isPending ||
+    queueWebBulkMutation.isPending ||
+    uploadWebBulkMutation.isPending;
 
   const metaFormError = useMemo(() => {
     if (draftSort.trim() === "") {
@@ -726,6 +808,32 @@ export function SourcesPage() {
     }
 
     await deletePageBySlug(activeSlug);
+  };
+
+  const handleQueueSingleWebSource = async () => {
+    const normalized = normalizeWebUrlCandidate(webSingleUrlInput);
+    if (!normalized) {
+      setStatusText("web url is invalid (http/https only)");
+      return;
+    }
+    await queueWebSourceMutation.mutateAsync({ url: normalized });
+  };
+
+  const handleQueueWebSourcesBulk = async () => {
+    const urls = extractWebUrlsFromText(webBulkInput);
+    if (urls.length === 0) {
+      setStatusText("no http/https URL found in bulk input");
+      return;
+    }
+    await queueWebBulkMutation.mutateAsync({ urls });
+  };
+
+  const handleUploadWebSourceFile = async (event: ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+    if (!file) return;
+    setWebUploadFilename(file.name);
+    await uploadWebBulkMutation.mutateAsync({ file });
   };
 
   const promptCreateFolder = async (parentPath = targetFolderForNewItem()) => {
@@ -1167,6 +1275,75 @@ export function SourcesPage() {
         </aside>
 
         <section className="flex min-w-0 flex-1 flex-col rounded-md border border-border bg-card p-3">
+          <div className="mb-3 rounded-md border border-border bg-muted/20 p-3">
+            <div className="mb-2 flex items-center gap-2">
+              <Link2 className="h-4 w-4" aria-hidden="true" />
+              <h2 className="text-sm font-semibold">Web Source Queue</h2>
+            </div>
+            <p className="mb-3 text-xs text-muted-foreground">
+              URL を登録すると `web_ingest` queue に追加され、pipeline で Markdown 化されます。
+            </p>
+            <div className="mb-3 grid gap-2 md:grid-cols-[1fr_auto]">
+              <Input
+                value={webSingleUrlInput}
+                onChange={(event) => setWebSingleUrlInput(event.target.value)}
+                placeholder="https://example.com/article"
+                disabled={busy}
+              />
+              <Button
+                type="button"
+                variant="secondary"
+                onClick={() => void handleQueueSingleWebSource()}
+                disabled={busy || webSingleUrlInput.trim().length === 0}
+              >
+                Queue URL
+              </Button>
+            </div>
+            <div className="space-y-2">
+              <textarea
+                value={webBulkInput}
+                onChange={(event) => setWebBulkInput(event.target.value)}
+                placeholder="複数URLを貼り付け（改行/カンマ区切り対応）"
+                className="h-24 w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+                disabled={busy}
+              />
+              <div className="flex flex-wrap items-center gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => void handleQueueWebSourcesBulk()}
+                  disabled={busy || webBulkInput.trim().length === 0}
+                >
+                  Queue Bulk
+                </Button>
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => setWebBulkInput("")}
+                  disabled={busy || webBulkInput.length === 0}
+                >
+                  Clear
+                </Button>
+                <label className="inline-flex cursor-pointer items-center gap-2 rounded-md border border-input bg-background px-3 py-2 text-sm hover:bg-accent">
+                  <Upload className="h-4 w-4" aria-hidden="true" />
+                  CSV/XLSX Upload
+                  <input
+                    type="file"
+                    accept=".csv,.tsv,.xlsx,.xls"
+                    className="hidden"
+                    onChange={(event) => void handleUploadWebSourceFile(event)}
+                    disabled={busy}
+                  />
+                </label>
+                {webUploadFilename ? (
+                  <span className="text-xs text-muted-foreground">
+                    last upload: {webUploadFilename}
+                  </span>
+                ) : null}
+              </div>
+            </div>
+          </div>
+
           <div className="mb-3 grid gap-2 md:grid-cols-2">
             <div className="space-y-1">
               <p className="text-xs text-muted-foreground">Slug</p>

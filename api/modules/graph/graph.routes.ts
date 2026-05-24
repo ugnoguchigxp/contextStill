@@ -12,6 +12,7 @@ import {
 } from "../../../src/modules/landscape/landscape-review-candidate.service.js";
 import {
   LandscapeReviewItemsError,
+  listLandscapeContradictionOverlay,
   listLandscapeReviewItems,
   materializeLandscapeReviewItems,
   updateLandscapeReviewItemStatus,
@@ -37,6 +38,10 @@ import {
   landscapeReviewItemsMaterializeInputSchema,
   landscapeReviewItemsMaterializeResultSchema,
 } from "../../../src/shared/schemas/landscape-review.schema.js";
+import {
+  landscapeContradictionOverlayListSchema,
+  landscapeContradictionOverlayQuerySchema,
+} from "../../../src/shared/schemas/landscape-contradiction-overlay.schema.js";
 import { landscapeSnapshotCacheStatusSchema } from "../../../src/shared/schemas/landscape-snapshot-cache.schema.js";
 import { landscapeSnapshotSchema } from "../../../src/shared/schemas/landscape.schema.js";
 import {
@@ -257,6 +262,19 @@ export const graphRouter = new Hono()
       return c.json({
         result: landscapeReviewCandidateCreateResultSchema.parse(result),
       });
+    },
+  )
+  .get(
+    "/landscape/contradictions",
+    zValidator("query", landscapeContradictionOverlayQuerySchema),
+    async (c) => {
+      const query = c.req.valid("query");
+      const result = await listLandscapeContradictionOverlay({
+        status: query.status,
+        confidenceMin: query.confidenceMin,
+        limit: query.limit,
+      });
+      return c.json(landscapeContradictionOverlayListSchema.parse(result));
     },
   )
   .get(

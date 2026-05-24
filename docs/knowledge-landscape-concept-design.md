@@ -9,6 +9,8 @@
 > - `docs/knowledge-landscape-attractor-phase2-replay-basin-plan.md`
 > - `docs/knowledge-landscape-action-queue-implementation-plan.md`
 > - `docs/knowledge-landscape-action-queue-next-phase-implementation-plan.md`
+> - `docs/knowledge-landscape-trajectory-contradiction-implementation-plan.md`
+> - `docs/knowledge-landscape-safe-completion-implementation-plan.md`
 
 ## 0. 実装状況サマリー (2026-05-24)
 
