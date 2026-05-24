@@ -3,6 +3,7 @@ import { db } from "../src/db/client.js";
 import {
   ingestAntigravityLogs,
   ingestCodexLogs,
+  ingestClaudeLogs,
 } from "../src/modules/agent-log-sync/ingest.service.js";
 import {
   buildReadableTranscript,
@@ -47,6 +48,15 @@ describe("Agent Log Sync Service", () => {
       skipped: true,
     } as any);
     vi.mocked(ingestCodexLogs).mockResolvedValue({
+      ok: true,
+      messages: [],
+      cursor: {},
+      checkedFiles: 0,
+      errors: [],
+      warnings: [],
+      skipped: true,
+    } as any);
+    vi.mocked(ingestClaudeLogs).mockResolvedValue({
       ok: true,
       messages: [],
       cursor: {},

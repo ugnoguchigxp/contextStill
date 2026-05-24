@@ -2110,37 +2110,39 @@ export function SettingsPage() {
             </>
           ) : null}
 
-            <Card>
-              <CardHeader>
-                <CardTitle>Provider Health Snapshot</CardTitle>
-              </CardHeader>
-              <CardContent className="settings-health-grid">
-                {runtimeProviders.map((provider) => (
-                  <div key={provider} className="settings-health-item">
-                    <div className="settings-health-head">
-                      <strong>{providerTitle(provider)}</strong>
-                      <ProviderHealthBadge health={providerHealth[provider]} />
+            {activeTab === "providers" ? (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Provider Health Snapshot</CardTitle>
+                </CardHeader>
+                <CardContent className="settings-health-grid">
+                  {runtimeProviders.map((provider) => (
+                    <div key={provider} className="settings-health-item">
+                      <div className="settings-health-head">
+                        <strong>{providerTitle(provider)}</strong>
+                        <ProviderHealthBadge health={providerHealth[provider]} />
+                      </div>
+                      <div className="settings-health-meta">
+                        <span>provider {provider}</span>
+                        <span>model {providerHealth[provider]?.model ?? "-"}</span>
+                        <span>endpoint {providerHealth[provider]?.endpoint ?? "-"}</span>
+                        <span>{providerHealth[provider]?.error ?? "no error"}</span>
+                      </div>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() => providerTestMutation.mutate(provider)}
+                        disabled={providerTestMutation.isPending}
+                      >
+                        <RefreshCcw size={14} />
+                        Re-test
+                      </Button>
                     </div>
-                    <div className="settings-health-meta">
-                      <span>provider {provider}</span>
-                      <span>model {providerHealth[provider]?.model ?? "-"}</span>
-                      <span>endpoint {providerHealth[provider]?.endpoint ?? "-"}</span>
-                      <span>{providerHealth[provider]?.error ?? "no error"}</span>
-                    </div>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="outline"
-                      onClick={() => providerTestMutation.mutate(provider)}
-                      disabled={providerTestMutation.isPending}
-                    >
-                      <RefreshCcw size={14} />
-                      Re-test
-                    </Button>
-                  </div>
-                ))}
-              </CardContent>
-            </Card>
+                  ))}
+                </CardContent>
+              </Card>
+            ) : null}
           </>
         )}
       </div>
