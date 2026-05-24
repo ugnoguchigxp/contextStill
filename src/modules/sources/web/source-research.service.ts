@@ -153,10 +153,11 @@ export async function researchWebSourceToMarkdown(params: {
   await ensureContentRoot(groupedConfig.sourceContent.root);
   const saved = await writePage(groupedConfig.sourceContent.root, slug, title, body, meta);
   const pagesRoot = path.resolve(groupedConfig.sourceContent.root, "pages");
-  const savedWikiTargetKey = saved.path
-    .slice(pagesRoot.length + 1)
-    .split(path.sep)
-    .join("/");
+  const relativeFromPages = path.relative(pagesRoot, saved.path);
+  if (relativeFromPages.startsWith("..") || path.isAbsolute(relativeFromPages)) {
+    throw new Error("saved wiki path must stay inside wiki/pages");
+  }
+  const savedWikiTargetKey = relativeFromPages.split(path.sep).join("/");
 
   await upsertSourceDocument({
     sourceKind: "wiki",

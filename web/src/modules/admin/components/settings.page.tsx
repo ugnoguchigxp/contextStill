@@ -807,7 +807,8 @@ export function SettingsPage() {
                               variant="ghost"
                               onClick={() => movePriorityTargetKind(kind, 1)}
                               disabled={
-                                index === draft.general.distillationPriority.targetPriorityOrder.length - 1
+                                index ===
+                                draft.general.distillationPriority.targetPriorityOrder.length - 1
                               }
                             >
                               <ArrowDown size={14} />

@@ -45,8 +45,8 @@ function priorityGroupsFromRuntimeSettings(): DistillationTargetPriorityGroup[] 
 }
 
 function buildPriorityRankCase(order: DistillationTargetPriorityGroup[]) {
-  const clauses = order.map((group, index) =>
-    sql`when ${distillationTargetStates.priorityGroup} = ${group} then ${index}`,
+  const clauses = order.map(
+    (group, index) => sql`when ${distillationTargetStates.priorityGroup} = ${group} then ${index}`,
   );
   return sql`case ${sql.join(clauses, sql` `)} else ${order.length} end`;
 }

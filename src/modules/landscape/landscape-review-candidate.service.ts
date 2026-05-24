@@ -223,11 +223,14 @@ export async function createLandscapeReviewCandidates(
   input: LandscapeReviewCandidateCreateInput,
 ): Promise<CreateLandscapeReviewCandidatesResult> {
   const parsed = landscapeReviewCandidateCreateInputSchema.parse(input);
-  const reviewRows = await listLandscapeReviewItemsForCandidateDraft({
+  const reviewRowsRaw = await listLandscapeReviewItemsForCandidateDraft({
     ids: parsed.ids,
     status: parsed.status,
     limit: parsed.limit,
   });
+  const reviewRows = reviewRowsRaw.filter(
+    (row) => row.status === parsed.status && row.source !== "contradiction_detection",
+  );
 
   const missingIds =
     parsed.ids && parsed.ids.length > 0

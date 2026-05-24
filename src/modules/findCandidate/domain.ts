@@ -293,7 +293,10 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
   let reads = 0;
   const targetReadPath =
     target.targetKind === "web_ingest" ? target.sourceUri.trim() : target.targetKey;
-  if ((target.targetKind === "wiki_file" || target.targetKind === "web_ingest") && !targetReadPath) {
+  if (
+    (target.targetKind === "wiki_file" || target.targetKind === "web_ingest") &&
+    !targetReadPath
+  ) {
     throw new Error(`missing readable source path for target: ${targetStateId}`);
   }
 

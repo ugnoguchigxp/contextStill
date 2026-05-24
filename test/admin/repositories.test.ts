@@ -76,6 +76,27 @@ describe("Admin Repository", () => {
         "DELETE /api/vibe-memory/123 failed: 400",
       );
     });
+
+    it("requestJson should prioritize reason/message from error payload", async () => {
+      vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({ reason: "invalid url" }),
+      } as unknown as Response);
+      await expect(queueWebSourceUrl({ url: "bad" })).rejects.toThrow("invalid url");
+    });
+
+    it("requestForm should prioritize reason/message from error payload", async () => {
+      vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: false,
+        status: 400,
+        json: async () => ({ reason: "no url found in upload file" }),
+      } as unknown as Response);
+      const file = new File(["not a url"], "urls.csv", { type: "text/csv" });
+      await expect(queueWebSourceUrlsUpload({ file })).rejects.toThrow(
+        "no url found in upload file",
+      );
+    });
   });
 
   describe("knowledge management", () => {

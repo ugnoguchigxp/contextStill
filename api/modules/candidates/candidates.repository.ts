@@ -304,11 +304,7 @@ function toNumber(value: unknown, fallback = 0): number {
 function toTargetKind(
   value: unknown,
 ): "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest" {
-  if (
-    value === "vibe_memory" ||
-    value === "knowledge_candidate" ||
-    value === "web_ingest"
-  ) {
+  if (value === "vibe_memory" || value === "knowledge_candidate" || value === "web_ingest") {
     return value;
   }
   return "wiki_file";

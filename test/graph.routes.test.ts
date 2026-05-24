@@ -17,6 +17,7 @@ const {
   createLandscapeReviewCandidatesMock,
   updateLandscapeReviewCandidateLinkMock,
   listLandscapeReviewItemsMock,
+  listLandscapeContradictionOverlayMock,
   materializeLandscapeReviewItemsMock,
   updateLandscapeReviewItemStatusMock,
   LandscapeReviewCandidateLinkErrorMock,
@@ -30,6 +31,7 @@ const {
   createLandscapeReviewCandidatesMock: vi.fn(),
   updateLandscapeReviewCandidateLinkMock: vi.fn(),
   listLandscapeReviewItemsMock: vi.fn(),
+  listLandscapeContradictionOverlayMock: vi.fn(),
   materializeLandscapeReviewItemsMock: vi.fn(),
   updateLandscapeReviewItemStatusMock: vi.fn(),
   LandscapeReviewCandidateLinkErrorMock: class LandscapeReviewCandidateLinkErrorMock extends Error {
@@ -74,6 +76,7 @@ vi.mock("../src/modules/landscape/landscape-trajectory.service.js", () => ({
 
 vi.mock("../src/modules/landscape/landscape-review-items.service.js", () => ({
   listLandscapeReviewItems: listLandscapeReviewItemsMock,
+  listLandscapeContradictionOverlay: listLandscapeContradictionOverlayMock,
   materializeLandscapeReviewItems: materializeLandscapeReviewItemsMock,
   updateLandscapeReviewItemStatus: updateLandscapeReviewItemStatusMock,
   LandscapeReviewItemsError: LandscapeReviewItemsErrorMock,
@@ -269,27 +272,47 @@ function validLandscapeSnapshotCacheStatus() {
     generatedAt: "2026-05-24T00:00:00.000Z",
     enabled: true,
     ttlSeconds: 300,
+    disabledReason: null,
     snapshots: [
       {
         snapshotType: "landscape_snapshot",
         readyCount: 2,
         staleCount: 1,
+        expiredReadyCount: 1,
+        oldestGeneratedAt: "2026-05-23T22:00:00.000Z",
         latestGeneratedAt: "2026-05-24T00:00:00.000Z",
         latestExpiresAt: "2026-05-24T00:05:00.000Z",
+        estimatedPayloadBytes: 2048,
+        lastPurge: null,
       },
       {
         snapshotType: "landscape_replay_snapshot",
         readyCount: 1,
         staleCount: 0,
+        expiredReadyCount: 0,
+        oldestGeneratedAt: "2026-05-23T22:30:00.000Z",
         latestGeneratedAt: "2026-05-24T00:00:00.000Z",
         latestExpiresAt: "2026-05-24T00:05:00.000Z",
+        estimatedPayloadBytes: 1024,
+        lastPurge: {
+          purgedAt: "2026-05-23T23:55:00.000Z",
+          staleDeletedCount: 1,
+          expiredDeletedCount: 0,
+          deletedCount: 1,
+          snapshotTypes: ["landscape_replay_snapshot"],
+          error: null,
+        },
       },
       {
         snapshotType: "landscape_replay_comparison",
         readyCount: 0,
         staleCount: 0,
+        expiredReadyCount: 0,
+        oldestGeneratedAt: null,
         latestGeneratedAt: null,
         latestExpiresAt: null,
+        estimatedPayloadBytes: 0,
+        lastPurge: null,
       },
     ],
   });
@@ -424,9 +447,20 @@ function validTrajectory() {
         agenticDecision: "accepted",
         rankingReason: "selected",
         communityKey: null,
+        evidence: {
+          status: "selected",
+          candidateEvidence: {
+            textMatched: true,
+            vectorMatched: false,
+            vectorScore: null,
+            facetMatched: true,
+          },
+        },
       },
     ],
     communitySummary: [],
+    taskTrace: null,
+    taskSimilarity: [],
   });
 }
 
@@ -534,6 +568,24 @@ describe("graph routes landscape", () => {
           createdAt: "2026-05-24T00:00:00.000Z",
           updatedAt: "2026-05-24T00:00:00.000Z",
           resolvedAt: null,
+        },
+      ],
+    });
+    listLandscapeContradictionOverlayMock.mockResolvedValue({
+      count: 1,
+      items: [
+        {
+          reviewItemId: "review-item-3",
+          leftKnowledgeId: "knowledge-1",
+          rightKnowledgeId: "knowledge-2",
+          pairKey: "knowledge-1::knowledge-2",
+          confidence: 0.74,
+          confidenceLabel: "medium",
+          status: "pending",
+          evidence: ["pair=knowledge-1::knowledge-2"],
+          communityKey: "a".repeat(64),
+          createdAt: "2026-05-24T00:00:00.000Z",
+          updatedAt: "2026-05-24T00:00:00.000Z",
         },
       ],
     });
@@ -870,6 +922,19 @@ describe("graph routes landscape", () => {
       communityKey: "community-a",
       priorityMin: 70,
       limit: 20,
+    });
+  });
+
+  test("GET /api/graph/landscape/contradictions parses filters", async () => {
+    const app = buildApp();
+    const response = await app.request(
+      "/api/graph/landscape/contradictions?status=reviewing&confidenceMin=0.72&limit=25",
+    );
+    expect(response.status).toBe(200);
+    expect(listLandscapeContradictionOverlayMock).toHaveBeenCalledWith({
+      status: "reviewing",
+      confidenceMin: 0.72,
+      limit: 25,
     });
   });
 

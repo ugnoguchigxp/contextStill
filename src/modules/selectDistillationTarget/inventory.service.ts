@@ -248,11 +248,11 @@ export async function previewNextDistillationTarget(
         ? "knowledge_candidate"
         : params.kind === "web"
           ? "web_ingest"
-        : params.kind === "wiki"
-          ? "wiki_file"
-          : params.kind === "vibe"
-            ? "vibe_memory"
-            : undefined;
+          : params.kind === "wiki"
+            ? "wiki_file"
+            : params.kind === "vibe"
+              ? "vibe_memory"
+              : undefined;
     const state = await findNextSelectableDistillationTargetState({
       distillationVersion,
       targetKind,

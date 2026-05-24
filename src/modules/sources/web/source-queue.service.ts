@@ -6,6 +6,9 @@ import { validateFetchContentUrl } from "../../distillation/distillation-tools.s
 import {
   DEFAULT_DISTILLATION_TARGET_VERSION,
   type DistillationTargetStateRow,
+  getDistillationTargetStateById,
+  requeueDistillationTargetState,
+  updateDistillationTargetSource,
   upsertDistillationTargetState,
 } from "../../selectDistillationTarget/repository.js";
 
@@ -27,7 +30,10 @@ function normalizeWebUrl(raw: string): { url: string; normalizedUrl: string } {
   }
   parsed.hash = "";
   parsed.hostname = parsed.hostname.toLowerCase();
-  if ((parsed.protocol === "http:" && parsed.port === "80") || (parsed.protocol === "https:" && parsed.port === "443")) {
+  if (
+    (parsed.protocol === "http:" && parsed.port === "80") ||
+    (parsed.protocol === "https:" && parsed.port === "443")
+  ) {
     parsed.port = "";
   }
   if (!parsed.pathname) parsed.pathname = "/";
@@ -56,6 +62,10 @@ async function findExistingWebIngestTarget(params: {
     )
     .limit(1);
   return row ?? null;
+}
+
+function shouldResetExistingWebIngest(status: string): boolean {
+  return status === "completed" || status === "skipped" || status === "failed";
 }
 
 export async function queueWebSourceUrl(params: {
@@ -87,7 +97,7 @@ export async function queueWebSourceUrl(params: {
     distillationVersion,
   });
 
-  const state = await upsertDistillationTargetState({
+  let state = await upsertDistillationTargetState({
     candidate: {
       targetKind: "web_ingest",
       targetKey: normalized.normalizedUrl,
@@ -104,6 +114,36 @@ export async function queueWebSourceUrl(params: {
       registeredAt: new Date().toISOString(),
     },
   });
+
+  if (existing && shouldResetExistingWebIngest(existing.status)) {
+    const resetReason = "web_source_requeued";
+    const requeued = await requeueDistillationTargetState({
+      id: existing.id,
+      reason: resetReason,
+      allowCompleted: true,
+    });
+    if (requeued) state = requeued;
+    await updateDistillationTargetSource({
+      id: existing.id,
+      sourceUri: normalized.normalizedUrl,
+      metadata: {
+        sourceType: "web_research",
+        sourceUrl: normalized.url,
+        normalizedUrl: normalized.normalizedUrl,
+        importedVia: "sources.webIngest",
+        registeredAt: new Date().toISOString(),
+        savedWikiSlug: null,
+        savedWikiTargetKey: null,
+        savedWikiPath: null,
+        researchGeneratedAt: null,
+        llmProvider: null,
+        llmModel: null,
+        fetchFinalUrl: null,
+      },
+    });
+    const refreshed = await getDistillationTargetStateById(existing.id);
+    if (refreshed) state = refreshed;
+  }
 
   return {
     ok: true,

@@ -13,6 +13,7 @@ import {
   type LandscapeReviewItemsListResponse,
   type LandscapeSnapshot,
   createLandscapeReviewCandidates,
+  fetchLandscapeContradictionOverlay,
   fetchGraphNodeDetail,
   fetchGraphSnapshot,
   fetchLandscapeReplayComparison,
@@ -40,6 +41,7 @@ vi.mock("../../../web/src/modules/admin/repositories/admin.repository", () => ({
   fetchLandscapeSnapshot: vi.fn(),
   fetchLandscapeSnapshotCacheStatus: vi.fn(),
   fetchLandscapeReplayComparison: vi.fn(),
+  fetchLandscapeContradictionOverlay: vi.fn(),
   fetchLandscapeTrajectory: vi.fn(),
   fetchLandscapeReplaySnapshot: vi.fn(),
   fetchLandscapeReviewItems: vi.fn(),
@@ -181,27 +183,47 @@ const mockLandscapeSnapshotCacheStatus = {
   generatedAt: "2026-05-24T00:00:00.000Z",
   enabled: true,
   ttlSeconds: 300,
+  disabledReason: null,
   snapshots: [
     {
       snapshotType: "landscape_snapshot" as const,
       readyCount: 2,
       staleCount: 1,
+      expiredReadyCount: 1,
+      oldestGeneratedAt: "2026-05-23T23:00:00.000Z",
       latestGeneratedAt: "2026-05-24T00:00:00.000Z",
       latestExpiresAt: "2026-05-24T00:05:00.000Z",
+      estimatedPayloadBytes: 2048,
+      lastPurge: null,
     },
     {
       snapshotType: "landscape_replay_snapshot" as const,
       readyCount: 1,
       staleCount: 0,
+      expiredReadyCount: 0,
+      oldestGeneratedAt: "2026-05-23T23:30:00.000Z",
       latestGeneratedAt: "2026-05-24T00:00:00.000Z",
       latestExpiresAt: "2026-05-24T00:05:00.000Z",
+      estimatedPayloadBytes: 1024,
+      lastPurge: {
+        purgedAt: "2026-05-23T23:50:00.000Z",
+        staleDeletedCount: 1,
+        expiredDeletedCount: 0,
+        deletedCount: 1,
+        snapshotTypes: ["landscape_replay_snapshot" as const],
+        error: null,
+      },
     },
     {
       snapshotType: "landscape_replay_comparison" as const,
       readyCount: 0,
       staleCount: 0,
+      expiredReadyCount: 0,
+      oldestGeneratedAt: null,
       latestGeneratedAt: null,
       latestExpiresAt: null,
+      estimatedPayloadBytes: 0,
+      lastPurge: null,
     },
   ],
 };
@@ -625,6 +647,24 @@ describe("GraphPage", () => {
     );
     vi.mocked(fetchLandscapeReplaySnapshot).mockResolvedValue(mockReplayData);
     vi.mocked(fetchLandscapeReplayComparison).mockResolvedValue(mockReplayComparisonData);
+    vi.mocked(fetchLandscapeContradictionOverlay).mockResolvedValue({
+      count: 1,
+      items: [
+        {
+          reviewItemId: "review-item-3",
+          leftKnowledgeId: "k-left",
+          rightKnowledgeId: "k-right",
+          pairKey: "k-left::k-right",
+          confidence: 0.72,
+          confidenceLabel: "medium",
+          status: "pending",
+          evidence: ["pair=k-left::k-right"],
+          communityKey: "a".repeat(64),
+          createdAt: "2026-05-24T00:00:00.000Z",
+          updatedAt: "2026-05-24T00:00:00.000Z",
+        },
+      ],
+    });
     vi.mocked(fetchLandscapeReviewItems).mockResolvedValue(mockLandscapeReviewItems);
     vi.mocked(fetchLandscapeTrajectory).mockResolvedValue(mockTrajectoryData);
     vi.mocked(createLandscapeReviewCandidates).mockResolvedValue({
@@ -945,7 +985,7 @@ describe("GraphPage", () => {
     expect(screen.getByText("Candidate Only")).toBeInTheDocument();
     expect(screen.getByText("Risky Runs")).toBeInTheDocument();
     expect(screen.getByText("k-persisted-1")).toBeInTheDocument();
-    expect(screen.getByText("k-lost")).toBeInTheDocument();
+    expect(screen.getAllByText("k-lost").length).toBeGreaterThan(0);
     expect(screen.getByText("Replay risky graph UI task")).toBeInTheDocument();
     expect(screen.getByText("Top Facet Risks")).toBeInTheDocument();
     expect(screen.getAllByText("Strong Attractor").length).toBeGreaterThan(0);
@@ -1001,6 +1041,10 @@ describe("GraphPage", () => {
     const circles = await screen.findAllByRole("button", { name: /Select/i });
     fireEvent.click(circles[0]);
     await screen.findByText("Replay Review");
+    expect(
+      screen.getByText("Select a run to compare baseline/current/sandbox."),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Sandbox Changed IDs")).not.toBeInTheDocument();
 
     const createCandidateButton = await screen.findByRole("button", {
       name: "Create Candidate Drafts",
@@ -1067,9 +1111,18 @@ describe("GraphPage", () => {
     const sandboxButtons = await screen.findAllByRole("button", { name: "Compare Sandbox" });
     fireEvent.click(sandboxButtons[0]);
     expect(await screen.findByText("Sandbox Comparison")).toBeInTheDocument();
+    expect(
+      screen.queryByText("Select a run to compare baseline/current/sandbox."),
+    ).not.toBeInTheDocument();
     expect(screen.getByText(/Removed \(/)).toBeInTheDocument();
     expect(screen.getByText(/Added \(/)).toBeInTheDocument();
     expect(screen.getByText(/Retained \(/)).toBeInTheDocument();
+    expect(screen.getByLabelText("sandbox-run-selector")).toBeInTheDocument();
+    const sandboxDiffFilter = screen.getByLabelText("sandbox-diff-filter");
+    fireEvent.change(sandboxDiffFilter, { target: { value: "added" } });
+    expect(await screen.findByText("Filtered IDs")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Focus Node" })).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Candidate Search" })).toBeInTheDocument();
 
     const resolveButtons = await screen.findAllByRole("button", { name: "Resolve" });
     fireEvent.click(resolveButtons[0]);

@@ -843,12 +843,24 @@ export type LandscapeSnapshotCacheStatus = {
   generatedAt: string;
   enabled: boolean;
   ttlSeconds: number;
+  disabledReason?: string | null;
   snapshots: Array<{
     snapshotType: LandscapeSnapshotCacheType;
     readyCount: number;
     staleCount: number;
+    expiredReadyCount: number;
+    oldestGeneratedAt: string | null;
     latestGeneratedAt: string | null;
     latestExpiresAt: string | null;
+    estimatedPayloadBytes: number;
+    lastPurge: {
+      purgedAt: string;
+      staleDeletedCount: number;
+      expiredDeletedCount: number;
+      deletedCount: number;
+      snapshotTypes: LandscapeSnapshotCacheType[];
+      error: string | null;
+    } | null;
   }>;
 };
 
@@ -1867,6 +1879,24 @@ async function getJson<T>(url: string): Promise<T> {
   return response.json() as Promise<T>;
 }
 
+function parseRequestErrorMessage(
+  method: string,
+  url: string,
+  status: number,
+  payload: unknown,
+): string {
+  if (typeof payload === "object" && payload !== null) {
+    if ("outcome" in payload) return JSON.stringify(payload);
+    if ("reason" in payload && typeof (payload as { reason?: unknown }).reason === "string") {
+      return (payload as { reason: string }).reason;
+    }
+    if ("message" in payload && typeof (payload as { message?: unknown }).message === "string") {
+      return (payload as { message: string }).message;
+    }
+  }
+  return `${method} ${url} failed: ${status}`;
+}
+
 async function requestJson<T>(url: string, method: string, body?: unknown): Promise<T> {
   const response = await fetch(url, {
     method,
@@ -1876,11 +1906,7 @@ async function requestJson<T>(url: string, method: string, body?: unknown): Prom
   if (!response.ok) {
     const message = await response
       .json()
-      .then((payload) =>
-        typeof payload === "object" && payload && "outcome" in payload
-          ? JSON.stringify(payload)
-          : `${method} ${url} failed: ${response.status}`,
-      )
+      .then((payload) => parseRequestErrorMessage(method, url, response.status, payload))
       .catch(() => `${method} ${url} failed: ${response.status}`);
     throw new Error(message);
   }
@@ -1895,11 +1921,7 @@ async function requestForm<T>(url: string, method: string, body: FormData): Prom
   if (!response.ok) {
     const message = await response
       .json()
-      .then((payload) =>
-        typeof payload === "object" && payload && "outcome" in payload
-          ? JSON.stringify(payload)
-          : `${method} ${url} failed: ${response.status}`,
-      )
+      .then((payload) => parseRequestErrorMessage(method, url, response.status, payload))
       .catch(() => `${method} ${url} failed: ${response.status}`);
     throw new Error(message);
   }

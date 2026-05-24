@@ -9,6 +9,78 @@ import {
 } from "../context-compiler/context-compile-task-trace.repository.js";
 import { loadLandscapeTrajectory } from "./landscape-trajectory.repository.js";
 
+function isMissingTaskTraceRelationError(error: unknown): boolean {
+  const needle = 'relation "context_compile_task_traces" does not exist';
+  const queue: unknown[] = [error];
+
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) continue;
+
+    if (typeof current === "string") {
+      if (current.includes(needle) || current.toLowerCase().includes("undefined_table")) {
+        return true;
+      }
+      continue;
+    }
+
+    if (current instanceof Error) {
+      if (
+        current.message.includes(needle) ||
+        current.message.toLowerCase().includes("undefined_table")
+      ) {
+        return true;
+      }
+      const shaped = current as Error & { code?: string; cause?: unknown };
+      if (shaped.code === "42P01") return true;
+      if (shaped.cause) queue.push(shaped.cause);
+      continue;
+    }
+
+    if (typeof current === "object") {
+      const shaped = current as {
+        code?: unknown;
+        message?: unknown;
+        cause?: unknown;
+        originalError?: unknown;
+      };
+      if (shaped.code === "42P01") return true;
+      if (
+        typeof shaped.message === "string" &&
+        (shaped.message.includes(needle) ||
+          shaped.message.toLowerCase().includes("undefined_table"))
+      ) {
+        return true;
+      }
+      if (shaped.cause) queue.push(shaped.cause);
+      if (shaped.originalError) queue.push(shaped.originalError);
+    }
+  }
+
+  return false;
+}
+
+async function safeFindTaskTrace(runId: string): Promise<ContextCompileTaskTrace | null> {
+  try {
+    return await findContextCompileTaskTraceByRunId(runId);
+  } catch (error) {
+    if (isMissingTaskTraceRelationError(error)) return null;
+    throw error;
+  }
+}
+
+async function safeListRecentTaskTraces(params: {
+  limit: number;
+  excludeRunId: string;
+}): Promise<ContextCompileTaskTrace[]> {
+  try {
+    return await listRecentContextCompileTaskTraces(params);
+  } catch (error) {
+    if (isMissingTaskTraceRelationError(error)) return [];
+    throw error;
+  }
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -116,7 +188,10 @@ function cosineSimilarity(left: number[] | null, right: number[] | null): number
   return Math.max(0, Math.min(1, score));
 }
 
-function facetSimilarity(base: ContextCompileTaskTrace, candidate: ContextCompileTaskTrace): number {
+function facetSimilarity(
+  base: ContextCompileTaskTrace,
+  candidate: ContextCompileTaskTrace,
+): number {
   const repoPathMatch =
     Boolean(base.repoPath) && Boolean(candidate.repoPath) && base.repoPath === candidate.repoPath
       ? 1
@@ -184,11 +259,11 @@ export async function buildLandscapeTrajectory(params: {
   const loaded = await loadLandscapeTrajectory(params);
   if (!loaded) return null;
 
-  const taskTrace = await findContextCompileTaskTraceByRunId(params.runId);
+  const taskTrace = await safeFindTaskTrace(params.runId);
   const taskSimilarity = taskTrace
     ? buildTaskSimilarity(
         taskTrace,
-        await listRecentContextCompileTaskTraces({
+        await safeListRecentTaskTraces({
           limit: 120,
           excludeRunId: params.runId,
         }),

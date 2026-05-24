@@ -807,7 +807,8 @@ export async function listLandscapeContradictionOverlay(
       const ids = contradictionIdsFromPayload(item, payload);
       if (!ids) return null;
 
-      const confidence = parseConfidenceFromPayload(payload) ?? labelToConfidenceScore(item.confidence);
+      const confidence =
+        parseConfidenceFromPayload(payload) ?? labelToConfidenceScore(item.confidence);
       if (confidence < input.confidenceMin) return null;
 
       const pairKeyRaw = typeof payload.pairKey === "string" ? payload.pairKey.trim() : "";
@@ -827,11 +828,7 @@ export async function listLandscapeContradictionOverlay(
         updatedAt: item.updatedAt,
       };
     })
-    .filter(
-      (
-        item,
-      ): item is LandscapeContradictionOverlayList["items"][number] => item !== null,
-    );
+    .filter((item): item is LandscapeContradictionOverlayList["items"][number] => item !== null);
 
   return {
     items,

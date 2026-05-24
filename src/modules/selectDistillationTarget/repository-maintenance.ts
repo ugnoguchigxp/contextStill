@@ -329,11 +329,11 @@ export async function getDistillationTargetSummary(
         ? "candidate_first"
         : pendingWebIngest > 0
           ? "web_first"
-        : pendingWiki > 0
-          ? "wiki_first"
-          : pendingVibeMemory > 0
-            ? "vibe_memory_fallback"
-            : "idle",
+          : pendingWiki > 0
+            ? "wiki_first"
+            : pendingVibeMemory > 0
+              ? "vibe_memory_fallback"
+              : "idle",
     queued,
     pendingKnowledgeCandidates,
     pendingWebIngest,

@@ -1131,7 +1131,8 @@ export async function compileContextPack(
     source: options?.source ?? "unknown",
   });
   const taskTraceEmbeddingStatus =
-    knowledge.stats.embeddingStatus === "provided" || knowledge.stats.embeddingStatus === "generated"
+    knowledge.stats.embeddingStatus === "provided" ||
+    knowledge.stats.embeddingStatus === "generated"
       ? "embedding_available"
       : knowledge.stats.embeddingStatus === "unavailable"
         ? "embedding_unavailable"

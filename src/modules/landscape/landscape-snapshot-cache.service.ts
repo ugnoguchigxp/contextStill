@@ -241,7 +241,11 @@ export async function purgeLandscapeSnapshotCache(input?: {
       deletedCount: 0,
       bySnapshotType: {
         landscape_snapshot: { deletedCount: 0, staleDeletedCount: 0, expiredDeletedCount: 0 },
-        landscape_replay_snapshot: { deletedCount: 0, staleDeletedCount: 0, expiredDeletedCount: 0 },
+        landscape_replay_snapshot: {
+          deletedCount: 0,
+          staleDeletedCount: 0,
+          expiredDeletedCount: 0,
+        },
         landscape_replay_comparison: {
           deletedCount: 0,
           staleDeletedCount: 0,

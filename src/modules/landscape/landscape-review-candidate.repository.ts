@@ -54,6 +54,7 @@ export async function listLandscapeReviewItemsForCandidateDraft(input: {
       .where(
         and(
           inArray(landscapeReviewItems.id, input.ids),
+          eq(landscapeReviewItems.status, input.status),
           sql`${landscapeReviewItems.source} <> 'contradiction_detection'`,
         ),
       )

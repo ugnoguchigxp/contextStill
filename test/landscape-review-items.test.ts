@@ -59,6 +59,7 @@ vi.mock("../src/modules/audit/audit-log.service.js", () => ({
 import {
   LandscapeReviewItemsError,
   buildLandscapeReviewItemCandidates,
+  listLandscapeContradictionOverlay,
   listLandscapeReviewItems,
   materializeLandscapeReviewItems,
   updateLandscapeReviewItemStatus,
@@ -810,5 +811,49 @@ describe("landscape review items service", () => {
 
     expect(result.items).toHaveLength(1);
     expect(result.count).toBe(3);
+  });
+
+  test("contradiction overlay excludes low confidence by threshold", async () => {
+    listLandscapeReviewItemRowsMock.mockResolvedValueOnce([
+      reviewItemRowFixture({
+        id: "review-item-ctr-1",
+        source: "contradiction_detection",
+        reason: "contradiction_review",
+        confidence: "low",
+        knowledgeId: "knowledge-left",
+        payload: {
+          rightKnowledgeId: "knowledge-right",
+          confidence: 0.55,
+          pairKey: "knowledge-left::knowledge-right",
+        },
+      }),
+      reviewItemRowFixture({
+        id: "review-item-ctr-2",
+        source: "contradiction_detection",
+        reason: "contradiction_review",
+        confidence: "high",
+        knowledgeId: "knowledge-left-2",
+        payload: {
+          rightKnowledgeId: "knowledge-right-2",
+          confidence: 0.84,
+          pairKey: "knowledge-left-2::knowledge-right-2",
+        },
+      }),
+    ]);
+    countLandscapeReviewItemRowsMock.mockResolvedValueOnce(2);
+
+    const overlay = await listLandscapeContradictionOverlay({
+      status: "pending",
+      confidenceMin: 0.62,
+      limit: 20,
+    });
+
+    expect(overlay.count).toBe(1);
+    expect(overlay.items[0]).toEqual(
+      expect.objectContaining({
+        reviewItemId: "review-item-ctr-2",
+        pairKey: "knowledge-left-2::knowledge-right-2",
+      }),
+    );
   });
 });

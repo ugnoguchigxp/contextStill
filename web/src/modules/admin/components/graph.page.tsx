@@ -6,7 +6,11 @@ import { Select } from "@/components/ui/select";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import { ContradictionReviewList } from "./contradiction-review-list";
-import { SandboxComparisonPanel, sandboxChangedKnowledgeIds } from "./sandbox-comparison-panel";
+import {
+  SandboxComparisonPanel,
+  sandboxChangedKnowledgeIds,
+  type SandboxDiffFilter,
+} from "./sandbox-comparison-panel";
 import { TrajectoryPanel, type TrajectoryStageFilter } from "./trajectory-panel";
 import {
   type GraphCommunityDisplayMode,
@@ -384,6 +388,13 @@ function landscapeSnapshotCacheTypeLabel(value: string): string {
   return value;
 }
 
+function formatBytes(value: number): string {
+  if (!Number.isFinite(value) || value <= 0) return "0 B";
+  if (value >= 1_000_000) return `${(value / 1_000_000).toFixed(1)} MB`;
+  if (value >= 1_000) return `${(value / 1_000).toFixed(1)} KB`;
+  return `${Math.trunc(value)} B`;
+}
+
 function healthLabel(summary: GraphCommunitySummary): string {
   if (summary.health.dead) return "cold";
   if (summary.health.stale || summary.health.thinEvidence) return "warm";
@@ -609,6 +620,7 @@ export function GraphPage() {
   const [selectedTrajectoryStage, setSelectedTrajectoryStage] =
     useState<TrajectoryStageFilter>("all");
   const [selectedSandboxRunId, setSelectedSandboxRunId] = useState<string | null>(null);
+  const [sandboxDiffFilter, setSandboxDiffFilter] = useState<SandboxDiffFilter>("all");
   const [showContradictionOverlay, setShowContradictionOverlay] = useState(false);
   const [contradictionStatus, setContradictionStatus] = useState<
     "pending" | "reviewing" | "resolved" | "dismissed" | "all"
@@ -868,13 +880,17 @@ export function GraphPage() {
         .slice(0, 4),
     [landscapeReplayComparison.data?.runs],
   );
-  const selectedSandboxRun = useMemo(
-    () => riskyReplayRuns.find((run) => run.runId === selectedSandboxRunId) ?? null,
-    [riskyReplayRuns, selectedSandboxRunId],
+  const sandboxComparisonRuns = useMemo(
+    () => landscapeReplayComparison.data?.runs ?? [],
+    [landscapeReplayComparison.data?.runs],
   );
+  const selectedSandboxRun = useMemo(() => {
+    if (!selectedSandboxRunId) return null;
+    return sandboxComparisonRuns.find((run) => run.runId === selectedSandboxRunId) ?? null;
+  }, [sandboxComparisonRuns, selectedSandboxRunId]);
   const changedSandboxKnowledgeIds = useMemo(
-    () => sandboxChangedKnowledgeIds(selectedSandboxRun),
-    [selectedSandboxRun],
+    () => sandboxChangedKnowledgeIds(selectedSandboxRun, sandboxDiffFilter),
+    [selectedSandboxRun, sandboxDiffFilter],
   );
   const communityKeyByKnowledgeId = useMemo(() => {
     const map = new Map<string, string>();
@@ -907,24 +923,29 @@ export function GraphPage() {
     if (inCommunitySupernodeMode)
       return [] as Array<{
         id: string;
+        pairKey: string;
         sourceNodeId: string;
         targetNodeId: string;
         confidence: number;
         status: LandscapeContradictionOverlayItem["status"];
         confidenceLabel: LandscapeContradictionOverlayItem["confidenceLabel"];
+        evidencePreview: string;
       }>;
 
     return contradictionOverlayItems
       .map((item) => {
         const sourceNodeId = `knowledge:${item.leftKnowledgeId}`;
         const targetNodeId = `knowledge:${item.rightKnowledgeId}`;
+        const evidencePreview = item.evidence.slice(0, 2).join(" / ");
         return {
-          id: item.pairKey,
+          id: `${item.pairKey}:${item.reviewItemId}`,
+          pairKey: item.pairKey,
           sourceNodeId,
           targetNodeId,
           confidence: item.confidence,
           status: item.status,
           confidenceLabel: item.confidenceLabel,
+          evidencePreview,
         };
       })
       .filter(
@@ -995,6 +1016,7 @@ export function GraphPage() {
       setSelectedTrajectoryRunId(null);
       setSelectedTrajectoryStage("all");
       setSelectedSandboxRunId(null);
+      setSandboxDiffFilter("all");
       return;
     }
     if (
@@ -1006,11 +1028,18 @@ export function GraphPage() {
     }
     if (
       selectedSandboxRunId &&
-      !riskyReplayRuns.some((run) => run.runId === selectedSandboxRunId)
+      !sandboxComparisonRuns.some((run) => run.runId === selectedSandboxRunId)
     ) {
       setSelectedSandboxRunId(null);
+      setSandboxDiffFilter("all");
     }
-  }, [viewMode, riskyReplayRuns, selectedTrajectoryRunId, selectedSandboxRunId]);
+  }, [
+    viewMode,
+    riskyReplayRuns,
+    sandboxComparisonRuns,
+    selectedTrajectoryRunId,
+    selectedSandboxRunId,
+  ]);
 
   const toggleRelationAxis = (axis: GraphRelationAxis) => {
     setSelectedId(null);
@@ -1281,6 +1310,12 @@ export function GraphPage() {
                 <span className="legend-chip dead-zone" />
                 <span>Dead Zone</span>
               </div>
+              {changedSandboxKnowledgeIds.length > 0 ? (
+                <div className="legend-item">
+                  <span className="legend-chip sandbox" />
+                  <span>Sandbox Affected</span>
+                </div>
+              ) : null}
             </>
           ) : (
             <>
@@ -1365,6 +1400,14 @@ export function GraphPage() {
             <div className="stat-row graph-stats-subtle">
               <span>Contradictions</span>
               <strong>{contradictionOverlayEdges.length}</strong>
+            </div>
+          ) : null}
+          {viewMode === "community" && changedSandboxKnowledgeIds.length > 0 ? (
+            <div className="stat-row graph-stats-subtle">
+              <span>
+                {sandboxDiffFilter === "all" ? "Sandbox Changed IDs" : "Sandbox Filter IDs"}
+              </span>
+              <strong>{changedSandboxKnowledgeIds.length}</strong>
             </div>
           ) : null}
           <div className="stat-row">
@@ -1687,18 +1730,52 @@ export function GraphPage() {
                   {landscapeSnapshotCacheStatus.isLoading ? (
                     <p>Loading cache status...</p>
                   ) : landscapeSnapshotCacheStatus.data ? (
-                    <p>
-                      {landscapeSnapshotCacheStatus.data.enabled
-                        ? `enabled ttl=${landscapeSnapshotCacheStatus.data.ttlSeconds}s`
-                        : "disabled"}{" "}
-                      /{" "}
-                      {landscapeSnapshotCacheStatus.data.snapshots
-                        .map(
-                          (snapshot) =>
-                            `${landscapeSnapshotCacheTypeLabel(snapshot.snapshotType)} ready ${snapshot.readyCount} stale ${snapshot.staleCount}`,
-                        )
-                        .join(" / ")}
-                    </p>
+                    <>
+                      <p>
+                        {landscapeSnapshotCacheStatus.data.enabled
+                          ? `enabled ttl=${landscapeSnapshotCacheStatus.data.ttlSeconds}s`
+                          : `disabled ttl=${landscapeSnapshotCacheStatus.data.ttlSeconds}s`}
+                        {landscapeSnapshotCacheStatus.data.disabledReason
+                          ? ` (${landscapeSnapshotCacheStatus.data.disabledReason})`
+                          : ""}
+                      </p>
+                      <div className="graph-cache-table-wrap">
+                        <table className="graph-cache-table">
+                          <thead>
+                            <tr>
+                              <th>Type</th>
+                              <th>Ready</th>
+                              <th>Stale</th>
+                              <th>Expired</th>
+                              <th>Oldest</th>
+                              <th>Latest</th>
+                              <th>Expires</th>
+                              <th>Size</th>
+                              <th>Last Purge</th>
+                            </tr>
+                          </thead>
+                          <tbody>
+                            {landscapeSnapshotCacheStatus.data.snapshots.map((snapshot) => (
+                              <tr key={`cache-${snapshot.snapshotType}`}>
+                                <td>{landscapeSnapshotCacheTypeLabel(snapshot.snapshotType)}</td>
+                                <td>{snapshot.readyCount}</td>
+                                <td>{snapshot.staleCount}</td>
+                                <td>{snapshot.expiredReadyCount}</td>
+                                <td>{snapshot.oldestGeneratedAt ?? "-"}</td>
+                                <td>{snapshot.latestGeneratedAt ?? "-"}</td>
+                                <td>{snapshot.latestExpiresAt ?? "-"}</td>
+                                <td>{formatBytes(snapshot.estimatedPayloadBytes)}</td>
+                                <td>
+                                  {snapshot.lastPurge
+                                    ? `${snapshot.lastPurge.deletedCount} @ ${snapshot.lastPurge.purgedAt}`
+                                    : "-"}
+                                </td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                    </>
                   ) : (
                     <p>Cache status unavailable.</p>
                   )}
@@ -2343,7 +2420,10 @@ export function GraphPage() {
                                         size="sm"
                                         variant="outline"
                                         className="h-7 px-2 text-[11px]"
-                                        onClick={() => setSelectedSandboxRunId(run.runId)}
+                                        onClick={() => {
+                                          setSelectedSandboxRunId(run.runId);
+                                          setSandboxDiffFilter("all");
+                                        }}
                                       >
                                         Compare Sandbox
                                       </Button>
@@ -2365,7 +2445,16 @@ export function GraphPage() {
                                 setSelectedTrajectoryStage("all");
                               }}
                             />
-                            <SandboxComparisonPanel run={selectedSandboxRun} />
+                            <SandboxComparisonPanel
+                              runs={sandboxComparisonRuns}
+                              selectedRunId={selectedSandboxRunId}
+                              onSelectRun={setSelectedSandboxRunId}
+                              diffFilter={sandboxDiffFilter}
+                              onDiffFilterChange={setSandboxDiffFilter}
+                              onSelectKnowledgeId={(knowledgeId) =>
+                                setSelectedId(`knowledge:${knowledgeId}`)
+                              }
+                            />
                           </div>
                         </>
                       ) : (
@@ -2567,7 +2656,11 @@ export function GraphPage() {
                       className="graph-edge contradiction"
                       strokeWidth={strokeWidth}
                       opacity={opacity}
-                    />
+                    >
+                      <title>
+                        {`pair=${edge.pairKey} confidence=${edge.confidence.toFixed(3)} (${edge.confidenceLabel}) status=${edge.status}${edge.evidencePreview ? ` evidence=${edge.evidencePreview}` : ""}`}
+                      </title>
+                    </line>
                   );
                 })
               : null}

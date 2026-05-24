@@ -466,9 +466,10 @@ function mergeRuntimeSettings(
   merged.taskRouting.agenticCompile.fallback = normalizeProviderList(
     merged.taskRouting.agenticCompile.fallback,
   );
-  merged.general.distillationPriority.targetPriorityOrder = normalizeDistillationTargetPriorityOrder(
-    merged.general.distillationPriority.targetPriorityOrder,
-  );
+  merged.general.distillationPriority.targetPriorityOrder =
+    normalizeDistillationTargetPriorityOrder(
+      merged.general.distillationPriority.targetPriorityOrder,
+    );
   merged.search.providerOrder = [...new Set(merged.search.providerOrder)];
   return merged;
 }

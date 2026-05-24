@@ -113,8 +113,7 @@ export async function listLandscapeSnapshotCacheSummaryRows(): Promise<
       oldestGeneratedAt: sql<Date | null>`min(${landscapeSnapshots.generatedAt})`,
       latestGeneratedAt: sql<Date | null>`max(${landscapeSnapshots.generatedAt})`,
       latestExpiresAt: sql<Date | null>`max(${landscapeSnapshots.expiresAt})`,
-      estimatedPayloadBytes:
-        sql<number>`coalesce(sum(octet_length(${landscapeSnapshots.payload}::text)), 0)::int`,
+      estimatedPayloadBytes: sql<number>`coalesce(sum(octet_length(${landscapeSnapshots.payload}::text)), 0)::int`,
     })
     .from(landscapeSnapshots)
     .groupBy(landscapeSnapshots.snapshotType);
@@ -242,7 +241,12 @@ export async function deleteStaleOrExpiredLandscapeSnapshotCacheRows(input?: {
 
   const deletedRows = await db
     .delete(landscapeSnapshots)
-    .where(inArray(landscapeSnapshots.id, targetRows.map((row) => row.id)))
+    .where(
+      inArray(
+        landscapeSnapshots.id,
+        targetRows.map((row) => row.id),
+      ),
+    )
     .returning({ id: landscapeSnapshots.id });
 
   return {

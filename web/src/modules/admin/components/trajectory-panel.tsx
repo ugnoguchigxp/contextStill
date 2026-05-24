@@ -1,7 +1,10 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import { Select } from "@/components/ui/select";
-import type { LandscapeTrajectoryCandidate, LandscapeTrajectoryResult } from "../repositories/admin.repository";
+import type {
+  LandscapeTrajectoryCandidate,
+  LandscapeTrajectoryResult,
+} from "../repositories/admin.repository";
 
 export type TrajectoryStageFilter =
   | "all"
@@ -48,7 +51,10 @@ function stageLabel(stage: TrajectoryStageFilter): string {
   }
 }
 
-function matchesStage(candidate: LandscapeTrajectoryCandidate, stage: TrajectoryStageFilter): boolean {
+function matchesStage(
+  candidate: LandscapeTrajectoryCandidate,
+  stage: TrajectoryStageFilter,
+): boolean {
   switch (stage) {
     case "text":
       return candidate.textRank !== null;
@@ -149,8 +155,9 @@ export function TrajectoryPanel(props: TrajectoryPanelProps) {
               <span>Stages</span>
               <p>
                 text {props.trajectory.stageCounts.textHit} / vector{" "}
-                {props.trajectory.stageCounts.vectorHit} / merged {props.trajectory.stageCounts.merged}
-                / final {props.trajectory.stageCounts.finalRanked}
+                {props.trajectory.stageCounts.vectorHit} / merged{" "}
+                {props.trajectory.stageCounts.merged}/ final{" "}
+                {props.trajectory.stageCounts.finalRanked}
               </p>
             </div>
             <div className="graph-community-summary-item">
@@ -165,16 +172,17 @@ export function TrajectoryPanel(props: TrajectoryPanelProps) {
             <div className="graph-review-status-note">
               task facets: retrieval={props.trajectory.taskTrace.retrievalMode} repo=
               {props.trajectory.taskTrace.repoKey ?? props.trajectory.taskTrace.repoPath ?? "-"} /
-              tech={props.trajectory.taskTrace.technologies.join(",") || "-"} /
-              change={props.trajectory.taskTrace.changeTypes.join(",") || "-"} /
-              domain={props.trajectory.taskTrace.domains.join(",") || "-"} / embedding=
+              tech={props.trajectory.taskTrace.technologies.join(",") || "-"} / change=
+              {props.trajectory.taskTrace.changeTypes.join(",") || "-"} / domain=
+              {props.trajectory.taskTrace.domains.join(",") || "-"} / embedding=
               {props.trajectory.taskTrace.embeddingStatus}
             </div>
           ) : null}
 
           {props.trajectory.taskSimilarity.length > 0 ? (
             <div className="graph-review-status-note">
-              task similarity: {props.trajectory.taskSimilarity
+              task similarity:{" "}
+              {props.trajectory.taskSimilarity
                 .slice(0, 3)
                 .map((item) => `${item.runId}:${item.mode}:${item.similarity.toFixed(2)}`)
                 .join(" / ")}

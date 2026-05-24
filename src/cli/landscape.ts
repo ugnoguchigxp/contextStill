@@ -10,6 +10,7 @@ import {
   clearLandscapeSnapshotCache,
   getLandscapeSnapshotCacheStatus,
   isLandscapeSnapshotCacheEnabled,
+  purgeLandscapeSnapshotCache,
   type LandscapeSnapshotCacheType,
 } from "../modules/landscape/landscape-snapshot-cache.service.js";
 import { buildLandscapeTrajectory } from "../modules/landscape/landscape-trajectory.service.js";
@@ -49,6 +50,7 @@ type CliOptions = {
   queueLimit: number;
   snapshotCacheStatus: boolean;
   snapshotCacheRefresh: boolean;
+  snapshotCachePurge: boolean;
   snapshotCacheWarmup: boolean;
   snapshotCacheTypes: LandscapeSnapshotCacheType[];
   json: boolean;
@@ -228,6 +230,7 @@ function parseArgs(args: string[]): CliOptions {
     queueLimit: 100,
     snapshotCacheStatus: false,
     snapshotCacheRefresh: false,
+    snapshotCachePurge: false,
     snapshotCacheWarmup: true,
     snapshotCacheTypes: [
       "landscape_snapshot",
@@ -386,6 +389,10 @@ function parseArgs(args: string[]): CliOptions {
     }
     if (arg === "--snapshot-cache-refresh") {
       options.snapshotCacheRefresh = true;
+      continue;
+    }
+    if (arg === "--snapshot-cache-purge") {
+      options.snapshotCachePurge = true;
       continue;
     }
     if (arg === "--snapshot-cache-no-warmup") {
@@ -651,11 +658,86 @@ function printSnapshotCacheStatus(
 ): void {
   console.log(`Landscape Snapshot Cache: ${status.enabled ? "enabled" : "disabled"}`);
   console.log(`TTL: ${status.ttlSeconds}s`);
+  if (!status.enabled && status.disabledReason) {
+    console.log(`Reason: ${status.disabledReason}`);
+  }
   for (const snapshot of status.snapshots) {
+    const purge = snapshot.lastPurge
+      ? ` last_purge=${snapshot.lastPurge.purgedAt} deleted=${snapshot.lastPurge.deletedCount}`
+      : "";
     console.log(
-      `- ${snapshot.snapshotType} ready=${snapshot.readyCount} stale=${snapshot.staleCount} latest=${snapshot.latestGeneratedAt ?? "-"} expires=${snapshot.latestExpiresAt ?? "-"}`,
+      `- ${snapshot.snapshotType} ready=${snapshot.readyCount} stale=${snapshot.staleCount} expired=${snapshot.expiredReadyCount} oldest=${snapshot.oldestGeneratedAt ?? "-"} latest=${snapshot.latestGeneratedAt ?? "-"} expires=${snapshot.latestExpiresAt ?? "-"} size=${snapshot.estimatedPayloadBytes}${purge}`,
     );
   }
+}
+
+function contradictionPairLabel(candidate: {
+  evidence: string[];
+  payload: Record<string, unknown>;
+}): string {
+  const payloadPairKey =
+    typeof candidate.payload.pairKey === "string" ? candidate.payload.pairKey : "";
+  if (payloadPairKey) return payloadPairKey;
+  const leftKnowledgeId =
+    typeof candidate.payload.leftKnowledgeId === "string" ? candidate.payload.leftKnowledgeId : "";
+  const rightKnowledgeId =
+    typeof candidate.payload.rightKnowledgeId === "string"
+      ? candidate.payload.rightKnowledgeId
+      : "";
+  if (leftKnowledgeId && rightKnowledgeId) return `${leftKnowledgeId}::${rightKnowledgeId}`;
+  const pairEvidence = candidate.evidence.find((item) => item.startsWith("pair="));
+  if (pairEvidence) return pairEvidence.slice("pair=".length).trim();
+  return "unknown";
+}
+
+function buildContradictionDryRunSummary(
+  result: Awaited<ReturnType<typeof materializeLandscapeReviewItems>>,
+) {
+  const contradictionCandidates = result.candidates.filter(
+    (candidate) =>
+      candidate.source === "contradiction_detection" || candidate.reason === "contradiction_review",
+  );
+  if (contradictionCandidates.length === 0) return null;
+
+  const confidenceDistribution = { low: 0, medium: 0, high: 0 };
+  const pairCounts = new Map<string, number>();
+  for (const candidate of contradictionCandidates) {
+    if (candidate.confidence === "high") confidenceDistribution.high += 1;
+    else if (candidate.confidence === "medium") confidenceDistribution.medium += 1;
+    else confidenceDistribution.low += 1;
+    const pair = contradictionPairLabel(candidate);
+    pairCounts.set(pair, (pairCounts.get(pair) ?? 0) + 1);
+  }
+
+  let topNoisyPair: { pairKey: string; count: number } | null = null;
+  for (const [pairKey, count] of pairCounts.entries()) {
+    if (!topNoisyPair || count > topNoisyPair.count) {
+      topNoisyPair = { pairKey, count };
+    }
+  }
+
+  return {
+    candidateCount: contradictionCandidates.length,
+    confidenceDistribution,
+    topNoisyPair,
+    materializeSkippedCount: result.skippedCount,
+  };
+}
+
+function printContradictionDryRunSummary(
+  summary: ReturnType<typeof buildContradictionDryRunSummary>,
+): void {
+  if (!summary) return;
+  console.log("");
+  console.log("Contradiction dry-run summary:");
+  console.log(`Candidates: ${summary.candidateCount}`);
+  console.log(
+    `Confidence: high=${summary.confidenceDistribution.high} medium=${summary.confidenceDistribution.medium} low=${summary.confidenceDistribution.low}`,
+  );
+  console.log(
+    `Top noisy pair: ${summary.topNoisyPair ? `${summary.topNoisyPair.pairKey} (${summary.topNoisyPair.count})` : "-"}`,
+  );
+  console.log(`Materialize skipped: ${summary.materializeSkippedCount}`);
 }
 
 async function warmupLandscapeSnapshotCache(
@@ -763,6 +845,40 @@ async function main(): Promise<void> {
     return;
   }
 
+  if (options.snapshotCachePurge) {
+    const purge = await purgeLandscapeSnapshotCache({
+      snapshotTypes: options.snapshotCacheTypes,
+    });
+    const status = await getLandscapeSnapshotCacheStatus();
+    if (options.json) {
+      console.log(
+        JSON.stringify(
+          {
+            purgedAt: purge.purgedAt,
+            requestedTypes: purge.requestedSnapshotTypes,
+            staleDeletedCount: purge.staleDeletedCount,
+            expiredDeletedCount: purge.expiredDeletedCount,
+            deletedCount: purge.deletedCount,
+            bySnapshotType: purge.bySnapshotType,
+            error: purge.error,
+            cacheStatus: status,
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+    console.log(
+      `Landscape Snapshot Cache purge deleted=${purge.deletedCount} stale=${purge.staleDeletedCount} expired=${purge.expiredDeletedCount}`,
+    );
+    if (purge.error) {
+      console.log(`Purge error: ${purge.error}`);
+    }
+    printSnapshotCacheStatus(status);
+    return;
+  }
+
   if (options.trajectoryRunId) {
     const trajectory = await buildLandscapeTrajectory({
       runId: options.trajectoryRunId,
@@ -828,11 +944,22 @@ async function main(): Promise<void> {
       sources: options.queueSources,
       materializeLimit: options.queueLimit,
     });
+    const contradictionSummary = buildContradictionDryRunSummary(result);
     if (options.json) {
-      console.log(JSON.stringify(result, null, 2));
+      console.log(
+        JSON.stringify(
+          {
+            ...result,
+            contradictionDryRunSummary: contradictionSummary,
+          },
+          null,
+          2,
+        ),
+      );
       return;
     }
     printQueueMaterializeSummary(result);
+    printContradictionDryRunSummary(contradictionSummary);
     return;
   }
 
