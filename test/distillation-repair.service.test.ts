@@ -222,6 +222,37 @@ describe("Distillation Repair Service", () => {
     expect(action?.safeToApply).toBe(false);
   });
 
+  it("does not detect queue_stopped when the same queue has recent progress", async () => {
+    const ancientTime = new Date(Date.now() - 3600 * 1000);
+    const recentTime = new Date();
+    setupDbMock([
+      {
+        id: "pending-row",
+        targetKind: "wiki_file",
+        status: "pending",
+        createdAt: ancientTime,
+        lockedAt: null,
+        heartbeatAt: null,
+        updatedAt: ancientTime,
+      },
+      {
+        id: "completed-row",
+        targetKind: "wiki_file",
+        status: "completed",
+        createdAt: ancientTime,
+        lockedAt: null,
+        heartbeatAt: null,
+        updatedAt: recentTime,
+        completedAt: recentTime,
+      },
+    ]);
+
+    const report = await runDistillationRepair();
+    const action = report.actions.find((a) => a.type === "queue_stopped");
+    expect(action).toBeUndefined();
+    expect(report.skipped.queueStopped).toBe(0);
+  });
+
   it("handles blocked_by_higher_priority when blocked by higher priority kind rows", async () => {
     setupDbMock([
       {

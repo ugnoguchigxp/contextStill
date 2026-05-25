@@ -82,6 +82,7 @@ type ScopedStateRow = Pick<
   | "lastError"
   | "priorityGroup"
   | "metadata"
+  | "completedAt"
 >;
 
 type QueueStats = {
@@ -92,6 +93,7 @@ type QueueStats = {
   retryablePaused: number;
   manualPaused: number;
   oldestQueuedAgeMinutes: number | null;
+  lastProgressAgeMinutes: number | null;
 };
 
 type HigherPriorityBlockers = {
@@ -136,6 +138,7 @@ function queueStatsFromRows(rows: ScopedStateRow[], nowMs: number, staleAtMs: nu
   let retryablePaused = 0;
   let manualPaused = 0;
   let oldestQueuedMs: number | null = null;
+  let newestProgressMs: number | null = null;
 
   for (const row of rows) {
     if (row.status === "pending") {
@@ -165,6 +168,16 @@ function queueStatsFromRows(rows: ScopedStateRow[], nowMs: number, staleAtMs: nu
     }
   }
 
+  for (const row of rows) {
+    if (row.status !== "completed" && row.status !== "skipped" && row.status !== "failed") {
+      continue;
+    }
+    const progressMs = (row.completedAt ?? row.updatedAt)?.getTime() ?? null;
+    if (progressMs === null) continue;
+    newestProgressMs =
+      newestProgressMs === null ? progressMs : Math.max(newestProgressMs, progressMs);
+  }
+
   return {
     queued,
     running,
@@ -173,6 +186,8 @@ function queueStatsFromRows(rows: ScopedStateRow[], nowMs: number, staleAtMs: nu
     retryablePaused,
     manualPaused,
     oldestQueuedAgeMinutes: oldestAgeMinutes(oldestQueuedMs, nowMs),
+    lastProgressAgeMinutes:
+      newestProgressMs === null ? null : oldestAgeMinutes(newestProgressMs, nowMs),
   };
 }
 
@@ -276,6 +291,7 @@ async function loadScopedRows(
       nextRetryAt: distillationTargetStates.nextRetryAt,
       lastError: distillationTargetStates.lastError,
       metadata: distillationTargetStates.metadata,
+      completedAt: distillationTargetStates.completedAt,
     })
     .from(distillationTargetStates)
     .where(and(...conditions));
@@ -308,6 +324,7 @@ async function loadHigherPriorityRows(
       nextRetryAt: distillationTargetStates.nextRetryAt,
       lastError: distillationTargetStates.lastError,
       metadata: distillationTargetStates.metadata,
+      completedAt: distillationTargetStates.completedAt,
     })
     .from(distillationTargetStates)
     .where(
@@ -443,12 +460,17 @@ export async function runDistillationRepair(
   }
 
   const runnableQueued = queueStats.queued + queueStats.retryablePaused;
+  const queueStoppedThresholdMinutes = groupedConfig.distillation.pipelineLockStaleSeconds / 60;
+  const noRecentProgress =
+    queueStats.lastProgressAgeMinutes === null ||
+    queueStats.lastProgressAgeMinutes > queueStoppedThresholdMinutes;
   const queueStopped =
     runnableQueued > 0 &&
     queueStats.running === 0 &&
     !blockedByHigherPriority &&
     queueStats.oldestQueuedAgeMinutes !== null &&
-    queueStats.oldestQueuedAgeMinutes > groupedConfig.distillation.pipelineLockStaleSeconds / 60;
+    queueStats.oldestQueuedAgeMinutes > queueStoppedThresholdMinutes &&
+    noRecentProgress;
   if (queueStopped) {
     actions.push({
       type: "queue_stopped",
@@ -460,6 +482,7 @@ export async function runDistillationRepair(
         queued: queueStats.queued,
         retryablePaused: queueStats.retryablePaused,
         oldestQueuedAgeMinutes: queueStats.oldestQueuedAgeMinutes,
+        lastProgressAgeMinutes: queueStats.lastProgressAgeMinutes,
       },
     });
   }

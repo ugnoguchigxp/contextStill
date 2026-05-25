@@ -99,14 +99,18 @@ function appendDistillationReasons(
     reasons.push(`${prefix}_PIPELINE_LOCK_STALE`);
   }
   const runnableQueued = distillation.queueHealth.queued + distillation.queueHealth.retryablePaused;
+  const queueStoppedThresholdMinutes = groupedConfig.distillation.pipelineLockStaleSeconds / 60;
+  const lastProgressAgeMinutes = distillation.runs.lastRunAgeMinutes;
+  const noRecentProgress =
+    lastProgressAgeMinutes === null || lastProgressAgeMinutes > queueStoppedThresholdMinutes;
   if (
     runnableQueued > 0 &&
     distillation.queueHealth.running === 0 &&
     distillation.launchAgent.loaded &&
     !distillation.queueHealth.blockedByHigherPriority &&
     distillation.queueHealth.oldestQueuedAgeMinutes !== null &&
-    distillation.queueHealth.oldestQueuedAgeMinutes >
-      groupedConfig.distillation.pipelineLockStaleSeconds / 60
+    distillation.queueHealth.oldestQueuedAgeMinutes > queueStoppedThresholdMinutes &&
+    noRecentProgress
   ) {
     reasons.push(`${prefix}_QUEUE_STOPPED`);
   }

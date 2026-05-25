@@ -153,6 +153,14 @@ function applyRunRow(runs: DistillationRuns, row: DistillationRunsRow) {
   runs.lastOkRunAgeMinutes = runs.lastOkRunAt ? minutesSince(runs.lastOkRunAt) : null;
 }
 
+function hasRecentProgress(runs: DistillationRuns): boolean {
+  const ageMinutes = runs.lastRunAgeMinutes;
+  return (
+    typeof ageMinutes === "number" &&
+    ageMinutes <= groupedConfig.distillation.pipelineLockStaleSeconds / 60
+  );
+}
+
 async function loadDomainDistillationRuns(
   targetKind: "wiki_file" | "vibe_memory",
 ): Promise<DistillationRunsRow> {
@@ -208,8 +216,8 @@ async function loadDomainDistillationRuns(
       count(*) filter (where status = 'completed')::int as ok_runs,
       count(*) filter (where status = 'skipped')::int as skipped_runs,
       count(*) filter (where status = 'failed')::int as failed_runs,
-      max(ended_at) as last_run_at,
-      max(ended_at) filter (where status = 'completed') as last_ok_run_at,
+      (max(ended_at)) at time zone 'UTC' as last_run_at,
+      (max(ended_at) filter (where status = 'completed')) at time zone 'UTC' as last_ok_run_at,
       coalesce((
         select jsonb_agg(
           jsonb_build_object('reason', reason, 'count', run_count)
@@ -522,7 +530,8 @@ function nextActionsForDistillation(
     queueHealth.running === 0 &&
     !queueHealth.blockedByHigherPriority &&
     queueHealth.oldestQueuedAgeMinutes !== null &&
-    queueHealth.oldestQueuedAgeMinutes > groupedConfig.distillation.pipelineLockStaleSeconds / 60
+    queueHealth.oldestQueuedAgeMinutes > groupedConfig.distillation.pipelineLockStaleSeconds / 60 &&
+    !hasRecentProgress(runs)
   ) {
     nextActions.push(
       `${config.label} のqueueが進んでいません。${repairDryRunCommand} で queue 状態を確認し、LaunchAgent と ${config.logPath} を確認する`,
