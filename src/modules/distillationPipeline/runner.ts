@@ -1323,57 +1323,35 @@ export async function runDistillationPipeline(
     };
   }
 
+  const findCandidatePromise = runParallelFindCandidateLane(input, distillationVersion);
+  const coverEvidencePromise = runParallelCoverEvidenceLane(input, distillationVersion);
+
   let coverEvidenceResult: DistillationPipelineTargetResult | null = null;
-  let findCandidateResult: DistillationPipelineTargetResult | null = null;
-  const claimedResults: DistillationPipelineTargetResult[] = [];
-  const inFlight = new Set<Promise<void>>();
-  const track = (promise: Promise<void>): void => {
-    inFlight.add(promise);
-    void promise.finally(() => {
-      inFlight.delete(promise);
-    });
-  };
-
-  track(
-    (async () => {
-      coverEvidenceResult = await runParallelCoverEvidenceLane(input, distillationVersion);
-    })(),
-  );
-  track(
-    (async () => {
-      findCandidateResult = await runParallelFindCandidateLane(input, distillationVersion);
-    })(),
-  );
-
-  let remainingClaimLimit = positiveLimit(
-    input.limit ?? groupedConfig.distillation.pipelineClaimLimit,
-  );
-  let canAttemptClaim = true;
-  while (remainingClaimLimit > 0 || inFlight.size > 0) {
-    if (remainingClaimLimit > 0 && canAttemptClaim) {
-      const target = await claimNextDistillationTargetState({
-        distillationVersion,
-        targetKind: targetKindFilter(input.kind),
-        worker: input.worker,
-        requireCandidateResultsForSourceTargets:
-          groupedConfig.distillation.findCandidateBackgroundEnabled,
-      });
-      if (target) {
-        remainingClaimLimit -= 1;
-        track(
-          (async () => {
-            claimedResults.push(await runClaimedTarget(target, input));
-          })(),
-        );
-        continue;
-      }
-      canAttemptClaim = false;
-    }
-
-    if (inFlight.size === 0) break;
-    await Promise.race(inFlight);
-    canAttemptClaim = true;
+  try {
+    coverEvidenceResult = await coverEvidencePromise;
+  } catch (error) {
+    await findCandidatePromise.catch(() => undefined);
+    throw error;
   }
+
+  const claimedResults: DistillationPipelineTargetResult[] = [];
+  for (
+    let index = 0;
+    index < positiveLimit(input.limit ?? groupedConfig.distillation.pipelineClaimLimit);
+    index += 1
+  ) {
+    const target = await claimNextDistillationTargetState({
+      distillationVersion,
+      targetKind: targetKindFilter(input.kind),
+      worker: input.worker,
+      requireCandidateResultsForSourceTargets:
+        groupedConfig.distillation.findCandidateBackgroundEnabled,
+    });
+    if (!target) break;
+    claimedResults.push(await runClaimedTarget(target, input));
+  }
+
+  const findCandidateResult = await findCandidatePromise;
 
   const results: DistillationPipelineTargetResult[] = [];
   if (coverEvidenceResult) results.push(coverEvidenceResult);

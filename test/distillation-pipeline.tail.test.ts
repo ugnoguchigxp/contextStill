@@ -32,6 +32,7 @@ const mocks = vi.hoisted(() => ({
   runFinalizeDistille: vi.fn(),
   listKnowledgeIdsByTargetStateId: vi.fn(),
   ensureRuntimeSettingsLoaded: vi.fn(),
+  reloadRuntimeSettingsCache: vi.fn(),
 }));
 
 vi.mock("../src/modules/selectDistillationTarget/inventory.service.js", () => ({
@@ -95,6 +96,7 @@ vi.mock("../src/modules/finalizeDistille/repository.js", () => ({
 
 vi.mock("../src/modules/settings/settings.service.js", () => ({
   ensureRuntimeSettingsLoaded: mocks.ensureRuntimeSettingsLoaded,
+  reloadRuntimeSettingsCache: mocks.reloadRuntimeSettingsCache,
 }));
 
 function targetRow(overrides: Record<string, unknown> = {}) {
@@ -208,6 +210,7 @@ describe("runDistillationPipeline", () => {
     mocks.recordProviderRateLimit.mockResolvedValue(undefined);
     mocks.recordProviderUsage.mockResolvedValue(undefined);
     mocks.ensureRuntimeSettingsLoaded.mockResolvedValue(undefined);
+    mocks.reloadRuntimeSettingsCache.mockResolvedValue(undefined);
     groupedConfig.distillation.pipelineClaimLimit = 1;
   });
 
