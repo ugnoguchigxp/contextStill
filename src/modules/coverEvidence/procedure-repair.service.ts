@@ -178,6 +178,7 @@ export async function repairProcedureCandidate(
         auditContext: {
           domain: "coverEvidence",
           id: input.id,
+          stage: "procedure_repair",
           assessment: "procedure-repair",
         },
         signal: input.signal,

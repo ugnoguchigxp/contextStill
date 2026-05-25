@@ -1,6 +1,7 @@
 import { and, asc, desc, eq, lt, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { auditLogs } from "../../db/schema.js";
+import { redactSecretRecord } from "../../shared/utils/secret-redaction.js";
 
 const DEFAULT_AUDIT_LOG_RETENTION_DAYS = 7;
 let auditLogDisabledReason: string | null = null;
@@ -31,6 +32,9 @@ export const auditEventTypes = {
   coverEvidenceStarted: "COVER_EVIDENCE_STARTED",
   coverEvidenceCompleted: "COVER_EVIDENCE_COMPLETED",
   coverEvidenceFailed: "COVER_EVIDENCE_FAILED",
+  coverEvidenceLlmStarted: "COVER_EVIDENCE_LLM_STARTED",
+  coverEvidenceLlmCompleted: "COVER_EVIDENCE_LLM_COMPLETED",
+  coverEvidenceLlmFailed: "COVER_EVIDENCE_LLM_FAILED",
   coverEvidenceReprocessRequested: "COVER_EVIDENCE_REPROCESS_REQUESTED",
   coverEvidenceProcedureRepairStarted: "COVER_EVIDENCE_PROCEDURE_REPAIR_STARTED",
   coverEvidenceProcedureRepairCompleted: "COVER_EVIDENCE_PROCEDURE_REPAIR_COMPLETED",
@@ -140,7 +144,7 @@ export async function recordAuditLog(input: RecordAuditLogInput): Promise<void> 
   await db.insert(auditLogs).values({
     eventType,
     actor: input.actor,
-    payload: input.payload ?? {},
+    payload: redactSecretRecord(input.payload ?? {}),
     createdAt: input.createdAt ?? new Date(),
   });
 }

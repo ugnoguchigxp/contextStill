@@ -1,6 +1,7 @@
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { agentDiffEntries, vibeMemories } from "../../db/schema.js";
+import { redactSecretRecord, redactSecrets } from "../../shared/utils/secret-redaction.js";
 
 export type VibeMemorySeed = {
   sessionId: string;
@@ -15,10 +16,10 @@ export async function insertVibeMemory(seed: VibeMemorySeed) {
     .insert(vibeMemories)
     .values({
       sessionId: seed.sessionId,
-      content: seed.content,
+      content: redactSecrets(seed.content),
       memoryType: seed.memoryType ?? "chat",
       embedding: seed.embedding,
-      metadata: seed.metadata ?? {},
+      metadata: redactSecretRecord(seed.metadata ?? {}),
     })
     .returning();
   return inserted;

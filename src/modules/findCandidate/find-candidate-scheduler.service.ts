@@ -112,12 +112,14 @@ function resolveProviderAndModel(params: {
 export async function decideFindCandidateSchedule(params: {
   targetKind: FindCandidateTargetKind;
   providerOverride?: DistillationProviderSetting;
+  includeJitter?: boolean;
 }): Promise<FindCandidateScheduleDecision> {
   await ensureRuntimeSettingsLoaded();
   const throttlingEnabled = groupedConfig.distillation.findCandidateBackgroundEnabled;
   const resolved = resolveProviderAndModel(params);
   const pressure = await readProviderPressureState(resolved);
   const lastBackgroundAgeSeconds = parseIsoAgeSeconds(pressure.metadata.lastBackgroundAt);
+  const jitterWaitMs = () => (params.includeJitter === false ? 0 : jitterMs());
 
   const baseDiagnostics = {
     provider: resolved.provider,
@@ -140,7 +142,7 @@ export async function decideFindCandidateSchedule(params: {
   if (pressure.cooldownActive) {
     return {
       shouldWait: true,
-      waitMs: pressure.waitMs + jitterMs(),
+      waitMs: pressure.waitMs + jitterWaitMs(),
       reason: "provider_cooldown",
       diagnostics: baseDiagnostics,
     };
@@ -160,7 +162,7 @@ export async function decideFindCandidateSchedule(params: {
       waitMs:
         (groupedConfig.distillation.findCandidateRecentBlockSeconds - stats.lastCompileAgeSeconds) *
           1000 +
-        jitterMs(),
+        jitterWaitMs(),
       reason: "recent_interactive_compile",
       diagnostics: {
         ...baseDiagnostics,
@@ -179,7 +181,7 @@ export async function decideFindCandidateSchedule(params: {
   if (waitSeconds > 0) {
     return {
       shouldWait: true,
-      waitMs: waitSeconds * 1000 + jitterMs(),
+      waitMs: waitSeconds * 1000 + jitterWaitMs(),
       reason: "interactive_pressure",
       diagnostics: {
         ...baseDiagnostics,

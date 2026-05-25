@@ -40,6 +40,8 @@ export type DistillationChatResponse = {
   content?: string | null;
   toolCalls: DistillationToolCall[];
   finishReason?: string;
+  provider?: DistillationProviderName;
+  model?: string;
   usage?: {
     promptTokens: number;
     completionTokens: number;

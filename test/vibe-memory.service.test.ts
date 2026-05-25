@@ -74,6 +74,50 @@ describe("Vibe Memory Service", () => {
     expect(mockTx.insert).toHaveBeenCalledTimes(2);
   });
 
+  test("redacts direct memory content, metadata, and diff entries", async () => {
+    const memoryValues = vi.fn().mockReturnValue({
+      returning: vi
+        .fn()
+        .mockResolvedValueOnce([
+          { id: "m1", sessionId: "s1", content: "Stored", memoryType: "action" },
+        ]),
+    });
+    const diffValues = vi.fn().mockReturnValue({
+      returning: vi.fn().mockResolvedValueOnce([{ id: "d1", filePath: "secret.ts" }]),
+    });
+    const mockTx = {
+      insert: vi
+        .fn()
+        .mockReturnValueOnce({ values: memoryValues })
+        .mockReturnValueOnce({ values: diffValues }),
+    };
+    vi.mocked(db.transaction).mockImplementation(async (cb) => cb(mockTx as any));
+
+    await recordVibeMemoryWithDiffEntries({
+      sessionId: "s1",
+      content: "api_key=sk-abcdefghijklmnopqrstuvwxyz0123456789\nnormal",
+      memoryType: "action",
+      metadata: { authToken: "raw-token-value" },
+      agentDiffs: [
+        {
+          filePath: "secret.ts",
+          diffHunk: "+const token = 'Bearer abcdefghijklmnopqrstuvwxyz0123456789';",
+          metadata: { privateKey: "raw-private-key" },
+        },
+      ],
+    });
+
+    const serialized = JSON.stringify([
+      memoryValues.mock.calls[0]?.[0],
+      diffValues.mock.calls[0]?.[0],
+    ]);
+    expect(serialized).toContain("[REMOVED SENSITIVE DATA]");
+    expect(serialized).toContain("normal");
+    expect(serialized).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789");
+    expect(serialized).not.toContain("raw-token-value");
+    expect(serialized).not.toContain("raw-private-key");
+  });
+
   test("retrieves vibe memory context", async () => {
     vi.mocked(searchVibeMemories).mockResolvedValue([
       {

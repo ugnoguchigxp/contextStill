@@ -4,6 +4,7 @@ import {
   type RecordVibeMemoryInput,
   recordVibeMemoryInputSchema,
 } from "../../shared/schemas/vibe-memory.schema.js";
+import { redactSecretRecord, redactSecrets } from "../../shared/utils/secret-redaction.js";
 import {
   extractAgentDiffContentFromText,
   normalizeAgentDiffEntries,
@@ -28,16 +29,21 @@ export async function recordVibeMemoryWithDiffEntries(
   input: RecordVibeMemoryInput,
 ): Promise<RecordedVibeMemory> {
   const parsed = recordVibeMemoryInputSchema.parse(input);
-  const embeddedDiff = extractAgentDiffContentFromText(parsed.content);
+  const redactedContent = redactSecrets(parsed.content);
+  const embeddedDiff = extractAgentDiffContentFromText(redactedContent);
   const normalizedEntries = normalizeAgentDiffEntries({
-    diff: [parsed.diff, embeddedDiff]
+    diff: [parsed.diff ? redactSecrets(parsed.diff) : undefined, embeddedDiff]
       .filter((diff): diff is string => Boolean(diff?.trim()))
       .join("\n\n"),
-    agentDiffs: parsed.agentDiffs,
+    agentDiffs: parsed.agentDiffs.map((entry) => ({
+      ...entry,
+      diffHunk: redactSecrets(entry.diffHunk ?? ""),
+      metadata: redactSecretRecord(entry.metadata ?? {}),
+    })),
   });
   const content =
-    stripAgentDiffContentFromText(parsed.content) ||
-    (normalizedEntries.length > 0 ? "Agent diff recorded." : parsed.content.trim());
+    redactSecrets(stripAgentDiffContentFromText(redactedContent)) ||
+    (normalizedEntries.length > 0 ? "Agent diff recorded." : redactedContent.trim());
 
   return db.transaction(async (tx) => {
     const [memory] = await tx
@@ -46,7 +52,7 @@ export async function recordVibeMemoryWithDiffEntries(
         sessionId: parsed.sessionId,
         content,
         memoryType: parsed.memoryType,
-        metadata: parsed.metadata,
+        metadata: redactSecretRecord(parsed.metadata),
       })
       .returning();
 
@@ -66,7 +72,7 @@ export async function recordVibeMemoryWithDiffEntries(
                 signature: entry.signature ?? null,
                 startLine: entry.startLine ?? null,
                 endLine: entry.endLine ?? null,
-                metadata: entry.metadata,
+                metadata: redactSecretRecord(entry.metadata),
               })),
             )
             .returning()

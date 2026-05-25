@@ -1,7 +1,7 @@
 import { type SQL, and, desc, eq, ilike, inArray, notInArray, or, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { sourceFragments, sources } from "../../db/schema.js";
-import { redactSecrets } from "../../shared/utils/secret-redaction.js";
+import { redactSecretRecord, redactSecrets } from "../../shared/utils/secret-redaction.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
 import { embedOne } from "../embedding/embedding.service.js";
@@ -147,9 +147,12 @@ async function replaceSourceFragments(params: {
 
 export async function upsertSourceDocument(params: UpsertSourceParams): Promise<string> {
   const actor = params.actor ?? "system";
+  const redactedUri = redactSecrets(params.uri);
+  const redactedTitle = params.title ? redactSecrets(params.title) : params.title;
   const redactedBody = redactSecrets(params.body);
+  const redactedMetadata = redactSecretRecord(params.metadata ?? {});
   const existing = await db.query.sources.findFirst({
-    where: eq(sources.uri, params.uri),
+    where: eq(sources.uri, redactedUri),
     columns: { id: true },
   });
 
@@ -158,18 +161,18 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
       .update(sources)
       .set({
         sourceKind: params.sourceKind,
-        uri: params.uri,
-        title: params.title ?? null,
+        uri: redactedUri,
+        title: redactedTitle ?? null,
         body: redactedBody,
-        metadata: params.metadata ?? {},
+        metadata: redactedMetadata,
         updatedAt: new Date(),
       })
       .where(eq(sources.id, existing.id));
     const fragmentCount = await replaceSourceFragments({
       sourceId: existing.id,
-      title: params.title,
+      title: redactedTitle,
       body: redactedBody,
-      metadata: params.metadata,
+      metadata: redactedMetadata,
     });
     await recordAuditLogSafe({
       eventType: auditEventTypes.sourceUpdated,
@@ -177,8 +180,8 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
       payload: {
         sourceId: existing.id,
         sourceKind: params.sourceKind,
-        uri: params.uri,
-        title: params.title ?? null,
+        uri: redactedUri,
+        title: redactedTitle ?? null,
         fragmentCount,
       },
     });
@@ -189,17 +192,17 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
     .insert(sources)
     .values({
       sourceKind: params.sourceKind,
-      uri: params.uri,
-      title: params.title ?? null,
+      uri: redactedUri,
+      title: redactedTitle ?? null,
       body: redactedBody,
-      metadata: params.metadata ?? {},
+      metadata: redactedMetadata,
     })
     .returning({ id: sources.id });
   const fragmentCount = await replaceSourceFragments({
     sourceId: inserted.id,
-    title: params.title,
+    title: redactedTitle,
     body: redactedBody,
-    metadata: params.metadata,
+    metadata: redactedMetadata,
   });
   await recordAuditLogSafe({
     eventType: auditEventTypes.sourceImported,
@@ -207,8 +210,8 @@ export async function upsertSourceDocument(params: UpsertSourceParams): Promise<
     payload: {
       sourceId: inserted.id,
       sourceKind: params.sourceKind,
-      uri: params.uri,
-      title: params.title ?? null,
+      uri: redactedUri,
+      title: redactedTitle ?? null,
       fragmentCount,
     },
   });

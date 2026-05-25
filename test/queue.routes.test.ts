@@ -32,6 +32,25 @@ describe("Queue route contract tests", () => {
     vi.mocked(fetchQueueDashboardStats).mockResolvedValueOnce({
       stats: { pending: 5, running: 1, completed: 10, failed: 2, paused: 0 },
       kinds: { wiki_file: 15, vibe_memory: 3 },
+      findCandidate: {
+        status: "waiting",
+        waitMs: 90_000,
+        waitUntil: "2026-05-24T10:00:00.000Z",
+        reason: "interactive_pressure",
+        targetKind: "vibe_memory",
+        provider: "openai",
+        model: "gpt-5-4-mini",
+        source: "scheduler",
+        updatedAt: "2026-05-24T09:58:30.000Z",
+        diagnostics: {
+          provider: "openai",
+          model: "gpt-5-4-mini",
+          compileCount: 4,
+          interactiveLlmCount: 3,
+          lastCompileAgeSeconds: 10,
+          lastBackgroundAgeSeconds: 20,
+        },
+      },
       providerPressure: {
         azureOpenai: {
           provider: "azure-openai",
@@ -53,6 +72,25 @@ describe("Queue route contract tests", () => {
     expect(json).toEqual({
       stats: { pending: 5, running: 1, completed: 10, failed: 2, paused: 0 },
       kinds: { wiki_file: 15, vibe_memory: 3 },
+      findCandidate: {
+        status: "waiting",
+        waitMs: 90_000,
+        waitUntil: "2026-05-24T10:00:00.000Z",
+        reason: "interactive_pressure",
+        targetKind: "vibe_memory",
+        provider: "openai",
+        model: "gpt-5-4-mini",
+        source: "scheduler",
+        updatedAt: "2026-05-24T09:58:30.000Z",
+        diagnostics: {
+          provider: "openai",
+          model: "gpt-5-4-mini",
+          compileCount: 4,
+          interactiveLlmCount: 3,
+          lastCompileAgeSeconds: 10,
+          lastBackgroundAgeSeconds: 20,
+        },
+      },
       providerPressure: {
         azureOpenai: {
           provider: "azure-openai",

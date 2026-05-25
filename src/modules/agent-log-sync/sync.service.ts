@@ -2,7 +2,7 @@ import { eq, like } from "drizzle-orm";
 import { groupedConfig } from "../../config.js";
 import { db } from "../../db/client.js";
 import { agentDiffEntries, syncStates, vibeMemories } from "../../db/schema.js";
-import { redactSecrets } from "../../shared/utils/secret-redaction.js";
+import { redactSecretRecord, redactSecrets } from "../../shared/utils/secret-redaction.js";
 import {
   auditEventTypes,
   cleanupExpiredAuditLogsSafe,
@@ -184,7 +184,7 @@ function summarizeToolMessage(message: ChatMessage): Record<string, unknown>[] {
   return [
     {
       name: getStringMetadata(message.metadata, "toolName") ?? "tool",
-      contentPreview: previewText(message.content),
+      contentPreview: previewText(redactSecrets(message.content)),
       timestamp: message.metadata.timestamp,
     },
   ];
@@ -235,7 +235,7 @@ export function buildReadableTranscript(messages: ChatMessage[]): string {
   return messages
     .filter((message) => !isToolCallMessage(message))
     .map((message) => {
-      const content = stripAgentDiffContentFromText(message.content);
+      const content = redactSecrets(stripAgentDiffContentFromText(message.content));
       return content ? `${message.role.toUpperCase()}: ${content}` : "";
     })
     .filter((line) => !line.match(/^(USER|ASSISTANT):\s*$/))
@@ -344,7 +344,7 @@ function mergeMessageMetadata(
   );
 
   return {
-    ...firstMetadata,
+    ...redactSecretRecord(firstMetadata),
     source: source.label,
     sourceId: source.id,
     sources: [source.label],
@@ -452,6 +452,7 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
         syncedAt: new Date().toISOString(),
         formatVersion: "2.0", // 2.0 移行の識別子
       };
+      const redactedSourceMetadata = redactSecretRecord(sourceMetadata);
 
       if (ingestResult.skipped) {
         summary.sources.push({
@@ -515,6 +516,7 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
             const content =
               readableContent.trim() ||
               (diffEntries.length > 0 ? "Agent diff recorded." : "Tool usage recorded.");
+            const redactedContent = redactSecrets(content);
             const dedupeKey = buildDedupeKey({
               sourceId: source.id,
               memorySessionId,
@@ -524,16 +526,16 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
               .insert(vibeMemories)
               .values({
                 sessionId: memorySessionId,
-                content,
+                content: redactedContent,
                 memoryType: "chat",
                 dedupeKey,
-                metadata: {
+                metadata: redactSecretRecord({
                   ...mergeMessageMetadata(source, chunk),
                   chunkIndex,
                   dedupeKey,
                   hiddenToolCallCount,
                   agentDiffCount: diffEntries.length,
-                },
+                }),
               })
               .onConflictDoNothing({
                 target: [vibeMemories.sessionId, vibeMemories.dedupeKey],
@@ -554,7 +556,7 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
                 diffEntries.map((entry) => ({
                   vibeMemoryId: inserted.id,
                   filePath: entry.filePath,
-                  diffHunk: entry.diffHunk,
+                  diffHunk: redactSecrets(entry.diffHunk),
                   changeType: entry.changeType ?? null,
                   language: entry.language ?? null,
                   symbolName: entry.symbolName ?? null,
@@ -562,12 +564,12 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
                   signature: entry.signature ?? null,
                   startLine: entry.startLine ?? null,
                   endLine: entry.endLine ?? null,
-                  metadata: {
+                  metadata: redactSecretRecord({
                     ...entry.metadata,
                     extractedFrom: "agent_log_sync",
                     dedupeKey,
                     sourceId: source.id,
-                  },
+                  }),
                 })),
               )
               .returning({ id: agentDiffEntries.id });
@@ -582,7 +584,7 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
             id: source.id,
             lastSyncedAt: checkpointDate,
             cursor: ingestResult.cursor,
-            metadata: sourceMetadata,
+            metadata: redactedSourceMetadata,
             updatedAt: now,
           })
           .onConflictDoUpdate({
@@ -590,7 +592,7 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
             set: {
               lastSyncedAt: checkpointDate,
               cursor: ingestResult.cursor,
-              metadata: sourceMetadata,
+              metadata: redactedSourceMetadata,
               updatedAt: now,
             },
           });

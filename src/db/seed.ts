@@ -1,6 +1,8 @@
 import { readFile } from "node:fs/promises";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import { sql } from "drizzle-orm";
+import { redactSecretRecord, redactSecretsFromValue } from "../shared/utils/secret-redaction.js";
 import { closeDbPool, db } from "./index.js";
 import {
   knowledgeCommunityLabels,
@@ -13,7 +15,7 @@ import {
 
 type JsonRecord = Record<string, unknown>;
 
-type SeedPayload = {
+export type SeedPayload = {
   schemaVersion: number;
   generatedAt: string;
   knowledgeItems: JsonRecord[];
@@ -28,6 +30,26 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function redactSeedRecord(row: JsonRecord): JsonRecord {
+  return redactSecretRecord(row);
+}
+
+export function sanitizeSeedPayloadForPersistence(payload: SeedPayload): SeedPayload {
+  return {
+    ...payload,
+    knowledgeItems: payload.knowledgeItems.map(redactSeedRecord),
+    sources: payload.sources.map(redactSeedRecord),
+    sourceFragments: payload.sourceFragments.map(redactSeedRecord),
+    knowledgeSourceLinks: payload.knowledgeSourceLinks.map(redactSeedRecord),
+    knowledgeTagDefinitions: payload.knowledgeTagDefinitions.map(
+      (row) => redactSecretsFromValue(row) as JsonRecord,
+    ),
+    knowledgeCommunityLabels: payload.knowledgeCommunityLabels.map(
+      (row) => redactSecretsFromValue(row) as JsonRecord,
+    ),
+  };
 }
 
 function asArray(value: unknown): unknown[] {
@@ -79,7 +101,7 @@ async function main(): Promise<void> {
     ? path.resolve(process.cwd(), process.env.KNOWLEDGE_SEED_FILE)
     : path.resolve(process.cwd(), "src/db/seeds/knowledge-seed.json");
   const raw = await readFile(seedFile, "utf-8");
-  const payload = asSeedPayload(JSON.parse(raw));
+  const payload = sanitizeSeedPayloadForPersistence(asSeedPayload(JSON.parse(raw)));
 
   if (payload.schemaVersion !== 1) {
     throw new Error(`Unsupported seed schemaVersion: ${payload.schemaVersion}`);
@@ -292,11 +314,17 @@ async function main(): Promise<void> {
   );
 }
 
-main()
-  .catch((error) => {
-    console.error("[seed] failed:", error);
-    process.exitCode = 1;
-  })
-  .finally(async () => {
-    await closeDbPool();
-  });
+const isDirectRun = process.argv[1]
+  ? import.meta.url === pathToFileURL(process.argv[1]).href
+  : false;
+
+if (isDirectRun) {
+  main()
+    .catch((error) => {
+      console.error("[seed] failed:", error);
+      process.exitCode = 1;
+    })
+    .finally(async () => {
+      await closeDbPool();
+    });
+}

@@ -1,4 +1,4 @@
-import React, { useState } from "react";
+import React, { useEffect, useState } from "react";
 import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
 import {
   Play,
@@ -53,12 +53,12 @@ function formatRelativeTime(dateStr: string | null): string {
   });
 }
 
-function formatCooldownCountdown(cooldownUntil: string | null): string {
-  if (!cooldownUntil) return "active";
+function formatCooldownCountdown(cooldownUntil: string | null, nowMs: number): string {
+  if (!cooldownUntil) return "ready";
   const untilMs = Date.parse(cooldownUntil);
   if (!Number.isFinite(untilMs)) return "unknown";
-  const remainingMs = Math.max(0, untilMs - Date.now());
-  if (remainingMs <= 0) return "active";
+  const remainingMs = Math.max(0, untilMs - nowMs);
+  if (remainingMs <= 0) return "ready";
   const totalSeconds = Math.ceil(remainingMs / 1000);
   const minutes = Math.floor(totalSeconds / 60);
   const seconds = totalSeconds % 60;
@@ -68,6 +68,32 @@ function formatCooldownCountdown(cooldownUntil: string | null): string {
     return `${hours}h ${restMinutes}m`;
   }
   return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
+}
+
+function formatFindCandidateReason(reason: QueueDashboardStats["findCandidate"]["reason"]): string {
+  switch (reason) {
+    case "provider_cooldown":
+      return "provider cooldown";
+    case "recent_interactive_compile":
+      return "recent compile";
+    case "interactive_pressure":
+      return "interactive pressure";
+    case "parallel_lane_busy":
+      return "parallel lane busy";
+    case "next_retry":
+      return "retry scheduled";
+    case "no_target":
+      return "no target";
+    default:
+      return reason.replaceAll("_", " ");
+  }
+}
+
+function formatFindCandidateTarget(
+  targetKind: QueueDashboardStats["findCandidate"]["targetKind"],
+): string {
+  if (!targetKind) return "queue idle";
+  return targetKind.replace("_", " ");
 }
 
 // Maps Phase to visual progress checklist steps
@@ -100,6 +126,7 @@ export function QueuePage() {
   const [kindFilter, setKindFilter] = useState<QueueTargetKindFilter>("all");
   const [statusFilter, setStatusFilter] = useState<QueueTargetStatusFilter>("all");
   const [actioningId, setActioningId] = useState<string | null>(null);
+  const [nowMs, setNowMs] = useState(() => Date.now());
 
   // Queries
   const statsQuery = useQuery<QueueDashboardStats>({
@@ -149,9 +176,29 @@ export function QueuePage() {
   });
 
   const stats = statsQuery.data?.stats ?? {};
-  const azureOpenAiPressure = statsQuery.data?.providerPressure.azureOpenai;
-  const azureCooldownActive = azureOpenAiPressure?.status === "cooldown";
-  const azureCooldownLabel = formatCooldownCountdown(azureOpenAiPressure?.cooldownUntil ?? null);
+  const findCandidateStatus = statsQuery.data?.findCandidate;
+  const findCandidateState = findCandidateStatus?.status ?? "idle";
+  const findCandidateWaiting = findCandidateState === "waiting";
+  const findCandidateRunning = findCandidateState === "running";
+  const findCandidateWaitUntil = findCandidateStatus?.waitUntil ?? null;
+  const findCandidateLabel =
+    findCandidateState === "idle"
+      ? "idle"
+      : findCandidateRunning
+        ? "active"
+        : formatCooldownCountdown(findCandidateWaitUntil, nowMs);
+  const findCandidateDetail = findCandidateStatus
+    ? `${formatFindCandidateReason(findCandidateStatus.reason)} / ${formatFindCandidateTarget(
+        findCandidateStatus.targetKind,
+      )}`
+    : "loading";
+
+  useEffect(() => {
+    if (!findCandidateWaitUntil) return;
+    setNowMs(Date.now());
+    const timer = window.setInterval(() => setNowMs(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, [findCandidateWaitUntil]);
   const activeTasks = activeQuery.data ?? [];
   const listData = itemsQuery.data;
   const runningCount = Number(stats.running ?? 0);
@@ -422,8 +469,8 @@ export function QueuePage() {
                 </div>
               </div>
 
-              {/* Integrated 3-Column Stats inside Header */}
-              <div className="grid grid-cols-3 gap-2 border-b border-slate-100/60 pb-3.5 pt-1 text-left">
+              {/* Integrated queue stats inside Header */}
+              <div className="grid grid-cols-2 md:grid-cols-4 gap-2 border-b border-slate-100/60 pb-3.5 pt-1 text-left">
                 <div className="flex flex-col">
                   <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">
                     Completed
@@ -454,26 +501,32 @@ export function QueuePage() {
                     {(stats.paused ?? 0) + (stats.skipped ?? 0)}
                   </strong>
                 </div>
-                <div className="flex flex-col">
+                <div
+                  className="flex flex-col"
+                  data-state={findCandidateState}
+                  aria-label="findCandidate wait"
+                >
                   <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">
-                    Azure OpenAI
+                    FindCandidate
                   </span>
                   <strong
                     className={
-                      azureCooldownActive
+                      findCandidateWaiting
                         ? "text-amber-600 text-[20px] font-extrabold mt-0.5 leading-none"
-                        : "text-emerald-600 text-[20px] font-extrabold mt-0.5 leading-none"
+                        : findCandidateRunning
+                          ? "text-cyan-600 text-[20px] font-extrabold mt-0.5 leading-none animate-pulse"
+                          : findCandidateState === "idle"
+                            ? "text-slate-800 text-[20px] font-extrabold mt-0.5 leading-none"
+                            : "text-emerald-600 text-[20px] font-extrabold mt-0.5 leading-none"
                     }
                   >
-                    {azureCooldownLabel}
+                    {findCandidateLabel}
                   </strong>
                   <span
                     className="text-[10.5px] text-slate-400 truncate max-w-[160px] font-semibold mt-1"
-                    title={azureOpenAiPressure?.source ?? azureOpenAiPressure?.model ?? undefined}
+                    title={findCandidateStatus?.model ?? findCandidateDetail}
                   >
-                    {azureCooldownActive
-                      ? azureOpenAiPressure?.reason || "cooldown"
-                      : azureOpenAiPressure?.model || "no pressure record"}
+                    {findCandidateDetail}
                   </span>
                 </div>
               </div>

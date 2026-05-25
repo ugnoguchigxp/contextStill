@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { groupedConfig } from "../../config.js";
+import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import { recordLlmUsage } from "../llm/llm-usage-logger.js";
 import {
   type DistillationToolCall,
@@ -57,6 +59,16 @@ type DistillationErrorWithToolEvents = Error & {
   distillationToolEvents?: DistillationToolResult[];
 };
 
+type MessageSizeSummary = {
+  messageCount: number;
+  inputChars: number;
+  systemChars: number;
+  userChars: number;
+  assistantChars: number;
+  toolChars: number;
+  maxMessageChars: number;
+};
+
 export function distillationToolEventsFromError(error: unknown): DistillationToolResult[] {
   if (!error || typeof error !== "object") return [];
   const events = (error as { distillationToolEvents?: unknown }).distillationToolEvents;
@@ -81,6 +93,113 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
     error.name = "AbortError";
     throw error;
   }
+}
+
+function messageContentChars(content: DistillationMessage["content"]): number {
+  if (content === null || content === undefined) return 0;
+  if (typeof content === "string") return content.length;
+  return JSON.stringify(content).length;
+}
+
+function summarizeMessages(messages: DistillationMessage[]): MessageSizeSummary {
+  const summary: MessageSizeSummary = {
+    messageCount: messages.length,
+    inputChars: 0,
+    systemChars: 0,
+    userChars: 0,
+    assistantChars: 0,
+    toolChars: 0,
+    maxMessageChars: 0,
+  };
+  for (const message of messages) {
+    const chars = messageContentChars(message.content);
+    summary.inputChars += chars;
+    summary.maxMessageChars = Math.max(summary.maxMessageChars, chars);
+    if (message.role === "system") summary.systemChars += chars;
+    if (message.role === "user") summary.userChars += chars;
+    if (message.role === "assistant") summary.assistantChars += chars;
+    if (message.role === "tool") summary.toolChars += chars;
+  }
+  return summary;
+}
+
+function shouldRecordCoverEvidenceLlmAudit(auditContext: Record<string, unknown> | undefined) {
+  return auditContext?.domain === "coverEvidence";
+}
+
+function stringContextValue(
+  auditContext: Record<string, unknown> | undefined,
+  key: string,
+): string | undefined {
+  const value = auditContext?.[key];
+  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+}
+
+function coverEvidenceLlmStage(auditContext: Record<string, unknown> | undefined): string {
+  return (
+    stringContextValue(auditContext, "stage") ??
+    stringContextValue(auditContext, "assessment") ??
+    stringContextValue(auditContext, "optionalEvidence") ??
+    "unknown"
+  );
+}
+
+function coverEvidenceLlmBasePayload(params: {
+  auditContext: Record<string, unknown>;
+  request: DistillationModelRequest;
+  messages: DistillationMessage[];
+  round: number;
+  toolRounds: number;
+  providerSetting?: DistillationProviderSetting;
+  fallbackOrder?: DistillationProviderName[];
+  timeoutMs?: number;
+  enableTools: boolean;
+  allowTools: boolean;
+  toolChoice: "auto" | "none" | "required";
+  toolDefinitions: DistillationRuntimeToolDefinition[];
+  requestAuditId: string;
+}): Record<string, unknown> {
+  const messageSummary = summarizeMessages(params.messages);
+  return {
+    ...params.auditContext,
+    requestAuditId: params.requestAuditId,
+    stage: coverEvidenceLlmStage(params.auditContext),
+    round: params.round,
+    toolRounds: params.toolRounds,
+    providerSetting: params.providerSetting ?? groupedConfig.distillation.provider,
+    fallbackOrder: params.fallbackOrder,
+    model: params.request.model,
+    maxTokens: params.request.maxTokens,
+    timeoutMs: params.timeoutMs,
+    enableTools: params.enableTools,
+    allowTools: params.allowTools,
+    toolChoice: params.toolChoice,
+    toolDefinitionCount: params.toolDefinitions.length,
+    ...messageSummary,
+  };
+}
+
+function errorName(error: unknown): string {
+  return error instanceof Error && error.name ? error.name : "Error";
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function classifyLlmError(error: unknown): string {
+  const name = errorName(error);
+  const message = errorMessage(error).toLowerCase();
+  if (name === "AbortError" || message.includes("aborted")) return "aborted";
+  if (message.includes("timed out") || message.includes("timeout")) return "timeout";
+  if (message.includes("unable to connect") || message.includes("connection"))
+    return "connectivity";
+  if (message.includes("prompt_too_large") || message.includes("context_length_exceeded")) {
+    return "input_too_large";
+  }
+  if (message.includes("http 503")) return "daemon_unavailable";
+  if (message.includes("http 500")) return "daemon_error";
+  return "provider_error";
 }
 
 function normalizeToolCallLimits(limits: Record<string, number> | undefined): Map<string, number> {
@@ -172,7 +291,7 @@ function createDefaultChatClient(
           source: usageSource,
         });
         pinnedProvider = provider;
-        return response;
+        return { ...response, provider, model };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         errors.push(`${provider}: ${message}`);
@@ -220,6 +339,7 @@ export async function runDistillationCompletion(
   const toolCallLimits = normalizeToolCallLimits(options.toolCallLimits);
   const toolCallCounts = new Map<string, number>();
   let toolRounds = 0;
+  let chatRound = 0;
   let requiredToolReminderSent = false;
   let blankResponseReminderSent = false;
 
@@ -237,14 +357,84 @@ export async function runDistillationCompletion(
           ? "required"
           : "auto"
         : "none";
-      const response = await chatClient({
-        ...request,
-        messages,
-        tools: allowTools ? roundToolDefinitions : undefined,
-        toolChoice,
-        timeoutMs: options.timeoutMs,
-        signal: options.signal,
-      });
+      chatRound += 1;
+      const requestAuditId = randomUUID();
+      const auditContext = options.auditContext;
+      const shouldAudit =
+        auditContext !== undefined && shouldRecordCoverEvidenceLlmAudit(auditContext);
+      const auditBase =
+        shouldAudit && auditContext
+          ? coverEvidenceLlmBasePayload({
+              auditContext,
+              request,
+              messages,
+              round: chatRound,
+              toolRounds,
+              providerSetting: options.providerSetting,
+              fallbackOrder: options.fallbackOrder,
+              timeoutMs: options.timeoutMs,
+              enableTools,
+              allowTools,
+              toolChoice,
+              toolDefinitions: roundToolDefinitions,
+              requestAuditId,
+            })
+          : undefined;
+      if (auditBase) {
+        await recordAuditLogSafe({
+          eventType: auditEventTypes.coverEvidenceLlmStarted,
+          actor: "system",
+          payload: auditBase,
+        });
+      }
+      const startedAt = Date.now();
+      let response: DistillationChatResponse;
+      try {
+        response = await chatClient({
+          ...request,
+          messages,
+          tools: allowTools ? roundToolDefinitions : undefined,
+          toolChoice,
+          timeoutMs: options.timeoutMs,
+          signal: options.signal,
+        });
+      } catch (error) {
+        if (auditBase) {
+          await recordAuditLogSafe({
+            eventType: auditEventTypes.coverEvidenceLlmFailed,
+            actor: "system",
+            payload: {
+              ...auditBase,
+              durationMs: Date.now() - startedAt,
+              errorName: errorName(error),
+              error: errorMessage(error),
+              errorKind: classifyLlmError(error),
+            },
+          });
+        }
+        throw error;
+      }
+      if (auditBase) {
+        await recordAuditLogSafe({
+          eventType: auditEventTypes.coverEvidenceLlmCompleted,
+          actor: "system",
+          payload: {
+            ...auditBase,
+            durationMs: Date.now() - startedAt,
+            provider: response.provider,
+            resolvedModel: response.model,
+            finishReason: response.finishReason,
+            outputChars: response.content?.length ?? 0,
+            outputPreview: response.content?.slice(0, 700) ?? undefined,
+            responseToolCallCount: response.toolCalls.length,
+            responseToolCallNames: response.toolCalls.map((call) => call.function.name),
+            promptTokens: response.usage?.promptTokens,
+            completionTokens: response.usage?.completionTokens,
+            totalTokens: response.usage?.totalTokens,
+            reasoningTokens: response.usage?.reasoningTokens,
+          },
+        });
+      }
 
       if (response.toolCalls.length > 0 && allowTools) {
         messages.push({

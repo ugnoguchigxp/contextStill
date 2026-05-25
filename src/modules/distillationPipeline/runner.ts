@@ -708,8 +708,11 @@ async function runOrResumeCandidates(
   const coverResults: CoverResult[] = [];
   const finalizeResults: FinalizeDistilleResult[] = [];
   const finalizeErrors: Array<{ coverEvidenceResultId: string; error: string }> = [];
+  const finalizedCoverEvidenceResultIds = new Set<string>();
 
   const finalizeReadyCandidate = async (coverResult: CoverResult): Promise<void> => {
+    if (finalizedCoverEvidenceResultIds.has(coverResult.coverEvidenceResultId)) return;
+    finalizedCoverEvidenceResultIds.add(coverResult.coverEvidenceResultId);
     await updatePhase(target, lease, "finalizing");
     await heartbeat(target, lease);
     try {
@@ -732,7 +735,27 @@ async function runOrResumeCandidates(
     await updatePhase(target, lease, "covering_evidence");
   };
 
-  const runCoverOnce = async (findCandidateId: string): Promise<void> => {
+  const finalizeReadyCandidates = async (results: Iterable<CoverResult>): Promise<void> => {
+    for (const coverResult of results) {
+      if (coverResult.status === "knowledge_ready") {
+        await finalizeReadyCandidate(coverResult);
+      }
+    }
+  };
+
+  const finalizeUnstoredReadyCandidates = async (): Promise<void> => {
+    const unstoredReady = [...coverResultsByCandidateId.values()].filter(
+      (coverResult) =>
+        coverResult.status === "knowledge_ready" &&
+        !finalizedCoverEvidenceResultIds.has(coverResult.coverEvidenceResultId),
+    );
+    if (unstoredReady.length === 0) return;
+    const knowledgeIds = await listKnowledgeIdsByTargetStateId(target.id);
+    if (knowledgeIds.length > 0) return;
+    await finalizeReadyCandidates(unstoredReady);
+  };
+
+  const runCoverOnce = async (findCandidateId: string): Promise<CoverResult> => {
     let coverResult: CoverResult;
     const existing = coverResultsByCandidateId.get(findCandidateId);
     if (existing && !input.forceRefreshEvidence && !existing.retryable) {
@@ -757,19 +780,16 @@ async function runOrResumeCandidates(
     }
     coverResultsByCandidateId.set(findCandidateId, coverResult);
     await heartbeat(target, lease);
-
-    if (coverResult.status === "knowledge_ready") {
-      await finalizeReadyCandidate(coverResult);
-    }
+    return coverResult;
   };
 
   const runCoverBatch = async (candidateBatch: string[]): Promise<void> => {
     if (candidateBatch.length === 0) return;
-    if (candidateBatch.length === 1) {
-      await runCoverOnce(candidateBatch[0]);
-      return;
-    }
-    await Promise.all(candidateBatch.map((findCandidateId) => runCoverOnce(findCandidateId)));
+    const batchResults =
+      candidateBatch.length === 1
+        ? [await runCoverOnce(candidateBatch[0])]
+        : await Promise.all(candidateBatch.map((findCandidateId) => runCoverOnce(findCandidateId)));
+    await finalizeReadyCandidates(batchResults);
     await heartbeat(target, lease);
   };
 
@@ -789,6 +809,8 @@ async function runOrResumeCandidates(
     }
     remainingCandidates = Math.max(0, pendingCandidateIds.length - nextBatch.length);
   }
+
+  await finalizeUnstoredReadyCandidates();
 
   for (const findCandidateId of candidateIds) {
     const coverResult = coverResultsByCandidateId.get(findCandidateId);
@@ -894,6 +916,11 @@ async function runClaimedTarget(
           metadata: {
             remainingCandidates,
             candidateCount,
+            coverEvidenceConcurrency: Math.max(
+              1,
+              groupedConfig.distillation.coverEvidenceConcurrency,
+            ),
+            processedBatchSize: candidateCount - remainingCandidates,
           },
           lease,
         }),

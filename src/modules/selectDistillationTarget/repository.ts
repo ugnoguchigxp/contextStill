@@ -2,6 +2,7 @@ import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
 import { APP_CONSTANTS } from "../../constants.js";
 import { db } from "../../db/index.js";
 import { distillationTargetStates, findCandidateResults } from "../../db/schema.js";
+import { redactSecretRecord, redactSecrets } from "../../shared/utils/secret-redaction.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import {
   ensureRuntimeSettingsLoaded,
@@ -85,23 +86,29 @@ export async function upsertDistillationTargetState(params: {
 }): Promise<DistillationTargetStateRow> {
   const now = new Date();
   const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
-  const metadata = params.metadata ?? {};
+  const metadata = redactSecretRecord(params.metadata ?? {});
+  const candidate: DistillationTargetCandidate = {
+    ...params.candidate,
+    targetKey: redactSecrets(params.candidate.targetKey),
+    sourceUri: redactSecrets(params.candidate.sourceUri),
+    sortKey: params.candidate.sortKey ? redactSecrets(params.candidate.sortKey) : undefined,
+  };
   const priorityGroup =
     params.priorityGroup ??
-    (params.candidate.targetKind === "knowledge_candidate"
+    (candidate.targetKind === "knowledge_candidate"
       ? resolveKnowledgeCandidatePriorityGroup({
-          sourceUri: params.candidate.sourceUri,
+          sourceUri: candidate.sourceUri,
           metadata,
         })
-      : priorityGroupForTargetKind(params.candidate.targetKind));
-  const sortKey = sortKeyForTarget(params.candidate);
+      : priorityGroupForTargetKind(candidate.targetKind));
+  const sortKey = sortKeyForTarget(candidate);
 
   const [state] = await db
     .insert(distillationTargetStates)
     .values({
-      targetKind: params.candidate.targetKind,
-      targetKey: params.candidate.targetKey,
-      sourceUri: params.candidate.sourceUri,
+      targetKind: candidate.targetKind,
+      targetKey: candidate.targetKey,
+      sourceUri: candidate.sourceUri,
       distillationVersion,
       status: "pending",
       phase: "selected",
@@ -117,7 +124,7 @@ export async function upsertDistillationTargetState(params: {
         distillationTargetStates.distillationVersion,
       ],
       set: {
-        sourceUri: params.candidate.sourceUri,
+        sourceUri: candidate.sourceUri,
         priorityGroup,
         sortKey,
         metadata:
@@ -568,12 +575,14 @@ export async function updateDistillationTargetSource(params: {
   metadata?: Record<string, unknown>;
   lease?: TargetLease;
 }): Promise<DistillationTargetStateRow | null> {
+  const sourceUri = redactSecrets(params.sourceUri);
+  const metadata = params.metadata ? redactSecretRecord(params.metadata) : undefined;
   const [row] = await db
     .update(distillationTargetStates)
     .set({
-      sourceUri: params.sourceUri,
-      metadata: params.metadata
-        ? (sql`${distillationTargetStates.metadata} || ${JSON.stringify(params.metadata)}::jsonb` as never)
+      sourceUri,
+      metadata: metadata
+        ? (sql`${distillationTargetStates.metadata} || ${JSON.stringify(metadata)}::jsonb` as never)
         : undefined,
       updatedAt: new Date(),
     })
@@ -593,6 +602,8 @@ export async function finishDistillationTargetState(params: {
   lease?: TargetLease;
 }): Promise<DistillationTargetStateRow | null> {
   const now = new Date();
+  const error = params.error ? redactSecrets(params.error) : params.error;
+  const metadata = params.metadata ? redactSecretRecord(params.metadata) : undefined;
   const [row] = await db
     .update(distillationTargetStates)
     .set({
@@ -603,11 +614,11 @@ export async function finishDistillationTargetState(params: {
       heartbeatAt: null,
       nextRetryAt: null,
       lastOutcomeKind: params.outcomeKind ?? null,
-      lastError: params.error ?? null,
+      lastError: error ?? null,
       candidateCount: params.candidateCount,
       knowledgeIds: params.knowledgeIds,
-      metadata: params.metadata
-        ? (sql`${distillationTargetStates.metadata} || ${JSON.stringify(params.metadata)}::jsonb` as never)
+      metadata: metadata
+        ? (sql`${distillationTargetStates.metadata} || ${JSON.stringify(metadata)}::jsonb` as never)
         : undefined,
       completedAt: now,
       updatedAt: now,
@@ -638,6 +649,7 @@ export async function releaseDistillationTargetState(params: {
   lease?: TargetLease;
 }): Promise<DistillationTargetStateRow | null> {
   const now = new Date();
+  const metadata = params.metadata ? redactSecretRecord(params.metadata) : undefined;
   const [row] = await db
     .update(distillationTargetStates)
     .set({
@@ -650,8 +662,8 @@ export async function releaseDistillationTargetState(params: {
       lastOutcomeKind: params.outcomeKind ?? null,
       lastError: null,
       candidateCount: params.candidateCount,
-      metadata: params.metadata
-        ? (sql`${distillationTargetStates.metadata} || ${JSON.stringify(params.metadata)}::jsonb` as never)
+      metadata: metadata
+        ? (sql`${distillationTargetStates.metadata} || ${JSON.stringify(metadata)}::jsonb` as never)
         : undefined,
       updatedAt: now,
     })
@@ -680,6 +692,8 @@ export async function pauseDistillationTargetState(params: {
   lease?: TargetLease;
 }): Promise<DistillationTargetStateRow | null> {
   const now = new Date();
+  const reason = redactSecrets(params.reason);
+  const metadata = params.metadata ? redactSecretRecord(params.metadata) : undefined;
   const retryDelaySeconds =
     params.retryDelaySeconds ?? APP_CONSTANTS.distillationTargetRetryDelaySeconds;
   const [row] = await db
@@ -691,9 +705,9 @@ export async function pauseDistillationTargetState(params: {
       heartbeatAt: null,
       nextRetryAt: new Date(now.getTime() + retryDelaySeconds * 1000),
       lastOutcomeKind: "paused",
-      lastError: params.reason,
-      metadata: params.metadata
-        ? (sql`${distillationTargetStates.metadata} || ${JSON.stringify(params.metadata)}::jsonb` as never)
+      lastError: reason,
+      metadata: metadata
+        ? (sql`${distillationTargetStates.metadata} || ${JSON.stringify(metadata)}::jsonb` as never)
         : undefined,
       updatedAt: now,
     })
@@ -704,7 +718,7 @@ export async function pauseDistillationTargetState(params: {
     await recordAuditLogSafe({
       eventType: auditEventTypes.distillationTargetStatusChanged,
       actor: "system",
-      payload: { ...targetIdentity(row), reason: params.reason },
+      payload: { ...targetIdentity(row), reason },
     });
   }
 

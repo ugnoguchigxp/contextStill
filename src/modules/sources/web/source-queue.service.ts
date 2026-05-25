@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { APP_CONSTANTS } from "../../../constants.js";
 import { db } from "../../../db/index.js";
 import { distillationTargetStates } from "../../../db/schema.js";
+import { redactSecrets } from "../../../shared/utils/secret-redaction.js";
 import { validateFetchContentUrl } from "../../distillation/distillation-tools.service.js";
 import {
   DEFAULT_DISTILLATION_TARGET_VERSION,
@@ -92,24 +93,26 @@ export async function queueWebSourceUrl(params: {
   }
 
   const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
+  const redactedUrl = redactSecrets(normalized.url);
+  const redactedNormalizedUrl = redactSecrets(normalized.normalizedUrl);
   const existing = await findExistingWebIngestTarget({
-    normalizedUrl: normalized.normalizedUrl,
+    normalizedUrl: redactedNormalizedUrl,
     distillationVersion,
   });
 
   let state = await upsertDistillationTargetState({
     candidate: {
       targetKind: "web_ingest",
-      targetKey: normalized.normalizedUrl,
-      sourceUri: normalized.normalizedUrl,
+      targetKey: redactedNormalizedUrl,
+      sourceUri: redactedNormalizedUrl,
       status: "pending",
-      sortKey: normalized.normalizedUrl.toLowerCase(),
+      sortKey: redactedNormalizedUrl.toLowerCase(),
     },
     distillationVersion,
     metadata: {
       sourceType: "web_research",
-      sourceUrl: normalized.url,
-      normalizedUrl: normalized.normalizedUrl,
+      sourceUrl: redactedUrl,
+      normalizedUrl: redactedNormalizedUrl,
       importedVia: "sources.webIngest",
       registeredAt: new Date().toISOString(),
     },
@@ -148,8 +151,8 @@ export async function queueWebSourceUrl(params: {
   return {
     ok: true,
     item: {
-      url: normalized.url,
-      normalizedUrl: normalized.normalizedUrl,
+      url: redactedUrl,
+      normalizedUrl: redactedNormalizedUrl,
       state,
       existing: Boolean(existing),
     },

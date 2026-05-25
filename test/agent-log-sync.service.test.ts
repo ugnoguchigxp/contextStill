@@ -222,6 +222,45 @@ describe("Agent Log Sync Service", () => {
     expect(summary.sources.find((source) => source.id === "antigravity_logs")?.messages).toBe(1);
   });
 
+  test("syncAllAgentLogs redacts secrets before storing memories and metadata", async () => {
+    vi.mocked(ingestCodexLogs).mockResolvedValue({
+      ok: true,
+      messages: [
+        {
+          role: "user",
+          content: "api_key=sk-abcdefghijklmnopqrstuvwxyz0123456789\nKeep this line",
+          metadata: {
+            sessionId: "s1",
+            timestamp: new Date().toISOString(),
+            authToken: "raw-token-value",
+            toolCalls: [
+              {
+                name: "apply_patch",
+                targetFile: "secret.ts",
+                contentPreview: "password=super-secret-value",
+              },
+            ],
+          },
+        },
+      ],
+      cursor: {},
+      maxObservedMtimeMs: 5000,
+      checkedFiles: 1,
+      errors: [],
+      warnings: [],
+    } as any);
+
+    await syncAllAgentLogs();
+
+    const insertChain = vi.mocked(db.insert).mock.results[0]?.value as any;
+    const serialized = JSON.stringify(insertChain.values.mock.calls);
+    expect(serialized).toContain("[REMOVED SENSITIVE DATA]");
+    expect(serialized).toContain("Keep this line");
+    expect(serialized).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789");
+    expect(serialized).not.toContain("raw-token-value");
+    expect(serialized).not.toContain("super-secret-value");
+  });
+
   test("syncAllAgentLogs inserts diff entries", async () => {
     vi.mocked(ingestCodexLogs).mockResolvedValue({
       ok: true,

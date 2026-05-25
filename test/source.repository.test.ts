@@ -63,6 +63,26 @@ describe("Source Repository", () => {
     expect(db.insert).toHaveBeenCalled();
   });
 
+  test("redacts source uri, title, body, and metadata before insert", async () => {
+    vi.mocked(db.query.sources.findFirst).mockResolvedValue(undefined as any);
+
+    await upsertSourceDocument({
+      sourceKind: "wiki",
+      uri: "https://example.com/docs?token=abcdef0123456789",
+      title: "Bearer abcdefghijklmnopqrstuvwxyz0123456789",
+      body: "api_key=sk-abcdefghijklmnopqrstuvwxyz0123456789\nnormal",
+      metadata: { authToken: "raw-token-value" },
+    });
+
+    const insertChain = vi.mocked(db.insert).mock.results[0]?.value as any;
+    const inserted = insertChain.values.mock.calls[0]?.[0];
+    expect(JSON.stringify(inserted)).toContain("[REMOVED SENSITIVE DATA]");
+    expect(JSON.stringify(inserted)).toContain("normal");
+    expect(JSON.stringify(inserted)).not.toContain("abcdef0123456789");
+    expect(JSON.stringify(inserted)).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789");
+    expect(JSON.stringify(inserted)).not.toContain("raw-token-value");
+  });
+
   test("searchSourceContent calls select", async () => {
     await searchSourceContent("query", 10);
     expect(db.select).toHaveBeenCalled();

@@ -58,6 +58,27 @@ describe("vibe-memory repository", () => {
         }),
       );
     });
+
+    test("redacts content and metadata before insert", async () => {
+      const mockValues = vi.fn().mockReturnThis();
+      (db.insert as any).mockReturnValue({
+        values: mockValues,
+        returning: vi.fn().mockResolvedValue([{}]),
+      });
+
+      await insertVibeMemory({
+        sessionId: "s1",
+        content: "api_key=sk-abcdefghijklmnopqrstuvwxyz0123456789\nnormal",
+        metadata: { authToken: "raw-token-value" },
+      });
+
+      const inserted = mockValues.mock.calls[0]?.[0];
+      const serialized = JSON.stringify(inserted);
+      expect(serialized).toContain("[REMOVED SENSITIVE DATA]");
+      expect(serialized).toContain("normal");
+      expect(serialized).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789");
+      expect(serialized).not.toContain("raw-token-value");
+    });
   });
 
   describe("searchVibeMemories", () => {

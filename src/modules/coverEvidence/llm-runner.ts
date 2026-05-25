@@ -335,6 +335,7 @@ export async function runValueAssessment(params: {
         auditContext: {
           domain: "coverEvidence",
           id: params.id,
+          stage: "final",
           assessment: "value",
         },
       },
@@ -449,6 +450,8 @@ export async function runExternalEvidence(params: {
         auditContext: {
           domain: "coverEvidence",
           id: params.id,
+          stage: "web",
+          assessment: "external-evidence",
           forceRefreshEvidence: Boolean(params.forceRefreshEvidence),
         },
         signal: params.signal,
@@ -578,6 +581,7 @@ export async function runOptionalMcpEvidence(params: {
         auditContext: {
           domain: "coverEvidence",
           id: params.id,
+          stage: "mcp",
           optionalEvidence: "mcp",
         },
         signal: params.signal,

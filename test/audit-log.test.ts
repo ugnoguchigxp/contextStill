@@ -54,6 +54,25 @@ describe("audit-log service", () => {
       await recordAuditLog({ eventType: "  ", actor: "user" });
       expect(db.insert).not.toHaveBeenCalled();
     });
+
+    test("redacts secrets from audit payloads", async () => {
+      const mockValues = vi.fn().mockResolvedValue(undefined);
+      (db.insert as any).mockReturnValue({ values: mockValues });
+
+      await recordAuditLog({
+        eventType: "TEST_EVENT",
+        actor: "system",
+        payload: {
+          authToken: "raw-token-value",
+          message: "Bearer abcdefghijklmnopqrstuvwxyz0123456789",
+        },
+      });
+
+      const serialized = JSON.stringify(mockValues.mock.calls[0]?.[0]);
+      expect(serialized).toContain("[REMOVED SENSITIVE DATA]");
+      expect(serialized).not.toContain("raw-token-value");
+      expect(serialized).not.toContain("abcdefghijklmnopqrstuvwxyz0123456789");
+    });
   });
 
   describe("recordAuditLogSafe", () => {

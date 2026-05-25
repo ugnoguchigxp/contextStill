@@ -142,6 +142,8 @@ describe("runDistillationPipeline", () => {
     mocks.listCoverEvidenceResultsByTargetStateId.mockResolvedValue([]);
     mocks.coverEvidenceResultFromRow.mockImplementation((row) => ({
       schemaVersion: 1,
+      coverEvidenceResultId: row.id,
+      findCandidateId: row.id,
       status: row.status,
       stage: row.stage,
       candidate: null,
@@ -707,6 +709,116 @@ describe("runDistillationPipeline", () => {
         metadata: expect.objectContaining({ remainingCandidates: 1, candidateCount: 3 }),
       }),
     );
+  });
+
+  test("starts cover evidence candidates concurrently but finalizes after the batch resolves", async () => {
+    groupedConfig.distillation.coverEvidenceConcurrency = 2;
+    mocks.listFindCandidateResultsByTargetStateId.mockResolvedValue([
+      {
+        id: "candidate-1",
+        targetStateId: "target-1",
+        candidateIndex: 0,
+        title: "C1",
+        content: "Candidate 1",
+        origin: { candidateType: "rule" },
+        status: "selected",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        targetKind: "wiki_file",
+        targetKey: "pipeline.md",
+        sourceUri: "/wiki/pages/pipeline.md",
+      },
+      {
+        id: "candidate-2",
+        targetStateId: "target-1",
+        candidateIndex: 1,
+        title: "C2",
+        content: "Candidate 2",
+        origin: { candidateType: "rule" },
+        status: "selected",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        targetKind: "wiki_file",
+        targetKey: "pipeline.md",
+        sourceUri: "/wiki/pages/pipeline.md",
+      },
+    ]);
+    const coverResolvers: Array<(value: unknown) => void> = [];
+    mocks.runCoverEvidenceForCandidate.mockImplementation(
+      ({ findCandidateId }) =>
+        new Promise((resolve) => {
+          coverResolvers.push(() =>
+            resolve({
+              coverEvidenceResultId: findCandidateId,
+              findCandidateId,
+              status: "knowledge_ready",
+              stage: "final",
+              retryable: false,
+              reason: null,
+            }),
+          );
+        }),
+    );
+
+    const pipeline = runDistillationPipeline({ write: true, refresh: false, limit: 1 });
+
+    await vi.waitFor(() => {
+      expect(mocks.runCoverEvidenceForCandidate).toHaveBeenCalledTimes(2);
+    });
+    expect(mocks.runFinalizeDistille).not.toHaveBeenCalled();
+
+    for (const resolveCover of coverResolvers) resolveCover({});
+
+    const result = await pipeline;
+    expect(result.results[0]).toMatchObject({
+      status: "completed",
+      outcomeKind: "knowledge_finalized",
+    });
+    expect(mocks.runFinalizeDistille).toHaveBeenCalledTimes(2);
+  });
+
+  test("finalizes existing ready cover evidence results when resuming without pending candidates", async () => {
+    mocks.listFindCandidateResultsByTargetStateId.mockResolvedValue([
+      {
+        id: "candidate-1",
+        targetStateId: "target-1",
+        candidateIndex: 0,
+        title: "C1",
+        content: "Candidate 1",
+        origin: { candidateType: "rule" },
+        status: "selected",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        targetKind: "wiki_file",
+        targetKey: "pipeline.md",
+        sourceUri: "/wiki/pages/pipeline.md",
+      },
+    ]);
+    mocks.listCoverEvidenceResultsByTargetStateId.mockResolvedValue([
+      {
+        id: "candidate-1",
+        targetStateId: "target-1",
+        status: "knowledge_ready",
+        stage: "final",
+        retryable: false,
+        reason: null,
+      },
+    ]);
+    mocks.listKnowledgeIdsByTargetStateId
+      .mockResolvedValueOnce([])
+      .mockResolvedValueOnce(["knowledge-1"]);
+
+    const result = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
+
+    expect(mocks.runCoverEvidenceForCandidate).not.toHaveBeenCalled();
+    expect(mocks.runFinalizeDistille).toHaveBeenCalledWith({
+      coverEvidenceResultId: "candidate-1",
+      write: true,
+    });
+    expect(result.results[0]).toMatchObject({
+      status: "completed",
+      outcomeKind: "knowledge_finalized",
+    });
   });
 
   test("skips retry-exhausted target after pipeline error", async () => {

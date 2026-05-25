@@ -10,6 +10,7 @@ import {
   listDistillationTargetStatesForCandidates,
   pauseDistillationTargetState,
   requeueDistillationTargetState,
+  updateDistillationTargetSource,
   updateDistillationTargetHeartbeat,
   updateDistillationTargetPhase,
   upsertDistillationTargetState,
@@ -59,6 +60,7 @@ const makeChain = (result: any) => {
 const flattenSqlChunks = (value: any): string => {
   if (!value || typeof value !== "object") return String(value ?? "");
   if (Array.isArray(value.value)) return value.value.join("");
+  if ("value" in value && typeof value.value !== "object") return String(value.value);
   if (Array.isArray(value.queryChunks)) return value.queryChunks.map(flattenSqlChunks).join("");
   return String(value);
 };
@@ -98,6 +100,30 @@ describe("selectDistillationTarget repository unit tests", () => {
 
       expect(result).toEqual(mockRow);
       expect(mockInsert).toHaveBeenCalled();
+    });
+
+    it("redacts target identity fields and metadata before persistence", async () => {
+      const chain = makeChain([mockRow]);
+      mockInsert.mockReturnValueOnce(chain);
+
+      await upsertDistillationTargetState({
+        candidate: {
+          targetKind: "web_ingest",
+          targetKey: "https://example.com/docs?token=abcdef0123456789",
+          sourceUri: "https://example.com/docs?token=abcdef0123456789",
+          sortKey: "https://example.com/docs?token=abcdef0123456789",
+        },
+        metadata: {
+          credentials: {
+            value: "raw-token-value",
+          },
+        },
+      });
+
+      const serialized = JSON.stringify(chain.values.mock.calls[0]?.[0]);
+      expect(serialized).toContain("[REMOVED SENSITIVE DATA]");
+      expect(serialized).not.toContain("abcdef0123456789");
+      expect(serialized).not.toContain("raw-token-value");
     });
   });
 
@@ -253,6 +279,33 @@ describe("selectDistillationTarget repository unit tests", () => {
       });
       expect(result).toEqual(mockRow);
       expect(recordAuditLogSafe).toHaveBeenCalled();
+    });
+  });
+
+  describe("updateDistillationTargetSource", () => {
+    it("redacts source uri and metadata before persistence", async () => {
+      const chain = makeChain([mockRow]);
+      mockUpdate.mockReturnValueOnce(chain);
+
+      const result = await updateDistillationTargetSource({
+        id: "target-1",
+        sourceUri: "https://example.com/docs?token=abcdef0123456789",
+        metadata: {
+          credentials: {
+            value: "raw-token-value",
+          },
+        },
+      });
+
+      const setValue = chain.set.mock.calls[0]?.[0];
+      const serialized = JSON.stringify({
+        sourceUri: setValue.sourceUri,
+        metadata: flattenSqlChunks(setValue.metadata),
+      });
+      expect(result).toEqual(mockRow);
+      expect(serialized).toContain("[REMOVED SENSITIVE DATA]");
+      expect(serialized).not.toContain("abcdef0123456789");
+      expect(serialized).not.toContain("raw-token-value");
     });
   });
 

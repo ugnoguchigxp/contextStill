@@ -1,10 +1,20 @@
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { groupedConfig } from "../src/config.js";
+import { recordAuditLogSafe } from "../src/modules/audit/audit-log.service.js";
 import {
   resolveDistillationModel,
   runDistillationCompletion,
 } from "../src/modules/distillation/distillation-runtime.service.js";
 import { recordLlmUsage } from "../src/modules/llm/llm-usage-logger.js";
+
+vi.mock("../src/modules/audit/audit-log.service.js", () => ({
+  auditEventTypes: {
+    coverEvidenceLlmStarted: "COVER_EVIDENCE_LLM_STARTED",
+    coverEvidenceLlmCompleted: "COVER_EVIDENCE_LLM_COMPLETED",
+    coverEvidenceLlmFailed: "COVER_EVIDENCE_LLM_FAILED",
+  },
+  recordAuditLogSafe: vi.fn().mockResolvedValue(undefined),
+}));
 
 vi.mock("../src/modules/llm/llm-usage-logger.js", () => ({
   recordLlmUsage: vi.fn(),
@@ -65,6 +75,117 @@ describe("Distillation Runtime Service", () => {
 
     expect(result.content).toBe("Hello result");
     expect(chatClient).toHaveBeenCalledTimes(1);
+  });
+
+  test("records coverEvidence LLM audit events with input and output diagnostics", async () => {
+    const chatClient = vi.fn().mockResolvedValue({
+      content: "Hello result",
+      finishReason: "stop",
+      provider: "local-llm",
+      model: "gemma-4-e4b-it",
+      toolCalls: [],
+      usage: {
+        promptTokens: 10,
+        completionTokens: 4,
+        totalTokens: 14,
+      },
+    });
+
+    await runDistillationCompletion(
+      {
+        model: "gemma-4-e4b-it",
+        messages: [
+          { role: "system", content: "Return JSON." },
+          { role: "user", content: "Verify candidate." },
+        ],
+        maxTokens: 100,
+      },
+      {
+        chatClient,
+        providerSetting: "local-llm",
+        timeoutMs: 12_345,
+        auditContext: {
+          domain: "coverEvidence",
+          id: "cover-1",
+          stage: "web",
+          assessment: "external-evidence",
+        },
+      },
+    );
+
+    expect(recordAuditLogSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "COVER_EVIDENCE_LLM_STARTED",
+        actor: "system",
+        payload: expect.objectContaining({
+          id: "cover-1",
+          stage: "web",
+          providerSetting: "local-llm",
+          model: "gemma-4-e4b-it",
+          timeoutMs: 12_345,
+          messageCount: 2,
+          inputChars: "Return JSON.Verify candidate.".length,
+          toolChoice: "auto",
+          allowTools: true,
+        }),
+      }),
+    );
+    expect(recordAuditLogSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "COVER_EVIDENCE_LLM_COMPLETED",
+        actor: "system",
+        payload: expect.objectContaining({
+          id: "cover-1",
+          stage: "web",
+          provider: "local-llm",
+          resolvedModel: "gemma-4-e4b-it",
+          finishReason: "stop",
+          outputChars: "Hello result".length,
+          responseToolCallCount: 0,
+          promptTokens: 10,
+          completionTokens: 4,
+          totalTokens: 14,
+        }),
+      }),
+    );
+  });
+
+  test("records coverEvidence LLM failure audit events", async () => {
+    const chatClient = vi.fn().mockRejectedValue(new Error("distillation LLM request timed out"));
+
+    await expect(
+      runDistillationCompletion(
+        {
+          model: "gemma-4-e4b-it",
+          messages: [{ role: "user", content: "Verify candidate." }],
+          maxTokens: 100,
+        },
+        {
+          chatClient,
+          providerSetting: "local-llm",
+          auditContext: {
+            domain: "coverEvidence",
+            id: "cover-2",
+            stage: "final",
+            assessment: "value",
+          },
+        },
+      ),
+    ).rejects.toThrow("distillation LLM request timed out");
+
+    expect(recordAuditLogSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "COVER_EVIDENCE_LLM_FAILED",
+        actor: "system",
+        payload: expect.objectContaining({
+          id: "cover-2",
+          stage: "final",
+          providerSetting: "local-llm",
+          errorKind: "timeout",
+          error: "distillation LLM request timed out",
+        }),
+      }),
+    );
   });
 
   test("runDistillationCompletion loops for tool calls", async () => {

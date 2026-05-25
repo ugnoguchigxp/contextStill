@@ -2638,6 +2638,34 @@ export type DistillationTargetState = {
 export type QueueDashboardStats = {
   stats: Record<string, number>;
   kinds: Record<string, number>;
+  findCandidate: {
+    status: "ready" | "waiting" | "idle" | "running";
+    waitMs: number;
+    waitUntil: string | null;
+    reason:
+      | "disabled"
+      | "provider_cooldown"
+      | "recent_interactive_compile"
+      | "interactive_pressure"
+      | "parallel_lane_busy"
+      | "ready"
+      | "next_retry"
+      | "no_target"
+      | "running";
+    targetKind: "wiki_file" | "vibe_memory" | "web_ingest" | null;
+    provider: string | null;
+    model: string | null;
+    source: "scheduler" | "target_retry" | "running" | "none";
+    updatedAt: string;
+    diagnostics: {
+      provider: string;
+      model: string;
+      compileCount: number;
+      interactiveLlmCount: number;
+      lastCompileAgeSeconds: number | null;
+      lastBackgroundAgeSeconds: number | null;
+    } | null;
+  };
   providerPressure: {
     azureOpenai: {
       provider: "azure-openai";
