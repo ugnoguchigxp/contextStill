@@ -1,4 +1,4 @@
-import { and, asc, count, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import { and, asc, count, desc, eq, gte, inArray, isNull, lt, lte, or, sql } from "drizzle-orm";
 import os from "node:os";
 import { APP_CONSTANTS } from "../../constants.js";
 import { db } from "../../db/index.js";
@@ -82,21 +82,64 @@ export async function releaseRetryablePausedDistillationTargets(
 ): Promise<number> {
   const now = params.now ?? new Date();
   const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
-  const baseConditions = [
+  const pausedConditions = [
     eq(distillationTargetStates.distillationVersion, distillationVersion),
     eq(distillationTargetStates.status, "paused"),
-    or(
-      isNull(distillationTargetStates.nextRetryAt),
-      lte(distillationTargetStates.nextRetryAt, now),
-    ),
   ];
   if (params.targetKind) {
-    baseConditions.push(eq(distillationTargetStates.targetKind, params.targetKind));
+    pausedConditions.push(eq(distillationTargetStates.targetKind, params.targetKind));
+  }
+  const retryExhaustedTerminalConditions = [
+    eq(distillationTargetStates.distillationVersion, distillationVersion),
+    inArray(distillationTargetStates.status, ["pending", "paused"]),
+  ];
+  if (params.targetKind) {
+    retryExhaustedTerminalConditions.push(
+      eq(distillationTargetStates.targetKind, params.targetKind),
+    );
   }
   const limit = typeof params.limit === "number" ? Math.max(1, params.limit) : null;
+  const maxAttempts = APP_CONSTANTS.distillationTargetMaxAttempts;
+  const retryReadyAtCondition = or(
+    isNull(distillationTargetStates.nextRetryAt),
+    lte(distillationTargetStates.nextRetryAt, now),
+  );
+  const retryReadyConditions = [...pausedConditions, retryReadyAtCondition];
+  const actionablePausedConditions = [
+    ...pausedConditions,
+    or(gte(distillationTargetStates.attemptCount, maxAttempts), retryReadyAtCondition),
+  ];
+  const retryExhaustedSet = {
+    status: "skipped" as const,
+    phase: "stored" as const,
+    lockedBy: null,
+    lockedAt: null,
+    heartbeatAt: null,
+    nextRetryAt: null,
+    lastOutcomeKind: "paused_retry_limit_exceeded",
+    lastError: "paused_retry_limit_exceeded",
+    metadata: sql`${distillationTargetStates.metadata} || ${JSON.stringify({
+      retryLimitExceeded: true,
+      retryLimitExceededAt: now.toISOString(),
+      maxAttempts,
+    })}::jsonb` as never,
+    completedAt: now,
+    updatedAt: now,
+  };
 
-  // Fast path: keep the original one-shot SQL update when additional filtering is not required.
+  // Fast path: avoid row hydration when manual-pause filtering and limiting are not required.
   if (!params.excludeManualPauseReasons && limit === null) {
+    await db
+      .update(distillationTargetStates)
+      .set(retryExhaustedSet)
+      .where(
+        and(
+          ...retryExhaustedTerminalConditions,
+          gte(distillationTargetStates.attemptCount, maxAttempts),
+        ),
+      )
+      .returning({ id: distillationTargetStates.id });
+
     const rows = await db
       .update(distillationTargetStates)
       .set({
@@ -104,7 +147,7 @@ export async function releaseRetryablePausedDistillationTargets(
         nextRetryAt: null,
         updatedAt: now,
       })
-      .where(and(...baseConditions))
+      .where(and(...retryReadyConditions, lt(distillationTargetStates.attemptCount, maxAttempts)))
       .returning({ id: distillationTargetStates.id });
     return rows.length;
   }
@@ -112,18 +155,44 @@ export async function releaseRetryablePausedDistillationTargets(
   const query = db
     .select({
       id: distillationTargetStates.id,
+      attemptCount: distillationTargetStates.attemptCount,
+      nextRetryAt: distillationTargetStates.nextRetryAt,
       lastError: distillationTargetStates.lastError,
       metadata: distillationTargetStates.metadata,
     })
     .from(distillationTargetStates)
-    .where(and(...baseConditions))
+    .where(and(...actionablePausedConditions))
     .orderBy(asc(distillationTargetStates.updatedAt));
 
   const pausedRows = limit === null ? await query : await query.limit(limit);
-  const eligibleIds = pausedRows
-    .filter((row) => (params.excludeManualPauseReasons ? !isManualPauseTarget(row) : true))
+  const eligibleRows = pausedRows.filter((row) =>
+    params.excludeManualPauseReasons ? !isManualPauseTarget(row) : true,
+  );
+  const retryExhaustedIds = eligibleRows
+    .filter((row) => row.attemptCount >= maxAttempts)
     .map((row) => row.id);
-  if (eligibleIds.length < 1) return 0;
+  const retryableIds = eligibleRows
+    .filter(
+      (row) =>
+        row.attemptCount < maxAttempts &&
+        (!row.nextRetryAt || row.nextRetryAt.getTime() <= now.getTime()),
+    )
+    .map((row) => row.id);
+
+  if (retryExhaustedIds.length > 0) {
+    await db
+      .update(distillationTargetStates)
+      .set(retryExhaustedSet)
+      .where(
+        and(
+          eq(distillationTargetStates.distillationVersion, distillationVersion),
+          inArray(distillationTargetStates.id, retryExhaustedIds),
+        ),
+      )
+      .returning({ id: distillationTargetStates.id });
+  }
+
+  if (retryableIds.length < 1) return 0;
 
   const rows = await db
     .update(distillationTargetStates)
@@ -135,7 +204,7 @@ export async function releaseRetryablePausedDistillationTargets(
     .where(
       and(
         eq(distillationTargetStates.distillationVersion, distillationVersion),
-        inArray(distillationTargetStates.id, eligibleIds),
+        inArray(distillationTargetStates.id, retryableIds),
       ),
     )
     .returning({ id: distillationTargetStates.id });

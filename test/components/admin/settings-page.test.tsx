@@ -207,6 +207,7 @@ function buildSettingsView(): RuntimeSettingsView {
     advanced: {
       pipelineLockStaleSeconds: 1200,
       lockTtlSeconds: 1800,
+      pipelineClaimLimit: 1,
       continuousIdleSleepMs: 5000,
       continuousErrorSleepMs: 12000,
       inventoryRefreshIntervalMs: 30000,

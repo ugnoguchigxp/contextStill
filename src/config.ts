@@ -254,6 +254,11 @@ export const groupedConfig: GroupedConfig = {
     pipelineLockFile: path.resolve(process.cwd(), "logs", "distillation-pipeline.lock"),
     candidateTimeoutMs: APP_CONSTANTS.distillationCandidateTimeoutMs,
     pipelineLockStaleSeconds: APP_CONSTANTS.distillationPipelineLockStaleSeconds,
+    pipelineClaimLimit: resolvePositiveInt(
+      process.env.MEMORY_ROUTER_DISTILL_PIPELINE_LIMIT,
+      APP_CONSTANTS.distillationPipelineClaimLimit,
+      { min: 1, max: 1000 },
+    ),
     continuousIdleSleepMs: APP_CONSTANTS.distillationContinuousIdleSleepMs,
     continuousErrorSleepMs: APP_CONSTANTS.distillationContinuousErrorSleepMs,
     inventoryRefreshIntervalMs: APP_CONSTANTS.distillationInventoryRefreshIntervalMs,

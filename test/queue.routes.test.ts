@@ -30,6 +30,7 @@ describe("Queue route contract tests", () => {
 
   test("GET /api/queue/stats returns correct stats", async () => {
     vi.mocked(fetchQueueDashboardStats).mockResolvedValueOnce({
+      maxAttempts: 2,
       stats: { pending: 5, running: 1, completed: 10, failed: 2, paused: 0 },
       kinds: { wiki_file: 15, vibe_memory: 3 },
       findCandidate: {
@@ -70,6 +71,7 @@ describe("Queue route contract tests", () => {
     expect(response.status).toBe(200);
     const json = await response.json();
     expect(json).toEqual({
+      maxAttempts: 2,
       stats: { pending: 5, running: 1, completed: 10, failed: 2, paused: 0 },
       kinds: { wiki_file: 15, vibe_memory: 3 },
       findCandidate: {

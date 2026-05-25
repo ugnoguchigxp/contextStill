@@ -1,4 +1,5 @@
 import type { DistillationProviderSetting } from "../distillation/distillation-runtime.service.js";
+import type { CoverEvidenceProviderPolicy } from "./provider-policy.js";
 import { runCoverEvidence } from "./domain.js";
 import type { CoverEvidenceStage, CoverEvidenceStatus } from "./types.js";
 
@@ -6,6 +7,7 @@ export type CoverEvidenceRunnerInput = {
   targetStateId: string;
   findCandidateId: string;
   provider?: DistillationProviderSetting;
+  providerPolicy?: CoverEvidenceProviderPolicy;
   providerFallbackMode?: "fallback" | "single";
   forceRefreshEvidence?: boolean;
   signal?: AbortSignal;
@@ -33,6 +35,7 @@ export async function runCoverEvidenceForCandidate(
   const result = await runCoverEvidence({
     id: input.findCandidateId,
     provider: input.provider,
+    providerPolicy: input.providerPolicy,
     providerFallbackMode: input.providerFallbackMode,
     write: true,
     forceRefreshEvidence: input.forceRefreshEvidence,

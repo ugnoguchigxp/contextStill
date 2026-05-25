@@ -268,6 +268,7 @@ export async function claimNextDistillationTargetState(
       where distillation_version = ${distillationVersion}
         and (${targetKind}::text is null or target_kind = ${targetKind})
         and ${runningCapacitySql(distillationVersion)}
+        and attempt_count < ${APP_CONSTANTS.distillationTargetMaxAttempts}
         and (
           status = 'pending'
           or (
@@ -344,6 +345,7 @@ export async function claimNextCoverEvidenceTargetState(params: {
       where distillation_version = ${distillationVersion}
         and (${targetKind}::text is null or target_kind = ${targetKind})
         and ${runningCapacitySql(distillationVersion)}
+        and attempt_count < ${APP_CONSTANTS.distillationTargetMaxAttempts}
         and (
           status = 'pending'
           or (
@@ -444,6 +446,7 @@ export async function claimDistillationTargetStateById(params: {
         and distillation_version = ${distillationVersion}
         and (${targetKind}::text is null or target_kind = ${targetKind})
         and ${runningCapacitySql(distillationVersion)}
+        and attempt_count < ${APP_CONSTANTS.distillationTargetMaxAttempts}
         and (
           status = 'pending'
           or (
@@ -554,6 +557,7 @@ export async function claimFindCandidateTargetStateById(params: {
         and distillation_version = ${distillationVersion}
         and target_kind = ${params.targetKind}
         and ${runningCapacitySql(distillationVersion)}
+        and attempt_count < ${APP_CONSTANTS.distillationTargetMaxAttempts}
         and (
           status = 'pending'
           or (

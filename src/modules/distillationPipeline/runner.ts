@@ -1,6 +1,9 @@
 import { groupedConfig } from "../../config.js";
 import { APP_CONSTANTS } from "../../constants.js";
-import { parseWebIngestTargetMetadata } from "../../shared/schemas/distillation-target-metadata.schema.js";
+import {
+  parseCoverEvidenceReprocessRequest,
+  parseWebIngestTargetMetadata,
+} from "../../shared/schemas/distillation-target-metadata.schema.js";
 import {
   type CoverEvidenceResultRow,
   coverEvidenceResultFromRow,
@@ -31,6 +34,7 @@ import {
   recordProviderRateLimit,
   recordProviderUsage,
 } from "../llm/provider-pressure.service.js";
+import { reloadRuntimeSettingsCache } from "../settings/settings.service.js";
 import type { DistillationTargetKind } from "../selectDistillationTarget/domain.js";
 import { refreshDistillationTargetInventory } from "../selectDistillationTarget/inventory.service.js";
 import {
@@ -111,6 +115,7 @@ type CandidateProcessing = {
   finalizeResults: FinalizeDistilleResult[];
   finalizeErrors: Array<{ coverEvidenceResultId: string; error: string }>;
   remainingCandidates: number;
+  reprocessCompletionMetadata: Record<string, unknown> | null;
 };
 
 type ScheduledFindCandidateTargetKind = "wiki_file" | "vibe_memory" | "web_ingest";
@@ -188,6 +193,50 @@ function compactCoverResults(
 
 function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
+}
+
+function mergeMetadata(
+  base: Record<string, unknown>,
+  extra: Record<string, unknown> | null,
+): Record<string, unknown> {
+  return extra ? { ...base, ...extra } : base;
+}
+
+function requestedCloudApiCandidateIds(
+  targetMetadata: unknown,
+  candidateIds: string[],
+): { request: ReturnType<typeof parseCoverEvidenceReprocessRequest>; ids: Set<string> | null } {
+  const request = parseCoverEvidenceReprocessRequest(targetMetadata);
+  if (!request || request.mode !== "cloud_api" || request.status !== "requested") {
+    return { request, ids: null };
+  }
+  const requested = new Set(
+    request.findCandidateResultIds.filter((findCandidateId) =>
+      candidateIds.includes(findCandidateId),
+    ),
+  );
+  if (requested.size === 0) {
+    return { request, ids: null };
+  }
+  return { request, ids: requested };
+}
+
+function buildReprocessCompletionMetadata(params: {
+  request: ReturnType<typeof parseCoverEvidenceReprocessRequest>;
+  requestedIds: Set<string> | null;
+  processedIds: Set<string>;
+}): Record<string, unknown> | null {
+  if (!params.request || !params.requestedIds || params.requestedIds.size === 0) return null;
+  for (const requestedId of params.requestedIds) {
+    if (!params.processedIds.has(requestedId)) return null;
+  }
+  return {
+    coverEvidenceReprocessRequest: {
+      ...params.request,
+      status: "completed",
+      completedAt: new Date().toISOString(),
+    },
+  };
 }
 
 function candidateTimeoutMessage(findCandidateId: string): string {
@@ -733,6 +782,9 @@ async function runOrResumeCandidates(
   const finalizeResults: FinalizeDistilleResult[] = [];
   const finalizeErrors: Array<{ coverEvidenceResultId: string; error: string }> = [];
   const finalizedCoverEvidenceResultIds = new Set<string>();
+  const processedCandidateIds = new Set<string>();
+  const { request: reprocessRequest, ids: cloudApiRequestedCandidateIds } =
+    requestedCloudApiCandidateIds(target.metadata, candidateIds);
 
   const finalizeReadyCandidate = async (coverResult: CoverResult): Promise<void> => {
     if (finalizedCoverEvidenceResultIds.has(coverResult.coverEvidenceResultId)) return;
@@ -780,9 +832,13 @@ async function runOrResumeCandidates(
   };
 
   const runCoverOnce = async (findCandidateId: string): Promise<CoverResult> => {
+    const providerPolicy = cloudApiRequestedCandidateIds?.has(findCandidateId)
+      ? "cloud_api"
+      : "default";
+    const forceRefreshEvidence = providerPolicy === "cloud_api" ? true : input.forceRefreshEvidence;
     let coverResult: CoverResult;
     const existing = coverResultsByCandidateId.get(findCandidateId);
-    if (existing && !input.forceRefreshEvidence && !existing.retryable) {
+    if (existing && !forceRefreshEvidence && !existing.retryable) {
       coverResult = existing;
     } else {
       try {
@@ -790,9 +846,11 @@ async function runOrResumeCandidates(
           runCoverEvidenceForCandidate({
             targetStateId: target.id,
             findCandidateId,
-            provider: input.provider,
-            providerFallbackMode: input.providerFallbackMode,
-            forceRefreshEvidence: input.forceRefreshEvidence,
+            provider: providerPolicy === "cloud_api" ? undefined : input.provider,
+            providerPolicy,
+            providerFallbackMode:
+              providerPolicy === "cloud_api" ? "fallback" : input.providerFallbackMode,
+            forceRefreshEvidence,
             signal,
           }),
         );
@@ -804,6 +862,7 @@ async function runOrResumeCandidates(
       }
     }
     coverResultsByCandidateId.set(findCandidateId, coverResult);
+    processedCandidateIds.add(findCandidateId);
     await heartbeat(target, lease);
     return coverResult;
   };
@@ -821,8 +880,11 @@ async function runOrResumeCandidates(
   let remainingCandidates = 0;
   const coverConcurrency = Math.max(1, groupedConfig.distillation.coverEvidenceConcurrency);
   if (input.forceRefreshEvidence) {
-    for (let index = 0; index < candidateIds.length; index += coverConcurrency) {
-      await runCoverBatch(candidateIds.slice(index, index + coverConcurrency));
+    const pendingCandidateIds = cloudApiRequestedCandidateIds
+      ? [...cloudApiRequestedCandidateIds]
+      : candidateIds;
+    for (let index = 0; index < pendingCandidateIds.length; index += coverConcurrency) {
+      await runCoverBatch(pendingCandidateIds.slice(index, index + coverConcurrency));
     }
   } else {
     const neverRunCandidateIds = candidateIds.filter((findCandidateId) => {
@@ -833,26 +895,45 @@ async function runOrResumeCandidates(
       const existing = coverResultsByCandidateId.get(findCandidateId);
       return Boolean(existing?.retryable);
     });
-    const pendingCandidateIds = [...neverRunCandidateIds, ...retryableCandidateIds];
+    const pendingCandidateIds = cloudApiRequestedCandidateIds
+      ? [...cloudApiRequestedCandidateIds]
+      : [...neverRunCandidateIds, ...retryableCandidateIds];
     const nextBatch = pendingCandidateIds.slice(0, coverConcurrency);
     if (nextBatch.length > 0) {
       await runCoverBatch(nextBatch);
     }
-    const processedNeverRunCandidates = nextBatch.filter((findCandidateId) =>
-      neverRunCandidateIds.includes(findCandidateId),
-    ).length;
-    remainingCandidates = Math.max(0, neverRunCandidateIds.length - processedNeverRunCandidates);
+    if (cloudApiRequestedCandidateIds) {
+      remainingCandidates = Math.max(0, pendingCandidateIds.length - nextBatch.length);
+    } else {
+      const processedNeverRunCandidates = nextBatch.filter((findCandidateId) =>
+        neverRunCandidateIds.includes(findCandidateId),
+      ).length;
+      remainingCandidates = Math.max(0, neverRunCandidateIds.length - processedNeverRunCandidates);
+    }
   }
 
   await finalizeUnstoredReadyCandidates();
 
-  for (const findCandidateId of candidateIds) {
+  const outcomeCandidateIds = cloudApiRequestedCandidateIds
+    ? candidateIds.filter((findCandidateId) => cloudApiRequestedCandidateIds.has(findCandidateId))
+    : candidateIds;
+  for (const findCandidateId of outcomeCandidateIds) {
     const coverResult = coverResultsByCandidateId.get(findCandidateId);
     if (!coverResult) continue;
     coverResults.push(coverResult);
   }
 
-  return { coverResults, finalizeResults, finalizeErrors, remainingCandidates };
+  return {
+    coverResults,
+    finalizeResults,
+    finalizeErrors,
+    remainingCandidates,
+    reprocessCompletionMetadata: buildReprocessCompletionMetadata({
+      request: reprocessRequest,
+      requestedIds: cloudApiRequestedCandidateIds,
+      processedIds: processedCandidateIds,
+    }),
+  };
 }
 
 async function finishSkipped(params: {
@@ -861,6 +942,7 @@ async function finishSkipped(params: {
   outcomeKind: string;
   candidateCount: number;
   coverResults: CoverResult[];
+  metadata?: Record<string, unknown> | null;
 }): Promise<DistillationPipelineTargetResult> {
   await requireLease(
     finishDistillationTargetState({
@@ -869,9 +951,12 @@ async function finishSkipped(params: {
       outcomeKind: params.outcomeKind,
       candidateCount: params.candidateCount,
       knowledgeIds: [],
-      metadata: {
-        coverEvidenceStatusCounts: coverStatusCounts(params.coverResults),
-      },
+      metadata: mergeMetadata(
+        {
+          coverEvidenceStatusCounts: coverStatusCounts(params.coverResults),
+        },
+        params.metadata ?? null,
+      ),
       lease: params.lease,
     }),
     params.target,
@@ -940,22 +1025,32 @@ async function runClaimedTarget(
     }
 
     const processed = await runOrResumeCandidates(target, lease, input, candidateIds);
-    const { coverResults, finalizeResults, finalizeErrors, remainingCandidates } = processed;
-    if (remainingCandidates > 0) {
+    const {
+      coverResults,
+      finalizeResults,
+      finalizeErrors,
+      remainingCandidates,
+      reprocessCompletionMetadata,
+    } = processed;
+    const retryLimitReached = target.attemptCount >= APP_CONSTANTS.distillationTargetMaxAttempts;
+    if (remainingCandidates > 0 && !retryLimitReached) {
       await requireLease(
         pauseDistillationTargetState({
           id: target.id,
           reason: CHECKPOINT_PAUSE_REASON,
           retryDelaySeconds: COVER_EVIDENCE_RETRY_DELAY_SECONDS,
-          metadata: {
-            remainingCandidates,
-            candidateCount,
-            coverEvidenceConcurrency: Math.max(
-              1,
-              groupedConfig.distillation.coverEvidenceConcurrency,
-            ),
-            processedBatchSize: candidateCount - remainingCandidates,
-          },
+          metadata: mergeMetadata(
+            {
+              remainingCandidates,
+              candidateCount,
+              coverEvidenceConcurrency: Math.max(
+                1,
+                groupedConfig.distillation.coverEvidenceConcurrency,
+              ),
+              processedBatchSize: candidateCount - remainingCandidates,
+            },
+            reprocessCompletionMetadata,
+          ),
           lease,
         }),
         target,
@@ -976,16 +1071,54 @@ async function runClaimedTarget(
 
     const ready = coverResults.filter((result) => result.status === "knowledge_ready");
     const retryable = coverResults.filter((result) => result.retryable);
+    if (remainingCandidates > 0 && retryLimitReached && ready.length === 0) {
+      return finishSkipped({
+        target,
+        lease,
+        outcomeKind: "cover_evidence_retry_limit_exceeded",
+        candidateCount,
+        coverResults,
+        metadata: mergeMetadata(
+          {
+            retryLimitExceeded: true,
+            maxAttempts: APP_CONSTANTS.distillationTargetMaxAttempts,
+            remainingCandidates,
+            retryableCoverEvidenceIds: retryable.map((result) => result.coverEvidenceResultId),
+          },
+          reprocessCompletionMetadata,
+        ),
+      });
+    }
     if (ready.length === 0 && retryable.length > 0) {
+      if (retryLimitReached) {
+        return finishSkipped({
+          target,
+          lease,
+          outcomeKind: "cover_evidence_retry_limit_exceeded",
+          candidateCount,
+          coverResults,
+          metadata: mergeMetadata(
+            {
+              retryLimitExceeded: true,
+              maxAttempts: APP_CONSTANTS.distillationTargetMaxAttempts,
+              retryableCoverEvidenceIds: retryable.map((result) => result.coverEvidenceResultId),
+            },
+            reprocessCompletionMetadata,
+          ),
+        });
+      }
       await requireLease(
         pauseDistillationTargetState({
           id: target.id,
           reason: "cover_evidence_retryable",
           retryDelaySeconds: COVER_EVIDENCE_RETRY_DELAY_SECONDS,
-          metadata: {
-            coverEvidenceStatusCounts: coverStatusCounts(coverResults),
-            retryableCoverEvidenceIds: retryable.map((result) => result.coverEvidenceResultId),
-          },
+          metadata: mergeMetadata(
+            {
+              coverEvidenceStatusCounts: coverStatusCounts(coverResults),
+              retryableCoverEvidenceIds: retryable.map((result) => result.coverEvidenceResultId),
+            },
+            reprocessCompletionMetadata,
+          ),
           lease,
         }),
         target,
@@ -1010,6 +1143,7 @@ async function runClaimedTarget(
         outcomeKind: "all_rejected",
         candidateCount,
         coverResults,
+        metadata: reprocessCompletionMetadata,
       });
     }
 
@@ -1025,10 +1159,13 @@ async function runClaimedTarget(
             "finalize produced no knowledge",
           candidateCount,
           knowledgeIds: [],
-          metadata: {
-            coverEvidenceStatusCounts: coverStatusCounts(coverResults),
-            finalizeErrors,
-          },
+          metadata: mergeMetadata(
+            {
+              coverEvidenceStatusCounts: coverStatusCounts(coverResults),
+              finalizeErrors,
+            },
+            reprocessCompletionMetadata,
+          ),
           lease,
         }),
         target,
@@ -1059,13 +1196,16 @@ async function runClaimedTarget(
         outcomeKind,
         candidateCount,
         knowledgeIds,
-        metadata: {
-          coverEvidenceStatusCounts: coverStatusCounts(coverResults),
-          embeddingStatusCounts: embeddingStatusCounts(finalizeResults),
-          retryableCoverEvidenceIds: retryable.map((result) => result.coverEvidenceResultId),
-          finalizeErrors,
-          resumedFindCandidate: selection.reused,
-        },
+        metadata: mergeMetadata(
+          {
+            coverEvidenceStatusCounts: coverStatusCounts(coverResults),
+            embeddingStatusCounts: embeddingStatusCounts(finalizeResults),
+            retryableCoverEvidenceIds: retryable.map((result) => result.coverEvidenceResultId),
+            finalizeErrors,
+            resumedFindCandidate: selection.reused,
+          },
+          reprocessCompletionMetadata,
+        ),
         lease,
       }),
       target,
@@ -1145,6 +1285,7 @@ export async function runDistillationPipeline(
   if (!input.write) {
     throw new Error("distillation pipeline requires write=true");
   }
+  await reloadRuntimeSettingsCache();
   const distillationVersion = input.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
   if (input.refresh ?? true) {
     await refreshDistillationTargetInventory({
@@ -1182,30 +1323,62 @@ export async function runDistillationPipeline(
     };
   }
 
-  const [coverEvidenceResult, findCandidateResult] = await Promise.all([
-    runParallelCoverEvidenceLane(input, distillationVersion),
-    runParallelFindCandidateLane(input, distillationVersion),
-  ]);
+  let coverEvidenceResult: DistillationPipelineTargetResult | null = null;
+  let findCandidateResult: DistillationPipelineTargetResult | null = null;
+  const claimedResults: DistillationPipelineTargetResult[] = [];
+  const inFlight = new Set<Promise<void>>();
+  const track = (promise: Promise<void>): void => {
+    inFlight.add(promise);
+    void promise.finally(() => {
+      inFlight.delete(promise);
+    });
+  };
+
+  track(
+    (async () => {
+      coverEvidenceResult = await runParallelCoverEvidenceLane(input, distillationVersion);
+    })(),
+  );
+  track(
+    (async () => {
+      findCandidateResult = await runParallelFindCandidateLane(input, distillationVersion);
+    })(),
+  );
+
+  let remainingClaimLimit = positiveLimit(
+    input.limit ?? groupedConfig.distillation.pipelineClaimLimit,
+  );
+  let canAttemptClaim = true;
+  while (remainingClaimLimit > 0 || inFlight.size > 0) {
+    if (remainingClaimLimit > 0 && canAttemptClaim) {
+      const target = await claimNextDistillationTargetState({
+        distillationVersion,
+        targetKind: targetKindFilter(input.kind),
+        worker: input.worker,
+        requireCandidateResultsForSourceTargets:
+          groupedConfig.distillation.findCandidateBackgroundEnabled,
+      });
+      if (target) {
+        remainingClaimLimit -= 1;
+        track(
+          (async () => {
+            claimedResults.push(await runClaimedTarget(target, input));
+          })(),
+        );
+        continue;
+      }
+      canAttemptClaim = false;
+    }
+
+    if (inFlight.size === 0) break;
+    await Promise.race(inFlight);
+    canAttemptClaim = true;
+  }
 
   const results: DistillationPipelineTargetResult[] = [];
-  if (coverEvidenceResult) {
-    results.push(coverEvidenceResult);
-  }
-  if (findCandidateResult) {
-    results.push(findCandidateResult);
-  }
-
-  for (let index = 0; index < positiveLimit(input.limit); index += 1) {
-    const target = await claimNextDistillationTargetState({
-      distillationVersion,
-      targetKind: targetKindFilter(input.kind),
-      worker: input.worker,
-      requireCandidateResultsForSourceTargets:
-        groupedConfig.distillation.findCandidateBackgroundEnabled,
-    });
-    if (!target) break;
-    results.push(await runClaimedTarget(target, input));
-  }
+  if (coverEvidenceResult) results.push(coverEvidenceResult);
+  if (findCandidateResult) results.push(findCandidateResult);
+  results.push(...claimedResults);
 
   return {
     distillationVersion,

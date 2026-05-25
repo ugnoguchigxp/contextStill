@@ -329,6 +329,7 @@ export const bootstrap: BootstrapConfig = {
   advanced: {
     pipelineLockStaleSeconds: groupedConfig.distillation.pipelineLockStaleSeconds,
     lockTtlSeconds: groupedConfig.distillation.lockTtlSeconds,
+    pipelineClaimLimit: groupedConfig.distillation.pipelineClaimLimit,
     continuousIdleSleepMs: groupedConfig.distillation.continuousIdleSleepMs,
     continuousErrorSleepMs: groupedConfig.distillation.continuousErrorSleepMs,
     inventoryRefreshIntervalMs: groupedConfig.distillation.inventoryRefreshIntervalMs,

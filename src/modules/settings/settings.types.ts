@@ -161,6 +161,7 @@ export type RuntimeSettingsEditable = {
   advanced: {
     pipelineLockStaleSeconds: number;
     lockTtlSeconds: number;
+    pipelineClaimLimit: number;
     continuousIdleSleepMs: number;
     continuousErrorSleepMs: number;
     inventoryRefreshIntervalMs: number;
@@ -322,6 +323,7 @@ export const runtimeSettingsEditableSchema = z.object({
   advanced: z.object({
     pipelineLockStaleSeconds: z.number().int().min(30).max(604_800),
     lockTtlSeconds: z.number().int().min(30).max(604_800),
+    pipelineClaimLimit: z.number().int().min(1).max(1000),
     continuousIdleSleepMs: z.number().int().min(100).max(3_600_000),
     continuousErrorSleepMs: z.number().int().min(100).max(3_600_000),
     inventoryRefreshIntervalMs: z.number().int().min(100).max(3_600_000),

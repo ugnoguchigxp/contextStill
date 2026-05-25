@@ -188,6 +188,7 @@ export function applyRuntimeSettingsToProcess(
     settings.distillationRuntime.lowImportanceRejectThreshold;
   groupedConfig.distillation.lockTtlSeconds = settings.advanced.lockTtlSeconds;
   groupedConfig.distillation.pipelineLockStaleSeconds = settings.advanced.pipelineLockStaleSeconds;
+  groupedConfig.distillation.pipelineClaimLimit = settings.advanced.pipelineClaimLimit;
   groupedConfig.distillation.continuousIdleSleepMs = settings.advanced.continuousIdleSleepMs;
   groupedConfig.distillation.continuousErrorSleepMs = settings.advanced.continuousErrorSleepMs;
   groupedConfig.distillation.inventoryRefreshIntervalMs =
@@ -287,6 +288,7 @@ export function buildSourceMap(view: RuntimeSettingsView): Record<string, string
     "coverEvidence.mcpEvidence.provider": "db",
     "findCandidate.timeoutMs": "db",
     "findCandidate.maxToolCalls": "db",
+    "distillation.pipelineClaimLimit": "db",
     "coverEvidence.timeoutMs": "db",
     "coverEvidence.searchMaxCalls": "db",
     "coverEvidence.fetchMaxCalls": "db",

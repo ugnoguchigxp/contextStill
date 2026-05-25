@@ -382,6 +382,7 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
     advanced: {
       pipelineLockStaleSeconds: view.advanced.pipelineLockStaleSeconds,
       lockTtlSeconds: view.advanced.lockTtlSeconds,
+      pipelineClaimLimit: view.advanced.pipelineClaimLimit,
       continuousIdleSleepMs: view.advanced.continuousIdleSleepMs,
       continuousErrorSleepMs: view.advanced.continuousErrorSleepMs,
       inventoryRefreshIntervalMs: view.advanced.inventoryRefreshIntervalMs,
@@ -2477,6 +2478,27 @@ export function SettingsPage() {
                               lockTtlSeconds: parseIntegerInput(
                                 event.target.value,
                                 current.advanced.lockTtlSeconds,
+                              ),
+                            },
+                          }))
+                        }
+                      />
+                    </label>
+                    <label className="settings-field">
+                      <span>Pipeline Loop Claim Limit</span>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={1000}
+                        value={draft.advanced.pipelineClaimLimit}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            advanced: {
+                              ...current.advanced,
+                              pipelineClaimLimit: parseIntegerInput(
+                                event.target.value,
+                                current.advanced.pipelineClaimLimit,
                               ),
                             },
                           }))

@@ -31,6 +31,7 @@ const mocks = vi.hoisted(() => ({
   saveCoverEvidenceResult: vi.fn(),
   runFinalizeDistille: vi.fn(),
   listKnowledgeIdsByTargetStateId: vi.fn(),
+  ensureRuntimeSettingsLoaded: vi.fn(),
 }));
 
 vi.mock("../src/modules/selectDistillationTarget/inventory.service.js", () => ({
@@ -90,6 +91,10 @@ vi.mock("../src/modules/finalizeDistille/domain.js", () => ({
 
 vi.mock("../src/modules/finalizeDistille/repository.js", () => ({
   listKnowledgeIdsByTargetStateId: mocks.listKnowledgeIdsByTargetStateId,
+}));
+
+vi.mock("../src/modules/settings/settings.service.js", () => ({
+  ensureRuntimeSettingsLoaded: mocks.ensureRuntimeSettingsLoaded,
 }));
 
 function targetRow(overrides: Record<string, unknown> = {}) {
@@ -202,6 +207,20 @@ describe("runDistillationPipeline", () => {
     mocks.isRateLimitError.mockReturnValue(false);
     mocks.recordProviderRateLimit.mockResolvedValue(undefined);
     mocks.recordProviderUsage.mockResolvedValue(undefined);
+    mocks.ensureRuntimeSettingsLoaded.mockResolvedValue(undefined);
+    groupedConfig.distillation.pipelineClaimLimit = 1;
+  });
+
+  test("uses pipeline claim limit from groupedConfig when --limit is omitted", async () => {
+    groupedConfig.distillation.pipelineClaimLimit = 2;
+    mocks.claimNextDistillationTargetState
+      .mockResolvedValueOnce(targetRow({ id: "target-1" }))
+      .mockResolvedValueOnce(targetRow({ id: "target-2" }))
+      .mockResolvedValueOnce(null);
+
+    await runDistillationPipeline({ write: true, refresh: false });
+
+    expect(mocks.claimNextDistillationTargetState).toHaveBeenCalledTimes(2);
   });
 
   test("times out one candidate and completes after next run processes another candidate", async () => {
@@ -311,6 +330,7 @@ describe("runDistillationPipeline", () => {
         },
       ]);
       mocks.listKnowledgeIdsByTargetStateId.mockResolvedValue(["knowledge-ready"]);
+      mocks.claimNextDistillationTargetState.mockResolvedValue(targetRow({ attemptCount: 2 }));
       const second = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
 
       expect(mocks.runCoverEvidenceForCandidate).toHaveBeenCalledWith(
@@ -545,8 +565,126 @@ describe("runDistillationPipeline", () => {
     });
   });
 
+  test("filters to requested ids and applies cloud_api policy on premium reprocess", async () => {
+    mocks.claimNextDistillationTargetState.mockResolvedValue(
+      targetRow({
+        metadata: {
+          coverEvidenceReprocessRequest: {
+            mode: "cloud_api",
+            requestedAt: "2026-05-25T00:00:00.000Z",
+            requestedBy: "user",
+            findCandidateResultIds: ["candidate-2"],
+            coverEvidenceResultIds: ["candidate-2"],
+            forceRefreshEvidence: true,
+            providerPolicy: "cloud_api",
+            status: "requested",
+          },
+        },
+      }),
+    );
+    mocks.listFindCandidateResultsByTargetStateId.mockResolvedValue([
+      {
+        id: "candidate-1",
+        targetStateId: "target-1",
+        candidateIndex: 0,
+        title: "C1",
+        content: "Candidate 1",
+        origin: { candidateType: "rule" },
+        status: "selected",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        targetKind: "wiki_file",
+        targetKey: "pipeline.md",
+        sourceUri: "/wiki/pages/pipeline.md",
+      },
+      {
+        id: "candidate-2",
+        targetStateId: "target-1",
+        candidateIndex: 1,
+        title: "C2",
+        content: "Candidate 2",
+        origin: { candidateType: "rule" },
+        status: "selected",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        targetKind: "wiki_file",
+        targetKey: "pipeline.md",
+        sourceUri: "/wiki/pages/pipeline.md",
+      },
+    ]);
+    mocks.listCoverEvidenceResultsByTargetStateId.mockResolvedValue([
+      {
+        id: "candidate-1",
+        status: "reprocess_requested",
+        stage: "final",
+        reason: "reprocess_requested:rule_body_not_actionable",
+      },
+      {
+        id: "candidate-2",
+        status: "reprocess_requested",
+        stage: "final",
+        reason: "reprocess_requested:rule_body_not_actionable",
+      },
+    ]);
+    mocks.coverEvidenceResultFromRow.mockImplementation((row) => ({
+      schemaVersion: 1,
+      status: row.status,
+      stage: row.stage,
+      candidate: null,
+      references: [],
+      duplicateRefs: [],
+      toolEvents: [],
+      reason: row.reason,
+    }));
+    mocks.runCoverEvidenceForCandidate.mockResolvedValue({
+      coverEvidenceResultId: "candidate-2",
+      findCandidateId: "candidate-2",
+      status: "knowledge_ready",
+      stage: "final",
+      retryable: false,
+      reason: null,
+    });
+    mocks.runFinalizeDistille.mockResolvedValue({
+      coverEvidenceResultId: "candidate-2",
+      knowledgeId: "knowledge-2",
+      status: "stored",
+      embeddingStatus: "stored",
+      sourceReferenceCount: 1,
+      sourceLinkCount: 0,
+      reason: null,
+    });
+    mocks.listKnowledgeIdsByTargetStateId.mockResolvedValue(["knowledge-2"]);
+
+    const result = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
+
+    expect(mocks.runCoverEvidenceForCandidate).toHaveBeenCalledTimes(1);
+    expect(mocks.runCoverEvidenceForCandidate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        findCandidateId: "candidate-2",
+        provider: undefined,
+        providerPolicy: "cloud_api",
+        providerFallbackMode: "fallback",
+        forceRefreshEvidence: true,
+      }),
+    );
+    expect(mocks.finishDistillationTargetState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        metadata: expect.objectContaining({
+          coverEvidenceReprocessRequest: expect.objectContaining({
+            mode: "cloud_api",
+            status: "completed",
+          }),
+        }),
+      }),
+    );
+    expect(result.results[0]).toMatchObject({
+      status: "completed",
+      knowledgeIds: ["knowledge-2"],
+    });
+  });
+
   test("skips retry-exhausted target after pipeline error", async () => {
-    mocks.claimNextDistillationTargetState.mockResolvedValue(targetRow({ attemptCount: 3 }));
+    mocks.claimNextDistillationTargetState.mockResolvedValue(targetRow({ attemptCount: 2 }));
     mocks.runFindCandidate.mockRejectedValue(new Error("The operation timed out."));
 
     const result = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
@@ -564,7 +702,120 @@ describe("runDistillationPipeline", () => {
         error: "The operation timed out.",
         metadata: expect.objectContaining({
           retryLimitExceeded: true,
-          maxAttempts: 3,
+          maxAttempts: 2,
+        }),
+      }),
+    );
+    expect(mocks.pauseDistillationTargetState).not.toHaveBeenCalled();
+  });
+
+  test("skips retry-exhausted cover evidence targets instead of pausing again", async () => {
+    mocks.claimNextCoverEvidenceTargetState.mockResolvedValue(targetRow({ attemptCount: 2 }));
+    mocks.claimNextDistillationTargetState.mockResolvedValue(null);
+    mocks.listFindCandidateResultsByTargetStateId.mockResolvedValue([
+      {
+        id: "candidate-retryable",
+        targetStateId: "target-1",
+        candidateIndex: 0,
+        title: "Retryable",
+        content: "Candidate that still cannot cover evidence",
+        origin: { candidateType: "rule" },
+        status: "selected",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        targetKind: "wiki_file",
+        targetKey: "pipeline.md",
+        sourceUri: "/wiki/pages/pipeline.md",
+      },
+    ]);
+    mocks.runCoverEvidenceForCandidate.mockResolvedValue({
+      coverEvidenceResultId: "candidate-retryable",
+      findCandidateId: "candidate-retryable",
+      status: "provider_failed",
+      stage: "final",
+      retryable: true,
+      reason: "provider timeout",
+    });
+    mocks.listKnowledgeIdsByTargetStateId.mockResolvedValue([]);
+
+    const result = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
+
+    expect(result.results[0]).toMatchObject({
+      status: "skipped",
+      outcomeKind: "cover_evidence_retry_limit_exceeded",
+    });
+    expect(mocks.finishDistillationTargetState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "skipped",
+        outcomeKind: "cover_evidence_retry_limit_exceeded",
+        metadata: expect.objectContaining({
+          retryLimitExceeded: true,
+          maxAttempts: 2,
+          retryableCoverEvidenceIds: ["candidate-retryable"],
+        }),
+      }),
+    );
+    expect(mocks.pauseDistillationTargetState).not.toHaveBeenCalled();
+  });
+
+  test("marks unprocessed cover evidence candidates as retry-exhausted at the retry limit", async () => {
+    mocks.claimNextCoverEvidenceTargetState.mockResolvedValue(targetRow({ attemptCount: 2 }));
+    mocks.claimNextDistillationTargetState.mockResolvedValue(null);
+    mocks.listFindCandidateResultsByTargetStateId.mockResolvedValue([
+      {
+        id: "candidate-rejected",
+        targetStateId: "target-1",
+        candidateIndex: 0,
+        title: "Rejected",
+        content: "Candidate that is rejected",
+        origin: { candidateType: "rule" },
+        status: "selected",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        targetKind: "wiki_file",
+        targetKey: "pipeline.md",
+        sourceUri: "/wiki/pages/pipeline.md",
+      },
+      {
+        id: "candidate-unprocessed",
+        targetStateId: "target-1",
+        candidateIndex: 1,
+        title: "Unprocessed",
+        content: "Candidate that would need another pass",
+        origin: { candidateType: "rule" },
+        status: "selected",
+        createdAt: new Date(),
+        updatedAt: new Date(),
+        targetKind: "wiki_file",
+        targetKey: "pipeline.md",
+        sourceUri: "/wiki/pages/pipeline.md",
+      },
+    ]);
+    mocks.runCoverEvidenceForCandidate.mockResolvedValue({
+      coverEvidenceResultId: "candidate-rejected",
+      findCandidateId: "candidate-rejected",
+      status: "insufficient",
+      stage: "final",
+      retryable: false,
+      reason: "not actionable",
+    });
+    mocks.listKnowledgeIdsByTargetStateId.mockResolvedValue([]);
+
+    const result = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
+
+    expect(mocks.runCoverEvidenceForCandidate).toHaveBeenCalledTimes(1);
+    expect(result.results[0]).toMatchObject({
+      status: "skipped",
+      outcomeKind: "cover_evidence_retry_limit_exceeded",
+    });
+    expect(mocks.finishDistillationTargetState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        status: "skipped",
+        outcomeKind: "cover_evidence_retry_limit_exceeded",
+        metadata: expect.objectContaining({
+          retryLimitExceeded: true,
+          maxAttempts: 2,
+          remainingCandidates: 1,
         }),
       }),
     );

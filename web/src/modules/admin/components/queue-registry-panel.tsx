@@ -20,6 +20,7 @@ import {
 
 type QueueRegistryPanelProps = {
   stats: Record<string, number>;
+  maxAttempts: number;
   findCandidateState: QueueDashboardStats["findCandidate"]["status"] | "idle";
   findCandidateWaiting: boolean;
   findCandidateRunning: boolean;
@@ -44,9 +45,23 @@ type QueueRegistryPanelProps = {
 function actionButton(
   item: DistillationTargetState,
   actioningId: string | null,
+  maxAttempts: number,
   onPause: (id: string) => void,
   onResume: (id: string) => void,
 ) {
+  if (item.attemptCount >= maxAttempts && item.status !== "running") {
+    return (
+      <Button
+        variant="ghost"
+        size="sm"
+        disabled
+        className="h-7 w-7 p-0 text-slate-300 rounded"
+        title="Retry limit reached"
+      >
+        <RotateCcw size={12} />
+      </Button>
+    );
+  }
   if (item.status === "running" || item.status === "pending") {
     return (
       <Button
@@ -91,6 +106,7 @@ function actionButton(
 
 export function QueueRegistryPanel({
   stats,
+  maxAttempts,
   findCandidateState,
   findCandidateWaiting,
   findCandidateRunning,
@@ -310,7 +326,7 @@ export function QueueRegistryPanel({
                         </td>
                         <td className="py-2.5 px-3 text-right">
                           <div className="flex items-center justify-end gap-1">
-                            {actionButton(item, actioningId, onPause, onResume)}
+                            {actionButton(item, actioningId, maxAttempts, onPause, onResume)}
                           </div>
                         </td>
                       </tr>

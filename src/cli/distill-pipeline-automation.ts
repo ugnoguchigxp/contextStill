@@ -52,22 +52,15 @@ function resolveBunPath(): string {
 
 function buildPipelineArgs(continuous: boolean): string[] {
   const pipelineKind = process.env.MEMORY_ROUTER_DISTILL_PIPELINE_KIND ?? "auto";
-  const pipelineLimit = process.env.MEMORY_ROUTER_DISTILL_PIPELINE_LIMIT ?? "1";
+  const pipelineLimit = process.env.MEMORY_ROUTER_DISTILL_PIPELINE_LIMIT?.trim() ?? "";
   const pipelineRefresh = process.env.MEMORY_ROUTER_DISTILL_PIPELINE_REFRESH ?? "1";
   const pipelineProvider = process.env.MEMORY_ROUTER_DISTILL_PIPELINE_PROVIDER ?? "";
   const pipelineProviderFallback =
     process.env.MEMORY_ROUTER_DISTILL_PIPELINE_PROVIDER_FALLBACK ?? "1";
   const pipelineVersion = process.env.MEMORY_ROUTER_DISTILL_PIPELINE_VERSION ?? "";
 
-  const args = [
-    "run",
-    "src/cli/distill-pipeline.ts",
-    "--write",
-    "--limit",
-    pipelineLimit,
-    "--kind",
-    pipelineKind,
-  ];
+  const args = ["run", "src/cli/distill-pipeline.ts", "--write", "--kind", pipelineKind];
+  if (pipelineLimit) args.push("--limit", pipelineLimit);
   if (continuous) args.push("--continuous");
   if (pipelineRefresh === "0") args.push("--no-refresh");
   if (pipelineProvider) args.push("--provider", pipelineProvider);

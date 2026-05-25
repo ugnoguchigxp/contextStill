@@ -3,6 +3,7 @@ export const candidateOutcomeValues = [
   "ready_not_finalized",
   "rejected",
   "retryable",
+  "retained_failure",
   "candidate_only",
   "target_pending",
 ] as const;
@@ -123,6 +124,7 @@ export type CandidateListStats = {
   readyNotFinalized: number;
   rejected: number;
   retryable: number;
+  retainedFailure: number;
   targetPending: number;
   candidateOnly: number;
 };

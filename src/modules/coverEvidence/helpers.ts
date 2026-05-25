@@ -437,11 +437,26 @@ export function isAbortError(error: unknown): boolean {
   return error instanceof Error && error.name === "AbortError";
 }
 
+const externalEvidenceUrlPattern = /\bhttps?:\/\//i;
+const directExternalEvidenceKeywordPattern =
+  /\b(pricing|rate limits?|official docs?|official documentation|public docs?|public documentation|public spec(?:ification)?s?)\b/i;
+const externalEvidenceFreshnessPattern = /\b(latest|current|currently|up-to-date)\b/i;
+const externalEvidenceSubjectPattern =
+  /\b(api|docs?|documentation|reference|spec(?:ification)?s?|provider|models?|package|library|sdk)\b/i;
+const japaneseDirectExternalEvidenceKeywordPattern =
+  /(料金|レート制限|公開仕様|公式ドキュメント|公式資料)/i;
+const japaneseExternalEvidenceFreshnessPattern = /(現在|最新)/i;
+const japaneseExternalEvidenceSubjectPattern =
+  /(API|ドキュメント|仕様|資料|モデル名|パッケージ|ライブラリ)/i;
+
 export function requiresExternalEvidence(candidate: CoverEvidenceCandidate): boolean {
   const text = `${candidate.title}\n${candidate.body}`;
   return (
-    /\bhttps?:\/\//i.test(text) ||
-    /\b(latest|current|pricing|rate limit|version|api|cli|provider|model)\b/i.test(text) ||
-    /(現在|最新|料金|制限|モデル名|公開仕様|API|CLI)/i.test(text)
+    externalEvidenceUrlPattern.test(text) ||
+    directExternalEvidenceKeywordPattern.test(text) ||
+    japaneseDirectExternalEvidenceKeywordPattern.test(text) ||
+    (externalEvidenceFreshnessPattern.test(text) && externalEvidenceSubjectPattern.test(text)) ||
+    (japaneseExternalEvidenceFreshnessPattern.test(text) &&
+      japaneseExternalEvidenceSubjectPattern.test(text))
   );
 }

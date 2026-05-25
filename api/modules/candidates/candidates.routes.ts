@@ -3,6 +3,10 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { distillationTargetKindValues } from "../../../src/db/schema.js";
 import {
+  CoverEvidenceReprocessError,
+  requestCoverEvidenceReprocess,
+} from "../../../src/modules/coverEvidence/reprocess-candidate.service.js";
+import {
   candidateListSortByValues,
   candidateOutcomeValues,
   listCandidateItems,
@@ -22,10 +26,19 @@ const candidateQuerySchema = z.object({
   sortDir: z.enum(["asc", "desc"]).default("desc"),
 });
 
-export const candidatesRouter = new Hono().get(
-  "/",
-  zValidator("query", candidateQuerySchema),
-  async (c) => {
+const candidateIdParamSchema = z.object({
+  id: z.string().trim().min(1),
+});
+
+const premiumReprocessBodySchema = z
+  .object({
+    mode: z.enum(["cloud_api"]).optional(),
+    forceRefreshEvidence: z.boolean().optional(),
+  })
+  .default({});
+
+export const candidatesRouter = new Hono()
+  .get("/", zValidator("query", candidateQuerySchema), async (c) => {
     const query = c.req.valid("query");
     const result = await listCandidateItems({
       page: query.page,
@@ -48,5 +61,35 @@ export const candidatesRouter = new Hono().get(
       totalPages,
       stats: result.stats,
     });
-  },
-);
+  })
+  .post("/:id/premium-reprocess", zValidator("param", candidateIdParamSchema), async (c) => {
+    let rawBody: unknown = {};
+    const rawText = await c.req.text();
+    if (rawText.trim().length > 0) {
+      try {
+        rawBody = JSON.parse(rawText);
+      } catch {
+        return c.json({ reason: "invalid_request_body" }, 400);
+      }
+    }
+    const parsedBody = premiumReprocessBodySchema.safeParse(rawBody);
+    if (!parsedBody.success) {
+      return c.json({ reason: "invalid_request_body" }, 400);
+    }
+    const params = c.req.valid("param");
+
+    try {
+      const result = await requestCoverEvidenceReprocess({
+        findCandidateResultId: params.id,
+        mode: parsedBody.data.mode ?? "cloud_api",
+        forceRefreshEvidence: parsedBody.data.forceRefreshEvidence ?? true,
+        actor: "user",
+      });
+      return c.json({ result });
+    } catch (error) {
+      if (error instanceof CoverEvidenceReprocessError) {
+        return c.json({ reason: error.reason }, error.statusCode);
+      }
+      throw error;
+    }
+  });

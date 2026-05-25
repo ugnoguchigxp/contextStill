@@ -51,7 +51,7 @@ describe("selectDistillationTarget repository-maintenance", () => {
   describe("releaseRetryablePausedDistillationTargets", () => {
     it("updates target status from paused to pending", async () => {
       const mockRows = [{ id: "target-1" }];
-      mockUpdate.mockReturnValueOnce(makeChain(mockRows));
+      mockUpdate.mockReturnValueOnce(makeChain([])).mockReturnValueOnce(makeChain(mockRows));
 
       const count = await releaseRetryablePausedDistillationTargets({
         distillationVersion: "v1",
@@ -63,11 +63,55 @@ describe("selectDistillationTarget repository-maintenance", () => {
       expect(mockUpdate).toHaveBeenCalled();
     });
 
+    it("skips paused targets that already reached the retry limit", async () => {
+      mockUpdate
+        .mockReturnValueOnce(makeChain([{ id: "target-1" }]))
+        .mockReturnValueOnce(makeChain([]));
+
+      const count = await releaseRetryablePausedDistillationTargets({
+        distillationVersion: "v1",
+        now: new Date(),
+      });
+
+      expect(count).toBe(0);
+      expect(mockSelect).not.toHaveBeenCalled();
+      expect(mockUpdate).toHaveBeenCalledTimes(2);
+    });
+
+    it("skips retry-exhausted paused targets even before their next retry time", async () => {
+      mockSelect.mockReturnValueOnce(
+        makeChain([
+          {
+            id: "future-exhausted",
+            attemptCount: 2,
+            nextRetryAt: new Date(Date.now() + 60_000),
+            lastError: "cover_evidence_retryable",
+            metadata: {},
+          },
+        ]),
+      );
+      mockUpdate.mockReturnValueOnce(makeChain([{ id: "future-exhausted" }]));
+
+      const count = await releaseRetryablePausedDistillationTargets({
+        distillationVersion: "v1",
+        now: new Date(),
+        excludeManualPauseReasons: true,
+      });
+
+      expect(count).toBe(0);
+      expect(mockUpdate).toHaveBeenCalledTimes(1);
+    });
+
     it("does not release manual paused targets when excludeManualPauseReasons is enabled", async () => {
       mockSelect.mockReturnValueOnce(
         makeChain([
-          { id: "manual", lastError: "manual_pause", metadata: {} },
-          { id: "retryable", lastError: "cover_evidence_retryable", metadata: {} },
+          { id: "manual", attemptCount: 1, lastError: "manual_pause", metadata: {} },
+          {
+            id: "retryable",
+            attemptCount: 1,
+            lastError: "cover_evidence_retryable",
+            metadata: {},
+          },
         ]),
       );
       mockUpdate.mockReturnValueOnce(makeChain([{ id: "retryable" }]));

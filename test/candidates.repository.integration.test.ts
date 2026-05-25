@@ -321,7 +321,8 @@ describeDb("candidates repository integration", () => {
       stored: 2,
       readyNotFinalized: 1,
       rejected: 1,
-      retryable: 2,
+      retryable: 1,
+      retainedFailure: 1,
       targetPending: 1,
       candidateOnly: 1,
     });
@@ -331,7 +332,7 @@ describeDb("candidates repository integration", () => {
     expect(byId.get("10000000-0000-0000-0000-000000000002")?.outcome).toBe("candidate_only");
     expect(byId.get("10000000-0000-0000-0000-000000000003")?.outcome).toBe("ready_not_finalized");
     expect(byId.get("10000000-0000-0000-0000-000000000004")?.outcome).toBe("rejected");
-    expect(byId.get("10000000-0000-0000-0000-000000000005")?.outcome).toBe("retryable");
+    expect(byId.get("10000000-0000-0000-0000-000000000005")?.outcome).toBe("retained_failure");
     expect(byId.get("10000000-0000-0000-0000-000000000006")?.outcome).toBe("stored");
     expect(byId.get("10000000-0000-0000-0000-000000000007")?.outcome).toBe("stored");
     expect(byId.get("10000000-0000-0000-0000-000000000008")?.outcome).toBe("retryable");
@@ -435,7 +436,85 @@ describeDb("candidates repository integration", () => {
     expect(rejectedOnly.items).toHaveLength(1);
     expect(rejectedOnly.items[0]?.outcome).toBe("rejected");
     expect(rejectedOnly.stats.rejected).toBe(1);
-    expect(rejectedOnly.stats.retryable).toBe(1);
+    expect(rejectedOnly.stats.retryable).toBe(0);
+    expect(rejectedOnly.stats.retainedFailure).toBe(1);
     expect(rejectedOnly.stats.total).toBe(2);
+  });
+
+  test("only cover-evidence paused targets count as retryable outcomes", async () => {
+    await db.insert(distillationTargetStates).values([
+      {
+        id: "40000000-0000-0000-0000-000000000001",
+        targetKind: "wiki_file",
+        targetKey: "retryable-paused-target",
+        sourceUri: "file:///workspace/wiki/retryable-paused.md",
+        distillationVersion: "v1",
+        status: "paused",
+        phase: "covering_evidence",
+        priorityGroup: "wiki",
+        sortKey: "retryable-paused-target",
+        lastOutcomeKind: "cover_evidence_retryable",
+      },
+      {
+        id: "40000000-0000-0000-0000-000000000002",
+        targetKind: "wiki_file",
+        targetKey: "manual-paused-target",
+        sourceUri: "file:///workspace/wiki/manual-paused.md",
+        distillationVersion: "v1",
+        status: "paused",
+        phase: "covering_evidence",
+        priorityGroup: "wiki",
+        sortKey: "manual-paused-target",
+        lastOutcomeKind: "manual_paused",
+      },
+    ]);
+
+    await db.insert(findCandidateResults).values([
+      {
+        id: "41000000-0000-0000-0000-000000000001",
+        targetStateId: "40000000-0000-0000-0000-000000000001",
+        candidateIndex: 0,
+        title: "Retryable paused candidate",
+        content: "stats",
+        status: "selected",
+      },
+      {
+        id: "41000000-0000-0000-0000-000000000002",
+        targetStateId: "40000000-0000-0000-0000-000000000002",
+        candidateIndex: 0,
+        title: "Manual paused candidate",
+        content: "stats",
+        status: "selected",
+      },
+    ]);
+
+    await db.insert(coverEvidenceResults).values([
+      {
+        id: "41000000-0000-0000-0000-000000000001",
+        status: "tool_failed",
+        stage: "web",
+        reason: "external_tool_failed",
+      },
+      {
+        id: "41000000-0000-0000-0000-000000000002",
+        status: "tool_failed",
+        stage: "web",
+        reason: "external_tool_failed",
+      },
+    ]);
+
+    const result = await listCandidateItems({
+      page: 1,
+      limit: 50,
+      targetKind: "all",
+      outcome: "all",
+      hasKnowledge: "all",
+    });
+
+    const byId = new Map(result.items.map((item) => [item.id, item]));
+    expect(byId.get("41000000-0000-0000-0000-000000000001")?.outcome).toBe("retryable");
+    expect(byId.get("41000000-0000-0000-0000-000000000002")?.outcome).toBe("retained_failure");
+    expect(result.stats.retryable).toBe(1);
+    expect(result.stats.retainedFailure).toBe(1);
   });
 });

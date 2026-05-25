@@ -1,9 +1,6 @@
 import { type SQL, and, sql } from "drizzle-orm";
 import { db } from "../../../src/db/index.js";
 import {
-  candidateListSortByValues,
-  candidateOutcomeValues,
-  landscapeLinkStatusValues,
   type CandidateDiffSummary,
   type CandidateListItem,
   type CandidateListQuery,
@@ -13,6 +10,9 @@ import {
   type CandidateListStats,
   type CandidateOutcome,
   type LandscapeLinkStatus,
+  candidateListSortByValues,
+  candidateOutcomeValues,
+  landscapeLinkStatusValues,
 } from "./candidates.types.js";
 
 export {
@@ -175,7 +175,15 @@ candidate_with_outcome as (
       when ck.knowledge_id is not null then 'stored'
       when ck.cover_status = 'knowledge_ready' and ck.knowledge_id is null then 'ready_not_finalized'
       when ck.cover_status in ('duplicate', 'near_duplicate', 'insufficient') then 'rejected'
-      when ck.cover_status in ('reprocess_requested', 'tool_failed', 'provider_failed', 'parse_failed') then 'retryable'
+      when ck.cover_status in ('reprocess_requested', 'tool_failed', 'provider_failed', 'parse_failed')
+        and (
+          ck.target_status in ('pending', 'running')
+          or (
+            ck.target_status = 'paused'
+            and ck.target_outcome_kind in ('cover_evidence_retryable', 'cover_evidence_checkpoint')
+          )
+        ) then 'retryable'
+      when ck.cover_status in ('reprocess_requested', 'tool_failed', 'provider_failed', 'parse_failed') then 'retained_failure'
       when ck.cover_status is null and ck.target_status in ('pending', 'running') then 'target_pending'
       when ck.cover_status is null then 'candidate_only'
       else 'candidate_only'
@@ -572,6 +580,7 @@ export async function listCandidateItems(params: CandidateListQuery): Promise<Ca
         count(*) filter (where outcome = 'ready_not_finalized')::int as ready_not_finalized,
         count(*) filter (where outcome = 'rejected')::int as rejected,
         count(*) filter (where outcome = 'retryable')::int as retryable,
+        count(*) filter (where outcome = 'retained_failure')::int as retained_failure,
         count(*) filter (where outcome = 'target_pending')::int as target_pending,
         count(*) filter (where outcome = 'candidate_only')::int as candidate_only
       from candidate_with_outcome
@@ -592,6 +601,7 @@ export async function listCandidateItems(params: CandidateListQuery): Promise<Ca
       readyNotFinalized: toNumber(statsRow.ready_not_finalized),
       rejected: toNumber(statsRow.rejected),
       retryable: toNumber(statsRow.retryable),
+      retainedFailure: toNumber(statsRow.retained_failure),
       targetPending: toNumber(statsRow.target_pending),
       candidateOnly: toNumber(statsRow.candidate_only),
     },

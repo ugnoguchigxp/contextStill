@@ -4,6 +4,7 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CandidatesPage } from "../../../web/src/modules/admin/components/candidates.page";
+import { requestCandidatePremiumReprocess } from "../../../web/src/modules/admin/repositories/admin.repository";
 
 // 外部APIおよびreact-query、react-routerのモック
 vi.mock("@tanstack/react-query", async () => {
@@ -24,6 +25,7 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("../../../web/src/modules/admin/repositories/admin.repository", () => ({
   fetchCandidateItems: vi.fn(),
+  requestCandidatePremiumReprocess: vi.fn(),
 }));
 
 const queryClient = new QueryClient();
@@ -110,14 +112,48 @@ const mockCandidateItems = [
     sourceUri: "file:///mem-vibe-abc",
     finalizeSourceUri: "",
   },
+  {
+    id: "cand-3",
+    targetKind: "wiki_file",
+    targetKey: "docs/rejected-candidate.md",
+    outcome: "rejected",
+    candidateIndex: 2,
+    original: {
+      title: "Rejected Candidate",
+      body: "Candidate that should be eligible for premium reprocess.",
+    },
+    cover: {
+      status: "insufficient",
+      stage: "source_support",
+      reason: "rule_body_not_actionable",
+      importance: null,
+      confidence: null,
+      title: null,
+      body: null,
+      type: null,
+      referencesCount: 0,
+      duplicateRefsCount: 0,
+      toolEventsCount: 0,
+    },
+    knowledge: null,
+    diff: {
+      originalToCover: null,
+    },
+    landscapeWarning: null,
+    latestUpdatedAt: "2026-05-20T08:00:00.000Z",
+    targetStateId: "state-789",
+    sourceUri: "file:///docs/rejected-candidate.md",
+    finalizeSourceUri: "cover-evidence-result://cand-3",
+  },
 ];
 
 const mockStats = {
-  total: 2,
+  total: 3,
   stored: 1,
   readyNotFinalized: 1,
-  rejected: 0,
+  rejected: 1,
   retryable: 0,
+  retainedFailure: 0,
   targetPending: 0,
   candidateOnly: 0,
 };
@@ -128,6 +164,17 @@ describe("CandidatesPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRefetch.mockResolvedValue({} as any);
+    vi.mocked(requestCandidatePremiumReprocess).mockResolvedValue({
+      result: {
+        findCandidateResultId: "cand-3",
+        coverEvidenceResultId: "cand-3",
+        targetStateId: "state-789",
+        status: "queued",
+        mode: "cloud_api",
+        previousStatus: "insufficient",
+        previousReason: "rule_body_not_actionable",
+      },
+    });
     window.history.replaceState({}, "", "/candidates");
 
     vi.mocked(useQuery).mockReturnValue({
@@ -168,7 +215,7 @@ describe("CandidatesPage", () => {
     expect(screen.getByText("promotion gate review required")).toBeInTheDocument();
 
     // Stats フッターの検証
-    expect(screen.getByText(/total 2 \| stored 1 \| ready 1/)).toBeInTheDocument();
+    expect(screen.getByText(/total 3 \| stored 1 \| ready 1 \| rejected 1/)).toBeInTheDocument();
   });
 
   it("reads targetStateId from query and shows active filter", () => {
@@ -335,5 +382,21 @@ describe("CandidatesPage", () => {
     const refreshButton = screen.getByText("Refresh");
     fireEvent.click(refreshButton);
     expect(mockRefetch).toHaveBeenCalled();
+  });
+
+  it("requests premium reprocess from expanded rejected candidate row", async () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <CandidatesPage />
+      </QueryClientProvider>,
+    );
+
+    fireEvent.click(screen.getByText("Rejected Candidate"));
+    const premiumButton = screen.getByRole("button", { name: "Premium再評価" });
+    fireEvent.click(premiumButton);
+
+    await waitFor(() => {
+      expect(requestCandidatePremiumReprocess).toHaveBeenCalledWith("cand-3");
+    });
   });
 });

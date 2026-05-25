@@ -9,7 +9,7 @@ import { type FileLockHandle, acquireFileLock } from "./file-lock.js";
 
 type CliOptions = {
   kind: "auto" | "wiki" | "vibe" | "candidate" | "web";
-  limit: number;
+  limit?: number;
   targetStateId?: string;
   write: boolean;
   refresh: boolean;
@@ -45,7 +45,6 @@ function readPositiveInteger(args: string[], index: number, name: string): numbe
 function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
     kind: "auto",
-    limit: 1,
     write: false,
     refresh: true,
     continuous: false,
@@ -142,7 +141,7 @@ function sleep(ms: number): Promise<void> {
 function pipelineInput(
   options: CliOptions,
   refresh: boolean,
-  limit: number,
+  limit?: number,
 ): DistillationPipelineInput {
   return {
     kind: options.kind,
@@ -162,7 +161,7 @@ function pipelineInput(
 
 async function runOnceWithLock(
   options: CliOptions,
-  params: { refresh: boolean; limit: number; wait: boolean },
+  params: { refresh: boolean; limit?: number; wait: boolean },
 ): Promise<Awaited<ReturnType<typeof runDistillationPipeline>>> {
   let lock: FileLockHandle | null = null;
   try {
@@ -192,7 +191,7 @@ async function runContinuous(options: CliOptions): Promise<void> {
       if (refresh) lastRefreshAt = now;
       const result = await runOnceWithLock(options, {
         refresh,
-        limit: 1,
+        limit: options.limit,
         wait: false,
       });
       process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);

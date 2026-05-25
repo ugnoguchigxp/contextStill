@@ -1686,6 +1686,7 @@ export type CandidateOutcome =
   | "ready_not_finalized"
   | "rejected"
   | "retryable"
+  | "retained_failure"
   | "candidate_only"
   | "target_pending";
 
@@ -1786,6 +1787,7 @@ export type CandidateListStats = {
   readyNotFinalized: number;
   rejected: number;
   retryable: number;
+  retainedFailure: number;
   targetPending: number;
   candidateOnly: number;
 };
@@ -1809,6 +1811,18 @@ export type CandidateListRequest = {
   targetStateId?: string;
   sortBy?: CandidateListSortBy;
   sortDir?: CandidateListSortDir;
+};
+
+export type CandidatePremiumReprocessResponse = {
+  result: {
+    findCandidateResultId: string;
+    coverEvidenceResultId: string;
+    targetStateId: string;
+    status: "queued" | "already_queued";
+    mode: "cloud_api";
+    previousStatus: string;
+    previousReason: string | null;
+  };
 };
 
 export type RuntimeProviderName = "openai" | "azure-openai" | "bedrock" | "local-llm";
@@ -1954,6 +1968,7 @@ export type RuntimeSettingsEditable = {
   advanced: {
     pipelineLockStaleSeconds: number;
     lockTtlSeconds: number;
+    pipelineClaimLimit: number;
     continuousIdleSleepMs: number;
     continuousErrorSleepMs: number;
     inventoryRefreshIntervalMs: number;
@@ -2724,6 +2739,16 @@ export async function fetchCandidateItems(
   return getJson<CandidateListResponse>(`/api/candidates?${query.toString()}`);
 }
 
+export async function requestCandidatePremiumReprocess(
+  id: string,
+): Promise<CandidatePremiumReprocessResponse> {
+  return requestJson<CandidatePremiumReprocessResponse>(
+    `/api/candidates/${encodeURIComponent(id)}/premium-reprocess`,
+    "POST",
+    { mode: "cloud_api", forceRefreshEvidence: true },
+  );
+}
+
 export async function fetchRuntimeSettings(): Promise<RuntimeSettingsSnapshotResponse> {
   return getJson<RuntimeSettingsSnapshotResponse>("/api/settings");
 }
@@ -2791,6 +2816,7 @@ export type DistillationTargetState = {
 };
 
 export type QueueDashboardStats = {
+  maxAttempts: number;
   stats: Record<string, number>;
   kinds: Record<string, number>;
   findCandidate: {

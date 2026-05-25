@@ -573,4 +573,87 @@ describe("runCoverEvidence", () => {
       ]),
     );
   });
+
+  test("classifies LLM timeout with prior tool events as provider failure", async () => {
+    mocks.getFindCandidateResultById.mockResolvedValue(
+      candidateRow({
+        title: "Use current API docs from https://example.com/docs",
+        content:
+          "Use current API docs from https://example.com/docs before preserving provider behavior claims.",
+      }),
+    );
+    mocks.readFileDomain.mockResolvedValue({
+      content:
+        "Use current API docs from https://example.com/docs before preserving provider behavior claims.",
+      totalTokens: 120,
+      from: 0,
+      toExclusive: 120,
+      returnedTokens: 120,
+    });
+    const error = Object.assign(new Error("local-llm: distillation request timed out"), {
+      distillationToolEvents: [
+        {
+          callId: "call-1",
+          name: "fetch_content",
+          ok: true,
+          content: "Fetched docs",
+          metadata: { url: "https://example.com/docs" },
+        },
+      ],
+    });
+    mocks.runDistillationCompletion.mockRejectedValueOnce(error);
+
+    const result = await runCoverEvidence({ id: "find-1" });
+
+    expect(result.result.status).toBe("provider_failed");
+    expect(result.result.reason).toBe("external_provider_timeout");
+    expect(result.result.toolEvents).toEqual([
+      expect.objectContaining({
+        name: "fetch_content",
+        ok: true,
+      }),
+    ]);
+  });
+
+  test("keeps failed tool events classified as tool failure even when the LLM also times out", async () => {
+    mocks.getFindCandidateResultById.mockResolvedValue(
+      candidateRow({
+        title: "Use current API docs from https://example.com/docs",
+        content:
+          "Use current API docs from https://example.com/docs before preserving provider behavior claims.",
+      }),
+    );
+    mocks.readFileDomain.mockResolvedValue({
+      content:
+        "Use current API docs from https://example.com/docs before preserving provider behavior claims.",
+      totalTokens: 120,
+      from: 0,
+      toExclusive: 120,
+      returnedTokens: 120,
+    });
+    const error = Object.assign(new Error("local-llm: distillation request timed out"), {
+      distillationToolEvents: [
+        {
+          callId: "call-1",
+          name: "fetch_content",
+          ok: false,
+          content: JSON.stringify({ error: "request timed out after 30000ms" }),
+          error: "request timed out after 30000ms",
+          metadata: { url: "https://example.com/docs" },
+        },
+      ],
+    });
+    mocks.runDistillationCompletion.mockRejectedValueOnce(error);
+
+    const result = await runCoverEvidence({ id: "find-1" });
+
+    expect(result.result.status).toBe("tool_failed");
+    expect(result.result.reason).toBe("external_tool_failed");
+    expect(result.result.toolEvents).toEqual([
+      expect.objectContaining({
+        name: "fetch_content",
+        ok: false,
+      }),
+    ]);
+  });
 });

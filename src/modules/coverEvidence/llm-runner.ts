@@ -55,6 +55,38 @@ import type {
   CoverEvidenceToolEvent,
 } from "./types.js";
 
+type LlmRuntimeFailureKind = "aborted" | "timeout" | null;
+
+function llmRuntimeFailureKind(error: unknown): LlmRuntimeFailureKind {
+  if (!(error instanceof Error)) return null;
+  const name = error.name.toLowerCase();
+  const message = error.message.toLowerCase();
+  if (name === "aborterror" || message.includes("aborted")) return "aborted";
+  if (message.includes("timed out") || message.includes("timeout")) return "timeout";
+  return null;
+}
+
+function coverEvidenceFailureStatus(params: {
+  error: unknown;
+  toolEvents: CoverEvidenceToolEvent[];
+}): CoverEvidenceStatus {
+  const hasFailedToolEvent = params.toolEvents.some((event) => !event.ok);
+  if (llmRuntimeFailureKind(params.error) && !hasFailedToolEvent) return "provider_failed";
+  return params.toolEvents.length > 0 ? "tool_failed" : "provider_failed";
+}
+
+function coverEvidenceFailureReason(params: {
+  prefix: "external" | "value";
+  status: CoverEvidenceStatus;
+  error: unknown;
+}): string {
+  if (params.status === "tool_failed") return `${params.prefix}_tool_failed`;
+  const runtimeFailure = llmRuntimeFailureKind(params.error);
+  if (runtimeFailure === "aborted") return `${params.prefix}_provider_aborted`;
+  if (runtimeFailure === "timeout") return `${params.prefix}_provider_timeout`;
+  return `${params.prefix}_provider_failed`;
+}
+
 function repairCandidateForResult(
   result: CoverEvidenceResult,
   fallbackProcedureCandidate?: CoverEvidenceCandidate,
@@ -298,14 +330,14 @@ export async function runValueAssessment(params: {
       throw error;
     }
     const toolEvents = toolEventsForResult(distillationToolEventsFromError(error));
-    const status: CoverEvidenceStatus = toolEvents.length > 0 ? "tool_failed" : "provider_failed";
+    const status = coverEvidenceFailureStatus({ error, toolEvents });
     return makeResult({
       status,
       stage: "final",
       candidate: null,
       references: params.sourceReferences,
       toolEvents,
-      reason: status === "tool_failed" ? "value_tool_failed" : "value_provider_failed",
+      reason: coverEvidenceFailureReason({ prefix: "value", status, error }),
     });
   }
 }
@@ -434,14 +466,14 @@ export async function runExternalEvidence(params: {
       throw error;
     }
     const toolEvents = toolEventsForResult(distillationToolEventsFromError(error));
-    const status: CoverEvidenceStatus = toolEvents.length > 0 ? "tool_failed" : "provider_failed";
+    const status = coverEvidenceFailureStatus({ error, toolEvents });
     return makeResult({
       status,
       stage: "web",
       candidate: null,
       references: params.sourceReferences,
       toolEvents,
-      reason: status === "tool_failed" ? "external_tool_failed" : "external_provider_failed",
+      reason: coverEvidenceFailureReason({ prefix: "external", status, error }),
     });
   }
 }

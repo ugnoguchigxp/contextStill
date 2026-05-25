@@ -1,5 +1,5 @@
 import os from "node:os";
-import { and, eq, isNull, lte, or } from "drizzle-orm";
+import { and, eq, isNull, lt, lte, or } from "drizzle-orm";
 import { distillationTargetStates } from "../../db/schema.js";
 import { APP_CONSTANTS } from "../../constants.js";
 
@@ -64,13 +64,16 @@ export function targetLeaseWhere(id: string, lease: TargetLease | undefined) {
 }
 
 export function statusEligibility(now: Date) {
-  return or(
-    eq(distillationTargetStates.status, "pending"),
-    and(
-      eq(distillationTargetStates.status, "paused"),
-      or(
-        isNull(distillationTargetStates.nextRetryAt),
-        lte(distillationTargetStates.nextRetryAt, now),
+  return and(
+    lt(distillationTargetStates.attemptCount, APP_CONSTANTS.distillationTargetMaxAttempts),
+    or(
+      eq(distillationTargetStates.status, "pending"),
+      and(
+        eq(distillationTargetStates.status, "paused"),
+        or(
+          isNull(distillationTargetStates.nextRetryAt),
+          lte(distillationTargetStates.nextRetryAt, now),
+        ),
       ),
     ),
   );

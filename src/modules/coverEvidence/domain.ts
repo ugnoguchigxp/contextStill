@@ -12,6 +12,7 @@ import {
   ensureRuntimeSettingsLoaded,
   resolveCoverEvidenceRoutes,
 } from "../settings/settings.service.js";
+import { resolveCoverEvidenceRouteByPolicy } from "./provider-policy.js";
 import { dedupeCoverEvidenceCandidate } from "./dedupe.service.js";
 import {
   baseCandidate,
@@ -160,29 +161,49 @@ export async function runCoverEvidence(
   }
   await ensureRuntimeSettingsLoaded();
   const routes = resolveCoverEvidenceRoutes();
+  const providerPolicy = input.providerPolicy ?? "default";
+  const resolvedProviderFallbackMode =
+    providerPolicy === "cloud_api" ? "fallback" : input.providerFallbackMode;
+  const providerOverride = providerPolicy === "cloud_api" ? undefined : input.provider;
+
+  const sourceSupportRuntimeRoute = resolveCoverEvidenceRouteByPolicy({
+    route: routes.sourceSupport,
+    policy: providerPolicy,
+    routeName: "sourceSupport",
+  });
+  const externalEvidenceRuntimeRoute = resolveCoverEvidenceRouteByPolicy({
+    route: routes.externalEvidence,
+    policy: providerPolicy,
+    routeName: "externalEvidence",
+  });
+  const mcpEvidenceRuntimeRoute = resolveCoverEvidenceRouteByPolicy({
+    route: routes.mcpEvidence,
+    policy: providerPolicy,
+    routeName: "mcpEvidence",
+  });
 
   const sourceSupportRoute = resolveCoverEvidenceProviderRoute({
-    route: routes.sourceSupport,
-    providerOverride: input.provider,
-    providerFallbackMode: input.providerFallbackMode,
+    route: sourceSupportRuntimeRoute,
+    providerOverride,
+    providerFallbackMode: resolvedProviderFallbackMode,
   });
   const sourceSupportProvider = sourceSupportRoute.provider;
   const sourceSupportFallbackOrder = sourceSupportRoute.fallbackOrder;
   const sourceSupportModel = sourceSupportRoute.model;
 
   const externalEvidenceRoute = resolveCoverEvidenceProviderRoute({
-    route: routes.externalEvidence,
-    providerOverride: input.provider,
-    providerFallbackMode: input.providerFallbackMode,
+    route: externalEvidenceRuntimeRoute,
+    providerOverride,
+    providerFallbackMode: resolvedProviderFallbackMode,
   });
   const externalEvidenceProvider = externalEvidenceRoute.provider;
   const externalEvidenceFallbackOrder = externalEvidenceRoute.fallbackOrder;
   const externalEvidenceModel = externalEvidenceRoute.model;
 
   const mcpEvidenceRoute = resolveCoverEvidenceProviderRoute({
-    route: routes.mcpEvidence,
-    providerOverride: input.provider,
-    providerFallbackMode: input.providerFallbackMode,
+    route: mcpEvidenceRuntimeRoute,
+    providerOverride,
+    providerFallbackMode: resolvedProviderFallbackMode,
   });
   const mcpEvidenceProvider = mcpEvidenceRoute.provider;
   const mcpEvidenceFallbackOrder = mcpEvidenceRoute.fallbackOrder;
@@ -228,8 +249,9 @@ export async function runCoverEvidence(
       targetKind: row.targetKind,
       targetKey: row.targetKey,
       provider: sourceSupportProvider,
-      providerOverride: input.provider ?? null,
-      providerFallbackMode: input.providerFallbackMode ?? "fallback",
+      providerOverride: providerOverride ?? null,
+      providerPolicy,
+      providerFallbackMode: resolvedProviderFallbackMode ?? "fallback",
       providerRoutes: {
         sourceSupport: {
           provider: sourceSupportProvider,

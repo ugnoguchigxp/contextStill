@@ -1,4 +1,5 @@
 import type { DistillationProviderSetting } from "../distillation/distillation-runtime.service.js";
+import type { CoverEvidenceProviderPolicy } from "./provider-policy.js";
 
 export const coverEvidenceStatuses = [
   "knowledge_ready",
@@ -75,6 +76,7 @@ export type CoverEvidenceResult = {
 export type CoverEvidenceInput = {
   id: string;
   provider?: DistillationProviderSetting;
+  providerPolicy?: CoverEvidenceProviderPolicy;
   providerFallbackMode?: "fallback" | "single";
   write?: boolean;
   forceRefreshEvidence?: boolean;

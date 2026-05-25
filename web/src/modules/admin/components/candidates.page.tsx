@@ -5,7 +5,7 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDateTime as tzFormatDateTime, useTimezone } from "@/lib/timezone";
-import { useQuery } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link } from "@tanstack/react-router";
 import {
   type ColumnDef,
@@ -14,13 +14,14 @@ import {
   getCoreRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { AlertTriangle, RefreshCw, Search } from "lucide-react";
+import { AlertTriangle, CloudCog, RefreshCw, Search } from "lucide-react";
 import { Fragment, useCallback, useMemo, useState } from "react";
 import {
   type CandidateListItem,
   type CandidateListSortBy,
   type CandidateOutcome,
   fetchCandidateItems,
+  requestCandidatePremiumReprocess,
 } from "../repositories/admin.repository";
 import { AdminPaginationFooter } from "./admin-pagination-footer";
 import { AdminSortableTableHead } from "./admin-sortable-table-head";
@@ -42,6 +43,7 @@ import {
 
 export function CandidatesPage() {
   const tz = useTimezone();
+  const queryClient = useQueryClient();
   const formatDate = useCallback(
     (value: string | Date | null | undefined): string => {
       return tzFormatDateTime(value, tz);
@@ -91,7 +93,35 @@ export function CandidatesPage() {
         sortBy: serverSort.id as CandidateListSortBy,
         sortDir: serverSort.desc ? "desc" : "asc",
       }),
+    refetchInterval: 5000,
   });
+
+  const premiumReprocessMutation = useMutation({
+    mutationFn: (candidateId: string) => requestCandidatePremiumReprocess(candidateId),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["candidates"] });
+    },
+  });
+
+  const canPremiumReprocess = useCallback((item: CandidateListItem): boolean => {
+    if (item.knowledge) return false;
+    const outcomeAllowed =
+      item.outcome === "rejected" ||
+      item.outcome === "retryable" ||
+      item.outcome === "retained_failure";
+    if (!outcomeAllowed) return false;
+    const coverStatus = item.cover?.status;
+    return (
+      coverStatus === "insufficient" ||
+      coverStatus === "provider_failed" ||
+      coverStatus === "tool_failed" ||
+      coverStatus === "parse_failed" ||
+      coverStatus === "reprocess_requested"
+    );
+  }, []);
+
+  const premiumReprocessError =
+    premiumReprocessMutation.error instanceof Error ? premiumReprocessMutation.error.message : null;
 
   const items = candidatesQuery.data?.items ?? [];
   const stats = candidatesQuery.data?.stats;
@@ -451,6 +481,33 @@ export function CandidatesPage() {
                             colSpan={columns.length}
                             className="px-3 py-4 whitespace-normal break-words [overflow-wrap:anywhere]"
                           >
+                            <div className="mb-3 flex flex-wrap items-center gap-2">
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                disabled={
+                                  !canPremiumReprocess(item) || premiumReprocessMutation.isPending
+                                }
+                                onClick={(event) => {
+                                  event.stopPropagation();
+                                  premiumReprocessMutation.mutate(item.id);
+                                }}
+                              >
+                                <CloudCog size={14} />
+                                Premium再評価
+                              </Button>
+                              {item.cover?.status === "reprocess_requested" ? (
+                                <span className="text-[11px] text-muted-foreground">
+                                  再評価キュー済み
+                                </span>
+                              ) : null}
+                              {premiumReprocessError ? (
+                                <span className="text-[11px] text-destructive">
+                                  {premiumReprocessError}
+                                </span>
+                              ) : null}
+                            </div>
                             <div className="grid min-w-0 gap-3 lg:grid-cols-3">
                               <CandidateDetailPane
                                 sectionTitle="Original Candidate"
@@ -527,6 +584,7 @@ export function CandidatesPage() {
           summaryItems={[
             `Showing ${pageStart} to ${pageEnd} of ${total} candidates | Page ${currentPage} / ${displayTotalPages}`,
             `total ${stats?.total ?? 0} | stored ${stats?.stored ?? 0} | ready ${stats?.readyNotFinalized ?? 0} | rejected ${stats?.rejected ?? 0} | retryable ${stats?.retryable ?? 0} | pending ${stats?.targetPending ?? 0}`,
+            `retained failures ${stats?.retainedFailure ?? 0}`,
           ]}
         />
       </Card>

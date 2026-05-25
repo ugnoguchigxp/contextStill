@@ -77,6 +77,7 @@ export function QueuePage() {
   });
 
   const stats = statsQuery.data?.stats ?? {};
+  const maxAttempts = statsQuery.data?.maxAttempts ?? 2;
   const findCandidateStatus = statsQuery.data?.findCandidate;
   const findCandidateState = findCandidateStatus?.status ?? "idle";
   const findCandidateWaiting = findCandidateState === "waiting";
@@ -170,6 +171,7 @@ export function QueuePage() {
           <div className="xl:col-span-2">
             <QueueRegistryPanel
               stats={stats}
+              maxAttempts={maxAttempts}
               findCandidateState={findCandidateState}
               findCandidateWaiting={findCandidateWaiting}
               findCandidateRunning={findCandidateRunning}

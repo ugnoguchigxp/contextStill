@@ -45,6 +45,7 @@ import {
 } from "../api/modules/settings/settings.service.js";
 import { vibeMemoryRouter } from "../api/modules/vibe-memory/vibe-memory.routes.js";
 import { groupedConfig } from "../src/config.js";
+import { requestCoverEvidenceReprocess } from "../src/modules/coverEvidence/reprocess-candidate.service.js";
 import { recordVibeMemoryWithDiffEntries } from "../src/modules/vibe-memory/vibe-memory.service.js";
 import { compileRunDetailSchema } from "../src/shared/schemas/compile-run.schema.js";
 import { type ContextPack, contextPackSchema } from "../src/shared/schemas/context-pack.schema.js";
@@ -116,6 +117,7 @@ vi.mock("../api/modules/candidates/candidates.repository.js", () => ({
     "ready_not_finalized",
     "rejected",
     "retryable",
+    "retained_failure",
     "candidate_only",
     "target_pending",
   ] as const,
@@ -139,6 +141,21 @@ vi.mock("../api/modules/audit/audit.repository.js", () => ({
 
 vi.mock("../src/modules/vibe-memory/vibe-memory.service.js", () => ({
   recordVibeMemoryWithDiffEntries: vi.fn(),
+}));
+
+vi.mock("../src/modules/coverEvidence/reprocess-candidate.service.js", () => ({
+  CoverEvidenceReprocessError: class CoverEvidenceReprocessError extends Error {
+    statusCode: 404 | 409;
+    reason: string;
+
+    constructor(statusCode: 404 | 409, reason: string) {
+      super(reason);
+      this.name = "CoverEvidenceReprocessError";
+      this.statusCode = statusCode;
+      this.reason = reason;
+    }
+  },
+  requestCoverEvidenceReprocess: vi.fn(),
 }));
 
 const buildApp = () => {
@@ -240,6 +257,7 @@ describe("API route contract tests", () => {
         readyNotFinalized: 0,
         rejected: 0,
         retryable: 0,
+        retainedFailure: 0,
         targetPending: 0,
         candidateOnly: 0,
       },
@@ -278,6 +296,15 @@ describe("API route contract tests", () => {
         createdAt: "2026-05-15T00:00:00.000Z",
       } as never,
       diffEntries: [],
+    });
+    vi.mocked(requestCoverEvidenceReprocess).mockResolvedValue({
+      findCandidateResultId: "candidate-1",
+      coverEvidenceResultId: "candidate-1",
+      targetStateId: "target-1",
+      status: "queued",
+      mode: "cloud_api",
+      previousStatus: "insufficient",
+      previousReason: "rule_body_not_actionable",
     });
   });
 

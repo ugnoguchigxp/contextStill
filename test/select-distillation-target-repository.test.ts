@@ -187,14 +187,14 @@ describe("selectDistillationTarget repository unit tests", () => {
       mockUpdate.mockReturnValueOnce(makeChain([mockRow]));
 
       const result = await claimNextDistillationTargetState({ worker: "test-worker" });
+      const selectSql = flattenSqlChunks(mockExecute.mock.calls[1]?.[0]);
       expect(result).toEqual(mockRow);
       expect(flattenSqlChunks(mockExecute.mock.calls[0]?.[0])).toContain(
         "distillation_pipeline_capacity",
       );
-      expect(flattenSqlChunks(mockExecute.mock.calls[1]?.[0])).toContain(
-        "::timestamptz at time zone 'UTC'",
-      );
-      expect(flattenSqlChunks(mockExecute.mock.calls[1]?.[0])).toContain("running_capacity");
+      expect(selectSql).toContain("::timestamptz at time zone 'UTC'");
+      expect(selectSql).toContain("running_capacity");
+      expect(selectSql).toContain("attempt_count <");
       expect(recordAuditLogSafe).toHaveBeenCalled();
     });
 
@@ -245,6 +245,7 @@ describe("selectDistillationTarget repository unit tests", () => {
       expect(flattenSqlChunks(mockExecute.mock.calls[1]?.[0])).toContain("pg_advisory_xact_lock");
       expect(flattenSqlChunks(mockExecute.mock.calls[2]?.[0])).toContain("find_candidate_results");
       expect(flattenSqlChunks(mockExecute.mock.calls[2]?.[0])).toContain("running_capacity");
+      expect(flattenSqlChunks(mockExecute.mock.calls[2]?.[0])).toContain("attempt_count <");
     });
   });
 
@@ -267,6 +268,7 @@ describe("selectDistillationTarget repository unit tests", () => {
       expect(selectSql).toContain("parse_failed");
       expect(selectSql).toContain("min(");
       expect(selectSql).toContain("running_capacity");
+      expect(selectSql).toContain("attempt_count <");
       expect(recordAuditLogSafe).toHaveBeenCalled();
     });
   });

@@ -271,6 +271,54 @@ describe("coverEvidence helpers", () => {
       ).toBe(true);
     });
 
+    test("returns true for direct external evidence signals", () => {
+      expect(
+        requiresExternalEvidence({
+          type: "rule",
+          title: "Check provider pricing",
+          body: "Validate pricing and rate limits before preserving billing guidance.",
+          importance: 80,
+          confidence: 80,
+        }),
+      ).toBe(true);
+    });
+
+    test("returns false for internal API or CLI wording without external signals", () => {
+      expect(
+        requiresExternalEvidence({
+          type: "rule",
+          title: "Keep API and CLI contracts aligned",
+          body: "When changing /api/candidates, update the local CLI smoke command and repository tests together.",
+          importance: 80,
+          confidence: 80,
+        }),
+      ).toBe(false);
+    });
+
+    test("returns false for provider or model words without freshness or public-doc signals", () => {
+      expect(
+        requiresExternalEvidence({
+          type: "rule",
+          title: "Keep provider and model settings in runtime resolver",
+          body: "When changing provider fallback, update the local model resolver tests.",
+          importance: 80,
+          confidence: 80,
+        }),
+      ).toBe(false);
+    });
+
+    test("does not treat camelCase internal identifiers as current-version signals", () => {
+      expect(
+        requiresExternalEvidence({
+          type: "rule",
+          title: "Apply diagnostic limits at retrieval time",
+          body: "Pass currentLimit into the retrieval layer instead of slicing only the response.",
+          importance: 80,
+          confidence: 80,
+        }),
+      ).toBe(false);
+    });
+
     test("returns false otherwise", () => {
       expect(
         requiresExternalEvidence({

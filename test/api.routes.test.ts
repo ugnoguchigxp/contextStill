@@ -44,6 +44,10 @@ import {
 } from "../api/modules/settings/settings.service.js";
 import { vibeMemoryRouter } from "../api/modules/vibe-memory/vibe-memory.routes.js";
 import { groupedConfig } from "../src/config.js";
+import {
+  CoverEvidenceReprocessError,
+  requestCoverEvidenceReprocess,
+} from "../src/modules/coverEvidence/reprocess-candidate.service.js";
 import { recordVibeMemoryWithDiffEntries } from "../src/modules/vibe-memory/vibe-memory.service.js";
 import { compileRunDetailSchema } from "../src/shared/schemas/compile-run.schema.js";
 import { type ContextPack, contextPackSchema } from "../src/shared/schemas/context-pack.schema.js";
@@ -114,6 +118,7 @@ vi.mock("../api/modules/candidates/candidates.repository.js", () => ({
     "ready_not_finalized",
     "rejected",
     "retryable",
+    "retained_failure",
     "candidate_only",
     "target_pending",
   ] as const,
@@ -139,6 +144,21 @@ vi.mock("../src/modules/vibe-memory/vibe-memory.service.js", () => ({
   recordVibeMemoryWithDiffEntries: vi.fn(),
 }));
 
+vi.mock("../src/modules/coverEvidence/reprocess-candidate.service.js", () => ({
+  CoverEvidenceReprocessError: class CoverEvidenceReprocessError extends Error {
+    statusCode: 404 | 409;
+    reason: string;
+
+    constructor(statusCode: 404 | 409, reason: string) {
+      super(reason);
+      this.name = "CoverEvidenceReprocessError";
+      this.statusCode = statusCode;
+      this.reason = reason;
+    }
+  },
+  requestCoverEvidenceReprocess: vi.fn(),
+}));
+
 const buildApp = () => {
   const app = new Hono();
   app.route("/api/audit-logs", auditLogsRouter);
@@ -157,13 +177,13 @@ import {
   validDoctorAiServiceTools,
   validDoctorCoreInfrastructure,
   validDoctorPipelineAutomation,
-  validPack,
   validDoctorReport,
   validOverviewDashboard,
   validOverviewKnowledgeAssets,
   validOverviewLandscapeHealth,
   validOverviewLlmResources,
   validOverviewSystemQuality,
+  validPack,
   validRunDetail,
   validRunKnowledgeFeedback,
 } from "./fixtures/api-route-contract-fixtures.js";
@@ -232,6 +252,7 @@ describe("API route contract tests", () => {
         readyNotFinalized: 0,
         rejected: 0,
         retryable: 0,
+        retainedFailure: 0,
         targetPending: 0,
         candidateOnly: 0,
       },
@@ -270,6 +291,15 @@ describe("API route contract tests", () => {
         createdAt: "2026-05-15T00:00:00.000Z",
       } as never,
       diffEntries: [],
+    });
+    vi.mocked(requestCoverEvidenceReprocess).mockResolvedValue({
+      findCandidateResultId: "candidate-1",
+      coverEvidenceResultId: "candidate-1",
+      targetStateId: "target-1",
+      status: "queued",
+      mode: "cloud_api",
+      previousStatus: "insufficient",
+      previousReason: "rule_body_not_actionable",
     });
   });
 
@@ -474,6 +504,7 @@ describe("API route contract tests", () => {
         readyNotFinalized: 0,
         rejected: 0,
         retryable: 0,
+        retainedFailure: 0,
         targetPending: 0,
         candidateOnly: 0,
       },
@@ -510,6 +541,67 @@ describe("API route contract tests", () => {
         sortDir: "asc",
       }),
     );
+  });
+
+  test("POST /api/candidates/:id/premium-reprocess queues candidate", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/candidates/candidate-1/premium-reprocess", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: JSON.stringify({}),
+    });
+    const json = (await response.json()) as {
+      result: {
+        status: string;
+        mode: string;
+      };
+    };
+
+    expect(response.status).toBe(200);
+    expect(json.result).toMatchObject({
+      status: "queued",
+      mode: "cloud_api",
+    });
+    expect(requestCoverEvidenceReprocess).toHaveBeenCalledWith({
+      findCandidateResultId: "candidate-1",
+      mode: "cloud_api",
+      forceRefreshEvidence: true,
+      actor: "user",
+    });
+  });
+
+  test("POST /api/candidates/:id/premium-reprocess maps domain reason errors", async () => {
+    vi.mocked(requestCoverEvidenceReprocess).mockRejectedValueOnce(
+      new CoverEvidenceReprocessError(409, "target_running"),
+    );
+    const app = buildApp();
+    const response = await app.request("/api/candidates/candidate-1/premium-reprocess", {
+      method: "POST",
+    });
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      reason: "target_running",
+    });
+  });
+
+  test("POST /api/candidates/:id/premium-reprocess rejects malformed request body", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/candidates/candidate-1/premium-reprocess", {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+      },
+      body: "{",
+    });
+
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toMatchObject({
+      reason: "invalid_request_body",
+    });
+    expect(requestCoverEvidenceReprocess).not.toHaveBeenCalled();
   });
 
   test("POST /api/context/compile returns 400 for invalid request body", async () => {

@@ -7,6 +7,7 @@ export const outcomeOptions: Array<"all" | CandidateOutcome> = [
   "ready_not_finalized",
   "rejected",
   "retryable",
+  "retained_failure",
   "candidate_only",
   "target_pending",
 ];
@@ -43,6 +44,7 @@ export function outcomeBadge(
   if (outcome === "stored") return "success";
   if (outcome === "ready_not_finalized" || outcome === "target_pending") return "warning";
   if (outcome === "rejected" || outcome === "retryable") return "destructive";
+  if (outcome === "retained_failure") return "secondary";
   return "secondary";
 }
 

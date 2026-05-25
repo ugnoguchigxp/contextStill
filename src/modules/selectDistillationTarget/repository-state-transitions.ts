@@ -274,11 +274,19 @@ export async function requeueDistillationTargetState(params: {
   id: string;
   reason?: string;
   allowCompleted?: boolean;
+  resetAttemptCount?: boolean;
+  maxAttempts?: number;
 }): Promise<DistillationTargetStateRow | null> {
   const conditions = [eq(distillationTargetStates.id, params.id)];
   if (!params.allowCompleted) {
     conditions.push(sql`${distillationTargetStates.status} <> 'completed'` as never);
   }
+  if (typeof params.maxAttempts === "number") {
+    conditions.push(
+      sql`${distillationTargetStates.attemptCount} < ${Math.max(1, params.maxAttempts)}` as never,
+    );
+  }
+  const resetAttemptCount = params.resetAttemptCount ?? true;
 
   const [row] = await db
     .update(distillationTargetStates)
@@ -289,7 +297,7 @@ export async function requeueDistillationTargetState(params: {
       lockedAt: null,
       heartbeatAt: null,
       nextRetryAt: null,
-      attemptCount: 0,
+      attemptCount: resetAttemptCount ? 0 : undefined,
       completedAt: null,
       lastOutcomeKind: "manual_requeue",
       lastError: params.reason ?? null,

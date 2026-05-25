@@ -327,6 +327,7 @@ export async function fetchQueueDashboardStats() {
   ]);
 
   return {
+    maxAttempts: APP_CONSTANTS.distillationTargetMaxAttempts,
     stats: stats.reduce(
       (acc, curr) => {
         acc[curr.status] = Number(curr.count ?? 0);
@@ -434,5 +435,7 @@ export async function resumeTarget(id: string) {
     id,
     reason: "resumed from control plane",
     allowCompleted: true,
+    resetAttemptCount: false,
+    maxAttempts: APP_CONSTANTS.distillationTargetMaxAttempts,
   });
 }

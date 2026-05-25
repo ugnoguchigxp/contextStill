@@ -46,6 +46,7 @@ describe("QueuePage", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-24T09:58:30.000Z"));
     repositoryMocks.fetchQueueDashboardStats.mockResolvedValue({
+      maxAttempts: 2,
       stats: { pending: 5, running: 1, completed: 10, failed: 2, paused: 1, skipped: 1 },
       kinds: { wiki_file: 15, vibe_memory: 3 },
       findCandidate: {
@@ -110,5 +111,47 @@ describe("QueuePage", () => {
     });
 
     expect(screen.getByText("launch in 89 sec")).toBeInTheDocument();
+  });
+
+  it("disables queue retry actions after the max attempt count", async () => {
+    repositoryMocks.fetchQueueItems.mockResolvedValueOnce({
+      items: [
+        {
+          id: "target-1",
+          targetKind: "wiki_file",
+          targetKey: "retry-limit.md",
+          sourceUri: "/wiki/retry-limit.md",
+          distillationVersion: "select-distillation-target-v1",
+          status: "skipped",
+          phase: "stored",
+          priorityGroup: "wiki",
+          sortKey: "retry-limit.md",
+          attemptCount: 2,
+          lockedBy: null,
+          lockedAt: null,
+          heartbeatAt: null,
+          nextRetryAt: null,
+          lastError: "pipeline_retry_limit_exceeded",
+          lastOutcomeKind: "pipeline_retry_limit_exceeded",
+          candidateCount: 0,
+          knowledgeIds: [],
+          metadata: {},
+          createdAt: "2026-05-24T09:00:00.000Z",
+          updatedAt: "2026-05-24T09:55:00.000Z",
+          completedAt: "2026-05-24T09:55:00.000Z",
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 15,
+    });
+
+    renderQueuePage();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(screen.getByTitle("Retry limit reached")).toBeDisabled();
   });
 });

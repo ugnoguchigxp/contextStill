@@ -117,6 +117,7 @@ export type GroupedConfig = {
     pipelineLockFile: string;
     candidateTimeoutMs: number;
     pipelineLockStaleSeconds: number;
+    pipelineClaimLimit: number;
     continuousIdleSleepMs: number;
     continuousErrorSleepMs: number;
     inventoryRefreshIntervalMs: number;
