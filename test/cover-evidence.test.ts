@@ -325,6 +325,55 @@ describe("runCoverEvidence", () => {
     expect(mocks.saveCoverEvidenceResult).not.toHaveBeenCalled();
   });
 
+  test("uses LLM verification instead of terminal source_support failure when source content is available", async () => {
+    mocks.readFileDomain.mockResolvedValue({
+      content:
+        "This unrelated paragraph describes release notes and dashboard copy but still gives the assessor source text to verify against.",
+      totalTokens: 120,
+      from: 0,
+      toExclusive: 120,
+      returnedTokens: 120,
+    });
+
+    const result = await runCoverEvidence({ id: "find-1" });
+
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(1);
+    expect(result.result.status).toBe("knowledge_ready");
+    expect(result.result.toolEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "source_support",
+          ok: false,
+          metadata: expect.objectContaining({
+            reason: "unsupported_by_source",
+            mode: "llm_verification",
+          }),
+        }),
+      ]),
+    );
+    const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(request.messages[0]?.content).toContain("source excerpt で支えられるか");
+  });
+
+  test("keeps empty source reads as terminal source_support failures", async () => {
+    mocks.readFileDomain.mockResolvedValue({
+      content: "",
+      totalTokens: 0,
+      from: 0,
+      toExclusive: 0,
+      returnedTokens: 0,
+    });
+
+    const result = await runCoverEvidence({ id: "find-1" });
+
+    expect(result.result.status).toBe("insufficient");
+    expect(result.result.stage).toBe("source_support");
+    expect(result.result.reason).toBe("unsupported_by_source");
+    expect(mocks.runDistillationCompletion).not.toHaveBeenCalled();
+  });
+
   test("preserves register_candidate origin hints through value assessment", async () => {
     const body = skillLikeProcedureBody();
     mocks.getFindCandidateResultById.mockResolvedValue(
@@ -917,6 +966,155 @@ describe("runCoverEvidence", () => {
     expect(request.messages[0]?.content).toContain("fetch_content は同じ検証 session で複数回");
     expect(request.messages[0]?.content).toContain("search_web を同義の言い換え query");
     expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(1);
+  });
+
+  test("records parser diagnostics when external evidence output cannot be parsed", async () => {
+    mocks.getFindCandidateResultById.mockResolvedValue(
+      candidateRow({
+        title: "Use current API docs from https://example.com/docs",
+        content:
+          "Use current API docs from https://example.com/docs before preserving provider behavior claims.",
+      }),
+    );
+    mocks.readFileDomain.mockResolvedValue({
+      content:
+        "Use current API docs from https://example.com/docs before preserving provider behavior claims.",
+      totalTokens: 120,
+      from: 0,
+      toExclusive: 120,
+      returnedTokens: 120,
+    });
+    mocks.runDistillationCompletion.mockResolvedValueOnce({
+      content: "The fetched documentation looks useful, but I cannot produce JSON.",
+      toolEvents: [
+        {
+          callId: "call-1",
+          name: "fetch_content",
+          ok: true,
+          content: "Fetched docs",
+          metadata: { url: "https://example.com/docs" },
+        },
+      ],
+      messages: [],
+    });
+
+    const result = await runCoverEvidence({ id: "find-1" });
+
+    expect(result.result.status).toBe("parse_failed");
+    expect(result.result.reason).toBe("external_parse_failed");
+    expect(result.result.toolEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "parse_cover_evidence_result",
+          ok: false,
+          error: "coverEvidence output must be a JSON object",
+          metadata: expect.objectContaining({
+            reason: "external_parse_failed",
+            contentPreview: expect.stringContaining("cannot produce JSON"),
+            toolEventCount: 1,
+          }),
+        }),
+      ]),
+    );
+  });
+
+  test("uses fetched external evidence when repairing procedure bodies", async () => {
+    const fetchedProcedureEvidence = [
+      "Use this when validating provider API behavior against current docs.",
+      "1. Fetch the current API documentation before changing provider behavior.",
+      "2. Compare the provider flow with the fetched documentation.",
+      "Verification: Confirm the provider behavior matches the fetched docs.",
+      "Avoid using stale docs or snippets without fetching the page.",
+    ].join("\n");
+    mocks.getFindCandidateResultById.mockResolvedValue(
+      candidateRow({
+        title: "Use current API docs from https://example.com/docs",
+        content:
+          "1. Fetch current API docs from https://example.com/docs.\n2. Verify provider behavior against the fetched docs.",
+        origin: {
+          candidateType: "procedure",
+          readRanges: [{ from: 0, toExclusive: 140 }],
+        },
+      }),
+    );
+    mocks.readFileDomain.mockResolvedValue({
+      content:
+        "1. Fetch current API docs from https://example.com/docs.\n2. Verify provider behavior against the fetched docs.",
+      totalTokens: 140,
+      from: 0,
+      toExclusive: 140,
+      returnedTokens: 140,
+    });
+    mocks.runDistillationCompletion
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          schemaVersion: 1,
+          status: "knowledge_ready",
+          stage: "web",
+          candidate: {
+            type: "procedure",
+            title: "Use current API docs from example docs",
+            body: "Fetch the docs, then verify provider behavior.",
+            importance: 86,
+            confidence: 84,
+          },
+          references: [],
+          duplicateRefs: [],
+          toolEvents: [],
+          reason: null,
+        }),
+        toolEvents: [
+          {
+            callId: "call-1",
+            name: "fetch_content",
+            ok: true,
+            content: fetchedProcedureEvidence,
+            metadata: { url: "https://example.com/docs" },
+          },
+        ],
+        messages: [
+          {
+            role: "tool",
+            name: "fetch_content",
+            tool_call_id: "call-1",
+            content: fetchedProcedureEvidence,
+          },
+        ],
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          title: "Use current API docs from example docs",
+          body: [
+            "Use when: Use this when validating provider API behavior against current docs.",
+            "",
+            "Workflow:",
+            "1. Fetch the current API documentation before changing provider behavior.",
+            "2. Compare the provider flow with the fetched documentation.",
+            "",
+            "Verification: Confirm the provider behavior matches the fetched docs.",
+            "",
+            "Avoid: Do not use stale docs or snippets without fetching the page.",
+          ].join("\n"),
+        }),
+        toolEvents: [],
+        messages: [],
+      });
+
+    const result = await runCoverEvidence({ id: "find-1" });
+
+    expect(result.result.status).toBe("knowledge_ready");
+    expect(result.result.candidate?.type).toBe("procedure");
+    expect(result.result.candidate?.body).toContain("Use when:");
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(2);
+    const repairRequest = mocks.runDistillationCompletion.mock.calls[1]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(repairRequest.messages[1]?.content).toContain(
+      "Tool evidence (fetch_content https://example.com/docs)",
+    );
+    expect(repairRequest.messages[1]?.content).toContain(
+      "Fetch the current API documentation before changing provider behavior.",
+    );
   });
 
   test("preserves MCP evidence references when available", async () => {

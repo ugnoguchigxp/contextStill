@@ -37,6 +37,7 @@
     "select-target:smoke": "bun run src/cli/select-distillation-target-smoke.ts",
     "find-candidate": "bun run src/cli/find-candidate.ts",
     "cover-evidence": "bun run src/cli/cover-evidence.ts",
+    "eval:context": "bun run src/cli/eval-context.ts",
     "finalize-distille": "bun run src/cli/finalize-distille.ts",
     "distill:pipeline": "bun run src/cli/distill-pipeline.ts",
     "distill:pipeline:once": "bun run src/cli/distill-pipeline.ts --write --limit 1 --kind auto",

@@ -156,6 +156,33 @@ const defaultOverviewData = {
       lastError: "Exa search HTTP 429",
     },
   },
+  landscape: {
+    status: "ok",
+    windowDays: 30,
+    generatedAt: "2026-05-20T00:00:00.000Z",
+    snapshot: {
+      totalCommunities: 12,
+      strongAttractorCount: 2,
+      usefulAttractorCount: 4,
+      negativeCandidateCount: 0,
+      overSelectedNotUsedCount: 1,
+      deadZoneReachabilityCount: 3,
+      deadZoneStaleCount: 0,
+      feedbackInsufficientCount: 4,
+      topRiskCount: 4,
+    },
+    replay: {
+      comparedRunCount: 20,
+      averageOverlapRate: 0.92,
+      retainedItemCount: 86,
+      missingFromCurrentItemCount: 3,
+      newlyRetrievedItemCount: 154,
+      usedBaselineLostItemCount: 2,
+      highChurnRunCount: 18,
+      currentNoMatchRunCount: 0,
+      promotionGateMode: "review_required",
+    },
+  },
 };
 
 const queryMockState = vi.hoisted(() => ({
@@ -226,6 +253,13 @@ describe("OverviewPage", () => {
     expect(screen.getByText("Compile Latency")).toBeInTheDocument();
     expect(screen.getByText("Knowledge Usage Lifecycle")).toBeInTheDocument();
     expect(screen.getByText("Knowledge Source & Community Coverage")).toBeInTheDocument();
+    expect(screen.getByText("Knowledge Landscape Health")).toBeInTheDocument();
+    expect(screen.getByText("Attractors")).toBeInTheDocument();
+    expect(screen.getByText("Dead zones")).toBeInTheDocument();
+    expect(screen.getByText("Replay overlap")).toBeInTheDocument();
+    expect(screen.getByText("Gate: review required")).toBeInTheDocument();
+    expect(screen.getByText("Field Health Mix")).toBeInTheDocument();
+    expect(screen.getByText("Replay Stability")).toBeInTheDocument();
     expect(
       screen.getByText("unlinked 4 / communities 1/3 covered, thin 1, no-source 1"),
     ).toBeInTheDocument();
@@ -247,6 +281,28 @@ describe("OverviewPage", () => {
     expect(screen.getByText("Knowledge Assets")).toBeInTheDocument();
     expect(screen.getByText("Daily LLM Tokens & Cloud Cost (14d)")).toBeInTheDocument();
     expect(screen.queryByText("Doctor Signals")).not.toBeInTheDocument();
+  });
+
+  it("keeps overview usable when landscape summary is unavailable", () => {
+    queryMockState.overviewData.landscape = {
+      status: "unavailable",
+      windowDays: 30,
+      error: "landscape replay comparison failed",
+    };
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <OverviewPage />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("Knowledge Landscape Health")).toBeInTheDocument();
+    expect(screen.getByText("Unavailable")).toBeInTheDocument();
+    expect(
+      screen.getByText("Landscape summary could not be loaded for this dashboard refresh."),
+    ).toBeInTheDocument();
+    expect(screen.getByText("Knowledge Assets")).toBeInTheDocument();
+    expect(screen.getByText("System Quality & Health")).toBeInTheDocument();
   });
 
   it("calls overview.refetch and doctor.refetch when refresh button is clicked", () => {

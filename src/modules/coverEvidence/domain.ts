@@ -35,8 +35,12 @@ import {
   saveCoverEvidenceResult,
   selectCoverEvidenceResultById,
 } from "./repository.js";
-import { evaluateSourceSupport, readSourceEvidenceForCandidate } from "./source-support.service.js";
-import type { CoverEvidenceInput, CoverEvidenceResult } from "./types.js";
+import {
+  evaluateSourceSupport,
+  readSourceEvidenceForCandidate,
+  type SourceSupportResult,
+} from "./source-support.service.js";
+import type { CoverEvidenceInput, CoverEvidenceResult, CoverEvidenceToolEvent } from "./types.js";
 
 export type CoverEvidenceRunInput = CoverEvidenceInput & {
   chatClient?: DistillationChatClient;
@@ -70,6 +74,42 @@ async function recordProcedureDemotionAudit(params: {
       },
     });
   }
+}
+
+function shouldVerifySourceSupportWithLlm(
+  support: SourceSupportResult,
+  sourceContent: string,
+): boolean {
+  if (support.ok || support.reason === "not_actionable") return false;
+  return sourceContent.trim().length > 0;
+}
+
+function sourceSupportDiagnosticEvent(support: SourceSupportResult): CoverEvidenceToolEvent | null {
+  if (support.ok) return null;
+  return {
+    name: "source_support",
+    ok: false,
+    metadata: {
+      reason: support.reason,
+      confidence: support.confidence,
+      overlapRatio: support.overlapRatio,
+      matchedTokenCount: support.matchedTokenCount,
+      checkedTokenCount: support.checkedTokenCount,
+      mode: "llm_verification",
+    },
+  };
+}
+
+function prependToolEvents(
+  result: CoverEvidenceResult,
+  toolEvents: CoverEvidenceToolEvent[],
+): CoverEvidenceResult {
+  return toolEvents.length > 0
+    ? {
+        ...result,
+        toolEvents: [...toolEvents, ...result.toolEvents],
+      }
+    : result;
 }
 
 export async function runCoverEvidence(
@@ -178,7 +218,8 @@ export async function runCoverEvidence(
           body: row.content,
           sourceContent: sourceRead.content,
         });
-        if (!support.ok) {
+        const sourceSupportDiagnostics: CoverEvidenceToolEvent[] = [];
+        if (!support.ok && !shouldVerifySourceSupportWithLlm(support, sourceRead.content)) {
           result = makeResult({
             status: "insufficient",
             stage: "source_support",
@@ -187,6 +228,10 @@ export async function runCoverEvidence(
             reason: support.reason,
           });
         } else {
+          const diagnosticEvent = sourceSupportDiagnosticEvent(support);
+          if (diagnosticEvent) {
+            sourceSupportDiagnostics.push(diagnosticEvent);
+          }
           const sourceContext = sourceContextForPrompts({
             row,
             readRanges: sourceRead.readRanges,
@@ -250,6 +295,9 @@ export async function runCoverEvidence(
               chatClient: input.chatClient,
               signal: input.signal,
             });
+          }
+          if (result) {
+            result = prependToolEvents(result, sourceSupportDiagnostics);
           }
         }
       }

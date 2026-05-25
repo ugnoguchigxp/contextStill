@@ -5,6 +5,7 @@ import { formatCheckedAt } from "@/lib/admin-formatters";
 import { fetchDoctorReport, fetchOverviewDashboard } from "../repositories/admin.repository";
 import { AdminPageHeader } from "./admin-page-header";
 import { KnowledgeAssetsDomain } from "./overview/knowledge-assets-domain";
+import { LandscapeHealthDomain } from "./overview/landscape-health-domain";
 import { SystemQualityDomain } from "./overview/system-quality-domain";
 import { LlmResourcesDomain } from "./overview/llm-resources-domain";
 
@@ -54,6 +55,7 @@ export function OverviewPage() {
             {/* 📂 左カラム: Knowledge Assets (統計とチャート) */}
             <div className="flex flex-col gap-6 w-full">
               <KnowledgeAssetsDomain dashboard={dashboard} doctorReport={doctorReport} />
+              <LandscapeHealthDomain dashboard={dashboard} />
             </div>
 
             {/* 📂 右カラム: System Quality & Health ＆ LLM Resources & Cost を縦並びに */}

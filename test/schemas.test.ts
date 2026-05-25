@@ -382,9 +382,113 @@ describe("Shared Schemas", () => {
           lastError: null,
         },
       },
+      landscape: {
+        status: "ok",
+        windowDays: 30,
+        generatedAt: "2026-05-21T00:00:00.000Z",
+        snapshot: {
+          totalCommunities: 12,
+          strongAttractorCount: 2,
+          usefulAttractorCount: 4,
+          negativeCandidateCount: 1,
+          overSelectedNotUsedCount: 1,
+          deadZoneReachabilityCount: 3,
+          deadZoneStaleCount: 0,
+          feedbackInsufficientCount: 5,
+          topRiskCount: 4,
+        },
+        replay: {
+          comparedRunCount: 20,
+          averageOverlapRate: 0.92,
+          retainedItemCount: 86,
+          missingFromCurrentItemCount: 3,
+          newlyRetrievedItemCount: 154,
+          usedBaselineLostItemCount: 2,
+          highChurnRunCount: 18,
+          currentNoMatchRunCount: 0,
+          promotionGateMode: "review_required",
+        },
+      },
     };
 
     expect(overviewDashboardSchema.parse(input)).toEqual(expect.objectContaining(input));
+  });
+
+  test("overviewDashboardSchema parses unavailable landscape summary", () => {
+    const input = {
+      checkedAt: new Date().toISOString(),
+      kpis: {
+        knowledgeTotal: 0,
+        activeKnowledge: 0,
+        draftKnowledge: 0,
+        deprecatedKnowledge: 0,
+        rules: 0,
+        procedures: 0,
+        embeddedKnowledge: 0,
+        zeroUseActiveKnowledge: 0,
+        wikiPages: 0,
+        indexedSources: 0,
+        sourceFragments: 0,
+        sourceLinks: 0,
+        linkedKnowledge: 0,
+        unlinkedKnowledge: 0,
+        sourceCommunities: 0,
+        sourceCoveredCommunities: 0,
+        sourceThinCommunities: 0,
+        sourceMissingCommunities: 0,
+        vibeRecords: 0,
+        vibeSessions: 0,
+        vibeRecordsWithDiffs: 0,
+        agentDiffEntries: 0,
+        compileRuns: 0,
+        compileOkRuns: 0,
+        compileDegradedRuns: 0,
+        compileFailedRuns: 0,
+      },
+      charts: {
+        knowledgeByStatusType: [],
+        dynamicScoreBuckets: [],
+        compileRunsByDay: [],
+        vibeRecordsByDay: [],
+        sourceCoverage: [],
+        communitySourceCoverage: [],
+        distillationQueue: [],
+      },
+      llmUsage: {
+        kpis: {
+          totalCalls30d: 0,
+          measuredCalls30d: 0,
+          estimatedCalls30d: 0,
+          localTokensTotal30d: 0,
+          localPromptTokens30d: 0,
+          localCompletionTokens30d: 0,
+          cloudTokensTotal30d: 0,
+          cloudPromptTokens30d: 0,
+          cloudCompletionTokens30d: 0,
+          measuredTokensTotal30d: 0,
+          estimatedTokensTotal30d: 0,
+          measuredCoveragePercent30d: 0,
+          reasoningTokensTotal30d: 0,
+          cloudCostJpyTotal30d: 0,
+          cloudModel: "gpt-5-4-mini",
+          cloudInputCostJpyPerMTokens: 0,
+          cloudOutputCostJpyPerMTokens: 0,
+        },
+        daily: [],
+        bySource: [],
+      },
+      searchApiStatus: {
+        brave: { status: "ok", cooldownUntil: null, lastError: null },
+        exa: { status: "ok", cooldownUntil: null, lastError: null },
+      },
+      landscape: {
+        status: "unavailable",
+        windowDays: 30,
+        error: "landscape unavailable",
+      },
+    };
+
+    expect(overviewDashboardSchema.parse(input).landscape).toEqual(input.landscape);
   });
 
   test("landscape review schemas parse valid input", () => {

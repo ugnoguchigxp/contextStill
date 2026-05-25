@@ -555,6 +555,39 @@ export type OverviewDashboard = {
       lastError: string | null;
     };
   };
+  landscape:
+    | {
+        status: "ok";
+        windowDays: number;
+        generatedAt: string;
+        snapshot: {
+          totalCommunities: number;
+          strongAttractorCount: number;
+          usefulAttractorCount: number;
+          negativeCandidateCount: number;
+          overSelectedNotUsedCount: number;
+          deadZoneReachabilityCount: number;
+          deadZoneStaleCount: number;
+          feedbackInsufficientCount: number;
+          topRiskCount: number;
+        };
+        replay: {
+          comparedRunCount: number;
+          averageOverlapRate: number;
+          retainedItemCount: number;
+          missingFromCurrentItemCount: number;
+          newlyRetrievedItemCount: number;
+          usedBaselineLostItemCount: number;
+          highChurnRunCount: number;
+          currentNoMatchRunCount: number;
+          promotionGateMode: "normal" | "review_required";
+        };
+      }
+    | {
+        status: "unavailable";
+        windowDays: number;
+        error: string;
+      };
 };
 
 export type GraphNode = {

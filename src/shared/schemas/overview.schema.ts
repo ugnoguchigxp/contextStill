@@ -24,6 +24,47 @@ export const overviewDistillationTargetKindSchema = z.enum([
   "web_ingest",
 ]);
 export const overviewSearchApiStatusSchema = z.enum(["ok", "cooldown"]);
+export const overviewLandscapeStatusSchema = z.enum(["ok", "unavailable"]);
+export const overviewLandscapePromotionGateModeSchema = z.enum(["normal", "review_required"]);
+
+const overviewLandscapeSnapshotSummarySchema = z.object({
+  totalCommunities: z.number().int().nonnegative(),
+  strongAttractorCount: z.number().int().nonnegative(),
+  usefulAttractorCount: z.number().int().nonnegative(),
+  negativeCandidateCount: z.number().int().nonnegative(),
+  overSelectedNotUsedCount: z.number().int().nonnegative(),
+  deadZoneReachabilityCount: z.number().int().nonnegative(),
+  deadZoneStaleCount: z.number().int().nonnegative(),
+  feedbackInsufficientCount: z.number().int().nonnegative(),
+  topRiskCount: z.number().int().nonnegative(),
+});
+
+const overviewLandscapeReplaySummarySchema = z.object({
+  comparedRunCount: z.number().int().nonnegative(),
+  averageOverlapRate: z.number().min(0).max(1),
+  retainedItemCount: z.number().int().nonnegative(),
+  missingFromCurrentItemCount: z.number().int().nonnegative(),
+  newlyRetrievedItemCount: z.number().int().nonnegative(),
+  usedBaselineLostItemCount: z.number().int().nonnegative(),
+  highChurnRunCount: z.number().int().nonnegative(),
+  currentNoMatchRunCount: z.number().int().nonnegative(),
+  promotionGateMode: overviewLandscapePromotionGateModeSchema,
+});
+
+export const overviewLandscapeSummarySchema = z.discriminatedUnion("status", [
+  z.object({
+    status: z.literal("ok"),
+    windowDays: z.number().int().min(1).max(180),
+    generatedAt: z.string().datetime(),
+    snapshot: overviewLandscapeSnapshotSummarySchema,
+    replay: overviewLandscapeReplaySummarySchema,
+  }),
+  z.object({
+    status: z.literal("unavailable"),
+    windowDays: z.number().int().min(1).max(180),
+    error: z.string().min(1),
+  }),
+]);
 
 export const overviewDashboardSchema = z.object({
   checkedAt: z.string().datetime(),
@@ -174,6 +215,7 @@ export const overviewDashboardSchema = z.object({
       lastError: z.string().nullable(),
     }),
   }),
+  landscape: overviewLandscapeSummarySchema,
 });
 
 export type OverviewDashboard = z.infer<typeof overviewDashboardSchema>;

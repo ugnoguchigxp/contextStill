@@ -1,6 +1,7 @@
 import { groupedConfig } from "../../config.js";
 import {
   type DistillationChatClient,
+  type DistillationCompletionResult,
   type DistillationProviderSetting,
   type DistillationToolExecutor,
   distillationToolEventsFromError,
@@ -8,6 +9,7 @@ import {
 } from "../distillation/distillation-runtime.service.js";
 import type { DistillationProviderName } from "../distillation/llm-resolver.js";
 import {
+  PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
   PROCEDURE_REPAIR_FAILED_REASON,
   assessProcedureQuality,
   validateCandidateQualityForStorage,
@@ -60,10 +62,109 @@ function coverEvidenceMaxToolRounds(): number {
   return Math.max(0, limits.search_web + limits.fetch_content);
 }
 
+const MAX_PARSE_FAILURE_PREVIEW_CHARS = 700;
+const MAX_PROCEDURE_REPAIR_EVIDENCE_CHARS = 12_000;
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function parseFailureToolEvent(params: {
+  reason: string;
+  error: unknown;
+  completion: DistillationCompletionResult;
+}): CoverEvidenceToolEvent {
+  const content = params.completion.content ?? "";
+  return {
+    name: "parse_cover_evidence_result",
+    ok: false,
+    error: errorMessage(params.error),
+    metadata: {
+      reason: params.reason,
+      contentChars: content.length,
+      contentPreview: content.slice(0, MAX_PARSE_FAILURE_PREVIEW_CHARS),
+      toolEventCount: params.completion.toolEvents.length,
+    },
+  };
+}
+
+function toolEvidenceLabel(event: DistillationCompletionResult["toolEvents"][number]): string {
+  const metadata = event.metadata ?? {};
+  const locator =
+    typeof metadata.finalUrl === "string"
+      ? metadata.finalUrl
+      : typeof metadata.url === "string"
+        ? metadata.url
+        : typeof metadata.query === "string"
+          ? `query:${metadata.query}`
+          : "";
+  return locator ? `${event.name} ${locator}` : event.name;
+}
+
+function appendUniqueEvidence(
+  parts: string[],
+  seen: Set<string>,
+  label: string,
+  content: string,
+): void {
+  const trimmed = content.trim();
+  if (!trimmed || seen.has(trimmed)) return;
+  seen.add(trimmed);
+  parts.push(`${label}:\n${trimmed}`);
+}
+
+function procedureRepairEvidenceFromCompletion(params: {
+  sourceEvidence?: string;
+  completion: DistillationCompletionResult;
+}): string {
+  const parts: string[] = [];
+  const seen = new Set<string>();
+  if (params.sourceEvidence?.trim()) {
+    appendUniqueEvidence(parts, seen, "Source evidence", params.sourceEvidence);
+  }
+  for (const event of params.completion.toolEvents) {
+    if (event.ok && event.content?.trim()) {
+      appendUniqueEvidence(
+        parts,
+        seen,
+        `Tool evidence (${toolEvidenceLabel(event)})`,
+        event.content,
+      );
+    }
+  }
+  for (const message of params.completion.messages) {
+    if (message.role === "tool" && message.content?.trim()) {
+      appendUniqueEvidence(
+        parts,
+        seen,
+        `Tool message evidence (${message.name ?? message.tool_call_id ?? "tool"})`,
+        message.content,
+      );
+    }
+  }
+  return parts.join("\n\n---\n\n").slice(0, MAX_PROCEDURE_REPAIR_EVIDENCE_CHARS);
+}
+
+function repairCandidateForResult(
+  result: CoverEvidenceResult,
+  fallbackProcedureCandidate?: CoverEvidenceCandidate,
+): CoverEvidenceCandidate | null {
+  if (result.candidate?.type === "procedure") return result.candidate;
+  if (
+    result.status === "insufficient" &&
+    result.reason === PROCEDURE_BODY_NOT_ACTIONABLE_REASON &&
+    fallbackProcedureCandidate?.type === "procedure"
+  ) {
+    return fallbackProcedureCandidate;
+  }
+  return null;
+}
+
 async function normalizeOrRepairProcedureQuality(params: {
   id: string;
   result: CoverEvidenceResult;
   candidateTypeHint?: CandidateKnowledgeType;
+  fallbackProcedureCandidate?: CoverEvidenceCandidate;
   sourceEvidence?: string;
   provider: DistillationProviderSetting;
   model: string;
@@ -72,8 +173,17 @@ async function normalizeOrRepairProcedureQuality(params: {
   signal?: AbortSignal;
   timeoutMs?: number;
 }): Promise<CoverEvidenceResult> {
-  const candidate = params.result.candidate;
-  if (params.result.status !== "knowledge_ready" || candidate?.type !== "procedure") {
+  if (
+    params.result.status !== "knowledge_ready" &&
+    !(
+      params.result.status === "insufficient" &&
+      params.result.reason === PROCEDURE_BODY_NOT_ACTIONABLE_REASON
+    )
+  ) {
+    return normalizeProcedureBodyQuality(params.result, { typeHint: params.candidateTypeHint });
+  }
+  const candidate = repairCandidateForResult(params.result, params.fallbackProcedureCandidate);
+  if (!candidate) {
     return normalizeProcedureBodyQuality(params.result, { typeHint: params.candidateTypeHint });
   }
   const decision = assessProcedureQuality({
@@ -229,9 +339,29 @@ export async function runValueAssessment(params: {
         },
       },
     );
-    const parsed = parseCoverEvidenceResult(completion.content, {
-      candidateDefaults: params.candidate,
-    });
+    let parsed: CoverEvidenceResult;
+    try {
+      parsed = parseCoverEvidenceResult(completion.content, {
+        candidateDefaults: params.candidate,
+      });
+    } catch (error) {
+      const toolEvents = toolEventsForResult(completion.toolEvents);
+      return makeResult({
+        status: "parse_failed",
+        stage: "final",
+        candidate: null,
+        references: params.sourceReferences,
+        toolEvents: [
+          ...toolEvents,
+          parseFailureToolEvent({
+            reason: "value_parse_failed",
+            error,
+            completion,
+          }),
+        ],
+        reason: "value_parse_failed",
+      });
+    }
     return normalizeOrRepairProcedureQuality({
       id: params.id,
       result: rejectLowImportance({
@@ -240,7 +370,11 @@ export async function runValueAssessment(params: {
         toolEvents: toolEventsForResult(completion.toolEvents),
       }),
       candidateTypeHint: params.candidateTypeHint,
-      sourceEvidence: params.sourceContentExcerpt,
+      fallbackProcedureCandidate: params.candidate,
+      sourceEvidence: procedureRepairEvidenceFromCompletion({
+        sourceEvidence: params.sourceContentExcerpt,
+        completion,
+      }),
       provider: params.provider,
       model: params.model,
       fallbackOrder: params.fallbackOrder,
@@ -332,7 +466,14 @@ export async function runExternalEvidence(params: {
         stage: "web",
         candidate: null,
         references: params.sourceReferences,
-        toolEvents,
+        toolEvents: [
+          ...toolEvents,
+          parseFailureToolEvent({
+            reason: "external_parse_failed",
+            error,
+            completion,
+          }),
+        ],
         reason: "external_parse_failed",
       });
     }
@@ -363,7 +504,11 @@ export async function runExternalEvidence(params: {
         toolEvents,
       }),
       candidateTypeHint: params.candidateTypeHint,
-      sourceEvidence: params.sourceContext.sourceUri,
+      fallbackProcedureCandidate: params.candidate,
+      sourceEvidence: procedureRepairEvidenceFromCompletion({
+        sourceEvidence: params.sourceContext.sourceUri,
+        completion,
+      }),
       provider: params.provider,
       model: params.model,
       fallbackOrder: params.fallbackOrder,

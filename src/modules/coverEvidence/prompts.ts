@@ -71,7 +71,7 @@ export function valueAssessmentSystemPrompt(): string {
     "手順・運用フロー・レビュー手順を小さな rule に分解して返さないでください。",
     ...procedureBodyInstructions(),
     ...applicabilityInstructions(),
-    "候補は元 source で支えられている前提ですが、重要度と自己完結性を改めて評価してください。",
+    "候補が source excerpt で支えられるかも検証し、source から支えられない場合は status を insufficient、reason を unsupported_by_source にしてください。",
     "importance と confidence は 0 から 100 目安の数値です。未確定なら省略して構いません。",
     `importance が ${groupedConfig.distillation.lowImportanceRejectThreshold} 以下なら status は insufficient、reason は low_importance にしてください。`,
     "JSON は次の形を基本にしてください。applicability field は任意で、省略しても構いません:",
@@ -87,7 +87,7 @@ export function valueAssessmentUserPrompt(params: {
   sourceContext: CoverEvidenceSourceContext;
 }): string {
   return [
-    "候補の value を判定してください。",
+    "候補の value と source support を判定してください。",
     "候補:",
     JSON.stringify(params.candidate, null, 2),
     "source references:",

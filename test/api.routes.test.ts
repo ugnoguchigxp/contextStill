@@ -535,6 +535,33 @@ const validOverviewDashboard: OverviewDashboard = overviewDashboardSchema.parse(
       lastError: null,
     },
   },
+  landscape: {
+    status: "ok",
+    windowDays: 30,
+    generatedAt: "2026-05-20T00:00:00.000Z",
+    snapshot: {
+      totalCommunities: 140,
+      strongAttractorCount: 9,
+      usefulAttractorCount: 31,
+      negativeCandidateCount: 0,
+      overSelectedNotUsedCount: 7,
+      deadZoneReachabilityCount: 42,
+      deadZoneStaleCount: 0,
+      feedbackInsufficientCount: 93,
+      topRiskCount: 10,
+    },
+    replay: {
+      comparedRunCount: 20,
+      averageOverlapRate: 0.92,
+      retainedItemCount: 86,
+      missingFromCurrentItemCount: 3,
+      newlyRetrievedItemCount: 154,
+      usedBaselineLostItemCount: 2,
+      highChurnRunCount: 18,
+      currentNoMatchRunCount: 0,
+      promotionGateMode: "review_required",
+    },
+  },
 });
 
 describe("API route contract tests", () => {

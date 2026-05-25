@@ -8,6 +8,8 @@ import type {
 } from "../../../src/modules/distillation/search-providers.js";
 import { deriveSearchProviderCooldownUntil } from "../../../src/modules/distillation/search-rate-limit.js";
 import { resolveCostRate } from "../../../src/modules/llm/llm-cost-config.js";
+import { buildLandscapeReplayComparison } from "../../../src/modules/landscape/landscape-replay-comparison.service.js";
+import { buildLandscapeSnapshot } from "../../../src/modules/landscape/landscape.service.js";
 import { ensureRuntimeSettingsLoaded } from "../../../src/modules/settings/settings.service.js";
 import { ensureContentRoot, listPages } from "../../../src/modules/sources/wiki/content-repo.js";
 import {
@@ -18,6 +20,10 @@ import { buildGraphSnapshot } from "../graph/graph.repository.js";
 
 const OVERVIEW_DAY_RANGE = 14;
 const LLM_KPI_DAY_RANGE = 30;
+const LANDSCAPE_OVERVIEW_WINDOW_DAYS = 30;
+const LANDSCAPE_OVERVIEW_LIMIT = 1000;
+const LANDSCAPE_OVERVIEW_REPLAY_LIMIT = 20;
+const LANDSCAPE_OVERVIEW_CURRENT_LIMIT = 12;
 const DASHBOARD_TIMEZONE = "Asia/Tokyo";
 const KNOWLEDGE_STATUS_ORDER = ["active", "draft", "deprecated"] as const;
 const DISTILLATION_TARGET_KIND_ORDER = [
@@ -119,6 +125,68 @@ function buildCommunitySourceCoverage(
     sourceThinCommunities,
     sourceMissingCommunities,
   };
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error && error.message
+    ? error.message
+    : "Landscape summary could not be loaded.";
+}
+
+async function buildOverviewLandscapeSummary(): Promise<OverviewDashboard["landscape"]> {
+  try {
+    const [snapshot, replay] = await Promise.all([
+      buildLandscapeSnapshot({
+        windowDays: LANDSCAPE_OVERVIEW_WINDOW_DAYS,
+        limit: LANDSCAPE_OVERVIEW_LIMIT,
+        status: "active",
+        relationAxes: ["session", "project", "source"],
+        minSelectedCount: 3,
+        minFeedbackCount: 3,
+      }),
+      buildLandscapeReplayComparison({
+        windowDays: LANDSCAPE_OVERVIEW_WINDOW_DAYS,
+        limit: LANDSCAPE_OVERVIEW_REPLAY_LIMIT,
+        runStatus: "all",
+        currentLimit: LANDSCAPE_OVERVIEW_CURRENT_LIMIT,
+        includeRuns: false,
+      }),
+    ]);
+
+    return {
+      status: "ok",
+      windowDays: LANDSCAPE_OVERVIEW_WINDOW_DAYS,
+      generatedAt: replay.generatedAt,
+      snapshot: {
+        totalCommunities: snapshot.stats.totalCommunities,
+        strongAttractorCount: snapshot.stats.strongAttractorCount,
+        usefulAttractorCount: snapshot.stats.usefulAttractorCount,
+        negativeCandidateCount: snapshot.stats.negativeCandidateCount,
+        overSelectedNotUsedCount: snapshot.stats.overSelectedNotUsedCount,
+        deadZoneReachabilityCount: snapshot.stats.deadZoneReachabilityCount,
+        deadZoneStaleCount: snapshot.stats.deadZoneStaleCount,
+        feedbackInsufficientCount: snapshot.stats.insufficientFeedbackCommunities,
+        topRiskCount: snapshot.risks.length,
+      },
+      replay: {
+        comparedRunCount: replay.comparedRunCount,
+        averageOverlapRate: replay.averageOverlapRate,
+        retainedItemCount: replay.retainedItemCount,
+        missingFromCurrentItemCount: replay.missingFromCurrentItemCount,
+        newlyRetrievedItemCount: replay.newlyRetrievedItemCount,
+        usedBaselineLostItemCount: replay.usedBaselineLostItemCount,
+        highChurnRunCount: replay.scoreTuning.highChurnRunCount,
+        currentNoMatchRunCount: replay.currentNoMatchRunCount,
+        promotionGateMode: replay.promotionGateSummary.gateMode,
+      },
+    };
+  } catch (error) {
+    return {
+      status: "unavailable",
+      windowDays: LANDSCAPE_OVERVIEW_WINDOW_DAYS,
+      error: errorMessage(error),
+    };
+  }
 }
 
 export function normalizeSearchApiStatus(metadata: unknown): OverviewDashboard["searchApiStatus"] {
@@ -460,12 +528,15 @@ export async function fetchOverviewDashboardForApi(): Promise<OverviewDashboard>
   const compileFailedRuns = toNumber(compileSummaryRow.compile_failed_runs);
   const zeroUseActiveKnowledge = toNumber(knowledgeSummaryRow.zero_use_active_knowledge);
   const activeKnowledge = toNumber(knowledgeSummaryRow.active_knowledge);
-  const communityGraph = await buildGraphSnapshot({
-    limit: Math.max(1, knowledgeTotal),
-    status: "all",
-    view: "community",
-    relationAxes: ["session", "project", "source"],
-  });
+  const [communityGraph, landscape] = await Promise.all([
+    buildGraphSnapshot({
+      limit: Math.max(1, knowledgeTotal),
+      status: "all",
+      view: "community",
+      relationAxes: ["session", "project", "source"],
+    }),
+    buildOverviewLandscapeSummary(),
+  ]);
   const communitySourceCoverage = buildCommunitySourceCoverage(communityGraph.communities);
 
   const statusTypeMap = new Map<string, { rule: number; procedure: number }>();
@@ -625,6 +696,7 @@ export async function fetchOverviewDashboardForApi(): Promise<OverviewDashboard>
       })),
     },
     searchApiStatus: normalizeSearchApiStatus(searchProviderStateRow.metadata),
+    landscape,
   };
 
   return overviewDashboardSchema.parse(dashboard);
