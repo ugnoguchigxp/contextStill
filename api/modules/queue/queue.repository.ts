@@ -84,14 +84,26 @@ function toIsoTimestamp(value: Date | string | number | null): string | null {
     return null;
   }
   if (value instanceof Date) {
-    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+    if (Number.isNaN(value.getTime())) return null;
+    // Driver-parsed `timestamp without time zone` values are interpreted as local time.
+    // Rebuild as UTC wall-clock to avoid local offset drift in API responses.
+    const rebuiltUtc = new Date(
+      Date.UTC(
+        value.getFullYear(),
+        value.getMonth(),
+        value.getDate(),
+        value.getHours(),
+        value.getMinutes(),
+        value.getSeconds(),
+        value.getMilliseconds(),
+      ),
+    );
+    return Number.isNaN(rebuiltUtc.getTime()) ? null : rebuiltUtc.toISOString();
   }
   if (typeof value === "string") {
     const trimmed = value.trim();
     // PostgreSQL timestamp (without timezone) should be treated as UTC to avoid local offset drift.
-    if (
-      /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)
-    ) {
+    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)) {
       const parsedUtc = new Date(`${trimmed.replace(" ", "T")}Z`);
       return Number.isNaN(parsedUtc.getTime()) ? null : parsedUtc.toISOString();
     }

@@ -1,4 +1,4 @@
-import { type ReactNode, useEffect, useMemo, useState } from "react";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type ColumnDef,
@@ -273,19 +273,22 @@ export function QueuePage() {
   const hasError = statsQuery.isError || activeQuery.isError || itemsQuery.isError;
   const activeCount = activeQuery.data?.length ?? 0;
 
-  const onAction = (item: QueueListItemV2, mode: ActionMode) => {
-    const actionKey = `${mode}:${item.queueName}:${item.id}`;
-    setActioning(actionKey);
-    if (mode === "pause") {
-      pauseMutation.mutate({ queue: item.queueName, id: item.id });
-      return;
-    }
-    if (mode === "resume") {
-      resumeMutation.mutate({ queue: item.queueName, id: item.id });
-      return;
-    }
-    retryMutation.mutate({ queue: item.queueName, id: item.id });
-  };
+  const onAction = useCallback(
+    (item: QueueListItemV2, mode: ActionMode) => {
+      const actionKey = `${mode}:${item.queueName}:${item.id}`;
+      setActioning(actionKey);
+      if (mode === "pause") {
+        pauseMutation.mutate({ queue: item.queueName, id: item.id });
+        return;
+      }
+      if (mode === "resume") {
+        resumeMutation.mutate({ queue: item.queueName, id: item.id });
+        return;
+      }
+      retryMutation.mutate({ queue: item.queueName, id: item.id });
+    },
+    [pauseMutation, resumeMutation, retryMutation],
+  );
 
   const queueStats = statsQuery.data?.queues;
   const totals = statsQuery.data?.totals;
@@ -321,10 +324,16 @@ export function QueuePage() {
       const rows = telemetryByQueue.get(tab.name) ?? [];
       for (const item of rows) {
         cards.push(
-          <div key={`active-${item.queueName}-${item.id}`} className="rounded-md border bg-white px-3 py-2.5">
+          <div
+            key={`active-${item.queueName}-${item.id}`}
+            className="rounded-md border bg-white px-3 py-2.5"
+          >
             <div className="mb-2 flex items-start justify-between gap-2">
               <div className="min-w-0">
-                <p className="truncate text-[12px] font-semibold text-slate-800" title={item.subjectTitle}>
+                <p
+                  className="truncate text-[12px] font-semibold text-slate-800"
+                  title={item.subjectTitle}
+                >
                   {item.subjectTitle}
                 </p>
                 <p className="truncate text-[10px] text-slate-500" title={item.subjectDetail}>
@@ -402,7 +411,9 @@ export function QueuePage() {
             <div className="whitespace-normal">
               <div className="font-medium text-slate-800">{item.subjectTitle}</div>
               <div className="text-xs text-muted-foreground">{item.subjectDetail}</div>
-              {item.lastError ? <div className="mt-1 text-xs text-rose-600">{item.lastError}</div> : null}
+              {item.lastError ? (
+                <div className="mt-1 text-xs text-rose-600">{item.lastError}</div>
+              ) : null}
             </div>
           );
         },
@@ -416,7 +427,9 @@ export function QueuePage() {
         accessorKey: "updatedAt",
         header: "更新",
         cell: ({ row }) => (
-          <span className="text-xs text-muted-foreground">{formatRelativeTime(row.original.updatedAt)}</span>
+          <span className="text-xs text-muted-foreground">
+            {formatRelativeTime(row.original.updatedAt)}
+          </span>
         ),
       },
       {
@@ -427,7 +440,9 @@ export function QueuePage() {
           return (
             <div className="text-xs">
               <div className="truncate text-slate-700">{item.lockedBy ?? "-"}</div>
-              <div className="truncate text-muted-foreground">{item.model ?? item.provider ?? "-"}</div>
+              <div className="truncate text-muted-foreground">
+                {item.model ?? item.provider ?? "-"}
+              </div>
             </div>
           );
         },
@@ -451,7 +466,11 @@ export function QueuePage() {
                 disabled={state.pauseDisabled || actioning === pauseKey}
                 onClick={() => onAction(item, "pause")}
               >
-                {actioning === pauseKey ? <RefreshCw size={14} className="animate-spin" /> : <Pause size={14} />}
+                {actioning === pauseKey ? (
+                  <RefreshCw size={14} className="animate-spin" />
+                ) : (
+                  <Pause size={14} />
+                )}
               </Button>
               <Button
                 variant="ghost"
@@ -460,7 +479,11 @@ export function QueuePage() {
                 disabled={state.resumeDisabled || actioning === resumeKey}
                 onClick={() => onAction(item, "resume")}
               >
-                {actioning === resumeKey ? <RefreshCw size={14} className="animate-spin" /> : <Play size={14} />}
+                {actioning === resumeKey ? (
+                  <RefreshCw size={14} className="animate-spin" />
+                ) : (
+                  <Play size={14} />
+                )}
               </Button>
               <Button
                 variant="ghost"
@@ -469,14 +492,18 @@ export function QueuePage() {
                 disabled={state.retryDisabled || actioning === retryKey}
                 onClick={() => onAction(item, "retry")}
               >
-                {actioning === retryKey ? <RefreshCw size={14} className="animate-spin" /> : <RotateCcw size={14} />}
+                {actioning === retryKey ? (
+                  <RefreshCw size={14} className="animate-spin" />
+                ) : (
+                  <RotateCcw size={14} />
+                )}
               </Button>
             </div>
           );
         },
       },
     ],
-    [actioning],
+    [actioning, onAction],
   );
 
   const table = useReactTable({
@@ -516,9 +543,7 @@ export function QueuePage() {
                     <h2 className="overview-domain-title text-[15px] font-bold text-slate-800">
                       LLM Task Telemetry
                     </h2>
-                    <p className="text-[11px] text-slate-400">
-                      Running タスク / worker heartbeat
-                    </p>
+                    <p className="text-[11px] text-slate-400">Running タスク / worker heartbeat</p>
                   </div>
                 </div>
                 <Badge variant="outline" className="border-cyan-200 bg-cyan-50 text-cyan-700">
@@ -647,7 +672,6 @@ export function QueuePage() {
                   );
                 })}
               </div>
-
             </section>
 
             <section className="overview-domain-section accent-violet">
@@ -722,7 +746,10 @@ export function QueuePage() {
                     </colgroup>
                     <TableBody>
                       {table.getRowModel().rows.map((row) => (
-                        <TableRow key={row.id} className="group transition-colors hover:bg-muted/50">
+                        <TableRow
+                          key={row.id}
+                          className="group transition-colors hover:bg-muted/50"
+                        >
                           {row.getVisibleCells().map((cell) => (
                             <TableCell key={cell.id}>
                               {flexRender(cell.column.columnDef.cell, cell.getContext())}

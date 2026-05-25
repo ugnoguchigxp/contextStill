@@ -921,12 +921,29 @@ export async function runQueueWorkerOnce(params: {
           status: "skipped",
           outcome: "source_missing",
         });
-      } else {
-        await markFindingFailed({
-          jobId: claimed.id,
-          error: message,
+        await appendQueueEvent({
+          queueName: params.queueName,
+          queueJobId: claimed.id,
+          eventType: "completed",
+          message: "source missing skipped",
+          metadata: {
+            reason: message,
+          },
         });
+        return {
+          ok: true,
+          queue: params.queueName,
+          worker: params.workerId,
+          idle: false,
+          claimedJobId: claimed.id,
+          completedJobId: claimed.id,
+          message: "source missing skipped",
+        };
       }
+      await markFindingFailed({
+        jobId: claimed.id,
+        error: message,
+      });
     } else if (
       params.queueName === "coveringEvidence" ||
       params.queueName === "premiumCoveringEvidence"

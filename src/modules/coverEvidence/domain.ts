@@ -24,10 +24,7 @@ import {
   referencesFromDuplicateRefs,
   sourceContextForPrompts,
 } from "./helpers.js";
-import {
-  appendOptionalMcpEvidence,
-  runExternalEvidence,
-} from "./llm-runner.js";
+import { appendOptionalMcpEvidence, runExternalEvidence } from "./llm-runner.js";
 import { parseCoverEvidenceResult } from "./parser.js";
 import {
   coverEvidenceResultFromRow,

@@ -72,6 +72,19 @@ const resolvePositiveInt = (
   return Math.max(1, floored);
 };
 
+const resolveNonNegativeInt = (
+  value: string | undefined,
+  fallback: number,
+  options?: { max?: number },
+): number => {
+  const parsed = Number(value ?? fallback);
+  if (!Number.isFinite(parsed)) return fallback;
+  const floored = Math.floor(parsed);
+  if (floored < 0) return fallback;
+  if (options?.max !== undefined && floored > options.max) return options.max;
+  return floored;
+};
+
 const resolveBoolean = (value: string | undefined, fallback: boolean): boolean => {
   if (value === undefined) return fallback;
   const normalized = value.trim().toLowerCase();
@@ -275,10 +288,10 @@ export const groupedConfig: GroupedConfig = {
     findCandidateMaxIntervalSeconds: APP_CONSTANTS.findCandidateMaxIntervalSeconds,
     findCandidateRateLimitCooldownSeconds: APP_CONSTANTS.findCandidateRateLimitCooldownSeconds,
     findCandidateJitterSeconds: APP_CONSTANTS.findCandidateJitterSeconds,
-    findingQueueTaskIntervalSeconds: resolvePositiveInt(
+    findingQueueTaskIntervalSeconds: resolveNonNegativeInt(
       process.env.MEMORY_ROUTER_FINDING_QUEUE_TASK_INTERVAL_SECONDS,
       APP_CONSTANTS.findingQueueTaskIntervalSeconds,
-      { min: 1, max: 3600 },
+      { max: 3600 },
     ),
     promotionBacklogThresholdCount: APP_CONSTANTS.distillationPromotionBacklogThresholdCount,
     lowImportanceRejectThreshold: APP_CONSTANTS.distillationLowImportanceRejectThreshold,
