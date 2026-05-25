@@ -54,6 +54,44 @@ const baseReport = {
     reachable: true,
     model: "gpt-5-4-mini",
     endpoint: "https://example.openai.azure.com",
+    providerHealth: [
+      {
+        id: "azure-openai:1",
+        label: "Azure OpenAI #1",
+        provider: "azure-openai",
+        configured: true,
+        reachable: true,
+        model: "gpt-5-4-mini",
+        endpoint: "https://example.openai.azure.com",
+        deploymentIndex: 1,
+        selected: true,
+        routeOrder: 0,
+      },
+      {
+        id: "azure-openai:2",
+        label: "Azure OpenAI #2",
+        provider: "azure-openai",
+        configured: true,
+        reachable: false,
+        model: "gpt-5-4-mini",
+        endpoint: "https://second.openai.azure.com",
+        deploymentIndex: 2,
+        error: "DeploymentNotFound",
+        selected: true,
+        routeOrder: 0,
+      },
+      {
+        id: "local-llm",
+        label: "Local LLM",
+        provider: "local-llm",
+        configured: true,
+        reachable: true,
+        model: "gemma4",
+        endpoint: "http://127.0.0.1:11434",
+        selected: false,
+        routeOrder: 1,
+      },
+    ],
   },
   tables: {
     expected: ["knowledge_items", "sources"],
@@ -353,7 +391,12 @@ describe("DoctorPage", () => {
     expect(screen.getByText("AI & Service Tools")).toBeInTheDocument();
     expect(screen.getByText("Pipeline & Automation")).toBeInTheDocument();
     expect(screen.getByText(/システム緊急警告/)).toBeInTheDocument();
-    expect(screen.getByText("Fallbacks")).toBeInTheDocument();
+    expect(screen.getByText("Provider Health")).toBeInTheDocument();
+    expect(screen.getByText("Azure OpenAI #1")).toBeInTheDocument();
+    expect(screen.getByText("Azure OpenAI #2")).toBeInTheDocument();
+    expect(screen.getByText("Local LLM")).toBeInTheDocument();
+    expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
+    expect(screen.queryByText("Bedrock")).not.toBeInTheDocument();
 
     expect(screen.getByText("未使用の active knowledge が多い")).toBeInTheDocument();
     expect(screen.getByText("Agentic LLM に到達できない")).toBeInTheDocument();

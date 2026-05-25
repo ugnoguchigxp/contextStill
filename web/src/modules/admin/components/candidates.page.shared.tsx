@@ -14,7 +14,8 @@ export const outcomeOptions: Array<"all" | CandidateOutcome> = [
 export const tableHeadClass = "px-3 whitespace-normal break-words [overflow-wrap:anywhere]";
 export const tableCellClass =
   "px-3 py-3 align-top whitespace-normal break-words [overflow-wrap:anywhere]";
-export const compactBadgeClass = "text-[10px] whitespace-normal break-words [overflow-wrap:anywhere]";
+export const compactBadgeClass =
+  "text-[10px] whitespace-normal break-words [overflow-wrap:anywhere]";
 
 export function toPercent(value: number): string {
   return `${Math.round(value * 100)}%`;
@@ -121,7 +122,9 @@ export function CandidateDetailPane({
   );
 }
 
-export function LandscapeWarningBadge({ warning }: { warning: CandidateListItem["landscapeWarning"] }) {
+export function LandscapeWarningBadge({
+  warning,
+}: { warning: CandidateListItem["landscapeWarning"] }) {
   if (!warning) return null;
   return (
     <div className="space-y-1 pt-1">

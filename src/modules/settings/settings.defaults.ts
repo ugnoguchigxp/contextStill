@@ -17,6 +17,8 @@ import {
 export const secretRowKeys: RuntimeSecretKey[] = [
   "openaiApiKey",
   "azureOpenAiApiKey",
+  "azureOpenAiApiKey2",
+  "azureOpenAiApiKey3",
   "localLlmApiKey",
   "braveApiKey",
   "exaApiKey",
@@ -62,10 +64,99 @@ const defaultDistillationTargetPriorityOrder: DistillationPriorityTargetKind[] =
   "wiki_file",
   "vibe_memory",
 ];
+const localLlmAzureFallback: RuntimeProviderName[] = ["azure-openai"];
 
 const distillationPriorityTargetKindSet = new Set<DistillationPriorityTargetKind>(
   distillationPriorityTargetKindValues,
 );
+
+const AZURE_OPENAI_MAX_DEPLOYMENTS = 3;
+
+function azureDeploymentName(index: number): string {
+  return index === 0 ? "Primary" : `Deployment ${index + 1}`;
+}
+
+function normalizeAzureDeployment(
+  value: Record<string, unknown>,
+  index: number,
+  fallback: RuntimeSettingsEditable["providers"]["azure-openai"],
+): RuntimeSettingsEditable["providers"]["azure-openai"]["deployments"][number] {
+  const name = typeof value.name === "string" ? value.name.trim() : "";
+  const apiBaseUrl =
+    typeof value.apiBaseUrl === "string"
+      ? value.apiBaseUrl.trim().replace(/\/+$/, "")
+      : index === 0
+        ? fallback.apiBaseUrl
+        : "";
+  const apiPath =
+    typeof value.apiPath === "string" && value.apiPath.trim()
+      ? value.apiPath.trim()
+      : fallback.apiPath;
+  const apiVersion =
+    typeof value.apiVersion === "string" && value.apiVersion.trim()
+      ? value.apiVersion.trim()
+      : fallback.apiVersion;
+  const model =
+    typeof value.model === "string" && value.model.trim()
+      ? value.model.trim()
+      : index === 0
+        ? fallback.model
+        : "";
+  return {
+    name: name || azureDeploymentName(index),
+    apiBaseUrl,
+    apiPath,
+    apiVersion,
+    model,
+  };
+}
+
+function normalizeAzureDeployments(
+  provider: RuntimeSettingsEditable["providers"]["azure-openai"],
+): RuntimeSettingsEditable["providers"]["azure-openai"]["deployments"] {
+  const rawDeployments = Array.isArray(provider.deployments) ? provider.deployments : [];
+  const source =
+    rawDeployments.length > 0
+      ? rawDeployments
+      : [
+          {
+            name: "Primary",
+            apiBaseUrl: provider.apiBaseUrl,
+            apiPath: provider.apiPath,
+            apiVersion: provider.apiVersion,
+            model: provider.model,
+          },
+        ];
+  const deployments = source
+    .slice(0, AZURE_OPENAI_MAX_DEPLOYMENTS)
+    .map((value, index) => normalizeAzureDeployment(asRecord(value), index, provider));
+  return deployments.length > 0
+    ? deployments
+    : [
+        {
+          name: "Primary",
+          apiBaseUrl: provider.apiBaseUrl,
+          apiPath: provider.apiPath,
+          apiVersion: provider.apiVersion,
+          model: provider.model,
+        },
+      ];
+}
+
+function syncAzureOpenAiProvider(
+  provider: RuntimeSettingsEditable["providers"]["azure-openai"],
+): RuntimeSettingsEditable["providers"]["azure-openai"] {
+  const deployments = normalizeAzureDeployments(provider);
+  const primary = deployments[0];
+  return {
+    ...provider,
+    apiBaseUrl: primary?.apiBaseUrl ?? provider.apiBaseUrl,
+    apiPath: primary?.apiPath ?? provider.apiPath,
+    apiVersion: primary?.apiVersion ?? provider.apiVersion,
+    model: primary?.model ?? provider.model,
+    deployments,
+  };
+}
 
 export function normalizeDistillationTargetPriorityOrder(
   values: unknown,
@@ -106,6 +197,34 @@ export const bootstrap: BootstrapConfig = {
       apiPath: groupedConfig.azureOpenAi.apiPath,
       apiVersion: groupedConfig.azureOpenAi.apiVersion,
       model: groupedConfig.azureOpenAi.model,
+      deployments: [
+        {
+          name: "Primary",
+          apiBaseUrl: groupedConfig.azureOpenAi.apiBaseUrl,
+          apiPath: groupedConfig.azureOpenAi.apiPath,
+          apiVersion: groupedConfig.azureOpenAi.apiVersion,
+          model: groupedConfig.azureOpenAi.model,
+        },
+        ...[2, 3]
+          .map((slot) => ({
+            name: `Deployment ${slot}`,
+            apiBaseUrl:
+              process.env[`MEMORY_ROUTER_AZURE_OPENAI_${slot}_API_BASE_URL`]?.trim() ??
+              process.env[`AZURE_OPENAI_${slot}_API_BASE_URL`]?.trim() ??
+              "",
+            apiPath:
+              process.env[`MEMORY_ROUTER_AZURE_OPENAI_${slot}_API_PATH`]?.trim() ||
+              "/openai/deployments",
+            apiVersion:
+              process.env[`MEMORY_ROUTER_AZURE_OPENAI_${slot}_API_VERSION`]?.trim() ||
+              groupedConfig.azureOpenAi.apiVersion,
+            model:
+              process.env[`MEMORY_ROUTER_AZURE_OPENAI_${slot}_MODEL`]?.trim() ??
+              process.env[`AZURE_OPENAI_${slot}_MODEL`]?.trim() ??
+              "",
+          }))
+          .filter((deployment) => deployment.apiBaseUrl || deployment.model),
+      ].slice(0, AZURE_OPENAI_MAX_DEPLOYMENTS),
     },
     bedrock: {
       enabled: Boolean(groupedConfig.bedrock.region.trim() && groupedConfig.bedrock.model.trim()),
@@ -114,7 +233,9 @@ export const bootstrap: BootstrapConfig = {
       model: groupedConfig.bedrock.model,
     },
     "local-llm": {
-      enabled: Boolean(groupedConfig.localLlm.apiBaseUrl.trim() && groupedConfig.localLlm.model.trim()),
+      enabled: Boolean(
+        groupedConfig.localLlm.apiBaseUrl.trim() && groupedConfig.localLlm.model.trim(),
+      ),
       apiBaseUrl: groupedConfig.localLlm.apiBaseUrl,
       model: groupedConfig.localLlm.model,
     },
@@ -138,18 +259,30 @@ export const bootstrap: BootstrapConfig = {
     webSourceResearch: {
       provider: "local-llm",
       model: groupedConfig.localLlm.model,
-      fallback: [],
+      fallback: [...localLlmAzureFallback],
     },
     coverEvidence: {
-      sourceSupport: { provider: "local-llm", model: groupedConfig.localLlm.model, fallback: [] },
+      sourceSupport: {
+        provider: "local-llm",
+        model: groupedConfig.localLlm.model,
+        fallback: [...localLlmAzureFallback],
+      },
       externalEvidence: {
         provider: "local-llm",
         model: groupedConfig.localLlm.model,
-        fallback: [],
+        fallback: [...localLlmAzureFallback],
       },
-      mcpEvidence: { provider: "local-llm", model: groupedConfig.localLlm.model, fallback: [] },
+      mcpEvidence: {
+        provider: "local-llm",
+        model: groupedConfig.localLlm.model,
+        fallback: [...localLlmAzureFallback],
+      },
     },
-    finalizeDistille: { provider: "local-llm", model: groupedConfig.localLlm.model, fallback: [] },
+    finalizeDistille: {
+      provider: "local-llm",
+      model: groupedConfig.localLlm.model,
+      fallback: [...localLlmAzureFallback],
+    },
     agenticCompile: {
       enabled: groupedConfig.agenticCompile.enabled,
       provider: "openai",
@@ -210,6 +343,14 @@ export const bootstrap: BootstrapConfig = {
   secrets: {
     openaiApiKey: groupedConfig.openAi.apiKey.trim() || undefined,
     azureOpenAiApiKey: groupedConfig.azureOpenAi.apiKey.trim() || undefined,
+    azureOpenAiApiKey2:
+      process.env.MEMORY_ROUTER_AZURE_OPENAI_2_API_KEY?.trim() ||
+      process.env.AZURE_OPENAI_2_API_KEY?.trim() ||
+      undefined,
+    azureOpenAiApiKey3:
+      process.env.MEMORY_ROUTER_AZURE_OPENAI_3_API_KEY?.trim() ||
+      process.env.AZURE_OPENAI_3_API_KEY?.trim() ||
+      undefined,
     localLlmApiKey: groupedConfig.localLlm.apiKey.trim() || undefined,
     braveApiKey: process.env.BRAVE_SEARCH_API_KEY?.trim() || undefined,
     exaApiKey:
@@ -226,23 +367,49 @@ export function cloneDefaultSettings(): RuntimeSettingsEditable {
     },
     providers: {
       openai: { ...bootstrap.providers.openai },
-      "azure-openai": { ...bootstrap.providers["azure-openai"] },
+      "azure-openai": {
+        ...bootstrap.providers["azure-openai"],
+        deployments: bootstrap.providers["azure-openai"].deployments.map((deployment) => ({
+          ...deployment,
+        })),
+      },
       bedrock: { ...bootstrap.providers.bedrock },
       "local-llm": { ...bootstrap.providers["local-llm"] },
     },
     taskRouting: {
       findCandidate: {
-        source: { ...bootstrap.taskRouting.findCandidate.source },
-        vibe: { ...bootstrap.taskRouting.findCandidate.vibe },
+        source: {
+          ...bootstrap.taskRouting.findCandidate.source,
+          fallback: [...bootstrap.taskRouting.findCandidate.source.fallback],
+        },
+        vibe: {
+          ...bootstrap.taskRouting.findCandidate.vibe,
+          fallback: [...bootstrap.taskRouting.findCandidate.vibe.fallback],
+        },
         throttling: { ...bootstrap.taskRouting.findCandidate.throttling },
       },
-      webSourceResearch: { ...bootstrap.taskRouting.webSourceResearch },
-      coverEvidence: {
-        sourceSupport: { ...bootstrap.taskRouting.coverEvidence.sourceSupport },
-        externalEvidence: { ...bootstrap.taskRouting.coverEvidence.externalEvidence },
-        mcpEvidence: { ...bootstrap.taskRouting.coverEvidence.mcpEvidence },
+      webSourceResearch: {
+        ...bootstrap.taskRouting.webSourceResearch,
+        fallback: [...bootstrap.taskRouting.webSourceResearch.fallback],
       },
-      finalizeDistille: { ...bootstrap.taskRouting.finalizeDistille },
+      coverEvidence: {
+        sourceSupport: {
+          ...bootstrap.taskRouting.coverEvidence.sourceSupport,
+          fallback: [...bootstrap.taskRouting.coverEvidence.sourceSupport.fallback],
+        },
+        externalEvidence: {
+          ...bootstrap.taskRouting.coverEvidence.externalEvidence,
+          fallback: [...bootstrap.taskRouting.coverEvidence.externalEvidence.fallback],
+        },
+        mcpEvidence: {
+          ...bootstrap.taskRouting.coverEvidence.mcpEvidence,
+          fallback: [...bootstrap.taskRouting.coverEvidence.mcpEvidence.fallback],
+        },
+      },
+      finalizeDistille: {
+        ...bootstrap.taskRouting.finalizeDistille,
+        fallback: [...bootstrap.taskRouting.finalizeDistille.fallback],
+      },
       agenticCompile: {
         ...bootstrap.taskRouting.agenticCompile,
         fallback: [...bootstrap.taskRouting.agenticCompile.fallback],
@@ -272,7 +439,13 @@ function resolveConfiguredRouteModel(
     case "openai":
       return settings.providers.openai.model.trim() || undefined;
     case "azure-openai":
-      return settings.providers["azure-openai"].model.trim() || undefined;
+      return (
+        settings.providers["azure-openai"].deployments
+          .find((deployment) => deployment.model.trim())
+          ?.model.trim() ||
+        settings.providers["azure-openai"].model.trim() ||
+        undefined
+      );
     case "bedrock":
       return settings.providers.bedrock.model.trim() || undefined;
     case "local-llm":
@@ -288,6 +461,16 @@ function sanitizeRoute(
     provider: route.provider,
     model: resolveConfiguredRouteModel(settings, route.provider),
     fallback: normalizeProviderList(route.fallback),
+  };
+}
+
+function ensureLocalLlmAzureFallback(route: RuntimeSettingsRoute): RuntimeSettingsRoute {
+  if (route.provider !== "local-llm" || route.fallback.includes("azure-openai")) {
+    return route;
+  }
+  return {
+    ...route,
+    fallback: [...route.fallback, "azure-openai"],
   };
 }
 
@@ -407,25 +590,48 @@ function mergeRuntimeSettings(
     },
   };
 
+  merged.providers["azure-openai"] = syncAzureOpenAiProvider(merged.providers["azure-openai"]);
+
   merged.taskRouting.findCandidate.source = sanitizeRoute(
     merged,
     merged.taskRouting.findCandidate.source,
   );
-  merged.taskRouting.findCandidate.vibe = sanitizeRoute(merged, merged.taskRouting.findCandidate.vibe);
-  merged.taskRouting.webSourceResearch = sanitizeRoute(merged, merged.taskRouting.webSourceResearch);
+  merged.taskRouting.findCandidate.vibe = sanitizeRoute(
+    merged,
+    merged.taskRouting.findCandidate.vibe,
+  );
+  merged.taskRouting.webSourceResearch = sanitizeRoute(
+    merged,
+    merged.taskRouting.webSourceResearch,
+  );
+  merged.taskRouting.webSourceResearch = ensureLocalLlmAzureFallback(
+    merged.taskRouting.webSourceResearch,
+  );
   merged.taskRouting.coverEvidence.sourceSupport = sanitizeRoute(
     merged,
+    merged.taskRouting.coverEvidence.sourceSupport,
+  );
+  merged.taskRouting.coverEvidence.sourceSupport = ensureLocalLlmAzureFallback(
     merged.taskRouting.coverEvidence.sourceSupport,
   );
   merged.taskRouting.coverEvidence.externalEvidence = sanitizeRoute(
     merged,
     merged.taskRouting.coverEvidence.externalEvidence,
   );
+  merged.taskRouting.coverEvidence.externalEvidence = ensureLocalLlmAzureFallback(
+    merged.taskRouting.coverEvidence.externalEvidence,
+  );
   merged.taskRouting.coverEvidence.mcpEvidence = sanitizeRoute(
     merged,
     merged.taskRouting.coverEvidence.mcpEvidence,
   );
+  merged.taskRouting.coverEvidence.mcpEvidence = ensureLocalLlmAzureFallback(
+    merged.taskRouting.coverEvidence.mcpEvidence,
+  );
   merged.taskRouting.finalizeDistille = sanitizeRoute(merged, merged.taskRouting.finalizeDistille);
+  merged.taskRouting.finalizeDistille = ensureLocalLlmAzureFallback(
+    merged.taskRouting.finalizeDistille,
+  );
   merged.taskRouting.agenticCompile.fallback = normalizeProviderList(
     merged.taskRouting.agenticCompile.fallback,
   );
@@ -434,8 +640,8 @@ function mergeRuntimeSettings(
       merged.general.distillationPriority.targetPriorityOrder,
     );
   merged.search.providerOrder = [...new Set(merged.search.providerOrder)];
-  groupedConfig.distillationTools.searchProviders =
-    merged.search.providerOrder as DistillationSearchProvider[];
+  groupedConfig.distillationTools.searchProviders = merged.search
+    .providerOrder as DistillationSearchProvider[];
   return merged;
 }
 

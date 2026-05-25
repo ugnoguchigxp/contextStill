@@ -525,5 +525,4 @@ describe("Admin Repository", () => {
       expect(res).toBeNull();
     });
   });
-
 });

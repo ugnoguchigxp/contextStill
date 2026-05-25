@@ -86,6 +86,13 @@ export type GroupedConfig = {
     apiPath: string;
     apiVersion: string;
     model: string;
+    deployments: Array<{
+      apiKey: string;
+      apiBaseUrl: string;
+      apiPath: string;
+      apiVersion: string;
+      model: string;
+    }>;
   };
   bedrock: {
     model: string;
@@ -114,6 +121,7 @@ export type GroupedConfig = {
     continuousErrorSleepMs: number;
     inventoryRefreshIntervalMs: number;
     findCandidateBackgroundEnabled: boolean;
+    findCandidateNoWait: boolean;
     findCandidateInteractiveWindowSeconds: number;
     findCandidateRecentBlockSeconds: number;
     findCandidateMinIntervalSeconds: number;

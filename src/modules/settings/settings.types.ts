@@ -10,6 +10,8 @@ export type RuntimeProviderSetting = (typeof runtimeProviderSettingNames)[number
 export type RuntimeSecretKey =
   | "openaiApiKey"
   | "azureOpenAiApiKey"
+  | "azureOpenAiApiKey2"
+  | "azureOpenAiApiKey3"
   | "localLlmApiKey"
   | "braveApiKey"
   | "exaApiKey";
@@ -17,6 +19,8 @@ export type RuntimeSecretKey =
 export const runtimeSecretKeys = [
   "openaiApiKey",
   "azureOpenAiApiKey",
+  "azureOpenAiApiKey2",
+  "azureOpenAiApiKey3",
   "localLlmApiKey",
   "braveApiKey",
   "exaApiKey",
@@ -49,6 +53,14 @@ export type FindCandidateThrottlingSettings = {
   jitterSeconds: number;
 };
 
+export type AzureOpenAiDeploymentSettings = {
+  name: string;
+  apiBaseUrl: string;
+  apiPath: string;
+  apiVersion: string;
+  model: string;
+};
+
 export const distillationPriorityTargetKindValues = [
   "knowledge_candidate",
   "web_ingest",
@@ -76,6 +88,7 @@ export type RuntimeSettingsEditable = {
       apiPath: string;
       apiVersion: string;
       model: string;
+      deployments: AzureOpenAiDeploymentSettings[];
     };
     bedrock: {
       enabled: boolean;
@@ -167,6 +180,7 @@ export type RuntimeSettingsView = RuntimeSettingsEditable & {
     };
     "azure-openai": RuntimeSettingsEditable["providers"]["azure-openai"] & {
       apiKeySecret: RuntimeSecretStatus;
+      apiKeySecrets: RuntimeSecretStatus[];
     };
     bedrock: RuntimeSettingsEditable["providers"]["bedrock"] & {
       credentialSecret: RuntimeSecretStatus;
@@ -193,6 +207,14 @@ const runtimeProviderSchema = z.enum(runtimeProviderNames);
 const runtimeProviderSettingSchema = z.enum(runtimeProviderSettingNames);
 const searchProviderSchema = z.enum(["brave", "exa", "duckduckgo"] as const);
 
+const azureOpenAiDeploymentSchema = z.object({
+  name: z.string().trim().max(80).default(""),
+  apiBaseUrl: z.string().trim().url().or(z.literal("")),
+  apiPath: z.string().trim().min(1),
+  apiVersion: z.string().trim().min(1),
+  model: z.string().trim().min(1).or(z.literal("")),
+});
+
 const runtimeRouteSchema = z.object({
   provider: runtimeProviderSettingSchema,
   model: z.string().trim().min(1).optional(),
@@ -217,6 +239,7 @@ export const runtimeSettingsEditableSchema = z.object({
       apiPath: z.string().trim().min(1),
       apiVersion: z.string().trim().min(1),
       model: z.string().trim().min(1).or(z.literal("")),
+      deployments: z.array(azureOpenAiDeploymentSchema).max(3).default([]),
     }),
     bedrock: z.object({
       enabled: z.boolean().default(false),

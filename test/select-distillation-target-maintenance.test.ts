@@ -1,8 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import os from "node:os";
 import { db } from "../src/db/index.js";
 import { recordAuditLogSafe } from "../src/modules/audit/audit-log.service.js";
 import {
   releaseRetryablePausedDistillationTargets,
+  recoverOrphanedRunningDistillationTargets,
   recoverStaleDistillationTargets,
   markMissingVibeMemoryTargetsSkipped,
   markMissingWikiTargetsSkipped,
@@ -146,6 +148,69 @@ describe("selectDistillationTarget repository-maintenance", () => {
       expect(result.recoveredToPending).toBe(0);
       expect(result.skipped).toBe(1);
       expect(mockUpdate).toHaveBeenCalled();
+    });
+  });
+
+  describe("recoverOrphanedRunningDistillationTargets", () => {
+    it("recovers running targets owned by a dead local worker pid", async () => {
+      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => {
+        const error = new Error("missing process");
+        (error as { code?: string }).code = "ESRCH";
+        throw error;
+      });
+      mockSelect.mockReturnValueOnce(
+        makeChain([
+          {
+            id: "orphaned-1",
+            status: "running",
+            attemptCount: 1,
+            lockedBy: `${os.hostname()}:12345`,
+          },
+        ]),
+      );
+      mockUpdate.mockReturnValueOnce(makeChain([{ id: "orphaned-1" }]));
+
+      try {
+        const result = await recoverOrphanedRunningDistillationTargets({
+          distillationVersion: "v1",
+          maxAttempts: 3,
+        });
+
+        expect(result).toEqual({ recoveredToPending: 1, failed: 0, skipped: 0 });
+        expect(mockUpdate).toHaveBeenCalled();
+        expect(recordAuditLogSafe).toHaveBeenCalledWith(
+          expect.objectContaining({
+            payload: expect.objectContaining({ reason: "dead_local_worker" }),
+          }),
+        );
+      } finally {
+        killSpy.mockRestore();
+      }
+    });
+
+    it("leaves running targets alone when the local worker pid is still alive", async () => {
+      const killSpy = vi.spyOn(process, "kill").mockImplementation(() => true);
+      mockSelect.mockReturnValueOnce(
+        makeChain([
+          {
+            id: "active-1",
+            status: "running",
+            attemptCount: 1,
+            lockedBy: `${os.hostname()}:12345`,
+          },
+        ]),
+      );
+
+      try {
+        const result = await recoverOrphanedRunningDistillationTargets({
+          distillationVersion: "v1",
+        });
+
+        expect(result).toEqual({ recoveredToPending: 0, failed: 0, skipped: 0 });
+        expect(mockUpdate).not.toHaveBeenCalled();
+      } finally {
+        killSpy.mockRestore();
+      }
     });
   });
 

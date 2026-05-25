@@ -29,10 +29,7 @@ import type {
   ListLandscapeReviewItemsInput,
   MaterializeLandscapeReviewItemsInput,
 } from "./landscape-review-items.types.js";
-import {
-  asRecord,
-  toIsoString,
-} from "../../shared/utils/normalize.js";
+import { asRecord, toIsoString } from "../../shared/utils/normalize.js";
 import {
   buildLandscapeReviewItemCandidates,
   normalizeEvidence,

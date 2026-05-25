@@ -3,6 +3,7 @@ import { groupedConfig } from "../../../src/config.js";
 import { APP_CONSTANTS } from "../../../src/constants.js";
 import { getDb } from "../../../src/db/index.js";
 import { resolveCostRate } from "../../../src/modules/llm/llm-cost-config.js";
+import { inspectCompileRuns } from "../../../src/modules/doctor/inspectors/compile.inspector.js";
 import { ensureRuntimeSettingsLoaded } from "../../../src/modules/settings/settings.service.js";
 import {
   type OverviewDashboard,
@@ -229,6 +230,7 @@ export async function fetchOverviewSystemQualityDomainForApi(): Promise<Overview
     compileRunsByDayResult,
     distillationQueueResult,
     searchProviderStateResult,
+    compileRunHealthResult,
   ] = await Promise.all([
     db.execute(sql`
       select
@@ -285,6 +287,12 @@ export async function fetchOverviewSystemQualityDomainForApi(): Promise<Overview
       where id = 'distillation_search_providers'
       limit 1
     `),
+    inspectCompileRuns({
+      windowSize: 20,
+      freshnessThresholdMinutes: groupedConfig.doctor.freshnessThresholdMinutes,
+      degradedRateThreshold: groupedConfig.doctor.degradedRateThreshold,
+      compileRunsTableAvailable: true,
+    }),
   ]);
 
   const compileSummaryRow = (compileSummaryResult.rows[0] ?? {}) as Record<string, unknown>;
@@ -301,6 +309,7 @@ export async function fetchOverviewSystemQualityDomainForApi(): Promise<Overview
       compileDegradedRuns: toNumber(compileSummaryRow.compile_degraded_runs),
       compileFailedRuns: toNumber(compileSummaryRow.compile_failed_runs),
     },
+    compileRunHealth: compileRunHealthResult.runs,
     charts: {
       compileRunsByDay: (compileRunsByDayResult.rows as Array<Record<string, unknown>>).map(
         (row) => ({

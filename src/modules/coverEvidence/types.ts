@@ -75,6 +75,7 @@ export type CoverEvidenceResult = {
 export type CoverEvidenceInput = {
   id: string;
   provider?: DistillationProviderSetting;
+  providerFallbackMode?: "fallback" | "single";
   write?: boolean;
   forceRefreshEvidence?: boolean;
   signal?: AbortSignal;

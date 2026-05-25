@@ -265,6 +265,7 @@ describe("OverviewPage", () => {
       "system-quality": {
         checkedAt: defaultOverviewData.checkedAt,
         kpis: JSON.parse(JSON.stringify(defaultOverviewData.kpis)),
+        compileRunHealth: JSON.parse(JSON.stringify(defaultDoctorData.runs)),
         charts: JSON.parse(JSON.stringify(defaultOverviewData.charts)),
         searchApiStatus: JSON.parse(JSON.stringify(defaultOverviewData.searchApiStatus)),
       },
@@ -446,14 +447,34 @@ describe("OverviewPage", () => {
     expect(screen.getByText("No active LLM sources")).toBeInTheDocument();
   });
 
-  it("calculates compile Usable rate from KPIs when doctorReport is null", () => {
-    // doctorReport is completely null
-    queryMockState.doctorData = null;
-
+  it("uses system-quality compile health instead of the separate doctor query", () => {
     queryMockState.domainData["system-quality"].kpis.compileRuns = 10;
     queryMockState.domainData["system-quality"].kpis.compileOkRuns = 9;
     queryMockState.domainData["system-quality"].kpis.compileDegradedRuns = 1;
     queryMockState.domainData["system-quality"].kpis.compileFailedRuns = 0;
+    queryMockState.domainData["system-quality"].compileRunHealth = {
+      ...JSON.parse(JSON.stringify(defaultDoctorData.runs)),
+      totalRuns: 10,
+      degradedRuns: 1,
+      degradedRate: 0.1,
+      usableRuns: 9,
+      usableRate: 0.9,
+      warningOnlyRuns: 1,
+      warningOnlyRate: 0.1,
+      blockingRuns: 0,
+      blockingRate: 0,
+      noContentRuns: 0,
+      noContentRate: 0,
+    };
+    queryMockState.doctorData = {
+      ...JSON.parse(JSON.stringify(defaultDoctorData)),
+      runs: {
+        ...JSON.parse(JSON.stringify(defaultDoctorData.runs)),
+        totalRuns: 10,
+        usableRuns: 1,
+        usableRate: 0.1,
+      },
+    };
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -461,7 +482,7 @@ describe("OverviewPage", () => {
       </QueryClientProvider>,
     );
 
-    // Ok: 9 / Total: 10 -> Usable Rate: 90.0%
     expect(screen.getAllByText("90.0%").length).toBeGreaterThan(0);
+    expect(screen.queryByText("10.0%")).not.toBeInTheDocument();
   });
 });

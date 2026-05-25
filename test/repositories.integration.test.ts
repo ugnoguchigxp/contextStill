@@ -588,5 +588,4 @@ index 0000000..1111111
     expect(topCommunity?.health.dead).toBe(true);
     expect(snapshot.stats.deadCommunityCount).toBeGreaterThanOrEqual(1);
   });
-
 });

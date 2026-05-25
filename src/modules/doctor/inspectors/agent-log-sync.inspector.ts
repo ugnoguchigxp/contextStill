@@ -6,6 +6,7 @@ import type { DoctorReport } from "../../../shared/schemas/doctor.schema.js";
 import {
   cursorFileCount,
   metadataSkipped,
+  metadataSyncedAt,
   metadataWarnings,
   minutesSince,
 } from "../doctor.utils.js";
@@ -37,10 +38,14 @@ export async function inspectAgentLogSync({
         .where(inArray(syncStates.id, ["codex_logs", "antigravity_logs"]));
       for (const row of rows) {
         const lastSyncedAt = row.lastSyncedAt?.toISOString() ?? null;
+        const lastCheckedAt =
+          metadataSyncedAt(row.metadata) ?? row.updatedAt?.toISOString() ?? null;
         states.push({
           id: row.id,
           lastSyncedAt,
           lastSyncedAgeMinutes: lastSyncedAt ? minutesSince(lastSyncedAt) : null,
+          lastCheckedAt,
+          lastCheckedAgeMinutes: lastCheckedAt ? minutesSince(lastCheckedAt) : null,
           cursorFiles: cursorFileCount(row.cursor),
           skipped: metadataSkipped(row.metadata),
           warnings: metadataWarnings(row.metadata),

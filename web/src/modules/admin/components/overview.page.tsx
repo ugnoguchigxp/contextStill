@@ -184,7 +184,7 @@ export function OverviewPage() {
 
           <div className="flex flex-col gap-6 w-full">
             {systemQuality.data ? (
-              <SystemQualityDomain dashboard={systemQuality.data} doctorReport={doctorReport} />
+              <SystemQualityDomain dashboard={systemQuality.data} />
             ) : (
               <OverviewDomainPlaceholder
                 title="System Quality & Health"

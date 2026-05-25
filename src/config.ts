@@ -72,6 +72,16 @@ const resolvePositiveInt = (
   return Math.max(1, floored);
 };
 
+const resolveBoolean = (value: string | undefined, fallback: boolean): boolean => {
+  if (value === undefined) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "1" || normalized === "true" || normalized === "yes" || normalized === "on")
+    return true;
+  if (normalized === "0" || normalized === "false" || normalized === "no" || normalized === "off")
+    return false;
+  return fallback;
+};
+
 const distillationProvider = parseDistillationProvider(
   process.env.MEMORY_ROUTER_DISTILLATION_PROVIDER,
   "local-llm",
@@ -215,6 +225,7 @@ export const groupedConfig: GroupedConfig = {
       process.env.MEMORY_ROUTER_AZURE_OPENAI_MODEL ||
       process.env.AZURE_OPENAI_MODEL ||
       "gpt-5-4-mini",
+    deployments: [],
   },
   bedrock: {
     model: "",
@@ -247,6 +258,10 @@ export const groupedConfig: GroupedConfig = {
     continuousErrorSleepMs: APP_CONSTANTS.distillationContinuousErrorSleepMs,
     inventoryRefreshIntervalMs: APP_CONSTANTS.distillationInventoryRefreshIntervalMs,
     findCandidateBackgroundEnabled: APP_CONSTANTS.findCandidateBackgroundEnabled,
+    findCandidateNoWait: resolveBoolean(
+      process.env.MEMORY_ROUTER_FIND_CANDIDATE_NO_WAIT,
+      APP_CONSTANTS.findCandidateNoWait,
+    ),
     findCandidateInteractiveWindowSeconds: APP_CONSTANTS.findCandidateInteractiveWindowSeconds,
     findCandidateRecentBlockSeconds: APP_CONSTANTS.findCandidateRecentBlockSeconds,
     findCandidateMinIntervalSeconds: APP_CONSTANTS.findCandidateMinIntervalSeconds,

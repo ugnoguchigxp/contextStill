@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { groupedConfig } from "../../config.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import { recordLlmUsage } from "../llm/llm-usage-logger.js";
+import { ensureRuntimeSettingsLoaded } from "../settings/settings.service.js";
 import {
   type DistillationToolCall,
   type DistillationToolResult,
@@ -16,11 +17,10 @@ import {
   isProviderConfigured,
   resolveDistillationProviderOrder,
 } from "./llm-resolver.js";
+import { createAzureOpenAiChatClient } from "./providers/azure-openai.js";
+import { callBedrockChat } from "./providers/bedrock.js";
 import { callLocalLlmChat } from "./providers/local-llm.js";
 import { callOpenAiChat } from "./providers/openai.js";
-import { callAzureOpenAiChat } from "./providers/azure-openai.js";
-import { callBedrockChat } from "./providers/bedrock.js";
-import { ensureRuntimeSettingsLoaded } from "../settings/settings.service.js";
 
 // Re-export types from types.ts to preserve public schema
 export type {
@@ -40,8 +40,8 @@ import type {
   DistillationCompletionResult,
   DistillationMessage,
   DistillationModelRequest,
-  DistillationRuntimeToolDefinition,
   DistillationRuntimeOptions,
+  DistillationRuntimeToolDefinition,
 } from "./types.js";
 
 // Re-export resolveDistillationModel and ProviderSetting
@@ -57,6 +57,10 @@ export {
 
 type DistillationErrorWithToolEvents = Error & {
   distillationToolEvents?: DistillationToolResult[];
+};
+
+type DistillationErrorWithProviderRoute = Error & {
+  providerRoute?: DistillationChatResponse["providerRoute"];
 };
 
 type MessageSizeSummary = {
@@ -159,6 +163,11 @@ function coverEvidenceLlmBasePayload(params: {
   toolDefinitions: DistillationRuntimeToolDefinition[];
   requestAuditId: string;
 }): Record<string, unknown> {
+  const providerSetting = params.providerSetting ?? groupedConfig.distillation.provider;
+  const providerOrder = resolveDistillationProviderOrder(
+    providerSetting,
+    params.fallbackOrder ?? [],
+  );
   const messageSummary = summarizeMessages(params.messages);
   return {
     ...params.auditContext,
@@ -166,8 +175,9 @@ function coverEvidenceLlmBasePayload(params: {
     stage: coverEvidenceLlmStage(params.auditContext),
     round: params.round,
     toolRounds: params.toolRounds,
-    providerSetting: params.providerSetting ?? groupedConfig.distillation.provider,
+    providerSetting,
     fallbackOrder: params.fallbackOrder,
+    providerOrder,
     model: params.request.model,
     maxTokens: params.request.maxTokens,
     timeoutMs: params.timeoutMs,
@@ -200,6 +210,25 @@ function classifyLlmError(error: unknown): string {
   if (message.includes("http 503")) return "daemon_unavailable";
   if (message.includes("http 500")) return "daemon_error";
   return "provider_error";
+}
+
+function fallbackUsedFromRoute(
+  route: DistillationChatResponse["providerRoute"] | undefined,
+): boolean {
+  if (!route) return false;
+  if (route.fallbackUsed) return true;
+  const selected = route.selectedProvider;
+  const primary = route.providerOrder[0];
+  return Boolean(selected && primary && selected !== primary);
+}
+
+function providerRouteFromError(
+  error: unknown,
+): DistillationChatResponse["providerRoute"] | undefined {
+  if (!error || typeof error !== "object") return undefined;
+  const route = (error as { providerRoute?: DistillationChatResponse["providerRoute"] })
+    .providerRoute;
+  return route;
 }
 
 function normalizeToolCallLimits(limits: Record<string, number> | undefined): Map<string, number> {
@@ -252,11 +281,16 @@ function createDefaultChatClient(
 ): DistillationChatClient {
   const order = resolveDistillationProviderOrder(providerSetting, fallbackOrder);
   let pinnedProvider: DistillationProviderName | null = null;
+  const azureOpenAiChatClient = createAzureOpenAiChatClient();
+  const requestModelOwner =
+    providerSetting === "auto"
+      ? (order.find((provider) => isProviderConfigured(provider)) ?? order[0] ?? "local-llm")
+      : providerSetting;
 
   const callByProvider: Record<DistillationProviderName, DistillationChatClient> = {
     "local-llm": callLocalLlmChat,
     openai: callOpenAiChat,
-    "azure-openai": callAzureOpenAiChat,
+    "azure-openai": azureOpenAiChatClient,
     bedrock: callBedrockChat,
   };
 
@@ -264,16 +298,25 @@ function createDefaultChatClient(
     const providersToTry = pinnedProvider
       ? [pinnedProvider, ...order.filter((provider) => provider !== pinnedProvider)]
       : order;
+    const providerOrder = [...order];
+    const primaryProvider = providerOrder[0];
     const allowFallback = providerSetting === "auto" || order.length > 1;
     const errors: string[] = [];
+    const attemptedProviders: DistillationProviderName[] = [];
+    const providerErrorKinds: Partial<Record<DistillationProviderName, string>> = {};
 
     for (const provider of providersToTry) {
       if (!isProviderConfigured(provider)) {
         errors.push(`${provider}: not configured`);
         continue;
       }
+      attemptedProviders.push(provider);
 
-      const model = request.model.trim() ? request.model : defaultModelForProvider(provider);
+      const requestModel = request.model.trim();
+      const model =
+        requestModel && provider === requestModelOwner
+          ? requestModel
+          : defaultModelForProvider(provider);
 
       try {
         const response = await callByProvider[provider]({ ...request, model });
@@ -291,18 +334,60 @@ function createDefaultChatClient(
           source: usageSource,
         });
         pinnedProvider = provider;
-        return { ...response, provider, model };
+        return {
+          ...response,
+          provider,
+          model,
+          providerRoute: {
+            providerOrder,
+            attemptedProviders,
+            selectedProvider: provider,
+            fallbackUsed:
+              attemptedProviders.length > 1 ||
+              (primaryProvider !== undefined && provider !== primaryProvider),
+            providerErrorKinds,
+            selectedProviderDetails:
+              provider === "azure-openai" ? response.providerMetadata : undefined,
+          },
+        };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         errors.push(`${provider}: ${message}`);
-        if (!allowFallback) {
+        providerErrorKinds[provider] = classifyLlmError(error);
+        if (error instanceof Error && error.name === "AbortError") {
           throw error;
+        }
+        if (!allowFallback) {
+          const wrapped: DistillationErrorWithProviderRoute =
+            error instanceof Error ? error : new Error(String(error));
+          wrapped.providerRoute = {
+            providerOrder,
+            attemptedProviders,
+            selectedProvider: undefined,
+            fallbackUsed: attemptedProviders.some(
+              (candidateProvider) => candidateProvider !== primaryProvider,
+            ),
+            providerErrorKinds,
+          };
+          throw wrapped;
         }
         pinnedProvider = null;
       }
     }
 
-    throw new Error(errors.join(" | ") || "no distillation provider available");
+    const error: DistillationErrorWithProviderRoute = new Error(
+      errors.join(" | ") || "no distillation provider available",
+    );
+    error.providerRoute = {
+      providerOrder,
+      attemptedProviders,
+      selectedProvider: undefined,
+      fallbackUsed: attemptedProviders.some(
+        (candidateProvider) => candidateProvider !== primaryProvider,
+      ),
+      providerErrorKinds,
+    };
+    throw error;
   };
 }
 
@@ -400,6 +485,21 @@ export async function runDistillationCompletion(
         });
       } catch (error) {
         if (auditBase) {
+          const providerRoute = providerRouteFromError(error);
+          const baseProviderOrder = Array.isArray(auditBase.providerOrder)
+            ? (auditBase.providerOrder as DistillationProviderName[])
+            : undefined;
+          const providerOrder = providerRoute?.providerOrder ?? baseProviderOrder;
+          const attemptedProviders =
+            providerRoute?.attemptedProviders ??
+            (providerOrder?.[0] ? [providerOrder[0]] : undefined);
+          const providerErrorKinds =
+            providerRoute?.providerErrorKinds ??
+            (providerOrder?.[0]
+              ? {
+                  [providerOrder[0]]: classifyLlmError(error),
+                }
+              : undefined);
           await recordAuditLogSafe({
             eventType: auditEventTypes.coverEvidenceLlmFailed,
             actor: "system",
@@ -409,11 +509,17 @@ export async function runDistillationCompletion(
               errorName: errorName(error),
               error: errorMessage(error),
               errorKind: classifyLlmError(error),
+              providerOrder,
+              attemptedProviders,
+              selectedProvider: providerRoute?.selectedProvider,
+              fallbackUsed: fallbackUsedFromRoute(providerRoute),
+              providerErrorKinds,
             },
           });
         }
         throw error;
       }
+      const providerRoute = response.providerRoute;
       if (auditBase) {
         await recordAuditLogSafe({
           eventType: auditEventTypes.coverEvidenceLlmCompleted,
@@ -432,6 +538,12 @@ export async function runDistillationCompletion(
             completionTokens: response.usage?.completionTokens,
             totalTokens: response.usage?.totalTokens,
             reasoningTokens: response.usage?.reasoningTokens,
+            providerOrder: providerRoute?.providerOrder,
+            attemptedProviders: providerRoute?.attemptedProviders,
+            selectedProvider: providerRoute?.selectedProvider ?? response.provider,
+            fallbackUsed: fallbackUsedFromRoute(providerRoute),
+            providerErrorKinds: providerRoute?.providerErrorKinds,
+            selectedProviderDetails: providerRoute?.selectedProviderDetails,
           },
         });
       }

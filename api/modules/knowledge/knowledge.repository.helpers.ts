@@ -87,13 +87,10 @@ export function buildKnowledgeListWhere(
   return conditions.length > 0 ? and(...conditions) : undefined;
 }
 
-export function buildKnowledgeListOrderBy(
-  params: Pick<KnowledgeListParams, "sortBy" | "sortDir">,
-) {
+export function buildKnowledgeListOrderBy(params: Pick<KnowledgeListParams, "sortBy" | "sortDir">) {
   const sortBy = params.sortBy ?? "updatedAt";
   const direction = params.sortDir === "asc" ? asc : desc;
-  const qualityScore =
-    sql<number>`(${knowledgeItems.importance} * 0.6 + ${knowledgeItems.confidence} * 0.4)`;
+  const qualityScore = sql<number>`(${knowledgeItems.importance} * 0.6 + ${knowledgeItems.confidence} * 0.4)`;
   const sortableColumns = {
     title: sql`lower(${knowledgeItems.title})`,
     type: sql`${knowledgeItems.type}`,

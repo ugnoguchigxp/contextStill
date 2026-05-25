@@ -98,6 +98,8 @@ describe("runFindCandidate", () => {
               type: "procedure",
               title: "Run smoke tests before finalizing changes",
               content: "Run smoke tests before finalizing implementation changes.",
+              sourceSummary:
+                "The source says to run smoke tests before finalizing implementation changes.",
             },
           ],
         }),
@@ -142,7 +144,11 @@ describe("runFindCandidate", () => {
     expect(result.readRanges).toEqual([{ from: 0, toExclusive: 20 }]);
     expect(mocks.insertFindCandidateResult).toHaveBeenCalledWith(
       expect.objectContaining({
-        candidate: expect.objectContaining({ type: "procedure" }),
+        candidate: expect.objectContaining({
+          type: "procedure",
+          sourceSummary:
+            "The source says to run smoke tests before finalizing implementation changes.",
+        }),
       }),
     );
   });
@@ -383,6 +389,8 @@ describe("parseStorageCandidatesFromLlmOutput", () => {
             type: "procedure",
             title: "Run focused verify before finalizing",
             content: "Run the focused test, inspect the returned evidence, then finalize.",
+            sourceSummary:
+              "The source describes running a focused test, inspecting evidence, and finalizing.",
           },
         ],
       }),
@@ -393,8 +401,24 @@ describe("parseStorageCandidatesFromLlmOutput", () => {
         type: "procedure",
         title: "Run focused verify before finalizing",
         content: "Run the focused test, inspect the returned evidence, then finalize.",
+        sourceSummary:
+          "The source describes running a focused test, inspecting evidence, and finalizing.",
       },
     ]);
+  });
+
+  test("caps candidate sourceSummary from JSON output", () => {
+    const candidates = parseStorageCandidatesFromLlmOutput(
+      JSON.stringify({
+        type: "rule",
+        title: "Keep summaries short",
+        content: "findCandidate should store concise source summaries.",
+        sourceSummary: `start ${"x".repeat(1500)}`,
+      }),
+    );
+
+    expect(candidates[0]?.sourceSummary).toHaveLength(1000);
+    expect(candidates[0]?.sourceSummary?.startsWith("start ")).toBe(true);
   });
 
   test("accepts a flat single-candidate JSON object", () => {
@@ -424,6 +448,8 @@ describe("parseStorageCandidatesFromLlmOutput", () => {
         "1. Run typecheck.",
         "2. Run focused tests.",
         "3. Confirm evidence payload before finalize.",
+        "SOURCE_SUMMARY:",
+        "The source describes typecheck, focused tests, and evidence confirmation.",
       ].join("\n"),
     );
     expect(candidates).toEqual([
@@ -432,6 +458,7 @@ describe("parseStorageCandidatesFromLlmOutput", () => {
         title: "Verify pipeline before finalize",
         content:
           "1. Run typecheck.\n2. Run focused tests.\n3. Confirm evidence payload before finalize.",
+        sourceSummary: "The source describes typecheck, focused tests, and evidence confirmation.",
       },
     ]);
   });

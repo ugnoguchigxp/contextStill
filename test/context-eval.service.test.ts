@@ -20,7 +20,7 @@ describe("context eval service", () => {
 
   afterEach(() => {
     if (previousCacheEnabled === undefined) {
-      delete process.env.LANDSCAPE_SNAPSHOT_CACHE_ENABLED;
+      process.env.LANDSCAPE_SNAPSHOT_CACHE_ENABLED = undefined;
     } else {
       process.env.LANDSCAPE_SNAPSHOT_CACHE_ENABLED = previousCacheEnabled;
     }

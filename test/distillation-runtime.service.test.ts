@@ -6,6 +6,7 @@ import {
   runDistillationCompletion,
 } from "../src/modules/distillation/distillation-runtime.service.js";
 import { recordLlmUsage } from "../src/modules/llm/llm-usage-logger.js";
+import { resetAzureOpenAiDeploymentPoolForTests } from "../src/modules/llm/providers/azure-openai-config.js";
 
 vi.mock("../src/modules/audit/audit-log.service.js", () => ({
   auditEventTypes: {
@@ -34,6 +35,7 @@ const originalConfig = {
   azureOpenAiApiPath: groupedConfig.azureOpenAi.apiPath,
   azureOpenAiApiVersion: groupedConfig.azureOpenAi.apiVersion,
   azureOpenAiModel: groupedConfig.azureOpenAi.model,
+  azureOpenAiDeployments: groupedConfig.azureOpenAi.deployments,
   bedrockRegion: groupedConfig.bedrock.region,
   bedrockModel: groupedConfig.bedrock.model,
 };
@@ -42,6 +44,7 @@ describe("Distillation Runtime Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.unstubAllGlobals();
+    resetAzureOpenAiDeploymentPoolForTests();
 
     groupedConfig.distillation.provider = "local-llm";
     groupedConfig.distillation.timeoutMs = 300_000;
@@ -57,6 +60,7 @@ describe("Distillation Runtime Service", () => {
     groupedConfig.azureOpenAi.apiPath = "/openai/deployments";
     groupedConfig.azureOpenAi.apiVersion = "2025-04-01-preview";
     groupedConfig.azureOpenAi.model = "";
+    groupedConfig.azureOpenAi.deployments = [];
 
     groupedConfig.bedrock.region = "";
     groupedConfig.bedrock.model = "";
@@ -121,6 +125,7 @@ describe("Distillation Runtime Service", () => {
           id: "cover-1",
           stage: "web",
           providerSetting: "local-llm",
+          providerOrder: ["local-llm"],
           model: "gemma-4-e4b-it",
           timeoutMs: 12_345,
           messageCount: 2,
@@ -181,6 +186,7 @@ describe("Distillation Runtime Service", () => {
           id: "cover-2",
           stage: "final",
           providerSetting: "local-llm",
+          providerOrder: ["local-llm"],
           errorKind: "timeout",
           error: "distillation LLM request timed out",
         }),
@@ -407,22 +413,31 @@ describe("Distillation Runtime Service", () => {
   });
 
   test("runDistillationCompletion can fall back to the configured secondary provider", async () => {
-    groupedConfig.openAi.apiKey = "";
+    groupedConfig.openAi.apiKey = "openai-key";
+    groupedConfig.openAi.apiBaseUrl = "https://api.openai.test/v1";
+    groupedConfig.openAi.model = "gpt-5-4-mini";
     groupedConfig.localLlm.apiKey = "local-key";
     groupedConfig.localLlm.apiBaseUrl = "http://127.0.0.1:44448";
     groupedConfig.localLlm.model = "gemma-4-e4b-it";
 
-    const mockFetch = vi.fn().mockResolvedValue({
-      ok: true,
-      json: async () => ({
-        choices: [{ message: { content: '{"candidates":[]}', tool_calls: [] } }],
-      }),
-    });
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: async () => "openai failure",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"candidates":[]}', tool_calls: [] } }],
+        }),
+      });
     vi.stubGlobal("fetch", mockFetch);
 
     const result = await runDistillationCompletion(
       {
-        model: "",
+        model: "gpt-5-4-mini",
         messages: [{ role: "user", content: "fallback smoke" }],
         maxTokens: 128,
       },
@@ -434,8 +449,299 @@ describe("Distillation Runtime Service", () => {
     );
 
     expect(result.content).toBe('{"candidates":[]}');
-    expect(mockFetch).toHaveBeenCalledTimes(1);
-    expect(String(mockFetch.mock.calls[0]?.[0])).toContain("127.0.0.1:44448");
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body)).model).toBe("gpt-5-4-mini");
+    expect(String(mockFetch.mock.calls[1]?.[0])).toContain("127.0.0.1:44448");
+    expect(JSON.parse(String(mockFetch.mock.calls[1]?.[1]?.body)).model).toBe("gemma-4-e4b-it");
+  });
+
+  test("does not fall back to the next provider when the parent signal aborts", async () => {
+    groupedConfig.openAi.apiKey = "openai-key";
+    groupedConfig.openAi.apiBaseUrl = "https://api.openai.test/v1";
+    groupedConfig.openAi.model = "gpt-5-4-mini";
+    groupedConfig.localLlm.apiKey = "local-key";
+    groupedConfig.localLlm.apiBaseUrl = "http://127.0.0.1:44448";
+    groupedConfig.localLlm.model = "gemma-4-e4b-it";
+
+    const mockFetch = vi.fn().mockImplementation((_url: string, init?: RequestInit) => {
+      return new Promise((_resolve, reject) => {
+        const signal = init?.signal;
+        const rejectAbort = () => {
+          const error = new Error("aborted");
+          error.name = "AbortError";
+          reject(error);
+        };
+        if (signal?.aborted) {
+          rejectAbort();
+          return;
+        }
+        signal?.addEventListener("abort", rejectAbort, { once: true });
+      });
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const controller = new AbortController();
+    const pending = runDistillationCompletion(
+      {
+        model: "gpt-5-4-mini",
+        messages: [{ role: "user", content: "abort smoke" }],
+        maxTokens: 128,
+      },
+      {
+        providerSetting: "openai",
+        fallbackOrder: ["local-llm"],
+        enableTools: false,
+        signal: controller.signal,
+      },
+    );
+    controller.abort();
+
+    await expect(pending).rejects.toThrow("distillation request aborted");
+    expect(mockFetch.mock.calls.length).toBeLessThanOrEqual(1);
+    expect(
+      mockFetch.mock.calls.every((call) => String(call[0]).includes("api.openai.test/v1")),
+    ).toBe(true);
+  });
+
+  test("runDistillationCompletion uses Azure OpenAI only after local-llm fails", async () => {
+    groupedConfig.localLlm.apiKey = "local-key";
+    groupedConfig.localLlm.apiBaseUrl = "http://127.0.0.1:44448";
+    groupedConfig.localLlm.model = "gemma-4-e4b-it";
+    groupedConfig.azureOpenAi.apiKey = "azure-key";
+    groupedConfig.azureOpenAi.apiBaseUrl = "https://first.openai.azure.com";
+    groupedConfig.azureOpenAi.apiPath = "/openai/deployments";
+    groupedConfig.azureOpenAi.apiVersion = "2025-04-01-preview";
+    groupedConfig.azureOpenAi.model = "gpt-4o-mini";
+    groupedConfig.azureOpenAi.deployments = [
+      {
+        apiKey: "azure-key",
+        apiBaseUrl: "https://first.openai.azure.com",
+        apiPath: "/openai/deployments",
+        apiVersion: "2025-04-01-preview",
+        model: "gpt-4o-mini",
+      },
+    ];
+
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: async () => "local failure",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"candidates":[]}', tool_calls: [] } }],
+        }),
+      });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await runDistillationCompletion(
+      {
+        model: "gemma-4-e4b-it",
+        messages: [{ role: "user", content: "fallback smoke" }],
+        maxTokens: 128,
+      },
+      {
+        providerSetting: "local-llm",
+        fallbackOrder: ["azure-openai"],
+        enableTools: false,
+        auditContext: {
+          domain: "coverEvidence",
+          id: "cover-fallback-route",
+          stage: "final",
+          assessment: "value",
+        },
+      },
+    );
+
+    expect(result.content).toBe('{"candidates":[]}');
+    expect(mockFetch).toHaveBeenCalledTimes(2);
+    expect(String(mockFetch.mock.calls[0]?.[0])).toBe("http://127.0.0.1:44448/v1/chat/completions");
+    expect(String(mockFetch.mock.calls[1]?.[0])).toBe(
+      "https://first.openai.azure.com/openai/deployments/gpt-4o-mini/chat/completions?api-version=2025-04-01-preview",
+    );
+    expect(recordLlmUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "azure-openai",
+        model: "gpt-4o-mini",
+      }),
+    );
+    const completedAudit = vi
+      .mocked(recordAuditLogSafe)
+      .mock.calls.find((call) => call[0]?.eventType === "COVER_EVIDENCE_LLM_COMPLETED");
+    expect(completedAudit).toBeDefined();
+    expect(completedAudit?.[0]).toEqual(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          providerOrder: ["local-llm", "azure-openai"],
+          attemptedProviders: ["local-llm", "azure-openai"],
+          selectedProvider: "azure-openai",
+          fallbackUsed: true,
+          providerErrorKinds: expect.objectContaining({
+            "local-llm": expect.any(String),
+          }),
+          selectedProviderDetails: expect.objectContaining({
+            azureDeployment: expect.objectContaining({
+              label: "deployment1",
+              host: "first.openai.azure.com",
+              model: "gpt-4o-mini",
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+
+  test("records provider route diagnostics on non-fallback provider failure", async () => {
+    groupedConfig.openAi.apiKey = "openai-key";
+    groupedConfig.openAi.apiBaseUrl = "https://api.openai.test/v1";
+    groupedConfig.openAi.model = "gpt-5-4-mini";
+    groupedConfig.localLlm.apiKey = "local-key";
+    groupedConfig.localLlm.apiBaseUrl = "http://127.0.0.1:44448";
+    groupedConfig.localLlm.model = "gemma-4-e4b-it";
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: false,
+      status: 500,
+      text: async () => "openai failure",
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    await expect(
+      runDistillationCompletion(
+        {
+          model: "gpt-5-4-mini",
+          messages: [{ role: "user", content: "failure route audit" }],
+          maxTokens: 128,
+        },
+        {
+          providerSetting: "openai",
+          enableTools: false,
+          auditContext: {
+            domain: "coverEvidence",
+            id: "cover-no-fallback",
+            stage: "final",
+            assessment: "value",
+          },
+        },
+      ),
+    ).rejects.toThrow();
+
+    const failedAudit = vi
+      .mocked(recordAuditLogSafe)
+      .mock.calls.find((call) => call[0]?.eventType === "COVER_EVIDENCE_LLM_FAILED");
+    expect(failedAudit).toBeDefined();
+    expect(failedAudit?.[0]).toEqual(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          providerOrder: ["openai"],
+          attemptedProviders: ["openai"],
+          selectedProvider: undefined,
+          fallbackUsed: false,
+          providerErrorKinds: expect.objectContaining({
+            openai: expect.any(String),
+          }),
+        }),
+      }),
+    );
+  });
+
+  test("keeps fallbackUsed true with pinned fallback provider on later rounds", async () => {
+    groupedConfig.localLlm.apiKey = "local-key";
+    groupedConfig.localLlm.apiBaseUrl = "http://127.0.0.1:44448";
+    groupedConfig.localLlm.model = "gemma-4-e4b-it";
+    groupedConfig.azureOpenAi.apiKey = "azure-key";
+    groupedConfig.azureOpenAi.apiBaseUrl = "https://first.openai.azure.com";
+    groupedConfig.azureOpenAi.apiPath = "/openai/deployments";
+    groupedConfig.azureOpenAi.apiVersion = "2025-04-01-preview";
+    groupedConfig.azureOpenAi.model = "gpt-4o-mini";
+    groupedConfig.azureOpenAi.deployments = [
+      {
+        apiKey: "azure-key",
+        apiBaseUrl: "https://first.openai.azure.com",
+        apiPath: "/openai/deployments",
+        apiVersion: "2025-04-01-preview",
+        model: "gpt-4o-mini",
+      },
+    ];
+
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: async () => "local failure",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: null,
+                tool_calls: [
+                  {
+                    id: "call-search-1",
+                    type: "function",
+                    function: {
+                      name: "search_web",
+                      arguments: JSON.stringify({ query: "fallback check" }),
+                    },
+                  },
+                ],
+              },
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"candidates":[]}', tool_calls: [] } }],
+        }),
+      });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await runDistillationCompletion(
+      {
+        model: "gemma-4-e4b-it",
+        messages: [{ role: "user", content: "pinned fallback audit" }],
+        maxTokens: 128,
+      },
+      {
+        providerSetting: "local-llm",
+        fallbackOrder: ["azure-openai"],
+        auditContext: {
+          domain: "coverEvidence",
+          id: "cover-pinned-fallback-route",
+          stage: "final",
+          assessment: "value",
+        },
+        toolExecutor: async (toolCall) => ({
+          callId: toolCall.id,
+          name: toolCall.function.name,
+          ok: true,
+          content: JSON.stringify({ ok: true }),
+        }),
+      },
+    );
+
+    expect(result.content).toBe('{"candidates":[]}');
+    const completedAudits = vi
+      .mocked(recordAuditLogSafe)
+      .mock.calls.filter((call) => call[0]?.eventType === "COVER_EVIDENCE_LLM_COMPLETED");
+    expect(completedAudits.length).toBe(2);
+    const firstPayload = completedAudits[0]?.[0]?.payload as Record<string, unknown>;
+    const secondPayload = completedAudits[1]?.[0]?.payload as Record<string, unknown>;
+    expect(firstPayload.providerOrder).toEqual(["local-llm", "azure-openai"]);
+    expect(firstPayload.attemptedProviders).toEqual(["local-llm", "azure-openai"]);
+    expect(firstPayload.fallbackUsed).toBe(true);
+    expect(secondPayload.providerOrder).toEqual(["local-llm", "azure-openai"]);
+    expect(secondPayload.attemptedProviders).toEqual(["azure-openai"]);
+    expect(secondPayload.selectedProvider).toBe("azure-openai");
+    expect(secondPayload.fallbackUsed).toBe(true);
   });
   afterAll(() => {
     groupedConfig.distillation.provider = originalConfig.distillationProvider;
@@ -451,6 +757,7 @@ describe("Distillation Runtime Service", () => {
     groupedConfig.azureOpenAi.apiPath = originalConfig.azureOpenAiApiPath;
     groupedConfig.azureOpenAi.apiVersion = originalConfig.azureOpenAiApiVersion;
     groupedConfig.azureOpenAi.model = originalConfig.azureOpenAiModel;
+    groupedConfig.azureOpenAi.deployments = originalConfig.azureOpenAiDeployments;
     groupedConfig.bedrock.region = originalConfig.bedrockRegion;
     groupedConfig.bedrock.model = originalConfig.bedrockModel;
     vi.unstubAllGlobals();

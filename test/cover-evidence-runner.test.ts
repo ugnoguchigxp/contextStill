@@ -45,6 +45,7 @@ describe("Cover Evidence Runner", () => {
     expect(runCoverEvidence).toHaveBeenCalledWith({
       id: "candidate-1",
       provider: undefined,
+      providerFallbackMode: undefined,
       write: true,
       forceRefreshEvidence: false,
       signal: undefined,

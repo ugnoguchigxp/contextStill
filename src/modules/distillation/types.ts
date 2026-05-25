@@ -36,12 +36,23 @@ export type DistillationChatRequest = DistillationModelRequest & {
   timeoutMs?: number;
 };
 
+export type DistillationProviderRouteMetadata = {
+  providerOrder: DistillationProviderName[];
+  attemptedProviders: DistillationProviderName[];
+  selectedProvider?: DistillationProviderName;
+  fallbackUsed: boolean;
+  providerErrorKinds?: Partial<Record<DistillationProviderName, string>>;
+  selectedProviderDetails?: Record<string, unknown>;
+};
+
 export type DistillationChatResponse = {
   content?: string | null;
   toolCalls: DistillationToolCall[];
   finishReason?: string;
   provider?: DistillationProviderName;
   model?: string;
+  providerMetadata?: Record<string, unknown>;
+  providerRoute?: DistillationProviderRouteMetadata;
   usage?: {
     promptTokens: number;
     completionTokens: number;

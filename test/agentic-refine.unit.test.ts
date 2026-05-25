@@ -453,7 +453,10 @@ describe("agentic-refine.service", () => {
         .mockResolvedValueOnce({
           ok: true,
           json: async () => ({
-            choices: [{ message: { content: "pong" }, finish_reason: "stop" }],
+            status: "ok",
+            ready: true,
+            loaded: true,
+            modelId: "gemma-4-e4b-it",
           }),
         });
 

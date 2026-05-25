@@ -1,15 +1,15 @@
 import { buildLandscapeReplayComparison } from "../modules/landscape/landscape-replay-comparison.service.js";
 import { buildLandscapeReplaySnapshot } from "../modules/landscape/landscape-replay.service.js";
-import { createLandscapeReviewCandidates } from "../modules/landscape/landscape-review-candidate.service.js";
-import {
+import type { createLandscapeReviewCandidates } from "../modules/landscape/landscape-review-candidate.service.js";
+import type {
   listLandscapeReviewItems,
   materializeLandscapeReviewItems,
 } from "../modules/landscape/landscape-review-items.service.js";
-import {
+import type {
   getLandscapeSnapshotCacheStatus,
-  type LandscapeSnapshotCacheType,
+  LandscapeSnapshotCacheType,
 } from "../modules/landscape/landscape-snapshot-cache.service.js";
-import { buildLandscapeTrajectory } from "../modules/landscape/landscape-trajectory.service.js";
+import type { buildLandscapeTrajectory } from "../modules/landscape/landscape-trajectory.service.js";
 import { buildLandscapeSnapshot } from "../modules/landscape/landscape.service.js";
 import type { CliOptions } from "./landscape-options.js";
 
@@ -67,8 +67,12 @@ export function printReplayComparisonSummary(
   console.log(`appliesTo refine candidates: ${comparison.appliesToRefineCandidates.length}`);
 }
 
-export function printReplaySummary(snapshot: Awaited<ReturnType<typeof buildLandscapeReplaySnapshot>>) {
-  const runFacetSummaries = snapshot.facetSummaries.filter((facet) => facet.facetKind === "runStatus");
+export function printReplaySummary(
+  snapshot: Awaited<ReturnType<typeof buildLandscapeReplaySnapshot>>,
+) {
+  const runFacetSummaries = snapshot.facetSummaries.filter(
+    (facet) => facet.facetKind === "runStatus",
+  );
   const runFacetCount = runFacetSummaries.reduce((sum, facet) => sum + facet.replayRunCount, 0);
   const feedbackCoverage =
     runFacetCount > 0
@@ -85,7 +89,9 @@ export function printReplaySummary(snapshot: Awaited<ReturnType<typeof buildLand
   console.log(`Missing knowledge: ${snapshot.missingKnowledgeCount}`);
   console.log(`Feedback coverage: ${feedbackCoverage.toFixed(2)}`);
   console.log(`Accepted events: ${snapshot.acceptanceWindow.acceptedCountWindow}`);
-  console.log(`Unknown acceptance events: ${snapshot.acceptanceWindow.unknownAcceptanceCountWindow}`);
+  console.log(
+    `Unknown acceptance events: ${snapshot.acceptanceWindow.unknownAcceptanceCountWindow}`,
+  );
   console.log(`Semantic aligned: ${snapshot.communityComparison.alignedCount}`);
   console.log(
     `Semantic reachable dead zones: ${snapshot.communityComparison.semanticReachableDeadZoneCount}`,
@@ -102,7 +108,9 @@ export function printQueueMaterializeSummary(
   console.log(`Skipped: ${result.skippedCount}`);
 }
 
-export function printQueueListSummary(result: Awaited<ReturnType<typeof listLandscapeReviewItems>>) {
+export function printQueueListSummary(
+  result: Awaited<ReturnType<typeof listLandscapeReviewItems>>,
+) {
   console.log(`Landscape Action Queue items: ${result.count}`);
 }
 

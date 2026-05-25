@@ -24,7 +24,10 @@ export function QueueTelemetryPanel({
       <div className="overview-domain-header justify-between items-center border-b border-cyan-500/10 pb-3">
         <div className="flex items-center gap-2.5">
           <div className="p-1.5 bg-cyan-50 rounded-lg">
-            <Activity className="overview-domain-icon text-cyan-500 w-4 h-4" style={{ color: "#06b6d4" }} />
+            <Activity
+              className="overview-domain-icon text-cyan-500 w-4 h-4"
+              style={{ color: "#06b6d4" }}
+            />
           </div>
           <div className="flex flex-col">
             <h2 className="overview-domain-title text-[15px] font-bold text-slate-800 leading-none">
@@ -38,24 +41,34 @@ export function QueueTelemetryPanel({
         {activeTasks.length > 0 && (
           <div className="flex items-center gap-1 bg-cyan-50 px-2 py-0.5 rounded-full border border-cyan-100">
             <span className="status-pulse-dot" style={{ backgroundColor: "#06b6d4" }} />
-            <span className="text-[10px] text-cyan-600 font-bold uppercase tracking-wider">Live</span>
+            <span className="text-[10px] text-cyan-600 font-bold uppercase tracking-wider">
+              Live
+            </span>
           </div>
         )}
       </div>
 
       <div className="grid grid-cols-2 lg:grid-cols-4 gap-2 border-b border-slate-100/60 pb-3.5 pt-1 text-left">
         <div className="flex flex-col">
-          <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">Total Queue</span>
-          <strong className="text-slate-800 text-[20px] font-extrabold mt-0.5 leading-none">{totalItems}</strong>
+          <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">
+            Total Queue
+          </span>
+          <strong className="text-slate-800 text-[20px] font-extrabold mt-0.5 leading-none">
+            {totalItems}
+          </strong>
         </div>
         <div className="flex flex-col">
-          <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">Running</span>
+          <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">
+            Running
+          </span>
           <strong className="text-amber-600 text-[20px] font-extrabold mt-0.5 leading-none animate-pulse">
             {stats.running ?? 0}
           </strong>
         </div>
         <div className="flex flex-col">
-          <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">Pending</span>
+          <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">
+            Pending
+          </span>
           <strong className="text-slate-800 text-[20px] font-extrabold mt-0.5 leading-none">
             {stats.pending ?? 0}
           </strong>
@@ -71,7 +84,9 @@ export function QueueTelemetryPanel({
                 <div className="flex flex-col gap-1 bg-slate-50 border border-slate-100/80 rounded-lg p-3">
                   <div className="flex items-center justify-between">
                     <span className="text-[11.5px] font-bold text-slate-800 font-mono break-all select-all pr-2">
-                      {task.targetKey.length > 36 ? `${task.targetKey.substring(0, 36)}...` : task.targetKey}
+                      {task.targetKey.length > 36
+                        ? `${task.targetKey.substring(0, 36)}...`
+                        : task.targetKey}
                     </span>
                     <Badge
                       variant="outline"
@@ -115,11 +130,15 @@ export function QueueTelemetryPanel({
                       }
                       return (
                         <div key={step.key} className="relative flex flex-col gap-1.5">
-                          <span className={`absolute -left-[23px] top-1.5 w-2 h-2 rounded-full border ${stepDotColor}`} />
+                          <span
+                            className={`absolute -left-[23px] top-1.5 w-2 h-2 rounded-full border ${stepDotColor}`}
+                          />
                           <div className="flex items-baseline justify-between">
                             <span className={`text-[12.5px] ${stepTextColor}`}>{step.label}</span>
                             {isActive && (
-                              <span className="text-[11.5px] font-bold text-amber-600 animate-pulse">active</span>
+                              <span className="text-[11.5px] font-bold text-amber-600 animate-pulse">
+                                active
+                              </span>
                             )}
                           </div>
                           <div className="w-full h-1 bg-slate-100/80 rounded-full overflow-hidden flex">

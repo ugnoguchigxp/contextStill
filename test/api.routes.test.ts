@@ -596,5 +596,4 @@ describe("API route contract tests", () => {
     expect(json.feedback.savedCount).toBeGreaterThanOrEqual(1);
     expect(Array.isArray(json.feedback.affectedKnowledgeIds)).toBe(true);
   });
-
 });

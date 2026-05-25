@@ -1,14 +1,14 @@
 import { groupedConfig } from "../../config.js";
 import type { DistillationSearchProvider } from "../../config.types.js";
-import type { SettingsRow } from "./settings.repository.js";
-import {
-  type RuntimeSecretKey,
-  type RuntimeSecretSource,
-  type RuntimeSecretStatus,
-  type RuntimeSettingsEditable,
-  type RuntimeSettingsView,
-} from "./settings.types.js";
 import { bootstrap, cloneDefaultSettings, secretRowKeys } from "./settings.defaults.js";
+import type { SettingsRow } from "./settings.repository.js";
+import type {
+  RuntimeSecretKey,
+  RuntimeSecretSource,
+  RuntimeSecretStatus,
+  RuntimeSettingsEditable,
+  RuntimeSettingsView,
+} from "./settings.types.js";
 
 export type SecretValueEntry = {
   value: string;
@@ -48,7 +48,15 @@ function getSecretStringFromRow(row: SettingsRow | undefined): string | undefine
   return direct?.trim() ? direct.trim() : undefined;
 }
 
-export function buildSecretMap(rows: SettingsRow[]): Record<RuntimeSecretKey, SettingsRow | undefined> {
+function azureOpenAiSecretKey(index: number): RuntimeSecretKey {
+  if (index === 1) return "azureOpenAiApiKey2";
+  if (index === 2) return "azureOpenAiApiKey3";
+  return "azureOpenAiApiKey";
+}
+
+export function buildSecretMap(
+  rows: SettingsRow[],
+): Record<RuntimeSecretKey, SettingsRow | undefined> {
   const result = Object.create(null) as Record<RuntimeSecretKey, SettingsRow | undefined>;
   for (const key of secretRowKeys) {
     result[key] = rows.find((row) => row.key === key);
@@ -97,20 +105,50 @@ export function applyRuntimeSettingsToProcess(
   settings: RuntimeSettingsEditable,
   secrets: Record<RuntimeSecretKey, SecretValueEntry | null>,
 ): void {
+  const openAiEnabled = settings.providers.openai.enabled;
+  const azureOpenAiEnabled = settings.providers["azure-openai"].enabled;
+  const bedrockEnabled = settings.providers.bedrock.enabled;
+  const localLlmEnabled = settings.providers["local-llm"].enabled;
+
+  const azureDeployments = azureOpenAiEnabled
+    ? settings.providers["azure-openai"].deployments.slice(0, 3).map((deployment, index) => ({
+        apiKey: secrets[azureOpenAiSecretKey(index)]?.value ?? "",
+        apiBaseUrl: deployment.apiBaseUrl.replace(/\/+$/, ""),
+        apiPath: deployment.apiPath,
+        apiVersion: deployment.apiVersion,
+        model: deployment.model,
+      }))
+    : [];
+  const configuredAzureDeployments = azureDeployments.filter(
+    (deployment) =>
+      deployment.apiKey.trim() && deployment.apiBaseUrl.trim() && deployment.model.trim(),
+  );
+  const primaryAzure = configuredAzureDeployments[0] ?? {
+    apiKey: azureOpenAiEnabled ? (secrets.azureOpenAiApiKey?.value ?? "") : "",
+    apiBaseUrl: settings.providers["azure-openai"].apiBaseUrl.replace(/\/+$/, ""),
+    apiPath: settings.providers["azure-openai"].apiPath,
+    apiVersion: settings.providers["azure-openai"].apiVersion,
+    model: settings.providers["azure-openai"].model,
+  };
+
   groupedConfig.openAi.apiBaseUrl = settings.providers.openai.apiBaseUrl.replace(/\/+$/, "");
   groupedConfig.openAi.model = settings.providers.openai.model;
-  groupedConfig.openAi.apiKey = secrets.openaiApiKey?.value ?? "";
-  groupedConfig.azureOpenAi.apiBaseUrl = settings.providers["azure-openai"].apiBaseUrl.replace(/\/+$/, "");
-  groupedConfig.azureOpenAi.apiPath = settings.providers["azure-openai"].apiPath;
-  groupedConfig.azureOpenAi.apiVersion = settings.providers["azure-openai"].apiVersion;
-  groupedConfig.azureOpenAi.model = settings.providers["azure-openai"].model;
-  groupedConfig.azureOpenAi.apiKey = secrets.azureOpenAiApiKey?.value ?? "";
+  groupedConfig.openAi.apiKey = openAiEnabled ? (secrets.openaiApiKey?.value ?? "") : "";
+  groupedConfig.azureOpenAi.apiBaseUrl = primaryAzure.apiBaseUrl;
+  groupedConfig.azureOpenAi.apiPath = primaryAzure.apiPath;
+  groupedConfig.azureOpenAi.apiVersion = primaryAzure.apiVersion;
+  groupedConfig.azureOpenAi.model = primaryAzure.model;
+  groupedConfig.azureOpenAi.apiKey = primaryAzure.apiKey;
+  groupedConfig.azureOpenAi.deployments = azureDeployments;
   groupedConfig.bedrock.region = settings.providers.bedrock.region;
   groupedConfig.bedrock.profile = settings.providers.bedrock.profile;
-  groupedConfig.bedrock.model = settings.providers.bedrock.model;
-  groupedConfig.localLlm.apiBaseUrl = settings.providers["local-llm"].apiBaseUrl.replace(/\/+$/, "");
-  groupedConfig.localLlm.model = settings.providers["local-llm"].model;
-  groupedConfig.localLlm.apiKey = secrets.localLlmApiKey?.value ?? "";
+  groupedConfig.bedrock.model = bedrockEnabled ? settings.providers.bedrock.model : "";
+  groupedConfig.localLlm.apiBaseUrl = settings.providers["local-llm"].apiBaseUrl.replace(
+    /\/+$/,
+    "",
+  );
+  groupedConfig.localLlm.model = localLlmEnabled ? settings.providers["local-llm"].model : "";
+  groupedConfig.localLlm.apiKey = localLlmEnabled ? (secrets.localLlmApiKey?.value ?? "") : "";
   groupedConfig.embedding.provider = settings.embedding.provider;
   groupedConfig.embedding.daemonUrl = settings.embedding.daemonUrl.replace(/\/+$/, "");
   groupedConfig.embedding.openaiModel = settings.embedding.openaiModel;
@@ -120,7 +158,8 @@ export function applyRuntimeSettingsToProcess(
   groupedConfig.agenticCompile.timeoutMs = settings.taskRouting.agenticCompile.timeoutMs;
   groupedConfig.agenticCompile.maxTokens = settings.taskRouting.agenticCompile.maxTokens;
   groupedConfig.distillation.provider = settings.taskRouting.finalizeDistille.provider;
-  groupedConfig.distillation.findCandidateProvider = settings.taskRouting.findCandidate.source.provider;
+  groupedConfig.distillation.findCandidateProvider =
+    settings.taskRouting.findCandidate.source.provider;
   groupedConfig.distillation.findCandidateBackgroundEnabled =
     settings.taskRouting.findCandidate.throttling.backgroundEnabled;
   groupedConfig.distillation.findCandidateInteractiveWindowSeconds =
@@ -194,6 +233,8 @@ export function buildRuntimeSettingsView(
   secretStatuses: {
     openaiApiKey: RuntimeSecretStatus;
     azureOpenAiApiKey: RuntimeSecretStatus;
+    azureOpenAiApiKey2: RuntimeSecretStatus;
+    azureOpenAiApiKey3: RuntimeSecretStatus;
     localLlmApiKey: RuntimeSecretStatus;
     braveApiKey: RuntimeSecretStatus;
     exaApiKey: RuntimeSecretStatus;
@@ -208,6 +249,11 @@ export function buildRuntimeSettingsView(
       "azure-openai": {
         ...settings.providers["azure-openai"],
         apiKeySecret: secretStatuses.azureOpenAiApiKey,
+        apiKeySecrets: [
+          secretStatuses.azureOpenAiApiKey,
+          secretStatuses.azureOpenAiApiKey2,
+          secretStatuses.azureOpenAiApiKey3,
+        ],
       },
       bedrock: {
         ...settings.providers.bedrock,
@@ -247,6 +293,8 @@ export function buildSourceMap(view: RuntimeSettingsView): Record<string, string
     "agenticCompile.provider": "db",
     "openai.apiKey": view.providers.openai.apiKeySecret.source,
     "azure-openai.apiKey": view.providers["azure-openai"].apiKeySecret.source,
+    "azure-openai.apiKey2": view.providers["azure-openai"].apiKeySecrets[1]?.source ?? "none",
+    "azure-openai.apiKey3": view.providers["azure-openai"].apiKeySecrets[2]?.source ?? "none",
     "local-llm.apiKey": view.providers["local-llm"].apiKeySecret.source,
     "search.brave.apiKey": view.search.providers.brave.apiKeySecret.source,
     "search.exa.apiKey": view.search.providers.exa.apiKeySecret.source,
@@ -267,6 +315,18 @@ export function defaultCache(): RuntimeSettingsCache {
       configured: Boolean(bootstrap.secrets.azureOpenAiApiKey),
       source: bootstrap.secrets.azureOpenAiApiKey ? "env" : "none",
       maskedValue: maskSecret(bootstrap.secrets.azureOpenAiApiKey),
+      updatedAt: null,
+    } satisfies RuntimeSecretStatus,
+    azureOpenAiApiKey2: {
+      configured: Boolean(bootstrap.secrets.azureOpenAiApiKey2),
+      source: bootstrap.secrets.azureOpenAiApiKey2 ? "env" : "none",
+      maskedValue: maskSecret(bootstrap.secrets.azureOpenAiApiKey2),
+      updatedAt: null,
+    } satisfies RuntimeSecretStatus,
+    azureOpenAiApiKey3: {
+      configured: Boolean(bootstrap.secrets.azureOpenAiApiKey3),
+      source: bootstrap.secrets.azureOpenAiApiKey3 ? "env" : "none",
+      maskedValue: maskSecret(bootstrap.secrets.azureOpenAiApiKey3),
       updatedAt: null,
     } satisfies RuntimeSecretStatus,
     localLlmApiKey: {

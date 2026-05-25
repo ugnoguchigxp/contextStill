@@ -35,7 +35,8 @@
       "dist-web/**",
       "drizzle/meta/**",
       "playwright-report/**",
-      "test-results/**"
+      "test-results/**",
+      "src/db/seeds/knowledge-seed.json"
     ]
   }
 }

@@ -181,19 +181,27 @@ describe("selectDistillationTarget repository unit tests", () => {
 
   describe("claimNextDistillationTargetState", () => {
     it("claims and transitions status to running", async () => {
-      mockExecute.mockResolvedValueOnce({ rows: [{ id: "target-1" }] });
+      mockExecute.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({
+        rows: [{ id: "target-1" }],
+      });
       mockUpdate.mockReturnValueOnce(makeChain([mockRow]));
 
       const result = await claimNextDistillationTargetState({ worker: "test-worker" });
       expect(result).toEqual(mockRow);
       expect(flattenSqlChunks(mockExecute.mock.calls[0]?.[0])).toContain(
+        "distillation_pipeline_capacity",
+      );
+      expect(flattenSqlChunks(mockExecute.mock.calls[1]?.[0])).toContain(
         "::timestamptz at time zone 'UTC'",
       );
+      expect(flattenSqlChunks(mockExecute.mock.calls[1]?.[0])).toContain("running_capacity");
       expect(recordAuditLogSafe).toHaveBeenCalled();
     });
 
     it("can restrict primary claims to targets with prepared candidates", async () => {
-      mockExecute.mockResolvedValueOnce({ rows: [{ id: "target-1" }] });
+      mockExecute.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({
+        rows: [{ id: "target-1" }],
+      });
       mockUpdate.mockReturnValueOnce(makeChain([mockRow]));
 
       const result = await claimNextDistillationTargetState({
@@ -201,14 +209,14 @@ describe("selectDistillationTarget repository unit tests", () => {
         requireCandidateResultsForSourceTargets: true,
       });
 
-      const selectSql = flattenSqlChunks(mockExecute.mock.calls[0]?.[0]);
+      const selectSql = flattenSqlChunks(mockExecute.mock.calls[1]?.[0]);
       expect(result).toEqual(mockRow);
       expect(selectSql).toContain("target_kind = 'knowledge_candidate'");
       expect(selectSql).toContain("find_candidate_results");
     });
 
     it("returns null if execute returns no rows", async () => {
-      mockExecute.mockResolvedValueOnce({ rows: [] });
+      mockExecute.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({ rows: [] });
 
       const result = await claimNextDistillationTargetState();
       expect(result).toBeNull();
@@ -220,6 +228,7 @@ describe("selectDistillationTarget repository unit tests", () => {
     it("serializes findCandidate claims with an advisory lock", async () => {
       mockExecute
         .mockResolvedValueOnce({ rows: [] })
+        .mockResolvedValueOnce({ rows: [] })
         .mockResolvedValueOnce({ rows: [{ id: "target-1" }] });
       mockUpdate.mockReturnValueOnce(makeChain([mockRow]));
 
@@ -230,24 +239,34 @@ describe("selectDistillationTarget repository unit tests", () => {
       });
 
       expect(result).toEqual(mockRow);
-      expect(flattenSqlChunks(mockExecute.mock.calls[0]?.[0])).toContain("pg_advisory_xact_lock");
-      expect(flattenSqlChunks(mockExecute.mock.calls[1]?.[0])).toContain("find_candidate_results");
+      expect(flattenSqlChunks(mockExecute.mock.calls[0]?.[0])).toContain(
+        "distillation_pipeline_capacity",
+      );
+      expect(flattenSqlChunks(mockExecute.mock.calls[1]?.[0])).toContain("pg_advisory_xact_lock");
+      expect(flattenSqlChunks(mockExecute.mock.calls[2]?.[0])).toContain("find_candidate_results");
+      expect(flattenSqlChunks(mockExecute.mock.calls[2]?.[0])).toContain("running_capacity");
     });
   });
 
   describe("claimNextCoverEvidenceTargetState", () => {
     it("claims the oldest target with missing or retryable cover evidence", async () => {
-      mockExecute.mockResolvedValueOnce({ rows: [{ id: "target-1" }] });
+      mockExecute.mockResolvedValueOnce({ rows: [] }).mockResolvedValueOnce({
+        rows: [{ id: "target-1" }],
+      });
       mockUpdate.mockReturnValueOnce(makeChain([mockRow]));
 
       const result = await claimNextCoverEvidenceTargetState({ worker: "test-worker" });
 
-      const selectSql = flattenSqlChunks(mockExecute.mock.calls[0]?.[0]);
+      const selectSql = flattenSqlChunks(mockExecute.mock.calls[1]?.[0]);
       expect(result).toEqual(mockRow);
+      expect(flattenSqlChunks(mockExecute.mock.calls[0]?.[0])).toContain(
+        "distillation_pipeline_capacity",
+      );
       expect(selectSql).toContain("cover_evidence_results");
       expect(selectSql).toContain("find_candidate_results");
       expect(selectSql).toContain("parse_failed");
       expect(selectSql).toContain("min(");
+      expect(selectSql).toContain("running_capacity");
       expect(recordAuditLogSafe).toHaveBeenCalled();
     });
   });

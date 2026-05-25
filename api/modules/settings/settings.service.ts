@@ -1,4 +1,8 @@
 import { z } from "zod";
+import { createAzureOpenAiProvider } from "../../../src/modules/llm/providers/azure-openai.provider.js";
+import { createBedrockProvider } from "../../../src/modules/llm/providers/bedrock.provider.js";
+import { createLocalLlmProvider } from "../../../src/modules/llm/providers/local-llm.provider.js";
+import { createOpenAiProvider } from "../../../src/modules/llm/providers/openai.provider.js";
 import { ensureRuntimeSettingsLoaded } from "../../../src/modules/settings/settings.service.js";
 import {
   getRuntimeSettingsViewSnapshot,
@@ -6,15 +10,12 @@ import {
   saveRuntimeSettings,
 } from "../../../src/modules/settings/settings.service.js";
 import {
-  settingsUpdateRequestSchema,
   type RuntimeSettingsUpdateRequest,
+  settingsUpdateRequestSchema,
 } from "../../../src/modules/settings/settings.types.js";
-import { createOpenAiProvider } from "../../../src/modules/llm/providers/openai.provider.js";
-import { createAzureOpenAiProvider } from "../../../src/modules/llm/providers/azure-openai.provider.js";
-import { createBedrockProvider } from "../../../src/modules/llm/providers/bedrock.provider.js";
-import { createLocalLlmProvider } from "../../../src/modules/llm/providers/local-llm.provider.js";
 
 const providerNameSchema = z.enum(["openai", "azure-openai", "bedrock", "local-llm"] as const);
+const azureOpenAiDeploymentSchema = z.coerce.number().int().min(1).max(3);
 
 export async function getSettingsForApi() {
   await ensureRuntimeSettingsLoaded();
@@ -55,4 +56,13 @@ export async function testProviderForApi(providerRaw: string) {
     case "local-llm":
       return createLocalLlmProvider({ timeoutMs: 10_000 }).healthCheck();
   }
+}
+
+export async function testAzureOpenAiDeploymentForApi(deploymentRaw: string | number) {
+  await ensureRuntimeSettingsLoaded();
+  const deployment = azureOpenAiDeploymentSchema.parse(deploymentRaw);
+  return createAzureOpenAiProvider({
+    timeoutMs: 10_000,
+    deploymentIndex: deployment - 1,
+  }).healthCheck();
 }

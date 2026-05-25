@@ -1,4 +1,7 @@
-import type { DistillationTargetState, QueueDashboardStats } from "../repositories/admin.repository";
+import type {
+  DistillationTargetState,
+  QueueDashboardStats,
+} from "../repositories/admin.repository";
 
 export function formatRelativeTime(dateStr: string | null): string {
   if (!dateStr) return "-";
@@ -37,7 +40,18 @@ export function formatCooldownCountdown(cooldownUntil: string | null, nowMs: num
   return `${minutes}m ${String(seconds).padStart(2, "0")}s`;
 }
 
-export function formatFindCandidateReason(reason: QueueDashboardStats["findCandidate"]["reason"]): string {
+export function formatLaunchCountdown(cooldownUntil: string | null, nowMs: number): string {
+  if (!cooldownUntil) return "launch in 0 sec";
+  const untilMs = Date.parse(cooldownUntil);
+  if (!Number.isFinite(untilMs)) return "launch pending";
+  const remainingMs = Math.max(0, untilMs - nowMs);
+  const totalSeconds = Math.ceil(remainingMs / 1000);
+  return `launch in ${totalSeconds} sec`;
+}
+
+export function formatFindCandidateReason(
+  reason: QueueDashboardStats["findCandidate"]["reason"],
+): string {
   switch (reason) {
     case "provider_cooldown":
       return "provider cooldown";
@@ -85,7 +99,10 @@ export const PHASE_MAP: Record<string, { label: string }> = {
   stored: { label: "Stored in Registry" },
 };
 
-export function statusBadgeStyle(item: DistillationTargetState): { className: string; label: string } {
+export function statusBadgeStyle(item: DistillationTargetState): {
+  className: string;
+  label: string;
+} {
   let className = "bg-slate-50 text-slate-600 border-slate-200/60";
   let label: string = item.status;
 
@@ -93,8 +110,7 @@ export function statusBadgeStyle(item: DistillationTargetState): { className: st
     className =
       "bg-emerald-50 text-emerald-700 border-emerald-300/30 font-bold shadow-sm shadow-emerald-500/5";
   } else if (item.status === "failed") {
-    className =
-      "bg-rose-50 text-rose-700 border-rose-300/30 font-bold shadow-sm shadow-rose-500/5";
+    className = "bg-rose-50 text-rose-700 border-rose-300/30 font-bold shadow-sm shadow-rose-500/5";
   } else if (item.status === "running") {
     className =
       "bg-amber-50 text-amber-700 border-amber-300/30 font-bold shadow-sm shadow-amber-500/5 animate-pulse";

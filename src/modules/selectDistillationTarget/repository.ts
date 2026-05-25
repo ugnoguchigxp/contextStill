@@ -1,4 +1,5 @@
 import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
+import { APP_CONSTANTS } from "../../constants.js";
 import { db } from "../../db/index.js";
 import { distillationTargetStates, findCandidateResults } from "../../db/schema.js";
 import { redactSecretRecord, redactSecrets } from "../../shared/utils/secret-redaction.js";
@@ -58,6 +59,28 @@ function buildPriorityRankCaseRaw(order: DistillationTargetPriorityGroup[]): str
   return `case ${clauses} else ${order.length} end`;
 }
 
+function pipelineCapacityLockKey(distillationVersion: string): string {
+  return `distillation_pipeline_capacity:${distillationVersion}`;
+}
+
+async function lockPipelineCapacity(
+  tx: { execute: (query: SQL) => Promise<unknown> },
+  distillationVersion: string,
+): Promise<void> {
+  await tx.execute(
+    sql`select pg_advisory_xact_lock(hashtext(${pipelineCapacityLockKey(distillationVersion)}))`,
+  );
+}
+
+function runningCapacitySql(distillationVersion: string): SQL {
+  return sql`(
+    select count(*)::int
+    from distillation_target_states running_capacity
+    where running_capacity.distillation_version = ${distillationVersion}
+      and running_capacity.status = 'running'
+  ) < ${APP_CONSTANTS.distillationPipelineMaxRunningTargets}`;
+}
+
 // Re-export constants, types and helpers from repository-helpers.js
 export {
   DEFAULT_DISTILLATION_TARGET_VERSION,
@@ -70,6 +93,7 @@ export {
 export {
   type DistillationTargetSummary,
   type RecoveryResult,
+  recoverOrphanedRunningDistillationTargets,
   releaseRetryablePausedDistillationTargets,
   recoverStaleDistillationTargets,
   markMissingVibeMemoryTargetsSkipped,
@@ -237,11 +261,13 @@ export async function claimNextDistillationTargetState(
     params.requireCandidateResultsForSourceTargets ?? false;
 
   const claimed = await db.transaction(async (tx) => {
+    await lockPipelineCapacity(tx, distillationVersion);
     const selected = await tx.execute(sql`
       select id
       from distillation_target_states
       where distillation_version = ${distillationVersion}
         and (${targetKind}::text is null or target_kind = ${targetKind})
+        and ${runningCapacitySql(distillationVersion)}
         and (
           status = 'pending'
           or (
@@ -311,11 +337,13 @@ export async function claimNextCoverEvidenceTargetState(params: {
   const lockOwner = params.worker?.trim() || workerId();
 
   const claimed = await db.transaction(async (tx) => {
+    await lockPipelineCapacity(tx, distillationVersion);
     const selected = await tx.execute(sql`
       select id
       from distillation_target_states
       where distillation_version = ${distillationVersion}
         and (${targetKind}::text is null or target_kind = ${targetKind})
+        and ${runningCapacitySql(distillationVersion)}
         and (
           status = 'pending'
           or (
@@ -408,12 +436,14 @@ export async function claimDistillationTargetStateById(params: {
   const lockOwner = params.worker?.trim() || workerId();
 
   const claimed = await db.transaction(async (tx) => {
+    await lockPipelineCapacity(tx, distillationVersion);
     const selected = await tx.execute(sql`
       select id
       from distillation_target_states
       where id = ${params.id}
         and distillation_version = ${distillationVersion}
         and (${targetKind}::text is null or target_kind = ${targetKind})
+        and ${runningCapacitySql(distillationVersion)}
         and (
           status = 'pending'
           or (
@@ -513,6 +543,7 @@ export async function claimFindCandidateTargetStateById(params: {
   const lockOwner = params.worker?.trim() || workerId();
 
   const claimed = await db.transaction(async (tx) => {
+    await lockPipelineCapacity(tx, distillationVersion);
     await tx.execute(
       sql`select pg_advisory_xact_lock(hashtext(${`distillation_find_candidate:${distillationVersion}`}))`,
     );
@@ -522,6 +553,7 @@ export async function claimFindCandidateTargetStateById(params: {
       where id = ${params.id}
         and distillation_version = ${distillationVersion}
         and target_kind = ${params.targetKind}
+        and ${runningCapacitySql(distillationVersion)}
         and (
           status = 'pending'
           or (

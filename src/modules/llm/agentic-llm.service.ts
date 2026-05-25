@@ -3,6 +3,7 @@ import type { LlmHealthStatus, LlmProvider, LlmProviderName } from "./llm-provid
 import { recordLlmUsage } from "./llm-usage-logger.js";
 import { createOpenAiProvider } from "./providers/openai.provider.js";
 import { createAzureOpenAiProvider } from "./providers/azure-openai.provider.js";
+import { configuredAzureOpenAiDeploymentSlots } from "./providers/azure-openai-config.js";
 import { createBedrockProvider } from "./providers/bedrock.provider.js";
 import { createLocalLlmProvider } from "./providers/local-llm.provider.js";
 
@@ -12,7 +13,26 @@ export type AgenticLlmHealthStatus = LlmHealthStatus & {
   providerSetting: AgenticCompileProvider;
   selectedProvider?: LlmProviderName;
   fallbackOrder: LlmProviderName[];
+  providerHealth?: LlmProviderHealthStatus[];
 };
+
+export type LlmProviderHealthStatus = LlmHealthStatus & {
+  id: string;
+  label: string;
+  deploymentIndex?: number;
+  selected: boolean;
+  routeOrder: number | null;
+};
+
+type LlmProviderHealthEntry = {
+  id: string;
+  label: string;
+  providerName: LlmProviderName;
+  provider: LlmProvider;
+  deploymentIndex?: number;
+};
+
+const nonAzureProviderNames: LlmProviderName[] = ["openai", "bedrock", "local-llm"];
 
 function dedupeOrder(values: LlmProviderName[]): LlmProviderName[] {
   const seen = new Set<LlmProviderName>();
@@ -73,6 +93,32 @@ function defaultModelForProvider(provider: LlmProviderName): string {
   }
 }
 
+function defaultEndpointForProvider(provider: LlmProviderName): string {
+  switch (provider) {
+    case "openai":
+      return groupedConfig.openAi.apiBaseUrl;
+    case "azure-openai":
+      return groupedConfig.azureOpenAi.apiBaseUrl;
+    case "bedrock":
+      return groupedConfig.bedrock.region;
+    case "local-llm":
+      return groupedConfig.localLlm.apiBaseUrl;
+  }
+}
+
+function defaultLabelForProvider(provider: LlmProviderName): string {
+  switch (provider) {
+    case "openai":
+      return "OpenAI";
+    case "azure-openai":
+      return "Azure OpenAI";
+    case "bedrock":
+      return "Bedrock";
+    case "local-llm":
+      return "Local LLM";
+  }
+}
+
 function withUsageLogging(provider: LlmProvider, source: string): LlmProvider {
   return {
     ...provider,
@@ -104,6 +150,79 @@ export function getAgenticLlmProviders(
   });
 }
 
+export async function checkLlmProviderHealthMatrix(
+  timeoutMs = 5000,
+  options: {
+    selectedProvider?: LlmProviderName;
+    routeOrder?: LlmProviderName[];
+  } = {},
+): Promise<LlmProviderHealthStatus[]> {
+  const routeOrder = options.routeOrder ?? [];
+  const entries: LlmProviderHealthEntry[] = [];
+
+  for (const providerName of nonAzureProviderNames) {
+    const provider = buildProvider(providerName, timeoutMs);
+    if (!provider.isConfigured()) continue;
+    entries.push({
+      id: providerName,
+      label: defaultLabelForProvider(providerName),
+      providerName,
+      provider,
+    });
+  }
+
+  for (const slot of configuredAzureOpenAiDeploymentSlots()) {
+    entries.push({
+      id: `azure-openai:${slot.index + 1}`,
+      label: `Azure OpenAI #${slot.index + 1}`,
+      providerName: "azure-openai",
+      provider: createAzureOpenAiProvider({ timeoutMs, deploymentIndex: slot.index }),
+      deploymentIndex: slot.index + 1,
+    });
+  }
+
+  entries.sort((left, right) => {
+    const leftRoute = routeOrder.indexOf(left.providerName);
+    const rightRoute = routeOrder.indexOf(right.providerName);
+    const leftRank = leftRoute >= 0 ? leftRoute : Number.MAX_SAFE_INTEGER;
+    const rightRank = rightRoute >= 0 ? rightRoute : Number.MAX_SAFE_INTEGER;
+    if (leftRank !== rightRank) return leftRank - rightRank;
+    return left.id.localeCompare(right.id);
+  });
+
+  return Promise.all(
+    entries.map(async (entry) => {
+      let status: LlmHealthStatus;
+      try {
+        status = await entry.provider.healthCheck();
+      } catch (error) {
+        status = {
+          provider: entry.providerName,
+          configured: entry.provider.isConfigured(),
+          reachable: false,
+          model: defaultModelForProvider(entry.providerName),
+          endpoint: defaultEndpointForProvider(entry.providerName),
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+      status = {
+        ...status,
+        model: status.model ?? defaultModelForProvider(entry.providerName),
+        endpoint: status.endpoint ?? defaultEndpointForProvider(entry.providerName),
+      };
+      const routeIndex = routeOrder.indexOf(entry.providerName);
+      return {
+        ...status,
+        id: entry.id,
+        label: entry.label,
+        deploymentIndex: entry.deploymentIndex,
+        selected: options.selectedProvider === entry.providerName,
+        routeOrder: routeIndex >= 0 ? routeIndex : null,
+      };
+    }),
+  );
+}
+
 export async function checkAgenticLlmHealth(
   providerSetting: AgenticCompileProvider = groupedConfig.agenticCompile.provider,
   timeoutMs = 5000,
@@ -129,15 +248,6 @@ export async function checkAgenticLlmHealth(
     }
 
     if (status.reachable) {
-      return {
-        ...status,
-        providerSetting,
-        selectedProvider: provider.name,
-        fallbackOrder: resolvedFallbackOrder,
-      };
-    }
-
-    if (providerSetting !== "auto") {
       return {
         ...status,
         providerSetting,
@@ -188,14 +298,6 @@ export async function checkDistillationLlmHealth(
     }
     firstConfiguredStatus ??= status;
     if (status.reachable) {
-      return {
-        ...status,
-        providerSetting,
-        selectedProvider: provider.name,
-        fallbackOrder: resolvedFallbackOrder,
-      };
-    }
-    if (providerSetting !== "auto") {
       return {
         ...status,
         providerSetting,

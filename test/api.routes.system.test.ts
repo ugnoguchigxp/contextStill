@@ -39,6 +39,7 @@ import { settingsRouter } from "../api/modules/settings/settings.routes.js";
 import {
   getSettingsForApi,
   reloadRuntimeCacheForApi,
+  testAzureOpenAiDeploymentForApi,
   testProviderForApi,
   updateSettingsForApi,
 } from "../api/modules/settings/settings.service.js";
@@ -95,6 +96,7 @@ vi.mock("../api/modules/overview/overview.repository.js", () => ({
 vi.mock("../api/modules/settings/settings.service.js", () => ({
   getSettingsForApi: vi.fn(),
   updateSettingsForApi: vi.fn(),
+  testAzureOpenAiDeploymentForApi: vi.fn(),
   testProviderForApi: vi.fn(),
   reloadRuntimeCacheForApi: vi.fn(),
 }));
@@ -217,6 +219,13 @@ describe("API route contract tests", () => {
       reachable: true,
       model: "5.4mini",
       endpoint: "https://api.openai.com/v1",
+    });
+    vi.mocked(testAzureOpenAiDeploymentForApi).mockResolvedValue({
+      provider: "azure-openai",
+      configured: true,
+      reachable: true,
+      model: "5.4mini",
+      endpoint: "https://example.openai.azure.com",
     });
     vi.mocked(reloadRuntimeCacheForApi).mockResolvedValue({
       ok: true,
@@ -391,6 +400,27 @@ describe("API route contract tests", () => {
     expect(testProviderForApi).toHaveBeenCalledWith("openai");
   });
 
+  test("POST /api/settings/providers/azure-openai/deployments/:deployment/test returns deployment health", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/settings/providers/azure-openai/deployments/2/test", {
+      method: "POST",
+    });
+    const json = (await response.json()) as {
+      provider: string;
+      deployment: number;
+      health: {
+        configured: boolean;
+        reachable: boolean;
+      };
+    };
+
+    expect(response.status).toBe(200);
+    expect(json.provider).toBe("azure-openai");
+    expect(json.deployment).toBe(2);
+    expect(json.health.configured).toBe(true);
+    expect(testAzureOpenAiDeploymentForApi).toHaveBeenCalledWith(2);
+  });
+
   test("POST /api/settings/reload-runtime-cache returns reload result", async () => {
     const app = buildApp();
     const response = await app.request("/api/settings/reload-runtime-cache", {
@@ -538,5 +568,4 @@ describe("API route contract tests", () => {
     expect(response.status).toBe(400);
     expect(updateKnowledgeItem).not.toHaveBeenCalled();
   });
-
 });

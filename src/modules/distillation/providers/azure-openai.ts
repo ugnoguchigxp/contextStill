@@ -1,53 +1,124 @@
 import { groupedConfig } from "../../../config.js";
-import type { DistillationChatRequest, DistillationChatResponse } from "../types.js";
+import { LlmProviderHttpError, parseRetryAfterSeconds } from "../../llm/provider-http-error.js";
+import {
+  type AzureOpenAiRuntimeDeployment,
+  azureOpenAiDeploymentAuditLabel,
+  azureOpenAiCooldownError,
+  azureOpenAiDeploymentsForTask,
+  azureOpenAiHeaders,
+  buildAzureOpenAiChatUrl,
+  configuredAzureOpenAiDeployments,
+  markAzureOpenAiDeploymentRateLimited,
+  markAzureOpenAiDeploymentSucceeded,
+} from "../../llm/providers/azure-openai-config.js";
+import type {
+  DistillationChatClient,
+  DistillationChatRequest,
+  DistillationChatResponse,
+} from "../types.js";
 import { parseOpenAiStyleResponse, withRequestTimeout } from "./helpers.js";
 
-function azureHeaders(): HeadersInit {
-  return {
-    "api-key": groupedConfig.azureOpenAi.apiKey,
-    "content-type": "application/json",
+function buildAzureOpenAiChatBody(request: DistillationChatRequest): Record<string, unknown> {
+  const base = {
+    messages: request.messages,
+    temperature: 0,
+    max_completion_tokens: request.maxTokens,
   };
+  if (request.tools && request.tools.length > 0) {
+    return {
+      ...base,
+      tools: request.tools,
+      tool_choice: request.toolChoice ?? "auto",
+    };
+  }
+  return base;
 }
 
-function buildAzureOpenAiUrl(): string {
-  const path = `${groupedConfig.azureOpenAi.apiPath.replace(/\/+$/, "")}/${encodeURIComponent(
-    groupedConfig.azureOpenAi.model,
-  )}/chat/completions?api-version=${encodeURIComponent(groupedConfig.azureOpenAi.apiVersion)}`;
-  return new URL(path, groupedConfig.azureOpenAi.apiBaseUrl).toString();
+function isRetryableAzureError(error: unknown): boolean {
+  if (!(error instanceof LlmProviderHttpError)) return true;
+  if (error.status === 404 && error.message.includes("DeploymentNotFound")) return true;
+  return (
+    error.status === 408 || error.status === 409 || error.status === 429 || error.status >= 500
+  );
+}
+
+function isAzureRateLimitError(error: unknown): boolean {
+  return error instanceof LlmProviderHttpError && error.status === 429;
+}
+
+async function callAzureOpenAiChatWithDeploymentPool(
+  request: DistillationChatRequest,
+  pinnedDeployment: AzureOpenAiRuntimeDeployment | null,
+  setPinnedDeployment: (deployment: AzureOpenAiRuntimeDeployment) => void,
+): Promise<DistillationChatResponse> {
+  return withRequestTimeout(
+    request.timeoutMs ?? groupedConfig.distillation.timeoutMs,
+    async (signal) => {
+      if (configuredAzureOpenAiDeployments().length === 0) {
+        throw new Error("Azure OpenAI is not configured");
+      }
+
+      const deployments = azureOpenAiDeploymentsForTask(pinnedDeployment);
+      if (deployments.length === 0) {
+        throw azureOpenAiCooldownError();
+      }
+
+      let lastError: unknown;
+      for (const [index, deployment] of deployments.entries()) {
+        try {
+          const response = await fetch(buildAzureOpenAiChatUrl(deployment), {
+            method: "POST",
+            headers: azureOpenAiHeaders(deployment),
+            body: JSON.stringify(buildAzureOpenAiChatBody(request)),
+            signal,
+          });
+
+          if (!response.ok) {
+            const body = await response.text().catch(() => "");
+            throw new LlmProviderHttpError({
+              provider: "azure-openai",
+              status: response.status,
+              retryAfterSeconds: parseRetryAfterSeconds(response.headers),
+              message: `Azure OpenAI HTTP ${response.status}: ${body.slice(0, 500)}`,
+            });
+          }
+
+          const parsed = parseOpenAiStyleResponse(await response.json());
+          setPinnedDeployment(deployment);
+          markAzureOpenAiDeploymentSucceeded(deployment);
+          return {
+            ...parsed,
+            providerMetadata: {
+              azureDeployment: azureOpenAiDeploymentAuditLabel(deployment),
+            },
+          };
+        } catch (error) {
+          lastError = error;
+          if (isAzureRateLimitError(error)) {
+            markAzureOpenAiDeploymentRateLimited(deployment, error);
+          }
+          if (index >= deployments.length - 1 || !isRetryableAzureError(error)) {
+            throw error;
+          }
+        }
+      }
+
+      throw lastError instanceof Error ? lastError : new Error(String(lastError));
+    },
+    request.signal,
+  );
+}
+
+export function createAzureOpenAiChatClient(): DistillationChatClient {
+  let pinnedDeployment: AzureOpenAiRuntimeDeployment | null = null;
+  return (request) =>
+    callAzureOpenAiChatWithDeploymentPool(request, pinnedDeployment, (deployment) => {
+      pinnedDeployment = deployment;
+    });
 }
 
 export async function callAzureOpenAiChat(
   request: DistillationChatRequest,
 ): Promise<DistillationChatResponse> {
-  return withRequestTimeout(
-    request.timeoutMs ?? groupedConfig.distillation.timeoutMs,
-    async (signal) => {
-      const response = await fetch(buildAzureOpenAiUrl(), {
-        method: "POST",
-        headers: azureHeaders(),
-        body: JSON.stringify({
-          messages: request.messages,
-          temperature: 0,
-          max_completion_tokens: request.maxTokens,
-          ...(request.tools && request.tools.length > 0
-            ? {
-                tools: request.tools,
-                tool_choice: request.toolChoice ?? "auto",
-              }
-            : {
-                tool_choice: request.toolChoice ?? "none",
-              }),
-        }),
-        signal,
-      });
-
-      if (!response.ok) {
-        const body = await response.text().catch(() => "");
-        throw new Error(`Azure OpenAI HTTP ${response.status}: ${body.slice(0, 500)}`);
-      }
-
-      return parseOpenAiStyleResponse(await response.json());
-    },
-    request.signal,
-  );
+  return createAzureOpenAiChatClient()(request);
 }

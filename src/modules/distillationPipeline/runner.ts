@@ -46,6 +46,7 @@ import {
   hasRunningFindCandidateTargetState,
   leaseFromTargetState,
   pauseDistillationTargetState,
+  recoverOrphanedRunningDistillationTargets,
   recoverStaleDistillationTargets,
   releaseDistillationTargetState,
   releaseRetryablePausedDistillationTargets,
@@ -61,6 +62,7 @@ export type DistillationPipelineInput = {
   targetStateId?: string;
   worker?: string;
   provider?: DistillationProviderSetting;
+  providerFallbackMode?: "fallback" | "single";
   distillationVersion?: string;
   refresh?: boolean;
   rootPath?: string;
@@ -119,7 +121,7 @@ const retryableCoverStatuses = new Set<string>([
   "provider_failed",
   "parse_failed",
 ]);
-const CHECKPOINT_RETRY_DELAY_SECONDS = 1;
+const COVER_EVIDENCE_RETRY_DELAY_SECONDS = 0;
 const CHECKPOINT_PAUSE_REASON = "cover_evidence_checkpoint";
 const PARALLEL_FIND_CANDIDATE_OUTCOME = "find_candidate_ready";
 
@@ -789,6 +791,7 @@ async function runOrResumeCandidates(
             targetStateId: target.id,
             findCandidateId,
             provider: input.provider,
+            providerFallbackMode: input.providerFallbackMode,
             forceRefreshEvidence: input.forceRefreshEvidence,
             signal,
           }),
@@ -822,14 +825,23 @@ async function runOrResumeCandidates(
       await runCoverBatch(candidateIds.slice(index, index + coverConcurrency));
     }
   } else {
-    const pendingCandidateIds = candidateIds.filter((findCandidateId) => {
-      return !coverResultsByCandidateId.has(findCandidateId);
+    const neverRunCandidateIds = candidateIds.filter((findCandidateId) => {
+      const existing = coverResultsByCandidateId.get(findCandidateId);
+      return !existing;
     });
+    const retryableCandidateIds = candidateIds.filter((findCandidateId) => {
+      const existing = coverResultsByCandidateId.get(findCandidateId);
+      return Boolean(existing?.retryable);
+    });
+    const pendingCandidateIds = [...neverRunCandidateIds, ...retryableCandidateIds];
     const nextBatch = pendingCandidateIds.slice(0, coverConcurrency);
     if (nextBatch.length > 0) {
       await runCoverBatch(nextBatch);
     }
-    remainingCandidates = Math.max(0, pendingCandidateIds.length - nextBatch.length);
+    const processedNeverRunCandidates = nextBatch.filter((findCandidateId) =>
+      neverRunCandidateIds.includes(findCandidateId),
+    ).length;
+    remainingCandidates = Math.max(0, neverRunCandidateIds.length - processedNeverRunCandidates);
   }
 
   await finalizeUnstoredReadyCandidates();
@@ -934,7 +946,7 @@ async function runClaimedTarget(
         pauseDistillationTargetState({
           id: target.id,
           reason: CHECKPOINT_PAUSE_REASON,
-          retryDelaySeconds: CHECKPOINT_RETRY_DELAY_SECONDS,
+          retryDelaySeconds: COVER_EVIDENCE_RETRY_DELAY_SECONDS,
           metadata: {
             remainingCandidates,
             candidateCount,
@@ -969,7 +981,7 @@ async function runClaimedTarget(
         pauseDistillationTargetState({
           id: target.id,
           reason: "cover_evidence_retryable",
-          retryDelaySeconds: groupedConfig.distillationTools.failureRetryDelaySeconds,
+          retryDelaySeconds: COVER_EVIDENCE_RETRY_DELAY_SECONDS,
           metadata: {
             coverEvidenceStatusCounts: coverStatusCounts(coverResults),
             retryableCoverEvidenceIds: retryable.map((result) => result.coverEvidenceResultId),
@@ -1143,6 +1155,7 @@ export async function runDistillationPipeline(
     });
   }
   await recoverStaleDistillationTargets({ distillationVersion });
+  await recoverOrphanedRunningDistillationTargets({ distillationVersion });
   await releaseRetryablePausedDistillationTargets({ distillationVersion });
 
   const requestedTargetStateId = input.targetStateId?.trim();
@@ -1169,34 +1182,29 @@ export async function runDistillationPipeline(
     };
   }
 
-  const coverEvidenceLane = runParallelCoverEvidenceLane(input, distillationVersion);
-  const findCandidateLane = runParallelFindCandidateLane(input, distillationVersion);
-  const primaryLane = (async (): Promise<DistillationPipelineTargetResult[]> => {
-    const results: DistillationPipelineTargetResult[] = [];
-    for (let index = 0; index < positiveLimit(input.limit); index += 1) {
-      const target = await claimNextDistillationTargetState({
-        distillationVersion,
-        targetKind: targetKindFilter(input.kind),
-        worker: input.worker,
-        requireCandidateResultsForSourceTargets:
-          groupedConfig.distillation.findCandidateBackgroundEnabled,
-      });
-      if (!target) break;
-      results.push(await runClaimedTarget(target, input));
-    }
-    return results;
-  })();
-
-  const [results, coverEvidenceResult, findCandidateResult] = await Promise.all([
-    primaryLane,
-    coverEvidenceLane,
-    findCandidateLane,
+  const [coverEvidenceResult, findCandidateResult] = await Promise.all([
+    runParallelCoverEvidenceLane(input, distillationVersion),
+    runParallelFindCandidateLane(input, distillationVersion),
   ]);
+
+  const results: DistillationPipelineTargetResult[] = [];
   if (coverEvidenceResult) {
     results.push(coverEvidenceResult);
   }
   if (findCandidateResult) {
     results.push(findCandidateResult);
+  }
+
+  for (let index = 0; index < positiveLimit(input.limit); index += 1) {
+    const target = await claimNextDistillationTargetState({
+      distillationVersion,
+      targetKind: targetKindFilter(input.kind),
+      worker: input.worker,
+      requireCandidateResultsForSourceTargets:
+        groupedConfig.distillation.findCandidateBackgroundEnabled,
+    });
+    if (!target) break;
+    results.push(await runClaimedTarget(target, input));
   }
 
   return {

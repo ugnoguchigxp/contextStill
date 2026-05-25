@@ -1,0 +1,87 @@
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { groupedConfig } from "../src/config.js";
+import { createLocalLlmProvider } from "../src/modules/llm/providers/local-llm.provider.js";
+
+vi.mock("../src/config.js", () => ({
+  groupedConfig: {
+    localLlm: {
+      apiBaseUrl: "http://127.0.0.1:44448",
+      apiKey: "",
+      model: "gemma-4-e4b-it",
+    },
+  },
+}));
+
+describe("local-llm provider", () => {
+  beforeEach(() => {
+    vi.restoreAllMocks();
+    groupedConfig.localLlm.apiBaseUrl = "http://127.0.0.1:44448";
+    groupedConfig.localLlm.apiKey = "";
+    groupedConfig.localLlm.model = "gemma-4-e4b-it";
+  });
+
+  test("healthCheck uses the lightweight health endpoint when available", async () => {
+    const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: "ok",
+        ready: true,
+        loaded: true,
+        modelId: "gemma-4-e4b-it",
+      }),
+    } as unknown as Response);
+
+    const status = await createLocalLlmProvider({ timeoutMs: 1000 }).healthCheck();
+
+    expect(status).toMatchObject({
+      provider: "local-llm",
+      configured: true,
+      reachable: true,
+      model: "gemma-4-e4b-it",
+      endpoint: "http://127.0.0.1:44448",
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]?.[0]).toBe("http://127.0.0.1:44448/health");
+  });
+
+  test("healthCheck reports not-ready health payloads without waiting for chat", async () => {
+    const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: "loading",
+        ready: false,
+        loaded: false,
+        preloadError: "model is loading",
+      }),
+    } as unknown as Response);
+
+    const status = await createLocalLlmProvider({ timeoutMs: 1000 }).healthCheck();
+
+    expect(status.reachable).toBe(false);
+    expect(status.error).toContain("model is loading");
+    expect(spy).toHaveBeenCalledTimes(1);
+  });
+
+  test("healthCheck falls back to chat when the health endpoint is not available", async () => {
+    const spy = vi
+      .spyOn(global, "fetch")
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 404,
+        text: async () => "not found",
+      } as unknown as Response)
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: "pong" }, finish_reason: "stop" }],
+        }),
+      } as unknown as Response);
+
+    const status = await createLocalLlmProvider({ timeoutMs: 1000 }).healthCheck();
+
+    expect(status.reachable).toBe(true);
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy.mock.calls[1]?.[0]).toBe("http://127.0.0.1:44448/v1/chat/completions");
+    expect(JSON.parse(spy.mock.calls[1]?.[1]?.body as string).max_tokens).toBe(8);
+  });
+});

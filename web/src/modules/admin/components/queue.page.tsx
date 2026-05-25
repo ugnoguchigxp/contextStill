@@ -16,9 +16,9 @@ import {
   type QueueTargetStatusFilter,
 } from "../repositories/admin.repository";
 import {
-  formatCooldownCountdown,
   formatFindCandidateReason,
   formatFindCandidateTarget,
+  formatLaunchCountdown,
   formatRelativeTime,
 } from "./queue.page.helpers";
 
@@ -87,11 +87,18 @@ export function QueuePage() {
       ? "idle"
       : findCandidateRunning
         ? "active"
-        : formatCooldownCountdown(findCandidateWaitUntil, nowMs);
-  const findCandidateDetail = findCandidateStatus
+        : findCandidateWaiting
+          ? "cooling down"
+          : "ready";
+  const findCandidateReasonDetail = findCandidateStatus
     ? `${formatFindCandidateReason(findCandidateStatus.reason)} / ${formatFindCandidateTarget(
         findCandidateStatus.targetKind,
       )}`
+    : "loading";
+  const findCandidateDetail = findCandidateStatus
+    ? findCandidateWaiting
+      ? formatLaunchCountdown(findCandidateWaitUntil, nowMs)
+      : findCandidateReasonDetail
     : "loading";
 
   useEffect(() => {

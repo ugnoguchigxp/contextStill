@@ -24,12 +24,18 @@ const warningReasonSet = new Set([
   "QUERY_EMBEDDING_UNAVAILABLE",
   "SOURCE_QUERY_EMBEDDING_UNAVAILABLE",
   "TOKEN_BUDGET_SECTION_LIMIT_REACHED",
+]);
+
+const usablePackFallbackReasonSet = new Set([
   "AGENTIC_REFINE_FAILED",
+  "CONTEXT_RESPONSE_COMPOSE_FAILED",
+  "COMPOSED_CONTEXT_NO_ALIGNMENT",
 ]);
 
 function isBlockingReason(reason: string, hasUsablePack: boolean): boolean {
   if (maintenanceReasonSet.has(reason)) return false;
   if (warningReasonSet.has(reason)) return false;
+  if (usablePackFallbackReasonSet.has(reason) && hasUsablePack) return false;
   if (reason === "NO_ACTIVE_KNOWLEDGE_MATCH") return true;
   if (reason === "NO_SOURCE_MATCH" && hasUsablePack) return false;
   if (reason === "NO_SOURCE_MATCH") return true;

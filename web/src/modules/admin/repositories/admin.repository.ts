@@ -198,6 +198,19 @@ export type DoctorReport = {
     model: string;
     endpoint: string;
     error?: string;
+    providerHealth?: Array<{
+      id: string;
+      label: string;
+      provider: string;
+      configured: boolean;
+      reachable: boolean;
+      model: string;
+      endpoint: string;
+      error?: string;
+      deploymentIndex?: number;
+      selected?: boolean;
+      routeOrder?: number | null;
+    }>;
   };
   runs: {
     windowSize?: number;
@@ -277,6 +290,8 @@ export type DoctorReport = {
       id: string;
       lastSyncedAt: string | null;
       lastSyncedAgeMinutes: number | null;
+      lastCheckedAt?: string | null;
+      lastCheckedAgeMinutes?: number | null;
       cursorFiles: number;
       skipped: boolean;
       warnings: string[];
@@ -653,6 +668,7 @@ export type OverviewSystemQualityDomain = {
     OverviewDashboard["kpis"],
     "compileRuns" | "compileOkRuns" | "compileDegradedRuns" | "compileFailedRuns"
   >;
+  compileRunHealth: DoctorReport["runs"];
   charts: Pick<OverviewDashboard["charts"], "compileRunsByDay" | "distillationQueue">;
   searchApiStatus: OverviewDashboard["searchApiStatus"];
 };
@@ -1801,6 +1817,8 @@ export type RuntimeSearchProvider = "brave" | "exa" | "duckduckgo";
 export type RuntimeSecretKey =
   | "openaiApiKey"
   | "azureOpenAiApiKey"
+  | "azureOpenAiApiKey2"
+  | "azureOpenAiApiKey3"
   | "localLlmApiKey"
   | "braveApiKey"
   | "exaApiKey";
@@ -1831,6 +1849,14 @@ export type FindCandidateThrottlingSettings = {
   jitterSeconds: number;
 };
 
+export type AzureOpenAiDeploymentSettings = {
+  name: string;
+  apiBaseUrl: string;
+  apiPath: string;
+  apiVersion: string;
+  model: string;
+};
+
 export type DistillationPriorityTargetKind =
   | "knowledge_candidate"
   | "web_ingest"
@@ -1855,6 +1881,7 @@ export type RuntimeSettingsEditable = {
       apiPath: string;
       apiVersion: string;
       model: string;
+      deployments: AzureOpenAiDeploymentSettings[];
     };
     bedrock: {
       enabled: boolean;
@@ -1946,6 +1973,7 @@ export type RuntimeSettingsView = RuntimeSettingsEditable & {
     };
     "azure-openai": RuntimeSettingsEditable["providers"]["azure-openai"] & {
       apiKeySecret: RuntimeSecretStatus;
+      apiKeySecrets: RuntimeSecretStatus[];
     };
     bedrock: RuntimeSettingsEditable["providers"]["bedrock"] & {
       credentialSecret: RuntimeSecretStatus;
@@ -1997,6 +2025,12 @@ export type RuntimeProviderHealth = {
 
 export type RuntimeProviderHealthResponse = {
   provider: RuntimeProviderName;
+  health: RuntimeProviderHealth;
+};
+
+export type RuntimeAzureOpenAiDeploymentHealthResponse = {
+  provider: "azure-openai";
+  deployment: number;
   health: RuntimeProviderHealth;
 };
 
@@ -2705,6 +2739,16 @@ export async function testRuntimeProvider(
 ): Promise<RuntimeProviderHealthResponse> {
   return requestJson<RuntimeProviderHealthResponse>(
     `/api/settings/providers/${provider}/test`,
+    "POST",
+  );
+}
+
+export async function testAzureOpenAiDeployment(
+  deploymentIndex: number,
+): Promise<RuntimeAzureOpenAiDeploymentHealthResponse> {
+  const deployment = deploymentIndex + 1;
+  return requestJson<RuntimeAzureOpenAiDeploymentHealthResponse>(
+    `/api/settings/providers/azure-openai/deployments/${deployment}/test`,
     "POST",
   );
 }

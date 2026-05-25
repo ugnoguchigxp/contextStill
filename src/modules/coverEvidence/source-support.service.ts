@@ -6,6 +6,7 @@ import type { CoverEvidenceReference } from "./types.js";
 
 export type CoverEvidenceSourceRead = {
   content: string;
+  valueAssessmentContent: string;
   references: CoverEvidenceReference[];
   readRanges: Array<{ from: number; toExclusive: number }>;
 };
@@ -57,12 +58,28 @@ function readRangesFromOrigin(origin: unknown): Array<{ from: number; toExclusiv
   return [{ from: 0, toExclusive: groupedConfig.readFile.defaultTokens }];
 }
 
+const MAX_ORIGIN_SOURCE_SUMMARY_CHARS = 1000;
+
+function sourceSummaryFromOrigin(origin: unknown): string | undefined {
+  const record = asRecord(origin);
+  const value =
+    record.sourceSummary ??
+    record.source_summary ??
+    record.sourceEvidenceSummary ??
+    record.evidenceSummary;
+  if (typeof value !== "string") return undefined;
+  const summary = value.replace(/\s+/g, " ").trim();
+  return summary ? summary.slice(0, MAX_ORIGIN_SOURCE_SUMMARY_CHARS) : undefined;
+}
+
 export async function readSourceEvidenceForCandidate(
   row: FindCandidateResultRow,
 ): Promise<CoverEvidenceSourceRead> {
+  const valueAssessmentContent = sourceSummaryFromOrigin(row.origin);
   if (row.targetKind === "knowledge_candidate") {
     return {
       content: row.content,
+      valueAssessmentContent: valueAssessmentContent ?? row.content,
       references: [
         {
           kind: "source",
@@ -111,6 +128,7 @@ export async function readSourceEvidenceForCandidate(
   const content = contentParts.join("\n\n---\n\n").trim();
   return {
     content,
+    valueAssessmentContent: valueAssessmentContent ?? content,
     references,
     readRanges,
   };

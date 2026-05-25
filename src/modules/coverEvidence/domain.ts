@@ -36,9 +36,9 @@ import {
   selectCoverEvidenceResultById,
 } from "./repository.js";
 import {
+  type SourceSupportResult,
   evaluateSourceSupport,
   readSourceEvidenceForCandidate,
-  type SourceSupportResult,
 } from "./source-support.service.js";
 import type { CoverEvidenceInput, CoverEvidenceResult, CoverEvidenceToolEvent } from "./types.js";
 
@@ -51,6 +51,45 @@ export type CoverEvidenceRunResult = {
   id: string;
   result: CoverEvidenceResult;
 };
+
+type CoverEvidenceResolvedProviderRoute = {
+  provider: DistillationProviderSetting;
+  fallbackOrder: DistillationProviderName[];
+  model: string;
+};
+
+function dedupeProviderFallbackOrder(
+  values: DistillationProviderName[],
+  primary: DistillationProviderSetting,
+): DistillationProviderName[] {
+  const seen = new Set<DistillationProviderName>();
+  const deduped: DistillationProviderName[] = [];
+  for (const value of values) {
+    if (value === primary || seen.has(value)) continue;
+    seen.add(value);
+    deduped.push(value);
+  }
+  return deduped;
+}
+
+function resolveCoverEvidenceProviderRoute(params: {
+  route: { provider: string; fallback: string[] };
+  providerOverride?: DistillationProviderSetting;
+  providerFallbackMode?: "fallback" | "single";
+}): CoverEvidenceResolvedProviderRoute {
+  const provider =
+    params.providerOverride ?? (params.route.provider as DistillationProviderSetting);
+  const fallbackMode = params.providerFallbackMode === "single" ? "single" : "fallback";
+  const routeFallback = [...params.route.fallback] as DistillationProviderName[];
+  const fallbackOrder =
+    fallbackMode === "single" ? [] : dedupeProviderFallbackOrder(routeFallback, provider);
+
+  return {
+    provider,
+    fallbackOrder,
+    model: resolveDistillationModel(provider),
+  };
+}
 
 async function recordProcedureDemotionAudit(params: {
   id: string;
@@ -122,24 +161,32 @@ export async function runCoverEvidence(
   await ensureRuntimeSettingsLoaded();
   const routes = resolveCoverEvidenceRoutes();
 
-  const sourceSupportProvider =
-    input.provider ?? (routes.sourceSupport.provider as DistillationProviderSetting);
-  const sourceSupportFallbackOrder = input.provider
-    ? []
-    : ([...routes.sourceSupport.fallback] as DistillationProviderName[]);
-  const sourceSupportModel = resolveDistillationModel(sourceSupportProvider);
-  const externalEvidenceProvider =
-    input.provider ?? (routes.externalEvidence.provider as DistillationProviderSetting);
-  const externalEvidenceFallbackOrder = input.provider
-    ? []
-    : ([...routes.externalEvidence.fallback] as DistillationProviderName[]);
-  const externalEvidenceModel = resolveDistillationModel(externalEvidenceProvider);
-  const mcpEvidenceProvider =
-    input.provider ?? (routes.mcpEvidence.provider as DistillationProviderSetting);
-  const mcpEvidenceFallbackOrder = input.provider
-    ? []
-    : ([...routes.mcpEvidence.fallback] as DistillationProviderName[]);
-  const mcpEvidenceModel = resolveDistillationModel(mcpEvidenceProvider);
+  const sourceSupportRoute = resolveCoverEvidenceProviderRoute({
+    route: routes.sourceSupport,
+    providerOverride: input.provider,
+    providerFallbackMode: input.providerFallbackMode,
+  });
+  const sourceSupportProvider = sourceSupportRoute.provider;
+  const sourceSupportFallbackOrder = sourceSupportRoute.fallbackOrder;
+  const sourceSupportModel = sourceSupportRoute.model;
+
+  const externalEvidenceRoute = resolveCoverEvidenceProviderRoute({
+    route: routes.externalEvidence,
+    providerOverride: input.provider,
+    providerFallbackMode: input.providerFallbackMode,
+  });
+  const externalEvidenceProvider = externalEvidenceRoute.provider;
+  const externalEvidenceFallbackOrder = externalEvidenceRoute.fallbackOrder;
+  const externalEvidenceModel = externalEvidenceRoute.model;
+
+  const mcpEvidenceRoute = resolveCoverEvidenceProviderRoute({
+    route: routes.mcpEvidence,
+    providerOverride: input.provider,
+    providerFallbackMode: input.providerFallbackMode,
+  });
+  const mcpEvidenceProvider = mcpEvidenceRoute.provider;
+  const mcpEvidenceFallbackOrder = mcpEvidenceRoute.fallbackOrder;
+  const mcpEvidenceModel = mcpEvidenceRoute.model;
 
   if (input.write) {
     const existing = await selectCoverEvidenceResultById(id);
@@ -181,6 +228,22 @@ export async function runCoverEvidence(
       targetKind: row.targetKind,
       targetKey: row.targetKey,
       provider: sourceSupportProvider,
+      providerOverride: input.provider ?? null,
+      providerFallbackMode: input.providerFallbackMode ?? "fallback",
+      providerRoutes: {
+        sourceSupport: {
+          provider: sourceSupportProvider,
+          fallbackOrder: sourceSupportFallbackOrder,
+        },
+        externalEvidence: {
+          provider: externalEvidenceProvider,
+          fallbackOrder: externalEvidenceFallbackOrder,
+        },
+        mcpEvidence: {
+          provider: mcpEvidenceProvider,
+          fallbackOrder: mcpEvidenceFallbackOrder,
+        },
+      },
     },
   });
 
@@ -207,6 +270,7 @@ export async function runCoverEvidence(
         });
         sourceRead = {
           content: "",
+          valueAssessmentContent: "",
           references: [],
           readRanges: [],
         };
@@ -286,7 +350,7 @@ export async function runCoverEvidence(
               id,
               candidate,
               sourceReferences: sourceRead.references,
-              sourceContentExcerpt: sourceRead.content,
+              sourceContentExcerpt: sourceRead.valueAssessmentContent,
               sourceContext,
               candidateTypeHint: originHints.type,
               provider: sourceSupportProvider,

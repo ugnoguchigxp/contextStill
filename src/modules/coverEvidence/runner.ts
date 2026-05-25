@@ -6,6 +6,7 @@ export type CoverEvidenceRunnerInput = {
   targetStateId: string;
   findCandidateId: string;
   provider?: DistillationProviderSetting;
+  providerFallbackMode?: "fallback" | "single";
   forceRefreshEvidence?: boolean;
   signal?: AbortSignal;
 };
@@ -32,6 +33,7 @@ export async function runCoverEvidenceForCandidate(
   const result = await runCoverEvidence({
     id: input.findCandidateId,
     provider: input.provider,
+    providerFallbackMode: input.providerFallbackMode,
     write: true,
     forceRefreshEvidence: input.forceRefreshEvidence,
     signal: input.signal,

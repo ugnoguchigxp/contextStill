@@ -19,6 +19,15 @@ type LocalLlmResponse = {
   };
 };
 
+type LocalLlmHealthResponse = {
+  status?: unknown;
+  ready?: unknown;
+  loaded?: unknown;
+  modelId?: unknown;
+  modelPath?: unknown;
+  preloadError?: unknown;
+};
+
 type LocalLlmProviderOptions = {
   timeoutMs?: number;
 };
@@ -34,6 +43,14 @@ function headers(): HeadersInit {
     result.Authorization = `Bearer ${apiKey}`;
   }
   return result;
+}
+
+function healthUrl(): string {
+  return `${groupedConfig.localLlm.apiBaseUrl.replace(/\/+$/, "")}/health`;
+}
+
+function chatUrl(): string {
+  return `${groupedConfig.localLlm.apiBaseUrl.replace(/\/+$/, "")}/v1/chat/completions`;
 }
 
 async function parseResponse(response: Response): Promise<LlmChatResponse> {
@@ -71,7 +88,7 @@ export function createLocalLlmProvider(options: LocalLlmProviderOptions = {}): L
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const response = await fetch(`${groupedConfig.localLlm.apiBaseUrl}/v1/chat/completions`, {
+        const response = await fetch(chatUrl(), {
           method: "POST",
           headers: headers(),
           body: JSON.stringify({
@@ -110,10 +127,54 @@ export function createLocalLlmProvider(options: LocalLlmProviderOptions = {}): L
         return { ...result, error: "local-llm is not configured" };
       }
 
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+      try {
+        const health = await fetch(healthUrl(), {
+          method: "GET",
+          headers: headers(),
+          signal: controller.signal,
+        });
+        if (health.ok) {
+          const payload = (await health.json()) as LocalLlmHealthResponse;
+          const ready = payload.ready === true || payload.status === "ok";
+          const loaded = payload.loaded !== false;
+          const model =
+            typeof payload.modelId === "string" && payload.modelId.trim()
+              ? payload.modelId
+              : result.model;
+          if (ready && loaded) {
+            return {
+              ...result,
+              reachable: true,
+              model,
+            };
+          }
+          const preloadError =
+            typeof payload.preloadError === "string" && payload.preloadError.trim()
+              ? `: ${payload.preloadError}`
+              : "";
+          return {
+            ...result,
+            model,
+            error: `local-llm health endpoint is not ready${preloadError}`,
+          };
+        }
+      } catch (error) {
+        if ((error as { name?: unknown })?.name === "AbortError") {
+          return {
+            ...result,
+            error: error instanceof Error ? error.message : String(error),
+          };
+        }
+      } finally {
+        clearTimeout(timer);
+      }
+
       try {
         const ping = await this.chat({
           messages: [{ role: "user", content: "ping" }],
-          maxTokens: 1,
+          maxTokens: 8,
           temperature: 0,
         });
         return {

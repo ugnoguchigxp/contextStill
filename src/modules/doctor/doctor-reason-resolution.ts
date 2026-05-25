@@ -247,10 +247,8 @@ export function appendAutomationReasons(
   appendDistillationReasons(reasons, options, "SOURCE_DISTILLATION", sourceDistillation);
 
   for (const state of agentLogSync.states) {
-    if (
-      state.lastSyncedAgeMinutes !== null &&
-      state.lastSyncedAgeMinutes > options.freshnessThresholdMinutes
-    ) {
+    const freshnessAgeMinutes = state.lastCheckedAgeMinutes ?? state.lastSyncedAgeMinutes;
+    if (freshnessAgeMinutes !== null && freshnessAgeMinutes > options.freshnessThresholdMinutes) {
       reasons.push(`${state.id.toUpperCase()}_SYNC_STALE`);
     }
     if (state.warnings.length > 0) {
@@ -442,6 +440,7 @@ function evidenceForReason(
       ? {
           stateId,
           lastSyncedAgeMinutes: state.lastSyncedAgeMinutes,
+          lastCheckedAgeMinutes: state.lastCheckedAgeMinutes ?? null,
           cursorFiles: state.cursorFiles,
           warnings: state.warnings.length,
         }

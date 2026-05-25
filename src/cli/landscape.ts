@@ -172,7 +172,9 @@ async function main(): Promise<void> {
     });
     const contradictionSummary = buildContradictionDryRunSummary(result);
     if (options.json) {
-      console.log(JSON.stringify({ ...result, contradictionDryRunSummary: contradictionSummary }, null, 2));
+      console.log(
+        JSON.stringify({ ...result, contradictionDryRunSummary: contradictionSummary }, null, 2),
+      );
       return;
     }
     printQueueMaterializeSummary(result);

@@ -387,7 +387,12 @@ export const landscapeSnapshotValidInput = {
         avgStalenessFactor: 0.1,
       },
       scores: { activity: 8, attractorScore: 3.2, negativeScore: 0.8, reachabilityRiskScore: 0.1 },
-      classification: { primary: "useful_attractor", flags: [], confidence: "medium", reason: "stable" },
+      classification: {
+        primary: "useful_attractor",
+        flags: [],
+        confidence: "medium",
+        reason: "stable",
+      },
       recommendedActions: ["keep"],
       representativeKnowledgeIds: ["k1", "k2"],
     },

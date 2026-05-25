@@ -325,6 +325,78 @@ describe("runCoverEvidence", () => {
     expect(mocks.saveCoverEvidenceResult).not.toHaveBeenCalled();
   });
 
+  test("keeps route fallback when provider override is supplied", async () => {
+    await runCoverEvidence({ id: "find-1", provider: "local-llm" });
+
+    const runtimeOptions = mocks.runDistillationCompletion.mock.calls.map(
+      (call) => call[1] as { providerSetting: string; fallbackOrder?: string[] },
+    );
+
+    expect(runtimeOptions.length).toBeGreaterThan(0);
+    expect(runtimeOptions).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          providerSetting: "local-llm",
+          fallbackOrder: ["azure-openai"],
+        }),
+      ]),
+    );
+  });
+
+  test("disables fallback only when single-provider mode is requested", async () => {
+    await runCoverEvidence({
+      id: "find-1",
+      provider: "local-llm",
+      providerFallbackMode: "single",
+    });
+
+    const runtimeOptions = mocks.runDistillationCompletion.mock.calls.map(
+      (call) => call[1] as { providerSetting: string; fallbackOrder?: string[] },
+    );
+
+    expect(runtimeOptions.length).toBeGreaterThan(0);
+    expect(
+      runtimeOptions.every(
+        (options) =>
+          options.providerSetting === "local-llm" &&
+          Array.isArray(options.fallbackOrder) &&
+          options.fallbackOrder.length === 0,
+      ),
+    ).toBe(true);
+  });
+
+  test("records provider route diagnostics in coverEvidence started audit", async () => {
+    await runCoverEvidence({ id: "find-1", provider: "local-llm" });
+
+    const startedAudit = mocks.recordAuditLogSafe.mock.calls.find(
+      (call) => call[0]?.eventType === "COVER_EVIDENCE_STARTED",
+    );
+    expect(startedAudit).toBeDefined();
+    expect(startedAudit?.[0]).toEqual(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          id: "find-1",
+          providerOverride: "local-llm",
+          providerFallbackMode: "fallback",
+          providerRoutes: expect.objectContaining({
+            sourceSupport: expect.objectContaining({
+              provider: "local-llm",
+              fallbackOrder: ["azure-openai"],
+            }),
+            externalEvidence: expect.objectContaining({
+              provider: "local-llm",
+              fallbackOrder: ["azure-openai"],
+            }),
+            mcpEvidence: expect.objectContaining({
+              provider: "local-llm",
+              fallbackOrder: ["azure-openai"],
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+
   test("uses LLM verification instead of terminal source_support failure when source content is available", async () => {
     mocks.readFileDomain.mockResolvedValue({
       content:
@@ -354,7 +426,35 @@ describe("runCoverEvidence", () => {
     const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
-    expect(request.messages[0]?.content).toContain("source excerpt で支えられるか");
+    expect(request.messages[0]?.content).toContain("source evidence に支えられるか");
+  });
+
+  test("uses findCandidate sourceSummary for final value assessment prompt", async () => {
+    const sourceSummary =
+      "Run smoke tests before finalizing coverEvidence; verify source references and evidence status.";
+    mocks.getFindCandidateResultById.mockResolvedValue(
+      candidateRow({
+        origin: {
+          readRanges: [{ from: 0, toExclusive: 120 }],
+          sourceSummary,
+        },
+      }),
+    );
+    mocks.readFileDomain.mockResolvedValue({
+      content: `${sourceSummary} ${"raw-source-filler ".repeat(400)}`,
+      totalTokens: 120,
+      from: 0,
+      toExclusive: 120,
+      returnedTokens: 120,
+    });
+
+    await runCoverEvidence({ id: "find-1" });
+
+    const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(request.messages[1]?.content).toContain(sourceSummary);
+    expect(request.messages[1]?.content).not.toContain("raw-source-filler");
   });
 
   test("keeps empty source reads as terminal source_support failures", async () => {
@@ -433,7 +533,7 @@ describe("runCoverEvidence", () => {
         usageSource: "cover-evidence:value-assessment",
       }),
     );
-    expect(request.messages[1]?.content).toContain('"technologies": [');
+    expect(request.messages[1]?.content).toContain('"technologies":["typescript"]');
     expect(request.messages[1]?.content).toContain('"candidate-registration"');
     expect(request.messages[1]?.content).toContain('"/Users/y.noguchi/Code/memoryRouter"');
   });
@@ -506,14 +606,12 @@ describe("runCoverEvidence", () => {
     const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
-    expect(request.messages[0]?.content).toContain("SKILL.md");
-    expect(request.messages[0]?.content).toContain("System Context");
-    expect(request.messages[0]?.content).toContain("description に相当する使用条件");
-    expect(request.messages[0]?.content).toContain("YAML frontmatter");
+    expect(request.messages[0]?.content.length).toBeLessThanOrEqual(1600);
     expect(request.messages[0]?.content).toContain("Use when:");
     expect(request.messages[0]?.content).toContain("Workflow:");
-    expect(request.messages[0]?.content).toContain("カンマ区切り文字列");
     expect(request.messages[0]?.content).toContain("domains");
+    expect(request.messages[0]?.content).not.toContain("System Context");
+    expect(request.messages[0]?.content).not.toContain("YAML frontmatter");
     expect(request.messages[0]?.content).not.toContain('"appliesTo":');
   });
 
@@ -594,5 +692,4 @@ describe("runCoverEvidence", () => {
       ]),
     );
   });
-
 });

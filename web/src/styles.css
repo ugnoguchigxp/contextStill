@@ -264,6 +264,36 @@
   gap: 0.85rem;
 }
 
+.settings-provider-deployment {
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  display: grid;
+  gap: 0.75rem;
+  padding-top: 0.85rem;
+}
+
+.settings-provider-deployment:first-of-type {
+  border-top: 0;
+  padding-top: 0;
+}
+
+.settings-deployment-header {
+  align-items: center;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
+.settings-deployment-health {
+  align-items: center;
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
+  padding-top: 0.65rem;
+}
+
 .settings-check {
   align-items: center;
   color: #334155;
@@ -431,34 +461,6 @@
   align-items: center;
   display: flex;
   gap: 0.35rem;
-}
-
-.settings-health-grid {
-  display: grid;
-  gap: 0.75rem;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-}
-
-.settings-health-item {
-  border: 1px solid rgba(15, 23, 42, 0.08);
-  border-radius: 0.5rem;
-  display: grid;
-  gap: 0.5rem;
-  padding: 0.75rem;
-}
-
-.settings-health-head {
-  align-items: center;
-  display: flex;
-  justify-content: space-between;
-}
-
-.settings-health-meta {
-  color: #64748b;
-  display: grid;
-  font-size: 0.76rem;
-  gap: 0.2rem;
-  overflow-wrap: anywhere;
 }
 
 .page-heading {
@@ -1991,7 +1993,6 @@
 
   .settings-provider-grid,
   .settings-search-grid,
-  .settings-health-grid,
   .settings-route-fields,
   .settings-form-grid {
     grid-template-columns: 1fr;

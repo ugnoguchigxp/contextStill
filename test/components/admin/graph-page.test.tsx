@@ -566,5 +566,4 @@ describe("GraphPage", () => {
       });
     });
   });
-
 });

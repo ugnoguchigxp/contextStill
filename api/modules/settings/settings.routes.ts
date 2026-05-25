@@ -5,12 +5,16 @@ import { settingsUpdateRequestSchema } from "../../../src/modules/settings/setti
 import {
   getSettingsForApi,
   reloadRuntimeCacheForApi,
+  testAzureOpenAiDeploymentForApi,
   testProviderForApi,
   updateSettingsForApi,
 } from "./settings.service.js";
 
 const providerParamSchema = z.object({
   provider: z.enum(["openai", "azure-openai", "bedrock", "local-llm"] as const),
+});
+const azureOpenAiDeploymentParamSchema = z.object({
+  deployment: z.coerce.number().int().min(1).max(3),
 });
 
 export const settingsRouter = new Hono()
@@ -22,6 +26,15 @@ export const settingsRouter = new Hono()
     const result = await updateSettingsForApi(c.req.valid("json"));
     return c.json(result);
   })
+  .post(
+    "/providers/azure-openai/deployments/:deployment/test",
+    zValidator("param", azureOpenAiDeploymentParamSchema),
+    async (c) => {
+      const { deployment } = c.req.valid("param");
+      const health = await testAzureOpenAiDeploymentForApi(deployment);
+      return c.json({ provider: "azure-openai", deployment, health });
+    },
+  )
   .post("/providers/:provider/test", zValidator("param", providerParamSchema), async (c) => {
     const { provider } = c.req.valid("param");
     const health = await testProviderForApi(provider);

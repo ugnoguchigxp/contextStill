@@ -12,7 +12,11 @@ import {
   doctorReportSchema,
 } from "../../shared/schemas/doctor.schema.js";
 import { cleanupExpiredAuditLogsSafe } from "../audit/audit-log.service.js";
-import { checkAgenticLlmHealth } from "../llm/agentic-llm.service.js";
+import {
+  type AgenticLlmHealthStatus,
+  checkAgenticLlmHealth,
+  checkLlmProviderHealthMatrix,
+} from "../llm/agentic-llm.service.js";
 import {
   ensureRuntimeSettingsLoaded,
   resolveAgenticCompileRouting,
@@ -53,6 +57,25 @@ async function inspectDoctorDatabase(options: ResolvedDoctorOptions): Promise<Da
   });
 }
 
+async function inspectAgenticLlmWithProviderHealth(
+  timeoutMs = 5000,
+): Promise<AgenticLlmHealthStatus> {
+  const agenticRouting = resolveAgenticCompileRouting();
+  const agenticLlm = await checkAgenticLlmHealth(
+    agenticRouting.provider,
+    timeoutMs,
+    agenticRouting.fallback,
+  );
+  const providerHealth = await checkLlmProviderHealthMatrix(timeoutMs, {
+    selectedProvider: agenticLlm.selectedProvider,
+    routeOrder: agenticLlm.fallbackOrder,
+  });
+  return {
+    ...agenticLlm,
+    providerHealth,
+  };
+}
+
 function buildMcpReport(
   mcp: DoctorReport["mcp"],
   database: DatabaseInspection,
@@ -91,7 +114,6 @@ function buildMcpReport(
 export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorReport> {
   await ensureRuntimeSettingsLoaded();
   const options = resolveDoctorOptions(rawOptions);
-  const agenticRouting = resolveAgenticCompileRouting();
   await cleanupExpiredAuditLogsSafe({ trigger: "doctor" });
   const reasons: string[] = [];
   const mcp = inspectMcpSurface();
@@ -100,11 +122,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
   }
 
   const embedding = await inspectEmbedding();
-  const agenticLlm = await checkAgenticLlmHealth(
-    agenticRouting.provider,
-    5000,
-    agenticRouting.fallback,
-  );
+  const agenticLlm = await inspectAgenticLlmWithProviderHealth(5000);
   const database = await inspectDoctorDatabase(options);
 
   if (!database.reachable) {
@@ -287,13 +305,8 @@ export async function runDoctorAiServiceTools(
   rawOptions?: DoctorOptions,
 ): Promise<DoctorAiServiceToolsDomain> {
   const options = await prepareDoctorDomainOptions(rawOptions);
-  const agenticRouting = resolveAgenticCompileRouting();
   const mcp = inspectMcpSurface();
-  const agenticLlm = await checkAgenticLlmHealth(
-    agenticRouting.provider,
-    5000,
-    agenticRouting.fallback,
-  );
+  const agenticLlm = await inspectAgenticLlmWithProviderHealth(5000);
 
   const reasons: string[] = [];
   if (mcp.missingPrimaryTools.length > 0) {

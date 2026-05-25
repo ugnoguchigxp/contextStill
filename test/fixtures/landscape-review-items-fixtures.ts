@@ -114,7 +114,12 @@ export function landscapeSnapshotFixture() {
           avgFreshnessFactor: 0.88,
           avgStalenessFactor: 0.12,
         },
-        scores: { activity: 12, attractorScore: 1.9, negativeScore: 2.2, reachabilityRiskScore: 0.2 },
+        scores: {
+          activity: 12,
+          attractorScore: 1.9,
+          negativeScore: 2.2,
+          reachabilityRiskScore: 0.2,
+        },
         classification: {
           primary: "negative_attractor_candidate",
           flags: [],
@@ -206,7 +211,12 @@ export function replayComparisonForPromotionGate(
     analysisAsOf: "2026-05-24T00:00:00.000Z",
     windowDays: 30,
     corpusWindow: { startAt: "2026-04-24T00:00:00.000Z", endAt: "2026-05-24T00:00:00.000Z" },
-    basis: { unit: "replay-comparison", mode: "current_retrieval", runStatus: "all", currentLimit: 12 },
+    basis: {
+      unit: "replay-comparison",
+      mode: "current_retrieval",
+      runStatus: "all",
+      currentLimit: 12,
+    },
     replayRunCount: 0,
     comparedRunCount: 0,
     baselineSelectedItemCount: 0,

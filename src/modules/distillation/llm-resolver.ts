@@ -1,4 +1,5 @@
 import { groupedConfig } from "../../config.js";
+import { isAzureOpenAiConfigured } from "../llm/providers/azure-openai-config.js";
 
 export type DistillationProviderName = "local-llm" | "openai" | "azure-openai" | "bedrock";
 export type DistillationProviderSetting =
@@ -51,11 +52,7 @@ export function isProviderConfigured(provider: DistillationProviderName): boolea
           groupedConfig.openAi.model.trim(),
       );
     case "azure-openai":
-      return Boolean(
-        groupedConfig.azureOpenAi.apiKey.trim() &&
-          groupedConfig.azureOpenAi.apiBaseUrl.trim() &&
-          groupedConfig.azureOpenAi.model.trim(),
-      );
+      return isAzureOpenAiConfigured();
     case "bedrock":
       return Boolean(groupedConfig.bedrock.region.trim() && groupedConfig.bedrock.model.trim());
     default:

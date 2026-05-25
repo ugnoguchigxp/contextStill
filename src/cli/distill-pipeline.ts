@@ -18,6 +18,7 @@ type CliOptions = {
   vibeLimit?: number;
   worker?: string;
   provider?: DistillationPipelineInput["provider"];
+  providerFallbackMode: "fallback" | "single";
   distillationVersion?: string;
   forceRefreshEvidence: boolean;
 };
@@ -48,6 +49,7 @@ function parseArgs(args: string[]): CliOptions {
     write: false,
     refresh: true,
     continuous: false,
+    providerFallbackMode: "fallback",
     forceRefreshEvidence: false,
   };
 
@@ -101,6 +103,10 @@ function parseArgs(args: string[]): CliOptions {
         throw new Error("--provider must be openai, local-llm, azure-openai, bedrock, or auto");
       }
       options.provider = value;
+    } else if (arg === "--no-provider-fallback" || arg === "--single-provider") {
+      options.providerFallbackMode = "single";
+    } else if (arg === "--provider-fallback") {
+      options.providerFallbackMode = "fallback";
     } else if (arg === "--write") {
       options.write = true;
     } else if (arg === "--refresh") {
@@ -144,6 +150,7 @@ function pipelineInput(
     targetStateId: options.targetStateId,
     worker: options.worker,
     provider: options.provider,
+    providerFallbackMode: options.providerFallbackMode,
     distillationVersion: options.distillationVersion,
     refresh,
     rootPath: options.rootPath,

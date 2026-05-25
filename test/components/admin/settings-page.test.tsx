@@ -19,6 +19,7 @@ const repositoryMocks = vi.hoisted(() => ({
   fetchRuntimeSettings: vi.fn(),
   updateRuntimeSettings: vi.fn(),
   reloadRuntimeSettingsCache: vi.fn(),
+  testAzureOpenAiDeployment: vi.fn(),
   testRuntimeProvider: vi.fn(),
 }));
 
@@ -52,6 +53,7 @@ vi.mock("../../../web/src/modules/admin/repositories/admin.repository", async ()
     fetchRuntimeSettings: repositoryMocks.fetchRuntimeSettings,
     updateRuntimeSettings: repositoryMocks.updateRuntimeSettings,
     reloadRuntimeSettingsCache: repositoryMocks.reloadRuntimeSettingsCache,
+    testAzureOpenAiDeployment: repositoryMocks.testAzureOpenAiDeployment,
     testRuntimeProvider: repositoryMocks.testRuntimeProvider,
   };
 });
@@ -86,6 +88,16 @@ function buildSettingsView(): RuntimeSettingsView {
         apiVersion: "2025-04-01-preview",
         model: "gpt-5-4-mini",
         apiKeySecret: secretStatus(true),
+        apiKeySecrets: [secretStatus(true), secretStatus(false), secretStatus(false)],
+        deployments: [
+          {
+            name: "Primary",
+            apiBaseUrl: "https://example.openai.azure.com",
+            apiPath: "/openai/deployments",
+            apiVersion: "2025-04-01-preview",
+            model: "gpt-5-4-mini",
+          },
+        ],
       },
       bedrock: {
         enabled: false,
@@ -122,13 +134,33 @@ function buildSettingsView(): RuntimeSettingsView {
           jitterSeconds: 10,
         },
       },
-      webSourceResearch: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },
-      coverEvidence: {
-        sourceSupport: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },
-        externalEvidence: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },
-        mcpEvidence: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },
+      webSourceResearch: {
+        provider: "local-llm",
+        model: "gemma-4-e4b-it",
+        fallback: ["azure-openai"],
       },
-      finalizeDistille: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },
+      coverEvidence: {
+        sourceSupport: {
+          provider: "local-llm",
+          model: "gemma-4-e4b-it",
+          fallback: ["azure-openai"],
+        },
+        externalEvidence: {
+          provider: "local-llm",
+          model: "gemma-4-e4b-it",
+          fallback: ["azure-openai"],
+        },
+        mcpEvidence: {
+          provider: "local-llm",
+          model: "gemma-4-e4b-it",
+          fallback: ["azure-openai"],
+        },
+      },
+      finalizeDistille: {
+        provider: "local-llm",
+        model: "gemma-4-e4b-it",
+        fallback: ["azure-openai"],
+      },
       agenticCompile: {
         enabled: true,
         provider: "openai",
@@ -232,6 +264,7 @@ describe("SettingsPage", () => {
     repositoryMocks.fetchRuntimeSettings.mockReset();
     repositoryMocks.updateRuntimeSettings.mockReset();
     repositoryMocks.reloadRuntimeSettingsCache.mockReset();
+    repositoryMocks.testAzureOpenAiDeployment.mockReset();
     repositoryMocks.testRuntimeProvider.mockReset();
 
     repositoryMocks.fetchRuntimeSettings.mockResolvedValue(buildSnapshot());
@@ -248,6 +281,19 @@ describe("SettingsPage", () => {
           configured: true,
           reachable: true,
           model: "gpt-5-4-mini",
+          endpoint: "https://example.invalid",
+        },
+      }),
+    );
+    repositoryMocks.testAzureOpenAiDeployment.mockImplementation(
+      async (deploymentIndex: number) => ({
+        provider: "azure-openai",
+        deployment: deploymentIndex + 1,
+        health: {
+          provider: "azure-openai",
+          configured: true,
+          reachable: true,
+          model: `azure-deployment-${deploymentIndex + 1}`,
           endpoint: "https://example.invalid",
         },
       }),
@@ -336,13 +382,51 @@ describe("SettingsPage", () => {
   it("calls provider health test for selected provider card", async () => {
     routerState.pathname = "/setting/llmprovider";
     renderPage();
-    expect(await screen.findByRole("heading", { name: "Azure OpenAI" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "OpenAI" })).toBeInTheDocument();
 
     const testButtons = screen.getAllByRole("button", { name: "Test" });
-    fireEvent.click(testButtons[1]);
+    fireEvent.click(testButtons[0]);
 
     await waitFor(() => expect(repositoryMocks.testRuntimeProvider).toHaveBeenCalledTimes(1));
-    expect(repositoryMocks.testRuntimeProvider).toHaveBeenCalledWith("azure-openai");
+    expect(repositoryMocks.testRuntimeProvider).toHaveBeenCalledWith("openai");
+  });
+
+  it("calls Azure OpenAI deployment health test for selected deployment", async () => {
+    routerState.pathname = "/setting/llmprovider";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Azure OpenAI" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Test 2" }));
+
+    await waitFor(() => expect(repositoryMocks.testAzureOpenAiDeployment).toHaveBeenCalledTimes(1));
+    expect(repositoryMocks.testAzureOpenAiDeployment).toHaveBeenCalledWith(1);
+  });
+
+  it("saves up to three Azure OpenAI deployments and separate API keys", async () => {
+    routerState.pathname = "/setting/llmprovider";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Azure OpenAI" })).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Deployment 2 Endpoint"), {
+      target: { value: "https://second.openai.azure.com" },
+    });
+    fireEvent.change(screen.getByLabelText("Deployment 2 Model"), {
+      target: { value: "gpt-5-4-mini-secondary" },
+    });
+    fireEvent.change(screen.getByLabelText("API Key 2 value"), {
+      target: { value: "second-secret" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    expect(payload.settings.providers["azure-openai"].deployments).toHaveLength(3);
+    expect(payload.settings.providers["azure-openai"].deployments[1]).toMatchObject({
+      apiBaseUrl: "https://second.openai.azure.com",
+      model: "gpt-5-4-mini-secondary",
+    });
+    expect(payload.secrets.azureOpenAiApiKey2).toEqual({ value: "second-secret" });
   });
 
   it("renders Advanced sync settings and allows toggling them", async () => {

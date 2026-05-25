@@ -544,5 +544,4 @@ describe("SourcesPage", () => {
     fireEvent.click(inlineNewPageBtn);
     expect(screen.getByPlaceholderText("Page title")).toHaveValue("Untitled");
   });
-
 });

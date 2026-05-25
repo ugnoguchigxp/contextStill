@@ -116,9 +116,8 @@ export async function decideFindCandidateSchedule(params: {
 }): Promise<FindCandidateScheduleDecision> {
   await ensureRuntimeSettingsLoaded();
   const throttlingEnabled = groupedConfig.distillation.findCandidateBackgroundEnabled;
+  const noWait = groupedConfig.distillation.findCandidateNoWait;
   const resolved = resolveProviderAndModel(params);
-  const pressure = await readProviderPressureState(resolved);
-  const lastBackgroundAgeSeconds = parseIsoAgeSeconds(pressure.metadata.lastBackgroundAt);
   const jitterWaitMs = () => (params.includeJitter === false ? 0 : jitterMs());
 
   const baseDiagnostics = {
@@ -127,7 +126,7 @@ export async function decideFindCandidateSchedule(params: {
     compileCount: 0,
     interactiveLlmCount: 0,
     lastCompileAgeSeconds: null,
-    lastBackgroundAgeSeconds,
+    lastBackgroundAgeSeconds: null,
   };
 
   if (!throttlingEnabled) {
@@ -139,12 +138,27 @@ export async function decideFindCandidateSchedule(params: {
     };
   }
 
+  if (noWait) {
+    return {
+      shouldWait: false,
+      waitMs: 0,
+      reason: "ready",
+      diagnostics: baseDiagnostics,
+    };
+  }
+
+  const pressure = await readProviderPressureState(resolved);
+  const lastBackgroundAgeSeconds = parseIsoAgeSeconds(pressure.metadata.lastBackgroundAt);
+
   if (pressure.cooldownActive) {
     return {
       shouldWait: true,
       waitMs: pressure.waitMs + jitterWaitMs(),
       reason: "provider_cooldown",
-      diagnostics: baseDiagnostics,
+      diagnostics: {
+        ...baseDiagnostics,
+        lastBackgroundAgeSeconds,
+      },
     };
   }
 

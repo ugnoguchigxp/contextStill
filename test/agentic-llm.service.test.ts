@@ -1,7 +1,9 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { groupedConfig } from "../src/config.js";
 import {
   checkAgenticLlmHealth,
   checkDistillationLlmHealth,
+  checkLlmProviderHealthMatrix,
   getAgenticLlmProviders,
 } from "../src/modules/llm/agentic-llm.service.js";
 import { recordLlmUsage } from "../src/modules/llm/llm-usage-logger.js";
@@ -29,6 +31,7 @@ vi.mock("../src/modules/llm/providers/local-llm.provider.js", () => ({
 describe("agentic-llm service tests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    groupedConfig.azureOpenAi.deployments = [];
   });
 
   const mockProvider = (name: string, configured: boolean, reachable: boolean, error?: string) => {
@@ -112,6 +115,75 @@ describe("agentic-llm service tests", () => {
     expect(recordLlmUsage).toHaveBeenCalledTimes(1);
   });
 
+  test("checkLlmProviderHealthMatrix reports configured providers and Azure deployments", async () => {
+    groupedConfig.azureOpenAi.deployments = [
+      {
+        apiKey: "first-key",
+        apiBaseUrl: "https://first.openai.azure.com",
+        apiPath: "/openai/deployments",
+        model: "gpt-5-mini",
+        apiVersion: "2025-04-01-preview",
+      },
+      {
+        apiKey: "second-key",
+        apiBaseUrl: "https://second.openai.azure.com",
+        apiPath: "/openai/deployments",
+        model: "gpt-5-mini",
+        apiVersion: "2025-04-01-preview",
+      },
+    ];
+    vi.mocked(createOpenAiProvider).mockReturnValue(mockProvider("openai", false, false) as any);
+    vi.mocked(createAzureOpenAiProvider).mockImplementation(
+      (options?: { deploymentIndex?: number }) =>
+        mockProvider(
+          "azure-openai",
+          true,
+          options?.deploymentIndex !== 1,
+          options?.deploymentIndex === 1 ? "DeploymentNotFound" : undefined,
+        ) as any,
+    );
+    vi.mocked(createBedrockProvider).mockReturnValue(
+      mockProvider("bedrock", false, false, "bedrock unavailable") as any,
+    );
+    vi.mocked(createLocalLlmProvider).mockReturnValue(mockProvider("local-llm", true, true) as any);
+
+    const health = await checkLlmProviderHealthMatrix(2000, {
+      selectedProvider: "azure-openai",
+      routeOrder: ["azure-openai", "local-llm"],
+    });
+
+    expect(health).toHaveLength(3);
+    expect(health.map((item) => item.id)).toEqual([
+      "azure-openai:1",
+      "azure-openai:2",
+      "local-llm",
+    ]);
+    expect(health[0]).toMatchObject({
+      label: "Azure OpenAI #1",
+      configured: true,
+      reachable: true,
+      selected: true,
+      routeOrder: 0,
+      deploymentIndex: 1,
+    });
+    expect(health[1]).toMatchObject({
+      label: "Azure OpenAI #2",
+      configured: true,
+      reachable: false,
+      error: "DeploymentNotFound",
+      selected: true,
+      routeOrder: 0,
+      deploymentIndex: 2,
+    });
+    expect(health[2]).toMatchObject({
+      provider: "local-llm",
+      configured: true,
+      reachable: true,
+      selected: false,
+      routeOrder: 1,
+    });
+  });
+
   describe("checkAgenticLlmHealth fallback logic", () => {
     test("returns first configured and reachable provider", async () => {
       // OpenAI and Azure are unconfigured; bedrock is configured & reachable, local is unreachable.
@@ -136,7 +208,24 @@ describe("agentic-llm service tests", () => {
       expect(third.healthCheck).not.toHaveBeenCalled(); // short-circuited
     });
 
-    test("stops immediately if non-auto setting provider is unreachable", async () => {
+    test("uses configured fallback when non-auto setting provider is unreachable", async () => {
+      const azure = mockProvider("azure-openai", true, false); // configured but unreachable
+      const local = mockProvider("local-llm", true, true);
+
+      vi.mocked(createAzureOpenAiProvider).mockReturnValue(azure as any);
+      vi.mocked(createLocalLlmProvider).mockReturnValue(local as any);
+
+      const health = await checkAgenticLlmHealth("azure-openai", 5000, ["local-llm"]);
+
+      expect(health.reachable).toBe(true);
+      expect(health.selectedProvider).toBe("local-llm");
+      expect(health.providerSetting).toBe("azure-openai");
+      expect(azure.healthCheck).toHaveBeenCalled();
+      expect(local.healthCheck).toHaveBeenCalled();
+      expect(health.fallbackOrder).toEqual(["azure-openai", "local-llm"]);
+    });
+
+    test("returns selected non-auto provider when no fallback is reachable", async () => {
       const azure = mockProvider("azure-openai", true, false); // configured but unreachable
 
       vi.mocked(createAzureOpenAiProvider).mockReturnValue(azure as any);
@@ -221,6 +310,22 @@ describe("agentic-llm service tests", () => {
 
       expect(health.configured).toBe(false);
       expect(health.error).toBe("No configured provider in distillation fallback chain");
+    });
+
+    test("uses configured distillation fallback when primary provider is unreachable", async () => {
+      const local = mockProvider("local-llm", true, false);
+      const azure = mockProvider("azure-openai", true, true);
+
+      vi.mocked(createLocalLlmProvider).mockReturnValue(local as any);
+      vi.mocked(createAzureOpenAiProvider).mockReturnValue(azure as any);
+
+      const health = await checkDistillationLlmHealth("local-llm", 5000, ["azure-openai"]);
+
+      expect(health.reachable).toBe(true);
+      expect(health.selectedProvider).toBe("azure-openai");
+      expect(local.healthCheck).toHaveBeenCalled();
+      expect(azure.healthCheck).toHaveBeenCalled();
+      expect(health.fallbackOrder).toEqual(["local-llm", "azure-openai"]);
     });
   });
 });

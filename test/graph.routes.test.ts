@@ -551,5 +551,4 @@ describe("graph routes landscape", () => {
       error: "invalid link status transition: finalized -> approved",
     });
   });
-
 });

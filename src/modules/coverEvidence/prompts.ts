@@ -1,12 +1,50 @@
 import { groupedConfig } from "../../config.js";
-import { buildCoverEvidenceSearchQuery } from "./search-query.service.js";
-import type { McpEvidenceToolName } from "./mcp-evidence.service.js";
 import {
+  type CoverEvidenceSourceContext,
   applicabilityInstructions,
   procedureBodyInstructions,
-  type CoverEvidenceSourceContext,
 } from "./helpers.js";
+import type { McpEvidenceToolName } from "./mcp-evidence.service.js";
+import { buildCoverEvidenceSearchQuery } from "./search-query.service.js";
 import type { CoverEvidenceCandidate, CoverEvidenceReference } from "./types.js";
+
+const MAX_VALUE_ASSESSMENT_SOURCE_CHARS = 1000;
+
+function compactJson(value: unknown): string {
+  return JSON.stringify(value);
+}
+
+function compactReferences(references: CoverEvidenceReference[]): Array<{
+  kind: CoverEvidenceReference["kind"];
+  uri: string;
+  locator?: string;
+  title?: string;
+  evidenceRole: CoverEvidenceReference["evidenceRole"];
+}> {
+  return references.map((reference) => ({
+    kind: reference.kind,
+    uri: reference.uri,
+    ...(reference.locator ? { locator: reference.locator } : {}),
+    ...(reference.title ? { title: reference.title } : {}),
+    evidenceRole: reference.evidenceRole,
+  }));
+}
+
+function compactSourceContext(context: CoverEvidenceSourceContext): {
+  targetKind: CoverEvidenceSourceContext["targetKind"];
+  sourceUri: string;
+  readRanges: CoverEvidenceSourceContext["readRanges"];
+} {
+  return {
+    targetKind: context.targetKind,
+    sourceUri: context.sourceUri,
+    readRanges: context.readRanges,
+  };
+}
+
+function compactSourceEvidence(value: string): string {
+  return value.replace(/\s+/g, " ").trim().slice(0, MAX_VALUE_ASSESSMENT_SOURCE_CHARS);
+}
 
 export function applicabilityBlankResponseReminderLines(
   stage: "web" | "final",
@@ -62,21 +100,38 @@ export function externalEvidenceUserPrompt(params: {
 }
 
 export function valueAssessmentSystemPrompt(): string {
+  /*
+   * Previous known-good full prompt, retained as the rollback reference:
+   * [
+   *   "あなたは coverEvidence の knowledge value 判定器です。",
+   *   "候補が次回以降の coding agent に再利用可能な rule/procedure かを判定してください。",
+   *   "入力 candidate.type は暫定ヒントです。最終 JSON では type を独立に再分類してください。",
+   *   "procedure は順序付き作業、コマンドフロー、検証/復旧/レビューの再利用可能な手順です。",
+   *   "rule は持続的な制約・方針・不変条件・意思決定です。",
+   *   "手順・運用フロー・レビュー手順を小さな rule に分解して返さないでください。",
+   *   ...procedureBodyInstructions(),
+   *   ...applicabilityInstructions(),
+   *   "候補が source excerpt で支えられるかも検証し、source から支えられない場合は status を insufficient、reason を unsupported_by_source にしてください。",
+   *   "importance と confidence は 0 から 100 目安の数値です。未確定なら省略して構いません。",
+   *   `importance が ${groupedConfig.distillation.lowImportanceRejectThreshold} 以下なら status は insufficient、reason は low_importance にしてください。`,
+   *   "JSON は次の形を基本にしてください。applicability field は任意で、省略しても構いません:",
+   *   '{"schemaVersion":1,"status":"knowledge_ready|insufficient","stage":"final","type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80,"technologies":"...","changeTypes":"...","domains":"...","applicabilityGeneral":false,"references":[],"duplicateRefs":[],"toolEvents":[],"reason":null}',
+   *   "insufficient の場合は title/body/type/importance/confidence を省略して構いません。",
+   * ].join("\n");
+   */
   return [
     "あなたは coverEvidence の knowledge value 判定器です。",
-    "候補が次回以降の coding agent に再利用可能な rule/procedure かを判定してください。",
-    "入力 candidate.type は暫定ヒントです。最終 JSON では type を独立に再分類してください。",
-    "procedure は順序付き作業、コマンドフロー、検証/復旧/レビューの再利用可能な手順です。",
-    "rule は持続的な制約・方針・不変条件・意思決定です。",
-    "手順・運用フロー・レビュー手順を小さな rule に分解して返さないでください。",
-    ...procedureBodyInstructions(),
-    ...applicabilityInstructions(),
-    "候補が source excerpt で支えられるかも検証し、source から支えられない場合は status を insufficient、reason を unsupported_by_source にしてください。",
-    "importance と confidence は 0 から 100 目安の数値です。未確定なら省略して構いません。",
+    "candidate が次回以降の coding agent に再利用可能で、source evidence に支えられるかだけを判定してください。",
+    "candidate.type はヒントです。必要なら rule/procedure を再分類してください。",
+    "rule は持続的な制約・方針・不変条件・意思決定です。単独の判断や禁止事項は rule にしてください。",
+    "procedure は順序付き作業、コマンドフロー、検証/復旧/レビュー手順です。2 step 以上の workflow と確認方法が source evidence から言える場合だけ procedure にしてください。",
+    "procedure body は Markdown で Use when:, Workflow:, Verification:, Avoid: を含めてください。構成できない場合は rule か insufficient にしてください。",
+    "source evidence で支えられない場合は status=insufficient、reason=unsupported_by_source にしてください。",
     `importance が ${groupedConfig.distillation.lowImportanceRejectThreshold} 以下なら status は insufficient、reason は low_importance にしてください。`,
-    "JSON は次の形を基本にしてください。applicability field は任意で、省略しても構いません:",
+    "applicability metadata は source/candidate から明示できる場合だけ返してください。対象 field は technologies, changeTypes, domains, repoPath, repoKey, applicabilityGeneral です。不明なら省略してください。",
+    "JSON だけを返してください。基本形:",
     '{"schemaVersion":1,"status":"knowledge_ready|insufficient","stage":"final","type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80,"technologies":"...","changeTypes":"...","domains":"...","applicabilityGeneral":false,"references":[],"duplicateRefs":[],"toolEvents":[],"reason":null}',
-    "insufficient の場合は title/body/type/importance/confidence を省略して構いません。",
+    "insufficient の場合は status/stage/reason だけでも構いません。",
   ].join("\n");
 }
 
@@ -89,13 +144,13 @@ export function valueAssessmentUserPrompt(params: {
   return [
     "候補の value と source support を判定してください。",
     "候補:",
-    JSON.stringify(params.candidate, null, 2),
+    compactJson(params.candidate),
     "source references:",
-    JSON.stringify(params.sourceReferences, null, 2),
+    compactJson(compactReferences(params.sourceReferences)),
     "system/source metadata:",
-    JSON.stringify(params.sourceContext, null, 2),
-    "source excerpt:",
-    params.sourceContentExcerpt.slice(0, 6000),
+    compactJson(compactSourceContext(params.sourceContext)),
+    "source evidence summary/excerpt:",
+    compactSourceEvidence(params.sourceContentExcerpt),
   ].join("\n\n");
 }
 

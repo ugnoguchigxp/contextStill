@@ -17,15 +17,24 @@ export type CandidateRecord = {
   type?: CandidateKnowledgeType;
   title: string;
   content: string;
+  sourceSummary?: string;
 };
 
 export type CandidateOrigin = {
   candidateType?: CandidateKnowledgeType;
+  sourceSummary?: string;
   readRanges: Array<{
     from: number;
     toExclusive: number;
   }>;
 };
+
+const MAX_SOURCE_SUMMARY_CHARS = 1000;
+
+function normalizeSourceSummary(value: string | undefined): string | undefined {
+  const summary = value?.replace(/\s+/g, " ").trim();
+  return summary ? summary.slice(0, MAX_SOURCE_SUMMARY_CHARS) : undefined;
+}
 
 export async function getFindCandidateResultById(
   id: string,
@@ -97,6 +106,7 @@ export async function insertFindCandidateResult(params: {
   candidate: CandidateRecord;
   origin: CandidateOrigin;
 }): Promise<FindCandidateBaseRow> {
+  const sourceSummary = normalizeSourceSummary(params.candidate.sourceSummary);
   const [row] = await db
     .insert(findCandidateResults)
     .values({
@@ -107,6 +117,7 @@ export async function insertFindCandidateResult(params: {
       origin: {
         ...params.origin,
         ...(params.candidate.type ? { candidateType: params.candidate.type } : {}),
+        ...(sourceSummary ? { sourceSummary } : {}),
       },
       status: "selected",
       updatedAt: new Date(),

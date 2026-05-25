@@ -11,13 +11,13 @@ import {
   runDistillationCompletion,
 } from "../distillation/distillation-runtime.service.js";
 import type { DistillationToolCall } from "../distillation/distillation-tools.service.js";
+import { readVibeMemoryByTokenWindow } from "../memoryReader/reader.service.js";
+import { readFileDomain } from "../readFile/domain.js";
+import { getDistillationTargetStateById } from "../selectDistillationTarget/repository.js";
 import {
   ensureRuntimeSettingsLoaded,
   resolveFindCandidateRoute,
 } from "../settings/settings.service.js";
-import { readVibeMemoryByTokenWindow } from "../memoryReader/reader.service.js";
-import { readFileDomain } from "../readFile/domain.js";
-import { getDistillationTargetStateById } from "../selectDistillationTarget/repository.js";
 import { parseStorageCandidatesFromLlmOutput } from "./parser.js";
 import {
   type CandidateOrigin,
@@ -168,13 +168,15 @@ function commonCandidateRules(): string[] {
     "- 単独の判断、制約、使うべき API/コマンド、避けるべき実装方針は procedure ではなく rule",
     "- procedure は 2 step 以上の workflow と成功確認まで書ける候補だけにする",
     "- procedure の content には、最終工程で SKILL.md 風に展開できるよう、使う場面・順序・確認方法・避けることの根拠を含める",
+    "- 各候補には sourceSummary を含め、候補を支える source content の該当部分を 1000 文字以内で要約する",
+    "- sourceSummary は source から確認できる根拠だけにし、推測や候補 content の言い換えで水増ししない",
     "- 候補件数は内容に応じて決める。件数合わせはしない",
     "最終出力は JSON のみで返してください。",
     "候補がある場合は単体オブジェクトまたは配列のどちらでも構いません。",
-    '{"type":"rule|procedure","title":"...","content":"..."}',
-    '[{"type":"rule|procedure","title":"...","content":"..."}]',
+    '{"type":"rule|procedure","title":"...","content":"...","sourceSummary":"..."}',
+    '[{"type":"rule|procedure","title":"...","content":"...","sourceSummary":"..."}]',
     "候補がない場合は [] を返してください。",
-    "必須 field を増やさず、type/title/content 以外は省略してください。",
+    "type/title/content/sourceSummary 以外の field は省略してください。",
   ];
 }
 
@@ -261,6 +263,7 @@ export function formatCliTextCandidates(candidates: CandidateRecord[]): string {
         ...(candidate.type ? [`TYPE: ${candidate.type}`] : []),
         `TITLE: ${candidate.title}`,
         `CONTENT:\n${candidate.content}`,
+        ...(candidate.sourceSummary ? [`SOURCE_SUMMARY:\n${candidate.sourceSummary}`] : []),
       ].join("\n"),
     )
     .join("\n---\n");

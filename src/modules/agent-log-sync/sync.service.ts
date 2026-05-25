@@ -7,9 +7,7 @@ import {
   cleanupExpiredAuditLogsSafe,
   recordAuditLogSafe,
 } from "../audit/audit-log.service.js";
-import {
-  normalizeAgentDiffEntries,
-} from "../vibe-memory/agent-diff-ingestion.service.js";
+import { normalizeAgentDiffEntries } from "../vibe-memory/agent-diff-ingestion.service.js";
 import {
   type ChatMessage,
   type IngestCursor,

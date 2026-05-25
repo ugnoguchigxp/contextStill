@@ -1,5 +1,5 @@
 import { compileRunDetailSchema } from "../../src/shared/schemas/compile-run.schema.js";
-import { type ContextPack } from "../../src/shared/schemas/context-pack.schema.js";
+import type { ContextPack } from "../../src/shared/schemas/context-pack.schema.js";
 import {
   type DoctorAiServiceToolsDomain,
   type DoctorCoreInfrastructureDomain,
@@ -124,6 +124,20 @@ export const validDoctorReport: DoctorReport = {
     reachable: true,
     model: "gpt-5-4-mini",
     endpoint: "https://test.openai.azure.com",
+    providerHealth: [
+      {
+        id: "azure-openai:1",
+        label: "Azure OpenAI #1",
+        provider: "azure-openai",
+        configured: true,
+        reachable: true,
+        model: "gpt-5-4-mini",
+        endpoint: "https://test.openai.azure.com",
+        deploymentIndex: 1,
+        selected: true,
+        routeOrder: 0,
+      },
+    ],
   },
   tables: {
     expected: ["knowledge_items"],
@@ -504,6 +518,7 @@ export const validOverviewLandscapeHealth = overviewLandscapeHealthDomainSchema.
 export const validOverviewSystemQuality = overviewSystemQualityDomainSchema.parse({
   checkedAt: validOverviewDashboard.checkedAt,
   kpis: validOverviewDashboard.kpis,
+  compileRunHealth: validDoctorReport.runs,
   charts: validOverviewDashboard.charts,
   searchApiStatus: validOverviewDashboard.searchApiStatus,
 });

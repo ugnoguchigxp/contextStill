@@ -6,7 +6,9 @@ import {
   insertContextPackItems,
   updateCompileRunSnapshot,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
+import { agenticRefine } from "../src/modules/context-compiler/agentic-refine.service.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
+import { composeContextResponse } from "../src/modules/context-compiler/context-response-composer.service.js";
 import { recordCompileRunKnowledgeUsageSignals } from "../src/modules/knowledge/knowledge-feedback.service.js";
 import { recordKnowledgeCompileSelectionSafe } from "../src/modules/knowledge/knowledge-value.service.js";
 import { retrieveKnowledge } from "../src/modules/knowledge/knowledge.service.js";
@@ -256,6 +258,108 @@ describe("Context Compiler Service", () => {
     expect(pack.diagnostics.degradedReasons).toContain("NO_SOURCE_MATCH");
     expect(reasonBuckets.blocking).not.toContain("NO_SOURCE_MATCH");
     expect(reasonBuckets.maintenanceWarnings).toContain("NO_SOURCE_MATCH");
+  });
+
+  test("keeps agentic refine failures non-blocking when ranked knowledge is usable", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [
+        {
+          id: "k1",
+          type: "rule",
+          status: "active",
+          title: "Useful rule",
+          body: "Use the ranked fallback when agentic refinement is unavailable.",
+          score: 0.9,
+          sourceRefs: [],
+          hasSourceLinks: false,
+        },
+      ],
+      degradedReasons: [],
+      stats: {
+        textHitCount: 1,
+        vectorHitCount: 0,
+        mergedCount: 1,
+        textFailed: false,
+        vectorFailed: false,
+        embeddingStatus: "generated",
+        scopedSearch: false,
+        repoScopeFallbackUsed: false,
+        queryText: "goal",
+      },
+    } as any);
+    vi.mocked(agenticRefine).mockResolvedValueOnce({
+      items: [
+        {
+          id: "k1",
+          type: "rule",
+          status: "active",
+          title: "Useful rule",
+          content: "Use the ranked fallback when agentic refinement is unavailable.",
+          score: 0.9,
+          sourceRefs: [],
+        },
+      ],
+      agenticUsed: false,
+      error: "AGENTIC_REFINE_FAILED: azure-openai:The operation was aborted.",
+    });
+
+    const { pack } = await compileContextPack({ goal: "agentic fallback with useful knowledge" });
+    const reasonBuckets = pack.diagnostics.retrievalStats.reasonBuckets as {
+      blocking: string[];
+      maintenanceWarnings: string[];
+    };
+    expect(pack.status).toBe("ok");
+    expect(pack.diagnostics.degradedReasons).toContain("AGENTIC_REFINE_FAILED");
+    expect(reasonBuckets.blocking).not.toContain("AGENTIC_REFINE_FAILED");
+    expect(reasonBuckets.maintenanceWarnings).toContain("AGENTIC_REFINE_FAILED");
+  });
+
+  test("keeps response composer failures non-blocking when pack items are usable", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [
+        {
+          id: "k1",
+          type: "procedure",
+          status: "active",
+          title: "Useful procedure",
+          body: "Use when fallback pack rendering is enough.\nWorkflow:\n1. Keep the selected pack items.\nVerification:\n- Pack status remains usable.\nAvoid:\n- Treating composer failure as no content.",
+          score: 0.9,
+          sourceRefs: [],
+          hasSourceLinks: false,
+        },
+      ],
+      degradedReasons: [],
+      stats: {
+        textHitCount: 1,
+        vectorHitCount: 0,
+        mergedCount: 1,
+        textFailed: false,
+        vectorFailed: false,
+        embeddingStatus: "generated",
+        scopedSearch: false,
+        repoScopeFallbackUsed: false,
+        queryText: "goal",
+      },
+    } as any);
+    vi.mocked(composeContextResponse).mockResolvedValueOnce({
+      markdown: "",
+      agenticUsed: false,
+      usedKnowledge: [],
+      error: "CONTEXT_RESPONSE_COMPOSE_FAILED: The operation was aborted.",
+    });
+
+    const { pack, markdown } = await compileContextPack({
+      goal: "composer fallback with useful knowledge",
+    });
+    const reasonBuckets = pack.diagnostics.retrievalStats.reasonBuckets as {
+      blocking: string[];
+      maintenanceWarnings: string[];
+    };
+    expect(pack.status).toBe("ok");
+    expect(markdown).toBe("# Pack Content");
+    expect(pack.diagnostics.degradedReasons).toContain("CONTEXT_RESPONSE_COMPOSE_FAILED");
+    expect(reasonBuckets.blocking).not.toContain("CONTEXT_RESPONSE_COMPOSE_FAILED");
+    expect(reasonBuckets.maintenanceWarnings).toContain("CONTEXT_RESPONSE_COMPOSE_FAILED");
   });
 
   test("records compile usage signals from composed response", async () => {

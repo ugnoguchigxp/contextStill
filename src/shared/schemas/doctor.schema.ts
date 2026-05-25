@@ -124,6 +124,20 @@ export const doctorDistillationHealthSchema = z.object({
   nextActions: z.array(z.string()),
 });
 
+const llmProviderHealthSchema = z.object({
+  id: z.string(),
+  label: z.string(),
+  provider: z.enum(["openai", "azure-openai", "bedrock", "local-llm"]),
+  configured: z.boolean(),
+  reachable: z.boolean(),
+  model: z.string(),
+  endpoint: z.string(),
+  error: z.string().optional(),
+  deploymentIndex: z.number().int().positive().optional(),
+  selected: z.boolean().default(false),
+  routeOrder: z.number().int().nonnegative().nullable().default(null),
+});
+
 export const doctorReportSchema = z.object({
   status: doctorStatusSchema,
   checkedAt: z.string().datetime(),
@@ -165,6 +179,7 @@ export const doctorReportSchema = z.object({
     model: z.string(),
     endpoint: z.string(),
     error: z.string().optional(),
+    providerHealth: z.array(llmProviderHealthSchema).default([]),
   }),
   tables: z.object({
     expected: z.array(z.string()),
@@ -239,6 +254,8 @@ export const doctorReportSchema = z.object({
         id: z.string(),
         lastSyncedAt: z.string().datetime().nullable(),
         lastSyncedAgeMinutes: z.number().nonnegative().nullable(),
+        lastCheckedAt: z.string().datetime().nullable().optional(),
+        lastCheckedAgeMinutes: z.number().nonnegative().nullable().optional(),
         cursorFiles: z.number().int().nonnegative(),
         skipped: z.boolean(),
         warnings: z.array(z.string()),

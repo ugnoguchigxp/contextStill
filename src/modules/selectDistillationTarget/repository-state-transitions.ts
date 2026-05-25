@@ -4,10 +4,7 @@ import { db } from "../../db/index.js";
 import { distillationTargetStates } from "../../db/schema.js";
 import { redactSecretRecord, redactSecrets } from "../../shared/utils/secret-redaction.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
-import type {
-  DistillationTargetPhase,
-  DistillationTargetStatus,
-} from "./domain.js";
+import type { DistillationTargetPhase, DistillationTargetStatus } from "./domain.js";
 import {
   DEFAULT_DISTILLATION_TARGET_VERSION,
   type DistillationTargetStateRow,

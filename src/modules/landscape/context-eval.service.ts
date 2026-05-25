@@ -79,7 +79,11 @@ export type ContextEvalReport = {
   highChurnRuns: ContextEvalRunSummary[];
   noCurrentMatchRuns: ContextEvalRunSummary[];
   recommendedNextAction: {
-    strategy: "observe_only" | "retain_used_baseline" | "repel_negative_candidates" | "diversity_exploration";
+    strategy:
+      | "observe_only"
+      | "retain_used_baseline"
+      | "repel_negative_candidates"
+      | "diversity_exploration";
     candidateRunCount: number;
     reason: string;
     productionEnabled: false;
@@ -152,7 +156,7 @@ async function buildReplayComparisonReadOnly(
     return await buildLandscapeReplayComparison(input);
   } finally {
     if (previous === undefined) {
-      delete process.env.LANDSCAPE_SNAPSHOT_CACHE_ENABLED;
+      process.env.LANDSCAPE_SNAPSHOT_CACHE_ENABLED = undefined;
     } else {
       process.env.LANDSCAPE_SNAPSHOT_CACHE_ENABLED = previous;
     }
@@ -182,12 +186,20 @@ export async function buildContextEvalReportFromReplay(
   );
   const usedBaselineTotalItemCount = usedBaselineRetainedItemCount + usedBaselineLostItemCount;
   const negativeBaselineItemCount = runs.reduce(
-    (sum, run) => sum + run.offTopicBaselineKnowledgeIds.length + run.wrongBaselineKnowledgeIds.length,
+    (sum, run) =>
+      sum + run.offTopicBaselineKnowledgeIds.length + run.wrongBaselineKnowledgeIds.length,
     0,
   );
-  const negativeReselectedItemCount = runs.reduce((sum, run) => sum + negativeReselectedCount(run), 0);
-  const degradedCurrentRunCount = runs.filter((run) => run.currentDegradedReasons.length > 0).length;
-  const noContentRunCount = runs.filter((run) => includesNoContent(run.currentDegradedReasons)).length;
+  const negativeReselectedItemCount = runs.reduce(
+    (sum, run) => sum + negativeReselectedCount(run),
+    0,
+  );
+  const degradedCurrentRunCount = runs.filter(
+    (run) => run.currentDegradedReasons.length > 0,
+  ).length;
+  const noContentRunCount = runs.filter((run) =>
+    includesNoContent(run.currentDegradedReasons),
+  ).length;
   const unstableRunCount = runs.filter(
     (run) => run.currentDegradedReasons.length > 0 || run.comparison === "no_current_match",
   ).length;
@@ -224,13 +236,17 @@ export async function buildContextEvalReportFromReplay(
   const highChurnRuns = runs
     .filter(
       (run) =>
-        run.replacementRate >= HIGH_CHURN_REPLACEMENT_RATE && run.newlyRetrievedKnowledgeIds.length > 0,
+        run.replacementRate >= HIGH_CHURN_REPLACEMENT_RATE &&
+        run.newlyRetrievedKnowledgeIds.length > 0,
     )
     .map(runSummary)
     .slice(0, maxRiskyRuns);
 
   const noCurrentMatchRuns = runs
-    .filter((run) => run.comparison === "no_current_match" || run.currentRetrievedKnowledgeIds.length === 0)
+    .filter(
+      (run) =>
+        run.comparison === "no_current_match" || run.currentRetrievedKnowledgeIds.length === 0,
+    )
     .map(runSummary)
     .slice(0, maxRiskyRuns);
 

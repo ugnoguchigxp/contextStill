@@ -24,6 +24,14 @@ export function metadataSkipped(raw: unknown): boolean {
   return Boolean((raw as { skipped?: unknown }).skipped);
 }
 
+export function metadataSyncedAt(raw: unknown): string | null {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return null;
+  const syncedAt = (raw as { syncedAt?: unknown }).syncedAt;
+  if (typeof syncedAt !== "string") return null;
+  const timestamp = Date.parse(syncedAt);
+  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
+}
+
 export type ReasonCount = {
   reason: string;
   count: number;

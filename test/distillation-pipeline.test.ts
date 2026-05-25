@@ -5,9 +5,11 @@ import { runDistillationPipeline } from "../src/modules/distillationPipeline/run
 const mocks = vi.hoisted(() => ({
   refreshDistillationTargetInventory: vi.fn(),
   recoverStaleDistillationTargets: vi.fn(),
+  recoverOrphanedRunningDistillationTargets: vi.fn(),
   releaseRetryablePausedDistillationTargets: vi.fn(),
   claimDistillationTargetStateById: vi.fn(),
   claimNextDistillationTargetState: vi.fn(),
+  claimNextCoverEvidenceTargetState: vi.fn(),
   findNextFindCandidateTargetState: vi.fn(),
   claimFindCandidateTargetStateById: vi.fn(),
   hasRunningFindCandidateTargetState: vi.fn(),
@@ -38,9 +40,11 @@ vi.mock("../src/modules/selectDistillationTarget/inventory.service.js", () => ({
 vi.mock("../src/modules/selectDistillationTarget/repository.js", () => ({
   DEFAULT_DISTILLATION_TARGET_VERSION: "test-version",
   recoverStaleDistillationTargets: mocks.recoverStaleDistillationTargets,
+  recoverOrphanedRunningDistillationTargets: mocks.recoverOrphanedRunningDistillationTargets,
   releaseRetryablePausedDistillationTargets: mocks.releaseRetryablePausedDistillationTargets,
   claimDistillationTargetStateById: mocks.claimDistillationTargetStateById,
   claimNextDistillationTargetState: mocks.claimNextDistillationTargetState,
+  claimNextCoverEvidenceTargetState: mocks.claimNextCoverEvidenceTargetState,
   findNextFindCandidateTargetState: mocks.findNextFindCandidateTargetState,
   claimFindCandidateTargetStateById: mocks.claimFindCandidateTargetStateById,
   hasRunningFindCandidateTargetState: mocks.hasRunningFindCandidateTargetState,
@@ -122,9 +126,11 @@ describe("runDistillationPipeline", () => {
     groupedConfig.distillation.coverEvidenceConcurrency = 1;
     mocks.refreshDistillationTargetInventory.mockResolvedValue({});
     mocks.recoverStaleDistillationTargets.mockResolvedValue({});
+    mocks.recoverOrphanedRunningDistillationTargets.mockResolvedValue({});
     mocks.releaseRetryablePausedDistillationTargets.mockResolvedValue({});
     mocks.claimDistillationTargetStateById.mockResolvedValue(null);
     mocks.claimNextDistillationTargetState.mockResolvedValue(targetRow());
+    mocks.claimNextCoverEvidenceTargetState.mockResolvedValue(null);
     mocks.findNextFindCandidateTargetState.mockResolvedValue(null);
     mocks.claimFindCandidateTargetStateById.mockResolvedValue(null);
     mocks.hasRunningFindCandidateTargetState.mockResolvedValue(false);
@@ -222,7 +228,24 @@ describe("runDistillationPipeline", () => {
     );
   });
 
-  test("runs one background findCandidate target beside the primary pipeline", async () => {
+  test("passes single-provider mode to coverEvidence runner when requested", async () => {
+    await runDistillationPipeline({
+      write: true,
+      refresh: false,
+      limit: 1,
+      provider: "local-llm",
+      providerFallbackMode: "single",
+    });
+
+    expect(mocks.runCoverEvidenceForCandidate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "local-llm",
+        providerFallbackMode: "single",
+      }),
+    );
+  });
+
+  test("runs one background findCandidate target before the primary pipeline", async () => {
     const primaryTarget = targetRow({
       id: "target-main",
       targetKind: "knowledge_candidate",
@@ -436,7 +459,7 @@ describe("runDistillationPipeline", () => {
     });
   });
 
-  test("pauses target when retryable cover evidence remains and nothing becomes ready", async () => {
+  test("reruns retryable cover evidence before deciding whether to pause again", async () => {
     mocks.listFindCandidateResultsByTargetStateId.mockResolvedValue([
       {
         id: "candidate-1",
@@ -472,13 +495,33 @@ describe("runDistillationPipeline", () => {
       reason: "reprocess_requested:procedure_body_not_actionable",
     });
 
+    mocks.runCoverEvidenceForCandidate.mockResolvedValueOnce({
+      coverEvidenceResultId: "candidate-1",
+      findCandidateId: "candidate-1",
+      status: "tool_failed",
+      stage: "web",
+      retryable: true,
+      reason: "external_tool_failed",
+    });
+
     const result = await runDistillationPipeline({ write: true, refresh: false, limit: 1 });
 
-    expect(mocks.runCoverEvidenceForCandidate).not.toHaveBeenCalled();
+    expect(mocks.runCoverEvidenceForCandidate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        targetStateId: "target-1",
+        findCandidateId: "candidate-1",
+        forceRefreshEvidence: undefined,
+      }),
+    );
     expect(result.results[0]).toMatchObject({
       status: "paused",
       outcomeKind: "cover_evidence_retryable",
     });
+    expect(mocks.pauseDistillationTargetState).toHaveBeenCalledWith(
+      expect.objectContaining({
+        reason: "cover_evidence_retryable",
+        retryDelaySeconds: 0,
+      }),
+    );
   });
-
 });

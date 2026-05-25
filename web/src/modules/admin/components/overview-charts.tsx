@@ -20,6 +20,8 @@ import type {
 } from "../repositories/admin.repository";
 import { AdminChartCard } from "./admin-chart-card";
 
+type CompileRunHealth = OverviewSystemQualityDomain["compileRunHealth"];
+
 const knowledgeStatusLabel: Record<"active" | "draft" | "deprecated", string> = {
   active: "active",
   draft: "draft",
@@ -85,38 +87,37 @@ function formatDurationSeconds(value: number | null | undefined): string {
   return `${(value / 1000).toFixed(1)}s`;
 }
 
-function compileMixData(report: DoctorReport | null | undefined) {
-  if (!report) return [];
+function compileMixData(runHealth: CompileRunHealth) {
   return [
     {
       label: "usable",
-      count: report.runs.usableRuns ?? 0,
-      rate: toPercent(report.runs.usableRate),
+      count: runHealth.usableRuns ?? 0,
+      rate: toPercent(runHealth.usableRate),
       color: "#16a34a",
     },
     {
       label: "warning",
-      count: report.runs.warningOnlyRuns ?? 0,
-      rate: toPercent(report.runs.warningOnlyRate),
+      count: runHealth.warningOnlyRuns ?? 0,
+      rate: toPercent(runHealth.warningOnlyRate),
       color: "#f59e0b",
     },
     {
       label: "blocking",
-      count: report.runs.blockingRuns ?? 0,
-      rate: toPercent(report.runs.blockingRate),
+      count: runHealth.blockingRuns ?? 0,
+      rate: toPercent(runHealth.blockingRate),
       color: "#dc2626",
     },
     {
       label: "no content",
-      count: report.runs.noContentRuns ?? 0,
-      rate: toPercent(report.runs.noContentRate),
+      count: runHealth.noContentRuns ?? 0,
+      rate: toPercent(runHealth.noContentRate),
       color: "#64748b",
     },
   ];
 }
 
-function compileLatencyData(report: DoctorReport | null | undefined) {
-  const samples = report?.runs.durationSamples ?? [];
+function compileLatencyData(runHealth: CompileRunHealth) {
+  const samples = runHealth.durationSamples ?? [];
   if (samples.length === 0) return [];
   const maxBucketSec = Math.max(
     1,
@@ -265,21 +266,19 @@ export function KnowledgeCharts({
 
 export function SystemHealthCharts({
   dashboard,
-  doctorReport,
 }: {
   dashboard: OverviewSystemQualityDomain;
-  doctorReport?: DoctorReport | null;
 }) {
-  const compileMix = compileMixData(doctorReport);
-  const compileLatency = compileLatencyData(doctorReport);
+  const compileMix = compileMixData(dashboard.compileRunHealth);
+  const compileLatency = compileLatencyData(dashboard.compileRunHealth);
   const queueData = dashboard.charts.distillationQueue.map((item) => ({
     ...item,
     targetLabel: distillationLabel[item.targetKind],
   }));
   const avgLatencyMs =
-    typeof doctorReport?.runs.durationMsAvg === "number" &&
-    Number.isFinite(doctorReport.runs.durationMsAvg)
-      ? Math.round(doctorReport.runs.durationMsAvg)
+    typeof dashboard.compileRunHealth.durationMsAvg === "number" &&
+    Number.isFinite(dashboard.compileRunHealth.durationMsAvg)
+      ? Math.round(dashboard.compileRunHealth.durationMsAvg)
       : null;
   const avgLatencyBucket = averageLatencyBucketLabel(avgLatencyMs);
 

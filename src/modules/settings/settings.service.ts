@@ -1,5 +1,12 @@
 import { APP_CONSTANTS } from "../../constants.js";
 import {
+  bootstrap,
+  cloneDefaultSettings,
+  normalizeDistillationTargetPriorityOrder,
+  parseDocumentValue,
+  secretRowKeys,
+} from "./settings.defaults.js";
+import {
   SETTINGS_DOCUMENT_KEY,
   SETTINGS_DOCUMENT_NAMESPACE,
   SETTINGS_SECRET_NAMESPACE,
@@ -9,22 +16,15 @@ import {
   upsertSettingsRow,
 } from "./settings.repository.js";
 import {
-  bootstrap,
-  cloneDefaultSettings,
-  normalizeDistillationTargetPriorityOrder,
-  parseDocumentValue,
-  secretRowKeys,
-} from "./settings.defaults.js";
-import {
+  type RuntimeSettingsCache,
   applyRuntimeSettingsToProcess,
+  buildRuntimeSettingsView,
   buildSecretMap,
   buildSourceMap,
-  buildRuntimeSettingsView,
   defaultCache,
   maskSecret,
   resolveBedrockCredentialStatus,
   resolveSecretValue,
-  type RuntimeSettingsCache,
 } from "./settings.runtime-cache.js";
 import {
   type DistillationPriorityTargetKind,
@@ -50,6 +50,8 @@ async function loadRuntimeSettingsInternal(): Promise<void> {
   const resolvedSecrets = {
     openaiApiKey: resolveSecretValue("openaiApiKey", secretRowMap.openaiApiKey),
     azureOpenAiApiKey: resolveSecretValue("azureOpenAiApiKey", secretRowMap.azureOpenAiApiKey),
+    azureOpenAiApiKey2: resolveSecretValue("azureOpenAiApiKey2", secretRowMap.azureOpenAiApiKey2),
+    azureOpenAiApiKey3: resolveSecretValue("azureOpenAiApiKey3", secretRowMap.azureOpenAiApiKey3),
     localLlmApiKey: resolveSecretValue("localLlmApiKey", secretRowMap.localLlmApiKey),
     braveApiKey: resolveSecretValue("braveApiKey", secretRowMap.braveApiKey),
     exaApiKey: resolveSecretValue("exaApiKey", secretRowMap.exaApiKey),
@@ -67,6 +69,18 @@ async function loadRuntimeSettingsInternal(): Promise<void> {
       source: resolvedSecrets.azureOpenAiApiKey?.source ?? "none",
       maskedValue: maskSecret(resolvedSecrets.azureOpenAiApiKey?.value),
       updatedAt: resolvedSecrets.azureOpenAiApiKey?.updatedAt ?? null,
+    },
+    azureOpenAiApiKey2: {
+      configured: Boolean(resolvedSecrets.azureOpenAiApiKey2?.value),
+      source: resolvedSecrets.azureOpenAiApiKey2?.source ?? "none",
+      maskedValue: maskSecret(resolvedSecrets.azureOpenAiApiKey2?.value),
+      updatedAt: resolvedSecrets.azureOpenAiApiKey2?.updatedAt ?? null,
+    },
+    azureOpenAiApiKey3: {
+      configured: Boolean(resolvedSecrets.azureOpenAiApiKey3?.value),
+      source: resolvedSecrets.azureOpenAiApiKey3?.source ?? "none",
+      maskedValue: maskSecret(resolvedSecrets.azureOpenAiApiKey3?.value),
+      updatedAt: resolvedSecrets.azureOpenAiApiKey3?.updatedAt ?? null,
     },
     localLlmApiKey: {
       configured: Boolean(resolvedSecrets.localLlmApiKey?.value),
@@ -115,6 +129,12 @@ export async function ensureRuntimeSettingsLoaded(): Promise<void> {
           : null,
         azureOpenAiApiKey: fallback.view.providers["azure-openai"].apiKeySecret.configured
           ? { value: bootstrap.secrets.azureOpenAiApiKey ?? "", source: "env", updatedAt: null }
+          : null,
+        azureOpenAiApiKey2: fallback.view.providers["azure-openai"].apiKeySecrets[1]?.configured
+          ? { value: bootstrap.secrets.azureOpenAiApiKey2 ?? "", source: "env", updatedAt: null }
+          : null,
+        azureOpenAiApiKey3: fallback.view.providers["azure-openai"].apiKeySecrets[2]?.configured
+          ? { value: bootstrap.secrets.azureOpenAiApiKey3 ?? "", source: "env", updatedAt: null }
           : null,
         localLlmApiKey: fallback.view.providers["local-llm"].apiKeySecret.configured
           ? { value: bootstrap.secrets.localLlmApiKey ?? "", source: "env", updatedAt: null }

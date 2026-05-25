@@ -75,7 +75,10 @@ export function classifyReplayComparison(params: {
   return "drifted";
 }
 
-export function normalizeRetrievalMode(value: string, fallbackChangeTypes: string[]): RetrievalMode {
+export function normalizeRetrievalMode(
+  value: string,
+  fallbackChangeTypes: string[],
+): RetrievalMode {
   const parsed = retrievalModeSchema.safeParse(value);
   if (parsed.success) return parsed.data;
   return deriveRetrievalModeFromChangeTypes(fallbackChangeTypes);

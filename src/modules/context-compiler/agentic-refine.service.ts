@@ -5,7 +5,6 @@ import { groupedConfig } from "../../config.js";
 import { getAgenticLlmProviders } from "../llm/agentic-llm.service.js";
 import {
   isRateLimitError,
-  readProviderPressureState,
   recordProviderRateLimit,
   recordProviderUsage,
 } from "../llm/provider-pressure.service.js";
@@ -207,19 +206,6 @@ export async function agenticRefine(
     "context-compiler",
     routing.fallback,
   );
-  const primaryProviderName = providers[0]?.name ?? routing.provider;
-  const primaryModel = modelForProvider(primaryProviderName);
-  const pressure = await readProviderPressureState({
-    provider: routing.provider,
-    model: primaryModel,
-  });
-  if (pressure.cooldownActive) {
-    return {
-      items: candidates,
-      agenticUsed: false,
-      error: "AGENTIC_REFINE_SKIPPED_RATE_LIMIT",
-    };
-  }
   const allowFallback = providers.length > 1;
   const fallbackErrors: string[] = [];
   let attempted = 0;

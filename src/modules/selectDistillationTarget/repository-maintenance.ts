@@ -1,4 +1,5 @@
 import { and, asc, count, desc, eq, inArray, isNull, lte, or, sql } from "drizzle-orm";
+import os from "node:os";
 import { APP_CONSTANTS } from "../../constants.js";
 import { db } from "../../db/index.js";
 import { distillationTargetStates } from "../../db/schema.js";
@@ -37,6 +38,38 @@ export type RecoveryResult = {
   failed: number;
   skipped: number;
 };
+
+function parseLocalWorkerPid(lockedBy: string | null): number | null {
+  if (!lockedBy) return null;
+  const separatorIndex = lockedBy.lastIndexOf(":");
+  if (separatorIndex < 1) return null;
+  const host = lockedBy.slice(0, separatorIndex);
+  if (host !== os.hostname()) return null;
+  const pid = Number(lockedBy.slice(separatorIndex + 1));
+  if (!Number.isInteger(pid) || pid <= 0) return null;
+  return pid;
+}
+
+function isProcessAlive(pid: number): boolean | null {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code =
+      error && typeof error === "object" && "code" in error
+        ? String((error as { code?: unknown }).code)
+        : "";
+    if (code === "ESRCH") return false;
+    if (code === "EPERM") return true;
+    return null;
+  }
+}
+
+function isDeadLocalWorker(lockedBy: string | null): boolean {
+  const pid = parseLocalWorkerPid(lockedBy);
+  if (pid === null) return false;
+  return isProcessAlive(pid) === false;
+}
 
 export async function releaseRetryablePausedDistillationTargets(
   params: {
@@ -192,6 +225,92 @@ export async function recoverStaleDistillationTargets(
         skipped,
         limit: params.limit ?? null,
         staleSeconds: params.staleSeconds ?? APP_CONSTANTS.distillationTargetStaleSeconds,
+      },
+    });
+  }
+
+  return { recoveredToPending, failed, skipped };
+}
+
+export async function recoverOrphanedRunningDistillationTargets(
+  params: {
+    distillationVersion?: string;
+    maxAttempts?: number;
+    now?: Date;
+    targetKind?: DistillationTargetKind;
+    limit?: number;
+  } = {},
+): Promise<RecoveryResult> {
+  const now = params.now ?? new Date();
+  const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
+  const maxAttempts = params.maxAttempts ?? APP_CONSTANTS.distillationTargetMaxAttempts;
+  const runningConditions = [
+    eq(distillationTargetStates.distillationVersion, distillationVersion),
+    eq(distillationTargetStates.status, "running"),
+  ];
+  if (params.targetKind) {
+    runningConditions.push(eq(distillationTargetStates.targetKind, params.targetKind));
+  }
+
+  const runningRows = await db
+    .select()
+    .from(distillationTargetStates)
+    .where(and(...runningConditions));
+  const orphanedRows = runningRows
+    .filter((row) => isDeadLocalWorker(row.lockedBy))
+    .slice(
+      0,
+      typeof params.limit === "number" ? Math.max(1, params.limit) : Number.MAX_SAFE_INTEGER,
+    );
+
+  let recoveredToPending = 0;
+  const failed = 0;
+  let skipped = 0;
+
+  for (const orphaned of orphanedRows) {
+    const nextStatus: DistillationTargetStatus =
+      orphaned.attemptCount >= maxAttempts ? "skipped" : "pending";
+    const [row] = await db
+      .update(distillationTargetStates)
+      .set({
+        status: nextStatus,
+        phase: nextStatus === "skipped" ? "stored" : "selected",
+        lockedBy: null,
+        lockedAt: null,
+        heartbeatAt: null,
+        nextRetryAt: null,
+        lastOutcomeKind: "orphaned_running_recovered",
+        lastError:
+          nextStatus === "skipped"
+            ? "orphaned_running_retry_limit_exceeded"
+            : "orphaned_running_recovered",
+        metadata: sql`${distillationTargetStates.metadata} || ${JSON.stringify({
+          orphanedRecovered: true,
+          orphanedRecoveredAt: now.toISOString(),
+          orphanedLockedBy: orphaned.lockedBy,
+        })}::jsonb` as never,
+        completedAt: nextStatus === "skipped" ? now : null,
+        updatedAt: now,
+      })
+      .where(eq(distillationTargetStates.id, orphaned.id))
+      .returning();
+    if (!row) continue;
+    if (nextStatus === "skipped") skipped += 1;
+    else recoveredToPending += 1;
+  }
+
+  if (recoveredToPending > 0 || failed > 0 || skipped > 0) {
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.distillationTargetRecovered,
+      actor: "system",
+      payload: {
+        distillationVersion,
+        targetKind: params.targetKind ?? null,
+        recoveredToPending,
+        failed,
+        skipped,
+        limit: params.limit ?? null,
+        reason: "dead_local_worker",
       },
     });
   }

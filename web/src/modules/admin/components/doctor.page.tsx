@@ -42,6 +42,37 @@ function formatAgeMinutes(value: number | null | undefined): string {
   return `${(value / 60 / 24).toFixed(1)} d`;
 }
 
+function llmProviderLabel(provider: string): string {
+  switch (provider) {
+    case "openai":
+      return "OpenAI";
+    case "azure-openai":
+      return "Azure OpenAI";
+    case "bedrock":
+      return "Bedrock";
+    case "local-llm":
+      return "Local LLM";
+    default:
+      return provider || "Unknown";
+  }
+}
+
+function llmHealthLabel(provider: {
+  configured: boolean;
+  reachable: boolean;
+  error?: string;
+}): string {
+  if (!provider.configured) return "Unconfigured";
+  if (provider.reachable) return "Reachable";
+  return provider.error ? "Offline" : "Unknown";
+}
+
+function llmHealthClass(provider: { configured: boolean; reachable: boolean }): string {
+  if (!provider.configured) return "text-slate-400";
+  if (provider.reachable) return "text-emerald-600";
+  return "text-amber-600";
+}
+
 function launchAgentLabel(agent: { loaded: boolean; installed: boolean }): string {
   if (agent.loaded) return "loaded";
   if (agent.installed) return "installed";
@@ -284,6 +315,11 @@ function CoreInfrastructureDomain({ data }: { data: DoctorCoreInfrastructureDoma
 function AiServiceToolsDomain({ data }: { data: DoctorAiServiceToolsDomain }) {
   const aiSignals = getDomainSignals(getDoctorReasonDetails(data), "ai");
   const aiNextActions = getDomainNextActions(data, "ai");
+  const providerHealth = data.agenticLlm?.providerHealth ?? [];
+  const reachableProviderCount = providerHealth.filter(
+    (provider) => provider.configured && provider.reachable,
+  ).length;
+  const configuredProviderCount = providerHealth.filter((provider) => provider.configured).length;
 
   return (
     <DomainShell
@@ -297,18 +333,20 @@ function AiServiceToolsDomain({ data }: { data: DoctorAiServiceToolsDomain }) {
         <div className="grid grid-cols-3 gap-2 border-b border-slate-100 pb-3 mb-1 text-center md:text-left">
           <div className="flex flex-col">
             <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
-              Agentic LLM
+              LLM Health
             </span>
             <strong
               className={`text-[19px] font-extrabold mt-1 leading-none ${
                 data.agenticLlm?.reachable ? "text-violet-600" : "text-amber-600"
               }`}
             >
-              {data.agenticLlm?.reachable
-                ? "Reachable"
-                : data.agenticLlm?.configured
-                  ? "Offline"
-                  : "Unconfigured"}
+              {providerHealth.length > 0
+                ? `${reachableProviderCount}/${providerHealth.length}`
+                : data.agenticLlm?.reachable
+                  ? "Reachable"
+                  : data.agenticLlm?.configured
+                    ? "Offline"
+                    : "Unconfigured"}
             </strong>
           </div>
           <div className="flex flex-col">
@@ -327,10 +365,14 @@ function AiServiceToolsDomain({ data }: { data: DoctorAiServiceToolsDomain }) {
           </div>
           <div className="flex flex-col">
             <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
-              Fallbacks
+              Configured
             </span>
             <strong className="text-slate-800 text-2xl font-extrabold mt-1 leading-none">
-              {data.agenticLlm?.fallbackOrder.length ?? 0}
+              {providerHealth.length > 0
+                ? configuredProviderCount
+                : data.agenticLlm?.configured
+                  ? 1
+                  : 0}
             </strong>
           </div>
         </div>
@@ -358,6 +400,56 @@ function AiServiceToolsDomain({ data }: { data: DoctorAiServiceToolsDomain }) {
             </strong>
           </div>
         </div>
+
+        {providerHealth.length > 0 && (
+          <div className="flex flex-col gap-2 border-t border-slate-100 pt-3">
+            <div className="flex items-center justify-between gap-3 text-[12px]">
+              <span className="text-slate-400 font-bold uppercase tracking-wider">
+                Provider Health
+              </span>
+              <span className="min-w-0 truncate text-slate-500 font-medium">
+                Route: {data.agenticLlm?.fallbackOrder.map(llmProviderLabel).join(" -> ") || "-"}
+              </span>
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {providerHealth.map((provider) => (
+                <div
+                  key={provider.id ?? `${provider.provider}:${provider.endpoint}:${provider.model}`}
+                  className="min-w-0 rounded-md border border-slate-100 bg-slate-50/50 px-2.5 py-2"
+                >
+                  <div className="flex min-w-0 items-center justify-between gap-2">
+                    <div className="min-w-0 flex items-center gap-1.5">
+                      <span className="font-bold text-slate-700 text-[12.5px] truncate">
+                        {provider.label || llmProviderLabel(provider.provider)}
+                      </span>
+                      {provider.selected && (
+                        <Badge
+                          variant="outline"
+                          className="text-[9px] px-1.5 py-0 border-violet-200 text-violet-700 bg-violet-50"
+                        >
+                          selected
+                        </Badge>
+                      )}
+                    </div>
+                    <strong className={`text-[12px] ${llmHealthClass(provider)}`}>
+                      {llmHealthLabel(provider)}
+                    </strong>
+                  </div>
+                  <div className="mt-1 flex min-w-0 items-center justify-between gap-2 text-[11px] text-slate-500">
+                    <span className="truncate" title={provider.model || provider.endpoint || ""}>
+                      {provider.model || provider.endpoint || "-"}
+                    </span>
+                    <span className="shrink-0">
+                      {provider.routeOrder === null || provider.routeOrder === undefined
+                        ? "standby"
+                        : `route #${provider.routeOrder + 1}`}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+          </div>
+        )}
 
         <SlimDoctorReasonList reasons={aiSignals} />
 
@@ -388,11 +480,16 @@ function PipelineAutomationDomain({ data }: { data: DoctorPipelineAutomationDoma
   const queueRunning = data.vibeDistillation.jobs.running + data.sourceDistillation.jobs.running;
   const maxSyncAge =
     data.agentLogSync.states.length > 0
-      ? Math.max(...data.agentLogSync.states.map((item) => item.lastSyncedAgeMinutes ?? 0))
+      ? Math.max(
+          ...data.agentLogSync.states.map(
+            (item) => item.lastCheckedAgeMinutes ?? item.lastSyncedAgeMinutes ?? 0,
+          ),
+        )
       : null;
   const syncStaleThresholdMinutes = data.runs.freshnessThresholdMinutes ?? 720;
   const staleSyncCount = data.agentLogSync.states.filter(
-    (state) => (state.lastSyncedAgeMinutes ?? 0) > syncStaleThresholdMinutes,
+    (state) =>
+      (state.lastCheckedAgeMinutes ?? state.lastSyncedAgeMinutes ?? 0) > syncStaleThresholdMinutes,
   ).length;
 
   return (

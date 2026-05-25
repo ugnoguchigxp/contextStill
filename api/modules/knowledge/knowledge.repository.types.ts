@@ -1,4 +1,7 @@
-import type { KnowledgeTagKind, KnowledgeTagStatus } from "../../../src/modules/knowledge/knowledge-tags.repository.js";
+import type {
+  KnowledgeTagKind,
+  KnowledgeTagStatus,
+} from "../../../src/modules/knowledge/knowledge-tags.repository.js";
 import type { KnowledgeStatus } from "../../../src/shared/schemas/knowledge.schema.js";
 
 export type KnowledgeCreateInput = {

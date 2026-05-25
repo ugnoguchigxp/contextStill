@@ -19,6 +19,7 @@ import {
   renameSourceFolder,
   runSourceReindex,
   searchSourcePages,
+  testAzureOpenAiDeployment,
   testRuntimeProvider,
   updateRuntimeSettings,
   updateSourcePage,
@@ -340,12 +341,33 @@ describe("Admin Repository sources/settings", () => {
                 jitterSeconds: 10,
               },
             },
-            coverEvidence: {
-              sourceSupport: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },
-              externalEvidence: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },
-              mcpEvidence: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },
+            webSourceResearch: {
+              provider: "local-llm",
+              model: "gemma-4-e4b-it",
+              fallback: ["azure-openai"],
             },
-            finalizeDistille: { provider: "local-llm", model: "gemma-4-e4b-it", fallback: [] },
+            coverEvidence: {
+              sourceSupport: {
+                provider: "local-llm",
+                model: "gemma-4-e4b-it",
+                fallback: ["azure-openai"],
+              },
+              externalEvidence: {
+                provider: "local-llm",
+                model: "gemma-4-e4b-it",
+                fallback: ["azure-openai"],
+              },
+              mcpEvidence: {
+                provider: "local-llm",
+                model: "gemma-4-e4b-it",
+                fallback: ["azure-openai"],
+              },
+            },
+            finalizeDistille: {
+              provider: "local-llm",
+              model: "gemma-4-e4b-it",
+              fallback: ["azure-openai"],
+            },
             agenticCompile: {
               enabled: true,
               provider: "openai",
@@ -417,6 +439,23 @@ describe("Admin Repository sources/settings", () => {
       } as Response);
       await testRuntimeProvider("openai");
       expect(spy).toHaveBeenCalledWith("/api/settings/providers/openai/test", {
+        method: "POST",
+        headers: undefined,
+        body: undefined,
+      });
+    });
+
+    it("testAzureOpenAiDeployment", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({
+          provider: "azure-openai",
+          deployment: 2,
+          health: { configured: true, reachable: true },
+        }),
+      } as Response);
+      await testAzureOpenAiDeployment(1);
+      expect(spy).toHaveBeenCalledWith("/api/settings/providers/azure-openai/deployments/2/test", {
         method: "POST",
         headers: undefined,
         body: undefined,

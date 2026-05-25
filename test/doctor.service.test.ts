@@ -6,7 +6,10 @@ import { getExposedToolEntries } from "../src/mcp/tools/index.js";
 import { runDoctor, runDoctorAiServiceTools } from "../src/modules/doctor/doctor.service.js";
 import { inspectCompileRuns } from "../src/modules/doctor/inspectors/compile.inspector.js";
 import { embeddingHealth } from "../src/modules/embedding/embedding.service.js";
-import { checkAgenticLlmHealth } from "../src/modules/llm/agentic-llm.service.js";
+import {
+  checkAgenticLlmHealth,
+  checkLlmProviderHealthMatrix,
+} from "../src/modules/llm/agentic-llm.service.js";
 
 vi.mock("../src/db/index.js");
 vi.mock("node:fs/promises");
@@ -49,6 +52,20 @@ describe("Doctor Service", () => {
       model: "gpt-5-4-mini",
       endpoint: "https://example.openai.azure.com",
     });
+    vi.mocked(checkLlmProviderHealthMatrix).mockResolvedValue([
+      {
+        id: "azure-openai:1",
+        label: "Azure OpenAI #1",
+        provider: "azure-openai",
+        configured: true,
+        reachable: true,
+        model: "gpt-5-4-mini",
+        endpoint: "https://example.openai.azure.com",
+        deploymentIndex: 1,
+        selected: true,
+        routeOrder: 0,
+      },
+    ]);
   });
 
   test("returns failed status when DB is unreachable", async () => {
@@ -294,6 +311,34 @@ describe("Doctor Service", () => {
 
     const report = await runDoctor({ freshnessThresholdMinutes: 30 });
     expect(report.reasons).toContain("CODEX_LOGS_SYNC_STALE");
+  });
+
+  test("uses the last sync check time for agent log freshness", async () => {
+    const mockDb = {
+      execute: vi
+        .fn()
+        .mockResolvedValueOnce({ rows: [{ ok: 1 }] })
+        .mockResolvedValueOnce({ rows: [{ installed: true }] })
+        .mockResolvedValueOnce({ rows: [{ table_name: "sync_states" }] }),
+      select: vi.fn().mockReturnThis(),
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockResolvedValue([
+        {
+          id: "antigravity_logs",
+          lastSyncedAt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000),
+          updatedAt: new Date(),
+          cursor: { "task.log": {} },
+          metadata: { syncedAt: new Date().toISOString(), warnings: [] },
+        },
+      ]),
+    };
+    vi.mocked(getDb).mockReturnValue(mockDb as any);
+
+    const report = await runDoctor({ freshnessThresholdMinutes: 30 });
+
+    expect(report.reasons).not.toContain("ANTIGRAVITY_LOGS_SYNC_STALE");
+    expect(report.agentLogSync.states[0]?.lastSyncedAgeMinutes).toBeGreaterThan(30);
+    expect(report.agentLogSync.states[0]?.lastCheckedAgeMinutes).toBeLessThan(30);
   });
 
   test("detects embedding provider unavailable when daemon unreachable and cli unusable", async () => {

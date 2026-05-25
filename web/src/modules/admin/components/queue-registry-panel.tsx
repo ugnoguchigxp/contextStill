@@ -116,7 +116,10 @@ export function QueueRegistryPanel({
       <div className="overview-domain-header justify-between items-center border-b border-slate-100 pb-3">
         <div className="flex items-center gap-2.5">
           <div className="p-1.5 bg-violet-50 rounded-lg">
-            <Layers className="overview-domain-icon text-violet-500 w-4 h-4" style={{ color: "#8b5cf6" }} />
+            <Layers
+              className="overview-domain-icon text-violet-500 w-4 h-4"
+              style={{ color: "#8b5cf6" }}
+            />
           </div>
           <div className="flex flex-col">
             <h2 className="overview-domain-title text-[15px] font-bold text-slate-800 leading-none">
@@ -131,13 +134,17 @@ export function QueueRegistryPanel({
 
       <div className="grid grid-cols-2 md:grid-cols-4 gap-2 border-b border-slate-100/60 pb-3.5 pt-1 text-left">
         <div className="flex flex-col">
-          <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">Completed</span>
+          <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">
+            Completed
+          </span>
           <strong className="text-emerald-600 text-[20px] font-extrabold mt-0.5 leading-none">
             {stats.completed ?? 0}
           </strong>
         </div>
         <div className="flex flex-col">
-          <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">Failed</span>
+          <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">
+            Failed
+          </span>
           <strong
             className={
               stats.failed && stats.failed > 0
@@ -149,13 +156,21 @@ export function QueueRegistryPanel({
           </strong>
         </div>
         <div className="flex flex-col">
-          <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">Paused / Skipped</span>
+          <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">
+            Paused / Skipped
+          </span>
           <strong className="text-slate-800 text-[20px] font-extrabold mt-0.5 leading-none">
             {(stats.paused ?? 0) + (stats.skipped ?? 0)}
           </strong>
         </div>
-        <div className="flex flex-col" data-state={findCandidateState} aria-label="findCandidate wait">
-          <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">FindCandidate</span>
+        <div
+          className="flex flex-col"
+          data-state={findCandidateState}
+          aria-label="findCandidate wait"
+        >
+          <span className="text-[10px] text-slate-400 font-bold tracking-wide uppercase">
+            FindCandidate
+          </span>
           <strong
             className={
               findCandidateWaiting
@@ -251,7 +266,10 @@ export function QueueRegistryPanel({
                     <React.Fragment key={item.id}>
                       <tr className="hover:bg-slate-50/30 transition-colors">
                         <td className="py-2.5 px-3">
-                          <Badge variant="outline" className={`text-[9.5px] font-extrabold uppercase px-1.5 py-0 ${kindClass}`}>
+                          <Badge
+                            variant="outline"
+                            className={`text-[9.5px] font-extrabold uppercase px-1.5 py-0 ${kindClass}`}
+                          >
                             {item.targetKind.replace("_", " ")}
                           </Badge>
                         </td>
@@ -261,15 +279,23 @@ export function QueueRegistryPanel({
                               className="font-bold text-slate-800 break-all select-all font-mono text-[11.5px] tracking-tight"
                               title={item.targetKey}
                             >
-                              {item.targetKey.length > 55 ? `${item.targetKey.substring(0, 55)}...` : item.targetKey}
+                              {item.targetKey.length > 55
+                                ? `${item.targetKey.substring(0, 55)}...`
+                                : item.targetKey}
                             </span>
-                            <span className="text-[10.5px] text-slate-400 truncate max-w-sm font-semibold" title={item.sourceUri}>
+                            <span
+                              className="text-[10.5px] text-slate-400 truncate max-w-sm font-semibold"
+                              title={item.sourceUri}
+                            >
                               {item.sourceUri}
                             </span>
                           </div>
                         </td>
                         <td className="py-2.5 px-3">
-                          <Badge variant="outline" className={`text-[10px] font-extrabold py-0.5 px-2 border uppercase ${status.className}`}>
+                          <Badge
+                            variant="outline"
+                            className={`text-[10px] font-extrabold py-0.5 px-2 border uppercase ${status.className}`}
+                          >
                             {status.label}
                           </Badge>
                         </td>
@@ -290,7 +316,10 @@ export function QueueRegistryPanel({
                       </tr>
                       {item.status === "failed" && item.lastError && (
                         <tr>
-                          <td colSpan={7} className="bg-rose-50/20 py-2 px-3 border-t border-slate-100">
+                          <td
+                            colSpan={7}
+                            className="bg-rose-50/20 py-2 px-3 border-t border-slate-100"
+                          >
                             <div className="flex items-start gap-2.5 text-[11px] text-rose-800">
                               <AlertCircle className="w-3.5 h-3.5 mt-0.5 text-rose-500 flex-shrink-0" />
                               <div className="flex flex-col gap-0.5 w-full">
@@ -314,9 +343,15 @@ export function QueueRegistryPanel({
             {listData.total > listData.limit && (
               <div className="flex items-center justify-between border-t border-slate-100 px-3 py-3 bg-white">
                 <span className="text-[12px] text-slate-400 font-semibold">
-                  Showing <strong className="font-bold text-slate-500">{(page - 1) * listData.limit + 1}</strong> to{" "}
-                  <strong className="font-bold text-slate-500">{Math.min(page * listData.limit, listData.total)}</strong> of{" "}
-                  <strong className="font-bold text-slate-500">{listData.total}</strong> targets
+                  Showing{" "}
+                  <strong className="font-bold text-slate-500">
+                    {(page - 1) * listData.limit + 1}
+                  </strong>{" "}
+                  to{" "}
+                  <strong className="font-bold text-slate-500">
+                    {Math.min(page * listData.limit, listData.total)}
+                  </strong>{" "}
+                  of <strong className="font-bold text-slate-500">{listData.total}</strong> targets
                 </span>
                 <div className="flex items-center gap-1">
                   <Button

@@ -58,6 +58,12 @@ const maintenanceReasonSet = new Set([
   "SOURCE_REPO_SCOPE_FALLBACK",
   "TOKEN_BUDGET_SECTION_LIMIT_REACHED",
 ]);
+
+const usablePackFallbackReasonSet = new Set([
+  "AGENTIC_REFINE_FAILED",
+  "CONTEXT_RESPONSE_COMPOSE_FAILED",
+  "COMPOSED_CONTEXT_NO_ALIGNMENT",
+]);
 const designDocumentPathPattern =
   /(?:^|[\s"'`(（])(?:file:\/\/\/[^\s"'`）)]+|(?:\.{1,2}\/)?(?:docs?|design|specs?|requirements?|roadmap|proposal|architecture)\/[^\s"'`）)]+)\.(?:md|mdx)(?=$|[\s"'`）).,])/i;
 const designDocumentFileNamePattern =
@@ -256,6 +262,10 @@ function classifyCompileReasons(params: {
 
   for (const reason of uniqueReasons) {
     if (maintenanceReasonSet.has(reason)) {
+      maintenanceWarnings.push(reason);
+      continue;
+    }
+    if (usablePackFallbackReasonSet.has(reason) && hasKnowledge) {
       maintenanceWarnings.push(reason);
       continue;
     }

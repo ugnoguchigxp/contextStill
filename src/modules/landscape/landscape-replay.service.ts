@@ -35,10 +35,7 @@ import type {
   LandscapeVerdictMix,
 } from "./landscape-replay.types.js";
 import { buildLandscapeSnapshot } from "./landscape.service.js";
-import type {
-  LandscapeClassificationPrimary,
-  LandscapeCommunity,
-} from "./landscape.types.js";
+import type { LandscapeClassificationPrimary, LandscapeCommunity } from "./landscape.types.js";
 
 type RelationCommunityAssignment = LandscapeRelationCommunityAssignment & {
   communityLabel: string;

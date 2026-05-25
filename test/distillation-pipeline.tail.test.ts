@@ -5,9 +5,11 @@ import { runDistillationPipeline } from "../src/modules/distillationPipeline/run
 const mocks = vi.hoisted(() => ({
   refreshDistillationTargetInventory: vi.fn(),
   recoverStaleDistillationTargets: vi.fn(),
+  recoverOrphanedRunningDistillationTargets: vi.fn(),
   releaseRetryablePausedDistillationTargets: vi.fn(),
   claimDistillationTargetStateById: vi.fn(),
   claimNextDistillationTargetState: vi.fn(),
+  claimNextCoverEvidenceTargetState: vi.fn(),
   findNextFindCandidateTargetState: vi.fn(),
   claimFindCandidateTargetStateById: vi.fn(),
   hasRunningFindCandidateTargetState: vi.fn(),
@@ -38,9 +40,11 @@ vi.mock("../src/modules/selectDistillationTarget/inventory.service.js", () => ({
 vi.mock("../src/modules/selectDistillationTarget/repository.js", () => ({
   DEFAULT_DISTILLATION_TARGET_VERSION: "test-version",
   recoverStaleDistillationTargets: mocks.recoverStaleDistillationTargets,
+  recoverOrphanedRunningDistillationTargets: mocks.recoverOrphanedRunningDistillationTargets,
   releaseRetryablePausedDistillationTargets: mocks.releaseRetryablePausedDistillationTargets,
   claimDistillationTargetStateById: mocks.claimDistillationTargetStateById,
   claimNextDistillationTargetState: mocks.claimNextDistillationTargetState,
+  claimNextCoverEvidenceTargetState: mocks.claimNextCoverEvidenceTargetState,
   findNextFindCandidateTargetState: mocks.findNextFindCandidateTargetState,
   claimFindCandidateTargetStateById: mocks.claimFindCandidateTargetStateById,
   hasRunningFindCandidateTargetState: mocks.hasRunningFindCandidateTargetState,
@@ -122,9 +126,11 @@ describe("runDistillationPipeline", () => {
     groupedConfig.distillation.coverEvidenceConcurrency = 1;
     mocks.refreshDistillationTargetInventory.mockResolvedValue({});
     mocks.recoverStaleDistillationTargets.mockResolvedValue({});
+    mocks.recoverOrphanedRunningDistillationTargets.mockResolvedValue({});
     mocks.releaseRetryablePausedDistillationTargets.mockResolvedValue({});
     mocks.claimDistillationTargetStateById.mockResolvedValue(null);
     mocks.claimNextDistillationTargetState.mockResolvedValue(targetRow());
+    mocks.claimNextCoverEvidenceTargetState.mockResolvedValue(null);
     mocks.findNextFindCandidateTargetState.mockResolvedValue(null);
     mocks.claimFindCandidateTargetStateById.mockResolvedValue(null);
     mocks.hasRunningFindCandidateTargetState.mockResolvedValue(false);
@@ -199,7 +205,8 @@ describe("runDistillationPipeline", () => {
   });
 
   test("times out one candidate and completes after next run processes another candidate", async () => {
-    vi.useFakeTimers();
+    const originalCandidateTimeoutMs = groupedConfig.distillation.candidateTimeoutMs;
+    groupedConfig.distillation.candidateTimeoutMs = 1;
     try {
       mocks.runFindCandidate.mockResolvedValue({
         targetStateId: "target-1",
@@ -248,7 +255,6 @@ describe("runDistillationPipeline", () => {
       });
 
       const firstPending = runDistillationPipeline({ write: true, refresh: false, limit: 1 });
-      await vi.advanceTimersByTimeAsync(600_000);
       const first = await firstPending;
 
       expect(mocks.saveCoverEvidenceResult).toHaveBeenCalledWith(
@@ -319,7 +325,7 @@ describe("runDistillationPipeline", () => {
         knowledgeIds: ["knowledge-ready"],
       });
     } finally {
-      vi.useRealTimers();
+      groupedConfig.distillation.candidateTimeoutMs = originalCandidateTimeoutMs;
     }
   });
 
@@ -423,6 +429,7 @@ describe("runDistillationPipeline", () => {
     expect(mocks.pauseDistillationTargetState).toHaveBeenCalledWith(
       expect.objectContaining({
         reason: "cover_evidence_checkpoint",
+        retryDelaySeconds: 0,
         metadata: expect.objectContaining({ remainingCandidates: 1, candidateCount: 3 }),
       }),
     );

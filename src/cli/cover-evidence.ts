@@ -4,6 +4,7 @@ import { type CoverEvidenceRunInput, runCoverEvidence } from "../modules/coverEv
 type CliOptions = {
   id: string;
   provider?: CoverEvidenceRunInput["provider"];
+  providerFallbackMode: "fallback" | "single";
   write: boolean;
   forceRefreshEvidence: boolean;
 };
@@ -21,6 +22,7 @@ function readArgValue(args: string[], index: number, name: string): string {
 function parseArgs(args: string[]): CliOptions {
   let id = "";
   let provider: CoverEvidenceRunInput["provider"];
+  let providerFallbackMode: "fallback" | "single" = "fallback";
   let write = false;
   let forceRefreshEvidence = false;
 
@@ -46,6 +48,10 @@ function parseArgs(args: string[]): CliOptions {
       write = true;
     } else if (arg === "--text" || arg === "--json") {
       write = false;
+    } else if (arg === "--no-provider-fallback" || arg === "--single-provider") {
+      providerFallbackMode = "single";
+    } else if (arg === "--provider-fallback") {
+      providerFallbackMode = "fallback";
     } else if (arg === "--force-refresh-evidence") {
       forceRefreshEvidence = true;
     } else {
@@ -60,6 +66,7 @@ function parseArgs(args: string[]): CliOptions {
   return {
     id,
     provider,
+    providerFallbackMode,
     write,
     forceRefreshEvidence,
   };
@@ -70,6 +77,7 @@ async function main(): Promise<void> {
   const result = await runCoverEvidence({
     id: options.id,
     provider: options.provider,
+    providerFallbackMode: options.providerFallbackMode,
     write: options.write,
     forceRefreshEvidence: options.forceRefreshEvidence,
   });

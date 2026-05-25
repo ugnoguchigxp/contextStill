@@ -73,7 +73,6 @@ import {
 } from "./fixtures/landscape-review-items-fixtures.ts";
 import type { LandscapeSnapshot } from "../src/modules/landscape/landscape.types.js";
 
-
 describe("landscape review items service", () => {
   beforeEach(() => {
     vi.clearAllMocks();

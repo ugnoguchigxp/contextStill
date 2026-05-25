@@ -55,6 +55,8 @@ function buildPipelineArgs(continuous: boolean): string[] {
   const pipelineLimit = process.env.MEMORY_ROUTER_DISTILL_PIPELINE_LIMIT ?? "1";
   const pipelineRefresh = process.env.MEMORY_ROUTER_DISTILL_PIPELINE_REFRESH ?? "1";
   const pipelineProvider = process.env.MEMORY_ROUTER_DISTILL_PIPELINE_PROVIDER ?? "";
+  const pipelineProviderFallback =
+    process.env.MEMORY_ROUTER_DISTILL_PIPELINE_PROVIDER_FALLBACK ?? "1";
   const pipelineVersion = process.env.MEMORY_ROUTER_DISTILL_PIPELINE_VERSION ?? "";
 
   const args = [
@@ -69,6 +71,7 @@ function buildPipelineArgs(continuous: boolean): string[] {
   if (continuous) args.push("--continuous");
   if (pipelineRefresh === "0") args.push("--no-refresh");
   if (pipelineProvider) args.push("--provider", pipelineProvider);
+  if (pipelineProviderFallback === "0") args.push("--no-provider-fallback");
   if (pipelineVersion) args.push("--version", pipelineVersion);
   return args;
 }

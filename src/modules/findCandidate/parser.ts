@@ -1,11 +1,19 @@
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
 import type { CandidateKnowledgeType, CandidateRecord } from "./repository.js";
 
+const MAX_SOURCE_SUMMARY_CHARS = 1000;
+
 function toCandidateType(value: unknown): CandidateKnowledgeType | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim().toLowerCase();
   if (normalized === "rule" || normalized === "procedure") return normalized;
   return undefined;
+}
+
+function normalizeSourceSummary(value: unknown): string | undefined {
+  if (typeof value !== "string") return undefined;
+  const summary = value.replace(/\s+/g, " ").trim();
+  return summary ? summary.slice(0, MAX_SOURCE_SUMMARY_CHARS) : undefined;
 }
 
 function toCandidateRecord(value: unknown): CandidateRecord | null {
@@ -18,6 +26,10 @@ function toCandidateRecord(value: unknown): CandidateRecord | null {
     content?: unknown;
     body?: unknown;
     description?: unknown;
+    sourceSummary?: unknown;
+    source_summary?: unknown;
+    sourceEvidenceSummary?: unknown;
+    evidenceSummary?: unknown;
   };
   const type = toCandidateType(record.type ?? record.candidateType);
   const title =
@@ -37,7 +49,18 @@ function toCandidateRecord(value: unknown): CandidateRecord | null {
   const normalizedTitle = title || content.slice(0, 80).replace(/\s+/g, " ").trim();
   const normalizedContent = content || title;
   if (!normalizedTitle || !normalizedContent) return null;
-  return { ...(type ? { type } : {}), title: normalizedTitle, content: normalizedContent };
+  const sourceSummary = normalizeSourceSummary(
+    record.sourceSummary ??
+      record.source_summary ??
+      record.sourceEvidenceSummary ??
+      record.evidenceSummary,
+  );
+  return {
+    ...(type ? { type } : {}),
+    title: normalizedTitle,
+    content: normalizedContent,
+    ...(sourceSummary ? { sourceSummary } : {}),
+  };
 }
 
 function hasCandidateFields(record: Record<string, unknown>): boolean {
@@ -67,11 +90,30 @@ function parsePlainTextCandidates(llmOutput: string): CandidateRecord[] {
   return llmOutput
     .split(/\n-{3,}\n/g)
     .map((block) => {
-      const title = block.match(/^TITLE:\s*(.+)$/im)?.[1]?.trim() ?? "";
-      const content = block.match(/^CONTENT:\s*([\s\S]+)$/im)?.[1]?.trim() ?? "";
-      const type = toCandidateType(block.match(/^TYPE:\s*(.+)$/im)?.[1]);
+      const fields: Record<string, string[]> = {};
+      let currentField: string | null = null;
+      for (const line of block.split(/\r?\n/)) {
+        const match = line.match(/^(TYPE|TITLE|CONTENT|SOURCE_SUMMARY):\s*(.*)$/i);
+        if (match) {
+          currentField = match[1].toUpperCase();
+          fields[currentField] = [match[2] ?? ""];
+          continue;
+        }
+        if (currentField) {
+          fields[currentField].push(line);
+        }
+      }
+      const title = fields.TITLE?.join("\n").trim() ?? "";
+      const content = fields.CONTENT?.join("\n").trim() ?? "";
+      const sourceSummary = normalizeSourceSummary(fields.SOURCE_SUMMARY?.join("\n"));
+      const type = toCandidateType(fields.TYPE?.join("\n"));
       if (!title || !content) return null;
-      return { ...(type ? { type } : {}), title, content };
+      return {
+        ...(type ? { type } : {}),
+        title,
+        content,
+        ...(sourceSummary ? { sourceSummary } : {}),
+      };
     })
     .filter((candidate): candidate is CandidateRecord => Boolean(candidate));
 }

@@ -3,10 +3,7 @@ import { HeartPulse } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatNumber } from "@/lib/admin-formatters";
-import type {
-  DoctorReport,
-  OverviewSystemQualityDomain,
-} from "../../repositories/admin.repository";
+import type { OverviewSystemQualityDomain } from "../../repositories/admin.repository";
 import { SystemHealthCharts } from "../overview-charts";
 
 function formatRatePercent(value: number | undefined): string {
@@ -33,10 +30,9 @@ function formatCountdown(cooldownUntil: string | null, nowMs: number): string {
 
 type SystemQualityDomainProps = {
   dashboard: OverviewSystemQualityDomain;
-  doctorReport?: DoctorReport | null;
 };
 
-export function SystemQualityDomain({ dashboard, doctorReport }: SystemQualityDomainProps) {
+export function SystemQualityDomain({ dashboard }: SystemQualityDomainProps) {
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -46,9 +42,7 @@ export function SystemQualityDomain({ dashboard, doctorReport }: SystemQualityDo
     return () => window.clearInterval(timer);
   }, []);
 
-  const compileRuns = dashboard.kpis.compileRuns ?? 0;
-  const compileDegradedRuns = dashboard.kpis.compileDegradedRuns ?? 0;
-  const compileRunHealth = doctorReport?.runs;
+  const compileRunHealth = dashboard.compileRunHealth;
 
   const queueTotals = (dashboard.charts.distillationQueue ?? []).reduce(
     (acc, item) => ({
@@ -60,9 +54,7 @@ export function SystemQualityDomain({ dashboard, doctorReport }: SystemQualityDo
     { pending: 0, running: 0, completed: 0, failed: 0 },
   );
 
-  const usableRate = compileRunHealth
-    ? compileRunHealth.usableRate
-    : dashboard.kpis.compileOkRuns / (compileRuns || 1);
+  const usableRate = compileRunHealth.usableRate;
 
   return (
     <section className="overview-domain-section accent-cyan">
@@ -151,58 +143,33 @@ export function SystemQualityDomain({ dashboard, doctorReport }: SystemQualityDo
             <span className="text-slate-400 font-bold text-[11.5px] uppercase tracking-wider pr-0.5 w-[85px]">
               Compile runs:
             </span>
-            {compileRunHealth ? (
-              <>
-                <div className="flex items-center gap-0.5">
-                  <span className="text-cyan-600">Usable:</span>
-                  <strong className="text-slate-700">
-                    {formatNumber(compileRunHealth.usableRuns ?? 0)}
-                  </strong>
-                </div>
-                <div className="text-slate-200">|</div>
-                <div className="flex items-center gap-0.5">
-                  <span className="text-amber-600">Warning:</span>
-                  <strong className="text-slate-700">
-                    {formatNumber(compileRunHealth.warningOnlyRuns ?? 0)}
-                  </strong>
-                </div>
-                <div className="text-slate-200">|</div>
-                <div className="flex items-center gap-0.5">
-                  <span className="text-red-600">Blocking:</span>
-                  <strong className="text-slate-700">
-                    {formatNumber(compileRunHealth.blockingRuns ?? 0)}
-                  </strong>
-                </div>
-                <div className="text-slate-200">|</div>
-                <div className="flex items-center gap-0.5">
-                  <span className="text-slate-400">No Content:</span>
-                  <strong className="text-slate-700">
-                    {formatNumber(compileRunHealth.noContentRuns ?? 0)}
-                  </strong>
-                </div>
-              </>
-            ) : (
-              <>
-                <div className="flex items-center gap-0.5">
-                  <span className="text-cyan-600">Ok:</span>
-                  <strong className="text-slate-700">
-                    {formatNumber(dashboard.kpis.compileOkRuns)}
-                  </strong>
-                </div>
-                <div className="text-slate-200">|</div>
-                <div className="flex items-center gap-0.5">
-                  <span className="text-amber-600">Degraded:</span>
-                  <strong className="text-slate-700">{formatNumber(compileDegradedRuns)}</strong>
-                </div>
-                <div className="text-slate-200">|</div>
-                <div className="flex items-center gap-0.5">
-                  <span className="text-red-600">Failed:</span>
-                  <strong className="text-slate-700">
-                    {formatNumber(dashboard.kpis.compileFailedRuns)}
-                  </strong>
-                </div>
-              </>
-            )}
+            <div className="flex items-center gap-0.5">
+              <span className="text-cyan-600">Usable:</span>
+              <strong className="text-slate-700">
+                {formatNumber(compileRunHealth.usableRuns ?? 0)}
+              </strong>
+            </div>
+            <div className="text-slate-200">|</div>
+            <div className="flex items-center gap-0.5">
+              <span className="text-amber-600">Warning:</span>
+              <strong className="text-slate-700">
+                {formatNumber(compileRunHealth.warningOnlyRuns ?? 0)}
+              </strong>
+            </div>
+            <div className="text-slate-200">|</div>
+            <div className="flex items-center gap-0.5">
+              <span className="text-red-600">Blocking:</span>
+              <strong className="text-slate-700">
+                {formatNumber(compileRunHealth.blockingRuns ?? 0)}
+              </strong>
+            </div>
+            <div className="text-slate-200">|</div>
+            <div className="flex items-center gap-0.5">
+              <span className="text-slate-400">No Content:</span>
+              <strong className="text-slate-700">
+                {formatNumber(compileRunHealth.noContentRuns ?? 0)}
+              </strong>
+            </div>
           </div>
         </div>
 
@@ -269,7 +236,7 @@ export function SystemQualityDomain({ dashboard, doctorReport }: SystemQualityDo
         </div>
       </div>
 
-      <SystemHealthCharts dashboard={dashboard} doctorReport={doctorReport} />
+      <SystemHealthCharts dashboard={dashboard} />
     </section>
   );
 }

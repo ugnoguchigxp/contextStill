@@ -4,9 +4,16 @@ import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { Checkbox } from "@/components/ui/checkbox";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
+import {
+  formatDateTime as formatDateTimeTz,
+  getRawTimezoneSetting,
+  setTimezoneSetting,
+  timezoneOptions,
+  useTimezone,
+} from "@/lib/timezone";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouterState } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, RefreshCcw, RotateCcw, Save, Stethoscope, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, RotateCcw, Save, Stethoscope, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   type RuntimeProviderHealth,
@@ -20,17 +27,11 @@ import {
   type RuntimeSettingsView,
   fetchRuntimeSettings,
   reloadRuntimeSettingsCache,
+  testAzureOpenAiDeployment,
   testRuntimeProvider,
   updateRuntimeSettings,
 } from "../repositories/admin.repository";
 import { AdminPageHeader } from "./admin-page-header";
-import {
-  useTimezone,
-  formatDateTime as formatDateTimeTz,
-  getRawTimezoneSetting,
-  setTimezoneSetting,
-  timezoneOptions,
-} from "@/lib/timezone";
 
 type SettingsTabId = "general" | "providers" | "taskRouting" | "search" | "embedding" | "advanced";
 type SettingsTabPath =
@@ -42,6 +43,21 @@ type SettingsTabPath =
   | "advanced";
 
 type SecretDraftState = Record<RuntimeSecretKey, { value: string; clear: boolean }>;
+
+const azureOpenAiSecretKeys: RuntimeSecretKey[] = [
+  "azureOpenAiApiKey",
+  "azureOpenAiApiKey2",
+  "azureOpenAiApiKey3",
+];
+
+function emptyRuntimeSecretStatus(): RuntimeSecretStatus {
+  return {
+    configured: false,
+    source: "none",
+    maskedValue: null,
+    updatedAt: null,
+  };
+}
 
 const settingsTabs: Array<{ id: SettingsTabId; label: string; path: SettingsTabPath }> = [
   { id: "general", label: "General", path: "general" },
@@ -109,7 +125,10 @@ function getConfiguredModelByProvider(
 ): Record<RuntimeProviderName, string> {
   return {
     openai: settings.providers.openai.model.trim(),
-    "azure-openai": settings.providers["azure-openai"].model.trim(),
+    "azure-openai":
+      settings.providers["azure-openai"].deployments
+        .find((deployment) => deployment.model.trim())
+        ?.model.trim() ?? settings.providers["azure-openai"].model.trim(),
     bedrock: settings.providers.bedrock.model.trim(),
     "local-llm": settings.providers["local-llm"].model.trim(),
   };
@@ -164,9 +183,52 @@ function createEmptySecretDraftState(): SecretDraftState {
   return {
     openaiApiKey: { value: "", clear: false },
     azureOpenAiApiKey: { value: "", clear: false },
+    azureOpenAiApiKey2: { value: "", clear: false },
+    azureOpenAiApiKey3: { value: "", clear: false },
     localLlmApiKey: { value: "", clear: false },
     braveApiKey: { value: "", clear: false },
     exaApiKey: { value: "", clear: false },
+  };
+}
+
+function normalizeAzureDeploymentsForForm(
+  provider: RuntimeSettingsView["providers"]["azure-openai"],
+): RuntimeSettingsEditable["providers"]["azure-openai"]["deployments"] {
+  const deployments = provider.deployments.length
+    ? provider.deployments
+    : [
+        {
+          name: "Primary",
+          apiBaseUrl: provider.apiBaseUrl,
+          apiPath: provider.apiPath,
+          apiVersion: provider.apiVersion,
+          model: provider.model,
+        },
+      ];
+  return [0, 1, 2].map((index) => {
+    const deployment = deployments[index];
+    return {
+      name: deployment?.name || (index === 0 ? "Primary" : `Deployment ${index + 1}`),
+      apiBaseUrl: deployment?.apiBaseUrl ?? (index === 0 ? provider.apiBaseUrl : ""),
+      apiPath: deployment?.apiPath || provider.apiPath || "/openai/deployments",
+      apiVersion: deployment?.apiVersion || provider.apiVersion || "2025-04-01-preview",
+      model: deployment?.model ?? (index === 0 ? provider.model : ""),
+    };
+  });
+}
+
+function syncAzureOpenAiProviderForDraft(
+  provider: RuntimeSettingsEditable["providers"]["azure-openai"],
+  deployments: RuntimeSettingsEditable["providers"]["azure-openai"]["deployments"],
+): RuntimeSettingsEditable["providers"]["azure-openai"] {
+  const primary = deployments[0];
+  return {
+    ...provider,
+    apiBaseUrl: primary?.apiBaseUrl ?? provider.apiBaseUrl,
+    apiPath: primary?.apiPath ?? provider.apiPath,
+    apiVersion: primary?.apiVersion ?? provider.apiVersion,
+    model: primary?.model ?? provider.model,
+    deployments,
   };
 }
 
@@ -207,6 +269,7 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
         apiPath: view.providers["azure-openai"].apiPath,
         apiVersion: view.providers["azure-openai"].apiVersion,
         model: view.providers["azure-openai"].model,
+        deployments: normalizeAzureDeploymentsForForm(view.providers["azure-openai"]),
       },
       bedrock: {
         enabled: view.providers.bedrock.enabled,
@@ -457,6 +520,9 @@ export function SettingsPage() {
   const [providerHealth, setProviderHealth] = useState<
     Partial<Record<RuntimeProviderName, RuntimeProviderHealth>>
   >({});
+  const [azureDeploymentHealth, setAzureDeploymentHealth] = useState<
+    Partial<Record<number, RuntimeProviderHealth>>
+  >({});
 
   const settingsQuery = useQuery({
     queryKey: ["runtime-settings"],
@@ -476,6 +542,7 @@ export function SettingsPage() {
     setSecretDrafts(createEmptySecretDraftState());
     setSaveError(null);
     setSaveMessage(null);
+    setAzureDeploymentHealth({});
   }, [baseEditable]);
 
   const hasSettingsDiff = useMemo(() => {
@@ -583,6 +650,20 @@ export function SettingsPage() {
     },
   });
 
+  const azureDeploymentTestMutation = useMutation({
+    mutationFn: (deploymentIndex: number) => testAzureOpenAiDeployment(deploymentIndex),
+    onSuccess: (result, deploymentIndex) => {
+      setAzureDeploymentHealth((current) => ({
+        ...current,
+        [deploymentIndex]: result.health,
+      }));
+    },
+    onError: (error) => {
+      setSaveMessage(null);
+      setSaveError(error instanceof Error ? error.message : String(error));
+    },
+  });
+
   const setSecretValue = (key: RuntimeSecretKey, value: string): void => {
     setSecretDrafts((current) => ({
       ...current,
@@ -621,6 +702,7 @@ export function SettingsPage() {
       <div className="settings-secret-inputs">
         <Input
           type="password"
+          aria-label={`${label} value`}
           value={secretDrafts[key].value}
           placeholder="new value"
           onChange={(event) => setSecretValue(key, event.target.value)}
@@ -958,19 +1040,6 @@ export function SettingsPage() {
                 <Card>
                   <CardHeader className="settings-provider-header">
                     <CardTitle>Azure OpenAI</CardTitle>
-                    <div className="settings-provider-actions">
-                      <ProviderHealthBadge health={providerHealth["azure-openai"]} />
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => providerTestMutation.mutate("azure-openai")}
-                        disabled={providerTestMutation.isPending}
-                      >
-                        <Stethoscope size={14} />
-                        Test
-                      </Button>
-                    </div>
                   </CardHeader>
                   <CardContent className="settings-card-grid">
                     <label className="settings-check">
@@ -991,85 +1060,172 @@ export function SettingsPage() {
                       />
                       enabled
                     </label>
-                    <label className="settings-field">
-                      <span>API Base URL</span>
-                      <Input
-                        value={draft.providers["azure-openai"].apiBaseUrl}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              "azure-openai": {
-                                ...current.providers["azure-openai"],
-                                apiBaseUrl: event.target.value,
-                              },
-                            },
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="settings-field">
-                      <span>API Path</span>
-                      <Input
-                        value={draft.providers["azure-openai"].apiPath}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              "azure-openai": {
-                                ...current.providers["azure-openai"],
-                                apiPath: event.target.value,
-                              },
-                            },
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="settings-field">
-                      <span>API Version</span>
-                      <Input
-                        value={draft.providers["azure-openai"].apiVersion}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              "azure-openai": {
-                                ...current.providers["azure-openai"],
-                                apiVersion: event.target.value,
-                              },
-                            },
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="settings-field">
-                      <span>Model</span>
-                      <Input
-                        value={draft.providers["azure-openai"].model}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              "azure-openai": {
-                                ...current.providers["azure-openai"],
-                                model: event.target.value,
-                              },
-                            },
-                          }))
-                        }
-                      />
-                    </label>
-                    {sourceView
-                      ? renderSecretEditor(
-                          "azureOpenAiApiKey",
-                          "API Key",
-                          sourceView.providers["azure-openai"].apiKeySecret,
-                        )
-                      : null}
+                    {draft.providers["azure-openai"].deployments.map((deployment, index) => {
+                      const secretKey = azureOpenAiSecretKeys[index] ?? "azureOpenAiApiKey";
+                      const secretStatus =
+                        sourceView?.providers["azure-openai"].apiKeySecrets[index] ??
+                        (sourceView ? emptyRuntimeSecretStatus() : null);
+                      return (
+                        <div key={secretKey} className="settings-provider-deployment">
+                          <div className="settings-deployment-header">
+                            <div className="settings-secret-meta">
+                              <strong>Deployment {index + 1}</strong>
+                            </div>
+                          </div>
+                          <label className="settings-field">
+                            <span>Deployment {index + 1} Name</span>
+                            <Input
+                              value={deployment.name}
+                              onChange={(event) =>
+                                patchDraft((current) => {
+                                  const deployments = current.providers[
+                                    "azure-openai"
+                                  ].deployments.map((item, itemIndex) =>
+                                    itemIndex === index
+                                      ? { ...item, name: event.target.value }
+                                      : item,
+                                  );
+                                  return {
+                                    ...current,
+                                    providers: {
+                                      ...current.providers,
+                                      "azure-openai": syncAzureOpenAiProviderForDraft(
+                                        current.providers["azure-openai"],
+                                        deployments,
+                                      ),
+                                    },
+                                  };
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="settings-field">
+                            <span>Deployment {index + 1} Endpoint</span>
+                            <Input
+                              value={deployment.apiBaseUrl}
+                              onChange={(event) =>
+                                patchDraft((current) => {
+                                  const deployments = current.providers[
+                                    "azure-openai"
+                                  ].deployments.map((item, itemIndex) =>
+                                    itemIndex === index
+                                      ? { ...item, apiBaseUrl: event.target.value }
+                                      : item,
+                                  );
+                                  return {
+                                    ...current,
+                                    providers: {
+                                      ...current.providers,
+                                      "azure-openai": syncAzureOpenAiProviderForDraft(
+                                        current.providers["azure-openai"],
+                                        deployments,
+                                      ),
+                                    },
+                                  };
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="settings-field">
+                            <span>Deployment {index + 1} API Path</span>
+                            <Input
+                              value={deployment.apiPath}
+                              onChange={(event) =>
+                                patchDraft((current) => {
+                                  const deployments = current.providers[
+                                    "azure-openai"
+                                  ].deployments.map((item, itemIndex) =>
+                                    itemIndex === index
+                                      ? { ...item, apiPath: event.target.value }
+                                      : item,
+                                  );
+                                  return {
+                                    ...current,
+                                    providers: {
+                                      ...current.providers,
+                                      "azure-openai": syncAzureOpenAiProviderForDraft(
+                                        current.providers["azure-openai"],
+                                        deployments,
+                                      ),
+                                    },
+                                  };
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="settings-field">
+                            <span>Deployment {index + 1} API Version</span>
+                            <Input
+                              value={deployment.apiVersion}
+                              onChange={(event) =>
+                                patchDraft((current) => {
+                                  const deployments = current.providers[
+                                    "azure-openai"
+                                  ].deployments.map((item, itemIndex) =>
+                                    itemIndex === index
+                                      ? { ...item, apiVersion: event.target.value }
+                                      : item,
+                                  );
+                                  return {
+                                    ...current,
+                                    providers: {
+                                      ...current.providers,
+                                      "azure-openai": syncAzureOpenAiProviderForDraft(
+                                        current.providers["azure-openai"],
+                                        deployments,
+                                      ),
+                                    },
+                                  };
+                                })
+                              }
+                            />
+                          </label>
+                          <label className="settings-field">
+                            <span>Deployment {index + 1} Model</span>
+                            <Input
+                              value={deployment.model}
+                              onChange={(event) =>
+                                patchDraft((current) => {
+                                  const deployments = current.providers[
+                                    "azure-openai"
+                                  ].deployments.map((item, itemIndex) =>
+                                    itemIndex === index
+                                      ? { ...item, model: event.target.value }
+                                      : item,
+                                  );
+                                  return {
+                                    ...current,
+                                    providers: {
+                                      ...current.providers,
+                                      "azure-openai": syncAzureOpenAiProviderForDraft(
+                                        current.providers["azure-openai"],
+                                        deployments,
+                                      ),
+                                    },
+                                  };
+                                })
+                              }
+                            />
+                          </label>
+                          {secretStatus
+                            ? renderSecretEditor(secretKey, `API Key ${index + 1}`, secretStatus)
+                            : null}
+                          <div className="settings-deployment-health">
+                            <ProviderHealthBadge health={azureDeploymentHealth[index]} />
+                            <Button
+                              type="button"
+                              size="sm"
+                              variant="outline"
+                              onClick={() => azureDeploymentTestMutation.mutate(index)}
+                              disabled={azureDeploymentTestMutation.isPending}
+                            >
+                              <Stethoscope size={14} />
+                              Test {index + 1}
+                            </Button>
+                          </div>
+                        </div>
+                      );
+                    })}
                   </CardContent>
                 </Card>
 
@@ -2505,40 +2661,6 @@ export function SettingsPage() {
                   </CardContent>
                 </Card>
               </>
-            ) : null}
-
-            {activeTab === "providers" ? (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Provider Health Snapshot</CardTitle>
-                </CardHeader>
-                <CardContent className="settings-health-grid">
-                  {runtimeProviders.map((provider) => (
-                    <div key={provider} className="settings-health-item">
-                      <div className="settings-health-head">
-                        <strong>{providerTitle(provider)}</strong>
-                        <ProviderHealthBadge health={providerHealth[provider]} />
-                      </div>
-                      <div className="settings-health-meta">
-                        <span>provider {provider}</span>
-                        <span>model {providerHealth[provider]?.model ?? "-"}</span>
-                        <span>endpoint {providerHealth[provider]?.endpoint ?? "-"}</span>
-                        <span>{providerHealth[provider]?.error ?? "no error"}</span>
-                      </div>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => providerTestMutation.mutate(provider)}
-                        disabled={providerTestMutation.isPending}
-                      >
-                        <RefreshCcw size={14} />
-                        Re-test
-                      </Button>
-                    </div>
-                  ))}
-                </CardContent>
-              </Card>
             ) : null}
           </>
         )}

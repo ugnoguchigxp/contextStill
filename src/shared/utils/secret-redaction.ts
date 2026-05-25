@@ -9,7 +9,7 @@ const SECRET_PATTERNS: RegExp[] = [
   PRIVATE_KEY_BLOCK_PATTERN,
   /(?:^|\b)export\s+[A-Z_]*(?:PASSWORD|TOKEN|KEY)\s*=\s*["']?[A-Za-z0-9_\-./+=]{12,}["']?$/gim,
   /\b(?:password|passphrase|secret(?:[_-]?key)?|api[_-]?key|auth[_-]?token|access[_-]?token|refresh[_-]?token)\b\s*[:=]\s*["']?[A-Za-z0-9_\-./+=]{12,}["']?/gi,
-  /\bBearer\s+[A-Za-z0-9\-._~+/]{12,}=*/gi,
+  /\bBearer\s+[A-Za-z0-9\-._~+/]{4,}=*/gi,
   /\b(?:sk|rk|pk)-[A-Za-z0-9]{20,}\b/g,
   /\bxox[baprs]-[A-Za-z0-9-]{20,}\b/g,
   /\bgh[pousr]_[A-Za-z0-9]{20,}\b/g,

@@ -102,13 +102,13 @@ describe("QueuePage", () => {
     });
 
     expect(screen.getByText("FindCandidate")).toBeInTheDocument();
-    expect(screen.getByText("1m 30s")).toBeInTheDocument();
-    expect(screen.getByText("interactive pressure / vibe memory")).toBeInTheDocument();
+    expect(screen.getByText("cooling down")).toBeInTheDocument();
+    expect(screen.getByText("launch in 90 sec")).toBeInTheDocument();
 
     act(() => {
       vi.advanceTimersByTime(1000);
     });
 
-    expect(screen.getByText("1m 29s")).toBeInTheDocument();
+    expect(screen.getByText("launch in 89 sec")).toBeInTheDocument();
   });
 });

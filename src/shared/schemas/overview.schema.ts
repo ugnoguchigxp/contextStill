@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { doctorReportSchema } from "./doctor.schema.js";
 
 const dayStringSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 
@@ -277,6 +278,7 @@ export const overviewSystemQualityDomainSchema = z.object({
     compileDegradedRuns: true,
     compileFailedRuns: true,
   }),
+  compileRunHealth: doctorReportSchema.shape.runs,
   charts: overviewDashboardChartsSchema.pick({
     compileRunsByDay: true,
     distillationQueue: true,

@@ -6,7 +6,11 @@ import type {
   BuildLandscapeReviewItemCandidatesInput,
   LandscapeReviewItemCandidateBuildResult,
 } from "./landscape-review-items.types.js";
-import { asRecord, normalizeNullableString, normalizeStringArray } from "../../shared/utils/normalize.js";
+import {
+  asRecord,
+  normalizeNullableString,
+  normalizeStringArray,
+} from "../../shared/utils/normalize.js";
 
 const MAX_EVIDENCE_COUNT = 8;
 const MAX_GOAL_PREVIEW_LENGTH = 180;

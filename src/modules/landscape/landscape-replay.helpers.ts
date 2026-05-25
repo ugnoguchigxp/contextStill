@@ -1,7 +1,4 @@
-import type {
-  LandscapeUsageVerdict,
-  LandscapeVerdictMix,
-} from "./landscape-replay.types.js";
+import type { LandscapeUsageVerdict, LandscapeVerdictMix } from "./landscape-replay.types.js";
 import type {
   LandscapeClassificationConfidence,
   LandscapeFeedbackConfidence,
@@ -32,7 +29,10 @@ export function addVerdictMix(target: LandscapeVerdictMix, source: LandscapeVerd
   target.wrong += source.wrong;
 }
 
-export function incrementVerdict(target: LandscapeVerdictMix, verdict: LandscapeUsageVerdict): void {
+export function incrementVerdict(
+  target: LandscapeVerdictMix,
+  verdict: LandscapeUsageVerdict,
+): void {
   if (verdict === "used") target.used += 1;
   if (verdict === "not_used") target.notUsed += 1;
   if (verdict === "off_topic") target.offTopic += 1;
