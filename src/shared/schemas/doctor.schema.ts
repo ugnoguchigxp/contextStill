@@ -251,5 +251,49 @@ export const doctorReportSchema = z.object({
   sourceDistillation: doctorDistillationHealthSchema,
 });
 
+const doctorDomainBaseSchema = doctorReportSchema.pick({
+  status: true,
+  checkedAt: true,
+  summary: true,
+  reasons: true,
+  reasonDetails: true,
+  skippedChecks: true,
+});
+
+export const doctorCoreInfrastructureDomainSchema = doctorDomainBaseSchema.extend({
+  db: doctorReportSchema.shape.db,
+  vector: doctorReportSchema.shape.vector,
+  embedding: doctorReportSchema.shape.embedding,
+  tables: doctorReportSchema.shape.tables,
+  hitl: doctorReportSchema.shape.hitl,
+  knowledgeLifecycle: doctorReportSchema.shape.knowledgeLifecycle,
+});
+
+export const doctorAiServiceToolsDomainSchema = doctorDomainBaseSchema.extend({
+  agenticLlm: doctorReportSchema.shape.agenticLlm,
+  mcp: doctorReportSchema.shape.mcp,
+});
+
+export const doctorPipelineAutomationDomainSchema = doctorDomainBaseSchema.extend({
+  runs: doctorReportSchema.shape.runs,
+  agentLogSync: doctorReportSchema.shape.agentLogSync,
+  vibeDistillation: doctorReportSchema.shape.vibeDistillation,
+  sourceDistillation: doctorReportSchema.shape.sourceDistillation,
+});
+
+export const doctorDomainNameSchema = z.enum([
+  "core-infrastructure",
+  "ai-service-tools",
+  "pipeline-automation",
+]);
+
 export type DoctorReport = z.infer<typeof doctorReportSchema>;
 export type DoctorDistillationHealth = z.infer<typeof doctorDistillationHealthSchema>;
+export type DoctorCoreInfrastructureDomain = z.infer<typeof doctorCoreInfrastructureDomainSchema>;
+export type DoctorAiServiceToolsDomain = z.infer<typeof doctorAiServiceToolsDomainSchema>;
+export type DoctorPipelineAutomationDomain = z.infer<typeof doctorPipelineAutomationDomainSchema>;
+export type DoctorDomainName = z.infer<typeof doctorDomainNameSchema>;
+export type DoctorDomainReport =
+  | DoctorCoreInfrastructureDomain
+  | DoctorAiServiceToolsDomain
+  | DoctorPipelineAutomationDomain;

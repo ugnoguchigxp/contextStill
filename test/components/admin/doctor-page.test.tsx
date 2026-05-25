@@ -265,18 +265,81 @@ const baseReport = {
   },
 };
 
+const baseDomainMeta = {
+  status: baseReport.status,
+  checkedAt: baseReport.checkedAt,
+  summary: baseReport.summary,
+  reasonDetails: [],
+  skippedChecks: baseReport.skippedChecks,
+};
+
+const coreInfrastructureDomain = {
+  ...baseDomainMeta,
+  reasons: ["KNOWLEDGE_ZERO_USE_HIGH"],
+  db: baseReport.db,
+  vector: baseReport.vector,
+  embedding: baseReport.embedding,
+  tables: baseReport.tables,
+  hitl: baseReport.hitl,
+  knowledgeLifecycle: baseReport.knowledgeLifecycle,
+};
+
+const aiServiceToolsDomain = {
+  ...baseDomainMeta,
+  reasons: ["AGENTIC_LLM_UNREACHABLE", "MCP_PRIMARY_TOOLS_MISSING"],
+  agenticLlm: baseReport.agenticLlm,
+  mcp: {
+    ...baseReport.mcp,
+    missingPrimaryTools: ["context_compile"],
+    staleKnowledgeCount: 0,
+    staleSourceCount: 0,
+    nextActions: ["不足 MCP primary tools を追加する: context_compile"],
+  },
+};
+
+const pipelineAutomationDomain = {
+  ...baseDomainMeta,
+  reasons: [
+    "VIBE_DISTILLATION_NEVER_RAN",
+    "VIBE_DISTILLATION_PIPELINE_LOCK_STALE",
+    "SOURCE_DISTILLATION_PIPELINE_LOCK_STALE",
+    "ANTIGRAVITY_LOGS_SYNC_STALE",
+  ],
+  runs: baseReport.runs,
+  agentLogSync: baseReport.agentLogSync,
+  vibeDistillation: baseReport.vibeDistillation,
+  sourceDistillation: baseReport.sourceDistillation,
+};
+
+function mockDoctorDomainQueries({
+  core = { data: coreInfrastructureDomain },
+  ai = { data: aiServiceToolsDomain },
+  pipeline = { data: pipelineAutomationDomain },
+}: {
+  core?: { data?: unknown; isError?: boolean; isFetching?: boolean };
+  ai?: { data?: unknown; isError?: boolean; isFetching?: boolean };
+  pipeline?: { data?: unknown; isError?: boolean; isFetching?: boolean };
+} = {}) {
+  vi.mocked(useQuery).mockImplementation((options: any) => {
+    const domain = options.queryKey?.[2];
+    const state =
+      domain === "core-infrastructure" ? core : domain === "ai-service-tools" ? ai : pipeline;
+    return {
+      data: state.data,
+      isError: state.isError ?? false,
+      isFetching: state.isFetching ?? false,
+      refetch: vi.fn(),
+    } as any;
+  });
+}
+
 describe("DoctorPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
   it("renders dashboard sections and human-readable reason labels", () => {
-    vi.mocked(useQuery).mockReturnValue({
-      data: baseReport,
-      isError: false,
-      isFetching: false,
-      refetch: vi.fn(),
-    } as any);
+    mockDoctorDomainQueries();
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -290,33 +353,41 @@ describe("DoctorPage", () => {
     expect(screen.getByText("AI & Service Tools")).toBeInTheDocument();
     expect(screen.getByText("Pipeline & Automation")).toBeInTheDocument();
     expect(screen.getByText(/システム緊急警告/)).toBeInTheDocument();
+    expect(screen.getByText("Fallbacks")).toBeInTheDocument();
 
     expect(screen.getByText("未使用の active knowledge が多い")).toBeInTheDocument();
+    expect(screen.getByText("Agentic LLM に到達できない")).toBeInTheDocument();
     expect(screen.getAllByText("会話ログ蒸留ロックが古い").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("AI 推奨アクション:")).toBeInTheDocument();
     expect(screen.getByText("パイプライン推奨アクション:")).toBeInTheDocument();
     expect(
-      screen.getByText("stale source を再importまたは更新する（count: 40）"),
+      screen.getByText("不足 MCP primary tools を追加する: context_compile"),
     ).toBeInTheDocument();
     expect(screen.getByText("vibe lock を確認する")).toBeInTheDocument();
     expect(screen.getByText("source queue を確認する")).toBeInTheDocument();
   }, 15_000);
 
   it("renders fallback text for unknown reason codes", () => {
-    const report = {
-      ...baseReport,
+    const core = {
+      ...coreInfrastructureDomain,
       reasons: ["UNMAPPED_CUSTOM_REASON"],
+    };
+    const ai = {
+      ...aiServiceToolsDomain,
       mcp: { ...baseReport.mcp, nextActions: [] },
+    };
+    const pipeline = {
+      ...pipelineAutomationDomain,
+      reasons: [],
       vibeDistillation: { ...baseReport.vibeDistillation, nextActions: [] },
       sourceDistillation: { ...baseReport.sourceDistillation, nextActions: [] },
     };
 
-    vi.mocked(useQuery).mockReturnValue({
-      data: report,
-      isError: false,
-      isFetching: false,
-      refetch: vi.fn(),
-    } as any);
+    mockDoctorDomainQueries({
+      core: { data: core },
+      ai: { data: ai },
+      pipeline: { data: pipeline },
+    });
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -331,12 +402,11 @@ describe("DoctorPage", () => {
   });
 
   it("renders error card when doctor query fails", () => {
-    vi.mocked(useQuery).mockReturnValue({
-      data: undefined,
-      isError: true,
-      isFetching: false,
-      refetch: vi.fn(),
-    } as any);
+    mockDoctorDomainQueries({
+      core: { isError: true },
+      ai: { data: aiServiceToolsDomain },
+      pipeline: { data: pipelineAutomationDomain },
+    });
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -345,5 +415,24 @@ describe("DoctorPage", () => {
     );
 
     expect(screen.getByText("Doctor API Error")).toBeInTheDocument();
+  });
+
+  it("renders domain placeholders before data arrives", () => {
+    mockDoctorDomainQueries({
+      core: {},
+      ai: {},
+      pipeline: {},
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <DoctorPage />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("Core Infrastructure")).toBeInTheDocument();
+    expect(screen.getByText("AI & Service Tools")).toBeInTheDocument();
+    expect(screen.getByText("Pipeline & Automation")).toBeInTheDocument();
+    expect(screen.getAllByText("Loading")).toHaveLength(3);
   });
 });

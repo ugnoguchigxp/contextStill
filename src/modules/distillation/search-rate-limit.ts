@@ -1,4 +1,4 @@
-import type { SearchProviderName, SearchProviderRateLimit } from "./search-providers.js";
+import type { SearchProviderName, SearchProviderRateLimit } from "./search-provider.types.js";
 
 function splitHeaderList(value: string | undefined): string[] {
   if (!value) return [];

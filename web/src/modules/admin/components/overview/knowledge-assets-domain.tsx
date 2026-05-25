@@ -2,7 +2,10 @@ import React from "react";
 import { Database } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { formatNumber } from "@/lib/admin-formatters";
-import type { OverviewDashboard, DoctorReport } from "../../repositories/admin.repository";
+import type {
+  DoctorReport,
+  OverviewKnowledgeAssetsDomain,
+} from "../../repositories/admin.repository";
 import { KnowledgeCharts } from "../overview-charts";
 
 function toPercent(numerator: number, denominator: number): string {
@@ -11,13 +14,11 @@ function toPercent(numerator: number, denominator: number): string {
 }
 
 type KnowledgeAssetsDomainProps = {
-  dashboard: OverviewDashboard;
+  dashboard: OverviewKnowledgeAssetsDomain;
   doctorReport?: DoctorReport | null;
 };
 
 export function KnowledgeAssetsDomain({ dashboard, doctorReport }: KnowledgeAssetsDomainProps) {
-  const compileRuns = dashboard.kpis.compileRuns ?? 0;
-
   return (
     <section className="overview-domain-section accent-emerald">
       <div className="overview-domain-header justify-between items-center border-b border-emerald-500/10 pb-3">

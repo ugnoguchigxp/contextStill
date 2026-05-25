@@ -186,10 +186,13 @@ const defaultOverviewData = {
 };
 
 const queryMockState = vi.hoisted(() => ({
-  overviewError: null as Error | null,
-  overviewData: null as any,
+  domainErrors: {} as Record<string, Error | null>,
+  domainData: {} as Record<string, any>,
   doctorData: null as any,
-  overviewRefetch: vi.fn(),
+  knowledgeRefetch: vi.fn(),
+  landscapeRefetch: vi.fn(),
+  systemRefetch: vi.fn(),
+  llmRefetch: vi.fn(),
   doctorRefetch: vi.fn(),
 }));
 
@@ -208,13 +211,31 @@ vi.mock("@tanstack/react-query", async () => {
           refetch: queryMockState.doctorRefetch,
         };
       }
+      if (options.queryKey?.[0] === "overview-domain") {
+        const domain = String(options.queryKey[1]);
+        const refetchByDomain: Record<string, ReturnType<typeof vi.fn>> = {
+          "knowledge-assets": queryMockState.knowledgeRefetch,
+          "landscape-health": queryMockState.landscapeRefetch,
+          "system-quality": queryMockState.systemRefetch,
+          "llm-resources": queryMockState.llmRefetch,
+        };
+        const error = queryMockState.domainErrors[domain] ?? null;
+        return {
+          data: queryMockState.domainData[domain] ?? null,
+          error,
+          isError: Boolean(error),
+          isFetching: false,
+          isLoading: queryMockState.domainData[domain] === null,
+          refetch: refetchByDomain[domain] ?? vi.fn(),
+        };
+      }
       return {
-        data: queryMockState.overviewData,
-        error: queryMockState.overviewError,
-        isError: Boolean(queryMockState.overviewError),
+        data: null,
+        error: null,
+        isError: false,
         isFetching: false,
         isLoading: false,
-        refetch: queryMockState.overviewRefetch,
+        refetch: vi.fn(),
       };
     }),
   };
@@ -225,10 +246,38 @@ const queryClient = new QueryClient();
 describe("OverviewPage", () => {
   beforeEach(() => {
     queryClient.clear();
-    queryMockState.overviewError = null;
-    queryMockState.overviewData = JSON.parse(JSON.stringify(defaultOverviewData));
+    queryMockState.domainErrors = {
+      "knowledge-assets": null,
+      "landscape-health": null,
+      "system-quality": null,
+      "llm-resources": null,
+    };
+    queryMockState.domainData = {
+      "knowledge-assets": {
+        checkedAt: defaultOverviewData.checkedAt,
+        kpis: JSON.parse(JSON.stringify(defaultOverviewData.kpis)),
+        charts: JSON.parse(JSON.stringify(defaultOverviewData.charts)),
+      },
+      "landscape-health": {
+        checkedAt: defaultOverviewData.checkedAt,
+        landscape: JSON.parse(JSON.stringify(defaultOverviewData.landscape)),
+      },
+      "system-quality": {
+        checkedAt: defaultOverviewData.checkedAt,
+        kpis: JSON.parse(JSON.stringify(defaultOverviewData.kpis)),
+        charts: JSON.parse(JSON.stringify(defaultOverviewData.charts)),
+        searchApiStatus: JSON.parse(JSON.stringify(defaultOverviewData.searchApiStatus)),
+      },
+      "llm-resources": {
+        checkedAt: defaultOverviewData.checkedAt,
+        llmUsage: JSON.parse(JSON.stringify(defaultOverviewData.llmUsage)),
+      },
+    };
     queryMockState.doctorData = JSON.parse(JSON.stringify(defaultDoctorData));
-    queryMockState.overviewRefetch.mockClear();
+    queryMockState.knowledgeRefetch.mockClear();
+    queryMockState.landscapeRefetch.mockClear();
+    queryMockState.systemRefetch.mockClear();
+    queryMockState.llmRefetch.mockClear();
     queryMockState.doctorRefetch.mockClear();
   });
 
@@ -267,8 +316,13 @@ describe("OverviewPage", () => {
     expect(screen.queryByText("Doctor Signals")).not.toBeInTheDocument();
   }, 10_000);
 
-  it("keeps existing overview content visible when the overview query reports an error", () => {
-    queryMockState.overviewError = new Error("/api/overview failed: 500");
+  it("renders domain placeholders before domain payloads arrive", () => {
+    queryMockState.domainData = {
+      "knowledge-assets": null,
+      "landscape-health": null,
+      "system-quality": null,
+      "llm-resources": null,
+    };
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -276,15 +330,33 @@ describe("OverviewPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByText("Overview API Error")).toBeInTheDocument();
-    expect(screen.getByText("/api/overview failed: 500")).toBeInTheDocument();
     expect(screen.getByText("Knowledge Assets")).toBeInTheDocument();
-    expect(screen.getByText("Daily LLM Tokens & Cloud Cost (14d)")).toBeInTheDocument();
+    expect(screen.getByText("Knowledge Landscape Health")).toBeInTheDocument();
+    expect(screen.getByText("System Quality & Health")).toBeInTheDocument();
+    expect(screen.getByText("LLM Resources & Cost")).toBeInTheDocument();
+    expect(screen.getAllByText("Loading").length).toBeGreaterThanOrEqual(4);
+  });
+
+  it("keeps other domains visible when one domain query reports an error", () => {
+    queryMockState.domainData["llm-resources"] = null;
+    queryMockState.domainErrors["llm-resources"] = new Error(
+      "/api/overview/domains/llm-resources failed: 500",
+    );
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <OverviewPage />
+      </QueryClientProvider>,
+    );
+
+    expect(screen.getByText("/api/overview/domains/llm-resources failed: 500")).toBeInTheDocument();
+    expect(screen.getByText("Knowledge Assets")).toBeInTheDocument();
+    expect(screen.getByText("System Quality & Health")).toBeInTheDocument();
     expect(screen.queryByText("Doctor Signals")).not.toBeInTheDocument();
   });
 
   it("keeps overview usable when landscape summary is unavailable", () => {
-    queryMockState.overviewData.landscape = {
+    queryMockState.domainData["landscape-health"].landscape = {
       status: "unavailable",
       windowDays: 30,
       error: "landscape replay comparison failed",
@@ -305,7 +377,7 @@ describe("OverviewPage", () => {
     expect(screen.getByText("System Quality & Health")).toBeInTheDocument();
   });
 
-  it("calls overview.refetch and doctor.refetch when refresh button is clicked", () => {
+  it("calls domain refetches and doctor.refetch when refresh button is clicked", () => {
     render(
       <QueryClientProvider client={queryClient}>
         <OverviewPage />
@@ -317,7 +389,10 @@ describe("OverviewPage", () => {
 
     fireEvent.click(refreshButton);
 
-    expect(queryMockState.overviewRefetch).toHaveBeenCalled();
+    expect(queryMockState.knowledgeRefetch).toHaveBeenCalled();
+    expect(queryMockState.landscapeRefetch).toHaveBeenCalled();
+    expect(queryMockState.systemRefetch).toHaveBeenCalled();
+    expect(queryMockState.llmRefetch).toHaveBeenCalled();
     expect(queryMockState.doctorRefetch).toHaveBeenCalled();
   });
 
@@ -346,9 +421,9 @@ describe("OverviewPage", () => {
   });
 
   it("displays 'All items successfully linked' when unlinkedKnowledge is 0", () => {
-    queryMockState.overviewData.kpis.unlinkedKnowledge = 0;
-    queryMockState.overviewData.kpis.linkedKnowledge = 10;
-    queryMockState.overviewData.kpis.knowledgeTotal = 10;
+    queryMockState.domainData["knowledge-assets"].kpis.unlinkedKnowledge = 0;
+    queryMockState.domainData["knowledge-assets"].kpis.linkedKnowledge = 10;
+    queryMockState.domainData["knowledge-assets"].kpis.knowledgeTotal = 10;
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -360,7 +435,7 @@ describe("OverviewPage", () => {
   });
 
   it("displays 'No active LLM sources' when bySource list is empty", () => {
-    queryMockState.overviewData.llmUsage.bySource = [];
+    queryMockState.domainData["llm-resources"].llmUsage.bySource = [];
 
     render(
       <QueryClientProvider client={queryClient}>
@@ -375,10 +450,10 @@ describe("OverviewPage", () => {
     // doctorReport is completely null
     queryMockState.doctorData = null;
 
-    queryMockState.overviewData.kpis.compileRuns = 10;
-    queryMockState.overviewData.kpis.compileOkRuns = 9;
-    queryMockState.overviewData.kpis.compileDegradedRuns = 1;
-    queryMockState.overviewData.kpis.compileFailedRuns = 0;
+    queryMockState.domainData["system-quality"].kpis.compileRuns = 10;
+    queryMockState.domainData["system-quality"].kpis.compileOkRuns = 9;
+    queryMockState.domainData["system-quality"].kpis.compileDegradedRuns = 1;
+    queryMockState.domainData["system-quality"].kpis.compileFailedRuns = 0;
 
     render(
       <QueryClientProvider client={queryClient}>

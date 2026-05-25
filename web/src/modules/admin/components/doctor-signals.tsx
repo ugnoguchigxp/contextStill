@@ -3,7 +3,11 @@ import {
   type DoctorReasonDetail,
   formatDoctorReasonDetail as formatDoctorReason,
 } from "../../../../../src/shared/doctor/doctor-reasons";
-import type { DoctorReport } from "../repositories/admin.repository";
+import type {
+  DoctorAiServiceToolsDomain,
+  DoctorPipelineAutomationDomain,
+  DoctorReport,
+} from "../repositories/admin.repository";
 
 function reasonBadgeVariant(
   severity: DoctorReasonDetail["severity"],
@@ -107,10 +111,14 @@ export function getDomainSignals(
 ): DoctorReasonDetail[] {
   return reasons.filter((r) => {
     if (domain === "infrastructure") {
-      return r.area === "Runtime" || r.area === "Knowledge" || r.area === "Other";
+      return (
+        (r.area === "Runtime" && !r.code.startsWith("AGENTIC_LLM_")) ||
+        r.area === "Knowledge" ||
+        r.area === "Other"
+      );
     }
     if (domain === "ai") {
-      return r.area === "MCP";
+      return r.area === "MCP" || r.code.startsWith("AGENTIC_LLM_");
     }
     if (domain === "pipeline") {
       return r.area === "Distillation" || r.area === "Sync";
@@ -121,7 +129,12 @@ export function getDomainSignals(
 
 // 🟢🟣🔵 各ドメイン別にNext Actionsを抽出
 export function getDomainNextActions(
-  report: DoctorReport | null | undefined,
+  report:
+    | DoctorReport
+    | DoctorAiServiceToolsDomain
+    | DoctorPipelineAutomationDomain
+    | null
+    | undefined,
   domain: "infrastructure" | "ai" | "pipeline",
 ): string[] {
   if (!report) return [];
@@ -129,14 +142,18 @@ export function getDomainNextActions(
     return [];
   }
   if (domain === "ai") {
-    return uniqueNonEmpty(report.mcp?.nextActions ?? []);
+    return uniqueNonEmpty("mcp" in report ? (report.mcp?.nextActions ?? []) : []);
   }
   if (domain === "pipeline") {
-    return uniqueNonEmpty([
-      ...(report.agentLogSync?.nextActions ?? []),
-      ...(report.vibeDistillation?.nextActions ?? []),
-      ...(report.sourceDistillation?.nextActions ?? []),
-    ]);
+    return uniqueNonEmpty(
+      "agentLogSync" in report
+        ? [
+            ...(report.agentLogSync?.nextActions ?? []),
+            ...(report.vibeDistillation?.nextActions ?? []),
+            ...(report.sourceDistillation?.nextActions ?? []),
+          ]
+        : [],
+    );
   }
   return [];
 }

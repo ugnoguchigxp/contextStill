@@ -2,7 +2,7 @@ import React from "react";
 import { CreditCard } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { formatNumber } from "@/lib/admin-formatters";
-import type { OverviewDashboard } from "../../repositories/admin.repository";
+import type { OverviewLlmResourcesDomain } from "../../repositories/admin.repository";
 import { LlmCharts } from "../overview-charts";
 
 function formatJpy(value: number): string {
@@ -14,7 +14,7 @@ function formatJpy(value: number): string {
 }
 
 type LlmResourcesDomainProps = {
-  dashboard: OverviewDashboard;
+  dashboard: OverviewLlmResourcesDomain;
 };
 
 export function LlmResourcesDomain({ dashboard }: LlmResourcesDomainProps) {

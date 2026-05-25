@@ -8,10 +8,6 @@ import {
 } from "../../../src/modules/audit/audit-log.service.js";
 import { embedOne } from "../../../src/modules/embedding/embedding.service.js";
 import {
-  mergeApplicabilityInput,
-  normalizeKnowledgeApplicability,
-} from "../../../src/modules/knowledge/applicability.service.js";
-import {
   type KnowledgeTagKind,
   type KnowledgeTagStatus,
   listKnowledgeTagDefinitions,
@@ -23,213 +19,41 @@ import {
 } from "../../../src/modules/knowledge/knowledge-value.service.js";
 import { canTransitionKnowledgeStatus } from "../../../src/modules/lifecycle/lifecycle.service.js";
 import type { KnowledgeStatus } from "../../../src/shared/schemas/knowledge.schema.js";
+import {
+  asRecord,
+  buildNormalizedApplicability,
+  buildKnowledgeListOrderBy,
+  buildKnowledgeListWhere,
+  extractSourceRefs,
+  extractSourceVibeMemoryIds,
+  isMissingKnowledgeLifecycleColumnsError,
+  mergeApplicabilityMetadata,
+  mergeNormalizedApplicability,
+} from "./knowledge.repository.helpers.js";
+import type {
+  BulkKnowledgeStatusUpdateParams,
+  BulkKnowledgeStatusUpdateResult,
+  KnowledgeCreateInput,
+  KnowledgeFeedbackDirection,
+  KnowledgeFeedbackResult,
+  KnowledgeListItem,
+  KnowledgeListParams,
+  KnowledgeListSortBy,
+  KnowledgeUpdateInput,
+  KnowledgeTagDefinitionApi,
+} from "./knowledge.repository.types.js";
 
-export type KnowledgeCreateInput = {
-  type: string;
-  status: string;
-  scope: string;
-  title: string;
-  body: string;
-  confidence: number;
-  importance: number;
-  appliesTo?: Record<string, unknown>;
-  general?: boolean;
-  technologies?: string[];
-  changeTypes?: string[];
-  domains?: string[];
-  repoPath?: string;
-  repoKey?: string;
-  metadata?: Record<string, unknown>;
+export type {
+  BulkKnowledgeStatusUpdateParams,
+  BulkKnowledgeStatusUpdateResult,
+  KnowledgeCreateInput,
+  KnowledgeFeedbackDirection,
+  KnowledgeFeedbackResult,
+  KnowledgeListItem,
+  KnowledgeListSortBy,
+  KnowledgeTagDefinitionApi,
+  KnowledgeUpdateInput,
 };
-
-export type KnowledgeUpdateInput = {
-  type?: string;
-  status?: string;
-  scope?: string;
-  title?: string;
-  body?: string;
-  confidence?: number;
-  importance?: number;
-  appliesTo?: Record<string, unknown>;
-  general?: boolean;
-  technologies?: string[];
-  changeTypes?: string[];
-  domains?: string[];
-  repoPath?: string;
-  repoKey?: string;
-  metadata?: Record<string, unknown>;
-};
-
-export type BulkKnowledgeStatusUpdateResult = {
-  targetStatus: KnowledgeStatus;
-  requestedIds: string[];
-  updatedIds: string[];
-  unchangedIds: string[];
-  notFoundIds: string[];
-  invalidTransitionIds: Array<{ id: string; fromStatus: KnowledgeStatus }>;
-};
-
-export type BulkKnowledgeStatusSelection = {
-  status?: KnowledgeStatus;
-  type?: string;
-  query?: string;
-};
-
-export type BulkKnowledgeStatusUpdateParams =
-  | {
-      ids: string[];
-      status: KnowledgeStatus;
-    }
-  | {
-      selection: BulkKnowledgeStatusSelection;
-      status: KnowledgeStatus;
-    };
-
-export type KnowledgeFeedbackDirection = "up" | "down";
-
-export type KnowledgeFeedbackResult = {
-  id: string;
-  direction: KnowledgeFeedbackDirection;
-  explicitUpvoteCount: number;
-  explicitDownvoteCount: number;
-  dynamicScore: number;
-  lastVerifiedAt: Date | null;
-};
-
-export type KnowledgeTagDefinitionApi = {
-  id: string;
-  kind: KnowledgeTagKind;
-  slug: string;
-  label: string;
-  description: string | null;
-  aliases: string[];
-  status: KnowledgeTagStatus;
-  sortOrder: number;
-};
-
-export type KnowledgeListItem = {
-  id: string;
-  type: string;
-  status: string;
-  scope: string;
-  title: string;
-  body: string;
-  confidence: number;
-  importance: number;
-  appliesTo: Record<string, unknown>;
-  metadata: Record<string, unknown>;
-  sourceRefs: string[];
-  sourceVibeMemoryIds: string[];
-  compileSelectCount: number;
-  lastCompiledAt: Date | null;
-  agenticAcceptCount: number;
-  explicitUpvoteCount: number;
-  explicitDownvoteCount: number;
-  dynamicScore: number;
-  decayFactor: number;
-  lastVerifiedAt: Date | null;
-  createdAt: Date;
-  updatedAt: Date;
-};
-
-type KnowledgeListParams = {
-  limit: number;
-  page?: number;
-  status?: string;
-  type?: string;
-  query?: string;
-  sortBy?: KnowledgeListSortBy;
-  sortDir?: KnowledgeListSortDir;
-};
-
-export type KnowledgeListSortBy =
-  | "title"
-  | "type"
-  | "status"
-  | "scope"
-  | "qualityScore"
-  | "updatedAt";
-
-export type KnowledgeListSortDir = "asc" | "desc";
-
-function asRecord(value: unknown): Record<string, unknown> {
-  return value && typeof value === "object" && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
-}
-
-function extractSourceRefs(metadata: Record<string, unknown>): string[] {
-  const refs = new Set<string>();
-  const sourceRefs = Array.isArray(metadata.sourceRefs) ? metadata.sourceRefs : [];
-  const candidateSourceRefs = Array.isArray(metadata.candidateSourceRefs)
-    ? metadata.candidateSourceRefs
-    : [];
-  for (const value of [...sourceRefs, ...candidateSourceRefs]) {
-    if (typeof value === "string" && value.trim()) refs.add(value.trim());
-  }
-
-  const sourceDocumentUri =
-    typeof metadata.sourceDocumentUri === "string" ? metadata.sourceDocumentUri.trim() : "";
-  const sourceUri = typeof metadata.sourceUri === "string" ? metadata.sourceUri.trim() : "";
-  const locator =
-    typeof metadata.sourceFragmentLocator === "string" && metadata.sourceFragmentLocator.trim()
-      ? metadata.sourceFragmentLocator.trim()
-      : "full";
-  const origin = sourceDocumentUri || sourceUri;
-  if (origin) refs.add(`${origin}#${locator}`);
-  return [...refs].slice(0, 8);
-}
-
-function extractSourceVibeMemoryIds(metadata: Record<string, unknown>): string[] {
-  const ids = new Set<string>();
-  const direct = Array.isArray(metadata.sourceVibeMemoryIds) ? metadata.sourceVibeMemoryIds : [];
-  for (const value of direct) {
-    if (typeof value === "string" && value.trim()) ids.add(value.trim());
-  }
-  const sourceUri = typeof metadata.sourceUri === "string" ? metadata.sourceUri.trim() : "";
-  if (sourceUri.startsWith("vibe-memory://")) {
-    const id = sourceUri.replace("vibe-memory://", "").trim();
-    if (id) ids.add(id);
-  }
-  return [...ids];
-}
-
-function isMissingKnowledgeLifecycleColumnsError(error: unknown): boolean {
-  const message = error instanceof Error ? error.message : String(error);
-  const normalized = message.toLowerCase();
-  const code = (error as { code?: unknown })?.code;
-  if (code === "42703") return true;
-  return (
-    normalized.includes("compile_select_count") ||
-    normalized.includes("last_compiled_at") ||
-    normalized.includes("agentic_accept_count") ||
-    normalized.includes("explicit_upvote_count") ||
-    normalized.includes("explicit_downvote_count") ||
-    normalized.includes("dynamic_score")
-  );
-}
-
-function buildKnowledgeListWhere(params: Pick<KnowledgeListParams, "status" | "type" | "query">) {
-  const conditions: SQL[] = [];
-  if (params.status) {
-    conditions.push(eq(knowledgeItems.status, params.status));
-  }
-  if (params.type) {
-    conditions.push(eq(knowledgeItems.type, params.type));
-  }
-  if (params.query?.trim()) {
-    const query = `%${params.query.trim()}%`;
-    const searchCondition = or(
-      ilike(knowledgeItems.title, query),
-      ilike(knowledgeItems.body, query),
-      sql`${knowledgeItems.appliesTo} ->> 'technologies' ilike ${query}`,
-      sql`${knowledgeItems.appliesTo} ->> 'domains' ilike ${query}`,
-      sql`${knowledgeItems.appliesTo} ->> 'changeTypes' ilike ${query}`,
-    );
-    if (searchCondition) conditions.push(searchCondition);
-  }
-  return conditions.length > 0 ? and(...conditions) : undefined;
-}
 
 export async function countKnowledgeItems(
   params: Pick<KnowledgeListParams, "status" | "type" | "query">,
@@ -344,22 +168,6 @@ export async function listKnowledgeItems(
   });
 }
 
-function buildKnowledgeListOrderBy(params: Pick<KnowledgeListParams, "sortBy" | "sortDir">) {
-  const sortBy = params.sortBy ?? "updatedAt";
-  const direction = params.sortDir === "asc" ? asc : desc;
-  const qualityScore = sql<number>`(${knowledgeItems.importance} * 0.6 + ${knowledgeItems.confidence} * 0.4)`;
-  const sortableColumns = {
-    title: sql`lower(${knowledgeItems.title})`,
-    type: sql`${knowledgeItems.type}`,
-    status: sql`${knowledgeItems.status}`,
-    scope: sql`${knowledgeItems.scope}`,
-    qualityScore,
-    updatedAt: sql`${knowledgeItems.updatedAt}`,
-  } satisfies Record<KnowledgeListSortBy, SQL>;
-  const selected = sortableColumns[sortBy] ?? sortableColumns.updatedAt;
-  return [direction(selected), desc(knowledgeItems.updatedAt), desc(knowledgeItems.id)];
-}
-
 async function tryEmbedKnowledge(input: { title: string; body: string }): Promise<
   number[] | undefined
 > {
@@ -368,71 +176,6 @@ async function tryEmbedKnowledge(input: { title: string; body: string }): Promis
   } catch {
     return undefined;
   }
-}
-
-type KnowledgeApplicabilityInput = Pick<
-  KnowledgeCreateInput,
-  "appliesTo" | "general" | "technologies" | "changeTypes" | "domains" | "repoPath" | "repoKey"
->;
-
-const knownApplicabilityKeys = new Set([
-  "general",
-  "technologies",
-  "changeTypes",
-  "domains",
-  "repoPath",
-  "repoKey",
-]);
-
-async function buildNormalizedApplicability(input: KnowledgeApplicabilityInput) {
-  const mergedInput = mergeApplicabilityInput({
-    appliesTo: input.appliesTo,
-    general: input.general,
-    technologies: input.technologies,
-    changeTypes: input.changeTypes,
-    domains: input.domains,
-    repoPath: input.repoPath,
-    repoKey: input.repoKey,
-  });
-  return normalizeKnowledgeApplicability(mergedInput);
-}
-
-function pickUnknownApplicabilityKeys(value: Record<string, unknown>): Record<string, unknown> {
-  const extras: Record<string, unknown> = {};
-  for (const [key, entry] of Object.entries(value)) {
-    if (!knownApplicabilityKeys.has(key)) {
-      extras[key] = entry;
-    }
-  }
-  return extras;
-}
-
-function mergeNormalizedApplicability(params: {
-  existingAppliesTo?: unknown;
-  inputAppliesTo?: unknown;
-  normalizedAppliesTo: Record<string, unknown>;
-}): Record<string, unknown> {
-  const existing = asRecord(params.existingAppliesTo);
-  const incoming = asRecord(params.inputAppliesTo);
-  return {
-    ...pickUnknownApplicabilityKeys(existing),
-    ...pickUnknownApplicabilityKeys(incoming),
-    ...params.normalizedAppliesTo,
-  };
-}
-
-function mergeApplicabilityMetadata(
-  metadata: Record<string, unknown>,
-  normalized: Awaited<ReturnType<typeof buildNormalizedApplicability>>,
-): Record<string, unknown> {
-  const next: Record<string, unknown> = { ...metadata };
-  if (normalized.warnings.length > 0) {
-    next.tagNormalizationWarnings = normalized.warnings;
-  }
-  if (normalized.unknownTagCandidates.length > 0) {
-    next.unknownTagCandidates = normalized.unknownTagCandidates;
-  }
-  return next;
 }
 
 export async function createKnowledgeItem(input: KnowledgeCreateInput) {

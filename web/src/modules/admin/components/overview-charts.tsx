@@ -12,7 +12,12 @@ import {
   XAxis,
   YAxis,
 } from "recharts";
-import type { DoctorReport, OverviewDashboard } from "../repositories/admin.repository";
+import type {
+  DoctorReport,
+  OverviewKnowledgeAssetsDomain,
+  OverviewLlmResourcesDomain,
+  OverviewSystemQualityDomain,
+} from "../repositories/admin.repository";
 import { AdminChartCard } from "./admin-chart-card";
 
 const knowledgeStatusLabel: Record<"active" | "draft" | "deprecated", string> = {
@@ -154,7 +159,7 @@ export function KnowledgeCharts({
   dashboard,
   doctorReport,
 }: {
-  dashboard: OverviewDashboard;
+  dashboard: OverviewKnowledgeAssetsDomain;
   doctorReport?: DoctorReport | null;
 }) {
   const knowledgeData = dashboard.charts.knowledgeByStatusType.map((item) => ({
@@ -262,7 +267,7 @@ export function SystemHealthCharts({
   dashboard,
   doctorReport,
 }: {
-  dashboard: OverviewDashboard;
+  dashboard: OverviewSystemQualityDomain;
   doctorReport?: DoctorReport | null;
 }) {
   const compileMix = compileMixData(doctorReport);
@@ -391,7 +396,7 @@ export function SystemHealthCharts({
 export function LlmCharts({
   dashboard,
 }: {
-  dashboard: OverviewDashboard;
+  dashboard: OverviewLlmResourcesDomain;
 }) {
   const llmData = dashboard.llmUsage.daily.map((item) => ({
     ...item,

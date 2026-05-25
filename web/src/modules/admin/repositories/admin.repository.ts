@@ -414,6 +414,20 @@ export type DoctorReport = {
   };
 };
 
+export type DoctorDomainBase = Pick<
+  DoctorReport,
+  "status" | "checkedAt" | "summary" | "reasons" | "reasonDetails" | "skippedChecks"
+>;
+
+export type DoctorCoreInfrastructureDomain = DoctorDomainBase &
+  Pick<DoctorReport, "db" | "vector" | "embedding" | "tables" | "hitl" | "knowledgeLifecycle">;
+
+export type DoctorAiServiceToolsDomain = DoctorDomainBase &
+  Pick<DoctorReport, "agenticLlm" | "mcp">;
+
+export type DoctorPipelineAutomationDomain = DoctorDomainBase &
+  Pick<DoctorReport, "runs" | "agentLogSync" | "vibeDistillation" | "sourceDistillation">;
+
 export type OverviewDashboard = {
   checkedAt: string;
   kpis: {
@@ -589,6 +603,75 @@ export type OverviewDashboard = {
         error: string;
       };
 };
+
+export type OverviewKnowledgeAssetsDomain = {
+  checkedAt: string;
+  kpis: Pick<
+    OverviewDashboard["kpis"],
+    | "knowledgeTotal"
+    | "activeKnowledge"
+    | "draftKnowledge"
+    | "deprecatedKnowledge"
+    | "rules"
+    | "procedures"
+    | "embeddedKnowledge"
+    | "zeroUseActiveKnowledge"
+    | "wikiPages"
+    | "indexedSources"
+    | "sourceFragments"
+    | "sourceLinks"
+    | "linkedKnowledge"
+    | "unlinkedKnowledge"
+    | "sourceCommunities"
+    | "sourceCoveredCommunities"
+    | "sourceThinCommunities"
+    | "sourceMissingCommunities"
+    | "vibeRecords"
+    | "vibeSessions"
+    | "vibeRecordsWithDiffs"
+    | "agentDiffEntries"
+    | "graphNodes"
+    | "graphEdges"
+    | "graphEmbedded"
+    | "graphSessionEdges"
+    | "graphProjectEdges"
+    | "graphSourceEdges"
+  >;
+  charts: Pick<
+    OverviewDashboard["charts"],
+    | "knowledgeByStatusType"
+    | "dynamicScoreBuckets"
+    | "vibeRecordsByDay"
+    | "sourceCoverage"
+    | "communitySourceCoverage"
+  >;
+};
+
+export type OverviewSystemQualityDomain = {
+  checkedAt: string;
+  kpis: Pick<
+    OverviewDashboard["kpis"],
+    "compileRuns" | "compileOkRuns" | "compileDegradedRuns" | "compileFailedRuns"
+  >;
+  charts: Pick<OverviewDashboard["charts"], "compileRunsByDay" | "distillationQueue">;
+  searchApiStatus: OverviewDashboard["searchApiStatus"];
+};
+
+export type OverviewLlmResourcesDomain = {
+  checkedAt: string;
+  llmUsage: OverviewDashboard["llmUsage"];
+};
+
+export type OverviewLandscapeHealthDomain = {
+  checkedAt: string;
+  landscape: OverviewDashboard["landscape"];
+};
+
+export type OverviewDomainName =
+  | "knowledge-assets"
+  | "landscape-health"
+  | "system-quality"
+  | "llm-resources";
 
 export type GraphNode = {
   id: string;
@@ -2157,8 +2240,36 @@ export async function fetchDoctorReport(): Promise<DoctorReport> {
   return getJson<DoctorReport>("/api/doctor");
 }
 
+export async function fetchDoctorCoreInfrastructureDomain(): Promise<DoctorCoreInfrastructureDomain> {
+  return getJson<DoctorCoreInfrastructureDomain>("/api/doctor/domains/core-infrastructure");
+}
+
+export async function fetchDoctorAiServiceToolsDomain(): Promise<DoctorAiServiceToolsDomain> {
+  return getJson<DoctorAiServiceToolsDomain>("/api/doctor/domains/ai-service-tools");
+}
+
+export async function fetchDoctorPipelineAutomationDomain(): Promise<DoctorPipelineAutomationDomain> {
+  return getJson<DoctorPipelineAutomationDomain>("/api/doctor/domains/pipeline-automation");
+}
+
 export async function fetchOverviewDashboard(): Promise<OverviewDashboard> {
   return getJson<OverviewDashboard>("/api/overview");
+}
+
+export async function fetchOverviewKnowledgeAssetsDomain(): Promise<OverviewKnowledgeAssetsDomain> {
+  return getJson<OverviewKnowledgeAssetsDomain>("/api/overview/domains/knowledge-assets");
+}
+
+export async function fetchOverviewLandscapeHealthDomain(): Promise<OverviewLandscapeHealthDomain> {
+  return getJson<OverviewLandscapeHealthDomain>("/api/overview/domains/landscape-health");
+}
+
+export async function fetchOverviewSystemQualityDomain(): Promise<OverviewSystemQualityDomain> {
+  return getJson<OverviewSystemQualityDomain>("/api/overview/domains/system-quality");
+}
+
+export async function fetchOverviewLlmResourcesDomain(): Promise<OverviewLlmResourcesDomain> {
+  return getJson<OverviewLlmResourcesDomain>("/api/overview/domains/llm-resources");
 }
 
 export async function fetchGraphSnapshot(

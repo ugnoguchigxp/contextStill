@@ -1,5 +1,4 @@
 import { and, asc, eq, inArray, sql, type SQL } from "drizzle-orm";
-import { APP_CONSTANTS } from "../../constants.js";
 import { db } from "../../db/index.js";
 import { distillationTargetStates, findCandidateResults } from "../../db/schema.js";
 import { redactSecretRecord, redactSecrets } from "../../shared/utils/secret-redaction.js";
@@ -77,6 +76,17 @@ export {
   markMissingWikiTargetsSkipped,
   getDistillationTargetSummary,
 } from "./repository-maintenance.js";
+
+export {
+  finishDistillationTargetState,
+  hasRunningFindCandidateTargetState,
+  pauseDistillationTargetState,
+  releaseDistillationTargetState,
+  requeueDistillationTargetState,
+  updateDistillationTargetHeartbeat,
+  updateDistillationTargetPhase,
+  updateDistillationTargetSource,
+} from "./repository-state-transitions.js";
 
 export async function upsertDistillationTargetState(params: {
   candidate: DistillationTargetCandidate;
@@ -287,6 +297,103 @@ export async function claimNextDistillationTargetState(
   return claimed;
 }
 
+export async function claimNextCoverEvidenceTargetState(params: {
+  distillationVersion?: string;
+  targetKind?: DistillationTargetKind;
+  worker?: string;
+  now?: Date;
+}): Promise<DistillationTargetStateRow | null> {
+  await ensureRuntimeSettingsLoaded();
+  const now = params.now ?? new Date();
+  const nowUtc = sql`${now.toISOString()}::timestamptz at time zone 'UTC'`;
+  const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
+  const targetKind = params.targetKind ?? null;
+  const lockOwner = params.worker?.trim() || workerId();
+
+  const claimed = await db.transaction(async (tx) => {
+    const selected = await tx.execute(sql`
+      select id
+      from distillation_target_states
+      where distillation_version = ${distillationVersion}
+        and (${targetKind}::text is null or target_kind = ${targetKind})
+        and (
+          status = 'pending'
+          or (
+            status = 'paused'
+            and (
+              next_retry_at is null
+              or next_retry_at <= ${nowUtc}
+            )
+          )
+        )
+        and exists (
+          select 1
+          from find_candidate_results f
+          left join cover_evidence_results c on c.id = f.id
+          where f.target_state_id = distillation_target_states.id
+            and (
+              c.id is null
+              or c.status in (
+                'reprocess_requested',
+                'tool_failed',
+                'provider_failed',
+                'parse_failed'
+              )
+            )
+        )
+      order by
+        (
+          select min(f.created_at)
+          from find_candidate_results f
+          left join cover_evidence_results c on c.id = f.id
+          where f.target_state_id = distillation_target_states.id
+            and (
+              c.id is null
+              or c.status in (
+                'reprocess_requested',
+                'tool_failed',
+                'provider_failed',
+                'parse_failed'
+              )
+            )
+        ) asc,
+        sort_key asc,
+        created_at asc,
+        id asc
+      for update skip locked
+      limit 1
+    `);
+    const id = (selected.rows as Array<{ id?: string }>)[0]?.id;
+    if (!id) return null;
+
+    const [row] = await tx
+      .update(distillationTargetStates)
+      .set({
+        status: "running",
+        phase: "covering_evidence",
+        lockedBy: lockOwner,
+        lockedAt: now,
+        heartbeatAt: now,
+        nextRetryAt: null,
+        attemptCount: sql`${distillationTargetStates.attemptCount} + 1` as never,
+        updatedAt: now,
+      })
+      .where(eq(distillationTargetStates.id, id))
+      .returning();
+    return row ?? null;
+  });
+
+  if (claimed) {
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.distillationTargetClaimed,
+      actor: "system",
+      payload: targetIdentity(claimed),
+    });
+  }
+
+  return claimed;
+}
+
 export async function claimDistillationTargetStateById(params: {
   id: string;
   distillationVersion?: string;
@@ -466,300 +573,4 @@ export async function claimFindCandidateTargetStateById(params: {
   }
 
   return claimed;
-}
-
-export async function hasRunningFindCandidateTargetState(params: {
-  distillationVersion?: string;
-  excludeTargetStateId?: string;
-}): Promise<boolean> {
-  const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
-  const conditions: SQL[] = [
-    eq(distillationTargetStates.distillationVersion, distillationVersion),
-    eq(distillationTargetStates.status, "running"),
-    eq(distillationTargetStates.phase, "finding_candidate"),
-  ];
-  if (params.excludeTargetStateId) {
-    conditions.push(sql`${distillationTargetStates.id} <> ${params.excludeTargetStateId}`);
-  }
-
-  const [row] = await db
-    .select({ id: distillationTargetStates.id })
-    .from(distillationTargetStates)
-    .where(and(...conditions))
-    .limit(1);
-  return Boolean(row);
-}
-
-export async function updateDistillationTargetHeartbeat(
-  id: string,
-  lease?: TargetLease,
-): Promise<DistillationTargetStateRow | null> {
-  const now = new Date();
-  const [row] = await db
-    .update(distillationTargetStates)
-    .set({
-      heartbeatAt: now,
-      updatedAt: now,
-    })
-    .where(
-      lease
-        ? targetLeaseWhere(id, lease)
-        : and(eq(distillationTargetStates.id, id), eq(distillationTargetStates.status, "running")),
-    )
-    .returning();
-
-  if (row) {
-    await recordAuditLogSafe({
-      eventType: auditEventTypes.distillationTargetHeartbeat,
-      actor: "system",
-      payload: targetIdentity(row),
-    });
-  }
-
-  return row ?? null;
-}
-
-export async function updateDistillationTargetPhase(params: {
-  id: string;
-  phase: DistillationTargetPhase;
-  lease?: TargetLease;
-  distillationVersion?: string;
-  requireNoOtherRunningFindCandidate?: boolean;
-}): Promise<DistillationTargetStateRow | null> {
-  const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
-  const findCandidateExclusive =
-    params.requireNoOtherRunningFindCandidate && params.phase === "finding_candidate";
-  if (findCandidateExclusive) {
-    return db.transaction(async (tx) => {
-      await tx.execute(
-        sql`select pg_advisory_xact_lock(hashtext(${`distillation_find_candidate:${distillationVersion}`}))`,
-      );
-      const [row] = await tx
-        .update(distillationTargetStates)
-        .set({
-          phase: params.phase,
-          updatedAt: new Date(),
-        })
-        .where(
-          and(
-            targetLeaseWhere(params.id, params.lease),
-            sql`not exists (
-              select 1
-              from ${distillationTargetStates} running_target
-              where running_target.distillation_version = ${distillationVersion}
-                and running_target.status = 'running'
-                and running_target.phase = 'finding_candidate'
-                and running_target.id <> ${params.id}
-            )`,
-          ),
-        )
-        .returning();
-      return row ?? null;
-    });
-  }
-
-  const [row] = await db
-    .update(distillationTargetStates)
-    .set({
-      phase: params.phase,
-      updatedAt: new Date(),
-    })
-    .where(targetLeaseWhere(params.id, params.lease))
-    .returning();
-  return row ?? null;
-}
-
-export async function updateDistillationTargetSource(params: {
-  id: string;
-  sourceUri: string;
-  metadata?: Record<string, unknown>;
-  lease?: TargetLease;
-}): Promise<DistillationTargetStateRow | null> {
-  const sourceUri = redactSecrets(params.sourceUri);
-  const metadata = params.metadata ? redactSecretRecord(params.metadata) : undefined;
-  const [row] = await db
-    .update(distillationTargetStates)
-    .set({
-      sourceUri,
-      metadata: metadata
-        ? (sql`${distillationTargetStates.metadata} || ${JSON.stringify(metadata)}::jsonb` as never)
-        : undefined,
-      updatedAt: new Date(),
-    })
-    .where(targetLeaseWhere(params.id, params.lease))
-    .returning();
-  return row ?? null;
-}
-
-export async function finishDistillationTargetState(params: {
-  id: string;
-  status: Extract<DistillationTargetStatus, "completed" | "skipped" | "failed">;
-  outcomeKind?: string | null;
-  error?: string | null;
-  candidateCount?: number;
-  knowledgeIds?: string[];
-  metadata?: Record<string, unknown>;
-  lease?: TargetLease;
-}): Promise<DistillationTargetStateRow | null> {
-  const now = new Date();
-  const error = params.error ? redactSecrets(params.error) : params.error;
-  const metadata = params.metadata ? redactSecretRecord(params.metadata) : undefined;
-  const [row] = await db
-    .update(distillationTargetStates)
-    .set({
-      status: params.status,
-      phase: "stored",
-      lockedBy: null,
-      lockedAt: null,
-      heartbeatAt: null,
-      nextRetryAt: null,
-      lastOutcomeKind: params.outcomeKind ?? null,
-      lastError: error ?? null,
-      candidateCount: params.candidateCount,
-      knowledgeIds: params.knowledgeIds,
-      metadata: metadata
-        ? (sql`${distillationTargetStates.metadata} || ${JSON.stringify(metadata)}::jsonb` as never)
-        : undefined,
-      completedAt: now,
-      updatedAt: now,
-    })
-    .where(targetLeaseWhere(params.id, params.lease))
-    .returning();
-
-  if (row) {
-    await recordAuditLogSafe({
-      eventType: auditEventTypes.distillationTargetStatusChanged,
-      actor: "system",
-      payload: {
-        ...targetIdentity(row),
-        outcomeKind: params.outcomeKind ?? null,
-      },
-    });
-  }
-
-  return row ?? null;
-}
-
-export async function releaseDistillationTargetState(params: {
-  id: string;
-  phase: DistillationTargetPhase;
-  outcomeKind?: string | null;
-  candidateCount?: number;
-  metadata?: Record<string, unknown>;
-  lease?: TargetLease;
-}): Promise<DistillationTargetStateRow | null> {
-  const now = new Date();
-  const metadata = params.metadata ? redactSecretRecord(params.metadata) : undefined;
-  const [row] = await db
-    .update(distillationTargetStates)
-    .set({
-      status: "pending",
-      phase: params.phase,
-      lockedBy: null,
-      lockedAt: null,
-      heartbeatAt: null,
-      nextRetryAt: null,
-      lastOutcomeKind: params.outcomeKind ?? null,
-      lastError: null,
-      candidateCount: params.candidateCount,
-      metadata: metadata
-        ? (sql`${distillationTargetStates.metadata} || ${JSON.stringify(metadata)}::jsonb` as never)
-        : undefined,
-      updatedAt: now,
-    })
-    .where(targetLeaseWhere(params.id, params.lease))
-    .returning();
-
-  if (row) {
-    await recordAuditLogSafe({
-      eventType: auditEventTypes.distillationTargetStatusChanged,
-      actor: "system",
-      payload: {
-        ...targetIdentity(row),
-        outcomeKind: params.outcomeKind ?? null,
-      },
-    });
-  }
-
-  return row ?? null;
-}
-
-export async function pauseDistillationTargetState(params: {
-  id: string;
-  reason: string;
-  retryDelaySeconds?: number;
-  metadata?: Record<string, unknown>;
-  lease?: TargetLease;
-}): Promise<DistillationTargetStateRow | null> {
-  const now = new Date();
-  const reason = redactSecrets(params.reason);
-  const metadata = params.metadata ? redactSecretRecord(params.metadata) : undefined;
-  const retryDelaySeconds =
-    params.retryDelaySeconds ?? APP_CONSTANTS.distillationTargetRetryDelaySeconds;
-  const [row] = await db
-    .update(distillationTargetStates)
-    .set({
-      status: "paused",
-      lockedBy: null,
-      lockedAt: null,
-      heartbeatAt: null,
-      nextRetryAt: new Date(now.getTime() + retryDelaySeconds * 1000),
-      lastOutcomeKind: "paused",
-      lastError: reason,
-      metadata: metadata
-        ? (sql`${distillationTargetStates.metadata} || ${JSON.stringify(metadata)}::jsonb` as never)
-        : undefined,
-      updatedAt: now,
-    })
-    .where(targetLeaseWhere(params.id, params.lease))
-    .returning();
-
-  if (row) {
-    await recordAuditLogSafe({
-      eventType: auditEventTypes.distillationTargetStatusChanged,
-      actor: "system",
-      payload: { ...targetIdentity(row), reason },
-    });
-  }
-
-  return row ?? null;
-}
-
-export async function requeueDistillationTargetState(params: {
-  id: string;
-  reason?: string;
-  allowCompleted?: boolean;
-}): Promise<DistillationTargetStateRow | null> {
-  const conditions = [eq(distillationTargetStates.id, params.id)];
-  if (!params.allowCompleted) {
-    conditions.push(sql`${distillationTargetStates.status} <> 'completed'` as never);
-  }
-
-  const [row] = await db
-    .update(distillationTargetStates)
-    .set({
-      status: "pending",
-      phase: "selected",
-      lockedBy: null,
-      lockedAt: null,
-      heartbeatAt: null,
-      nextRetryAt: null,
-      attemptCount: 0,
-      completedAt: null,
-      lastOutcomeKind: "manual_requeue",
-      lastError: params.reason ?? null,
-      updatedAt: new Date(),
-    })
-    .where(and(...conditions))
-    .returning();
-
-  if (row) {
-    await recordAuditLogSafe({
-      eventType: auditEventTypes.distillationTargetStatusChanged,
-      actor: "user",
-      payload: { ...targetIdentity(row), reason: params.reason ?? null },
-    });
-  }
-
-  return row ?? null;
 }

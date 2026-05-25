@@ -3,7 +3,7 @@ import fs from "node:fs/promises";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { getDb } from "../src/db/index.js";
 import { getExposedToolEntries } from "../src/mcp/tools/index.js";
-import { runDoctor } from "../src/modules/doctor/doctor.service.js";
+import { runDoctor, runDoctorAiServiceTools } from "../src/modules/doctor/doctor.service.js";
 import { inspectCompileRuns } from "../src/modules/doctor/inspectors/compile.inspector.js";
 import { embeddingHealth } from "../src/modules/embedding/embedding.service.js";
 import { checkAgenticLlmHealth } from "../src/modules/llm/agentic-llm.service.js";
@@ -347,5 +347,19 @@ describe("Doctor Service", () => {
 
     report = await runDoctor();
     expect(report.reasons).toContain("AGENTIC_LLM_UNREACHABLE");
+  });
+
+  test("AI service-tools domain does not run database inspection", async () => {
+    vi.mocked(getDb).mockImplementation(() => {
+      throw new Error("AI service-tools domain should not inspect the database");
+    });
+
+    const report = await runDoctorAiServiceTools();
+
+    expect(report.agenticLlm.reachable).toBe(true);
+    expect(report.mcp.exposedTools).toContain("doctor");
+    expect(report.mcp.staleKnowledgeCount).toBe(0);
+    expect(report.mcp.staleSourceCount).toBe(0);
+    expect(getDb).not.toHaveBeenCalled();
   });
 });

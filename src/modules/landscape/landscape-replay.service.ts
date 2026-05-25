@@ -7,6 +7,20 @@ import {
   buildLandscapeCommunityComparison,
   type LandscapeRelationCommunityAssignment,
 } from "./landscape-community-comparison.js";
+import {
+  addVerdictMix,
+  asClassificationConfidence,
+  asFeedbackConfidence,
+  asKnowledgeNodeId,
+  buildSelectedRankMap,
+  emptyVerdictMix,
+  feedbackCount,
+  groupByRunId,
+  incrementVerdict,
+  rate,
+  type PackItemForReplay,
+  type UsageEventForReplay,
+} from "./landscape-replay.helpers.js";
 import { loadLandscapeReplayCorpus } from "./landscape-replay.repository.js";
 import { runWithLandscapeSnapshotCache } from "./landscape-snapshot-cache.service.js";
 import type {
@@ -18,39 +32,18 @@ import type {
   LandscapeFacetBasinSummary,
   LandscapeReplayRun,
   LandscapeReplaySnapshot,
-  LandscapeUsageVerdict,
   LandscapeVerdictMix,
 } from "./landscape-replay.types.js";
 import { buildLandscapeSnapshot } from "./landscape.service.js";
 import type {
-  LandscapeClassificationConfidence,
   LandscapeClassificationPrimary,
   LandscapeCommunity,
-  LandscapeFeedbackConfidence,
 } from "./landscape.types.js";
 
 type RelationCommunityAssignment = LandscapeRelationCommunityAssignment & {
   communityLabel: string;
   communityRank: number;
 };
-
-type PackItemForReplay = {
-  itemId: string;
-  score: number;
-  createdAt: Date;
-};
-
-type UsageEventForReplay = {
-  runId: string;
-  knowledgeId: string;
-  verdict: LandscapeUsageVerdict;
-  actor: "agent" | "user" | "system";
-  metadata: Record<string, unknown>;
-};
-
-function emptyVerdictMix(): LandscapeVerdictMix {
-  return { used: 0, notUsed: 0, offTopic: 0, wrong: 0 };
-}
 
 function emptyExplanationCounts(): Record<LandscapeBasinExplanation, number> {
   return {
@@ -60,50 +53,6 @@ function emptyExplanationCounts(): Record<LandscapeBasinExplanation, number> {
     over_selected: 0,
     unexplained: 0,
   };
-}
-
-function addVerdictMix(target: LandscapeVerdictMix, source: LandscapeVerdictMix): void {
-  target.used += source.used;
-  target.notUsed += source.notUsed;
-  target.offTopic += source.offTopic;
-  target.wrong += source.wrong;
-}
-
-function incrementVerdict(target: LandscapeVerdictMix, verdict: LandscapeUsageVerdict): void {
-  if (verdict === "used") target.used += 1;
-  if (verdict === "not_used") target.notUsed += 1;
-  if (verdict === "off_topic") target.offTopic += 1;
-  if (verdict === "wrong") target.wrong += 1;
-}
-
-function feedbackCount(mix: LandscapeVerdictMix): number {
-  return mix.used + mix.notUsed + mix.offTopic + mix.wrong;
-}
-
-function rate(numerator: number, denominator: number): number {
-  return denominator > 0 ? numerator / denominator : 0;
-}
-
-function asKnowledgeNodeId(nodeId: string): string {
-  return nodeId.replace(/^knowledge:/, "");
-}
-
-function orderPackItems(items: PackItemForReplay[]): PackItemForReplay[] {
-  return [...items].sort(
-    (a, b) =>
-      b.score - a.score ||
-      b.createdAt.getTime() - a.createdAt.getTime() ||
-      a.itemId.localeCompare(b.itemId),
-  );
-}
-
-function buildSelectedRankMap(items: PackItemForReplay[]): Map<string, number> {
-  const rankByKnowledgeId = new Map<string, number>();
-  for (const [index, item] of orderPackItems(items).entries()) {
-    if (rankByKnowledgeId.has(item.itemId)) continue;
-    rankByKnowledgeId.set(item.itemId, index + 1);
-  }
-  return rankByKnowledgeId;
 }
 
 export function explainLandscapeBasinTrace(input: {
@@ -189,14 +138,6 @@ function buildAcceptanceWindowSummary(
     acceptanceRateKnownWindow: rate(acceptedCountWindow, knownAcceptanceCount),
     acceptanceCoverageRate: rate(knownAcceptanceCount, events.length),
   };
-}
-
-function asClassificationConfidence(value: unknown): LandscapeClassificationConfidence {
-  return value === "high" || value === "medium" ? value : "low";
-}
-
-function asFeedbackConfidence(value: unknown): LandscapeFeedbackConfidence {
-  return value === "high" || value === "medium" || value === "low" ? value : "insufficient";
 }
 
 function summarizeReplayCommunities(
@@ -355,16 +296,6 @@ function summarizeFacets(
         a.facetKind.localeCompare(b.facetKind) ||
         a.facetValue.localeCompare(b.facetValue),
     );
-}
-
-function groupByRunId<T extends { runId: string }>(rows: T[]): Map<string, T[]> {
-  const result = new Map<string, T[]>();
-  for (const row of rows) {
-    const rowsForRun = result.get(row.runId) ?? [];
-    rowsForRun.push(row);
-    result.set(row.runId, rowsForRun);
-  }
-  return result;
 }
 
 export async function buildLandscapeReplaySnapshot(

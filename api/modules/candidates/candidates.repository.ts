@@ -1,139 +1,33 @@
 import { type SQL, and, sql } from "drizzle-orm";
 import { db } from "../../../src/db/index.js";
+import {
+  candidateListSortByValues,
+  candidateOutcomeValues,
+  landscapeLinkStatusValues,
+  type CandidateDiffSummary,
+  type CandidateListItem,
+  type CandidateListQuery,
+  type CandidateListResult,
+  type CandidateListSortBy,
+  type CandidateListSortDir,
+  type CandidateListStats,
+  type CandidateOutcome,
+  type LandscapeLinkStatus,
+} from "./candidates.types.js";
 
-export const candidateOutcomeValues = [
-  "stored",
-  "ready_not_finalized",
-  "rejected",
-  "retryable",
-  "candidate_only",
-  "target_pending",
-] as const;
-
-export type CandidateOutcome = (typeof candidateOutcomeValues)[number];
-
-export const candidateListSortByValues = [
-  "targetKey",
-  "candidateTitle",
-  "coverageStatus",
-  "knowledgeStatus",
-  "outcome",
-  "qualityScore",
-  "latestUpdatedAt",
-] as const;
-
-export type CandidateListSortBy = (typeof candidateListSortByValues)[number];
-export type CandidateListSortDir = "asc" | "desc";
-
-export type CandidateListQuery = {
-  page: number;
-  limit: number;
-  query?: string;
-  targetKind?: "all" | "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest";
-  outcome?: "all" | CandidateOutcome;
-  hasKnowledge?: "all" | "yes" | "no";
-  targetStateId?: string;
-  sortBy?: CandidateListSortBy;
-  sortDir?: CandidateListSortDir;
-};
-
-export type CandidateDiffSummary = {
-  titleChanged: boolean;
-  bodyChanged: boolean;
-  typeChanged: boolean;
-  importanceDelta: number | null;
-  confidenceDelta: number | null;
-  bodySimilarity: number;
-  summary: string[];
-};
-
-export const landscapeLinkStatusValues = [
-  "draft_created",
-  "review_required",
-  "approved",
-  "rejected",
-  "finalized",
-] as const;
-
-export type LandscapeLinkStatus = (typeof landscapeLinkStatusValues)[number];
-
-export type CandidateListItem = {
-  id: string;
-  targetStateId: string;
-  candidateIndex: number;
-  targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest";
-  targetKey: string;
-  sourceUri: string;
-  finalizeSourceUri: string;
-  targetStatus: string;
-  targetPhase: string;
-  targetOutcomeKind: string | null;
-  targetLastError: string | null;
-  latestUpdatedAt: string;
-  original: {
-    title: string;
-    body: string;
-    status: string;
-    createdAt: string;
-    updatedAt: string;
-  };
-  cover: null | {
-    status: string;
-    stage: string;
-    type: "rule" | "procedure" | null;
-    title: string | null;
-    body: string | null;
-    importance: number | null;
-    confidence: number | null;
-    reason: string | null;
-    referencesCount: number;
-    duplicateRefsCount: number;
-    toolEventsCount: number;
-    updatedAt: string;
-  };
-  knowledge: null | {
-    id: string;
-    type: string;
-    status: string;
-    scope: string;
-    title: string;
-    body: string;
-    importance: number | null;
-    confidence: number | null;
-    updatedAt: string;
-  };
-  outcome: CandidateOutcome;
-  landscapeWarning: null | {
-    source: "landscape_review_item";
-    linkId: string | null;
-    reviewItemId: string | null;
-    reason: string | null;
-    evidence: string[];
-    linkStatus: LandscapeLinkStatus | null;
-    requiresManualApproval: boolean;
-    warningReason: "promotion_gate_review" | "review_required";
-  };
-  diff: {
-    originalToCover: CandidateDiffSummary | null;
-    coverToKnowledge: CandidateDiffSummary | null;
-    originalToKnowledge: CandidateDiffSummary | null;
-  };
-};
-
-export type CandidateListStats = {
-  total: number;
-  stored: number;
-  readyNotFinalized: number;
-  rejected: number;
-  retryable: number;
-  targetPending: number;
-  candidateOnly: number;
-};
-
-export type CandidateListResult = {
-  items: CandidateListItem[];
-  total: number;
-  stats: CandidateListStats;
+export {
+  candidateListSortByValues,
+  candidateOutcomeValues,
+  landscapeLinkStatusValues,
+  type CandidateDiffSummary,
+  type CandidateListItem,
+  type CandidateListQuery,
+  type CandidateListResult,
+  type CandidateListSortBy,
+  type CandidateListSortDir,
+  type CandidateListStats,
+  type CandidateOutcome,
+  type LandscapeLinkStatus,
 };
 
 type CandidateSqlRow = {

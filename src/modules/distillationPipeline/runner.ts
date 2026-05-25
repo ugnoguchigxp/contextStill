@@ -37,6 +37,7 @@ import {
   DEFAULT_DISTILLATION_TARGET_VERSION,
   type DistillationTargetStateRow,
   type TargetLease,
+  claimNextCoverEvidenceTargetState,
   claimFindCandidateTargetStateById,
   claimDistillationTargetStateById,
   claimNextDistillationTargetState,
@@ -205,6 +206,11 @@ function candidateTimeoutResult(findCandidateId: string): CoverResult {
 function findCandidateWorker(input: DistillationPipelineInput): string | undefined {
   const base = input.worker?.trim();
   return base ? `${base}:find-candidate` : undefined;
+}
+
+function coverEvidenceWorker(input: DistillationPipelineInput): string | undefined {
+  const base = input.worker?.trim();
+  return base ? `${base}:cover-evidence` : undefined;
 }
 
 async function saveCandidateTimeoutResult(findCandidateId: string): Promise<CoverResult> {
@@ -628,6 +634,22 @@ async function runParallelFindCandidateLane(
   if (!target) return null;
 
   return runParallelFindCandidateTarget(target, input, scheduleDecision);
+}
+
+async function runParallelCoverEvidenceLane(
+  input: DistillationPipelineInput,
+  distillationVersion: string,
+): Promise<DistillationPipelineTargetResult | null> {
+  if (input.targetStateId?.trim()) return null;
+
+  const target = await claimNextCoverEvidenceTargetState({
+    distillationVersion,
+    targetKind: targetKindFilter(input.kind),
+    worker: coverEvidenceWorker(input),
+  });
+  if (!target) return null;
+
+  return runClaimedTarget(target, input);
 }
 
 function sourceUrlForWebIngestTarget(target: DistillationTargetStateRow): string {
@@ -1147,6 +1169,7 @@ export async function runDistillationPipeline(
     };
   }
 
+  const coverEvidenceLane = runParallelCoverEvidenceLane(input, distillationVersion);
   const findCandidateLane = runParallelFindCandidateLane(input, distillationVersion);
   const primaryLane = (async (): Promise<DistillationPipelineTargetResult[]> => {
     const results: DistillationPipelineTargetResult[] = [];
@@ -1164,7 +1187,14 @@ export async function runDistillationPipeline(
     return results;
   })();
 
-  const [results, findCandidateResult] = await Promise.all([primaryLane, findCandidateLane]);
+  const [results, coverEvidenceResult, findCandidateResult] = await Promise.all([
+    primaryLane,
+    coverEvidenceLane,
+    findCandidateLane,
+  ]);
+  if (coverEvidenceResult) {
+    results.push(coverEvidenceResult);
+  }
   if (findCandidateResult) {
     results.push(findCandidateResult);
   }

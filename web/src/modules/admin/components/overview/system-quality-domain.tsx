@@ -3,7 +3,10 @@ import { HeartPulse } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatNumber } from "@/lib/admin-formatters";
-import type { OverviewDashboard, DoctorReport } from "../../repositories/admin.repository";
+import type {
+  DoctorReport,
+  OverviewSystemQualityDomain,
+} from "../../repositories/admin.repository";
 import { SystemHealthCharts } from "../overview-charts";
 
 function formatRatePercent(value: number | undefined): string {
@@ -29,7 +32,7 @@ function formatCountdown(cooldownUntil: string | null, nowMs: number): string {
 }
 
 type SystemQualityDomainProps = {
-  dashboard: OverviewDashboard;
+  dashboard: OverviewSystemQualityDomain;
   doctorReport?: DoctorReport | null;
 };
 

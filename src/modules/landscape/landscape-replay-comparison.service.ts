@@ -1,14 +1,20 @@
 import {
-  type CompileInput,
-  type RetrievalMode,
-  deriveRetrievalModeFromChangeTypes,
-  retrievalModeSchema,
-} from "../../shared/schemas/compile.schema.js";
+  averageRunRate,
+  buildVerdictMix,
+  classifyReplayComparison,
+  compileInputFromRun,
+  emptyComparisonCounts,
+  emptyVerdictMix,
+  groupByRunId,
+  normalizeRetrievalMode,
+  orderPackItems,
+  rate,
+  uniqueOrdered,
+  type PackItemForComparison,
+  type UsageEventForComparison,
+} from "./landscape-replay-comparison.helpers.js";
 import { retrieveKnowledge } from "../knowledge/knowledge.service.js";
-import {
-  extractLandscapeTaskFacets,
-  type LandscapeReplayCompileRunInput,
-} from "./landscape-facets.js";
+import { extractLandscapeTaskFacets } from "./landscape-facets.js";
 import { loadLandscapeReplayCorpus } from "./landscape-replay.repository.js";
 import { runWithLandscapeSnapshotCache } from "./landscape-snapshot-cache.service.js";
 import type {
@@ -23,136 +29,11 @@ import type {
   LandscapeReplayRecompilePlan,
   LandscapeRunStatus,
   LandscapeScoreTuningSummary,
-  LandscapeUsageVerdict,
-  LandscapeVerdictMix,
 } from "./landscape-replay.types.js";
 
 const HIGH_CHURN_REPLACEMENT_RATE = 0.5;
 const LOW_OVERLAP_RATE = 0.6;
 const MAX_REFINE_CANDIDATES = 50;
-
-type PackItemForComparison = {
-  itemId: string;
-  score: number;
-  createdAt: Date;
-};
-
-type UsageEventForComparison = {
-  runId: string;
-  knowledgeId: string;
-  verdict: LandscapeUsageVerdict;
-};
-
-function uniqueOrdered(values: string[]): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const value of values) {
-    const normalized = value.trim();
-    if (!normalized || seen.has(normalized)) continue;
-    seen.add(normalized);
-    result.push(normalized);
-  }
-  return result;
-}
-
-function orderPackItems(items: PackItemForComparison[]): PackItemForComparison[] {
-  return [...items].sort(
-    (a, b) =>
-      b.score - a.score ||
-      b.createdAt.getTime() - a.createdAt.getTime() ||
-      a.itemId.localeCompare(b.itemId),
-  );
-}
-
-function groupByRunId<T extends { runId: string }>(rows: T[]): Map<string, T[]> {
-  const result = new Map<string, T[]>();
-  for (const row of rows) {
-    const current = result.get(row.runId) ?? [];
-    current.push(row);
-    result.set(row.runId, current);
-  }
-  return result;
-}
-
-function rate(numerator: number, denominator: number): number {
-  return denominator > 0 ? numerator / denominator : 0;
-}
-
-function classifyReplayComparison(params: {
-  baselineCount: number;
-  currentCount: number;
-  retainedCount: number;
-  overlapRate: number;
-}): LandscapeReplayComparisonKind {
-  if (params.baselineCount === 0 && params.currentCount > 0) return "new_only";
-  if (params.currentCount === 0) return "no_current_match";
-  if (params.baselineCount > 0 && params.retainedCount === 0) return "lost_baseline";
-  if (params.overlapRate >= 0.6) return "stable";
-  return "drifted";
-}
-
-function normalizeRetrievalMode(value: string, fallbackChangeTypes: string[]): RetrievalMode {
-  const parsed = retrievalModeSchema.safeParse(value);
-  if (parsed.success) return parsed.data;
-  return deriveRetrievalModeFromChangeTypes(fallbackChangeTypes);
-}
-
-function compileInputFromRun(input: LandscapeReplayCompileRunInput): CompileInput {
-  const facets = extractLandscapeTaskFacets({
-    runInput: input.runInput,
-    repoPath: input.repoPath,
-    retrievalMode: input.retrievalMode,
-    source: input.source,
-    runStatus: input.runStatus,
-    degradedReasons: input.degradedReasons,
-  });
-  return {
-    goal: input.goal,
-    ...(facets.changeTypes.length > 0 ? { changeTypes: facets.changeTypes } : {}),
-    ...(facets.technologies.length > 0 ? { technologies: facets.technologies } : {}),
-    ...(facets.domains.length > 0 ? { domains: facets.domains } : {}),
-  };
-}
-
-function emptyComparisonCounts(): Record<LandscapeReplayComparisonKind, number> {
-  return {
-    stable: 0,
-    drifted: 0,
-    lost_baseline: 0,
-    new_only: 0,
-    no_current_match: 0,
-  };
-}
-
-function emptyVerdictMix(): LandscapeVerdictMix {
-  return {
-    used: 0,
-    notUsed: 0,
-    offTopic: 0,
-    wrong: 0,
-  };
-}
-
-function buildVerdictMix(events: UsageEventForComparison[]): LandscapeVerdictMix {
-  const mix = emptyVerdictMix();
-  for (const event of events) {
-    if (event.verdict === "used") mix.used += 1;
-    if (event.verdict === "not_used") mix.notUsed += 1;
-    if (event.verdict === "off_topic") mix.offTopic += 1;
-    if (event.verdict === "wrong") mix.wrong += 1;
-  }
-  return mix;
-}
-
-function averageRunRate(
-  runs: LandscapeReplayComparisonRun[],
-  compute: (run: LandscapeReplayComparisonRun) => number,
-): number {
-  return rate(
-    runs.reduce((sum, run) => sum + compute(run), 0),
-    runs.length,
-  );
-}
 
 function buildRecompilePlan(params: {
   replayRunCount: number;

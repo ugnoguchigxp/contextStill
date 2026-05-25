@@ -3,10 +3,10 @@ import { Activity } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { cn } from "@/lib/utils";
 import { formatNumber } from "@/lib/admin-formatters";
-import type { OverviewDashboard } from "../../repositories/admin.repository";
+import type { OverviewLandscapeHealthDomain } from "../../repositories/admin.repository";
 
 type LandscapeHealthDomainProps = {
-  dashboard: OverviewDashboard;
+  dashboard: OverviewLandscapeHealthDomain;
 };
 
 function formatPercent(value: number): string {

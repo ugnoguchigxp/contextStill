@@ -13,103 +13,23 @@ import {
   type CompileRunSelectedItem,
   type CompileRunSource,
   compileRunDetailSchema,
-  compileRunSourceSchema,
 } from "../../shared/schemas/compile-run.schema.js";
 import type { ContextPack } from "../../shared/schemas/context-pack.schema.js";
 import { contextPackSchema } from "../../shared/schemas/context-pack.schema.js";
 import { asRecord, normalizeNullableString } from "../../shared/utils/normalize.js";
-import { renderContextPackMarkdown } from "./pack-renderer.js";
-
-const runStatusValues = new Set(["ok", "degraded", "failed"]);
-const knowledgeVerdictValues = new Set(["used", "not_used", "off_topic", "wrong"]);
-const feedbackActorValues = new Set(["agent", "user", "system"]);
-
-function normalizeRunStatus(value: unknown): "ok" | "degraded" | "failed" {
-  return typeof value === "string" && runStatusValues.has(value)
-    ? (value as "ok" | "degraded" | "failed")
-    : "failed";
-}
-
-function normalizeCompileRunSource(value: unknown): CompileRunSource {
-  const parsed = compileRunSourceSchema.safeParse(value);
-  return parsed.success ? parsed.data : "unknown";
-}
-
-function normalizeDate(value: unknown): Date {
-  if (value instanceof Date) return value;
-  if (typeof value === "string") {
-    const parsed = new Date(value);
-    if (!Number.isNaN(parsed.getTime())) return parsed;
-  }
-  return new Date(0);
-}
-
-function normalizeStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.filter((item): item is string => typeof item === "string")
-    : [];
-}
-
-function normalizeDuration(value: unknown): number {
-  return typeof value === "number" && Number.isFinite(value) ? Math.max(0, Math.round(value)) : 0;
-}
-
-function normalizeKnowledgeVerdict(value: unknown): "used" | "not_used" | "off_topic" | "wrong" {
-  return typeof value === "string" && knowledgeVerdictValues.has(value)
-    ? (value as "used" | "not_used" | "off_topic" | "wrong")
-    : "used";
-}
-
-function normalizeFeedbackActor(value: unknown): "agent" | "user" | "system" {
-  return typeof value === "string" && feedbackActorValues.has(value)
-    ? (value as "agent" | "user" | "system")
-    : "system";
-}
-
-function extractOutputMarkdown(pack: ContextPack | null): string | null {
-  if (!pack) return null;
-  const retrievalStats = asRecord(pack.diagnostics.retrievalStats);
-  const responseComposer = asRecord(retrievalStats.responseComposer);
-  const fromComposer =
-    typeof responseComposer.outputMarkdown === "string"
-      ? responseComposer.outputMarkdown.trim()
-      : "";
-  if (fromComposer) return fromComposer;
-  return renderContextPackMarkdown(pack);
-}
-
-function normalizeOutputMarkdownKind(value: unknown): "narrative" | "no-content" | null {
-  if (value === "narrative" || value === "no-content") return value;
-  return null;
-}
-
-function extractCompileRunSignals(packSnapshot: unknown): {
-  selectedItemCount: number;
-  outputMarkdownKind: "narrative" | "no-content" | null;
-} {
-  const pack = asRecord(packSnapshot);
-  const rules = Array.isArray(pack.rules) ? pack.rules.length : 0;
-  const procedures = Array.isArray(pack.procedures) ? pack.procedures.length : 0;
-  const diagnostics = asRecord(pack.diagnostics);
-  const retrievalStats = asRecord(diagnostics.retrievalStats);
-  const responseComposer = asRecord(retrievalStats.responseComposer);
-  const storedKind = normalizeOutputMarkdownKind(responseComposer.markdownKind);
-  if (storedKind) {
-    return {
-      selectedItemCount: rules + procedures,
-      outputMarkdownKind: storedKind,
-    };
-  }
-
-  const outputMarkdown =
-    typeof responseComposer.outputMarkdown === "string"
-      ? responseComposer.outputMarkdown.trim()
-      : "";
-  return {
-    selectedItemCount: rules + procedures,
-    outputMarkdownKind: outputMarkdown && outputMarkdown !== "No Content" ? "narrative" : null,
-  };
-}
+import {
+  extractCompileRunSignals,
+  extractOutputMarkdown,
+  feedbackActorValues,
+  knowledgeVerdictValues,
+  normalizeCompileRunSource,
+  normalizeDate,
+  normalizeDuration,
+  normalizeFeedbackActor,
+  normalizeKnowledgeVerdict,
+  normalizeRunStatus,
+  normalizeStringArray,
+} from "./context-compiler.repository.utils.js";
 
 export async function insertCompileRun(params: {
   goal: string;
