@@ -1,13 +1,7 @@
 import { Hono } from "hono";
-import { describe, expect, test, vi, beforeEach } from "vitest";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { queueRouter } from "../api/modules/queue/queue.routes.js";
-import {
-  fetchQueueDashboardStats,
-  listQueueItems,
-  fetchActiveTasks,
-  pauseTarget,
-  resumeTarget,
-} from "../api/modules/queue/queue.repository.js";
+import * as repo from "../api/modules/queue/queue.repository.js";
 
 vi.mock("../api/modules/queue/queue.repository.js", () => ({
   fetchQueueDashboardStats: vi.fn(),
@@ -15,6 +9,7 @@ vi.mock("../api/modules/queue/queue.repository.js", () => ({
   fetchActiveTasks: vi.fn(),
   pauseTarget: vi.fn(),
   resumeTarget: vi.fn(),
+  retryTarget: vi.fn(),
 }));
 
 const buildApp = () => {
@@ -23,46 +18,59 @@ const buildApp = () => {
   return app;
 };
 
-describe("Queue route contract tests", () => {
+describe("queue routes v2", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });
 
-  test("GET /api/queue/stats returns correct stats", async () => {
-    vi.mocked(fetchQueueDashboardStats).mockResolvedValueOnce({
-      maxAttempts: 2,
-      stats: { pending: 5, running: 1, completed: 10, failed: 2, paused: 0 },
-      kinds: { wiki_file: 15, vibe_memory: 3 },
-      findCandidate: {
-        status: "waiting",
-        waitMs: 90_000,
-        waitUntil: "2026-05-24T10:00:00.000Z",
-        reason: "interactive_pressure",
-        targetKind: "vibe_memory",
-        provider: "openai",
-        model: "gpt-5-4-mini",
-        source: "scheduler",
-        updatedAt: "2026-05-24T09:58:30.000Z",
-        diagnostics: {
-          provider: "openai",
-          model: "gpt-5-4-mini",
-          compileCount: 4,
-          interactiveLlmCount: 3,
-          lastCompileAgeSeconds: 10,
-          lastBackgroundAgeSeconds: 20,
+  test("GET /api/queue/stats returns queue stats", async () => {
+    vi.mocked(repo.fetchQueueDashboardStats).mockResolvedValueOnce({
+      queues: {
+        findingCandidate: {
+          counters: { pending: 1, running: 1, completed: 0, skipped: 0, failed: 0, paused: 0 },
+          oldestPendingAt: null,
+          running: 1,
+          failed: 0,
+          offline: 0,
+          nonRegistered: 0,
+          escalated: 0,
+        },
+        coveringEvidence: {
+          counters: { pending: 2, running: 0, completed: 0, skipped: 0, failed: 1, paused: 0 },
+          oldestPendingAt: null,
+          running: 0,
+          failed: 1,
+          offline: 1,
+          nonRegistered: 0,
+          escalated: 1,
+        },
+        premiumCoveringEvidence: {
+          counters: { pending: 0, running: 0, completed: 0, skipped: 0, failed: 0, paused: 0 },
+          oldestPendingAt: null,
+          running: 0,
+          failed: 0,
+          offline: 0,
+          nonRegistered: 0,
+          escalated: 0,
+        },
+        finalizeDistille: {
+          counters: { pending: 0, running: 0, completed: 3, skipped: 0, failed: 0, paused: 0 },
+          oldestPendingAt: null,
+          running: 0,
+          failed: 0,
+          offline: 0,
+          nonRegistered: 0,
+          escalated: 0,
         },
       },
-      providerPressure: {
-        azureOpenai: {
-          provider: "azure-openai",
-          model: "gpt-5-4-mini",
-          status: "cooldown",
-          cooldownUntil: "2026-05-24T10:00:00.000Z",
-          reason: "rate_limit",
-          source: "find-candidate",
-          lastRateLimitedAt: "2026-05-24T09:50:00.000Z",
-          updatedAt: "2026-05-24T09:50:00.000Z",
-        },
+      totals: {
+        counters: { pending: 3, running: 1, completed: 3, skipped: 0, failed: 1, paused: 0 },
+        oldestPendingAt: null,
+        running: 1,
+        failed: 1,
+        offline: 1,
+        nonRegistered: 0,
+        escalated: 1,
       },
     });
 
@@ -70,151 +78,93 @@ describe("Queue route contract tests", () => {
     const response = await app.request("/api/queue/stats");
     expect(response.status).toBe(200);
     const json = await response.json();
-    expect(json).toEqual({
-      maxAttempts: 2,
-      stats: { pending: 5, running: 1, completed: 10, failed: 2, paused: 0 },
-      kinds: { wiki_file: 15, vibe_memory: 3 },
-      findCandidate: {
-        status: "waiting",
-        waitMs: 90_000,
-        waitUntil: "2026-05-24T10:00:00.000Z",
-        reason: "interactive_pressure",
-        targetKind: "vibe_memory",
-        provider: "openai",
-        model: "gpt-5-4-mini",
-        source: "scheduler",
-        updatedAt: "2026-05-24T09:58:30.000Z",
-        diagnostics: {
-          provider: "openai",
-          model: "gpt-5-4-mini",
-          compileCount: 4,
-          interactiveLlmCount: 3,
-          lastCompileAgeSeconds: 10,
-          lastBackgroundAgeSeconds: 20,
-        },
-      },
-      providerPressure: {
-        azureOpenai: {
-          provider: "azure-openai",
-          model: "gpt-5-4-mini",
-          status: "cooldown",
-          cooldownUntil: "2026-05-24T10:00:00.000Z",
-          reason: "rate_limit",
-          source: "find-candidate",
-          lastRateLimitedAt: "2026-05-24T09:50:00.000Z",
-          updatedAt: "2026-05-24T09:50:00.000Z",
-        },
-      },
-    });
-    expect(fetchQueueDashboardStats).toHaveBeenCalled();
+    expect(json.totals.counters.pending).toBe(3);
+    expect(repo.fetchQueueDashboardStats).toHaveBeenCalled();
   });
 
-  test("GET /api/queue lists targets with correct queries", async () => {
-    vi.mocked(listQueueItems).mockResolvedValueOnce({
+  test("GET /api/queue validates filters and proxies to repository", async () => {
+    vi.mocked(repo.listQueueItems).mockResolvedValueOnce({
+      queue: "findingCandidate",
       items: [],
       total: 0,
-      page: 1,
+      page: 2,
       limit: 15,
     });
 
     const app = buildApp();
     const response = await app.request(
-      "/api/queue?page=2&limit=15&targetKind=wiki_file&status=pending",
+      "/api/queue?page=2&limit=15&queue=findingCandidate&status=pending",
     );
     expect(response.status).toBe(200);
-    const json = await response.json();
-    expect(json).toEqual({
-      items: [],
-      total: 0,
-      page: 1,
-      limit: 15,
-    });
-    expect(listQueueItems).toHaveBeenCalledWith({
+    expect(repo.listQueueItems).toHaveBeenCalledWith({
       page: 2,
       limit: 15,
-      targetKind: "wiki_file",
+      queue: "findingCandidate",
       status: "pending",
       query: undefined,
     });
   });
 
-  test("GET /api/queue rejects unknown status filter", async () => {
+  test("GET /api/queue rejects unknown queue name", async () => {
     const app = buildApp();
-    const response = await app.request("/api/queue?status=unknown");
+    const response = await app.request("/api/queue?queue=invalidQueue");
     expect(response.status).toBe(400);
-    expect(listQueueItems).not.toHaveBeenCalled();
   });
 
-  test("GET /api/queue/active returns active targets", async () => {
-    vi.mocked(fetchActiveTasks).mockResolvedValueOnce([
-      {
-        id: "active-1",
-        targetKind: "wiki_file",
-        targetKey: "wiki/intro.md",
-        sourceUri: "file:///intro.md",
-        distillationVersion: "1.0",
-        status: "running",
-        phase: "reading",
-        priorityGroup: "wiki",
-        sortKey: "sort-1",
-        attemptCount: 1,
-        lockedBy: "worker-1",
-        lockedAt: null,
-        heartbeatAt: null,
-        nextRetryAt: null,
-        lastError: null,
-        lastOutcomeKind: null,
-        candidateCount: 0,
-        knowledgeIds: [],
-        metadata: {},
-        createdAt: null,
-        updatedAt: null,
-        completedAt: null,
-      } as any,
-    ]);
+  test("POST /api/queue/:queue/:id/pause routes action", async () => {
+    vi.mocked(repo.pauseTarget).mockResolvedValueOnce({ id: "job-1", status: "paused" });
 
     const app = buildApp();
-    const response = await app.request("/api/queue/active");
-    expect(response.status).toBe(200);
-    const json = await response.json();
-    expect(json).toHaveLength(1);
-    expect(json[0].id).toBe("active-1");
-    expect(json[0].status).toBe("running");
-  });
-
-  test("POST /api/queue/:id/pause successfully pauses target", async () => {
-    vi.mocked(pauseTarget).mockResolvedValueOnce({
-      id: "target-1",
-      status: "paused",
-    } as any);
-
-    const app = buildApp();
-    const response = await app.request("/api/queue/target-1/pause", {
+    const response = await app.request("/api/queue/findingCandidate/job-1/pause", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ reason: "manual pause" }),
     });
-
     expect(response.status).toBe(200);
-    const json = await response.json();
-    expect(json.ok).toBe(true);
-    expect(pauseTarget).toHaveBeenCalledWith("target-1", "manual pause");
+    expect(repo.pauseTarget).toHaveBeenCalledWith("findingCandidate", "job-1", "manual pause");
   });
 
-  test("POST /api/queue/:id/resume successfully resumes target", async () => {
-    vi.mocked(resumeTarget).mockResolvedValueOnce({
-      id: "target-1",
-      status: "pending",
-    } as any);
+  test("POST /api/queue/:queue/:id/resume routes action", async () => {
+    vi.mocked(repo.resumeTarget).mockResolvedValueOnce({ id: "job-1", status: "pending" });
 
     const app = buildApp();
-    const response = await app.request("/api/queue/target-1/resume", {
+    const response = await app.request("/api/queue/findingCandidate/job-1/resume", {
       method: "POST",
     });
-
     expect(response.status).toBe(200);
+    expect(repo.resumeTarget).toHaveBeenCalledWith("findingCandidate", "job-1");
+  });
+
+  test("POST /api/queue/:queue/:id/retry routes action", async () => {
+    vi.mocked(repo.retryTarget).mockResolvedValueOnce({ id: "job-1", status: "pending" });
+
+    const app = buildApp();
+    const response = await app.request("/api/queue/coveringEvidence/job-1/retry", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ mode: "cloud_api", forceRefreshEvidence: true }),
+    });
+    expect(response.status).toBe(200);
+    expect(repo.retryTarget).toHaveBeenCalledWith({
+      queueName: "coveringEvidence",
+      id: "job-1",
+      mode: "cloud_api",
+      forceRefreshEvidence: true,
+      reason: undefined,
+    });
+  });
+
+  test("GET /api/queue returns 503 when queue schema is not migrated", async () => {
+    const error = new Error('relation "covering_evidence_queue" does not exist') as Error & {
+      code?: string;
+    };
+    error.code = "42P01";
+    vi.mocked(repo.listQueueItems).mockRejectedValueOnce(error);
+
+    const app = buildApp();
+    const response = await app.request("/api/queue?queue=coveringEvidence&status=running");
+    expect(response.status).toBe(503);
     const json = await response.json();
-    expect(json.ok).toBe(true);
-    expect(resumeTarget).toHaveBeenCalledWith("target-1");
+    expect(json.code).toBe("QUEUE_SCHEMA_NOT_READY");
   });
 });

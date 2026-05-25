@@ -172,15 +172,12 @@ bun run sync:agent-logs
 
 ```bash
 # 1 件だけ staged distillation を実行（wiki / vibe memory / candidate を自動選択）
-bun run distill:pipeline:once
+bun run queue:finding:once
 
-# 対象種別を明示して実行
-bun run distill:pipeline -- --write --limit 1 --kind wiki
-bun run distill:pipeline -- --write --limit 1 --kind vibe
-bun run distill:pipeline -- --write --limit 1 --kind candidate
-
-# キュー上の特定 target だけを実行
-bun run distill:pipeline -- --write --kind candidate --target-state-id <uuid>
+# 後続キューステージを実行
+bun run queue:covering:once
+bun run queue:premium:once
+bun run queue:finalize:once
 ```
 
 staged distillation パイプラインの動作:
@@ -244,7 +241,7 @@ bun run landscape -- --queue-list --queue-status pending
 bun run landscape -- --queue-create-candidates --queue-status pending --queue-limit 20
 
 # 生成された candidate target を 1 件だけ distillation pipeline に流す
-bun run distill:pipeline -- --write --kind candidate --target-state-id <targetStateId>
+bun run queue:covering:once
 ```
 
 review が必要な landscape candidate link は、finalize 前に approve します。
@@ -333,12 +330,13 @@ MCP ツールの完全な入出力仕様は [docs/mcp-tools.md](docs/mcp-tools.m
 | `bun run import:wiki <path>` | Markdown を sources にインポート |
 | `bun run import:markdown <file>` | 単一 Markdown ファイルをインポート |
 | `bun run sync:agent-logs` | Codex / Antigravity のログを同期 |
-| `bun run distill:pipeline:once` | staged distillation を 1 件実行 |
-| `bun run distill:pipeline -- --write --limit 1 --kind wiki` | staged distillation pipeline を明示実行 |
-| `bun run distill:pipeline -- --write --kind candidate --target-state-id <uuid>` | 指定した candidate target だけを実行 |
-| `bun run distill-target:refresh` | wiki/vibe/candidate の distillation target を更新 |
-| `bun run distill:status` | distillation target queue と進捗カウンタを表示 |
-| `bun run distill-target:release-stale` | stale な running distillation target を解放 |
+| `bun run queue:finding:once` | finding queue を 1 サイクル実行（source/provided candidate 取り込み） |
+| `bun run queue:covering:once` | covering evidence queue を 1 サイクル実行 |
+| `bun run queue:premium:once` | premium covering evidence queue を 1 サイクル実行 |
+| `bun run queue:finalize:once` | finalize queue を 1 サイクル実行 |
+| `bun run queue:supervisor` | queue supervisor を常時実行 |
+| `bun run queue:migrate:dry-run` | queue migration mapping を書き込みなしで確認 |
+| `bun run queue:migrate:write` | queue migration mapping を書き込み実行 |
 | `bun run doctor` | システム診断を実行 |
 | `bun run landscape -- --window-days 30` | community-based landscape snapshot を生成 |
 | `bun run landscape -- --window-days 30 --json` | landscape snapshot JSON を出力 |
@@ -356,13 +354,13 @@ MCP ツールの完全な入出力仕様は [docs/mcp-tools.md](docs/mcp-tools.m
 # wiki インポート + グローバルプリセット投入 + テストコンパイル
 bun run init:project -- --wiki-root ./wiki/pages
 
-# distillation target を更新し、1 件だけ staged distillation を実行
-bun run distill-target:refresh
-bun run distill:pipeline:once
+# queue サイクルを実行
+bun run queue:finding:once
+bun run queue:covering:once
 ```
 
 - グローバルプリセットのエントリは `scope: global` として保存されます。
-- リポジトリ固有の知識は `import:wiki` / `distill:pipeline` を通じて `scope: repo` に保持されます。
+- リポジトリ固有の知識は `import:wiki` / `queue:supervisor` を通じて `scope: repo` に保持されます。
 - テストコンパイルで関連アイテムが見つからない場合、具体的な次アクションが表示されます。
 
 ### 使用例
@@ -376,16 +374,17 @@ bun run compile --goal "コンテキストコンパイラを修正" \
   --json
 
 # staged distillation を 1 件実行（auto target selection）
-bun run distill:pipeline:once
+bun run queue:finding:once
 
-# 対象種別を明示して実行
-bun run distill:pipeline -- --write --limit 1 --kind wiki
-bun run distill:pipeline -- --write --limit 1 --kind vibe
-bun run distill:pipeline -- --write --limit 1 --kind candidate
+# 各キューステージを 1 回ずつ実行
+bun run queue:finding:once
+bun run queue:covering:once
+bun run queue:premium:once
+bun run queue:finalize:once
 
 # review item から candidate draft を作成して処理
 bun run landscape -- --queue-create-candidates --queue-status pending --queue-limit 20
-bun run distill:pipeline -- --write --kind candidate --target-state-id <targetStateId>
+bun run queue:covering:once
 ```
 
 ---
@@ -536,35 +535,32 @@ bun run automation:agent-log-sync -- status
 
 ### 蒸留の自動化（Conveyor）
 
-staged distillation（`selectDistillationTarget -> findCandidate -> coverEvidence -> finalizeDistille`）をスケジュール実行します。
+Queue V2 蒸留ワーカー（`findingCandidate -> coveringEvidence -> premiumCoveringEvidence -> finalizeDistille`）をスケジュール実行します。
 
 ```bash
 # 一度だけ実行
-bun run distill:pipeline:once
+bun run queue:finding:once
 
 # macOS LaunchAgent としてインストール
-bun run automation:distill-pipeline -- install
-bun run automation:distill-pipeline -- load
-bun run automation:distill-pipeline -- status
+bun run automation:queue-supervisor -- install
+bun run automation:queue-supervisor -- load
+bun run automation:queue-supervisor -- status
 
 # Windows Task Scheduler
-bun run automation:distill-pipeline -- install
-bun run automation:distill-pipeline -- load
-bun run automation:distill-pipeline -- status
+bun run automation:queue-supervisor -- install
+bun run automation:queue-supervisor -- load
+bun run automation:queue-supervisor -- status
 ```
 
 進捗確認と復旧:
 
 ```bash
-bun run distill-target:status
-bun run distill-progress
-bun run distill-target:release-stale
-bun run src/cli/distillation-target.ts release-paused
+bun run doctor
+bun run queue:finding:once
+bun run queue:migrate:dry-run
 ```
 
-**Queue** 管理ページでは、同じ target state をブラウザから確認できます。status counter、running lock、worker heartbeat age、target kind/status filter、pause、resume、retry/requeue action を扱えるため、ローカル daemon の診断時は主要な operational view になります。
-
-pipeline LaunchAgent の load step は、重複実行を避けるため旧 `vibe/source` distillation job を bootout します。
+**Queue** 管理ページは主要な運用画面です。status counter、running lock、worker heartbeat age、queue/status filter、pause/resume/retry を確認・操作できます。
 
 ### データベースバックアップ
 

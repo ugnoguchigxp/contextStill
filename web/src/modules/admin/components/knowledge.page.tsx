@@ -156,6 +156,9 @@ export function KnowledgePage() {
   const [editingOriginalType, setEditingOriginalType] = useState<string | null>(null);
   const [typeChangedInForm, setTypeChangedInForm] = useState(false);
   const [form, setForm] = useState<KnowledgeWriteInput>(emptyForm);
+  const [technologiesInput, setTechnologiesInput] = useState("");
+  const [changeTypesInput, setChangeTypesInput] = useState("");
+  const [domainsInput, setDomainsInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [displayFilter, setDisplayFilter] = useState<string>("all");
@@ -391,6 +394,10 @@ export function KnowledgePage() {
       appliesTo: asRecord(item.appliesTo),
       metadata: item.metadata ?? {},
     });
+    const appliesTo = asRecord(item.appliesTo);
+    setTechnologiesInput(csvFrom(appliesTo.technologies));
+    setChangeTypesInput(csvFrom(appliesTo.changeTypes));
+    setDomainsInput(csvFrom(appliesTo.domains));
     setIsModalOpen(true);
   }, []);
 
@@ -400,6 +407,9 @@ export function KnowledgePage() {
     setTypeChangedInForm(false);
     setModalDetail(null);
     setForm(emptyForm);
+    setTechnologiesInput("");
+    setChangeTypesInput("");
+    setDomainsInput("");
     setIsModalOpen(true);
   };
 
@@ -1155,10 +1165,12 @@ export function KnowledgePage() {
                   id="knowledge-applies-technologies"
                   className="placeholder:text-muted-foreground/60"
                   placeholder="typescript, python"
-                  value={csvFrom(asRecord(form.appliesTo).technologies)}
-                  onChange={(event) =>
-                    updateAppliesTo({ technologies: parseCsv(event.target.value) })
-                  }
+                  value={technologiesInput}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setTechnologiesInput(value);
+                    updateAppliesTo({ technologies: parseCsv(value) });
+                  }}
                 />
               </div>
               <div className="space-y-1">
@@ -1172,10 +1184,12 @@ export function KnowledgePage() {
                   id="knowledge-applies-change-types"
                   className="placeholder:text-muted-foreground/60"
                   placeholder="feature, bugfix, schema"
-                  value={csvFrom(asRecord(form.appliesTo).changeTypes)}
-                  onChange={(event) =>
-                    updateAppliesTo({ changeTypes: parseCsv(event.target.value) })
-                  }
+                  value={changeTypesInput}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setChangeTypesInput(value);
+                    updateAppliesTo({ changeTypes: parseCsv(value) });
+                  }}
                 />
               </div>
               <div className="space-y-1">
@@ -1189,8 +1203,12 @@ export function KnowledgePage() {
                   id="knowledge-applies-domains"
                   className="placeholder:text-muted-foreground/60"
                   placeholder="admin-ui, knowledge"
-                  value={csvFrom(asRecord(form.appliesTo).domains)}
-                  onChange={(event) => updateAppliesTo({ domains: parseCsv(event.target.value) })}
+                  value={domainsInput}
+                  onChange={(event) => {
+                    const value = event.target.value;
+                    setDomainsInput(value);
+                    updateAppliesTo({ domains: parseCsv(value) });
+                  }}
                 />
               </div>
             </div>

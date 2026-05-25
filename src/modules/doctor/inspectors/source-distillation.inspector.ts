@@ -9,10 +9,10 @@ export async function inspectSourceDistillation(
 ): Promise<DoctorReport["sourceDistillation"]> {
   return inspectDistillationRunHealth(options, {
     label: "wiki distillation",
-    launchAgentLabel: "com.memory-router.distill-pipeline",
-    setupScript: "bun run automation:distill-pipeline --",
-    runCommand: "bun run distill:pipeline -- --write --limit 1 --kind wiki",
-    logPath: "logs/distill-pipeline.log",
+    launchAgentLabel: "com.memory-router.queue-supervisor",
+    setupScript: "bun run automation:queue-supervisor --",
+    runCommand: "bun run queue:finding:once",
+    logPath: "logs/queue-supervisor.log",
     targetKind: "wiki_file",
   });
 }

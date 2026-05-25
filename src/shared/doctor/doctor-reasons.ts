@@ -65,33 +65,33 @@ const environmentScopeRules: Partial<Record<string, DoctorReasonEnvironmentScope
 
 const commandHints: Partial<Record<string, DoctorReasonCommands>> = {
   VIBE_DISTILLATION_QUEUE_STALE_RUNNING: {
-    inspect: "bun run distill:repair -- --kind vibe --json",
-    repairDryRun: "bun run distill:repair -- --kind vibe --json",
-    repairApply: "bun run distill:repair -- --kind vibe --apply --limit 50 --json",
+    inspect: "bun run doctor",
+    repairDryRun: "bun run queue:migrate:dry-run",
+    repairApply: "bun run queue:finding:once",
   },
   VIBE_DISTILLATION_PIPELINE_LOCK_STALE: {
-    inspect: "bun run distill:repair -- --kind vibe --json",
-    repairDryRun: "bun run distill:repair -- --kind vibe --json",
-    repairApply: "bun run distill:repair -- --kind vibe --apply --limit 50 --json",
+    inspect: "bun run doctor",
+    repairDryRun: "bun run queue:migrate:dry-run",
+    repairApply: "bun run queue:finding:once",
   },
   VIBE_DISTILLATION_QUEUE_STOPPED: {
-    inspect: "bun run distill:repair -- --kind vibe --json",
-    repairDryRun: "bun run distill:repair -- --kind vibe --json",
+    inspect: "bun run doctor",
+    repairDryRun: "bun run queue:migrate:dry-run",
     repairApply: null,
   },
   SOURCE_DISTILLATION_QUEUE_STALE_RUNNING: {
-    inspect: "bun run distill:repair -- --kind wiki --json",
-    repairDryRun: "bun run distill:repair -- --kind wiki --json",
-    repairApply: "bun run distill:repair -- --kind wiki --apply --limit 50 --json",
+    inspect: "bun run doctor",
+    repairDryRun: "bun run queue:migrate:dry-run",
+    repairApply: "bun run queue:finding:once",
   },
   SOURCE_DISTILLATION_PIPELINE_LOCK_STALE: {
-    inspect: "bun run distill:repair -- --kind wiki --json",
-    repairDryRun: "bun run distill:repair -- --kind wiki --json",
-    repairApply: "bun run distill:repair -- --kind wiki --apply --limit 50 --json",
+    inspect: "bun run doctor",
+    repairDryRun: "bun run queue:migrate:dry-run",
+    repairApply: "bun run queue:finding:once",
   },
   SOURCE_DISTILLATION_QUEUE_STOPPED: {
-    inspect: "bun run distill:repair -- --kind wiki --json",
-    repairDryRun: "bun run distill:repair -- --kind wiki --json",
+    inspect: "bun run doctor",
+    repairDryRun: "bun run queue:migrate:dry-run",
     repairApply: null,
   },
 };

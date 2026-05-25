@@ -407,8 +407,8 @@ export const validOverviewDashboard: OverviewDashboard = overviewDashboardSchema
       reasoningTokensTotal30d: 100,
       cloudCostJpyTotal30d: 5.75,
       cloudModel: "gpt-5-4-mini",
-      cloudInputCostJpyPerMTokens: 165,
-      cloudOutputCostJpyPerMTokens: 660,
+      cloudInputCostJpyPerMTokens: 112.5,
+      cloudOutputCostJpyPerMTokens: 675,
     },
     daily: [
       {

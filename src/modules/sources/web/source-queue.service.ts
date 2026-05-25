@@ -1,22 +1,23 @@
-import { and, eq } from "drizzle-orm";
 import { APP_CONSTANTS } from "../../../constants.js";
-import { db } from "../../../db/index.js";
-import { distillationTargetStates } from "../../../db/schema.js";
 import { redactSecrets } from "../../../shared/utils/secret-redaction.js";
 import { validateFetchContentUrl } from "../../distillation/distillation-tools.service.js";
-import {
-  DEFAULT_DISTILLATION_TARGET_VERSION,
-  type DistillationTargetStateRow,
-  getDistillationTargetStateById,
-  requeueDistillationTargetState,
-  updateDistillationTargetSource,
-  upsertDistillationTargetState,
-} from "../../selectDistillationTarget/repository.js";
+import { enqueueFindingJob, findFindingJob } from "../../queue/core/index.js";
 
 export type WebSourceQueueItem = {
   url: string;
   normalizedUrl: string;
-  state: DistillationTargetStateRow;
+  state: {
+    id: string;
+    status: string;
+    priority: number;
+    attemptCount: number;
+    distillationVersion: string;
+    sourceKind: "web_ingest";
+    sourceKey: string;
+    sourceUri: string;
+    createdAt: string;
+    updatedAt: string;
+  };
   existing: boolean;
 };
 
@@ -47,28 +48,6 @@ function normalizeWebUrl(raw: string): { url: string; normalizedUrl: string } {
   };
 }
 
-async function findExistingWebIngestTarget(params: {
-  normalizedUrl: string;
-  distillationVersion: string;
-}): Promise<DistillationTargetStateRow | null> {
-  const [row] = await db
-    .select()
-    .from(distillationTargetStates)
-    .where(
-      and(
-        eq(distillationTargetStates.targetKind, "web_ingest"),
-        eq(distillationTargetStates.targetKey, params.normalizedUrl),
-        eq(distillationTargetStates.distillationVersion, params.distillationVersion),
-      ),
-    )
-    .limit(1);
-  return row ?? null;
-}
-
-function shouldResetExistingWebIngest(status: string): boolean {
-  return status === "completed" || status === "skipped" || status === "failed";
-}
-
 export async function queueWebSourceUrl(params: {
   url: string;
   distillationVersion?: string;
@@ -92,68 +71,54 @@ export async function queueWebSourceUrl(params: {
     };
   }
 
-  const distillationVersion = params.distillationVersion ?? DEFAULT_DISTILLATION_TARGET_VERSION;
+  const distillationVersion = params.distillationVersion ?? APP_CONSTANTS.distillationTargetVersion;
   const redactedUrl = redactSecrets(normalized.url);
   const redactedNormalizedUrl = redactSecrets(normalized.normalizedUrl);
-  const existing = await findExistingWebIngestTarget({
-    normalizedUrl: redactedNormalizedUrl,
+  const existing = await findFindingJob({
+    inputKind: "source_target",
+    sourceKind: "web_ingest",
+    sourceKey: redactedNormalizedUrl,
     distillationVersion,
   });
-
-  let state = await upsertDistillationTargetState({
-    candidate: {
-      targetKind: "web_ingest",
-      targetKey: redactedNormalizedUrl,
-      sourceUri: redactedNormalizedUrl,
-      status: "pending",
-      sortKey: redactedNormalizedUrl.toLowerCase(),
-    },
+  const state = await enqueueFindingJob({
+    inputKind: "source_target",
+    sourceKind: "web_ingest",
+    sourceKey: redactedNormalizedUrl,
+    sourceUri: redactedNormalizedUrl,
     distillationVersion,
-    metadata: {
+    payload: {
       sourceType: "web_research",
       sourceUrl: redactedUrl,
       normalizedUrl: redactedNormalizedUrl,
       importedVia: "sources.webIngest",
       registeredAt: new Date().toISOString(),
     },
+    metadata: {
+      sourceType: "web_research",
+      sourceUrl: redactedUrl,
+      normalizedUrl: redactedNormalizedUrl,
+      importedVia: "sources.webIngest",
+    },
+    priority: 20,
   });
-
-  if (existing && shouldResetExistingWebIngest(existing.status)) {
-    const resetReason = "web_source_requeued";
-    const requeued = await requeueDistillationTargetState({
-      id: existing.id,
-      reason: resetReason,
-      allowCompleted: true,
-    });
-    if (requeued) state = requeued;
-    await updateDistillationTargetSource({
-      id: existing.id,
-      sourceUri: normalized.normalizedUrl,
-      metadata: {
-        sourceType: "web_research",
-        sourceUrl: normalized.url,
-        normalizedUrl: normalized.normalizedUrl,
-        importedVia: "sources.webIngest",
-        registeredAt: new Date().toISOString(),
-        savedWikiSlug: null,
-        savedWikiTargetKey: null,
-        savedWikiPath: null,
-        researchGeneratedAt: null,
-        llmProvider: null,
-        llmModel: null,
-        fetchFinalUrl: null,
-      },
-    });
-    const refreshed = await getDistillationTargetStateById(existing.id);
-    if (refreshed) state = refreshed;
-  }
 
   return {
     ok: true,
     item: {
       url: redactedUrl,
       normalizedUrl: redactedNormalizedUrl,
-      state,
+      state: {
+        id: state.id,
+        status: state.status,
+        priority: state.priority,
+        attemptCount: state.attemptCount,
+        distillationVersion: state.distillationVersion,
+        sourceKind: "web_ingest",
+        sourceKey: state.sourceKey,
+        sourceUri: state.sourceUri,
+        createdAt: state.createdAt.toISOString(),
+        updatedAt: state.updatedAt.toISOString(),
+      },
       existing: Boolean(existing),
     },
   };

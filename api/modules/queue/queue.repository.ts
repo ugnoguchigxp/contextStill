@@ -1,621 +1,611 @@
-import { and, asc, count, desc, eq, gt, ilike, inArray, or, sql, type SQL } from "drizzle-orm";
-import { groupedConfig } from "../../../src/config.js";
+import { sql } from "drizzle-orm";
 import { db } from "../../../src/db/index.js";
 import {
-  distillationTargetStates,
-  findCandidateResults,
-  syncStates,
-} from "../../../src/db/schema.js";
-import { APP_CONSTANTS } from "../../../src/constants.js";
-import {
-  decideFindCandidateSchedule,
-  type FindCandidateScheduleDecision,
-} from "../../../src/modules/findCandidate/find-candidate-scheduler.service.js";
-import {
-  ensureRuntimeSettingsLoaded,
-  resolveCoverEvidenceRoutes,
-  resolveFindCandidateRoute,
-  resolveWebSourceResearchRoute,
-} from "../../../src/modules/settings/settings.service.js";
+  appendQueueEvent,
+  pauseQueueJob,
+  resumeQueueJob,
+  retryQueueJob,
+} from "../../../src/modules/queue/core/index.js";
+import { resolveCoverEvidenceRouteByPolicy } from "../../../src/modules/coverEvidence/provider-policy.js";
 import {
   resolveDistillationModel,
-  resolveProviderForDistillation,
-  type DistillationProviderName,
   type DistillationProviderSetting,
-} from "../../../src/modules/distillation/llm-resolver.js";
+} from "../../../src/modules/distillation/distillation-runtime.service.js";
 import {
-  findNextFindCandidateTargetState,
-  pauseDistillationTargetState,
-  requeueDistillationTargetState,
-} from "../../../src/modules/selectDistillationTarget/repository.js";
-import type {
-  DistillationTargetKind,
-  DistillationTargetStatus,
-} from "../../../src/modules/selectDistillationTarget/domain.js";
-
-const DEFAULT_VERSION = APP_CONSTANTS.distillationTargetVersion;
-const FIND_CANDIDATE_TARGET_KINDS = ["web_ingest", "wiki_file", "vibe_memory"] as const;
-
-type ProviderPressureStatus = "ok" | "cooldown";
-type FindCandidateTargetKind = (typeof FIND_CANDIDATE_TARGET_KINDS)[number];
-type QueueFindCandidateReason =
-  | FindCandidateScheduleDecision["reason"]
-  | "next_retry"
-  | "no_target"
-  | "running";
-
-export type QueueFindCandidateStatus = {
-  status: "ready" | "waiting" | "idle" | "running";
-  waitMs: number;
-  waitUntil: string | null;
-  reason: QueueFindCandidateReason;
-  targetKind: FindCandidateTargetKind | null;
-  provider: string | null;
-  model: string | null;
-  source: "scheduler" | "target_retry" | "running" | "none";
-  updatedAt: string;
-  diagnostics: FindCandidateScheduleDecision["diagnostics"] | null;
-};
-
-export type QueueProviderPressure = {
-  azureOpenai: {
-    provider: "azure-openai";
-    model: string | null;
-    status: ProviderPressureStatus;
-    cooldownUntil: string | null;
-    reason: string | null;
-    source: string | null;
-    lastRateLimitedAt: string | null;
-    updatedAt: string | null;
-  };
-};
+  ensureRuntimeSettingsLoaded,
+  getRuntimeSettingsSnapshot,
+  resolveCoverEvidenceRoutes,
+  resolveFindCandidateRoute,
+} from "../../../src/modules/settings/settings.service.js";
+import {
+  distillationQueueNames,
+  distillationQueueStatuses,
+  queueTableNameByQueue,
+  type DistillationQueueName,
+  type DistillationQueueStatus,
+  type QueueListItem,
+  type QueueRetryMode,
+  type QueueStatsByQueue,
+} from "../../../src/modules/queue/core/types.js";
 
 export type QueueListQuery = {
   page: number;
   limit: number;
   query?: string;
-  targetKind?: DistillationTargetKind | "all";
-  status?: DistillationTargetStatus | "all";
+  queue?: DistillationQueueName;
+  status?: DistillationQueueStatus | "all";
 };
 
-type QueueTaskWithModel = typeof distillationTargetStates.$inferSelect & {
-  activeModel: string | null;
-  activeProvider: DistillationProviderName | null;
+type QueueStatsAggregateRow = {
+  status: string;
+  count: number;
+  oldest_pending_at: Date | string | number | null;
+  escalated_count: number;
+  offline_count: number;
+  non_registered_count: number;
 };
 
-function asDistillationProviderSetting(value: unknown): DistillationProviderSetting {
-  if (
-    value === "openai" ||
-    value === "azure-openai" ||
-    value === "bedrock" ||
-    value === "local-llm" ||
-    value === "auto"
-  ) {
-    return value;
-  }
-  return "auto";
-}
+type QueueListRow = {
+  id: string;
+  status: string;
+  priority: number;
+  attempt_count: number;
+  subject_title: string | null;
+  subject_detail: string | null;
+  provider: string | null;
+  model: string | null;
+  last_error: string | null;
+  last_outcome_kind: string | null;
+  locked_by: string | null;
+  locked_at: Date | string | number | null;
+  heartbeat_at: Date | string | number | null;
+  created_at: Date | string | number;
+  updated_at: Date | string | number;
+  completed_at: Date | string | number | null;
+  next_run_at: Date | string | number | null;
+  metadata_summary: string | null;
+  source_kind: string | null;
+  provider_policy: string | null;
+};
 
-function resolveProviderModel(
-  providerSetting: DistillationProviderSetting,
-): { provider: DistillationProviderName; model: string | null } {
-  const provider = resolveProviderForDistillation(providerSetting);
-  const model = resolveDistillationModel(providerSetting).trim();
+function emptyCounters(): Record<DistillationQueueStatus, number> {
   return {
-    provider,
-    model: model || null,
+    pending: 0,
+    running: 0,
+    completed: 0,
+    skipped: 0,
+    failed: 0,
+    paused: 0,
   };
 }
 
-function dedupe(values: Array<string | null>): string[] {
-  const seen = new Set<string>();
-  const ordered: string[] = [];
-  for (const value of values) {
-    if (!value || seen.has(value)) continue;
-    seen.add(value);
-    ordered.push(value);
+function toIsoTimestamp(value: Date | string | number | null): string | null {
+  if (value === null || value === undefined) {
+    return null;
   }
-  return ordered;
+  if (value instanceof Date) {
+    return Number.isNaN(value.getTime()) ? null : value.toISOString();
+  }
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    // PostgreSQL timestamp (without timezone) should be treated as UTC to avoid local offset drift.
+    if (
+      /^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)
+    ) {
+      const parsedUtc = new Date(`${trimmed.replace(" ", "T")}Z`);
+      return Number.isNaN(parsedUtc.getTime()) ? null : parsedUtc.toISOString();
+    }
+    const parsedString = new Date(trimmed);
+    return Number.isNaN(parsedString.getTime()) ? null : parsedString.toISOString();
+  }
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
-function modelFromTaskMetadata(metadata: unknown): { model: string | null; provider: string | null } {
-  const root = isRecord(metadata) ? metadata : {};
-  const llmModel = stringValue(root.llmModel);
-  const llmProvider = stringValue(root.llmProvider);
-  if (llmModel) {
-    return { model: llmModel, provider: llmProvider };
-  }
-
-  const scheduleDecision = isRecord(root.scheduleDecision) ? root.scheduleDecision : {};
-  const scheduleModel = stringValue(scheduleDecision.model);
-  const scheduleProvider = stringValue(scheduleDecision.provider);
-  if (scheduleModel) {
-    return { model: scheduleModel, provider: scheduleProvider };
-  }
-
-  const diagnostics = isRecord(scheduleDecision.diagnostics) ? scheduleDecision.diagnostics : {};
-  const diagnosticsModel = stringValue(diagnostics.model);
-  const diagnosticsProvider = stringValue(diagnostics.provider);
-  if (diagnosticsModel) {
-    return { model: diagnosticsModel, provider: diagnosticsProvider };
-  }
-
-  return { model: null, provider: null };
-}
-
-function findCandidateProviderModel(
-  targetKind: DistillationTargetKind | string,
-): { model: string | null; provider: DistillationProviderName | null } {
-  if (
-    targetKind !== "wiki_file" &&
-    targetKind !== "vibe_memory" &&
-    targetKind !== "web_ingest"
-  ) {
-    return { model: null, provider: null };
-  }
-  const route = resolveFindCandidateRoute(targetKind);
-  const resolved = resolveProviderModel(asDistillationProviderSetting(route.provider));
+function normalizeRow(queueName: DistillationQueueName, row: QueueListRow): QueueListItem {
+  const createdAt =
+    toIsoTimestamp(row.created_at) ?? toIsoTimestamp(row.updated_at) ?? new Date(0).toISOString();
+  const updatedAt = toIsoTimestamp(row.updated_at) ?? createdAt;
+  const resolved = resolveQueueRuntimeModel(queueName, row);
   return {
-    model: resolved.model,
+    queueName,
+    id: row.id,
+    status: row.status as DistillationQueueStatus,
+    priority: Number(row.priority ?? 50),
+    attemptCount: Number(row.attempt_count ?? 0),
+    subjectTitle: row.subject_title ?? "-",
+    subjectDetail: row.subject_detail ?? "-",
     provider: resolved.provider,
-  };
-}
-
-function webResearchProviderModel(): {
-  model: string | null;
-  provider: DistillationProviderName | null;
-} {
-  const route = resolveWebSourceResearchRoute();
-  const resolved = resolveProviderModel(asDistillationProviderSetting(route.provider));
-  return {
     model: resolved.model,
-    provider: resolved.provider,
-  };
-}
-
-function coverEvidenceProviderModel(): {
-  model: string | null;
-  provider: DistillationProviderName | null;
-} {
-  const routes = resolveCoverEvidenceRoutes();
-  const resolvedRoutes = [
-    resolveProviderModel(asDistillationProviderSetting(routes.sourceSupport.provider)),
-    resolveProviderModel(asDistillationProviderSetting(routes.externalEvidence.provider)),
-    resolveProviderModel(asDistillationProviderSetting(routes.mcpEvidence.provider)),
-  ];
-  const models = dedupe(resolvedRoutes.map((entry) => entry.model));
-  const providers = dedupe(resolvedRoutes.map((entry) => entry.provider));
-  return {
-    model: models.length > 0 ? models.join(" | ") : null,
-    provider:
-      providers.length === 0
-        ? null
-        : providers.length === 1
-          ? (providers[0] as DistillationProviderName)
-          : null,
-  };
-}
-
-function finalizeProviderModel(): {
-  model: string | null;
-  provider: DistillationProviderName | null;
-} {
-  const resolved = resolveProviderModel(groupedConfig.distillation.provider);
-  return {
-    model: resolved.model,
-    provider: resolved.provider,
-  };
-}
-
-function activeProviderModelForTask(task: typeof distillationTargetStates.$inferSelect): {
-  model: string | null;
-  provider: DistillationProviderName | null;
-} {
-  const metadataModel = modelFromTaskMetadata(task.metadata);
-  if (metadataModel.model) {
-    return {
-      model: metadataModel.model,
-      provider:
-        metadataModel.provider === "openai" ||
-        metadataModel.provider === "azure-openai" ||
-        metadataModel.provider === "bedrock" ||
-        metadataModel.provider === "local-llm"
-          ? metadataModel.provider
-          : null,
-    };
-  }
-
-  if (task.phase === "researching_source" || task.phase === "writing_source") {
-    return webResearchProviderModel();
-  }
-  if (task.phase === "covering_evidence") {
-    return coverEvidenceProviderModel();
-  }
-  if (task.phase === "finalizing") {
-    return finalizeProviderModel();
-  }
-  return findCandidateProviderModel(task.targetKind);
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function stringValue(value: unknown): string | null {
-  return typeof value === "string" && value.trim() ? value.trim() : null;
-}
-
-function isoDateTimeValue(value: unknown): string | null {
-  const raw = stringValue(value);
-  if (!raw) return null;
-  const timestamp = Date.parse(raw);
-  return Number.isFinite(timestamp) ? new Date(timestamp).toISOString() : null;
-}
-
-function modelFromPressureId(id: string): string | null {
-  const prefix = "llm_provider_pressure:azure-openai:";
-  if (!id.startsWith(prefix)) return null;
-  const encoded = id.slice(prefix.length);
-  try {
-    return decodeURIComponent(encoded);
-  } catch {
-    return encoded || null;
-  }
-}
-
-function isFindCandidateTargetKind(value: unknown): value is FindCandidateTargetKind {
-  return (
-    typeof value === "string" &&
-    FIND_CANDIDATE_TARGET_KINDS.includes(value as FindCandidateTargetKind)
-  );
-}
-
-function normalizeFindCandidateReason(value: string | null): QueueFindCandidateReason {
-  switch (value) {
-    case "disabled":
-    case "provider_cooldown":
-    case "recent_interactive_compile":
-    case "interactive_pressure":
-    case "parallel_lane_busy":
-    case "ready":
-    case "running":
-      return value;
-    default:
-      return value ? "next_retry" : "no_target";
-  }
-}
-
-function throttledReasonFromPause(row: {
-  lastError: string | null;
-  metadata: unknown;
-}): QueueFindCandidateReason {
-  const metadata = isRecord(row.metadata) ? row.metadata : {};
-  const scheduleDecision = isRecord(metadata.scheduleDecision) ? metadata.scheduleDecision : {};
-  const metadataReason = normalizeFindCandidateReason(stringValue(scheduleDecision.reason));
-  if (metadataReason !== "no_target") return metadataReason;
-  const prefix = "find_candidate_throttled:";
-  const pauseReason = stringValue(row.lastError);
-  if (pauseReason?.startsWith(prefix)) {
-    return normalizeFindCandidateReason(pauseReason.slice(prefix.length));
-  }
-  return "next_retry";
-}
-
-async function fetchRunningFindCandidateTarget() {
-  const [row] = await db
-    .select({
-      targetKind: distillationTargetStates.targetKind,
-      updatedAt: distillationTargetStates.updatedAt,
-    })
-    .from(distillationTargetStates)
-    .where(
-      and(
-        eq(distillationTargetStates.distillationVersion, DEFAULT_VERSION),
-        inArray(distillationTargetStates.targetKind, [...FIND_CANDIDATE_TARGET_KINDS]),
-        eq(distillationTargetStates.status, "running"),
-        eq(distillationTargetStates.phase, "finding_candidate"),
-      ),
-    )
-    .orderBy(desc(distillationTargetStates.updatedAt))
-    .limit(1);
-
-  return row ?? null;
-}
-
-async function fetchNextFindCandidateRetry(now: Date) {
-  const [row] = await db
-    .select({
-      targetKind: distillationTargetStates.targetKind,
-      nextRetryAt: distillationTargetStates.nextRetryAt,
-      lastError: distillationTargetStates.lastError,
-      metadata: distillationTargetStates.metadata,
-      updatedAt: distillationTargetStates.updatedAt,
-    })
-    .from(distillationTargetStates)
-    .where(
-      and(
-        eq(distillationTargetStates.distillationVersion, DEFAULT_VERSION),
-        inArray(distillationTargetStates.targetKind, [...FIND_CANDIDATE_TARGET_KINDS]),
-        eq(distillationTargetStates.status, "paused"),
-        gt(distillationTargetStates.nextRetryAt, now),
-        sql`${distillationTargetStates.lastError} like 'find_candidate_throttled:%'`,
-        sql`not exists (
-          select 1
-          from ${findCandidateResults}
-          where ${findCandidateResults.targetStateId} = ${distillationTargetStates.id}
-        )`,
-      ),
-    )
-    .orderBy(
-      asc(distillationTargetStates.nextRetryAt),
-      asc(distillationTargetStates.sortKey),
-      asc(distillationTargetStates.createdAt),
-      asc(distillationTargetStates.id),
-    )
-    .limit(1);
-
-  return row ?? null;
-}
-
-async function fetchFindCandidateStatus(): Promise<QueueFindCandidateStatus> {
-  await ensureRuntimeSettingsLoaded();
-  const now = new Date();
-  const updatedAt = now.toISOString();
-
-  const runningTarget = await fetchRunningFindCandidateTarget();
-  if (runningTarget && isFindCandidateTargetKind(runningTarget.targetKind)) {
-    return {
-      status: "running",
-      waitMs: 0,
-      waitUntil: null,
-      reason: "running",
-      targetKind: runningTarget.targetKind,
-      provider: null,
-      model: null,
-      source: "running",
-      updatedAt,
-      diagnostics: null,
-    };
-  }
-
-  const preview = await findNextFindCandidateTargetState({
-    distillationVersion: DEFAULT_VERSION,
-    targetKinds: [...FIND_CANDIDATE_TARGET_KINDS],
-    now,
-  });
-  if (preview && isFindCandidateTargetKind(preview.targetKind)) {
-    const decision = await decideFindCandidateSchedule({
-      targetKind: preview.targetKind,
-      includeJitter: false,
-    });
-    const waitMs = Math.max(0, Math.ceil(decision.waitMs));
-    return {
-      status: decision.shouldWait ? "waiting" : "ready",
-      waitMs,
-      waitUntil: decision.shouldWait ? new Date(now.getTime() + waitMs).toISOString() : null,
-      reason: decision.reason,
-      targetKind: preview.targetKind,
-      provider: decision.diagnostics.provider,
-      model: decision.diagnostics.model,
-      source: "scheduler",
-      updatedAt,
-      diagnostics: decision.diagnostics,
-    };
-  }
-
-  const retryTarget = await fetchNextFindCandidateRetry(now);
-  if (
-    retryTarget?.nextRetryAt &&
-    retryTarget.targetKind &&
-    isFindCandidateTargetKind(retryTarget.targetKind)
-  ) {
-    const retryAt = retryTarget.nextRetryAt;
-    return {
-      status: "waiting",
-      waitMs: Math.max(0, retryAt.getTime() - now.getTime()),
-      waitUntil: retryAt.toISOString(),
-      reason: throttledReasonFromPause(retryTarget),
-      targetKind: retryTarget.targetKind,
-      provider: null,
-      model: null,
-      source: "target_retry",
-      updatedAt,
-      diagnostics: null,
-    };
-  }
-
-  return {
-    status: "idle",
-    waitMs: 0,
-    waitUntil: null,
-    reason: "no_target",
-    targetKind: null,
-    provider: null,
-    model: null,
-    source: "none",
+    lastError: row.last_error ?? null,
+    lastOutcomeKind: row.last_outcome_kind ?? null,
+    lockedBy: row.locked_by ?? null,
+    lockedAt: toIsoTimestamp(row.locked_at),
+    heartbeatAt: toIsoTimestamp(row.heartbeat_at),
+    createdAt,
     updatedAt,
-    diagnostics: null,
+    completedAt: toIsoTimestamp(row.completed_at),
+    nextRunAt: toIsoTimestamp(row.next_run_at),
+    metadataSummary: row.metadata_summary ?? null,
   };
 }
 
-async function fetchAzureOpenAiPressure(): Promise<QueueProviderPressure["azureOpenai"]> {
-  await ensureRuntimeSettingsLoaded();
-  const configuredModel = groupedConfig.azureOpenAi.model.trim() || null;
-  const pressureId = configuredModel
-    ? `llm_provider_pressure:azure-openai:${encodeURIComponent(configuredModel.toLowerCase())}`
-    : null;
-  const [row] = await db
-    .select({
-      id: syncStates.id,
-      metadata: syncStates.metadata,
-      updatedAt: syncStates.updatedAt,
-    })
-    .from(syncStates)
-    .where(
-      pressureId
-        ? eq(syncStates.id, pressureId)
-        : sql`${syncStates.id} like 'llm_provider_pressure:azure-openai:%'`,
-    )
-    .orderBy(desc(syncStates.updatedAt))
-    .limit(1);
+function normalizeProviderPolicy(value: string | null): "default" | "cloud_api" {
+  return value === "cloud_api" ? "cloud_api" : "default";
+}
 
-  const metadata = isRecord(row?.metadata) ? row.metadata : {};
-  const cooldownUntil = isoDateTimeValue(metadata.cooldownUntil);
-  const cooldownActive = cooldownUntil !== null && Date.parse(cooldownUntil) > Date.now();
+function resolveRouteModel(provider: string, configuredModel: string | undefined): string | null {
+  const model = configuredModel?.trim();
+  if (model) return model;
+  try {
+    return resolveDistillationModel(provider as DistillationProviderSetting);
+  } catch {
+    return null;
+  }
+}
+
+function resolveQueueRuntimeModel(
+  queueName: DistillationQueueName,
+  row: QueueListRow,
+): { provider: string | null; model: string | null } {
+  if (row.model?.trim()) {
+    return { provider: row.provider ?? null, model: row.model.trim() };
+  }
+
+  if (queueName === "findingCandidate") {
+    const sourceKind = row.source_kind === "vibe_memory" ? "vibe_memory" : "wiki_file";
+    const route = resolveFindCandidateRoute(sourceKind);
+    const provider = route.provider;
+    return { provider, model: resolveRouteModel(provider, route.model) };
+  }
+
+  if (queueName === "coveringEvidence" || queueName === "premiumCoveringEvidence") {
+    const policy = normalizeProviderPolicy(row.provider_policy);
+    const routes = resolveCoverEvidenceRoutes();
+    try {
+      const route = resolveCoverEvidenceRouteByPolicy({
+        route: routes.externalEvidence,
+        policy,
+        routeName: "externalEvidence",
+      });
+      const provider = route.provider;
+      return { provider, model: resolveRouteModel(provider, route.model) };
+    } catch {
+      const provider = row.provider ?? null;
+      return { provider, model: provider ? resolveRouteModel(provider, undefined) : null };
+    }
+  }
+
+  const settings = getRuntimeSettingsSnapshot();
+  const finalizeRoute = settings.taskRouting.finalizeDistille;
+  const provider = finalizeRoute.provider;
+  return { provider, model: resolveRouteModel(provider, finalizeRoute.model) };
+}
+
+async function queryQueueRows(
+  queueName: DistillationQueueName,
+  params: {
+    limit: number;
+    offset: number;
+    query?: string;
+    status?: DistillationQueueStatus | "all";
+  },
+): Promise<QueueListRow[]> {
+  const pattern = params.query?.trim() ? `%${params.query.trim()}%` : null;
+  const statusFilter = params.status && params.status !== "all" ? params.status : null;
+
+  if (queueName === "findingCandidate") {
+    const result = await db.execute(sql`
+      select
+        q.id,
+        q.status,
+        q.priority,
+        q.attempt_count,
+        q.source_key as subject_title,
+        concat(q.source_kind, ' | ', coalesce(q.source_uri, '')) as subject_detail,
+        null::text as provider,
+        null::text as model,
+        q.last_error,
+        q.last_outcome_kind,
+        q.locked_by,
+        q.locked_at,
+        q.heartbeat_at,
+        q.created_at,
+        q.updated_at,
+        q.completed_at,
+        q.next_run_at,
+        concat('input=', q.input_kind) as metadata_summary,
+        q.source_kind,
+        null::text as provider_policy
+      from finding_candidate_queue q
+      where (${statusFilter}::text is null or q.status = ${statusFilter})
+        and (
+          ${pattern}::text is null
+          or q.source_key ilike ${pattern}
+          or q.source_uri ilike ${pattern}
+        )
+      order by
+        case
+          when q.status = 'running' then 0
+          when q.status = 'pending' then 1
+          when q.status = 'paused' then 2
+          when q.status = 'failed' then 3
+          else 4
+        end,
+        q.priority asc,
+        q.updated_at desc
+      limit ${params.limit}
+      offset ${params.offset}
+    `);
+    return result.rows as unknown as QueueListRow[];
+  }
+
+  if (queueName === "coveringEvidence") {
+    const result = await db.execute(sql`
+      select
+        q.id,
+        q.status,
+        q.priority,
+        q.attempt_count,
+        c.title as subject_title,
+        concat('candidate=', q.found_candidate_id, ' | policy=', q.provider_policy) as subject_detail,
+        q.provider_policy as provider,
+        null::text as model,
+        q.last_error,
+        q.last_outcome_kind,
+        q.locked_by,
+        q.locked_at,
+        q.heartbeat_at,
+        q.created_at,
+        q.updated_at,
+        q.completed_at,
+        q.next_run_at,
+        null::text as metadata_summary,
+        null::text as source_kind,
+        q.provider_policy
+      from covering_evidence_queue q
+      left join found_candidates c on c.id = q.found_candidate_id
+      where (${statusFilter}::text is null or q.status = ${statusFilter})
+        and (
+          ${pattern}::text is null
+          or c.title ilike ${pattern}
+          or q.found_candidate_id::text ilike ${pattern}
+        )
+      order by
+        case
+          when q.status = 'running' then 0
+          when q.status = 'pending' then 1
+          when q.status = 'paused' then 2
+          when q.status = 'failed' then 3
+          else 4
+        end,
+        q.priority asc,
+        q.updated_at desc
+      limit ${params.limit}
+      offset ${params.offset}
+    `);
+    return result.rows as unknown as QueueListRow[];
+  }
+
+  if (queueName === "premiumCoveringEvidence") {
+    const result = await db.execute(sql`
+      select
+        q.id,
+        q.status,
+        q.priority,
+        q.attempt_count,
+        c.title as subject_title,
+        concat(
+          'candidate=', q.found_candidate_id,
+          ' | sourceCovering=', coalesce(q.source_covering_job_id::text, '-')
+        ) as subject_detail,
+        q.provider_policy as provider,
+        null::text as model,
+        q.last_error,
+        q.last_outcome_kind,
+        q.locked_by,
+        q.locked_at,
+        q.heartbeat_at,
+        q.created_at,
+        q.updated_at,
+        q.completed_at,
+        q.next_run_at,
+        q.payload ->> 'escalationReason' as metadata_summary,
+        null::text as source_kind,
+        q.provider_policy
+      from premium_covering_evidence_queue q
+      left join found_candidates c on c.id = q.found_candidate_id
+      where (${statusFilter}::text is null or q.status = ${statusFilter})
+        and (
+          ${pattern}::text is null
+          or c.title ilike ${pattern}
+          or q.found_candidate_id::text ilike ${pattern}
+        )
+      order by
+        case
+          when q.status = 'running' then 0
+          when q.status = 'pending' then 1
+          when q.status = 'paused' then 2
+          when q.status = 'failed' then 3
+          else 4
+        end,
+        q.priority asc,
+        q.updated_at desc
+      limit ${params.limit}
+      offset ${params.offset}
+    `);
+    return result.rows as unknown as QueueListRow[];
+  }
+
+  const result = await db.execute(sql`
+    select
+      q.id,
+      q.status,
+      q.priority,
+      q.attempt_count,
+      coalesce(e.title, c.title) as subject_title,
+      concat(
+        'evidence=', q.evidence_result_id,
+        ' | knowledge=', coalesce(q.knowledge_id::text, '-')
+      ) as subject_detail,
+      q.provider_policy as provider,
+      null::text as model,
+      q.last_error,
+      q.last_outcome_kind,
+      q.locked_by,
+      q.locked_at,
+      q.heartbeat_at,
+      q.created_at,
+      q.updated_at,
+      q.completed_at,
+      null::timestamp as next_run_at,
+      null::text as metadata_summary,
+      null::text as source_kind,
+      q.provider_policy
+    from finalize_distille_queue q
+    left join evidence_coverage_results e on e.id = q.evidence_result_id
+    left join found_candidates c on c.id = e.found_candidate_id
+    where (${statusFilter}::text is null or q.status = ${statusFilter})
+      and (
+        ${pattern}::text is null
+        or coalesce(e.title, c.title) ilike ${pattern}
+        or q.evidence_result_id::text ilike ${pattern}
+      )
+    order by
+      case
+        when q.status = 'running' then 0
+        when q.status = 'pending' then 1
+        when q.status = 'paused' then 2
+        when q.status = 'failed' then 3
+        else 4
+      end,
+      q.priority asc,
+      q.updated_at desc
+    limit ${params.limit}
+    offset ${params.offset}
+  `);
+  return result.rows as unknown as QueueListRow[];
+}
+
+async function countQueueRows(
+  queueName: DistillationQueueName,
+  params: { query?: string; status?: DistillationQueueStatus | "all" },
+): Promise<number> {
+  const pattern = params.query?.trim() ? `%${params.query.trim()}%` : null;
+  const statusFilter = params.status && params.status !== "all" ? params.status : null;
+  const tableName = queueTableNameByQueue[queueName];
+
+  const column =
+    queueName === "findingCandidate"
+      ? sql`q.source_key || ' ' || coalesce(q.source_uri, '')`
+      : queueName === "finalizeDistille"
+        ? sql`coalesce(e.title, c.title, q.evidence_result_id::text)`
+        : sql`coalesce(c.title, q.found_candidate_id::text)`;
+
+  const joinSql =
+    queueName === "findingCandidate"
+      ? sql``
+      : queueName === "finalizeDistille"
+        ? sql`left join evidence_coverage_results e on e.id = q.evidence_result_id
+              left join found_candidates c on c.id = e.found_candidate_id`
+        : sql`left join found_candidates c on c.id = q.found_candidate_id`;
+
+  const result = await db.execute(sql`
+    select count(*)::int as count
+    from ${sql.raw(tableName)} q
+    ${joinSql}
+    where (${statusFilter}::text is null or q.status = ${statusFilter})
+      and (${pattern}::text is null or ${column} ilike ${pattern})
+  `);
+  const row = result.rows[0] as { count?: number } | undefined;
+  return Number(row?.count ?? 0);
+}
+
+async function queueStatsFor(queueName: DistillationQueueName) {
+  const tableName = queueTableNameByQueue[queueName];
+  const result = await db.execute(sql`
+    select
+      status,
+      count(*)::int as count,
+      min(case when status = 'pending' then created_at end) as oldest_pending_at,
+      count(*) filter (where last_outcome_kind = 'escalated_to_premium')::int as escalated_count,
+      count(*) filter (
+        where status = 'failed'
+          and (
+            coalesce(last_outcome_kind, '') = 'provider_failed'
+            or coalesce(last_outcome_kind, '') like '%provider_timeout%'
+            or coalesce(last_outcome_kind, '') like '%provider_failed%'
+          )
+      )::int as offline_count,
+      count(*) filter (
+        where status = 'completed'
+          and coalesce(last_outcome_kind, '') = 'insufficient'
+      )::int as non_registered_count
+    from ${sql.raw(tableName)}
+    group by status
+  `);
+  const rows = result.rows as unknown as QueueStatsAggregateRow[];
+  const counters = emptyCounters();
+  let oldestPendingAt: string | null = null;
+  let escalated = 0;
+  let offline = 0;
+  let nonRegistered = 0;
+  for (const row of rows) {
+    if (distillationQueueStatuses.includes(row.status as DistillationQueueStatus)) {
+      counters[row.status as DistillationQueueStatus] = Number(row.count ?? 0);
+    }
+    if (!oldestPendingAt) {
+      const normalized = toIsoTimestamp(row.oldest_pending_at);
+      if (normalized) {
+        oldestPendingAt = normalized;
+      }
+    }
+    escalated += Number(row.escalated_count ?? 0);
+    offline += Number(row.offline_count ?? 0);
+    nonRegistered += Number(row.non_registered_count ?? 0);
+  }
+  if (queueName !== "premiumCoveringEvidence") {
+    nonRegistered = 0;
+  }
   return {
-    provider: "azure-openai",
-    model: row ? modelFromPressureId(row.id) : configuredModel,
-    status: cooldownActive ? "cooldown" : "ok",
-    cooldownUntil: cooldownActive ? cooldownUntil : null,
-    reason: stringValue(metadata.reason),
-    source: stringValue(metadata.source),
-    lastRateLimitedAt: isoDateTimeValue(metadata.lastRateLimitedAt),
-    updatedAt: isoDateTimeValue(metadata.updatedAt) ?? row?.updatedAt?.toISOString() ?? null,
+    counters,
+    oldestPendingAt,
+    running: counters.running,
+    failed: counters.failed,
+    offline,
+    nonRegistered,
+    escalated,
   };
 }
 
-export async function fetchQueueDashboardStats() {
-  const [stats, kinds, azureOpenai, findCandidate] = await Promise.all([
-    db
-      .select({
-        status: distillationTargetStates.status,
-        count: count(),
-      })
-      .from(distillationTargetStates)
-      .where(eq(distillationTargetStates.distillationVersion, DEFAULT_VERSION))
-      .groupBy(distillationTargetStates.status),
-    db
-      .select({
-        targetKind: distillationTargetStates.targetKind,
-        count: count(),
-      })
-      .from(distillationTargetStates)
-      .where(eq(distillationTargetStates.distillationVersion, DEFAULT_VERSION))
-      .groupBy(distillationTargetStates.targetKind),
-    fetchAzureOpenAiPressure(),
-    fetchFindCandidateStatus(),
-  ]);
+export async function fetchQueueDashboardStats(): Promise<{
+  queues: QueueStatsByQueue;
+  totals: QueueStatsByQueue[DistillationQueueName];
+}> {
+  const values = await Promise.all(
+    distillationQueueNames.map((queueName) => queueStatsFor(queueName)),
+  );
+  const queues = Object.fromEntries(
+    distillationQueueNames.map((queueName, index) => [queueName, values[index]]),
+  ) as QueueStatsByQueue;
 
-  return {
-    maxAttempts: APP_CONSTANTS.distillationTargetMaxAttempts,
-    stats: stats.reduce(
-      (acc, curr) => {
-        acc[curr.status] = Number(curr.count ?? 0);
-        return acc;
-      },
-      {} as Record<string, number>,
-    ),
-    kinds: kinds.reduce(
-      (acc, curr) => {
-        acc[curr.targetKind] = Number(curr.count ?? 0);
-        return acc;
-      },
-      {} as Record<string, number>,
-    ),
-    providerPressure: {
-      azureOpenai,
-    } satisfies QueueProviderPressure,
-    findCandidate,
-  };
+  const totals = {
+    counters: emptyCounters(),
+    oldestPendingAt: null,
+    running: 0,
+    failed: 0,
+    offline: 0,
+    nonRegistered: 0,
+    escalated: 0,
+  } as QueueStatsByQueue[DistillationQueueName];
+
+  for (const queueName of distillationQueueNames) {
+    const snapshot = queues[queueName];
+    for (const status of distillationQueueStatuses) {
+      totals.counters[status] += snapshot.counters[status];
+    }
+    totals.running += snapshot.running;
+    totals.failed += snapshot.failed;
+    totals.offline += snapshot.offline;
+    totals.nonRegistered += snapshot.nonRegistered;
+    totals.escalated += snapshot.escalated;
+    if (snapshot.oldestPendingAt) {
+      if (
+        !totals.oldestPendingAt ||
+        Date.parse(snapshot.oldestPendingAt) < Date.parse(totals.oldestPendingAt)
+      ) {
+        totals.oldestPendingAt = snapshot.oldestPendingAt;
+      }
+    }
+  }
+
+  return { queues, totals };
 }
 
 export async function listQueueItems(params: QueueListQuery) {
+  await ensureRuntimeSettingsLoaded();
+  const queueName = params.queue ?? "findingCandidate";
   const page = Math.max(1, params.page);
   const limit = Math.max(1, Math.min(100, params.limit));
   const offset = (page - 1) * limit;
 
-  const conditions: SQL[] = [eq(distillationTargetStates.distillationVersion, DEFAULT_VERSION)];
-
-  if (params.targetKind && params.targetKind !== "all") {
-    conditions.push(eq(distillationTargetStates.targetKind, params.targetKind));
-  }
-
-  if (params.status && params.status !== "all") {
-    conditions.push(eq(distillationTargetStates.status, params.status));
-  }
-
-  if (params.query?.trim()) {
-    const term = `%${params.query.trim()}%`;
-    const textMatch = or(
-      ilike(distillationTargetStates.targetKey, term),
-      ilike(distillationTargetStates.sourceUri, term),
-    );
-    if (textMatch) {
-      conditions.push(textMatch);
-    }
-  }
-
-  const whereClause =
-    and(...conditions) ?? eq(distillationTargetStates.distillationVersion, DEFAULT_VERSION);
-
-  const [totalResult] = await db
-    .select({ count: count() })
-    .from(distillationTargetStates)
-    .where(whereClause);
-
-  const items = await db
-    .select()
-    .from(distillationTargetStates)
-    .where(whereClause)
-    .orderBy(
-      // prioritize running and pending
-      sql`case
-        when ${distillationTargetStates.status} = 'running' then 0
-        when ${distillationTargetStates.status} = 'pending' then 1
-        when ${distillationTargetStates.status} = 'failed' then 2
-        when ${distillationTargetStates.status} = 'paused' then 3
-        else 4
-      end asc`,
-      desc(distillationTargetStates.updatedAt),
-      desc(distillationTargetStates.createdAt),
-    )
-    .limit(limit)
-    .offset(offset);
+  const [rows, total] = await Promise.all([
+    queryQueueRows(queueName, {
+      limit,
+      offset,
+      query: params.query,
+      status: params.status,
+    }),
+    countQueueRows(queueName, {
+      query: params.query,
+      status: params.status,
+    }),
+  ]);
 
   return {
-    items,
-    total: Number(totalResult?.count ?? 0),
+    queue: queueName,
+    items: rows.map((row) => normalizeRow(queueName, row)),
+    total,
     page,
     limit,
   };
 }
 
-export async function fetchActiveTasks() {
+export async function fetchActiveTasks(): Promise<QueueListItem[]> {
   await ensureRuntimeSettingsLoaded();
-  const rows = await db
-    .select()
-    .from(distillationTargetStates)
-    .where(
-      and(
-        eq(distillationTargetStates.distillationVersion, DEFAULT_VERSION),
-        eq(distillationTargetStates.status, "running"),
-      ),
-    )
-    .orderBy(desc(distillationTargetStates.lockedAt));
+  const responses = await Promise.all(
+    distillationQueueNames.map((queueName) =>
+      queryQueueRows(queueName, { limit: 50, offset: 0, status: "running" }),
+    ),
+  );
 
-  return rows.map((row) => {
-    const active = activeProviderModelForTask(row);
-    return {
-      ...row,
-      activeModel: active.model,
-      activeProvider: active.provider,
-    } satisfies QueueTaskWithModel;
-  });
+  return responses
+    .flatMap((rows, index) => rows.map((row) => normalizeRow(distillationQueueNames[index], row)))
+    .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
-export async function pauseTarget(id: string, reason: string) {
-  return pauseDistillationTargetState({
-    id,
-    reason,
+export async function pauseTarget(queueName: DistillationQueueName, id: string, reason: string) {
+  const row = await pauseQueueJob({ queueName, id, reason });
+  if (!row) return null;
+  await appendQueueEvent({
+    queueName,
+    queueJobId: id,
+    eventType: "paused",
+    message: reason,
   });
+  return row;
 }
 
-export async function resumeTarget(id: string) {
-  return requeueDistillationTargetState({
-    id,
-    reason: "resumed from control plane",
-    allowCompleted: true,
-    resetAttemptCount: false,
-    maxAttempts: APP_CONSTANTS.distillationTargetMaxAttempts,
+export async function resumeTarget(queueName: DistillationQueueName, id: string) {
+  const row = await resumeQueueJob({ queueName, id });
+  if (!row) return null;
+  await appendQueueEvent({
+    queueName,
+    queueJobId: id,
+    eventType: "resumed",
+    message: "resumed from queue control",
   });
+  return row;
+}
+
+export async function retryTarget(params: {
+  queueName: DistillationQueueName;
+  id: string;
+  mode: QueueRetryMode;
+  forceRefreshEvidence: boolean;
+  reason?: string;
+}) {
+  const row = await retryQueueJob(params);
+  if (!row) return null;
+  await appendQueueEvent({
+    queueName: params.queueName,
+    queueJobId: params.id,
+    eventType: "retried",
+    message: params.reason ?? null,
+    metadata: {
+      mode: params.mode,
+      forceRefreshEvidence: params.forceRefreshEvidence,
+    },
+  });
+  return row;
 }

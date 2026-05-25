@@ -17,14 +17,26 @@ import { getFindCandidateResultById } from "../findCandidate/repository.js";
 import { upsertKnowledgeFromSource } from "../knowledge/knowledge.repository.js";
 import {
   getLandscapeReviewLinkForFinalize,
+  getLandscapeReviewLinkForFinalizeByFoundCandidate,
   markLandscapeReviewLinkFinalizedForCandidate,
+  markLandscapeReviewLinkFinalizedForFoundCandidate,
   markLandscapeReviewLinkReviewRequiredForCandidate,
+  markLandscapeReviewLinkReviewRequiredForFoundCandidate,
 } from "../landscape/landscape-review-candidate.service.js";
 import { findSourceFragmentByReference, selectKnowledgeByFinalizeSourceUri } from "./repository.js";
 import { linkKnowledgeToSourceFragment } from "./source-link.repository.js";
 
 export type FinalizeDistilleInput = {
   coverEvidenceResultId: string;
+  resultOverride?: CoverEvidenceResult;
+  candidateContext?: {
+    foundCandidateId: string;
+    targetStateId?: string | null;
+    findCandidateResultId?: string | null;
+    targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest";
+    targetKey: string;
+    sourceUri: string;
+  };
   write?: boolean;
   signal?: AbortSignal;
 };
@@ -137,6 +149,48 @@ function appliesToFromCandidate(
   };
 }
 
+async function getLandscapeLinkForContext(params: {
+  findCandidateResultId?: string | null;
+  foundCandidateId?: string | null;
+}): Promise<{
+  status: "draft_created" | "review_required" | "approved" | "rejected" | "finalized";
+  linkId: string;
+} | null> {
+  if (params.foundCandidateId) {
+    return getLandscapeReviewLinkForFinalizeByFoundCandidate(params.foundCandidateId);
+  }
+  if (params.findCandidateResultId) {
+    return getLandscapeReviewLinkForFinalize(params.findCandidateResultId);
+  }
+  return null;
+}
+
+async function markLandscapeReviewRequired(params: {
+  findCandidateResultId?: string | null;
+  foundCandidateId?: string | null;
+}): Promise<void> {
+  if (params.foundCandidateId) {
+    await markLandscapeReviewLinkReviewRequiredForFoundCandidate(params.foundCandidateId);
+    return;
+  }
+  if (params.findCandidateResultId) {
+    await markLandscapeReviewLinkReviewRequiredForCandidate(params.findCandidateResultId);
+  }
+}
+
+async function markLandscapeFinalized(params: {
+  findCandidateResultId?: string | null;
+  foundCandidateId?: string | null;
+}): Promise<void> {
+  if (params.foundCandidateId) {
+    await markLandscapeReviewLinkFinalizedForFoundCandidate(params.foundCandidateId);
+    return;
+  }
+  if (params.findCandidateResultId) {
+    await markLandscapeReviewLinkFinalizedForCandidate(params.findCandidateResultId);
+  }
+}
+
 export async function runFinalizeDistille(
   input: FinalizeDistilleInput,
 ): Promise<FinalizeDistilleResult> {
@@ -146,12 +200,17 @@ export async function runFinalizeDistille(
     throw new Error("coverEvidenceResultId is required");
   }
 
-  const row = await selectCoverEvidenceResultById(coverEvidenceResultId);
-  throwIfAborted(input.signal);
-  if (!row) {
-    throw new Error(`cover evidence result not found: ${coverEvidenceResultId}`);
+  let result: CoverEvidenceResult;
+  if (input.resultOverride) {
+    result = input.resultOverride;
+  } else {
+    const row = await selectCoverEvidenceResultById(coverEvidenceResultId);
+    throwIfAborted(input.signal);
+    if (!row) {
+      throw new Error(`cover evidence result not found: ${coverEvidenceResultId}`);
+    }
+    result = coverEvidenceResultFromRow(row);
   }
-  const result = coverEvidenceResultFromRow(row);
   const sourceReferenceCount = result.references.length;
 
   if (result.status !== "knowledge_ready" || !result.candidate) {
@@ -192,14 +251,28 @@ export async function runFinalizeDistille(
     }
   }
 
-  const candidateRow = await getFindCandidateResultById(coverEvidenceResultId);
-  if (!candidateRow) {
-    throw new Error(`find candidate result not found: ${coverEvidenceResultId}`);
+  let candidateContext = input.candidateContext;
+  if (!candidateContext) {
+    const candidateRow = await getFindCandidateResultById(coverEvidenceResultId);
+    if (!candidateRow) {
+      throw new Error(`find candidate result not found: ${coverEvidenceResultId}`);
+    }
+    candidateContext = {
+      foundCandidateId: "",
+      targetStateId: candidateRow.targetStateId,
+      findCandidateResultId: coverEvidenceResultId,
+      targetKind: candidateRow.targetKind,
+      targetKey: candidateRow.targetKey,
+      sourceUri: candidateRow.sourceUri,
+    };
   }
 
-  const landscapeLink = await getLandscapeReviewLinkForFinalize(coverEvidenceResultId);
+  const landscapeLink = await getLandscapeLinkForContext({
+    findCandidateResultId: candidateContext.findCandidateResultId,
+    foundCandidateId: candidateContext.foundCandidateId || null,
+  });
   const requiresLandscapeApproval =
-    candidateRow.targetKind === "knowledge_candidate" && Boolean(landscapeLink);
+    candidateContext.targetKind === "knowledge_candidate" && Boolean(landscapeLink);
   if (
     requiresLandscapeApproval &&
     landscapeLink &&
@@ -207,7 +280,10 @@ export async function runFinalizeDistille(
     landscapeLink.status !== "finalized"
   ) {
     if (input.write) {
-      await markLandscapeReviewLinkReviewRequiredForCandidate(coverEvidenceResultId);
+      await markLandscapeReviewRequired({
+        findCandidateResultId: candidateContext.findCandidateResultId,
+        foundCandidateId: candidateContext.foundCandidateId || null,
+      });
     }
     return rejectedResult(coverEvidenceResultId, result, "landscape_manual_approval_required");
   }
@@ -217,11 +293,12 @@ export async function runFinalizeDistille(
   const metadata = {
     sourceUri,
     coverEvidenceResultId,
-    findCandidateResultId: coverEvidenceResultId,
-    targetStateId: candidateRow.targetStateId,
-    targetKind: candidateRow.targetKind,
-    targetKey: candidateRow.targetKey,
-    sourceDocumentUri: candidateRow.sourceUri,
+    findCandidateResultId: candidateContext.findCandidateResultId ?? null,
+    foundCandidateId: candidateContext.foundCandidateId || null,
+    targetStateId: candidateContext.targetStateId ?? null,
+    targetKind: candidateContext.targetKind,
+    targetKey: candidateContext.targetKey,
+    sourceDocumentUri: candidateContext.sourceUri,
     references: result.references,
     duplicateRefs: result.duplicateRefs,
     toolEvents: demotionReason
@@ -258,9 +335,9 @@ export async function runFinalizeDistille(
     actor: "system",
     payload: {
       coverEvidenceResultId,
-      targetStateId: candidateRow.targetStateId,
-      targetKind: candidateRow.targetKind,
-      targetKey: candidateRow.targetKey,
+      targetStateId: candidateContext.targetStateId ?? null,
+      targetKind: candidateContext.targetKind,
+      targetKey: candidateContext.targetKey,
     },
   });
   if (demotionReason) {
@@ -269,9 +346,9 @@ export async function runFinalizeDistille(
       actor: "system",
       payload: {
         coverEvidenceResultId,
-        targetStateId: candidateRow.targetStateId,
-        targetKind: candidateRow.targetKind,
-        targetKey: candidateRow.targetKey,
+        targetStateId: candidateContext.targetStateId ?? null,
+        targetKind: candidateContext.targetKind,
+        targetKey: candidateContext.targetKey,
         reason: demotionReason,
         source: "finalizeDistille",
       },
@@ -287,7 +364,10 @@ export async function runFinalizeDistille(
       coverEvidenceResultId,
     });
     if (requiresLandscapeApproval && landscapeLink?.status === "approved") {
-      await markLandscapeReviewLinkFinalizedForCandidate(coverEvidenceResultId);
+      await markLandscapeFinalized({
+        findCandidateResultId: candidateContext.findCandidateResultId,
+        foundCandidateId: candidateContext.foundCandidateId || null,
+      });
     }
     await recordAuditLogSafe({
       eventType: auditEventTypes.finalizeDistilleCompleted,
@@ -367,7 +447,10 @@ export async function runFinalizeDistille(
   });
 
   if (requiresLandscapeApproval && landscapeLink?.status === "approved") {
-    await markLandscapeReviewLinkFinalizedForCandidate(coverEvidenceResultId);
+    await markLandscapeFinalized({
+      findCandidateResultId: candidateContext.findCandidateResultId,
+      foundCandidateId: candidateContext.foundCandidateId || null,
+    });
   }
 
   return {

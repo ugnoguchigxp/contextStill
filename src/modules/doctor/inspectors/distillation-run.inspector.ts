@@ -467,9 +467,8 @@ function nextActionsForDistillation(
   queueHealth: DistillationQueueHealth,
 ): string[] {
   const nextActions: string[] = [];
-  const kindArg = config.targetKind === "vibe_memory" ? "vibe" : "wiki";
-  const repairDryRunCommand = `bun run distill:repair -- --kind ${kindArg} --json`;
-  const repairApplyCommand = `bun run distill:repair -- --kind ${kindArg} --apply --limit 50 --json`;
+  const repairDryRunCommand = "bun run queue:migrate:dry-run";
+  const repairApplyCommand = "bun run queue:finding:once";
   const lockLikelyBlocking = isPipelineLockLikelyBlocking({
     staleByCreatedAge: queueHealth.lock.staleByCreatedAge,
     launchAgentLoaded: launchAgent.loaded,

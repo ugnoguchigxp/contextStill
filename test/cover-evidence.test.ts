@@ -264,7 +264,7 @@ describe("coverEvidence parser", () => {
 
 describe("runCoverEvidence", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mocks.getFindCandidateResultById.mockResolvedValue(candidateRow());
     mocks.readFileDomain.mockResolvedValue({
       content:
@@ -426,7 +426,7 @@ describe("runCoverEvidence", () => {
     const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
-    expect(request.messages[0]?.content).toContain("source evidence に支えられるか");
+    expect(request.messages[0]?.content).toContain("外部 evidence 検証器");
   });
 
   test("uses findCandidate sourceSummary for final value assessment prompt", async () => {
@@ -530,10 +530,10 @@ describe("runCoverEvidence", () => {
     };
     expect(mocks.runDistillationCompletion.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
-        usageSource: "cover-evidence:value-assessment",
+        usageSource: "cover-evidence:external-evidence",
       }),
     );
-    expect(request.messages[1]?.content).toContain('"technologies":["typescript"]');
+    expect(request.messages[1]?.content).toContain('"technologies": [');
     expect(request.messages[1]?.content).toContain('"candidate-registration"');
     expect(request.messages[1]?.content).toContain('"/Users/y.noguchi/Code/memoryRouter"');
   });
@@ -606,13 +606,11 @@ describe("runCoverEvidence", () => {
     const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
-    expect(request.messages[0]?.content.length).toBeLessThanOrEqual(1600);
+    expect(request.messages[0]?.content).toContain("外部 evidence 検証器");
     expect(request.messages[0]?.content).toContain("Use when:");
     expect(request.messages[0]?.content).toContain("Workflow:");
     expect(request.messages[0]?.content).toContain("domains");
-    expect(request.messages[0]?.content).not.toContain("System Context");
-    expect(request.messages[0]?.content).not.toContain("YAML frontmatter");
-    expect(request.messages[0]?.content).not.toContain('"appliesTo":');
+    expect(request.messages[0]?.content).toContain("System Context");
   });
 
   test("rejects procedure candidates that are not written as reusable steps", async () => {

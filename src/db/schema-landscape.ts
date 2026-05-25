@@ -11,7 +11,13 @@ import {
   uuid,
 } from "drizzle-orm/pg-core";
 import { contextCompileRuns, knowledgeUsageEvents } from "./schema-context.js";
-import { distillationTargetStates, findCandidateResults } from "./schema-distillation.js";
+import {
+  distillationTargetStates,
+  evidenceCoverageResults,
+  findCandidateResults,
+  findingCandidateQueue,
+  foundCandidates,
+} from "./schema-distillation.js";
 import { knowledgeItems } from "./schema-knowledge.js";
 import {
   landscapeReviewItemCandidateLinkStatusValues,
@@ -125,12 +131,26 @@ export const landscapeReviewItemCandidateLinks = pgTable(
     reviewItemId: uuid("review_item_id")
       .references(() => landscapeReviewItems.id, { onDelete: "cascade" })
       .notNull(),
-    targetStateId: uuid("target_state_id")
-      .references(() => distillationTargetStates.id, { onDelete: "cascade" })
-      .notNull(),
-    findCandidateResultId: uuid("find_candidate_result_id")
-      .references(() => findCandidateResults.id, { onDelete: "cascade" })
-      .notNull(),
+    targetStateId: uuid("target_state_id").references(() => distillationTargetStates.id, {
+      onDelete: "cascade",
+    }),
+    findCandidateResultId: uuid("find_candidate_result_id").references(
+      () => findCandidateResults.id,
+      {
+        onDelete: "cascade",
+      },
+    ),
+    findingJobId: uuid("finding_job_id").references(() => findingCandidateQueue.id, {
+      onDelete: "cascade",
+    }),
+    foundCandidateId: uuid("found_candidate_id").references(() => foundCandidates.id, {
+      onDelete: "cascade",
+    }),
+    evidenceResultId: uuid("evidence_result_id").references(() => evidenceCoverageResults.id, {
+      onDelete: "set null",
+    }),
+    legacyTargetStateId: uuid("legacy_target_state_id"),
+    legacyFindCandidateResultId: uuid("legacy_find_candidate_result_id"),
     candidateKey: text("candidate_key").notNull(),
     status: text("status").notNull().default("draft_created"),
     approvalNote: text("approval_note"),
@@ -146,6 +166,9 @@ export const landscapeReviewItemCandidateLinks = pgTable(
     targetCandidateUnique: uniqueIndex(
       "landscape_review_item_candidate_links_target_candidate_unique",
     ).on(table.targetStateId, table.findCandidateResultId),
+    queueCandidateUnique: uniqueIndex(
+      "landscape_review_item_candidate_links_queue_candidate_unique",
+    ).on(table.findingJobId, table.foundCandidateId),
     reviewStatusCreatedAtIdx: index(
       "landscape_review_item_candidate_links_review_status_created_at_idx",
     ).on(table.reviewItemId, table.status, table.createdAt),
@@ -154,6 +177,15 @@ export const landscapeReviewItemCandidateLinks = pgTable(
     ),
     findCandidateIdx: index("landscape_review_item_candidate_links_find_candidate_idx").on(
       table.findCandidateResultId,
+    ),
+    findingJobIdx: index("landscape_review_item_candidate_links_finding_job_idx").on(
+      table.findingJobId,
+    ),
+    foundCandidateIdx: index("landscape_review_item_candidate_links_found_candidate_idx").on(
+      table.foundCandidateId,
+    ),
+    evidenceResultIdx: index("landscape_review_item_candidate_links_evidence_result_idx").on(
+      table.evidenceResultId,
     ),
     statusCheck: check(
       "landscape_review_item_candidate_links_status_check",

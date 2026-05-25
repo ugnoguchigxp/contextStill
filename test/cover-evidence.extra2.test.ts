@@ -107,7 +107,7 @@ function skillLikeProcedureBody(): string {
 
 describe("runCoverEvidence", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
     mocks.getFindCandidateResultById.mockResolvedValue(candidateRow());
     mocks.readFileDomain.mockResolvedValue({
       content:

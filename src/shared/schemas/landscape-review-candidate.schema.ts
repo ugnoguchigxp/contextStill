@@ -47,8 +47,8 @@ export const landscapeReviewCandidateCreateResultSchema = z.object({
 export const landscapeReviewCandidateLinkSchema = z.object({
   id: z.string(),
   reviewItemId: z.string(),
-  targetStateId: z.string(),
-  findCandidateResultId: z.string(),
+  targetStateId: z.string().nullable(),
+  findCandidateResultId: z.string().nullable(),
   candidateKey: z.string().min(1),
   status: landscapeReviewCandidateLinkStatusSchema,
   approvalNote: z.string().nullable(),

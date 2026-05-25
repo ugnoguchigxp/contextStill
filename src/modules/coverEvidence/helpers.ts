@@ -6,13 +6,10 @@ import {
   validateCandidateQualityForStorage,
 } from "../distillation/procedure-quality.js";
 import { buildProcedureSystemContext } from "../distillation/procedure-system-context.js";
-import type {
-  CandidateKnowledgeType,
-  FindCandidateResultRow,
-} from "../findCandidate/repository.js";
-import type { DistillationTargetKind } from "../selectDistillationTarget/domain.js";
+import type { CandidateKnowledgeType } from "../findCandidate/repository.js";
 import { referencesFromMcpToolEvents } from "./mcp-evidence.service.js";
 import type {
+  CoverEvidenceCandidateInput,
   CoverEvidenceCandidate,
   CoverEvidenceReference,
   CoverEvidenceResult,
@@ -22,10 +19,11 @@ import type {
 } from "./types.js";
 
 export type CoverEvidenceSourceContext = {
-  targetKind: DistillationTargetKind;
+  targetKind: CoverEvidenceCandidateInput["targetKind"];
   targetKey: string;
   sourceUri: string;
   readRanges: Array<{ from: number; toExclusive: number }>;
+  sourceSummary?: string;
 };
 
 export type CandidateOriginHints = Partial<
@@ -56,27 +54,36 @@ export function procedureBodyInstructions(): string[] {
 
 export function applicabilityInstructions(): string[] {
   return [
-    "draft knowledge の applicability metadata も、わかる範囲で最終 JSON の任意 field として返してください。",
+    "draft knowledge の applicability metadata を最終 JSON に返してください。",
     "ネストした appliesTo や candidate オブジェクトは作らないでください。",
     "任意 field は applicabilityGeneral, technologies, changeTypes, domains, repoPath, repoKey です。",
     "technologies / changeTypes / domains は JSON 配列ではなく、できればカンマ区切り文字列で返してください。",
-    "title/body/source excerpt に明确な技術名や変更種別や機能領域がある場合は、対応する technologies/changeTypes/domains を埋めてください。",
-    "必須 field は増やしません。最低限 status と title/body が返せれば十分です。type/importance/confidence は省略しても構いません。",
-    "source evidence から明確に言える値だけを返し、不明な field は省略してください。省略しても問題ありません。",
+    "knowledge_ready を返す場合、technologies/changeTypes/domains はそれぞれ最低 1 件を必ず埋めてください。",
+    "3カテゴリを埋められない場合は knowledge_ready にせず、status=insufficient と reason=applies_to_categories_required を返してください。",
+    "source evidence から明確に言える値を優先し、曖昧な推測で埋めないでください。",
     "applicabilityGeneral は repo、project、file、technology に依存せず広く再利用できる knowledge の場合だけ true にしてください。",
     "repoPath と repoKey は system/source metadata に明示されている場合だけ使い、推測で作らないでください。",
   ];
 }
 
 export function sourceContextForPrompts(params: {
-  row: FindCandidateResultRow;
+  row: CoverEvidenceCandidateInput;
   readRanges: Array<{ from: number; toExclusive: number }>;
 }): CoverEvidenceSourceContext {
+  const originRecord =
+    params.row.origin && typeof params.row.origin === "object" && !Array.isArray(params.row.origin)
+      ? (params.row.origin as Record<string, unknown>)
+      : null;
+  const sourceSummary =
+    typeof originRecord?.sourceSummary === "string" && originRecord.sourceSummary.trim().length > 0
+      ? originRecord.sourceSummary.trim()
+      : undefined;
   return {
     targetKind: params.row.targetKind,
     targetKey: params.row.targetKey,
     sourceUri: params.row.sourceUri,
     readRanges: params.readRanges,
+    ...(sourceSummary ? { sourceSummary } : {}),
   };
 }
 

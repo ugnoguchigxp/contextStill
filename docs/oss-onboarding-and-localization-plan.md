@@ -43,12 +43,12 @@
   - `src/cli/init-project.ts` に `--lang en|ja` と env fallback を追加し、preset/smoke/nextActions を locale 切替対応した。
   - `.env.example` に `MEMORY_ROUTER_LANG=ja` を追加した。
 - Milestone 6:
-  - `src/cli/{agent-log-sync-automation,distill-pipeline-automation}.ts` を追加し、LaunchAgent の install/load/status と手動 run を TS CLI 化した。
-  - `package.json` に `automation:agent-log-sync` / `automation:distill-pipeline` を追加した。
+  - `src/cli/{agent-log-sync-automation,queue-supervisor-automation}.ts` を追加し、LaunchAgent の install/load/status と手動 run を TS CLI 化した。
+  - `package.json` に `automation:agent-log-sync` / `automation:queue-supervisor` を追加した。
   - Windows Task Scheduler 用に `scripts/automation/windows/*.task.xml` を追加し、同じ CLI で install/load/status/uninstall を実行できるようにした。
   - `agent-log-sync` の取り込みルートに Windows 候補パスと複数 root 上書き env (`MEMORY_ROUTER_*_DIRS`) を追加した。
-  - README / README.jp / Doctor action を `bun run ...` 導線へ統一し、`setup-automation.sh` / `setup-distill-pipeline-automation.sh` 参照を除去した。
-  - `scripts/automation/com.memory-router.distill-pipeline.plist` を script 呼び出しではなく TS CLI 呼び出しへ更新した。
+  - README / README.jp / Doctor action を `bun run ...` 導線へ統一し、`setup-automation.sh` / `setup-queue-supervisor-automation.sh` 参照を除去した。
+  - `scripts/automation/com.memory-router.queue-supervisor.plist` を script 呼び出しではなく TS CLI 呼び出しへ更新した。
 
 ## Phase 1 の非目標
 

@@ -34,11 +34,13 @@ function compactSourceContext(context: CoverEvidenceSourceContext): {
   targetKind: CoverEvidenceSourceContext["targetKind"];
   sourceUri: string;
   readRanges: CoverEvidenceSourceContext["readRanges"];
+  sourceSummary?: string;
 } {
   return {
     targetKind: context.targetKind,
     sourceUri: context.sourceUri,
     readRanges: context.readRanges,
+    ...(context.sourceSummary ? { sourceSummary: context.sourceSummary } : {}),
   };
 }
 
@@ -128,7 +130,9 @@ export function valueAssessmentSystemPrompt(): string {
     "procedure body は Markdown で Use when:, Workflow:, Verification:, Avoid: を含めてください。構成できない場合は rule か insufficient にしてください。",
     "source evidence で支えられない場合は status=insufficient、reason=unsupported_by_source にしてください。",
     `importance が ${groupedConfig.distillation.lowImportanceRejectThreshold} 以下なら status は insufficient、reason は low_importance にしてください。`,
-    "applicability metadata は source/candidate から明示できる場合だけ返してください。対象 field は technologies, changeTypes, domains, repoPath, repoKey, applicabilityGeneral です。不明なら省略してください。",
+    "knowledge_ready を返す場合、technologies/changeTypes/domains はそれぞれ最低 1 件を必ず返してください。",
+    "3カテゴリを埋められない場合は knowledge_ready にせず status=insufficient、reason=applies_to_categories_required を返してください。",
+    "repoPath/repoKey/applicabilityGeneral は source/candidate で明示できる場合だけ追加してください。",
     "JSON だけを返してください。基本形:",
     '{"schemaVersion":1,"status":"knowledge_ready|insufficient","stage":"final","type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80,"technologies":"...","changeTypes":"...","domains":"...","applicabilityGeneral":false,"references":[],"duplicateRefs":[],"toolEvents":[],"reason":null}',
     "insufficient の場合は status/stage/reason だけでも構いません。",
@@ -144,6 +148,37 @@ export function valueAssessmentUserPrompt(params: {
   return [
     "候補の value と source support を判定してください。",
     "候補:",
+    compactJson(params.candidate),
+    "source references:",
+    compactJson(compactReferences(params.sourceReferences)),
+    "system/source metadata:",
+    compactJson(compactSourceContext(params.sourceContext)),
+    "source evidence summary/excerpt:",
+    compactSourceEvidence(params.sourceContentExcerpt),
+  ].join("\n\n");
+}
+
+export function applicabilityRefinementSystemPrompt(): string {
+  return [
+    "あなたは coverEvidence の applicability 補完器です。",
+    "目的は technologies / changeTypes / domains の3カテゴリを埋めることです。",
+    "source evidence と candidate から根拠のある値だけを返してください。",
+    "knowledge_ready を返す場合、3カテゴリそれぞれ最低 1 件を必ず返してください。",
+    "推測で埋められない場合は status=insufficient と reason=applies_to_categories_required を返してください。",
+    "JSON だけを返してください。",
+    '{"schemaVersion":1,"status":"knowledge_ready|insufficient","stage":"final","type":"rule|procedure","title":"...","body":"...","technologies":"...","changeTypes":"...","domains":"...","reason":null}',
+  ].join("\n");
+}
+
+export function applicabilityRefinementUserPrompt(params: {
+  candidate: CoverEvidenceCandidate;
+  sourceReferences: CoverEvidenceReference[];
+  sourceContentExcerpt: string;
+  sourceContext: CoverEvidenceSourceContext;
+}): string {
+  return [
+    "以下の candidate について、3カテゴリを補完してください。",
+    "candidate:",
     compactJson(params.candidate),
     "source references:",
     compactJson(compactReferences(params.sourceReferences)),

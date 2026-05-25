@@ -131,6 +131,7 @@ export type GroupedConfig = {
     findCandidateMaxIntervalSeconds: number;
     findCandidateRateLimitCooldownSeconds: number;
     findCandidateJitterSeconds: number;
+    findingQueueTaskIntervalSeconds: number;
     promotionBacklogThresholdCount: number;
     lowImportanceRejectThreshold: number;
     circuitBreakerEnabled: boolean;

@@ -16,10 +16,13 @@ import {
   LandscapeReviewCandidateLinkError,
   type LandscapeReviewItemCandidateLinkRow,
   type LandscapeReviewItemCandidateSourceRow,
+  findLandscapeReviewCandidateLinkByFoundCandidateId,
   findLandscapeReviewCandidateLinkByFindCandidateResultId,
   listLandscapeReviewItemsForCandidateDraft,
   markLandscapeReviewCandidateLinkFinalized,
+  markLandscapeReviewCandidateLinkFinalizedByFoundCandidateId,
   markLandscapeReviewCandidateLinkReviewRequired,
+  markLandscapeReviewCandidateLinkReviewRequiredByFoundCandidateId,
   updateLandscapeReviewCandidateLinkStatus,
   upsertLandscapeReviewItemCandidateDraft,
 } from "./landscape-review-candidate.repository.js";
@@ -349,6 +352,37 @@ export async function markLandscapeReviewLinkReviewRequiredForCandidate(
   findCandidateResultId: string,
 ): Promise<LandscapeReviewCandidateLink["status"] | null> {
   const link = await markLandscapeReviewCandidateLinkReviewRequired(findCandidateResultId);
+  if (!link) return null;
+  return mapLinkRow(link).status;
+}
+
+export async function getLandscapeReviewLinkForFinalizeByFoundCandidate(
+  foundCandidateId: string,
+): Promise<{
+  status: LandscapeReviewCandidateLink["status"];
+  linkId: string;
+} | null> {
+  const link = await findLandscapeReviewCandidateLinkByFoundCandidateId(foundCandidateId);
+  if (!link) return null;
+  return {
+    status: mapLinkRow(link).status,
+    linkId: link.id,
+  };
+}
+
+export async function markLandscapeReviewLinkFinalizedForFoundCandidate(
+  foundCandidateId: string,
+): Promise<LandscapeReviewCandidateLink["status"] | null> {
+  const link = await markLandscapeReviewCandidateLinkFinalizedByFoundCandidateId(foundCandidateId);
+  if (!link) return null;
+  return mapLinkRow(link).status;
+}
+
+export async function markLandscapeReviewLinkReviewRequiredForFoundCandidate(
+  foundCandidateId: string,
+): Promise<LandscapeReviewCandidateLink["status"] | null> {
+  const link =
+    await markLandscapeReviewCandidateLinkReviewRequiredByFoundCandidateId(foundCandidateId);
   if (!link) return null;
   return mapLinkRow(link).status;
 }

@@ -39,6 +39,8 @@ import {
 import { parseCoverEvidenceResult } from "./parser.js";
 import { repairProcedureCandidate } from "./procedure-repair.service.js";
 import {
+  applicabilityRefinementSystemPrompt,
+  applicabilityRefinementUserPrompt,
   applicabilityBlankResponseReminderLines,
   externalEvidenceSystemPrompt,
   externalEvidenceUserPrompt,
@@ -85,6 +87,157 @@ function coverEvidenceFailureReason(params: {
   if (runtimeFailure === "aborted") return `${params.prefix}_provider_aborted`;
   if (runtimeFailure === "timeout") return `${params.prefix}_provider_timeout`;
   return `${params.prefix}_provider_failed`;
+}
+
+function hasFacet(values: string[] | undefined): boolean {
+  if (!values || values.length === 0) return false;
+  return values.some((value) => value.trim().length > 0);
+}
+
+function missingApplicabilityFacets(candidate: CoverEvidenceCandidate): string[] {
+  const missing: string[] = [];
+  if (!hasFacet(candidate.technologies)) missing.push("technologies");
+  if (!hasFacet(candidate.changeTypes)) missing.push("changeTypes");
+  if (!hasFacet(candidate.domains)) missing.push("domains");
+  return missing;
+}
+
+async function enrichApplicabilityFacets(params: {
+  id: string;
+  result: CoverEvidenceResult;
+  sourceReferences: CoverEvidenceReference[];
+  sourceContentExcerpt: string;
+  sourceContext: CoverEvidenceSourceContext;
+  provider: DistillationProviderSetting;
+  model: string;
+  fallbackOrder?: DistillationProviderName[];
+  chatClient?: DistillationChatClient;
+  signal?: AbortSignal;
+}): Promise<CoverEvidenceResult> {
+  if (params.result.status !== "knowledge_ready" || !params.result.candidate) {
+    return params.result;
+  }
+  const missingBefore = missingApplicabilityFacets(params.result.candidate);
+  if (missingBefore.length === 0) {
+    return params.result;
+  }
+
+  try {
+    const completion = await runDistillationCompletion(
+      {
+        model: params.model,
+        maxTokens: Math.max(768, groupedConfig.vibeDistillation.maxOutputTokens),
+        messages: [
+          { role: "system", content: applicabilityRefinementSystemPrompt() },
+          {
+            role: "user",
+            content: applicabilityRefinementUserPrompt({
+              candidate: params.result.candidate,
+              sourceReferences: params.sourceReferences,
+              sourceContentExcerpt: params.sourceContentExcerpt,
+              sourceContext: params.sourceContext,
+            }),
+          },
+        ],
+      },
+      {
+        providerSetting: params.provider,
+        fallbackOrder: params.fallbackOrder,
+        chatClient: params.chatClient,
+        usageSource: "cover-evidence:applicability-refinement",
+        enableTools: false,
+        timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+        blankResponseReminder: applicabilityBlankResponseReminderLines(
+          "final",
+          "knowledge_ready|insufficient",
+        ),
+        signal: params.signal,
+        auditContext: {
+          domain: "coverEvidence",
+          id: params.id,
+          stage: "final",
+          assessment: "applicability-refinement",
+        },
+      },
+    );
+
+    let refined: CoverEvidenceResult;
+    try {
+      refined = parseCoverEvidenceResult(completion.content, {
+        candidateDefaults: params.result.candidate,
+      });
+    } catch (error) {
+      return {
+        ...params.result,
+        toolEvents: [
+          ...params.result.toolEvents,
+          ...toolEventsForResult(completion.toolEvents),
+          parseFailureToolEvent({
+            reason: "applicability_refinement_parse_failed",
+            error,
+            completion,
+          }),
+        ],
+      };
+    }
+
+    if (refined.status !== "knowledge_ready" || !refined.candidate) {
+      return {
+        ...params.result,
+        toolEvents: [
+          ...params.result.toolEvents,
+          ...toolEventsForResult(completion.toolEvents),
+          {
+            name: "applicability_refinement",
+            ok: false,
+            metadata: { reason: "refinement_not_knowledge_ready" },
+          },
+        ],
+      };
+    }
+
+    const mergedCandidate: CoverEvidenceCandidate = {
+      ...params.result.candidate,
+      ...(hasFacet(refined.candidate.technologies)
+        ? { technologies: refined.candidate.technologies }
+        : {}),
+      ...(hasFacet(refined.candidate.changeTypes)
+        ? { changeTypes: refined.candidate.changeTypes }
+        : {}),
+      ...(hasFacet(refined.candidate.domains) ? { domains: refined.candidate.domains } : {}),
+    };
+    const missingAfter = missingApplicabilityFacets(mergedCandidate);
+    return {
+      ...params.result,
+      candidate: mergedCandidate,
+      toolEvents: [
+        ...params.result.toolEvents,
+        ...toolEventsForResult(completion.toolEvents),
+        {
+          name: "applicability_refinement",
+          ok: missingAfter.length === 0,
+          metadata: {
+            missingBefore,
+            missingAfter,
+          },
+        },
+      ],
+    };
+  } catch (error) {
+    if (isAbortError(error)) throw error;
+    return {
+      ...params.result,
+      toolEvents: [
+        ...params.result.toolEvents,
+        ...toolEventsForResult(distillationToolEventsFromError(error)),
+        {
+          name: "applicability_refinement",
+          ok: false,
+          error: error instanceof Error ? error.message : String(error),
+        },
+      ],
+    };
+  }
 }
 
 function repairCandidateForResult(
@@ -305,13 +458,26 @@ export async function runValueAssessment(params: {
         reason: "value_parse_failed",
       });
     }
+    const baseResult = rejectLowImportance({
+      ...reclassifyResultCandidate(parsed),
+      references: mergeReferences(params.sourceReferences, parsed.references),
+      toolEvents: toolEventsForResult(completion.toolEvents),
+    });
+    const enrichedResult = await enrichApplicabilityFacets({
+      id: params.id,
+      result: baseResult,
+      sourceReferences: params.sourceReferences,
+      sourceContentExcerpt: params.sourceContentExcerpt,
+      sourceContext: params.sourceContext,
+      provider: params.provider,
+      model: params.model,
+      fallbackOrder: params.fallbackOrder,
+      chatClient: params.chatClient,
+      signal: params.signal,
+    });
     return normalizeOrRepairProcedureQuality({
       id: params.id,
-      result: rejectLowImportance({
-        ...reclassifyResultCandidate(parsed),
-        references: mergeReferences(params.sourceReferences, parsed.references),
-        toolEvents: toolEventsForResult(completion.toolEvents),
-      }),
+      result: enrichedResult,
       candidateTypeHint: params.candidateTypeHint,
       fallbackProcedureCandidate: params.candidate,
       sourceEvidence: procedureRepairEvidenceFromCompletion({
@@ -346,6 +512,7 @@ export async function runExternalEvidence(params: {
   id: string;
   candidate: CoverEvidenceCandidate;
   sourceReferences: CoverEvidenceReference[];
+  sourceContentExcerpt: string;
   sourceContext: CoverEvidenceSourceContext;
   candidateTypeHint?: CandidateKnowledgeType;
   provider: DistillationProviderSetting;
@@ -383,7 +550,6 @@ export async function runExternalEvidence(params: {
         maxToolRounds: coverEvidenceMaxToolRounds(),
         toolCallLimits: coverEvidenceToolLimits(),
         timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
-        requireToolCall: true,
         blankResponseReminder: applicabilityBlankResponseReminderLines(
           "web",
           "knowledge_ready|insufficient|duplicate|near_duplicate",
@@ -428,18 +594,6 @@ export async function runExternalEvidence(params: {
       parsed.references,
       referencesFromToolEvents(toolEvents),
     );
-    const hasFetchEvidence = toolEvents.some((event) => event.name === "fetch_content" && event.ok);
-    if (parsed.status === "knowledge_ready" && !hasFetchEvidence) {
-      return makeResult({
-        status: "insufficient",
-        stage: "web",
-        candidate: null,
-        references,
-        duplicateRefs: parsed.duplicateRefs,
-        toolEvents,
-        reason: "external_fetch_evidence_missing",
-      });
-    }
 
     return normalizeOrRepairProcedureQuality({
       id: params.id,
@@ -451,7 +605,7 @@ export async function runExternalEvidence(params: {
       candidateTypeHint: params.candidateTypeHint,
       fallbackProcedureCandidate: params.candidate,
       sourceEvidence: procedureRepairEvidenceFromCompletion({
-        sourceEvidence: params.sourceContext.sourceUri,
+        sourceEvidence: params.sourceContentExcerpt,
         completion,
       }),
       provider: params.provider,

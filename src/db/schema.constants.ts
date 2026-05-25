@@ -19,6 +19,54 @@ export const distillationTargetKindValues = [
   "knowledge_candidate",
   "web_ingest",
 ] as const;
+export const distillationQueueNameValues = [
+  "findingCandidate",
+  "coveringEvidence",
+  "premiumCoveringEvidence",
+  "finalizeDistille",
+] as const;
+export const distillationQueueStatusValues = [
+  "pending",
+  "running",
+  "completed",
+  "skipped",
+  "failed",
+  "paused",
+] as const;
+export const distillationQueueInputKindValues = ["source_target", "provided_candidate"] as const;
+export const distillationQueueSourceKindValues = [
+  "wiki_file",
+  "vibe_memory",
+  "knowledge_candidate",
+  "web_ingest",
+] as const;
+export const distillationQueueProducerValues = [
+  "coveringEvidence",
+  "premiumCoveringEvidence",
+] as const;
+export const distillationQueueProviderPolicyValues = ["default", "cloud_api"] as const;
+export const evidenceCoverageStatusValues = [
+  "knowledge_ready",
+  "duplicate",
+  "near_duplicate",
+  "insufficient",
+  "parse_failed",
+  "tool_failed",
+  "provider_failed",
+] as const;
+export const distillationQueueEventTypeValues = [
+  "claimed",
+  "completed",
+  "paused",
+  "resumed",
+  "retried",
+  "reprocess_requested",
+  "escalated_to_premium",
+  "enqueued",
+  "migration_mapped",
+  "migration_failed",
+] as const;
+export const distillationQueueMigrationStatusValues = ["migrated", "skipped", "failed"] as const;
 export const distillationTargetStatusValues = [
   "pending",
   "running",

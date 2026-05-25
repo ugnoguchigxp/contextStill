@@ -309,17 +309,17 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     label: "Vibe distillation launch agent 未配置",
     severity: "warning",
     area: "Distillation",
-    description: "distillation pipeline の LaunchAgent が配置されていません。",
+    description: "queue supervisor の LaunchAgent が配置されていません。",
     impact: "vibe distillation が自動実行されません。",
-    action: "`bun run automation:distill-pipeline -- install` を実行してください。",
+    action: "`bun run automation:queue-supervisor -- install` を実行してください。",
   },
   VIBE_DISTILLATION_LAUNCH_AGENT_NOT_LOADED: {
     label: "Vibe distillation launch agent 未ロード",
     severity: "warning",
     area: "Distillation",
-    description: "distillation pipeline の LaunchAgent が未ロードです。",
+    description: "queue supervisor の LaunchAgent が未ロードです。",
     impact: "vibe distillation queue が処理されません。",
-    action: "`bun run automation:distill-pipeline -- load` を実行してください。",
+    action: "`bun run automation:queue-supervisor -- load` を実行してください。",
   },
   VIBE_DISTILLATION_NEVER_RAN: {
     label: "会話ログ蒸留が未実行",
@@ -327,8 +327,7 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     area: "Distillation",
     description: "Vibe Memory 由来の distillation が成功していません。",
     impact: "会話ログの知見が knowledge に反映されません。",
-    action:
-      "`bun run distill:pipeline -- --write --limit 1 --kind vibe` で処理経路が動くか確認してください。",
+    action: "`bun run queue:finding:once` で処理経路が動くか確認してください。",
   },
   VIBE_DISTILLATION_STALE: {
     label: "Vibe distillation 成功実行が古い",
@@ -367,17 +366,17 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     label: "Source distillation launch agent 未配置",
     severity: "warning",
     area: "Distillation",
-    description: "distillation pipeline の LaunchAgent が配置されていません。",
+    description: "queue supervisor の LaunchAgent が配置されていません。",
     impact: "source distillation が自動実行されません。",
-    action: "`bun run automation:distill-pipeline -- install` を実行してください。",
+    action: "`bun run automation:queue-supervisor -- install` を実行してください。",
   },
   SOURCE_DISTILLATION_LAUNCH_AGENT_NOT_LOADED: {
     label: "Source distillation launch agent 未ロード",
     severity: "warning",
     area: "Distillation",
-    description: "distillation pipeline の LaunchAgent が未ロードです。",
+    description: "queue supervisor の LaunchAgent が未ロードです。",
     impact: "source distillation queue が処理されません。",
-    action: "`bun run automation:distill-pipeline -- load` を実行してください。",
+    action: "`bun run automation:queue-supervisor -- load` を実行してください。",
   },
   SOURCE_DISTILLATION_NEVER_RAN: {
     label: "Source distillation が未実行",
@@ -385,8 +384,7 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     area: "Distillation",
     description: "wiki/source 由来の distillation が成功していません。",
     impact: "source から knowledge への更新が進みません。",
-    action:
-      "`bun run distill:pipeline -- --write --limit 1 --kind wiki` で処理経路を確認してください。",
+    action: "`bun run queue:finding:once` で処理経路を確認してください。",
   },
 
   SOURCE_DISTILLATION_QUEUE_STALE_RUNNING: {

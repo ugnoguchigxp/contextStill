@@ -3,8 +3,8 @@ import { appendAutomationReasons } from "../src/modules/doctor/doctor-reason-res
 import type { DoctorReport } from "../src/shared/schemas/doctor.schema.js";
 
 const loadedLaunchAgent = {
-  label: "com.memory-router.distill-pipeline",
-  plistPath: "/tmp/distill.plist",
+  label: "com.memory-router.queue-supervisor",
+  plistPath: "/tmp/queue-supervisor.plist",
   installed: true,
   loaded: true,
   state: "running",

@@ -1,0 +1,57 @@
+import {
+  distillationQueueNameValues,
+  distillationQueueStatusValues,
+} from "../../../db/schema.constants.js";
+
+export const distillationQueueNames = [...distillationQueueNameValues];
+export const distillationQueueStatuses = [...distillationQueueStatusValues];
+export { distillationQueueNameValues, distillationQueueStatusValues };
+
+export type DistillationQueueName = (typeof distillationQueueNameValues)[number];
+export type DistillationQueueStatus = (typeof distillationQueueStatusValues)[number];
+
+export const queueTableNameByQueue: Record<DistillationQueueName, string> = {
+  findingCandidate: "finding_candidate_queue",
+  coveringEvidence: "covering_evidence_queue",
+  premiumCoveringEvidence: "premium_covering_evidence_queue",
+  finalizeDistille: "finalize_distille_queue",
+};
+
+export type QueueRetryMode = "default" | "cloud_api";
+
+export type QueueListItem = {
+  queueName: DistillationQueueName;
+  id: string;
+  status: DistillationQueueStatus;
+  priority: number;
+  attemptCount: number;
+  subjectTitle: string;
+  subjectDetail: string;
+  provider: string | null;
+  model: string | null;
+  lastError: string | null;
+  lastOutcomeKind: string | null;
+  lockedBy: string | null;
+  lockedAt: string | null;
+  heartbeatAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  nextRunAt: string | null;
+  metadataSummary: string | null;
+};
+
+export type QueueStatsCounter = Record<DistillationQueueStatus, number>;
+
+export type QueueStatsByQueue = Record<
+  DistillationQueueName,
+  {
+    counters: QueueStatsCounter;
+    oldestPendingAt: string | null;
+    running: number;
+    failed: number;
+    offline: number;
+    nonRegistered: number;
+    escalated: number;
+  }
+>;

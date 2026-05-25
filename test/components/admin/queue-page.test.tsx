@@ -1,17 +1,10 @@
 /** @vitest-environment jsdom */
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
-import { act, render, screen } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { QueuePage } from "../../../web/src/modules/admin/components/queue.page";
-
-const repositoryMocks = vi.hoisted(() => ({
-  fetchQueueDashboardStats: vi.fn(),
-  fetchActiveQueueTasks: vi.fn(),
-  fetchQueueItems: vi.fn(),
-  pauseQueueTarget: vi.fn(),
-  resumeQueueTarget: vi.fn(),
-}));
+import * as adminRepository from "../../../web/src/modules/admin/repositories/admin.repository";
 
 vi.mock("../../../web/src/modules/admin/repositories/admin.repository", async () => {
   const actual = await vi.importActual(
@@ -19,11 +12,12 @@ vi.mock("../../../web/src/modules/admin/repositories/admin.repository", async ()
   );
   return {
     ...actual,
-    fetchQueueDashboardStats: repositoryMocks.fetchQueueDashboardStats,
-    fetchActiveQueueTasks: repositoryMocks.fetchActiveQueueTasks,
-    fetchQueueItems: repositoryMocks.fetchQueueItems,
-    pauseQueueTarget: repositoryMocks.pauseQueueTarget,
-    resumeQueueTarget: repositoryMocks.resumeQueueTarget,
+    fetchQueueDashboardStatsV2: vi.fn(),
+    fetchActiveQueueTasksV2: vi.fn(),
+    fetchQueueItemsV2: vi.fn(),
+    pauseQueueJobV2: vi.fn(),
+    resumeQueueJobV2: vi.fn(),
+    retryQueueJobV2: vi.fn(),
   };
 });
 
@@ -41,53 +35,118 @@ function renderQueuePage() {
   );
 }
 
-describe("QueuePage", () => {
+describe("QueuePage v2", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2026-05-24T09:58:30.000Z"));
-    repositoryMocks.fetchQueueDashboardStats.mockResolvedValue({
-      maxAttempts: 2,
-      stats: { pending: 5, running: 1, completed: 10, failed: 2, paused: 1, skipped: 1 },
-      kinds: { wiki_file: 15, vibe_memory: 3 },
-      findCandidate: {
-        status: "waiting",
-        waitMs: 90_000,
-        waitUntil: "2026-05-24T10:00:00.000Z",
-        reason: "interactive_pressure",
-        targetKind: "vibe_memory",
-        provider: "openai",
-        model: "gpt-5-4-mini",
-        source: "scheduler",
-        updatedAt: "2026-05-24T09:58:30.000Z",
-        diagnostics: {
-          provider: "openai",
-          model: "gpt-5-4-mini",
-          compileCount: 4,
-          interactiveLlmCount: 3,
-          lastCompileAgeSeconds: 10,
-          lastBackgroundAgeSeconds: 20,
+    vi.setSystemTime(new Date("2026-05-25T12:00:00.000Z"));
+
+    vi.mocked(adminRepository.fetchQueueDashboardStatsV2).mockResolvedValue({
+      queues: {
+        findingCandidate: {
+          counters: { pending: 1, running: 0, completed: 0, skipped: 0, failed: 0, paused: 0 },
+          oldestPendingAt: null,
+          running: 0,
+          failed: 0,
+          offline: 0,
+          nonRegistered: 0,
+          escalated: 0,
+        },
+        coveringEvidence: {
+          counters: { pending: 0, running: 1, completed: 0, skipped: 0, failed: 0, paused: 0 },
+          oldestPendingAt: null,
+          running: 1,
+          failed: 0,
+          offline: 0,
+          nonRegistered: 0,
+          escalated: 1,
+        },
+        premiumCoveringEvidence: {
+          counters: { pending: 0, running: 0, completed: 0, skipped: 0, failed: 1, paused: 0 },
+          oldestPendingAt: null,
+          running: 0,
+          failed: 1,
+          offline: 1,
+          nonRegistered: 1,
+          escalated: 0,
+        },
+        finalizeDistille: {
+          counters: { pending: 0, running: 0, completed: 2, skipped: 0, failed: 0, paused: 0 },
+          oldestPendingAt: null,
+          running: 0,
+          failed: 0,
+          offline: 0,
+          nonRegistered: 0,
+          escalated: 0,
         },
       },
-      providerPressure: {
-        azureOpenai: {
-          provider: "azure-openai",
-          model: "gpt-5-4-mini",
-          status: "ok",
-          cooldownUntil: null,
-          reason: null,
-          source: null,
-          lastRateLimitedAt: null,
-          updatedAt: null,
-        },
+      totals: {
+        counters: { pending: 1, running: 1, completed: 2, skipped: 0, failed: 1, paused: 0 },
+        oldestPendingAt: null,
+        running: 1,
+        failed: 1,
+        offline: 1,
+        nonRegistered: 1,
+        escalated: 1,
       },
     });
-    repositoryMocks.fetchActiveQueueTasks.mockResolvedValue([]);
-    repositoryMocks.fetchQueueItems.mockResolvedValue({
-      items: [],
-      total: 0,
+
+    vi.mocked(adminRepository.fetchActiveQueueTasksV2).mockResolvedValue([
+      {
+        queueName: "coveringEvidence",
+        id: "job-running",
+        status: "running",
+        priority: 50,
+        attemptCount: 1,
+        subjectTitle: "candidate A",
+        subjectDetail: "detail",
+        provider: "default",
+        model: null,
+        lastError: null,
+        lastOutcomeKind: null,
+        lockedBy: "worker-1",
+        lockedAt: "2026-05-25T11:59:25.000Z",
+        heartbeatAt: "2026-05-25T11:59:30.000Z",
+        createdAt: "2026-05-25T11:58:00.000Z",
+        updatedAt: "2026-05-25T11:59:30.000Z",
+        completedAt: null,
+        nextRunAt: null,
+        metadataSummary: null,
+      },
+    ]);
+
+    vi.mocked(adminRepository.fetchQueueItemsV2).mockResolvedValue({
+      queue: "findingCandidate",
+      items: [
+        {
+          queueName: "findingCandidate",
+          id: "job-1",
+          status: "pending",
+          priority: 50,
+          attemptCount: 0,
+          subjectTitle: "wiki/page.md",
+          subjectDetail: "wiki_file | file:///wiki/page.md",
+          provider: null,
+          model: null,
+          lastError: null,
+          lastOutcomeKind: null,
+          lockedBy: null,
+          lockedAt: null,
+          heartbeatAt: null,
+          createdAt: "2026-05-25T11:58:00.000Z",
+          updatedAt: "2026-05-25T11:59:00.000Z",
+          completedAt: null,
+          nextRunAt: null,
+          metadataSummary: "input=source_target",
+        },
+      ],
+      total: 1,
       page: 1,
-      limit: 15,
+      limit: 20,
     });
+
+    vi.mocked(adminRepository.pauseQueueJobV2).mockResolvedValue({ ok: true });
+    vi.mocked(adminRepository.resumeQueueJobV2).mockResolvedValue({ ok: true });
+    vi.mocked(adminRepository.retryQueueJobV2).mockResolvedValue({ ok: true });
   });
 
   afterEach(() => {
@@ -95,63 +154,62 @@ describe("QueuePage", () => {
     vi.clearAllMocks();
   });
 
-  it("renders the findCandidate cooldown timer and ticks every second", async () => {
+  it("renders 4 queue tabs and table rows", async () => {
     renderQueuePage();
-
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
 
-    expect(screen.getByText("FindCandidate")).toBeInTheDocument();
-    expect(screen.getByText("cooling down")).toBeInTheDocument();
-    expect(screen.getByText("launch in 90 sec")).toBeInTheDocument();
-
-    act(() => {
-      vi.advanceTimersByTime(1000);
-    });
-
-    expect(screen.getByText("launch in 89 sec")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Finding" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Covering" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Premium" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Finalize" })).toBeInTheDocument();
+    expect(screen.getByText("Completed")).toBeInTheDocument();
+    expect(screen.getByText("Total")).toBeInTheDocument();
+    expect(screen.getByText("wiki/page.md")).toBeInTheDocument();
   });
 
-  it("disables queue retry actions after the max attempt count", async () => {
-    repositoryMocks.fetchQueueItems.mockResolvedValueOnce({
-      items: [
-        {
-          id: "target-1",
-          targetKind: "wiki_file",
-          targetKey: "retry-limit.md",
-          sourceUri: "/wiki/retry-limit.md",
-          distillationVersion: "select-distillation-target-v1",
-          status: "skipped",
-          phase: "stored",
-          priorityGroup: "wiki",
-          sortKey: "retry-limit.md",
-          attemptCount: 2,
-          lockedBy: null,
-          lockedAt: null,
-          heartbeatAt: null,
-          nextRetryAt: null,
-          lastError: "pipeline_retry_limit_exceeded",
-          lastOutcomeKind: "pipeline_retry_limit_exceeded",
-          candidateCount: 0,
-          knowledgeIds: [],
-          metadata: {},
-          createdAt: "2026-05-24T09:00:00.000Z",
-          updatedAt: "2026-05-24T09:55:00.000Z",
-          completedAt: "2026-05-24T09:55:00.000Z",
-        },
-      ],
-      total: 1,
-      page: 1,
-      limit: 15,
-    });
-
+  it("switches queue tab and refetches list with selected queue", async () => {
     renderQueuePage();
-
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
     });
 
-    expect(screen.getByTitle("Retry limit reached")).toBeDisabled();
+    fireEvent.click(screen.getByRole("button", { name: "Covering" }));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(adminRepository.fetchQueueItemsV2).toHaveBeenCalledWith(
+      expect.objectContaining({ queue: "coveringEvidence" }),
+    );
+  });
+
+  it("runs pause action with queue-aware endpoint call", async () => {
+    renderQueuePage();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    fireEvent.click(screen.getByTitle("Pause queue job"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(adminRepository.pauseQueueJobV2).toHaveBeenCalledWith("findingCandidate", "job-1");
+  });
+
+  it("shows LLM status labels (Ready/Active/Offline) and does not show 待機中 label", async () => {
+    renderQueuePage();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(screen.getByRole("button", { name: "Finding" })).toHaveTextContent("Ready");
+    expect(screen.getByRole("button", { name: "Covering" })).toHaveTextContent("Active");
+    expect(screen.getByRole("button", { name: "Premium" })).toHaveTextContent("Offline");
+    expect(screen.getByRole("button", { name: "Premium" })).toHaveTextContent("非登録");
+    expect(screen.getAllByText("非登録")).toHaveLength(1);
+    expect(screen.queryByText("待機中")).not.toBeInTheDocument();
   });
 });

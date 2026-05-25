@@ -68,6 +68,7 @@ export const APP_CONSTANTS = {
   findCandidateMaxIntervalSeconds: 300,
   findCandidateRateLimitCooldownSeconds: 600,
   findCandidateJitterSeconds: 10,
+  findingQueueTaskIntervalSeconds: 30,
   defaultTokenBudget: 5000,
   defaultCandidateTraceLimit: 200,
   compileCandidateTraceLimitMax: 1000,

@@ -27,8 +27,15 @@ import {
 
 export type FindCandidateCallerMode = "cli_text" | "storage";
 
+export type FindCandidateSourceInput = {
+  targetKind: "wiki_file" | "vibe_memory" | "web_ingest";
+  targetKey: string;
+  sourceUri: string;
+};
+
 export type FindCandidateInput = {
-  targetStateId: string;
+  targetStateId?: string;
+  sourceInput?: FindCandidateSourceInput;
   provider?: DistillationProviderSetting;
   callerMode?: FindCandidateCallerMode;
   fromToken?: number;
@@ -40,7 +47,7 @@ export type FindCandidateInput = {
 };
 
 export type FindCandidateResult = {
-  targetStateId: string;
+  targetStateId: string | null;
   targetKind: "wiki_file" | "vibe_memory" | "web_ingest";
   targetKey: string;
   callerMode: FindCandidateCallerMode;
@@ -270,14 +277,20 @@ export function formatCliTextCandidates(candidates: CandidateRecord[]): string {
 }
 
 export async function runFindCandidate(input: FindCandidateInput): Promise<FindCandidateResult> {
-  const targetStateId = input.targetStateId.trim();
-  if (!targetStateId) {
-    throw new Error("targetStateId is required");
-  }
-
-  const target = await getDistillationTargetStateById(targetStateId);
+  const targetStateId = input.targetStateId?.trim() ?? "";
+  const target =
+    targetStateId.length > 0
+      ? await getDistillationTargetStateById(targetStateId)
+      : input.sourceInput
+        ? {
+            id: null,
+            targetKind: input.sourceInput.targetKind,
+            targetKey: input.sourceInput.targetKey.trim(),
+            sourceUri: input.sourceInput.sourceUri.trim(),
+          }
+        : null;
   if (!target) {
-    throw new Error(`distillation target state not found: ${targetStateId}`);
+    throw new Error("targetStateId or sourceInput is required");
   }
 
   if (
@@ -286,6 +299,9 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
     target.targetKind !== "web_ingest"
   ) {
     throw new Error(`unsupported target kind for findCandidate: ${target.targetKind}`);
+  }
+  if (!target.targetKey.trim()) {
+    throw new Error("targetKey is required");
   }
 
   const callerMode = input.callerMode ?? "cli_text";
@@ -303,7 +319,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
     (target.targetKind === "wiki_file" || target.targetKind === "web_ingest") &&
     !targetReadPath
   ) {
-    throw new Error(`missing readable source path for target: ${targetStateId}`);
+    throw new Error(`missing readable source path for target: ${target.id ?? target.targetKey}`);
   }
 
   const toolExecutor: DistillationToolExecutor = async (toolCall) => {
@@ -502,14 +518,16 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
 
     const insertedIds: string[] = [];
 
-    for (const [index, candidate] of candidates.entries()) {
-      const saved = await insertFindCandidateResult({
-        targetStateId: target.id,
-        candidateIndex: index,
-        candidate,
-        origin,
-      });
-      insertedIds.push(saved.id);
+    if (target.id) {
+      for (const [index, candidate] of candidates.entries()) {
+        const saved = await insertFindCandidateResult({
+          targetStateId: target.id,
+          candidateIndex: index,
+          candidate,
+          origin,
+        });
+        insertedIds.push(saved.id);
+      }
     }
 
     await recordAuditLogSafe({
@@ -528,7 +546,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
       targetKey: target.targetKey,
       callerMode,
       candidates,
-      insertedIds,
+      insertedIds: target.id ? insertedIds : undefined,
       readRanges: readLog,
     };
   } catch (error) {

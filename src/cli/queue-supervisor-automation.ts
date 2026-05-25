@@ -15,17 +15,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "../..");
 const plistDir = path.resolve(projectRoot, "scripts/automation");
 const launchAgentsDir = path.resolve(os.homedir(), "Library/LaunchAgents");
-const plist = "com.memory-router.distill-pipeline.plist";
-const label = "com.memory-router.distill-pipeline";
+const plist = "com.memory-router.queue-supervisor.plist";
+const label = "com.memory-router.queue-supervisor";
 const windowsTaskTemplatePath = path.resolve(
   projectRoot,
-  "scripts/automation/windows/com.memory-router.distill-pipeline.task.xml",
+  "scripts/automation/windows/com.memory-router.queue-supervisor.task.xml",
 );
-const windowsTaskName = "\\memory-router\\distill-pipeline";
-const legacyLabels = [
-  "com.memory-router.vibe-distillation",
-  "com.memory-router.source-distillation",
-];
+const windowsTaskName = "\\memory-router\\queue-supervisor";
 
 function isDarwin(): boolean {
   return process.platform === "darwin";
@@ -50,41 +46,16 @@ function resolveBunPath(): string {
   return process.execPath || "bun";
 }
 
-function buildPipelineArgs(continuous: boolean): string[] {
-  const pipelineKind = process.env.MEMORY_ROUTER_DISTILL_PIPELINE_KIND ?? "auto";
-  const pipelineLimit = process.env.MEMORY_ROUTER_DISTILL_PIPELINE_LIMIT?.trim() ?? "";
-  const pipelineRefresh = process.env.MEMORY_ROUTER_DISTILL_PIPELINE_REFRESH ?? "1";
-  const pipelineProvider = process.env.MEMORY_ROUTER_DISTILL_PIPELINE_PROVIDER ?? "";
-  const pipelineProviderFallback =
-    process.env.MEMORY_ROUTER_DISTILL_PIPELINE_PROVIDER_FALLBACK ?? "1";
-  const pipelineVersion = process.env.MEMORY_ROUTER_DISTILL_PIPELINE_VERSION ?? "";
-
-  const args = ["run", "src/cli/distill-pipeline.ts", "--write", "--kind", pipelineKind];
-  if (pipelineLimit) args.push("--limit", pipelineLimit);
-  if (continuous) args.push("--continuous");
-  if (pipelineRefresh === "0") args.push("--no-refresh");
-  if (pipelineProvider) args.push("--provider", pipelineProvider);
-  if (pipelineProviderFallback === "0") args.push("--no-provider-fallback");
-  if (pipelineVersion) args.push("--version", pipelineVersion);
-  return args;
-}
-
 function install(): void {
   if (process.platform === "win32") {
-    const intervalSeconds = Number(
-      process.env.MEMORY_ROUTER_DISTILL_PIPELINE_INTERVAL_SECONDS ?? "120",
-    );
-    const intervalMinutes = Number.isFinite(intervalSeconds)
-      ? Math.max(1, Math.floor(intervalSeconds / 60))
-      : 2;
     installWindowsTask({
       taskName: windowsTaskName,
-      description: "Run memory-router distillation pipeline on schedule",
+      description: "Run memory-router queue supervisor continuously",
       templatePath: windowsTaskTemplatePath,
       command: resolveBunPath(),
-      arguments: `run ${path.resolve(projectRoot, "src/cli/distill-pipeline-automation.ts")} run-once`,
+      arguments: `run ${path.resolve(projectRoot, "src/cli/queue-supervisor-automation.ts")} run-once`,
       workingDirectory: projectRoot,
-      intervalMinutes,
+      intervalMinutes: 2,
     });
     return;
   }
@@ -100,10 +71,6 @@ function install(): void {
   console.log(`installed: ${target}`);
 }
 
-function launchctl(...args: string[]): void {
-  execFileSync("launchctl", args, { stdio: "inherit" });
-}
-
 function launchctlQuiet(...args: string[]): void {
   try {
     execFileSync("launchctl", args, { stdio: "ignore" });
@@ -112,10 +79,8 @@ function launchctlQuiet(...args: string[]): void {
   }
 }
 
-function disableLegacyJobs(uid: string): void {
-  for (const legacy of legacyLabels) {
-    launchctlQuiet("bootout", `gui/${uid}/${legacy}`);
-  }
+function launchctl(...args: string[]): void {
+  execFileSync("launchctl", args, { stdio: "inherit" });
 }
 
 function loadJob(): void {
@@ -127,7 +92,6 @@ function loadJob(): void {
   const target = path.resolve(launchAgentsDir, plist);
   if (!existsSync(target)) install();
   const uid = getUid();
-  disableLegacyJobs(uid);
   launchctlQuiet("bootout", `gui/${uid}`, target);
   launchctl("bootstrap", `gui/${uid}`, target);
   console.log(`loaded: ${label}`);
@@ -168,7 +132,6 @@ function status(): void {
     console.log(`${label}: not installed`);
     return;
   }
-
   const uid = getUid();
   try {
     const output = execFileSync("launchctl", ["print", `gui/${uid}/${label}`], {
@@ -182,67 +145,60 @@ function status(): void {
 }
 
 function runOnce(): void {
-  const args = buildPipelineArgs(false);
-  const stamp = new Date().toISOString();
-  console.log(`[${stamp}] ${label} run started`);
-  const result = spawnSync(resolveBunPath(), args, {
-    cwd: projectRoot,
-    stdio: "inherit",
-    env: process.env,
-  });
-  const endStamp = new Date().toISOString();
-  const exitCode = result.status ?? 1;
-  console.log(`[${endStamp}] ${label} run finished exit_code=${exitCode}`);
-  process.exitCode = exitCode;
+  const result = spawnSync(
+    resolveBunPath(),
+    ["run", "src/cli/queue-supervisor.ts", "--once", "--limit", "1"],
+    {
+      cwd: projectRoot,
+      stdio: "inherit",
+      env: process.env,
+    },
+  );
+  process.exitCode = result.status ?? 1;
 }
 
 function runContinuous(): void {
-  const args = buildPipelineArgs(true);
-  const stamp = new Date().toISOString();
-  console.log(`[${stamp}] ${label} continuous run started`);
-  const result = spawnSync(resolveBunPath(), args, {
-    cwd: projectRoot,
-    stdio: "inherit",
-    env: process.env,
-  });
+  const result = spawnSync(
+    resolveBunPath(),
+    ["run", "src/cli/queue-supervisor.ts", "--continuous", "--limit", "1"],
+    {
+      cwd: projectRoot,
+      stdio: "inherit",
+      env: process.env,
+    },
+  );
   process.exitCode = result.status ?? 1;
 }
 
 function main(): void {
   const action = process.argv[2] ?? "";
-  try {
-    switch (action) {
-      case "install":
-        install();
-        break;
-      case "load":
-        loadJob();
-        break;
-      case "unload":
-        unloadJob();
-        break;
-      case "uninstall":
-        uninstall();
-        break;
-      case "status":
-        status();
-        break;
-      case "run-once":
-        runOnce();
-        break;
-      case "run-continuous":
-        runContinuous();
-        break;
-      default:
-        console.error(
-          "Usage: bun run src/cli/distill-pipeline-automation.ts -- {install|load|unload|uninstall|status|run-once|run-continuous}",
-        );
-        process.exitCode = 1;
-        break;
-    }
-  } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
-    process.exitCode = 1;
+  switch (action) {
+    case "install":
+      install();
+      break;
+    case "load":
+      loadJob();
+      break;
+    case "unload":
+      unloadJob();
+      break;
+    case "uninstall":
+      uninstall();
+      break;
+    case "status":
+      status();
+      break;
+    case "run-once":
+      runOnce();
+      break;
+    case "run-continuous":
+      runContinuous();
+      break;
+    default:
+      console.error(
+        "Usage: bun run src/cli/queue-supervisor-automation.ts -- {install|load|unload|uninstall|status|run-once|run-continuous}",
+      );
+      process.exitCode = 1;
   }
 }
 

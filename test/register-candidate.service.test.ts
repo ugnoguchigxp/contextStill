@@ -3,6 +3,7 @@ import { db } from "../src/db/index.js";
 import { registerCandidate } from "../src/modules/registerCandidate/register-candidate.service.js";
 
 const mockInsert = vi.fn();
+const mockEnqueueFindingJob = vi.fn().mockResolvedValue({ id: "finding-job-1" });
 const mockTransaction = vi.fn().mockImplementation(async (callback) => {
   const tx = {
     insert: (...args: any[]) => mockInsert(...args),
@@ -16,6 +17,10 @@ vi.mock("../src/db/index.js", () => ({
   },
 }));
 
+vi.mock("../src/modules/queue/core/index.js", () => ({
+  enqueueFindingJob: (...args: any[]) => mockEnqueueFindingJob(...args),
+}));
+
 const makeChain = (result: any) => {
   const chain = {
     values: vi.fn().mockImplementation(() => chain),
@@ -27,6 +32,7 @@ const makeChain = (result: any) => {
 describe("register-candidate.service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockEnqueueFindingJob.mockResolvedValue({ id: "finding-job-1" });
   });
 
   test("infers title from markdown heading successfully", async () => {

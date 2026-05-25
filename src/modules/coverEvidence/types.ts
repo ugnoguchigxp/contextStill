@@ -73,8 +73,21 @@ export type CoverEvidenceResult = {
   reason: string | null;
 };
 
+export type CoverEvidenceCandidateInput = {
+  id: string;
+  status: string;
+  title: string;
+  content: string;
+  origin: unknown;
+  targetStateId?: string | null;
+  targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest";
+  targetKey: string;
+  sourceUri: string;
+};
+
 export type CoverEvidenceInput = {
   id: string;
+  candidate?: CoverEvidenceCandidateInput;
   provider?: DistillationProviderSetting;
   providerPolicy?: CoverEvidenceProviderPolicy;
   providerFallbackMode?: "fallback" | "single";

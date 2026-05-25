@@ -75,6 +75,6 @@ export async function inspectLaunchAgent(
 
 function toWindowsTaskName(label: string): string | null {
   if (label === "com.memory-router.agent-log-sync") return "\\memory-router\\agent-log-sync";
-  if (label === "com.memory-router.distill-pipeline") return "\\memory-router\\distill-pipeline";
+  if (label === "com.memory-router.queue-supervisor") return "\\memory-router\\queue-supervisor";
   return null;
 }

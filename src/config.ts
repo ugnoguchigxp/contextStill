@@ -275,6 +275,11 @@ export const groupedConfig: GroupedConfig = {
     findCandidateMaxIntervalSeconds: APP_CONSTANTS.findCandidateMaxIntervalSeconds,
     findCandidateRateLimitCooldownSeconds: APP_CONSTANTS.findCandidateRateLimitCooldownSeconds,
     findCandidateJitterSeconds: APP_CONSTANTS.findCandidateJitterSeconds,
+    findingQueueTaskIntervalSeconds: resolvePositiveInt(
+      process.env.MEMORY_ROUTER_FINDING_QUEUE_TASK_INTERVAL_SECONDS,
+      APP_CONSTANTS.findingQueueTaskIntervalSeconds,
+      { min: 1, max: 3600 },
+    ),
     promotionBacklogThresholdCount: APP_CONSTANTS.distillationPromotionBacklogThresholdCount,
     lowImportanceRejectThreshold: APP_CONSTANTS.distillationLowImportanceRejectThreshold,
     circuitBreakerEnabled: APP_CONSTANTS.distillationCircuitBreakerEnabled,

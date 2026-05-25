@@ -205,8 +205,8 @@ const baseReport = {
   },
   vibeDistillation: {
     launchAgent: {
-      label: "com.memory-router.distill-pipeline",
-      plistPath: "/Users/y.noguchi/Library/LaunchAgents/com.memory-router.distill-pipeline.plist",
+      label: "com.memory-router.queue-supervisor",
+      plistPath: "/Users/y.noguchi/Library/LaunchAgents/com.memory-router.queue-supervisor.plist",
       installed: true,
       loaded: true,
       state: "running",
@@ -254,8 +254,8 @@ const baseReport = {
   },
   sourceDistillation: {
     launchAgent: {
-      label: "com.memory-router.distill-pipeline",
-      plistPath: "/Users/y.noguchi/Library/LaunchAgents/com.memory-router.distill-pipeline.plist",
+      label: "com.memory-router.queue-supervisor",
+      plistPath: "/Users/y.noguchi/Library/LaunchAgents/com.memory-router.queue-supervisor.plist",
       installed: true,
       loaded: true,
       state: "running",

@@ -6,6 +6,7 @@ import { registerCandidateInputSchema } from "../../shared/schemas/knowledge.sch
 import { hasSkillLikeProcedureBody } from "../distillation/procedure-quality.js";
 import { parseStorageCandidatesFromLlmOutput } from "../findCandidate/parser.js";
 import type { CandidateKnowledgeType } from "../findCandidate/repository.js";
+import { enqueueFindingJob } from "../queue/core/index.js";
 import { DEFAULT_DISTILLATION_TARGET_VERSION } from "../selectDistillationTarget/repository.js";
 import { resolveKnowledgeCandidatePriorityGroup } from "../selectDistillationTarget/priority-group.js";
 
@@ -19,6 +20,7 @@ export type RegisterCandidateWarning =
 export type RegisterCandidateResult = {
   targetStateId: string;
   findCandidateResultId: string;
+  findingJobId?: string;
   sourceUri: string;
   status: "candidate_registered";
   title: string;
@@ -110,7 +112,7 @@ export async function registerCandidate(
     metadata: targetMetadata,
   });
 
-  return db.transaction(async (tx) => {
+  const legacy = await db.transaction(async (tx) => {
     const [target] = await tx
       .insert(distillationTargetStates)
       .values({
@@ -143,16 +145,42 @@ export async function registerCandidate(
       .returning();
 
     if (!candidate) throw new Error("failed to create candidate result");
-
-    return {
-      targetStateId: target.id,
-      findCandidateResultId: candidate.id,
-      sourceUri,
-      status: "candidate_registered",
-      title: normalized.title,
-      type: normalized.type,
-      warnings: normalized.warnings,
-      next: "distillation_pipeline",
-    };
+    return { target, candidate };
   });
+
+  const findingJob = await enqueueFindingJob({
+    inputKind: "provided_candidate",
+    sourceKind: "knowledge_candidate",
+    sourceKey: candidateId,
+    sourceUri,
+    distillationVersion: DEFAULT_DISTILLATION_TARGET_VERSION,
+    payload: {
+      title: normalized.title,
+      body: normalized.body,
+      type: normalized.type,
+      sourceSummary: undefined,
+      origin: compactOrigin(parsed, normalized),
+      legacyTargetStateId: legacy.target.id,
+      legacyFindCandidateResultId: legacy.candidate.id,
+    },
+    metadata: {
+      source: "mcp_register_candidate",
+      registeredAt: now.toISOString(),
+      legacyTargetStateId: legacy.target.id,
+      legacyFindCandidateResultId: legacy.candidate.id,
+    },
+    priority: 40,
+  });
+
+  return {
+    targetStateId: legacy.target.id,
+    findCandidateResultId: legacy.candidate.id,
+    findingJobId: findingJob.id,
+    sourceUri,
+    status: "candidate_registered",
+    title: normalized.title,
+    type: normalized.type,
+    warnings: normalized.warnings,
+    next: "distillation_pipeline",
+  };
 }

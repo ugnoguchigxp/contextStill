@@ -1615,15 +1615,13 @@ export type WebSourceQueueItem = {
   normalizedUrl: string;
   state: {
     id: string;
-    targetKind: "web_ingest";
-    targetKey: string;
+    status: string;
+    priority: number;
+    attemptCount: number;
+    sourceKind: "web_ingest";
+    sourceKey: string;
     sourceUri: string;
     distillationVersion: string;
-    status: string;
-    phase: string;
-    priorityGroup: string;
-    sortKey: string;
-    metadata: Record<string, unknown>;
     createdAt: string;
     updatedAt: string;
   };
@@ -2904,4 +2902,137 @@ export async function pauseQueueTarget(id: string, reason?: string): Promise<{ o
 
 export async function resumeQueueTarget(id: string): Promise<{ ok: boolean }> {
   return requestJson<{ ok: boolean }>(`/api/queue/${encodeURIComponent(id)}/resume`, "POST");
+}
+
+export type DistillationQueueName =
+  | "findingCandidate"
+  | "coveringEvidence"
+  | "premiumCoveringEvidence"
+  | "finalizeDistille";
+export type DistillationQueueStatus =
+  | "pending"
+  | "running"
+  | "completed"
+  | "skipped"
+  | "failed"
+  | "paused";
+
+export type QueueDashboardStatsV2 = {
+  queues: Record<
+    DistillationQueueName,
+    {
+      counters: Record<DistillationQueueStatus, number>;
+      oldestPendingAt: string | null;
+      running: number;
+      failed: number;
+      offline: number;
+      nonRegistered: number;
+      escalated: number;
+    }
+  >;
+  totals: {
+    counters: Record<DistillationQueueStatus, number>;
+    oldestPendingAt: string | null;
+    running: number;
+    failed: number;
+    offline: number;
+    nonRegistered: number;
+    escalated: number;
+  };
+};
+
+export type QueueListItemV2 = {
+  queueName: DistillationQueueName;
+  id: string;
+  status: DistillationQueueStatus;
+  priority: number;
+  attemptCount: number;
+  subjectTitle: string;
+  subjectDetail: string;
+  provider: string | null;
+  model: string | null;
+  lastError: string | null;
+  lastOutcomeKind: string | null;
+  lockedBy: string | null;
+  lockedAt: string | null;
+  heartbeatAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+  nextRunAt: string | null;
+  metadataSummary: string | null;
+};
+
+export type QueueListResponseV2 = {
+  queue: DistillationQueueName;
+  items: QueueListItemV2[];
+  total: number;
+  page: number;
+  limit: number;
+};
+
+export async function fetchQueueDashboardStatsV2(): Promise<QueueDashboardStatsV2> {
+  return getJson<QueueDashboardStatsV2>("/api/queue/stats");
+}
+
+export async function fetchActiveQueueTasksV2(): Promise<QueueListItemV2[]> {
+  return getJson<QueueListItemV2[]>("/api/queue/active");
+}
+
+export async function fetchQueueItemsV2(input: {
+  page: number;
+  limit: number;
+  queue: DistillationQueueName;
+  query?: string;
+  status?: DistillationQueueStatus | "all";
+}): Promise<QueueListResponseV2> {
+  const query = new URLSearchParams();
+  query.set("page", String(input.page));
+  query.set("limit", String(input.limit));
+  query.set("queue", input.queue);
+  if (input.query?.trim()) query.set("query", input.query.trim());
+  if (input.status) query.set("status", input.status);
+  return getJson<QueueListResponseV2>(`/api/queue?${query.toString()}`);
+}
+
+export async function pauseQueueJobV2(
+  queue: DistillationQueueName,
+  id: string,
+  reason?: string,
+): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>(
+    `/api/queue/${encodeURIComponent(queue)}/${encodeURIComponent(id)}/pause`,
+    "POST",
+    {
+      reason,
+    },
+  );
+}
+
+export async function resumeQueueJobV2(
+  queue: DistillationQueueName,
+  id: string,
+): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>(
+    `/api/queue/${encodeURIComponent(queue)}/${encodeURIComponent(id)}/resume`,
+    "POST",
+  );
+}
+
+export async function retryQueueJobV2(input: {
+  queue: DistillationQueueName;
+  id: string;
+  mode?: "default" | "cloud_api";
+  forceRefreshEvidence?: boolean;
+  reason?: string;
+}): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>(
+    `/api/queue/${encodeURIComponent(input.queue)}/${encodeURIComponent(input.id)}/retry`,
+    "POST",
+    {
+      mode: input.mode ?? "default",
+      forceRefreshEvidence: input.forceRefreshEvidence ?? true,
+      reason: input.reason,
+    },
+  );
 }

@@ -70,6 +70,9 @@ function readyResult() {
       body: "finalizeDistille must preserve cover evidence references on draft knowledge.",
       importance: 82,
       confidence: 84,
+      technologies: ["typescript"],
+      changeTypes: ["implementation"],
+      domains: ["distillation"],
     },
     references: [
       {
@@ -201,6 +204,9 @@ describe("runFinalizeDistille", () => {
         body: "繰り返し実行するクエリは `prepare()` で Prepared Statement 化して高速化する。",
         importance: 90,
         confidence: 95,
+        technologies: ["postgresql"],
+        changeTypes: ["performance"],
+        domains: ["database"],
       },
     });
 
@@ -241,6 +247,9 @@ describe("runFinalizeDistille", () => {
         body: "Run smoke tests, then inspect the returned source references before finalizing coverEvidence.",
         importance: 82,
         confidence: 84,
+        technologies: ["vitest"],
+        changeTypes: ["testing"],
+        domains: ["distillation"],
       },
     });
 

@@ -80,7 +80,7 @@ const initProjectLocaleText: Record<SupportedLocale, InitProjectLocaleText> = {
     defaultSmokeGoal: "このリポジトリの初回セットアップ手順と検証手順を確認したい",
     smokeNoKnowledgeSuggestions: [
       "bun run import:sources -- <wiki root>",
-      "bun run distill:pipeline:once",
+      "bun run queue:finding:once",
       "Admin UI で draft knowledge を review して active に更新",
     ],
     nextActionsNoSmoke: [
@@ -93,11 +93,11 @@ const initProjectLocaleText: Record<SupportedLocale, InitProjectLocaleText> = {
       "bun run doctor でシステム健全性を確認する",
       "mcpConfigSnippet を MCP クライアント設定へ貼り付ける",
       "Admin UI で新規 draft knowledge を review し、必要なものだけ active に昇格する",
-      "通常運用では import:sources と distill:pipeline を定期実行する",
+      "通常運用では import:sources と queue:supervisor を定期実行する",
     ],
     nextActionsSmokeFailed: [
       "bun run import:sources -- <wiki root>",
-      "bun run distill:pipeline:once",
+      "bun run queue:finding:once",
       "bun run doctor でシステム健全性を確認する",
       "mcpConfigSnippet を MCP クライアント設定へ貼り付ける",
       "Admin UI で draft knowledge の根拠を確認して active/deprecated を整理する",
@@ -108,7 +108,7 @@ const initProjectLocaleText: Record<SupportedLocale, InitProjectLocaleText> = {
     defaultSmokeGoal: "I want to validate initial setup and verification flow for this repository.",
     smokeNoKnowledgeSuggestions: [
       "bun run import:sources -- <wiki root>",
-      "bun run distill:pipeline:once",
+      "bun run queue:finding:once",
       "Review draft knowledge in Admin UI and promote required items to active",
     ],
     nextActionsNoSmoke: [
@@ -121,11 +121,11 @@ const initProjectLocaleText: Record<SupportedLocale, InitProjectLocaleText> = {
       "Run bun run doctor to confirm system health",
       "Paste mcpConfigSnippet into your MCP client config",
       "Review new draft knowledge in Admin UI and promote only required items",
-      "In normal operations, run import:sources and distill:pipeline periodically",
+      "In normal operations, run import:sources and queue:supervisor periodically",
     ],
     nextActionsSmokeFailed: [
       "bun run import:sources -- <wiki root>",
-      "bun run distill:pipeline:once",
+      "bun run queue:finding:once",
       "Run bun run doctor to confirm system health",
       "Paste mcpConfigSnippet into your MCP client config",
       "Review evidence for draft knowledge in Admin UI and triage active/deprecated",

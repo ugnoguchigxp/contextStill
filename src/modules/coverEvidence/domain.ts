@@ -22,13 +22,11 @@ import {
   mergeReferences,
   normalizeProcedureBodyQuality,
   referencesFromDuplicateRefs,
-  requiresExternalEvidence,
   sourceContextForPrompts,
 } from "./helpers.js";
 import {
   appendOptionalMcpEvidence,
   runExternalEvidence,
-  runValueAssessment,
 } from "./llm-runner.js";
 import { parseCoverEvidenceResult } from "./parser.js";
 import {
@@ -237,7 +235,7 @@ export async function runCoverEvidence(
     }
   }
 
-  const row = await getFindCandidateResultById(id);
+  const row = input.candidate ?? (await getFindCandidateResultById(id));
   if (!row) {
     throw new Error(`find candidate result not found: ${id}`);
   }
@@ -342,11 +340,12 @@ export async function runCoverEvidence(
               duplicateRefs: dedupe.duplicateRefs,
               reason: dedupe.status,
             });
-          } else if (requiresExternalEvidence(candidate)) {
+          } else {
             result = await runExternalEvidence({
               id,
               candidate,
               sourceReferences: sourceRead.references,
+              sourceContentExcerpt: sourceRead.valueAssessmentContent,
               sourceContext,
               candidateTypeHint: originHints.type,
               provider: externalEvidenceProvider,
@@ -365,20 +364,6 @@ export async function runCoverEvidence(
               fallbackOrder: mcpEvidenceFallbackOrder,
               chatClient: input.chatClient,
               toolExecutor: input.toolExecutor,
-              signal: input.signal,
-            });
-          } else {
-            result = await runValueAssessment({
-              id,
-              candidate,
-              sourceReferences: sourceRead.references,
-              sourceContentExcerpt: sourceRead.valueAssessmentContent,
-              sourceContext,
-              candidateTypeHint: originHints.type,
-              provider: sourceSupportProvider,
-              model: sourceSupportModel,
-              fallbackOrder: sourceSupportFallbackOrder,
-              chatClient: input.chatClient,
               signal: input.signal,
             });
           }

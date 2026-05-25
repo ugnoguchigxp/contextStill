@@ -212,8 +212,8 @@ export const overviewDashboardValidInput = {
       reasoningTokensTotal30d: 500,
       cloudCostJpyTotal30d: 12.5,
       cloudModel: "gpt-5-4-mini",
-      cloudInputCostJpyPerMTokens: 165,
-      cloudOutputCostJpyPerMTokens: 660,
+      cloudInputCostJpyPerMTokens: 112.5,
+      cloudOutputCostJpyPerMTokens: 675,
     },
     daily: [
       {

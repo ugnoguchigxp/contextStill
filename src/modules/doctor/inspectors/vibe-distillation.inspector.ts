@@ -9,10 +9,10 @@ export async function inspectVibeDistillation(
 ): Promise<DoctorReport["vibeDistillation"]> {
   return inspectDistillationRunHealth(options, {
     label: "vibe distillation",
-    launchAgentLabel: "com.memory-router.distill-pipeline",
-    setupScript: "bun run automation:distill-pipeline --",
-    runCommand: "bun run distill:pipeline -- --write --limit 1 --kind vibe",
-    logPath: "logs/distill-pipeline.log",
+    launchAgentLabel: "com.memory-router.queue-supervisor",
+    setupScript: "bun run automation:queue-supervisor --",
+    runCommand: "bun run queue:finding:once",
+    logPath: "logs/queue-supervisor.log",
     targetKind: "vibe_memory",
   });
 }

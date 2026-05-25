@@ -1,8 +1,8 @@
 import { groupedConfig } from "../../config.js";
-import type { FindCandidateResultRow } from "../findCandidate/repository.js";
 import { readVibeMemoryByTokenWindow } from "../memoryReader/reader.service.js";
 import { readFileDomain } from "../readFile/domain.js";
 import type { CoverEvidenceReference } from "./types.js";
+import type { CoverEvidenceCandidateInput } from "./types.js";
 
 export type CoverEvidenceSourceRead = {
   content: string;
@@ -73,7 +73,7 @@ function sourceSummaryFromOrigin(origin: unknown): string | undefined {
 }
 
 export async function readSourceEvidenceForCandidate(
-  row: FindCandidateResultRow,
+  row: CoverEvidenceCandidateInput,
 ): Promise<CoverEvidenceSourceRead> {
   const valueAssessmentContent = sourceSummaryFromOrigin(row.origin);
   if (row.targetKind === "knowledge_candidate") {

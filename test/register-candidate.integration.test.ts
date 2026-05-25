@@ -3,6 +3,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest"
 import { getDb } from "../src/db/index.js";
 import {
   distillationTargetStates,
+  findingCandidateQueue,
   findCandidateResults,
   knowledgeItems,
 } from "../src/db/schema.js";
@@ -62,6 +63,11 @@ describeDb("registerCandidate", () => {
       .select()
       .from(findCandidateResults)
       .where(eq(findCandidateResults.id, result.findCandidateResultId));
+    expect(result.findingJobId).toBeTruthy();
+    const [findingJob] = await db
+      .select()
+      .from(findingCandidateQueue)
+      .where(eq(findingCandidateQueue.id, result.findingJobId as string));
     const knowledgeRows = await db.select({ id: knowledgeItems.id }).from(knowledgeItems);
 
     expect(target).toMatchObject({
@@ -73,6 +79,11 @@ describeDb("registerCandidate", () => {
       targetStateId: result.targetStateId,
       title: "Verify before reporting fixed",
       status: "selected",
+    });
+    expect(findingJob).toMatchObject({
+      inputKind: "provided_candidate",
+      sourceKind: "knowledge_candidate",
+      status: "pending",
     });
     expect(knowledgeRows).toEqual([]);
   });

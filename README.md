@@ -163,15 +163,12 @@ Convert raw evidence into structured **rules** and **procedures** using a local 
 
 ```bash
 # Run one distillation cycle (auto selects wiki, vibe memory, or candidate targets)
-bun run distill:pipeline:once
+bun run queue:finding:once
 
-# Or target kind explicitly
-bun run distill:pipeline -- --write --limit 1 --kind wiki
-bun run distill:pipeline -- --write --limit 1 --kind vibe
-bun run distill:pipeline -- --write --limit 1 --kind candidate
-
-# Or run one exact queued target
-bun run distill:pipeline -- --write --kind candidate --target-state-id <uuid>
+# Process queued follow-up stages
+bun run queue:covering:once
+bun run queue:premium:once
+bun run queue:finalize:once
 ```
 
 The staged distillation pipeline:
@@ -235,7 +232,7 @@ bun run landscape -- --queue-list --queue-status pending
 bun run landscape -- --queue-create-candidates --queue-status pending --queue-limit 20
 
 # Run a single generated candidate through the distillation pipeline
-bun run distill:pipeline -- --write --kind candidate --target-state-id <targetStateId>
+bun run queue:covering:once
 ```
 
 Approve a landscape candidate link before finalization when review is required:
@@ -324,12 +321,13 @@ For the full MCP tool contract, see [docs/mcp-tools.md](docs/mcp-tools.md).
 | `bun run import:wiki <path>` | Import Markdown into sources |
 | `bun run import:markdown <file>` | Import a single Markdown file |
 | `bun run sync:agent-logs` | Sync Codex / Antigravity logs |
-| `bun run distill:pipeline:once` | Run one auto-selected distillation cycle |
-| `bun run distill:pipeline -- --write --limit 1 --kind wiki` | Run the staged distillation pipeline explicitly |
-| `bun run distill:pipeline -- --write --kind candidate --target-state-id <uuid>` | Run one exact candidate target |
-| `bun run distill-target:refresh` | Refresh wiki/vibe/candidate distillation targets |
-| `bun run distill:status` | Show distillation target queue and progress counters |
-| `bun run distill-target:release-stale` | Release stale running distillation targets |
+| `bun run queue:finding:once` | Run one finding-queue cycle (source/provided candidate intake) |
+| `bun run queue:covering:once` | Run one covering-evidence queue cycle |
+| `bun run queue:premium:once` | Run one premium covering-evidence queue cycle |
+| `bun run queue:finalize:once` | Run one finalize queue cycle |
+| `bun run queue:supervisor` | Run queue supervisor continuously |
+| `bun run queue:migrate:dry-run` | Preview queue migration mapping without writes |
+| `bun run queue:migrate:write` | Write queue migration mapping rows |
 | `bun run doctor` | Run system diagnostics |
 | `bun run landscape -- --window-days 30` | Generate a community-based landscape snapshot |
 | `bun run landscape -- --window-days 30 --json` | Emit full landscape snapshot JSON |
@@ -349,13 +347,13 @@ Use `init:project` on a fresh repository to connect the first-run path end-to-en
 # import wiki + seed global preset + smoke compile
 bun run init:project -- --wiki-root ./wiki/pages
 
-# refresh distillation targets and run one cycle
-bun run distill-target:refresh
-bun run distill:pipeline:once
+# run queue cycles
+bun run queue:finding:once
+bun run queue:covering:once
 ```
 
 - Global preset entries are stored as `scope: global`.
-- Repo-specific knowledge stays in `scope: repo` through `import:wiki` / `distill:pipeline`.
+- Repo-specific knowledge stays in `scope: repo` through `import:wiki` / `queue:supervisor`.
 - If smoke compile returns no relevant items, the command prints concrete next actions.
 
 ### Examples
@@ -369,16 +367,17 @@ bun run compile --goal "fix context compiler" \
   --json
 
 # Distill one cycle (auto target selection)
-bun run distill:pipeline:once
+bun run queue:finding:once
 
-# Distill explicit target kind
-bun run distill:pipeline -- --write --limit 1 --kind wiki
-bun run distill:pipeline -- --write --limit 1 --kind vibe
-bun run distill:pipeline -- --write --limit 1 --kind candidate
+# Process each queue stage once
+bun run queue:finding:once
+bun run queue:covering:once
+bun run queue:premium:once
+bun run queue:finalize:once
 
 # Create and process review-item candidate drafts
 bun run landscape -- --queue-create-candidates --queue-status pending --queue-limit 20
-bun run distill:pipeline -- --write --kind candidate --target-state-id <targetStateId>
+bun run queue:covering:once
 ```
 
 ---
@@ -529,38 +528,35 @@ Default log locations:
 
 ### Distillation Automation (Conveyor)
 
-Run staged distillation (`selectDistillationTarget -> findCandidate -> coverEvidence -> finalizeDistille`) on a schedule:
+Run Queue V2 distillation workers (`findingCandidate -> coveringEvidence -> premiumCoveringEvidence -> finalizeDistille`) on a schedule:
 
 ```bash
 # One-time run
-bun run distill:pipeline:once
+bun run queue:finding:once
 
 # Install and load as macOS LaunchAgent
-bun run automation:distill-pipeline -- install
-bun run automation:distill-pipeline -- load
-bun run automation:distill-pipeline -- status
+bun run automation:queue-supervisor -- install
+bun run automation:queue-supervisor -- load
+bun run automation:queue-supervisor -- status
 
 # Windows Task Scheduler
-bun run automation:distill-pipeline -- install
-bun run automation:distill-pipeline -- load
-bun run automation:distill-pipeline -- status
+bun run automation:queue-supervisor -- install
+bun run automation:queue-supervisor -- load
+bun run automation:queue-supervisor -- status
 ```
 
 Progress / recovery commands:
 
 ```bash
 # Queue state + latest counters
-bun run distill-target:status
-bun run distill-progress
+bun run doctor
+bun run queue:finding:once
 
-# Recover stale or retryable targets
-bun run distill-target:release-stale
-bun run src/cli/distillation-target.ts release-paused
+# Queue migration/backfill dry-run
+bun run queue:migrate:dry-run
 ```
 
-The **Queue** admin page shows the same target state from the browser: status counters, running locks, worker heartbeat age, target kind/status filters, pause, resume, and retry/requeue actions. It is the preferred operational view when diagnosing a running local daemon.
-
-The pipeline LaunchAgent load step boots out legacy `vibe/source` distillation jobs to avoid duplicate execution.
+The **Queue** admin page is the primary operational view: status counters, running locks, worker heartbeat age, queue/status filters, and pause/resume/retry controls.
 
 ### Database Backup
 
