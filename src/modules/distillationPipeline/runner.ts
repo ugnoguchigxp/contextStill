@@ -1323,23 +1323,30 @@ export async function runDistillationPipeline(
     };
   }
 
-  const findCandidatePromise = runParallelFindCandidateLane(input, distillationVersion);
+  let remainingClaimLimit = positiveLimit(input.limit ?? groupedConfig.distillation.pipelineClaimLimit);
+  const findCandidateResults: DistillationPipelineTargetResult[] = [];
+
   const coverEvidencePromise = runParallelCoverEvidenceLane(input, distillationVersion);
+  const findCandidateBurstPromise = (async () => {
+    while (remainingClaimLimit > 0) {
+      const result = await runParallelFindCandidateLane(input, distillationVersion);
+      if (!result) break;
+      findCandidateResults.push(result);
+      remainingClaimLimit -= 1;
+    }
+  })();
 
   let coverEvidenceResult: DistillationPipelineTargetResult | null = null;
   try {
-    coverEvidenceResult = await coverEvidencePromise;
+    const [coverResult] = await Promise.all([coverEvidencePromise, findCandidateBurstPromise]);
+    coverEvidenceResult = coverResult;
   } catch (error) {
-    await findCandidatePromise.catch(() => undefined);
+    await Promise.allSettled([coverEvidencePromise, findCandidateBurstPromise]);
     throw error;
   }
 
   const claimedResults: DistillationPipelineTargetResult[] = [];
-  for (
-    let index = 0;
-    index < positiveLimit(input.limit ?? groupedConfig.distillation.pipelineClaimLimit);
-    index += 1
-  ) {
+  while (remainingClaimLimit > 0) {
     const target = await claimNextDistillationTargetState({
       distillationVersion,
       targetKind: targetKindFilter(input.kind),
@@ -1349,13 +1356,12 @@ export async function runDistillationPipeline(
     });
     if (!target) break;
     claimedResults.push(await runClaimedTarget(target, input));
+    remainingClaimLimit -= 1;
   }
-
-  const findCandidateResult = await findCandidatePromise;
 
   const results: DistillationPipelineTargetResult[] = [];
   if (coverEvidenceResult) results.push(coverEvidenceResult);
-  if (findCandidateResult) results.push(findCandidateResult);
+  results.push(...findCandidateResults);
   results.push(...claimedResults);
 
   return {

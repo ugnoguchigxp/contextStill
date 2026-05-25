@@ -31,7 +31,6 @@ const mocks = vi.hoisted(() => ({
   saveCoverEvidenceResult: vi.fn(),
   runFinalizeDistille: vi.fn(),
   listKnowledgeIdsByTargetStateId: vi.fn(),
-  ensureRuntimeSettingsLoaded: vi.fn(),
   reloadRuntimeSettingsCache: vi.fn(),
 }));
 
@@ -95,7 +94,6 @@ vi.mock("../src/modules/finalizeDistille/repository.js", () => ({
 }));
 
 vi.mock("../src/modules/settings/settings.service.js", () => ({
-  ensureRuntimeSettingsLoaded: mocks.ensureRuntimeSettingsLoaded,
   reloadRuntimeSettingsCache: mocks.reloadRuntimeSettingsCache,
 }));
 
@@ -209,7 +207,6 @@ describe("runDistillationPipeline", () => {
     mocks.isRateLimitError.mockReturnValue(false);
     mocks.recordProviderRateLimit.mockResolvedValue(undefined);
     mocks.recordProviderUsage.mockResolvedValue(undefined);
-    mocks.ensureRuntimeSettingsLoaded.mockResolvedValue(undefined);
     mocks.reloadRuntimeSettingsCache.mockResolvedValue(undefined);
     groupedConfig.distillation.pipelineClaimLimit = 1;
   });
@@ -218,8 +215,7 @@ describe("runDistillationPipeline", () => {
     groupedConfig.distillation.pipelineClaimLimit = 2;
     mocks.claimNextDistillationTargetState
       .mockResolvedValueOnce(targetRow({ id: "target-1" }))
-      .mockResolvedValueOnce(targetRow({ id: "target-2" }))
-      .mockResolvedValueOnce(null);
+      .mockResolvedValueOnce(targetRow({ id: "target-2" }));
 
     await runDistillationPipeline({ write: true, refresh: false });
 

@@ -2802,6 +2802,8 @@ export type DistillationTargetState = {
   sortKey: string;
   attemptCount: number;
   lockedBy: string | null;
+  activeModel?: string | null;
+  activeProvider?: string | null;
   lockedAt: string | null;
   heartbeatAt: string | null;
   nextRetryAt: string | null;

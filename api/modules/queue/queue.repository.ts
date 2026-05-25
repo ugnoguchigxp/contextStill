@@ -11,7 +11,18 @@ import {
   decideFindCandidateSchedule,
   type FindCandidateScheduleDecision,
 } from "../../../src/modules/findCandidate/find-candidate-scheduler.service.js";
-import { ensureRuntimeSettingsLoaded } from "../../../src/modules/settings/settings.service.js";
+import {
+  ensureRuntimeSettingsLoaded,
+  resolveCoverEvidenceRoutes,
+  resolveFindCandidateRoute,
+  resolveWebSourceResearchRoute,
+} from "../../../src/modules/settings/settings.service.js";
+import {
+  resolveDistillationModel,
+  resolveProviderForDistillation,
+  type DistillationProviderName,
+  type DistillationProviderSetting,
+} from "../../../src/modules/distillation/llm-resolver.js";
 import {
   findNextFindCandidateTargetState,
   pauseDistillationTargetState,
@@ -66,6 +77,165 @@ export type QueueListQuery = {
   targetKind?: DistillationTargetKind | "all";
   status?: DistillationTargetStatus | "all";
 };
+
+type QueueTaskWithModel = typeof distillationTargetStates.$inferSelect & {
+  activeModel: string | null;
+  activeProvider: DistillationProviderName | null;
+};
+
+function asDistillationProviderSetting(value: unknown): DistillationProviderSetting {
+  if (
+    value === "openai" ||
+    value === "azure-openai" ||
+    value === "bedrock" ||
+    value === "local-llm" ||
+    value === "auto"
+  ) {
+    return value;
+  }
+  return "auto";
+}
+
+function resolveProviderModel(
+  providerSetting: DistillationProviderSetting,
+): { provider: DistillationProviderName; model: string | null } {
+  const provider = resolveProviderForDistillation(providerSetting);
+  const model = resolveDistillationModel(providerSetting).trim();
+  return {
+    provider,
+    model: model || null,
+  };
+}
+
+function dedupe(values: Array<string | null>): string[] {
+  const seen = new Set<string>();
+  const ordered: string[] = [];
+  for (const value of values) {
+    if (!value || seen.has(value)) continue;
+    seen.add(value);
+    ordered.push(value);
+  }
+  return ordered;
+}
+
+function modelFromTaskMetadata(metadata: unknown): { model: string | null; provider: string | null } {
+  const root = isRecord(metadata) ? metadata : {};
+  const llmModel = stringValue(root.llmModel);
+  const llmProvider = stringValue(root.llmProvider);
+  if (llmModel) {
+    return { model: llmModel, provider: llmProvider };
+  }
+
+  const scheduleDecision = isRecord(root.scheduleDecision) ? root.scheduleDecision : {};
+  const scheduleModel = stringValue(scheduleDecision.model);
+  const scheduleProvider = stringValue(scheduleDecision.provider);
+  if (scheduleModel) {
+    return { model: scheduleModel, provider: scheduleProvider };
+  }
+
+  const diagnostics = isRecord(scheduleDecision.diagnostics) ? scheduleDecision.diagnostics : {};
+  const diagnosticsModel = stringValue(diagnostics.model);
+  const diagnosticsProvider = stringValue(diagnostics.provider);
+  if (diagnosticsModel) {
+    return { model: diagnosticsModel, provider: diagnosticsProvider };
+  }
+
+  return { model: null, provider: null };
+}
+
+function findCandidateProviderModel(
+  targetKind: DistillationTargetKind | string,
+): { model: string | null; provider: DistillationProviderName | null } {
+  if (
+    targetKind !== "wiki_file" &&
+    targetKind !== "vibe_memory" &&
+    targetKind !== "web_ingest"
+  ) {
+    return { model: null, provider: null };
+  }
+  const route = resolveFindCandidateRoute(targetKind);
+  const resolved = resolveProviderModel(asDistillationProviderSetting(route.provider));
+  return {
+    model: resolved.model,
+    provider: resolved.provider,
+  };
+}
+
+function webResearchProviderModel(): {
+  model: string | null;
+  provider: DistillationProviderName | null;
+} {
+  const route = resolveWebSourceResearchRoute();
+  const resolved = resolveProviderModel(asDistillationProviderSetting(route.provider));
+  return {
+    model: resolved.model,
+    provider: resolved.provider,
+  };
+}
+
+function coverEvidenceProviderModel(): {
+  model: string | null;
+  provider: DistillationProviderName | null;
+} {
+  const routes = resolveCoverEvidenceRoutes();
+  const resolvedRoutes = [
+    resolveProviderModel(asDistillationProviderSetting(routes.sourceSupport.provider)),
+    resolveProviderModel(asDistillationProviderSetting(routes.externalEvidence.provider)),
+    resolveProviderModel(asDistillationProviderSetting(routes.mcpEvidence.provider)),
+  ];
+  const models = dedupe(resolvedRoutes.map((entry) => entry.model));
+  const providers = dedupe(resolvedRoutes.map((entry) => entry.provider));
+  return {
+    model: models.length > 0 ? models.join(" | ") : null,
+    provider:
+      providers.length === 0
+        ? null
+        : providers.length === 1
+          ? (providers[0] as DistillationProviderName)
+          : null,
+  };
+}
+
+function finalizeProviderModel(): {
+  model: string | null;
+  provider: DistillationProviderName | null;
+} {
+  const resolved = resolveProviderModel(groupedConfig.distillation.provider);
+  return {
+    model: resolved.model,
+    provider: resolved.provider,
+  };
+}
+
+function activeProviderModelForTask(task: typeof distillationTargetStates.$inferSelect): {
+  model: string | null;
+  provider: DistillationProviderName | null;
+} {
+  const metadataModel = modelFromTaskMetadata(task.metadata);
+  if (metadataModel.model) {
+    return {
+      model: metadataModel.model,
+      provider:
+        metadataModel.provider === "openai" ||
+        metadataModel.provider === "azure-openai" ||
+        metadataModel.provider === "bedrock" ||
+        metadataModel.provider === "local-llm"
+          ? metadataModel.provider
+          : null,
+    };
+  }
+
+  if (task.phase === "researching_source" || task.phase === "writing_source") {
+    return webResearchProviderModel();
+  }
+  if (task.phase === "covering_evidence") {
+    return coverEvidenceProviderModel();
+  }
+  if (task.phase === "finalizing") {
+    return finalizeProviderModel();
+  }
+  return findCandidateProviderModel(task.targetKind);
+}
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
@@ -411,7 +581,8 @@ export async function listQueueItems(params: QueueListQuery) {
 }
 
 export async function fetchActiveTasks() {
-  return db
+  await ensureRuntimeSettingsLoaded();
+  const rows = await db
     .select()
     .from(distillationTargetStates)
     .where(
@@ -421,6 +592,15 @@ export async function fetchActiveTasks() {
       ),
     )
     .orderBy(desc(distillationTargetStates.lockedAt));
+
+  return rows.map((row) => {
+    const active = activeProviderModelForTask(row);
+    return {
+      ...row,
+      activeModel: active.model,
+      activeProvider: active.provider,
+    } satisfies QueueTaskWithModel;
+  });
 }
 
 export async function pauseTarget(id: string, reason: string) {

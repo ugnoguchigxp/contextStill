@@ -1,4 +1,4 @@
-import { Activity, Clock, Cpu, Database, Pause, User } from "lucide-react";
+import { Activity, Clock, Cpu, Database, Pause } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import type { DistillationTargetState } from "../repositories/admin.repository";
@@ -101,8 +101,13 @@ export function QueueTelemetryPanel({
                       <span>Try: {task.attemptCount}</span>
                     </div>
                     <div className="flex items-center gap-1">
-                      <User size={11} className="text-slate-300" />
-                      <span className="truncate max-w-[100px]">{task.lockedBy}</span>
+                      <span>Model:</span>
+                      <span
+                        className="truncate max-w-[160px] font-mono text-[10.5px]"
+                        title={task.activeModel ?? undefined}
+                      >
+                        {task.activeModel ?? "unknown"}
+                      </span>
                     </div>
                   </div>
                 </div>
