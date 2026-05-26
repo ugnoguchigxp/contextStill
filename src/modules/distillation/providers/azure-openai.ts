@@ -7,7 +7,7 @@ import {
   azureOpenAiDeploymentsForTask,
   azureOpenAiHeaders,
   buildAzureOpenAiChatUrl,
-  configuredAzureOpenAiDeployments,
+  configuredAzureOpenAiDeploymentsForSlots,
   markAzureOpenAiDeploymentRateLimited,
   markAzureOpenAiDeploymentSucceeded,
 } from "../../llm/providers/azure-openai-config.js";
@@ -49,16 +49,17 @@ function isAzureRateLimitError(error: unknown): boolean {
 async function callAzureOpenAiChatWithDeploymentPool(
   request: DistillationChatRequest,
   pinnedDeployment: AzureOpenAiRuntimeDeployment | null,
+  selectedSlots: number[] | undefined,
   setPinnedDeployment: (deployment: AzureOpenAiRuntimeDeployment) => void,
 ): Promise<DistillationChatResponse> {
   return withRequestTimeout(
     request.timeoutMs ?? groupedConfig.distillation.timeoutMs,
     async (signal) => {
-      if (configuredAzureOpenAiDeployments().length === 0) {
+      if (configuredAzureOpenAiDeploymentsForSlots(selectedSlots).length === 0) {
         throw new Error("Azure OpenAI is not configured");
       }
 
-      const deployments = azureOpenAiDeploymentsForTask(pinnedDeployment);
+      const deployments = azureOpenAiDeploymentsForTask(pinnedDeployment, selectedSlots);
       if (deployments.length === 0) {
         throw azureOpenAiCooldownError();
       }
@@ -109,12 +110,17 @@ async function callAzureOpenAiChatWithDeploymentPool(
   );
 }
 
-export function createAzureOpenAiChatClient(): DistillationChatClient {
+export function createAzureOpenAiChatClient(selectedSlots?: number[]): DistillationChatClient {
   let pinnedDeployment: AzureOpenAiRuntimeDeployment | null = null;
   return (request) =>
-    callAzureOpenAiChatWithDeploymentPool(request, pinnedDeployment, (deployment) => {
-      pinnedDeployment = deployment;
-    });
+    callAzureOpenAiChatWithDeploymentPool(
+      request,
+      pinnedDeployment,
+      selectedSlots,
+      (deployment) => {
+        pinnedDeployment = deployment;
+      },
+    );
 }
 
 export async function callAzureOpenAiChat(

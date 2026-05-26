@@ -65,10 +65,12 @@ async function inspectAgenticLlmWithProviderHealth(
     agenticRouting.provider,
     timeoutMs,
     agenticRouting.fallback,
+    agenticRouting.azureDeploymentSlots,
   );
   const providerHealth = await checkLlmProviderHealthMatrix(timeoutMs, {
     selectedProvider: agenticLlm.selectedProvider,
     routeOrder: agenticLlm.fallbackOrder,
+    selectedAzureDeploymentSlots: agenticRouting.azureDeploymentSlots,
   });
   return {
     ...agenticLlm,

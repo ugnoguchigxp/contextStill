@@ -480,6 +480,7 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
     routing.timeoutMs,
     "context-response-composer",
     routing.fallback,
+    routing.azureDeploymentSlots,
   );
   const primaryProviderName = providers[0]?.name ?? routing.provider;
   const primaryModel = modelForProvider(primaryProviderName);

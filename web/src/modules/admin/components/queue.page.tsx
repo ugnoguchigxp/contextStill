@@ -611,7 +611,8 @@ export function QueuePage() {
                   const offline = snapshot?.offline ?? 0;
                   const nonRegistered = snapshot?.nonRegistered ?? 0;
                   const llmStatus = resolveQueueLlmStatus({ running, offline });
-                  const isPremiumQueue = tab.name === "premiumCoveringEvidence";
+                  const showsNonRegistered =
+                    tab.name === "coveringEvidence" || tab.name === "premiumCoveringEvidence";
                   const visuals = queueCardVisuals[tab.name];
                   const selected = queue === tab.name;
                   return (
@@ -659,13 +660,13 @@ export function QueuePage() {
                           <div>完了</div>
                           <div>失敗</div>
                           <div>一時停止</div>
-                          {isPremiumQueue ? <div>非登録</div> : null}
+                          {showsNonRegistered ? <div>非登録</div> : null}
                         </div>
                         <div className="space-y-1 text-right font-medium text-slate-800">
                           <div>{formatCount(completed)}</div>
                           <div>{formatCount(failed)}</div>
                           <div>{formatCount(paused)}</div>
-                          {isPremiumQueue ? <div>{formatCount(nonRegistered)}</div> : null}
+                          {showsNonRegistered ? <div>{formatCount(nonRegistered)}</div> : null}
                         </div>
                       </div>
                     </button>

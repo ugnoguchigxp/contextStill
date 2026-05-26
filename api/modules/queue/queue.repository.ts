@@ -476,7 +476,7 @@ async function queueStatsFor(queueName: DistillationQueueName) {
     offline += Number(row.offline_count ?? 0);
     nonRegistered += Number(row.non_registered_count ?? 0);
   }
-  if (queueName !== "premiumCoveringEvidence") {
+  if (queueName !== "coveringEvidence" && queueName !== "premiumCoveringEvidence") {
     nonRegistered = 0;
   }
   return {

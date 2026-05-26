@@ -15,7 +15,7 @@ import {
   azureOpenAiDeploymentsForTask,
   azureOpenAiHeaders,
   buildAzureOpenAiChatUrl,
-  configuredAzureOpenAiDeployments,
+  configuredAzureOpenAiDeploymentsForSlots,
   markAzureOpenAiDeploymentRateLimited,
   markAzureOpenAiDeploymentSucceeded,
   primaryAzureOpenAiDeployment,
@@ -39,6 +39,7 @@ type AzureOpenAiResponse = {
 type AzureOpenAiProviderOptions = {
   timeoutMs?: number;
   deploymentIndex?: number;
+  deploymentSlots?: number[];
 };
 
 const azureHealthCheckMaxTokens = 16;
@@ -141,6 +142,7 @@ async function pingAzureOpenAiDeploymentWithTimeout(
 export function createAzureOpenAiProvider(options: AzureOpenAiProviderOptions = {}): LlmProvider {
   const timeoutMs = Math.max(1000, options.timeoutMs ?? 5000);
   const deploymentIndex = options.deploymentIndex;
+  const deploymentSlots = options.deploymentSlots;
   let pinnedDeployment: AzureOpenAiRuntimeDeployment | null = null;
 
   const configuredDeployments = () => {
@@ -148,14 +150,14 @@ export function createAzureOpenAiProvider(options: AzureOpenAiProviderOptions = 
       const deployment = azureOpenAiDeploymentAt(deploymentIndex);
       return deployment ? [deployment] : [];
     }
-    return configuredAzureOpenAiDeployments();
+    return configuredAzureOpenAiDeploymentsForSlots(deploymentSlots);
   };
   const selectedDeployments = () => {
     if (typeof deploymentIndex === "number") {
       const deployment = azureOpenAiDeploymentAt(deploymentIndex);
       return deployment ? [deployment] : [];
     }
-    return azureOpenAiDeploymentsForTask(pinnedDeployment);
+    return azureOpenAiDeploymentsForTask(pinnedDeployment, deploymentSlots);
   };
   const isConfigured = () => configuredDeployments().length > 0;
 

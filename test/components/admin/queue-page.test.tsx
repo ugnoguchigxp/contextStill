@@ -57,7 +57,7 @@ describe("QueuePage v2", () => {
           running: 1,
           failed: 0,
           offline: 0,
-          nonRegistered: 0,
+          nonRegistered: 2,
           escalated: 1,
         },
         premiumCoveringEvidence: {
@@ -85,7 +85,7 @@ describe("QueuePage v2", () => {
         running: 1,
         failed: 1,
         offline: 1,
-        nonRegistered: 1,
+        nonRegistered: 3,
         escalated: 1,
       },
     });
@@ -207,9 +207,11 @@ describe("QueuePage v2", () => {
 
     expect(screen.getByRole("button", { name: "Finding" })).toHaveTextContent("Ready");
     expect(screen.getByRole("button", { name: "Covering" })).toHaveTextContent("Active");
+    expect(screen.getByRole("button", { name: "Covering" })).toHaveTextContent("非登録");
+    expect(screen.getByRole("button", { name: "Covering" })).toHaveTextContent("2");
     expect(screen.getByRole("button", { name: "Premium" })).toHaveTextContent("Offline");
     expect(screen.getByRole("button", { name: "Premium" })).toHaveTextContent("非登録");
-    expect(screen.getAllByText("非登録")).toHaveLength(1);
+    expect(screen.getAllByText("非登録")).toHaveLength(2);
     expect(screen.queryByText("待機中")).not.toBeInTheDocument();
   });
 });

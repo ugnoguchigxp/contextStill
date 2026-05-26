@@ -39,6 +39,7 @@ export type RuntimeSettingsRoute = {
   provider: RuntimeProviderSetting;
   model?: string;
   fallback: RuntimeProviderName[];
+  azureDeploymentSlots?: number[];
 };
 
 export type FindCandidateThrottlingSettings = {
@@ -120,6 +121,7 @@ export type RuntimeSettingsEditable = {
       provider: RuntimeProviderName;
       model: string;
       fallback: RuntimeProviderName[];
+      azureDeploymentSlots?: number[];
       timeoutMs: number;
       maxTokens: number;
     };
@@ -220,6 +222,7 @@ const runtimeRouteSchema = z.object({
   provider: runtimeProviderSettingSchema,
   model: z.string().trim().min(1).optional(),
   fallback: z.array(runtimeProviderSchema).max(8).default([]),
+  azureDeploymentSlots: z.array(z.number().int().min(1).max(3)).max(3).optional(),
 });
 
 export const runtimeSettingsEditableSchema = z.object({
@@ -282,6 +285,7 @@ export const runtimeSettingsEditableSchema = z.object({
       provider: runtimeProviderSchema,
       model: z.string().trim().min(1),
       fallback: z.array(runtimeProviderSchema).max(8).default([]),
+      azureDeploymentSlots: z.array(z.number().int().min(1).max(3)).max(3).optional(),
       timeoutMs: z.number().int().min(1000).max(3_600_000),
       maxTokens: z.number().int().min(128).max(16_384),
     }),

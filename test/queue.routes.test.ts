@@ -41,7 +41,7 @@ describe("queue routes v2", () => {
           running: 0,
           failed: 1,
           offline: 1,
-          nonRegistered: 0,
+          nonRegistered: 1,
           escalated: 1,
         },
         premiumCoveringEvidence: {
@@ -69,7 +69,7 @@ describe("queue routes v2", () => {
         running: 1,
         failed: 1,
         offline: 1,
-        nonRegistered: 0,
+        nonRegistered: 1,
         escalated: 1,
       },
     });
@@ -79,6 +79,7 @@ describe("queue routes v2", () => {
     expect(response.status).toBe(200);
     const json = await response.json();
     expect(json.totals.counters.pending).toBe(3);
+    expect(json.queues.coveringEvidence.nonRegistered).toBe(1);
     expect(repo.fetchQueueDashboardStats).toHaveBeenCalled();
   });
 

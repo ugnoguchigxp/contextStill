@@ -120,6 +120,33 @@ function patchFallbackSlot(
   return normalizeFallbackProviders(nextSlots);
 }
 
+const azureDeploymentSlotOptions = [1, 2, 3] as const;
+
+function normalizeAzureDeploymentSlots(values: number[] | undefined): number[] {
+  if (!values || values.length === 0) return [];
+  const deduped = new Set<number>();
+  for (const value of values) {
+    if (!Number.isInteger(value) || value < 1 || value > 3) continue;
+    deduped.add(value);
+  }
+  return [...deduped];
+}
+
+function patchAzureDeploymentSlot(
+  values: number[] | undefined,
+  slot: number,
+  enabled: boolean,
+): number[] | undefined {
+  const current = new Set(normalizeAzureDeploymentSlots(values));
+  if (enabled) {
+    current.add(slot);
+  } else {
+    current.delete(slot);
+  }
+  const next = [...current].sort((left, right) => left - right);
+  return next.length > 0 ? next : undefined;
+}
+
 function getConfiguredModelByProvider(
   settings: RuntimeSettingsEditable,
 ): Record<RuntimeProviderName, string> {
@@ -289,11 +316,17 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
           provider: view.taskRouting.findCandidate.source.provider,
           model: view.taskRouting.findCandidate.source.model,
           fallback: [...view.taskRouting.findCandidate.source.fallback],
+          azureDeploymentSlots: view.taskRouting.findCandidate.source.azureDeploymentSlots
+            ? [...view.taskRouting.findCandidate.source.azureDeploymentSlots]
+            : undefined,
         },
         vibe: {
           provider: view.taskRouting.findCandidate.vibe.provider,
           model: view.taskRouting.findCandidate.vibe.model,
           fallback: [...view.taskRouting.findCandidate.vibe.fallback],
+          azureDeploymentSlots: view.taskRouting.findCandidate.vibe.azureDeploymentSlots
+            ? [...view.taskRouting.findCandidate.vibe.azureDeploymentSlots]
+            : undefined,
         },
         throttling: {
           backgroundEnabled: view.taskRouting.findCandidate.throttling.backgroundEnabled,
@@ -313,34 +346,52 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
         provider: view.taskRouting.webSourceResearch.provider,
         model: view.taskRouting.webSourceResearch.model,
         fallback: [...view.taskRouting.webSourceResearch.fallback],
+        azureDeploymentSlots: view.taskRouting.webSourceResearch.azureDeploymentSlots
+          ? [...view.taskRouting.webSourceResearch.azureDeploymentSlots]
+          : undefined,
       },
       coverEvidence: {
         sourceSupport: {
           provider: view.taskRouting.coverEvidence.sourceSupport.provider,
           model: view.taskRouting.coverEvidence.sourceSupport.model,
           fallback: [...view.taskRouting.coverEvidence.sourceSupport.fallback],
+          azureDeploymentSlots: view.taskRouting.coverEvidence.sourceSupport.azureDeploymentSlots
+            ? [...view.taskRouting.coverEvidence.sourceSupport.azureDeploymentSlots]
+            : undefined,
         },
         externalEvidence: {
           provider: view.taskRouting.coverEvidence.externalEvidence.provider,
           model: view.taskRouting.coverEvidence.externalEvidence.model,
           fallback: [...view.taskRouting.coverEvidence.externalEvidence.fallback],
+          azureDeploymentSlots: view.taskRouting.coverEvidence.externalEvidence.azureDeploymentSlots
+            ? [...view.taskRouting.coverEvidence.externalEvidence.azureDeploymentSlots]
+            : undefined,
         },
         mcpEvidence: {
           provider: view.taskRouting.coverEvidence.mcpEvidence.provider,
           model: view.taskRouting.coverEvidence.mcpEvidence.model,
           fallback: [...view.taskRouting.coverEvidence.mcpEvidence.fallback],
+          azureDeploymentSlots: view.taskRouting.coverEvidence.mcpEvidence.azureDeploymentSlots
+            ? [...view.taskRouting.coverEvidence.mcpEvidence.azureDeploymentSlots]
+            : undefined,
         },
       },
       finalizeDistille: {
         provider: view.taskRouting.finalizeDistille.provider,
         model: view.taskRouting.finalizeDistille.model,
         fallback: [...view.taskRouting.finalizeDistille.fallback],
+        azureDeploymentSlots: view.taskRouting.finalizeDistille.azureDeploymentSlots
+          ? [...view.taskRouting.finalizeDistille.azureDeploymentSlots]
+          : undefined,
       },
       agenticCompile: {
         enabled: view.taskRouting.agenticCompile.enabled,
         provider: view.taskRouting.agenticCompile.provider,
         model: view.taskRouting.agenticCompile.model,
         fallback: [...view.taskRouting.agenticCompile.fallback],
+        azureDeploymentSlots: view.taskRouting.agenticCompile.azureDeploymentSlots
+          ? [...view.taskRouting.agenticCompile.azureDeploymentSlots]
+          : undefined,
         timeoutMs: view.taskRouting.agenticCompile.timeoutMs,
         maxTokens: view.taskRouting.agenticCompile.maxTokens,
       },
@@ -426,6 +477,7 @@ function RouteEditor({
   onChange: (next: RuntimeSettingsRoute) => void;
 }) {
   const fallbackSlots = toFallbackSlots(route.fallback);
+  const azureSlots = normalizeAzureDeploymentSlots(route.azureDeploymentSlots);
 
   return (
     <div className="settings-route-row">
@@ -500,6 +552,30 @@ function RouteEditor({
             ))}
           </Select>
         </label>
+        <div className="settings-field">
+          <span>Azure Slots</span>
+          <div className="flex flex-wrap items-center gap-3 py-2">
+            {azureDeploymentSlotOptions.map((slot) => (
+              <label key={slot} className="settings-check">
+                <Checkbox
+                  checked={azureSlots.includes(slot)}
+                  onChange={(event) =>
+                    onChange({
+                      ...route,
+                      azureDeploymentSlots: patchAzureDeploymentSlot(
+                        route.azureDeploymentSlots,
+                        slot,
+                        event.target.checked,
+                      ),
+                    })
+                  }
+                />
+                #{slot}
+              </label>
+            ))}
+          </div>
+          <span className="text-xs text-muted-foreground">empty = all configured deployments</span>
+        </div>
       </div>
     </div>
   );
@@ -2090,6 +2166,40 @@ export function SettingsPage() {
                             ))}
                           </Select>
                         </label>
+                        <div className="settings-field">
+                          <span>Azure Slots</span>
+                          <div className="flex flex-wrap items-center gap-3 py-2">
+                            {azureDeploymentSlotOptions.map((slot) => (
+                              <label key={slot} className="settings-check">
+                                <Checkbox
+                                  checked={normalizeAzureDeploymentSlots(
+                                    draft.taskRouting.agenticCompile.azureDeploymentSlots,
+                                  ).includes(slot)}
+                                  onChange={(event) =>
+                                    patchDraft((current) => ({
+                                      ...current,
+                                      taskRouting: {
+                                        ...current.taskRouting,
+                                        agenticCompile: {
+                                          ...current.taskRouting.agenticCompile,
+                                          azureDeploymentSlots: patchAzureDeploymentSlot(
+                                            current.taskRouting.agenticCompile.azureDeploymentSlots,
+                                            slot,
+                                            event.target.checked,
+                                          ),
+                                        },
+                                      },
+                                    }))
+                                  }
+                                />
+                                #{slot}
+                              </label>
+                            ))}
+                          </div>
+                          <span className="text-xs text-muted-foreground">
+                            empty = all configured deployments
+                          </span>
+                        </div>
                         <label className="settings-field">
                           <span>Timeout (ms)</span>
                           <Input

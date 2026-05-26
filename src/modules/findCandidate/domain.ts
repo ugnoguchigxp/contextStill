@@ -104,12 +104,14 @@ function candidateOutputMaxTokens(): number {
 async function defaultFindCandidateRoute(targetKind: FindCandidateTargetKind): Promise<{
   provider: DistillationProviderSetting;
   fallback: Array<Exclude<DistillationProviderSetting, "auto">>;
+  azureDeploymentSlots?: number[];
 }> {
   await ensureRuntimeSettingsLoaded();
   const route = resolveFindCandidateRoute(targetKind);
   return {
     provider: route.provider as DistillationProviderSetting,
     fallback: [...route.fallback] as Array<Exclude<DistillationProviderSetting, "auto">>,
+    azureDeploymentSlots: route.azureDeploymentSlots ? [...route.azureDeploymentSlots] : undefined,
   };
 }
 
@@ -308,6 +310,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
   const defaultRoute = await defaultFindCandidateRoute(target.targetKind);
   const provider = input.provider ?? defaultRoute.provider;
   const fallbackOrder = input.provider ? [] : defaultRoute.fallback;
+  const azureDeploymentSlots = input.provider ? undefined : defaultRoute.azureDeploymentSlots;
   const model = resolveDistillationModel(provider);
   const toolDefinition = buildToolDefinitionForTarget(target.targetKind);
   const readLog: Array<{ from: number; toExclusive: number }> = [];
@@ -464,6 +467,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
       {
         providerSetting: provider,
         fallbackOrder,
+        azureDeploymentSlots,
         toolDefinitions: [toolDefinition],
         toolExecutor,
         usageSource: "find-candidate",

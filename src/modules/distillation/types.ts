@@ -81,6 +81,7 @@ export type DistillationRuntimeOptions = {
   toolExecutor?: DistillationToolExecutor;
   providerSetting?: DistillationProviderSetting;
   fallbackOrder?: DistillationProviderName[];
+  azureDeploymentSlots?: number[];
   enableTools?: boolean;
   maxToolRounds?: number;
   toolCallLimits?: Record<string, number>;

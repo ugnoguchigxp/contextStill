@@ -1847,6 +1847,7 @@ export type RuntimeSettingsRoute = {
   provider: RuntimeProviderSetting;
   model?: string;
   fallback: RuntimeProviderName[];
+  azureDeploymentSlots?: number[];
 };
 
 export type FindCandidateThrottlingSettings = {
@@ -1925,6 +1926,7 @@ export type RuntimeSettingsEditable = {
       provider: RuntimeProviderName;
       model: string;
       fallback: RuntimeProviderName[];
+      azureDeploymentSlots?: number[];
       timeoutMs: number;
       maxTokens: number;
     };

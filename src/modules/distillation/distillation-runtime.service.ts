@@ -278,10 +278,11 @@ function createDefaultChatClient(
   providerSetting: DistillationProviderSetting = groupedConfig.distillation.provider,
   usageSource = "distillation",
   fallbackOrder: DistillationProviderName[] = [],
+  azureDeploymentSlots?: number[],
 ): DistillationChatClient {
   const order = resolveDistillationProviderOrder(providerSetting, fallbackOrder);
   let pinnedProvider: DistillationProviderName | null = null;
-  const azureOpenAiChatClient = createAzureOpenAiChatClient();
+  const azureOpenAiChatClient = createAzureOpenAiChatClient(azureDeploymentSlots);
   const requestModelOwner =
     providerSetting === "auto"
       ? (order.find((provider) => isProviderConfigured(provider)) ?? order[0] ?? "local-llm")
@@ -402,6 +403,7 @@ export async function runDistillationCompletion(
       options.providerSetting ?? groupedConfig.distillation.provider,
       options.usageSource ?? "distillation",
       options.fallbackOrder,
+      options.azureDeploymentSlots,
     );
   const toolExecutor = options.toolExecutor ?? executeDistillationToolCall;
   const maxToolRounds = Math.max(

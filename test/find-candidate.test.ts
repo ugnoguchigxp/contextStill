@@ -4,6 +4,12 @@ import { runFindCandidate } from "../src/modules/findCandidate/domain.js";
 import { parseStorageCandidatesFromLlmOutput } from "../src/modules/findCandidate/parser.js";
 
 type RuntimeProviderName = "openai" | "azure-openai" | "bedrock" | "local-llm";
+type RuntimeRouteMock = {
+  provider: string;
+  model: string;
+  fallback: RuntimeProviderName[];
+  azureDeploymentSlots?: number[];
+};
 
 const mocks = vi.hoisted(() => ({
   getDistillationTargetStateById: vi.fn(),
@@ -12,11 +18,13 @@ const mocks = vi.hoisted(() => ({
   runDistillationCompletion: vi.fn(),
   resolveDistillationModel: vi.fn(() => "test-model"),
   ensureRuntimeSettingsLoaded: vi.fn(async () => {}),
-  resolveFindCandidateRoute: vi.fn(() => ({
-    provider: "local-llm",
-    model: "test-model",
-    fallback: [] as RuntimeProviderName[],
-  })),
+  resolveFindCandidateRoute: vi.fn(
+    (): RuntimeRouteMock => ({
+      provider: "local-llm",
+      model: "test-model",
+      fallback: [] as RuntimeProviderName[],
+    }),
+  ),
   insertFindCandidateResult: vi.fn(),
   recordAuditLogSafe: vi.fn(),
 }));
@@ -63,11 +71,13 @@ describe("runFindCandidate", () => {
     groupedConfig.distillation.findCandidateProvider = "local-llm";
     groupedConfig.distillation.findCandidateTimeoutMs = 600_000;
     groupedConfig.distillationTools.findCandidateMaxToolCalls = 8;
-    mocks.resolveFindCandidateRoute.mockImplementation(() => ({
-      provider: groupedConfig.distillation.findCandidateProvider,
-      model: "test-model",
-      fallback: [] as RuntimeProviderName[],
-    }));
+    mocks.resolveFindCandidateRoute.mockImplementation(
+      (): RuntimeRouteMock => ({
+        provider: groupedConfig.distillation.findCandidateProvider,
+        model: "test-model",
+        fallback: [] as RuntimeProviderName[],
+      }),
+    );
     mocks.getDistillationTargetStateById.mockResolvedValue({
       id: "target-1",
       targetKind: "wiki_file",
@@ -222,6 +232,28 @@ describe("runFindCandidate", () => {
       expect.objectContaining({
         providerSetting: "openai",
         fallbackOrder: ["local-llm", "bedrock"],
+      }),
+    );
+  });
+
+  test("passes configured Azure deployment slots when provider is not explicitly overridden", async () => {
+    mocks.resolveFindCandidateRoute.mockReturnValue({
+      provider: "azure-openai",
+      model: "test-model",
+      fallback: ["local-llm"] as RuntimeProviderName[],
+      azureDeploymentSlots: [2],
+    });
+
+    await runFindCandidate({
+      targetStateId: "target-1",
+      callerMode: "storage",
+    });
+
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledWith(
+      expect.any(Object),
+      expect.objectContaining({
+        providerSetting: "azure-openai",
+        azureDeploymentSlots: [2],
       }),
     );
   });

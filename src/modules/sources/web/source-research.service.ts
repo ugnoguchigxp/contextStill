@@ -111,6 +111,7 @@ export async function researchWebSourceToMarkdown(params: {
   const configuredRoute = resolveWebSourceResearchRoute();
   const provider = params.provider ?? (configuredRoute.provider as DistillationProviderSetting);
   const fallbackOrder = params.provider ? [] : configuredRoute.fallback;
+  const azureDeploymentSlots = params.provider ? undefined : configuredRoute.azureDeploymentSlots;
   const model = resolveDistillationModel(provider);
 
   const completion = await runDistillationCompletion(
@@ -125,6 +126,7 @@ export async function researchWebSourceToMarkdown(params: {
     {
       providerSetting: provider,
       fallbackOrder,
+      azureDeploymentSlots,
       usageSource: "web-source-research",
       requireToolCall: true,
       toolNames: ["fetch_content"],

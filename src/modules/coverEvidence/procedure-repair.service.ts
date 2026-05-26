@@ -27,6 +27,7 @@ export type ProcedureRepairInput = {
   provider: DistillationProviderSetting;
   model: string;
   fallbackOrder?: DistillationProviderName[];
+  azureDeploymentSlots?: number[];
   chatClient?: DistillationChatClient;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -167,6 +168,7 @@ export async function repairProcedureCandidate(
       {
         providerSetting: input.provider,
         fallbackOrder: input.fallbackOrder,
+        azureDeploymentSlots: input.azureDeploymentSlots,
         chatClient: input.chatClient,
         usageSource: "cover-evidence:procedure-repair",
         enableTools: false,

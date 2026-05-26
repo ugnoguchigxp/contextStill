@@ -65,12 +65,18 @@ function resolveDistillationProviderOrder(
   return dedupeOrder([providerSetting, ...fallbackOrder]);
 }
 
-function buildProvider(provider: LlmProviderName, timeoutMs: number): LlmProvider {
+function buildProvider(
+  provider: LlmProviderName,
+  timeoutMs: number,
+  azureDeploymentSlots?: number[],
+): LlmProvider {
   switch (provider) {
     case "openai":
       return createOpenAiProvider({ timeoutMs });
     case "azure-openai":
-      return createAzureOpenAiProvider({ timeoutMs });
+      return azureDeploymentSlots && azureDeploymentSlots.length > 0
+        ? createAzureOpenAiProvider({ timeoutMs, deploymentSlots: azureDeploymentSlots })
+        : createAzureOpenAiProvider({ timeoutMs });
     case "bedrock":
       return createBedrockProvider({ timeoutMs });
     case "local-llm":
@@ -142,10 +148,11 @@ export function getAgenticLlmProviders(
   timeoutMs = groupedConfig.agenticCompile.timeoutMs,
   usageSource?: string,
   fallbackOrder: LlmProviderName[] = [],
+  azureDeploymentSlots?: number[],
 ): LlmProvider[] {
   const resolvedUsageSource = usageSource ?? "agentic-llm";
   return resolveProviderOrder(providerSetting, fallbackOrder).map((providerName) => {
-    const provider = buildProvider(providerName, timeoutMs);
+    const provider = buildProvider(providerName, timeoutMs, azureDeploymentSlots);
     return withUsageLogging(provider, resolvedUsageSource);
   });
 }
@@ -155,9 +162,15 @@ export async function checkLlmProviderHealthMatrix(
   options: {
     selectedProvider?: LlmProviderName;
     routeOrder?: LlmProviderName[];
+    selectedAzureDeploymentSlots?: number[];
   } = {},
 ): Promise<LlmProviderHealthStatus[]> {
   const routeOrder = options.routeOrder ?? [];
+  const selectedAzureDeploymentSlots = new Set(
+    options.selectedAzureDeploymentSlots?.filter(
+      (slot) => Number.isInteger(slot) && slot >= 1 && slot <= 3,
+    ) ?? [],
+  );
   const entries: LlmProviderHealthEntry[] = [];
 
   for (const providerName of nonAzureProviderNames) {
@@ -211,12 +224,18 @@ export async function checkLlmProviderHealthMatrix(
         endpoint: status.endpoint ?? defaultEndpointForProvider(entry.providerName),
       };
       const routeIndex = routeOrder.indexOf(entry.providerName);
+      const selected =
+        options.selectedProvider === entry.providerName &&
+        (entry.providerName !== "azure-openai" ||
+          selectedAzureDeploymentSlots.size === 0 ||
+          (typeof entry.deploymentIndex === "number" &&
+            selectedAzureDeploymentSlots.has(entry.deploymentIndex)));
       return {
         ...status,
         id: entry.id,
         label: entry.label,
         deploymentIndex: entry.deploymentIndex,
-        selected: options.selectedProvider === entry.providerName,
+        selected,
         routeOrder: routeIndex >= 0 ? routeIndex : null,
       };
     }),
@@ -227,6 +246,7 @@ export async function checkAgenticLlmHealth(
   providerSetting: AgenticCompileProvider = groupedConfig.agenticCompile.provider,
   timeoutMs = 5000,
   fallbackOrder: LlmProviderName[] = [],
+  azureDeploymentSlots?: number[],
 ): Promise<AgenticLlmHealthStatus> {
   const resolvedFallbackOrder = resolveProviderOrder(providerSetting, fallbackOrder);
   const providers = getAgenticLlmProviders(
@@ -234,6 +254,7 @@ export async function checkAgenticLlmHealth(
     timeoutMs,
     "health-check:agentic-llm",
     fallbackOrder,
+    azureDeploymentSlots,
   );
   let firstConfiguredStatus: LlmHealthStatus | null = null;
 

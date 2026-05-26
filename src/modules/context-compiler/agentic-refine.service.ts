@@ -205,6 +205,7 @@ export async function agenticRefine(
     routing.timeoutMs,
     "context-compiler",
     routing.fallback,
+    routing.azureDeploymentSlots,
   );
   const allowFallback = providers.length > 1;
   const fallbackErrors: string[] = [];

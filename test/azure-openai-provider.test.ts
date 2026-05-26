@@ -331,6 +331,52 @@ describe("azure openai provider", () => {
     );
   });
 
+  test("createAzureOpenAiChatClient can restrict routing to selected deployment slots", async () => {
+    groupedConfig.azureOpenAi.deployments = [
+      {
+        apiKey: "test-api-key",
+        apiBaseUrl: "https://test-endpoint.openai.azure.com",
+        apiPath: "/openai/deployments",
+        model: "gpt-4",
+        apiVersion: "2023-05-15",
+      },
+      {
+        apiKey: "second-key",
+        apiBaseUrl: "https://second.openai.azure.com",
+        apiPath: "/openai/deployments",
+        model: "gpt-4b",
+        apiVersion: "2023-05-15",
+      },
+    ];
+
+    const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: "ok" }, finish_reason: "stop" }],
+      }),
+    } as unknown as Response);
+
+    const client = createAzureOpenAiChatClient([2]);
+    await client({
+      model: "gpt-4",
+      messages: [{ role: "user", content: "first" }],
+      maxTokens: 50,
+    });
+    await client({
+      model: "gpt-4",
+      messages: [{ role: "user", content: "second" }],
+      maxTokens: 50,
+    });
+
+    expect(spy).toHaveBeenCalledTimes(2);
+    expect(spy.mock.calls[0]?.[0]).toBe(
+      "https://second.openai.azure.com/openai/deployments/gpt-4b/chat/completions?api-version=2023-05-15",
+    );
+    expect(spy.mock.calls[1]?.[0]).toBe(
+      "https://second.openai.azure.com/openai/deployments/gpt-4b/chat/completions?api-version=2023-05-15",
+    );
+  });
+
   test("callAzureOpenAiChat skips a rate-limited Azure deployment on the next task", async () => {
     groupedConfig.azureOpenAi.deployments = [
       {

@@ -12,6 +12,7 @@ import {
   ensureRuntimeSettingsLoaded,
   resolveCoverEvidenceRoutes,
 } from "../settings/settings.service.js";
+import type { RuntimeSettingsRoute } from "../settings/settings.types.js";
 import { resolveCoverEvidenceRouteByPolicy } from "./provider-policy.js";
 import { dedupeCoverEvidenceCandidate } from "./dedupe.service.js";
 import {
@@ -52,6 +53,7 @@ type CoverEvidenceResolvedProviderRoute = {
   provider: DistillationProviderSetting;
   fallbackOrder: DistillationProviderName[];
   model: string;
+  azureDeploymentSlots?: number[];
 };
 
 function dedupeProviderFallbackOrder(
@@ -69,7 +71,7 @@ function dedupeProviderFallbackOrder(
 }
 
 function resolveCoverEvidenceProviderRoute(params: {
-  route: { provider: string; fallback: string[] };
+  route: RuntimeSettingsRoute;
   providerOverride?: DistillationProviderSetting;
   providerFallbackMode?: "fallback" | "single";
 }): CoverEvidenceResolvedProviderRoute {
@@ -84,6 +86,9 @@ function resolveCoverEvidenceProviderRoute(params: {
     provider,
     fallbackOrder,
     model: resolveDistillationModel(provider),
+    azureDeploymentSlots: params.route.azureDeploymentSlots
+      ? [...params.route.azureDeploymentSlots]
+      : undefined,
   };
 }
 
@@ -185,6 +190,7 @@ export async function runCoverEvidence(
   const sourceSupportProvider = sourceSupportRoute.provider;
   const sourceSupportFallbackOrder = sourceSupportRoute.fallbackOrder;
   const sourceSupportModel = sourceSupportRoute.model;
+  const sourceSupportAzureDeploymentSlots = sourceSupportRoute.azureDeploymentSlots;
 
   const externalEvidenceRoute = resolveCoverEvidenceProviderRoute({
     route: externalEvidenceRuntimeRoute,
@@ -194,6 +200,7 @@ export async function runCoverEvidence(
   const externalEvidenceProvider = externalEvidenceRoute.provider;
   const externalEvidenceFallbackOrder = externalEvidenceRoute.fallbackOrder;
   const externalEvidenceModel = externalEvidenceRoute.model;
+  const externalEvidenceAzureDeploymentSlots = externalEvidenceRoute.azureDeploymentSlots;
 
   const mcpEvidenceRoute = resolveCoverEvidenceProviderRoute({
     route: mcpEvidenceRuntimeRoute,
@@ -203,6 +210,7 @@ export async function runCoverEvidence(
   const mcpEvidenceProvider = mcpEvidenceRoute.provider;
   const mcpEvidenceFallbackOrder = mcpEvidenceRoute.fallbackOrder;
   const mcpEvidenceModel = mcpEvidenceRoute.model;
+  const mcpEvidenceAzureDeploymentSlots = mcpEvidenceRoute.azureDeploymentSlots;
 
   if (input.write) {
     const existing = await selectCoverEvidenceResultById(id);
@@ -251,14 +259,17 @@ export async function runCoverEvidence(
         sourceSupport: {
           provider: sourceSupportProvider,
           fallbackOrder: sourceSupportFallbackOrder,
+          azureDeploymentSlots: sourceSupportAzureDeploymentSlots,
         },
         externalEvidence: {
           provider: externalEvidenceProvider,
           fallbackOrder: externalEvidenceFallbackOrder,
+          azureDeploymentSlots: externalEvidenceAzureDeploymentSlots,
         },
         mcpEvidence: {
           provider: mcpEvidenceProvider,
           fallbackOrder: mcpEvidenceFallbackOrder,
+          azureDeploymentSlots: mcpEvidenceAzureDeploymentSlots,
         },
       },
     },
@@ -348,6 +359,7 @@ export async function runCoverEvidence(
               provider: externalEvidenceProvider,
               model: externalEvidenceModel,
               fallbackOrder: externalEvidenceFallbackOrder,
+              azureDeploymentSlots: externalEvidenceAzureDeploymentSlots,
               forceRefreshEvidence: input.forceRefreshEvidence,
               chatClient: input.chatClient,
               toolExecutor: input.toolExecutor,
@@ -359,6 +371,7 @@ export async function runCoverEvidence(
               provider: mcpEvidenceProvider,
               model: mcpEvidenceModel,
               fallbackOrder: mcpEvidenceFallbackOrder,
+              azureDeploymentSlots: mcpEvidenceAzureDeploymentSlots,
               chatClient: input.chatClient,
               toolExecutor: input.toolExecutor,
               signal: input.signal,

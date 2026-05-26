@@ -98,6 +98,19 @@ describe("agentic-llm service tests", () => {
     );
   });
 
+  test("passes Azure deployment slot routing when configured", () => {
+    vi.mocked(createAzureOpenAiProvider).mockReturnValue(
+      mockProvider("azure-openai", true, true) as any,
+    );
+
+    const providers = getAgenticLlmProviders("azure-openai", 2000, "context-compiler", [], [2]);
+    expect(providers).toHaveLength(1);
+    expect(createAzureOpenAiProvider).toHaveBeenCalledWith({
+      timeoutMs: 2000,
+      deploymentSlots: [2],
+    });
+  });
+
   test("wrapped chat does not wait for usage persistence", async () => {
     const azure = mockProvider("azure-openai", true, true);
     azure.chat.mockResolvedValue({ content: "ok" });
@@ -182,6 +195,42 @@ describe("agentic-llm service tests", () => {
       selected: false,
       routeOrder: 1,
     });
+  });
+
+  test("checkLlmProviderHealthMatrix marks only selected Azure slots when constrained", async () => {
+    groupedConfig.azureOpenAi.deployments = [
+      {
+        apiKey: "first-key",
+        apiBaseUrl: "https://first.openai.azure.com",
+        apiPath: "/openai/deployments",
+        model: "gpt-5-mini",
+        apiVersion: "2025-04-01-preview",
+      },
+      {
+        apiKey: "second-key",
+        apiBaseUrl: "https://second.openai.azure.com",
+        apiPath: "/openai/deployments",
+        model: "gpt-5-mini",
+        apiVersion: "2025-04-01-preview",
+      },
+    ];
+    vi.mocked(createOpenAiProvider).mockReturnValue(mockProvider("openai", false, false) as any);
+    vi.mocked(createAzureOpenAiProvider).mockReturnValue(
+      mockProvider("azure-openai", true, true) as any,
+    );
+    vi.mocked(createBedrockProvider).mockReturnValue(mockProvider("bedrock", false, false) as any);
+    vi.mocked(createLocalLlmProvider).mockReturnValue(
+      mockProvider("local-llm", false, false) as any,
+    );
+
+    const health = await checkLlmProviderHealthMatrix(2000, {
+      selectedProvider: "azure-openai",
+      routeOrder: ["azure-openai"],
+      selectedAzureDeploymentSlots: [2],
+    });
+
+    expect(health.find((item) => item.id === "azure-openai:1")?.selected).toBe(false);
+    expect(health.find((item) => item.id === "azure-openai:2")?.selected).toBe(true);
   });
 
   describe("checkAgenticLlmHealth fallback logic", () => {

@@ -111,6 +111,7 @@ async function enrichApplicabilityFacets(params: {
   provider: DistillationProviderSetting;
   model: string;
   fallbackOrder?: DistillationProviderName[];
+  azureDeploymentSlots?: number[];
   chatClient?: DistillationChatClient;
   signal?: AbortSignal;
 }): Promise<CoverEvidenceResult> {
@@ -143,6 +144,7 @@ async function enrichApplicabilityFacets(params: {
       {
         providerSetting: params.provider,
         fallbackOrder: params.fallbackOrder,
+        azureDeploymentSlots: params.azureDeploymentSlots,
         chatClient: params.chatClient,
         usageSource: "cover-evidence:applicability-refinement",
         enableTools: false,
@@ -264,6 +266,7 @@ async function normalizeOrRepairProcedureQuality(params: {
   provider: DistillationProviderSetting;
   model: string;
   fallbackOrder?: DistillationProviderName[];
+  azureDeploymentSlots?: number[];
   chatClient?: DistillationChatClient;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -298,6 +301,7 @@ async function normalizeOrRepairProcedureQuality(params: {
     provider: params.provider,
     model: params.model,
     fallbackOrder: params.fallbackOrder,
+    azureDeploymentSlots: params.azureDeploymentSlots,
     chatClient: params.chatClient,
     signal: params.signal,
     timeoutMs: params.timeoutMs,
@@ -394,6 +398,7 @@ export async function runValueAssessment(params: {
   provider: DistillationProviderSetting;
   model: string;
   fallbackOrder?: DistillationProviderName[];
+  azureDeploymentSlots?: number[];
   chatClient?: DistillationChatClient;
   signal?: AbortSignal;
 }): Promise<CoverEvidenceResult> {
@@ -418,6 +423,7 @@ export async function runValueAssessment(params: {
       {
         providerSetting: params.provider,
         fallbackOrder: params.fallbackOrder,
+        azureDeploymentSlots: params.azureDeploymentSlots,
         chatClient: params.chatClient,
         usageSource: "cover-evidence:value-assessment",
         enableTools: false,
@@ -472,6 +478,7 @@ export async function runValueAssessment(params: {
       provider: params.provider,
       model: params.model,
       fallbackOrder: params.fallbackOrder,
+      azureDeploymentSlots: params.azureDeploymentSlots,
       chatClient: params.chatClient,
       signal: params.signal,
     });
@@ -487,6 +494,7 @@ export async function runValueAssessment(params: {
       provider: params.provider,
       model: params.model,
       fallbackOrder: params.fallbackOrder,
+      azureDeploymentSlots: params.azureDeploymentSlots,
       chatClient: params.chatClient,
       signal: params.signal,
       timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
@@ -518,6 +526,7 @@ export async function runExternalEvidence(params: {
   provider: DistillationProviderSetting;
   model: string;
   fallbackOrder?: DistillationProviderName[];
+  azureDeploymentSlots?: number[];
   forceRefreshEvidence?: boolean;
   chatClient?: DistillationChatClient;
   toolExecutor?: DistillationToolExecutor;
@@ -543,6 +552,7 @@ export async function runExternalEvidence(params: {
       {
         providerSetting: params.provider,
         fallbackOrder: params.fallbackOrder,
+        azureDeploymentSlots: params.azureDeploymentSlots,
         chatClient: params.chatClient,
         toolExecutor: params.toolExecutor,
         usageSource: "cover-evidence:external-evidence",
@@ -611,6 +621,7 @@ export async function runExternalEvidence(params: {
       provider: params.provider,
       model: params.model,
       fallbackOrder: params.fallbackOrder,
+      azureDeploymentSlots: params.azureDeploymentSlots,
       chatClient: params.chatClient,
       signal: params.signal,
       timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
@@ -638,6 +649,7 @@ export async function runOptionalMcpEvidence(params: {
   provider: DistillationProviderSetting;
   model: string;
   fallbackOrder?: DistillationProviderName[];
+  azureDeploymentSlots?: number[];
   chatClient?: DistillationChatClient;
   toolExecutor?: DistillationToolExecutor;
   signal?: AbortSignal;
@@ -660,6 +672,7 @@ export async function runOptionalMcpEvidence(params: {
       {
         providerSetting: params.provider,
         fallbackOrder: params.fallbackOrder,
+        azureDeploymentSlots: params.azureDeploymentSlots,
         chatClient: params.chatClient,
         toolExecutor: params.toolExecutor,
         usageSource: "cover-evidence:mcp-evidence",
@@ -706,6 +719,7 @@ export async function appendOptionalMcpEvidence(params: {
   provider: DistillationProviderSetting;
   model: string;
   fallbackOrder?: DistillationProviderName[];
+  azureDeploymentSlots?: number[];
   chatClient?: DistillationChatClient;
   toolExecutor?: DistillationToolExecutor;
   signal?: AbortSignal;
@@ -720,6 +734,7 @@ export async function appendOptionalMcpEvidence(params: {
     provider: params.provider,
     model: params.model,
     fallbackOrder: params.fallbackOrder,
+    azureDeploymentSlots: params.azureDeploymentSlots,
     chatClient: params.chatClient,
     toolExecutor: params.toolExecutor,
     signal: params.signal,

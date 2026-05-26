@@ -550,41 +550,6 @@ async function processCoveringJob(
       .onConflictDoNothing({ target: finalizeDistilleQueue.evidenceResultId });
   }
 
-  if (queue === "coveringEvidence" && cover.result.status === "insufficient") {
-    await db
-      .insert(premiumCoveringEvidenceQueue)
-      .values({
-        foundCandidateId: candidate.id,
-        sourceCoveringJobId: job.id,
-        distillationVersion: job.distillationVersion,
-        status: "pending",
-        priority: job.priority,
-        providerPolicy: "cloud_api",
-        payload: {
-          escalationReason: cover.result.reason ?? "insufficient",
-        },
-        metadata: {
-          fromQueueJobId: job.id,
-        },
-        updatedAt: new Date(),
-      })
-      .onConflictDoNothing({ target: premiumCoveringEvidenceQueue.foundCandidateId });
-    await markCoveringCompleted({
-      queue,
-      jobId: job.id,
-      status: "completed",
-      attemptCount: nextAttemptCount,
-      outcome: "escalated_to_premium",
-    });
-    await appendQueueEvent({
-      queueName: queue,
-      queueJobId: job.id,
-      eventType: "escalated_to_premium",
-      message: "insufficient result escalated to premium queue",
-    });
-    return;
-  }
-
   if (retryableCoverStatuses.has(cover.result.status)) {
     if (queue === "coveringEvidence" && exhausted) {
       await db

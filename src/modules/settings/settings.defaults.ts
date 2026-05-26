@@ -72,6 +72,19 @@ const distillationPriorityTargetKindSet = new Set<DistillationPriorityTargetKind
 
 const AZURE_OPENAI_MAX_DEPLOYMENTS = 3;
 
+function normalizeAzureDeploymentSlots(values: unknown): number[] | undefined {
+  if (!Array.isArray(values)) return undefined;
+  const deduped = new Set<number>();
+  for (const value of values) {
+    const numeric = typeof value === "number" ? value : Number(value);
+    if (!Number.isInteger(numeric)) continue;
+    if (numeric < 1 || numeric > AZURE_OPENAI_MAX_DEPLOYMENTS) continue;
+    deduped.add(numeric);
+  }
+  const normalized = [...deduped];
+  return normalized.length > 0 ? normalized : undefined;
+}
+
 function azureDeploymentName(index: number): string {
   return index === 0 ? "Primary" : `Deployment ${index + 1}`;
 }
@@ -382,38 +395,64 @@ export function cloneDefaultSettings(): RuntimeSettingsEditable {
         source: {
           ...bootstrap.taskRouting.findCandidate.source,
           fallback: [...bootstrap.taskRouting.findCandidate.source.fallback],
+          azureDeploymentSlots: bootstrap.taskRouting.findCandidate.source.azureDeploymentSlots
+            ? [...bootstrap.taskRouting.findCandidate.source.azureDeploymentSlots]
+            : undefined,
         },
         vibe: {
           ...bootstrap.taskRouting.findCandidate.vibe,
           fallback: [...bootstrap.taskRouting.findCandidate.vibe.fallback],
+          azureDeploymentSlots: bootstrap.taskRouting.findCandidate.vibe.azureDeploymentSlots
+            ? [...bootstrap.taskRouting.findCandidate.vibe.azureDeploymentSlots]
+            : undefined,
         },
         throttling: { ...bootstrap.taskRouting.findCandidate.throttling },
       },
       webSourceResearch: {
         ...bootstrap.taskRouting.webSourceResearch,
         fallback: [...bootstrap.taskRouting.webSourceResearch.fallback],
+        azureDeploymentSlots: bootstrap.taskRouting.webSourceResearch.azureDeploymentSlots
+          ? [...bootstrap.taskRouting.webSourceResearch.azureDeploymentSlots]
+          : undefined,
       },
       coverEvidence: {
         sourceSupport: {
           ...bootstrap.taskRouting.coverEvidence.sourceSupport,
           fallback: [...bootstrap.taskRouting.coverEvidence.sourceSupport.fallback],
+          azureDeploymentSlots: bootstrap.taskRouting.coverEvidence.sourceSupport
+            .azureDeploymentSlots
+            ? [...bootstrap.taskRouting.coverEvidence.sourceSupport.azureDeploymentSlots]
+            : undefined,
         },
         externalEvidence: {
           ...bootstrap.taskRouting.coverEvidence.externalEvidence,
           fallback: [...bootstrap.taskRouting.coverEvidence.externalEvidence.fallback],
+          azureDeploymentSlots: bootstrap.taskRouting.coverEvidence.externalEvidence
+            .azureDeploymentSlots
+            ? [...bootstrap.taskRouting.coverEvidence.externalEvidence.azureDeploymentSlots]
+            : undefined,
         },
         mcpEvidence: {
           ...bootstrap.taskRouting.coverEvidence.mcpEvidence,
           fallback: [...bootstrap.taskRouting.coverEvidence.mcpEvidence.fallback],
+          azureDeploymentSlots: bootstrap.taskRouting.coverEvidence.mcpEvidence.azureDeploymentSlots
+            ? [...bootstrap.taskRouting.coverEvidence.mcpEvidence.azureDeploymentSlots]
+            : undefined,
         },
       },
       finalizeDistille: {
         ...bootstrap.taskRouting.finalizeDistille,
         fallback: [...bootstrap.taskRouting.finalizeDistille.fallback],
+        azureDeploymentSlots: bootstrap.taskRouting.finalizeDistille.azureDeploymentSlots
+          ? [...bootstrap.taskRouting.finalizeDistille.azureDeploymentSlots]
+          : undefined,
       },
       agenticCompile: {
         ...bootstrap.taskRouting.agenticCompile,
         fallback: [...bootstrap.taskRouting.agenticCompile.fallback],
+        azureDeploymentSlots: bootstrap.taskRouting.agenticCompile.azureDeploymentSlots
+          ? [...bootstrap.taskRouting.agenticCompile.azureDeploymentSlots]
+          : undefined,
       },
     },
     search: {
@@ -462,6 +501,7 @@ function sanitizeRoute(
     provider: route.provider,
     model: resolveConfiguredRouteModel(settings, route.provider),
     fallback: normalizeProviderList(route.fallback),
+    azureDeploymentSlots: normalizeAzureDeploymentSlots(route.azureDeploymentSlots),
   };
 }
 
@@ -635,6 +675,9 @@ function mergeRuntimeSettings(
   );
   merged.taskRouting.agenticCompile.fallback = normalizeProviderList(
     merged.taskRouting.agenticCompile.fallback,
+  );
+  merged.taskRouting.agenticCompile.azureDeploymentSlots = normalizeAzureDeploymentSlots(
+    merged.taskRouting.agenticCompile.azureDeploymentSlots,
   );
   merged.general.distillationPriority.targetPriorityOrder =
     normalizeDistillationTargetPriorityOrder(

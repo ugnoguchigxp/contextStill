@@ -25,6 +25,7 @@ export type AzureOpenAiDeploymentAuditLabel = {
 
 const azureOpenAiDeploymentCooldowns = new Map<string, number>();
 let azureOpenAiNextDeploymentIndex = 0;
+const AZURE_OPENAI_SLOT_COUNT = 3;
 
 function normalizeDeployment(
   deployment: Partial<AzureOpenAiRuntimeDeployment>,
@@ -39,7 +40,7 @@ function normalizeDeployment(
 }
 
 function slotCandidate(index: number): Partial<AzureOpenAiRuntimeDeployment> | null {
-  if (!Number.isInteger(index) || index < 0 || index >= 3) return null;
+  if (!Number.isInteger(index) || index < 0 || index >= AZURE_OPENAI_SLOT_COUNT) return null;
   const deployment = groupedConfig.azureOpenAi.deployments?.[index];
   if (deployment) return deployment;
   if (index === 0) {
@@ -141,6 +142,43 @@ export function configuredAzureOpenAiDeployments(): AzureOpenAiRuntimeDeployment
   return deployments;
 }
 
+function normalizeRequestedSlotIndexes(selectedSlots: number[] | undefined): number[] {
+  if (!Array.isArray(selectedSlots) || selectedSlots.length === 0) return [];
+  const seen = new Set<number>();
+  const normalized: number[] = [];
+  for (const raw of selectedSlots) {
+    if (!Number.isInteger(raw)) continue;
+    const slot = raw;
+    if (slot < 1 || slot > AZURE_OPENAI_SLOT_COUNT) continue;
+    const index = slot - 1;
+    if (seen.has(index)) continue;
+    seen.add(index);
+    normalized.push(index);
+  }
+  return normalized;
+}
+
+export function configuredAzureOpenAiDeploymentsForSlots(
+  selectedSlots?: number[],
+): AzureOpenAiRuntimeDeployment[] {
+  if (!Array.isArray(selectedSlots) || selectedSlots.length === 0) {
+    return configuredAzureOpenAiDeployments();
+  }
+  const slotIndexes = normalizeRequestedSlotIndexes(selectedSlots);
+  if (slotIndexes.length === 0) return [];
+  const deployments: AzureOpenAiRuntimeDeployment[] = [];
+  const seen = new Set<string>();
+  for (const index of slotIndexes) {
+    const deployment = azureOpenAiDeploymentAt(index);
+    if (!deployment) continue;
+    const key = azureOpenAiDeploymentKey(deployment);
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deployments.push(deployment);
+  }
+  return deployments;
+}
+
 export function primaryAzureOpenAiDeployment(): AzureOpenAiRuntimeDeployment | null {
   return configuredAzureOpenAiDeployments()[0] ?? null;
 }
@@ -179,8 +217,9 @@ export function isAzureOpenAiConfigured(): boolean {
 
 export function azureOpenAiDeploymentsForTask(
   pinnedDeployment: AzureOpenAiRuntimeDeployment | null = null,
+  selectedSlots?: number[],
 ): AzureOpenAiRuntimeDeployment[] {
-  const deployments = configuredAzureOpenAiDeployments();
+  const deployments = configuredAzureOpenAiDeploymentsForSlots(selectedSlots);
   if (deployments.length === 0) return [];
 
   const ordered = pinnedDeployment
