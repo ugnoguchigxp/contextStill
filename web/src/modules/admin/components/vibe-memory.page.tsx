@@ -4,6 +4,12 @@ import mermaid from "mermaid";
 import { MarkdownEditor } from "markdown-wysiwyg-editor";
 import { useMemo, useState } from "react";
 import {
+  formatDateTime,
+  formatDateTimeCompact,
+  formatDateTimeShort,
+  useTimezone,
+} from "@/lib/timezone";
+import {
   type AgentDiffEntry,
   type VibeMemory,
   deleteVibeMemory,
@@ -40,6 +46,7 @@ mermaid.initialize({ startOnLoad: false });
 
 export function VibeMemoryPage() {
   const queryClient = useQueryClient();
+  const tz = useTimezone();
   const sessionIdFromQuery = useMemo(() => {
     if (typeof window === "undefined") return null;
     return new URLSearchParams(window.location.search).get("sessionId");
@@ -62,7 +69,7 @@ export function VibeMemoryPage() {
     ) ?? {};
 
   const sessions = Object.entries(sessionMap)
-    .map(([id, items]) => buildSessionSummary(id, items))
+    .map(([id, items]) => buildSessionSummary(id, items, tz))
     .sort((a, b) => b.lastCreatedAt.getTime() - a.lastCreatedAt.getTime());
 
   // Default to the latest session
@@ -114,7 +121,7 @@ export function VibeMemoryPage() {
                     {s.firstMessage || s.projectName || "New Session"}
                   </span>
                   <span className="session-time-label">
-                    {formatSessionTimeCompact(s.startedAt)}
+                    {formatDateTimeCompact(s.lastCreatedAt, tz)}
                   </span>
                 </div>
                 <div className="session-meta-line">
@@ -166,7 +173,7 @@ export function VibeMemoryPage() {
                         {m.memoryType}
                       </Badge>
                       <span className="vibe-timestamp">
-                        {resolveMemoryEventTime(m).toLocaleString()}
+                        {formatDateTime(resolveMemoryEventTime(m), tz)}
                       </span>
                     </div>
                     <div className="vibe-card-body">
@@ -201,7 +208,7 @@ export function VibeMemoryPage() {
   );
 }
 
-function buildSessionSummary(id: string, items: VibeMemory[]): SessionSummary {
+function buildSessionSummary(id: string, items: VibeMemory[], tz: string): SessionSummary {
   const sortedItems = [...items].sort(
     (a, b) => resolveMemoryEventTime(a).getTime() - resolveMemoryEventTime(b).getTime(),
   );
@@ -230,7 +237,7 @@ function buildSessionSummary(id: string, items: VibeMemory[]): SessionSummary {
 
   return {
     id,
-    title: [projectName, formatSessionTime(startedAt), sourceLabel].join(" / "),
+    title: [projectName, formatDateTimeShort(startedAt, tz), sourceLabel].join(" / "),
     firstMessage,
     projectName,
     startedAt,
@@ -267,32 +274,6 @@ function firstMetadataString(items: VibeMemory[], key: string): string | undefin
     if (typeof value === "string" && value.trim().length > 0) return value.trim();
   }
   return undefined;
-}
-
-function formatSessionTime(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const hour = String(date.getHours()).padStart(2, "0");
-  const minute = String(date.getMinutes()).padStart(2, "0");
-  return `${year}/${month}/${day} ${hour}:${minute}`;
-}
-
-function formatSessionTimeCompact(value: string): string {
-  const date = new Date(value);
-  if (Number.isNaN(date.getTime())) return value;
-  const now = new Date();
-  const isToday =
-    date.getFullYear() === now.getFullYear() &&
-    date.getMonth() === now.getMonth() &&
-    date.getDate() === now.getDate();
-
-  if (isToday) {
-    return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
-  }
-  return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
 function ChatTranscript({ turns }: { turns: ChatTurn[] }) {

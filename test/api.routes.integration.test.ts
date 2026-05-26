@@ -356,7 +356,8 @@ describeDb("api route integration", () => {
     expect(secondJson.memo.slot).not.toBe(firstJson.memo.slot);
   });
 
-  test("GET /api/session-memo/item resolves linkedOutputMarkdown for compile_result", async () => {
+  test("GET /api/session-memo exposes linkedGoal and linkedOutput for compile-linked notes", async () => {
+    const sessionId = `integration-session-compile-result-${Date.now()}`;
     const compileResponse = await app.request("/api/context/compile", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -375,7 +376,7 @@ describeDb("api route integration", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        sessionId: "integration-session-compile-result",
+        sessionId,
         kind: "compile_result",
         body: "context_compile output reference",
         metadata: { contextCompileRunId: runId },
@@ -385,19 +386,58 @@ describeDb("api route integration", () => {
     const createJson = (await createResponse.json()) as { memo: { slot: number } };
 
     const getResponse = await app.request(
-      `/api/session-memo/item?sessionId=integration-session-compile-result&slot=${createJson.memo.slot}`,
+      `/api/session-memo/item?sessionId=${encodeURIComponent(sessionId)}&slot=${createJson.memo.slot}`,
     );
     expect(getResponse.status).toBe(200);
     const getJson = (await getResponse.json()) as {
       memo: {
+        linkedGoal: string | null;
         linkedOutputMarkdown: string | null;
         linkedOutputAvailable: boolean;
         contextCompileRunId: string | null;
       };
     };
     expect(getJson.memo.contextCompileRunId).toBe(runId);
+    expect(getJson.memo.linkedGoal).toBe("integration compile_result linked output token");
     expect(getJson.memo.linkedOutputAvailable).toBe(true);
     expect(getJson.memo.linkedOutputMarkdown).toBe(compileJson.markdown);
+
+    const compileEvalResponse = await app.request("/api/session-memo/item", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId,
+        kind: "compile_eval",
+        body: "compile eval note",
+        metadata: {
+          contextCompileRunId: runId,
+          title: "eval",
+          score: 90,
+        },
+      }),
+    });
+    expect(compileEvalResponse.status).toBe(201);
+
+    const listResponse = await app.request(
+      `/api/session-memo?sessionId=${encodeURIComponent(sessionId)}`,
+    );
+    expect(listResponse.status).toBe(200);
+    const listJson = (await listResponse.json()) as {
+      items: Array<{
+        kind?: string;
+        label?: string | null;
+        linkedGoal?: string | null;
+        linkedOutputMarkdown?: string | null;
+      }>;
+    };
+    const evalItem = listJson.items.find(
+      (item) => item.label?.startsWith(`compile_eval:${runId}:`) ?? false,
+    );
+    const resultItem = listJson.items.find((item) => item.label === `compile_result:${runId}`);
+    expect(evalItem?.linkedGoal).toBe("integration compile_result linked output token");
+    expect(evalItem?.linkedOutputMarkdown ?? null).toBeNull();
+    expect(resultItem?.linkedGoal).toBe("integration compile_result linked output token");
+    expect(resultItem?.linkedOutputMarkdown).toBe(compileJson.markdown);
   });
 
   test("GET /api/session-memo/sessions excludes compile_result-only sessions by default", async () => {
@@ -448,5 +488,103 @@ describeDb("api route integration", () => {
         (item) => item.sessionId === "integration-session-compile-only",
       ),
     ).toBe(true);
+  });
+
+  test("GET /api/session-memo/sessions returns a real timestamp and newest sessions first", async () => {
+    const olderSessionId = `integration-session-older-${Date.now()}`;
+    const newerSessionId = `integration-session-newer-${Date.now() + 1}`;
+
+    const olderResponse = await app.request("/api/session-memo/item", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: olderSessionId,
+        kind: "scratch",
+        body: "older memo",
+      }),
+    });
+    expect(olderResponse.status).toBe(201);
+
+    await new Promise((resolve) => setTimeout(resolve, 25));
+
+    const newerResponse = await app.request("/api/session-memo/item", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: newerSessionId,
+        kind: "scratch",
+        body: "newer memo",
+      }),
+    });
+    expect(newerResponse.status).toBe(201);
+
+    const listResponse = await app.request(
+      "/api/session-memo/sessions?limit=20&includeCompileOnly=true",
+    );
+    expect(listResponse.status).toBe(200);
+    const listJson = (await listResponse.json()) as {
+      items: Array<{ sessionId: string; lastUpdatedAt: string }>;
+    };
+
+    const newerItem = listJson.items.find((item) => item.sessionId === newerSessionId);
+    const olderItem = listJson.items.find((item) => item.sessionId === olderSessionId);
+    expect(newerItem).toBeDefined();
+    expect(olderItem).toBeDefined();
+    if (!newerItem || !olderItem) {
+      throw new Error("expected both session memo rows to exist");
+    }
+    expect(newerItem?.lastUpdatedAt).not.toBe("1970-01-01T00:00:00.000Z");
+    expect(olderItem?.lastUpdatedAt).not.toBe("1970-01-01T00:00:00.000Z");
+    expect(new Date(newerItem.lastUpdatedAt).getTime()).toBeGreaterThan(
+      new Date(olderItem.lastUpdatedAt).getTime(),
+    );
+    expect(listJson.items[0]?.sessionId).toBe(newerSessionId);
+    expect(listJson.items[1]?.sessionId).toBe(olderSessionId);
+  });
+
+  test("GET /api/session-memo/sessions lastUpdatedAt matches latest memo updatedAt in the same session", async () => {
+    const sessionId = `integration-session-time-sync-${Date.now()}`;
+
+    const createResponse = await app.request("/api/session-memo/item", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId,
+        kind: "compile_eval",
+        body: "timezone alignment check",
+      }),
+    });
+    expect(createResponse.status).toBe(201);
+
+    const memosResponse = await app.request(
+      `/api/session-memo?sessionId=${encodeURIComponent(sessionId)}`,
+    );
+    expect(memosResponse.status).toBe(200);
+    const memosJson = (await memosResponse.json()) as {
+      items: Array<{ updatedAt?: string }>;
+    };
+    const latestMemoUpdatedAt = memosJson.items
+      .map((item) => item.updatedAt)
+      .filter((value): value is string => typeof value === "string")
+      .sort((a, b) => new Date(b).getTime() - new Date(a).getTime())[0];
+    expect(latestMemoUpdatedAt).toBeDefined();
+    if (!latestMemoUpdatedAt) {
+      throw new Error("expected latest memo updatedAt");
+    }
+
+    const sessionsResponse = await app.request(
+      "/api/session-memo/sessions?limit=50&includeCompileOnly=true",
+    );
+    expect(sessionsResponse.status).toBe(200);
+    const sessionsJson = (await sessionsResponse.json()) as {
+      items: Array<{ sessionId: string; lastUpdatedAt: string }>;
+    };
+    const sessionRow = sessionsJson.items.find((item) => item.sessionId === sessionId);
+    expect(sessionRow).toBeDefined();
+    if (!sessionRow) {
+      throw new Error("expected session row");
+    }
+
+    expect(sessionRow.lastUpdatedAt).toBe(latestMemoUpdatedAt);
   });
 });

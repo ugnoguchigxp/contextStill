@@ -2184,6 +2184,42 @@
   font-size: 0.78rem;
 }
 
+.vibe-note-goal-row {
+  display: grid;
+  gap: 0.55rem;
+  margin-bottom: 1rem;
+  padding: 0.78rem 0.9rem;
+  border: 1px solid oklch(0.82 0.09 84);
+  border-left: 4px solid oklch(0.67 0.17 74);
+  border-radius: 0.65rem;
+  background: linear-gradient(90deg, oklch(0.98 0.04 94) 0%, oklch(0.99 0.02 92) 100%);
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+}
+
+.vibe-note-goal-label {
+  display: inline-flex;
+  width: fit-content;
+  align-items: center;
+  border: 1px solid oklch(0.8 0.1 84);
+  border-radius: 999px;
+  padding: 0.12rem 0.6rem;
+  font-size: 0.7rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: oklch(0.39 0.1 62);
+  background: oklch(0.95 0.05 90);
+}
+
+.vibe-note-goal-text {
+  font-size: 0.96rem;
+  line-height: 1.5;
+  font-weight: 600;
+  color: var(--foreground);
+  word-break: break-word;
+  white-space: pre-wrap;
+}
+
 .vibe-card:hover {
   transform: translateY(-2px);
   box-shadow: 0 4px 12px rgba(0, 0, 0, 0.08);

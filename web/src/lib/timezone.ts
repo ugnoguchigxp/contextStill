@@ -89,6 +89,52 @@ function parseDate(value: string | Date | null | undefined): Date | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed;
 }
 
+type TimezoneParts = {
+  year: string;
+  month: string;
+  day: string;
+  hour: string;
+  minute: string;
+};
+
+function extractTimezoneParts(
+  value: string | Date | null | undefined,
+  tz: string,
+): TimezoneParts | null {
+  const date = parseDate(value);
+  if (!date) return null;
+
+  try {
+    const formatter = new Intl.DateTimeFormat("en-US", {
+      timeZone: tz,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      hour12: false,
+    });
+    const parts = formatter.formatToParts(date);
+    const year = parts.find((part) => part.type === "year")?.value;
+    const month = parts.find((part) => part.type === "month")?.value;
+    const day = parts.find((part) => part.type === "day")?.value;
+    const hour = parts.find((part) => part.type === "hour")?.value;
+    const minute = parts.find((part) => part.type === "minute")?.value;
+    if (!year || !month || !day || !hour || !minute) return null;
+    return { year, month, day, hour, minute };
+  } catch {
+    return null;
+  }
+}
+
+function formatMonthDay(parts: TimezoneParts): string {
+  return `${Number(parts.month)}/${Number(parts.day)}`;
+}
+
+function formatHourMinute(parts: TimezoneParts): string {
+  return `${parts.hour}:${parts.minute}`;
+}
+
 export function formatInTimezone(
   value: string | Date | null | undefined,
   tz: string,
@@ -132,6 +178,27 @@ export function formatDate(value: string | Date | null | undefined, tz: string):
     });
     return formatter.format(date);
   }
+}
+
+export function formatDateTimeShort(value: string | Date | null | undefined, tz: string): string {
+  const parts = extractTimezoneParts(value, tz);
+  if (!parts) return "-";
+  return `${parts.year}/${Number(parts.month)}/${Number(parts.day)} ${formatHourMinute(parts)}`;
+}
+
+export function formatDateTimeCompact(value: string | Date | null | undefined, tz: string): string {
+  const parts = extractTimezoneParts(value, tz);
+  if (!parts) return "-";
+  const currentParts = extractTimezoneParts(new Date(), tz);
+  if (
+    currentParts &&
+    currentParts.year === parts.year &&
+    currentParts.month === parts.month &&
+    currentParts.day === parts.day
+  ) {
+    return formatHourMinute(parts);
+  }
+  return formatMonthDay(parts);
 }
 
 export function formatDateTime(value: string | Date | null | undefined, tz: string): string {

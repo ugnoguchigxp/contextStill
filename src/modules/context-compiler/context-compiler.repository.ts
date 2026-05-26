@@ -319,6 +319,7 @@ export async function listCompileRunOutputsByIds(runIds: string[]): Promise<
     string,
     {
       createdAt: Date;
+      goal: string;
       outputMarkdown: string | null;
     }
   >
@@ -329,6 +330,7 @@ export async function listCompileRunOutputsByIds(runIds: string[]): Promise<
     .select({
       id: contextCompileRuns.id,
       createdAt: contextCompileRuns.createdAt,
+      goal: contextCompileRuns.goal,
       packSnapshot: contextCompileRuns.packSnapshot,
     })
     .from(contextCompileRuns)
@@ -339,6 +341,7 @@ export async function listCompileRunOutputsByIds(runIds: string[]): Promise<
       row.id,
       {
         createdAt: normalizeDate(row.createdAt),
+        goal: row.goal,
         outputMarkdown: resolveOutputMarkdownFromPackSnapshot(row.packSnapshot),
       },
     ]),

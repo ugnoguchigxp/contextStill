@@ -1,8 +1,9 @@
-import { QueryClient, QueryClientProvider, useMutation, useQuery } from "@tanstack/react-query";
 /** @vitest-environment jsdom */
+import { QueryClient, QueryClientProvider, useMutation, useQuery } from "@tanstack/react-query";
 import { fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { formatDateTime, formatDateTimeShort } from "../../../web/src/lib/timezone";
 import { VibeMemoryPage } from "../../../web/src/modules/admin/components/vibe-memory.page";
 
 // 外部ライブラリのモック
@@ -90,6 +91,7 @@ describe("VibeMemoryPage", () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    window.localStorage.setItem("memory_router_timezone", "Asia/Tokyo");
 
     // デフォルトの useQuery / useMutation モック実装
     vi.mocked(useQuery).mockImplementation((options: any) => {
@@ -105,6 +107,10 @@ describe("VibeMemoryPage", () => {
     vi.mocked(useMutation).mockReturnValue({
       mutate: mockMutate,
     } as any);
+  });
+
+  afterEach(() => {
+    window.localStorage.clear();
   });
 
   it("renders vibe memories sessions and detail correctly", () => {
@@ -123,6 +129,17 @@ describe("VibeMemoryPage", () => {
     expect(screen.getByText("Project Alpha")).toBeInTheDocument();
     expect(screen.getByText("Antigravity")).toBeInTheDocument();
     expect(screen.getAllByText("1 vibes").length).toBeGreaterThanOrEqual(1);
+    expect(
+      screen.getByRole("heading", {
+        name: `Project Alpha / ${formatDateTimeShort(
+          "2026-05-21T08:00:00.000Z",
+          "Asia/Tokyo",
+        )} / Antigravity`,
+      }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByText(formatDateTime("2026-05-21T08:00:00.000Z", "Asia/Tokyo")),
+    ).toBeInTheDocument();
 
     // セッション2のプロジェクト名、メタ情報もセッションリストにあること
     expect(screen.getAllByText("Project Beta").length).toBeGreaterThanOrEqual(1);

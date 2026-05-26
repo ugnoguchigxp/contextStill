@@ -135,6 +135,7 @@ export type SessionMemoListItem = {
   createdAt?: string;
   updatedAt?: string;
   expiresAt?: string | null;
+  linkedGoal?: string | null;
   linkedOutputMarkdown?: string | null;
   linkedOutputAvailable?: boolean;
   linkedOutputSource?: string | null;

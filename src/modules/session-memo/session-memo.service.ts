@@ -46,6 +46,40 @@ function normalizeTitle(value?: string): string | undefined {
   return trimmed && trimmed.length > 0 ? trimmed : undefined;
 }
 
+function toIsoTimestamp(value: Date | string | number | null | undefined): string | null {
+  if (value === null || value === undefined) return null;
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    // Driver-parsed `timestamp without time zone` values are interpreted as local time.
+    // Rebuild as UTC wall-clock to avoid local offset drift in API responses.
+    const rebuiltUtc = new Date(
+      Date.UTC(
+        value.getFullYear(),
+        value.getMonth(),
+        value.getDate(),
+        value.getHours(),
+        value.getMinutes(),
+        value.getSeconds(),
+        value.getMilliseconds(),
+      ),
+    );
+    return Number.isNaN(rebuiltUtc.getTime()) ? null : rebuiltUtc.toISOString();
+  }
+
+  if (typeof value === "string") {
+    const trimmed = value.trim();
+    if (/^\d{4}-\d{2}-\d{2}[ T]\d{2}:\d{2}:\d{2}(\.\d+)?$/.test(trimmed)) {
+      const parsedUtc = new Date(`${trimmed.replace(" ", "T")}Z`);
+      return Number.isNaN(parsedUtc.getTime()) ? null : parsedUtc.toISOString();
+    }
+    const parsedString = new Date(trimmed);
+    return Number.isNaN(parsedString.getTime()) ? null : parsedString.toISOString();
+  }
+
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
+}
+
 function asMetadataRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -341,6 +375,7 @@ type SessionMemoRow = typeof sessionMemos.$inferSelect;
 
 type LinkedCompileOutput = {
   contextCompileRunId: string;
+  linkedGoal: string | null;
   linkedOutputMarkdown: string | null;
   linkedOutputSource: "context_compile_runs.pack_snapshot";
   linkedOutputAvailable: boolean;
@@ -350,22 +385,22 @@ async function resolveLinkedCompileOutputs(
   rows: SessionMemoRow[],
 ): Promise<Map<string, LinkedCompileOutput>> {
   const runIds = rows
-    .filter((row) => row.kind === compileResultKind)
     .map((row) => getContextCompileRunIdFromMetadata(asMetadataRecord(row.metadata)))
     .filter((value): value is string => Boolean(value));
   if (runIds.length === 0) return new Map();
   const runMap = await listCompileRunOutputsByIds(runIds);
   const outputByMemoId = new Map<string, LinkedCompileOutput>();
   for (const row of rows) {
-    if (row.kind !== compileResultKind) continue;
     const runId = getContextCompileRunIdFromMetadata(asMetadataRecord(row.metadata));
     if (!runId) continue;
     const compileRun = runMap.get(runId);
+    const includeLinkedOutput = row.kind === compileResultKind;
     outputByMemoId.set(row.id, {
       contextCompileRunId: runId,
-      linkedOutputMarkdown: compileRun?.outputMarkdown ?? null,
+      linkedGoal: compileRun?.goal ?? null,
+      linkedOutputMarkdown: includeLinkedOutput ? (compileRun?.outputMarkdown ?? null) : null,
       linkedOutputSource: "context_compile_runs.pack_snapshot",
-      linkedOutputAvailable: Boolean(compileRun?.outputMarkdown),
+      linkedOutputAvailable: includeLinkedOutput && Boolean(compileRun?.outputMarkdown),
     });
   }
   return outputByMemoId;
@@ -410,6 +445,7 @@ export async function listSessionMemos(input: {
     updatedAt: item.updatedAt,
     metadata: item.metadata,
     expiresAt: item.expiresAt,
+    linkedGoal: item.linkedOutput?.linkedGoal ?? null,
     linkedOutputMarkdown: item.linkedOutput?.linkedOutputMarkdown ?? null,
     linkedOutputAvailable: item.linkedOutput?.linkedOutputAvailable ?? false,
     linkedOutputSource: item.linkedOutput?.linkedOutputSource ?? null,
@@ -452,6 +488,7 @@ export async function getSessionMemo(input: {
   const linkedOutput = linkedOutputByMemoId.get(memo.id) ?? null;
   return {
     ...memo,
+    linkedGoal: linkedOutput?.linkedGoal ?? null,
     linkedOutputMarkdown: linkedOutput?.linkedOutputMarkdown ?? null,
     linkedOutputAvailable: linkedOutput?.linkedOutputAvailable ?? false,
     linkedOutputSource: linkedOutput?.linkedOutputSource ?? null,
@@ -522,7 +559,7 @@ export async function listSessionMemoSessions(limit = 200, includeCompileOnly = 
       sessionId: sessionMemos.sessionId,
       memoCount: sql<number>`count(*)::int`,
       nonCompileResultMemoCount: sql<number>`count(*) filter (where ${sessionMemos.kind} <> ${compileResultKind})::int`,
-      lastUpdatedAt: sql<Date>`max(${sessionMemos.updatedAt})`,
+      lastUpdatedAt: sql<string>`max(${sessionMemos.updatedAt})`,
     })
     .from(sessionMemos)
     .where(
@@ -549,6 +586,6 @@ export async function listSessionMemoSessions(limit = 200, includeCompileOnly = 
       Number(row.memoCount ?? 0) - Number(row.nonCompileResultMemoCount ?? 0),
     ),
     compileOnly: Number(row.nonCompileResultMemoCount ?? 0) === 0,
-    lastUpdatedAt: row.lastUpdatedAt?.toISOString?.() ?? new Date(0).toISOString(),
+    lastUpdatedAt: toIsoTimestamp(row.lastUpdatedAt) ?? new Date(0).toISOString(),
   }));
 }
