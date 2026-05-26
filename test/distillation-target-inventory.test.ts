@@ -8,7 +8,7 @@ import {
   markMissingVibeMemoryTargetsSkipped,
   markMissingWikiTargetsSkipped,
   findNextSelectableDistillationTargetState,
-} from "../src/modules/selectDistillationTarget/repository.js";
+} from "../src/modules/distillationTarget/repository.js";
 
 const mocks = vi.hoisted(() => ({
   memories: [] as Array<{
@@ -55,7 +55,7 @@ vi.mock("../src/modules/audit/audit-log.service.js", () => ({
   recordAuditLogSafe: vi.fn().mockResolvedValue(undefined),
 }));
 
-vi.mock("../src/modules/selectDistillationTarget/repository.js", () => ({
+vi.mock("../src/modules/distillationTarget/repository.js", () => ({
   DEFAULT_DISTILLATION_TARGET_VERSION: "select-distillation-target-v1",
   listDistillationTargetStatesForCandidates: vi.fn(),
   upsertDistillationTargetState: vi.fn(),
@@ -77,7 +77,7 @@ function memory(id: string, createdAt: string) {
   };
 }
 
-describe("selectDistillationTarget inventory.service unit tests", () => {
+describe("distillationTarget inventory.service unit tests", () => {
   beforeEach(async () => {
     vi.clearAllMocks();
     mocks.memories = [
@@ -90,7 +90,7 @@ describe("selectDistillationTarget inventory.service unit tests", () => {
   describe("collectVibeMemoryTargetCandidates", () => {
     test("collects all vibe memories by default", async () => {
       const { collectVibeMemoryTargetCandidates } = await import(
-        "../src/modules/selectDistillationTarget/inventory.service.js"
+        "../src/modules/distillationTarget/inventory.service.js"
       );
 
       const candidates = await collectVibeMemoryTargetCandidates();
@@ -105,7 +105,7 @@ describe("selectDistillationTarget inventory.service unit tests", () => {
 
     test("honors explicit vibe inventory limits", async () => {
       const { collectVibeMemoryTargetCandidates } = await import(
-        "../src/modules/selectDistillationTarget/inventory.service.js"
+        "../src/modules/distillationTarget/inventory.service.js"
       );
 
       const candidates = await collectVibeMemoryTargetCandidates({ limit: 2 });
@@ -116,7 +116,7 @@ describe("selectDistillationTarget inventory.service unit tests", () => {
 
     test("returns empty array on database error with missing relation", async () => {
       const { collectVibeMemoryTargetCandidates } = await import(
-        "../src/modules/selectDistillationTarget/inventory.service.js"
+        "../src/modules/distillationTarget/inventory.service.js"
       );
 
       const error = new Error("relation vibe_memories does not exist");
@@ -133,7 +133,7 @@ describe("selectDistillationTarget inventory.service unit tests", () => {
   describe("collectWikiFileTargetCandidates", () => {
     test("collects wiki files successfully", async () => {
       const { collectWikiFileTargetCandidates } = await import(
-        "../src/modules/selectDistillationTarget/inventory.service.js"
+        "../src/modules/distillationTarget/inventory.service.js"
       );
 
       vi.mocked(readdir).mockResolvedValueOnce([
@@ -154,7 +154,7 @@ describe("selectDistillationTarget inventory.service unit tests", () => {
   describe("applyPersistedDistillationTargetStatuses", () => {
     test("maps persisted statuses correctly", async () => {
       const { applyPersistedDistillationTargetStatuses } = await import(
-        "../src/modules/selectDistillationTarget/inventory.service.js"
+        "../src/modules/distillationTarget/inventory.service.js"
       );
 
       const mockStates = [
@@ -191,7 +191,7 @@ describe("selectDistillationTarget inventory.service unit tests", () => {
   describe("refreshDistillationTargetInventory", () => {
     test("refreshes inventory successfully", async () => {
       const { refreshDistillationTargetInventory } = await import(
-        "../src/modules/selectDistillationTarget/inventory.service.js"
+        "../src/modules/distillationTarget/inventory.service.js"
       );
 
       vi.mocked(readdir).mockResolvedValueOnce([
@@ -217,7 +217,7 @@ describe("selectDistillationTarget inventory.service unit tests", () => {
   describe("previewNextDistillationTarget", () => {
     test("previews from state table when requested", async () => {
       const { previewNextDistillationTarget } = await import(
-        "../src/modules/selectDistillationTarget/inventory.service.js"
+        "../src/modules/distillationTarget/inventory.service.js"
       );
 
       const mockState = {
@@ -236,7 +236,7 @@ describe("selectDistillationTarget inventory.service unit tests", () => {
 
     test("previews candidate-first when kind = candidate", async () => {
       const { previewNextDistillationTarget } = await import(
-        "../src/modules/selectDistillationTarget/inventory.service.js"
+        "../src/modules/distillationTarget/inventory.service.js"
       );
 
       const mockState = {
@@ -254,7 +254,7 @@ describe("selectDistillationTarget inventory.service unit tests", () => {
 
     test("previews wiki-first on previewNextDistillationTarget", async () => {
       const { previewNextDistillationTarget } = await import(
-        "../src/modules/selectDistillationTarget/inventory.service.js"
+        "../src/modules/distillationTarget/inventory.service.js"
       );
 
       vi.mocked(readdir).mockResolvedValueOnce([

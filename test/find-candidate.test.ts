@@ -29,7 +29,7 @@ const mocks = vi.hoisted(() => ({
   recordAuditLogSafe: vi.fn(),
 }));
 
-vi.mock("../src/modules/selectDistillationTarget/repository.js", () => ({
+vi.mock("../src/modules/distillationTarget/repository.js", () => ({
   getDistillationTargetStateById: mocks.getDistillationTargetStateById,
 }));
 

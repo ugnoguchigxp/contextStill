@@ -8,8 +8,8 @@ import { hasSkillLikeProcedureBody } from "../distillation/procedure-quality.js"
 import { parseStorageCandidatesFromLlmOutput } from "../findCandidate/parser.js";
 import type { CandidateKnowledgeType } from "../findCandidate/repository.js";
 import { enqueueFindingJob } from "../queue/core/index.js";
-import { DEFAULT_DISTILLATION_TARGET_VERSION } from "../selectDistillationTarget/repository.js";
-import { resolveKnowledgeCandidatePriorityGroup } from "../selectDistillationTarget/priority-group.js";
+import { DEFAULT_DISTILLATION_TARGET_VERSION } from "../distillationTarget/repository.js";
+import { resolveKnowledgeCandidatePriorityGroup } from "../distillationTarget/priority-group.js";
 
 export type RegisterCandidateInput = z.input<typeof registerCandidateInputSchema>;
 
@@ -50,6 +50,14 @@ export type RegisterCandidatesBulkResult = {
   items: RegisterCandidatesBulkItemResult[];
   next: "distillation_pipeline";
 };
+
+type RegisterCandidateOptions = {
+  strictProcedureSections?: boolean;
+};
+
+const PROCEDURE_SECTION_WARNING: RegisterCandidateWarning =
+  "procedure_candidate_missing_skill_like_sections";
+const PROCEDURE_SECTION_VALIDATION_ERROR = "PROCEDURE_CANDIDATE_MISSING_SKILL_LIKE_SECTIONS";
 
 function inferTitleFromText(value: string): string {
   const lines = value
@@ -118,9 +126,13 @@ function compactOrigin(
 
 export async function registerCandidate(
   input: RegisterCandidateInput,
+  options: RegisterCandidateOptions = {},
 ): Promise<RegisterCandidateResult> {
   const parsed = registerCandidateInputSchema.parse(input);
   const normalized = normalizeInput(parsed);
+  if (options.strictProcedureSections && normalized.warnings.includes(PROCEDURE_SECTION_WARNING)) {
+    throw new Error(PROCEDURE_SECTION_VALIDATION_ERROR);
+  }
   const candidateId = randomUUID();
   const sourceUri = `agent://candidate/${candidateId}`;
   const now = new Date();
@@ -209,6 +221,7 @@ export async function registerCandidate(
 
 export async function registerCandidatesBulk(
   input: RegisterCandidateInput[],
+  options: RegisterCandidateOptions = {},
 ): Promise<RegisterCandidatesBulkResult> {
   const parsed = registerCandidatesBulkInputSchema.parse(input);
   const bulkBatchId = randomUUID();
@@ -233,7 +246,7 @@ export async function registerCandidatesBulk(
     };
 
     try {
-      const result = await registerCandidate(normalized);
+      const result = await registerCandidate(normalized, options);
       registeredCount += 1;
       items.push({
         index,

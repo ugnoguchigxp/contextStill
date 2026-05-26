@@ -2,7 +2,7 @@ import { closeDbPool } from "../db/index.js";
 import {
   type DistillationRepairInput,
   runDistillationRepair,
-} from "../modules/distillationRepair/repair.service.js";
+} from "../modules/distillationTarget/repair.service.js";
 
 type CliOptions = DistillationRepairInput;
 

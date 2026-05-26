@@ -5,14 +5,14 @@ import { groupedConfig } from "../../config.js";
 import { APP_CONSTANTS } from "../../constants.js";
 import { getDb } from "../../db/index.js";
 import { distillationTargetStates } from "../../db/schema.js";
-import { priorityGroupFromRowLike } from "../selectDistillationTarget/priority-group.js";
-import type { DistillationTargetKind } from "../selectDistillationTarget/domain.js";
-import { isManualPauseTarget } from "../selectDistillationTarget/manual-pause.js";
+import { priorityGroupFromRowLike } from "./priority-group.js";
+import type { DistillationTargetKind } from "./domain.js";
+import { isManualPauseTarget } from "./manual-pause.js";
 import {
   DEFAULT_DISTILLATION_TARGET_VERSION,
   recoverStaleDistillationTargets,
   releaseRetryablePausedDistillationTargets,
-} from "../selectDistillationTarget/repository.js";
+} from "./repository.js";
 
 export type DistillationRepairKind = "auto" | "wiki" | "vibe" | "candidate" | "web";
 export type DistillationRepairMode = "dry-run" | "apply";

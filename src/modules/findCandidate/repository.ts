@@ -1,7 +1,7 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { distillationTargetStates, findCandidateResults } from "../../db/schema.js";
-import type { DistillationTargetKind } from "../selectDistillationTarget/domain.js";
+import type { DistillationTargetKind } from "../distillationTarget/domain.js";
 
 type FindCandidateBaseRow = typeof findCandidateResults.$inferSelect;
 

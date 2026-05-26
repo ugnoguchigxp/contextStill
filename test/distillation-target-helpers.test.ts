@@ -4,7 +4,7 @@ import {
   nowMinusSeconds,
   rowHeartbeatMs,
   staleThresholdMs,
-} from "../src/modules/selectDistillationTarget/repository-helpers.js";
+} from "../src/modules/distillationTarget/repository-helpers.js";
 
 describe("selectDistillationTarget repository helpers", () => {
   describe("nowMinusSeconds", () => {

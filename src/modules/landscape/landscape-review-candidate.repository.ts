@@ -6,8 +6,8 @@ import {
   landscapeReviewItemCandidateLinks,
   landscapeReviewItems,
 } from "../../db/schema.js";
-import { resolveKnowledgeCandidatePriorityGroup } from "../selectDistillationTarget/priority-group.js";
-import { DEFAULT_DISTILLATION_TARGET_VERSION } from "../selectDistillationTarget/repository.js";
+import { resolveKnowledgeCandidatePriorityGroup } from "../distillationTarget/priority-group.js";
+import { DEFAULT_DISTILLATION_TARGET_VERSION } from "../distillationTarget/repository.js";
 import type { LandscapeReviewCandidateDraft } from "./landscape-review-candidate.types.js";
 
 export type LandscapeReviewItemCandidateSourceRow = typeof landscapeReviewItems.$inferSelect;

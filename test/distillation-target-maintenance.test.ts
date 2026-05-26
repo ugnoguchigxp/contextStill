@@ -9,7 +9,7 @@ import {
   markMissingVibeMemoryTargetsSkipped,
   markMissingWikiTargetsSkipped,
   getDistillationTargetSummary,
-} from "../src/modules/selectDistillationTarget/repository-maintenance.js";
+} from "../src/modules/distillationTarget/repository-maintenance.js";
 
 const mockSelect = vi.fn();
 const mockUpdate = vi.fn();
@@ -43,7 +43,7 @@ const makeChain = (result: any) => {
   return chain;
 };
 
-describe("selectDistillationTarget repository-maintenance", () => {
+describe("distillationTarget repository-maintenance", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

@@ -15,7 +15,7 @@ import {
   updateDistillationTargetHeartbeat,
   updateDistillationTargetPhase,
   upsertDistillationTargetState,
-} from "../src/modules/selectDistillationTarget/repository.js";
+} from "../src/modules/distillationTarget/repository.js";
 
 const mockInsert = vi.fn();
 const mockSelect = vi.fn();
@@ -66,7 +66,7 @@ const flattenSqlChunks = (value: any): string => {
   return String(value);
 };
 
-describe("selectDistillationTarget repository unit tests", () => {
+describe("distillationTarget repository unit tests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
   });

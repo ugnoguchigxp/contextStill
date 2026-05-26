@@ -8,7 +8,7 @@ import { knowledgeItems } from "../../db/schema.js";
 import { normalizeKnowledgeScore } from "../../lib/score-scale.js";
 import { rankAndDedupe } from "../../modules/context-compiler/ranking.service.js";
 import { searchKnowledgeCandidates } from "../../modules/knowledge/knowledge.service.js";
-import { canTransitionKnowledgeStatus } from "../../modules/lifecycle/lifecycle.service.js";
+import { canTransitionKnowledgeStatus } from "../../modules/knowledge/knowledge-lifecycle.service.js";
 import {
   registerCandidate,
   registerCandidatesBulk,
@@ -153,7 +153,7 @@ export const registerCandidateTool: ToolEntry = {
   },
   handler: async (args) => {
     const parsed = registerCandidateInputSchema.parse(args ?? {});
-    const result = await registerCandidate(parsed);
+    const result = await registerCandidate(parsed, { strictProcedureSections: true });
     return {
       content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
     };
@@ -197,7 +197,7 @@ export const registerCandidatesTool: ToolEntry = {
   },
   handler: async (args) => {
     const parsed = registerCandidatesToolInputSchema.parse(args ?? {});
-    const result = await registerCandidatesBulk(parsed.items);
+    const result = await registerCandidatesBulk(parsed.items, { strictProcedureSections: true });
     return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   },
 };

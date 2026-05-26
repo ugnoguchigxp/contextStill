@@ -2,7 +2,7 @@ import { describe, expect, test } from "vitest";
 import {
   canTransitionKnowledgeStatus,
   resolveKnowledgeSearchStatuses,
-} from "../src/modules/lifecycle/lifecycle.service.js";
+} from "../src/modules/knowledge/knowledge-lifecycle.service.js";
 
 describe("Lifecycle Service", () => {
   test("canTransitionKnowledgeStatus validates allowed transitions", () => {

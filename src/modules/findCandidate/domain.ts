@@ -13,7 +13,7 @@ import {
 import type { DistillationToolCall } from "../distillation/distillation-tools.service.js";
 import { readVibeMemoryByTokenWindow } from "../memoryReader/reader.service.js";
 import { readFileDomain } from "../readFile/domain.js";
-import { getDistillationTargetStateById } from "../selectDistillationTarget/repository.js";
+import { getDistillationTargetStateById } from "../distillationTarget/repository.js";
 import {
   ensureRuntimeSettingsLoaded,
   resolveFindCandidateRoute,

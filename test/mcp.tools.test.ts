@@ -258,12 +258,15 @@ describe("MCP Tools Handlers", () => {
         type: "rule",
       });
 
-      expect(registerCandidate).toHaveBeenCalledWith({
-        title: "New Rule",
-        body: "Detailed body of the rule",
-        type: "rule",
-        metadata: {},
-      });
+      expect(registerCandidate).toHaveBeenCalledWith(
+        {
+          title: "New Rule",
+          body: "Detailed body of the rule",
+          type: "rule",
+          metadata: {},
+        },
+        { strictProcedureSections: true },
+      );
       expect(JSON.parse(response.content[0].text)).toMatchObject({
         targetStateId: "target-id",
         findCandidateResultId: "candidate-id",
@@ -287,10 +290,27 @@ describe("MCP Tools Handlers", () => {
         text: '{"type":"procedure","title":"Failure note","body":"Use when:\\n- ..."}',
       });
 
-      expect(registerCandidate).toHaveBeenCalledWith({
-        text: '{"type":"procedure","title":"Failure note","body":"Use when:\\n- ..."}',
-        metadata: {},
-      });
+      expect(registerCandidate).toHaveBeenCalledWith(
+        {
+          text: '{"type":"procedure","title":"Failure note","body":"Use when:\\n- ..."}',
+          metadata: {},
+        },
+        { strictProcedureSections: true },
+      );
+    });
+
+    test("throws validation error for invalid procedure candidate body", async () => {
+      vi.mocked(registerCandidate).mockRejectedValue(
+        new Error("PROCEDURE_CANDIDATE_MISSING_SKILL_LIKE_SECTIONS"),
+      );
+
+      await expect(
+        registerCandidateTool.handler({
+          title: "Bad Procedure",
+          body: "just memo text",
+          type: "procedure",
+        }),
+      ).rejects.toThrow("PROCEDURE_CANDIDATE_MISSING_SKILL_LIKE_SECTIONS");
     });
   });
 
@@ -309,10 +329,13 @@ describe("MCP Tools Handlers", () => {
       });
       const data = JSON.parse(response.content[0].text);
       expect(data.registeredCount).toBe(2);
-      expect(registerCandidatesBulk).toHaveBeenCalledWith([
-        { body: "A", metadata: {} },
-        { body: "B", metadata: {} },
-      ]);
+      expect(registerCandidatesBulk).toHaveBeenCalledWith(
+        [
+          { body: "A", metadata: {} },
+          { body: "B", metadata: {} },
+        ],
+        { strictProcedureSections: true },
+      );
     });
   });
 

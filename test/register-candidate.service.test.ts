@@ -98,6 +98,22 @@ describe("register-candidate.service", () => {
     expect(result.warnings).toContain("procedure_candidate_missing_skill_like_sections");
   });
 
+  test("throws validation error in strict mode if procedure candidate is missing skill-like section", async () => {
+    await expect(
+      registerCandidate(
+        {
+          title: "Bad Procedure",
+          body: "This body does not contain key skill terms.",
+          type: "procedure",
+          metadata: {},
+        },
+        { strictProcedureSections: true },
+      ),
+    ).rejects.toThrow("PROCEDURE_CANDIDATE_MISSING_SKILL_LIKE_SECTIONS");
+    expect(mockInsert).not.toHaveBeenCalled();
+    expect(mockEnqueueFindingJob).not.toHaveBeenCalled();
+  });
+
   test("does not emit warning if procedure candidate has proper skill-like sections", async () => {
     mockInsert
       .mockReturnValueOnce(makeChain([{ id: "target-1" }]))
@@ -319,6 +335,42 @@ Do not run on production database.
         index: 1,
         status: "candidate_failed",
         error: "queue unavailable",
+      }),
+    );
+  });
+
+  test("marks invalid procedure item as failed in strict bulk mode", async () => {
+    mockInsert
+      .mockReturnValueOnce(makeChain([{ id: "target-1" }]))
+      .mockReturnValueOnce(makeChain([{ id: "candidate-1" }]));
+
+    const result = await registerCandidatesBulk(
+      [
+        {
+          title: "Bad Procedure",
+          body: "This body does not contain key skill terms.",
+          type: "procedure",
+        },
+        { body: "Valid rule body" },
+      ],
+      { strictProcedureSections: true },
+    );
+
+    expect(result.status).toBe("bulk_candidates_partial");
+    expect(result.registeredCount).toBe(1);
+    expect(result.failedCount).toBe(1);
+    expect(result.items[0]).toEqual(
+      expect.objectContaining({
+        index: 0,
+        status: "candidate_failed",
+        error: "PROCEDURE_CANDIDATE_MISSING_SKILL_LIKE_SECTIONS",
+      }),
+    );
+    expect(result.items[1]).toEqual(
+      expect.objectContaining({
+        index: 1,
+        status: "candidate_registered",
+        type: "rule",
       }),
     );
   });

@@ -17,7 +17,7 @@ import {
   computeDecayFactor,
   computeDynamicScore,
 } from "../../../src/modules/knowledge/knowledge-value.service.js";
-import { canTransitionKnowledgeStatus } from "../../../src/modules/lifecycle/lifecycle.service.js";
+import { canTransitionKnowledgeStatus } from "../../../src/modules/knowledge/knowledge-lifecycle.service.js";
 import type { KnowledgeStatus } from "../../../src/shared/schemas/knowledge.schema.js";
 import {
   asRecord,

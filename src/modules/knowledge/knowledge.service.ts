@@ -11,7 +11,7 @@ import {
   normalizeRepoPath,
 } from "../context-compiler/query-context.js";
 import { embedOne } from "../embedding/embedding.service.js";
-import { resolveKnowledgeSearchStatuses } from "../lifecycle/lifecycle.service.js";
+import { resolveKnowledgeSearchStatuses } from "./knowledge-lifecycle.service.js";
 import {
   type KnowledgeSearchResult,
   searchKnowledge,

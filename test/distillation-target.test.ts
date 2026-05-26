@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   type DistillationTargetCandidate,
   selectDistillationTarget,
-} from "../src/modules/selectDistillationTarget/domain.js";
+} from "../src/modules/distillationTarget/domain.js";
 
 function wiki(
   targetKey: string,

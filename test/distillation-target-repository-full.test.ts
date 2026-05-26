@@ -2,7 +2,7 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import { db } from "../src/db/index.js";
 import { distillationTargetStates } from "../src/db/schema.js";
-import { releaseRetryablePausedDistillationTargets } from "../src/modules/selectDistillationTarget/repository.js";
+import { releaseRetryablePausedDistillationTargets } from "../src/modules/distillationTarget/repository.js";
 import {
   closeIntegrationDb,
   ensureDbIntegrationReady,
@@ -12,7 +12,7 @@ import {
 
 const describeDb = isDbIntegrationEnabled() ? describe : describe.skip;
 
-describeDb("selectDistillationTarget repository full coverage", () => {
+describeDb("distillationTarget repository full coverage", () => {
   beforeAll(async () => {
     await ensureDbIntegrationReady();
   });
