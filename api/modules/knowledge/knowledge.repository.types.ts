@@ -122,12 +122,23 @@ export type KnowledgeListSortBy =
 
 export type KnowledgeListSortDir = "asc" | "desc";
 
+export type KnowledgeDisplayFilter =
+  | "all"
+  | "draft"
+  | "active"
+  | "deprecated"
+  | "unused-active"
+  | "stale"
+  | "high-value";
+
 export type KnowledgeListParams = {
   limit: number;
   page?: number;
   status?: string;
   type?: string;
   query?: string;
+  displayFilter?: KnowledgeDisplayFilter;
+  minQuality?: number;
   sortBy?: KnowledgeListSortBy;
   sortDir?: KnowledgeListSortDir;
 };

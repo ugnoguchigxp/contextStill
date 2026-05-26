@@ -330,6 +330,13 @@
       "when": 1779782400000,
       "tag": "0046_session_memos",
       "breakpoints": true
+    },
+    {
+      "idx": 47,
+      "version": "7",
+      "when": 1779786000000,
+      "tag": "0047_compile_eval_notes",
+      "breakpoints": true
     }
   ]
 }

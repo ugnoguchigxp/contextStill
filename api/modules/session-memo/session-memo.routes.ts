@@ -32,15 +32,11 @@ sessionMemoRouter.get("/", zValidator("query", sessionIdSchema), async (c) => {
   return c.json({ sessionId, items, events });
 });
 
-sessionMemoRouter.get(
-  "/item",
-  zValidator("query", sessionMemoLocatorQuerySchema),
-  async (c) => {
-    const memo = await getSessionMemo(c.req.valid("query"));
-    if (!memo) return c.json({ error: "session memo not found" }, 404);
-    return c.json({ memo });
-  },
-);
+sessionMemoRouter.get("/item", zValidator("query", sessionMemoLocatorQuerySchema), async (c) => {
+  const memo = await getSessionMemo(c.req.valid("query"));
+  if (!memo) return c.json({ error: "session memo not found" }, 404);
+  return c.json({ memo });
+});
 
 sessionMemoRouter.post(
   "/item",
@@ -49,8 +45,11 @@ sessionMemoRouter.post(
     z.object({
       sessionId: z.string().trim().min(1),
       slot: z.number().int().min(0).max(19).optional(),
+      kind: z.string().trim().min(1).max(64).optional(),
+      title: z.string().trim().min(1).max(160).optional(),
+      score: z.number().int().min(0).max(100).optional(),
       label: z.string().trim().min(1).optional(),
-      body: z.string().trim().min(1).max(4000),
+      body: z.string().trim().min(1).max(10000),
       metadata: z.record(z.unknown()).optional(),
       expiresAt: z.string().datetime().optional(),
     }),
@@ -61,14 +60,10 @@ sessionMemoRouter.post(
   },
 );
 
-sessionMemoRouter.delete(
-  "/item",
-  zValidator("query", sessionMemoLocatorQuerySchema),
-  async (c) => {
-    const result = await deleteSessionMemo(c.req.valid("query"));
-    return c.json(result);
-  },
-);
+sessionMemoRouter.delete("/item", zValidator("query", sessionMemoLocatorQuerySchema), async (c) => {
+  const result = await deleteSessionMemo(c.req.valid("query"));
+  return c.json(result);
+});
 
 sessionMemoRouter.delete("/", zValidator("query", sessionIdSchema), async (c) => {
   const result = await clearSessionMemos(c.req.valid("query").sessionId);

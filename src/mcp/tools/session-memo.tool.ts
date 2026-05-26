@@ -34,6 +34,9 @@ export const sessionMemoTool: ToolEntry = {
       action: { type: "string", enum: ["put", "put_many", "list", "get", "delete", "clear"] },
       sessionId: { type: "string" },
       slot: { type: "number" },
+      kind: { type: "string" },
+      title: { type: "string" },
+      score: { type: "number" },
       label: { type: "string" },
       body: { type: "string" },
       metadata: { type: "object" },
@@ -53,6 +56,9 @@ export const sessionMemoTool: ToolEntry = {
       const saved = await putSessionMemo({
         sessionId,
         slot: parsed.slot,
+        kind: parsed.kind,
+        title: parsed.title,
+        score: parsed.score,
         label: parsed.label,
         body: parsed.body,
         metadata: parsed.metadata,
@@ -66,6 +72,9 @@ export const sessionMemoTool: ToolEntry = {
       if (!parsed.items) throw new Error("items is required");
       const items = parsed.items.map((item) => ({
         slot: item.slot,
+        kind: item.kind,
+        title: item.title,
+        score: item.score,
         label: item.label,
         body: item.body,
         metadata: item.metadata,

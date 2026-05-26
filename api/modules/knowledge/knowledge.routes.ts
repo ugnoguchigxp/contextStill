@@ -25,6 +25,10 @@ const listKnowledgeQuerySchema = z.object({
   status: z.string().trim().min(1).optional(),
   type: z.string().trim().min(1).optional(),
   query: z.string().trim().optional(),
+  displayFilter: z
+    .enum(["all", "draft", "active", "deprecated", "unused-active", "stale", "high-value"])
+    .optional(),
+  minQuality: z.coerce.number().min(0).max(100).optional(),
   sortBy: z
     .enum(["title", "type", "status", "scope", "qualityScore", "updatedAt"])
     .default("updatedAt"),

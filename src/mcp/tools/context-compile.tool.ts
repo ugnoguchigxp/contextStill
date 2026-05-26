@@ -3,6 +3,15 @@ import { reloadRuntimeSettingsCache } from "../../modules/settings/settings.serv
 import { compileInputSchema } from "../../shared/schemas/compile.schema.js";
 import type { ToolEntry } from "../registry.js";
 
+function resolveSessionIdFromMeta(requestMeta?: Record<string, unknown>): string | undefined {
+  const keys = ["sessionId", "threadId", "conversationId", "codexSessionId"] as const;
+  for (const key of keys) {
+    const value = requestMeta?.[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
 export const contextCompileTool: ToolEntry = {
   name: "context_compile",
   description:
@@ -17,10 +26,13 @@ export const contextCompileTool: ToolEntry = {
     },
     required: ["goal"],
   },
-  handler: async (args) => {
+  handler: async (args, context) => {
     const parsed = compileInputSchema.parse(args ?? {});
     await reloadRuntimeSettingsCache();
-    const { markdown } = await compileContextPack(parsed, { source: "mcp" });
+    const { markdown } = await compileContextPack(parsed, {
+      source: "mcp",
+      sessionId: resolveSessionIdFromMeta(context?.requestMeta),
+    });
     return {
       content: [{ type: "text", text: markdown }],
     };

@@ -35,6 +35,7 @@ export const contextCompileRuns = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     goal: text("goal").notNull(),
     intent: text("intent").notNull(),
+    sessionId: text("session_id"),
     repoPath: text("repo_path"),
     input: jsonb("input").notNull().default({}),
     retrievalMode: text("retrieval_mode").notNull(),
@@ -49,6 +50,9 @@ export const contextCompileRuns = pgTable(
   (table) => ({
     statusIdx: index("context_compile_runs_status_idx").on(table.status),
     createdAtIdx: index("context_compile_runs_created_at_idx").on(table.createdAt),
+    sessionCreatedAtIdx: index("context_compile_runs_session_created_at_idx")
+      .on(table.sessionId, table.createdAt)
+      .where(sql`${table.sessionId} is not null`),
     sourceIdx: index("context_compile_runs_source_idx").on(table.source),
     statusCheck: check(
       "context_compile_runs_status_check",

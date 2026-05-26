@@ -168,11 +168,13 @@ describe("Admin Repository", () => {
         page: 2,
         status: "active",
         query: "test",
+        displayFilter: "stale",
+        minQuality: 50,
         sortBy: "title",
         sortDir: "asc",
       });
       expect(spy).toHaveBeenCalledWith(
-        "/api/knowledge?limit=20&page=2&status=active&query=test&sortBy=title&sortDir=asc",
+        "/api/knowledge?limit=20&page=2&status=active&query=test&displayFilter=stale&minQuality=50&sortBy=title&sortDir=asc",
       );
     });
 

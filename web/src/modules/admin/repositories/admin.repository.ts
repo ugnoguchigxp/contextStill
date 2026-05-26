@@ -37,6 +37,15 @@ export type KnowledgeListRequest = {
   page?: number;
   status?: string;
   query?: string;
+  displayFilter?:
+    | "all"
+    | "draft"
+    | "active"
+    | "deprecated"
+    | "unused-active"
+    | "stale"
+    | "high-value";
+  minQuality?: number;
   sortBy?: string;
   sortDir?: "asc" | "desc";
 };
@@ -89,6 +98,7 @@ export type SessionMemo = {
   id: string;
   sessionId: string;
   slot: number;
+  kind: string;
   label: string | null;
   body: string;
   metadata?: Record<string, unknown>;
@@ -103,12 +113,28 @@ export type SessionMemoEvent = {
   id: string;
   sessionId: string;
   slot: number | null;
+  kind: string;
   label: string | null;
   action: string;
   bodyPreview: string | null;
   metadata?: Record<string, unknown>;
   source: string;
   createdAt: string;
+};
+
+export type SessionMemoListItem = {
+  slot: number;
+  kind?: string;
+  label?: string | null;
+  title?: string | null;
+  score?: number | null;
+  preview?: string;
+  previewChars?: number;
+  bodyLength?: number;
+  metadata?: Record<string, unknown>;
+  updatedAt?: string;
+  expiresAt?: string | null;
+  empty?: boolean;
 };
 
 export type AgentDiffEntry = {
@@ -2253,6 +2279,8 @@ export async function fetchKnowledgeItems(
     params.set("page", String(input.page ?? 1));
     if (input.status) params.set("status", input.status);
     if (input.query) params.set("query", input.query);
+    if (input.displayFilter) params.set("displayFilter", input.displayFilter);
+    if (input.minQuality !== undefined) params.set("minQuality", String(input.minQuality));
     if (input.sortBy) params.set("sortBy", input.sortBy);
     if (input.sortDir) params.set("sortDir", input.sortDir);
   }
@@ -2298,11 +2326,11 @@ export async function fetchVibeMemories(limit = 120): Promise<VibeMemory[]> {
 export async function fetchSessionMemos(
   sessionId: string,
   options?: { includeEmpty?: boolean; previewChars?: number },
-): Promise<{ items: Array<Record<string, unknown>>; events: SessionMemoEvent[] }> {
+): Promise<{ items: SessionMemoListItem[]; events: SessionMemoEvent[] }> {
   const params = new URLSearchParams({ sessionId });
   if (options?.includeEmpty !== undefined) params.set("includeEmpty", String(options.includeEmpty));
   if (options?.previewChars !== undefined) params.set("previewChars", String(options.previewChars));
-  return getJson<{ items: Array<Record<string, unknown>>; events: SessionMemoEvent[] }>(
+  return getJson<{ items: SessionMemoListItem[]; events: SessionMemoEvent[] }>(
     `/api/session-memo?${params}`,
   );
 }
@@ -2310,6 +2338,9 @@ export async function fetchSessionMemos(
 export async function upsertSessionMemo(input: {
   sessionId: string;
   slot?: number;
+  kind?: string;
+  title?: string;
+  score?: number;
   label?: string;
   body: string;
   metadata?: Record<string, unknown>;

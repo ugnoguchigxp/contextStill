@@ -1,4 +1,4 @@
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, lte, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import {
   contextCompileCandidateTraces,
@@ -34,6 +34,7 @@ import {
 export async function insertCompileRun(params: {
   goal: string;
   intent: string;
+  sessionId?: string;
   repoPath?: string;
   input: Record<string, unknown>;
   retrievalMode: string;
@@ -48,6 +49,7 @@ export async function insertCompileRun(params: {
     .values({
       goal: params.goal,
       intent: params.intent,
+      sessionId: params.sessionId ?? null,
       repoPath: params.repoPath ?? null,
       input: params.input,
       retrievalMode: params.retrievalMode,
@@ -257,6 +259,28 @@ export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSn
       sourceRefs: normalizeStringArray(row.sourceRefs),
     })),
   };
+}
+
+export async function getLatestCompileRunForSession(params: {
+  sessionId: string;
+  createdBefore?: Date;
+}): Promise<{ id: string; createdAt: Date } | null> {
+  const [row] = await db
+    .select({
+      id: contextCompileRuns.id,
+      createdAt: contextCompileRuns.createdAt,
+    })
+    .from(contextCompileRuns)
+    .where(
+      and(
+        eq(contextCompileRuns.sessionId, params.sessionId),
+        params.createdBefore ? lte(contextCompileRuns.createdAt, params.createdBefore) : undefined,
+      ),
+    )
+    .orderBy(desc(contextCompileRuns.createdAt))
+    .limit(1);
+  if (!row) return null;
+  return { id: row.id, createdAt: normalizeDate(row.createdAt) };
 }
 
 export async function getCompileRunDetail(runId: string): Promise<CompileRunDetail | null> {

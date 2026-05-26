@@ -382,14 +382,17 @@ describe("MCP Tools Handlers", () => {
         label: undefined,
       });
 
-      await sessionMemoTool.handler({ action: "clear", sessionId: "s-1" }, { toolName: "session_memo" });
+      await sessionMemoTool.handler(
+        { action: "clear", sessionId: "s-1" },
+        { toolName: "session_memo" },
+      );
       expect(clearSessionMemos).toHaveBeenCalledWith("s-1");
     });
 
     test("fails when session id is missing", async () => {
-      await expect(sessionMemoTool.handler({ action: "list" }, { toolName: "session_memo" })).rejects.toThrow(
-        "SESSION_ID_REQUIRED",
-      );
+      await expect(
+        sessionMemoTool.handler({ action: "list" }, { toolName: "session_memo" }),
+      ).rejects.toThrow("SESSION_ID_REQUIRED");
     });
   });
 

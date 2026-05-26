@@ -56,7 +56,7 @@ export type {
 };
 
 export async function countKnowledgeItems(
-  params: Pick<KnowledgeListParams, "status" | "type" | "query">,
+  params: Pick<KnowledgeListParams, "status" | "type" | "query" | "displayFilter" | "minQuality">,
 ): Promise<number> {
   const rows = await db
     .select({

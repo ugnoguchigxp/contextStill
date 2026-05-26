@@ -141,6 +141,7 @@ export const sessionMemos = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     sessionId: text("session_id").notNull(),
     slot: integer("slot").notNull(),
+    kind: text("kind").notNull().default("scratch"),
     label: text("label"),
     body: text("body").notNull(),
     metadata: jsonb("metadata").default({}).notNull(),
@@ -159,9 +160,13 @@ export const sessionMemos = pgTable(
       "session_memos_source_check",
       sql`${table.source} in ('mcp', 'ui', 'system', 'import')`,
     ),
+    kindLengthCheck: check(
+      "session_memos_kind_length_check",
+      sql`char_length(${table.kind}) <= 64`,
+    ),
     bodyLengthCheck: check(
       "session_memos_body_length_check",
-      sql`char_length(${table.body}) <= 4000`,
+      sql`char_length(${table.body}) <= 10000`,
     ),
     activeSlotUniqueIdx: uniqueIndex("session_memos_active_slot_unique")
       .on(table.sessionId, table.slot)
@@ -173,6 +178,9 @@ export const sessionMemos = pgTable(
       table.sessionId,
       table.updatedAt,
     ),
+    sessionKindUpdatedAtIdx: index("session_memos_session_kind_updated_at_idx")
+      .on(table.sessionId, table.kind, table.updatedAt)
+      .where(sql`${table.deletedAt} is null`),
     expiresAtIdx: index("session_memos_expires_at_idx")
       .on(table.expiresAt)
       .where(sql`${table.deletedAt} is null and ${table.expiresAt} is not null`),
@@ -185,6 +193,7 @@ export const sessionMemoEvents = pgTable(
     id: uuid("id").primaryKey().defaultRandom(),
     sessionId: text("session_id").notNull(),
     slot: integer("slot"),
+    kind: text("kind").notNull().default("scratch"),
     label: text("label"),
     action: text("action").notNull(),
     bodyPreview: text("body_preview"),
@@ -201,8 +210,17 @@ export const sessionMemoEvents = pgTable(
       "session_memo_events_source_check",
       sql`${table.source} in ('mcp', 'ui', 'system', 'import')`,
     ),
+    kindLengthCheck: check(
+      "session_memo_events_kind_length_check",
+      sql`char_length(${table.kind}) <= 64`,
+    ),
     sessionCreatedAtIdx: index("session_memo_events_session_created_at_idx").on(
       table.sessionId,
+      table.createdAt,
+    ),
+    sessionKindCreatedAtIdx: index("session_memo_events_session_kind_created_at_idx").on(
+      table.sessionId,
+      table.kind,
       table.createdAt,
     ),
   }),

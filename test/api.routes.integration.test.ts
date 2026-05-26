@@ -211,7 +211,9 @@ describeDb("api route integration", () => {
     expect(
       listJson.items.some(
         (item) =>
-          item.slot === 2 && item.label === "goal" && item.preview === "finish session memo integration test",
+          item.slot === 2 &&
+          item.label === "goal" &&
+          item.preview === "finish session memo integration test",
       ),
     ).toBe(true);
     expect(listJson.events.some((event) => event.action === "put")).toBe(true);

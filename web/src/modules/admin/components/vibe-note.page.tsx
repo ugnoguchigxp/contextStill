@@ -28,7 +28,10 @@ type SessionSummary = {
 export function VibeNotePage() {
   const queryClient = useQueryClient();
   const search = useRouterState({ select: (state) => state.location.searchStr });
-  const sessionIdFromQuery = useMemo(() => new URLSearchParams(search).get("sessionId") ?? "", [search]);
+  const sessionIdFromQuery = useMemo(
+    () => new URLSearchParams(search).get("sessionId") ?? "",
+    [search],
+  );
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     sessionIdFromQuery || null,
   );
@@ -60,17 +63,19 @@ export function VibeNotePage() {
 
   const notes = useQuery({
     queryKey: ["session-memos", activeSessionId],
-    queryFn: () => fetchSessionMemos(activeSessionId, { includeEmpty: true }),
+    queryFn: () => fetchSessionMemos(activeSessionId),
     enabled: activeSessionId.length > 0,
   });
 
   const save = useMutation({
     mutationFn: upsertSessionMemo,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["session-memos", activeSessionId] }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["session-memos", activeSessionId] }),
   });
   const remove = useMutation({
     mutationFn: deleteSessionMemo,
-    onSuccess: () => queryClient.invalidateQueries({ queryKey: ["session-memos", activeSessionId] }),
+    onSuccess: () =>
+      queryClient.invalidateQueries({ queryKey: ["session-memos", activeSessionId] }),
   });
 
   return (
@@ -120,13 +125,13 @@ export function VibeNotePage() {
           </div>
           <div className="header-meta">
             {activeSessionId ? (
-              <a href={`/vibe-memory?sessionId=${encodeURIComponent(activeSessionId)}`}>Vibe Memoryへ</a>
+              <a href={`/vibe-memory?sessionId=${encodeURIComponent(activeSessionId)}`}>
+                Vibe Memoryへ
+              </a>
             ) : null}
           </div>
         </header>
-        {!activeSessionId ? (
-          <div className="vibe-empty-view">セッションがありません。</div>
-        ) : null}
+        {!activeSessionId ? <div className="vibe-empty-view">セッションがありません。</div> : null}
         <div className="vibe-card">
           <div className="vibe-card-body" style={{ display: "grid", gap: 8 }}>
             <Input
@@ -160,23 +165,26 @@ export function VibeNotePage() {
           </div>
         </div>
         <div className="vibe-history">
-          {(notes.data?.items ?? []).map((item) => {
-            const slotNum = Number(item.slot);
-            const empty = item.empty === true;
-            return (
-              <div key={slotNum} className="vibe-card">
-                <div className="vibe-card-header">
-                  <Badge variant="secondary">slot {slotNum}</Badge>
-                  {item.label ? <span>{String(item.label)}</span> : null}
-                </div>
-                <div className="vibe-card-body">
-                  {empty ? (
-                    <span className="vibe-muted-text">(empty)</span>
-                  ) : (
+          {notes.data?.items?.length ? (
+            notes.data.items.map((item) => {
+              const slotNum = Number(item.slot);
+              const kind = typeof item.kind === "string" ? item.kind : "scratch";
+              const title =
+                typeof item.metadata?.title === "string" ? item.metadata.title : undefined;
+              const score =
+                typeof item.metadata?.score === "number" ? item.metadata.score : undefined;
+              return (
+                <div key={slotNum} className="vibe-card">
+                  <div className="vibe-card-header">
+                    <Badge variant="secondary">slot {slotNum}</Badge>
+                    <Badge variant="outline">{kind}</Badge>
+                    {item.label ? <span>{String(item.label)}</span> : null}
+                    {title ? <span>{title}</span> : null}
+                    {score !== undefined ? <span>score: {score}</span> : null}
+                  </div>
+                  <div className="vibe-card-body">
                     <pre>{String(item.preview ?? "")}</pre>
-                  )}
-                </div>
-                {!empty ? (
+                  </div>
                   <div className="vibe-card-footer">
                     <button
                       type="button"
@@ -186,10 +194,16 @@ export function VibeNotePage() {
                       Delete
                     </button>
                   </div>
-                ) : null}
+                </div>
+              );
+            })
+          ) : (
+            <div className="vibe-card">
+              <div className="vibe-card-body">
+                <span className="vibe-muted-text">保存されたノート無し</span>
               </div>
-            );
-          })}
+            </div>
+          )}
         </div>
         {notes.data?.events?.length ? (
           <div className="vibe-card">
@@ -199,7 +213,8 @@ export function VibeNotePage() {
             <div className="vibe-card-body">
               {notes.data.events.slice(0, 20).map((event) => (
                 <div key={event.id} className="vibe-muted-text">
-                  {event.action} / slot {event.slot ?? "-"} / {new Date(event.createdAt).toLocaleString()}
+                  {event.action} / slot {event.slot ?? "-"} /{" "}
+                  {new Date(event.createdAt).toLocaleString()}
                 </div>
               ))}
             </div>
@@ -210,24 +225,21 @@ export function VibeNotePage() {
   );
 }
 
-function buildSessionSummary(
-  id: string,
-  items: Array<{ createdAt: string; content: string; metadata?: Record<string, unknown> }>,
-): SessionSummary {
-  const lastCreatedAt = new Date(
-    Math.max(...items.map((item) => new Date(String(item.createdAt)).getTime())),
-  );
-  const firstCreatedAt = new Date(
-    Math.min(...items.map((item) => new Date(String(item.createdAt)).getTime())),
-  );
-  const projectName = firstMetadataString(items, "projectName") ?? "Unknown Project";
-  const sourceLabel = firstMetadataString(items, "source") ?? "Agent";
-  const startedAt = firstMetadataString(items, "sessionStartedAt") ?? firstCreatedAt.toISOString();
-
-  let firstMessage: string | undefined;
+function buildSessionSummary(id: string, items: VibeMemory[]): SessionSummary {
   const sortedItems = [...items].sort(
     (a, b) => resolveMemoryEventTime(a).getTime() - resolveMemoryEventTime(b).getTime(),
   );
+  const lastCreatedAt =
+    latestMetadataTime(items, "timestamp") ??
+    new Date(Math.max(...items.map((item) => resolveMemoryEventTime(item).getTime())));
+  const firstCreatedAt = new Date(
+    Math.min(...items.map((item) => resolveMemoryEventTime(item).getTime())),
+  );
+  const projectName = firstMetadataString(items, "projectName") ?? "Unknown Project";
+  const sourceLabel = firstMetadataString(items, "source") ?? "Agent";
+  const startedAt = earliestMetadataTime(items, "sessionStartedAt") ?? firstCreatedAt.toISOString();
+
+  let firstMessage: string | undefined;
   for (const item of sortedItems) {
     const turns = parseVibeMemoryTurns(item.content);
     const userTurn = turns.find((turn) => turn.role === "user" && !turn.isMetadata);
@@ -249,15 +261,32 @@ function buildSessionSummary(
   };
 }
 
-function firstMetadataString(
-  items: Array<{ metadata?: Record<string, unknown> }>,
-  key: string,
-): string | undefined {
+function firstMetadataString(items: VibeMemory[], key: string): string | undefined {
   for (const item of items) {
     const value = item.metadata?.[key];
     if (typeof value === "string" && value.trim().length > 0) return value.trim();
   }
   return undefined;
+}
+
+function earliestMetadataTime(items: VibeMemory[], key: string): string | undefined {
+  const times = items
+    .map((item) => item.metadata?.[key])
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => new Date(value))
+    .filter((date) => !Number.isNaN(date.getTime()))
+    .sort((a, b) => a.getTime() - b.getTime());
+  return times[0]?.toISOString();
+}
+
+function latestMetadataTime(items: VibeMemory[], key: string): Date | undefined {
+  const times = items
+    .map((item) => item.metadata?.[key])
+    .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+    .map((value) => new Date(value))
+    .filter((date) => !Number.isNaN(date.getTime()))
+    .sort((a, b) => b.getTime() - a.getTime());
+  return times[0];
 }
 
 function formatSessionTime(value: string): string {
@@ -289,7 +318,10 @@ function stripRolePrefix(value: string): string {
   return value.replace(/^\s*(USER|ASSISTANT|SYSTEM)\s*:\s*/i, "").trim();
 }
 
-function resolveMemoryEventTime(memory: { createdAt: string; metadata?: Record<string, unknown> }): Date {
+function resolveMemoryEventTime(memory: {
+  createdAt: string;
+  metadata?: Record<string, unknown>;
+}): Date {
   const timestamp = memory.metadata?.timestamp;
   if (typeof timestamp === "string" && timestamp.trim()) {
     const parsed = new Date(timestamp);

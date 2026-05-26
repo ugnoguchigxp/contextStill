@@ -64,11 +64,39 @@ export function isMissingKnowledgeLifecycleColumnsError(error: unknown): boolean
 }
 
 export function buildKnowledgeListWhere(
-  params: Pick<KnowledgeListParams, "status" | "type" | "query">,
+  params: Pick<KnowledgeListParams, "status" | "type" | "query" | "displayFilter" | "minQuality">,
 ) {
   const conditions: SQL[] = [];
-  if (params.status) {
+  const displayFilter = params.displayFilter ?? "all";
+  if (displayFilter === "draft" || displayFilter === "active" || displayFilter === "deprecated") {
+    conditions.push(eq(knowledgeItems.status, displayFilter));
+  } else if (params.status) {
     conditions.push(eq(knowledgeItems.status, params.status));
+  }
+  if (displayFilter === "unused-active") {
+    conditions.push(eq(knowledgeItems.status, "active"));
+    conditions.push(eq(knowledgeItems.compileSelectCount, 0));
+  }
+  if (displayFilter === "stale") {
+    conditions.push(sql`
+      exp(
+        -(
+          case when ${knowledgeItems.type} = 'procedure' then 0.004 else 0.001 end
+        ) * (
+          case when ${knowledgeItems.scope} = 'global' then 0.5 else 1 end
+        ) * greatest(
+          0,
+          extract(
+            epoch from (
+              now() - coalesce(${knowledgeItems.lastVerifiedAt}, ${knowledgeItems.updatedAt})
+            )
+          ) / 86400.0
+        )
+      ) < 0.5
+    `);
+  }
+  if (displayFilter === "high-value") {
+    conditions.push(sql`${knowledgeItems.dynamicScore} >= 60`);
   }
   if (params.type) {
     conditions.push(eq(knowledgeItems.type, params.type));
@@ -83,6 +111,11 @@ export function buildKnowledgeListWhere(
       sql`${knowledgeItems.appliesTo} ->> 'changeTypes' ilike ${query}`,
     );
     if (searchCondition) conditions.push(searchCondition);
+  }
+  if ((params.minQuality ?? 0) > 0) {
+    conditions.push(
+      sql`(${knowledgeItems.importance} * 0.6 + ${knowledgeItems.confidence} * 0.4) >= ${params.minQuality ?? 0}`,
+    );
   }
   return conditions.length > 0 ? and(...conditions) : undefined;
 }

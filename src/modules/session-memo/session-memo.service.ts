@@ -2,11 +2,15 @@ import { and, desc, eq, isNull, lte, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { db } from "../../db/client.js";
 import { sessionMemoEvents, sessionMemos } from "../../db/schema.js";
+import { getLatestCompileRunForSession } from "../context-compiler/context-compiler.repository.js";
 import { sessionMemoSlotLimit } from "../../shared/schemas/session-memo.schema.js";
 
 type PutInput = {
   sessionId: string;
   slot?: number;
+  kind?: string;
+  title?: string;
+  score?: number;
   label?: string;
   body: string;
   metadata?: Record<string, unknown>;
@@ -14,9 +18,53 @@ type PutInput = {
   source?: "mcp" | "ui" | "system" | "import";
 };
 
+const compileEvalKind = "compile_eval";
+const defaultMemoKind = "scratch";
+
 function normalizeLabel(value?: string): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function normalizeKind(value?: string): string {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : defaultMemoKind;
+}
+
+function normalizeTitle(value?: string): string | undefined {
+  const trimmed = value?.trim();
+  return trimmed && trimmed.length > 0 ? trimmed : undefined;
+}
+
+function asMetadataRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
+async function enrichMetadataForCompileEval(params: {
+  sessionId: string;
+  createdAt: Date;
+  metadata: Record<string, unknown>;
+}): Promise<Record<string, unknown>> {
+  const linkedRun = await getLatestCompileRunForSession({
+    sessionId: params.sessionId,
+    createdBefore: params.createdAt,
+  });
+  if (!linkedRun) {
+    return {
+      ...params.metadata,
+      linkStatus: "unresolved",
+      unresolvedReason: "no_recent_context_compile_run",
+    };
+  }
+
+  return {
+    ...params.metadata,
+    contextCompileRunId: linkedRun.id,
+    contextCompileRunCreatedAt: linkedRun.createdAt.toISOString(),
+    linkStatus: "linked",
+  };
 }
 
 async function expireRows(sessionId: string, source: PutInput["source"] = "mcp"): Promise<void> {
@@ -31,12 +79,13 @@ async function expireRows(sessionId: string, source: PutInput["source"] = "mcp")
         lte(sessionMemos.expiresAt, now),
       ),
     )
-    .returning({ slot: sessionMemos.slot, label: sessionMemos.label });
+    .returning({ slot: sessionMemos.slot, kind: sessionMemos.kind, label: sessionMemos.label });
   if (expired.length === 0) return;
   await db.insert(sessionMemoEvents).values(
     expired.map((row) => ({
       sessionId,
       slot: row.slot,
+      kind: row.kind,
       label: row.label,
       action: "expire",
       source: source ?? "mcp",
@@ -74,13 +123,29 @@ async function putSessionMemoIn(
   input: PutInput,
 ) {
   const label = normalizeLabel(input.label);
+  const kind = normalizeKind(input.kind);
+  const title = normalizeTitle(input.title);
   const now = new Date();
   const source = input.source ?? "mcp";
+  const effectiveLabel = label ?? (kind === compileEvalKind ? compileEvalKind : null);
+  let effectiveMetadata: Record<string, unknown> = {
+    ...(input.metadata ?? {}),
+    kind,
+  };
+  if (title !== undefined) effectiveMetadata.title = title;
+  if (input.score !== undefined) effectiveMetadata.score = input.score;
+  if (kind === compileEvalKind) {
+    effectiveMetadata = await enrichMetadataForCompileEval({
+      sessionId: input.sessionId,
+      createdAt: now,
+      metadata: effectiveMetadata,
+    });
+  }
 
   let rowByLabel:
     | { id: string; slot: number; label: string | null; body: string; metadata: unknown }
     | undefined;
-  if (label) {
+  if (effectiveLabel) {
     const rows = await tx
       .select({
         id: sessionMemos.id,
@@ -94,7 +159,7 @@ async function putSessionMemoIn(
         and(
           eq(sessionMemos.sessionId, input.sessionId),
           isNull(sessionMemos.deletedAt),
-          sql`lower(${sessionMemos.label}) = lower(${label})`,
+          sql`lower(${sessionMemos.label}) = lower(${effectiveLabel})`,
         ),
       )
       .limit(1);
@@ -119,9 +184,10 @@ async function putSessionMemoIn(
     .values({
       sessionId: input.sessionId,
       slot: resolvedSlot,
-      label,
+      kind,
+      label: effectiveLabel,
       body: input.body,
-      metadata: input.metadata ?? {},
+      metadata: effectiveMetadata,
       source,
       expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
       updatedAt: now,
@@ -130,9 +196,10 @@ async function putSessionMemoIn(
       target: [sessionMemos.sessionId, sessionMemos.slot],
       targetWhere: sql`${sessionMemos.deletedAt} is null`,
       set: {
-        label,
+        kind,
+        label: effectiveLabel,
         body: input.body,
-        metadata: input.metadata ?? {},
+        metadata: effectiveMetadata,
         source,
         expiresAt: input.expiresAt ? new Date(input.expiresAt) : null,
         updatedAt: now,
@@ -144,11 +211,12 @@ async function putSessionMemoIn(
   await tx.insert(sessionMemoEvents).values({
     sessionId: input.sessionId,
     slot: saved.slot,
+    kind: saved.kind,
     label: saved.label,
     action: "put",
     source,
     bodyPreview: input.body.slice(0, 200),
-    metadata: input.metadata ?? {},
+    metadata: effectiveMetadata,
   });
 
   return saved;
@@ -183,17 +251,31 @@ export async function listSessionMemos(input: {
     .where(and(eq(sessionMemos.sessionId, input.sessionId), isNull(sessionMemos.deletedAt)))
     .orderBy(sessionMemos.slot);
   const items = rows.map((row) => ({
+    metadata: asMetadataRecord(row.metadata),
     slot: row.slot,
+    kind: row.kind,
     label: row.label,
     preview: row.body.slice(0, previewChars),
     previewChars,
     bodyLength: row.body.length,
     updatedAt: row.updatedAt,
-    metadata: row.metadata,
     expiresAt: row.expiresAt,
   }));
-  if (!input.includeEmpty) return items;
-  const map = new Map(items.map((item) => [item.slot, item]));
+  const normalizedItems = items.map((item) => ({
+    slot: item.slot,
+    kind: item.kind,
+    label: item.label,
+    title: typeof item.metadata.title === "string" ? item.metadata.title : null,
+    score: typeof item.metadata.score === "number" ? item.metadata.score : null,
+    preview: item.preview,
+    previewChars: item.previewChars,
+    bodyLength: item.bodyLength,
+    updatedAt: item.updatedAt,
+    metadata: item.metadata,
+    expiresAt: item.expiresAt,
+  }));
+  if (!input.includeEmpty) return normalizedItems;
+  const map = new Map(normalizedItems.map((item) => [item.slot, item]));
   return Array.from({ length: sessionMemoSlotLimit }, (_, slot) => {
     const entry = map.get(slot);
     if (entry) return entry;
@@ -242,6 +324,7 @@ export async function deleteSessionMemo(input: {
   await db.insert(sessionMemoEvents).values({
     sessionId: input.sessionId,
     slot: row.slot,
+    kind: row.kind,
     label: row.label,
     action: "delete",
     source: "mcp",
@@ -262,6 +345,7 @@ export async function clearSessionMemos(sessionId: string) {
   if (rows.length > 0) {
     await db.insert(sessionMemoEvents).values({
       sessionId,
+      kind: defaultMemoKind,
       action: "clear",
       source: "mcp",
       metadata: { count: rows.length },

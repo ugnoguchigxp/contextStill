@@ -30,6 +30,7 @@ import { type FormEvent, useCallback, useEffect, useMemo, useState } from "react
 import {
   type KnowledgeBulkStatusSelection,
   type KnowledgeItem,
+  type KnowledgeListRequest,
   type KnowledgeType,
   type KnowledgeUpdateInput,
   type KnowledgeWriteInput,
@@ -161,7 +162,8 @@ export function KnowledgePage() {
   const [domainsInput, setDomainsInput] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
-  const [displayFilter, setDisplayFilter] = useState<string>("all");
+  const [displayFilter, setDisplayFilter] =
+    useState<NonNullable<KnowledgeListRequest["displayFilter"]>>("all");
   const [minQuality, setMinQuality] = useState<number>(0);
   const [searchInputValue, setSearchInputValue] = useState("");
   const [submittedSearchQuery, setSubmittedSearchQuery] = useState("");
@@ -201,6 +203,8 @@ export function KnowledgePage() {
         limit: pagination.pageSize,
         status: serverStatusFilter,
         query: serverSearchQuery,
+        displayFilter: displayFilter !== "all" ? displayFilter : undefined,
+        minQuality: minQuality > 0 ? minQuality : undefined,
         sortBy: serverSort.id,
         sortDir: serverSort.desc ? "desc" : "asc",
       },
@@ -211,6 +215,8 @@ export function KnowledgePage() {
         limit: pagination.pageSize,
         status: serverStatusFilter,
         query: serverSearchQuery || undefined,
+        displayFilter: displayFilter !== "all" ? displayFilter : undefined,
+        minQuality: minQuality > 0 ? minQuality : undefined,
         sortBy: serverSort.id,
         sortDir: serverSort.desc ? "desc" : "asc",
       }),
@@ -218,29 +224,13 @@ export function KnowledgePage() {
   const loadedKnowledgeItems = knowledge.data?.items ?? [];
   const totalKnowledgeCount = knowledge.data?.total ?? loadedKnowledgeItems.length;
 
-  const filteredItems = useMemo(() => {
-    return loadedKnowledgeItems.filter((item) => {
-      const statusMatch =
-        displayFilter === "all" ||
-        (displayFilter === "unused-active"
-          ? item.status === "active" && item.compileSelectCount === 0
-          : displayFilter === "stale"
-            ? item.decayFactor < staleDecayThreshold
-            : displayFilter === "high-value"
-              ? item.dynamicScore >= highValueThreshold
-              : item.status === displayFilter);
-      const qualityMatch = qualityScore(item) >= minQuality;
-      return statusMatch && qualityMatch;
-    });
-  }, [loadedKnowledgeItems, displayFilter, minQuality]);
-
   useEffect(() => {
-    const validIds = new Set(filteredItems.map((item) => item.id));
+    const validIds = new Set(loadedKnowledgeItems.map((item) => item.id));
     setSelectedIds((current) => {
       const next = current.filter((id) => validIds.has(id));
       return next.length === current.length ? current : next;
     });
-  }, [filteredItems]);
+  }, [loadedKnowledgeItems]);
 
   const buildEditPayload = useCallback((): KnowledgeUpdateInput => {
     const payload: KnowledgeUpdateInput = {
@@ -431,12 +421,16 @@ export function KnowledgePage() {
   }, []);
 
   const selectedCount = selectedIds.length;
-  const allFilteredIds = useMemo(() => filteredItems.map((item) => item.id), [filteredItems]);
+  const allFilteredIds = useMemo(
+    () => loadedKnowledgeItems.map((item) => item.id),
+    [loadedKnowledgeItems],
+  );
   const selectedSet = useMemo(() => new Set(selectedIds), [selectedIds]);
   const selectedTotalCount = bulkSelection ? totalKnowledgeCount : selectedCount;
   const visibleSelectedCount = bulkSelection
-    ? filteredItems.filter((item) => !bulkSelection.status || item.status === bulkSelection.status)
-        .length
+    ? loadedKnowledgeItems.filter(
+        (item) => !bulkSelection.status || bulkSelection.status === item.status,
+      ).length
     : allFilteredIds.filter((id) => selectedSet.has(id)).length;
   const toggleSelected = useCallback((id: string, checked: boolean) => {
     setBulkSelection(null);
@@ -774,7 +768,7 @@ export function KnowledgePage() {
   );
 
   const table = useReactTable({
-    data: filteredItems,
+    data: loadedKnowledgeItems,
     columns,
     state: {
       sorting,
@@ -800,8 +794,6 @@ export function KnowledgePage() {
   const displayTotalPages = Math.max(1, totalPages);
   const hasPrev = currentPage > 1;
   const hasNext = totalPages > 0 && currentPage < totalPages;
-  const hasCurrentPageFilters =
-    minQuality > 0 || ["unused-active", "stale", "high-value"].includes(displayFilter);
 
   return (
     <div className="knowledge-full-layout">
@@ -827,7 +819,10 @@ export function KnowledgePage() {
             value={displayFilter}
             className="w-[150px]"
             onChange={(event) => {
-              setDisplayFilter(event.target.value);
+              const nextFilter =
+                displayFilterOptions.find((option) => option.value === event.target.value)?.value ??
+                "all";
+              setDisplayFilter(nextFilter);
               setBulkSelection(null);
               resetToFirstPage();
             }}
@@ -994,9 +989,7 @@ export function KnowledgePage() {
         onNextPage={() => table.nextPage()}
         onPageSelect={(pageNumber) => table.setPageIndex(pageNumber - 1)}
         summaryItems={[
-          hasCurrentPageFilters
-            ? `Showing ${filteredItems.length} matching items on this page / ${totalKnowledgeCount} total | Page ${currentPage} / ${displayTotalPages}`
-            : `Showing ${pageStart} to ${pageEnd} of ${totalKnowledgeCount} items | Page ${currentPage} / ${displayTotalPages}`,
+          `Showing ${pageStart} to ${pageEnd} of ${totalKnowledgeCount} items | Page ${currentPage} / ${displayTotalPages}`,
         ]}
       />
 

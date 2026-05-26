@@ -774,7 +774,7 @@ function legacyIntentFromRetrievalMode(retrievalMode: RetrievalMode): string {
 
 export async function compileContextPack(
   rawInput: unknown,
-  options?: { source?: CompileRunSource },
+  options?: { source?: CompileRunSource; sessionId?: string },
 ): Promise<{
   pack: ContextPack;
   markdown: string;
@@ -824,6 +824,7 @@ export async function compileContextPack(
     const runId = await insertCompileRun({
       goal: input.goal,
       intent: legacyIntentFromRetrievalMode(retrievalMode),
+      sessionId: options?.sessionId,
       repoPath: workspaceRepoPath,
       input: {
         goal: input.goal,
@@ -1112,6 +1113,7 @@ export async function compileContextPack(
   const runId = await insertCompileRun({
     goal: input.goal,
     intent: legacyIntentFromRetrievalMode(retrievalMode),
+    sessionId: options?.sessionId,
     repoPath: workspaceRepoPath,
     input: {
       goal: input.goal,

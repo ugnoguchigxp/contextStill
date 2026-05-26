@@ -578,6 +578,34 @@ describe("API route contract tests", () => {
     });
   });
 
+  test("GET /api/knowledge passes displayFilter and minQuality parameters", async () => {
+    vi.mocked(listKnowledgeItems).mockResolvedValueOnce([]);
+    vi.mocked(countKnowledgeItems).mockResolvedValueOnce(0);
+
+    const app = buildApp();
+    const response = await app.request(
+      "/api/knowledge?limit=20&page=1&displayFilter=stale&minQuality=70",
+    );
+
+    expect(response.status).toBe(200);
+    expect(listKnowledgeItems).toHaveBeenCalledWith({
+      limit: 20,
+      page: 1,
+      displayFilter: "stale",
+      minQuality: 70,
+      sortBy: "updatedAt",
+      sortDir: "desc",
+    });
+    expect(countKnowledgeItems).toHaveBeenCalledWith({
+      limit: 20,
+      page: 1,
+      displayFilter: "stale",
+      minQuality: 70,
+      sortBy: "updatedAt",
+      sortDir: "desc",
+    });
+  });
+
   test("PUT /api/knowledge/:id rejects invalid payload", async () => {
     const app = buildApp();
     const response = await app.request("/api/knowledge/invalid-id", {
