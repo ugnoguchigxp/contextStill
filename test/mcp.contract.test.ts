@@ -58,6 +58,8 @@ describeDb("mcp contract", () => {
       "context_compile",
       "search_knowledge",
       "register_candidate",
+      "register_candidates",
+      "session_memo",
       "search_memory",
       "fetch_memory",
       "doctor",
@@ -80,6 +82,7 @@ describeDb("mcp contract", () => {
     expect(text).toContain("## MCPツール種別");
     expect(text).toContain("context_compile");
     expect(text).toContain("register_candidate");
+    expect(text).toContain("register_candidates");
     expect(text).toContain("Use when:");
     expect(text).toContain("design.md");
   });

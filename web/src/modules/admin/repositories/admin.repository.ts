@@ -85,6 +85,32 @@ export type VibeMemory = {
   createdAt: string;
 };
 
+export type SessionMemo = {
+  id: string;
+  sessionId: string;
+  slot: number;
+  label: string | null;
+  body: string;
+  metadata?: Record<string, unknown>;
+  source: string;
+  expiresAt: string | null;
+  createdAt: string;
+  updatedAt: string;
+  deletedAt: string | null;
+};
+
+export type SessionMemoEvent = {
+  id: string;
+  sessionId: string;
+  slot: number | null;
+  label: string | null;
+  action: string;
+  bodyPreview: string | null;
+  metadata?: Record<string, unknown>;
+  source: string;
+  createdAt: string;
+};
+
 export type AgentDiffEntry = {
   id: string;
   vibeMemoryId: string;
@@ -2267,6 +2293,41 @@ export async function sendKnowledgeFeedback(
 export async function fetchVibeMemories(limit = 120): Promise<VibeMemory[]> {
   const json = await getJson<{ memories: VibeMemory[] }>(`/api/vibe-memory?limit=${limit}`);
   return json.memories;
+}
+
+export async function fetchSessionMemos(
+  sessionId: string,
+  options?: { includeEmpty?: boolean; previewChars?: number },
+): Promise<{ items: Array<Record<string, unknown>>; events: SessionMemoEvent[] }> {
+  const params = new URLSearchParams({ sessionId });
+  if (options?.includeEmpty !== undefined) params.set("includeEmpty", String(options.includeEmpty));
+  if (options?.previewChars !== undefined) params.set("previewChars", String(options.previewChars));
+  return getJson<{ items: Array<Record<string, unknown>>; events: SessionMemoEvent[] }>(
+    `/api/session-memo?${params}`,
+  );
+}
+
+export async function upsertSessionMemo(input: {
+  sessionId: string;
+  slot?: number;
+  label?: string;
+  body: string;
+  metadata?: Record<string, unknown>;
+  expiresAt?: string;
+}): Promise<SessionMemo> {
+  const json = await requestJson<{ memo: SessionMemo }>("/api/session-memo/item", "POST", input);
+  return json.memo;
+}
+
+export async function deleteSessionMemo(input: {
+  sessionId: string;
+  slot?: number;
+  label?: string;
+}): Promise<void> {
+  const params = new URLSearchParams({ sessionId: input.sessionId });
+  if (input.slot !== undefined) params.set("slot", String(input.slot));
+  if (input.label) params.set("label", input.label);
+  await requestJson(`/api/session-memo/item?${params}`, "DELETE");
 }
 
 export async function deleteVibeMemory(id: string): Promise<void> {

@@ -134,3 +134,76 @@ export const auditLogs = pgTable(
     ),
   }),
 );
+
+export const sessionMemos = pgTable(
+  "session_memos",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sessionId: text("session_id").notNull(),
+    slot: integer("slot").notNull(),
+    label: text("label"),
+    body: text("body").notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    source: text("source").notNull().default("mcp"),
+    expiresAt: timestamp("expires_at"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    deletedAt: timestamp("deleted_at"),
+  },
+  (table) => ({
+    slotRangeCheck: check(
+      "session_memos_slot_range_check",
+      sql`${table.slot} >= 0 and ${table.slot} < 20`,
+    ),
+    sourceCheck: check(
+      "session_memos_source_check",
+      sql`${table.source} in ('mcp', 'ui', 'system', 'import')`,
+    ),
+    bodyLengthCheck: check(
+      "session_memos_body_length_check",
+      sql`char_length(${table.body}) <= 4000`,
+    ),
+    activeSlotUniqueIdx: uniqueIndex("session_memos_active_slot_unique")
+      .on(table.sessionId, table.slot)
+      .where(sql`${table.deletedAt} is null`),
+    activeLabelUniqueIdx: uniqueIndex("session_memos_active_label_unique")
+      .on(table.sessionId, sql`lower(${table.label})`)
+      .where(sql`${table.deletedAt} is null and ${table.label} is not null`),
+    sessionUpdatedAtIdx: index("session_memos_session_updated_at_idx").on(
+      table.sessionId,
+      table.updatedAt,
+    ),
+    expiresAtIdx: index("session_memos_expires_at_idx")
+      .on(table.expiresAt)
+      .where(sql`${table.deletedAt} is null and ${table.expiresAt} is not null`),
+  }),
+);
+
+export const sessionMemoEvents = pgTable(
+  "session_memo_events",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sessionId: text("session_id").notNull(),
+    slot: integer("slot"),
+    label: text("label"),
+    action: text("action").notNull(),
+    bodyPreview: text("body_preview"),
+    metadata: jsonb("metadata").default({}).notNull(),
+    source: text("source").notNull().default("mcp"),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    actionCheck: check(
+      "session_memo_events_action_check",
+      sql`${table.action} in ('put', 'delete', 'clear', 'expire')`,
+    ),
+    sourceCheck: check(
+      "session_memo_events_source_check",
+      sql`${table.source} in ('mcp', 'ui', 'system', 'import')`,
+    ),
+    sessionCreatedAtIdx: index("session_memo_events_session_created_at_idx").on(
+      table.sessionId,
+      table.createdAt,
+    ),
+  }),
+);

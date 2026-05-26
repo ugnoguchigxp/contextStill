@@ -148,7 +148,13 @@ export function createMcpServer(): Server {
     }
 
     try {
-      return await tool.handler(request.params.arguments);
+      return await tool.handler(request.params.arguments, {
+        requestMeta:
+          request.params._meta && typeof request.params._meta === "object"
+            ? (request.params._meta as Record<string, unknown>)
+            : undefined,
+        toolName: request.params.name,
+      });
     } catch (error) {
       return toErrorResult(error);
     }

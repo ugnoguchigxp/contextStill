@@ -138,9 +138,8 @@ async function putSessionMemoIn(
         updatedAt: now,
         deletedAt: null,
       },
-    });
-  })
-  .returning();
+    })
+    .returning();
 
   await tx.insert(sessionMemoEvents).values({
     sessionId: input.sessionId,

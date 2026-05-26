@@ -17,12 +17,21 @@ import {
   memorySearchTool as searchMemoryLegacyTool,
   searchMemoryTool as searchMemoryPrimaryTool,
 } from "../src/mcp/tools/memory.tool.js";
+import { sessionMemoTool } from "../src/mcp/tools/session-memo.tool.js";
 import { doctorTool, initialInstructionsTool } from "../src/mcp/tools/system.tool.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
 import { runDoctor } from "../src/modules/doctor/doctor.service.js";
 import { searchKnowledgeCandidates } from "../src/modules/knowledge/knowledge.service.js";
 import { registerCandidate } from "../src/modules/registerCandidate/register-candidate.service.js";
 import { registerCandidatesBulk } from "../src/modules/registerCandidate/register-candidate.service.js";
+import {
+  clearSessionMemos,
+  deleteSessionMemo as deleteSessionMemoService,
+  getSessionMemo,
+  listSessionMemos,
+  putManySessionMemos,
+  putSessionMemo,
+} from "../src/modules/session-memo/session-memo.service.js";
 import { reloadRuntimeSettingsCache } from "../src/modules/settings/settings.service.js";
 import { retrieveVibeMemoryContext } from "../src/modules/vibe-memory/vibe-memory.service.js";
 
@@ -47,6 +56,7 @@ vi.mock("../src/modules/knowledge/knowledge.service.js");
 vi.mock("../src/modules/context-compiler/context-compiler.service.js");
 vi.mock("../src/modules/doctor/doctor.service.js");
 vi.mock("../src/modules/registerCandidate/register-candidate.service.js");
+vi.mock("../src/modules/session-memo/session-memo.service.js");
 vi.mock("../src/modules/settings/settings.service.js");
 vi.mock("../api/modules/knowledge/knowledge.repository.js");
 
@@ -301,7 +311,53 @@ describe("MCP Tools Handlers", () => {
       });
       const data = JSON.parse(response.content[0].text);
       expect(data.registeredCount).toBe(2);
-      expect(registerCandidatesBulk).toHaveBeenCalled();
+      expect(registerCandidatesBulk).toHaveBeenCalledWith([
+        { body: "A", metadata: {} },
+        { body: "B", metadata: {} },
+      ]);
+    });
+  });
+
+  describe("session_memo", () => {
+    test("list resolves session id from metadata", async () => {
+      vi.mocked(listSessionMemos).mockResolvedValue([{ slot: 0, preview: "a" }] as never);
+
+      const response = await sessionMemoTool.handler(
+        { action: "list" },
+        { toolName: "session_memo", requestMeta: { sessionId: "meta-session" } },
+      );
+      const data = JSON.parse(response.content[0].text);
+      expect(data.sessionId).toBe("meta-session");
+      expect(listSessionMemos).toHaveBeenCalledWith({
+        sessionId: "meta-session",
+        includeEmpty: false,
+        previewChars: 320,
+      });
+    });
+
+    test("put_many delegates items to service", async () => {
+      vi.mocked(putManySessionMemos).mockResolvedValue([{ slot: 1, label: "x" }] as never);
+      const response = await sessionMemoTool.handler(
+        {
+          action: "put_many",
+          sessionId: "s-1",
+          items: [{ slot: 1, label: "x", body: "hello" }],
+        },
+        { toolName: "session_memo" },
+      );
+      const data = JSON.parse(response.content[0].text);
+      expect(data.items[0].slot).toBe(1);
+      expect(putManySessionMemos).toHaveBeenCalledWith(
+        "s-1",
+        [{ slot: 1, label: "x", body: "hello", metadata: {}, expiresAt: undefined }],
+        "mcp",
+      );
+    });
+
+    test("fails when session id is missing", async () => {
+      await expect(sessionMemoTool.handler({ action: "list" }, { toolName: "session_memo" })).rejects.toThrow(
+        "SESSION_ID_REQUIRED",
+      );
     });
   });
 

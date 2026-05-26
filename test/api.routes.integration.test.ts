@@ -184,4 +184,49 @@ describeDb("api route integration", () => {
       ),
     ).toBe(true);
   });
+
+  test("POST /api/session-memo/item and GET /api/session-memo work with session-scoped slots", async () => {
+    const createResponse = await app.request("/api/session-memo/item", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "integration-session-memo",
+        slot: 2,
+        label: "goal",
+        body: "finish session memo integration test",
+        metadata: { score: 92 },
+      }),
+    });
+    expect(createResponse.status).toBe(201);
+
+    const listResponse = await app.request(
+      "/api/session-memo?sessionId=integration-session-memo&includeEmpty=true",
+    );
+    expect(listResponse.status).toBe(200);
+    const listJson = (await listResponse.json()) as {
+      items: Array<{ slot: number; label?: string; preview?: string; empty?: boolean }>;
+      events: Array<{ action: string }>;
+    };
+    expect(listJson.items).toHaveLength(20);
+    expect(
+      listJson.items.some(
+        (item) =>
+          item.slot === 2 && item.label === "goal" && item.preview === "finish session memo integration test",
+      ),
+    ).toBe(true);
+    expect(listJson.events.some((event) => event.action === "put")).toBe(true);
+
+    const getResponse = await app.request(
+      "/api/session-memo/item?sessionId=integration-session-memo&label=goal",
+    );
+    expect(getResponse.status).toBe(200);
+    const getJson = (await getResponse.json()) as { memo: { body: string; slot: number } };
+    expect(getJson.memo.slot).toBe(2);
+    expect(getJson.memo.body).toBe("finish session memo integration test");
+  });
+
+  test("GET /api/session-memo/item returns 400 when neither slot nor label is provided", async () => {
+    const response = await app.request("/api/session-memo/item?sessionId=integration-session-memo");
+    expect(response.status).toBe(400);
+  });
 });

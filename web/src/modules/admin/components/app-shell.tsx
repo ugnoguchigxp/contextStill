@@ -4,6 +4,7 @@ const navItems = [
   { to: "/", label: "Overview" },
   { to: "/sources", label: "Source" },
   { to: "/vibe-memory", label: "Vibe Memory" },
+  { to: "/vibe-note", label: "Vibe Note" },
   { to: "/candidates", label: "Candidates" },
   { to: "/queue", label: "Queue" },
   { to: "/knowledge", label: "Knowledge" },
@@ -49,6 +50,7 @@ export function AppShell() {
           pathname === "/" ||
           pathname.startsWith("/compile") ||
           pathname.startsWith("/vibe-memory") ||
+          pathname.startsWith("/vibe-note") ||
           pathname.startsWith("/sources") ||
           pathname.startsWith("/graph") ||
           pathname.startsWith("/knowledge") ||

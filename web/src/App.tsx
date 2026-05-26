@@ -79,6 +79,15 @@ const vibeMemoryRoute = createRoute({
   ),
 });
 
+const vibeNoteRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/vibe-note",
+  component: lazyRouteComponent(
+    () => import("./modules/admin/components/vibe-note.page"),
+    "VibeNotePage",
+  ),
+});
+
 const graphRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/graph",
@@ -175,6 +184,7 @@ const routeTree = rootRoute.addChildren([
   queueRoute,
   graphRoute,
   vibeMemoryRoute,
+  vibeNoteRoute,
   sourcesRoute,
   auditRoute,
   doctorRoute,

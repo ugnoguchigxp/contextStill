@@ -15,6 +15,7 @@ import { overviewRouter } from "./modules/overview/overview.routes.js";
 import { queueRouter } from "./modules/queue/queue.routes.js";
 import { settingsRouter } from "./modules/settings/settings.routes.js";
 import { sourcesRouter } from "./modules/sources/sources.routes.js";
+import { sessionMemoRouter } from "./modules/session-memo/session-memo.routes.js";
 import { vibeMemoryRouter } from "./modules/vibe-memory/vibe-memory.routes.js";
 
 const app = new Hono();
@@ -35,6 +36,7 @@ app.route("/api/doctor", doctorRouter);
 app.route("/api/knowledge", knowledgeRouter);
 app.route("/api/sources", sourcesRouter);
 app.route("/api/vibe-memory", vibeMemoryRouter);
+app.route("/api/session-memo", sessionMemoRouter);
 app.route("/api/agent-diffs", agentDiffsRouter);
 app.route("/api/graph", graphRouter);
 app.route("/api/overview", overviewRouter);

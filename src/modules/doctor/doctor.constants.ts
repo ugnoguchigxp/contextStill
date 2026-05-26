@@ -6,6 +6,8 @@ export const requiredTables = [
   "knowledge_source_links",
   "vibe_memories",
   "agent_diff_entries",
+  "session_memos",
+  "session_memo_events",
   "distillation_target_states",
   "distillation_evidence_cache",
   "find_candidate_results",

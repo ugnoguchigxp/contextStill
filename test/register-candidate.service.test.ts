@@ -276,6 +276,27 @@ Do not run on production database.
         type: "procedure",
       }),
     );
+    expect(mockEnqueueFindingJob).toHaveBeenCalledTimes(2);
+    const firstOrigin = mockEnqueueFindingJob.mock.calls[0]?.[0]?.payload?.origin;
+    const secondOrigin = mockEnqueueFindingJob.mock.calls[1]?.[0]?.payload?.origin;
+    expect(firstOrigin?.metadata).toEqual(
+      expect.objectContaining({
+        bulkIndex: 0,
+        bulkCount: 2,
+        bulkSource: "mcp_register_candidates",
+        inputTypeProvided: false,
+      }),
+    );
+    expect(secondOrigin?.metadata).toEqual(
+      expect.objectContaining({
+        bulkIndex: 1,
+        bulkCount: 2,
+        bulkSource: "mcp_register_candidates",
+        inputTypeProvided: true,
+      }),
+    );
+    expect(firstOrigin?.metadata?.bulkBatchId).toBeTypeOf("string");
+    expect(firstOrigin?.metadata?.bulkBatchId).toBe(secondOrigin?.metadata?.bulkBatchId);
   });
 
   test("returns partial result when one bulk item fails", async () => {

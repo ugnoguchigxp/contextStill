@@ -3,9 +3,14 @@ type ToolResult = {
   isError?: boolean;
 };
 
+export type ToolHandlerContext = {
+  requestMeta?: Record<string, unknown>;
+  toolName: string;
+};
+
 export interface ToolEntry {
   name: string;
   description: string;
   inputSchema: Record<string, unknown>;
-  handler: (args: unknown) => Promise<ToolResult>;
+  handler: (args: unknown, context?: ToolHandlerContext) => Promise<ToolResult>;
 }
