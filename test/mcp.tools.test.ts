@@ -354,6 +354,38 @@ describe("MCP Tools Handlers", () => {
       );
     });
 
+    test("put/get/delete/clear delegate to corresponding services", async () => {
+      vi.mocked(putSessionMemo).mockResolvedValue({ slot: 2, label: "goal" } as never);
+      vi.mocked(getSessionMemo).mockResolvedValue({ slot: 2, body: "body" } as never);
+      vi.mocked(deleteSessionMemoService).mockResolvedValue({ ok: true, deleted: true } as never);
+      vi.mocked(clearSessionMemos).mockResolvedValue({ ok: true, cleared: 2 } as never);
+
+      const putResponse = await sessionMemoTool.handler(
+        { action: "put", sessionId: "s-1", slot: 2, label: "goal", body: "body" },
+        { toolName: "session_memo" },
+      );
+      expect(JSON.parse(putResponse.content[0].text).memo.slot).toBe(2);
+
+      await sessionMemoTool.handler(
+        { action: "get", sessionId: "s-1", slot: 2 },
+        { toolName: "session_memo" },
+      );
+      expect(getSessionMemo).toHaveBeenCalledWith({ sessionId: "s-1", slot: 2, label: undefined });
+
+      await sessionMemoTool.handler(
+        { action: "delete", sessionId: "s-1", slot: 2 },
+        { toolName: "session_memo" },
+      );
+      expect(deleteSessionMemoService).toHaveBeenCalledWith({
+        sessionId: "s-1",
+        slot: 2,
+        label: undefined,
+      });
+
+      await sessionMemoTool.handler({ action: "clear", sessionId: "s-1" }, { toolName: "session_memo" });
+      expect(clearSessionMemos).toHaveBeenCalledWith("s-1");
+    });
+
     test("fails when session id is missing", async () => {
       await expect(sessionMemoTool.handler({ action: "list" }, { toolName: "session_memo" })).rejects.toThrow(
         "SESSION_ID_REQUIRED",

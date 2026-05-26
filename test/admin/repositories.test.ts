@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
   bulkUpdateKnowledgeStatus,
   createKnowledgeItem,
+  deleteSessionMemo,
   deleteKnowledgeItem,
   deleteVibeMemory,
   fetchAgentDiffEntries,
@@ -19,10 +20,12 @@ import {
   fetchOverviewLandscapeHealthDomain,
   fetchOverviewLlmResourcesDomain,
   fetchOverviewSystemQualityDomain,
+  fetchSessionMemos,
   fetchVibeMemories,
   queueWebSourceUrl,
   queueWebSourceUrlsUpload,
   sendKnowledgeFeedback,
+  upsertSessionMemo,
   updateGraphCommunityLabel,
   updateKnowledgeItem,
 } from "../../web/src/modules/admin/repositories/admin.repository.js";
@@ -268,6 +271,45 @@ describe("Admin Repository", () => {
       } as Response);
       await deleteVibeMemory("v-1");
       expect(spy).toHaveBeenCalledWith("/api/vibe-memory/v-1", {
+        method: "DELETE",
+        headers: undefined,
+        body: undefined,
+      });
+    });
+  });
+
+  describe("session memos", () => {
+    it("fetchSessionMemos includes query params", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ items: [], events: [] }),
+      } as Response);
+      await fetchSessionMemos("s-1", { includeEmpty: true, previewChars: 480 });
+      expect(spy).toHaveBeenCalledWith(
+        "/api/session-memo?sessionId=s-1&includeEmpty=true&previewChars=480",
+      );
+    });
+
+    it("upsertSessionMemo posts JSON body", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ memo: { id: "m-1", body: "x" } }),
+      } as Response);
+      await upsertSessionMemo({ sessionId: "s-1", slot: 1, label: "goal", body: "x" });
+      expect(spy).toHaveBeenCalledWith("/api/session-memo/item", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ sessionId: "s-1", slot: 1, label: "goal", body: "x" }),
+      });
+    });
+
+    it("deleteSessionMemo builds locator query", async () => {
+      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({}),
+      } as Response);
+      await deleteSessionMemo({ sessionId: "s-1", slot: 3 });
+      expect(spy).toHaveBeenCalledWith("/api/session-memo/item?sessionId=s-1&slot=3", {
         method: "DELETE",
         headers: undefined,
         body: undefined,

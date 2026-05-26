@@ -160,4 +160,71 @@ describe("runQueueWorkerOnce", () => {
       }),
     );
   });
+
+  test("marks covering retryable failures as failed on max attempts without premium escalation", async () => {
+    mocks.selectRows = [
+      [
+        {
+          id: "cover-job-1",
+          foundCandidateId: "candidate-1",
+          distillationVersion: "v-test",
+          attemptCount: 1,
+          maxAttempts: 2,
+          priority: 50,
+          providerPolicy: "default",
+          payload: {},
+        },
+      ],
+      [
+        {
+          id: "candidate-1",
+          title: "Candidate title",
+          content: "Candidate body",
+          origin: {},
+          type: "rule",
+          findingJobId: "finding-job-1",
+          metadata: {},
+        },
+      ],
+      [
+        {
+          id: "finding-job-1",
+          sourceKind: "wiki_file",
+          sourceKey: "docs/example.md",
+          sourceUri: "file:///docs/example.md",
+        },
+      ],
+    ];
+    mocks.runCoverEvidence.mockResolvedValue({
+      result: {
+        status: "parse_failed",
+        stage: "final",
+        candidate: null,
+        references: [],
+        duplicateRefs: [],
+        toolEvents: [],
+        reason: "external_parse_failed",
+      },
+    });
+
+    const result = await runQueueWorkerOnce({
+      queueName: "coveringEvidence",
+      workerId: "worker-1",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(mocks.db.insert).not.toHaveBeenCalledWith(premiumCoveringEvidenceQueue);
+    expect(mocks.insertCalls.map((call) => call.table)).not.toContain(premiumCoveringEvidenceQueue);
+    expect(mocks.updateCalls).toContainEqual(
+      expect.objectContaining({
+        table: coveringEvidenceQueue,
+        values: expect.objectContaining({
+          status: "failed",
+          attemptCount: 2,
+          lastOutcomeKind: "parse_failed",
+          lastError: "external_parse_failed",
+        }),
+      }),
+    );
+  });
 });

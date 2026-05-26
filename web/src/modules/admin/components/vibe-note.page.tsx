@@ -6,17 +6,23 @@ import { useRouterState } from "@tanstack/react-router";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useMemo, useState } from "react";
 import {
+  type VibeMemory,
   deleteSessionMemo,
   fetchSessionMemos,
   fetchVibeMemories,
   upsertSessionMemo,
 } from "../repositories/admin.repository";
+import { parseVibeMemoryTurns } from "./chat-rendering";
 
 type SessionSummary = {
   id: string;
-  startedAt: string;
+  title: string;
+  firstMessage?: string;
+  sourceLabel: string;
   count: number;
   projectName: string;
+  startedAt: string;
+  lastCreatedAt: Date;
 };
 
 export function VibeNotePage() {
@@ -35,21 +41,19 @@ export function VibeNotePage() {
     queryFn: () => fetchVibeMemories(200),
   });
   const sessions = useMemo(() => {
-    const map = new Map<string, SessionSummary>();
+    const map = new Map<string, VibeMemory[]>();
     for (const memory of memories.data ?? []) {
       if (map.has(memory.sessionId)) {
-        const entry = map.get(memory.sessionId)!;
-        entry.count += 1;
+        const entry = map.get(memory.sessionId);
+        if (!entry) continue;
+        entry.push(memory);
         continue;
       }
-      map.set(memory.sessionId, {
-        id: memory.sessionId,
-        startedAt: String(memory.metadata?.sessionStartedAt ?? memory.createdAt),
-        count: 1,
-        projectName: String(memory.metadata?.projectName ?? "Unknown Project"),
-      });
+      map.set(memory.sessionId, [memory]);
     }
-    return Array.from(map.values()).sort((a, b) => Date.parse(b.startedAt) - Date.parse(a.startedAt));
+    return Array.from(map.entries())
+      .map(([id, items]) => buildSessionSummary(id, items))
+      .sort((a, b) => b.lastCreatedAt.getTime() - a.lastCreatedAt.getTime());
   }, [memories.data]);
 
   const activeSessionId = selectedSessionId ?? sessions[0]?.id ?? "";
@@ -86,12 +90,18 @@ export function VibeNotePage() {
             >
               <div className="session-info">
                 <div className="session-project-line">
-                  <span className="session-project-name">{session.projectName}</span>
+                  <span className="session-project-name">
+                    {session.firstMessage || session.projectName || "New Session"}
+                  </span>
                   <span className="session-time-label">
-                    {new Date(session.startedAt).toLocaleDateString()}
+                    {formatSessionTimeCompact(session.startedAt)}
                   </span>
                 </div>
                 <div className="session-meta-line">
+                  <span className="session-meta-project">{session.projectName}</span>
+                  <span>·</span>
+                  <span>{session.sourceLabel}</span>
+                  <span>·</span>
                   <span>{session.count} vibes</span>
                 </div>
               </div>
@@ -198,4 +208,94 @@ export function VibeNotePage() {
       </main>
     </div>
   );
+}
+
+function buildSessionSummary(
+  id: string,
+  items: Array<{ createdAt: string; content: string; metadata?: Record<string, unknown> }>,
+): SessionSummary {
+  const lastCreatedAt = new Date(
+    Math.max(...items.map((item) => new Date(String(item.createdAt)).getTime())),
+  );
+  const firstCreatedAt = new Date(
+    Math.min(...items.map((item) => new Date(String(item.createdAt)).getTime())),
+  );
+  const projectName = firstMetadataString(items, "projectName") ?? "Unknown Project";
+  const sourceLabel = firstMetadataString(items, "source") ?? "Agent";
+  const startedAt = firstMetadataString(items, "sessionStartedAt") ?? firstCreatedAt.toISOString();
+
+  let firstMessage: string | undefined;
+  const sortedItems = [...items].sort(
+    (a, b) => resolveMemoryEventTime(a).getTime() - resolveMemoryEventTime(b).getTime(),
+  );
+  for (const item of sortedItems) {
+    const turns = parseVibeMemoryTurns(item.content);
+    const userTurn = turns.find((turn) => turn.role === "user" && !turn.isMetadata);
+    if (userTurn?.content.trim()) {
+      firstMessage = stripRolePrefix(userTurn.content).slice(0, 100);
+      break;
+    }
+  }
+
+  return {
+    id,
+    title: [projectName, formatSessionTime(startedAt), sourceLabel].join(" / "),
+    firstMessage,
+    sourceLabel,
+    count: items.length,
+    projectName,
+    startedAt,
+    lastCreatedAt,
+  };
+}
+
+function firstMetadataString(
+  items: Array<{ metadata?: Record<string, unknown> }>,
+  key: string,
+): string | undefined {
+  for (const item of items) {
+    const value = item.metadata?.[key];
+    if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  }
+  return undefined;
+}
+
+function formatSessionTime(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hour = String(date.getHours()).padStart(2, "0");
+  const minute = String(date.getMinutes()).padStart(2, "0");
+  return `${year}/${month}/${day} ${hour}:${minute}`;
+}
+
+function formatSessionTimeCompact(value: string): string {
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  const now = new Date();
+  const isToday =
+    date.getFullYear() === now.getFullYear() &&
+    date.getMonth() === now.getMonth() &&
+    date.getDate() === now.getDate();
+  if (isToday) {
+    return `${String(date.getHours()).padStart(2, "0")}:${String(date.getMinutes()).padStart(2, "0")}`;
+  }
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+function stripRolePrefix(value: string): string {
+  return value.replace(/^\s*(USER|ASSISTANT|SYSTEM)\s*:\s*/i, "").trim();
+}
+
+function resolveMemoryEventTime(memory: { createdAt: string; metadata?: Record<string, unknown> }): Date {
+  const timestamp = memory.metadata?.timestamp;
+  if (typeof timestamp === "string" && timestamp.trim()) {
+    const parsed = new Date(timestamp);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  const created = new Date(memory.createdAt);
+  if (!Number.isNaN(created.getTime())) return created;
+  return new Date(0);
 }
