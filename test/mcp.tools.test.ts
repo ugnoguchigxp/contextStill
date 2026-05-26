@@ -25,8 +25,6 @@ import { searchKnowledgeCandidates } from "../src/modules/knowledge/knowledge.se
 import { registerCandidate } from "../src/modules/registerCandidate/register-candidate.service.js";
 import { registerCandidatesBulk } from "../src/modules/registerCandidate/register-candidate.service.js";
 import {
-  clearSessionMemos,
-  deleteSessionMemo as deleteSessionMemoService,
   getSessionMemo,
   listSessionMemos,
   putManySessionMemos,
@@ -349,16 +347,14 @@ describe("MCP Tools Handlers", () => {
       expect(data.items[0].slot).toBe(1);
       expect(putManySessionMemos).toHaveBeenCalledWith(
         "s-1",
-        [{ slot: 1, label: "x", body: "hello", metadata: {}, expiresAt: undefined }],
+        [{ slot: undefined, label: "x", body: "hello", metadata: {}, expiresAt: undefined }],
         "mcp",
       );
     });
 
-    test("put/get/delete/clear delegate to corresponding services", async () => {
+    test("put/get delegate to corresponding services", async () => {
       vi.mocked(putSessionMemo).mockResolvedValue({ slot: 2, label: "goal" } as never);
       vi.mocked(getSessionMemo).mockResolvedValue({ slot: 2, body: "body" } as never);
-      vi.mocked(deleteSessionMemoService).mockResolvedValue({ ok: true, deleted: true } as never);
-      vi.mocked(clearSessionMemos).mockResolvedValue({ ok: true, cleared: 2 } as never);
 
       const putResponse = await sessionMemoTool.handler(
         { action: "put", sessionId: "s-1", slot: 2, label: "goal", body: "body" },
@@ -371,22 +367,40 @@ describe("MCP Tools Handlers", () => {
         { toolName: "session_memo" },
       );
       expect(getSessionMemo).toHaveBeenCalledWith({ sessionId: "s-1", slot: 2, label: undefined });
+    });
+
+    test("put compile_eval drops slot and legacy label before delegating", async () => {
+      vi.mocked(putSessionMemo).mockResolvedValue({
+        slot: 1,
+        label: "compile_eval:run:1",
+      } as never);
 
       await sessionMemoTool.handler(
-        { action: "delete", sessionId: "s-1", slot: 2 },
+        {
+          action: "put",
+          sessionId: "s-1",
+          kind: "compile_eval",
+          slot: 0,
+          label: "compile_eval",
+          title: "eval",
+          score: 88,
+          body: "evaluation",
+        },
         { toolName: "session_memo" },
       );
-      expect(deleteSessionMemoService).toHaveBeenCalledWith({
+
+      expect(putSessionMemo).toHaveBeenCalledWith({
         sessionId: "s-1",
-        slot: 2,
+        slot: undefined,
+        kind: "compile_eval",
+        title: "eval",
+        score: 88,
         label: undefined,
+        body: "evaluation",
+        metadata: {},
+        expiresAt: undefined,
+        source: "mcp",
       });
-
-      await sessionMemoTool.handler(
-        { action: "clear", sessionId: "s-1" },
-        { toolName: "session_memo" },
-      );
-      expect(clearSessionMemos).toHaveBeenCalledWith("s-1");
     });
 
     test("fails when session id is missing", async () => {

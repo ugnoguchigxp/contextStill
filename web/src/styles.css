@@ -2146,6 +2146,15 @@
   overflow-x: hidden;
 }
 
+.vibe-note-content {
+  display: block;
+  padding: 2rem;
+}
+
+.vibe-note-content .vibe-history {
+  padding: 0;
+}
+
 .vibe-card {
   background: var(--card);
   border: 1px solid var(--border);
@@ -2154,6 +2163,25 @@
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
   transition: transform 0.2s ease, box-shadow 0.2s ease;
   min-width: 0;
+}
+
+.vibe-note-content .vibe-card-header {
+  justify-content: flex-start;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.vibe-note-score {
+  display: inline-flex;
+  align-items: center;
+  border: 1px solid oklch(0.63 0.19 38);
+  background: oklch(0.96 0.05 84);
+  color: oklch(0.38 0.1 42);
+  border-radius: 999px;
+  padding: 0.15rem 0.55rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  font-size: 0.78rem;
 }
 
 .vibe-card:hover {

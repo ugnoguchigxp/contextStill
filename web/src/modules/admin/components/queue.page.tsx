@@ -32,7 +32,9 @@ import {
   fetchActiveQueueTasksV2,
   fetchQueueDashboardStatsV2,
   fetchQueueItemsV2,
+  pauseQueueLaneV2,
   pauseQueueJobV2,
+  resumeQueueLaneV2,
   resumeQueueJobV2,
   retryQueueJobV2,
   type DistillationQueueName,
@@ -133,12 +135,14 @@ function formatCount(value: number | undefined): string {
   return Number(value ?? 0).toLocaleString("en-US");
 }
 
-type QueueLlmStatus = "Active" | "Ready" | "Offline";
+type QueueLlmStatus = "Active" | "Ready" | "Offline" | "Paused";
 
 function resolveQueueLlmStatus(params: {
   running: number;
   offline: number;
+  paused: boolean;
 }): QueueLlmStatus {
+  if (params.paused) return "Paused";
   if (params.offline > 0 && params.running === 0) return "Offline";
   if (params.running > 0) return "Active";
   return "Ready";
@@ -264,6 +268,16 @@ export function QueuePage() {
     onSuccess: () => void invalidateQueue(),
     onSettled: () => setActioning(null),
   });
+  const lanePauseMutation = useMutation({
+    mutationFn: (input: { queue: DistillationQueueName }) => pauseQueueLaneV2(input.queue),
+    onSuccess: () => void invalidateQueue(),
+    onSettled: () => setActioning(null),
+  });
+  const laneResumeMutation = useMutation({
+    mutationFn: (input: { queue: DistillationQueueName }) => resumeQueueLaneV2(input.queue),
+    onSuccess: () => void invalidateQueue(),
+    onSettled: () => setActioning(null),
+  });
 
   const checkedAt = Math.max(
     statsQuery.dataUpdatedAt ?? 0,
@@ -288,6 +302,19 @@ export function QueuePage() {
       retryMutation.mutate({ queue: item.queueName, id: item.id });
     },
     [pauseMutation, resumeMutation, retryMutation],
+  );
+
+  const onLaneControl = useCallback(
+    (queueName: DistillationQueueName, paused: boolean) => {
+      const actionKey = `${paused ? "lane-resume" : "lane-pause"}:${queueName}`;
+      setActioning(actionKey);
+      if (paused) {
+        laneResumeMutation.mutate({ queue: queueName });
+        return;
+      }
+      lanePauseMutation.mutate({ queue: queueName });
+    },
+    [lanePauseMutation, laneResumeMutation],
   );
 
   const queueStats = statsQuery.data?.queues;
@@ -610,7 +637,10 @@ export function QueuePage() {
                   const paused = snapshot?.counters.paused ?? 0;
                   const offline = snapshot?.offline ?? 0;
                   const nonRegistered = snapshot?.nonRegistered ?? 0;
-                  const llmStatus = resolveQueueLlmStatus({ running, offline });
+                  const laneControl = statsQuery.data?.queueControls?.[tab.name];
+                  const lanePaused = laneControl?.paused === true;
+                  const llmStatus = resolveQueueLlmStatus({ running, offline, paused: lanePaused });
+                  const laneActionKey = `${lanePaused ? "lane-resume" : "lane-pause"}:${tab.name}`;
                   const showsNonRegistered =
                     tab.name === "coveringEvidence" || tab.name === "premiumCoveringEvidence";
                   const visuals = queueCardVisuals[tab.name];
@@ -644,15 +674,37 @@ export function QueuePage() {
                         <Badge
                           variant="outline"
                           className={
-                            llmStatus === "Active"
-                              ? "border-emerald-300 bg-emerald-50 text-emerald-700"
-                              : llmStatus === "Offline"
-                                ? "border-rose-300 bg-rose-50 text-rose-700"
-                                : "border-sky-300 bg-sky-50 text-sky-700"
+                            llmStatus === "Paused"
+                              ? "border-violet-300 bg-violet-50 text-violet-700"
+                              : llmStatus === "Active"
+                                ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                                : llmStatus === "Offline"
+                                  ? "border-rose-300 bg-rose-50 text-rose-700"
+                                  : "border-sky-300 bg-sky-50 text-sky-700"
                           }
                         >
                           {llmStatus}
                         </Badge>
+                        <Button
+                          type="button"
+                          variant="outline"
+                          size="sm"
+                          className="h-7 px-2.5 text-[11px]"
+                          disabled={actioning === laneActionKey}
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            onLaneControl(tab.name, lanePaused);
+                          }}
+                        >
+                          {actioning === laneActionKey ? (
+                            <RefreshCw size={12} className="mr-1 animate-spin" />
+                          ) : lanePaused ? (
+                            <Play size={12} className="mr-1" />
+                          ) : (
+                            <Pause size={12} className="mr-1" />
+                          )}
+                          {lanePaused ? "再開" : "一時停止"}
+                        </Button>
                       </div>
 
                       <div className="grid grid-cols-[1fr_auto] gap-x-4 text-xs text-slate-600">

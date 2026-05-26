@@ -3,12 +3,23 @@ import { fetchQueueDashboardStats } from "../api/modules/queue/queue.repository.
 
 const mocks = vi.hoisted(() => ({
   execute: vi.fn(),
+  getQueueControlStates: vi.fn(),
 }));
 
 vi.mock("../src/db/index.js", () => ({
   db: {
     execute: mocks.execute,
   },
+}));
+
+vi.mock("../src/modules/queue/core/index.js", () => ({
+  appendQueueEvent: vi.fn(),
+  pauseQueueJob: vi.fn(),
+  resumeQueueJob: vi.fn(),
+  retryQueueJob: vi.fn(),
+  getQueueControlStates: mocks.getQueueControlStates,
+  pauseRunningQueueJobs: vi.fn(),
+  setQueuePaused: vi.fn(),
 }));
 
 function aggregateRow(overrides: Record<string, unknown> = {}) {
@@ -26,6 +37,12 @@ function aggregateRow(overrides: Record<string, unknown> = {}) {
 describe("queue repository stats", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mocks.getQueueControlStates.mockResolvedValue({
+      findingCandidate: { paused: false, updatedAt: null, updatedBy: null, reason: null },
+      coveringEvidence: { paused: false, updatedAt: null, updatedBy: null, reason: null },
+      premiumCoveringEvidence: { paused: false, updatedAt: null, updatedBy: null, reason: null },
+      finalizeDistille: { paused: false, updatedAt: null, updatedBy: null, reason: null },
+    });
   });
 
   test("reports non-registered counts for covering queue stats", async () => {

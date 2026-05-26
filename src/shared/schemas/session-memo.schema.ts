@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const sessionMemoSlotLimit = 20;
+export const sessionMemoSlotLimit = 40;
 export const sessionMemoBodyMaxChars = 10000;
 export const sessionMemoKindMaxChars = 64;
 export const sessionMemoTitleMaxChars = 160;
@@ -63,7 +63,7 @@ export const sessionMemoItemInputSchema = z
 
 export const sessionMemoToolInputSchema = z
   .object({
-    action: z.enum(["put", "put_many", "list", "get", "delete", "clear"]),
+    action: z.enum(["put", "put_many", "list", "get"]),
     sessionId: optionalTrimmedString,
     slot: slotSchema.optional(),
     kind: optionalKindString,
@@ -87,6 +87,13 @@ export const sessionMemoToolInputSchema = z
           message: "body is required for compile_eval",
         });
       }
+    }
+    if (value.action === "get" && value.slot === undefined && !value.label) {
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["slot"],
+        message: "slot or label is required for get",
+      });
     }
   });
 

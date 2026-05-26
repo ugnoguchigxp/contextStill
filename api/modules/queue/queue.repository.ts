@@ -2,9 +2,12 @@ import { sql } from "drizzle-orm";
 import { db } from "../../../src/db/index.js";
 import {
   appendQueueEvent,
+  getQueueControlStates,
+  pauseRunningQueueJobs,
   pauseQueueJob,
   resumeQueueJob,
   retryQueueJob,
+  setQueuePaused,
 } from "../../../src/modules/queue/core/index.js";
 import { resolveCoverEvidenceRouteByPolicy } from "../../../src/modules/coverEvidence/provider-policy.js";
 import {
@@ -35,6 +38,15 @@ export type QueueListQuery = {
   queue?: DistillationQueueName;
   status?: DistillationQueueStatus | "all";
 };
+
+export type QueueControlState = {
+  paused: boolean;
+  updatedAt: string | null;
+  updatedBy: string | null;
+  reason: string | null;
+};
+
+export type QueueControlStatesByQueue = Record<DistillationQueueName, QueueControlState>;
 
 type QueueStatsAggregateRow = {
   status: string;
@@ -493,10 +505,12 @@ async function queueStatsFor(queueName: DistillationQueueName) {
 export async function fetchQueueDashboardStats(): Promise<{
   queues: QueueStatsByQueue;
   totals: QueueStatsByQueue[DistillationQueueName];
+  queueControls: QueueControlStatesByQueue;
 }> {
-  const values = await Promise.all(
-    distillationQueueNames.map((queueName) => queueStatsFor(queueName)),
-  );
+  const [values, queueControls] = await Promise.all([
+    Promise.all(distillationQueueNames.map((queueName) => queueStatsFor(queueName))),
+    getQueueControlStates(),
+  ]);
   const queues = Object.fromEntries(
     distillationQueueNames.map((queueName, index) => [queueName, values[index]]),
   ) as QueueStatsByQueue;
@@ -531,7 +545,7 @@ export async function fetchQueueDashboardStats(): Promise<{
     }
   }
 
-  return { queues, totals };
+  return { queues, totals, queueControls };
 }
 
 export async function listQueueItems(params: QueueListQuery) {
@@ -620,4 +634,39 @@ export async function retryTarget(params: {
     },
   });
   return row;
+}
+
+export async function pauseQueueLane(queueName: DistillationQueueName, reason?: string) {
+  const queueControls = await setQueuePaused({
+    queueName,
+    paused: true,
+    reason,
+    updatedBy: "queue-dashboard",
+  });
+
+  const pausedRunningCount = await pauseRunningQueueJobs({
+    queueName,
+    reason: reason ?? "paused from queue lane control",
+  });
+
+  return {
+    queueName,
+    state: queueControls[queueName],
+    pausedRunningCount,
+  };
+}
+
+export async function resumeQueueLane(queueName: DistillationQueueName, reason?: string) {
+  const queueControls = await setQueuePaused({
+    queueName,
+    paused: false,
+    reason,
+    updatedBy: "queue-dashboard",
+  });
+
+  return {
+    queueName,
+    state: queueControls[queueName],
+    reason: reason ?? null,
+  };
 }

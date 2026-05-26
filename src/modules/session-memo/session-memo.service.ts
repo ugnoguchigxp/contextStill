@@ -2,8 +2,12 @@ import { and, desc, eq, isNull, lte, sql } from "drizzle-orm";
 import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { db } from "../../db/client.js";
 import { sessionMemoEvents, sessionMemos } from "../../db/schema.js";
-import { getLatestCompileRunForSession } from "../context-compiler/context-compiler.repository.js";
 import { sessionMemoSlotLimit } from "../../shared/schemas/session-memo.schema.js";
+import {
+  getCompileRunById,
+  getLatestCompileRunForSession,
+  listCompileRunOutputsByIds,
+} from "../context-compiler/context-compiler.repository.js";
 
 type PutInput = {
   sessionId: string;
@@ -19,11 +23,17 @@ type PutInput = {
 };
 
 const compileEvalKind = "compile_eval";
+const compileResultKind = "compile_result";
 const defaultMemoKind = "scratch";
 
 function normalizeLabel(value?: string): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
+}
+
+function normalizeCompileEvalLabel(value: string | null): string | null {
+  if (!value) return null;
+  return value.toLowerCase() === compileEvalKind ? null : value;
 }
 
 function normalizeKind(value?: string): string {
@@ -42,11 +52,87 @@ function asMetadataRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function deriveCompileOutputKind(
+  outputMarkdown: string | null,
+): "narrative" | "no_content" | "unknown" {
+  if (!outputMarkdown) return "unknown";
+  return outputMarkdown.trim() === "No Content" ? "no_content" : "narrative";
+}
+
+function getContextCompileRunIdFromMetadata(metadata: Record<string, unknown>): string | null {
+  const runId = metadata.contextCompileRunId;
+  return typeof runId === "string" && runId.trim().length > 0 ? runId.trim() : null;
+}
+
+function parseCompileEvalOrdinal(label: string, runId: string): number | null {
+  const prefix = `${compileEvalKind}:${runId}:`;
+  if (!label.startsWith(prefix)) return null;
+  const rawOrdinal = Number(label.slice(prefix.length));
+  if (!Number.isInteger(rawOrdinal) || rawOrdinal < 1) return null;
+  return rawOrdinal;
+}
+
+async function nextCompileEvalOrdinalIn(
+  tx: NodePgDatabase<typeof import("../../db/schema.js")> | typeof db,
+  sessionId: string,
+  runId: string,
+): Promise<number> {
+  const labels = await tx
+    .select({ label: sessionMemos.label })
+    .from(sessionMemos)
+    .where(
+      and(
+        eq(sessionMemos.sessionId, sessionId),
+        eq(sessionMemos.kind, compileEvalKind),
+        isNull(sessionMemos.deletedAt),
+      ),
+    );
+  let maxOrdinal = 0;
+  for (const row of labels) {
+    const label = typeof row.label === "string" ? row.label : "";
+    const ordinal = parseCompileEvalOrdinal(label, runId);
+    if (ordinal !== null && ordinal > maxOrdinal) maxOrdinal = ordinal;
+  }
+  return maxOrdinal + 1;
+}
+
+async function resolveCompileEvalLabel(params: {
+  tx: NodePgDatabase<typeof import("../../db/schema.js")> | typeof db;
+  sessionId: string;
+  explicitLabel: string | null;
+  metadata: Record<string, unknown>;
+}): Promise<string> {
+  if (params.explicitLabel) return params.explicitLabel;
+  const runId = getContextCompileRunIdFromMetadata(params.metadata) ?? "unresolved";
+  const ordinal = await nextCompileEvalOrdinalIn(params.tx, params.sessionId, runId);
+  return `${compileEvalKind}:${runId}:${ordinal}`;
+}
+
 async function enrichMetadataForCompileEval(params: {
   sessionId: string;
   createdAt: Date;
   metadata: Record<string, unknown>;
 }): Promise<Record<string, unknown>> {
+  const explicitRunId = getContextCompileRunIdFromMetadata(params.metadata);
+  if (explicitRunId) {
+    const linkedRun = await getCompileRunById(explicitRunId);
+    if (!linkedRun || linkedRun.sessionId !== params.sessionId) {
+      return {
+        ...params.metadata,
+        linkStatus: "unresolved",
+        unresolvedReason: "context_compile_run_not_found",
+        contextCompileOutputKind: "unknown",
+      };
+    }
+    return {
+      ...params.metadata,
+      contextCompileRunId: linkedRun.id,
+      contextCompileRunCreatedAt: linkedRun.createdAt.toISOString(),
+      linkStatus: "linked",
+      contextCompileOutputKind: deriveCompileOutputKind(linkedRun.outputMarkdown),
+    };
+  }
+
   const linkedRun = await getLatestCompileRunForSession({
     sessionId: params.sessionId,
     createdBefore: params.createdAt,
@@ -56,14 +142,18 @@ async function enrichMetadataForCompileEval(params: {
       ...params.metadata,
       linkStatus: "unresolved",
       unresolvedReason: "no_recent_context_compile_run",
+      contextCompileOutputKind: "unknown",
     };
   }
+
+  const linkedRunDetail = await getCompileRunById(linkedRun.id);
 
   return {
     ...params.metadata,
     contextCompileRunId: linkedRun.id,
     contextCompileRunCreatedAt: linkedRun.createdAt.toISOString(),
     linkStatus: "linked",
+    contextCompileOutputKind: deriveCompileOutputKind(linkedRunDetail?.outputMarkdown ?? null),
   };
 }
 
@@ -94,10 +184,6 @@ async function expireRows(sessionId: string, source: PutInput["source"] = "mcp")
   );
 }
 
-async function nextEmptySlot(sessionId: string): Promise<number | null> {
-  return nextEmptySlotIn(db, sessionId);
-}
-
 async function nextEmptySlotIn(
   tx: NodePgDatabase<typeof import("../../db/schema.js")> | typeof db,
   sessionId: string,
@@ -122,24 +208,41 @@ async function putSessionMemoIn(
   tx: NodePgDatabase<typeof import("../../db/schema.js")> | typeof db,
   input: PutInput,
 ) {
-  const label = normalizeLabel(input.label);
   const kind = normalizeKind(input.kind);
+  const label =
+    kind === compileEvalKind
+      ? normalizeCompileEvalLabel(normalizeLabel(input.label))
+      : normalizeLabel(input.label);
   const title = normalizeTitle(input.title);
   const now = new Date();
   const source = input.source ?? "mcp";
-  const effectiveLabel = label ?? (kind === compileEvalKind ? compileEvalKind : null);
   let effectiveMetadata: Record<string, unknown> = {
     ...(input.metadata ?? {}),
     kind,
   };
   if (title !== undefined) effectiveMetadata.title = title;
-  if (input.score !== undefined) effectiveMetadata.score = input.score;
   if (kind === compileEvalKind) {
     effectiveMetadata = await enrichMetadataForCompileEval({
       sessionId: input.sessionId,
       createdAt: now,
       metadata: effectiveMetadata,
     });
+  }
+  if (input.score !== undefined) {
+    effectiveMetadata.score = input.score;
+  }
+  let effectiveLabel = label;
+  if (kind === compileEvalKind) {
+    effectiveLabel = await resolveCompileEvalLabel({
+      tx,
+      sessionId: input.sessionId,
+      explicitLabel: label,
+      metadata: effectiveMetadata,
+    });
+  }
+  if (kind === compileResultKind && !effectiveLabel) {
+    const runId = getContextCompileRunIdFromMetadata(effectiveMetadata);
+    if (runId) effectiveLabel = `${compileResultKind}:${runId}`;
   }
 
   let rowByLabel:
@@ -166,7 +269,7 @@ async function putSessionMemoIn(
     rowByLabel = rows[0];
   }
 
-  let slot: number | null | undefined = input.slot;
+  let slot: number | undefined;
   if (slot === undefined && rowByLabel) slot = rowByLabel.slot;
   if (slot === undefined) {
     const emptySlot = await nextEmptySlotIn(tx, input.sessionId);
@@ -174,10 +277,6 @@ async function putSessionMemoIn(
     slot = emptySlot;
   }
   const resolvedSlot = slot;
-
-  if (rowByLabel && input.slot !== undefined && rowByLabel.slot !== input.slot) {
-    throw new Error("LABEL_SLOT_CONFLICT");
-  }
 
   const [saved] = await tx
     .insert(sessionMemos)
@@ -238,6 +337,40 @@ export async function putManySessionMemos(
   return saved;
 }
 
+type SessionMemoRow = typeof sessionMemos.$inferSelect;
+
+type LinkedCompileOutput = {
+  contextCompileRunId: string;
+  linkedOutputMarkdown: string | null;
+  linkedOutputSource: "context_compile_runs.pack_snapshot";
+  linkedOutputAvailable: boolean;
+};
+
+async function resolveLinkedCompileOutputs(
+  rows: SessionMemoRow[],
+): Promise<Map<string, LinkedCompileOutput>> {
+  const runIds = rows
+    .filter((row) => row.kind === compileResultKind)
+    .map((row) => getContextCompileRunIdFromMetadata(asMetadataRecord(row.metadata)))
+    .filter((value): value is string => Boolean(value));
+  if (runIds.length === 0) return new Map();
+  const runMap = await listCompileRunOutputsByIds(runIds);
+  const outputByMemoId = new Map<string, LinkedCompileOutput>();
+  for (const row of rows) {
+    if (row.kind !== compileResultKind) continue;
+    const runId = getContextCompileRunIdFromMetadata(asMetadataRecord(row.metadata));
+    if (!runId) continue;
+    const compileRun = runMap.get(runId);
+    outputByMemoId.set(row.id, {
+      contextCompileRunId: runId,
+      linkedOutputMarkdown: compileRun?.outputMarkdown ?? null,
+      linkedOutputSource: "context_compile_runs.pack_snapshot",
+      linkedOutputAvailable: Boolean(compileRun?.outputMarkdown),
+    });
+  }
+  return outputByMemoId;
+}
+
 export async function listSessionMemos(input: {
   sessionId: string;
   includeEmpty?: boolean;
@@ -250,14 +383,17 @@ export async function listSessionMemos(input: {
     .from(sessionMemos)
     .where(and(eq(sessionMemos.sessionId, input.sessionId), isNull(sessionMemos.deletedAt)))
     .orderBy(sessionMemos.slot);
+  const linkedOutputByMemoId = await resolveLinkedCompileOutputs(rows);
   const items = rows.map((row) => ({
     metadata: asMetadataRecord(row.metadata),
+    linkedOutput: linkedOutputByMemoId.get(row.id) ?? null,
     slot: row.slot,
     kind: row.kind,
     label: row.label,
     preview: row.body.slice(0, previewChars),
     previewChars,
     bodyLength: row.body.length,
+    createdAt: row.createdAt,
     updatedAt: row.updatedAt,
     expiresAt: row.expiresAt,
   }));
@@ -270,9 +406,14 @@ export async function listSessionMemos(input: {
     preview: item.preview,
     previewChars: item.previewChars,
     bodyLength: item.bodyLength,
+    createdAt: item.createdAt,
     updatedAt: item.updatedAt,
     metadata: item.metadata,
     expiresAt: item.expiresAt,
+    linkedOutputMarkdown: item.linkedOutput?.linkedOutputMarkdown ?? null,
+    linkedOutputAvailable: item.linkedOutput?.linkedOutputAvailable ?? false,
+    linkedOutputSource: item.linkedOutput?.linkedOutputSource ?? null,
+    contextCompileRunId: item.linkedOutput?.contextCompileRunId ?? null,
   }));
   if (!input.includeEmpty) return normalizedItems;
   const map = new Map(normalizedItems.map((item) => [item.slot, item]));
@@ -305,7 +446,17 @@ export async function getSessionMemo(input: {
       ),
     )
     .limit(1);
-  return rows[0] ?? null;
+  const memo = rows[0];
+  if (!memo) return null;
+  const linkedOutputByMemoId = await resolveLinkedCompileOutputs([memo]);
+  const linkedOutput = linkedOutputByMemoId.get(memo.id) ?? null;
+  return {
+    ...memo,
+    linkedOutputMarkdown: linkedOutput?.linkedOutputMarkdown ?? null,
+    linkedOutputAvailable: linkedOutput?.linkedOutputAvailable ?? false,
+    linkedOutputSource: linkedOutput?.linkedOutputSource ?? null,
+    contextCompileRunId: linkedOutput?.contextCompileRunId ?? null,
+  };
 }
 
 export async function deleteSessionMemo(input: {
@@ -361,4 +512,43 @@ export async function listSessionMemoEvents(sessionId: string, limit = 200) {
     .where(eq(sessionMemoEvents.sessionId, sessionId))
     .orderBy(desc(sessionMemoEvents.createdAt))
     .limit(limit);
+}
+
+export async function listSessionMemoSessions(limit = 200, includeCompileOnly = false) {
+  const safeLimit = Number.isFinite(limit) ? Math.max(1, Math.min(1000, Math.floor(limit))) : 200;
+  const now = new Date();
+  const rows = await db
+    .select({
+      sessionId: sessionMemos.sessionId,
+      memoCount: sql<number>`count(*)::int`,
+      nonCompileResultMemoCount: sql<number>`count(*) filter (where ${sessionMemos.kind} <> ${compileResultKind})::int`,
+      lastUpdatedAt: sql<Date>`max(${sessionMemos.updatedAt})`,
+    })
+    .from(sessionMemos)
+    .where(
+      and(
+        isNull(sessionMemos.deletedAt),
+        sql`(${sessionMemos.expiresAt} is null or ${sessionMemos.expiresAt} > ${now})`,
+      ),
+    )
+    .groupBy(sessionMemos.sessionId)
+    .having(
+      includeCompileOnly
+        ? undefined
+        : sql`count(*) filter (where ${sessionMemos.kind} <> ${compileResultKind}) > 0`,
+    )
+    .orderBy(desc(sql`max(${sessionMemos.updatedAt})`))
+    .limit(safeLimit);
+
+  return rows.map((row) => ({
+    sessionId: row.sessionId,
+    memoCount: Number(row.memoCount ?? 0),
+    nonCompileResultMemoCount: Number(row.nonCompileResultMemoCount ?? 0),
+    compileResultMemoCount: Math.max(
+      0,
+      Number(row.memoCount ?? 0) - Number(row.nonCompileResultMemoCount ?? 0),
+    ),
+    compileOnly: Number(row.nonCompileResultMemoCount ?? 0) === 0,
+    lastUpdatedAt: row.lastUpdatedAt?.toISOString?.() ?? new Date(0).toISOString(),
+  }));
 }

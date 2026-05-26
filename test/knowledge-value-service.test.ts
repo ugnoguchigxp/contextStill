@@ -59,6 +59,38 @@ describe("knowledge value service", () => {
         }),
       ).toBe(0);
     });
+
+    test("penalizes repeated not_used signals less than off_topic", () => {
+      const baseline = computeDynamicScore({
+        compileSelectCount: 6,
+        recentSelectCount30d: 3,
+        agenticAcceptCount: 1,
+        explicitUpvoteCount: 0,
+        explicitDownvoteCount: 0,
+        usageUsedCount30d: 2,
+      });
+      const notUsedPenalty = computeDynamicScore({
+        compileSelectCount: 6,
+        recentSelectCount30d: 3,
+        agenticAcceptCount: 1,
+        explicitUpvoteCount: 0,
+        explicitDownvoteCount: 0,
+        usageUsedCount30d: 2,
+        usageNotUsedCount30d: 8,
+      });
+      const offTopicPenalty = computeDynamicScore({
+        compileSelectCount: 6,
+        recentSelectCount30d: 3,
+        agenticAcceptCount: 1,
+        explicitUpvoteCount: 0,
+        explicitDownvoteCount: 0,
+        usageUsedCount30d: 2,
+        usageOffTopicCount30d: 8,
+      });
+
+      expect(notUsedPenalty).toBeLessThan(baseline);
+      expect(offTopicPenalty).toBeLessThan(notUsedPenalty);
+    });
   });
 
   describe("computeDecayFactor", () => {

@@ -1,19 +1,20 @@
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { groupedConfig } from "../src/config.js";
+import { recordAuditLogSafe } from "../src/modules/audit/audit-log.service.js";
+import { agenticRefine } from "../src/modules/context-compiler/agentic-refine.service.js";
 import {
   insertCompileRun,
   insertContextCompileCandidateTraces,
   insertContextPackItems,
   updateCompileRunSnapshot,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
-import { agenticRefine } from "../src/modules/context-compiler/agentic-refine.service.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
 import { composeContextResponse } from "../src/modules/context-compiler/context-response-composer.service.js";
 import { recordCompileRunKnowledgeUsageSignals } from "../src/modules/knowledge/knowledge-feedback.service.js";
 import { recordKnowledgeCompileSelectionSafe } from "../src/modules/knowledge/knowledge-value.service.js";
 import { retrieveKnowledge } from "../src/modules/knowledge/knowledge.service.js";
+import { putSessionMemo } from "../src/modules/session-memo/session-memo.service.js";
 import { retrieveSources } from "../src/modules/sources/source-retrieval.service.js";
-import { recordAuditLogSafe } from "../src/modules/audit/audit-log.service.js";
 
 vi.mock("../src/modules/knowledge/knowledge.service.js");
 vi.mock("../src/modules/sources/source-retrieval.service.js");
@@ -21,6 +22,7 @@ vi.mock("../src/modules/context-compiler/context-compiler.repository.js");
 vi.mock("../src/modules/knowledge/knowledge-feedback.service.js");
 vi.mock("../src/modules/knowledge/knowledge-value.service.js");
 vi.mock("../src/modules/audit/audit-log.service.js");
+vi.mock("../src/modules/session-memo/session-memo.service.js");
 vi.mock("../src/modules/context-compiler/pack-renderer.js", () => ({
   renderContextPackMarkdown: vi.fn(() => "# Pack Content"),
 }));
@@ -55,6 +57,7 @@ describe("Context Compiler Service", () => {
     vi.mocked(insertContextPackItems).mockResolvedValue();
     vi.mocked(insertContextCompileCandidateTraces).mockResolvedValue();
     vi.mocked(updateCompileRunSnapshot).mockResolvedValue();
+    vi.mocked(putSessionMemo).mockResolvedValue({ id: "memo-1", slot: 0 } as never);
     vi.mocked(recordCompileRunKnowledgeUsageSignals).mockResolvedValue({
       savedCount: 0,
       updatedCount: 0,
@@ -122,6 +125,18 @@ describe("Context Compiler Service", () => {
   test("records run source for caller", async () => {
     await compileContextPack({ goal: "source test" }, { source: "mcp" });
     expect(insertCompileRun).toHaveBeenCalledWith(expect.objectContaining({ source: "mcp" }));
+  });
+
+  test("auto-links compile_result when sessionId is provided", async () => {
+    await compileContextPack({ goal: "session-linked compile" }, { sessionId: "session-1" });
+    expect(putSessionMemo).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sessionId: "session-1",
+        kind: "compile_result",
+        label: "compile_result:550e8400-e29b-41d4-a716-446655440000",
+        source: "system",
+      }),
+    );
   });
 
   test("applies internal token budget and marks compaction warning", async () => {
@@ -434,6 +449,90 @@ describe("Context Compiler Service", () => {
         }),
       );
     });
+  });
+
+  test("suppresses near-duplicate candidates before selection and records suppression trace", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [
+        {
+          id: "k-high",
+          type: "rule",
+          status: "active",
+          title: "Use queue supervisor for lane health",
+          body: "Use queue supervisor for lane health and runtime visibility.",
+          score: 0.95,
+          sourceRefs: ["wiki://queue#runbook"],
+          hasSourceLinks: true,
+        },
+        {
+          id: "k-low",
+          type: "rule",
+          status: "active",
+          title: "Use queue supervisor for lane health",
+          body: "Use queue supervisor for lane health and operational visibility.",
+          score: 0.82,
+          sourceRefs: ["wiki://queue#runbook"],
+          hasSourceLinks: true,
+        },
+        {
+          id: "k-other",
+          type: "rule",
+          status: "active",
+          title: "Run doctor after queue repair",
+          body: "Run doctor after queue repair before resuming normal operations.",
+          score: 0.81,
+          sourceRefs: ["wiki://doctor#workflow"],
+          hasSourceLinks: true,
+        },
+      ],
+      degradedReasons: [],
+      stats: {
+        textHitCount: 3,
+        vectorHitCount: 0,
+        mergedCount: 3,
+        textFailed: false,
+        vectorFailed: false,
+        embeddingStatus: "generated",
+        scopedSearch: false,
+        repoScopeFallbackUsed: false,
+        queryText: "goal",
+      },
+    } as any);
+
+    const { pack } = await compileContextPack({ goal: "duplicate suppression behavior" });
+
+    expect(recordKnowledgeCompileSelectionSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        selectedKnowledgeIds: expect.arrayContaining(["k-high", "k-other"]),
+      }),
+    );
+    const selectedKnowledgeIds = vi.mocked(recordKnowledgeCompileSelectionSafe).mock.calls[0]?.[0]
+      ?.selectedKnowledgeIds;
+    expect(selectedKnowledgeIds).not.toContain("k-low");
+
+    const traceRows = vi.mocked(insertContextCompileCandidateTraces).mock.calls[0]?.[1] ?? [];
+    const suppressedRow = traceRows.find((row) => row.itemId === "k-low");
+    expect(suppressedRow).toBeTruthy();
+    expect(suppressedRow).toEqual(
+      expect.objectContaining({
+        suppressed: true,
+        suppressionReason: "near_duplicate_representative",
+        rankingReason: "near_duplicate_representative:k-high",
+      }),
+    );
+    expect(suppressedRow?.evidence).toEqual(
+      expect.objectContaining({
+        duplicateSuppression: expect.objectContaining({
+          representativeId: "k-high",
+        }),
+      }),
+    );
+    expect(pack.diagnostics.retrievalStats).toEqual(
+      expect.objectContaining({
+        duplicateSuppressedCount: 1,
+        duplicateSuppressedGroupCount: 1,
+      }),
+    );
   });
 
   test("stores unknown facet candidates in diagnostics", async () => {

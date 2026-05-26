@@ -19,6 +19,8 @@ import { runFindCandidate, type FindCandidateResult } from "../../findCandidate/
 import { researchWebSourceToMarkdown } from "../../sources/web/source-research.service.js";
 import { appendQueueEvent } from "./events.js";
 import { claimNextQueueJob } from "./claim.js";
+import { isQueuePaused } from "./control.js";
+import { pauseQueueJob } from "./state.js";
 import { queueTableNameByQueue, type DistillationQueueName } from "./types.js";
 
 type QueueRunResult = {
@@ -773,24 +775,71 @@ async function runWithHeartbeat<T>(params: {
 
 async function runWithTimeout<T>(params: {
   timeoutMs: number;
+  signal?: AbortSignal;
   run: (signal: AbortSignal) => Promise<T>;
 }): Promise<T> {
   const timeoutMs = Math.max(1_000, Math.floor(params.timeoutMs));
-  const controller = new AbortController();
+  const timeoutController = new AbortController();
+  const mergedController = new AbortController();
+  const abortMerged = (reason: unknown) => {
+    if (!mergedController.signal.aborted) {
+      mergedController.abort(reason);
+    }
+  };
+
+  timeoutController.signal.addEventListener(
+    "abort",
+    () => {
+      abortMerged(timeoutController.signal.reason ?? "queue_job_timeout");
+    },
+    { once: true },
+  );
+  if (params.signal) {
+    if (params.signal.aborted) {
+      abortMerged(params.signal.reason ?? "queue_control_aborted");
+    } else {
+      params.signal.addEventListener(
+        "abort",
+        () => {
+          abortMerged(params.signal?.reason ?? "queue_control_aborted");
+        },
+        { once: true },
+      );
+    }
+  }
+
   const timer = setTimeout(() => {
-    controller.abort("queue_job_timeout");
+    timeoutController.abort("queue_job_timeout");
   }, timeoutMs);
   try {
-    return await params.run(controller.signal);
+    return await params.run(mergedController.signal);
   } finally {
     clearTimeout(timer);
   }
+}
+
+function isAbortError(error: unknown): boolean {
+  if (typeof error === "object" && error !== null && "name" in error) {
+    return (error as { name?: string }).name === "AbortError";
+  }
+  return false;
 }
 
 export async function runQueueWorkerOnce(params: {
   queueName: DistillationQueueName;
   workerId: string;
 }): Promise<QueueRunResult> {
+  if (await isQueuePaused(params.queueName)) {
+    return {
+      ok: true,
+      queue: params.queueName,
+      worker: params.workerId,
+      idle: true,
+      claimedJobId: null,
+      message: "queue paused by lane control",
+    };
+  }
+
   const claimed = await claimNextQueueJob({
     queueName: params.queueName,
     workerId: params.workerId,
@@ -807,33 +856,57 @@ export async function runQueueWorkerOnce(params: {
   }
 
   try {
-    await runWithHeartbeat({
-      queueName: params.queueName,
-      jobId: claimed.id,
-      run: async () => {
-        if (params.queueName === "findingCandidate") {
-          await runWithTimeout({
-            timeoutMs: groupedConfig.distillation.findCandidateTimeoutMs,
-            run: (signal) => processFindingCandidate(claimed.id, signal),
-          });
-        } else if (params.queueName === "coveringEvidence") {
-          await runWithTimeout({
-            timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
-            run: (signal) => processCoveringJob("coveringEvidence", claimed.id, signal),
-          });
-        } else if (params.queueName === "premiumCoveringEvidence") {
-          await runWithTimeout({
-            timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
-            run: (signal) => processCoveringJob("premiumCoveringEvidence", claimed.id, signal),
-          });
-        } else {
-          await runWithTimeout({
-            timeoutMs: groupedConfig.distillation.timeoutMs,
-            run: (signal) => processFinalizeJob(claimed.id, signal),
-          });
+    const pauseController = new AbortController();
+    const pausePollTimer = setInterval(() => {
+      void (async () => {
+        const paused = await isQueuePaused(params.queueName);
+        if (paused && !pauseController.signal.aborted) {
+          pauseController.abort("queue_lane_paused");
         }
-      },
-    });
+      })().catch(() => {
+        // Ignore transient control-plane read errors and continue worker cycle.
+      });
+    }, 2_000);
+    if (await isQueuePaused(params.queueName)) {
+      pauseController.abort("queue_lane_paused");
+    }
+
+    try {
+      await runWithHeartbeat({
+        queueName: params.queueName,
+        jobId: claimed.id,
+        run: async () => {
+          if (params.queueName === "findingCandidate") {
+            await runWithTimeout({
+              timeoutMs: groupedConfig.distillation.findCandidateTimeoutMs,
+              signal: pauseController.signal,
+              run: (signal) => processFindingCandidate(claimed.id, signal),
+            });
+          } else if (params.queueName === "coveringEvidence") {
+            await runWithTimeout({
+              timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+              signal: pauseController.signal,
+              run: (signal) => processCoveringJob("coveringEvidence", claimed.id, signal),
+            });
+          } else if (params.queueName === "premiumCoveringEvidence") {
+            await runWithTimeout({
+              timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+              signal: pauseController.signal,
+              run: (signal) => processCoveringJob("premiumCoveringEvidence", claimed.id, signal),
+            });
+          } else {
+            await runWithTimeout({
+              timeoutMs: groupedConfig.distillation.timeoutMs,
+              signal: pauseController.signal,
+              run: (signal) => processFinalizeJob(claimed.id, signal),
+            });
+          }
+        },
+      });
+    } finally {
+      clearInterval(pausePollTimer);
+    }
+
     return {
       ok: true,
       queue: params.queueName,
@@ -844,7 +917,33 @@ export async function runQueueWorkerOnce(params: {
       message: "processed job",
     };
   } catch (error) {
+    const pausedByLaneControl =
+      (typeof error === "string" && error.includes("queue_lane_paused")) ||
+      (error instanceof Error && error.message.includes("queue_lane_paused")) ||
+      isAbortError(error);
     const message = error instanceof Error ? error.message : String(error);
+    if (pausedByLaneControl && (await isQueuePaused(params.queueName))) {
+      await pauseQueueJob({
+        queueName: params.queueName,
+        id: claimed.id,
+        reason: "paused by queue lane control",
+      });
+      await appendQueueEvent({
+        queueName: params.queueName,
+        queueJobId: claimed.id,
+        eventType: "paused",
+        message: "paused by queue lane control",
+      });
+      return {
+        ok: true,
+        queue: params.queueName,
+        worker: params.workerId,
+        idle: false,
+        claimedJobId: claimed.id,
+        message: "paused by queue lane control",
+      };
+    }
+
     if (params.queueName === "findingCandidate") {
       if (isMissingSourceError(message)) {
         await markFindingCompleted({

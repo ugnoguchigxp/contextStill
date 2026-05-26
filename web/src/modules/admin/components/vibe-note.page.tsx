@@ -1,16 +1,15 @@
 import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { Textarea } from "@/components/ui/textarea";
+import { useQuery } from "@tanstack/react-query";
 import { useRouterState } from "@tanstack/react-router";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useMemo, useState } from "react";
+import mermaid from "mermaid";
+import { MarkdownEditor } from "markdown-wysiwyg-editor";
+import { useEffect, useMemo, useState } from "react";
 import {
+  type SessionMemoSessionListItem,
   type VibeMemory,
-  deleteSessionMemo,
+  fetchSessionMemoSessions,
   fetchSessionMemos,
   fetchVibeMemories,
-  upsertSessionMemo,
 } from "../repositories/admin.repository";
 import { parseVibeMemoryTurns } from "./chat-rendering";
 
@@ -25,8 +24,9 @@ type SessionSummary = {
   lastCreatedAt: Date;
 };
 
+mermaid.initialize({ startOnLoad: false });
+
 export function VibeNotePage() {
-  const queryClient = useQueryClient();
   const search = useRouterState({ select: (state) => state.location.searchStr });
   const sessionIdFromQuery = useMemo(
     () => new URLSearchParams(search).get("sessionId") ?? "",
@@ -35,47 +35,73 @@ export function VibeNotePage() {
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(
     sessionIdFromQuery || null,
   );
-  const [slot, setSlot] = useState("");
-  const [label, setLabel] = useState("");
-  const [body, setBody] = useState("");
 
-  const memories = useQuery({
-    queryKey: ["vibe-memories", 200],
-    queryFn: () => fetchVibeMemories(200),
+  const memoSessions = useQuery({
+    queryKey: ["session-memo-sessions", 400, "include-compile-only"],
+    queryFn: () => fetchSessionMemoSessions(400, { includeCompileOnly: true }),
   });
-  const sessions = useMemo(() => {
+  const memories = useQuery({
+    queryKey: ["vibe-memories", 2000],
+    queryFn: () => fetchVibeMemories(2000),
+  });
+
+  const memorySessionSummaryByRawId = useMemo(() => {
     const map = new Map<string, VibeMemory[]>();
     for (const memory of memories.data ?? []) {
-      if (map.has(memory.sessionId)) {
-        const entry = map.get(memory.sessionId);
-        if (!entry) continue;
-        entry.push(memory);
+      const entries = map.get(memory.sessionId);
+      if (entries) {
+        entries.push(memory);
         continue;
       }
       map.set(memory.sessionId, [memory]);
     }
-    return Array.from(map.entries())
-      .map(([id, items]) => buildSessionSummary(id, items))
-      .sort((a, b) => b.lastCreatedAt.getTime() - a.lastCreatedAt.getTime());
+    const summaryByRawId = new Map<string, SessionSummary>();
+    for (const [id, items] of map.entries()) {
+      const summary = buildSessionSummary(id, items);
+      const rawSessionId = rawSessionIdFromMemoryGroup(id, items);
+      summaryByRawId.set(rawSessionId, summary);
+    }
+    return summaryByRawId;
   }, [memories.data]);
 
-  const activeSessionId = selectedSessionId ?? sessions[0]?.id ?? "";
+  const sessions = useMemo(() => {
+    return (memoSessions.data ?? [])
+      .map((item) =>
+        buildSessionSummaryForMemoSession({
+          item,
+          memorySummary: memorySessionSummaryByRawId.get(rawSessionIdFromSessionId(item.sessionId)),
+        }),
+      )
+      .sort((a, b) => b.lastCreatedAt.getTime() - a.lastCreatedAt.getTime());
+  }, [memoSessions.data, memorySessionSummaryByRawId]);
+
+  const resolvedSelectedSessionId = useMemo(
+    () => resolveMemoSessionId(selectedSessionId, sessions),
+    [selectedSessionId, sessions],
+  );
+
+  useEffect(() => {
+    if (sessions.length === 0) {
+      if (selectedSessionId !== null) setSelectedSessionId(null);
+      return;
+    }
+    if (resolvedSelectedSessionId !== null) {
+      if (selectedSessionId !== resolvedSelectedSessionId) {
+        setSelectedSessionId(resolvedSelectedSessionId);
+      }
+      return;
+    }
+    if (selectedSessionId !== sessions[0].id) {
+      setSelectedSessionId(sessions[0].id);
+    }
+  }, [sessions, selectedSessionId, resolvedSelectedSessionId]);
+
+  const activeSessionId = resolvedSelectedSessionId ?? sessions[0]?.id ?? "";
 
   const notes = useQuery({
     queryKey: ["session-memos", activeSessionId],
-    queryFn: () => fetchSessionMemos(activeSessionId),
+    queryFn: () => fetchSessionMemos(activeSessionId, { previewChars: 2000 }),
     enabled: activeSessionId.length > 0,
-  });
-
-  const save = useMutation({
-    mutationFn: upsertSessionMemo,
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["session-memos", activeSessionId] }),
-  });
-  const remove = useMutation({
-    mutationFn: deleteSessionMemo,
-    onSuccess: () =>
-      queryClient.invalidateQueries({ queryKey: ["session-memos", activeSessionId] }),
   });
 
   return (
@@ -107,13 +133,13 @@ export function VibeNotePage() {
                   <span>·</span>
                   <span>{session.sourceLabel}</span>
                   <span>·</span>
-                  <span>{session.count} vibes</span>
+                  <span>{session.count} notes</span>
                 </div>
               </div>
             </button>
           ))}
-          {sessions.length === 0 && !memories.isLoading ? (
-            <div className="empty-state">No sessions found</div>
+          {sessions.length === 0 && !memoSessions.isLoading ? (
+            <div className="empty-state">No sessions with notes</div>
           ) : null}
         </div>
       </aside>
@@ -132,97 +158,103 @@ export function VibeNotePage() {
           </div>
         </header>
         {!activeSessionId ? <div className="vibe-empty-view">セッションがありません。</div> : null}
-        <div className="vibe-card">
-          <div className="vibe-card-body" style={{ display: "grid", gap: 8 }}>
-            <Input
-              value={slot}
-              onChange={(e) => setSlot(e.target.value)}
-              placeholder="slot (optional)"
-            />
-            <Input
-              value={label}
-              onChange={(e) => setLabel(e.target.value)}
-              placeholder="label (optional)"
-            />
-            <Textarea
-              value={body}
-              onChange={(e) => setBody(e.target.value)}
-              placeholder="memo body"
-            />
-            <Button
-              onClick={() =>
-                save.mutate({
-                  sessionId: activeSessionId,
-                  slot: slot.trim() ? Number(slot) : undefined,
-                  label: label.trim() || undefined,
-                  body,
-                })
-              }
-              disabled={!body.trim() || !activeSessionId}
-            >
-              Save
-            </Button>
-          </div>
-        </div>
-        <div className="vibe-history">
-          {notes.data?.items?.length ? (
-            notes.data.items.map((item) => {
-              const slotNum = Number(item.slot);
-              const kind = typeof item.kind === "string" ? item.kind : "scratch";
-              const title =
-                typeof item.metadata?.title === "string" ? item.metadata.title : undefined;
-              const score =
-                typeof item.metadata?.score === "number" ? item.metadata.score : undefined;
-              return (
-                <div key={slotNum} className="vibe-card">
-                  <div className="vibe-card-header">
-                    <Badge variant="secondary">slot {slotNum}</Badge>
-                    <Badge variant="outline">{kind}</Badge>
-                    {item.label ? <span>{String(item.label)}</span> : null}
-                    {title ? <span>{title}</span> : null}
-                    {score !== undefined ? <span>score: {score}</span> : null}
+        <div className="vibe-note-content">
+          <div className="vibe-history">
+            {notes.data?.items?.length ? (
+              notes.data.items.map((item) => {
+                const slotNum = Number(item.slot);
+                const kind = typeof item.kind === "string" ? item.kind : "scratch";
+                const title =
+                  typeof item.metadata?.title === "string" ? item.metadata.title : undefined;
+                const score =
+                  typeof item.metadata?.score === "number" ? item.metadata.score : undefined;
+                const createdAtText = formatOptionalTimestamp(item.createdAt);
+                const isCompileResult = kind === "compile_result";
+                const bodyText = isCompileResult
+                  ? (item.linkedOutputMarkdown ?? "参照先なし")
+                  : String(item.preview ?? "");
+                return (
+                  <div key={slotNum} className="vibe-card">
+                    <div className="vibe-card-header">
+                      <Badge variant="secondary">slot {slotNum}</Badge>
+                      <Badge variant="outline">{kind}</Badge>
+                      {item.label ? <span>{String(item.label)}</span> : null}
+                      {title ? <span>{title}</span> : null}
+                      {score !== undefined ? (
+                        <span className="vibe-note-score">score {score}</span>
+                      ) : null}
+                      {createdAtText ? <span>{createdAtText}</span> : null}
+                    </div>
+                    <div className="vibe-card-body">
+                      <div className="chat-turn-content">
+                        <MarkdownEditor
+                          value={bodyText}
+                          editable={false}
+                          toolbarMode="hidden"
+                          enableMermaid
+                          mermaidLib={mermaid}
+                        />
+                      </div>
+                    </div>
                   </div>
-                  <div className="vibe-card-body">
-                    <pre>{String(item.preview ?? "")}</pre>
-                  </div>
-                  <div className="vibe-card-footer">
-                    <button
-                      type="button"
-                      className="vibe-delete-link"
-                      onClick={() => remove.mutate({ sessionId: activeSessionId, slot: slotNum })}
-                    >
-                      Delete
-                    </button>
-                  </div>
+                );
+              })
+            ) : (
+              <div className="vibe-card">
+                <div className="vibe-card-body">
+                  <span className="vibe-muted-text">保存されたノート無し</span>
                 </div>
-              );
-            })
-          ) : (
-            <div className="vibe-card">
-              <div className="vibe-card-body">
-                <span className="vibe-muted-text">保存されたノート無し</span>
               </div>
-            </div>
-          )}
-        </div>
-        {notes.data?.events?.length ? (
-          <div className="vibe-card">
-            <div className="vibe-card-header">
-              <Badge variant="secondary">Events</Badge>
-            </div>
-            <div className="vibe-card-body">
-              {notes.data.events.slice(0, 20).map((event) => (
-                <div key={event.id} className="vibe-muted-text">
-                  {event.action} / slot {event.slot ?? "-"} /{" "}
-                  {new Date(event.createdAt).toLocaleString()}
-                </div>
-              ))}
-            </div>
+            )}
           </div>
-        ) : null}
+        </div>
       </main>
     </div>
   );
+}
+
+function formatOptionalTimestamp(value?: string): string | null {
+  if (!value) return null;
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return null;
+  return date.toLocaleString();
+}
+
+function resolveMemoSessionId(value: string | null, sessions: SessionSummary[]): string | null {
+  if (!value) return null;
+  if (sessions.some((session) => session.id === value)) return value;
+  const rawSessionId = rawSessionIdFromSessionId(value);
+  return sessions.some((session) => session.id === rawSessionId) ? rawSessionId : null;
+}
+
+function buildSessionSummaryForMemoSession(params: {
+  item: SessionMemoSessionListItem;
+  memorySummary?: SessionSummary;
+}): SessionSummary {
+  const memoUpdatedAt = new Date(params.item.lastUpdatedAt);
+  const safeMemoUpdatedAt = Number.isNaN(memoUpdatedAt.getTime()) ? new Date(0) : memoUpdatedAt;
+
+  if (!params.memorySummary) {
+    return {
+      id: params.item.sessionId,
+      title: params.item.sessionId,
+      firstMessage: undefined,
+      sourceLabel: "session-memo",
+      count: params.item.memoCount,
+      projectName: "Unknown Project",
+      startedAt: safeMemoUpdatedAt.toISOString(),
+      lastCreatedAt: safeMemoUpdatedAt,
+    };
+  }
+
+  return {
+    ...params.memorySummary,
+    id: params.item.sessionId,
+    count: params.item.memoCount,
+    lastCreatedAt: new Date(
+      Math.max(params.memorySummary.lastCreatedAt.getTime(), safeMemoUpdatedAt.getTime()),
+    ),
+  };
 }
 
 function buildSessionSummary(id: string, items: VibeMemory[]): SessionSummary {
@@ -244,7 +276,7 @@ function buildSessionSummary(id: string, items: VibeMemory[]): SessionSummary {
     const turns = parseVibeMemoryTurns(item.content);
     const userTurn = turns.find((turn) => turn.role === "user" && !turn.isMetadata);
     if (userTurn?.content.trim()) {
-      firstMessage = stripRolePrefix(userTurn.content).slice(0, 100);
+      firstMessage = userTurn.content.trim().slice(0, 100);
       break;
     }
   }
@@ -259,6 +291,20 @@ function buildSessionSummary(id: string, items: VibeMemory[]): SessionSummary {
     startedAt,
     lastCreatedAt,
   };
+}
+
+function rawSessionIdFromMemoryGroup(id: string, items: VibeMemory[]): string {
+  for (const item of items) {
+    const metadataSessionId = item.metadata?.sessionId;
+    if (typeof metadataSessionId === "string" && metadataSessionId.trim().length > 0) {
+      return metadataSessionId.trim();
+    }
+  }
+  return rawSessionIdFromSessionId(id);
+}
+
+function rawSessionIdFromSessionId(value: string): string {
+  return value.split(":").filter(Boolean).at(-1) ?? value;
 }
 
 function firstMetadataString(items: VibeMemory[], key: string): string | undefined {
@@ -314,20 +360,26 @@ function formatSessionTimeCompact(value: string): string {
   return `${date.getMonth() + 1}/${date.getDate()}`;
 }
 
-function stripRolePrefix(value: string): string {
-  return value.replace(/^\s*(USER|ASSISTANT|SYSTEM)\s*:\s*/i, "").trim();
-}
-
 function resolveMemoryEventTime(memory: {
   createdAt: string;
   metadata?: Record<string, unknown>;
 }): Date {
-  const timestamp = memory.metadata?.timestamp;
-  if (typeof timestamp === "string" && timestamp.trim()) {
+  const timestamp = readString(memory.metadata?.timestamp);
+  if (timestamp) {
     const parsed = new Date(timestamp);
     if (!Number.isNaN(parsed.getTime())) return parsed;
   }
-  const created = new Date(memory.createdAt);
-  if (!Number.isNaN(created.getTime())) return created;
-  return new Date(0);
+
+  const startedAt = readString(memory.metadata?.sessionStartedAt);
+  if (startedAt) {
+    const parsed = new Date(startedAt);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+
+  const createdAt = new Date(memory.createdAt);
+  return Number.isNaN(createdAt.getTime()) ? new Date(0) : createdAt;
+}
+
+function readString(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
 }

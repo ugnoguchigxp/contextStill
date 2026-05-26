@@ -1,7 +1,6 @@
 import { createHash } from "node:crypto";
 import { groupedConfig } from "../../config.js";
 import type { CompileRunSource } from "../../shared/schemas/compile-run.schema.js";
-import { asRecord, asStringArray, normalizeFacetArray } from "../../shared/utils/normalize.js";
 import {
   type CompileInput,
   type RetrievalMode,
@@ -14,6 +13,7 @@ import {
   contextPackSchema,
 } from "../../shared/schemas/context-pack.schema.js";
 import type { KnowledgeItem, KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
+import { asRecord, asStringArray, normalizeFacetArray } from "../../shared/utils/normalize.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import { normalizeKnowledgeApplicability } from "../knowledge/applicability.service.js";
 import { recordCompileRunKnowledgeUsageSignals } from "../knowledge/knowledge-feedback.service.js";
@@ -27,18 +27,23 @@ import {
   applyLandscapeCompileIntervention,
   isLandscapeCompileInterventionEnabled,
 } from "../landscape/landscape-compile-intervention.service.js";
+import { putSessionMemo } from "../session-memo/session-memo.service.js";
 import { retrieveSources } from "../sources/source-retrieval.service.js";
 import { agenticRefine } from "./agentic-refine.service.js";
-import { normalizeRepoKey, normalizeRepoPath } from "./query-context.js";
+import { upsertContextCompileTaskTrace } from "./context-compile-task-trace.repository.js";
 import {
   insertCompileRun,
   insertContextCompileCandidateTraces,
   insertContextPackItems,
   updateCompileRunSnapshot,
 } from "./context-compiler.repository.js";
-import { upsertContextCompileTaskTrace } from "./context-compile-task-trace.repository.js";
 import { composeContextResponse } from "./context-response-composer.service.js";
+import {
+  suppressNearDuplicateKnowledge,
+  type DuplicateSuppressionInfo,
+} from "./duplicate-suppression.service.js";
 import { renderContextPackMarkdown } from "./pack-renderer.js";
+import { normalizeRepoKey, normalizeRepoPath } from "./query-context.js";
 import { type Rankable, rankAndDedupe } from "./ranking.service.js";
 import { applySectionTokenBudget, estimateTokens } from "./token-budget.js";
 
@@ -347,8 +352,44 @@ function buildInputFacets(params: {
   };
 }
 
-function updateCompileRunSnapshotSafe(runId: string, pack: ContextPack): Promise<void> {
-  return updateCompileRunSnapshot(runId, pack).catch(() => undefined);
+async function updateCompileRunSnapshotSafe(runId: string, pack: ContextPack): Promise<boolean> {
+  try {
+    await updateCompileRunSnapshot(runId, pack);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function autoLinkCompileResultMemoSafe(params: {
+  sessionId?: string;
+  runId: string;
+  runCreatedAt: Date;
+}): Promise<void> {
+  const sessionId = params.sessionId?.trim();
+  if (!sessionId) return;
+  try {
+    await putSessionMemo({
+      sessionId,
+      kind: "compile_result",
+      label: `compile_result:${params.runId}`,
+      body: "context_compile output reference",
+      metadata: {
+        kind: "compile_result",
+        contextCompileRunId: params.runId,
+        contextCompileRunCreatedAt: params.runCreatedAt.toISOString(),
+        source: "auto_context_compile",
+        linkMode: "compile_output_reference",
+        linkStatus: "linked",
+      },
+      source: "system",
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.warn(
+      `[compileContextPack] failed to auto-link compile_result memo for runId=${params.runId}: ${message}`,
+    );
+  }
 }
 
 function normalizeConfidence(value: unknown): number {
@@ -556,6 +597,7 @@ function buildCandidateTraceRows(params: {
   rankedKnowledgeBeforeIntervention: KnowledgeRankable[];
   filteredKnowledge: KnowledgeRankable[];
   finalKnowledge: KnowledgeRankable[];
+  duplicateSuppressedById: Map<string, DuplicateSuppressionInfo>;
   selectedPackItems: ContextPackItem[];
   retrievalTrace: {
     text: KnowledgeRetrievalTraceEntry[];
@@ -626,9 +668,12 @@ function buildCandidateTraceRows(params: {
     const merged = mergedRanks.get(itemId);
     const final = finalRanks.get(itemId);
     const selected = selectedItemById.has(itemId);
+    const duplicateSuppression = params.duplicateSuppressedById.get(itemId);
 
     let suppressionReason: string | null = null;
-    if (!filteredIds.has(itemId) && rankedIds.has(itemId)) {
+    if (duplicateSuppression) {
+      suppressionReason = "near_duplicate_representative";
+    } else if (!filteredIds.has(itemId) && rankedIds.has(itemId)) {
       suppressionReason = "low_confidence_vector_only";
     } else if (filteredIds.has(itemId) && !finalIds.has(itemId) && params.agenticUsed) {
       suppressionReason = "agentic_rejected";
@@ -659,11 +704,22 @@ function buildCandidateTraceRows(params: {
       suppressed: Boolean(suppressionReason),
       suppressionReason,
       agenticDecision,
-      rankingReason: selectedItemById.get(itemId) ?? suppressionReason,
+      rankingReason:
+        selectedItemById.get(itemId) ??
+        (duplicateSuppression
+          ? `near_duplicate_representative:${duplicateSuppression.representativeId}`
+          : suppressionReason),
       communityKey: resolveCommunityKeyFromMetadata(knowledge.metadata),
       evidence: {
         status: knowledge.status,
         candidateEvidence: knowledge.candidateEvidence ?? null,
+        duplicateSuppression: duplicateSuppression
+          ? {
+              representativeId: duplicateSuppression.representativeId,
+              reason: duplicateSuppression.reason,
+              confidence: duplicateSuppression.confidence,
+            }
+          : null,
       },
     });
   }
@@ -890,7 +946,14 @@ export async function compileContextPack(
 
     const markdown = renderContextPackMarkdown(pack);
     const packWithMarkdown = attachOutputMarkdownToPack(pack, markdown);
-    await updateCompileRunSnapshotSafe(runId, packWithMarkdown);
+    const snapshotSaved = await updateCompileRunSnapshotSafe(runId, packWithMarkdown);
+    if (snapshotSaved) {
+      await autoLinkCompileResultMemoSafe({
+        sessionId: options?.sessionId,
+        runId,
+        runCreatedAt: new Date(),
+      });
+    }
     await recordKnowledgeCompileSelectionSafe({
       runId,
       selectedKnowledgeIds: [],
@@ -958,15 +1021,17 @@ export async function compileContextPack(
 
   const knowledgeFilterResult = filterByCandidateEvidence(rankedKnowledge);
   const filteredKnowledge = knowledgeFilterResult.items;
+  const duplicateSuppression = suppressNearDuplicateKnowledge(filteredKnowledge);
+  const compressedKnowledge = duplicateSuppression.items;
   if (knowledgeFilterResult.suppressedCount > 0) {
     pushUnique(degradedReasons, "LOW_CONFIDENCE_VECTOR_ONLY_SUPPRESSED");
   }
-  if (rankedKnowledge.length > 0 && filteredKnowledge.length === 0) {
+  if (rankedKnowledge.length > 0 && compressedKnowledge.length === 0) {
     pushUnique(degradedReasons, "NO_RELEVANT_CONTEXT");
   }
 
   const agenticResult = await agenticRefine(
-    filteredKnowledge.map((item) => ({
+    compressedKnowledge.map((item) => ({
       id: item.id,
       type: item.type,
       status: item.status,
@@ -992,7 +1057,7 @@ export async function compileContextPack(
     }
   }
 
-  const refinedKnowledgeMap = new Map(filteredKnowledge.map((k) => [k.id, k]));
+  const refinedKnowledgeMap = new Map(compressedKnowledge.map((k) => [k.id, k]));
   const finalKnowledge = agenticResult.items
     .map((item) => refinedKnowledgeMap.get(item.id))
     .filter((k): k is KnowledgeRankable => k !== undefined);
@@ -1045,8 +1110,9 @@ export async function compileContextPack(
       candidateEvidence: item.candidateEvidence,
     })),
     rankedKnowledgeBeforeIntervention,
-    filteredKnowledge,
+    filteredKnowledge: compressedKnowledge,
     finalKnowledge,
+    duplicateSuppressedById: duplicateSuppression.suppressedById,
     selectedPackItems,
     retrievalTrace: knowledge.trace ?? null,
     agenticUsed: agenticResult.agenticUsed,
@@ -1184,12 +1250,12 @@ export async function compileContextPack(
         sourceRefs: item.sourceRefs,
       })),
     ),
-    recordKnowledgeCompileSelectionSafe({
-      runId,
-      selectedKnowledgeIds,
-      agenticAcceptedKnowledgeIds,
-    }),
   ]);
+  await recordKnowledgeCompileSelectionSafe({
+    runId,
+    selectedKnowledgeIds,
+    agenticAcceptedKnowledgeIds,
+  });
 
   void recordCompileRunKnowledgeUsageSignalsSafe({
     runId,
@@ -1226,6 +1292,8 @@ export async function compileContextPack(
         candidateTraceTruncated: candidateTracePersistResult.truncated,
         candidateTraceLimit,
         candidateTraceSkippedReason: candidateTracePersistResult.skippedReason,
+        duplicateSuppressedCount: duplicateSuppression.suppressedById.size,
+        duplicateSuppressedGroupCount: duplicateSuppression.groups.length,
         landscapeIntervention: landscapeIntervention.diagnostics,
         agenticUsed: agenticResult.agenticUsed,
         agenticReasoning: agenticResult.reasoning,
@@ -1249,8 +1317,14 @@ export async function compileContextPack(
     ? "No Content"
     : composedResponse.markdown || renderContextPackMarkdown(pack);
   const packWithMarkdown = attachOutputMarkdownToPack(pack, markdown);
-
-  await updateCompileRunSnapshotSafe(runId, packWithMarkdown);
+  const snapshotSaved = await updateCompileRunSnapshotSafe(runId, packWithMarkdown);
+  if (snapshotSaved) {
+    await autoLinkCompileResultMemoSafe({
+      sessionId: options?.sessionId,
+      runId,
+      runCreatedAt: new Date(),
+    });
+  }
 
   await recordAuditLogSafe({
     eventType: auditEventTypes.contextCompileRun,

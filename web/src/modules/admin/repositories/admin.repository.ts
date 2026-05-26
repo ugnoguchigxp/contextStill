@@ -132,9 +132,23 @@ export type SessionMemoListItem = {
   previewChars?: number;
   bodyLength?: number;
   metadata?: Record<string, unknown>;
+  createdAt?: string;
   updatedAt?: string;
   expiresAt?: string | null;
+  linkedOutputMarkdown?: string | null;
+  linkedOutputAvailable?: boolean;
+  linkedOutputSource?: string | null;
+  contextCompileRunId?: string | null;
   empty?: boolean;
+};
+
+export type SessionMemoSessionListItem = {
+  sessionId: string;
+  memoCount: number;
+  nonCompileResultMemoCount?: number;
+  compileResultMemoCount?: number;
+  compileOnly?: boolean;
+  lastUpdatedAt: string;
 };
 
 export type AgentDiffEntry = {
@@ -2335,9 +2349,20 @@ export async function fetchSessionMemos(
   );
 }
 
+export async function fetchSessionMemoSessions(
+  limit = 200,
+  options?: { includeCompileOnly?: boolean },
+): Promise<SessionMemoSessionListItem[]> {
+  const params = new URLSearchParams({ limit: String(limit) });
+  if (options?.includeCompileOnly) params.set("includeCompileOnly", "true");
+  const json = await getJson<{ items: SessionMemoSessionListItem[] }>(
+    `/api/session-memo/sessions?${params}`,
+  );
+  return json.items;
+}
+
 export async function upsertSessionMemo(input: {
   sessionId: string;
-  slot?: number;
   kind?: string;
   title?: string;
   score?: number;
@@ -2348,17 +2373,6 @@ export async function upsertSessionMemo(input: {
 }): Promise<SessionMemo> {
   const json = await requestJson<{ memo: SessionMemo }>("/api/session-memo/item", "POST", input);
   return json.memo;
-}
-
-export async function deleteSessionMemo(input: {
-  sessionId: string;
-  slot?: number;
-  label?: string;
-}): Promise<void> {
-  const params = new URLSearchParams({ sessionId: input.sessionId });
-  if (input.slot !== undefined) params.set("slot", String(input.slot));
-  if (input.label) params.set("label", input.label);
-  await requestJson(`/api/session-memo/item?${params}`, "DELETE");
 }
 
 export async function deleteVibeMemory(id: string): Promise<void> {
@@ -2923,6 +2937,15 @@ export type DistillationQueueStatus =
   | "paused";
 
 export type QueueDashboardStatsV2 = {
+  queueControls: Record<
+    DistillationQueueName,
+    {
+      paused: boolean;
+      updatedAt: string | null;
+      updatedBy: string | null;
+      reason: string | null;
+    }
+  >;
   queues: Record<
     DistillationQueueName,
     {
@@ -3012,6 +3035,24 @@ export async function pauseQueueJobV2(
       reason,
     },
   );
+}
+
+export async function pauseQueueLaneV2(
+  queue: DistillationQueueName,
+  reason?: string,
+): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>(`/api/queue/${encodeURIComponent(queue)}/pause`, "POST", {
+    reason,
+  });
+}
+
+export async function resumeQueueLaneV2(
+  queue: DistillationQueueName,
+  reason?: string,
+): Promise<{ ok: boolean }> {
+  return requestJson<{ ok: boolean }>(`/api/queue/${encodeURIComponent(queue)}/resume`, "POST", {
+    reason,
+  });
 }
 
 export async function resumeQueueJobV2(

@@ -2,20 +2,28 @@ import { zValidator } from "@hono/zod-validator";
 import { Hono } from "hono";
 import { z } from "zod";
 import {
-  clearSessionMemos,
-  deleteSessionMemo,
   getSessionMemo,
   listSessionMemoEvents,
+  listSessionMemoSessions,
   listSessionMemos,
   putSessionMemo,
 } from "../../../src/modules/session-memo/session-memo.service.js";
+import { sessionMemoSlotLimit } from "../../../src/shared/schemas/session-memo.schema.js";
 
 export const sessionMemoRouter = new Hono();
+const sessionMemoMaxSlot = sessionMemoSlotLimit - 1;
 
 const sessionIdSchema = z.object({ sessionId: z.string().trim().min(1) });
+const sessionMemoSessionsQuerySchema = z.object({
+  limit: z.coerce.number().int().min(1).max(1000).default(200),
+  includeCompileOnly: z
+    .union([z.literal("true"), z.literal("false")])
+    .optional()
+    .transform((value) => value === "true"),
+});
 const sessionMemoLocatorQuerySchema = sessionIdSchema
   .extend({
-    slot: z.coerce.number().int().min(0).max(19).optional(),
+    slot: z.coerce.number().int().min(0).max(sessionMemoMaxSlot).optional(),
     label: z.string().trim().min(1).optional(),
   })
   .refine((value) => value.slot !== undefined || value.label !== undefined, {
@@ -32,6 +40,16 @@ sessionMemoRouter.get("/", zValidator("query", sessionIdSchema), async (c) => {
   return c.json({ sessionId, items, events });
 });
 
+sessionMemoRouter.get(
+  "/sessions",
+  zValidator("query", sessionMemoSessionsQuerySchema),
+  async (c) => {
+    const { limit, includeCompileOnly } = c.req.valid("query");
+    const items = await listSessionMemoSessions(limit, includeCompileOnly);
+    return c.json({ items });
+  },
+);
+
 sessionMemoRouter.get("/item", zValidator("query", sessionMemoLocatorQuerySchema), async (c) => {
   const memo = await getSessionMemo(c.req.valid("query"));
   if (!memo) return c.json({ error: "session memo not found" }, 404);
@@ -44,7 +62,6 @@ sessionMemoRouter.post(
     "json",
     z.object({
       sessionId: z.string().trim().min(1),
-      slot: z.number().int().min(0).max(19).optional(),
       kind: z.string().trim().min(1).max(64).optional(),
       title: z.string().trim().min(1).max(160).optional(),
       score: z.number().int().min(0).max(100).optional(),
@@ -59,13 +76,3 @@ sessionMemoRouter.post(
     return c.json({ memo: saved }, 201);
   },
 );
-
-sessionMemoRouter.delete("/item", zValidator("query", sessionMemoLocatorQuerySchema), async (c) => {
-  const result = await deleteSessionMemo(c.req.valid("query"));
-  return c.json(result);
-});
-
-sessionMemoRouter.delete("/", zValidator("query", sessionIdSchema), async (c) => {
-  const result = await clearSessionMemos(c.req.valid("query").sessionId);
-  return c.json(result);
-});

@@ -2,12 +2,16 @@ import { sql } from "drizzle-orm";
 import { groupedConfig } from "../../../config.js";
 import { db } from "../../../db/index.js";
 import type { DistillationQueueName } from "./types.js";
+import { isQueuePaused } from "./control.js";
 import { queueTableNameByQueue } from "./types.js";
 
 export async function claimNextQueueJob(params: {
   queueName: DistillationQueueName;
   workerId: string;
 }): Promise<{ id: string } | null> {
+  if (await isQueuePaused(params.queueName)) {
+    return null;
+  }
   const tableName = queueTableNameByQueue[params.queueName];
   const staleSeconds = Math.max(
     30,

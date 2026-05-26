@@ -1,8 +1,9 @@
 import type { ToolEntry } from "../registry.js";
-import { sessionMemoToolInputSchema } from "../../shared/schemas/session-memo.schema.js";
 import {
-  clearSessionMemos,
-  deleteSessionMemo,
+  sessionMemoSlotLimit,
+  sessionMemoToolInputSchema,
+} from "../../shared/schemas/session-memo.schema.js";
+import {
   getSessionMemo,
   listSessionMemos,
   putManySessionMemos,
@@ -31,9 +32,12 @@ export const sessionMemoTool: ToolEntry = {
   inputSchema: {
     type: "object",
     properties: {
-      action: { type: "string", enum: ["put", "put_many", "list", "get", "delete", "clear"] },
+      action: { type: "string", enum: ["put", "put_many", "list", "get"] },
       sessionId: { type: "string" },
-      slot: { type: "number" },
+      slot: {
+        type: "number",
+        description: "Optional slot locator used by action=get.",
+      },
       kind: { type: "string" },
       title: { type: "string" },
       score: { type: "number" },
@@ -41,7 +45,12 @@ export const sessionMemoTool: ToolEntry = {
       body: { type: "string" },
       metadata: { type: "object" },
       expiresAt: { type: "string" },
-      items: { type: "array", items: { type: "object" }, minItems: 1, maxItems: 20 },
+      items: {
+        type: "array",
+        items: { type: "object" },
+        minItems: 1,
+        maxItems: sessionMemoSlotLimit,
+      },
       includeEmpty: { type: "boolean", default: false },
       previewChars: { type: "number", default: 320 },
     },
@@ -53,13 +62,15 @@ export const sessionMemoTool: ToolEntry = {
 
     if (parsed.action === "put") {
       if (!parsed.body) throw new Error("body is required");
+      const isLegacyCompileEvalLabel =
+        typeof parsed.label === "string" && parsed.label.trim().toLowerCase() === "compile_eval";
       const saved = await putSessionMemo({
         sessionId,
-        slot: parsed.slot,
+        slot: undefined,
         kind: parsed.kind,
         title: parsed.title,
         score: parsed.score,
-        label: parsed.label,
+        label: isLegacyCompileEvalLabel ? undefined : parsed.label,
         body: parsed.body,
         metadata: parsed.metadata,
         expiresAt: parsed.expiresAt,
@@ -71,7 +82,7 @@ export const sessionMemoTool: ToolEntry = {
     if (parsed.action === "put_many") {
       if (!parsed.items) throw new Error("items is required");
       const items = parsed.items.map((item) => ({
-        slot: item.slot,
+        slot: undefined,
         kind: item.kind,
         title: item.title,
         score: item.score,
@@ -98,12 +109,6 @@ export const sessionMemoTool: ToolEntry = {
       return { content: [{ type: "text", text: JSON.stringify({ memo }, null, 2) }] };
     }
 
-    if (parsed.action === "delete") {
-      const result = await deleteSessionMemo({ sessionId, slot: parsed.slot, label: parsed.label });
-      return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
-    }
-
-    const result = await clearSessionMemos(sessionId);
-    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
+    throw new Error(`Unsupported action: ${parsed.action}`);
   },
 };

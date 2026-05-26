@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => ({
   runFindCandidate: vi.fn(),
   runFinalizeDistille: vi.fn(),
   researchWebSourceToMarkdown: vi.fn(),
+  isQueuePaused: vi.fn(),
   selectRows: [] as unknown[][],
   insertCalls: [] as Array<{ table: unknown; values: unknown }>,
   updateCalls: [] as Array<{ table: unknown; values: Record<string, unknown> }>,
@@ -46,6 +47,10 @@ vi.mock("../src/modules/finalizeDistille/domain.js", () => ({
 
 vi.mock("../src/modules/sources/web/source-research.service.js", () => ({
   researchWebSourceToMarkdown: mocks.researchWebSourceToMarkdown,
+}));
+
+vi.mock("../src/modules/queue/core/control.js", () => ({
+  isQueuePaused: mocks.isQueuePaused,
 }));
 
 function selectChain(rows: unknown[]) {
@@ -88,6 +93,7 @@ describe("runQueueWorkerOnce", () => {
     mocks.insertCalls = [];
     mocks.updateCalls = [];
     mocks.claimNextQueueJob.mockResolvedValue({ id: "cover-job-1" });
+    mocks.isQueuePaused.mockResolvedValue(false);
     mocks.db.select.mockImplementation(() => selectChain(mocks.selectRows.shift() ?? []));
     mocks.db.insert.mockImplementation((table: unknown) => insertChain(table));
     mocks.db.update.mockImplementation((table: unknown) => updateChain(table));
@@ -226,5 +232,18 @@ describe("runQueueWorkerOnce", () => {
         }),
       }),
     );
+  });
+
+  test("returns idle when lane is paused", async () => {
+    mocks.isQueuePaused.mockResolvedValue(true);
+
+    const result = await runQueueWorkerOnce({
+      queueName: "findingCandidate",
+      workerId: "worker-1",
+    });
+
+    expect(result.idle).toBe(true);
+    expect(result.message).toContain("queue paused");
+    expect(mocks.claimNextQueueJob).not.toHaveBeenCalled();
   });
 });

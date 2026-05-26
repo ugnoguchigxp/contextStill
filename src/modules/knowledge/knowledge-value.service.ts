@@ -12,6 +12,7 @@ export type KnowledgeValueSignals = {
   explicitUpvoteCount: number;
   explicitDownvoteCount: number;
   usageUsedCount30d?: number;
+  usageNotUsedCount30d?: number;
   usageOffTopicCount30d?: number;
 };
 
@@ -32,6 +33,7 @@ type KnowledgeCounterRow = {
 
 type UsageSignals = {
   usedCount30d: number;
+  notUsedCount30d: number;
   offTopicCount30d: number;
 };
 
@@ -57,6 +59,7 @@ export function computeDynamicScore(signals: KnowledgeValueSignals): number {
   const explicitUpvoteCount = asNonNegativeInteger(signals.explicitUpvoteCount);
   const explicitDownvoteCount = asNonNegativeInteger(signals.explicitDownvoteCount);
   const usageUsedCount30d = asNonNegativeInteger(signals.usageUsedCount30d ?? 0);
+  const usageNotUsedCount30d = asNonNegativeInteger(signals.usageNotUsedCount30d ?? 0);
   const usageOffTopicCount30d = asNonNegativeInteger(signals.usageOffTopicCount30d ?? 0);
 
   const score =
@@ -66,6 +69,7 @@ export function computeDynamicScore(signals: KnowledgeValueSignals): number {
     Math.min(20, explicitUpvoteCount * 10) -
     Math.min(40, explicitDownvoteCount * 15) +
     Math.min(10, usageUsedCount30d * 1.5) -
+    Math.min(10, usageNotUsedCount30d * 1) -
     Math.min(30, usageOffTopicCount30d * 3);
 
   return clamp(score, 0, 100);
@@ -143,6 +147,7 @@ async function loadRecentUsageSignalsMap(
     .select({
       knowledgeId: knowledgeUsageEvents.knowledgeId,
       usedCount30d: sql<number>`count(*) filter (where ${knowledgeUsageEvents.verdict} = 'used')::int`,
+      notUsedCount30d: sql<number>`count(*) filter (where ${knowledgeUsageEvents.verdict} = 'not_used')::int`,
       offTopicCount30d: sql<number>`count(*) filter (where ${knowledgeUsageEvents.verdict} = 'off_topic')::int`,
     })
     .from(knowledgeUsageEvents)
@@ -158,6 +163,7 @@ async function loadRecentUsageSignalsMap(
   for (const row of rows) {
     usageMap.set(row.knowledgeId, {
       usedCount30d: asNonNegativeInteger(row.usedCount30d),
+      notUsedCount30d: asNonNegativeInteger(row.notUsedCount30d),
       offTopicCount30d: asNonNegativeInteger(row.offTopicCount30d),
     });
   }
@@ -193,6 +199,7 @@ export async function recordKnowledgeCompileSelection(
       explicitUpvoteCount: row.explicitUpvoteCount,
       explicitDownvoteCount: row.explicitDownvoteCount,
       usageUsedCount30d: usageSignals?.usedCount30d ?? 0,
+      usageNotUsedCount30d: usageSignals?.notUsedCount30d ?? 0,
       usageOffTopicCount30d: usageSignals?.offTopicCount30d ?? 0,
     });
 
@@ -228,6 +235,7 @@ export async function recalculateKnowledgeDynamicScores(knowledgeIds: string[]):
       explicitUpvoteCount: row.explicitUpvoteCount,
       explicitDownvoteCount: row.explicitDownvoteCount,
       usageUsedCount30d: usageSignals?.usedCount30d ?? 0,
+      usageNotUsedCount30d: usageSignals?.notUsedCount30d ?? 0,
       usageOffTopicCount30d: usageSignals?.offTopicCount30d ?? 0,
     });
 

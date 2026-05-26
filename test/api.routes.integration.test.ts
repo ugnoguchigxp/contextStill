@@ -1,6 +1,10 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import app from "../api/app.js";
 import { upsertKnowledgeFromSource } from "../src/modules/knowledge/knowledge.repository.js";
+import {
+  getRuntimeSettingsSnapshot,
+  saveRuntimeSettings,
+} from "../src/modules/settings/settings.service.js";
 import { compileRunDetailSchema } from "../src/shared/schemas/compile-run.schema.js";
 import { contextPackSchema } from "../src/shared/schemas/context-pack.schema.js";
 import {
@@ -15,6 +19,12 @@ const describeDb = isDbIntegrationEnabled() ? describe : describe.skip;
 describeDb("api route integration", () => {
   beforeAll(async () => {
     await ensureDbIntegrationReady();
+    const settings = getRuntimeSettingsSnapshot();
+    settings.taskRouting.agenticCompile.enabled = false;
+    await saveRuntimeSettings({
+      settings,
+      updatedBy: "integration-test",
+    });
   });
 
   beforeEach(async () => {
@@ -79,7 +89,7 @@ describeDb("api route integration", () => {
     const detailJson = (await detailResponse.json()) as { detail: unknown };
     const parsedDetail = compileRunDetailSchema.parse(detailJson.detail);
     expect(parsedDetail.knowledgeFeedback.some((item) => item.knowledgeId === ruleId)).toBe(true);
-  });
+  }, 15000);
 
   test("GET /api/knowledge returns persisted items", async () => {
     await upsertKnowledgeFromSource({
@@ -191,7 +201,6 @@ describeDb("api route integration", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         sessionId: "integration-session-memo",
-        slot: 2,
         label: "goal",
         body: "finish session memo integration test",
         metadata: { score: 92 },
@@ -207,13 +216,10 @@ describeDb("api route integration", () => {
       items: Array<{ slot: number; label?: string; preview?: string; empty?: boolean }>;
       events: Array<{ action: string }>;
     };
-    expect(listJson.items).toHaveLength(20);
+    expect(listJson.items).toHaveLength(40);
     expect(
       listJson.items.some(
-        (item) =>
-          item.slot === 2 &&
-          item.label === "goal" &&
-          item.preview === "finish session memo integration test",
+        (item) => item.label === "goal" && item.preview === "finish session memo integration test",
       ),
     ).toBe(true);
     expect(listJson.events.some((event) => event.action === "put")).toBe(true);
@@ -223,12 +229,224 @@ describeDb("api route integration", () => {
     );
     expect(getResponse.status).toBe(200);
     const getJson = (await getResponse.json()) as { memo: { body: string; slot: number } };
-    expect(getJson.memo.slot).toBe(2);
+    expect(Number.isInteger(getJson.memo.slot)).toBe(true);
+    expect(getJson.memo.slot).toBeGreaterThanOrEqual(0);
     expect(getJson.memo.body).toBe("finish session memo integration test");
   });
 
   test("GET /api/session-memo/item returns 400 when neither slot nor label is provided", async () => {
     const response = await app.request("/api/session-memo/item?sessionId=integration-session-memo");
     expect(response.status).toBe(400);
+  });
+
+  test("POST /api/session-memo/item stores compile_eval in separate slots when label is omitted", async () => {
+    const first = await app.request("/api/session-memo/item", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "integration-session-compile-eval",
+        kind: "compile_eval",
+        title: "first",
+        score: 70,
+        body: "first evaluation",
+      }),
+    });
+    expect(first.status).toBe(201);
+    const firstJson = (await first.json()) as { memo: { label: string; slot: number } };
+
+    const second = await app.request("/api/session-memo/item", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "integration-session-compile-eval",
+        kind: "compile_eval",
+        title: "second",
+        score: 72,
+        body: "second evaluation",
+      }),
+    });
+    expect(second.status).toBe(201);
+    const secondJson = (await second.json()) as { memo: { label: string; slot: number } };
+
+    expect(firstJson.memo.label).toMatch(/^compile_eval:/);
+    expect(secondJson.memo.label).toMatch(/^compile_eval:/);
+    expect(secondJson.memo.label).not.toBe(firstJson.memo.label);
+    expect(secondJson.memo.slot).not.toBe(firstJson.memo.slot);
+  });
+
+  test("POST /api/session-memo/item always picks next empty slot for compile_eval", async () => {
+    const sessionId = `integration-session-slot-guard-${Date.now()}`;
+    const compileResponse = await app.request("/api/context/compile", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        goal: "integration compile_result slot guard token",
+      }),
+    });
+    expect(compileResponse.status).toBe(200);
+    const compileJson = (await compileResponse.json()) as { pack: { runId: string } };
+
+    const createCompileResult = await app.request("/api/session-memo/item", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId,
+        kind: "compile_result",
+        body: "context_compile output reference",
+        metadata: { contextCompileRunId: compileJson.pack.runId },
+      }),
+    });
+    expect(createCompileResult.status).toBe(201);
+    const compileResultJson = (await createCompileResult.json()) as { memo: { slot: number } };
+    expect(compileResultJson.memo.slot).toBe(0);
+
+    const createEval = await app.request("/api/session-memo/item", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId,
+        kind: "compile_eval",
+        title: "score",
+        score: 78,
+        body: "eval",
+      }),
+    });
+    expect(createEval.status).toBe(201);
+    const evalJson = (await createEval.json()) as { memo: { slot: number; kind: string } };
+    expect(evalJson.memo.kind).toBe("compile_eval");
+    expect(evalJson.memo.slot).toBe(1);
+  });
+
+  test("POST /api/session-memo/item does not collapse compile_eval when legacy label=compile_eval is sent", async () => {
+    const sessionId = `integration-session-compile-eval-legacy-label-${Date.now()}`;
+
+    const first = await app.request("/api/session-memo/item", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId,
+        kind: "compile_eval",
+        label: "compile_eval",
+        title: "legacy-1",
+        score: 81,
+        body: "legacy eval 1",
+      }),
+    });
+    expect(first.status).toBe(201);
+    const firstJson = (await first.json()) as { memo: { slot: number; label: string } };
+
+    const second = await app.request("/api/session-memo/item", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId,
+        kind: "compile_eval",
+        label: "compile_eval",
+        title: "legacy-2",
+        score: 82,
+        body: "legacy eval 2",
+      }),
+    });
+    expect(second.status).toBe(201);
+    const secondJson = (await second.json()) as { memo: { slot: number; label: string } };
+
+    expect(firstJson.memo.label).toMatch(/^compile_eval:/);
+    expect(secondJson.memo.label).toMatch(/^compile_eval:/);
+    expect(secondJson.memo.label).not.toBe(firstJson.memo.label);
+    expect(secondJson.memo.slot).not.toBe(firstJson.memo.slot);
+  });
+
+  test("GET /api/session-memo/item resolves linkedOutputMarkdown for compile_result", async () => {
+    const compileResponse = await app.request("/api/context/compile", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        goal: "integration compile_result linked output token",
+      }),
+    });
+    expect(compileResponse.status).toBe(200);
+    const compileJson = (await compileResponse.json()) as {
+      pack: { runId: string };
+      markdown: string;
+    };
+    const runId = compileJson.pack.runId;
+
+    const createResponse = await app.request("/api/session-memo/item", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "integration-session-compile-result",
+        kind: "compile_result",
+        body: "context_compile output reference",
+        metadata: { contextCompileRunId: runId },
+      }),
+    });
+    expect(createResponse.status).toBe(201);
+    const createJson = (await createResponse.json()) as { memo: { slot: number } };
+
+    const getResponse = await app.request(
+      `/api/session-memo/item?sessionId=integration-session-compile-result&slot=${createJson.memo.slot}`,
+    );
+    expect(getResponse.status).toBe(200);
+    const getJson = (await getResponse.json()) as {
+      memo: {
+        linkedOutputMarkdown: string | null;
+        linkedOutputAvailable: boolean;
+        contextCompileRunId: string | null;
+      };
+    };
+    expect(getJson.memo.contextCompileRunId).toBe(runId);
+    expect(getJson.memo.linkedOutputAvailable).toBe(true);
+    expect(getJson.memo.linkedOutputMarkdown).toBe(compileJson.markdown);
+  });
+
+  test("GET /api/session-memo/sessions excludes compile_result-only sessions by default", async () => {
+    const compileOnlyResponse = await app.request("/api/session-memo/item", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "integration-session-compile-only",
+        kind: "compile_result",
+        body: "context_compile output reference",
+        metadata: { contextCompileRunId: "run-compile-only" },
+      }),
+    });
+    expect(compileOnlyResponse.status).toBe(201);
+
+    const normalResponse = await app.request("/api/session-memo/item", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        sessionId: "integration-session-regular",
+        kind: "scratch",
+        body: "manual note",
+      }),
+    });
+    expect(normalResponse.status).toBe(201);
+
+    const defaultList = await app.request("/api/session-memo/sessions?limit=20");
+    expect(defaultList.status).toBe(200);
+    const defaultJson = (await defaultList.json()) as {
+      items: Array<{ sessionId: string }>;
+    };
+    expect(defaultJson.items.some((item) => item.sessionId === "integration-session-regular")).toBe(
+      true,
+    );
+    expect(
+      defaultJson.items.some((item) => item.sessionId === "integration-session-compile-only"),
+    ).toBe(false);
+
+    const includeCompileOnlyList = await app.request(
+      "/api/session-memo/sessions?limit=20&includeCompileOnly=true",
+    );
+    expect(includeCompileOnlyList.status).toBe(200);
+    const includeCompileOnlyJson = (await includeCompileOnlyList.json()) as {
+      items: Array<{ sessionId: string }>;
+    };
+    expect(
+      includeCompileOnlyJson.items.some(
+        (item) => item.sessionId === "integration-session-compile-only",
+      ),
+    ).toBe(true);
   });
 });

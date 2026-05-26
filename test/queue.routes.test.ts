@@ -7,7 +7,9 @@ vi.mock("../api/modules/queue/queue.repository.js", () => ({
   fetchQueueDashboardStats: vi.fn(),
   listQueueItems: vi.fn(),
   fetchActiveTasks: vi.fn(),
+  pauseQueueLane: vi.fn(),
   pauseTarget: vi.fn(),
+  resumeQueueLane: vi.fn(),
   resumeTarget: vi.fn(),
   retryTarget: vi.fn(),
 }));
@@ -25,6 +27,12 @@ describe("queue routes v2", () => {
 
   test("GET /api/queue/stats returns queue stats", async () => {
     vi.mocked(repo.fetchQueueDashboardStats).mockResolvedValueOnce({
+      queueControls: {
+        findingCandidate: { paused: false, updatedAt: null, updatedBy: null, reason: null },
+        coveringEvidence: { paused: false, updatedAt: null, updatedBy: null, reason: null },
+        premiumCoveringEvidence: { paused: false, updatedAt: null, updatedBy: null, reason: null },
+        finalizeDistille: { paused: false, updatedAt: null, updatedBy: null, reason: null },
+      },
       queues: {
         findingCandidate: {
           counters: { pending: 1, running: 1, completed: 0, skipped: 0, failed: 0, paused: 0 },
@@ -123,6 +131,52 @@ describe("queue routes v2", () => {
     });
     expect(response.status).toBe(200);
     expect(repo.pauseTarget).toHaveBeenCalledWith("findingCandidate", "job-1", "manual pause");
+  });
+
+  test("POST /api/queue/:queue/pause toggles lane pause", async () => {
+    vi.mocked(repo.pauseQueueLane).mockResolvedValueOnce({
+      queueName: "findingCandidate",
+      state: {
+        paused: true,
+        updatedAt: "2026-05-26T10:00:00.000Z",
+        updatedBy: "queue-dashboard",
+        reason: "manual lane pause",
+      },
+      pausedRunningCount: 1,
+    });
+
+    const app = buildApp();
+    const response = await app.request("/api/queue/findingCandidate/pause", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "manual lane pause" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(repo.pauseQueueLane).toHaveBeenCalledWith("findingCandidate", "manual lane pause");
+  });
+
+  test("POST /api/queue/:queue/resume toggles lane resume", async () => {
+    vi.mocked(repo.resumeQueueLane).mockResolvedValueOnce({
+      queueName: "findingCandidate",
+      state: {
+        paused: false,
+        updatedAt: "2026-05-26T10:10:00.000Z",
+        updatedBy: "queue-dashboard",
+        reason: "manual lane resume",
+      },
+      reason: "manual lane resume",
+    });
+
+    const app = buildApp();
+    const response = await app.request("/api/queue/findingCandidate/resume", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "manual lane resume" }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(repo.resumeQueueLane).toHaveBeenCalledWith("findingCandidate", "manual lane resume");
   });
 
   test("POST /api/queue/:queue/:id/resume routes action", async () => {

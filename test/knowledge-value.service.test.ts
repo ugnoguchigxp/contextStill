@@ -44,6 +44,38 @@ describe("knowledge value service", () => {
     expect(withDownvotes).toBeGreaterThanOrEqual(0);
   });
 
+  test("computeDynamicScore applies mild not_used penalty weaker than off_topic", () => {
+    const baseline = computeDynamicScore({
+      compileSelectCount: 10,
+      recentSelectCount30d: 5,
+      agenticAcceptCount: 4,
+      explicitUpvoteCount: 0,
+      explicitDownvoteCount: 0,
+      usageUsedCount30d: 3,
+    });
+    const withNotUsed = computeDynamicScore({
+      compileSelectCount: 10,
+      recentSelectCount30d: 5,
+      agenticAcceptCount: 4,
+      explicitUpvoteCount: 0,
+      explicitDownvoteCount: 0,
+      usageUsedCount30d: 3,
+      usageNotUsedCount30d: 5,
+    });
+    const withOffTopic = computeDynamicScore({
+      compileSelectCount: 10,
+      recentSelectCount30d: 5,
+      agenticAcceptCount: 4,
+      explicitUpvoteCount: 0,
+      explicitDownvoteCount: 0,
+      usageUsedCount30d: 3,
+      usageOffTopicCount30d: 5,
+    });
+
+    expect(withNotUsed).toBeLessThan(baseline);
+    expect(withOffTopic).toBeLessThan(withNotUsed);
+  });
+
   test("computeDecayFactor decays procedure faster than rule", () => {
     const now = new Date("2026-05-16T00:00:00.000Z");
     const updatedAt = new Date("2025-11-17T00:00:00.000Z");

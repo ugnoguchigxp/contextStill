@@ -154,7 +154,7 @@ export const sessionMemos = pgTable(
   (table) => ({
     slotRangeCheck: check(
       "session_memos_slot_range_check",
-      sql`${table.slot} >= 0 and ${table.slot} < 20`,
+      sql`${table.slot} >= 0 and ${table.slot} < 40`,
     ),
     sourceCheck: check(
       "session_memos_source_check",

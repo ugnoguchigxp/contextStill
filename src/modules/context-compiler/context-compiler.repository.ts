@@ -1,4 +1,4 @@
-import { and, desc, eq, lte, sql } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import {
   contextCompileCandidateTraces,
@@ -281,6 +281,68 @@ export async function getLatestCompileRunForSession(params: {
     .limit(1);
   if (!row) return null;
   return { id: row.id, createdAt: normalizeDate(row.createdAt) };
+}
+
+function resolveOutputMarkdownFromPackSnapshot(packSnapshot: unknown): string | null {
+  const parsed = contextPackSchema.safeParse(packSnapshot);
+  if (!parsed.success) return null;
+  return extractOutputMarkdown(parsed.data);
+}
+
+export async function getCompileRunById(runId: string): Promise<{
+  id: string;
+  sessionId: string | null;
+  createdAt: Date;
+  outputMarkdown: string | null;
+} | null> {
+  const [row] = await db
+    .select({
+      id: contextCompileRuns.id,
+      sessionId: contextCompileRuns.sessionId,
+      createdAt: contextCompileRuns.createdAt,
+      packSnapshot: contextCompileRuns.packSnapshot,
+    })
+    .from(contextCompileRuns)
+    .where(eq(contextCompileRuns.id, runId))
+    .limit(1);
+  if (!row) return null;
+  return {
+    id: row.id,
+    sessionId: normalizeNullableString(row.sessionId),
+    createdAt: normalizeDate(row.createdAt),
+    outputMarkdown: resolveOutputMarkdownFromPackSnapshot(row.packSnapshot),
+  };
+}
+
+export async function listCompileRunOutputsByIds(runIds: string[]): Promise<
+  Map<
+    string,
+    {
+      createdAt: Date;
+      outputMarkdown: string | null;
+    }
+  >
+> {
+  const normalizedIds = [...new Set(runIds.map((item) => item.trim()).filter(Boolean))];
+  if (normalizedIds.length === 0) return new Map();
+  const rows = await db
+    .select({
+      id: contextCompileRuns.id,
+      createdAt: contextCompileRuns.createdAt,
+      packSnapshot: contextCompileRuns.packSnapshot,
+    })
+    .from(contextCompileRuns)
+    .where(inArray(contextCompileRuns.id, normalizedIds));
+
+  return new Map(
+    rows.map((row) => [
+      row.id,
+      {
+        createdAt: normalizeDate(row.createdAt),
+        outputMarkdown: resolveOutputMarkdownFromPackSnapshot(row.packSnapshot),
+      },
+    ]),
+  );
 }
 
 export async function getCompileRunDetail(runId: string): Promise<CompileRunDetail | null> {

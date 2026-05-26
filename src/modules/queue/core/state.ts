@@ -153,3 +153,36 @@ export async function retryQueueJob(params: {
         `);
   return (result.rows[0] as QueueStateRow | undefined) ?? null;
 }
+
+export async function pauseRunningQueueJobs(params: {
+  queueName: DistillationQueueName;
+  reason?: string;
+}): Promise<number> {
+  const tableName = queueTableNameByQueue[params.queueName];
+  const result =
+    params.queueName === "finalizeDistille"
+      ? await db.execute(sql`
+          update ${sql.raw(tableName)}
+          set
+            status = 'paused',
+            last_error = ${params.reason ?? "queue paused from queue control"},
+            locked_by = null,
+            locked_at = null,
+            heartbeat_at = null,
+            updated_at = now()
+          where status = 'running'
+        `)
+      : await db.execute(sql`
+          update ${sql.raw(tableName)}
+          set
+            status = 'paused',
+            last_error = ${params.reason ?? "queue paused from queue control"},
+            next_run_at = now(),
+            locked_by = null,
+            locked_at = null,
+            heartbeat_at = null,
+            updated_at = now()
+          where status = 'running'
+        `);
+  return result.rowCount ?? 0;
+}

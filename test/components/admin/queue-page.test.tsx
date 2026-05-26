@@ -15,7 +15,9 @@ vi.mock("../../../web/src/modules/admin/repositories/admin.repository", async ()
     fetchQueueDashboardStatsV2: vi.fn(),
     fetchActiveQueueTasksV2: vi.fn(),
     fetchQueueItemsV2: vi.fn(),
+    pauseQueueLaneV2: vi.fn(),
     pauseQueueJobV2: vi.fn(),
+    resumeQueueLaneV2: vi.fn(),
     resumeQueueJobV2: vi.fn(),
     retryQueueJobV2: vi.fn(),
   };
@@ -41,6 +43,12 @@ describe("QueuePage v2", () => {
     vi.setSystemTime(new Date("2026-05-25T12:00:00.000Z"));
 
     vi.mocked(adminRepository.fetchQueueDashboardStatsV2).mockResolvedValue({
+      queueControls: {
+        findingCandidate: { paused: false, updatedAt: null, updatedBy: null, reason: null },
+        coveringEvidence: { paused: false, updatedAt: null, updatedBy: null, reason: null },
+        premiumCoveringEvidence: { paused: false, updatedAt: null, updatedBy: null, reason: null },
+        finalizeDistille: { paused: false, updatedAt: null, updatedBy: null, reason: null },
+      },
       queues: {
         findingCandidate: {
           counters: { pending: 1, running: 0, completed: 0, skipped: 0, failed: 0, paused: 0 },
@@ -145,6 +153,8 @@ describe("QueuePage v2", () => {
     });
 
     vi.mocked(adminRepository.pauseQueueJobV2).mockResolvedValue({ ok: true });
+    vi.mocked(adminRepository.pauseQueueLaneV2).mockResolvedValue({ ok: true });
+    vi.mocked(adminRepository.resumeQueueLaneV2).mockResolvedValue({ ok: true });
     vi.mocked(adminRepository.resumeQueueJobV2).mockResolvedValue({ ok: true });
     vi.mocked(adminRepository.retryQueueJobV2).mockResolvedValue({ ok: true });
   });
@@ -213,5 +223,19 @@ describe("QueuePage v2", () => {
     expect(screen.getByRole("button", { name: "Premium" })).toHaveTextContent("非登録");
     expect(screen.getAllByText("非登録")).toHaveLength(2);
     expect(screen.queryByText("待機中")).not.toBeInTheDocument();
+  });
+
+  it("calls lane pause endpoint from queue card control", async () => {
+    renderQueuePage();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    fireEvent.click(screen.getAllByRole("button", { name: "一時停止" })[0]);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(adminRepository.pauseQueueLaneV2).toHaveBeenCalledWith("findingCandidate");
   });
 });
