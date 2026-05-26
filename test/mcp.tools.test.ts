@@ -7,6 +7,7 @@ import { contextCompileTool } from "../src/mcp/tools/context-compile.tool.js";
 import {
   listKnowledgeTool,
   registerCandidateTool,
+  registerCandidatesTool,
   searchKnowledgeTool,
   updateKnowledgeTool,
 } from "../src/mcp/tools/knowledge.tool.js";
@@ -21,6 +22,7 @@ import { compileContextPack } from "../src/modules/context-compiler/context-comp
 import { runDoctor } from "../src/modules/doctor/doctor.service.js";
 import { searchKnowledgeCandidates } from "../src/modules/knowledge/knowledge.service.js";
 import { registerCandidate } from "../src/modules/registerCandidate/register-candidate.service.js";
+import { registerCandidatesBulk } from "../src/modules/registerCandidate/register-candidate.service.js";
 import { reloadRuntimeSettingsCache } from "../src/modules/settings/settings.service.js";
 import { retrieveVibeMemoryContext } from "../src/modules/vibe-memory/vibe-memory.service.js";
 
@@ -281,6 +283,25 @@ describe("MCP Tools Handlers", () => {
         text: '{"type":"procedure","title":"Failure note","body":"Use when:\\n- ..."}',
         metadata: {},
       });
+    });
+  });
+
+  describe("register_candidates", () => {
+    test("registers multiple candidates", async () => {
+      vi.mocked(registerCandidatesBulk).mockResolvedValue({
+        status: "bulk_candidates_registered",
+        registeredCount: 2,
+        failedCount: 0,
+        items: [],
+        next: "distillation_pipeline",
+      } as never);
+
+      const response = await registerCandidatesTool.handler({
+        items: [{ body: "A" }, { body: "B" }],
+      });
+      const data = JSON.parse(response.content[0].text);
+      expect(data.registeredCount).toBe(2);
+      expect(registerCandidatesBulk).toHaveBeenCalled();
     });
   });
 

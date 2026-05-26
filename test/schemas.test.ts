@@ -4,6 +4,8 @@ import { doctorReportSchema } from "../src/shared/schemas/doctor.schema.ts";
 import {
   knowledgeSearchInputSchema,
   registerCandidateInputSchema,
+  registerCandidatesBulkInputSchema,
+  registerCandidatesToolInputSchema,
   registerKnowledgeInputSchema,
   updateKnowledgeInputSchema,
 } from "../src/shared/schemas/knowledge.schema.ts";
@@ -50,6 +52,32 @@ describe("Shared Schemas", () => {
       expect.objectContaining({ text: "TITLE: T\nCONTENT: B" }),
     );
     expect(registerCandidateInputSchema.safeParse({ title: "T" }).success).toBe(false);
+  });
+
+  test("registerCandidatesToolInputSchema requires strict wrapper", () => {
+    expect(
+      registerCandidatesToolInputSchema.parse({
+        items: [{ body: "A" }],
+      }),
+    ).toEqual({
+      items: [{ body: "A", metadata: {} }],
+    });
+    expect(
+      registerCandidatesToolInputSchema.safeParse({
+        items: [{ body: "A" }],
+        extra: true,
+      }).success,
+    ).toBe(false);
+  });
+
+  test("registerCandidatesBulkInputSchema enforces min/max", () => {
+    expect(registerCandidatesBulkInputSchema.safeParse([]).success).toBe(false);
+    expect(
+      registerCandidatesBulkInputSchema.safeParse(
+        Array.from({ length: 11 }, (_, index) => ({ body: `body-${index}` })),
+      ).success,
+    ).toBe(false);
+    expect(registerCandidatesBulkInputSchema.safeParse([{ body: "A" }]).success).toBe(true);
   });
 
   test("compileInputSchema parses valid input", () => {

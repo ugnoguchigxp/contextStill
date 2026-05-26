@@ -1,22 +1,25 @@
 # MCP Tools
 
-`memory-router` の公開 MCP surface は次の 7 ツールです。
+`memory-router` の公開 MCP surface は次の 9 ツールです。
 
 1. `initial_instructions`
 2. `context_compile`
 3. `search_knowledge`
 4. `register_candidate`
-5. `search_memory`
-6. `fetch_memory`
-7. `doctor`
+5. `register_candidates`
+6. `session_memo`
+7. `search_memory`
+8. `fetch_memory`
+9. `doctor`
 
 ## 推奨フロー
 
 1. `initial_instructions`
 2. `context_compile`
 3. 必要時のみ `search_knowledge` / `search_memory` / `fetch_memory`
-4. 実装・検証
-5. `doctor`
+4. 候補登録は 1 件なら `register_candidate`、複数件なら `register_candidates`
+5. 実装・検証
+6. `doctor`
 
 ## 命名ポリシー
 
@@ -68,6 +71,15 @@
   - `distillation_target_states.target_kind = knowledge_candidate` と `find_candidate_results` に候補を保存して即返す
   - その後の draft 化、Embedding 生成、重複判定、品質判定は蒸留パイプラインが行う
   - `text` だけ渡された場合は、サーバー側で最初の candidate JSON / `TYPE:` `TITLE:` `CONTENT:` 風テキストを `title` / `body` / `type` へ正規化する
+
+### `register_candidates`
+
+- 入力: `items`（1〜10件の candidate 配列）
+- 役割: 複数の候補をまとめて登録する（best-effort）
+- 挙動:
+  - 各 item は `register_candidate` と同じ入力形式（`title` + `body` または `text`）
+  - 一部失敗しても処理は継続し、`bulk_candidates_partial` で集計結果を返す
+  - 各 item には `bulkBatchId`, `bulkIndex`, `bulkCount`, `bulkSource` などのメタデータを自動付与する
 
 ### `search_memory`
 

@@ -9,11 +9,15 @@ import { normalizeKnowledgeScore } from "../../lib/score-scale.js";
 import { rankAndDedupe } from "../../modules/context-compiler/ranking.service.js";
 import { searchKnowledgeCandidates } from "../../modules/knowledge/knowledge.service.js";
 import { canTransitionKnowledgeStatus } from "../../modules/lifecycle/lifecycle.service.js";
-import { registerCandidate } from "../../modules/registerCandidate/register-candidate.service.js";
+import {
+  registerCandidate,
+  registerCandidatesBulk,
+} from "../../modules/registerCandidate/register-candidate.service.js";
 import {
   knowledgeSearchInputSchema,
   listKnowledgeInputSchema,
   registerCandidateInputSchema,
+  registerCandidatesToolInputSchema,
   updateKnowledgeInputSchema,
 } from "../../shared/schemas/knowledge.schema.js";
 import type { ToolEntry } from "../registry.js";
@@ -153,6 +157,48 @@ export const registerCandidateTool: ToolEntry = {
     return {
       content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
     };
+  },
+};
+
+export const registerCandidatesTool: ToolEntry = {
+  name: "register_candidates",
+  description:
+    "Bulk-register lightweight rule/procedure candidates for later distillation. Use when multiple durable lessons should be registered from the same task.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      items: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string" },
+            body: { type: "string" },
+            text: { type: "string" },
+            type: { type: "string", enum: ["rule", "procedure"] },
+            confidence: { type: "number", minimum: 0, maximum: 100 },
+            importance: { type: "number", minimum: 0, maximum: 100 },
+            appliesTo: { type: "object" },
+            general: { type: "boolean" },
+            technologies: { type: "array", items: { type: "string" } },
+            changeTypes: { type: "array", items: { type: "string" } },
+            domains: { type: "array", items: { type: "string" } },
+            repoPath: { type: "string" },
+            repoKey: { type: "string" },
+            metadata: { type: "object" },
+          },
+        },
+        minItems: 1,
+        maxItems: 10,
+      },
+    },
+    required: ["items"],
+  },
+  handler: async (args) => {
+    const parsed = registerCandidatesToolInputSchema.parse(args ?? {});
+    const result = await registerCandidatesBulk(parsed.items);
+    return { content: [{ type: "text", text: JSON.stringify(result, null, 2) }] };
   },
 };
 

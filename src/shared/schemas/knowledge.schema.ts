@@ -129,6 +129,17 @@ export const registerCandidateInputSchema = z
     });
   });
 
+export const registerCandidatesBulkInputSchema = z
+  .array(registerCandidateInputSchema)
+  .min(1)
+  .max(10);
+
+export const registerCandidatesToolInputSchema = z
+  .object({
+    items: registerCandidatesBulkInputSchema,
+  })
+  .strict();
+
 export const listKnowledgeInputSchema = z.object({
   limit: z.number().int().min(1).max(200).default(50),
   status: knowledgeStatusSchema.optional(),

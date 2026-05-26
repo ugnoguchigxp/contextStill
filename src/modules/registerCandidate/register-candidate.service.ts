@@ -3,6 +3,7 @@ import type { z } from "zod";
 import { db } from "../../db/index.js";
 import { distillationTargetStates, findCandidateResults } from "../../db/schema.js";
 import { registerCandidateInputSchema } from "../../shared/schemas/knowledge.schema.js";
+import { registerCandidatesBulkInputSchema } from "../../shared/schemas/knowledge.schema.js";
 import { hasSkillLikeProcedureBody } from "../distillation/procedure-quality.js";
 import { parseStorageCandidatesFromLlmOutput } from "../findCandidate/parser.js";
 import type { CandidateKnowledgeType } from "../findCandidate/repository.js";
@@ -10,7 +11,7 @@ import { enqueueFindingJob } from "../queue/core/index.js";
 import { DEFAULT_DISTILLATION_TARGET_VERSION } from "../selectDistillationTarget/repository.js";
 import { resolveKnowledgeCandidatePriorityGroup } from "../selectDistillationTarget/priority-group.js";
 
-export type RegisterCandidateInput = z.infer<typeof registerCandidateInputSchema>;
+export type RegisterCandidateInput = z.input<typeof registerCandidateInputSchema>;
 
 export type RegisterCandidateWarning =
   | "text_parsed_to_candidate_json"
@@ -26,6 +27,27 @@ export type RegisterCandidateResult = {
   title: string;
   type: CandidateKnowledgeType;
   warnings: RegisterCandidateWarning[];
+  next: "distillation_pipeline";
+};
+
+export type RegisterCandidatesBulkItemResult = {
+  index: number;
+  status: "candidate_registered" | "candidate_failed";
+  title?: string;
+  type?: CandidateKnowledgeType;
+  targetStateId?: string;
+  findCandidateResultId?: string;
+  findingJobId?: string;
+  sourceUri?: string;
+  warnings?: RegisterCandidateWarning[];
+  error?: string;
+};
+
+export type RegisterCandidatesBulkResult = {
+  status: "bulk_candidates_registered" | "bulk_candidates_partial" | "bulk_candidates_failed";
+  registeredCount: number;
+  failedCount: number;
+  items: RegisterCandidatesBulkItemResult[];
   next: "distillation_pipeline";
 };
 
@@ -181,6 +203,73 @@ export async function registerCandidate(
     title: normalized.title,
     type: normalized.type,
     warnings: normalized.warnings,
+    next: "distillation_pipeline",
+  };
+}
+
+export async function registerCandidatesBulk(
+  input: RegisterCandidateInput[],
+): Promise<RegisterCandidatesBulkResult> {
+  const parsed = registerCandidatesBulkInputSchema.parse(input);
+  const bulkBatchId = randomUUID();
+  const bulkCount = parsed.length;
+  const items: RegisterCandidatesBulkItemResult[] = [];
+  let registeredCount = 0;
+
+  for (let index = 0; index < parsed.length; index += 1) {
+    const item = parsed[index];
+    const metadata = {
+      ...(item.metadata ?? {}),
+      bulkBatchId,
+      bulkIndex: index,
+      bulkCount,
+      bulkSource: "mcp_register_candidates",
+      inputTypeProvided: item.type !== undefined,
+    };
+    const normalized: RegisterCandidateInput = {
+      ...item,
+      ...(item.type ? {} : { type: "rule" }),
+      metadata,
+    };
+
+    try {
+      const result = await registerCandidate(normalized);
+      registeredCount += 1;
+      items.push({
+        index,
+        status: "candidate_registered",
+        title: result.title,
+        type: result.type,
+        targetStateId: result.targetStateId,
+        findCandidateResultId: result.findCandidateResultId,
+        findingJobId: result.findingJobId,
+        sourceUri: result.sourceUri,
+        warnings: result.warnings,
+      });
+    } catch (error) {
+      items.push({
+        index,
+        status: "candidate_failed",
+        title: normalized.title,
+        type: normalized.type as CandidateKnowledgeType | undefined,
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  }
+
+  const failedCount = bulkCount - registeredCount;
+  const status =
+    registeredCount === bulkCount
+      ? "bulk_candidates_registered"
+      : registeredCount > 0
+        ? "bulk_candidates_partial"
+        : "bulk_candidates_failed";
+
+  return {
+    status,
+    registeredCount,
+    failedCount,
+    items,
     next: "distillation_pipeline",
   };
 }

@@ -1,8 +1,8 @@
 import { Badge } from "@/components/ui/badge";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { MarkdownEditor } from "markdown-wysiwyg-editor";
 import mermaid from "mermaid";
-import { useState } from "react";
+import { MarkdownEditor } from "markdown-wysiwyg-editor";
+import { useMemo, useState } from "react";
 import {
   type AgentDiffEntry,
   type VibeMemory,
@@ -40,6 +40,10 @@ mermaid.initialize({ startOnLoad: false });
 
 export function VibeMemoryPage() {
   const queryClient = useQueryClient();
+  const sessionIdFromQuery = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("sessionId");
+  }, []);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
   const memories = useQuery({
@@ -62,7 +66,7 @@ export function VibeMemoryPage() {
     .sort((a, b) => b.lastCreatedAt.getTime() - a.lastCreatedAt.getTime());
 
   // Default to the latest session
-  const activeSessionId = selectedSessionId ?? sessions[0]?.id;
+  const activeSessionId = selectedSessionId ?? sessionIdFromQuery ?? sessions[0]?.id;
   const activeSession = sessions.find((session) => session.id === activeSessionId);
   const activeMemories = activeSessionId
     ? (sessionMap[activeSessionId] || []).sort(
@@ -137,6 +141,11 @@ export function VibeMemoryPage() {
               <div className="header-title">
                 <h1>{activeSession?.title ?? activeSessionId}</h1>
                 <Badge variant="outline">{activeMemories.length} records</Badge>
+              </div>
+              <div className="header-meta">
+                <a href={`/vibe-note?sessionId=${encodeURIComponent(activeSessionId)}`}>
+                  Vibe Note
+                </a>
               </div>
               {activeSession?.projectRoot ? (
                 <div className="header-meta">
