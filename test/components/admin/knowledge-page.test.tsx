@@ -180,7 +180,7 @@ describe("KnowledgePage", () => {
     });
   });
 
-  it("handles item deletion from the edit modal with confirm dialog", () => {
+  it("handles item deprecation from the edit modal with confirm dialog", () => {
     const confirmSpy = vi.spyOn(window, "confirm");
     render(
       <QueryClientProvider client={queryClient}>
@@ -191,21 +191,22 @@ describe("KnowledgePage", () => {
     expect(screen.queryByText("Actions")).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByRole("button", { name: "Test Rule Title 1" }));
-    const deleteBtn = screen.getByTitle("Delete");
+    const deprecateBtn = screen.getAllByTitle("Deprecate").at(-1);
+    expect(deprecateBtn).toBeDefined();
 
     // キャンセル時
     confirmSpy.mockReturnValue(false);
-    fireEvent.click(deleteBtn);
-    expect(confirmSpy).toHaveBeenCalledWith("Delete knowledge item: Test Rule Title 1?");
+    fireEvent.click(deprecateBtn as HTMLElement);
+    expect(confirmSpy).toHaveBeenCalledWith("Deprecate knowledge item: Test Rule Title 1?");
     expect(mockMutate).not.toHaveBeenCalled();
 
     // 承諾時
     confirmSpy.mockReturnValue(true);
-    fireEvent.click(deleteBtn);
+    fireEvent.click(deprecateBtn as HTMLElement);
     expect(mockMutate).toHaveBeenCalledWith("kn-1");
   });
 
-  it("handles bulk status update selection", () => {
+  it("handles select all draft then bulk activate", () => {
     const confirmSpy = vi.spyOn(window, "confirm");
     render(
       <QueryClientProvider client={queryClient}>
@@ -213,20 +214,16 @@ describe("KnowledgePage", () => {
       </QueryClientProvider>,
     );
 
-    // 順次クリック（再レンダリングを考慮して都度要素を取得）
-    fireEvent.click(screen.getByLabelText("select-kn-1"));
-    fireEvent.click(screen.getByLabelText("select-kn-2"));
-
-    // 一括更新ボタン
-    const bulkDeprecateBtn = screen.getByText("Deprecate selected");
+    fireEvent.click(screen.getByText("Select all draft"));
+    const bulkActivateBtn = screen.getByText("Activate selected");
 
     confirmSpy.mockReturnValue(true);
-    fireEvent.click(bulkDeprecateBtn);
+    fireEvent.click(bulkActivateBtn);
 
     expect(confirmSpy).toHaveBeenCalled();
     expect(mockMutate).toHaveBeenCalledWith({
-      ids: ["kn-1", "kn-2"],
-      status: "deprecated",
+      selection: { status: "draft", query: undefined },
+      status: "active",
     });
   });
 

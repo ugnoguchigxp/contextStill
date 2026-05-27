@@ -291,6 +291,27 @@ export function KnowledgePage() {
     },
   });
 
+  const deprecateEditing = useMutation({
+    mutationFn: (id: string) =>
+      updateKnowledgeItem(id, {
+        status: "deprecated",
+      }),
+    onSuccess: async () => {
+      setForm(emptyForm);
+      setEditingId(null);
+      setEditingOriginalType(null);
+      setTypeChangedInForm(false);
+      setModalDetail(null);
+      setError(null);
+      setIsModalOpen(false);
+      await queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+      await queryClient.invalidateQueries({ queryKey: ["graph"] });
+    },
+    onError: (mutationError) => {
+      setError(mutationError instanceof Error ? mutationError.message : String(mutationError));
+    },
+  });
+
   const quickStatusUpdate = useMutation({
     mutationFn: ({ id, status }: { id: string; status: string }) =>
       updateKnowledgeItem(id, {
@@ -403,12 +424,21 @@ export function KnowledgePage() {
     setIsModalOpen(true);
   };
 
+  const deprecateEditingItem = useCallback(() => {
+    if (!editingId || form.status === "deprecated") return;
+    if (confirm(`Deprecate knowledge item: ${form.title}?`)) {
+      deprecateEditing.mutate(editingId);
+    }
+  }, [deprecateEditing, editingId, form.status, form.title]);
+
   const deleteEditingItem = useCallback(() => {
-    if (!editingId) return;
-    if (confirm(`Delete knowledge item: ${form.title}?`)) {
+    if (!editingId || form.status !== "deprecated") return;
+    if (
+      confirm(`Delete deprecated knowledge item permanently: ${form.title}? This cannot be undone.`)
+    ) {
       remove.mutate(editingId);
     }
-  }, [editingId, form.title, remove.mutate]);
+  }, [editingId, form.status, form.title, remove]);
 
   const updateAppliesTo = useCallback((next: Record<string, unknown>) => {
     setForm((current) => ({
@@ -450,12 +480,22 @@ export function KnowledgePage() {
       query: serverSearchQuery || undefined,
     });
   }, [displayFilter, serverSearchQuery]);
+  const selectAllDrafts = useCallback(() => {
+    setSelectedIds([]);
+    setDisplayFilter("draft");
+    resetToFirstPage();
+    setBulkSelection({
+      status: "draft",
+      query: serverSearchQuery || undefined,
+    });
+  }, [resetToFirstPage, serverSearchQuery]);
   const clearSelection = useCallback(() => {
     setSelectedIds([]);
     setBulkSelection(null);
   }, []);
   const canSelectAllMatching =
     serverSelectableStatusFilters.has(displayFilter) && minQuality === 0 && totalKnowledgeCount > 0;
+  const canSelectAllDrafts = minQuality === 0 && totalKnowledgeCount > 0;
   const submitSearch = useCallback(
     (event?: FormEvent<HTMLFormElement>) => {
       event?.preventDefault();
@@ -612,7 +652,7 @@ export function KnowledgePage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-6 px-2 text-[10px] gap-1 hover:bg-red-50 hover:text-red-600 hover:border-red-200"
+                  className="h-6 px-2 text-[10px] gap-1 border-orange-700 text-orange-700 bg-transparent hover:bg-orange-700 hover:text-white hover:border-orange-800"
                   onClick={() => quickStatusUpdate.mutate({ id: item.id, status: "deprecated" })}
                   disabled={quickStatusUpdate.isPending}
                   title="Deprecate"
@@ -873,23 +913,17 @@ export function KnowledgePage() {
             >
               Activate selected
             </Button>
-            <Button
-              variant="outline"
-              size="sm"
-              className="h-7 px-2 text-[11px] border-red-300 text-red-300 hover:bg-red-900/30"
-              disabled={selectedTotalCount === 0 || bulkStatusUpdate.isPending}
-              onClick={() => {
-                if (confirm(`Deprecate ${selectedTotalCount} selected knowledge items?`)) {
-                  bulkStatusUpdate.mutate(
-                    bulkSelection
-                      ? { selection: bulkSelection, status: "deprecated" }
-                      : { ids: selectedIds, status: "deprecated" },
-                  );
-                }
-              }}
-            >
-              Deprecate selected
-            </Button>
+            {canSelectAllDrafts ? (
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 px-2 text-[11px]"
+                disabled={bulkStatusUpdate.isPending}
+                onClick={selectAllDrafts}
+              >
+                Select all draft
+              </Button>
+            ) : null}
             {canSelectAllMatching ? (
               <Button
                 variant="ghost"
@@ -1318,15 +1352,28 @@ export function KnowledgePage() {
           <div className="pt-4 flex items-center justify-between gap-3 border-t">
             <div>
               {editingId ? (
-                <Button
-                  variant="destructive"
-                  onClick={deleteEditingItem}
-                  disabled={remove.isPending}
-                  title="Delete"
-                >
-                  <Trash2 size={16} />
-                  {remove.isPending ? "Deleting..." : "Delete"}
-                </Button>
+                form.status === "deprecated" ? (
+                  <Button
+                    variant="destructive"
+                    onClick={deleteEditingItem}
+                    disabled={remove.isPending}
+                    title="Delete permanently"
+                  >
+                    <Trash2 size={16} />
+                    {remove.isPending ? "Deleting..." : "Delete permanently"}
+                  </Button>
+                ) : (
+                  <Button
+                    variant="outline"
+                    onClick={deprecateEditingItem}
+                    disabled={deprecateEditing.isPending}
+                    title="Deprecate"
+                    className="border-orange-700 bg-orange-700 text-white hover:bg-orange-800 hover:border-orange-800"
+                  >
+                    <Archive size={16} />
+                    {deprecateEditing.isPending ? "Deprecating..." : "Deprecate"}
+                  </Button>
+                )
               ) : null}
             </div>
             <div className="flex justify-end gap-3">

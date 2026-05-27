@@ -24,14 +24,9 @@ const sourceLabels: Record<CompileRunSource, string> = {
   unknown: "Unknown",
 };
 
-function outcomeLabel(
-  outcome: "useful" | "partial" | "misleading" | "unused" | null | undefined,
-): string {
-  if (outcome === "useful") return "useful";
-  if (outcome === "partial") return "partial";
-  if (outcome === "misleading") return "misleading";
-  if (outcome === "unused") return "unused";
-  return "-";
+function formatLatestScore(score: number | null | undefined): string {
+  if (typeof score !== "number" || !Number.isFinite(score)) return "-";
+  return String(Math.max(0, Math.min(100, Math.round(score))));
 }
 
 export function formatLatency(value: number): string {
@@ -77,11 +72,10 @@ function RunListItem({
       </div>
       <div className="compile-run-foot">
         <time>{tzFormatDate(run.createdAt, tz)}</time>
-        <span className="compile-run-score" title="Latest compile_eval score">
-          score {run.evalSummary?.latestScore ?? "-"} /{" "}
-          {outcomeLabel(run.evalSummary?.latestOutcome)}
-        </span>
       </div>
+      <span className="compile-run-score" title="Latest compile_eval score">
+        {formatLatestScore(run.evalSummary?.latestScore)}
+      </span>
     </button>
   );
 }

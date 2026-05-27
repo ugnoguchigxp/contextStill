@@ -11,7 +11,28 @@ done
 SCRIPT_ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
 MODE="${1:-post-commit}"
 
+timestamp_utc() {
+  date -u '+%Y-%m-%dT%H:%M:%SZ'
+}
+
+resolve_log_file() {
+  if [ -n "${MEMORY_ROUTER_CANDIDATE_HOOK_LOG_FILE:-}" ]; then
+    printf "%s" "$MEMORY_ROUTER_CANDIDATE_HOOK_LOG_FILE"
+    return 0
+  fi
+  printf "%s" "${XDG_STATE_HOME:-$HOME/.local/state}/memory-router/hook-events.log"
+}
+
+append_hook_log() {
+  local message="$1"
+  local log_file
+  log_file="$(resolve_log_file)"
+  mkdir -p "$(dirname "$log_file")"
+  printf "%s [%s] %s\n" "$(timestamp_utc)" "$MODE" "$message" >> "$log_file" 2>/dev/null || true
+}
+
 if [ "$MODE" = "pre-commit" ]; then
+  append_hook_log "pre-commit reminder emitted"
   echo "[memory-router] pre-commit reminder"
   echo "  if this task used context_compile, compile_eval is required before final completion report"
   echo "  ask user first: Fill compile_eval now? (Yes/No)"
@@ -34,6 +55,7 @@ sanitize_repo_key() {
 
 REPO_ROOT="$(resolve_repo_root)"
 if [ -z "$REPO_ROOT" ]; then
+  append_hook_log "skipped: not inside a git worktree"
   echo "[memory-router] candidate reminder skipped: not inside a git worktree"
   exit 0
 fi
@@ -42,6 +64,7 @@ cd "$REPO_ROOT"
 
 COMMIT_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
 if [ -z "$COMMIT_SHA" ]; then
+  append_hook_log "skipped: no HEAD commit"
   echo "[memory-router] candidate reminder skipped: no HEAD commit"
   exit 0
 fi
@@ -151,6 +174,7 @@ $STAT_SUMMARY
 EOF
 
 ln -sf "$(basename "$PROMPT_FILE")" "$LATEST_FILE"
+append_hook_log "wrote prompt=$PROMPT_FILE latest=$LATEST_FILE commit=$SHORT_SHA"
 
 if [ "${MEMORY_ROUTER_CANDIDATE_HOOK_QUIET:-0}" != "1" ]; then
   cat <<EOF

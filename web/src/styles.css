@@ -2723,7 +2723,8 @@
   display: grid;
   gap: 0.35rem;
   min-width: 0;
-  padding: 0.65rem 0.75rem;
+  padding: 0.65rem 0.75rem 0.95rem;
+  position: relative;
   text-align: left;
   transition: background 0.2s ease;
 }
@@ -2778,16 +2779,19 @@
 }
 
 .compile-run-foot {
-  align-items: end;
+  align-items: start;
   display: flex;
-  justify-content: space-between;
   gap: 0.5rem;
 }
 
 .compile-run-score {
   color: var(--muted-foreground);
   font-size: 0.7rem;
+  font-variant-numeric: tabular-nums;
   line-height: 1.2;
+  bottom: 0.65rem;
+  position: absolute;
+  right: 0.75rem;
   text-align: right;
 }
 
