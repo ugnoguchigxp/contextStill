@@ -2777,6 +2777,20 @@
   line-height: 1.35;
 }
 
+.compile-run-foot {
+  align-items: end;
+  display: flex;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.compile-run-score {
+  color: var(--muted-foreground);
+  font-size: 0.7rem;
+  line-height: 1.2;
+  text-align: right;
+}
+
 .compile-main {
   background: var(--background);
   display: flex;

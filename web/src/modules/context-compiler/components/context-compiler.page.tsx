@@ -210,6 +210,13 @@ function feedbackVariant(current: CompileRunKnowledgeVerdict | null) {
   return "default" as const;
 }
 
+function evalOutcomeLabel(outcome: "useful" | "partial" | "misleading" | "unused"): string {
+  if (outcome === "useful") return "Useful";
+  if (outcome === "partial") return "Partial";
+  if (outcome === "misleading") return "Misleading";
+  return "Unused";
+}
+
 function RunDetailPane({
   detail,
   isLoading,
@@ -265,6 +272,7 @@ function RunDetailPane({
   const domains = stringArrayValue(input.domains);
   const outputMarkdown = detail.outputMarkdown?.trim() || "No Content";
   const knowledgeSignals = detail.knowledgeSignals ?? [];
+  const evaluations = detail.evaluations ?? [];
 
   const applyKnowledgeFeedback = async (
     knowledgeId: string,
@@ -324,6 +332,34 @@ function RunDetailPane({
           {changeTypes.length === 0 && technologies.length === 0 && domains.length === 0 ? (
             <p className="compile-state-text">Goal only</p>
           ) : null}
+        </section>
+
+        <section className="compile-pack-section">
+          <div className="compile-pack-section-header">
+            <h3>Compile Eval</h3>
+            <Badge variant="outline">{evaluations.length}</Badge>
+          </div>
+          {evaluations.length === 0 ? (
+            <p className="compile-state-text">No compile_eval records for this run.</p>
+          ) : (
+            <div className="compile-pack-items">
+              {evaluations.map((evaluation) => (
+                <article key={evaluation.id} className="compile-pack-item">
+                  <div className="compile-pack-item-header">
+                    <strong>{evaluation.title ?? "Untitled evaluation"}</strong>
+                    <Badge variant="secondary">
+                      {evaluation.score} / {evalOutcomeLabel(evaluation.outcome)}
+                    </Badge>
+                  </div>
+                  <p>{evaluation.body}</p>
+                  <div className="compile-pack-item-meta">
+                    <span>source: {evaluation.source}</span>
+                    <span>{tzFormatDate(evaluation.createdAt, tz)}</span>
+                  </div>
+                </article>
+              ))}
+            </div>
+          )}
         </section>
 
         {detail.pack ? (

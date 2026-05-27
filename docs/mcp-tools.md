@@ -63,6 +63,7 @@
 - 挙動:
   - `runId` を省略した場合は、同じ session の最新 compile result から評価対象 run を解決する
   - 同一 session に複数の `context_compile` run がある場合は、Vibe Note の `compile_result`（runId）を参照して各 run ごとに評価を保存する
+  - 完了報告前に、`context_compile` 実行回数と `compile_eval` 実行回数を自己申告し、不足があれば `compile_eval` を追加実行する
   - `score` は `0..100` の整数
   - `outcome` は `useful` / `partial` / `misleading` / `unused`
   - 評価結果は `context_compile` run に紐づく永続データとして保持される

@@ -24,6 +24,16 @@ const sourceLabels: Record<CompileRunSource, string> = {
   unknown: "Unknown",
 };
 
+function outcomeLabel(
+  outcome: "useful" | "partial" | "misleading" | "unused" | null | undefined,
+): string {
+  if (outcome === "useful") return "useful";
+  if (outcome === "partial") return "partial";
+  if (outcome === "misleading") return "misleading";
+  if (outcome === "unused") return "unused";
+  return "-";
+}
+
 export function formatLatency(value: number): string {
   if (value >= 1000) return `${(value / 1000).toFixed(1)}s`;
   return `${value}ms`;
@@ -65,7 +75,13 @@ function RunListItem({
         <span>{run.retrievalMode}</span>
         <span>{formatLatency(run.durationMs)}</span>
       </div>
-      <time>{tzFormatDate(run.createdAt, tz)}</time>
+      <div className="compile-run-foot">
+        <time>{tzFormatDate(run.createdAt, tz)}</time>
+        <span className="compile-run-score" title="Latest compile_eval score">
+          score {run.evalSummary?.latestScore ?? "-"} /{" "}
+          {outcomeLabel(run.evalSummary?.latestOutcome)}
+        </span>
+      </div>
     </button>
   );
 }

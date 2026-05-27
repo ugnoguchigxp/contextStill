@@ -110,6 +110,10 @@ After completing coding work that relied on \`context_compile\`, call MCP tool \
 - \`outcome\` (\`useful\` / \`partial\` / \`misleading\` / \`unused\`)
 - concise rationale in \`body\`
 - when multiple \`context_compile\` runs exist in the same session, reference Vibe Note \`compile_result\` entries and evaluate every run (pass \`runId\` explicitly)
+- before final completion report, self-report:
+  - count of \`context_compile\` runs in this task
+  - count of \`compile_eval\` calls in this task
+  - if counts are insufficient, run missing \`compile_eval\` calls first, then report completion
 
 ## Useful evidence commands
 
