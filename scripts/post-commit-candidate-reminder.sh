@@ -9,6 +9,14 @@ while [ -h "$SOURCE" ]; do
 done
 
 SCRIPT_ROOT="$(cd -P "$(dirname "$SOURCE")/.." && pwd)"
+MODE="${1:-post-commit}"
+
+if [ "$MODE" = "pre-commit" ]; then
+  echo "[memory-router] pre-commit reminder"
+  echo "  if this task used context_compile, compile_eval is required before final completion report"
+  echo "  ask user first: Fill compile_eval now? (Yes/No)"
+  exit 0
+fi
 
 resolve_repo_root() {
   if [ -n "${MEMORY_ROUTER_CANDIDATE_HOOK_REPO_ROOT:-}" ]; then
@@ -110,10 +118,16 @@ After completing coding work that relied on \`context_compile\`, call MCP tool \
 - \`outcome\` (\`useful\` / \`partial\` / \`misleading\` / \`unused\`)
 - concise rationale in \`body\`
 - when multiple \`context_compile\` runs exist in the same session, reference Vibe Note \`compile_result\` entries and evaluate every run (pass \`runId\` explicitly)
+- ask the user first: "Fill compile_eval now?" (Yes/No). If Yes, execute immediately.
 - before final completion report, self-report:
   - count of \`context_compile\` runs in this task
   - count of \`compile_eval\` calls in this task
   - if counts are insufficient, run missing \`compile_eval\` calls first, then report completion
+
+Before registration, prepare candidate selection for \`register_candidate\`:
+- include only reusable procedures/rules
+- exclude project-specific facts, names, paths, and one-off incident details
+- leave candidates ready so next round can register quickly
 
 ## Useful evidence commands
 
