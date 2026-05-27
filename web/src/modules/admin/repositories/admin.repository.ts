@@ -127,7 +127,6 @@ export type SessionMemoListItem = {
   kind?: string;
   label?: string | null;
   title?: string | null;
-  score?: number | null;
   preview?: string;
   previewChars?: number;
   bodyLength?: number;
@@ -2366,7 +2365,6 @@ export async function upsertSessionMemo(input: {
   sessionId: string;
   kind?: string;
   title?: string;
-  score?: number;
   label?: string;
   body: string;
   metadata?: Record<string, unknown>;

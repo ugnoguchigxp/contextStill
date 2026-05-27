@@ -158,7 +158,7 @@ const baseReport = {
   },
   mcp: {
     exposedTools: ["doctor"],
-    requiredPrimaryTools: ["doctor"],
+    requiredPrimaryTools: ["context_compile", "compile_eval"],
     missingPrimaryTools: [],
     staleKnowledgeCount: 4,
     staleSourceCount: 40,
@@ -328,10 +328,10 @@ const aiServiceToolsDomain = {
   agenticLlm: baseReport.agenticLlm,
   mcp: {
     ...baseReport.mcp,
-    missingPrimaryTools: ["context_compile"],
+    missingPrimaryTools: ["context_compile", "compile_eval"],
     staleKnowledgeCount: 0,
     staleSourceCount: 0,
-    nextActions: ["不足 MCP primary tools を追加する: context_compile"],
+    nextActions: ["不足 MCP primary tools を追加する: context_compile, compile_eval"],
   },
 };
 
@@ -404,7 +404,7 @@ describe("DoctorPage", () => {
     expect(screen.getByText("AI 推奨アクション:")).toBeInTheDocument();
     expect(screen.getByText("パイプライン推奨アクション:")).toBeInTheDocument();
     expect(
-      screen.getByText("不足 MCP primary tools を追加する: context_compile"),
+      screen.getByText("不足 MCP primary tools を追加する: context_compile, compile_eval"),
     ).toBeInTheDocument();
     expect(screen.getByText("vibe lock を確認する")).toBeInTheDocument();
     expect(screen.getByText("source queue を確認する")).toBeInTheDocument();

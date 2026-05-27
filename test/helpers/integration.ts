@@ -21,6 +21,7 @@ const requiredTables = [
   "distillation_queue_events",
   "distillation_queue_migration_map",
   "context_compile_runs",
+  "context_compile_evals",
   "context_pack_items",
   "knowledge_usage_events",
   "knowledge_review_queue",
@@ -85,6 +86,7 @@ export async function truncateIntegrationTables(): Promise<void> {
     truncate table
       context_pack_items,
       context_compile_runs,
+      context_compile_evals,
       knowledge_quality_adjustments,
       landscape_review_item_candidate_links,
       landscape_review_items,

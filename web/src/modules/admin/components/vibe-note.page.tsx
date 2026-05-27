@@ -174,8 +174,6 @@ export function VibeNotePage() {
                 const kind = typeof item.kind === "string" ? item.kind : "scratch";
                 const title =
                   typeof item.metadata?.title === "string" ? item.metadata.title : undefined;
-                const score =
-                  typeof item.metadata?.score === "number" ? item.metadata.score : undefined;
                 const createdAtText = formatDateTime(item.createdAt, tz);
                 const isCompileResult = kind === "compile_result";
                 const linkedGoal =
@@ -194,9 +192,6 @@ export function VibeNotePage() {
                       <Badge variant="outline">{kind}</Badge>
                       {item.label ? <span>{String(item.label)}</span> : null}
                       {title ? <span>{title}</span> : null}
-                      {score !== undefined ? (
-                        <span className="vibe-note-score">score {score}</span>
-                      ) : null}
                       {createdAtText ? <span>{createdAtText}</span> : null}
                     </div>
                     <div className="vibe-card-body">

@@ -18,6 +18,10 @@ import type { ContextPack } from "../../shared/schemas/context-pack.schema.js";
 import { contextPackSchema } from "../../shared/schemas/context-pack.schema.js";
 import { asRecord, normalizeNullableString } from "../../shared/utils/normalize.js";
 import {
+  getCompileEvalSummaryByRunId,
+  listCompileEvalsByRunId,
+} from "./context-compile-eval.repository.js";
+import {
   extractCompileRunSignals,
   extractOutputMarkdown,
   feedbackActorValues,
@@ -153,6 +157,13 @@ export type CompileRunSummary = {
   degradedReasons: string[];
   durationMs: number;
   source: CompileRunSource;
+  evalSummary: {
+    count: number;
+    latestScore: number | null;
+    averageScore: number | null;
+    latestOutcome: "useful" | "partial" | "misleading" | "unused" | null;
+    latestEvaluatedAt: string | null;
+  };
   selectedItemCount: number;
   outputMarkdownKind: "narrative" | "no-content" | null;
   createdAt: Date;
@@ -187,21 +198,25 @@ export async function listRecentCompileRuns(limit = 20): Promise<CompileRunSumma
     .orderBy(desc(contextCompileRuns.createdAt))
     .limit(normalizedLimit);
 
-  return rows.map((row) => {
-    const signals = extractCompileRunSignals(row.packSnapshot);
-    return {
-      id: row.id,
-      goal: row.goal,
-      retrievalMode: row.retrievalMode,
-      status: normalizeRunStatus(row.status),
-      degradedReasons: normalizeStringArray(row.degradedReasons),
-      durationMs: normalizeDuration(row.durationMs),
-      source: normalizeCompileRunSource(row.source),
-      selectedItemCount: signals.selectedItemCount,
-      outputMarkdownKind: signals.outputMarkdownKind,
-      createdAt: normalizeDate(row.createdAt),
-    };
-  });
+  return Promise.all(
+    rows.map(async (row) => {
+      const signals = extractCompileRunSignals(row.packSnapshot);
+      const evalSummary = await getCompileEvalSummaryByRunId(row.id);
+      return {
+        id: row.id,
+        goal: row.goal,
+        retrievalMode: row.retrievalMode,
+        status: normalizeRunStatus(row.status),
+        degradedReasons: normalizeStringArray(row.degradedReasons),
+        durationMs: normalizeDuration(row.durationMs),
+        source: normalizeCompileRunSource(row.source),
+        evalSummary,
+        selectedItemCount: signals.selectedItemCount,
+        outputMarkdownKind: signals.outputMarkdownKind,
+        createdAt: normalizeDate(row.createdAt),
+      };
+    }),
+  );
 }
 
 export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSnapshot | null> {
@@ -246,6 +261,7 @@ export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSn
       degradedReasons: normalizeStringArray(run.degradedReasons),
       durationMs: normalizeDuration(run.durationMs),
       source: normalizeCompileRunSource(run.source),
+      evalSummary: await getCompileEvalSummaryByRunId(run.id),
       selectedItemCount: signals.selectedItemCount,
       outputMarkdownKind: signals.outputMarkdownKind,
       createdAt: normalizeDate(run.createdAt),
@@ -397,6 +413,7 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
     .from(knowledgeUsageEvents)
     .where(eq(knowledgeUsageEvents.runId, runId))
     .orderBy(desc(knowledgeUsageEvents.updatedAt), desc(knowledgeUsageEvents.createdAt));
+  const evalRows = await listCompileEvalsByRunId(runId);
 
   const parsedPackSnapshot = contextPackSchema.safeParse(run.packSnapshot);
   const packSnapshot =
@@ -464,6 +481,7 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
       degradedReasons: normalizeStringArray(run.degradedReasons),
       durationMs: normalizeDuration(run.durationMs),
       source: normalizeCompileRunSource(run.source),
+      evalSummary: await getCompileEvalSummaryByRunId(run.id),
       createdAt: normalizeDate(run.createdAt).toISOString(),
       tokenBudget: normalizeDuration(run.tokenBudget),
       input:
@@ -566,6 +584,18 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
         updatedAt: latestFeedback.updatedAt,
       };
     }),
+    evaluations: evalRows.map((row) => ({
+      id: row.id,
+      runId: row.runId,
+      sessionId: row.sessionId,
+      score: row.score,
+      outcome: row.outcome,
+      title: row.title,
+      body: row.body,
+      source: row.source,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    })),
     snapshotAvailable: packSnapshot !== null,
   };
 

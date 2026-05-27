@@ -188,8 +188,8 @@ export const validDoctorReport: DoctorReport = {
     },
   },
   mcp: {
-    exposedTools: ["context_compile"],
-    requiredPrimaryTools: ["context_compile"],
+    exposedTools: ["context_compile", "compile_eval"],
+    requiredPrimaryTools: ["context_compile", "compile_eval"],
     missingPrimaryTools: [],
     staleKnowledgeCount: 0,
     staleSourceCount: 0,

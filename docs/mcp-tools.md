@@ -1,25 +1,27 @@
 # MCP Tools
 
-`memory-router` の公開 MCP surface は次の 9 ツールです。
+`memory-router` の公開 MCP surface は次の 10 ツールです。
 
 1. `initial_instructions`
 2. `context_compile`
-3. `search_knowledge`
-4. `register_candidate`
-5. `register_candidates`
-6. `session_memo`
-7. `search_memory`
-8. `fetch_memory`
-9. `doctor`
+3. `compile_eval`
+4. `search_knowledge`
+5. `register_candidate`
+6. `register_candidates`
+7. `session_memo`
+8. `search_memory`
+9. `fetch_memory`
+10. `doctor`
 
 ## 推奨フロー
 
 1. `initial_instructions`
 2. `context_compile`
-3. 必要時のみ `search_knowledge` / `search_memory` / `fetch_memory`
-4. 候補登録は 1 件なら `register_candidate`、複数件なら `register_candidates`
-5. 実装・検証
-6. `doctor`
+3. 実装・検証
+4. `compile_eval`
+5. 必要時のみ `search_knowledge` / `search_memory` / `fetch_memory`
+6. 候補登録は 1 件なら `register_candidate`、複数件なら `register_candidates`
+7. `doctor`
 
 ## 命名ポリシー
 
@@ -53,6 +55,17 @@
   - MCP レスポンスは LLM向け Markdown 1件のみを返す（JSON pack は DB/UI 側で保持）
   - 出力は knowledge 列挙ではなく、`実装フォーカス` / `実装手順` / `検証観点` を中心とした自然言語コンテキストに整形する
   - 有効な rule/procedure が選べない場合や compile が失敗した場合、Markdown は `No Content` のみ返す
+
+### `compile_eval`
+
+- 入力: `score`（必須）, `outcome`（必須）, `body`（必須）, `runId`（任意）, `title`
+- 役割: `context_compile` の作業後評価を保存
+- 挙動:
+  - `runId` を省略した場合は、同じ session の最新 compile result から評価対象 run を解決する
+  - 同一 session に複数の `context_compile` run がある場合は、Vibe Note の `compile_result`（runId）を参照して各 run ごとに評価を保存する
+  - `score` は `0..100` の整数
+  - `outcome` は `useful` / `partial` / `misleading` / `unused`
+  - 評価結果は `context_compile` run に紐づく永続データとして保持される
 
 ### `search_knowledge`
 

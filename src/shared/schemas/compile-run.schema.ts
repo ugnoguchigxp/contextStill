@@ -14,6 +14,22 @@ export const compileRunSummarySchema = z.object({
   degradedReasons: z.array(z.string()),
   durationMs: z.number().int().nonnegative(),
   source: compileRunSourceSchema,
+  evalSummary: z
+    .object({
+      count: z.number().int().nonnegative(),
+      latestScore: z.number().int().min(0).max(100).nullable(),
+      averageScore: z.number().nullable(),
+      latestOutcome: z.enum(["useful", "partial", "misleading", "unused"]).nullable(),
+      latestEvaluatedAt: z.string().datetime().nullable(),
+    })
+    .optional()
+    .default({
+      count: 0,
+      latestScore: null,
+      averageScore: null,
+      latestOutcome: null,
+      latestEvaluatedAt: null,
+    }),
   createdAt: z.string().datetime(),
 });
 
@@ -90,6 +106,22 @@ export const compileRunDetailSchema = z.object({
   selectedItems: z.array(compileRunSelectedItemSchema),
   knowledgeFeedback: z.array(compileRunKnowledgeFeedbackSchema).default([]),
   knowledgeSignals: z.array(compileRunKnowledgeSignalSchema).default([]),
+  evaluations: z
+    .array(
+      z.object({
+        id: z.string().uuid(),
+        runId: z.string().uuid(),
+        sessionId: z.string().nullable(),
+        score: z.number().int().min(0).max(100),
+        outcome: z.enum(["useful", "partial", "misleading", "unused"]),
+        title: z.string().nullable(),
+        body: z.string(),
+        source: z.enum(["mcp", "ui", "system", "import"]),
+        createdAt: z.string().datetime(),
+        updatedAt: z.string().datetime(),
+      }),
+    )
+    .default([]),
   snapshotAvailable: z.boolean(),
 });
 

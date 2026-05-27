@@ -60,16 +60,25 @@ sessionMemoRouter.post(
   "/item",
   zValidator(
     "json",
-    z.object({
-      sessionId: z.string().trim().min(1),
-      kind: z.string().trim().min(1).max(64).optional(),
-      title: z.string().trim().min(1).max(160).optional(),
-      score: z.number().int().min(0).max(100).optional(),
-      label: z.string().trim().min(1).optional(),
-      body: z.string().trim().min(1).max(10000),
-      metadata: z.record(z.unknown()).optional(),
-      expiresAt: z.string().datetime().optional(),
-    }),
+    z
+      .object({
+        sessionId: z.string().trim().min(1),
+        kind: z.string().trim().min(1).max(64).optional(),
+        title: z.string().trim().min(1).max(160).optional(),
+        label: z.string().trim().min(1).optional(),
+        body: z.string().trim().min(1).max(10000),
+        metadata: z.record(z.unknown()).optional(),
+        expiresAt: z.string().datetime().optional(),
+      })
+      .superRefine((value, ctx) => {
+        if (value.kind === "compile_eval") {
+          ctx.addIssue({
+            code: z.ZodIssueCode.custom,
+            path: ["kind"],
+            message: "compile_eval kind is no longer supported in session_memo",
+          });
+        }
+      }),
   ),
   async (c) => {
     const saved = await putSessionMemo({ ...c.req.valid("json"), source: "ui" });

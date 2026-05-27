@@ -4,6 +4,7 @@ import {
   updateKnowledgeItem,
 } from "../api/modules/knowledge/knowledge.repository.js";
 import { contextCompileTool } from "../src/mcp/tools/context-compile.tool.js";
+import { compileEvalTool } from "../src/mcp/tools/compile-eval.tool.js";
 import {
   listKnowledgeTool,
   registerCandidateTool,
@@ -20,6 +21,7 @@ import {
 import { sessionMemoTool } from "../src/mcp/tools/session-memo.tool.js";
 import { doctorTool, initialInstructionsTool } from "../src/mcp/tools/system.tool.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
+import { recordCompileEval } from "../src/modules/context-compiler/context-compile-eval.service.js";
 import { runDoctor } from "../src/modules/doctor/doctor.service.js";
 import { searchKnowledgeCandidates } from "../src/modules/knowledge/knowledge.service.js";
 import { registerCandidate } from "../src/modules/registerCandidate/register-candidate.service.js";
@@ -52,6 +54,7 @@ const { mockDb } = vi.hoisted(() => {
 vi.mock("../src/modules/vibe-memory/vibe-memory.service.js");
 vi.mock("../src/modules/knowledge/knowledge.service.js");
 vi.mock("../src/modules/context-compiler/context-compiler.service.js");
+vi.mock("../src/modules/context-compiler/context-compile-eval.service.js");
 vi.mock("../src/modules/doctor/doctor.service.js");
 vi.mock("../src/modules/registerCandidate/register-candidate.service.js");
 vi.mock("../src/modules/session-memo/session-memo.service.js");
@@ -370,7 +373,17 @@ describe("MCP Tools Handlers", () => {
       expect(data.items[0].slot).toBe(1);
       expect(putManySessionMemos).toHaveBeenCalledWith(
         "s-1",
-        [{ slot: undefined, label: "x", body: "hello", metadata: {}, expiresAt: undefined }],
+        [
+          {
+            slot: undefined,
+            kind: undefined,
+            title: undefined,
+            label: "x",
+            body: "hello",
+            metadata: {},
+            expiresAt: undefined,
+          },
+        ],
         "mcp",
       );
     });
@@ -392,44 +405,57 @@ describe("MCP Tools Handlers", () => {
       expect(getSessionMemo).toHaveBeenCalledWith({ sessionId: "s-1", slot: 2, label: undefined });
     });
 
-    test("put compile_eval drops slot and legacy label before delegating", async () => {
-      vi.mocked(putSessionMemo).mockResolvedValue({
-        slot: 1,
-        label: "compile_eval:run:1",
-      } as never);
+    test("rejects compile_eval kind", async () => {
+      vi.mocked(putSessionMemo).mockResolvedValue({ slot: 1, label: "x" } as never);
 
-      await sessionMemoTool.handler(
-        {
-          action: "put",
-          sessionId: "s-1",
-          kind: "compile_eval",
-          slot: 0,
-          label: "compile_eval",
-          title: "eval",
-          score: 88,
-          body: "evaluation",
-        },
-        { toolName: "session_memo" },
-      );
-
-      expect(putSessionMemo).toHaveBeenCalledWith({
-        sessionId: "s-1",
-        slot: undefined,
-        kind: "compile_eval",
-        title: "eval",
-        score: 88,
-        label: undefined,
-        body: "evaluation",
-        metadata: {},
-        expiresAt: undefined,
-        source: "mcp",
-      });
+      await expect(
+        sessionMemoTool.handler(
+          {
+            action: "put",
+            sessionId: "s-1",
+            kind: "compile_eval",
+            body: "evaluation",
+          },
+          { toolName: "session_memo" },
+        ),
+      ).rejects.toThrow("compile_eval kind is no longer supported");
     });
 
     test("fails when session id is missing", async () => {
       await expect(
         sessionMemoTool.handler({ action: "list" }, { toolName: "session_memo" }),
       ).rejects.toThrow("SESSION_ID_REQUIRED");
+    });
+  });
+
+  describe("compile_eval", () => {
+    test("records compile evaluation and returns JSON", async () => {
+      vi.mocked(recordCompileEval).mockResolvedValue({
+        evaluation: {
+          id: "550e8400-e29b-41d4-a716-446655440000",
+          runId: "550e8400-e29b-41d4-a716-446655440001",
+          sessionId: "s-1",
+          score: 82,
+          outcome: "useful",
+          title: "good",
+          body: "helped",
+          source: "mcp",
+          createdAt: "2026-01-01T00:00:00.000Z",
+          updatedAt: "2026-01-01T00:00:00.000Z",
+        },
+        resolvedFrom: "latest_session_compile_result",
+      } as never);
+      const response = await compileEvalTool.handler(
+        { score: 82, outcome: "useful", body: "helped" },
+        { toolName: "compile_eval", requestMeta: { sessionId: "s-1" } },
+      );
+      const json = JSON.parse(response.content[0].text);
+      expect(json.evaluation.score).toBe(82);
+      expect(recordCompileEval).toHaveBeenCalledWith({
+        input: { score: 82, outcome: "useful", body: "helped" },
+        requestMeta: { sessionId: "s-1" },
+        source: "mcp",
+      });
     });
   });
 

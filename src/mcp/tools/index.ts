@@ -1,4 +1,5 @@
 import type { ToolEntry } from "../registry.js";
+import { compileEvalTool } from "./compile-eval.tool.js";
 import { contextCompileTool } from "./context-compile.tool.js";
 import {
   listKnowledgeTool,
@@ -40,6 +41,7 @@ const v1ToolEntries: ToolEntry[] = [
 const v2ToolEntries: ToolEntry[] = [
   initialInstructionsTool,
   contextCompileTool,
+  compileEvalTool,
   searchKnowledgeTool,
   registerCandidateTool,
   registerCandidatesTool,

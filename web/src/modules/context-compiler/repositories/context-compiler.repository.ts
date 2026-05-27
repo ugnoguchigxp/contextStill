@@ -16,6 +16,13 @@ export type CompileRunSummary = {
   degradedReasons: string[];
   durationMs: number;
   source: CompileRunSource;
+  evalSummary?: {
+    count: number;
+    latestScore: number | null;
+    averageScore: number | null;
+    latestOutcome: "useful" | "partial" | "misleading" | "unused" | null;
+    latestEvaluatedAt: string | null;
+  };
   createdAt: string;
 };
 
@@ -103,6 +110,18 @@ export type CompileRunDetail = {
   selectedItems: CompileRunSelectedItem[];
   knowledgeFeedback: CompileRunKnowledgeFeedback[];
   knowledgeSignals: CompileRunKnowledgeSignal[];
+  evaluations: Array<{
+    id: string;
+    runId: string;
+    sessionId: string | null;
+    score: number;
+    outcome: "useful" | "partial" | "misleading" | "unused";
+    title: string | null;
+    body: string;
+    source: "mcp" | "ui" | "system" | "import";
+    createdAt: string;
+    updatedAt: string;
+  }>;
   snapshotAvailable: boolean;
 };
 

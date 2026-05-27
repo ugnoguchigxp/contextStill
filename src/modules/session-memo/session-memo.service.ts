@@ -3,18 +3,13 @@ import type { NodePgDatabase } from "drizzle-orm/node-postgres";
 import { db } from "../../db/client.js";
 import { sessionMemoEvents, sessionMemos } from "../../db/schema.js";
 import { sessionMemoSlotLimit } from "../../shared/schemas/session-memo.schema.js";
-import {
-  getCompileRunById,
-  getLatestCompileRunForSession,
-  listCompileRunOutputsByIds,
-} from "../context-compiler/context-compiler.repository.js";
+import { listCompileRunOutputsByIds } from "../context-compiler/context-compiler.repository.js";
 
 type PutInput = {
   sessionId: string;
   slot?: number;
   kind?: string;
   title?: string;
-  score?: number;
   label?: string;
   body: string;
   metadata?: Record<string, unknown>;
@@ -22,18 +17,12 @@ type PutInput = {
   source?: "mcp" | "ui" | "system" | "import";
 };
 
-const compileEvalKind = "compile_eval";
 const compileResultKind = "compile_result";
 const defaultMemoKind = "scratch";
 
 function normalizeLabel(value?: string): string | null {
   const trimmed = value?.trim();
   return trimmed ? trimmed : null;
-}
-
-function normalizeCompileEvalLabel(value: string | null): string | null {
-  if (!value) return null;
-  return value.toLowerCase() === compileEvalKind ? null : value;
 }
 
 function normalizeKind(value?: string): string {
@@ -86,109 +75,9 @@ function asMetadataRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
-function deriveCompileOutputKind(
-  outputMarkdown: string | null,
-): "narrative" | "no_content" | "unknown" {
-  if (!outputMarkdown) return "unknown";
-  return outputMarkdown.trim() === "No Content" ? "no_content" : "narrative";
-}
-
 function getContextCompileRunIdFromMetadata(metadata: Record<string, unknown>): string | null {
   const runId = metadata.contextCompileRunId;
   return typeof runId === "string" && runId.trim().length > 0 ? runId.trim() : null;
-}
-
-function parseCompileEvalOrdinal(label: string, runId: string): number | null {
-  const prefix = `${compileEvalKind}:${runId}:`;
-  if (!label.startsWith(prefix)) return null;
-  const rawOrdinal = Number(label.slice(prefix.length));
-  if (!Number.isInteger(rawOrdinal) || rawOrdinal < 1) return null;
-  return rawOrdinal;
-}
-
-async function nextCompileEvalOrdinalIn(
-  tx: NodePgDatabase<typeof import("../../db/schema.js")> | typeof db,
-  sessionId: string,
-  runId: string,
-): Promise<number> {
-  const labels = await tx
-    .select({ label: sessionMemos.label })
-    .from(sessionMemos)
-    .where(
-      and(
-        eq(sessionMemos.sessionId, sessionId),
-        eq(sessionMemos.kind, compileEvalKind),
-        isNull(sessionMemos.deletedAt),
-      ),
-    );
-  let maxOrdinal = 0;
-  for (const row of labels) {
-    const label = typeof row.label === "string" ? row.label : "";
-    const ordinal = parseCompileEvalOrdinal(label, runId);
-    if (ordinal !== null && ordinal > maxOrdinal) maxOrdinal = ordinal;
-  }
-  return maxOrdinal + 1;
-}
-
-async function resolveCompileEvalLabel(params: {
-  tx: NodePgDatabase<typeof import("../../db/schema.js")> | typeof db;
-  sessionId: string;
-  explicitLabel: string | null;
-  metadata: Record<string, unknown>;
-}): Promise<string> {
-  if (params.explicitLabel) return params.explicitLabel;
-  const runId = getContextCompileRunIdFromMetadata(params.metadata) ?? "unresolved";
-  const ordinal = await nextCompileEvalOrdinalIn(params.tx, params.sessionId, runId);
-  return `${compileEvalKind}:${runId}:${ordinal}`;
-}
-
-async function enrichMetadataForCompileEval(params: {
-  sessionId: string;
-  createdAt: Date;
-  metadata: Record<string, unknown>;
-}): Promise<Record<string, unknown>> {
-  const explicitRunId = getContextCompileRunIdFromMetadata(params.metadata);
-  if (explicitRunId) {
-    const linkedRun = await getCompileRunById(explicitRunId);
-    if (!linkedRun || linkedRun.sessionId !== params.sessionId) {
-      return {
-        ...params.metadata,
-        linkStatus: "unresolved",
-        unresolvedReason: "context_compile_run_not_found",
-        contextCompileOutputKind: "unknown",
-      };
-    }
-    return {
-      ...params.metadata,
-      contextCompileRunId: linkedRun.id,
-      contextCompileRunCreatedAt: linkedRun.createdAt.toISOString(),
-      linkStatus: "linked",
-      contextCompileOutputKind: deriveCompileOutputKind(linkedRun.outputMarkdown),
-    };
-  }
-
-  const linkedRun = await getLatestCompileRunForSession({
-    sessionId: params.sessionId,
-    createdBefore: params.createdAt,
-  });
-  if (!linkedRun) {
-    return {
-      ...params.metadata,
-      linkStatus: "unresolved",
-      unresolvedReason: "no_recent_context_compile_run",
-      contextCompileOutputKind: "unknown",
-    };
-  }
-
-  const linkedRunDetail = await getCompileRunById(linkedRun.id);
-
-  return {
-    ...params.metadata,
-    contextCompileRunId: linkedRun.id,
-    contextCompileRunCreatedAt: linkedRun.createdAt.toISOString(),
-    linkStatus: "linked",
-    contextCompileOutputKind: deriveCompileOutputKind(linkedRunDetail?.outputMarkdown ?? null),
-  };
 }
 
 async function expireRows(sessionId: string, source: PutInput["source"] = "mcp"): Promise<void> {
@@ -243,37 +132,16 @@ async function putSessionMemoIn(
   input: PutInput,
 ) {
   const kind = normalizeKind(input.kind);
-  const label =
-    kind === compileEvalKind
-      ? normalizeCompileEvalLabel(normalizeLabel(input.label))
-      : normalizeLabel(input.label);
+  const label = normalizeLabel(input.label);
   const title = normalizeTitle(input.title);
   const now = new Date();
   const source = input.source ?? "mcp";
-  let effectiveMetadata: Record<string, unknown> = {
+  const effectiveMetadata: Record<string, unknown> = {
     ...(input.metadata ?? {}),
     kind,
   };
   if (title !== undefined) effectiveMetadata.title = title;
-  if (kind === compileEvalKind) {
-    effectiveMetadata = await enrichMetadataForCompileEval({
-      sessionId: input.sessionId,
-      createdAt: now,
-      metadata: effectiveMetadata,
-    });
-  }
-  if (input.score !== undefined) {
-    effectiveMetadata.score = input.score;
-  }
   let effectiveLabel = label;
-  if (kind === compileEvalKind) {
-    effectiveLabel = await resolveCompileEvalLabel({
-      tx,
-      sessionId: input.sessionId,
-      explicitLabel: label,
-      metadata: effectiveMetadata,
-    });
-  }
   if (kind === compileResultKind && !effectiveLabel) {
     const runId = getContextCompileRunIdFromMetadata(effectiveMetadata);
     if (runId) effectiveLabel = `${compileResultKind}:${runId}`;
@@ -437,7 +305,6 @@ export async function listSessionMemos(input: {
     kind: item.kind,
     label: item.label,
     title: typeof item.metadata.title === "string" ? item.metadata.title : null,
-    score: typeof item.metadata.score === "number" ? item.metadata.score : null,
     preview: item.preview,
     previewChars: item.previewChars,
     bodyLength: item.bodyLength,

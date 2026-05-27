@@ -18,6 +18,7 @@ import { knowledgeItems } from "./schema-knowledge.js";
 import {
   auditLogActorValues,
   compileRunSourceValues,
+  compileEvalOutcomeValues,
   contextCompileCandidateTraceAgenticDecisionValues,
   contextCompileTaskTraceEmbeddingStatusValues,
   knowledgeReviewProposedActionValues,
@@ -61,6 +62,58 @@ export const contextCompileRuns = pgTable(
     sourceCheck: check(
       "context_compile_runs_source_check",
       sql`${table.source} IN (${sql.raw(toSqlList(compileRunSourceValues))})`,
+    ),
+  }),
+);
+
+export const contextCompileEvals = pgTable(
+  "context_compile_evals",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    runId: uuid("run_id")
+      .references(() => contextCompileRuns.id, { onDelete: "cascade" })
+      .notNull(),
+    sessionId: text("session_id"),
+    score: integer("score").notNull(),
+    outcome: text("outcome").notNull(),
+    title: text("title"),
+    body: text("body").notNull(),
+    source: text("source").notNull().default("mcp"),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    runCreatedAtIdx: index("context_compile_evals_run_created_at_idx").on(
+      table.runId,
+      table.createdAt,
+    ),
+    sessionCreatedAtIdx: index("context_compile_evals_session_created_at_idx")
+      .on(table.sessionId, table.createdAt)
+      .where(sql`${table.sessionId} is not null`),
+    outcomeCreatedAtIdx: index("context_compile_evals_outcome_created_at_idx").on(
+      table.outcome,
+      table.createdAt,
+    ),
+    scoreRangeCheck: check(
+      "context_compile_evals_score_range_check",
+      sql`${table.score} >= 0 and ${table.score} <= 100`,
+    ),
+    outcomeCheck: check(
+      "context_compile_evals_outcome_check",
+      sql`${table.outcome} IN (${sql.raw(toSqlList(compileEvalOutcomeValues))})`,
+    ),
+    sourceCheck: check(
+      "context_compile_evals_source_check",
+      sql`${table.source} IN ('mcp', 'ui', 'system', 'import')`,
+    ),
+    bodyLengthCheck: check(
+      "context_compile_evals_body_length_check",
+      sql`char_length(${table.body}) <= 10000`,
+    ),
+    titleLengthCheck: check(
+      "context_compile_evals_title_length_check",
+      sql`${table.title} is null or char_length(${table.title}) <= 160`,
     ),
   }),
 );

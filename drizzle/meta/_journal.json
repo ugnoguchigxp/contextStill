@@ -344,6 +344,13 @@
       "when": 1779798973000,
       "tag": "0048_session_memo_slot_limit_40",
       "breakpoints": true
+    },
+    {
+      "idx": 49,
+      "version": "7",
+      "when": 1779830400000,
+      "tag": "0049_context_compile_evals",
+      "breakpoints": true
     }
   ]
 }

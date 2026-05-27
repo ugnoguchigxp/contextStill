@@ -23,16 +23,6 @@ const optionalTitleString = z.preprocess((value) => {
   return trimmed.length > 0 ? trimmed : undefined;
 }, z.string().max(sessionMemoTitleMaxChars).optional());
 
-const optionalScoreNumber = z.preprocess((value) => {
-  if (value === undefined || value === null || value === "") return undefined;
-  if (typeof value === "number") return value;
-  if (typeof value === "string") {
-    const numeric = Number(value.trim());
-    return Number.isFinite(numeric) ? numeric : undefined;
-  }
-  return undefined;
-}, z.number().int().min(0).max(100).optional());
-
 const slotSchema = z
   .number()
   .int()
@@ -44,7 +34,6 @@ export const sessionMemoItemInputSchema = z
     slot: slotSchema.optional(),
     kind: optionalKindString,
     title: optionalTitleString,
-    score: optionalScoreNumber,
     label: optionalTrimmedString,
     body: z.string().trim().min(1).max(sessionMemoBodyMaxChars),
     metadata: z.record(z.unknown()).optional().default({}),
@@ -52,11 +41,11 @@ export const sessionMemoItemInputSchema = z
   })
   .strict()
   .superRefine((value, ctx) => {
-    if (value.kind === "compile_eval" && value.body.trim().length === 0) {
+    if (value.kind === "compile_eval") {
       ctx.addIssue({
         code: z.ZodIssueCode.custom,
-        path: ["body"],
-        message: "body is required for compile_eval",
+        path: ["kind"],
+        message: "compile_eval kind is no longer supported in session_memo",
       });
     }
   });
@@ -68,7 +57,6 @@ export const sessionMemoToolInputSchema = z
     slot: slotSchema.optional(),
     kind: optionalKindString,
     title: optionalTitleString,
-    score: optionalScoreNumber,
     label: optionalTrimmedString,
     body: z.string().trim().min(1).max(sessionMemoBodyMaxChars).optional(),
     metadata: z.record(z.unknown()).optional().default({}),
@@ -80,13 +68,11 @@ export const sessionMemoToolInputSchema = z
   .strict()
   .superRefine((value, ctx) => {
     if (value.action === "put" && value.kind === "compile_eval") {
-      if (!value.body || value.body.trim().length === 0) {
-        ctx.addIssue({
-          code: z.ZodIssueCode.custom,
-          path: ["body"],
-          message: "body is required for compile_eval",
-        });
-      }
+      ctx.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["kind"],
+        message: "compile_eval kind is no longer supported in session_memo",
+      });
     }
     if (value.action === "get" && value.slot === undefined && !value.label) {
       ctx.addIssue({

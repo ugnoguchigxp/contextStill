@@ -1,10 +1,12 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { listStaticResources, readStaticResource } from "../src/mcp/server.js";
+import { compileEvalTool } from "../src/mcp/tools/compile-eval.tool.js";
 import { contextCompileTool } from "../src/mcp/tools/context-compile.tool.js";
 import { getCallableToolEntries, getExposedToolEntries } from "../src/mcp/tools/index.js";
 import { searchKnowledgeTool } from "../src/mcp/tools/knowledge.tool.js";
 import { initialInstructionsTool } from "../src/mcp/tools/system.tool.js";
 import {
+  getCompileRunDetail,
   insertCompileRun,
   insertContextPackItems,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
@@ -51,11 +53,26 @@ describeDb("mcp contract", () => {
     expect(properties).not.toHaveProperty("queryEmbedding");
   });
 
+  test("compile_eval tool input schema contract", () => {
+    expect(compileEvalTool.inputSchema).toMatchObject({
+      type: "object",
+      required: ["score", "outcome", "body"],
+    });
+    const properties = (compileEvalTool.inputSchema as { properties?: Record<string, unknown> })
+      .properties;
+    expect(properties?.score).toEqual({ type: "integer", minimum: 0, maximum: 100 });
+    expect(properties?.outcome).toEqual({
+      type: "string",
+      enum: ["useful", "partial", "misleading", "unused"],
+    });
+  });
+
   test("public tools list contract", () => {
     const toolNames = getExposedToolEntries().map((tool) => tool.name);
     expect(toolNames).toEqual([
       "initial_instructions",
       "context_compile",
+      "compile_eval",
       "search_knowledge",
       "register_candidate",
       "register_candidates",
@@ -83,6 +100,8 @@ describeDb("mcp contract", () => {
     expect(text).toContain("context_compile");
     expect(text).toContain("register_candidate");
     expect(text).toContain("register_candidates");
+    expect(text).toContain("compile_result");
+    expect(text).toContain("各 runId ごと");
     expect(text).toContain("Use when:");
     expect(text).toContain("design.md");
   });
@@ -189,5 +208,35 @@ describeDb("mcp contract", () => {
     expect(response.content.length).toBe(1);
     expect(response.content[0]?.type).toBe("text");
     expect(response.content[0]?.text.length).toBeGreaterThan(0);
+  });
+
+  test("compile_eval saves score and appears in run detail", async () => {
+    const runId = await insertCompileRun({
+      goal: "compile eval contract",
+      intent: "edit",
+      sessionId: "contract-session",
+      input: { goal: "compile eval contract" },
+      retrievalMode: "task_context",
+      status: "ok",
+      degradedReasons: [],
+      tokenBudget: 2048,
+      durationMs: 21,
+    });
+    const response = await compileEvalTool.handler(
+      { runId, score: 84, outcome: "useful", body: "worked well", title: "good fit" },
+      { toolName: "compile_eval", requestMeta: { sessionId: "contract-session" } },
+    );
+    const json = JSON.parse(response.content[0]?.text ?? "{}") as {
+      evaluation: { runId: string; score: number; outcome: string };
+    };
+    expect(json.evaluation.runId).toBe(runId);
+    expect(json.evaluation.score).toBe(84);
+    expect(json.evaluation.outcome).toBe("useful");
+
+    const detail = await getCompileRunDetail(runId);
+    expect(detail?.evaluations.length).toBe(1);
+    expect(detail?.evaluations[0]?.score).toBe(84);
+    expect(detail?.run.evalSummary.count).toBe(1);
+    expect(detail?.run.evalSummary.latestScore).toBe(84);
   });
 });

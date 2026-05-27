@@ -118,6 +118,7 @@ export const sourceLinkTypeValues = ["derived_from"] as const;
 
 export const runStatusValues = ["ok", "degraded", "failed"] as const;
 export const compileRunSourceValues = ["ui", "mcp", "cli", "unknown"] as const;
+export const compileEvalOutcomeValues = ["useful", "partial", "misleading", "unused"] as const;
 
 export const packSectionValues = ["rules", "procedures", "code_context", "warnings"] as const;
 export const contextCompileCandidateTraceAgenticDecisionValues = [

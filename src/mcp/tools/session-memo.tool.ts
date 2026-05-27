@@ -40,7 +40,6 @@ export const sessionMemoTool: ToolEntry = {
       },
       kind: { type: "string" },
       title: { type: "string" },
-      score: { type: "number" },
       label: { type: "string" },
       body: { type: "string" },
       metadata: { type: "object" },
@@ -62,15 +61,12 @@ export const sessionMemoTool: ToolEntry = {
 
     if (parsed.action === "put") {
       if (!parsed.body) throw new Error("body is required");
-      const isLegacyCompileEvalLabel =
-        typeof parsed.label === "string" && parsed.label.trim().toLowerCase() === "compile_eval";
       const saved = await putSessionMemo({
         sessionId,
         slot: undefined,
         kind: parsed.kind,
         title: parsed.title,
-        score: parsed.score,
-        label: isLegacyCompileEvalLabel ? undefined : parsed.label,
+        label: parsed.label,
         body: parsed.body,
         metadata: parsed.metadata,
         expiresAt: parsed.expiresAt,
@@ -85,7 +81,6 @@ export const sessionMemoTool: ToolEntry = {
         slot: undefined,
         kind: item.kind,
         title: item.title,
-        score: item.score,
         label: item.label,
         body: item.body,
         metadata: item.metadata,

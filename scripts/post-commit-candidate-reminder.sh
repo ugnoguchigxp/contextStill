@@ -105,6 +105,12 @@ Evidence:
 
 If no reusable lesson exists, report that no candidate should be registered.
 
+After completing coding work that relied on \`context_compile\`, call MCP tool \`compile_eval\` and persist:
+- \`score\` (0-100)
+- \`outcome\` (\`useful\` / \`partial\` / \`misleading\` / \`unused\`)
+- concise rationale in \`body\`
+- when multiple \`context_compile\` runs exist in the same session, reference Vibe Note \`compile_result\` entries and evaluate every run (pass \`runId\` explicitly)
+
 ## Useful evidence commands
 
 \`\`\`bash
@@ -133,6 +139,6 @@ if [ "${MEMORY_ROUTER_CANDIDATE_HOOK_QUIET:-0}" != "1" ]; then
 [memory-router] post-commit candidate reminder
   commit: $SHORT_SHA $SUBJECT
   prompt: $LATEST_FILE
-  action: ask the coding agent to review the commit and call register_candidate only for durable lessons
+  action: ask the coding agent to review the commit, call register_candidate for durable lessons, and call compile_eval for context_compile quality
 EOF
 fi

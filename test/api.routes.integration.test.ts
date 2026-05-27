@@ -239,42 +239,20 @@ describeDb("api route integration", () => {
     expect(response.status).toBe(400);
   });
 
-  test("POST /api/session-memo/item stores compile_eval in separate slots when label is omitted", async () => {
-    const first = await app.request("/api/session-memo/item", {
+  test("POST /api/session-memo/item rejects compile_eval kind", async () => {
+    const response = await app.request("/api/session-memo/item", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         sessionId: "integration-session-compile-eval",
         kind: "compile_eval",
-        title: "first",
-        score: 70,
         body: "first evaluation",
       }),
     });
-    expect(first.status).toBe(201);
-    const firstJson = (await first.json()) as { memo: { label: string; slot: number } };
-
-    const second = await app.request("/api/session-memo/item", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        sessionId: "integration-session-compile-eval",
-        kind: "compile_eval",
-        title: "second",
-        score: 72,
-        body: "second evaluation",
-      }),
-    });
-    expect(second.status).toBe(201);
-    const secondJson = (await second.json()) as { memo: { label: string; slot: number } };
-
-    expect(firstJson.memo.label).toMatch(/^compile_eval:/);
-    expect(secondJson.memo.label).toMatch(/^compile_eval:/);
-    expect(secondJson.memo.label).not.toBe(firstJson.memo.label);
-    expect(secondJson.memo.slot).not.toBe(firstJson.memo.slot);
+    expect(response.status).toBe(400);
   });
 
-  test("POST /api/session-memo/item always picks next empty slot for compile_eval", async () => {
+  test("POST /api/session-memo/item keeps next empty slot behavior for non-compile-eval notes", async () => {
     const sessionId = `integration-session-slot-guard-${Date.now()}`;
     const compileResponse = await app.request("/api/context/compile", {
       method: "POST",
@@ -300,60 +278,20 @@ describeDb("api route integration", () => {
     const compileResultJson = (await createCompileResult.json()) as { memo: { slot: number } };
     expect(compileResultJson.memo.slot).toBe(0);
 
-    const createEval = await app.request("/api/session-memo/item", {
+    const createScratch = await app.request("/api/session-memo/item", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         sessionId,
-        kind: "compile_eval",
-        title: "score",
-        score: 78,
-        body: "eval",
+        kind: "scratch",
+        title: "memo",
+        body: "note",
       }),
     });
-    expect(createEval.status).toBe(201);
-    const evalJson = (await createEval.json()) as { memo: { slot: number; kind: string } };
-    expect(evalJson.memo.kind).toBe("compile_eval");
-    expect(evalJson.memo.slot).toBe(1);
-  });
-
-  test("POST /api/session-memo/item does not collapse compile_eval when legacy label=compile_eval is sent", async () => {
-    const sessionId = `integration-session-compile-eval-legacy-label-${Date.now()}`;
-
-    const first = await app.request("/api/session-memo/item", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        sessionId,
-        kind: "compile_eval",
-        label: "compile_eval",
-        title: "legacy-1",
-        score: 81,
-        body: "legacy eval 1",
-      }),
-    });
-    expect(first.status).toBe(201);
-    const firstJson = (await first.json()) as { memo: { slot: number; label: string } };
-
-    const second = await app.request("/api/session-memo/item", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        sessionId,
-        kind: "compile_eval",
-        label: "compile_eval",
-        title: "legacy-2",
-        score: 82,
-        body: "legacy eval 2",
-      }),
-    });
-    expect(second.status).toBe(201);
-    const secondJson = (await second.json()) as { memo: { slot: number; label: string } };
-
-    expect(firstJson.memo.label).toMatch(/^compile_eval:/);
-    expect(secondJson.memo.label).toMatch(/^compile_eval:/);
-    expect(secondJson.memo.label).not.toBe(firstJson.memo.label);
-    expect(secondJson.memo.slot).not.toBe(firstJson.memo.slot);
+    expect(createScratch.status).toBe(201);
+    const memoJson = (await createScratch.json()) as { memo: { slot: number; kind: string } };
+    expect(memoJson.memo.kind).toBe("scratch");
+    expect(memoJson.memo.slot).toBe(1);
   });
 
   test("GET /api/session-memo exposes linkedGoal and linkedOutput for compile-linked notes", async () => {
@@ -402,22 +340,6 @@ describeDb("api route integration", () => {
     expect(getJson.memo.linkedOutputAvailable).toBe(true);
     expect(getJson.memo.linkedOutputMarkdown).toBe(compileJson.markdown);
 
-    const compileEvalResponse = await app.request("/api/session-memo/item", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        sessionId,
-        kind: "compile_eval",
-        body: "compile eval note",
-        metadata: {
-          contextCompileRunId: runId,
-          title: "eval",
-          score: 90,
-        },
-      }),
-    });
-    expect(compileEvalResponse.status).toBe(201);
-
     const listResponse = await app.request(
       `/api/session-memo?sessionId=${encodeURIComponent(sessionId)}`,
     );
@@ -430,12 +352,7 @@ describeDb("api route integration", () => {
         linkedOutputMarkdown?: string | null;
       }>;
     };
-    const evalItem = listJson.items.find(
-      (item) => item.label?.startsWith(`compile_eval:${runId}:`) ?? false,
-    );
     const resultItem = listJson.items.find((item) => item.label === `compile_result:${runId}`);
-    expect(evalItem?.linkedGoal).toBe("integration compile_result linked output token");
-    expect(evalItem?.linkedOutputMarkdown ?? null).toBeNull();
     expect(resultItem?.linkedGoal).toBe("integration compile_result linked output token");
     expect(resultItem?.linkedOutputMarkdown).toBe(compileJson.markdown);
   });
@@ -550,7 +467,7 @@ describeDb("api route integration", () => {
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
         sessionId,
-        kind: "compile_eval",
+        kind: "scratch",
         body: "timezone alignment check",
       }),
     });

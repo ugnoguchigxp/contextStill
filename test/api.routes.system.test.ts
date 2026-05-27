@@ -334,7 +334,7 @@ describe("API route contract tests", () => {
     );
     expect(
       doctorAiServiceToolsDomainSchema.parse(await aiResponse.json()).mcp.exposedTools,
-    ).toEqual(["context_compile"]);
+    ).toEqual(["context_compile", "compile_eval"]);
     expect(
       doctorPipelineAutomationDomainSchema.parse(await pipelineResponse.json()).runs.totalRuns,
     ).toBe(1);

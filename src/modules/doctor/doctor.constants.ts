@@ -14,6 +14,7 @@ export const requiredTables = [
   "cover_evidence_results",
   "landscape_review_item_candidate_links",
   "context_compile_runs",
+  "context_compile_evals",
   "context_pack_items",
   "sync_states",
   "settings",
@@ -28,6 +29,7 @@ export function getRequiredPrimaryMcpTools(): readonly string[] {
     return [
       "initial_instructions",
       "context_compile",
+      "compile_eval",
       "search_knowledge",
       "register_candidate",
       "memory_search",
@@ -38,6 +40,7 @@ export function getRequiredPrimaryMcpTools(): readonly string[] {
   return [
     "initial_instructions",
     "context_compile",
+    "compile_eval",
     "search_knowledge",
     "register_candidate",
     "search_memory",
