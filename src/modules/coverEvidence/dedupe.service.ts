@@ -2,6 +2,9 @@ import { calculateBigramSimilarity, findSimilarKnowledge } from "../../lib/knowl
 import { type KnowledgeSearchResult, searchKnowledge } from "../knowledge/knowledge.repository.js";
 import type { CoverEvidenceCandidate, CoverEvidenceDuplicateRef } from "./types.js";
 
+const COVER_EVIDENCE_DUPLICATE_THRESHOLD = 0.93;
+const COVER_EVIDENCE_NEAR_DUPLICATE_THRESHOLD = 0.82;
+
 export type CoverEvidenceDedupeResult =
   | { status: "unique"; duplicateRefs: CoverEvidenceDuplicateRef[] }
   | { status: "duplicate" | "near_duplicate"; duplicateRefs: CoverEvidenceDuplicateRef[] };
@@ -79,10 +82,10 @@ export async function dedupeCoverEvidenceCandidate(
   );
   const topScore = duplicateRefs[0]?.score ?? 0;
 
-  if (exactMatch || topScore >= 0.92) {
+  if (exactMatch || topScore >= COVER_EVIDENCE_DUPLICATE_THRESHOLD) {
     return { status: "duplicate", duplicateRefs };
   }
-  if (topScore >= 0.82) {
+  if (topScore >= COVER_EVIDENCE_NEAR_DUPLICATE_THRESHOLD) {
     return { status: "near_duplicate", duplicateRefs };
   }
   return { status: "unique", duplicateRefs };
