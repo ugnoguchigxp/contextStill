@@ -239,11 +239,11 @@ function EvaluationRadarChart({
   specificity: number;
 }) {
   const data = [
-    { subject: "目的適合性", value: relevance },
-    { subject: "実行可能性", value: actionability },
-    { subject: "網羅性", value: coverage },
-    { subject: "ノイズ削減", value: noise },
-    { subject: "具体性", value: specificity },
+    { subject: "目的適合性 (Relevance)", value: relevance },
+    { subject: "実行可能性 (Actionability)", value: actionability },
+    { subject: "網羅性 (Coverage)", value: coverage },
+    { subject: "ノイズ削減 (Noise)", value: noise },
+    { subject: "具体性 (Specificity)", value: specificity },
   ];
 
   return (
@@ -251,37 +251,47 @@ function EvaluationRadarChart({
       className="evaluation-radar-chart-container"
       style={{
         width: "100%",
-        height: "220px",
+        height: "280px",
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
-        margin: "12px 0",
-        padding: "8px",
-        background: "rgba(255, 255, 255, 0.02)",
-        borderRadius: "8px",
-        border: "1px solid rgba(255, 255, 255, 0.05)",
+        margin: "16px 0",
+        padding: "12px",
+        background: "rgba(255, 255, 255, 0.03)",
+        backdropFilter: "blur(8px)",
+        borderRadius: "12px",
+        border: "1px solid rgba(255, 255, 255, 0.08)",
+        boxShadow: "0 4px 20px rgba(0, 0, 0, 0.15)",
       }}
     >
       <ResponsiveContainer width="100%" height="100%">
-        <RadarChart cx="50%" cy="50%" outerRadius="70%" data={data}>
-          <PolarGrid stroke="rgba(255, 255, 255, 0.1)" />
+        <RadarChart
+          cx="50%"
+          cy="50%"
+          outerRadius="62%"
+          data={data}
+          margin={{ top: 10, right: 30, bottom: 10, left: 30 }}
+        >
+          <PolarGrid stroke="rgba(255, 255, 255, 0.15)" gridType="polygon" />
           <PolarAngleAxis
             dataKey="subject"
-            tick={{ fill: "rgba(255, 255, 255, 0.6)", fontSize: 11, fontWeight: 500 }}
+            tick={{ fill: "rgba(255, 255, 255, 0.8)", fontSize: 11, fontWeight: 600 }}
           />
           <PolarRadiusAxis
-            angle={30}
+            angle={90}
             domain={[0, 100]}
-            tick={{ fill: "rgba(255, 255, 255, 0.3)", fontSize: 9 }}
+            ticks={[0, 25, 50, 75, 100]}
+            tick={{ fill: "rgba(255, 255, 255, 0.5)", fontSize: 10, fontWeight: 500 }}
             axisLine={false}
-            tickCount={6}
           />
           <Radar
             name="評価スコア"
             dataKey="value"
             stroke="#a78bfa"
             fill="#a78bfa"
-            fillOpacity={0.25}
+            fillOpacity={0.3}
+            strokeWidth={2}
+            dot={{ r: 4, fill: "#c084fc", stroke: "#ffffff", strokeWidth: 1 }}
           />
         </RadarChart>
       </ResponsiveContainer>
