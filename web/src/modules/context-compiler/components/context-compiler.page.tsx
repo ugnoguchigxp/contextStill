@@ -257,11 +257,10 @@ function EvaluationRadarChart({
         alignItems: "center",
         margin: "16px 0",
         padding: "12px",
-        background: "rgba(255, 255, 255, 0.03)",
-        backdropFilter: "blur(8px)",
+        background: "rgba(0, 0, 0, 0.01)",
         borderRadius: "12px",
-        border: "1px solid rgba(255, 255, 255, 0.08)",
-        boxShadow: "0 4px 20px rgba(0, 0, 0, 0.15)",
+        border: "1px solid rgba(0, 0, 0, 0.06)",
+        boxShadow: "0 4px 16px rgba(0, 0, 0, 0.04)",
       }}
     >
       <ResponsiveContainer width="100%" height="100%">
@@ -272,26 +271,26 @@ function EvaluationRadarChart({
           data={data}
           margin={{ top: 10, right: 30, bottom: 10, left: 30 }}
         >
-          <PolarGrid stroke="rgba(255, 255, 255, 0.15)" gridType="polygon" />
+          <PolarGrid stroke="rgba(0, 0, 0, 0.08)" gridType="polygon" />
           <PolarAngleAxis
             dataKey="subject"
-            tick={{ fill: "rgba(255, 255, 255, 0.8)", fontSize: 11, fontWeight: 600 }}
+            tick={{ fill: "#1f2937", fontSize: 11, fontWeight: 600 }}
           />
           <PolarRadiusAxis
             angle={90}
             domain={[0, 100]}
             ticks={[0, 25, 50, 75, 100]}
-            tick={{ fill: "rgba(255, 255, 255, 0.5)", fontSize: 10, fontWeight: 500 }}
+            tick={{ fill: "#4b5563", fontSize: 10, fontWeight: 500 }}
             axisLine={false}
           />
           <Radar
             name="評価スコア"
             dataKey="value"
-            stroke="#a78bfa"
-            fill="#a78bfa"
-            fillOpacity={0.3}
+            stroke="#7c3aed"
+            fill="#7c3aed"
+            fillOpacity={0.15}
             strokeWidth={2}
-            dot={{ r: 4, fill: "#c084fc", stroke: "#ffffff", strokeWidth: 1 }}
+            dot={{ r: 4, fill: "#a78bfa", stroke: "#ffffff", strokeWidth: 1.5 }}
           />
         </RadarChart>
       </ResponsiveContainer>
