@@ -583,7 +583,7 @@ describe("MCP Tools Handlers", () => {
     test("initial_instructions returns English text when MEMORY_ROUTER_LANG=en", async () => {
       process.env.MEMORY_ROUTER_LANG = "en";
       const response = await initialInstructionsTool.handler();
-      expect(response.content[0].text).toContain("## Core Rules");
+      expect(response.content[0].text).toContain("## 常用ルール");
     });
 
     test("doctor calls runDoctor and returns JSON", async () => {

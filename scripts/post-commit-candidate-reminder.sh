@@ -99,15 +99,15 @@ Author: $AUTHOR
 Committed: $COMMITTED_AT
 Repository: $REPO_ROOT
 
-## Required action for the coding agent
+## コーディングエージェントに必要なアクション
 
-Review this commit and decide whether it contains durable lessons, rules, or procedures worth preserving.
+このコミットを確認し、将来にわたって再利用可能なレッスン、ルール、または手順（手続き）が含まれているかを判断してください。
 
-If durable knowledge exists, call the memory-router MCP tool \`register_candidate\` for each reusable candidate. Do not stop at summarizing the commit.
+再利用可能な知見が存在する場合は、対象の候補ごとに memory-router の MCP ツール \`register_candidate\` を呼び出して登録してください。コミット内容の要約だけで終わらせないでください。
 
-Do not register one-off task notes, unverified guesses, file-specific trivia, or generic best practices that are not grounded in this commit.
+一回限りのタスクメモ、未検証の仮説、ファイル固有のトリビア、またはこのコミットに裏付けられていない一般的なベストプラクティスは登録しないでください。
 
-Prefer a \`procedure\` candidate when the lesson is operational. Use this body shape:
+レッスンが運用手順である場合は、\`procedure\` タイプの候補を優先し、以下の構成で記述してください：
 
 \`\`\`md
 Use when:
@@ -130,27 +130,27 @@ Avoid:
 - ...
 
 Evidence:
-- Commit $SHORT_SHA
+- コミット $SHORT_SHA
 - ...
 \`\`\`
 
-If no reusable lesson exists, report that no candidate should be registered.
+再利用可能なレッスンが存在しない場合は、登録すべき候補がない旨を報告してください。
 
-After completing coding work that relied on \`context_compile\`, call MCP tool \`compile_eval\` and persist:
-- 5 detailed metrics: \`relevance\`, \`actionability\`, \`coverage\`, \`noise\`, \`specificity\` (all 0-100)
-- \`outcome\` (\`useful\` / \`partial\` / \`misleading\` / \`unused\`)
-- concise rationale in \`body\`
-- when multiple \`context_compile\` runs exist in the same session, reference Vibe Note \`compile_result\` entries and evaluate every run (pass \`runId\` explicitly)
-- ask the user first: "Fill compile_eval now?" (Yes/No). If Yes, execute immediately.
-- before final completion report, self-report:
-  - count of \`context_compile\` runs in this task
-  - count of \`compile_eval\` calls in this task
-  - if counts are insufficient, run missing \`compile_eval\` calls first, then report completion
+【重要】\`context_compile\` を利用したコーディング作業が完了した後は、必ず MCP ツール \`compile_eval\` を実行し、以下を保存してください：
+- 5つの詳細評価指標: \`relevance\`, \`actionability\`, \`coverage\`, \`noise\`, \`specificity\` (すべて 0〜100 の数値)
+- 評価結果 (\`useful\` / \`partial\` / \`misleading\` / \`unused\`)
+- 評価コメントである \`body\` (※極力、日本語を用いて具体的かつ詳細に記述することが強く推奨されます)
+- 同一セッション内に複数の \`context_compile\` 実行がある場合は、Vibe Note の \`compile_result\` エントリを参照し、すべての runId に対して個別に評価を保存してください（\`runId\` を明示的に渡してください）
+- 完了前に、まずユーザーへ確認してください: 「今から compile_eval を入力しますか？ (Yes/No)」 Yes なら直ちに実行します。
+- 完了報告の前に、以下の件数を自己申告してください：
+  - このタスクでの \`context_compile\` の実行回数
+  - このタスクでの \`compile_eval\` の実行回数
+  - 評価回数が不足している場合は、先に不足分の \`compile_eval\` を追加実行してから完了報告を行ってください
 
-Before registration, prepare candidate selection for \`register_candidate\`:
-- include only reusable procedures/rules
-- exclude project-specific facts, names, paths, and one-off incident details
-- leave candidates ready so next round can register quickly
+候補登録の前に、\`register_candidate\` のための選出準備を行ってください：
+- 再利用可能な手順やルールのみを含めること
+- プロジェクト固有の事実、個人名、パス名、一回限りのインシデント詳細は除外すること
+- 次のラウンドで迅速に登録できるよう、候補を整えておくこと
 
 ## Useful evidence commands
 

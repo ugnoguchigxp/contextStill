@@ -251,12 +251,12 @@ function EvaluationRadarChart({
       className="evaluation-radar-chart-container"
       style={{
         width: "100%",
-        height: "280px",
+        height: "240px",
         display: "flex",
         justifyContent: "center",
         alignItems: "center",
-        margin: "16px 0",
-        padding: "12px",
+        margin: "8px 0",
+        padding: "8px",
         background: "rgba(0, 0, 0, 0.01)",
         borderRadius: "12px",
         border: "1px solid rgba(0, 0, 0, 0.06)",
@@ -267,7 +267,7 @@ function EvaluationRadarChart({
         <RadarChart
           cx="50%"
           cy="50%"
-          outerRadius="62%"
+          outerRadius="60%"
           data={data}
           margin={{ top: 10, right: 30, bottom: 10, left: 30 }}
         >
@@ -434,27 +434,46 @@ function RunDetailPane({
                 ].every((val) => val !== null && val !== undefined);
 
                 return (
-                  <article key={evaluation.id} className="compile-pack-item">
-                    <div className="compile-pack-item-header">
+                  <article key={evaluation.id} className="compile-pack-item" style={{ padding: "16px" }}>
+                    <div className="compile-pack-item-header" style={{ marginBottom: "12px" }}>
                       <strong>{evaluation.title ?? "Untitled evaluation"}</strong>
                       <Badge variant="secondary">
                         Avg: {evaluation.avg} / {evalOutcomeLabel(evaluation.outcome)}
                       </Badge>
                     </div>
-                    <p>{evaluation.body}</p>
-                    {hasDetails && (
-                      <EvaluationRadarChart
-                        relevance={evaluation.relevance!}
-                        actionability={evaluation.actionability!}
-                        coverage={evaluation.coverage!}
-                        noise={evaluation.noise!}
-                        specificity={evaluation.specificity!}
-                      />
+
+                    {hasDetails ? (
+                      <div className="compile-eval-layout" style={{ display: "grid", gridTemplateColumns: "1.1fr 1.2fr", gap: "24px", alignItems: "center" }}>
+                        <div className="compile-eval-left">
+                          <EvaluationRadarChart
+                            relevance={evaluation.relevance!}
+                            actionability={evaluation.actionability!}
+                            coverage={evaluation.coverage!}
+                            noise={evaluation.noise!}
+                            specificity={evaluation.specificity!}
+                          />
+                        </div>
+                        <div className="compile-eval-right" style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", height: "100%", minHeight: "220px", padding: "8px 0" }}>
+                          <p style={{ fontSize: "14px", lineHeight: "1.6", color: "#374151", whiteSpace: "pre-wrap", flexGrow: 1, margin: 0 }}>
+                            {evaluation.body}
+                          </p>
+                          <div className="compile-pack-item-meta" style={{ marginTop: "16px", paddingTop: "12px", borderTop: "1px solid rgba(0, 0, 0, 0.05)" }}>
+                            <span>source: {evaluation.source}</span>
+                            <span>{tzFormatDate(evaluation.createdAt, tz)}</span>
+                          </div>
+                        </div>
+                      </div>
+                    ) : (
+                      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                        <p style={{ fontSize: "14px", lineHeight: "1.6", color: "#374151", whiteSpace: "pre-wrap" }}>
+                          {evaluation.body}
+                        </p>
+                        <div className="compile-pack-item-meta">
+                          <span>source: {evaluation.source}</span>
+                          <span>{tzFormatDate(evaluation.createdAt, tz)}</span>
+                        </div>
+                      </div>
                     )}
-                    <div className="compile-pack-item-meta">
-                      <span>source: {evaluation.source}</span>
-                      <span>{tzFormatDate(evaluation.createdAt, tz)}</span>
-                    </div>
                   </article>
                 );
               })}
