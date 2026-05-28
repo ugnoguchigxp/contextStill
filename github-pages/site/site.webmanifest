@@ -1,0 +1,22 @@
+---
+layout: null
+permalink: /site.webmanifest
+---
+{
+  "name": "memoryRouter",
+  "short_name": "memoryRouter",
+  "description": "Evidence-backed adaptive knowledge compiler for coding agents.",
+  "lang": "{{ site.lang | default: 'ja' }}",
+  "start_url": "{{ '/' | relative_url }}",
+  "scope": "{{ '/' | relative_url }}",
+  "display": "standalone",
+  "background_color": "#f3f1eb",
+  "theme_color": "#0f8078",
+  "icons": [
+    {
+      "src": "{{ '/assets/img/favicon.svg' | relative_url }}",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

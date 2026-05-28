@@ -9,6 +9,16 @@ type OpenAiToolCall = {
   function?: { name?: unknown; arguments?: unknown };
 };
 
+type ToolCallLikeObject = {
+  id?: unknown;
+  type?: unknown;
+  name?: unknown;
+  arguments?: unknown;
+  function?: { name?: unknown; arguments?: unknown } | null;
+  tool_calls?: unknown;
+  toolCalls?: unknown;
+};
+
 export function abortError(): Error {
   const error = new Error("distillation request aborted");
   error.name = "AbortError";
@@ -97,6 +107,63 @@ export function parseToolCalls(value: unknown): DistillationToolCall[] {
   });
 }
 
+function normalizeToolCallLike(
+  value: unknown,
+  index: number,
+  options: { requireArguments: boolean },
+): DistillationToolCall | null {
+  if (!value || typeof value !== "object") return null;
+  const call = value as ToolCallLikeObject;
+  const functionShape =
+    call.function && typeof call.function === "object"
+      ? call.function
+      : {
+          name: call.name,
+          arguments: call.arguments,
+        };
+  const name = functionShape.name;
+  if (typeof name !== "string" || !name.trim()) return null;
+  if (options.requireArguments && functionShape.arguments === undefined) return null;
+
+  const rawArguments = functionShape.arguments;
+  const argumentsText =
+    typeof rawArguments === "string"
+      ? rawArguments
+      : rawArguments === undefined
+        ? "{}"
+        : JSON.stringify(rawArguments);
+
+  return {
+    id: typeof call.id === "string" && call.id.trim() ? call.id : `tool-call-content-${index + 1}`,
+    type: call.type === "function" ? "function" : undefined,
+    function: {
+      name,
+      arguments: argumentsText,
+    },
+  };
+}
+
+function parseToolCallsFromContent(rawContent: unknown): DistillationToolCall[] {
+  if (typeof rawContent !== "string" || !rawContent.trim()) return [];
+  const parsed = parseLlmJsonLike(rawContent)?.value;
+  if (!parsed) return [];
+
+  if (Array.isArray(parsed)) {
+    return parsed.flatMap((entry, index) => {
+      const normalized = normalizeToolCallLike(entry, index, { requireArguments: true });
+      return normalized ? [normalized] : [];
+    });
+  }
+
+  if (!parsed || typeof parsed !== "object") return [];
+  const objectValue = parsed as ToolCallLikeObject;
+  const nestedCalls = parseToolCalls(objectValue.tool_calls ?? objectValue.toolCalls);
+  if (nestedCalls.length > 0) return nestedCalls;
+
+  const single = normalizeToolCallLike(objectValue, 0, { requireArguments: true });
+  return single ? [single] : [];
+}
+
 /** @internal */
 export function parseOpenAiStyleResponse(payload: unknown): DistillationChatResponse {
   const parsed = payload as {
@@ -121,9 +188,15 @@ export function parseOpenAiStyleResponse(payload: unknown): DistillationChatResp
     totalTokens: parsed.usage?.total_tokens,
     reasoningTokens: parsed.usage?.completion_tokens_details?.reasoning_tokens,
   });
+  const explicitToolCalls = parseToolCalls(choice?.message?.tool_calls);
+  const recoveredToolCalls =
+    explicitToolCalls.length > 0 ? [] : parseToolCallsFromContent(rawContent);
+  const toolCalls = explicitToolCalls.length > 0 ? explicitToolCalls : recoveredToolCalls;
+  const normalizedContent =
+    recoveredToolCalls.length > 0 ? null : typeof rawContent === "string" ? rawContent : null;
   return {
-    content: typeof rawContent === "string" ? rawContent : null,
-    toolCalls: parseToolCalls(choice?.message?.tool_calls),
+    content: normalizedContent,
+    toolCalls,
     finishReason: typeof choice?.finish_reason === "string" ? choice.finish_reason : undefined,
     usage,
   };

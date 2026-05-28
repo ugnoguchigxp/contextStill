@@ -392,6 +392,49 @@ describe("Distillation Runtime Service", () => {
     expect(result.messages.find((m) => m.role === "assistant")?.tool_calls).toHaveLength(3);
   });
 
+  test("callLocalLlmChat recovers content-embedded tool call JSON", async () => {
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            choices: [
+              {
+                message: {
+                  content: '{"name":"tool_from_content","arguments":{"x":1}}',
+                  tool_calls: [],
+                },
+              },
+            ],
+          }),
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: () =>
+          Promise.resolve({
+            choices: [{ message: { content: '{"candidates":[]}', tool_calls: [] } }],
+          }),
+      });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const { callLocalLlmCompletionForDistillation } = await import(
+      "../src/modules/distillation/distillation-runtime.service.js"
+    );
+    const result = await callLocalLlmCompletionForDistillation({
+      model: "m1",
+      messages: [],
+      maxTokens: 50,
+    });
+
+    expect(result.content).toBe('{"candidates":[]}');
+    const assistantWithToolCall = result.messages.find(
+      (message) => message.role === "assistant" && Array.isArray(message.tool_calls),
+    );
+    expect(assistantWithToolCall?.tool_calls).toHaveLength(1);
+    expect(assistantWithToolCall?.tool_calls?.[0]?.function.name).toBe("tool_from_content");
+  });
+
   test("resolveDistillationModel uses selected provider model", () => {
     groupedConfig.distillation.provider = "azure-openai";
     groupedConfig.azureOpenAi.apiKey = "key";

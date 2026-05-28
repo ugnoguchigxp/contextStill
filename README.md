@@ -1,6 +1,6 @@
 <p align="center">
   <strong>memory-router</strong><br/>
-  <em>Local-first Context Compiler for AI Coding Agents</em>
+  <em>Local-first Adaptive Knowledge Compiler for Coding Agents</em>
 </p>
 
 <p align="center">
@@ -25,73 +25,74 @@
 
 ## What is memory-router?
 
-**memory-router** is a local-first knowledge engine for AI coding agents. It distills coding sessions, wikis, and documentation into reusable **rules** and **procedures**, compiles the right context for each task, and provides an admin control plane for reviewing candidates, graph health, landscape risks, and distillation queues.
+**memory-router** is a local-first adaptive knowledge compiler for coding agents.
+
+It turns working evidence (wiki/docs, website URLs, agent logs, and candidate knowledge proposed by agents) into reusable `rule` / `procedure` knowledge, compiles task-specific context packs under token budgets, and improves future selection quality through compile evaluations and usage feedback.
+
+It is not a "document chunks -> prompt stuffing" system. It is an evidence-backed **distill -> compile -> evaluate -> evolve** loop for real coding workflows.
 
 ```
-┌─────────────┐   ┌──────────────┐   ┌──────────────────┐
-│  Wiki / Docs │   │ Agent Logs   │   │  Manual Rules    │
-│  (Markdown)  │   │ (Codex,      │   │  (register_      │
-│              │   │  Antigravity)│   │   candidate)     │
-└──────┬───────┘   └──────┬───────┘   └────────┬─────────┘
-       │                  │                    │
-       ▼                  ▼                    │
-   import:wiki     sync:agent-logs             │
-       │                  │                    │
-       ▼                  ▼                    │
-┌──────────────────────────────┐               │
-│  Distillation (Local LLM)    │               │
-│  ┌────────┐ ┌─────────────┐  │               │
-│  │ Value  │ │ Tool Loop   │  │               │
-│  │ Gate   │ │ search_web  │  │               │
-│  │ >50    │ │ fetch docs  │  │               │
-│  └────────┘ └─────────────┘  │               │
-└──────────────┬───────────────┘               │
-               │                               │
-               ▼                               ▼
-        ┌──────────────────────────────────────────┐
-        │         knowledge_items                   │
-        │   type: rule | procedure                  │
-        │   status: draft → active → deprecated     │
-        │   scope: repo | global                    │
-        │   + passage embedding (pgvector)          │
-        └───────────────┬──────────────┬───────────┘
-                        │              │
-                        ▼              ▼
-          ┌─────────────────────┐  ┌───────────────────────┐
-          │  context_compile    │  │ Knowledge Landscape    │
-          │  Token budget split │  │ graph / replay / queue │
-          │  rules/procedures   │  │ approval-gated fixes   │
-          └─────────┬───────────┘  └───────────┬───────────┘
-                    │                          │
-                    ▼                          ▼
-          ┌─────────────────────┐   ┌──────────────────────┐
-          │  Context Pack       │   │ Admin Control Plane   │
-          │  (Markdown output)  │   │ candidates / queue    │
-          │  → Agent prompt     │   │ doctor / settings     │
-          └─────────────────────┘   └──────────────────────┘
+┌──────────────┐  ┌────────────┐  ┌─────────────────────┐  ┌─────────────────────────┐
+│ Wiki / Docs  │  │ Web URLs   │  │ Agent Logs          │  │ Candidate Registration  │
+│ (Markdown)   │  │ (web_ingest│  │ (Codex /            │  │ (register_candidate,    │
+│              │  │  queue)    │  │  Antigravity/Claude)│  │  post-commit prompt)    │
+└──────┬───────┘  └─────┬──────┘  └──────────┬──────────┘  └───────────┬─────────────┘
+       │                │                     │                         │
+       └────────────────┴─────────────────────┴─────────────────────────┘
+                                   ▼
+                     ┌──────────────────────────────┐
+                     │ Distillation + Evidence Loop │
+                     │ search_web / fetch_content   │
+                     │ dedupe / quality gates       │
+                     └──────────────┬───────────────┘
+                                    ▼
+                  ┌────────────────────────────────────────┐
+                  │ knowledge_items + knowledge_source_links│
+                  │ type: rule|procedure                   │
+                  │ status: draft -> active -> deprecated  │
+                  │ score: dynamic_score + decay-aware rank│
+                  └───────────────┬────────────────────────┘
+                                  ▼
+                        ┌─────────────────────┐
+                        │ context_compile     │
+                        │ tag-aware ranking   │
+                        │ token budget split  │
+                        └─────────┬───────────┘
+                                  ▼
+                        ┌─────────────────────┐
+                        │ Context Pack        │
+                        │ + run diagnostics   │
+                        └─────────┬───────────┘
+                                  ▼
+           ┌───────────────────────────────────────────────────────┐
+           │ compile_eval + knowledge_usage_events + new candidates│
+           │ => utility feedback + knowledge lifecycle evolution   │
+           └───────────────────────────────────────────────────────┘
 ```
 
 ### Key Differentiators
 
 | Feature | memory-router | Naive RAG | CLAUDE.md / Cursor Rules |
 |---|---|---|---|
-| Knowledge distillation | ✅ LLM + score gate | ❌ Raw search | ❌ Manual |
-| Evidence / instruction separation | ✅ Full | ❌ Mixed | ❌ Instruction only |
-| External evidence verification | ✅ Tool loop | ❌ | ❌ |
-| Repo-scoped knowledge | ✅ DB-level | △ Namespace | ❌ Global only |
-| Compile quality tracking | ✅ Degraded reasons + run history | ❌ | ❌ |
-| Knowledge lifecycle | ✅ draft/active/deprecated | ❌ | ❌ |
+| Knowledge distillation | ✅ Staged pipeline (`finding -> covering -> premium -> finalize`) | ❌ Raw search | ❌ Manual |
+| Knowledge model | ✅ `rule` / `procedure` split + skill-like procedure checks | ❌ Chunk-centric | ❌ Flat instruction text |
+| Evidence traceability | ✅ `knowledge_source_links` + source refs + tool events | ❌ Weak | ❌ Usually none |
+| Upstream variety | ✅ Wiki + web ingest + agent logs + candidate queue | △ Mostly docs | ❌ Manual only |
+| Compile quality tracking | ✅ Run history + `compile_eval` (`score`, `outcome`) | ❌ | ❌ |
+| Utility feedback signals | ✅ `knowledge_usage_events` (`used/not_used/off_topic/wrong`) | ❌ | ❌ |
+| Lifecycle and decay | ✅ `draft/active/deprecated` + `dynamic_score` + decay penalties | ❌ | ❌ |
+| Tag-aware retrieval | ✅ technologies/changeTypes/domains/general + repo scope | △ Prompt hacks | ❌ |
 | Landscape diagnostics | ✅ Graph, replay, attractor/dead-zone, action queue | ❌ | ❌ |
-| Candidate approval workflow | ✅ Review item → candidate draft → manual approval gate | ❌ | ❌ |
+| Candidate approval workflow | ✅ Review item -> candidate draft -> manual approval gate | ❌ | ❌ |
 | MCP standard | ✅ Official SDK | ❌ | ❌ |
 
 ### Project Status
 
-memory-router is an active local-first project for personal and team coding-agent workflows. It is usable as a local MCP server, REST API, and admin UI, but it is not a hosted multi-tenant SaaS product. Expect to run your own PostgreSQL/pgvector database and review distilled `draft` knowledge before promoting it to `active`.
+memory-router is an active local-first project for personal and team coding-agent workflows. It runs as a local MCP server, REST API, and admin UI. It is not a hosted multi-tenant SaaS product.
 
-The current checkout includes the full staged distillation flow, knowledge graph exploration, Knowledge Landscape replay diagnostics, persisted landscape review items, candidate-draft generation from review items, a Queue control plane, candidate warning badges, and manual approval enforcement for landscape-origin candidates.
+The current checkout includes staged distillation, web URL ingestion queueing, Codex/Antigravity/Claude log sync, context compile run diagnostics, compile evaluation storage, knowledge usage signals, knowledge graph + landscape replay diagnostics, persisted review items, candidate-draft generation, queue control plane, and manual approval enforcement for landscape-origin candidates.
 
-The project favors auditability over invisible automation: compile runs, selected knowledge, source links, distillation targets, candidate rows, evidence checks, landscape review items, approval links, runtime settings, LLM usage logs, and health diagnostics are stored so you can inspect why a context pack was produced and why a candidate was or was not finalized.
+The project favors auditability over invisible automation: compile runs, selected knowledge, source links, distillation targets, candidate rows, evidence checks, usage/eval signals, landscape review items, approval links, runtime settings, LLM usage logs, and health diagnostics are stored so you can inspect why a context pack was produced and why a candidate was or was not finalized.
 
 ---
 
@@ -153,9 +154,11 @@ Ingest raw evidence from multiple sources:
 # Import Markdown documentation
 bun run import:wiki ./wiki/pages
 
-# Sync agent conversation logs (Codex / Antigravity)
+# Sync agent conversation logs (Codex / Antigravity / Claude)
 bun run sync:agent-logs
 ```
+
+You can also queue website URLs from the admin UI or API (`POST /api/sources/web`, `/api/sources/web/bulk`, `/api/sources/web/upload`). These are processed as `web_ingest` targets and converted into wiki-backed source pages for downstream distillation.
 
 ### Stage 2: Distill
 
@@ -172,7 +175,7 @@ bun run queue:finalize:once
 ```
 
 The staged distillation pipeline:
-1. Selects a target from wiki files, agent memories, or landscape-generated knowledge candidates.
+1. Selects a target from wiki files, agent memories, web-ingest targets, or knowledge candidates.
 2. Extracts minimal `find_candidate_results` rows.
 3. Checks source support, duplicate/near-duplicate matches, and external claims in `cover_evidence_results`.
 4. Uses `search_web` to find source URLs and `fetch_content` to ground external claims. Search and fetched content are cached in `distillation_evidence_cache`.
@@ -195,9 +198,28 @@ bun run compile --goal "fix the authentication middleware" \
 The compiler:
 1. Resolves retrieval mode from `changeTypes` and goal keywords
 2. Searches knowledge (hybrid: full-text + vector) scoped to the repository
-3. Ranks by weighted score (importance, confidence, source evidence)
+3. Ranks by weighted score (importance, confidence, dynamic score, source evidence, applicability), with decay/deprecated/stale penalties
 4. Allocates token budget across sections (rules → procedures → sources)
 5. Returns a structured Markdown context pack with diagnostics
+
+### Operational Feedback Loop
+
+After compile, memory-router records and uses multiple feedback channels:
+
+1. `context_pack_items` records what was selected for a run.
+2. `knowledge_usage_events` records per-knowledge usage signals (`used`, `not_used`, `off_topic`, `wrong`).
+3. `compile_eval` stores run-level usefulness (`score: 0-100`, `outcome`, rationale `body`) in `context_compile_evals`.
+4. `register_candidate` / `register_candidates` stores new reusable lessons as `knowledge_candidate` targets for distillation.
+
+Optional pre/post-commit reminder hooks can be installed to make this loop explicit in day-to-day coding:
+
+```bash
+./scripts/setup-candidate-registration-hook.sh install
+```
+
+With hooks installed:
+- pre-commit reminder asks for `compile_eval` when `context_compile` was used.
+- post-commit reminder writes a prompt to review the commit and register durable candidates.
 
 ---
 
@@ -288,8 +310,10 @@ Add to your MCP client configuration:
 |---|---|---|
 | `initial_instructions` | Operating guidance for the agent | Call once at session start |
 | `context_compile` | Generate context pack for current task | **Primary tool** — call before every task |
+| `compile_eval` | Record post-task context usefulness (`score`, `outcome`, rationale) | After the task, per compile run |
 | `search_knowledge` | Raw knowledge candidate inspection | When `context_compile` results need investigation |
 | `register_candidate` | Register a lightweight rule/procedure candidate | When the agent discovers reusable patterns |
+| `register_candidates` | Bulk register multiple candidates | When several reusable lessons were found |
 | `search_memory` | Search past conversations and diffs | When identifying candidate memories by ID |
 | `fetch_memory` | Fetch a specific memory by ID | When inspecting one memory in detail |
 | `doctor` | System health diagnostics | When compile is degraded/failed |
@@ -304,8 +328,9 @@ Deprecated aliases: `memory_search` -> `search_memory`, `memory_fetch` -> `fetch
 3. search_knowledge         → Investigate if needed (supplementary)
 4. search_memory/fetch_memory → Inspect past conversations only when needed
 5. ... do the work ...
-6. register_candidate       → Save reusable discoveries as candidates
-7. doctor                   → Check system health if issues arise
+6. compile_eval             → Save usefulness evaluation for the run
+7. register_candidate(s)    → Save reusable discoveries as candidates
+8. doctor                   → Check system health if issues arise
 ```
 
 For the full MCP tool contract, see [docs/mcp-tools.md](docs/mcp-tools.md).
@@ -320,7 +345,7 @@ For the full MCP tool contract, see [docs/mcp-tools.md](docs/mcp-tools.md).
 | `bun run compile` | Compile a context pack |
 | `bun run import:wiki <path>` | Import Markdown into sources |
 | `bun run import:markdown <file>` | Import a single Markdown file |
-| `bun run sync:agent-logs` | Sync Codex / Antigravity logs |
+| `bun run sync:agent-logs` | Sync Codex / Antigravity / Claude logs |
 | `bun run queue:finding:once` | Run one finding-queue cycle (source/provided candidate intake) |
 | `bun run queue:covering:once` | Run one covering-evidence queue cycle |
 | `bun run queue:premium:once` | Run one premium covering-evidence queue cycle |
@@ -406,6 +431,9 @@ The REST API serves the Web UI and can be used independently.
 | `GET` | `/api/sources/tree` | Wiki source tree |
 | `GET` | `/api/sources/search` | Search source pages |
 | `POST` | `/api/sources/reindex` | Rebuild source fragments |
+| `POST` | `/api/sources/web` | Queue one website URL for web-ingest distillation |
+| `POST` | `/api/sources/web/bulk` | Queue multiple website URLs |
+| `POST` | `/api/sources/web/upload` | Extract URLs from uploaded file and queue them |
 | `GET/POST` | `/api/sources/folders` | List / create folders |
 | `PUT/DELETE` | `/api/sources/folders/*` | Update / delete a folder |
 | `GET/POST` | `/api/sources/pages` | List / create pages |
@@ -454,18 +482,18 @@ memory-router separates **evidence** (raw data) from **instructions** (distilled
 
 | Table | Description |
 |---|---|
-| `sources` | Wiki content root. Human-authored Markdown lives here. |
+| `sources` | Canonical source corpus (`source_kind` currently `wiki`). Human-authored wiki pages and web-research pages land here. |
 | `source_fragments` | Internal search index for wiki pages. Not a user-facing input. |
-| `vibe_memories` | Natural language conversation logs from AI agents. No diff content. |
-| `agent_diff_entries` | Code diffs from conversations. Stores `diff_hunk` and extracted symbols. |
+| `vibe_memories` | Natural language conversation logs from coding agents (Codex/Antigravity/Claude). |
+| `agent_diff_entries` | Code diffs extracted from conversation logs (`diff_hunk` + symbol metadata). |
 
 ### Knowledge layer
 
 | Table | Description |
 |---|---|
-| `knowledge_items` | Distilled rules and procedures. `type: rule \| procedure`, `status: draft \| active \| deprecated`, `scope: repo \| global`. |
+| `knowledge_items` | Distilled rules and procedures. `type: rule \| procedure`, `status: draft \| active \| deprecated`, `scope: repo \| global`, with utility counters and `dynamic_score`. |
 | `knowledge_source_links` | Links knowledge back to its source evidence. |
-| `knowledge_tag_definitions` | Shared applicability tag definitions for technologies, change types, and domains. |
+| `knowledge_tag_definitions` | Shared applicability tag definitions (`technology`, `change_type`, `domain`, `retrieval_mode`). |
 | `knowledge_community_labels` | Persisted human labels for graph communities. |
 
 ### Processing layer
@@ -478,8 +506,9 @@ memory-router separates **evidence** (raw data) from **instructions** (distilled
 | `cover_evidence_results` | Evidence coverage results keyed by `find_candidate_results.id`. |
 | `knowledge_items` metadata indexes | Fast joins from finalized knowledge back to candidate/cover-evidence IDs. |
 | `context_compile_runs` | Compile execution history with diagnostics. |
+| `context_compile_evals` | Run-level compile usefulness evaluations (`score`, `outcome`, rationale). |
 | `context_pack_items` | Items selected for each compile run. |
-| `knowledge_usage_events` | Manual and observed feedback about selected knowledge usefulness. |
+| `knowledge_usage_events` | Per-knowledge usage feedback (`used` / `not_used` / `off_topic` / `wrong`). |
 | `knowledge_review_queue` | Review queue for explicit wrong-knowledge feedback. |
 | `landscape_review_items` | Persisted Knowledge Landscape action items from replay, attractor/dead-zone, semantic comparison, and promotion-gate signals. |
 | `landscape_review_item_candidate_links` | Traceability and approval state between review items, distillation targets, and candidate rows. |
@@ -504,7 +533,7 @@ MEMORY_ROUTER_SOURCE_CONTENT_ROOT=/path/to/your/wiki
 
 ### Agent Log Sync
 
-Continuously ingest conversation logs from Codex and Antigravity:
+Continuously ingest conversation logs from Codex, Antigravity, and Claude:
 
 ```bash
 # One-time sync
@@ -524,6 +553,7 @@ bun run automation:agent-log-sync -- status
 Default log locations:
 - Codex: `~/.codex/sessions` and `~/.codex/archived_sessions`
 - Antigravity: `~/.gemini/antigravity/brain`
+- Claude: `~/.claude/projects`
 - On Windows, fallback roots under `%APPDATA%` / `%LOCALAPPDATA%` are scanned in addition to defaults.
 
 ### Distillation Automation (Conveyor)
@@ -558,6 +588,27 @@ bun run queue:migrate:dry-run
 
 The **Queue** admin page is the primary operational view: status counters, running locks, worker heartbeat age, queue/status filters, and pause/resume/retry controls.
 
+### Candidate Registration Reminder Hooks (Optional)
+
+Install local Git hooks that remind compile evaluation and post-commit candidate extraction:
+
+```bash
+./scripts/setup-candidate-registration-hook.sh install
+```
+
+Common operations:
+
+```bash
+./scripts/setup-candidate-registration-hook.sh status
+./scripts/setup-candidate-registration-hook.sh uninstall
+./scripts/setup-candidate-registration-hook.sh install-global
+./scripts/setup-candidate-registration-hook.sh status-global
+```
+
+Behavior (when installed):
+- pre-commit: reminder to run `compile_eval` for tasks that used `context_compile`.
+- post-commit: writes a candidate-registration prompt (`logs/post-commit-candidate-reminders/latest.md` in this repo, or state directory for other repos).
+
 ### Database Backup
 
 ```bash
@@ -590,7 +641,7 @@ When set to `auto` (default), the daemon is tried first; on failure, the CLI fal
 
 - The primary datastore is your local PostgreSQL/pgvector database.
 - Wiki pages are stored under the local `MEMORY_ROUTER_SOURCE_CONTENT_ROOT` directory.
-- Agent log sync reads local Codex and Antigravity log directories when configured.
+- Agent log sync reads local Codex, Antigravity, and Claude log directories when configured.
 - Distillation can call external search providers (`brave`, `exa`) and external LLM providers (`azure-openai`, `bedrock`) if you configure those providers.
 - Use `MEMORY_ROUTER_DISTILLATION_PROVIDER=local-llm` and omit search API keys for the most local setup.
 - `test:integration` is destructive and must target a dedicated database whose name includes `test`.

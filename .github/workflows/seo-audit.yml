@@ -1,0 +1,66 @@
+name: seo-audit
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - ".github/workflows/seo-audit.yml"
+      - "github-pages/**"
+  schedule:
+    - cron: "0 0 * * 1"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  lighthouse:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - name: Setup Ruby
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: github-pages
+
+      - name: Build preview site
+        working-directory: github-pages
+        run: bundle exec jekyll build --config _config.yml,_config.local.yml
+
+      - name: Run Lighthouse
+        run: |
+          mkdir -p github-pages/reports
+          npx serve github-pages/.preview -l 4499 >/tmp/seo-audit-serve.log 2>&1 &
+          SERVE_PID=$!
+          trap "kill ${SERVE_PID}" EXIT
+          sleep 2
+          npx --yes lighthouse http://127.0.0.1:4499/ \
+            --quiet \
+            --chrome-flags="--headless=new --no-sandbox" \
+            --only-categories=performance,accessibility,best-practices,seo \
+            --output=json \
+            --output-path=github-pages/reports/lighthouse.json
+
+      - name: Enforce score gate
+        run: bun run github-pages/scripts/assert-lighthouse.ts github-pages/reports/lighthouse.json 90 100
+
+      - name: Upload report artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: lighthouse-report
+          path: github-pages/reports/lighthouse.json

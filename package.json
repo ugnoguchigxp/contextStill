@@ -7,7 +7,7 @@
   "bin": {
     "memory-router": "./src/cli/memory-router.ts"
   },
-  "packageManager": "bun@1.3.12",
+  "packageManager": "bun@1.3.14",
   "scripts": {
     "dev": "bun ./node_modules/vite/bin/vite.js",
     "start": "bun run start:mcp",
@@ -15,6 +15,8 @@
     "start:api": "bun run api/index.ts",
     "build:web": "vite build",
     "preview:web": "vite preview",
+    "lp:optimize-image": "bun run github-pages/scripts/optimize-hero-image.ts",
+    "lp:lighthouse": "bash github-pages/scripts/run-lighthouse.sh",
     "compile": "bun run src/cli/compile.ts",
     "init:project": "bun run src/cli/init-project.ts",
     "setup": "bun run src/cli/setup.ts",

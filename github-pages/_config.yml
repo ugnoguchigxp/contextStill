@@ -1,0 +1,27 @@
+title: memoryRouter
+description: Evidence-backed adaptive knowledge compiler for coding agents.
+lang: ja
+url: "https://ugnoguchigxp.github.io"
+baseurl: "/memoryRouter"
+
+source: site
+destination: docs
+
+markdown: kramdown
+permalink: pretty
+
+plugins:
+  - jekyll-seo-tag
+  - jekyll-sitemap
+
+defaults:
+  - scope:
+      path: ""
+    values:
+      layout: default
+
+exclude:
+  - Gemfile
+  - Gemfile.lock
+  - README.md
+  - vendor

@@ -1,0 +1,36 @@
+<!doctype html>
+<html lang="{{ page.lang | default: site.lang | default: 'ja' }}">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    {% seo %}
+    <meta name="robots" content="index,follow,max-snippet:-1,max-image-preview:large,max-video-preview:-1">
+    <meta name="googlebot" content="index,follow,max-snippet:-1,max-image-preview:large,max-video-preview:-1">
+    <meta name="theme-color" content="#0f8078">
+    {% if site.google_verification_token %}
+    <meta name="google-site-verification" content="{{ site.google_verification_token }}">
+    {% endif %}
+    {% if site.bing_verification_token %}
+    <meta name="msvalidate.01" content="{{ site.bing_verification_token }}">
+    {% endif %}
+    <meta name="twitter:image:alt" content="{{ page.twitter_image_alt | default: page.description | default: site.description }}">
+    <meta property="og:image:alt" content="{{ page.og_image_alt | default: page.description | default: site.description }}">
+    <link rel="icon" href="{{ '/assets/img/favicon.svg' | relative_url }}" type="image/svg+xml">
+    <link rel="manifest" href="{{ '/site.webmanifest' | relative_url }}">
+    <link rel="alternate" hreflang="{{ page.lang | default: site.lang | default: 'ja' }}" href="{{ page.url | absolute_url }}">
+    <link rel="alternate" hreflang="x-default" href="{{ page.url | absolute_url }}">
+    {% if page.preload_hero %}
+    <link rel="preload" as="image" href="{{ '/assets/img/knowledge-distillation-hero.webp' | relative_url }}" fetchpriority="high">
+    {% endif %}
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link
+      href="https://fonts.googleapis.com/css2?family=Sora:wght@500;600;700;800&family=JetBrains+Mono:wght@500&display=swap"
+      rel="stylesheet"
+    >
+    <link rel="stylesheet" href="{{ '/assets/css/lp.css' | relative_url }}">
+  </head>
+  <body class="{{ page.body_class | default: '' }}">
+    {{ content }}
+  </body>
+</html>

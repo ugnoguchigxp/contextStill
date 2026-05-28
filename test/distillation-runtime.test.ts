@@ -439,6 +439,54 @@ describe("distillation runtime", () => {
       expect(result.content).toBe("hello");
       expect(result.finishReason).toBe("stop");
     });
+
+    test("parseOpenAiStyleResponse recovers tool call when model returns call JSON in content", () => {
+      const raw = {
+        choices: [
+          {
+            message: {
+              content: '{"name":"search_web","arguments":{"query":"memory router"}}',
+              tool_calls: [],
+            },
+            finish_reason: "stop",
+          },
+        ],
+      };
+
+      const result = parseOpenAiStyleResponse(raw);
+      expect(result.content).toBeNull();
+      expect(result.toolCalls).toHaveLength(1);
+      expect(result.toolCalls[0]).toMatchObject({
+        function: {
+          name: "search_web",
+          arguments: '{"query":"memory router"}',
+        },
+      });
+    });
+
+    test("parseOpenAiStyleResponse prefers explicit tool_calls over content recovery", () => {
+      const raw = {
+        choices: [
+          {
+            message: {
+              content: '{"name":"search_web","arguments":{"query":"ignored"}}',
+              tool_calls: [
+                {
+                  id: "call_1",
+                  type: "function",
+                  function: { name: "fetch_content", arguments: '{"url":"https://example.com"}' },
+                },
+              ],
+            },
+          },
+        ],
+      };
+
+      const result = parseOpenAiStyleResponse(raw);
+      expect(result.content).toBe('{"name":"search_web","arguments":{"query":"ignored"}}');
+      expect(result.toolCalls).toHaveLength(1);
+      expect(result.toolCalls[0]?.function.name).toBe("fetch_content");
+    });
   });
 
   describe("bedrock conversion", () => {
