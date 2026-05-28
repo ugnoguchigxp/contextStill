@@ -1,0 +1,18 @@
+{
+  "name": "memoryRouter",
+  "short_name": "memoryRouter",
+  "description": "Evidence-backed adaptive knowledge compiler for coding agents.",
+  "lang": "ja",
+  "start_url": "/memoryRouter/",
+  "scope": "/memoryRouter/",
+  "display": "standalone",
+  "background_color": "#f3f1eb",
+  "theme_color": "#0f8078",
+  "icons": [
+    {
+      "src": "/memoryRouter/assets/img/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml"
+    }
+  ]
+}

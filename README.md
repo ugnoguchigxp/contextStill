@@ -14,7 +14,7 @@
   <a href="#mcp-integration">MCP Integration</a> ·
   <a href="#cli-reference">CLI</a> ·
   <a href="#api-reference">API</a> ·
-  <a href="docs/mcp-tools.md">MCP Tool Contract</a>
+  <a href="spec/mcp-tools.md">MCP Tool Contract</a>
 </p>
 
 <p align="center">
@@ -333,7 +333,7 @@ Deprecated aliases: `memory_search` -> `search_memory`, `memory_fetch` -> `fetch
 8. doctor                   → Check system health if issues arise
 ```
 
-For the full MCP tool contract, see [docs/mcp-tools.md](docs/mcp-tools.md).
+For the full MCP tool contract, see [spec/mcp-tools.md](spec/mcp-tools.md).
 
 ---
 
@@ -752,7 +752,7 @@ memory-router/
 ├── wiki/                 # Wiki content (independent Git repo)
 ├── drizzle/              # Database migrations
 ├── scripts/              # Automation setup scripts
-└── docs/                 # Architecture and planning documents
+└── spec/                 # Architecture and planning documents
 ```
 
 ---
@@ -761,10 +761,10 @@ memory-router/
 
 | Document | Description |
 |---|---|
-| [MCP Tool Contract](docs/mcp-tools.md) | Full MCP tool input/output specifications |
-| [Project Evaluation](docs/project-evaluation.md) | Evidence-backed project value and current maturity notes |
-| [Knowledge Landscape Concept](docs/knowledge-landscape-concept-design.md) | Concept model for graph/community/knowledge-field views |
-| [OSS Onboarding & Localization Plan](docs/oss-onboarding-and-localization-plan.md) | OSS onboarding flow and README localization rollout plan |
+| [MCP Tool Contract](spec/mcp-tools.md) | Full MCP tool input/output specifications |
+| [Project Evaluation](spec/project-evaluation.md) | Evidence-backed project value and current maturity notes |
+| [Knowledge Landscape Concept](spec/knowledge-landscape-concept-design.md) | Concept model for graph/community/knowledge-field views |
+| [OSS Onboarding & Localization Plan](spec/oss-onboarding-and-localization-plan.md) | OSS onboarding flow and README localization rollout plan |
 
 ---
 

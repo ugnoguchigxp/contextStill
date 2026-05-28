@@ -5,12 +5,12 @@
 > Date: 2026-05-22
 > Last reviewed: 2026-05-24
 > Implementation plans:
-> - `docs/knowledge-landscape-attractor-implementation-plan.md`
-> - `docs/knowledge-landscape-attractor-phase2-replay-basin-plan.md`
-> - `docs/knowledge-landscape-action-queue-implementation-plan.md`
-> - `docs/knowledge-landscape-action-queue-next-phase-implementation-plan.md`
-> - `docs/knowledge-landscape-trajectory-contradiction-implementation-plan.md`
-> - `docs/knowledge-landscape-safe-completion-implementation-plan.md`
+> - `spec/knowledge-landscape-attractor-implementation-plan.md`
+> - `spec/knowledge-landscape-attractor-phase2-replay-basin-plan.md`
+> - `spec/knowledge-landscape-action-queue-implementation-plan.md`
+> - `spec/knowledge-landscape-action-queue-next-phase-implementation-plan.md`
+> - `spec/knowledge-landscape-trajectory-contradiction-implementation-plan.md`
+> - `spec/knowledge-landscape-safe-completion-implementation-plan.md`
 
 ## 0. 実装状況サマリー (2026-05-24)
 

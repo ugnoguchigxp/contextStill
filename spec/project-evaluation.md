@@ -333,7 +333,7 @@ memory-router は、以下の交差点に位置する**唯一のツール**:
 
 ### 4.1 ロードマップの質
 
-`docs/project-value-improvement-roadmap.md` は、10項目の具体的な価値向上施策を優先順位付きで定義:
+`spec/project-value-improvement-roadmap.md` は、10項目の具体的な価値向上施策を優先順位付きで定義:
 
 1. **Context 品質の評価エンジン** — 価値の計測可能化
 2. **Active-use feedback loop** — 自己改善メカニズム

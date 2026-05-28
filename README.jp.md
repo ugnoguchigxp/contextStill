@@ -14,7 +14,7 @@
   <a href="#mcp-連携">MCP 連携</a> ·
   <a href="#cli-リファレンス">CLI</a> ·
   <a href="#api-リファレンス">API</a> ·
-  <a href="docs/mcp-tools.md">MCP Tool Contract</a>
+  <a href="spec/mcp-tools.md">MCP Tool Contract</a>
 </p>
 
 <p align="center">
@@ -317,7 +317,7 @@ MCP クライアントの設定に追加:
 7. doctor                   → 問題発生時にシステム状態を確認
 ```
 
-MCP ツールの完全な入出力仕様は [docs/mcp-tools.md](docs/mcp-tools.md) を参照してください。
+MCP ツールの完全な入出力仕様は [spec/mcp-tools.md](spec/mcp-tools.md) を参照してください。
 
 ---
 
@@ -705,7 +705,7 @@ memory-router/
 ├── wiki/                 # Wiki コンテンツ（独立 Git リポジトリ）
 ├── drizzle/              # データベースマイグレーション
 ├── scripts/              # 自動化セットアップスクリプト
-└── docs/                 # アーキテクチャ・計画ドキュメント
+└── spec/                 # アーキテクチャ・計画ドキュメント
 ```
 
 ---
@@ -714,10 +714,10 @@ memory-router/
 
 | ドキュメント | 説明 |
 |---|---|
-| [MCP Tool Contract](docs/mcp-tools.md) | MCP ツールの完全な入出力仕様 |
-| [Project Evaluation](docs/project-evaluation.md) | エビデンスに基づくプロジェクト価値と現在の成熟度 |
-| [Knowledge Landscape Concept](docs/knowledge-landscape-concept-design.md) | graph/community/knowledge-field view のコンセプト |
-| [OSS Onboarding & Localization Plan](docs/oss-onboarding-and-localization-plan.md) | OSS オンボーディングと README ローカライズ展開計画 |
+| [MCP Tool Contract](spec/mcp-tools.md) | MCP ツールの完全な入出力仕様 |
+| [Project Evaluation](spec/project-evaluation.md) | エビデンスに基づくプロジェクト価値と現在の成熟度 |
+| [Knowledge Landscape Concept](spec/knowledge-landscape-concept-design.md) | graph/community/knowledge-field view のコンセプト |
+| [OSS Onboarding & Localization Plan](spec/oss-onboarding-and-localization-plan.md) | OSS オンボーディングと README ローカライズ展開計画 |
 
 ---
 

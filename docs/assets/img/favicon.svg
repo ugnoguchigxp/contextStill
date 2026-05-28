@@ -1,0 +1,21 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="memoryRouter">
+  <defs>
+    <linearGradient id="g" x1="0%" x2="100%" y1="0%" y2="100%">
+      <stop offset="0%" stop-color="#1f8f86"/>
+      <stop offset="100%" stop-color="#d28a42"/>
+    </linearGradient>
+  </defs>
+  <rect width="64" height="64" rx="14" fill="#122432"/>
+  <circle cx="32" cy="32" r="22" fill="url(#g)"/>
+  <text
+    x="32"
+    y="38"
+    fill="#f5f7f9"
+    font-family="ui-sans-serif, -apple-system, Segoe UI, sans-serif"
+    font-size="18"
+    font-weight="700"
+    text-anchor="middle"
+  >
+    mr
+  </text>
+</svg>

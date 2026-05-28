@@ -354,13 +354,13 @@ backfill 後:
 - 評価は作業後に行う。
 - run id を覚えていなくても、同一 session の最新 compile result から解決できる。
 
-`docs/mcp-tools.md` は MCP surface を更新する。
+`spec/mcp-tools.md` は MCP surface を更新する。
 
 - `compile_eval` を追加
 - `session_memo` の説明から compile 評価責務を削除
 - 推奨フローの実装・検証後に `compile_eval` を追加
 
-`docs/vibe-note-session-memo-design.md` は後続タスクで更新または置換する。今回の計画では、既存設計書を直接修正しない。
+`spec/vibe-note-session-memo-design.md` は後続タスクで更新または置換する。今回の計画では、既存設計書を直接修正しない。
 
 ## 7. 影響ファイル候補
 
@@ -410,8 +410,8 @@ Tests:
 
 Docs:
 
-- `docs/mcp-tools.md`
-- `docs/vibe-note-session-memo-design.md`
+- `spec/mcp-tools.md`
+- `spec/vibe-note-session-memo-design.md`
 
 ## 8. 実装順序
 
@@ -443,7 +443,7 @@ Docs:
 - `context_compile` run detail から evaluations を取得できる。
 - `context_compile` run summary から eval summary を取得できる。
 - `initial_instructions` は `session_memo` に compile 評価を書かせない。
-- `docs/mcp-tools.md` の公開 tool 数と tool contract が実装と一致している。
+- `spec/mcp-tools.md` の公開 tool 数と tool contract が実装と一致している。
 
 ## 10. 検証計画
 
@@ -491,7 +491,7 @@ Operational smoke:
 - `compile_eval` tool の run resolution が session 境界を越えないこと。
 - runId 明示時の API が、存在しない run と session mismatch を区別していること。
 - backfill が idempotent で、同じ legacy memo から重複 eval を作らないこと。
-- MCP exposed tools と `docs/mcp-tools.md` の tool 数が一致していること。
+- MCP exposed tools と `spec/mcp-tools.md` の tool 数が一致していること。
 - `initial_instructions` が agent に古い `session_memo kind="compile_eval"` を指示していないこと。
 
 ## 12. 実装時の注意点
