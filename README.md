@@ -70,6 +70,12 @@ It is not a "document chunks -> prompt stuffing" system. It is an evidence-backe
            └───────────────────────────────────────────────────────┘
 ```
 
+### Admin UI Snapshot
+
+<p align="center">
+  <img src="artifacts/overview.webp" alt="memory-router admin overview dashboard" width="980">
+</p>
+
 ### Key Differentiators
 
 | Feature | memory-router | Naive RAG | CLAUDE.md / Cursor Rules |
@@ -181,6 +187,10 @@ The staged distillation pipeline:
 4. Uses `search_web` to find source URLs and `fetch_content` to ground external claims. Search and fetched content are cached in `distillation_evidence_cache`.
 5. Finalizes `knowledge_ready` candidates into `draft` knowledge when they remain valuable enough (`importance > 50`), can be embedded, and pass any landscape manual-approval gate.
 
+<p align="center">
+  <img src="artifacts/queue.webp" alt="Distillation queue and candidate processing view" width="980">
+</p>
+
 Candidate outcomes are intentionally separated from final knowledge. `rejected` means the cover-evidence stage found a terminal reason such as `duplicate`, `near_duplicate`, `unsupported_by_source`, `not_actionable`, or `external_fetch_evidence_missing`; retryable provider/tool/parse failures are tracked separately.
 
 For `knowledge_candidate` targets created from Landscape review items, finalization is approval-gated. If the candidate link is not `approved`, `finalizeDistille` rejects it with `landscape_manual_approval_required` and marks the link as `review_required` when writing.
@@ -201,6 +211,10 @@ The compiler:
 3. Ranks by weighted score (importance, confidence, dynamic score, source evidence, applicability), with decay/deprecated/stale penalties
 4. Allocates token budget across sections (rules → procedures → sources)
 5. Returns a structured Markdown context pack with diagnostics
+
+<p align="center">
+  <img src="artifacts/compile.webp" alt="Context compile run and diagnostics view" width="980">
+</p>
 
 ### Operational Feedback Loop
 
@@ -237,6 +251,14 @@ Knowledge Landscape turns compile history, feedback, graph communities, and repl
 | Review items | Persisted action items for replay drift, landscape risks, semantic/relation splits, and promotion-gate concerns |
 | Candidate drafts | Deterministic `rule` / `procedure` drafts generated from review items |
 | Approval links | Traceability from review item to distillation target and candidate, with `draft_created -> review_required -> approved/rejected -> finalized` lifecycle |
+
+<p align="center">
+  <img src="artifacts/graph.webp" alt="Knowledge graph and relationship diagnostics view" width="980">
+</p>
+
+<p align="center">
+  <img src="artifacts/knowledge.webp" alt="Knowledge list and quality/lifecycle signals view" width="980">
+</p>
 
 ### CLI workflow
 

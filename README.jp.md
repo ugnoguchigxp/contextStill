@@ -71,6 +71,12 @@
           └─────────────────────┘   └──────────────────────┘
 ```
 
+### 管理 UI スナップショット
+
+<p align="center">
+  <img src="artifacts/overview.webp" alt="memory-router の管理 UI Overview 画面" width="980">
+</p>
+
 ### 既存手法との比較
 
 | 機能 | memory-router | 一般的な RAG | CLAUDE.md / Cursor Rules |
@@ -187,6 +193,10 @@ staged distillation パイプラインの動作:
 4. `search_web` で source URL を探し、外部主張は `fetch_content` 成功結果で根拠付ける。検索結果と fetch 結果は `distillation_evidence_cache` に保存
 5. `knowledge_ready` かつ価値が十分な候補（`importance > 50`）を、embedding 可能かつ landscape manual approval gate を通過した場合に `draft` knowledge として保存
 
+<p align="center">
+  <img src="artifacts/queue.webp" alt="Distillation queue と candidate 処理の画面" width="980">
+</p>
+
 candidate outcome は final knowledge と分離されています。`rejected` は `duplicate`、`near_duplicate`、`unsupported_by_source`、`not_actionable`、`external_fetch_evidence_missing` などの終端理由を表し、provider/tool/parse failure のような再試行可能な失敗は `retryable` として別扱いです。
 
 Landscape review item から作成された `knowledge_candidate` target は approval-gated です。candidate link が `approved` でない場合、`finalizeDistille` は `landscape_manual_approval_required` で拒否し、write 時には link を `review_required` に更新します。
@@ -208,6 +218,10 @@ bun run compile --goal "認証ミドルウェアを修正する" \
 4. トークンバジェットをセクションに配分（rules → procedures → sources）
 5. 診断情報付きの構造化 Markdown コンテキストパックを返却
 
+<p align="center">
+  <img src="artifacts/compile.webp" alt="Context compile の実行結果と診断画面" width="980">
+</p>
+
 ---
 
 ## Knowledge Landscape & Action Queue
@@ -224,6 +238,14 @@ Knowledge Landscape は、compile 履歴、feedback、graph community、replay c
 | Review items | replay drift、landscape risk、semantic/relation split、promotion-gate concern を永続化した action item |
 | Candidate drafts | review item から deterministic に生成される `rule` / `procedure` draft |
 | Approval links | review item、distillation target、candidate row を接続し、`draft_created -> review_required -> approved/rejected -> finalized` を追跡する承認リンク |
+
+<p align="center">
+  <img src="artifacts/graph.webp" alt="Knowledge Graph と関係性診断の画面" width="980">
+</p>
+
+<p align="center">
+  <img src="artifacts/knowledge.webp" alt="Knowledge 一覧と品質・ライフサイクル信号の画面" width="980">
+</p>
 
 ### CLI workflow
 
