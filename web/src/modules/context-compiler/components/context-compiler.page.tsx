@@ -188,14 +188,20 @@ function PackSection({
       ) : (
         <div className="compile-pack-items">
           {items.map((item) => {
-            const sig = signals.find((s) => s.knowledgeId === item.id);
+            const sig = signals.find((s) => s.knowledgeId === item.itemId);
             return (
-              <article key={item.id} className="compile-pack-item">
+              <article key={item.id} className="compile-pack-item" style={{ padding: "16px" }}>
                 <div className="compile-pack-item-header">
                   <strong>{item.title}</strong>
                   <Badge variant="secondary">{item.itemKind}</Badge>
                 </div>
-                <p className="compile-pack-item-content" style={{ whiteSpace: "pre-wrap" }}>{item.content}</p>
+                
+                {/* 常に表示する Knowledge ID */}
+                <p className="compile-pack-item-id" style={{ fontSize: "11px", color: "#6b7280", fontFamily: "monospace", margin: "2px 0 10px 0" }}>
+                  id: {item.itemId}
+                </p>
+
+                <p className="compile-pack-item-content" style={{ whiteSpace: "pre-wrap", fontSize: "14px", lineHeight: "1.6", color: "#374151" }}>{item.content}</p>
                 {sig ? (
                   <div className="compile-pack-item-signal-info" style={{ marginTop: "12px", borderTop: "1px solid rgba(0,0,0,0.05)", paddingTop: "12px" }}>
                     <div className="compile-pack-item-meta" style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", marginBottom: "8px" }}>
@@ -219,10 +225,6 @@ function PackSection({
                         Signal: {sig.effectiveReason}
                       </p>
                     ) : null}
-
-                    <p className="compile-pack-item-id text-xs text-muted-foreground" style={{ margin: "4px 0" }}>
-                      id: {sig.rawId}
-                    </p>
 
                     <div className="compile-feedback-actions" style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
                       <Button

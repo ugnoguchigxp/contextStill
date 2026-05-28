@@ -28,6 +28,7 @@ export type CompileRunSummary = {
 
 export type CompilePackItem = {
   id: string;
+  itemId: string;
   itemKind: string;
   title: string;
   content: string;
