@@ -31,6 +31,7 @@ import type {
   CompileRunKnowledgeFeedbackResult,
   CompileRunKnowledgeFeedbackWriteItem,
   CompileRunKnowledgeVerdict,
+  CompileRunKnowledgeSignal,
   CompileRunSource,
   CompileRunSummary,
 } from "../repositories/context-compiler.repository";
@@ -163,7 +164,19 @@ function SourceRefsList({ refs }: { refs: string[] }) {
   );
 }
 
-function PackSection({ title, items }: { title: string; items: CompilePackItem[] }) {
+function PackSection({
+  title,
+  items,
+  signals,
+  onFeedback,
+  feedbackPending,
+}: {
+  title: string;
+  items: CompilePackItem[];
+  signals: CompileRunKnowledgeSignal[];
+  onFeedback: (knowledgeId: string, verdict: CompileRunKnowledgeVerdict) => Promise<void>;
+  feedbackPending: boolean;
+}) {
   return (
     <section className="compile-pack-section">
       <div className="compile-pack-section-header">
@@ -174,15 +187,86 @@ function PackSection({ title, items }: { title: string; items: CompilePackItem[]
         <p className="compile-state-text">None</p>
       ) : (
         <div className="compile-pack-items">
-          {items.map((item) => (
-            <article key={item.id} className="compile-pack-item">
-              <div className="compile-pack-item-header">
-                <strong>{item.title}</strong>
-                <Badge variant="secondary">{item.itemKind}</Badge>
-              </div>
-              <p>{item.content}</p>
-            </article>
-          ))}
+          {items.map((item) => {
+            const sig = signals.find((s) => s.knowledgeId === item.id);
+            return (
+              <article key={item.id} className="compile-pack-item">
+                <div className="compile-pack-item-header">
+                  <strong>{item.title}</strong>
+                  <Badge variant="secondary">{item.itemKind}</Badge>
+                </div>
+                <p className="compile-pack-item-content" style={{ whiteSpace: "pre-wrap" }}>{item.content}</p>
+                {sig ? (
+                  <div className="compile-pack-item-signal-info" style={{ marginTop: "12px", borderTop: "1px solid rgba(0,0,0,0.05)", paddingTop: "12px" }}>
+                    <div className="compile-pack-item-meta" style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", marginBottom: "8px" }}>
+                      <Badge variant={feedbackVariant(sig.effectiveVerdict)}>
+                        {sig.effectiveVerdict
+                          ? verdictLabel(sig.effectiveVerdict)
+                          : "No signal"}
+                      </Badge>
+                      <span className="text-xs text-muted-foreground">{sig.rankingReason || item.rankingReason}</span>
+                    </div>
+
+                    {sig.hasUserOverride && sig.autoVerdict ? (
+                      <p className="text-xs text-muted-foreground" style={{ margin: "4px 0" }}>
+                        Auto: {verdictLabel(sig.autoVerdict)}
+                        {sig.autoReason ? ` (${sig.autoReason})` : ""}
+                      </p>
+                    ) : null}
+
+                    {sig.effectiveReason ? (
+                      <p className="text-xs text-muted-foreground" style={{ margin: "4px 0" }}>
+                        Signal: {sig.effectiveReason}
+                      </p>
+                    ) : null}
+
+                    <p className="compile-pack-item-id text-xs text-muted-foreground" style={{ margin: "4px 0" }}>
+                      id: {sig.rawId}
+                    </p>
+
+                    <div className="compile-feedback-actions" style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={sig.effectiveVerdict === "used" ? "default" : "outline"}
+                        onClick={() => void onFeedback(sig.knowledgeId, "used")}
+                        disabled={feedbackPending}
+                      >
+                        Used
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={sig.effectiveVerdict === "not_used" ? "default" : "outline"}
+                        onClick={() => void onFeedback(sig.knowledgeId, "not_used")}
+                        disabled={feedbackPending}
+                      >
+                        Not used
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={sig.effectiveVerdict === "off_topic" ? "default" : "outline"}
+                        onClick={() => void onFeedback(sig.knowledgeId, "off_topic")}
+                        disabled={feedbackPending}
+                      >
+                        Off-topic
+                      </Button>
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant={sig.effectiveVerdict === "wrong" ? "default" : "outline"}
+                        onClick={() => void onFeedback(sig.knowledgeId, "wrong")}
+                        disabled={feedbackPending}
+                      >
+                        Wrong
+                      </Button>
+                    </div>
+                  </div>
+                ) : null}
+              </article>
+            );
+          })}
         </div>
       )}
     </section>
@@ -491,91 +575,25 @@ function RunDetailPane({
                 Compiled Output生成時に選ばれた候補を監査目的で表示しています。
               </p>
             </section>
-            <PackSection title="Rules" items={detail.pack.rules} />
-            <PackSection title="Procedures" items={detail.pack.procedures} />
-            {knowledgeSignals.length > 0 ? (
-              <section className="compile-pack-section">
-                <div className="compile-pack-section-header">
-                  <h3>Knowledge Usage Signals</h3>
-                  <Badge variant="outline">{knowledgeSignals.length}</Badge>
-                </div>
-                <p className="compile-state-text">
-                  Auto verdicts are shown here. Save an override only when needed.
-                </p>
-                <div className="compile-pack-items">
-                  {knowledgeSignals.map((item) => (
-                    <article key={item.knowledgeId} className="compile-pack-item">
-                      <div className="compile-pack-item-header">
-                        <strong>{item.title}</strong>
-                        <Badge variant="secondary">{item.itemKind}</Badge>
-                      </div>
-                      <div className="compile-pack-item-meta">
-                        <Badge variant={feedbackVariant(item.effectiveVerdict)}>
-                          {item.effectiveVerdict
-                            ? verdictLabel(item.effectiveVerdict)
-                            : "No signal"}
-                        </Badge>
-                        <span>{item.rankingReason}</span>
-                      </div>
-                      {item.hasUserOverride && item.autoVerdict ? (
-                        <p>
-                          Auto: {verdictLabel(item.autoVerdict)}
-                          {item.autoReason ? ` (${item.autoReason})` : ""}
-                        </p>
-                      ) : null}
-                      {item.effectiveReason ? <p>Signal: {item.effectiveReason}</p> : null}
-                      <p className="compile-pack-item-id">id: {item.rawId}</p>
-                      <div className="compile-feedback-actions">
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={item.effectiveVerdict === "used" ? "default" : "outline"}
-                          onClick={() => void applyKnowledgeFeedback(item.knowledgeId, "used")}
-                          disabled={feedbackPending}
-                        >
-                          Used
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={item.effectiveVerdict === "not_used" ? "default" : "outline"}
-                          onClick={() => void applyKnowledgeFeedback(item.knowledgeId, "not_used")}
-                          disabled={feedbackPending}
-                        >
-                          Not used
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={item.effectiveVerdict === "off_topic" ? "default" : "outline"}
-                          onClick={() => void applyKnowledgeFeedback(item.knowledgeId, "off_topic")}
-                          disabled={feedbackPending}
-                        >
-                          Off-topic
-                        </Button>
-                        <Button
-                          type="button"
-                          size="sm"
-                          variant={item.effectiveVerdict === "wrong" ? "default" : "outline"}
-                          onClick={() => void applyKnowledgeFeedback(item.knowledgeId, "wrong")}
-                          disabled={feedbackPending}
-                        >
-                          Wrong
-                        </Button>
-                      </div>
-                    </article>
-                  ))}
-                </div>
-                {feedbackMessage ? <p className="compile-state-text">{feedbackMessage}</p> : null}
-              </section>
-            ) : (
-              <section className="compile-pack-section">
-                <div className="compile-pack-section-header">
-                  <h3>Knowledge Usage Signals</h3>
-                </div>
-                <p className="compile-state-text">Usage signals were not recorded for this run.</p>
-              </section>
-            )}
+            <PackSection
+              title="Rules"
+              items={detail.pack.rules}
+              signals={knowledgeSignals}
+              onFeedback={applyKnowledgeFeedback}
+              feedbackPending={feedbackPending}
+            />
+            <PackSection
+              title="Procedures"
+              items={detail.pack.procedures}
+              signals={knowledgeSignals}
+              onFeedback={applyKnowledgeFeedback}
+              feedbackPending={feedbackPending}
+            />
+            {feedbackMessage ? (
+              <div style={{ padding: "0 8px 16px" }}>
+                <p className="compile-state-text">{feedbackMessage}</p>
+              </div>
+            ) : null}
             {detail.pack.diagnostics.degradedReasons.length > 0 ? (
               <section className="compile-pack-section">
                 <div className="compile-pack-section-header">
