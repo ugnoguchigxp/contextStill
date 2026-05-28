@@ -11,6 +11,14 @@ import mermaid from "mermaid";
 import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import {
+  ResponsiveContainer,
+  RadarChart,
+  PolarGrid,
+  PolarAngleAxis,
+  PolarRadiusAxis,
+  Radar,
+} from "recharts";
+import {
   useCompilePack,
   useCompileRunDetail,
   useCompileRuns,
@@ -217,6 +225,70 @@ function evalOutcomeLabel(outcome: "useful" | "partial" | "misleading" | "unused
   return "Unused";
 }
 
+function EvaluationRadarChart({
+  relevance,
+  actionability,
+  coverage,
+  noise,
+  specificity,
+}: {
+  relevance: number;
+  actionability: number;
+  coverage: number;
+  noise: number;
+  specificity: number;
+}) {
+  const data = [
+    { subject: "目的適合性", value: relevance },
+    { subject: "実行可能性", value: actionability },
+    { subject: "網羅性", value: coverage },
+    { subject: "ノイズ削減", value: noise },
+    { subject: "具体性", value: specificity },
+  ];
+
+  return (
+    <div
+      className="evaluation-radar-chart-container"
+      style={{
+        width: "100%",
+        height: "220px",
+        display: "flex",
+        justifyContent: "center",
+        alignItems: "center",
+        margin: "12px 0",
+        padding: "8px",
+        background: "rgba(255, 255, 255, 0.02)",
+        borderRadius: "8px",
+        border: "1px solid rgba(255, 255, 255, 0.05)",
+      }}
+    >
+      <ResponsiveContainer width="100%" height="100%">
+        <RadarChart cx="50%" cy="50%" outerRadius="70%" data={data}>
+          <PolarGrid stroke="rgba(255, 255, 255, 0.1)" />
+          <PolarAngleAxis
+            dataKey="subject"
+            tick={{ fill: "rgba(255, 255, 255, 0.6)", fontSize: 11, fontWeight: 500 }}
+          />
+          <PolarRadiusAxis
+            angle={30}
+            domain={[0, 100]}
+            tick={{ fill: "rgba(255, 255, 255, 0.3)", fontSize: 9 }}
+            axisLine={false}
+            tickCount={6}
+          />
+          <Radar
+            name="評価スコア"
+            dataKey="value"
+            stroke="#a78bfa"
+            fill="#a78bfa"
+            fillOpacity={0.25}
+          />
+        </RadarChart>
+      </ResponsiveContainer>
+    </div>
+  );
+}
+
 function RunDetailPane({
   detail,
   isLoading,
@@ -343,21 +415,40 @@ function RunDetailPane({
             <p className="compile-state-text">No compile_eval records for this run.</p>
           ) : (
             <div className="compile-pack-items">
-              {evaluations.map((evaluation) => (
-                <article key={evaluation.id} className="compile-pack-item">
-                  <div className="compile-pack-item-header">
-                    <strong>{evaluation.title ?? "Untitled evaluation"}</strong>
-                    <Badge variant="secondary">
-                      {evaluation.score} / {evalOutcomeLabel(evaluation.outcome)}
-                    </Badge>
-                  </div>
-                  <p>{evaluation.body}</p>
-                  <div className="compile-pack-item-meta">
-                    <span>source: {evaluation.source}</span>
-                    <span>{tzFormatDate(evaluation.createdAt, tz)}</span>
-                  </div>
-                </article>
-              ))}
+              {evaluations.map((evaluation) => {
+                const hasDetails = [
+                  evaluation.relevance,
+                  evaluation.actionability,
+                  evaluation.coverage,
+                  evaluation.noise,
+                  evaluation.specificity,
+                ].every((val) => val !== null && val !== undefined);
+
+                return (
+                  <article key={evaluation.id} className="compile-pack-item">
+                    <div className="compile-pack-item-header">
+                      <strong>{evaluation.title ?? "Untitled evaluation"}</strong>
+                      <Badge variant="secondary">
+                        Avg: {evaluation.avg} / {evalOutcomeLabel(evaluation.outcome)}
+                      </Badge>
+                    </div>
+                    <p>{evaluation.body}</p>
+                    {hasDetails && (
+                      <EvaluationRadarChart
+                        relevance={evaluation.relevance!}
+                        actionability={evaluation.actionability!}
+                        coverage={evaluation.coverage!}
+                        noise={evaluation.noise!}
+                        specificity={evaluation.specificity!}
+                      />
+                    )}
+                    <div className="compile-pack-item-meta">
+                      <span>source: {evaluation.source}</span>
+                      <span>{tzFormatDate(evaluation.createdAt, tz)}</span>
+                    </div>
+                  </article>
+                );
+              })}
             </div>
           )}
         </section>

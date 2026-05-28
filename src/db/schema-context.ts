@@ -74,12 +74,17 @@ export const contextCompileEvals = pgTable(
       .references(() => contextCompileRuns.id, { onDelete: "cascade" })
       .notNull(),
     sessionId: text("session_id"),
-    score: integer("score").notNull(),
+    avg: integer("score").notNull(),
     outcome: text("outcome").notNull(),
     title: text("title"),
     body: text("body").notNull(),
     source: text("source").notNull().default("mcp"),
     metadata: jsonb("metadata").notNull().default({}),
+    relevance: integer("relevance"),
+    actionability: integer("actionability"),
+    coverage: integer("coverage"),
+    noise: integer("noise"),
+    specificity: integer("specificity"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
   },
@@ -97,7 +102,7 @@ export const contextCompileEvals = pgTable(
     ),
     scoreRangeCheck: check(
       "context_compile_evals_score_range_check",
-      sql`${table.score} >= 0 and ${table.score} <= 100`,
+      sql`${table.avg} >= 0 and ${table.avg} <= 100`,
     ),
     outcomeCheck: check(
       "context_compile_evals_outcome_check",
@@ -114,6 +119,26 @@ export const contextCompileEvals = pgTable(
     titleLengthCheck: check(
       "context_compile_evals_title_length_check",
       sql`${table.title} is null or char_length(${table.title}) <= 160`,
+    ),
+    relevanceRangeCheck: check(
+      "context_compile_evals_relevance_range_check",
+      sql`${table.relevance} is null or (${table.relevance} >= 0 and ${table.relevance} <= 100)`,
+    ),
+    actionabilityRangeCheck: check(
+      "context_compile_evals_actionability_range_check",
+      sql`${table.actionability} is null or (${table.actionability} >= 0 and ${table.actionability} <= 100)`,
+    ),
+    coverageRangeCheck: check(
+      "context_compile_evals_coverage_range_check",
+      sql`${table.coverage} is null or (${table.coverage} >= 0 and ${table.coverage} <= 100)`,
+    ),
+    noiseRangeCheck: check(
+      "context_compile_evals_noise_range_check",
+      sql`${table.noise} is null or (${table.noise} >= 0 and ${table.noise} <= 100)`,
+    ),
+    specificityRangeCheck: check(
+      "context_compile_evals_specificity_range_check",
+      sql`${table.specificity} is null or (${table.specificity} >= 0 and ${table.specificity} <= 100)`,
     ),
   }),
 );

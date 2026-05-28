@@ -351,6 +351,13 @@
       "when": 1779830400000,
       "tag": "0049_context_compile_evals",
       "breakpoints": true
+    },
+    {
+      "idx": 50,
+      "version": "7",
+      "when": 1780003470947,
+      "tag": "0050_add_compile_eval_details",
+      "breakpoints": true
     }
   ]
 }

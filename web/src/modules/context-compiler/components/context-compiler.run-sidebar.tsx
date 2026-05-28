@@ -24,9 +24,9 @@ const sourceLabels: Record<CompileRunSource, string> = {
   unknown: "Unknown",
 };
 
-function formatLatestScore(score: number | null | undefined): string {
-  if (typeof score !== "number" || !Number.isFinite(score)) return "-";
-  return String(Math.max(0, Math.min(100, Math.round(score))));
+function formatLatestAvg(avg: number | null | undefined): string {
+  if (typeof avg !== "number" || !Number.isFinite(avg)) return "-";
+  return String(Math.max(0, Math.min(100, Math.round(avg))));
 }
 
 export function formatLatency(value: number): string {
@@ -73,8 +73,8 @@ function RunListItem({
       <div className="compile-run-foot">
         <time>{tzFormatDate(run.createdAt, tz)}</time>
       </div>
-      <span className="compile-run-score" title="Latest compile_eval score">
-        {formatLatestScore(run.evalSummary?.latestScore)}
+      <span className="compile-run-score" title="Latest compile_eval avg score">
+        {formatLatestAvg(run.evalSummary?.latestAvg)}
       </span>
     </button>
   );

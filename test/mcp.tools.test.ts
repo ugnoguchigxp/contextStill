@@ -435,24 +435,29 @@ describe("MCP Tools Handlers", () => {
           id: "550e8400-e29b-41d4-a716-446655440000",
           runId: "550e8400-e29b-41d4-a716-446655440001",
           sessionId: "s-1",
-          score: 82,
+          avg: 82,
           outcome: "useful",
           title: "good",
           body: "helped",
           source: "mcp",
+          relevance: 90,
+          actionability: 80,
+          coverage: 70,
+          noise: 90,
+          specificity: 80,
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
         },
         resolvedFrom: "latest_session_compile_result",
       } as never);
       const response = await compileEvalTool.handler(
-        { score: 82, outcome: "useful", body: "helped" },
+        { relevance: 90, actionability: 80, coverage: 70, noise: 90, specificity: 80, outcome: "useful", body: "helped" },
         { toolName: "compile_eval", requestMeta: { sessionId: "s-1" } },
       );
       const json = JSON.parse(response.content[0].text);
-      expect(json.evaluation.score).toBe(82);
+      expect(json.evaluation.avg).toBe(82);
       expect(recordCompileEval).toHaveBeenCalledWith({
-        input: { score: 82, outcome: "useful", body: "helped" },
+        input: { relevance: 90, actionability: 80, coverage: 70, noise: 90, specificity: 80, outcome: "useful", body: "helped" },
         requestMeta: { sessionId: "s-1" },
         source: "mcp",
       });

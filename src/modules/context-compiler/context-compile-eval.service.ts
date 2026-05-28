@@ -53,14 +53,22 @@ export async function recordCompileEval(params: {
     );
   }
 
+  const { relevance, actionability, coverage, noise, specificity } = params.input;
+  const avg = Math.round((relevance + actionability + coverage + noise + specificity) / 5);
+
   const saved = await insertCompileEval({
     runId,
     sessionId: sessionId ?? compileRun.sessionId ?? null,
-    score: params.input.score,
+    avg,
     outcome: params.input.outcome,
     title: params.input.title,
     body: params.input.body,
     source: params.source ?? "mcp",
+    relevance,
+    actionability,
+    coverage,
+    noise,
+    specificity,
     metadata: {
       sourceTool: "compile_eval",
       resolvedFrom,

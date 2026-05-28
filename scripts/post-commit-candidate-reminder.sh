@@ -137,7 +137,7 @@ Evidence:
 If no reusable lesson exists, report that no candidate should be registered.
 
 After completing coding work that relied on \`context_compile\`, call MCP tool \`compile_eval\` and persist:
-- \`score\` (0-100)
+- 5 detailed metrics: \`relevance\`, \`actionability\`, \`coverage\`, \`noise\`, \`specificity\` (all 0-100)
 - \`outcome\` (\`useful\` / \`partial\` / \`misleading\` / \`unused\`)
 - concise rationale in \`body\`
 - when multiple \`context_compile\` runs exist in the same session, reference Vibe Note \`compile_result\` entries and evaluate every run (pass \`runId\` explicitly)

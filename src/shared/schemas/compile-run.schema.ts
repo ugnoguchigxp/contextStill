@@ -17,16 +17,16 @@ export const compileRunSummarySchema = z.object({
   evalSummary: z
     .object({
       count: z.number().int().nonnegative(),
-      latestScore: z.number().int().min(0).max(100).nullable(),
-      averageScore: z.number().nullable(),
+      latestAvg: z.number().int().min(0).max(100).nullable(),
+      averageAvg: z.number().nullable(),
       latestOutcome: z.enum(["useful", "partial", "misleading", "unused"]).nullable(),
       latestEvaluatedAt: z.string().datetime().nullable(),
     })
     .optional()
     .default({
       count: 0,
-      latestScore: null,
-      averageScore: null,
+      latestAvg: null,
+      averageAvg: null,
       latestOutcome: null,
       latestEvaluatedAt: null,
     }),
@@ -112,11 +112,16 @@ export const compileRunDetailSchema = z.object({
         id: z.string().uuid(),
         runId: z.string().uuid(),
         sessionId: z.string().nullable(),
-        score: z.number().int().min(0).max(100),
+        avg: z.number().int().min(0).max(100),
         outcome: z.enum(["useful", "partial", "misleading", "unused"]),
         title: z.string().nullable(),
         body: z.string(),
         source: z.enum(["mcp", "ui", "system", "import"]),
+        relevance: z.number().int().min(0).max(100).nullable(),
+        actionability: z.number().int().min(0).max(100).nullable(),
+        coverage: z.number().int().min(0).max(100).nullable(),
+        noise: z.number().int().min(0).max(100).nullable(),
+        specificity: z.number().int().min(0).max(100).nullable(),
         createdAt: z.string().datetime(),
         updatedAt: z.string().datetime(),
       }),

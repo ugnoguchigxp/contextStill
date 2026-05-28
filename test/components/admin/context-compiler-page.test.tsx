@@ -33,8 +33,8 @@ function setupHooks() {
         source: "mcp",
         evalSummary: {
           count: 1,
-          latestScore: 88,
-          averageScore: 88,
+          latestAvg: 88,
+          averageAvg: 88,
           latestOutcome: "useful",
           latestEvaluatedAt: "2026-05-27T00:00:00.000Z",
         },
@@ -58,8 +58,8 @@ function setupHooks() {
         source: "mcp",
         evalSummary: {
           count: 1,
-          latestScore: 88,
-          averageScore: 88,
+          latestAvg: 88,
+          averageAvg: 88,
           latestOutcome: "useful",
           latestEvaluatedAt: "2026-05-27T00:00:00.000Z",
         },
@@ -77,11 +77,16 @@ function setupHooks() {
           id: "eval-1",
           runId: "run-1",
           sessionId: "s-1",
-          score: 88,
+          avg: 88,
           outcome: "useful",
           title: "Good context",
           body: "It reduced investigation time.",
           source: "mcp",
+          relevance: 90,
+          actionability: 80,
+          coverage: 70,
+          noise: 90,
+          specificity: 80,
           createdAt: "2026-05-27T00:00:00.000Z",
           updatedAt: "2026-05-27T00:00:00.000Z",
         },
@@ -103,11 +108,11 @@ describe("ContextCompilerPage", () => {
     setupHooks();
     render(<ContextCompilerPage />);
 
-    expect(screen.getByText("score 88 / useful")).toBeInTheDocument();
+    expect(screen.getByTitle("Latest compile_eval avg score")).toHaveTextContent("88");
 
     fireEvent.click(screen.getByRole("button", { name: /run one/i }));
     expect(screen.getByRole("heading", { name: "Compile Eval" })).toBeInTheDocument();
     expect(screen.getByText("Good context")).toBeInTheDocument();
-    expect(screen.getByText("88 / Useful")).toBeInTheDocument();
+    expect(screen.getByText("Avg: 88 / Useful")).toBeInTheDocument();
   });
 });

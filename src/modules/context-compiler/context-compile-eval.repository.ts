@@ -6,19 +6,24 @@ export type CompileEvalRecord = {
   id: string;
   runId: string;
   sessionId: string | null;
-  score: number;
+  avg: number;
   outcome: "useful" | "partial" | "misleading" | "unused";
   title: string | null;
   body: string;
   source: "mcp" | "ui" | "system" | "import";
+  relevance: number | null;
+  actionability: number | null;
+  coverage: number | null;
+  noise: number | null;
+  specificity: number | null;
   createdAt: Date;
   updatedAt: Date;
 };
 
 export type CompileEvalSummary = {
   count: number;
-  latestScore: number | null;
-  averageScore: number | null;
+  latestAvg: number | null;
+  averageAvg: number | null;
   latestOutcome: "useful" | "partial" | "misleading" | "unused" | null;
   latestEvaluatedAt: string | null;
 };
@@ -46,24 +51,34 @@ function asRows<T>(value: unknown): T[] {
 export async function insertCompileEval(params: {
   runId: string;
   sessionId?: string | null;
-  score: number;
+  avg: number;
   outcome: CompileEvalRecord["outcome"];
   title?: string;
   body: string;
   source?: CompileEvalRecord["source"];
   metadata?: Record<string, unknown>;
+  relevance: number;
+  actionability: number;
+  coverage: number;
+  noise: number;
+  specificity: number;
 }): Promise<CompileEvalRecord> {
   const [row] = await db
     .insert(contextCompileEvals)
     .values({
       runId: params.runId,
       sessionId: params.sessionId ?? null,
-      score: params.score,
+      avg: params.avg,
       outcome: params.outcome,
       title: params.title ?? null,
       body: params.body,
       source: params.source ?? "mcp",
       metadata: params.metadata ?? {},
+      relevance: params.relevance,
+      actionability: params.actionability,
+      coverage: params.coverage,
+      noise: params.noise,
+      specificity: params.specificity,
       updatedAt: new Date(),
     })
     .returning();
@@ -71,34 +86,39 @@ export async function insertCompileEval(params: {
     id: row.id,
     runId: row.runId,
     sessionId: row.sessionId,
-    score: row.score,
+    avg: row.avg,
     outcome: normalizeOutcome(row.outcome),
     title: row.title,
     body: row.body,
     source: normalizeSource(row.source),
+    relevance: row.relevance,
+    actionability: row.actionability,
+    coverage: row.coverage,
+    noise: row.noise,
+    specificity: row.specificity,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   };
 }
 
 export async function getCompileEvalSummaryByRunId(runId: string): Promise<CompileEvalSummary> {
-  const aggRows = asRows<{ count: number; averageScore: number | null }>(
+  const aggRows = asRows<{ count: number; averageAvg: number | null }>(
     await db
       .select({
         count: sql<number>`count(*)::int`,
-        averageScore: sql<
+        averageAvg: sql<
           number | null
-        >`round(avg(${contextCompileEvals.score})::numeric, 1)::float8`,
+        >`round(avg(${contextCompileEvals.avg})::numeric, 1)::float8`,
       })
       .from(contextCompileEvals)
       .where(eq(contextCompileEvals.runId, runId)),
   );
   const aggRow = aggRows[0];
 
-  const latestRows = asRows<{ score: number; outcome: string; createdAt: Date }>(
+  const latestRows = asRows<{ avg: number; outcome: string; createdAt: Date }>(
     await db
       .select({
-        score: contextCompileEvals.score,
+        avg: contextCompileEvals.avg,
         outcome: contextCompileEvals.outcome,
         createdAt: contextCompileEvals.createdAt,
       })
@@ -111,8 +131,8 @@ export async function getCompileEvalSummaryByRunId(runId: string): Promise<Compi
 
   return {
     count: aggRow?.count ?? 0,
-    latestScore: latestRow?.score ?? null,
-    averageScore: aggRow?.averageScore ?? null,
+    latestAvg: latestRow?.avg ?? null,
+    averageAvg: aggRow?.averageAvg ?? null,
     latestOutcome:
       latestRow &&
       (latestRow.outcome === "useful" ||
@@ -142,11 +162,16 @@ export async function listCompileEvalsByRunId(runId: string): Promise<CompileEva
     id: row.id,
     runId: row.runId,
     sessionId: row.sessionId,
-    score: row.score,
+    avg: row.avg,
     outcome: normalizeOutcome(row.outcome),
     title: row.title,
     body: row.body,
     source: normalizeSource(row.source),
+    relevance: row.relevance,
+    actionability: row.actionability,
+    coverage: row.coverage,
+    noise: row.noise,
+    specificity: row.specificity,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
   }));

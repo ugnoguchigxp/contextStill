@@ -159,8 +159,8 @@ export type CompileRunSummary = {
   source: CompileRunSource;
   evalSummary: {
     count: number;
-    latestScore: number | null;
-    averageScore: number | null;
+    latestAvg: number | null;
+    averageAvg: number | null;
     latestOutcome: "useful" | "partial" | "misleading" | "unused" | null;
     latestEvaluatedAt: string | null;
   };
@@ -588,11 +588,16 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
       id: row.id,
       runId: row.runId,
       sessionId: row.sessionId,
-      score: row.score,
+      avg: row.avg,
       outcome: row.outcome,
       title: row.title,
       body: row.body,
       source: row.source,
+      relevance: row.relevance,
+      actionability: row.actionability,
+      coverage: row.coverage,
+      noise: row.noise,
+      specificity: row.specificity,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),
     })),

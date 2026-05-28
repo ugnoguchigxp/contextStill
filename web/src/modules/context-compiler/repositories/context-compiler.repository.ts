@@ -18,8 +18,8 @@ export type CompileRunSummary = {
   source: CompileRunSource;
   evalSummary?: {
     count: number;
-    latestScore: number | null;
-    averageScore: number | null;
+    latestAvg: number | null;
+    averageAvg: number | null;
     latestOutcome: "useful" | "partial" | "misleading" | "unused" | null;
     latestEvaluatedAt: string | null;
   };
@@ -114,11 +114,16 @@ export type CompileRunDetail = {
     id: string;
     runId: string;
     sessionId: string | null;
-    score: number;
+    avg: number;
     outcome: "useful" | "partial" | "misleading" | "unused";
     title: string | null;
     body: string;
     source: "mcp" | "ui" | "system" | "import";
+    relevance: number | null;
+    actionability: number | null;
+    coverage: number | null;
+    noise: number | null;
+    specificity: number | null;
     createdAt: string;
     updatedAt: string;
   }>;

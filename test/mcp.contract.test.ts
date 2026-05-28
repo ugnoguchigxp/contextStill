@@ -56,11 +56,11 @@ describeDb("mcp contract", () => {
   test("compile_eval tool input schema contract", () => {
     expect(compileEvalTool.inputSchema).toMatchObject({
       type: "object",
-      required: ["score", "outcome", "body"],
+      required: ["outcome", "body", "relevance", "actionability", "coverage", "noise", "specificity"],
     });
     const properties = (compileEvalTool.inputSchema as { properties?: Record<string, unknown> })
       .properties;
-    expect(properties?.score).toEqual({ type: "integer", minimum: 0, maximum: 100 });
+    expect(properties?.relevance).toEqual({ type: "integer", minimum: 0, maximum: 100, description: "目的に合っていたか (0-100)" });
     expect(properties?.outcome).toEqual({
       type: "string",
       enum: ["useful", "partial", "misleading", "unused"],
@@ -223,20 +223,30 @@ describeDb("mcp contract", () => {
       durationMs: 21,
     });
     const response = await compileEvalTool.handler(
-      { runId, score: 84, outcome: "useful", body: "worked well", title: "good fit" },
+      {
+        runId,
+        relevance: 90,
+        actionability: 80,
+        coverage: 70,
+        noise: 100,
+        specificity: 80,
+        outcome: "useful",
+        body: "worked well",
+        title: "good fit",
+      },
       { toolName: "compile_eval", requestMeta: { sessionId: "contract-session" } },
     );
     const json = JSON.parse(response.content[0]?.text ?? "{}") as {
-      evaluation: { runId: string; score: number; outcome: string };
+      evaluation: { runId: string; avg: number; outcome: string };
     };
     expect(json.evaluation.runId).toBe(runId);
-    expect(json.evaluation.score).toBe(84);
+    expect(json.evaluation.avg).toBe(84);
     expect(json.evaluation.outcome).toBe("useful");
 
     const detail = await getCompileRunDetail(runId);
     expect(detail?.evaluations.length).toBe(1);
-    expect(detail?.evaluations[0]?.score).toBe(84);
+    expect(detail?.evaluations[0]?.avg).toBe(84);
     expect(detail?.run.evalSummary.count).toBe(1);
-    expect(detail?.run.evalSummary.latestScore).toBe(84);
+    expect(detail?.run.evalSummary.latestAvg).toBe(84);
   });
 });

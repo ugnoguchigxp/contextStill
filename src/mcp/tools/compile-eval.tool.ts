@@ -10,12 +10,16 @@ export const compileEvalTool: ToolEntry = {
     type: "object",
     properties: {
       runId: { type: "string", format: "uuid" },
-      score: { type: "integer", minimum: 0, maximum: 100 },
       outcome: { type: "string", enum: ["useful", "partial", "misleading", "unused"] },
       title: { type: "string", maxLength: 160 },
       body: { type: "string", maxLength: 10000 },
+      relevance: { type: "integer", minimum: 0, maximum: 100, description: "目的に合っていたか (0-100)" },
+      actionability: { type: "integer", minimum: 0, maximum: 100, description: "実装・判断に使えたか (0-100)" },
+      coverage: { type: "integer", minimum: 0, maximum: 100, description: "必要情報を網羅していたか (0-100)" },
+      noise: { type: "integer", minimum: 0, maximum: 100, description: "余計な情報が少なかったか (0-100)" },
+      specificity: { type: "integer", minimum: 0, maximum: 100, description: "抽象すぎなかったか (0-100)" },
     },
-    required: ["score", "outcome", "body"],
+    required: ["outcome", "body", "relevance", "actionability", "coverage", "noise", "specificity"],
   },
   handler: async (args, context) => {
     const input = compileEvalInputSchema.parse(args ?? {});
