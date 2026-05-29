@@ -115,4 +115,62 @@ describe("ContextCompilerPage", () => {
     expect(screen.getByText("Good context")).toBeInTheDocument();
     expect(screen.getByText("Avg: 88 / Useful")).toBeInTheDocument();
   });
+
+  it("shows 'Evaluation' when evaluation title is missing", async () => {
+    setupHooks();
+    mockedHooks.useCompileRunDetail.mockReturnValue({
+      data: {
+        run: {
+          id: "run-1",
+          goal: "Run one",
+          retrievalMode: "task_context",
+          status: "ok",
+          degradedReasons: [],
+          durationMs: 123,
+          source: "mcp",
+          evalSummary: {
+            count: 1,
+            latestAvg: 88,
+            averageAvg: 88,
+            latestOutcome: "useful",
+            latestEvaluatedAt: "2026-05-27T00:00:00.000Z",
+          },
+          createdAt: "2026-05-27T00:00:00.000Z",
+          tokenBudget: 2048,
+          input: {},
+        },
+        pack: null,
+        outputMarkdown: "No Content",
+        selectedItems: [],
+        knowledgeFeedback: [],
+        knowledgeSignals: [],
+        evaluations: [
+          {
+            id: "eval-1",
+            runId: "run-1",
+            sessionId: "s-1",
+            avg: 88,
+            outcome: "useful",
+            title: null,
+            body: "It reduced investigation time.",
+            source: "mcp",
+            relevance: 90,
+            actionability: 80,
+            coverage: 70,
+            noise: 90,
+            specificity: 80,
+            createdAt: "2026-05-27T00:00:00.000Z",
+            updatedAt: "2026-05-27T00:00:00.000Z",
+          },
+        ],
+        snapshotAvailable: false,
+      },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof hooks.useCompileRunDetail>);
+
+    render(<ContextCompilerPage />);
+    fireEvent.click(screen.getByRole("button", { name: /run one/i }));
+    expect(screen.getByText("Evaluation")).toBeInTheDocument();
+  });
 });

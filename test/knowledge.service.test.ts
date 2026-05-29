@@ -215,6 +215,71 @@ describe("Knowledge Service", () => {
     expect(repo.searchKnowledge).toHaveBeenCalled();
   });
 
+  test("retrieveKnowledge executes intent and domain query rounds from multi-clause goals", async () => {
+    groupedConfig.compile.enableVectorSearch = false;
+    const goal = "shadcn/ui + tailwindcss でデザインシステムを実装する、詳細の設計書を作る";
+    vi.mocked(repo.searchKnowledge).mockImplementation(async (input) => {
+      if (input.query === "詳細の設計書を作る") {
+        return [{ id: "intent-doc", score: 0.93 }] as any;
+      }
+      if (input.query === "shadcn/ui + tailwindcss でデザインシステムを実装する") {
+        return [{ id: "domain-tech", score: 0.88 }] as any;
+      }
+      return [];
+    });
+
+    const result = await retrieveKnowledge({ goal } as any, { retrievalMode: "learning_context" });
+
+    expect(result.items.map((item) => item.id)).toEqual(["intent-doc", "domain-tech"]);
+    expect(result.stats.roundsExecuted).toBe(2);
+    expect(result.stats.laneCoverage).toEqual(["intent", "domain"]);
+    const searchedQueries = result.stats.searchedQueries ?? [];
+    expect(searchedQueries).toContain("詳細の設計書を作る");
+    expect(searchedQueries).toContain("shadcn/ui + tailwindcss でデザインシステムを実装する");
+  });
+
+  test("NO_ACTIVE_KNOWLEDGE_MATCH is cleared when later rounds find matches", async () => {
+    groupedConfig.compile.enableVectorSearch = false;
+    const goal = "frontend 実装を行う、設計書を作る";
+    vi.mocked(repo.searchKnowledge).mockImplementation(async (input) => {
+      if (input.query === "frontend 実装を行う") {
+        return [{ id: "domain-only", score: 0.9 }] as any;
+      }
+      return [];
+    });
+
+    const result = await retrieveKnowledge({ goal } as any, { retrievalMode: "learning_context" });
+
+    expect(result.items.map((item) => item.id)).toContain("domain-only");
+    expect(result.degradedReasons).not.toContain("NO_ACTIVE_KNOWLEDGE_MATCH");
+  });
+
+  test("retrieveKnowledge keeps at least one item per required lane when ranking is imbalanced", async () => {
+    groupedConfig.compile.enableVectorSearch = false;
+    const goal = "domain 実装を進める、設計書を作る";
+    vi.mocked(repo.searchKnowledge).mockImplementation(async (input) => {
+      if (input.query === "設計書を作る") {
+        return [{ id: "intent-low", score: 0.12 }] as any;
+      }
+      if (input.query === "domain 実装を進める") {
+        return [
+          { id: "domain-1", score: 0.99 },
+          { id: "domain-2", score: 0.98 },
+          { id: "domain-3", score: 0.97 },
+        ] as any;
+      }
+      return [];
+    });
+
+    const result = await retrieveKnowledge({ goal } as any, {
+      retrievalMode: "learning_context",
+      limit: 3,
+    });
+
+    expect(result.items.map((item) => item.id)).toContain("intent-low");
+    expect(result.items).toHaveLength(3);
+  });
+
   afterAll(() => {
     groupedConfig.compile.enableVectorSearch = originalEnableVectorSearch;
   });

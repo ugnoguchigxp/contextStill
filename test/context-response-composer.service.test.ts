@@ -87,6 +87,224 @@ describe("context response composer", () => {
     expect(result.usedKnowledge[0]?.id).toBe("r1");
   });
 
+  test("does not switch to test headings just because goal contains specificity", async () => {
+    const result = await composeContextResponse({
+      input: {
+        goal: "compile_evalとWebUIの評価指標（relevance, actionability, coverage, noise, specificity, avg）の実装計画を作る",
+      },
+      retrievalMode: "task_context",
+      rules: [
+        {
+          id: "knowledge:r1",
+          itemKind: "rule",
+          itemId: "r1",
+          section: "rules",
+          title: "実装計画はスコープを明確化する",
+          content: "実装計画には対象と非対象を明記する。",
+          score: 0.8,
+          rankingReason: "ranked",
+          sourceRefs: [],
+        },
+      ],
+      procedures: [],
+    });
+
+    expect(result.agenticUsed).toBe(false);
+    expect(result.markdown).toContain("## 実装フォーカス");
+    expect(result.markdown).not.toContain("## テスト方針");
+  });
+
+  test("uses SKILL-style output when planner requests skill with enough candidates", async () => {
+    groupedConfig.agenticCompile.enabled = true;
+    mockProvider.chat
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          headings: {
+            focus: "実装フォーカス",
+            steps: "実装手順",
+            verification: "検証観点",
+            avoid: "注意点",
+          },
+          includeAvoidSection: true,
+          ruleQueryHints: ["設計", "手順"],
+          procedureQueryHints: ["Workflow"],
+          exclusionHints: [],
+          responseStyle: "skill",
+          styleReason: "goal requests reusable procedure",
+          styleConfidence: 0.91,
+          candidateSufficiency: "enough",
+        }),
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          markdown:
+            "## Use when\n- 手順化が必要なとき。\n\n## Workflow\n1. 要件を整理する。\n2. 実装順序を固定する。\n\n## Verification\n- 手順が再利用可能であること。\n\n## Avoid\n- 目的外の一般論を混ぜない。",
+          usedKnowledge: [{ id: "p1", confidence: 0.87 }],
+        }),
+      });
+
+    const result = await composeContextResponse({
+      input: {
+        goal: "再利用可能な手順書として実装ガイドを作る",
+      },
+      retrievalMode: "procedure_context",
+      rules: [
+        {
+          id: "knowledge:r1",
+          itemKind: "rule",
+          itemId: "r1",
+          section: "rules",
+          title: "目的を明確化する",
+          content: "手順は目的に紐づける。",
+          score: 0.9,
+          rankingReason: "ranked",
+          sourceRefs: [],
+        },
+      ],
+      procedures: [
+        {
+          id: "knowledge:p1",
+          itemKind: "procedure",
+          itemId: "p1",
+          section: "procedures",
+          title: "手順整備",
+          content: "Workflow:\n1. 手順を定義する。\nVerification:\n- 再利用できる。",
+          score: 0.9,
+          rankingReason: "ranked",
+          sourceRefs: [],
+        },
+      ],
+    });
+
+    expect(result.agenticUsed).toBe(true);
+    expect(result.markdown).toContain("## Use when");
+    expect(result.markdown).toContain("## Workflow");
+    expect(result.markdown).toContain("## Verification");
+    expect(result.markdown).toContain("## Avoid");
+  });
+
+  test("downgrades skill to narrative when planner reports limited candidates", async () => {
+    groupedConfig.agenticCompile.enabled = true;
+    mockProvider.chat
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          headings: {
+            focus: "実装フォーカス",
+            steps: "実装手順",
+            verification: "検証観点",
+            avoid: "注意点",
+          },
+          includeAvoidSection: false,
+          ruleQueryHints: [],
+          procedureQueryHints: [],
+          exclusionHints: [],
+          responseStyle: "skill",
+          styleReason: "goal asks procedure",
+          styleConfidence: 0.95,
+          candidateSufficiency: "limited",
+        }),
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          markdown: "## 実装フォーカス\n- 候補不足のため narrative で返す。",
+          usedKnowledge: [{ id: "r1", confidence: 0.7 }],
+        }),
+      });
+
+    const result = await composeContextResponse({
+      input: {
+        goal: "手順を整理する",
+      },
+      retrievalMode: "task_context",
+      rules: [
+        {
+          id: "knowledge:r1",
+          itemKind: "rule",
+          itemId: "r1",
+          section: "rules",
+          title: "範囲を先に決める",
+          content: "実装範囲を先に決める。",
+          score: 0.8,
+          rankingReason: "ranked",
+          sourceRefs: [],
+        },
+      ],
+      procedures: [],
+    });
+
+    expect(result.agenticUsed).toBe(true);
+    expect(result.markdown).toContain("## 実装フォーカス");
+    const composeRequest = mockProvider.chat.mock.calls[1]?.[0];
+    const composeSystemPrompt = composeRequest?.messages?.[0]?.content ?? "";
+    expect(composeSystemPrompt).not.toContain("## Use when");
+  });
+
+  test("falls back to narrative when skill output misses required sections", async () => {
+    groupedConfig.agenticCompile.enabled = true;
+    mockProvider.chat
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          headings: {
+            focus: "実装フォーカス",
+            steps: "実装手順",
+            verification: "検証観点",
+            avoid: "注意点",
+          },
+          includeAvoidSection: true,
+          ruleQueryHints: [],
+          procedureQueryHints: ["Workflow"],
+          exclusionHints: [],
+          responseStyle: "skill",
+          styleReason: "procedure-ready",
+          styleConfidence: 0.9,
+          candidateSufficiency: "enough",
+        }),
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          markdown: "## Use when\n- 手順が必要。\n\n## Workflow\n1. 実行する。",
+          usedKnowledge: [{ id: "p1", confidence: 0.8 }],
+        }),
+      });
+
+    const result = await composeContextResponse({
+      input: {
+        goal: "運用手順を作る",
+      },
+      retrievalMode: "procedure_context",
+      rules: [
+        {
+          id: "knowledge:r1",
+          itemKind: "rule",
+          itemId: "r1",
+          section: "rules",
+          title: "手順は検証可能にする",
+          content: "Verification を必ず定義する。",
+          score: 0.9,
+          rankingReason: "ranked",
+          sourceRefs: [],
+        },
+      ],
+      procedures: [
+        {
+          id: "knowledge:p1",
+          itemKind: "procedure",
+          itemId: "p1",
+          section: "procedures",
+          title: "運用手順",
+          content: "Workflow:\n1. 前提確認\nVerification:\n- 完了条件確認",
+          score: 0.9,
+          rankingReason: "ranked",
+          sourceRefs: [],
+        },
+      ],
+    });
+
+    expect(result.agenticUsed).toBe(false);
+    expect(result.error).toContain("COMPOSER_SKILL_SECTION_MISSING");
+    expect(result.markdown).toContain("## 実装フォーカス");
+  });
+
   test("uses agentic LLM composer successfully when enabled and output is valid JSON", async () => {
     groupedConfig.agenticCompile.enabled = true;
 
@@ -144,7 +362,8 @@ describe("context response composer", () => {
         maxTokens: expect.any(Number),
       }),
     );
-    const chatRequest = mockProvider.chat.mock.calls[0]?.[0];
+    expect(mockProvider.chat).toHaveBeenCalledTimes(2);
+    const chatRequest = mockProvider.chat.mock.calls[1]?.[0];
     const systemPrompt = chatRequest?.messages?.[0]?.content ?? "";
     const markdownTargetTokens = Number(systemPrompt.match(/本文は (\d+) トークン/u)?.[1]);
     expect(systemPrompt).toContain("JSON は必ず完結");
@@ -218,7 +437,7 @@ describe("context response composer", () => {
     expect(result.agenticUsed).toBe(false);
     expect(result.markdown).toContain("## 実装フォーカス");
     expect(result.markdown).not.toContain('{"markdown"');
-    expect(result.error).toBe("COMPOSER_JSON_PARSE_FAILED");
+    expect(result.error).toContain("COMPOSER_JSON_PARSE_FAILED");
   });
 
   test("uses valid JSON even when LLM reports token limit finish reason", async () => {

@@ -42,125 +42,131 @@ type HeadingConfig = {
   avoid: string;
 };
 
-function resolveHeadings(goal: string, changeTypes?: string[]): HeadingConfig {
-  const text = goal.toLowerCase();
-  const types = (changeTypes ?? []).map((t) => t.toLowerCase());
+type ComposeResponseStyle = "skill" | "narrative";
+type ComposeCandidateSufficiency = "enough" | "limited" | "insufficient";
 
-  // 1. ドキュメント系
-  if (
-    types.includes("docs") ||
-    types.includes("wiki") ||
-    types.includes("plan") ||
-    text.includes("ドキュメント") ||
-    text.includes("wiki") ||
-    text.includes("設計書") ||
-    text.includes("readme") ||
-    text.includes("仕様書")
-  ) {
-    return {
-      focus: "構成フォーカス",
-      steps: "執筆手順",
-      verification: "確認観点",
-      avoid: "注意点",
-    };
+type ComposePlan = {
+  headings: HeadingConfig;
+  includeAvoidSection: boolean;
+  ruleQueryHints: string[];
+  procedureQueryHints: string[];
+  exclusionHints: string[];
+  responseStyle: ComposeResponseStyle;
+  styleReason: string;
+  styleConfidence: number;
+  candidateSufficiency: ComposeCandidateSufficiency;
+};
+
+const composePlannerHintLimit = 6;
+const composeHeadingMaxChars = 32;
+const composeStyleReasonMaxChars = 120;
+const composeStyleConfidenceMin = 0;
+const composeStyleConfidenceMax = 1;
+const composeStyleConfidenceFloor = 0.7;
+
+function resolveDefaultHeadings(retrievalMode: RetrievalMode): HeadingConfig {
+  switch (retrievalMode) {
+    case "architecture_context":
+      return {
+        focus: "実装計画フォーカス",
+        steps: "実装計画手順",
+        verification: "計画検証観点",
+        avoid: "スコープ注意点",
+      };
+    case "review_context":
+      return {
+        focus: "レビュー方針",
+        steps: "レビュー手順",
+        verification: "確認ポイント",
+        avoid: "見落とし注意",
+      };
+    case "debug_context":
+      return {
+        focus: "調査フォーカス",
+        steps: "デバッグ手順",
+        verification: "再現・検証観点",
+        avoid: "二次バグ注意",
+      };
+    case "procedure_context":
+      return {
+        focus: "作業フォーカス",
+        steps: "実行手順",
+        verification: "確認観点",
+        avoid: "注意点",
+      };
+    case "learning_context":
+      return {
+        focus: "学習フォーカス",
+        steps: "実践手順",
+        verification: "理解確認",
+        avoid: "誤解注意",
+      };
+    default:
+      return {
+        focus: "実装フォーカス",
+        steps: "実装手順",
+        verification: "検証観点",
+        avoid: "注意点",
+      };
   }
+}
 
-  // 2. レビュー系
-  if (
-    types.includes("review") ||
-    text.includes("レビュー") ||
-    text.includes("review") ||
-    text.includes("監査")
-  ) {
-    return {
-      focus: "レビュー方針",
-      steps: "レビュー手順",
-      verification: "確認ポイント",
-      avoid: "見落とし注意",
-    };
+function defaultComposePlan(retrievalMode: RetrievalMode): ComposePlan {
+  return {
+    headings: resolveDefaultHeadings(retrievalMode),
+    includeAvoidSection: false,
+    ruleQueryHints: [],
+    procedureQueryHints: [],
+    exclusionHints: [],
+    responseStyle: "narrative",
+    styleReason: "default_plan",
+    styleConfidence: 0.5,
+    candidateSufficiency: "limited",
+  };
+}
+
+function sanitizeHeading(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const normalized = normalizeLine(value).replace(/^#+\s*/, "").slice(0, composeHeadingMaxChars).trim();
+  return normalized || fallback;
+}
+
+function sanitizeHintArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  const deduped = new Set<string>();
+  for (const entry of value) {
+    if (typeof entry !== "string") continue;
+    const normalized = normalizeLine(entry).slice(0, 48);
+    if (!normalized) continue;
+    deduped.add(normalized);
+    if (deduped.size >= composePlannerHintLimit) break;
   }
+  return [...deduped];
+}
 
-  // 3. テスト系
-  if (
-    types.includes("test") ||
-    types.includes("qa") ||
-    types.includes("spec") ||
-    text.includes("テスト") ||
-    text.includes("試験") ||
-    text.includes("test") ||
-    text.includes("spec")
-  ) {
-    return {
-      focus: "テスト方針",
-      steps: "テスト実装手順",
-      verification: "アサーション・検証観点",
-      avoid: "モック・環境依存注意",
-    };
-  }
+function sanitizeStyleReason(value: unknown, fallback: string): string {
+  if (typeof value !== "string") return fallback;
+  const normalized = normalizeLine(value).slice(0, composeStyleReasonMaxChars);
+  return normalized || fallback;
+}
 
-  // 4. セットアップ・デプロイ・インフラ系
-  if (
-    types.includes("setup") ||
-    types.includes("devops") ||
-    types.includes("ci") ||
-    types.includes("cd") ||
-    types.includes("deploy") ||
-    text.includes("構築") ||
-    text.includes("設定") ||
-    text.includes("セットアップ") ||
-    text.includes("setup") ||
-    text.includes("deploy") ||
-    text.includes("ci/cd") ||
-    text.includes("docker")
-  ) {
-    return {
-      focus: "構築・設定方針",
-      steps: "セットアップ手順",
-      verification: "動作確認・疎通観点",
-      avoid: "環境差分・セキュリティ注意",
-    };
-  }
+function sanitizeStyleConfidence(value: unknown, fallback: number): number {
+  const parsed = Number(value);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.max(composeStyleConfidenceMin, Math.min(composeStyleConfidenceMax, parsed));
+}
 
-  // 5. リファクタ・最適化系
-  if (
-    types.includes("refactor") ||
-    types.includes("optimize") ||
-    text.includes("リファクタ") ||
-    text.includes("最適化") ||
-    text.includes("refactor") ||
-    text.includes("clean") ||
-    text.includes("クリーンアップ")
-  ) {
-    return {
-      focus: "リファクタリング方針",
-      steps: "改善・変更手順",
-      verification: "デグレード・性能検証",
-      avoid: "挙動変更の防止",
-    };
-  }
+function sanitizeResponseStyle(value: unknown, fallback: ComposeResponseStyle): ComposeResponseStyle {
+  if (value === "skill" || value === "narrative") return value;
+  return fallback;
+}
 
-  // 6. デバッグ・調査系
-  if (
-    types.includes("bugfix") ||
-    types.includes("hotfix") ||
-    types.includes("investigate") ||
-    text.includes("バグ") ||
-    text.includes("デバッグ") ||
-    text.includes("調査") ||
-    text.includes("エラー") ||
-    text.includes("debug") ||
-    text.includes("障害")
-  ) {
-    return {
-      focus: "調査フォーカス",
-      steps: "デバッグ手順",
-      verification: "再現・検証観点",
-      avoid: "二次バグ注意",
-    };
-  }
-
-  // 7. デフォルト：通常の実装
-  return { focus: "実装フォーカス", steps: "実装手順", verification: "検証観点", avoid: "注意点" };
+function sanitizeCandidateSufficiency(
+  value: unknown,
+  fallback: ComposeCandidateSufficiency,
+): ComposeCandidateSufficiency {
+  if (value === "enough" || value === "limited" || value === "insufficient") return value;
+  return fallback;
 }
 
 function normalizeLine(text: string): string {
@@ -210,6 +216,8 @@ type FallbackComposeResult = {
 const composerJsonCompletionMaxTokens = 16_384;
 const composerJsonCompletionHeadroomTokens = 512;
 const composerJsonCompletionHeadroomRatio = 1.15;
+const composerPlannerMinTokens = 384;
+const composerPlannerMaxTokens = 2048;
 
 function maxTokensWithJsonHeadroom(markdownTargetTokens: number): number {
   const normalizedTarget = Math.max(128, Math.floor(markdownTargetTokens));
@@ -219,6 +227,14 @@ function maxTokensWithJsonHeadroom(markdownTargetTokens: number): number {
       normalizedTarget + composerJsonCompletionHeadroomTokens,
       Math.ceil(normalizedTarget * composerJsonCompletionHeadroomRatio),
     ),
+  );
+}
+
+function plannerMaxTokens(markdownTargetTokens: number): number {
+  const normalizedTarget = Math.max(128, Math.floor(markdownTargetTokens));
+  return Math.min(
+    composerPlannerMaxTokens,
+    Math.max(composerPlannerMinTokens, Math.floor(normalizedTarget * 0.35)),
   );
 }
 
@@ -237,8 +253,8 @@ function modelForProvider(provider: string): string {
   }
 }
 
-function buildFallbackCompose(params: ComposeInput): FallbackComposeResult {
-  const headings = resolveHeadings(params.input.goal, params.input.changeTypes);
+function buildFallbackCompose(params: ComposeInput, plan: ComposePlan): FallbackComposeResult {
+  const { headings } = plan;
   const allItems = [...params.rules, ...params.procedures];
   if (allItems.length === 0) return { markdown: "No Content", usedKnowledge: [] };
   const usedKnowledgeIds = new Set<string>();
@@ -300,13 +316,20 @@ function buildFallbackCompose(params: ComposeInput): FallbackComposeResult {
     .filter(Boolean)
     .slice(0, 2);
   const avoidLines: string[] = [];
-  if (avoidCandidates.length > 0) {
+  if (plan.includeAvoidSection || avoidCandidates.length > 0) {
     avoidLines.push("", `## ${headings.avoid}`, "");
-    for (const item of avoidCandidates) {
-      avoidLines.push(`- ${item}`);
-    }
-    for (const procedure of params.procedures.slice(0, 2)) {
-      trackUsed(procedure);
+    if (avoidCandidates.length > 0) {
+      for (const item of avoidCandidates) {
+        avoidLines.push(`- ${item}`);
+      }
+      for (const procedure of params.procedures.slice(0, 2)) {
+        trackUsed(procedure);
+      }
+    } else {
+      for (const item of [...params.rules, ...params.procedures].slice(0, 2)) {
+        avoidLines.push(`- ${item.title} を適用する際の前提条件を明確にする。`);
+        trackUsed(item);
+      }
     }
   }
 
@@ -320,8 +343,41 @@ function buildFallbackCompose(params: ComposeInput): FallbackComposeResult {
   };
 }
 
-function buildSystemPrompt(maxTokens: number, headings: HeadingConfig): string {
+function buildPlanSystemPrompt(): string {
+  return [
+    "あなたは context_compile の返答構成プランナーです。",
+    "goal と候補要約だけを使って、次ラウンドで使う返答構成・出力形式・検索ヒントを JSON で設計してください。",
+    "",
+    "JSON 形式:",
+    '{ "headings": { "focus": "...", "steps": "...", "verification": "...", "avoid": "..." }, "includeAvoidSection": true, "ruleQueryHints": ["..."], "procedureQueryHints": ["..."], "exclusionHints": ["..."], "responseStyle": "skill|narrative", "styleReason": "...", "styleConfidence": 0.0, "candidateSufficiency": "enough|limited|insufficient" }',
+    "",
+    "必須ルール:",
+    "- 回答は JSON のみ。Markdown や説明文は返さない。",
+    "- 見出しは goal に合わせて自然な日本語で作る。",
+    "- ruleQueryHints / procedureQueryHints は、候補検索・選別で使える短い語句を2-6件に絞る。",
+    "- exclusionHints は、今回ノイズになりやすい語句を必要時のみ入れる。",
+    "- Goal が再利用可能な手順を求め、候補が十分な場合は responseStyle=skill を優先する。",
+    "- 候補が不足している場合は responseStyle=narrative を選ぶ。",
+    "- styleReason は1文で簡潔に書く。",
+    "- styleConfidence は 0.0-1.0 で返す。",
+    "- candidateSufficiency は enough / limited / insufficient のいずれかで返す。",
+    "- 過剰な一般論は避け、goal達成に必要な最小限へ絞る。",
+  ].join("\n");
+}
+
+function buildComposerSystemPrompt(maxTokens: number, plan: ComposePlan): string {
   const normalizedMaxTokens = Math.max(128, Math.floor(maxTokens));
+  const headings = plan.headings;
+  const headingRule =
+    plan.responseStyle === "skill"
+      ? "- 見出しは `## Use when` / `## Workflow` / `## Verification` / `## Avoid` をこの順で必ず出す。"
+      : plan.includeAvoidSection
+        ? `- 見出しは \`${headings.focus}\` / \`${headings.steps}\` / \`${headings.verification}\` / \`${headings.avoid}\` をこの順で必ず出す。`
+        : `- 見出しは \`${headings.focus}\` / \`${headings.steps}\` / \`${headings.verification}\` をこの順で必ず出す。必要な場合のみ \`${headings.avoid}\` を追加。`;
+  const styleRule =
+    plan.responseStyle === "skill"
+      ? "- 出力は再利用可能な手順書として書き、Workflow は番号付き手順で具体化する。"
+      : "- 出力は実装・調査判断に使える narrative コンテキストとして要点をまとめる。";
   return [
     "あなたは context_compile の最終コンテキスト編集者です。",
     "入力された knowledge 候補をそのまま列挙せず、現在の goal に直結する指示へ統合してください。回答はJSONのみ返してください。",
@@ -331,7 +387,8 @@ function buildSystemPrompt(maxTokens: number, headings: HeadingConfig): string {
     "",
     "必須ルール:",
     "- 出力は日本語 Markdown。",
-    `- 見出しは \`${headings.focus}\` / \`${headings.steps}\` / \`${headings.verification}\` を必須とし、必要時のみ \`${headings.avoid}\` を追加。`,
+    headingRule,
+    styleRule,
     "- `Rules` や `Procedures` の見出しは使わない。",
     "- 入力knowledgeに無い事実を追加しない。",
     `- markdown フィールドの本文は ${normalizedMaxTokens} トークン以内を目標に収める。`,
@@ -343,11 +400,85 @@ function buildSystemPrompt(maxTokens: number, headings: HeadingConfig): string {
   ].join("\n");
 }
 
-function buildUserPrompt(params: ComposeInput): string {
-  const items = [...params.rules, ...params.procedures].slice(0, 8);
+function normalizedHintSet(hints: string[]): Set<string> {
+  return new Set(hints.map((hint) => hint.toLowerCase()));
+}
+
+function countHintMatches(text: string, hints: Set<string>): number {
+  if (hints.size === 0) return 0;
+  const normalized = text.toLowerCase();
+  let matches = 0;
+  for (const hint of hints) {
+    if (!hint) continue;
+    if (normalized.includes(hint)) matches += 1;
+  }
+  return matches;
+}
+
+function selectPromptKnowledgeCandidates(params: ComposeInput, plan: ComposePlan): ContextPackItem[] {
+  const ruleHintSet = normalizedHintSet(plan.ruleQueryHints);
+  const procedureHintSet = normalizedHintSet(plan.procedureQueryHints);
+  const exclusionHintSet = normalizedHintSet(plan.exclusionHints);
+  const scoreItem = (item: ContextPackItem): number => {
+    const summary = firstSentence(item.content, 200);
+    const text = `${item.title}\n${summary}`;
+    const includeHints = item.itemKind === "rule" ? ruleHintSet : procedureHintSet;
+    const positive = countHintMatches(text, includeHints);
+    const negative = countHintMatches(text, exclusionHintSet);
+    return positive * 8 - negative * 4 + item.score;
+  };
+  const rankedRules = [...params.rules].sort((a, b) => scoreItem(b) - scoreItem(a));
+  const rankedProcedures = [...params.procedures].sort((a, b) => scoreItem(b) - scoreItem(a));
+  const selected: ContextPackItem[] = [];
+  const pushUnique = (item: ContextPackItem) => {
+    if (selected.some((picked) => picked.itemId === item.itemId)) return;
+    selected.push(item);
+  };
+  for (const item of rankedRules.slice(0, 4)) pushUnique(item);
+  for (const item of rankedProcedures.slice(0, 4)) pushUnique(item);
+  for (const item of [...rankedRules, ...rankedProcedures]) {
+    if (selected.length >= 8) break;
+    pushUnique(item);
+  }
+  return selected;
+}
+
+function buildPlanUserPrompt(params: ComposeInput): string {
+  const topRules = params.rules.slice(0, 4).map((item) => item.title);
+  const topProcedures = params.procedures.slice(0, 4).map((item) => item.title);
   const lines: string[] = [
     `goal: ${normalizeLine(params.input.goal)}`,
     `retrievalMode: ${params.retrievalMode}`,
+  ];
+  if (params.input.changeTypes?.length) {
+    lines.push(`changeTypes: ${params.input.changeTypes.join(", ")}`);
+  }
+  if (params.input.technologies?.length) {
+    lines.push(`technologies: ${params.input.technologies.join(", ")}`);
+  }
+  if (params.input.domains?.length) {
+    lines.push(`domains: ${params.input.domains.join(", ")}`);
+  }
+  lines.push(`ruleCandidates: ${params.rules.length}`);
+  lines.push(`procedureCandidates: ${params.procedures.length}`);
+  lines.push(`topRuleTitles: ${topRules.length > 0 ? topRules.join(" | ") : "(none)"}`);
+  lines.push(
+    `topProcedureTitles: ${topProcedures.length > 0 ? topProcedures.join(" | ") : "(none)"}`,
+  );
+  lines.push("", "output requirements:");
+  lines.push("- JSON only");
+  lines.push("- sections should feel natural for this goal");
+  lines.push("- include concise query hints");
+  lines.push("- decide responseStyle from goal + candidate sufficiency");
+  return lines.join("\n");
+}
+
+function buildComposerUserPrompt(params: ComposeInput, plan: ComposePlan): string {
+  const items = selectPromptKnowledgeCandidates(params, plan);
+  const lines: string[] = [
+    `goal: ${normalizeLine(params.input.goal)}`,
+    `retrievalMode: ${params.retrievalMode}`,
+    `compositionPlan: ${JSON.stringify(plan)}`,
   ];
   if (params.input.changeTypes?.length) {
     lines.push(`changeTypes: ${params.input.changeTypes.join(", ")}`);
@@ -415,6 +546,94 @@ function parseUsedKnowledgeArray(
   return [...deduped.values()];
 }
 
+function parseComposePlanPayload(
+  raw: string,
+  fallbackPlan: ComposePlan,
+): { plan: ComposePlan; error?: string } {
+  const normalized = normalizeComposerOutput(raw);
+  if (normalized === "No Content") {
+    return { plan: fallbackPlan, error: "COMPOSER_PLAN_NO_CONTENT" };
+  }
+  try {
+    const parsed = JSON.parse(normalized) as Record<string, unknown>;
+    const headingsRecord =
+      parsed.headings && typeof parsed.headings === "object"
+        ? (parsed.headings as Record<string, unknown>)
+        : {};
+    const headings: HeadingConfig = {
+      focus: sanitizeHeading(headingsRecord.focus, fallbackPlan.headings.focus),
+      steps: sanitizeHeading(headingsRecord.steps, fallbackPlan.headings.steps),
+      verification: sanitizeHeading(headingsRecord.verification, fallbackPlan.headings.verification),
+      avoid: sanitizeHeading(headingsRecord.avoid, fallbackPlan.headings.avoid),
+    };
+    return {
+      plan: {
+        headings,
+        includeAvoidSection:
+          typeof parsed.includeAvoidSection === "boolean"
+            ? parsed.includeAvoidSection
+            : fallbackPlan.includeAvoidSection,
+        ruleQueryHints: sanitizeHintArray(parsed.ruleQueryHints),
+        procedureQueryHints: sanitizeHintArray(parsed.procedureQueryHints),
+        exclusionHints: sanitizeHintArray(parsed.exclusionHints),
+        responseStyle: sanitizeResponseStyle(parsed.responseStyle, fallbackPlan.responseStyle),
+        styleReason: sanitizeStyleReason(parsed.styleReason, fallbackPlan.styleReason),
+        styleConfidence: sanitizeStyleConfidence(parsed.styleConfidence, fallbackPlan.styleConfidence),
+        candidateSufficiency: sanitizeCandidateSufficiency(
+          parsed.candidateSufficiency,
+          fallbackPlan.candidateSufficiency,
+        ),
+      },
+    };
+  } catch {
+    if (looksLikeJsonPayload(normalized)) {
+      return { plan: fallbackPlan, error: "COMPOSER_PLAN_JSON_PARSE_FAILED" };
+    }
+    return { plan: fallbackPlan, error: "COMPOSER_PLAN_NON_JSON" };
+  }
+}
+
+function withNarrativeStyle(plan: ComposePlan, reason: string): ComposePlan {
+  return {
+    ...plan,
+    responseStyle: "narrative",
+    styleReason: sanitizeStyleReason(reason, "forced_narrative"),
+    includeAvoidSection: false,
+  };
+}
+
+function enforceStyleGuards(plan: ComposePlan): { plan: ComposePlan; downgradedReason?: string } {
+  if (plan.responseStyle !== "skill") {
+    return { plan };
+  }
+  if (plan.styleConfidence < composeStyleConfidenceFloor) {
+    return {
+      plan: withNarrativeStyle(plan, `styleConfidence below ${composeStyleConfidenceFloor}`),
+      downgradedReason: "COMPOSER_STYLE_DOWNGRADED_CONFIDENCE",
+    };
+  }
+  if (plan.candidateSufficiency !== "enough") {
+    return {
+      plan: withNarrativeStyle(plan, `candidateSufficiency=${plan.candidateSufficiency}`),
+      downgradedReason: "COMPOSER_STYLE_DOWNGRADED_CANDIDATE_INSUFFICIENT",
+    };
+  }
+  return { plan };
+}
+
+function hasSkillSection(markdown: string, section: string): boolean {
+  return new RegExp(`^##\\s+${section}\\s*$`, "im").test(markdown);
+}
+
+function validateSkillMarkdown(markdown: string): boolean {
+  return (
+    hasSkillSection(markdown, "Use when") &&
+    hasSkillSection(markdown, "Workflow") &&
+    hasSkillSection(markdown, "Verification") &&
+    hasSkillSection(markdown, "Avoid")
+  );
+}
+
 function parseAgenticComposerPayload(
   raw: string,
   selectableKnowledgeIds: Set<string>,
@@ -459,8 +678,9 @@ function looksGoalAligned(markdown: string, goal: string): boolean {
 }
 
 export async function composeContextResponse(params: ComposeInput): Promise<ComposeResult> {
-  const fallback = buildFallbackCompose(params);
-  if (fallback.markdown === "No Content") {
+  const defaultPlan = defaultComposePlan(params.retrievalMode);
+  const defaultFallback = buildFallbackCompose(params, defaultPlan);
+  if (defaultFallback.markdown === "No Content") {
     return { markdown: "No Content", agenticUsed: false, usedKnowledge: [] };
   }
 
@@ -469,9 +689,9 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
 
   if (!routing.enabled) {
     return {
-      markdown: fallback.markdown,
+      markdown: defaultFallback.markdown,
       agenticUsed: false,
-      usedKnowledge: fallback.usedKnowledge,
+      usedKnowledge: defaultFallback.usedKnowledge,
     };
   }
 
@@ -490,9 +710,9 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
   });
   if (pressure.cooldownActive) {
     return {
-      markdown: fallback.markdown,
+      markdown: defaultFallback.markdown,
       agenticUsed: false,
-      usedKnowledge: fallback.usedKnowledge,
+      usedKnowledge: defaultFallback.usedKnowledge,
       error: "CONTEXT_RESPONSE_COMPOSER_SKIPPED_RATE_LIMIT",
     };
   }
@@ -500,9 +720,9 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
   const fallbackErrors: string[] = [];
   let attempted = 0;
   const completionMaxTokens = maxTokensWithJsonHeadroom(routing.maxTokens);
-  const headings = resolveHeadings(params.input.goal, params.input.changeTypes);
-  const systemPrompt = buildSystemPrompt(routing.maxTokens, headings);
-  const userPrompt = buildUserPrompt(params);
+  const plannerCompletionMaxTokens = plannerMaxTokens(routing.maxTokens);
+  const plannerSystemPrompt = buildPlanSystemPrompt();
+  const plannerUserPrompt = buildPlanUserPrompt(params);
   const selectableKnowledgeIds = new Set(
     [...params.rules, ...params.procedures]
       .map((item) => item.itemId.trim())
@@ -519,6 +739,43 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
       source: "context-response-composer",
       kind: "interactive",
     }).catch(() => undefined);
+    let composePlan = defaultPlan;
+    let plannerError: string | undefined;
+    try {
+      const plannerResponse = await provider.chat({
+        messages: [
+          { role: "system", content: plannerSystemPrompt },
+          { role: "user", content: plannerUserPrompt },
+        ],
+        maxTokens: plannerCompletionMaxTokens,
+        temperature: 0,
+        responseFormat: "json",
+      });
+      const parsedPlan = parseComposePlanPayload(plannerResponse.content, defaultPlan);
+      composePlan = parsedPlan.plan;
+      plannerError = parsedPlan.error;
+    } catch (error) {
+      const plannerMessage = error instanceof Error ? error.message : String(error);
+      plannerError = `CONTEXT_RESPONSE_PLAN_FAILED: ${plannerMessage}`;
+      if (isRateLimitError(error)) {
+        void recordProviderRateLimit({
+          provider: provider.name,
+          model: providerModel,
+          source: "context-response-composer",
+          error,
+        }).catch(() => undefined);
+      }
+    }
+    const guarded = enforceStyleGuards(composePlan);
+    const effectivePlan = guarded.plan;
+    if (guarded.downgradedReason) {
+      plannerError = [plannerError, guarded.downgradedReason].filter(Boolean).join(" | ");
+    }
+    const fallbackPlanForThisRound =
+      effectivePlan.responseStyle === "skill" ? withNarrativeStyle(effectivePlan, "skill fallback") : effectivePlan;
+    const fallbackForThisRound = buildFallbackCompose(params, fallbackPlanForThisRound);
+    const systemPrompt = buildComposerSystemPrompt(routing.maxTokens, effectivePlan);
+    const userPrompt = buildComposerUserPrompt(params, effectivePlan);
     try {
       const response = await provider.chat({
         messages: [
@@ -531,19 +788,32 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
       });
       const parsed = parseAgenticComposerPayload(response.content, selectableKnowledgeIds);
       if (parsed.error) {
+        const errorSummary = [plannerError, parsed.error].filter(Boolean).join(" | ");
         if (allowFallback) {
-          fallbackErrors.push(`${provider.name}:${parsed.error}`);
+          fallbackErrors.push(`${provider.name}:${errorSummary}`);
           continue;
         }
         return {
-          markdown: fallback.markdown,
+          markdown: fallbackForThisRound.markdown,
           agenticUsed: false,
-          usedKnowledge: fallback.usedKnowledge,
-          error: parsed.error,
+          usedKnowledge: fallbackForThisRound.usedKnowledge,
+          error: errorSummary,
         };
       }
       if (parsed.markdown === "No Content") {
         return { markdown: "No Content", agenticUsed: true, usedKnowledge: [] };
+      }
+      if (effectivePlan.responseStyle === "skill" && !validateSkillMarkdown(parsed.markdown)) {
+        if (allowFallback) {
+          fallbackErrors.push(`${provider.name}:COMPOSER_SKILL_SECTION_MISSING`);
+          continue;
+        }
+        return {
+          markdown: fallbackForThisRound.markdown,
+          agenticUsed: false,
+          usedKnowledge: fallbackForThisRound.usedKnowledge,
+          error: [plannerError, "COMPOSER_SKILL_SECTION_MISSING"].filter(Boolean).join(" | "),
+        };
       }
       if (!looksGoalAligned(parsed.markdown, params.input.goal)) {
         return { markdown: "No Content", agenticUsed: true, usedKnowledge: [] };
@@ -564,34 +834,43 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
         }).catch(() => undefined);
       }
       if (allowFallback) {
-        fallbackErrors.push(`${provider.name}:${message}`);
+        const errorSummary = [plannerError, `CONTEXT_RESPONSE_COMPOSE_FAILED: ${message}`]
+          .filter(Boolean)
+          .join(" | ");
+        fallbackErrors.push(`${provider.name}:${errorSummary}`);
         continue;
       }
       return {
-        markdown: fallback.markdown,
+        markdown: fallbackForThisRound.markdown,
         agenticUsed: false,
-        usedKnowledge: fallback.usedKnowledge,
-        error: `CONTEXT_RESPONSE_COMPOSE_FAILED: ${message}`,
+        usedKnowledge: fallbackForThisRound.usedKnowledge,
+        error: [plannerError, `CONTEXT_RESPONSE_COMPOSE_FAILED: ${message}`]
+          .filter(Boolean)
+          .join(" | "),
       };
     }
   }
 
   if (attempted === 0) {
     return {
-      markdown: fallback.markdown,
+      markdown: defaultFallback.markdown,
       agenticUsed: false,
-      usedKnowledge: fallback.usedKnowledge,
+      usedKnowledge: defaultFallback.usedKnowledge,
     };
   }
 
   if (fallbackErrors.length > 0) {
     return {
-      markdown: fallback.markdown,
+      markdown: defaultFallback.markdown,
       agenticUsed: false,
-      usedKnowledge: fallback.usedKnowledge,
+      usedKnowledge: defaultFallback.usedKnowledge,
       error: `CONTEXT_RESPONSE_COMPOSE_FAILED: ${fallbackErrors.join(" | ")}`,
     };
   }
 
-  return { markdown: fallback.markdown, agenticUsed: false, usedKnowledge: fallback.usedKnowledge };
+  return {
+    markdown: defaultFallback.markdown,
+    agenticUsed: false,
+    usedKnowledge: defaultFallback.usedKnowledge,
+  };
 }

@@ -550,7 +550,7 @@ function RunDetailPane({
                 return (
                   <article key={evaluation.id} className="compile-pack-item" style={{ padding: "16px" }}>
                     <div className="compile-pack-item-header" style={{ marginBottom: "12px" }}>
-                      <strong>{evaluation.title ?? "Untitled evaluation"}</strong>
+                      <strong>{evaluation.title ?? "Evaluation"}</strong>
                       <Badge variant="secondary">
                         Avg: {evaluation.avg} / {evalOutcomeLabel(evaluation.outcome)}
                       </Badge>

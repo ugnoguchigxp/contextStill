@@ -60,6 +60,9 @@ export type KnowledgeRetrievalResult = {
     scopedSearch: boolean;
     repoScopeFallbackUsed: boolean;
     queryText: string;
+    searchedQueries?: string[];
+    roundsExecuted?: number;
+    laneCoverage?: string[];
   };
 };
 
@@ -93,6 +96,7 @@ type KnowledgeSearchScope = {
 type InternalKnowledgeSearchParams = {
   primaryQuery: string;
   queryText: string;
+  textQueries?: string[];
   limit: number;
   statuses: KnowledgeStatus[];
   status: KnowledgeStatus;
@@ -110,6 +114,190 @@ type InternalKnowledgeSearchParams = {
   domains?: string[];
   includeGeneral?: boolean;
 };
+
+type RetrievalRoundName = "intent" | "domain" | "combined";
+
+type RetrievalQueryRound = {
+  name: RetrievalRoundName;
+  queries: string[];
+  minimumContribution: number;
+};
+
+function uniqueNonEmptyStrings(values: Array<string | undefined | null>): string[] {
+  const deduped = new Set<string>();
+  for (const value of values) {
+    const trimmed = value?.trim();
+    if (!trimmed) continue;
+    deduped.add(trimmed);
+  }
+  return [...deduped];
+}
+
+function splitGoalClauses(goal: string): string[] {
+  const clauses = goal
+    .split(/[\n\r,，、。;；]+/u)
+    .map((clause) => clause.trim())
+    .filter((clause) => clause.length > 0);
+  return clauses.length > 0 ? [...new Set(clauses)] : [goal.trim()];
+}
+
+function buildFacetLines(
+  input: Pick<CompileInput, "changeTypes" | "technologies" | "domains">,
+): string[] {
+  const changeTypes = uniqueNonEmptyStrings(input.changeTypes ?? []);
+  const technologies = uniqueNonEmptyStrings(input.technologies ?? []);
+  const domains = uniqueNonEmptyStrings(input.domains ?? []);
+  const lines: string[] = [];
+  if (changeTypes.length > 0) lines.push(`changeTypes: ${changeTypes.join(" ")}`);
+  if (technologies.length > 0) lines.push(`technologies: ${technologies.join(" ")}`);
+  if (domains.length > 0) lines.push(`domains: ${domains.join(" ")}`);
+  return lines;
+}
+
+function expandClauseKeywords(clause: string): string[] {
+  const roughTokens = clause
+    .split(/[\s+/|,，、。;；:：()（）[\]{}「」『』・]+/u)
+    .flatMap((token) => token.split(/[のをにがはでとやへ]/u))
+    .map((token) => token.trim())
+    .filter((token) => token.length >= 2);
+  const stopWords = new Set(["こと", "ため", "する", "したい", "です", "ます", "実装", "作る"]);
+  const filtered = roughTokens.filter((token) => !stopWords.has(token));
+  return [...new Set(filtered)].slice(0, 6);
+}
+
+function buildRetrievalRounds(
+  input: Pick<CompileInput, "goal" | "changeTypes" | "technologies" | "domains">,
+): RetrievalQueryRound[] {
+  const goal = input.goal.trim();
+  const clauses = splitGoalClauses(goal);
+  const intentSeed = clauses.at(-1) ?? goal;
+  const domainSeed = clauses[0] ?? goal;
+  const facetLines = buildFacetLines(input);
+  const intentKeywords = expandClauseKeywords(intentSeed);
+  const domainKeywords = expandClauseKeywords(domainSeed);
+
+  const intentQueries = uniqueNonEmptyStrings([
+    intentSeed,
+    ...intentKeywords,
+    ...clauses.slice(1),
+    goal,
+  ]);
+  const domainQueries = uniqueNonEmptyStrings([
+    domainSeed,
+    ...domainKeywords,
+    ...clauses.slice(0, Math.max(0, clauses.length - 1)),
+    ...facetLines,
+  ]).filter((query) => !intentQueries.includes(query));
+  const combinedQuery = buildRetrievalQueryText(input);
+  const combinedQueries = uniqueNonEmptyStrings([combinedQuery]).filter(
+    (query) => !intentQueries.includes(query) && !domainQueries.includes(query),
+  );
+
+  const rounds: RetrievalQueryRound[] = [
+    { name: "intent", queries: intentQueries, minimumContribution: 1 },
+  ];
+  if (domainQueries.length > 0) {
+    rounds.push({ name: "domain", queries: domainQueries, minimumContribution: 1 });
+  }
+  if (combinedQueries.length > 0) {
+    rounds.push({ name: "combined", queries: combinedQueries, minimumContribution: 1 });
+  }
+  return rounds;
+}
+
+function mergeRetrievalTraceEntries(
+  entries: KnowledgeRetrievalTraceEntry[],
+): KnowledgeRetrievalTraceEntry[] {
+  const bestById = new Map<string, number>();
+  for (const entry of entries) {
+    const current = bestById.get(entry.id);
+    if (typeof current !== "number" || entry.score > current) {
+      bestById.set(entry.id, entry.score);
+    }
+  }
+  return [...bestById.entries()]
+    .sort((a, b) => b[1] - a[1])
+    .map(([id, score], index) => ({
+      id,
+      score,
+      rank: index + 1,
+    }));
+}
+
+function mergeRetrievalItems(
+  items: KnowledgeSearchResultWithEvidence[],
+): KnowledgeSearchResultWithEvidence[] {
+  const mergedById = new Map<string, KnowledgeSearchResultWithEvidence>();
+  for (const item of items) {
+    const existing = mergedById.get(item.id);
+    if (!existing) {
+      mergedById.set(item.id, { ...item });
+      continue;
+    }
+    const mergedEvidence = mergeCandidateEvidence(
+      existing.candidateEvidence,
+      item.candidateEvidence ?? {},
+    );
+    const preferred = item.score > existing.score ? item : existing;
+    mergedById.set(item.id, {
+      ...preferred,
+      candidateEvidence: mergedEvidence,
+    });
+  }
+  return [...mergedById.values()].sort((a, b) => b.score - a.score);
+}
+
+function selectItemsWithLaneQuota(params: {
+  mergedItems: KnowledgeSearchResultWithEvidence[];
+  roundResults: Array<{ lane: RetrievalRoundName; items: KnowledgeSearchResultWithEvidence[] }>;
+  requiredLanes: Set<RetrievalRoundName>;
+  limit: number;
+}): KnowledgeSearchResultWithEvidence[] {
+  const laneOrder: RetrievalRoundName[] = ["intent", "domain", "combined"];
+  const mergedById = new Map(params.mergedItems.map((item) => [item.id, item]));
+  const selected: KnowledgeSearchResultWithEvidence[] = [];
+  const selectedIds = new Set<string>();
+
+  for (const lane of laneOrder) {
+    if (!params.requiredLanes.has(lane)) continue;
+    const laneBest = params.roundResults
+      .filter((round) => round.lane === lane)
+      .flatMap((round) => round.items)
+      .sort((a, b) => b.score - a.score)
+      .find((item) => !selectedIds.has(item.id) && mergedById.has(item.id));
+    if (!laneBest) continue;
+    const mergedItem = mergedById.get(laneBest.id);
+    if (!mergedItem) continue;
+    selected.push(mergedItem);
+    selectedIds.add(mergedItem.id);
+  }
+
+  for (const item of params.mergedItems) {
+    if (selectedIds.has(item.id)) continue;
+    selected.push(item);
+    selectedIds.add(item.id);
+    if (selected.length >= params.limit) break;
+  }
+
+  return selected.slice(0, params.limit);
+}
+
+function chooseEmbeddingStatus(
+  statuses: Array<KnowledgeRetrievalResult["stats"]["embeddingStatus"]>,
+): KnowledgeRetrievalResult["stats"]["embeddingStatus"] {
+  const priority: Record<KnowledgeRetrievalResult["stats"]["embeddingStatus"], number> = {
+    generated: 3,
+    provided: 2,
+    unavailable: 1,
+    disabled: 0,
+  };
+  return (
+    statuses.reduce<KnowledgeRetrievalResult["stats"]["embeddingStatus"]>(
+      (best, current) => (priority[current] > priority[best] ? current : best),
+      "disabled",
+    ) ?? "disabled"
+  );
+}
 
 function mergeKnowledgeHits(hits: KnowledgeSearchResult[], limit: number): KnowledgeSearchResult[] {
   const mergedById = new Map<string, KnowledgeSearchResult>();
@@ -247,6 +435,18 @@ async function executeKnowledgeSearch(
       ...(repoPath ? { repoPath } : {}),
     });
 
+  const normalizedTextQueries =
+    params.textQueries && params.textQueries.length > 0
+      ? uniqueNonEmptyStrings([params.primaryQuery, ...params.textQueries])
+      : uniqueNonEmptyStrings([
+          params.primaryQuery,
+          params.queryText !== params.primaryQuery ? params.queryText : undefined,
+        ]);
+  const secondaryQueryLimit = Math.max(
+    1,
+    Math.floor(params.limit / Math.max(2, normalizedTextQueries.length)),
+  );
+
   const runScopedSearch = async (
     scope: KnowledgeSearchScope,
   ): Promise<{
@@ -260,46 +460,37 @@ async function executeKnowledgeSearch(
     let textFailed = false;
     let vectorFailed = false;
 
-    try {
-      textHits = await searchKnowledge(
-        buildSearchInput(params.primaryQuery, params.limit, scope.repoPath),
-        {
-          repoPath: scope.repoPath,
-          repoKey: scope.repoKey,
-          allowGlobalScope: scope.allowGlobalScope,
-          types: params.types,
-          scopeMatchMode: scope.scopeMatchMode,
-          technologies: params.technologies,
-          changeTypes: params.changeTypes,
-          domains: params.domains,
-          includeGeneral: params.includeGeneral ?? true,
-        },
-      );
-      if (params.queryText !== params.primaryQuery) {
-        const hintHits = await searchKnowledge(
-          buildSearchInput(
-            params.queryText,
-            Math.max(3, Math.floor(params.limit / 2)),
-            scope.repoPath,
-          ),
-          {
-            repoPath: scope.repoPath,
-            repoKey: scope.repoKey,
-            allowGlobalScope: scope.allowGlobalScope,
-            types: params.types,
-            scopeMatchMode: scope.scopeMatchMode,
-            technologies: params.technologies,
-            changeTypes: params.changeTypes,
-            domains: params.domains,
-            includeGeneral: params.includeGeneral ?? true,
-          },
-        );
-        textHits = [...new Map([...textHits, ...hintHits].map((item) => [item.id, item])).values()];
-      }
-    } catch {
-      textFailed = true;
-      appendDegradedReason(degradedReasons, "KNOWLEDGE_TEXT_SEARCH_FAILED");
-    }
+    const searchOptions = {
+      repoPath: scope.repoPath,
+      repoKey: scope.repoKey,
+      allowGlobalScope: scope.allowGlobalScope,
+      types: params.types,
+      scopeMatchMode: scope.scopeMatchMode,
+      technologies: params.technologies,
+      changeTypes: params.changeTypes,
+      domains: params.domains,
+      includeGeneral: params.includeGeneral ?? true,
+    } as const;
+
+    const textResults = await Promise.all(
+      normalizedTextQueries.map(async (query, index) => {
+        try {
+          return await searchKnowledge(
+            buildSearchInput(
+              query,
+              index === 0 ? params.limit : secondaryQueryLimit,
+              scope.repoPath,
+            ),
+            searchOptions,
+          );
+        } catch {
+          textFailed = true;
+          appendDegradedReason(degradedReasons, "KNOWLEDGE_TEXT_SEARCH_FAILED");
+          return [];
+        }
+      }),
+    );
+    textHits = [...new Map(textResults.flat().map((item) => [item.id, item])).values()];
 
     if (groupedConfig.compile.enableVectorSearch) {
       if (
@@ -443,6 +634,7 @@ async function executeKnowledgeSearch(
       scopedSearch: params.scopedSearch,
       repoScopeFallbackUsed,
       queryText: params.queryText,
+      searchedQueries: normalizedTextQueries,
     },
   };
 }
@@ -468,23 +660,133 @@ export async function retrieveKnowledge(
     retrievalMode: options.retrievalMode,
     includeDraft: false,
   });
-  return executeKnowledgeSearch({
-    primaryQuery: input.goal.trim(),
-    queryText: buildRetrievalQueryText(input),
-    limit,
-    statuses,
-    status: "active",
-    includeDraft: false,
-    types: profile.types,
-    scopedSearch: false,
-    generateEmbeddingIfMissing: true,
-    noMatchReason: "NO_ACTIVE_KNOWLEDGE_MATCH",
-    repoScopeFallbackReason: "KNOWLEDGE_REPO_SCOPE_FALLBACK",
+  const retrievalInput: CompileInput = {
+    ...input,
     technologies: options.facetFilters?.technologies ?? input.technologies,
     changeTypes: options.facetFilters?.changeTypes ?? input.changeTypes,
     domains: options.facetFilters?.domains ?? input.domains,
-    includeGeneral: true,
+  };
+  const rounds = buildRetrievalRounds(retrievalInput);
+  const requiredLanes = new Set<RetrievalRoundName>(["intent"]);
+  if (rounds.some((round) => round.name === "domain")) requiredLanes.add("domain");
+
+  const roundResults: Array<
+    KnowledgeRetrievalResult & { lane: RetrievalRoundName; newItemCount: number }
+  > = [];
+  const seenItemIds = new Set<string>();
+  const laneCoverage = new Set<RetrievalRoundName>();
+
+  for (const round of rounds) {
+    const result = await executeKnowledgeSearch({
+      primaryQuery: round.queries[0] ?? retrievalInput.goal.trim(),
+      queryText: round.queries.join("\n"),
+      textQueries: round.queries,
+      limit,
+      statuses,
+      status: "active",
+      includeDraft: false,
+      types: profile.types,
+      scopedSearch: false,
+      generateEmbeddingIfMissing: true,
+      noMatchReason: "NO_ACTIVE_KNOWLEDGE_MATCH",
+      repoScopeFallbackReason: "KNOWLEDGE_REPO_SCOPE_FALLBACK",
+      technologies: retrievalInput.technologies,
+      changeTypes: retrievalInput.changeTypes,
+      domains: retrievalInput.domains,
+      includeGeneral: true,
+    });
+
+    let newItemCount = 0;
+    for (const item of result.items) {
+      if (!seenItemIds.has(item.id)) {
+        seenItemIds.add(item.id);
+        newItemCount += 1;
+      }
+    }
+    if (newItemCount >= round.minimumContribution) laneCoverage.add(round.name);
+    roundResults.push({ ...result, lane: round.name, newItemCount });
+
+    const requiredSatisfied = [...requiredLanes].every((lane) => laneCoverage.has(lane));
+    if (requiredSatisfied) break;
+  }
+
+  if (roundResults.length === 0) {
+    return executeKnowledgeSearch({
+      primaryQuery: retrievalInput.goal.trim(),
+      queryText: buildRetrievalQueryText(retrievalInput),
+      limit,
+      statuses,
+      status: "active",
+      includeDraft: false,
+      types: profile.types,
+      scopedSearch: false,
+      generateEmbeddingIfMissing: true,
+      noMatchReason: "NO_ACTIVE_KNOWLEDGE_MATCH",
+      repoScopeFallbackReason: "KNOWLEDGE_REPO_SCOPE_FALLBACK",
+      technologies: retrievalInput.technologies,
+      changeTypes: retrievalInput.changeTypes,
+      domains: retrievalInput.domains,
+      includeGeneral: true,
+    });
+  }
+
+  const mergedItems = mergeRetrievalItems(roundResults.flatMap((result) => result.items));
+  const selectedItems = selectItemsWithLaneQuota({
+    mergedItems,
+    roundResults,
+    requiredLanes,
+    limit,
   });
+  const degradedReasons = [
+    ...new Set(roundResults.flatMap((result) => result.degradedReasons)),
+  ].filter((reason) => selectedItems.length === 0 || reason !== "NO_ACTIVE_KNOWLEDGE_MATCH");
+  const textTrace = mergeRetrievalTraceEntries(roundResults.flatMap((result) => result.trace.text));
+  const vectorTrace = mergeRetrievalTraceEntries(
+    roundResults.flatMap((result) => result.trace.vector),
+  );
+  const mergedTrace = mergeRetrievalTraceEntries(
+    roundResults.flatMap((result) => result.trace.merged),
+  );
+  const embeddingStatus = chooseEmbeddingStatus(
+    roundResults.map((result) => result.stats.embeddingStatus),
+  );
+  const embeddingSource = roundResults.find(
+    (result) => result.stats.embeddingStatus === embeddingStatus,
+  );
+  const searchedQueries = uniqueNonEmptyStrings(
+    roundResults.flatMap((result) => result.stats.searchedQueries ?? []),
+  );
+
+  return {
+    items: selectedItems,
+    degradedReasons,
+    trace: {
+      text: textTrace,
+      vector: vectorTrace,
+      merged: mergedTrace,
+    },
+    stats: {
+      textHitCount: textTrace.length,
+      vectorHitCount: vectorTrace.length,
+      mergedCount: mergedTrace.length,
+      textFailed: roundResults.some((result) => result.stats.textFailed),
+      vectorFailed: roundResults.some((result) => result.stats.vectorFailed),
+      embeddingStatus,
+      embeddingProvider: embeddingSource?.stats.embeddingProvider,
+      embeddingModel: embeddingSource?.stats.embeddingModel,
+      embeddingDimensions: embeddingSource?.stats.embeddingDimensions,
+      queryEmbedding:
+        roundResults.find(
+          (result) => result.stats.queryEmbedding && result.stats.queryEmbedding.length > 0,
+        )?.stats.queryEmbedding ?? undefined,
+      scopedSearch: false,
+      repoScopeFallbackUsed: roundResults.some((result) => result.stats.repoScopeFallbackUsed),
+      queryText: buildRetrievalQueryText(retrievalInput),
+      searchedQueries,
+      roundsExecuted: roundResults.length,
+      laneCoverage: [...laneCoverage],
+    },
+  };
 }
 
 export async function searchKnowledgeCandidates(
