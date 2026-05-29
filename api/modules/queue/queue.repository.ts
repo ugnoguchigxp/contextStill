@@ -37,6 +37,8 @@ export type QueueListQuery = {
   query?: string;
   queue?: DistillationQueueName;
   status?: DistillationQueueStatus | "all";
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
 };
 
 export type QueueControlState = {
@@ -206,6 +208,61 @@ function resolveQueueRuntimeModel(
   return { provider, model: resolveRouteModel(provider, finalizeRoute.model) };
 }
 
+function buildDynamicOrderBy(
+  queueName: DistillationQueueName,
+  sortBy: string | null | undefined,
+  sortDir: "asc" | "desc" | undefined,
+) {
+  const allowedFields = ["status", "priority", "subjectTitle", "attemptCount", "updatedAt"];
+  const field = sortBy && allowedFields.includes(sortBy) ? sortBy : null;
+  const dir = sortDir === "asc" || sortDir === "desc" ? sortDir : "desc";
+
+  if (!field) {
+    return sql`
+      case
+        when q.status = 'running' then 0
+        when q.status = 'pending' then 1
+        when q.status = 'paused' then 2
+        when q.status = 'failed' then 3
+        else 4
+      end,
+      q.priority desc,
+      q.updated_at desc
+    `;
+  }
+
+  let sortColumn;
+  switch (field) {
+    case "status":
+      sortColumn = sql`q.status`;
+      break;
+    case "priority":
+      sortColumn = sql`q.priority`;
+      break;
+    case "attemptCount":
+      sortColumn = sql`q.attempt_count`;
+      break;
+    case "updatedAt":
+      sortColumn = sql`q.updated_at`;
+      break;
+    case "subjectTitle":
+      if (queueName === "findingCandidate") {
+        sortColumn = sql`q.source_key`;
+      } else if (queueName === "coveringEvidence" || queueName === "premiumCoveringEvidence") {
+        sortColumn = sql`c.title`;
+      } else {
+        sortColumn = sql`coalesce(e.title, c.title)`;
+      }
+      break;
+    default:
+      sortColumn = sql`q.updated_at`;
+  }
+
+  return dir === "asc"
+    ? sql`${sortColumn} asc, q.updated_at desc`
+    : sql`${sortColumn} desc, q.updated_at desc`;
+}
+
 async function queryQueueRows(
   queueName: DistillationQueueName,
   params: {
@@ -213,10 +270,13 @@ async function queryQueueRows(
     offset: number;
     query?: string;
     status?: DistillationQueueStatus | "all";
+    sortBy?: string;
+    sortDir?: "asc" | "desc";
   },
 ): Promise<QueueListRow[]> {
   const pattern = params.query?.trim() ? `%${params.query.trim()}%` : null;
   const statusFilter = params.status && params.status !== "all" ? params.status : null;
+  const { sortBy, sortDir } = params;
 
   if (queueName === "findingCandidate") {
     const result = await db.execute(sql`
@@ -249,15 +309,7 @@ async function queryQueueRows(
           or q.source_uri ilike ${pattern}
         )
       order by
-        case
-          when q.status = 'running' then 0
-          when q.status = 'pending' then 1
-          when q.status = 'paused' then 2
-          when q.status = 'failed' then 3
-          else 4
-        end,
-        q.priority asc,
-        q.updated_at desc
+        ${buildDynamicOrderBy("findingCandidate", sortBy, sortDir)}
       limit ${params.limit}
       offset ${params.offset}
     `);
@@ -296,15 +348,7 @@ async function queryQueueRows(
           or q.found_candidate_id::text ilike ${pattern}
         )
       order by
-        case
-          when q.status = 'running' then 0
-          when q.status = 'pending' then 1
-          when q.status = 'paused' then 2
-          when q.status = 'failed' then 3
-          else 4
-        end,
-        q.priority asc,
-        q.updated_at desc
+        ${buildDynamicOrderBy("coveringEvidence", sortBy, sortDir)}
       limit ${params.limit}
       offset ${params.offset}
     `);
@@ -346,15 +390,7 @@ async function queryQueueRows(
           or q.found_candidate_id::text ilike ${pattern}
         )
       order by
-        case
-          when q.status = 'running' then 0
-          when q.status = 'pending' then 1
-          when q.status = 'paused' then 2
-          when q.status = 'failed' then 3
-          else 4
-        end,
-        q.priority asc,
-        q.updated_at desc
+        ${buildDynamicOrderBy("premiumCoveringEvidence", sortBy, sortDir)}
       limit ${params.limit}
       offset ${params.offset}
     `);
@@ -396,15 +432,7 @@ async function queryQueueRows(
         or q.evidence_result_id::text ilike ${pattern}
       )
     order by
-      case
-        when q.status = 'running' then 0
-        when q.status = 'pending' then 1
-        when q.status = 'paused' then 2
-        when q.status = 'failed' then 3
-        else 4
-      end,
-      q.priority asc,
-      q.updated_at desc
+      ${buildDynamicOrderBy("finalizeDistille", sortBy, sortDir)}
     limit ${params.limit}
     offset ${params.offset}
   `);
@@ -561,6 +589,8 @@ export async function listQueueItems(params: QueueListQuery) {
       offset,
       query: params.query,
       status: params.status,
+      sortBy: params.sortBy,
+      sortDir: params.sortDir,
     }),
     countQueueRows(queueName, {
       query: params.query,

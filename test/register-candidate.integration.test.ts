@@ -6,6 +6,8 @@ import {
   findingCandidateQueue,
   findCandidateResults,
   knowledgeItems,
+  foundCandidates,
+  coveringEvidenceQueue,
 } from "../src/db/schema.js";
 import { registerCandidate } from "../src/modules/registerCandidate/register-candidate.service.js";
 import {
@@ -83,8 +85,29 @@ describeDb("registerCandidate", () => {
     expect(findingJob).toMatchObject({
       inputKind: "provided_candidate",
       sourceKind: "knowledge_candidate",
-      status: "pending",
+      status: "completed",
     });
+
+    const [foundCandidate] = await db
+      .select()
+      .from(foundCandidates)
+      .where(eq(foundCandidates.findingJobId, findingJob.id));
+
+    expect(foundCandidate).toMatchObject({
+      title: "Verify before reporting fixed",
+      candidateIndex: 0,
+    });
+
+    const [coveringJob] = await db
+      .select()
+      .from(coveringEvidenceQueue)
+      .where(eq(coveringEvidenceQueue.foundCandidateId, foundCandidate.id));
+
+    expect(coveringJob).toMatchObject({
+      status: "pending",
+      priority: 90,
+    });
+
     expect(knowledgeRows).toEqual([]);
   });
 

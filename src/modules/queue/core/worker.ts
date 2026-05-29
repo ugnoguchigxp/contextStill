@@ -81,12 +81,13 @@ function appliesToFromCoverCandidate(
 
 function priorityForSourceKind(sourceKind: FindingSourceKind): number {
   switch (sourceKind) {
-    case "web_ingest":
-      return 20;
-    case "wiki_file":
-      return 30;
     case "knowledge_candidate":
-      return 40;
+      return 90;
+    case "web_ingest":
+      return 80;
+    case "wiki_file":
+      return 70;
+    case "vibe_memory":
     default:
       return 50;
   }
@@ -169,6 +170,7 @@ async function enqueueCoveringJob(params: {
   foundCandidateId: string;
   distillationVersion: string;
   providerPolicy?: "default" | "cloud_api";
+  priority?: number;
 }): Promise<void> {
   await db
     .insert(coveringEvidenceQueue)
@@ -176,7 +178,7 @@ async function enqueueCoveringJob(params: {
       foundCandidateId: params.foundCandidateId,
       distillationVersion: params.distillationVersion,
       status: "pending",
-      priority: 50,
+      priority: params.priority ?? 50,
       providerPolicy: params.providerPolicy ?? "default",
       payload: {},
       metadata: {},
@@ -300,6 +302,7 @@ async function processFindingCandidate(jobId: string, signal?: AbortSignal): Pro
       foundCandidateId,
       distillationVersion: job.distillationVersion,
       providerPolicy: "default",
+      priority: job.priority,
     });
     await markFindingCompleted({
       jobId: job.id,
@@ -346,6 +349,7 @@ async function processFindingCandidate(jobId: string, signal?: AbortSignal): Pro
       foundCandidateId,
       distillationVersion: job.distillationVersion,
       providerPolicy: "default",
+      priority: job.priority,
     });
   }
 

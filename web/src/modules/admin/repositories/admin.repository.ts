@@ -3012,6 +3012,8 @@ export async function fetchQueueItemsV2(input: {
   queue: DistillationQueueName;
   query?: string;
   status?: DistillationQueueStatus | "all";
+  sortBy?: string;
+  sortDir?: "asc" | "desc";
 }): Promise<QueueListResponseV2> {
   const query = new URLSearchParams();
   query.set("page", String(input.page));
@@ -3019,6 +3021,8 @@ export async function fetchQueueItemsV2(input: {
   query.set("queue", input.queue);
   if (input.query?.trim()) query.set("query", input.query.trim());
   if (input.status) query.set("status", input.status);
+  if (input.sortBy) query.set("sortBy", input.sortBy);
+  if (input.sortDir) query.set("sortDir", input.sortDir);
   return getJson<QueueListResponseV2>(`/api/queue?${query.toString()}`);
 }
 

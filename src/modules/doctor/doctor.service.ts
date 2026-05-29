@@ -118,7 +118,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
   const options = resolveDoctorOptions(rawOptions);
   await cleanupExpiredAuditLogsSafe({ trigger: "doctor" });
   const reasons: string[] = [];
-  const mcp = inspectMcpSurface();
+  const mcp = await inspectMcpSurface();
   if (mcp.missingPrimaryTools.length > 0) {
     reasons.push("MCP_PRIMARY_TOOLS_MISSING");
   }
@@ -307,7 +307,7 @@ export async function runDoctorAiServiceTools(
   rawOptions?: DoctorOptions,
 ): Promise<DoctorAiServiceToolsDomain> {
   const options = await prepareDoctorDomainOptions(rawOptions);
-  const mcp = inspectMcpSurface();
+  const mcp = await inspectMcpSurface();
   const agenticLlm = await inspectAgenticLlmWithProviderHealth(5000);
 
   const reasons: string[] = [];

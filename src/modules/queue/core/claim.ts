@@ -71,7 +71,7 @@ export async function claimNextQueueJob(params: {
               from ${sql.raw(tableName)}
               where status in ('pending', 'paused')
                 and not exists (select 1 from has_running)
-              order by priority asc, created_at asc, id asc
+              order by priority desc, created_at asc, id asc
               for update skip locked
               limit 1
             )
@@ -99,7 +99,7 @@ export async function claimNextQueueJob(params: {
               where status in ('pending', 'paused')
                 and (next_run_at is null or next_run_at <= now())
                 and not exists (select 1 from has_running)
-              order by priority asc, created_at asc, id asc
+              order by priority desc, created_at asc, id asc
               for update skip locked
               limit 1
             )

@@ -1,4 +1,34 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+
+const { mockDb } = vi.hoisted(() => {
+  return {
+    mockDb: {
+      select: vi.fn().mockReturnThis(),
+      from: vi.fn().mockReturnThis(),
+      where: vi.fn().mockImplementation(() => {
+        return Object.assign(Promise.resolve([]), {
+          orderBy: vi.fn().mockResolvedValue([]),
+          limit: vi.fn().mockResolvedValue([]),
+        });
+      }),
+      limit: vi.fn().mockResolvedValue([]),
+    },
+  };
+});
+
+vi.mock("../src/modules/vibe-memory/vibe-memory.service.js");
+vi.mock("../src/modules/knowledge/knowledge.service.js");
+vi.mock("../src/modules/context-compiler/context-compiler.service.js");
+vi.mock("../src/modules/context-compiler/context-compile-eval.service.js");
+vi.mock("../src/modules/doctor/doctor.service.js");
+vi.mock("../src/modules/registerCandidate/register-candidate.service.js");
+vi.mock("../src/modules/session-memo/session-memo.service.js");
+vi.mock("../src/modules/settings/settings.service.js");
+vi.mock("../api/modules/knowledge/knowledge.repository.js");
+vi.mock("../src/db/client.js", () => ({
+  db: mockDb,
+}));
+
 import {
   listKnowledgeItems,
   updateKnowledgeItem,
@@ -34,36 +64,6 @@ import {
 } from "../src/modules/session-memo/session-memo.service.js";
 import { reloadRuntimeSettingsCache } from "../src/modules/settings/settings.service.js";
 import { retrieveVibeMemoryContext } from "../src/modules/vibe-memory/vibe-memory.service.js";
-
-const { mockDb } = vi.hoisted(() => {
-  return {
-    mockDb: {
-      select: vi.fn().mockReturnThis(),
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockImplementation(() => {
-        return Object.assign(Promise.resolve([]), {
-          orderBy: vi.fn().mockResolvedValue([]),
-          limit: vi.fn().mockResolvedValue([]),
-        });
-      }),
-      limit: vi.fn().mockResolvedValue([]),
-    },
-  };
-});
-
-vi.mock("../src/modules/vibe-memory/vibe-memory.service.js");
-vi.mock("../src/modules/knowledge/knowledge.service.js");
-vi.mock("../src/modules/context-compiler/context-compiler.service.js");
-vi.mock("../src/modules/context-compiler/context-compile-eval.service.js");
-vi.mock("../src/modules/doctor/doctor.service.js");
-vi.mock("../src/modules/registerCandidate/register-candidate.service.js");
-vi.mock("../src/modules/session-memo/session-memo.service.js");
-vi.mock("../src/modules/settings/settings.service.js");
-vi.mock("../api/modules/knowledge/knowledge.repository.js");
-
-vi.mock("../src/db/client.js", () => ({
-  db: mockDb,
-}));
 
 describe("MCP Tools Handlers", () => {
   beforeEach(() => {

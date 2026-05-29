@@ -211,7 +211,7 @@ export function QueuePage() {
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
   const [actioning, setActioning] = useState<string | null>(null);
-  const [sorting, setSorting] = useState<SortingState>([{ id: "priority", desc: false }]);
+  const [sorting, setSorting] = useState<SortingState>([{ id: "priority", desc: true }]);
   const [nowMs, setNowMs] = useState(() => Date.now());
 
   useEffect(() => {
@@ -232,8 +232,17 @@ export function QueuePage() {
     refetchInterval: 2500,
   });
   const itemsQuery = useQuery({
-    queryKey: ["queue-v2-items", queue, status, query, page],
-    queryFn: () => fetchQueueItemsV2({ queue, status, query, page, limit: 20 }),
+    queryKey: ["queue-v2-items", queue, status, query, page, sorting],
+    queryFn: () =>
+      fetchQueueItemsV2({
+        queue,
+        status,
+        query,
+        page,
+        limit: 20,
+        sortBy: sorting[0]?.id,
+        sortDir: sorting[0]?.desc ? "desc" : "asc",
+      }),
     placeholderData: (prev) => prev,
   });
 
@@ -541,7 +550,6 @@ export function QueuePage() {
     enableMultiSort: false,
     enableSortingRemoval: false,
     getCoreRowModel: getCoreRowModel(),
-    getSortedRowModel: getSortedRowModel(),
   });
 
   return (

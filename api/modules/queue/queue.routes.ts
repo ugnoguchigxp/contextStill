@@ -28,6 +28,8 @@ const listQuerySchema = z.object({
   query: z.string().trim().max(200).optional(),
   queue: z.enum(queueNameValues).default("findingCandidate"),
   status: z.enum(queueStatusFilterValues).default("all"),
+  sortBy: z.string().trim().max(100).optional(),
+  sortDir: z.enum(["asc", "desc"]).optional(),
 });
 const queueIdParamSchema = z.object({
   queue: z.enum(queueNameValues),

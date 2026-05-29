@@ -1,13 +1,19 @@
 import { randomUUID } from "node:crypto";
 import type { z } from "zod";
 import { db } from "../../db/index.js";
-import { distillationTargetStates, findCandidateResults } from "../../db/schema.js";
+import {
+  distillationTargetStates,
+  findCandidateResults,
+  findingCandidateQueue,
+  foundCandidates,
+  coveringEvidenceQueue,
+} from "../../db/schema.js";
 import { registerCandidateInputSchema } from "../../shared/schemas/knowledge.schema.js";
 import { registerCandidatesBulkInputSchema } from "../../shared/schemas/knowledge.schema.js";
 import { hasSkillLikeProcedureBody } from "../distillation/procedure-quality.js";
 import { parseStorageCandidatesFromLlmOutput } from "../findCandidate/parser.js";
 import type { CandidateKnowledgeType } from "../findCandidate/repository.js";
-import { enqueueFindingJob } from "../queue/core/index.js";
+import { appendQueueEvent } from "../queue/core/events.js";
 import { DEFAULT_DISTILLATION_TARGET_VERSION } from "../distillationTarget/repository.js";
 import { resolveKnowledgeCandidatePriorityGroup } from "../distillationTarget/priority-group.js";
 
@@ -146,7 +152,7 @@ export async function registerCandidate(
     metadata: targetMetadata,
   });
 
-  const legacy = await db.transaction(async (tx) => {
+  const result = await db.transaction(async (tx) => {
     const [target] = await tx
       .insert(distillationTargetStates)
       .values({
@@ -179,37 +185,157 @@ export async function registerCandidate(
       .returning();
 
     if (!candidate) throw new Error("failed to create candidate result");
-    return { target, candidate };
-  });
 
-  const findingJob = await enqueueFindingJob({
-    inputKind: "provided_candidate",
-    sourceKind: "knowledge_candidate",
-    sourceKey: candidateId,
-    sourceUri,
-    distillationVersion: DEFAULT_DISTILLATION_TARGET_VERSION,
-    payload: {
+    const payload = {
       title: normalized.title,
       body: normalized.body,
       type: normalized.type,
       sourceSummary: undefined,
       origin: compactOrigin(parsed, normalized),
-      legacyTargetStateId: legacy.target.id,
-      legacyFindCandidateResultId: legacy.candidate.id,
-    },
-    metadata: {
+      legacyTargetStateId: target.id,
+      legacyFindCandidateResultId: candidate.id,
+    };
+
+    const metadata = {
       source: "mcp_register_candidate",
       registeredAt: now.toISOString(),
-      legacyTargetStateId: legacy.target.id,
-      legacyFindCandidateResultId: legacy.candidate.id,
+      legacyTargetStateId: target.id,
+      legacyFindCandidateResultId: candidate.id,
+    };
+
+    const [findingJob] = await tx
+      .insert(findingCandidateQueue)
+      .values({
+        inputKind: "provided_candidate",
+        sourceKind: "knowledge_candidate",
+        sourceKey: candidateId,
+        sourceUri,
+        distillationVersion: DEFAULT_DISTILLATION_TARGET_VERSION,
+        payload,
+        metadata,
+        priority: 90,
+        status: "completed",
+        completedAt: now,
+        lastOutcomeKind: "provided_candidate_registered",
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [
+          findingCandidateQueue.inputKind,
+          findingCandidateQueue.sourceKind,
+          findingCandidateQueue.sourceKey,
+          findingCandidateQueue.distillationVersion,
+        ],
+        set: {
+          sourceUri,
+          payload,
+          metadata,
+          priority: 90,
+          status: "completed",
+          completedAt: now,
+          lastOutcomeKind: "provided_candidate_registered",
+          updatedAt: now,
+        },
+      })
+      .returning();
+
+    if (!findingJob) throw new Error("failed to create V2 finding job");
+
+    const origin = compactOrigin(parsed, normalized);
+    const candidateMetadata = {
+      sourceKind: "knowledge_candidate",
+      sourceKey: candidateId,
+      sourceUri,
+    };
+
+    const [foundCandidate] = await tx
+      .insert(foundCandidates)
+      .values({
+        findingJobId: findingJob.id,
+        candidateIndex: 0,
+        type: normalized.type,
+        title: normalized.title,
+        content: normalized.body,
+        origin,
+        metadata: candidateMetadata,
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: [foundCandidates.findingJobId, foundCandidates.candidateIndex],
+        set: {
+          type: normalized.type,
+          title: normalized.title,
+          content: normalized.body,
+          origin,
+          metadata: candidateMetadata,
+          updatedAt: now,
+        },
+      })
+      .returning();
+
+    if (!foundCandidate) throw new Error("failed to create V2 found candidate");
+
+    const [coveringJob] = await tx
+      .insert(coveringEvidenceQueue)
+      .values({
+        foundCandidateId: foundCandidate.id,
+        distillationVersion: DEFAULT_DISTILLATION_TARGET_VERSION,
+        status: "pending",
+        priority: 90,
+        providerPolicy: "default",
+        payload: {},
+        metadata: {},
+        updatedAt: now,
+      })
+      .onConflictDoUpdate({
+        target: coveringEvidenceQueue.foundCandidateId,
+        set: {
+          status: "pending",
+          priority: 90,
+          completedAt: null,
+          lockedBy: null,
+          lockedAt: null,
+          heartbeatAt: null,
+          lastError: null,
+          lastOutcomeKind: null,
+          updatedAt: now,
+        },
+      })
+      .returning();
+
+    if (!coveringJob) throw new Error("failed to create V2 covering job");
+
+    return { target, candidate, findingJob, foundCandidate, coveringJob };
+  });
+
+  await appendQueueEvent({
+    queueName: "findingCandidate",
+    queueJobId: result.findingJob.id,
+    eventType: "completed",
+    message: "provided candidate registered synchronously (finding skipped)",
+    metadata: {
+      sourceKind: "knowledge_candidate",
+      sourceKey: candidateId,
+      inputKind: "provided_candidate",
+      foundCandidateId: result.foundCandidate.id,
     },
-    priority: 40,
+  });
+
+  await appendQueueEvent({
+    queueName: "coveringEvidence",
+    queueJobId: result.coveringJob.id,
+    eventType: "enqueued",
+    message: "covering job enqueued from synchronous register-candidate",
+    metadata: {
+      foundCandidateId: result.foundCandidate.id,
+      findingJobId: result.findingJob.id,
+    },
   });
 
   return {
-    targetStateId: legacy.target.id,
-    findCandidateResultId: legacy.candidate.id,
-    findingJobId: findingJob.id,
+    targetStateId: result.target.id,
+    findCandidateResultId: result.candidate.id,
+    findingJobId: result.findingJob.id,
     sourceUri,
     status: "candidate_registered",
     title: normalized.title,

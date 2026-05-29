@@ -99,7 +99,7 @@ export async function queueWebSourceUrl(params: {
       normalizedUrl: redactedNormalizedUrl,
       importedVia: "sources.webIngest",
     },
-    priority: 20,
+    priority: 80,
   });
 
   return {

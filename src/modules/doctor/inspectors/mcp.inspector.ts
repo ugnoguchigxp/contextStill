@@ -1,8 +1,8 @@
-import { getExposedToolEntries } from "../../../mcp/tools/index.js";
 import type { DoctorReport } from "../../../shared/schemas/doctor.schema.js";
 import { getRequiredPrimaryMcpTools } from "../doctor.constants.js";
 
-export function inspectMcpSurface(): DoctorReport["mcp"] {
+export async function inspectMcpSurface(): Promise<DoctorReport["mcp"]> {
+  const { getExposedToolEntries } = await import("../../../mcp/tools/index.js");
   const requiredPrimaryMcpTools = getRequiredPrimaryMcpTools();
   const exposedTools = getExposedToolEntries()
     .map((entry) => entry.name)

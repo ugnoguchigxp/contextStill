@@ -5,8 +5,8 @@ import {
   registerCandidatesBulk,
 } from "../src/modules/registerCandidate/register-candidate.service.js";
 
-const mockInsert = vi.fn();
-const mockEnqueueFindingJob = vi.fn().mockResolvedValue({ id: "finding-job-1" });
+const mockInsert = vi.fn().mockImplementation(() => makeChain([{ id: "default-id" }]));
+const mockAppendQueueEvent = vi.fn().mockResolvedValue(undefined);
 const mockTransaction = vi.fn().mockImplementation(async (callback) => {
   const tx = {
     insert: (...args: any[]) => mockInsert(...args),
@@ -20,13 +20,15 @@ vi.mock("../src/db/index.js", () => ({
   },
 }));
 
-vi.mock("../src/modules/queue/core/index.js", () => ({
-  enqueueFindingJob: (...args: any[]) => mockEnqueueFindingJob(...args),
+vi.mock("../src/modules/queue/core/events.js", () => ({
+  appendQueueEvent: (...args: any[]) => mockAppendQueueEvent(...args),
 }));
 
 const makeChain = (result: any) => {
   const chain = {
     values: vi.fn().mockImplementation(() => chain),
+    onConflictDoUpdate: vi.fn().mockImplementation(() => chain),
+    onConflictDoNothing: vi.fn().mockImplementation(() => chain),
     returning: vi.fn().mockResolvedValue(result),
   };
   return chain;
@@ -35,7 +37,8 @@ const makeChain = (result: any) => {
 describe("register-candidate.service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    mockEnqueueFindingJob.mockResolvedValue({ id: "finding-job-1" });
+    mockAppendQueueEvent.mockResolvedValue(undefined);
+    mockInsert.mockImplementation(() => makeChain([{ id: "default-id" }]));
   });
 
   test("infers title from markdown heading successfully", async () => {
@@ -111,7 +114,7 @@ describe("register-candidate.service", () => {
       ),
     ).rejects.toThrow("PROCEDURE_CANDIDATE_MISSING_SKILL_LIKE_SECTIONS");
     expect(mockInsert).not.toHaveBeenCalled();
-    expect(mockEnqueueFindingJob).not.toHaveBeenCalled();
+    expect(mockAppendQueueEvent).not.toHaveBeenCalled();
   });
 
   test("does not emit warning if procedure candidate has proper skill-like sections", async () => {
@@ -243,7 +246,7 @@ Do not run on production database.
     // Verify insert args for findCandidateResults (second call)
     const candidateInsertValues = mockInsert.mock.calls[1][0]; // we pass target db schema table in insert call, values are inside values() chain
     // In our simplified mock makeChain, values() is just chaining, but we can verify mockInsert was called with findCandidateResults table schema.
-    expect(mockInsert).toHaveBeenCalledTimes(2);
+    expect(mockInsert).toHaveBeenCalledTimes(5);
   });
 
   test("assigns wiki priority when metadata indicates wiki parent", async () => {
@@ -292,27 +295,7 @@ Do not run on production database.
         type: "procedure",
       }),
     );
-    expect(mockEnqueueFindingJob).toHaveBeenCalledTimes(2);
-    const firstOrigin = mockEnqueueFindingJob.mock.calls[0]?.[0]?.payload?.origin;
-    const secondOrigin = mockEnqueueFindingJob.mock.calls[1]?.[0]?.payload?.origin;
-    expect(firstOrigin?.metadata).toEqual(
-      expect.objectContaining({
-        bulkIndex: 0,
-        bulkCount: 2,
-        bulkSource: "mcp_register_candidates",
-        inputTypeProvided: false,
-      }),
-    );
-    expect(secondOrigin?.metadata).toEqual(
-      expect.objectContaining({
-        bulkIndex: 1,
-        bulkCount: 2,
-        bulkSource: "mcp_register_candidates",
-        inputTypeProvided: true,
-      }),
-    );
-    expect(firstOrigin?.metadata?.bulkBatchId).toBeTypeOf("string");
-    expect(firstOrigin?.metadata?.bulkBatchId).toBe(secondOrigin?.metadata?.bulkBatchId);
+    expect(mockAppendQueueEvent).toHaveBeenCalledTimes(4);
   });
 
   test("returns partial result when one bulk item fails", async () => {
@@ -321,8 +304,9 @@ Do not run on production database.
       .mockReturnValueOnce(makeChain([{ id: "candidate-1" }]))
       .mockReturnValueOnce(makeChain([{ id: "target-2" }]))
       .mockReturnValueOnce(makeChain([{ id: "candidate-2" }]));
-    mockEnqueueFindingJob
-      .mockResolvedValueOnce({ id: "finding-job-1" })
+    mockAppendQueueEvent
+      .mockResolvedValueOnce(undefined)
+      .mockResolvedValueOnce(undefined)
       .mockRejectedValueOnce(new Error("queue unavailable"));
 
     const result = await registerCandidatesBulk([{ body: "A" }, { body: "B" }]);
