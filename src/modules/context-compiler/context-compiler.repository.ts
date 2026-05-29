@@ -16,7 +16,7 @@ import {
 } from "../../shared/schemas/compile-run.schema.js";
 import type { ContextPack } from "../../shared/schemas/context-pack.schema.js";
 import { contextPackSchema } from "../../shared/schemas/context-pack.schema.js";
-import { asRecord, normalizeNullableString } from "../../shared/utils/normalize.js";
+import { asRecord, asStringArray, normalizeNullableString } from "../../shared/utils/normalize.js";
 import {
   getCompileEvalSummaryByRunId,
   listCompileEvalsByRunId,
@@ -420,6 +420,48 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
     parsedPackSnapshot.success && parsedPackSnapshot.data.runId === run.id
       ? parsedPackSnapshot.data
       : null;
+
+  if (packSnapshot) {
+    const allItemIds = [
+      ...(packSnapshot.rules ?? []).map((item) => item.itemId),
+      ...(packSnapshot.procedures ?? []).map((item) => item.itemId),
+    ].filter(Boolean);
+
+    const knowledgeRows = allItemIds.length > 0
+      ? await db
+          .select({
+            id: knowledgeItems.id,
+            appliesTo: knowledgeItems.appliesTo,
+          })
+          .from(knowledgeItems)
+          .where(inArray(knowledgeItems.id, allItemIds))
+      : [];
+
+    const appliesToByItemId = new Map<string, { changeTypes: string[]; technologies: string[]; domains: string[] }>();
+    for (const row of knowledgeRows) {
+      const appliesTo = asRecord(row.appliesTo);
+      appliesToByItemId.set(row.id, {
+        changeTypes: asStringArray(appliesTo.changeTypes),
+        technologies: asStringArray(appliesTo.technologies),
+        domains: asStringArray(appliesTo.domains),
+      });
+    }
+
+    for (const item of packSnapshot.rules) {
+      const applies = appliesToByItemId.get(item.itemId);
+      item.changeTypes = item.changeTypes?.length ? item.changeTypes : (applies?.changeTypes ?? []);
+      item.technologies = item.technologies?.length ? item.technologies : (applies?.technologies ?? []);
+      item.domains = item.domains?.length ? item.domains : (applies?.domains ?? []);
+    }
+
+    for (const item of packSnapshot.procedures) {
+      const applies = appliesToByItemId.get(item.itemId);
+      item.changeTypes = item.changeTypes?.length ? item.changeTypes : (applies?.changeTypes ?? []);
+      item.technologies = item.technologies?.length ? item.technologies : (applies?.technologies ?? []);
+      item.domains = item.domains?.length ? item.domains : (applies?.domains ?? []);
+    }
+  }
+
   const outputMarkdown = extractOutputMarkdown(packSnapshot);
 
   const selectedKnowledgeRowsMap = new Map<

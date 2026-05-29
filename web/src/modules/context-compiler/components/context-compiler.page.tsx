@@ -197,75 +197,103 @@ function PackSection({
                 </div>
                 
                 {/* 常に表示する Knowledge ID */}
-                <p className="compile-pack-item-id" style={{ fontSize: "11px", color: "#6b7280", fontFamily: "monospace", margin: "2px 0 10px 0" }}>
+                <p className="compile-pack-item-id" style={{ fontSize: "11px", color: "#6b7280", fontFamily: "monospace", margin: "2px 0 6px 0" }}>
                   id: {item.itemId}
                 </p>
 
-                <p className="compile-pack-item-content" style={{ whiteSpace: "pre-wrap", fontSize: "14px", lineHeight: "1.6", color: "#374151" }}>{item.content}</p>
-                {sig ? (
-                  <div className="compile-pack-item-signal-info" style={{ marginTop: "12px", borderTop: "1px solid rgba(0,0,0,0.05)", paddingTop: "12px" }}>
-                    <div className="compile-pack-item-meta" style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", marginBottom: "8px" }}>
-                      <Badge variant={feedbackVariant(sig.effectiveVerdict)}>
-                        {sig.effectiveVerdict
-                          ? verdictLabel(sig.effectiveVerdict)
-                          : "No signal"}
-                      </Badge>
-                      <span className="text-xs text-muted-foreground">{sig.rankingReason || item.rankingReason}</span>
-                    </div>
-
-                    {sig.hasUserOverride && sig.autoVerdict ? (
-                      <p className="text-xs text-muted-foreground" style={{ margin: "4px 0" }}>
-                        Auto: {verdictLabel(sig.autoVerdict)}
-                        {sig.autoReason ? ` (${sig.autoReason})` : ""}
-                      </p>
+                {/* タグ (changeTypes, technologies, domains) の描画 */}
+                {(item.changeTypes?.length || item.technologies?.length || item.domains?.length) ? (
+                  <p style={{ fontSize: "14px", color: "#6b7280", margin: "4px 0 10px 0", lineHeight: "1.6" }}>
+                    {item.changeTypes?.length ? (
+                      <span>
+                        <strong style={{ color: "#374151" }}>Change Type:</strong>{" "}
+                        {item.changeTypes.join(", ")}
+                      </span>
                     ) : null}
-
-                    {sig.effectiveReason ? (
-                      <p className="text-xs text-muted-foreground" style={{ margin: "4px 0" }}>
-                        Signal: {sig.effectiveReason}
-                      </p>
+                    {item.changeTypes?.length && (item.technologies?.length || item.domains?.length) ? "　" : null}
+                    {item.technologies?.length ? (
+                      <span>
+                        <strong style={{ color: "#374151" }}>Technology:</strong>{" "}
+                        {item.technologies.join(", ")}
+                      </span>
                     ) : null}
-
-                    <div className="compile-feedback-actions" style={{ display: "flex", gap: "8px", marginTop: "8px" }}>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={sig.effectiveVerdict === "used" ? "default" : "outline"}
-                        onClick={() => void onFeedback(sig.knowledgeId, "used")}
-                        disabled={feedbackPending}
-                      >
-                        Used
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={sig.effectiveVerdict === "not_used" ? "default" : "outline"}
-                        onClick={() => void onFeedback(sig.knowledgeId, "not_used")}
-                        disabled={feedbackPending}
-                      >
-                        Not used
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={sig.effectiveVerdict === "off_topic" ? "default" : "outline"}
-                        onClick={() => void onFeedback(sig.knowledgeId, "off_topic")}
-                        disabled={feedbackPending}
-                      >
-                        Off-topic
-                      </Button>
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant={sig.effectiveVerdict === "wrong" ? "default" : "outline"}
-                        onClick={() => void onFeedback(sig.knowledgeId, "wrong")}
-                        disabled={feedbackPending}
-                      >
-                        Wrong
-                      </Button>
-                    </div>
-                  </div>
+                    {item.technologies?.length && item.domains?.length ? "　" : null}
+                    {item.domains?.length ? (
+                      <span>
+                        <strong style={{ color: "#374151" }}>Domain:</strong>{" "}
+                        {item.domains.join(", ")}
+                      </span>
+                    ) : null}
+                  </p>
                 ) : null}
+
+                <p className="compile-pack-item-content" style={{ whiteSpace: "pre-wrap", fontSize: "14px", lineHeight: "1.6", color: "#374151" }}>{item.content}</p>
+                <div className="compile-pack-item-signal-info" style={{ marginTop: "12px", borderTop: "1px solid rgba(0,0,0,0.05)", paddingTop: "12px" }}>
+                  {sig ? (
+                    <>
+                      <div className="compile-pack-item-meta" style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", marginBottom: "8px" }}>
+                        <Badge variant={feedbackVariant(sig.effectiveVerdict)}>
+                          {sig.effectiveVerdict
+                            ? verdictLabel(sig.effectiveVerdict)
+                            : "No signal"}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">{sig.rankingReason || item.rankingReason}</span>
+                      </div>
+
+                      {sig.hasUserOverride && sig.autoVerdict ? (
+                        <p className="text-xs text-muted-foreground" style={{ margin: "4px 0" }}>
+                          Auto: {verdictLabel(sig.autoVerdict)}
+                          {sig.autoReason ? ` (${sig.autoReason})` : ""}
+                        </p>
+                      ) : null}
+
+                      {sig.effectiveReason ? (
+                        <p className="text-xs text-muted-foreground" style={{ margin: "4px 0" }}>
+                          Signal: {sig.effectiveReason}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : null}
+
+                  <div className="compile-feedback-actions" style={{ display: "flex", gap: "8px", marginTop: sig ? "8px" : "0" }}>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={sig?.effectiveVerdict === "used" ? "default" : "outline"}
+                      onClick={() => void onFeedback(sig?.knowledgeId ?? item.itemId, "used")}
+                      disabled={feedbackPending}
+                    >
+                      Used
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={sig?.effectiveVerdict === "not_used" ? "default" : "outline"}
+                      onClick={() => void onFeedback(sig?.knowledgeId ?? item.itemId, "not_used")}
+                      disabled={feedbackPending}
+                    >
+                      Not used
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={sig?.effectiveVerdict === "off_topic" ? "default" : "outline"}
+                      onClick={() => void onFeedback(sig?.knowledgeId ?? item.itemId, "off_topic")}
+                      disabled={feedbackPending}
+                    >
+                      Off-topic
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant={sig?.effectiveVerdict === "wrong" ? "default" : "outline"}
+                      onClick={() => void onFeedback(sig?.knowledgeId ?? item.itemId, "wrong")}
+                      disabled={feedbackPending}
+                    >
+                      Wrong
+                    </Button>
+                  </div>
+                </div>
               </article>
             );
           })}

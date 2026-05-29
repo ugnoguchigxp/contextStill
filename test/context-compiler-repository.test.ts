@@ -37,7 +37,7 @@ const validPack: ContextPack = {
   },
 };
 
-function createSelectChain<T>(input: { limitResult?: T; orderByResult?: T }) {
+function createSelectChain<T>(input: { limitResult?: T; orderByResult?: T; whereResult?: T }) {
   const chain = {
     from: vi.fn(),
     where: vi.fn(),
@@ -52,6 +52,9 @@ function createSelectChain<T>(input: { limitResult?: T; orderByResult?: T }) {
   }
   if (input.orderByResult !== undefined) {
     chain.orderBy.mockResolvedValue(input.orderByResult);
+  }
+  if (input.whereResult !== undefined) {
+    chain.where.mockResolvedValue(input.whereResult);
   }
   return chain;
 }
@@ -378,7 +381,9 @@ describe("context-compiler repository", () => {
       (db.select as any)
         .mockReturnValueOnce(createSelectChain({ limitResult: [mockRun] }))
         .mockReturnValueOnce(createSelectChain({ orderByResult: mockItems }))
-        .mockReturnValueOnce(createSelectChain({ orderByResult: [] }));
+        .mockReturnValueOnce(createSelectChain({ orderByResult: [] }))
+        .mockReturnValueOnce(createSelectChain({ orderByResult: [] }))
+        .mockReturnValueOnce(createSelectChain({ whereResult: [] }));
 
       const result = await getCompileRunDetail(validPack.runId);
 

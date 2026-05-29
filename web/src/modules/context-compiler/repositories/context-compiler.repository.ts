@@ -35,6 +35,9 @@ export type CompilePackItem = {
   score: number;
   rankingReason: string;
   sourceRefs: string[];
+  changeTypes?: string[];
+  technologies?: string[];
+  domains?: string[];
 };
 
 export type CompilePack = {
