@@ -731,6 +731,7 @@ function RunDetailPane({
               <SourceBadge source={detail.run.source} />
               <span>{detail.run.retrievalMode}</span>
               <span>{formatLatency(detail.run.durationMs)}</span>
+              <span style={{ fontFamily: "monospace", fontSize: "11px", color: "#6b7280" }}>id: {detail.run.id}</span>
             </div>
           </div>
           <time>{tzFormatDate(detail.run.createdAt, tz)}</time>
