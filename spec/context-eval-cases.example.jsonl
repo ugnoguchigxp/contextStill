@@ -1,0 +1,5 @@
+# Context Eval Cases Example Reference
+# This file serves as a format reference rather than a runnable fixture.
+# Active IDs in your local memory-router DB will vary.
+{"id":"queue-repair-basic","goal":"Repair a stalled distillation queue and verify runtime health.","changeTypes":["debug","ops"],"technologies":["Bun","PostgreSQL"],"domains":["queue","distillation"],"expectedKnowledgeIds":["knowledge-queue-supervisor"],"forbiddenKnowledgeIds":["knowledge-ui-only-note"]}
+{"id":"context-compile-duplicate-suppression","goal":"Check whether duplicate suppression prevents near-duplicate knowledge from being selected repeatedly.","changeTypes":["review"],"technologies":["TypeScript"],"domains":["context_compile"],"expectedKnowledgeIds":["knowledge-duplicate-suppression"],"forbiddenKnowledgeIds":[]}

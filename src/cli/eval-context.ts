@@ -1,12 +1,15 @@
 import { closeDbPool } from "../db/index.js";
+import { buildContextEvalCaseReport } from "../modules/landscape/context-eval-case.service.js";
 import {
   buildContextEvalReportFromReplay,
   type ContextEvalReport,
 } from "../modules/landscape/context-eval.service.js";
 import type { LandscapeRunStatusFilter } from "../modules/landscape/landscape-replay.types.js";
+import type { ContextEvalCaseReport } from "../shared/schemas/context-eval-case.schema.js";
 
 type CliOptions = {
   fromReplay: boolean;
+  casesPath?: string;
   windowDays: number;
   limit: number;
   runStatus: LandscapeRunStatusFilter;
@@ -60,6 +63,12 @@ function parseArgs(args: string[]): CliOptions {
     const arg = args[index];
     if (arg === "--from-replay") {
       options.fromReplay = true;
+      continue;
+    }
+    if (arg === "--cases" || arg.startsWith("--cases=")) {
+      const value = readArgValue(args, index, "--cases");
+      options.casesPath = value;
+      if (arg === "--cases") index += 1;
       continue;
     }
     if (arg === "--json") {
@@ -127,10 +136,48 @@ function printSummary(report: ContextEvalReport): void {
   }
 }
 
+function printCaseSummary(report: ContextEvalCaseReport): void {
+  console.log(
+    `Context Eval (cases, cases=${report.summary.caseCount}, currentLimit=${report.source.currentLimit})`,
+  );
+  console.log(
+    `Summary: ${report.summary.status} passRate=${report.summary.passRate.toFixed(2)} expectedRecall=${report.metrics.expectedRecall !== null ? report.metrics.expectedRecall.toFixed(2) : "null"} forbiddenHits=${report.metrics.forbiddenHitCount} degraded=${report.metrics.degradedCaseCount}`,
+  );
+
+  const failedCases = report.cases.filter((c) => c.status === "failed");
+  if (failedCases.length === 0) return;
+
+  console.log("");
+  console.log("Failed cases:");
+  for (const c of failedCases) {
+    console.log(
+      `- ${c.id} missing=[${c.missingExpectedIds.join(", ")}] forbidden=[${c.forbiddenHitIds.join(", ")}]`,
+    );
+  }
+}
+
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
-  if (!options.fromReplay) {
-    throw new Error("MVP currently supports only --from-replay mode.");
+  if (!options.fromReplay && !options.casesPath) {
+    throw new Error("Either --from-replay or --cases <path> must be specified.");
+  }
+  if (options.fromReplay && options.casesPath) {
+    throw new Error("Cannot specify both --from-replay and --cases <path> simultaneously.");
+  }
+
+  if (options.casesPath) {
+    const report = await buildContextEvalCaseReport({
+      casesPath: options.casesPath,
+      currentLimit: options.currentLimit,
+    });
+
+    if (options.asJson) {
+      console.log(JSON.stringify(report, null, 2));
+      return;
+    }
+
+    printCaseSummary(report);
+    return;
   }
 
   const report = await buildContextEvalReportFromReplay({

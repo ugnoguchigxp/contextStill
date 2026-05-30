@@ -537,12 +537,56 @@ function EvaluationRadarChart({
   specificity: number;
 }) {
   const data = [
-    { subject: "目的適合性 (Relevance)", value: relevance },
-    { subject: "実行可能性 (Actionability)", value: actionability },
-    { subject: "網羅性 (Coverage)", value: coverage },
-    { subject: "ノイズ削減 (Noise)", value: noise },
-    { subject: "具体性 (Specificity)", value: specificity },
+    { subject: `目的適合: ${relevance}`, value: relevance },
+    { subject: `実行可能: ${actionability}`, value: actionability },
+    { subject: `網羅性: ${coverage}`, value: coverage },
+    { subject: `ノイズ削減: ${noise}`, value: noise },
+    { subject: `具体性: ${specificity}`, value: specificity },
   ];
+
+  const renderCustomTick = (props: any) => {
+    const { x, y, payload, textAnchor } = props;
+    const parts = payload.value.split(": ");
+    if (parts.length < 2) {
+      return (
+        <text x={x} y={y} textAnchor={textAnchor} fill="#1f2937" fontSize={11} fontWeight={600}>
+          {payload.value}
+        </text>
+      );
+    }
+
+    const label = parts[0];
+    const score = parts[1];
+
+    const isTop = label === "目的適合";
+    const labelY = isTop ? -17 : -4;
+    const scoreY = isTop ? -1 : 12;
+
+    return (
+      <g transform={`translate(${x}, ${y})`}>
+        <text
+          x={0}
+          y={labelY}
+          textAnchor={textAnchor}
+          fill="#4b5563"
+          fontSize={10}
+          fontWeight={500}
+        >
+          {label}
+        </text>
+        <text
+          x={0}
+          y={scoreY}
+          textAnchor={textAnchor}
+          fill="#7c3aed"
+          fontSize={14}
+          fontWeight={700}
+        >
+          {score}
+        </text>
+      </g>
+    );
+  };
 
   return (
     <div
@@ -572,7 +616,7 @@ function EvaluationRadarChart({
           <PolarGrid stroke="rgba(0, 0, 0, 0.08)" gridType="polygon" />
           <PolarAngleAxis
             dataKey="subject"
-            tick={{ fill: "#1f2937", fontSize: 11, fontWeight: 600 }}
+            tick={renderCustomTick}
           />
           <PolarRadiusAxis
             angle={90}
