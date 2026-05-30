@@ -149,6 +149,19 @@ function appliesToFromCandidate(
   };
 }
 
+function hasFacet(values: string[] | undefined): boolean {
+  return Boolean(values?.some((value) => value.trim().length > 0));
+}
+
+function missingApplicabilityFacets(candidate: CoverEvidenceResult["candidate"]): string[] {
+  if (!candidate) return ["technologies", "changeTypes", "domains"];
+  const missing: string[] = [];
+  if (!hasFacet(candidate.technologies)) missing.push("technologies");
+  if (!hasFacet(candidate.changeTypes)) missing.push("changeTypes");
+  if (!hasFacet(candidate.domains)) missing.push("domains");
+  return missing;
+}
+
 async function getLandscapeLinkForContext(params: {
   findCandidateResultId?: string | null;
   foundCandidateId?: string | null;
@@ -249,6 +262,11 @@ export async function runFinalizeDistille(
           : PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
       );
     }
+  }
+
+  const missingFacets = missingApplicabilityFacets(candidate);
+  if (missingFacets.length > 0) {
+    return rejectedResult(coverEvidenceResultId, result, "applies_to_categories_required");
   }
 
   let candidateContext = input.candidateContext;

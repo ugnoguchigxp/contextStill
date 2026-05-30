@@ -62,7 +62,7 @@ describeDb("mcp contract", () => {
         "relevance",
         "actionability",
         "coverage",
-        "noise",
+        "clarity",
         "specificity",
       ],
     });
@@ -74,11 +74,11 @@ describeDb("mcp contract", () => {
       maximum: 100,
       description: "目的に合っていたか (0-100)",
     });
-    expect(properties?.noise).toEqual({
+    expect(properties?.clarity).toEqual({
       type: "integer",
       minimum: 0,
       maximum: 100,
-      description: "低ノイズ度。100=余計な情報がほぼない、0=余計な情報が多い",
+      description: "Context clarity (100 = clean, 0 = noisy).",
     });
     expect(properties?.outcome).toEqual({
       type: "string",
@@ -247,7 +247,7 @@ describeDb("mcp contract", () => {
         relevance: 90,
         actionability: 80,
         coverage: 70,
-        noise: 100,
+        clarity: 100,
         specificity: 80,
         outcome: "useful",
         body: "worked well",

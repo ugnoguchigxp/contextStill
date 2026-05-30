@@ -83,7 +83,7 @@ export const contextCompileEvals = pgTable(
     relevance: integer("relevance"),
     actionability: integer("actionability"),
     coverage: integer("coverage"),
-    noise: integer("noise"),
+    clarity: integer("clarity"),
     specificity: integer("specificity"),
     createdAt: timestamp("created_at").defaultNow().notNull(),
     updatedAt: timestamp("updated_at").defaultNow().notNull(),
@@ -132,9 +132,9 @@ export const contextCompileEvals = pgTable(
       "context_compile_evals_coverage_range_check",
       sql`${table.coverage} is null or (${table.coverage} >= 0 and ${table.coverage} <= 100)`,
     ),
-    noiseRangeCheck: check(
-      "context_compile_evals_noise_range_check",
-      sql`${table.noise} is null or (${table.noise} >= 0 and ${table.noise} <= 100)`,
+    clarityRangeCheck: check(
+      "context_compile_evals_clarity_range_check",
+      sql`${table.clarity} is null or (${table.clarity} >= 0 and ${table.clarity} <= 100)`,
     ),
     specificityRangeCheck: check(
       "context_compile_evals_specificity_range_check",

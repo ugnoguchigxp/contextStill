@@ -655,7 +655,7 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
       relevance: row.relevance,
       actionability: row.actionability,
       coverage: row.coverage,
-      noise: row.noise,
+      clarity: row.clarity,
       specificity: row.specificity,
       createdAt: row.createdAt.toISOString(),
       updatedAt: row.updatedAt.toISOString(),

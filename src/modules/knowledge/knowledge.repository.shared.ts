@@ -94,12 +94,12 @@ function toStringArray(value: unknown): string[] {
     .filter(Boolean);
 }
 
-function toLowerSlug(value: string): string {
+function normalizeFacetValue(value: string): string {
   return value
     .trim()
     .toLowerCase()
     .replace(/[\s_]+/g, "-")
-    .replace(/[^a-z0-9./-]/g, "-")
+    .replace(/[^\p{L}\p{N}./+#-]/gu, "-")
     .replace(/-+/g, "-")
     .replace(/^-+|-+$/g, "");
 }
@@ -107,7 +107,7 @@ function toLowerSlug(value: string): string {
 function uniqueLowerSlugs(values: string[] | undefined): string[] {
   const deduped = new Set<string>();
   for (const raw of values ?? []) {
-    const normalized = toLowerSlug(raw);
+    const normalized = normalizeFacetValue(raw);
     if (!normalized) continue;
     deduped.add(normalized);
   }
@@ -149,10 +149,10 @@ export function hasApplicabilityQuery(query: ApplicabilityQuery): boolean {
 
 function intersect(queryValues: string[], sourceValues: string[]): string[] {
   if (queryValues.length === 0 || sourceValues.length === 0) return [];
-  const sourceSet = new Set(sourceValues.map(toLowerSlug));
+  const sourceSet = new Set(sourceValues.map(normalizeFacetValue));
   const matched: string[] = [];
   for (const value of queryValues) {
-    if (sourceSet.has(toLowerSlug(value))) matched.push(value);
+    if (sourceSet.has(normalizeFacetValue(value))) matched.push(value);
   }
   return matched;
 }

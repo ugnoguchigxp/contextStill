@@ -195,6 +195,25 @@ describe("runFinalizeDistille", () => {
     expect(mocks.upsertKnowledgeFromSource).not.toHaveBeenCalled();
   });
 
+  test("rejects ready cover evidence when applicability facets are missing", async () => {
+    mocks.coverEvidenceResultFromRow.mockReturnValue({
+      ...readyResult(),
+      candidate: {
+        ...readyResult().candidate,
+        technologies: undefined,
+        changeTypes: [],
+        domains: undefined,
+      },
+    });
+
+    const result = await runFinalizeDistille({ coverEvidenceResultId: "find-1", write: true });
+
+    expect(result.status).toBe("rejected");
+    expect(result.reason).toBe("applies_to_categories_required");
+    expect(mocks.getFindCandidateResultById).not.toHaveBeenCalled();
+    expect(mocks.upsertKnowledgeFromSource).not.toHaveBeenCalled();
+  });
+
   test("demotes one-line procedure misclassifications before storing", async () => {
     mocks.coverEvidenceResultFromRow.mockReturnValue({
       ...readyResult(),

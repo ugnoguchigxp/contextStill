@@ -152,6 +152,39 @@ describe("knowledge repository", () => {
       );
     });
 
+    test("preserves non-ASCII applicability facets while normalizing separators", async () => {
+      (db.query.knowledgeItems.findFirst as any).mockResolvedValue(null);
+      const values = vi.fn().mockReturnThis();
+      (db.insert as any).mockReturnValue({
+        values,
+        returning: vi.fn().mockResolvedValue([{ id: "new-k" }]),
+      });
+
+      await upsertKnowledgeFromSource({
+        sourceUri: "cover-evidence-result://evidence-1",
+        type: "rule",
+        status: "draft",
+        scope: "repo",
+        title: "Feature flag rollout",
+        body: "Body",
+        appliesTo: {
+          technologies: ["feature flag"],
+          changeTypes: ["機能追加"],
+          domains: ["リリース管理"],
+        },
+      });
+
+      expect(values).toHaveBeenCalledWith(
+        expect.objectContaining({
+          appliesTo: {
+            technologies: ["feature-flag"],
+            changeTypes: ["機能追加"],
+            domains: ["リリース管理"],
+          },
+        }),
+      );
+    });
+
     test("updates existing knowledge", async () => {
       const existing = { id: "old-k", status: "draft" };
       (db.query.knowledgeItems.findFirst as any).mockResolvedValue(existing);

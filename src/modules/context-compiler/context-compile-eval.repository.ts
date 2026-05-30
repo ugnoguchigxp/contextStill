@@ -14,7 +14,7 @@ export type CompileEvalRecord = {
   relevance: number | null;
   actionability: number | null;
   coverage: number | null;
-  noise: number | null;
+  clarity: number | null;
   specificity: number | null;
   createdAt: Date;
   updatedAt: Date;
@@ -60,7 +60,7 @@ export async function insertCompileEval(params: {
   relevance: number;
   actionability: number;
   coverage: number;
-  noise: number;
+  clarity: number;
   specificity: number;
 }): Promise<CompileEvalRecord> {
   const [row] = await db
@@ -77,7 +77,7 @@ export async function insertCompileEval(params: {
       relevance: params.relevance,
       actionability: params.actionability,
       coverage: params.coverage,
-      noise: params.noise,
+      clarity: params.clarity,
       specificity: params.specificity,
       updatedAt: new Date(),
     })
@@ -94,7 +94,7 @@ export async function insertCompileEval(params: {
     relevance: row.relevance,
     actionability: row.actionability,
     coverage: row.coverage,
-    noise: row.noise,
+    clarity: row.clarity,
     specificity: row.specificity,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,
@@ -168,7 +168,7 @@ export async function listCompileEvalsByRunId(runId: string): Promise<CompileEva
     relevance: row.relevance,
     actionability: row.actionability,
     coverage: row.coverage,
-    noise: row.noise,
+    clarity: row.clarity,
     specificity: row.specificity,
     createdAt: row.createdAt,
     updatedAt: row.updatedAt,

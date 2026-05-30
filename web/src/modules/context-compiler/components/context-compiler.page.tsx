@@ -527,20 +527,20 @@ function EvaluationRadarChart({
   relevance,
   actionability,
   coverage,
-  noise,
+  clarity,
   specificity,
 }: {
   relevance: number;
   actionability: number;
   coverage: number;
-  noise: number;
+  clarity: number;
   specificity: number;
 }) {
   const data = [
     { subject: `目的適合: ${relevance}`, value: relevance },
     { subject: `実行可能: ${actionability}`, value: actionability },
     { subject: `網羅性: ${coverage}`, value: coverage },
-    { subject: `低ノイズ: ${noise}`, value: noise },
+    { subject: `明瞭さ: ${clarity}`, value: clarity },
     { subject: `具体性: ${specificity}`, value: specificity },
   ];
 
@@ -803,7 +803,7 @@ function RunDetailPane({
             ) : (
               <div className="compile-pack-items">
                 {evaluations.map((evaluation) => {
-                  const { relevance, actionability, coverage, noise, specificity } = evaluation;
+                  const { relevance, actionability, coverage, clarity, specificity } = evaluation;
                   const hasDetails =
                     relevance !== null &&
                     relevance !== undefined &&
@@ -811,8 +811,8 @@ function RunDetailPane({
                     actionability !== undefined &&
                     coverage !== null &&
                     coverage !== undefined &&
-                    noise !== null &&
-                    noise !== undefined &&
+                    clarity !== null &&
+                    clarity !== undefined &&
                     specificity !== null &&
                     specificity !== undefined;
                   const detailValues = hasDetails
@@ -820,7 +820,7 @@ function RunDetailPane({
                         relevance,
                         actionability,
                         coverage,
-                        noise,
+                        clarity,
                         specificity,
                       }
                     : null;
@@ -853,7 +853,7 @@ function RunDetailPane({
                               relevance={detailValues.relevance}
                               actionability={detailValues.actionability}
                               coverage={detailValues.coverage}
-                              noise={detailValues.noise}
+                              clarity={detailValues.clarity}
                               specificity={detailValues.specificity}
                             />
                           </div>

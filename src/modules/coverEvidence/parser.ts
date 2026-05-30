@@ -25,6 +25,13 @@ function asRecord(value: unknown): Record<string, unknown> {
     : {};
 }
 
+function recordValue(record: Record<string, unknown>, keys: string[]): unknown {
+  for (const key of keys) {
+    if (record[key] !== undefined) return record[key];
+  }
+  return undefined;
+}
+
 function asString(value: unknown): string {
   return typeof value === "string" ? value.trim() : "";
 }
@@ -42,9 +49,29 @@ function asStringArray(value: unknown): string[] {
       .filter(Boolean);
   }
   if (typeof value === "string" && value.trim()) {
-    return value
-      .split(",")
+    const trimmed = value.trim();
+    if (/^(?:n\/a|na|null|none|-|なし|\[\])$/i.test(trimmed)) {
+      return [];
+    }
+    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
+      try {
+        const parsed = JSON.parse(trimmed);
+        if (Array.isArray(parsed)) {
+          return parsed
+            .filter((item): item is string => typeof item === "string")
+            .map((item) => item.trim())
+            .filter(Boolean);
+        }
+      } catch {
+        // Local LLM sometimes emits bracketed labels like [AuthError].
+      }
+    }
+    const normalized =
+      trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
+    return normalized
+      .split(/[,、，]/)
       .map((part) => part.trim())
+      .filter((part) => !/^(?:n\/a|na|null|none|-|なし|\[\])$/i.test(part))
       .filter(Boolean);
   }
   return [];
@@ -86,15 +113,40 @@ function parseApplicability(
   CoverEvidenceCandidate,
   "applicabilityGeneral" | "technologies" | "changeTypes" | "domains" | "repoPath" | "repoKey"
 > {
-  const nested = asRecord(record.appliesTo ?? record.applicability);
-  const technologies = asStringArray(record.technologies ?? nested.technologies);
-  const changeTypes = asStringArray(record.changeTypes ?? nested.changeTypes);
-  const domains = asStringArray(record.domains ?? nested.domains);
-  const general = asOptionalBoolean(
-    record.applicabilityGeneral ?? record.general ?? nested.general,
+  const nested = asRecord(
+    recordValue(record, [
+      "appliesTo",
+      "applies_to",
+      "APPLIES_TO",
+      "applicability",
+      "APPLICABILITY",
+    ]),
   );
-  const repoPath = asOptionalString(record.repoPath ?? nested.repoPath);
-  const repoKey = asOptionalString(record.repoKey ?? nested.repoKey);
+  const technologies = asStringArray(
+    recordValue(record, ["technologies", "TECHNOLOGIES"]) ?? nested.technologies,
+  );
+  const changeTypes = asStringArray(
+    recordValue(record, ["changeTypes", "change_types", "CHANGE_TYPES", "CHANGETYPES"]) ??
+      nested.changeTypes,
+  );
+  const domains = asStringArray(
+    recordValue(record, ["domains", "domain", "DOMAINS", "DOMAIN"]) ?? nested.domains,
+  );
+  const general = asOptionalBoolean(
+    recordValue(record, [
+      "applicabilityGeneral",
+      "applicability_general",
+      "APPLICABILITY_GENERAL",
+      "general",
+      "GENERAL",
+    ]) ?? nested.general,
+  );
+  const repoPath = asOptionalString(
+    recordValue(record, ["repoPath", "repo_path", "REPO_PATH"]) ?? nested.repoPath,
+  );
+  const repoKey = asOptionalString(
+    recordValue(record, ["repoKey", "repo_key", "REPO_KEY"]) ?? nested.repoKey,
+  );
 
   return {
     ...(general !== undefined
@@ -123,7 +175,7 @@ function parseApplicability(
 }
 
 function candidateRecordFromResult(record: Record<string, unknown>): Record<string, unknown> {
-  const nested = asRecord(record.candidate);
+  const nested = asRecord(recordValue(record, ["candidate", "CANDIDATE"]));
   if (Object.keys(nested).length === 0) {
     return record;
   }
@@ -142,12 +194,28 @@ function parseCandidate(
   defaults: Partial<CoverEvidenceCandidate> = {},
 ): CoverEvidenceCandidate | null {
   const candidateRecord = candidateRecordFromResult(record);
-  const title = asString(candidateRecord.title ?? candidateRecord.candidateTitle);
+  const title = asString(
+    recordValue(candidateRecord, [
+      "title",
+      "TITLE",
+      "candidateTitle",
+      "candidate_title",
+      "CANDIDATE_TITLE",
+    ]),
+  );
   const body = asString(
-    candidateRecord.body ??
-      candidateRecord.content ??
-      candidateRecord.candidateBody ??
-      candidateRecord.candidateContent,
+    recordValue(candidateRecord, [
+      "body",
+      "BODY",
+      "content",
+      "CONTENT",
+      "candidateBody",
+      "candidate_body",
+      "CANDIDATE_BODY",
+      "candidateContent",
+      "candidate_content",
+      "CANDIDATE_CONTENT",
+    ]),
   );
   const normalizedTitle = title || (body ? inferTitleFromBody(body) : "");
   const normalizedBody = body || title;
@@ -156,16 +224,30 @@ function parseCandidate(
   }
 
   const typeHint = asString(
-    candidateRecord.type ?? candidateRecord.candidateType ?? candidateRecord.kind,
-  );
+    recordValue(candidateRecord, [
+      "type",
+      "TYPE",
+      "candidateType",
+      "candidate_type",
+      "CANDIDATE_TYPE",
+      "kind",
+      "KIND",
+    ]),
+  ).toLowerCase();
   const type = typeHint === "procedure" ? "procedure" : (defaults.type ?? "rule");
   const applicability = parseApplicability(candidateRecord, defaults);
   return {
     type,
     title: normalizedTitle,
     body: normalizedBody,
-    importance: parseScore(candidateRecord.importance, defaults.importance ?? DEFAULT_IMPORTANCE),
-    confidence: parseScore(candidateRecord.confidence, defaults.confidence ?? DEFAULT_CONFIDENCE),
+    importance: parseScore(
+      recordValue(candidateRecord, ["importance", "IMPORTANCE"]),
+      defaults.importance ?? DEFAULT_IMPORTANCE,
+    ),
+    confidence: parseScore(
+      recordValue(candidateRecord, ["confidence", "CONFIDENCE"]),
+      defaults.confidence ?? DEFAULT_CONFIDENCE,
+    ),
     ...applicability,
   };
 }
@@ -427,36 +509,38 @@ export function parseCoverEvidenceResult(
   }
 
   const record =
-    parsed?.value && typeof parsed.value === "object"
+    parsed?.value && typeof parsed.value === "object" && !Array.isArray(parsed.value)
       ? asRecord(parsed.value)
       : (labelledFallback ?? slashFallback ?? {});
-  const statusValue = asString(record.status);
-  const hasCandidateShape = Object.keys(candidateRecordFromResult(record)).some((key) =>
-    ["title", "candidateTitle", "body", "content", "candidateBody", "candidateContent"].includes(
-      key,
-    ),
-  );
+  const candidate = parseCandidate(record, options.candidateDefaults);
+  const statusValue = asString(recordValue(record, ["status", "STATUS"])).toLowerCase();
   const status: CoverEvidenceStatus = isCoverEvidenceStatus(statusValue)
     ? statusValue
-    : hasCandidateShape
+    : candidate
       ? "knowledge_ready"
       : "insufficient";
 
-  const stageValue = asString(record.stage);
+  const stageValue = asString(recordValue(record, ["stage", "STAGE"])).toLowerCase();
   const stage: CoverEvidenceStage = isCoverEvidenceStage(stageValue) ? stageValue : "final";
-  const references = Array.isArray(record.references)
-    ? record.references.map(parseReference).filter(isReference)
+  const rawReferences = recordValue(record, ["references", "REFERENCES"]);
+  const references = Array.isArray(rawReferences)
+    ? rawReferences.map(parseReference).filter(isReference)
     : [];
-  const duplicateRefs = Array.isArray(record.duplicateRefs)
-    ? record.duplicateRefs.map(parseDuplicateRef).filter(isDuplicateRef)
+  const rawDuplicateRefs = recordValue(record, [
+    "duplicateRefs",
+    "duplicate_refs",
+    "DUPLICATE_REFS",
+  ]);
+  const duplicateRefs = Array.isArray(rawDuplicateRefs)
+    ? rawDuplicateRefs.map(parseDuplicateRef).filter(isDuplicateRef)
     : [];
-  const toolEvents = Array.isArray(record.toolEvents)
-    ? record.toolEvents.map(parseToolEvent).filter(isToolEvent)
+  const rawToolEvents = recordValue(record, ["toolEvents", "tool_events", "TOOL_EVENTS"]);
+  const toolEvents = Array.isArray(rawToolEvents)
+    ? rawToolEvents.map(parseToolEvent).filter(isToolEvent)
     : [];
-  const candidate = parseCandidate(record, options.candidateDefaults);
   const normalizedStatus: CoverEvidenceStatus =
     status === "knowledge_ready" && !candidate ? "insufficient" : status;
-  const reason = asOptionalReason(record.reason);
+  const reason = asOptionalReason(recordValue(record, ["reason", "REASON"]));
 
   return {
     schemaVersion: 1,

@@ -1,6 +1,11 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { runCoverEvidence } from "../src/modules/coverEvidence/domain.js";
 import { parseCoverEvidenceResult } from "../src/modules/coverEvidence/parser.js";
+import {
+  applicabilityRefinementSystemPrompt,
+  externalEvidenceFinalSystemPrompt,
+} from "../src/modules/coverEvidence/prompts.js";
+import { buildCoverEvidenceSearchQuery } from "../src/modules/coverEvidence/search-query.service.js";
 
 const mocks = vi.hoisted(() => ({
   getFindCandidateResultById: vi.fn(),
@@ -212,6 +217,74 @@ describe("coverEvidence parser", () => {
     expect(parsed.candidate).not.toHaveProperty("changeTypes");
   });
 
+  test("normalizes bracketed label applicability values", () => {
+    const parsed = parseCoverEvidenceResult(
+      [
+        "STATUS: knowledge_ready",
+        "STAGE: web",
+        "TYPE: rule",
+        "TITLE: Use explicit auth errors",
+        "BODY: Protected routes should raise AuthError when user context is missing.",
+        "IMPORTANCE: 80",
+        "CONFIDENCE: 90",
+        "TECHNOLOGIES: [AuthError]",
+        "CHANGE_TYPES: []",
+        "DOMAINS: なし",
+      ].join("\n"),
+    );
+
+    expect(parsed.candidate).toMatchObject({
+      technologies: ["AuthError"],
+    });
+    expect(parsed.candidate).not.toHaveProperty("changeTypes");
+    expect(parsed.candidate).not.toHaveProperty("domains");
+  });
+
+  test("parses uppercase-key JSON emitted despite label instructions", () => {
+    const parsed = parseCoverEvidenceResult(
+      JSON.stringify({
+        STATUS: "knowledge_ready",
+        STAGE: "Finalization",
+        TYPE: "Procedure",
+        TITLE: "Reduce recursive helper argument count via context structs",
+        BODY: [
+          "Use when:",
+          "- Recursive helpers accumulate many related parameters.",
+          "",
+          "Workflow:",
+          "1. Group shared dependencies into a context struct.",
+          "2. Pass the context through recursive calls.",
+          "",
+          "Verification:",
+          "- Recursive behavior remains unchanged in tests.",
+          "",
+          "Avoid:",
+          "- Suppressing argument-count warnings without cleanup.",
+        ].join("\n"),
+        IMPORTANCE: 92,
+        CONFIDENCE: 93,
+        TECHNOLOGIES: "Rust",
+        CHANGE_TYPES: "refactor, quality",
+        DOMAINS: "code-quality",
+      }),
+      {
+        candidateDefaults: {
+          type: "procedure",
+        },
+      },
+    );
+
+    expect(parsed.status).toBe("knowledge_ready");
+    expect(parsed.stage).toBe("final");
+    expect(parsed.candidate).toMatchObject({
+      type: "procedure",
+      title: "Reduce recursive helper argument count via context structs",
+      technologies: ["Rust"],
+      changeTypes: ["refactor", "quality"],
+      domains: ["code-quality"],
+    });
+  });
+
   test("fills omitted candidate fields from caller defaults", () => {
     const parsed = parseCoverEvidenceResult(
       JSON.stringify({
@@ -310,6 +383,26 @@ describe("coverEvidence parser", () => {
 
     expect(parsed.status).toBe("insufficient");
     expect(parsed.reason).toBe("Evidence URI could not be parsed as a valid URL.");
+  });
+});
+
+describe("coverEvidence search query", () => {
+  test("keeps search terms short and drops prompt heading filler", () => {
+    const query = buildCoverEvidenceSearchQuery(
+      "仕様変更時は段階的テスト実行で検証する Use when Workflow Verification Avoid",
+    );
+
+    expect(query.searchTerms.length).toBeLessThanOrEqual(3);
+    expect(query.searchTerms).not.toContain("use");
+    expect(query.searchTerms).not.toContain("when");
+    expect(query.query).toBe("仕様変更時 段階的テスト実行 検証");
+  });
+});
+
+describe("coverEvidence prompts", () => {
+  test("asks applicability facets to prefer ASCII tags", () => {
+    expect(externalEvidenceFinalSystemPrompt()).toContain("lowercase kebab-case の ASCII tag");
+    expect(applicabilityRefinementSystemPrompt()).toContain("lowercase kebab-case の ASCII tag");
   });
 });
 
@@ -673,6 +766,9 @@ describe("runCoverEvidence", () => {
           ].join("\n"),
           importance: 82,
           confidence: 86,
+          technologies: "typescript, bun",
+          changeTypes: "verification",
+          domains: "distillation",
         },
         references: [],
         duplicateRefs: [],
@@ -697,7 +793,7 @@ describe("runCoverEvidence", () => {
     const request = mocks.runDistillationCompletion.mock.calls[2]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
-    expect(request.messages[0]?.content).toContain("fetch_content の本文だけ");
+    expect(request.messages[0]?.content).toContain("source evidence と fetch_content evidence");
     expect(request.messages[0]?.content).toContain("Use when:");
     expect(request.messages[0]?.content).toContain("Workflow:");
     expect(request.messages[0]?.content).toContain("domains");
@@ -751,6 +847,9 @@ describe("runCoverEvidence", () => {
           body: "First, coverEvidence must preserve source references, then verify the saved result before finalization.",
           importance: 86,
           confidence: 84,
+          technologies: "typescript",
+          changeTypes: "verification",
+          domains: "distillation",
         },
         references: [],
         duplicateRefs: [],

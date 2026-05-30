@@ -4,7 +4,7 @@ export type CoverEvidenceSearchQuery = {
   searchTerms: string[];
 };
 
-const maxSearchTerms = 5;
+const maxSearchTerms = 3;
 
 const searchStopWords = new Set([
   "a",
@@ -19,6 +19,18 @@ const searchStopWords = new Set([
   "or",
   "the",
   "to",
+  "use",
+  "when",
+  "workflow",
+  "verification",
+  "avoid",
+  "rule",
+  "procedure",
+  "title",
+  "body",
+  "candidate",
+  "knowledge",
+  "implementation",
   "with",
   "この",
   "その",
@@ -35,6 +47,14 @@ const searchStopWords = new Set([
   "して",
   "ください",
   "教えて",
+  "関連ファイル",
+  "既存実装パターン",
+  "関連",
+  "既存",
+  "実装",
+  "パターン",
+  "固定",
+  "候補",
 ]);
 
 export function normalizeCoverEvidenceSearchTerms(query: string): string[] {

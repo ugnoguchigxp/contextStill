@@ -10,7 +10,7 @@ export const compileEvalInputSchema = z.object({
   relevance: z.number().int().min(0).max(100),
   actionability: z.number().int().min(0).max(100),
   coverage: z.number().int().min(0).max(100),
-  noise: z.number().int().min(0).max(100),
+  clarity: z.number().int().min(0).max(100),
   specificity: z.number().int().min(0).max(100),
 });
 
@@ -26,7 +26,7 @@ export const compileEvalRecordSchema = z.object({
   relevance: z.number().int().min(0).max(100).nullable(),
   actionability: z.number().int().min(0).max(100).nullable(),
   coverage: z.number().int().min(0).max(100).nullable(),
-  noise: z.number().int().min(0).max(100).nullable(),
+  clarity: z.number().int().min(0).max(100).nullable(),
   specificity: z.number().int().min(0).max(100).nullable(),
   createdAt: z.string().datetime(),
   updatedAt: z.string().datetime(),

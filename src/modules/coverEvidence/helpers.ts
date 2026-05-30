@@ -58,6 +58,7 @@ export function applicabilityInstructions(): string[] {
     "ネストした appliesTo や candidate オブジェクトは作らないでください。",
     "任意 field は applicabilityGeneral, technologies, changeTypes, domains, repoPath, repoKey です。",
     "technologies / changeTypes / domains は JSON 配列ではなく、できればカンマ区切り文字列で返してください。",
+    "technologies / changeTypes / domains の値は、可能な限り lowercase kebab-case の ASCII tag で返してください（例: release-management, feature-flag）。日本語しか根拠がない場合だけ日本語を使ってください。",
     "knowledge_ready を返す場合、technologies/changeTypes/domains はそれぞれ最低 1 件を必ず埋めてください。",
     "3カテゴリを埋められない場合は knowledge_ready にせず、status=insufficient と reason=applies_to_categories_required を返してください。",
     "source evidence から明確に言える値を優先し、曖昧な推測で埋めないでください。",

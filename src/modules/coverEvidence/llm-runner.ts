@@ -102,6 +102,8 @@ function hasFacet(values: string[] | undefined): boolean {
   return values.some((value) => value.trim().length > 0);
 }
 
+const APPLICABILITY_CATEGORIES_REQUIRED_REASON = "applies_to_categories_required";
+
 function missingApplicabilityFacets(candidate: CoverEvidenceCandidate): string[] {
   const missing: string[] = [];
   if (!hasFacet(candidate.technologies)) missing.push("technologies");
@@ -250,6 +252,50 @@ async function enrichApplicabilityFacets(params: {
   }
 }
 
+async function ensureApplicabilityFacets(params: {
+  id: string;
+  result: CoverEvidenceResult;
+  sourceReferences: CoverEvidenceReference[];
+  sourceContentExcerpt: string;
+  sourceContext: CoverEvidenceSourceContext;
+  provider: DistillationProviderSetting;
+  model: string;
+  fallbackOrder?: DistillationProviderName[];
+  azureDeploymentSlots?: number[];
+  chatClient?: DistillationChatClient;
+  signal?: AbortSignal;
+}): Promise<CoverEvidenceResult> {
+  const enriched = await enrichApplicabilityFacets(params);
+  if (enriched.status !== "knowledge_ready" || !enriched.candidate) {
+    return enriched;
+  }
+
+  const missing = missingApplicabilityFacets(enriched.candidate);
+  if (missing.length === 0) {
+    return enriched;
+  }
+
+  return makeResult({
+    status: "insufficient",
+    stage: enriched.stage,
+    candidate: null,
+    references: enriched.references,
+    duplicateRefs: enriched.duplicateRefs,
+    toolEvents: [
+      ...enriched.toolEvents,
+      {
+        name: "applicability_required",
+        ok: false,
+        metadata: {
+          reason: APPLICABILITY_CATEGORIES_REQUIRED_REASON,
+          missingFacets: missing,
+        },
+      },
+    ],
+    reason: APPLICABILITY_CATEGORIES_REQUIRED_REASON,
+  });
+}
+
 function repairCandidateForResult(
   result: CoverEvidenceResult,
   fallbackProcedureCandidate?: CoverEvidenceCandidate,
@@ -396,6 +442,52 @@ async function normalizeOrRepairProcedureQuality(params: {
   );
 }
 
+async function finalizeKnowledgeReadyResult(params: {
+  id: string;
+  result: CoverEvidenceResult;
+  sourceReferences: CoverEvidenceReference[];
+  sourceContentExcerpt: string;
+  sourceContext: CoverEvidenceSourceContext;
+  candidateTypeHint?: CandidateKnowledgeType;
+  fallbackProcedureCandidate?: CoverEvidenceCandidate;
+  sourceEvidence?: string;
+  provider: DistillationProviderSetting;
+  model: string;
+  fallbackOrder?: DistillationProviderName[];
+  azureDeploymentSlots?: number[];
+  chatClient?: DistillationChatClient;
+  signal?: AbortSignal;
+  timeoutMs?: number;
+}): Promise<CoverEvidenceResult> {
+  const qualityResult = await normalizeOrRepairProcedureQuality({
+    id: params.id,
+    result: params.result,
+    candidateTypeHint: params.candidateTypeHint,
+    fallbackProcedureCandidate: params.fallbackProcedureCandidate,
+    sourceEvidence: params.sourceEvidence,
+    provider: params.provider,
+    model: params.model,
+    fallbackOrder: params.fallbackOrder,
+    azureDeploymentSlots: params.azureDeploymentSlots,
+    chatClient: params.chatClient,
+    signal: params.signal,
+    timeoutMs: params.timeoutMs,
+  });
+  return ensureApplicabilityFacets({
+    id: params.id,
+    result: qualityResult,
+    sourceReferences: params.sourceReferences,
+    sourceContentExcerpt: params.sourceContentExcerpt,
+    sourceContext: params.sourceContext,
+    provider: params.provider,
+    model: params.model,
+    fallbackOrder: params.fallbackOrder,
+    azureDeploymentSlots: params.azureDeploymentSlots,
+    chatClient: params.chatClient,
+    signal: params.signal,
+  });
+}
+
 export async function runValueAssessment(params: {
   id: string;
   candidate: CoverEvidenceCandidate;
@@ -477,22 +569,12 @@ export async function runValueAssessment(params: {
       references: mergeReferences(params.sourceReferences, parsed.references),
       toolEvents: toolEventsForResult(completion.toolEvents),
     });
-    const enrichedResult = await enrichApplicabilityFacets({
+    return finalizeKnowledgeReadyResult({
       id: params.id,
       result: baseResult,
       sourceReferences: params.sourceReferences,
       sourceContentExcerpt: params.sourceContentExcerpt,
       sourceContext: params.sourceContext,
-      provider: params.provider,
-      model: params.model,
-      fallbackOrder: params.fallbackOrder,
-      azureDeploymentSlots: params.azureDeploymentSlots,
-      chatClient: params.chatClient,
-      signal: params.signal,
-    });
-    return normalizeOrRepairProcedureQuality({
-      id: params.id,
-      result: enrichedResult,
       candidateTypeHint: params.candidateTypeHint,
       fallbackProcedureCandidate: params.candidate,
       sourceEvidence: procedureRepairEvidenceFromCompletion({
@@ -649,6 +731,32 @@ function searchResultCount(content: string): number {
   } catch {
     return 0;
   }
+}
+
+function isUnexpectedNoToolsToolCall(error: unknown): boolean {
+  return (
+    error instanceof Error && error.message.includes("distillation tool loop exceeded max rounds")
+  );
+}
+
+function isFinalLabelStubOutput(content: string): boolean {
+  const normalized = content
+    .trim()
+    .replace(/[:/]+$/, "")
+    .toUpperCase();
+  return [
+    "STATUS",
+    "STAGE",
+    "TYPE",
+    "TITLE",
+    "BODY",
+    "IMPORTANCE",
+    "CONFIDENCE",
+    "TECHNOLOGIES",
+    "CHANGE_TYPES",
+    "DOMAINS",
+    "REASON",
+  ].includes(normalized);
 }
 
 async function executeExternalEvidenceTool(params: {
@@ -823,40 +931,88 @@ export async function runExternalEvidence(params: {
       });
     }
 
-    const finalCompletion = await runDistillationCompletion(
-      {
-        model: params.model,
-        maxTokens: Math.max(2048, groupedConfig.vibeDistillation.maxOutputTokens),
-        messages: [
-          { role: "system", content: externalEvidenceFinalSystemPrompt() },
-          {
-            role: "user",
-            content: externalEvidenceFinalUserPrompt({
-              candidate: params.candidate,
-              sourceReferences: params.sourceReferences,
-              sourceContext: params.sourceContext,
-              searchQuery: searchQuery.query,
-              fetchedEvidence: fetchResult.content.slice(0, MAX_FETCH_EVIDENCE_PROMPT_CHARS),
-            }),
+    let finalCompletion: Awaited<ReturnType<typeof runDistillationCompletion>>;
+    try {
+      finalCompletion = await runDistillationCompletion(
+        {
+          model: params.model,
+          maxTokens: Math.max(2048, groupedConfig.vibeDistillation.maxOutputTokens),
+          messages: [
+            { role: "system", content: externalEvidenceFinalSystemPrompt() },
+            {
+              role: "user",
+              content: externalEvidenceFinalUserPrompt({
+                candidate: params.candidate,
+                sourceReferences: params.sourceReferences,
+                sourceContext: params.sourceContext,
+                sourceEvidence: params.sourceContentExcerpt,
+                searchQuery: searchQuery.query,
+                fetchedEvidence: fetchResult.content.slice(0, MAX_FETCH_EVIDENCE_PROMPT_CHARS),
+              }),
+            },
+          ],
+        },
+        {
+          providerSetting: params.provider,
+          fallbackOrder: params.fallbackOrder,
+          azureDeploymentSlots: params.azureDeploymentSlots,
+          chatClient: params.chatClient,
+          usageSource: "cover-evidence:external-final",
+          enableTools: false,
+          timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+          blankResponseReminder: applicabilityBlankResponseReminderLines(
+            "web",
+            "knowledge_ready|insufficient|duplicate|near_duplicate",
+          ),
+          auditContext: { ...auditContext, assessment: "external-final" },
+          signal: params.signal,
+        },
+      );
+    } catch (error) {
+      if (!isUnexpectedNoToolsToolCall(error)) {
+        throw error;
+      }
+      const toolEvents = [
+        ...toolEventsForResult(externalToolResults),
+        {
+          name: "external_final_candidate_fallback",
+          ok: true,
+          metadata: {
+            reason: "unexpected_tool_call_in_no_tools_final",
+            error: error instanceof Error ? error.message : String(error),
           },
-        ],
-      },
-      {
-        providerSetting: params.provider,
+        },
+      ];
+      return finalizeKnowledgeReadyResult({
+        id: params.id,
+        result: rejectLowImportance({
+          schemaVersion: 1,
+          status: "knowledge_ready",
+          stage: "web",
+          candidate: params.candidate,
+          references: mergeReferences(
+            params.sourceReferences,
+            referencesFromToolEvents(toolEvents),
+          ),
+          duplicateRefs: [],
+          toolEvents,
+          reason: null,
+        }),
+        sourceReferences: params.sourceReferences,
+        sourceContentExcerpt: params.sourceContentExcerpt,
+        sourceContext: params.sourceContext,
+        candidateTypeHint: params.candidateTypeHint,
+        fallbackProcedureCandidate: params.candidate,
+        sourceEvidence: params.sourceContentExcerpt,
+        provider: params.provider,
+        model: params.model,
         fallbackOrder: params.fallbackOrder,
         azureDeploymentSlots: params.azureDeploymentSlots,
         chatClient: params.chatClient,
-        usageSource: "cover-evidence:external-final",
-        enableTools: false,
-        timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
-        blankResponseReminder: applicabilityBlankResponseReminderLines(
-          "web",
-          "knowledge_ready|insufficient|duplicate|near_duplicate",
-        ),
-        auditContext: { ...auditContext, assessment: "external-final" },
         signal: params.signal,
-      },
-    );
+        timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+      });
+    }
     const completion = {
       ...finalCompletion,
       toolEvents: [...externalToolResults, ...finalCompletion.toolEvents],
@@ -873,6 +1029,47 @@ export async function runExternalEvidence(params: {
       });
     } catch (error) {
       const toolEvents = toolEventsForResult(completion.toolEvents);
+      if (isFinalLabelStubOutput(completion.content)) {
+        return finalizeKnowledgeReadyResult({
+          id: params.id,
+          result: rejectLowImportance({
+            schemaVersion: 1,
+            status: "knowledge_ready",
+            stage: "web",
+            candidate: params.candidate,
+            references: mergeReferences(
+              params.sourceReferences,
+              referencesFromToolEvents(toolEvents),
+            ),
+            duplicateRefs: [],
+            toolEvents: [
+              ...toolEvents,
+              {
+                name: "external_final_candidate_fallback",
+                ok: true,
+                metadata: {
+                  reason: "label_stub_in_no_tools_final",
+                  content: completion.content.trim().slice(0, 80),
+                },
+              },
+            ],
+            reason: null,
+          }),
+          sourceReferences: params.sourceReferences,
+          sourceContentExcerpt: params.sourceContentExcerpt,
+          sourceContext: params.sourceContext,
+          candidateTypeHint: params.candidateTypeHint,
+          fallbackProcedureCandidate: params.candidate,
+          sourceEvidence: params.sourceContentExcerpt,
+          provider: params.provider,
+          model: params.model,
+          fallbackOrder: params.fallbackOrder,
+          azureDeploymentSlots: params.azureDeploymentSlots,
+          chatClient: params.chatClient,
+          signal: params.signal,
+          timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+        });
+      }
       return makeResult({
         status: "parse_failed",
         stage: "web",
@@ -896,13 +1093,16 @@ export async function runExternalEvidence(params: {
       referencesFromToolEvents(toolEvents),
     );
 
-    return normalizeOrRepairProcedureQuality({
+    return finalizeKnowledgeReadyResult({
       id: params.id,
       result: rejectLowImportance({
         ...reclassifyResultCandidate(parsed),
         references,
         toolEvents,
       }),
+      sourceReferences: params.sourceReferences,
+      sourceContentExcerpt: params.sourceContentExcerpt,
+      sourceContext: params.sourceContext,
       candidateTypeHint: params.candidateTypeHint,
       fallbackProcedureCandidate: params.candidate,
       sourceEvidence: procedureRepairEvidenceFromCompletion({

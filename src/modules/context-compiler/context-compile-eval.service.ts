@@ -53,8 +53,8 @@ export async function recordCompileEval(params: {
     );
   }
 
-  const { relevance, actionability, coverage, noise, specificity } = params.input;
-  const avg = Math.round((relevance + actionability + coverage + noise + specificity) / 5);
+  const { relevance, actionability, coverage, clarity, specificity } = params.input;
+  const avg = Math.round((relevance + actionability + coverage + clarity + specificity) / 5);
 
   const saved = await insertCompileEval({
     runId,
@@ -67,7 +67,7 @@ export async function recordCompileEval(params: {
     relevance,
     actionability,
     coverage,
-    noise,
+    clarity,
     specificity,
     metadata: {
       sourceTool: "compile_eval",

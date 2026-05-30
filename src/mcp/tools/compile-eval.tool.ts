@@ -31,11 +31,11 @@ export const compileEvalTool: ToolEntry = {
         maximum: 100,
         description: "必要情報を網羅していたか (0-100)",
       },
-      noise: {
+      clarity: {
         type: "integer",
         minimum: 0,
         maximum: 100,
-        description: "低ノイズ度。100=余計な情報がほぼない、0=余計な情報が多い",
+        description: "Context clarity (100 = clean, 0 = noisy).",
       },
       specificity: {
         type: "integer",
@@ -44,7 +44,7 @@ export const compileEvalTool: ToolEntry = {
         description: "抽象すぎなかったか (0-100)",
       },
     },
-    required: ["outcome", "body", "relevance", "actionability", "coverage", "noise", "specificity"],
+    required: ["outcome", "body", "relevance", "actionability", "coverage", "clarity", "specificity"],
   },
   handler: async (args, context) => {
     const input = compileEvalInputSchema.parse(args ?? {});

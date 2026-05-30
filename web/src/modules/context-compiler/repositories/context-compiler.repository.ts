@@ -126,7 +126,7 @@ export type CompileRunDetail = {
     relevance: number | null;
     actionability: number | null;
     coverage: number | null;
-    noise: number | null;
+    clarity: number | null;
     specificity: number | null;
     createdAt: string;
     updatedAt: string;

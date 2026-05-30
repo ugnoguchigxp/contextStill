@@ -137,7 +137,7 @@ Evidence:
 再利用可能なレッスンが存在しない場合は、登録すべき候補がない旨を報告してください。
 
 【重要】\`context_compile\` を利用したコーディング作業が完了した後は、必ず MCP ツール \`compile_eval\` を実行し、以下を保存してください：
-- 5つの詳細評価指標: \`relevance\`, \`actionability\`, \`coverage\`, \`noise\`, \`specificity\` (すべて 0〜100 の数値)
+- 5つの詳細評価指標: \`relevance\`, \`actionability\`, \`coverage\`, \`clarity\`, \`specificity\` (すべて 0〜100 の数値)
 - 評価結果 (\`useful\` / \`partial\` / \`misleading\` / \`unused\`)
 - 評価コメントである \`body\` (※極力、日本語を用いて具体的かつ詳細に記述することが強く推奨されます)
 - 同一セッション内に複数の \`context_compile\` 実行がある場合は、Vibe Note の \`compile_result\` エントリを参照し、すべての runId に対して個別に評価を保存してください（\`runId\` を明示的に渡してください）

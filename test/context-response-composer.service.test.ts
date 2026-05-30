@@ -90,7 +90,7 @@ describe("context response composer", () => {
   test("does not switch to test headings just because goal contains specificity", async () => {
     const result = await composeContextResponse({
       input: {
-        goal: "compile_evalとWebUIの評価指標（relevance, actionability, coverage, noise, specificity, avg）の実装計画を作る",
+        goal: "compile_evalとWebUIの評価指標（relevance, actionability, coverage, clarity, specificity, avg）の実装計画を作る",
       },
       retrievalMode: "task_context",
       rules: [

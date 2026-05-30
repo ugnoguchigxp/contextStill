@@ -63,20 +63,28 @@ export function externalEvidenceSearchQuerySystemPrompt(): string {
   return [
     "外部 evidence 検索用の検索語だけを選んでください。",
     "出力は1行だけです。",
-    "形式: `| keyword | keyword | keyword |`",
-    "keyword は1個以上から5個以下です。",
-    "名詞・固有名詞・API名・機能名だけを選び、文章にしないでください。",
+    "形式: `| keyword |` または `| keyword | keyword |`",
+    "keyword は1個以上から3個以下です。1個で十分なら1個だけ返してください。",
+    "名詞・固有名詞・API名・機能名・エラー名だけを選び、文章にしないでください。",
+    "Use when / Workflow / Verification / Avoid / rule / procedure などの見出し語は検索語にしないでください。",
+    "数合わせで一般語を足さないでください。",
   ].join("\n");
 }
 
 export function externalEvidenceSearchQueryUserPrompt(params: {
   candidate: CoverEvidenceCandidate;
 }): string {
-  const query = buildCoverEvidenceSearchQuery(`${params.candidate.title} ${params.candidate.body}`);
+  const querySource = [
+    params.candidate.title,
+    ...(params.candidate.technologies ?? []),
+    ...(params.candidate.changeTypes ?? []),
+    ...(params.candidate.domains ?? []),
+  ].join(" ");
+  const query = buildCoverEvidenceSearchQuery(querySource || params.candidate.title);
   return [
     `title: ${params.candidate.title}`,
-    `body: ${params.candidate.body.slice(0, 800)}`,
-    `検索語ヒント（必要なら選び直してよい・最大5個）: ${query.searchTerms.join(" | ")}`,
+    `body: ${params.candidate.body.slice(0, 500)}`,
+    `検索語ヒント（必要なら選び直してよい・最大3個）: ${query.searchTerms.join(" | ")}`,
   ].join("\n\n");
 }
 
@@ -106,11 +114,14 @@ export function externalEvidenceFetchSelectionUserPrompt(params: {
 
 export function externalEvidenceFinalSystemPrompt(): string {
   return [
-    "fetch_content の本文だけを外部 evidence として、coverEvidence の最終判定を返してください。",
+    "source evidence と fetch_content evidence から、coverEvidence の最終判定を返してください。",
+    "source evidence は候補の直接根拠です。fetch_content evidence は公開Webの補助根拠です。",
+    "内部実装、repo運用、coding agent 作業手順は公開Webだけでは直接検証できない場合があります。その場合、source evidence が十分なら knowledge_ready にしてください。",
     "search snippet は根拠にしないでください。",
-    "最終判定はラベル形式だけで返してください。",
+    "最終判定はJSONではなくラベル形式だけで返してください。",
     "ラベル: STATUS / STAGE / TYPE / TITLE / BODY / IMPORTANCE / CONFIDENCE / TECHNOLOGIES / CHANGE_TYPES / DOMAINS / REASON",
-    "STATUS は knowledge_ready|insufficient|duplicate|near_duplicate のいずれかです。",
+    "STATUS は knowledge_ready|insufficient|duplicate|near_duplicate のいずれかです。STAGE は web 固定です。",
+    "TYPE は rule|procedure の小文字だけです。",
     "insufficient の場合は STATUS / STAGE / REASON だけでも構いません。",
     "IMPORTANCE と CONFIDENCE は 0 から 100 目安の数値です。",
     ...procedureBodyInstructions(),
@@ -122,6 +133,7 @@ export function externalEvidenceFinalUserPrompt(params: {
   candidate: CoverEvidenceCandidate;
   sourceReferences: CoverEvidenceReference[];
   sourceContext: CoverEvidenceSourceContext;
+  sourceEvidence: string;
   searchQuery: string;
   fetchedEvidence: string;
 }): string {
@@ -132,6 +144,8 @@ export function externalEvidenceFinalUserPrompt(params: {
     JSON.stringify(params.sourceReferences, null, 2),
     "system/source metadata:",
     JSON.stringify(params.sourceContext, null, 2),
+    "source evidence:",
+    compactSourceEvidence(params.sourceEvidence),
     `search query: ${params.searchQuery}`,
     "fetch_content evidence:",
     params.fetchedEvidence,
@@ -168,6 +182,7 @@ export function valueAssessmentSystemPrompt(): string {
     "source evidence で支えられない場合は status=insufficient、reason=unsupported_by_source にしてください。",
     `importance が ${groupedConfig.distillation.lowImportanceRejectThreshold} 以下なら status は insufficient、reason は low_importance にしてください。`,
     "knowledge_ready を返す場合、technologies/changeTypes/domains はそれぞれ最低 1 件を必ず返してください。",
+    "technologies/changeTypes/domains の値は、可能な限り lowercase kebab-case の ASCII tag で返してください（例: release-management, feature-flag）。",
     "3カテゴリを埋められない場合は knowledge_ready にせず status=insufficient、reason=applies_to_categories_required を返してください。",
     "repoPath/repoKey/applicabilityGeneral は source/candidate で明示できる場合だけ追加してください。",
     "JSON だけを返してください。基本形:",
@@ -201,6 +216,7 @@ export function applicabilityRefinementSystemPrompt(): string {
     "目的は technologies / changeTypes / domains の3カテゴリを埋めることです。",
     "source evidence と candidate から根拠のある値だけを返してください。",
     "knowledge_ready を返す場合、3カテゴリそれぞれ最低 1 件を必ず返してください。",
+    "technologies/changeTypes/domains の値は、可能な限り lowercase kebab-case の ASCII tag で返してください（例: release-management, feature-flag）。",
     "推測で埋められない場合は status=insufficient と reason=applies_to_categories_required を返してください。",
     "JSON だけを返してください。",
     '{"schemaVersion":1,"status":"knowledge_ready|insufficient","stage":"final","type":"rule|procedure","title":"...","body":"...","technologies":"...","changeTypes":"...","domains":"...","reason":null}',

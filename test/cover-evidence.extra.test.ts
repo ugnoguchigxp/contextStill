@@ -236,6 +236,9 @@ describe("runCoverEvidence", () => {
           body: "Run tests, then inspect references.",
           importance: 88,
           confidence: 86,
+          technologies: "typescript, vitest",
+          changeTypes: "testing",
+          domains: "distillation",
         },
         references: [],
         duplicateRefs: [],
@@ -301,6 +304,9 @@ describe("runCoverEvidence", () => {
           body: "1. Run the nearest behavior test first.\n2. Then run the related test range.",
           importance: 90,
           confidence: 90,
+          technologies: "vitest",
+          changeTypes: "testing",
+          domains: "test-strategy",
         },
         references: [],
         duplicateRefs: [],
@@ -350,6 +356,9 @@ describe("runCoverEvidence", () => {
           body: "繰り返し実行するクエリは `prepare()` で Prepared Statement 化して高速化する。",
           importance: 90,
           confidence: 95,
+          technologies: "postgresql",
+          changeTypes: "performance",
+          domains: "database",
         },
         references: [],
         duplicateRefs: [],
@@ -504,6 +513,9 @@ describe("runCoverEvidence", () => {
         body: "Use fetched API documentation before preserving provider behavior claims.",
         importance: 80,
         confidence: 84,
+        technologies: "api, docs",
+        changeTypes: "verification",
+        domains: "provider-behavior",
       },
       references: [],
       duplicateRefs: [],
@@ -588,7 +600,7 @@ describe("runCoverEvidence", () => {
       messages: Array<{ role: string; content: string }>;
     };
     expect(searchRequest.messages[0]?.content).toContain("検索語だけ");
-    expect(searchRequest.messages[0]?.content).toContain("5個以下");
+    expect(searchRequest.messages[0]?.content).toContain("3個以下");
     expect(searchRequest.messages[1]?.content).toContain("検索語ヒント");
     const selectionRequest = mocks.runDistillationCompletion.mock.calls[1]?.[0] as {
       messages: Array<{ role: string; content: string }>;
@@ -597,7 +609,165 @@ describe("runCoverEvidence", () => {
     const finalRequest = mocks.runDistillationCompletion.mock.calls[2]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
-    expect(finalRequest.messages[0]?.content).toContain("fetch_content の本文だけ");
+    expect(finalRequest.messages[0]?.content).toContain(
+      "source evidence と fetch_content evidence",
+    );
+  });
+
+  test("refines missing applicability facets before accepting external evidence", async () => {
+    mocks.getFindCandidateResultById.mockResolvedValue(
+      candidateRow({
+        title: "Use Number.isNaN for CLI numeric validation",
+        content: "CLI numeric validation should use Number.isNaN after parsing input.",
+      }),
+    );
+    mocks.readFileDomain.mockResolvedValue({
+      content: "CLI numeric validation should use Number.isNaN after parsing input.",
+      totalTokens: 120,
+      from: 0,
+      toExclusive: 120,
+      returnedTokens: 120,
+    });
+    mocks.runDistillationCompletion.mockReset();
+    mocks.runDistillationCompletion
+      .mockResolvedValueOnce(completion("| Number.isNaN | CLI |"))
+      .mockResolvedValueOnce(completion("1"))
+      .mockResolvedValueOnce(
+        completion(
+          [
+            "STATUS: knowledge_ready",
+            "STAGE: web",
+            "TYPE: rule",
+            "TITLE: Use Number.isNaN for CLI numeric validation",
+            "BODY: CLI numeric validation should use Number.isNaN after parsing input.",
+            "IMPORTANCE: 80",
+            "CONFIDENCE: 90",
+          ].join("\n"),
+        ),
+      )
+      .mockResolvedValueOnce(
+        completion(
+          [
+            "STATUS: knowledge_ready",
+            "STAGE: final",
+            "TYPE: rule",
+            "TITLE: Use Number.isNaN for CLI numeric validation",
+            "BODY: CLI numeric validation should use Number.isNaN after parsing input.",
+            "TECHNOLOGIES: JavaScript, CLI",
+            "CHANGE_TYPES: validation",
+            "DOMAINS: command-line-tools",
+          ].join("\n"),
+        ),
+      );
+
+    const result = await runCoverEvidence({ id: "find-1", forceRefreshEvidence: true });
+
+    expect(result.result.status).toBe("knowledge_ready");
+    expect(result.result.candidate).toMatchObject({
+      technologies: ["JavaScript", "CLI"],
+      changeTypes: ["validation"],
+      domains: ["command-line-tools"],
+    });
+    expect(result.result.toolEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "applicability_refinement",
+          ok: true,
+          metadata: expect.objectContaining({ missingAfter: [] }),
+        }),
+      ]),
+    );
+    expect(mocks.runDistillationCompletion.mock.calls[3]?.[1]).toEqual(
+      expect.objectContaining({
+        usageSource: "cover-evidence:applicability-refinement",
+      }),
+    );
+  });
+
+  test("falls back to the source-supported candidate when final no-tools round emits a tool call", async () => {
+    mocks.getFindCandidateResultById.mockResolvedValue(
+      candidateRow({
+        title: "Run focused tests before the full suite",
+        content: "Rule: Run focused tests for the changed area before running the full test suite.",
+        origin: {
+          candidateType: "rule",
+          technologies: ["general"],
+          changeTypes: ["testing"],
+          domains: ["engineering-process"],
+        },
+      }),
+    );
+    mocks.readFileDomain.mockResolvedValue({
+      content: "Rule: Run focused tests for the changed area before running the full test suite.",
+      totalTokens: 120,
+      from: 0,
+      toExclusive: 120,
+      returnedTokens: 120,
+    });
+    mocks.runDistillationCompletion.mockReset();
+    mocks.runDistillationCompletion
+      .mockResolvedValueOnce(completion("| focused tests |"))
+      .mockResolvedValueOnce(completion("1"))
+      .mockRejectedValueOnce(new Error("distillation tool loop exceeded max rounds (0)"));
+
+    const result = await runCoverEvidence({ id: "find-1", forceRefreshEvidence: true });
+
+    expect(result.result.status).toBe("knowledge_ready");
+    expect(result.result.candidate).toMatchObject({
+      type: "rule",
+      title: "Run focused tests before the full suite",
+    });
+    expect(result.result.toolEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "external_final_candidate_fallback",
+          ok: true,
+        }),
+      ]),
+    );
+  });
+
+  test("falls back to the source-supported candidate when final output is only a label stub", async () => {
+    mocks.getFindCandidateResultById.mockResolvedValue(
+      candidateRow({
+        title: "Pin related files before implementation",
+        content:
+          "Rule: Keep related files and established implementation patterns fixed before changing code.",
+        origin: {
+          candidateType: "rule",
+          technologies: ["llm-workflow"],
+          changeTypes: ["implementation-guidance"],
+          domains: ["codebase-navigation"],
+        },
+      }),
+    );
+    mocks.readFileDomain.mockResolvedValue({
+      content:
+        "Rule: Keep related files and established implementation patterns fixed before changing code.",
+      totalTokens: 120,
+      from: 0,
+      toExclusive: 120,
+      returnedTokens: 120,
+    });
+    mocks.runDistillationCompletion.mockReset();
+    mocks.runDistillationCompletion
+      .mockResolvedValueOnce(completion("| llm-workflow |"))
+      .mockResolvedValueOnce(completion("1"))
+      .mockResolvedValueOnce(completion("STATUS"));
+
+    const result = await runCoverEvidence({ id: "find-1", forceRefreshEvidence: true });
+
+    expect(result.result.status).toBe("knowledge_ready");
+    expect(result.result.candidate?.title).toBe("Pin related files before implementation");
+    expect(result.result.toolEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "external_final_candidate_fallback",
+          ok: true,
+          metadata: expect.objectContaining({ reason: "label_stub_in_no_tools_final" }),
+        }),
+      ]),
+    );
   });
 
   test("records parser diagnostics when external evidence output cannot be parsed", async () => {
