@@ -113,10 +113,31 @@ The project favors auditability over invisible automation: compile runs, selecte
 
 ### Setup
 
+The easiest way to get started is by running the interactive startup script, which validates your environment, starts required Docker containers, runs migrations, verifies LLM credentials, and performs a complete system health check.
+
+#### Interactive Startup Script Features
+- **Dry-run by default**: It calculates your configuration and prints a masked `.env` diff and execution plan without modifying any files or databases.
+- **Safe applies**: Writes changes only with `--apply`. It automatically creates a `.env.bak-<timestamp>` backup before modifying your configuration.
+- **Incremental validations**: Checks Docker connectivity, applies Drizzle database migrations, initiates LLM health checks, runs smoke compile tests, and runs the final `doctor` diagnostics.
+
+By default, it runs in **dry-run** mode to protect your environment:
+
 ```bash
 git clone https://github.com/ugnoguchigxp/memoryRouter.git
 cd memoryRouter
 bun install
+bun run startup
+```
+
+Once you review the calculated execution plan and masked `.env` diff, apply the changes:
+
+```bash
+bun run startup -- --apply
+```
+
+If you prefer a manual, non-interactive setup, you can still run:
+
+```bash
 docker compose up -d
 cp .env.example .env
 bun run db:migrate

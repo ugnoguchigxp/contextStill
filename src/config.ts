@@ -95,6 +95,24 @@ const resolveBoolean = (value: string | undefined, fallback: boolean): boolean =
   return fallback;
 };
 
+const parseAgenticCompileProvider = (
+  value: string | undefined,
+  fallback: AgenticCompileProvider,
+): AgenticCompileProvider => {
+  if (!value) return fallback;
+  const normalized = value.trim().toLowerCase();
+  if (
+    normalized === "openai" ||
+    normalized === "local-llm" ||
+    normalized === "azure-openai" ||
+    normalized === "bedrock" ||
+    normalized === "auto"
+  ) {
+    return normalized as AgenticCompileProvider;
+  }
+  return fallback;
+};
+
 const distillationProvider = parseDistillationProvider(
   process.env.MEMORY_ROUTER_DISTILLATION_PROVIDER,
   "local-llm",
@@ -135,7 +153,7 @@ export const groupedConfig: GroupedConfig = {
       process.env.MEMORY_ROUTER_LOCAL_LLM_API_BASE_URL || "http://127.0.0.1:44448"
     ).replace(/\/+$/, ""),
     apiKey: process.env.MEMORY_ROUTER_LOCAL_LLM_API_KEY || process.env.LOCAL_LLM_ACCESS_TOKEN || "",
-    model: "gemma-4-e4b-it",
+    model: process.env.MEMORY_ROUTER_LOCAL_LLM_MODEL || "gemma-4-e4b-it",
   },
   sourceContent: {
     root: sourceContentRoot,
@@ -241,12 +259,15 @@ export const groupedConfig: GroupedConfig = {
     deployments: [],
   },
   bedrock: {
-    model: "",
+    model: process.env.MEMORY_ROUTER_BEDROCK_MODEL || "",
     region: process.env.MEMORY_ROUTER_BEDROCK_REGION || process.env.AWS_REGION || "us-east-1",
     profile: process.env.MEMORY_ROUTER_BEDROCK_PROFILE || process.env.AWS_PROFILE || "",
   },
   agenticCompile: {
-    provider: "openai",
+    provider: parseAgenticCompileProvider(
+      process.env.MEMORY_ROUTER_AGENTIC_COMPILE_PROVIDER,
+      "openai",
+    ),
     enabled: APP_CONSTANTS.agenticCompileEnabled,
     timeoutMs: APP_CONSTANTS.agenticCompileTimeoutMs,
     maxTokens: APP_CONSTANTS.agenticCompileMaxTokens,

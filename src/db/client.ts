@@ -9,8 +9,10 @@ const createDatabase = (pool: InstanceType<typeof Pool>) => drizzle(pool, { sche
 
 type Database = ReturnType<typeof createDatabase>;
 
-let pool: InstanceType<typeof Pool> | null = null;
-let database: Database | null = null;
+const globalForDb = globalThis as unknown as {
+  pool: InstanceType<typeof Pool> | undefined;
+  database: Database | undefined;
+};
 
 function isVitestRuntime(): boolean {
   return (
@@ -43,14 +45,14 @@ function assertSafeTestDatabase(databaseUrl: string): void {
 }
 
 function ensureDatabase(): Database {
-  if (!pool) {
+  if (!globalForDb.pool) {
     assertSafeTestDatabase(groupedConfig.database.url);
-    pool = new Pool({ connectionString: groupedConfig.database.url });
+    globalForDb.pool = new Pool({ connectionString: groupedConfig.database.url });
   }
-  if (!database) {
-    database = createDatabase(pool);
+  if (!globalForDb.database) {
+    globalForDb.database = createDatabase(globalForDb.pool);
   }
-  return database;
+  return globalForDb.database;
 }
 
 export function getDb(): Database {
@@ -58,10 +60,10 @@ export function getDb(): Database {
 }
 
 export async function closeDbPool(): Promise<void> {
-  if (!pool) return;
-  const current = pool;
-  pool = null;
-  database = null;
+  if (!globalForDb.pool) return;
+  const current = globalForDb.pool;
+  globalForDb.pool = undefined;
+  globalForDb.database = undefined;
   await current.end();
 }
 
