@@ -1,10 +1,6 @@
 import { eq, and } from "drizzle-orm";
 import { db, closeDbPool } from "../db/index.js";
-import {
-  findingCandidateQueue,
-  foundCandidates,
-  coveringEvidenceQueue,
-} from "../db/schema.js";
+import { findingCandidateQueue, foundCandidates, coveringEvidenceQueue } from "../db/schema.js";
 import { appendQueueEvent } from "../modules/queue/core/events.js";
 
 async function main() {
@@ -17,8 +13,8 @@ async function main() {
     .where(
       and(
         eq(findingCandidateQueue.inputKind, "provided_candidate"),
-        eq(findingCandidateQueue.status, "pending")
-      )
+        eq(findingCandidateQueue.status, "pending"),
+      ),
     );
 
   console.log(`Found ${pendingJobs.length} pending provided_candidate jobs.`);
@@ -68,7 +64,8 @@ async function main() {
         })
         .returning();
 
-      if (!foundCandidate) throw new Error(`failed to create/upsert found candidate for job ${job.id}`);
+      if (!foundCandidate)
+        throw new Error(`failed to create/upsert found candidate for job ${job.id}`);
 
       // 2. Upsert covering job
       const [coveringJob] = await tx

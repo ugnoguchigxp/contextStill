@@ -38,16 +38,11 @@ export function VibeNotePage() {
   const tz = useTimezone();
   const queryClient = useQueryClient();
   const search = useRouterState({ select: (state) => state.location.searchStr });
-  
-  // Resolve goalId from query string if present
-  const goalIdFromQuery = useMemo(
-    () => new URLSearchParams(search).get("goalId") ?? "",
-    [search],
-  );
 
-  const [selectedGoalId, setSelectedGoalId] = useState<string | null>(
-    goalIdFromQuery || null,
-  );
+  // Resolve goalId from query string if present
+  const goalIdFromQuery = useMemo(() => new URLSearchParams(search).get("goalId") ?? "", [search]);
+
+  const [selectedGoalId, setSelectedGoalId] = useState<string | null>(goalIdFromQuery || null);
 
   // Agent profiles check-state for wants filtering
   const [selectedProfiles, setSelectedProfiles] = useState<string[]>([
@@ -193,34 +188,49 @@ export function VibeNotePage() {
       <main className="vibe-main">
         {activeGoalId ? (
           <>
-            <header className="vibe-content-header" style={{ flexDirection: "column", alignItems: "flex-start", gap: "10px" }}>
-              <div style={{ display: "flex", justifyContent: "space-between", width: "100%", alignItems: "center" }}>
+            <header
+              className="vibe-content-header"
+              style={{ flexDirection: "column", alignItems: "flex-start", gap: "10px" }}
+            >
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  width: "100%",
+                  alignItems: "center",
+                }}
+              >
                 <div className="header-title">
                   <h1>{activeGoal?.title ?? "Goal Room Dashboard"}</h1>
-                  <Badge variant="outline" className="vibe-hash-badge">goal: {activeGoalId.slice(0, 10)}...</Badge>
+                  <Badge variant="outline" className="vibe-hash-badge">
+                    goal: {activeGoalId.slice(0, 10)}...
+                  </Badge>
                 </div>
                 <div className="header-meta">
-                  <a href={`/vibe-memory?goalId=${encodeURIComponent(activeGoalId)}`} className="vibe-link-btn">
+                  <a
+                    href={`/vibe-memory?goalId=${encodeURIComponent(activeGoalId)}`}
+                    className="vibe-link-btn"
+                  >
                     Vibe Memoryへ
                   </a>
                 </div>
               </div>
 
-
-
               {/* Profile Capability Filter Selecors */}
               <div className="vibe-profile-selectors">
                 <span className="vibe-profile-label">Capabilities Profile:</span>
-                {["code-review", "implementation", "testing", "documentation", "architect"].map((prof) => (
-                  <button
-                    key={prof}
-                    type="button"
-                    className={`vibe-profile-btn ${selectedProfiles.includes(prof) ? "selected" : ""}`}
-                    onClick={() => toggleProfile(prof)}
-                  >
-                    {prof}
-                  </button>
-                ))}
+                {["code-review", "implementation", "testing", "documentation", "architect"].map(
+                  (prof) => (
+                    <button
+                      key={prof}
+                      type="button"
+                      className={`vibe-profile-btn ${selectedProfiles.includes(prof) ? "selected" : ""}`}
+                      onClick={() => toggleProfile(prof)}
+                    >
+                      {prof}
+                    </button>
+                  ),
+                )}
               </div>
 
               {/* Tabs Selector */}
@@ -237,23 +247,31 @@ export function VibeNotePage() {
                   className={`vibe-tab-btn ${activeTab === "checkpoints" ? "active" : ""}`}
                   onClick={() => setActiveTab("checkpoints")}
                 >
-                  Checkpoints & Decisions ({ (contextQuery.data?.pinned?.length ?? 0) + (contextQuery.data?.decisions?.length ?? 0) })
+                  Checkpoints & Decisions (
+                  {(contextQuery.data?.pinned?.length ?? 0) +
+                    (contextQuery.data?.decisions?.length ?? 0)}
+                  )
                 </button>
                 <button
                   type="button"
                   className={`vibe-tab-btn ${activeTab === "timeline" ? "active" : ""}`}
                   onClick={() => setActiveTab("timeline")}
                 >
-                  Raw Timeline ({ contextQuery.data?.openLoops?.length ?? 0 } unresolved)
+                  Raw Timeline ({contextQuery.data?.openLoops?.length ?? 0} unresolved)
                 </button>
               </div>
             </header>
 
             {/* Tab 1: Brief & Open Loops */}
             {activeTab === "brief" && (
-              <div className={`vibe-tab-content vertical-brief-kanban ${isBriefExpanded ? "brief-open" : "brief-closed"}`}>
+              <div
+                className={`vibe-tab-content vertical-brief-kanban ${isBriefExpanded ? "brief-open" : "brief-closed"}`}
+              >
                 {/* Top: Dynamic Brief text inside Accordion */}
-                <div className="vibe-brief-accordion-container" style={{ width: "100%", marginBottom: "0.5rem" }}>
+                <div
+                  className="vibe-brief-accordion-container"
+                  style={{ width: "100%", marginBottom: "0.5rem" }}
+                >
                   <button
                     type="button"
                     className="vibe-brief-accordion-header"
@@ -269,47 +287,90 @@ export function VibeNotePage() {
                       borderRadius: isBriefExpanded ? "0.75rem 0.75rem 0 0" : "0.75rem",
                       cursor: "pointer",
                       transition: "all 0.2s ease",
-                      textAlign: "left"
+                      textAlign: "left",
                     }}
                   >
-                    <span style={{ display: "flex", alignItems: "center", gap: "8px", fontWeight: "600", fontSize: "0.9rem", color: "var(--foreground)" }}>
+                    <span
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "8px",
+                        fontWeight: "600",
+                        fontSize: "0.9rem",
+                        color: "var(--foreground)",
+                      }}
+                    >
                       📄 Room Brief & Goal Room Information
                     </span>
-                    <span style={{
-                      transform: isBriefExpanded ? "rotate(90deg)" : "rotate(0deg)",
-                      transition: "transform 0.2s ease",
-                      color: "var(--muted-foreground)",
-                      fontWeight: "bold",
-                      fontSize: "1.1rem",
-                      lineHeight: "1"
-                    }}>
+                    <span
+                      style={{
+                        transform: isBriefExpanded ? "rotate(90deg)" : "rotate(0deg)",
+                        transition: "transform 0.2s ease",
+                        color: "var(--muted-foreground)",
+                        fontWeight: "bold",
+                        fontSize: "1.1rem",
+                        lineHeight: "1",
+                      }}
+                    >
                       ›
                     </span>
                   </button>
 
                   {isBriefExpanded && (
-                    <div className="vibe-brief-accordion-content" style={{
-                      border: "1px solid var(--border)",
-                      borderTop: "none",
-                      borderRadius: "0 0 0.75rem 0.75rem",
-                      padding: "1.25rem",
-                      background: "var(--card)",
-                      boxShadow: "0 4px 15px -3px rgba(0,0,0,0.05)"
-                    }}>
+                    <div
+                      className="vibe-brief-accordion-content"
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderTop: "none",
+                        borderRadius: "0 0 0.75rem 0.75rem",
+                        padding: "1.25rem",
+                        background: "var(--card)",
+                        boxShadow: "0 4px 15px -3px rgba(0,0,0,0.05)",
+                      }}
+                    >
                       {/* Goal Metadata Sub-line inside Accordion */}
-                      <div className="vibe-goal-subline" style={{
-                        display: "flex",
-                        flexWrap: "wrap",
-                        gap: "15px",
-                        marginBottom: "12px",
-                        paddingBottom: "10px",
-                        borderBottom: "1px solid rgba(15, 23, 42, 0.08)"
-                      }}>
-                        <div className="vibe-goal-meta-item" style={{ fontSize: "0.8rem", color: "var(--muted-foreground)" }}>
-                          <strong>URI:</strong> <code className="vibe-code" style={{ background: "rgba(15, 23, 42, 0.04)", padding: "2px 6px", borderRadius: "4px" }}>{activeGoal?.goalUri}</code>
+                      <div
+                        className="vibe-goal-subline"
+                        style={{
+                          display: "flex",
+                          flexWrap: "wrap",
+                          gap: "15px",
+                          marginBottom: "12px",
+                          paddingBottom: "10px",
+                          borderBottom: "1px solid rgba(15, 23, 42, 0.08)",
+                        }}
+                      >
+                        <div
+                          className="vibe-goal-meta-item"
+                          style={{ fontSize: "0.8rem", color: "var(--muted-foreground)" }}
+                        >
+                          <strong>URI:</strong>{" "}
+                          <code
+                            className="vibe-code"
+                            style={{
+                              background: "rgba(15, 23, 42, 0.04)",
+                              padding: "2px 6px",
+                              borderRadius: "4px",
+                            }}
+                          >
+                            {activeGoal?.goalUri}
+                          </code>
                         </div>
-                        <div className="vibe-goal-meta-item" style={{ fontSize: "0.8rem", color: "var(--muted-foreground)" }}>
-                          <strong>Anchor Path:</strong> <code className="vibe-code" style={{ background: "rgba(15, 23, 42, 0.04)", padding: "2px 6px", borderRadius: "4px" }}>{activeGoal?.goalAnchorRef}</code>
+                        <div
+                          className="vibe-goal-meta-item"
+                          style={{ fontSize: "0.8rem", color: "var(--muted-foreground)" }}
+                        >
+                          <strong>Anchor Path:</strong>{" "}
+                          <code
+                            className="vibe-code"
+                            style={{
+                              background: "rgba(15, 23, 42, 0.04)",
+                              padding: "2px 6px",
+                              borderRadius: "4px",
+                            }}
+                          >
+                            {activeGoal?.goalAnchorRef}
+                          </code>
                         </div>
                       </div>
 
@@ -332,24 +393,27 @@ export function VibeNotePage() {
                   <div className="vibe-pane-header" style={{ marginBottom: "5px" }}>
                     <h3>📋 Goal Room Kanban Board</h3>
                   </div>
-                  
+
                   {/* Dynamic Kanban classification */}
                   {(() => {
                     const openLoops = contextQuery.data?.openLoops ?? [];
-                    const issues = openLoops.filter((l: any) => 
-                      ["ask", "question", "risk", "warning"].includes(l.intent)
+                    const issues = openLoops.filter((l: any) =>
+                      ["ask", "question", "risk", "warning"].includes(l.intent),
                     );
-                    const patches = openLoops.filter((l: any) => 
-                      ["review", "patch"].includes(l.intent)
+                    const patches = openLoops.filter((l: any) =>
+                      ["review", "patch"].includes(l.intent),
                     );
-                    const decisions = openLoops.filter((l: any) => 
-                      ["decision", "verify", "checkpoint", "result"].includes(l.intent)
+                    const decisions = openLoops.filter((l: any) =>
+                      ["decision", "verify", "checkpoint", "result"].includes(l.intent),
                     );
 
                     const renderKanbanCard = (loop: any) => {
                       const isUnverified = loop.evidenceStatus === "ungrounded";
                       return (
-                        <div key={loop.id} className={`vibe-loop-card ${loop.score >= 100 ? "highlight-match" : ""}`}>
+                        <div
+                          key={loop.id}
+                          className={`vibe-loop-card ${loop.score >= 100 ? "highlight-match" : ""}`}
+                        >
                           {/* Card Header */}
                           <div className="loop-card-header">
                             <div className="intent-line">
@@ -359,7 +423,7 @@ export function VibeNotePage() {
                                 <Badge className="badge-match-glow">🔥 MATCH</Badge>
                               ) : null}
                             </div>
-                            
+
                             {/* Interactive Mark dropdown buttons */}
                             <div className="mark-actions">
                               <button
@@ -386,16 +450,19 @@ export function VibeNotePage() {
                             <p className="loop-text">{loop.text}</p>
                             {loop.subject ? (
                               <div className="loop-meta-item">
-                                <span className="meta-lbl">Subject:</span> <span>{loop.subject}</span>
+                                <span className="meta-lbl">Subject:</span>{" "}
+                                <span>{loop.subject}</span>
                               </div>
                             ) : null}
-                            
+
                             {loop.wants?.length > 0 ? (
                               <div className="loop-meta-item">
                                 <span className="meta-lbl">Wants:</span>
                                 <div className="labels-row">
                                   {loop.wants.map((w: string) => (
-                                    <span key={w} className="meta-badge-wants">{w}</span>
+                                    <span key={w} className="meta-badge-wants">
+                                      {w}
+                                    </span>
                                   ))}
                                 </div>
                               </div>
@@ -406,7 +473,9 @@ export function VibeNotePage() {
                                 <span className="meta-lbl">Refs:</span>
                                 <div className="labels-row-refs">
                                   {loop.refs.map((r: string) => (
-                                    <code key={r} className="meta-ref-code" title={r}>{parseFileName(r)}</code>
+                                    <code key={r} className="meta-ref-code" title={r}>
+                                      {parseFileName(r)}
+                                    </code>
                                   ))}
                                 </div>
                               </div>
@@ -418,11 +487,16 @@ export function VibeNotePage() {
                             <div className="actor-time">
                               <span className="author">by {loop.actorId}</span>
                               <span className="bullet">·</span>
-                              <span className="time">{formatDateTimeCompact(new Date(loop.createdAt), tz)}</span>
+                              <span className="time">
+                                {formatDateTimeCompact(new Date(loop.createdAt), tz)}
+                              </span>
                             </div>
-                            
+
                             {/* Evidence Status Label */}
-                            <Badge variant={isUnverified ? "destructive" : "default"} className="evidence-badge-lbl">
+                            <Badge
+                              variant={isUnverified ? "destructive" : "default"}
+                              className="evidence-badge-lbl"
+                            >
                               {isUnverified ? "未検証" : `Evidence: ${loop.evidenceStatus}`}
                             </Badge>
                           </div>
@@ -450,7 +524,9 @@ export function VibeNotePage() {
                           </div>
                           <div className="column-cards-container">
                             {issues.map(renderKanbanCard)}
-                            {issues.length === 0 && <div className="empty-column-msg">No active issues</div>}
+                            {issues.length === 0 && (
+                              <div className="empty-column-msg">No active issues</div>
+                            )}
                           </div>
                         </div>
 
@@ -461,7 +537,9 @@ export function VibeNotePage() {
                           </div>
                           <div className="column-cards-container">
                             {patches.map(renderKanbanCard)}
-                            {patches.length === 0 && <div className="empty-column-msg">No active patches</div>}
+                            {patches.length === 0 && (
+                              <div className="empty-column-msg">No active patches</div>
+                            )}
                           </div>
                         </div>
 
@@ -472,7 +550,9 @@ export function VibeNotePage() {
                           </div>
                           <div className="column-cards-container">
                             {decisions.map(renderKanbanCard)}
-                            {decisions.length === 0 && <div className="empty-column-msg">No active decisions</div>}
+                            {decisions.length === 0 && (
+                              <div className="empty-column-msg">No active decisions</div>
+                            )}
                           </div>
                         </div>
                       </div>
@@ -496,13 +576,17 @@ export function VibeNotePage() {
                         <div className="card-lbl">
                           <MapPin className="pin-symbol" />
                           <span className="author">{pin.actorId} pinned checkpoint</span>
-                          <span className="time">{formatDateTimeShort(new Date(pin.createdAt), tz)}</span>
+                          <span className="time">
+                            {formatDateTimeShort(new Date(pin.createdAt), tz)}
+                          </span>
                         </div>
                         <p className="body-text">{pin.text}</p>
                         {pin.refs?.length > 0 ? (
                           <div className="refs-row">
                             {pin.refs.map((r: string) => (
-                              <code key={r} className="meta-ref-code">{parseFileName(r)}</code>
+                              <code key={r} className="meta-ref-code">
+                                {parseFileName(r)}
+                              </code>
                             ))}
                           </div>
                         ) : null}
@@ -525,13 +609,17 @@ export function VibeNotePage() {
                         <div className="card-lbl">
                           <CheckCircle className="check-symbol" />
                           <span className="author">Verified Decision by {dec.actorId}</span>
-                          <span className="time">{formatDateTimeShort(new Date(dec.createdAt), tz)}</span>
+                          <span className="time">
+                            {formatDateTimeShort(new Date(dec.createdAt), tz)}
+                          </span>
                         </div>
                         <p className="body-text">{dec.text}</p>
                         {dec.refs?.length > 0 ? (
                           <div className="refs-row">
                             {dec.refs.map((r: string) => (
-                              <code key={r} className="meta-ref-code">{parseFileName(r)}</code>
+                              <code key={r} className="meta-ref-code">
+                                {parseFileName(r)}
+                              </code>
                             ))}
                           </div>
                         ) : null}
@@ -565,14 +653,18 @@ export function VibeNotePage() {
                             <strong>{cap.actorId}</strong>
                             <Badge variant="outline">{cap.intent}</Badge>
                           </div>
-                          <span className="time">{formatDateTime(new Date(cap.createdAt), tz)}</span>
+                          <span className="time">
+                            {formatDateTime(new Date(cap.createdAt), tz)}
+                          </span>
                         </div>
                         <p className="text">{cap.text}</p>
                         {cap.refs?.length > 0 ? (
                           <div className="refs-bar">
                             <span>Refs:</span>
                             {cap.refs.map((r) => (
-                              <code key={r} className="ref-node" title={r}>{parseFileName(r)}</code>
+                              <code key={r} className="ref-node" title={r}>
+                                {parseFileName(r)}
+                              </code>
                             ))}
                           </div>
                         ) : null}

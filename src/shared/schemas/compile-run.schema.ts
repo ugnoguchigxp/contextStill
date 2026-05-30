@@ -130,9 +130,74 @@ export const compileRunDetailSchema = z.object({
   snapshotAvailable: z.boolean(),
 });
 
+export const compileRunRankingTraceItemSchema = z.object({
+  itemKind: z.enum(["rule", "procedure"]),
+  itemId: z.string().uuid(),
+  title: z.string(),
+  status: z.enum(["active", "draft", "deprecated"]),
+  textRank: z.number().int().nullable(),
+  textScore: z.number().nullable(),
+  vectorRank: z.number().int().nullable(),
+  vectorScore: z.number().nullable(),
+  mergedRank: z.number().int().nullable(),
+  mergedScore: z.number().nullable(),
+  finalRank: z.number().int().nullable(),
+  finalScore: z.number().nullable(),
+  selected: z.boolean(),
+  packed: z.boolean(),
+  packPosition: z.number().int().nullable(),
+  suppressed: z.boolean(),
+  suppressionReason: z.string().nullable(),
+  agenticDecision: z.enum(["not_evaluated", "accepted", "rejected", "skipped"]),
+  rankingReason: z.string().nullable(),
+  communityKey: z.string().nullable(),
+  feedback: z.object({
+    verdict: knowledgeUsageVerdictSchema.nullable(),
+    actor: z.enum(["agent", "user", "system"]).nullable(),
+    reason: z.string().nullable(),
+    updatedAt: z.string().datetime().nullable(),
+  }),
+  sourceRefs: z.array(z.string()),
+});
+
+export const compileRunRankingTraceSchema = z.object({
+  run: z.object({
+    id: z.string().uuid(),
+    goal: z.string(),
+    repoPath: z.string().nullable(),
+    retrievalMode: retrievalModeSchema,
+    status: compileRunStatusSchema,
+    input: compileRunInputSnapshotSchema,
+    createdAt: z.string().datetime(),
+  }),
+  evalSummary: z.object({
+    count: z.number().int().nonnegative(),
+    latestAvg: z.number().int().min(0).max(100).nullable(),
+    latestOutcome: z.enum(["useful", "partial", "misleading", "unused"]).nullable(),
+  }),
+  feedbackSummary: z.object({
+    used: z.number().int().nonnegative(),
+    notUsed: z.number().int().nonnegative(),
+    offTopic: z.number().int().nonnegative(),
+    wrong: z.number().int().nonnegative(),
+    noSignal: z.number().int().nonnegative(),
+  }),
+  funnel: z.object({
+    textHitCount: z.number().int().nonnegative(),
+    vectorHitCount: z.number().int().nonnegative(),
+    mergedCount: z.number().int().nonnegative(),
+    finalCount: z.number().int().nonnegative(),
+    packedCount: z.number().int().nonnegative(),
+    selectedCount: z.number().int().nonnegative(),
+    suppressedCount: z.number().int().nonnegative(),
+  }),
+  items: z.array(compileRunRankingTraceItemSchema),
+});
+
 export type CompileRunSource = z.infer<typeof compileRunSourceSchema>;
 export type CompileRunSelectedItem = z.infer<typeof compileRunSelectedItemSchema>;
 export type CompileRunKnowledgeFeedbackResult = z.infer<
   typeof compileRunKnowledgeFeedbackResultSchema
 >;
 export type CompileRunDetail = z.infer<typeof compileRunDetailSchema>;
+export type CompileRunRankingTrace = z.infer<typeof compileRunRankingTraceSchema>;

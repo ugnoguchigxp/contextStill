@@ -3122,7 +3122,6 @@ export type VibeMemoryCapsule = {
   matchesProfile?: boolean;
 };
 
-
 export type VibeMemoryContextPack = {
   brief: string;
   openLoops: VibeMemoryCapsule[];
@@ -3178,4 +3177,3 @@ export async function postRecordVibeMemoryCapsule(input: {
 }): Promise<VibeMemoryCapsule> {
   return requestJson<VibeMemoryCapsule>("/api/vibe-memory/record", "POST", input);
 }
-

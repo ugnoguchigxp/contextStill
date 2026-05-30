@@ -34,7 +34,17 @@
       "dist/**",
       "dist-web/**",
       "drizzle/meta/**",
+      "docs/assets/**",
+      "docs/assets/css/style.css",
+      "github-pages/.preview/**",
+      "github-pages/docs/**",
+      "github-pages/reports/**",
+      "github-pages/site/assets/**",
+      "github-pages/site/site.webmanifest",
+      "github-pages/vendor/**",
+      "logs/**",
       "playwright-report/**",
+      "scratch/**",
       "test-results/**",
       "src/db/seeds/knowledge-seed.json"
     ]

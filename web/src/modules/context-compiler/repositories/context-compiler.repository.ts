@@ -134,6 +134,70 @@ export type CompileRunDetail = {
   snapshotAvailable: boolean;
 };
 
+export type CompileRunRankingTraceItem = {
+  itemKind: "rule" | "procedure";
+  itemId: string;
+  title: string;
+  status: "active" | "draft" | "deprecated";
+  textRank: number | null;
+  textScore: number | null;
+  vectorRank: number | null;
+  vectorScore: number | null;
+  mergedRank: number | null;
+  mergedScore: number | null;
+  finalRank: number | null;
+  finalScore: number | null;
+  selected: boolean;
+  packed: boolean;
+  packPosition: number | null;
+  suppressed: boolean;
+  suppressionReason: string | null;
+  agenticDecision: "not_evaluated" | "accepted" | "rejected" | "skipped";
+  rankingReason: string | null;
+  communityKey: string | null;
+  feedback: {
+    verdict: CompileRunKnowledgeVerdict | null;
+    actor: "agent" | "user" | "system" | null;
+    reason: string | null;
+    updatedAt: string | null;
+  };
+  sourceRefs: string[];
+};
+
+export type CompileRunRankingTrace = {
+  run: {
+    id: string;
+    goal: string;
+    repoPath: string | null;
+    retrievalMode: string;
+    status: "ok" | "degraded" | "failed";
+    input: Record<string, unknown>;
+    createdAt: string;
+  };
+  evalSummary: {
+    count: number;
+    latestAvg: number | null;
+    latestOutcome: "useful" | "partial" | "misleading" | "unused" | null;
+  };
+  feedbackSummary: {
+    used: number;
+    notUsed: number;
+    offTopic: number;
+    wrong: number;
+    noSignal: number;
+  };
+  funnel: {
+    textHitCount: number;
+    vectorHitCount: number;
+    mergedCount: number;
+    finalCount: number;
+    packedCount: number;
+    selectedCount: number;
+    suppressedCount: number;
+  };
+  items: CompileRunRankingTraceItem[];
+};
+
 export type CompileRunKnowledgeFeedbackWriteItem = {
   knowledgeId: string;
   verdict: CompileRunKnowledgeVerdict;
@@ -176,6 +240,15 @@ export async function fetchRunDetail(runId: string): Promise<CompileRunDetail> {
   }
   const json = (await response.json()) as { detail: CompileRunDetail };
   return json.detail;
+}
+
+export async function fetchRunRankingTrace(runId: string): Promise<CompileRunRankingTrace> {
+  const response = await fetch(`/api/context/runs/${encodeURIComponent(runId)}/ranking-trace`);
+  if (!response.ok) {
+    throw new Error(`Fetch run ranking trace failed: ${response.status}`);
+  }
+  const json = (await response.json()) as { trace: CompileRunRankingTrace };
+  return json.trace;
 }
 
 export async function submitRunKnowledgeFeedback(

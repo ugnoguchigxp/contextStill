@@ -231,7 +231,7 @@ function buildDynamicOrderBy(
     `;
   }
 
-  let sortColumn;
+  let sortColumn = sql`q.updated_at`;
   switch (field) {
     case "status":
       sortColumn = sql`q.status`;

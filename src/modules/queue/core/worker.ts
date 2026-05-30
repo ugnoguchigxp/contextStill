@@ -87,7 +87,6 @@ function priorityForSourceKind(sourceKind: FindingSourceKind): number {
       return 80;
     case "wiki_file":
       return 70;
-    case "vibe_memory":
     default:
       return 50;
   }

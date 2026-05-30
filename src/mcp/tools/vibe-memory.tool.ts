@@ -32,8 +32,14 @@ export const vibeMemorySayTool: ToolEntry = {
     type: "object",
     properties: {
       goalId: { type: "string", description: "Goal Room stable ID (SHA-256 hash or stable ID)." },
-      goalUri: { type: "string", description: "Normalized Goal URI. e.g. repo://org/repo/spec/plan.md" },
-      goalAnchorRef: { type: "string", description: "Absolute path reference of the local implementation plan file." },
+      goalUri: {
+        type: "string",
+        description: "Normalized Goal URI. e.g. repo://org/repo/spec/plan.md",
+      },
+      goalAnchorRef: {
+        type: "string",
+        description: "Absolute path reference of the local implementation plan file.",
+      },
       subject: { type: "string", description: "Subject context. e.g. 'PR#128', 'src/server.ts'" },
       intent: {
         type: "string",
@@ -57,7 +63,8 @@ export const vibeMemorySayTool: ToolEntry = {
       wants: {
         type: "array",
         items: { type: "string" },
-        description: "Actionable wants required from other agents. e.g. ['review', 'fix', 'verify']",
+        description:
+          "Actionable wants required from other agents. e.g. ['review', 'fix', 'verify']",
       },
       text: { type: "string", description: "Message body. Keep it concise." },
       refs: {
@@ -65,7 +72,11 @@ export const vibeMemorySayTool: ToolEntry = {
         items: { type: "string" },
         description: "Structured evidence references (file://, git://, doc:// etc.).",
       },
-      confidence: { type: "string", enum: ["low", "medium", "high"], description: "Self-assessed confidence level." },
+      confidence: {
+        type: "string",
+        enum: ["low", "medium", "high"],
+        description: "Self-assessed confidence level.",
+      },
       metadata: { type: "object", description: "Additional metadata." },
       actorId: { type: "string", description: "Explicit identifier of the posting agent." },
       ttlHours: { type: "number", description: "Time-to-live hours for auto-compaction cleanups." },
@@ -94,7 +105,10 @@ export const vibeMemoryReplyTool: ToolEntry = {
     type: "object",
     properties: {
       goalId: { type: "string", description: "Goal Room stable ID." },
-      parentId: { type: "string", description: "Parent Capsule UUID (the message being replied to)." },
+      parentId: {
+        type: "string",
+        description: "Parent Capsule UUID (the message being replied to).",
+      },
       subject: { type: "string", description: "Subject context." },
       intent: {
         type: "string",
@@ -149,7 +163,8 @@ export const vibeMemoryReplyTool: ToolEntry = {
  */
 export const vibeMemoryPeekTool: ToolEntry = {
   name: "vibe_memory_peek",
-  description: "Peek actionable Open Loops and localized Goal Room Brief tailored for the agent's profile.",
+  description:
+    "Peek actionable Open Loops and localized Goal Room Brief tailored for the agent's profile.",
   inputSchema: {
     type: "object",
     properties: {
@@ -157,7 +172,8 @@ export const vibeMemoryPeekTool: ToolEntry = {
       profile: {
         type: "array",
         items: { type: "string" },
-        description: "Agent capabilities profile to highlight matched Wants. e.g. ['code-review', 'implementation']",
+        description:
+          "Agent capabilities profile to highlight matched Wants. e.g. ['code-review', 'implementation']",
       },
     },
     required: ["goalId"],
@@ -185,7 +201,8 @@ export const vibeMemoryPeekTool: ToolEntry = {
  */
 export const vibeMemoryMarkTool: ToolEntry = {
   name: "vibe_memory_mark",
-  description: "Mark a Capsule with a status label. Useful for resolutions, verification, staling, or pinning checkpoints.",
+  description:
+    "Mark a Capsule with a status label. Useful for resolutions, verification, staling, or pinning checkpoints.",
   inputSchema: {
     type: "object",
     properties: {

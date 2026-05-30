@@ -100,7 +100,7 @@ describe("VibeNotePage", () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-05-27T00:00:00.000Z"));
     setTimezoneSetting("UTC");
-    
+
     vi.mocked(useQuery).mockImplementation((options: any) => {
       if (options.queryKey[0] === "vibe-goals") {
         return { data: mockVibeGoals, isLoading: false, isError: false } as any;
@@ -135,10 +135,10 @@ describe("VibeNotePage", () => {
 
   it("renders Room Brief and Unresolved Open Loops", () => {
     render(<VibeNotePage />);
-    
+
     // Check Room Brief is loaded
     expect(screen.getByText(/This is a brief/)).toBeInTheDocument();
-    
+
     // Check Kanban card
     expect(screen.getByText(/Add unit tests/)).toBeInTheDocument();
     expect(screen.getByText(/test\/vibe-memory\.test\.ts/)).toBeInTheDocument();

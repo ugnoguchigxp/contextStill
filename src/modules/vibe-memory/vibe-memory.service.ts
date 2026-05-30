@@ -88,14 +88,26 @@ export async function recordVibeMemoryWithDiffEntries(
 }
 
 // Helper to determine evidence status based on refs
-function determineEvidenceStatus(intent: string, refs: string[], confidence?: string | null): string {
+function determineEvidenceStatus(
+  intent: string,
+  refs: string[],
+  confidence?: string | null,
+): string {
   if (!refs || refs.length === 0) {
     return "ungrounded";
   }
 
   // Basic validation of URI schemes
-  const validPrefixes = ["file://", "git://", "github://", "test://", "log://", "doc://", "memory://"];
-  const hasValidRef = refs.some(ref => validPrefixes.some(prefix => ref.startsWith(prefix)));
+  const validPrefixes = [
+    "file://",
+    "git://",
+    "github://",
+    "test://",
+    "log://",
+    "doc://",
+    "memory://",
+  ];
+  const hasValidRef = refs.some((ref) => validPrefixes.some((prefix) => ref.startsWith(prefix)));
   if (!hasValidRef) {
     return "ungrounded";
   }
@@ -128,7 +140,11 @@ export async function recordVibeMemoryCapsule(input: RecordVibeMemoryCapsuleInpu
     }
 
     // 2. Resolve evidence status
-    const evidenceStatus = determineEvidenceStatus(input.intent, input.refs ?? [], input.confidence);
+    const evidenceStatus = determineEvidenceStatus(
+      input.intent,
+      input.refs ?? [],
+      input.confidence,
+    );
 
     // 3. Insert Capsule into vibe_memories
     const [inserted] = await tx
@@ -179,11 +195,10 @@ export async function markVibeMemory(input: MarkVibeMemoryInput) {
 export async function retrieveVibeMemoryContext(params: {
   query?: string;
   sessionId?: string; // Legacy chat context lookup
-  goalId?: string;    // Goal Room Memory lookup (Priority)
+  goalId?: string; // Goal Room Memory lookup (Priority)
   profile?: string[]; // Agent profiles for Step 2 profile filtering
   limit?: number;
 }): Promise<any> {
-
   // If goalId is provided, run the Goal Room Memory 5-step Pipeline
   if (params.goalId) {
     const goalId = params.goalId;
@@ -329,12 +344,7 @@ export async function retrieveVibeMemoryContext(params: {
         createdAt: vibeMemories.createdAt,
       })
       .from(vibeMemories)
-      .where(
-        and(
-          eq(vibeMemories.goalId, goalId),
-          eq(vibeMemories.memoryType, "capsule"),
-        ),
-      )
+      .where(and(eq(vibeMemories.goalId, goalId), eq(vibeMemories.memoryType, "capsule")))
       .orderBy(desc(vibeMemories.createdAt))
       .limit(10);
 
@@ -343,16 +353,16 @@ export async function retrieveVibeMemoryContext(params: {
     // Wants to Profile Matching Mapping
     const profileWantsMap: Record<string, string[]> = {
       "code-review": ["review", "verify"],
-      "architect": ["review", "decide"],
-      "implementation": ["fix"],
-      "debugging": ["fix", "investigate"],
-      "testing": ["verify"],
-      "documentation": ["document"],
-      "reviewer": ["decide"],
-      "research": ["investigate"],
+      architect: ["review", "decide"],
+      implementation: ["fix"],
+      debugging: ["fix", "investigate"],
+      testing: ["verify"],
+      documentation: ["document"],
+      reviewer: ["decide"],
+      research: ["investigate"],
     };
 
-    const actionableWants = profile.flatMap(p => profileWantsMap[p] ?? []);
+    const actionableWants = profile.flatMap((p) => profileWantsMap[p] ?? []);
 
     // Step 2 & 3: Eligibility & Scoring
     const scoredLoops = openLoops.map((loop) => {
@@ -360,7 +370,7 @@ export async function retrieveVibeMemoryContext(params: {
       const wants = (loop.wants as string[]) ?? [];
 
       // Profile Matching Match
-      const matchesProfile = wants.some(w => actionableWants.includes(w));
+      const matchesProfile = wants.some((w) => actionableWants.includes(w));
       if (matchesProfile) score += 100;
 
       // Intent based priority
@@ -376,7 +386,7 @@ export async function retrieveVibeMemoryContext(params: {
     scoredLoops.sort((a, b) => b.score - a.score);
 
     // Step 5: Brief generation (Compaction view)
-    let brief = `## Goal Room Brief\n`;
+    let brief = "## Goal Room Brief\n";
     brief += `**Goal ID**: ${goalId}\n`;
     if (goal) {
       brief += `**Goal URI**: ${goal.goalUri}\n`;
@@ -384,61 +394,66 @@ export async function retrieveVibeMemoryContext(params: {
     }
 
     if (pinnedMemories.length > 0) {
-      brief += `### 📌 Pinned Checkpoints\n`;
+      brief += "### 📌 Pinned Checkpoints\n";
       for (const pin of pinnedMemories) {
         const refs = (pin.refs as string[]) ?? [];
         brief += `- [${pin.actorId}]: ${pin.text} ${refs.length > 0 ? `(Refs: ${refs.join(", ")})` : ""}\n`;
       }
-      brief += `\n`;
+      brief += "\n";
     }
 
     if (scoredLoops.length > 0) {
-      brief += `### ⚡ Actionable Open Loops\n`;
+      brief += "### ⚡ Actionable Open Loops\n";
       for (const loop of scoredLoops) {
         const wants = (loop.wants as string[]) ?? [];
         const refs = (loop.refs as string[]) ?? [];
         const isUnverified = loop.evidenceStatus === "ungrounded";
         const validationLabel = isUnverified ? " [未検証]" : ` [Evidence: ${loop.evidenceStatus}]`;
         const actionMatch = loop.matchesProfile ? " 🔥 (Match)" : "";
-        
+
         brief += `- [${loop.intent.toUpperCase()}] ${loop.actorId}: ${loop.text}`;
         brief += wants.length > 0 ? ` (Wants: ${wants.join(", ")})` : "";
         brief += refs.length > 0 ? ` (Refs: ${refs.join(", ")})` : "";
         brief += `${validationLabel}${actionMatch}\n`;
 
         const marks = (loop.marks as any[]) ?? [];
-        const activeMarks = marks.filter(m => m.mark !== "stale" && m.mark !== "superseded");
+        const activeMarks = marks.filter((m) => m.mark !== "stale" && m.mark !== "superseded");
         if (activeMarks.length > 0) {
-          brief += `  └─ Marks: ${activeMarks.map(m => `[${m.mark}] ${m.note ?? ""}`).join(", ")}\n`;
+          brief += `  └─ Marks: ${activeMarks.map((m) => `[${m.mark}] ${m.note ?? ""}`).join(", ")}\n`;
         }
       }
-      brief += `\n`;
+      brief += "\n";
     }
 
     if (verifiedDecisions.length > 0) {
-      brief += `### ✓ Verified Decisions\n`;
+      brief += "### ✓ Verified Decisions\n";
       for (const dec of verifiedDecisions) {
         const refs = (dec.refs as string[]) ?? [];
         brief += `- ${dec.text} ${refs.length > 0 ? `(Refs: ${refs.join(", ")})` : ""} [Verified]\n`;
       }
-      brief += `\n`;
+      brief += "\n";
     }
 
     if (recentTimeline.length > 0) {
-      brief += `### 🕒 Recent Timeline\n`;
+      brief += "### 🕒 Recent Timeline\n";
       for (const time of recentTimeline.reverse()) {
-        const dateStr = new Date(time.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+        const dateStr = new Date(time.createdAt).toLocaleTimeString([], {
+          hour: "2-digit",
+          minute: "2-digit",
+        });
         brief += `- [${dateStr}] [${time.intent}] ${time.actorId}: ${time.text}\n`;
       }
     }
 
-    return [{
-      brief,
-      openLoops: scoredLoops,
-      pinned: pinnedMemories,
-      decisions: verifiedDecisions,
-      goal: goal,
-    }];
+    return [
+      {
+        brief,
+        openLoops: scoredLoops,
+        pinned: pinnedMemories,
+        decisions: verifiedDecisions,
+        goal: goal,
+      },
+    ];
   }
 
   // Legacy Semantic / Text Search Fallback
@@ -469,4 +484,3 @@ export async function retrieveVibeMemoryContext(params: {
 export async function listVibeGoals() {
   return db.select().from(vibeGoals).orderBy(desc(vibeGoals.createdAt));
 }
-

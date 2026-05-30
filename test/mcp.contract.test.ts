@@ -56,11 +56,24 @@ describeDb("mcp contract", () => {
   test("compile_eval tool input schema contract", () => {
     expect(compileEvalTool.inputSchema).toMatchObject({
       type: "object",
-      required: ["outcome", "body", "relevance", "actionability", "coverage", "noise", "specificity"],
+      required: [
+        "outcome",
+        "body",
+        "relevance",
+        "actionability",
+        "coverage",
+        "noise",
+        "specificity",
+      ],
     });
     const properties = (compileEvalTool.inputSchema as { properties?: Record<string, unknown> })
       .properties;
-    expect(properties?.relevance).toEqual({ type: "integer", minimum: 0, maximum: 100, description: "目的に合っていたか (0-100)" });
+    expect(properties?.relevance).toEqual({
+      type: "integer",
+      minimum: 0,
+      maximum: 100,
+      description: "目的に合っていたか (0-100)",
+    });
     expect(properties?.outcome).toEqual({
       type: "string",
       enum: ["useful", "partial", "misleading", "unused"],

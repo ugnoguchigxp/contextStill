@@ -1,6 +1,7 @@
 import {
   type CompileRunSummary,
   getCompileRunDetail,
+  getCompileRunRankingTrace,
   listRecentCompileRuns,
 } from "../../../src/modules/context-compiler/context-compiler.repository.js";
 import { compileContextPack } from "../../../src/modules/context-compiler/context-compiler.service.js";
@@ -8,6 +9,7 @@ import { recordCompileRunKnowledgeFeedback } from "../../../src/modules/knowledg
 import type {
   CompileRunDetail,
   CompileRunKnowledgeFeedbackResult,
+  CompileRunRankingTrace,
 } from "../../../src/shared/schemas/compile-run.schema.js";
 import type { CompileInput } from "../../../src/shared/schemas/compile.schema.js";
 import type { ContextPack } from "../../../src/shared/schemas/context-pack.schema.js";
@@ -25,6 +27,10 @@ export async function listRuns(limit: number): Promise<CompileRunSummary[]> {
 
 export async function getRunDetail(runId: string): Promise<CompileRunDetail | null> {
   return getCompileRunDetail(runId);
+}
+
+export async function getRunRankingTrace(runId: string): Promise<CompileRunRankingTrace | null> {
+  return getCompileRunRankingTrace(runId);
 }
 
 export async function saveRunKnowledgeFeedback(params: {

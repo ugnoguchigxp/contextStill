@@ -75,4 +75,3 @@ export function getCallableToolEntries(): ToolEntry[] {
   }
   return [...v2ToolEntries, memorySearchTool, memoryFetchTool];
 }
-

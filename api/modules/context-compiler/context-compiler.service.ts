@@ -7,6 +7,7 @@ import { compileInputSchema } from "../../../src/shared/schemas/compile.schema.j
 import {
   compilePack,
   getRunDetail,
+  getRunRankingTrace,
   listRuns,
   saveRunKnowledgeFeedback,
 } from "./context-compiler.repository.js";
@@ -16,6 +17,10 @@ export const listRunsQuerySchema = z.object({
 });
 
 export const getRunDetailParamSchema = z.object({
+  id: z.string().uuid(),
+});
+
+export const getRunRankingTraceParamSchema = z.object({
   id: z.string().uuid(),
 });
 
@@ -36,6 +41,11 @@ export async function listRunsForApi(input: unknown) {
 export async function getRunDetailForApi(input: unknown) {
   const parsed = getRunDetailParamSchema.parse(input);
   return getRunDetail(parsed.id);
+}
+
+export async function getRunRankingTraceForApi(input: unknown) {
+  const parsed = getRunRankingTraceParamSchema.parse(input);
+  return getRunRankingTrace(parsed.id);
 }
 
 export async function saveRunKnowledgeFeedbackForApi(paramsInput: unknown, bodyInput: unknown) {

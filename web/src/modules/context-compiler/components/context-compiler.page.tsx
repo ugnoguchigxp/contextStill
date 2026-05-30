@@ -21,6 +21,7 @@ import {
 import {
   useCompilePack,
   useCompileRunDetail,
+  useCompileRunRankingTrace,
   useCompileRuns,
   useRunKnowledgeFeedbackMutation,
 } from "../hooks/context-compiler.hooks";
@@ -32,6 +33,7 @@ import type {
   CompileRunKnowledgeFeedbackWriteItem,
   CompileRunKnowledgeVerdict,
   CompileRunKnowledgeSignal,
+  CompileRunRankingTrace,
   CompileRunSource,
   CompileRunSummary,
 } from "../repositories/context-compiler.repository";
@@ -53,6 +55,7 @@ type FormValues = {
 type PageMode = "new" | "detail";
 type StatusFilter = "all" | CompileRunSummary["status"];
 type SourceFilter = "all" | CompileRunSource;
+type RunDetailTab = "pack" | "ranking" | "feedback" | "markdown";
 
 function stringArrayValue(value: unknown): string[] {
   return Array.isArray(value)
@@ -195,22 +198,39 @@ function PackSection({
                   <strong>{item.title}</strong>
                   <Badge variant="secondary">{item.itemKind}</Badge>
                 </div>
-                
+
                 {/* 常に表示する Knowledge ID */}
-                <p className="compile-pack-item-id" style={{ fontSize: "11px", color: "#6b7280", fontFamily: "monospace", margin: "2px 0 6px 0" }}>
+                <p
+                  className="compile-pack-item-id"
+                  style={{
+                    fontSize: "11px",
+                    color: "#6b7280",
+                    fontFamily: "monospace",
+                    margin: "2px 0 6px 0",
+                  }}
+                >
                   id: {item.itemId}
                 </p>
 
                 {/* タグ (changeTypes, technologies, domains) の描画 */}
-                {(item.changeTypes?.length || item.technologies?.length || item.domains?.length) ? (
-                  <p style={{ fontSize: "14px", color: "#6b7280", margin: "4px 0 10px 0", lineHeight: "1.6" }}>
+                {item.changeTypes?.length || item.technologies?.length || item.domains?.length ? (
+                  <p
+                    style={{
+                      fontSize: "14px",
+                      color: "#6b7280",
+                      margin: "4px 0 10px 0",
+                      lineHeight: "1.6",
+                    }}
+                  >
                     {item.changeTypes?.length ? (
                       <span>
                         <strong style={{ color: "#374151" }}>Change Type:</strong>{" "}
                         {item.changeTypes.join(", ")}
                       </span>
                     ) : null}
-                    {item.changeTypes?.length && (item.technologies?.length || item.domains?.length) ? "　" : null}
+                    {item.changeTypes?.length && (item.technologies?.length || item.domains?.length)
+                      ? "　"
+                      : null}
                     {item.technologies?.length ? (
                       <span>
                         <strong style={{ color: "#374151" }}>Technology:</strong>{" "}
@@ -227,17 +247,43 @@ function PackSection({
                   </p>
                 ) : null}
 
-                <p className="compile-pack-item-content" style={{ whiteSpace: "pre-wrap", fontSize: "14px", lineHeight: "1.6", color: "#374151" }}>{item.content}</p>
-                <div className="compile-pack-item-signal-info" style={{ marginTop: "12px", borderTop: "1px solid rgba(0,0,0,0.05)", paddingTop: "12px" }}>
+                <p
+                  className="compile-pack-item-content"
+                  style={{
+                    whiteSpace: "pre-wrap",
+                    fontSize: "14px",
+                    lineHeight: "1.6",
+                    color: "#374151",
+                  }}
+                >
+                  {item.content}
+                </p>
+                <div
+                  className="compile-pack-item-signal-info"
+                  style={{
+                    marginTop: "12px",
+                    borderTop: "1px solid rgba(0,0,0,0.05)",
+                    paddingTop: "12px",
+                  }}
+                >
                   {sig ? (
                     <>
-                      <div className="compile-pack-item-meta" style={{ display: "flex", gap: "8px", alignItems: "center", flexWrap: "wrap", marginBottom: "8px" }}>
+                      <div
+                        className="compile-pack-item-meta"
+                        style={{
+                          display: "flex",
+                          gap: "8px",
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                          marginBottom: "8px",
+                        }}
+                      >
                         <Badge variant={feedbackVariant(sig.effectiveVerdict)}>
-                          {sig.effectiveVerdict
-                            ? verdictLabel(sig.effectiveVerdict)
-                            : "No signal"}
+                          {sig.effectiveVerdict ? verdictLabel(sig.effectiveVerdict) : "No signal"}
                         </Badge>
-                        <span className="text-xs text-muted-foreground">{sig.rankingReason || item.rankingReason}</span>
+                        <span className="text-xs text-muted-foreground">
+                          {sig.rankingReason || item.rankingReason}
+                        </span>
                       </div>
 
                       {sig.hasUserOverride && sig.autoVerdict ? (
@@ -255,7 +301,10 @@ function PackSection({
                     </>
                   ) : null}
 
-                  <div className="compile-feedback-actions" style={{ display: "flex", gap: "8px", marginTop: sig ? "8px" : "0" }}>
+                  <div
+                    className="compile-feedback-actions"
+                    style={{ display: "flex", gap: "8px", marginTop: sig ? "8px" : "0" }}
+                  >
                     <Button
                       type="button"
                       size="sm"
@@ -339,6 +388,134 @@ function evalOutcomeLabel(outcome: "useful" | "partial" | "misleading" | "unused
   return "Unused";
 }
 
+function RankingTraceSection({
+  trace,
+  isLoading,
+  error,
+  tz,
+}: {
+  trace: CompileRunRankingTrace | undefined;
+  isLoading: boolean;
+  error: unknown;
+  tz: string;
+}) {
+  if (isLoading) {
+    return <p className="compile-state-text">Loading ranking trace...</p>;
+  }
+  if (error) {
+    return <p className="compile-state-text destructive">{String(error)}</p>;
+  }
+  if (!trace) {
+    return <p className="compile-state-text">Ranking trace unavailable for this run.</p>;
+  }
+
+  return (
+    <div style={{ display: "grid", gap: 12 }}>
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
+          gap: 8,
+        }}
+      >
+        <div className="compile-pack-item" style={{ padding: "10px 12px" }}>
+          <strong>Eval</strong>
+          <p className="compile-state-text">
+            {trace.evalSummary.latestAvg ?? "-"} /{" "}
+            {trace.evalSummary.latestOutcome
+              ? evalOutcomeLabel(trace.evalSummary.latestOutcome)
+              : "No outcome"}
+          </p>
+        </div>
+        <div className="compile-pack-item" style={{ padding: "10px 12px" }}>
+          <strong>Feedback</strong>
+          <p className="compile-state-text">
+            used {trace.feedbackSummary.used}, not_used {trace.feedbackSummary.notUsed}, no signal{" "}
+            {trace.feedbackSummary.noSignal}
+          </p>
+        </div>
+        <div className="compile-pack-item" style={{ padding: "10px 12px" }}>
+          <strong>Funnel</strong>
+          <p className="compile-state-text">
+            text {trace.funnel.textHitCount} {"->"} merged {trace.funnel.mergedCount} {"->"} final{" "}
+            {trace.funnel.finalCount} {"->"} packed {trace.funnel.packedCount}
+          </p>
+        </div>
+      </div>
+
+      <div style={{ overflowX: "auto" }}>
+        <table style={{ width: "100%", borderCollapse: "collapse", fontSize: 13 }}>
+          <thead>
+            <tr>
+              {["#", "Title", "Ranks", "Packed", "Feedback", "Decision", "Reason"].map((label) => (
+                <th
+                  key={label}
+                  style={{
+                    textAlign: "left",
+                    padding: "8px 10px",
+                    borderBottom: "1px solid rgba(0,0,0,0.08)",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {label}
+                </th>
+              ))}
+            </tr>
+          </thead>
+          <tbody>
+            {trace.items.map((item, index) => (
+              <tr key={`${item.itemKind}:${item.itemId}`}>
+                <td style={{ padding: "8px 10px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+                  {index + 1}
+                </td>
+                <td style={{ padding: "8px 10px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+                  <div style={{ display: "grid", gap: 2 }}>
+                    <strong>{item.title}</strong>
+                    <span className="compile-state-text">
+                      {item.itemKind} / {item.status} / {item.itemId.slice(0, 8)}
+                    </span>
+                  </div>
+                </td>
+                <td style={{ padding: "8px 10px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+                  <span className="compile-state-text">
+                    t:{item.textRank ?? "-"} v:{item.vectorRank ?? "-"} m:{item.mergedRank ?? "-"}{" "}
+                    f:
+                    {item.finalRank ?? "-"}
+                  </span>
+                </td>
+                <td style={{ padding: "8px 10px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+                  <span className="compile-state-text">
+                    {item.packed ? `yes (#${item.packPosition ?? "-"})` : "no"}
+                  </span>
+                </td>
+                <td style={{ padding: "8px 10px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+                  <span className="compile-state-text">
+                    {item.feedback.verdict ?? "no signal"}
+                    {item.feedback.updatedAt
+                      ? ` (${tzFormatDate(item.feedback.updatedAt, tz)})`
+                      : ""}
+                  </span>
+                </td>
+                <td style={{ padding: "8px 10px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+                  <span className="compile-state-text">
+                    {item.selected ? "selected" : "not selected"} / {item.agenticDecision}
+                    {item.suppressed ? " / suppressed" : ""}
+                  </span>
+                </td>
+                <td style={{ padding: "8px 10px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
+                  <span className="compile-state-text">
+                    {item.rankingReason ?? item.suppressionReason ?? "-"}
+                  </span>
+                </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  );
+}
+
 function EvaluationRadarChart({
   relevance,
   actionability,
@@ -414,12 +591,18 @@ function EvaluationRadarChart({
 
 function RunDetailPane({
   detail,
+  rankingTrace,
+  rankingTraceLoading,
+  rankingTraceError,
   isLoading,
   error,
   onSubmitKnowledgeFeedback,
   feedbackPending,
 }: {
   detail: CompileRunDetail | undefined;
+  rankingTrace: CompileRunRankingTrace | undefined;
+  rankingTraceLoading: boolean;
+  rankingTraceError: unknown;
   isLoading: boolean;
   error: unknown;
   onSubmitKnowledgeFeedback: (
@@ -430,6 +613,7 @@ function RunDetailPane({
 }) {
   const tz = useTimezone();
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<RunDetailTab>("pack");
 
   if (isLoading) {
     return (
@@ -503,17 +687,41 @@ function RunDetailPane({
 
         <section className="compile-pack-section">
           <div className="compile-pack-section-header">
-            <h3>Compiled Output</h3>
+            <h3>View</h3>
           </div>
-          <div className="compile-output-markdown">
-            <MarkdownEditor
-              value={outputMarkdown}
-              editable={false}
-              toolbarMode="hidden"
-              enableVerticalScroll
-              enableMermaid
-              mermaidLib={mermaid}
-            />
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            <Button
+              size="sm"
+              variant={activeTab === "pack" ? "default" : "outline"}
+              onClick={() => setActiveTab("pack")}
+              type="button"
+            >
+              Pack
+            </Button>
+            <Button
+              size="sm"
+              variant={activeTab === "ranking" ? "default" : "outline"}
+              onClick={() => setActiveTab("ranking")}
+              type="button"
+            >
+              Ranking Trace
+            </Button>
+            <Button
+              size="sm"
+              variant={activeTab === "feedback" ? "default" : "outline"}
+              onClick={() => setActiveTab("feedback")}
+              type="button"
+            >
+              Feedback & Eval
+            </Button>
+            <Button
+              size="sm"
+              variant={activeTab === "markdown" ? "default" : "outline"}
+              onClick={() => setActiveTab("markdown")}
+              type="button"
+            >
+              Markdown Output
+            </Button>
           </div>
         </section>
 
@@ -529,73 +737,134 @@ function RunDetailPane({
           ) : null}
         </section>
 
-        <section className="compile-pack-section">
-          <div className="compile-pack-section-header">
-            <h3>Compile Eval</h3>
-            <Badge variant="outline">{evaluations.length}</Badge>
-          </div>
-          {evaluations.length === 0 ? (
-            <p className="compile-state-text">No compile_eval records for this run.</p>
-          ) : (
-            <div className="compile-pack-items">
-              {evaluations.map((evaluation) => {
-                const hasDetails = [
-                  evaluation.relevance,
-                  evaluation.actionability,
-                  evaluation.coverage,
-                  evaluation.noise,
-                  evaluation.specificity,
-                ].every((val) => val !== null && val !== undefined);
+        {activeTab === "feedback" ? (
+          <section className="compile-pack-section">
+            <div className="compile-pack-section-header">
+              <h3>Compile Eval</h3>
+              <Badge variant="outline">{evaluations.length}</Badge>
+            </div>
+            {evaluations.length === 0 ? (
+              <p className="compile-state-text">No compile_eval records for this run.</p>
+            ) : (
+              <div className="compile-pack-items">
+                {evaluations.map((evaluation) => {
+                  const { relevance, actionability, coverage, noise, specificity } = evaluation;
+                  const hasDetails =
+                    relevance !== null &&
+                    relevance !== undefined &&
+                    actionability !== null &&
+                    actionability !== undefined &&
+                    coverage !== null &&
+                    coverage !== undefined &&
+                    noise !== null &&
+                    noise !== undefined &&
+                    specificity !== null &&
+                    specificity !== undefined;
+                  const detailValues = hasDetails
+                    ? {
+                        relevance,
+                        actionability,
+                        coverage,
+                        noise,
+                        specificity,
+                      }
+                    : null;
 
-                return (
-                  <article key={evaluation.id} className="compile-pack-item" style={{ padding: "16px" }}>
-                    <div className="compile-pack-item-header" style={{ marginBottom: "12px" }}>
-                      <strong>{evaluation.title ?? "Evaluation"}</strong>
-                      <Badge variant="secondary">
-                        Avg: {evaluation.avg} / {evalOutcomeLabel(evaluation.outcome)}
-                      </Badge>
-                    </div>
+                  return (
+                    <article
+                      key={evaluation.id}
+                      className="compile-pack-item"
+                      style={{ padding: "16px" }}
+                    >
+                      <div className="compile-pack-item-header" style={{ marginBottom: "12px" }}>
+                        <strong>{evaluation.title ?? "Evaluation"}</strong>
+                        <Badge variant="secondary">
+                          Avg: {evaluation.avg} / {evalOutcomeLabel(evaluation.outcome)}
+                        </Badge>
+                      </div>
 
-                    {hasDetails ? (
-                      <div className="compile-eval-layout" style={{ display: "grid", gridTemplateColumns: "1.1fr 1.2fr", gap: "24px", alignItems: "center" }}>
-                        <div className="compile-eval-left">
-                          <EvaluationRadarChart
-                            relevance={evaluation.relevance!}
-                            actionability={evaluation.actionability!}
-                            coverage={evaluation.coverage!}
-                            noise={evaluation.noise!}
-                            specificity={evaluation.specificity!}
-                          />
+                      {detailValues ? (
+                        <div
+                          className="compile-eval-layout"
+                          style={{
+                            display: "grid",
+                            gridTemplateColumns: "1.1fr 1.2fr",
+                            gap: "24px",
+                            alignItems: "center",
+                          }}
+                        >
+                          <div className="compile-eval-left">
+                            <EvaluationRadarChart
+                              relevance={detailValues.relevance}
+                              actionability={detailValues.actionability}
+                              coverage={detailValues.coverage}
+                              noise={detailValues.noise}
+                              specificity={detailValues.specificity}
+                            />
+                          </div>
+                          <div
+                            className="compile-eval-right"
+                            style={{
+                              display: "flex",
+                              flexDirection: "column",
+                              justifyContent: "space-between",
+                              height: "100%",
+                              minHeight: "220px",
+                              padding: "8px 0",
+                            }}
+                          >
+                            <p
+                              style={{
+                                fontSize: "14px",
+                                lineHeight: "1.6",
+                                color: "#374151",
+                                whiteSpace: "pre-wrap",
+                                flexGrow: 1,
+                                margin: 0,
+                              }}
+                            >
+                              {evaluation.body}
+                            </p>
+                            <div
+                              className="compile-pack-item-meta"
+                              style={{
+                                marginTop: "16px",
+                                paddingTop: "12px",
+                                borderTop: "1px solid rgba(0, 0, 0, 0.05)",
+                              }}
+                            >
+                              <span>source: {evaluation.source}</span>
+                              <span>{tzFormatDate(evaluation.createdAt, tz)}</span>
+                            </div>
+                          </div>
                         </div>
-                        <div className="compile-eval-right" style={{ display: "flex", flexDirection: "column", justifyContent: "space-between", height: "100%", minHeight: "220px", padding: "8px 0" }}>
-                          <p style={{ fontSize: "14px", lineHeight: "1.6", color: "#374151", whiteSpace: "pre-wrap", flexGrow: 1, margin: 0 }}>
+                      ) : (
+                        <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
+                          <p
+                            style={{
+                              fontSize: "14px",
+                              lineHeight: "1.6",
+                              color: "#374151",
+                              whiteSpace: "pre-wrap",
+                            }}
+                          >
                             {evaluation.body}
                           </p>
-                          <div className="compile-pack-item-meta" style={{ marginTop: "16px", paddingTop: "12px", borderTop: "1px solid rgba(0, 0, 0, 0.05)" }}>
+                          <div className="compile-pack-item-meta">
                             <span>source: {evaluation.source}</span>
                             <span>{tzFormatDate(evaluation.createdAt, tz)}</span>
                           </div>
                         </div>
-                      </div>
-                    ) : (
-                      <div style={{ display: "flex", flexDirection: "column", gap: "12px" }}>
-                        <p style={{ fontSize: "14px", lineHeight: "1.6", color: "#374151", whiteSpace: "pre-wrap" }}>
-                          {evaluation.body}
-                        </p>
-                        <div className="compile-pack-item-meta">
-                          <span>source: {evaluation.source}</span>
-                          <span>{tzFormatDate(evaluation.createdAt, tz)}</span>
-                        </div>
-                      </div>
-                    )}
-                  </article>
-                );
-              })}
-            </div>
-          )}
-        </section>
+                      )}
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+          </section>
+        ) : null}
 
-        {detail.pack ? (
+        {activeTab === "pack" && detail.pack ? (
           <>
             <section className="compile-pack-section">
               <div className="compile-pack-section-header">
@@ -638,11 +907,44 @@ function RunDetailPane({
               </section>
             ) : null}
           </>
-        ) : (
+        ) : activeTab === "pack" ? (
           <section className="compile-pack-section">
             <p className="compile-state-text">Snapshot unavailable for this legacy run.</p>
           </section>
-        )}
+        ) : null}
+
+        {activeTab === "ranking" ? (
+          <section className="compile-pack-section">
+            <div className="compile-pack-section-header">
+              <h3>Ranking Trace</h3>
+              <Badge variant="outline">{rankingTrace?.items.length ?? 0}</Badge>
+            </div>
+            <RankingTraceSection
+              trace={rankingTrace}
+              isLoading={rankingTraceLoading}
+              error={rankingTraceError}
+              tz={tz}
+            />
+          </section>
+        ) : null}
+
+        {activeTab === "markdown" ? (
+          <section className="compile-pack-section">
+            <div className="compile-pack-section-header">
+              <h3>Compiled Output</h3>
+            </div>
+            <div className="compile-output-markdown">
+              <MarkdownEditor
+                value={outputMarkdown}
+                editable={false}
+                toolbarMode="hidden"
+                enableVerticalScroll
+                enableMermaid
+                mermaidLib={mermaid}
+              />
+            </div>
+          </section>
+        ) : null}
 
         {hasLegacyInput(input) ? (
           <section className="compile-pack-section">
@@ -674,6 +976,7 @@ export function ContextCompilerPage() {
   const runKnowledgeFeedback = useRunKnowledgeFeedbackMutation();
   const runs = useCompileRuns(50);
   const detail = useCompileRunDetail(mode === "detail" ? activeRunId : null);
+  const rankingTrace = useCompileRunRankingTrace(mode === "detail" ? activeRunId : null);
 
   const filteredRuns = useMemo(() => {
     return (runs.data ?? []).filter((run) => {
@@ -735,6 +1038,9 @@ export function ContextCompilerPage() {
           <RunDetailPane
             key={activeRunId ?? "compile-run-detail"}
             detail={detail.data}
+            rankingTrace={rankingTrace.data}
+            rankingTraceLoading={rankingTrace.isLoading}
+            rankingTraceError={rankingTrace.error}
             isLoading={detail.isLoading}
             error={detail.error}
             feedbackPending={runKnowledgeFeedback.isPending}

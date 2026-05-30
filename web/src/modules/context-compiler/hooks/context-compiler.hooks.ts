@@ -3,6 +3,7 @@ import {
   type CompileRequest,
   type CompileRunKnowledgeFeedbackWriteItem,
   compilePack,
+  fetchRunRankingTrace,
   fetchRecentRuns,
   fetchRunDetail,
   submitRunKnowledgeFeedback,
@@ -33,6 +34,14 @@ export function useCompileRunDetail(runId: string | null) {
   });
 }
 
+export function useCompileRunRankingTrace(runId: string | null) {
+  return useQuery({
+    queryKey: ["compile-run-ranking-trace", runId],
+    queryFn: () => fetchRunRankingTrace(runId as string),
+    enabled: Boolean(runId),
+  });
+}
+
 export function useRunKnowledgeFeedbackMutation() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -40,6 +49,9 @@ export function useRunKnowledgeFeedbackMutation() {
       submitRunKnowledgeFeedback(input.runId, input.items),
     onSuccess: async (_data, variables) => {
       await queryClient.invalidateQueries({ queryKey: ["compile-run-detail", variables.runId] });
+      await queryClient.invalidateQueries({
+        queryKey: ["compile-run-ranking-trace", variables.runId],
+      });
     },
   });
 }

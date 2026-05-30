@@ -11,6 +11,7 @@ import { contextCompilerRouter } from "../api/modules/context-compiler/context-c
 import {
   compilePackForApi,
   getRunDetailForApi,
+  getRunRankingTraceForApi,
   listRunsForApi,
   saveRunKnowledgeFeedbackForApi,
 } from "../api/modules/context-compiler/context-compiler.service.js";
@@ -71,7 +72,11 @@ import {
 vi.mock("../api/modules/context-compiler/context-compiler.service.js", () => ({
   compilePackForApi: vi.fn(),
   getRunDetailForApi: vi.fn(),
+  getRunRankingTraceForApi: vi.fn(),
   getRunDetailParamSchema: z.object({
+    id: z.string().uuid(),
+  }),
+  getRunRankingTraceParamSchema: z.object({
     id: z.string().uuid(),
   }),
   runKnowledgeFeedbackParamSchema: z.object({
@@ -199,6 +204,29 @@ describe("API route contract tests", () => {
     vi.mocked(compilePackForApi).mockResolvedValue(validCompileResponse);
     vi.mocked(listRunsForApi).mockResolvedValue([]);
     vi.mocked(getRunDetailForApi).mockResolvedValue(validRunDetail);
+    vi.mocked(getRunRankingTraceForApi).mockResolvedValue({
+      run: {
+        id: "550e8400-e29b-41d4-a716-446655440000",
+        goal: "api contract goal",
+        repoPath: null,
+        retrievalMode: "task_context",
+        status: "ok",
+        input: {},
+        createdAt: "2026-05-23T00:00:00.000Z",
+      },
+      evalSummary: { count: 0, latestAvg: null, latestOutcome: null },
+      feedbackSummary: { used: 0, notUsed: 0, offTopic: 0, wrong: 0, noSignal: 0 },
+      funnel: {
+        textHitCount: 0,
+        vectorHitCount: 0,
+        mergedCount: 0,
+        finalCount: 0,
+        packedCount: 0,
+        selectedCount: 0,
+        suppressedCount: 0,
+      },
+      items: [],
+    } as any);
     vi.mocked(saveRunKnowledgeFeedbackForApi).mockResolvedValue(validRunKnowledgeFeedback);
     vi.mocked(getDoctorReportForApi).mockResolvedValue(validDoctorReport);
     vi.mocked(getDoctorDomainForApi).mockImplementation(async (domain) => {

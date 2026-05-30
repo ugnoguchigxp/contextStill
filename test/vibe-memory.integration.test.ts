@@ -8,7 +8,6 @@ import {
   retrieveVibeMemoryContext,
 } from "../src/modules/vibe-memory/vibe-memory.service.js";
 
-
 // Skip tests if DATABASE is not configured or integration test flag is missing
 const runDbTests = process.env.MEMORY_ROUTER_RUN_DB_TESTS || process.env.DATABASE_URL;
 
@@ -71,11 +70,13 @@ describe("Goal Room Memory Database Integration Tests", () => {
     expect(mark.id).toBeDefined();
     expect(mark.mark).toBe("pinned");
 
-    const [savedMark] = await db.select().from(vibeMemoryMarks).where(eq(vibeMemoryMarks.id, mark.id));
+    const [savedMark] = await db
+      .select()
+      .from(vibeMemoryMarks)
+      .where(eq(vibeMemoryMarks.id, mark.id));
     expect(savedMark).toBeDefined();
     expect(savedMark.note).toBe("Important milestone");
   });
-
 
   test("retrieveVibeMemoryContext extracts unresolved open loops & formats Brief", async () => {
     const goalId = "test-hash-brief-check";

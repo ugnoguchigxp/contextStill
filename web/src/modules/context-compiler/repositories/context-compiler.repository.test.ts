@@ -3,6 +3,7 @@ import {
   compilePack,
   fetchRecentRuns,
   fetchRunDetail,
+  fetchRunRankingTrace,
   submitRunKnowledgeFeedback,
 } from "./context-compiler.repository.js";
 
@@ -93,6 +94,31 @@ describe("context-compiler.repository", () => {
       } as Response);
 
       await expect(fetchRunDetail("run-1")).rejects.toThrow("Fetch run detail failed: 404");
+    });
+  });
+
+  describe("fetchRunRankingTrace", () => {
+    it("should fetch run ranking trace successfully", async () => {
+      const mockTrace = { run: { id: "run-1" }, items: [] };
+      const fetchSpy = vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: true,
+        json: async () => ({ trace: mockTrace }),
+      } as Response);
+
+      const result = await fetchRunRankingTrace("run-1");
+      expect(result).toEqual(mockTrace);
+      expect(fetchSpy).toHaveBeenCalledWith("/api/context/runs/run-1/ranking-trace");
+    });
+
+    it("should throw error when response is not ok", async () => {
+      vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: false,
+        status: 404,
+      } as Response);
+
+      await expect(fetchRunRankingTrace("run-1")).rejects.toThrow(
+        "Fetch run ranking trace failed: 404",
+      );
     });
   });
 

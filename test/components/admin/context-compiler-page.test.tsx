@@ -8,6 +8,7 @@ import * as hooks from "../../../web/src/modules/context-compiler/hooks/context-
 vi.mock("../../../web/src/modules/context-compiler/hooks/context-compiler.hooks", () => ({
   useCompilePack: vi.fn(),
   useCompileRunDetail: vi.fn(),
+  useCompileRunRankingTrace: vi.fn(),
   useCompileRuns: vi.fn(),
   useRunKnowledgeFeedbackMutation: vi.fn(),
 }));
@@ -97,6 +98,44 @@ function setupHooks() {
     error: null,
   } as unknown as ReturnType<typeof hooks.useCompileRunDetail>);
 
+  mockedHooks.useCompileRunRankingTrace.mockReturnValue({
+    data: {
+      run: {
+        id: "run-1",
+        goal: "Run one",
+        repoPath: null,
+        retrievalMode: "task_context",
+        status: "ok",
+        input: {},
+        createdAt: "2026-05-27T00:00:00.000Z",
+      },
+      evalSummary: {
+        count: 1,
+        latestAvg: 88,
+        latestOutcome: "useful",
+      },
+      feedbackSummary: {
+        used: 1,
+        notUsed: 0,
+        offTopic: 0,
+        wrong: 0,
+        noSignal: 0,
+      },
+      funnel: {
+        textHitCount: 1,
+        vectorHitCount: 1,
+        mergedCount: 1,
+        finalCount: 1,
+        packedCount: 1,
+        selectedCount: 1,
+        suppressedCount: 0,
+      },
+      items: [],
+    },
+    isLoading: false,
+    error: null,
+  } as unknown as ReturnType<typeof hooks.useCompileRunRankingTrace>);
+
   mockedHooks.useRunKnowledgeFeedbackMutation.mockReturnValue({
     isPending: false,
     mutateAsync: vi.fn(),
@@ -111,6 +150,7 @@ describe("ContextCompilerPage", () => {
     expect(screen.getByTitle("Latest compile_eval avg score")).toHaveTextContent("88");
 
     fireEvent.click(screen.getByRole("button", { name: /run one/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Feedback & Eval" }));
     expect(screen.getByRole("heading", { name: "Compile Eval" })).toBeInTheDocument();
     expect(screen.getByText("Good context")).toBeInTheDocument();
     expect(screen.getByText("Avg: 88 / Useful")).toBeInTheDocument();
@@ -171,6 +211,7 @@ describe("ContextCompilerPage", () => {
 
     render(<ContextCompilerPage />);
     fireEvent.click(screen.getByRole("button", { name: /run one/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Feedback & Eval" }));
     expect(screen.getByText("Evaluation")).toBeInTheDocument();
   });
 });

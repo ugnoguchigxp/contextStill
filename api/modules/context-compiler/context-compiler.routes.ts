@@ -6,6 +6,8 @@ import {
   compilePackForApi,
   getRunDetailForApi,
   getRunDetailParamSchema,
+  getRunRankingTraceForApi,
+  getRunRankingTraceParamSchema,
   listRunsForApi,
   listRunsQuerySchema,
   runKnowledgeFeedbackParamSchema,
@@ -30,6 +32,14 @@ export const contextCompilerRouter = new Hono()
       return c.json({ error: "Compile run not found." }, 404);
     }
     return c.json({ detail });
+  })
+  .get("/runs/:id/ranking-trace", zValidator("param", getRunRankingTraceParamSchema), async (c) => {
+    const params = c.req.valid("param");
+    const trace = await getRunRankingTraceForApi(params);
+    if (!trace) {
+      return c.json({ error: "Compile run not found." }, 404);
+    }
+    return c.json({ trace });
   })
   .post(
     "/runs/:id/knowledge-feedback",

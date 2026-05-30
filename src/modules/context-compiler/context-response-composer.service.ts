@@ -127,7 +127,10 @@ function defaultComposePlan(retrievalMode: RetrievalMode): ComposePlan {
 
 function sanitizeHeading(value: unknown, fallback: string): string {
   if (typeof value !== "string") return fallback;
-  const normalized = normalizeLine(value).replace(/^#+\s*/, "").slice(0, composeHeadingMaxChars).trim();
+  const normalized = normalizeLine(value)
+    .replace(/^#+\s*/, "")
+    .slice(0, composeHeadingMaxChars)
+    .trim();
   return normalized || fallback;
 }
 
@@ -156,7 +159,10 @@ function sanitizeStyleConfidence(value: unknown, fallback: number): number {
   return Math.max(composeStyleConfidenceMin, Math.min(composeStyleConfidenceMax, parsed));
 }
 
-function sanitizeResponseStyle(value: unknown, fallback: ComposeResponseStyle): ComposeResponseStyle {
+function sanitizeResponseStyle(
+  value: unknown,
+  fallback: ComposeResponseStyle,
+): ComposeResponseStyle {
   if (value === "skill" || value === "narrative") return value;
   return fallback;
 }
@@ -415,7 +421,10 @@ function countHintMatches(text: string, hints: Set<string>): number {
   return matches;
 }
 
-function selectPromptKnowledgeCandidates(params: ComposeInput, plan: ComposePlan): ContextPackItem[] {
+function selectPromptKnowledgeCandidates(
+  params: ComposeInput,
+  plan: ComposePlan,
+): ContextPackItem[] {
   const ruleHintSet = normalizedHintSet(plan.ruleQueryHints);
   const procedureHintSet = normalizedHintSet(plan.procedureQueryHints);
   const exclusionHintSet = normalizedHintSet(plan.exclusionHints);
@@ -563,7 +572,10 @@ function parseComposePlanPayload(
     const headings: HeadingConfig = {
       focus: sanitizeHeading(headingsRecord.focus, fallbackPlan.headings.focus),
       steps: sanitizeHeading(headingsRecord.steps, fallbackPlan.headings.steps),
-      verification: sanitizeHeading(headingsRecord.verification, fallbackPlan.headings.verification),
+      verification: sanitizeHeading(
+        headingsRecord.verification,
+        fallbackPlan.headings.verification,
+      ),
       avoid: sanitizeHeading(headingsRecord.avoid, fallbackPlan.headings.avoid),
     };
     return {
@@ -578,7 +590,10 @@ function parseComposePlanPayload(
         exclusionHints: sanitizeHintArray(parsed.exclusionHints),
         responseStyle: sanitizeResponseStyle(parsed.responseStyle, fallbackPlan.responseStyle),
         styleReason: sanitizeStyleReason(parsed.styleReason, fallbackPlan.styleReason),
-        styleConfidence: sanitizeStyleConfidence(parsed.styleConfidence, fallbackPlan.styleConfidence),
+        styleConfidence: sanitizeStyleConfidence(
+          parsed.styleConfidence,
+          fallbackPlan.styleConfidence,
+        ),
         candidateSufficiency: sanitizeCandidateSufficiency(
           parsed.candidateSufficiency,
           fallbackPlan.candidateSufficiency,
@@ -772,7 +787,9 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
       plannerError = [plannerError, guarded.downgradedReason].filter(Boolean).join(" | ");
     }
     const fallbackPlanForThisRound =
-      effectivePlan.responseStyle === "skill" ? withNarrativeStyle(effectivePlan, "skill fallback") : effectivePlan;
+      effectivePlan.responseStyle === "skill"
+        ? withNarrativeStyle(effectivePlan, "skill fallback")
+        : effectivePlan;
     const fallbackForThisRound = buildFallbackCompose(params, fallbackPlanForThisRound);
     const systemPrompt = buildComposerSystemPrompt(routing.maxTokens, effectivePlan);
     const userPrompt = buildComposerUserPrompt(params, effectivePlan);

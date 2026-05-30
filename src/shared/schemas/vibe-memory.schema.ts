@@ -97,4 +97,3 @@ export type AgentDiffSymbolInput = z.input<typeof agentDiffSymbolInputSchema>;
 export type RecordVibeMemoryInput = z.input<typeof recordVibeMemoryInputSchema>;
 export type RecordVibeMemoryCapsuleInput = z.input<typeof recordVibeMemoryCapsuleInputSchema>;
 export type MarkVibeMemoryInput = z.input<typeof markVibeMemoryInputSchema>;
-

@@ -111,7 +111,7 @@ async function runOnce(options: CliOptions) {
 }
 
 let stopping = false;
-let activeLoopsPromise: Promise<void[]> | null = null;
+let activeLoopsPromise: Promise<unknown[]> | null = null;
 
 async function runContinuous(options: CliOptions): Promise<void> {
   const busySleepMs = 0;
@@ -144,7 +144,7 @@ async function runContinuous(options: CliOptions): Promise<void> {
           : queueName === "findingCandidate"
             ? findingQueueTaskIntervalMs
             : busySleepMs;
-        
+
         const start = Date.now();
         while (Date.now() - start < sleepMs && !stopping) {
           await sleep(Math.max(1, Math.min(100, sleepMs - (Date.now() - start))));
@@ -183,7 +183,7 @@ const shutdown = async (signal: string) => {
       console.log("Waiting for active queue worker loops to yield...");
       await activeLoopsPromise;
     }
-    
+
     console.log("Closing queue supervisor database connection pool...");
     await closeDbPool();
     console.log("Queue supervisor shutdown complete.");

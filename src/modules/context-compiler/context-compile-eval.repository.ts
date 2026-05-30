@@ -106,9 +106,7 @@ export async function getCompileEvalSummaryByRunId(runId: string): Promise<Compi
     await db
       .select({
         count: sql<number>`count(*)::int`,
-        averageAvg: sql<
-          number | null
-        >`round(avg(${contextCompileEvals.avg})::numeric, 1)::float8`,
+        averageAvg: sql<number | null>`round(avg(${contextCompileEvals.avg})::numeric, 1)::float8`,
       })
       .from(contextCompileEvals)
       .where(eq(contextCompileEvals.runId, runId)),

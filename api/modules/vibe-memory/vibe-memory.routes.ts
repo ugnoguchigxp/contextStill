@@ -43,7 +43,7 @@ vibeMemoryRouter.get("/context", async (c) => {
   const sessionId = c.req.query("sessionId");
   const goalId = c.req.query("goalId");
   const limit = c.req.query("limit") ? Number(c.req.query("limit")) : undefined;
-  
+
   // profile can be passed as multiple query parameters: ?profile=code-review&profile=implementation
   const profile = c.req.queries("profile") ?? [];
 
@@ -94,10 +94,14 @@ vibeMemoryRouter.delete("/:id", async (c) => {
  * Goal Room Memory: Record Capsule
  * POST /api/vibe-memory/record
  */
-vibeMemoryRouter.post("/record", zValidator("json", recordVibeMemoryCapsuleInputSchema), async (c) => {
-  const result = await recordVibeMemoryCapsule(c.req.valid("json"));
-  return c.json(result, 201);
-});
+vibeMemoryRouter.post(
+  "/record",
+  zValidator("json", recordVibeMemoryCapsuleInputSchema),
+  async (c) => {
+    const result = await recordVibeMemoryCapsule(c.req.valid("json"));
+    return c.json(result, 201);
+  },
+);
 
 /**
  * Goal Room Memory: Add Mark (付箋)
@@ -107,6 +111,3 @@ vibeMemoryRouter.post("/mark", zValidator("json", markVibeMemoryInputSchema), as
   const result = await markVibeMemory(c.req.valid("json"));
   return c.json(result, 201);
 });
-
-
-

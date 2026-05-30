@@ -20,7 +20,6 @@ const contextPackItemSchema = z.object({
   domains: z.array(z.string()).optional(),
 });
 
-
 export const contextPackSchema = z.object({
   runId: z.string().uuid(),
   goal: z.string().min(1),

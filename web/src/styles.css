@@ -2539,7 +2539,6 @@
   background: rgba(255, 255, 255, 0.4);
 }
 
-
 .grid-checkpoints {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -2650,9 +2649,18 @@
 }
 
 @keyframes pulseGlow {
-  0% { transform: scale(1); opacity: 0.9; }
-  50% { transform: scale(1.05); opacity: 1; }
-  100% { transform: scale(1); opacity: 0.9; }
+  0% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  50% {
+    transform: scale(1.05);
+    opacity: 1;
+  }
+  100% {
+    transform: scale(1);
+    opacity: 0.9;
+  }
 }
 
 .mark-actions {
@@ -2983,7 +2991,6 @@
   border-radius: var(--radius-sm);
   color: var(--muted-foreground);
 }
-
 
 .chat-turns {
   display: grid;
