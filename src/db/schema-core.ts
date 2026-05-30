@@ -16,6 +16,23 @@ import { groupedConfig } from "../config.js";
 import { auditLogActorValues, settingValueKindValues } from "./schema.constants.js";
 import { toSqlList } from "./schema.utils.js";
 
+export const vibeMigrationRuns = pgTable("vibe_migration_runs", {
+  id: uuid("id").primaryKey().defaultRandom(),
+  fromTable: text("from_table").notNull(),
+  deletedCount: integer("deleted_count").notNull(),
+  preservedTables: jsonb("preserved_tables").default([]).notNull(),
+  executedAt: timestamp("executed_at").defaultNow().notNull(),
+  appVersion: text("app_version").notNull(),
+});
+
+export const vibeGoals = pgTable("vibe_goals", {
+  id: text("id").primaryKey(), // SHA-256 ハッシュ値。JOIN 用
+  goalUri: text("goal_uri").notNull().unique(),
+  goalAnchorRef: text("goal_anchor_ref").notNull(),
+  title: text("title"),
+  createdAt: timestamp("created_at").defaultNow().notNull(),
+});
+
 export const vibeMemories = pgTable(
   "vibe_memories",
   {
@@ -27,6 +44,17 @@ export const vibeMemories = pgTable(
     embedding: vector("embedding", { dimensions: groupedConfig.embedding.dimension }),
     metadata: jsonb("metadata").default({}).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
+    // Goal Room Memory Extensions
+    goalId: text("goal_id").references(() => vibeGoals.id, { onDelete: "cascade" }),
+    parentId: uuid("parent_id").references((): any => vibeMemories.id, { onDelete: "cascade" }),
+    subject: text("subject"),
+    intent: text("intent"),
+    wants: jsonb("wants").default([]).notNull(),
+    refs: jsonb("refs").default([]).notNull(),
+    confidence: text("confidence"),
+    evidenceStatus: text("evidence_status"),
+    actorId: text("actor_id"),
+    ttlAt: timestamp("ttl_at"),
   },
   (table) => ({
     sessionIdIdx: index("vibe_memories_session_id_idx").on(table.sessionId),
@@ -43,6 +71,32 @@ export const vibeMemories = pgTable(
       "hnsw",
       table.embedding.op("vector_cosine_ops"),
     ),
+    // Goal Room Memory Index Extensions
+    goalIdIdx: index("vibe_memories_goal_id_idx").on(table.goalId),
+    parentIdIdx: index("vibe_memories_parent_id_idx").on(table.parentId),
+    intentIdx: index("vibe_memories_intent_idx").on(table.intent),
+  }),
+);
+
+export const vibeMemoryMarks = pgTable(
+  "vibe_memory_marks",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    goalId: text("goal_id")
+      .references(() => vibeGoals.id, { onDelete: "cascade" })
+      .notNull(),
+    targetMemoryId: uuid("target_memory_id")
+      .references(() => vibeMemories.id, { onDelete: "cascade" })
+      .notNull(),
+    mark: text("mark").notNull(),
+    note: text("note"),
+    actorId: text("actor_id").notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    goalIdIdx: index("vibe_memory_marks_goal_id_idx").on(table.goalId),
+    targetMemoryIdIdx: index("vibe_memory_marks_target_memory_id_idx").on(table.targetMemoryId),
+    markIdx: index("vibe_memory_marks_mark_idx").on(table.mark),
   }),
 );
 

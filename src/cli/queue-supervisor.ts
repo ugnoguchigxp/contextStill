@@ -110,13 +110,16 @@ async function runOnce(options: CliOptions) {
   return result;
 }
 
+let stopping = false;
+let activeLoopsPromise: Promise<void[]> | null = null;
+
 async function runContinuous(options: CliOptions): Promise<void> {
   const busySleepMs = 0;
   const findingQueueTaskIntervalMs =
     groupedConfig.distillation.findingQueueTaskIntervalSeconds * 1000;
   const runLoop = async (queueName: DistillationQueueName): Promise<void> => {
     let wasIdle = false;
-    while (true) {
+    while (!stopping) {
       try {
         const run = await runQueueWorkerOnce({
           queueName,
@@ -141,16 +144,60 @@ async function runContinuous(options: CliOptions): Promise<void> {
           : queueName === "findingCandidate"
             ? findingQueueTaskIntervalMs
             : busySleepMs;
-        await sleep(sleepMs);
+        
+        const start = Date.now();
+        while (Date.now() - start < sleepMs && !stopping) {
+          await sleep(Math.max(1, Math.min(100, sleepMs - (Date.now() - start))));
+        }
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));
-        await sleep(groupedConfig.distillation.continuousErrorSleepMs);
+        const start = Date.now();
+        const errSleep = groupedConfig.distillation.continuousErrorSleepMs;
+        while (Date.now() - start < errSleep && !stopping) {
+          await sleep(Math.max(1, Math.min(100, errSleep - (Date.now() - start))));
+        }
       }
     }
   };
 
-  await Promise.all(options.queueNames.map((queueName) => runLoop(queueName)));
+  activeLoopsPromise = Promise.all(options.queueNames.map((queueName) => runLoop(queueName)));
+  await activeLoopsPromise;
 }
+
+let shuttingDown = false;
+
+const shutdown = async (signal: string) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  console.log(`\nReceived ${signal} in queue supervisor. Shutting down gracefully...`);
+  stopping = true;
+
+  const forceExitTimer = setTimeout(() => {
+    console.error("Queue supervisor graceful shutdown timed out. Forcing exit.");
+    process.exit(1);
+  }, 15_000);
+
+  try {
+    if (activeLoopsPromise) {
+      console.log("Waiting for active queue worker loops to yield...");
+      await activeLoopsPromise;
+    }
+    
+    console.log("Closing queue supervisor database connection pool...");
+    await closeDbPool();
+    console.log("Queue supervisor shutdown complete.");
+    clearTimeout(forceExitTimer);
+    process.exit(0);
+  } catch (error) {
+    clearTimeout(forceExitTimer);
+    console.error("Error during queue supervisor shutdown:", error);
+    process.exit(1);
+  }
+};
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
@@ -167,5 +214,9 @@ main()
     process.exitCode = 1;
   })
   .finally(async () => {
-    await closeDbPool();
+    // Only close pool here if we are running in once mode, as continuous mode handles it in shutdown()
+    const options = parseArgs(process.argv.slice(2));
+    if (!options.continuous) {
+      await closeDbPool();
+    }
   });

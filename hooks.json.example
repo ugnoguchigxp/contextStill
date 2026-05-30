@@ -1,0 +1,28 @@
+{
+  "memory-router-hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "write_file|replace_file_content|multi_replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun run doctor",
+            "description": "Verify database and environment sanity before modifying code files"
+          }
+        ]
+      }
+    ],
+    "PostToolUse": [
+      {
+        "matcher": "write_file|replace_file_content|multi_replace_file_content",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "bun run test:unit",
+            "description": "Automatically run unit tests to check for regressions after file modifications"
+          }
+        ]
+      }
+    ]
+  }
+}

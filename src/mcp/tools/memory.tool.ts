@@ -54,7 +54,7 @@ async function handleSearchMemory(args: unknown) {
   }
   const previewChars =
     parsed.previewChars !== undefined ? parsed.previewChars : DEFAULT_PREVIEW_CHARS;
-  const items = results.map((item) => {
+  const items = results.map((item: any) => {
     const title = pickTitleFromContent(item.content);
     const summary = toSingleLineSummary(item.content, 180);
     const base = {

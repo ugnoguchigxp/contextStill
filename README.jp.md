@@ -317,26 +317,35 @@ MCP クライアントの設定に追加:
 
 | ツール | 用途 | 使用タイミング |
 |---|---|---|
-| `initial_instructions` | エージェントへの操作ガイダンス | セッション開始時に 1 回 |
+| `initial_instructions` | エージェントへの操作ガイダンス（常用ルール・フック活用） | セッション開始時に 1 回 |
+| `vibe_memory_peek` | Goal Room の未解決 Open Loop と Brief の確認 | **最優先** — 作業開始前に |
 | `context_compile` | タスク用コンテキストパック生成 | **主導線** — 毎タスクの作業前に |
-| `search_knowledge` | knowledge 候補の直接検索 | `context_compile` の結果を深掘りしたい時 |
+| `vibe_memory_say` | Goal Room への Capsule（共有メモ等）の投稿 | 発見、疑問、タスクが生じた時 |
+| `vibe_memory_reply` | 既存のカプセルに対するスレッド返信の投稿 | 議論や確認への応答時 |
+| `vibe_memory_mark` | カプセルへのマーク（resolved/pinned等）付与 | 課題解決やマイルストーン固定時 |
 | `register_candidate` | 軽量な rule/procedure 候補の登録 | 再利用可能なパターンを発見した時 |
-| `search_memory` | 過去の会話・差分を検索 | 候補メモリを ID ベースで特定したい時 |
+| `register_candidates` | 複数の候補を一括登録（best-effort） | 複数の再利用可能パターン発見時 |
+| `compile_eval` | `context_compile` 品質評価の保存 | 作業完了時の報告前 |
+| `search_knowledge` | knowledge 候補の直接検索 | `context_compile` の結果を深掘りしたい時 |
+| `search_memory` | 過去の会話・差分を検索 | 過去メモリをキーワード特定したい時 |
 | `fetch_memory` | 特定メモリの詳細取得 | 特定の会話を詳細に精査したい時 |
-| `doctor` | システム診断 | compile が degraded/failed の時 |
+| `doctor` | システム診断（DB、接続、同期のヘルス） | compile が degraded/failed の時 |
 
-旧名エイリアス: `memory_search` -> `search_memory`, `memory_fetch` -> `fetch_memory`。
+> [!NOTE]
+> 旧 `session_memo` ツールは廃止され、スケーラブルな Goal Room Memory 協調システム（上記 `vibe_memory` 4ツール）へ統合されました。
 
 ### 推奨ワークフロー
 
 ```
-1. initial_instructions     → 操作ルールを取得
-2. context_compile          → タスク固有のコンテキストを取得（主導線）
-3. search_knowledge         → 必要に応じて深掘り（補助）
-4. search_memory/fetch_memory → 必要時だけ過去会話を参照
-5. ... 作業を実行 ...
-6. register_candidate       → 再利用可能な発見を候補として保存
-7. doctor                   → 問題発生時にシステム状態を確認
+1. initial_instructions      → 操作ルールと hooksLLM ガイドラインを取得
+2. vibe_memory_peek         → 現在のゴールの Open Loops や Brief を確認
+3. context_compile          → タスク固有のコンテキストを取得（主導線）
+4. ... hooksLLM による自動テスト等の恩恵を受けながら作業を実行 ...
+5. vibe_memory_say/reply    → 途中計画、疑問、進捗、パッチを Capsule 投稿して協調
+6. vibe_memory_mark         → 課題の解決やピン留めを行い、タイムラインを整理
+7. compile_eval             → コンパイル品質の評価を記録
+8. register_candidate       → 得られた再利用可能な知見を候補登録
+9. doctor                   → 問題発生時にシステム状態を確認
 ```
 
 MCP ツールの完全な入出力仕様は [spec/mcp-tools.md](spec/mcp-tools.md) を参照してください。

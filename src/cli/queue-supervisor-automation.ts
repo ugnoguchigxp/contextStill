@@ -1,4 +1,4 @@
-import { execFileSync, spawnSync } from "node:child_process";
+import { execFileSync, spawnSync, spawn, type ChildProcess } from "node:child_process";
 import { mkdirSync, readFileSync, writeFileSync, existsSync, rmSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -144,8 +144,43 @@ function status(): void {
   }
 }
 
+let childProcess: ChildProcess | null = null;
+let shuttingDown = false;
+
+const shutdown = (signal: string) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  console.log(`\nReceived ${signal} in automation supervisor. Terminating child...`);
+
+  const forceExitTimer = setTimeout(() => {
+    console.error("Automation graceful shutdown timed out. Forcing exit.");
+    process.exit(1);
+  }, 10_000);
+
+  if (childProcess) {
+    if (childProcess.killed || childProcess.exitCode !== null) {
+      clearTimeout(forceExitTimer);
+      process.exit(0);
+      return;
+    }
+    childProcess.once("exit", (code, sig) => {
+      console.log(`Child process exited with code ${code} and signal ${sig}.`);
+      clearTimeout(forceExitTimer);
+      process.exit(0);
+    });
+    childProcess.kill("SIGTERM");
+  } else {
+    clearTimeout(forceExitTimer);
+    process.exit(0);
+  }
+};
+
+process.on("SIGINT", () => shutdown("SIGINT"));
+process.on("SIGTERM", () => shutdown("SIGTERM"));
+
 function runOnce(): void {
-  const result = spawnSync(
+  childProcess = spawn(
     resolveBunPath(),
     ["run", "src/cli/queue-supervisor.ts", "--once", "--limit", "1"],
     {
@@ -154,11 +189,16 @@ function runOnce(): void {
       env: process.env,
     },
   );
-  process.exitCode = result.status ?? 1;
+
+  childProcess.on("exit", (code) => {
+    if (!shuttingDown) {
+      process.exit(code ?? 1);
+    }
+  });
 }
 
 function runContinuous(): void {
-  const result = spawnSync(
+  childProcess = spawn(
     resolveBunPath(),
     ["run", "src/cli/queue-supervisor.ts", "--continuous", "--limit", "1"],
     {
@@ -167,7 +207,12 @@ function runContinuous(): void {
       env: process.env,
     },
   );
-  process.exitCode = result.status ?? 1;
+
+  childProcess.on("exit", (code) => {
+    if (!shuttingDown) {
+      process.exit(code ?? 1);
+    }
+  });
 }
 
 function main(): void {

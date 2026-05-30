@@ -330,29 +330,35 @@ Add to your MCP client configuration:
 
 | Tool | Purpose | Usage |
 |---|---|---|
-| `initial_instructions` | Operating guidance for the agent | Call once at session start |
+| `initial_instructions` | Operating guidance for the agent (rules & hooks) | Call once at session start |
+| `vibe_memory_peek` | Peek active Open Loops and Brief for the Goal Room | **Primary check** — call before start |
 | `context_compile` | Generate context pack for current task | **Primary tool** — call before every task |
-| `compile_eval` | Record post-task context usefulness (`score`, `outcome`, rationale) | After the task, per compile run |
-| `search_knowledge` | Raw knowledge candidate inspection | When `context_compile` results need investigation |
-| `register_candidate` | Register a lightweight rule/procedure candidate | When the agent discovers reusable patterns |
-| `register_candidates` | Bulk register multiple candidates | When several reusable lessons were found |
-| `search_memory` | Search past conversations and diffs | When identifying candidate memories by ID |
+| `vibe_memory_say` | Post a Capsule (shared note, task, findings) to Goal Room | When findings, tasks or plans arise |
+| `vibe_memory_reply` | Post a thread reply to an existing Capsule | When replying to questions or reviews |
+| `vibe_memory_mark` | Mark a Capsule with a status (resolved, pinned, etc.) | When issues are resolved or pinned |
+| `register_candidate` | Register a lightweight rule/procedure candidate | When discovering reusable patterns |
+| `register_candidates` | Bulk register multiple candidates | When several reusable lessons are found |
+| `compile_eval` | Record post-task context usefulness (`score`, `outcome`) | After the task, per compile run |
+| `search_knowledge` | Raw knowledge candidate inspection | When compile results need investigation |
+| `search_memory` | Search past conversations and diffs | When searching memories by query keyword |
 | `fetch_memory` | Fetch a specific memory by ID | When inspecting one memory in detail |
-| `doctor` | System health diagnostics | When compile is degraded/failed |
+| `doctor` | System health diagnostics (DB, sync, embeddings) | When compile is degraded/failed |
 
-Deprecated aliases: `memory_search` -> `search_memory`, `memory_fetch` -> `fetch_memory`.
+> [!NOTE]
+> The flat `session_memo` tool has been deprecated and completely replaced by the infinite, scalable Goal Room Memory collaborative framework (the 4 `vibe_memory` tools above).
 
 ### Recommended workflow
 
 ```
-1. initial_instructions     → Get operating rules
-2. context_compile          → Get task-specific context (primary)
-3. search_knowledge         → Investigate if needed (supplementary)
-4. search_memory/fetch_memory → Inspect past conversations only when needed
-5. ... do the work ...
-6. compile_eval             → Save usefulness evaluation for the run
-7. register_candidate(s)    → Save reusable discoveries as candidates
-8. doctor                   → Check system health if issues arise
+1. initial_instructions      → Get operating rules and hooksLLM guidelines
+2. vibe_memory_peek         → Peek Open Loops and latest Brief for the Goal Room
+3. context_compile          → Get task-specific context (primary baseline)
+4. ... do the work, benefiting from hooksLLM auto-tests/doctor checks ...
+5. vibe_memory_say/reply    → Ingest findings, queries, and patches as Capsules
+6. vibe_memory_mark         → Resolve loops or pin checkpoints to shape the timelines
+7. compile_eval             → Save compile run evaluation rationales
+8. register_candidate(s)    → Distill reusable discoveries as candidates
+9. doctor                   → Check system diagnostics on failures
 ```
 
 For the full MCP tool contract, see [spec/mcp-tools.md](spec/mcp-tools.md).

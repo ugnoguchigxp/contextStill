@@ -17,6 +17,12 @@ import {
 import { readFileTool } from "./read-file.tool.js";
 import { sessionMemoTool } from "./session-memo.tool.js";
 import { doctorTool, initialInstructionsTool } from "./system.tool.js";
+import {
+  vibeMemoryMarkTool,
+  vibeMemoryPeekTool,
+  vibeMemoryReplyTool,
+  vibeMemorySayTool,
+} from "./vibe-memory.tool.js";
 
 function isMcpV2Enabled(): boolean {
   const raw = process.env.MEMORY_ROUTER_MCP_V2?.trim().toLowerCase();
@@ -36,6 +42,10 @@ const v1ToolEntries: ToolEntry[] = [
   memorySearchTool,
   memoryFetchTool,
   doctorTool,
+  vibeMemorySayTool,
+  vibeMemoryReplyTool,
+  vibeMemoryPeekTool,
+  vibeMemoryMarkTool,
 ];
 
 const v2ToolEntries: ToolEntry[] = [
@@ -49,6 +59,10 @@ const v2ToolEntries: ToolEntry[] = [
   searchMemoryTool,
   fetchMemoryTool,
   doctorTool,
+  vibeMemorySayTool,
+  vibeMemoryReplyTool,
+  vibeMemoryPeekTool,
+  vibeMemoryMarkTool,
 ];
 
 export function getExposedToolEntries(): ToolEntry[] {
@@ -61,3 +75,4 @@ export function getCallableToolEntries(): ToolEntry[] {
   }
   return [...v2ToolEntries, memorySearchTool, memoryFetchTool];
 }
+

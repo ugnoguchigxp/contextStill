@@ -17,6 +17,6 @@ describe("locale helpers", () => {
 
   test("buildInitialInstructionsText returns localized headings", () => {
     expect(buildInitialInstructionsText("ja")).toContain("## 常用ルール");
-    expect(buildInitialInstructionsText("en")).toContain("## 常用ルール");
+    expect(buildInitialInstructionsText("en")).toContain("## Operational Rules");
   });
 });

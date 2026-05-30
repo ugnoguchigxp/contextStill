@@ -291,7 +291,7 @@ index 0000000..1111111
       sessionId: "integration-agent-diff-session",
       limit: 5,
     });
-    expect(hits.some((hit) => hit.id === result.memory.id)).toBe(true);
+    expect(hits.some((hit: any) => hit.id === result.memory.id)).toBe(true);
   });
 
   test("vibe memory recording moves embedded content diffs into agent_diff_entries", async () => {
