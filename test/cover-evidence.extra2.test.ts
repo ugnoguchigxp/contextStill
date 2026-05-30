@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   coverEvidenceResultFromRow: vi.fn(),
   resolveDistillationModel: vi.fn(() => "test-model"),
   runDistillationCompletion: vi.fn(),
+  executeDistillationToolCall: vi.fn(),
 }));
 
 vi.mock("../src/modules/findCandidate/repository.js", () => ({
@@ -69,6 +70,10 @@ vi.mock("../src/modules/distillation/distillation-runtime.service.js", () => ({
       : [],
 }));
 
+vi.mock("../src/modules/distillation/distillation-tools.service.js", () => ({
+  executeDistillationToolCall: mocks.executeDistillationToolCall,
+}));
+
 function candidateRow(overrides: Record<string, unknown> = {}) {
   return {
     id: "find-1",
@@ -105,6 +110,43 @@ function skillLikeProcedureBody(): string {
   ].join("\n");
 }
 
+function completion(content: string, toolEvents: unknown[] = [], messages: unknown[] = []) {
+  return { content, toolEvents, messages };
+}
+
+function defaultExternalFinalOutput() {
+  return JSON.stringify({
+    schemaVersion: 1,
+    status: "knowledge_ready",
+    stage: "source",
+    candidate: {
+      type: "procedure",
+      title: "Run smoke tests before finalizing coverEvidence",
+      body: skillLikeProcedureBody(),
+      importance: 80,
+      confidence: 85,
+      technologies: "typescript, vitest",
+      changeTypes: "test",
+      domains: "distillation, testing",
+    },
+    references: [],
+    duplicateRefs: [],
+    toolEvents: [],
+    reason: null,
+  });
+}
+
+function mockExternalEvidenceRounds(finalOutput: string, extraOutputs: string[] = []) {
+  mocks.runDistillationCompletion.mockReset();
+  mocks.runDistillationCompletion
+    .mockResolvedValueOnce(completion("| coverEvidence | testing |"))
+    .mockResolvedValueOnce(completion("1"))
+    .mockResolvedValueOnce(completion(finalOutput));
+  for (const output of extraOutputs) {
+    mocks.runDistillationCompletion.mockResolvedValueOnce(completion(output));
+  }
+}
+
 describe("runCoverEvidence", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -124,28 +166,47 @@ describe("runCoverEvidence", () => {
       id: "cover-1",
       ...result,
     }));
-    mocks.runDistillationCompletion.mockResolvedValue({
-      content: JSON.stringify({
-        schemaVersion: 1,
-        status: "knowledge_ready",
-        stage: "source",
-        candidate: {
-          type: "procedure",
-          title: "Run smoke tests before finalizing coverEvidence",
-          body: skillLikeProcedureBody(),
-          importance: 80,
-          confidence: 85,
-          technologies: "typescript, vitest",
-          changeTypes: "test",
-          domains: "distillation, testing",
+    mockExternalEvidenceRounds(defaultExternalFinalOutput());
+    mocks.executeDistillationToolCall.mockImplementation(async (toolCall) => {
+      if (toolCall.function.name === "search_web") {
+        return {
+          callId: toolCall.id,
+          name: "search_web",
+          ok: true,
+          content: JSON.stringify({
+            query: "coverEvidence testing",
+            results: [
+              {
+                title: "Example docs",
+                url: "https://example.com/docs",
+                snippet: "Fetched docs for coverEvidence testing.",
+              },
+            ],
+          }),
+          metadata: { query: "coverEvidence testing", resultCount: 1, provider: "test" },
+        };
+      }
+      return {
+        callId: toolCall.id,
+        name: "fetch_content",
+        ok: true,
+        content: JSON.stringify({
+          selected: [
+            {
+              index: 1,
+              url: "https://example.com/docs",
+              ok: true,
+              content: "Fetched docs",
+            },
+          ],
+        }),
+        metadata: {
+          selection: "1",
+          selectedUrls: ["https://example.com/docs"],
+          selectedCount: 1,
+          url: "https://example.com/docs",
         },
-        references: [],
-        duplicateRefs: [],
-        toolEvents: [],
-        reason: null,
-      }),
-      toolEvents: [],
-      messages: [],
+      };
     });
     process.env.MEMORY_ROUTER_CONTEXT7_MCP_COMMAND = "";
     process.env.MEMORY_ROUTER_DEEPWIKI_MCP_COMMAND = "";
@@ -178,44 +239,56 @@ describe("runCoverEvidence", () => {
       toExclusive: 140,
       returnedTokens: 140,
     });
-    mocks.runDistillationCompletion
-      .mockResolvedValueOnce({
-        content: JSON.stringify({
-          schemaVersion: 1,
-          status: "knowledge_ready",
-          stage: "web",
-          candidate: {
-            type: "procedure",
-            title: "Use current API docs from example docs",
-            body: "Fetch the docs, then verify provider behavior.",
-            importance: 86,
-            confidence: 84,
-          },
-          references: [],
-          duplicateRefs: [],
-          toolEvents: [],
-          reason: null,
-        }),
-        toolEvents: [
-          {
-            callId: "call-1",
-            name: "fetch_content",
-            ok: true,
-            content: fetchedProcedureEvidence,
-            metadata: { url: "https://example.com/docs" },
-          },
-        ],
-        messages: [
-          {
-            role: "tool",
-            name: "fetch_content",
-            tool_call_id: "call-1",
-            content: fetchedProcedureEvidence,
-          },
-        ],
-      })
-      .mockResolvedValueOnce({
-        content: JSON.stringify({
+    mocks.executeDistillationToolCall.mockImplementation(async (toolCall) => {
+      if (toolCall.function.name === "search_web") {
+        return {
+          callId: toolCall.id,
+          name: "search_web",
+          ok: true,
+          content: JSON.stringify({
+            query: "example docs",
+            results: [
+              {
+                title: "Example docs",
+                url: "https://example.com/docs",
+                snippet: "Current API docs for example provider.",
+              },
+            ],
+          }),
+          metadata: { query: "example docs", resultCount: 1, provider: "test" },
+        };
+      }
+      return {
+        callId: toolCall.id,
+        name: "fetch_content",
+        ok: true,
+        content: fetchedProcedureEvidence,
+        metadata: {
+          url: "https://example.com/docs",
+          selectedUrls: ["https://example.com/docs"],
+          selectedCount: 1,
+        },
+      };
+    });
+    mockExternalEvidenceRounds(
+      JSON.stringify({
+        schemaVersion: 1,
+        status: "knowledge_ready",
+        stage: "web",
+        candidate: {
+          type: "procedure",
+          title: "Use current API docs from example docs",
+          body: "Fetch the docs, then verify provider behavior.",
+          importance: 86,
+          confidence: 84,
+        },
+        references: [],
+        duplicateRefs: [],
+        toolEvents: [],
+        reason: null,
+      }),
+      [
+        JSON.stringify({
           title: "Use current API docs from example docs",
           body: [
             "Use when: Use this when validating provider API behavior against current docs.",
@@ -229,17 +302,16 @@ describe("runCoverEvidence", () => {
             "Avoid: Do not use stale docs or snippets without fetching the page.",
           ].join("\n"),
         }),
-        toolEvents: [],
-        messages: [],
-      });
+      ],
+    );
 
     const result = await runCoverEvidence({ id: "find-1" });
 
     expect(result.result.status).toBe("knowledge_ready");
     expect(result.result.candidate?.type).toBe("procedure");
     expect(result.result.candidate?.body).toContain("Use when:");
-    expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(2);
-    const repairRequest = mocks.runDistillationCompletion.mock.calls[1]?.[0] as {
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(4);
+    const repairRequest = mocks.runDistillationCompletion.mock.calls[3]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
     expect(repairRequest.messages[1]?.content).toContain(
@@ -284,19 +356,7 @@ describe("runCoverEvidence", () => {
       returnedTokens: 120,
     });
     process.env.MEMORY_ROUTER_CONTEXT7_MCP_COMMAND = "stub";
-    mocks.runDistillationCompletion.mockResolvedValueOnce({
-      content: externalOutput,
-      toolEvents: [
-        {
-          callId: "call-1",
-          name: "fetch_content",
-          ok: true,
-          content: "Fetched docs",
-          metadata: { url: "https://example.com/docs" },
-        },
-      ],
-      messages: [],
-    });
+    mockExternalEvidenceRounds(externalOutput);
     mocks.runDistillationCompletion.mockResolvedValueOnce({
       content: mcpOutput,
       toolEvents: [
@@ -321,12 +381,12 @@ describe("runCoverEvidence", () => {
       1,
       expect.anything(),
       expect.objectContaining({
-        toolNames: ["search_web", "fetch_content"],
-        usageSource: "cover-evidence:external-evidence",
+        enableTools: false,
+        usageSource: "cover-evidence:external-search-query",
       }),
     );
     expect(mocks.runDistillationCompletion).toHaveBeenNthCalledWith(
-      2,
+      4,
       expect.anything(),
       expect.objectContaining({
         toolNames: ["context7"],

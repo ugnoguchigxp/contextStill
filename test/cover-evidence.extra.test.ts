@@ -14,6 +14,7 @@ const mocks = vi.hoisted(() => ({
   coverEvidenceResultFromRow: vi.fn(),
   resolveDistillationModel: vi.fn(() => "test-model"),
   runDistillationCompletion: vi.fn(),
+  executeDistillationToolCall: vi.fn(),
 }));
 
 vi.mock("../src/modules/findCandidate/repository.js", () => ({
@@ -69,6 +70,10 @@ vi.mock("../src/modules/distillation/distillation-runtime.service.js", () => ({
       : [],
 }));
 
+vi.mock("../src/modules/distillation/distillation-tools.service.js", () => ({
+  executeDistillationToolCall: mocks.executeDistillationToolCall,
+}));
+
 function candidateRow(overrides: Record<string, unknown> = {}) {
   return {
     id: "find-1",
@@ -105,6 +110,43 @@ function skillLikeProcedureBody(): string {
   ].join("\n");
 }
 
+function completion(content: string, toolEvents: unknown[] = []) {
+  return { content, toolEvents, messages: [] };
+}
+
+function defaultExternalFinalOutput() {
+  return JSON.stringify({
+    schemaVersion: 1,
+    status: "knowledge_ready",
+    stage: "source",
+    candidate: {
+      type: "procedure",
+      title: "Run smoke tests before finalizing coverEvidence",
+      body: skillLikeProcedureBody(),
+      importance: 80,
+      confidence: 85,
+      technologies: "typescript, vitest",
+      changeTypes: "test",
+      domains: "distillation, testing",
+    },
+    references: [],
+    duplicateRefs: [],
+    toolEvents: [],
+    reason: null,
+  });
+}
+
+function mockExternalEvidenceRounds(finalOutput: string, extraOutputs: string[] = []) {
+  mocks.runDistillationCompletion.mockReset();
+  mocks.runDistillationCompletion
+    .mockResolvedValueOnce(completion("| coverEvidence | testing |"))
+    .mockResolvedValueOnce(completion("1"))
+    .mockResolvedValueOnce(completion(finalOutput));
+  for (const output of extraOutputs) {
+    mocks.runDistillationCompletion.mockResolvedValueOnce(completion(output));
+  }
+}
+
 describe("runCoverEvidence", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -124,28 +166,46 @@ describe("runCoverEvidence", () => {
       id: "cover-1",
       ...result,
     }));
-    mocks.runDistillationCompletion.mockResolvedValue({
-      content: JSON.stringify({
-        schemaVersion: 1,
-        status: "knowledge_ready",
-        stage: "source",
-        candidate: {
-          type: "procedure",
-          title: "Run smoke tests before finalizing coverEvidence",
-          body: skillLikeProcedureBody(),
-          importance: 80,
-          confidence: 85,
-          technologies: "typescript, vitest",
-          changeTypes: "test",
-          domains: "distillation, testing",
+    mockExternalEvidenceRounds(defaultExternalFinalOutput());
+    mocks.executeDistillationToolCall.mockImplementation(async (toolCall) => {
+      if (toolCall.function.name === "search_web") {
+        return {
+          callId: toolCall.id,
+          name: "search_web",
+          ok: true,
+          content: JSON.stringify({
+            query: "coverEvidence testing",
+            results: [
+              {
+                title: "Example docs",
+                url: "https://example.com/docs",
+                snippet: "Fetched docs for coverEvidence testing.",
+              },
+            ],
+          }),
+          metadata: { query: "coverEvidence testing", resultCount: 1, provider: "test" },
+        };
+      }
+      return {
+        callId: toolCall.id,
+        name: "fetch_content",
+        ok: true,
+        content: JSON.stringify({
+          selected: [
+            {
+              index: 1,
+              url: "https://example.com/docs",
+              ok: true,
+              content: "Fetched docs",
+            },
+          ],
+        }),
+        metadata: {
+          selection: "1",
+          selectedUrls: ["https://example.com/docs"],
+          selectedCount: 1,
         },
-        references: [],
-        duplicateRefs: [],
-        toolEvents: [],
-        reason: null,
-      }),
-      toolEvents: [],
-      messages: [],
+      };
     });
     process.env.MEMORY_ROUTER_CONTEXT7_MCP_COMMAND = "";
     process.env.MEMORY_ROUTER_DEEPWIKI_MCP_COMMAND = "";
@@ -165,29 +225,25 @@ describe("runCoverEvidence", () => {
       toExclusive: 180,
       returnedTokens: 180,
     });
-    mocks.runDistillationCompletion
-      .mockResolvedValueOnce({
-        content: JSON.stringify({
-          schemaVersion: 1,
-          status: "knowledge_ready",
-          stage: "final",
-          candidate: {
-            type: "procedure",
-            title: "Finalize coverEvidence safely",
-            body: "Run tests, then inspect references.",
-            importance: 88,
-            confidence: 86,
-          },
-          references: [],
-          duplicateRefs: [],
-          toolEvents: [],
-          reason: null,
-        }),
+    mockExternalEvidenceRounds(
+      JSON.stringify({
+        schemaVersion: 1,
+        status: "knowledge_ready",
+        stage: "final",
+        candidate: {
+          type: "procedure",
+          title: "Finalize coverEvidence safely",
+          body: "Run tests, then inspect references.",
+          importance: 88,
+          confidence: 86,
+        },
+        references: [],
+        duplicateRefs: [],
         toolEvents: [],
-        messages: [],
-      })
-      .mockResolvedValueOnce({
-        content: JSON.stringify({
+        reason: null,
+      }),
+      [
+        JSON.stringify({
           title: "Finalize coverEvidence safely",
           body: [
             "Use when: Use this when finalizing coverEvidence changes.",
@@ -201,9 +257,8 @@ describe("runCoverEvidence", () => {
             "Avoid: Do not skip source reference inspection.",
           ].join("\n"),
         }),
-        toolEvents: [],
-        messages: [],
-      });
+      ],
+    );
 
     const result = await runCoverEvidence({ id: "find-1", write: true });
 
@@ -235,8 +290,8 @@ describe("runCoverEvidence", () => {
         },
       }),
     );
-    mocks.runDistillationCompletion.mockResolvedValueOnce({
-      content: JSON.stringify({
+    mockExternalEvidenceRounds(
+      JSON.stringify({
         schemaVersion: 1,
         status: "knowledge_ready",
         stage: "final",
@@ -252,9 +307,7 @@ describe("runCoverEvidence", () => {
         toolEvents: [],
         reason: null,
       }),
-      toolEvents: [],
-      messages: [],
-    });
+    );
 
     const result = await runCoverEvidence({ id: "find-1", write: true });
 
@@ -286,8 +339,8 @@ describe("runCoverEvidence", () => {
   });
 
   test("demotes one-line procedure misclassifications to rules", async () => {
-    mocks.runDistillationCompletion.mockResolvedValueOnce({
-      content: JSON.stringify({
+    mockExternalEvidenceRounds(
+      JSON.stringify({
         schemaVersion: 1,
         status: "knowledge_ready",
         stage: "final",
@@ -303,9 +356,7 @@ describe("runCoverEvidence", () => {
         toolEvents: [],
         reason: null,
       }),
-      toolEvents: [],
-      messages: [],
-    });
+    );
 
     const result = await runCoverEvidence({ id: "find-1", write: true });
 
@@ -407,8 +458,8 @@ describe("runCoverEvidence", () => {
   });
 
   test("rejects source-backed candidates with low value assessment importance", async () => {
-    mocks.runDistillationCompletion.mockResolvedValueOnce({
-      content: JSON.stringify({
+    mockExternalEvidenceRounds(
+      JSON.stringify({
         schemaVersion: 1,
         status: "knowledge_ready",
         stage: "source",
@@ -424,9 +475,7 @@ describe("runCoverEvidence", () => {
         toolEvents: [],
         reason: null,
       }),
-      toolEvents: [],
-      messages: [],
-    });
+    );
 
     const result = await runCoverEvidence({ id: "find-1", write: true });
 
@@ -476,19 +525,7 @@ describe("runCoverEvidence", () => {
       toExclusive: 120,
       returnedTokens: 120,
     });
-    mocks.runDistillationCompletion.mockResolvedValue({
-      content: externalOutput,
-      toolEvents: [
-        {
-          callId: "call-1",
-          name: "fetch_content",
-          ok: true,
-          content: "Fetched docs",
-          metadata: { url: "https://example.com/docs" },
-        },
-      ],
-      messages: [],
-    });
+    mockExternalEvidenceRounds(externalOutput);
 
     const result = await runCoverEvidence({
       id: "find-1",
@@ -499,32 +536,68 @@ describe("runCoverEvidence", () => {
     expect(result.result.references.some((ref) => ref.uri === "https://example.com/docs")).toBe(
       true,
     );
-    expect(mocks.runDistillationCompletion).toHaveBeenCalledWith(
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(3);
+    expect(mocks.runDistillationCompletion).toHaveBeenNthCalledWith(
+      1,
       expect.anything(),
       expect.objectContaining({
-        auditContext: expect.objectContaining({ forceRefreshEvidence: true }),
-        maxToolRounds: expect.any(Number),
-        toolNames: ["search_web", "fetch_content"],
-        usageSource: "cover-evidence:external-evidence",
+        auditContext: expect.objectContaining({
+          assessment: "external-search-query",
+          forceRefreshEvidence: true,
+        }),
+        enableTools: false,
+        usageSource: "cover-evidence:external-search-query",
       }),
     );
-    const options = mocks.runDistillationCompletion.mock.calls[0]?.[1] as {
-      maxToolRounds: number;
-      timeoutMs: number;
-      toolCallLimits: Record<string, number>;
-      toolResultReminder?: unknown;
-    };
-    expect(options.maxToolRounds).toBe(4);
-    expect(options.timeoutMs).toBe(600_000);
-    expect(options.toolCallLimits).toEqual({ search_web: 1, fetch_content: 3 });
-    expect(options.toolResultReminder).toEqual(expect.any(Function));
-    const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
+    expect(mocks.runDistillationCompletion).toHaveBeenNthCalledWith(
+      2,
+      expect.anything(),
+      expect.objectContaining({
+        auditContext: expect.objectContaining({ assessment: "external-fetch-selection" }),
+        enableTools: false,
+        usageSource: "cover-evidence:external-fetch-selection",
+      }),
+    );
+    expect(mocks.runDistillationCompletion).toHaveBeenNthCalledWith(
+      3,
+      expect.anything(),
+      expect.objectContaining({
+        auditContext: expect.objectContaining({ assessment: "external-final" }),
+        enableTools: false,
+        usageSource: "cover-evidence:external-final",
+      }),
+    );
+    expect(mocks.executeDistillationToolCall).toHaveBeenNthCalledWith(
+      1,
+      expect.objectContaining({
+        function: expect.objectContaining({ name: "search_web" }),
+      }),
+      expect.objectContaining({ id: "find-1" }),
+    );
+    expect(mocks.executeDistillationToolCall).toHaveBeenNthCalledWith(
+      2,
+      expect.objectContaining({
+        function: expect.objectContaining({
+          name: "fetch_content",
+          arguments: JSON.stringify({ url: "1" }),
+        }),
+      }),
+      expect.objectContaining({ id: "find-1" }),
+    );
+    const searchRequest = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
-    expect(request.messages[0]?.content).toContain("段階1");
-    expect(request.messages[0]?.content).toContain("keyword は1から5個");
-    expect(request.messages[1]?.content).toContain("検索語ヒント");
-    expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(1);
+    expect(searchRequest.messages[0]?.content).toContain("検索語だけ");
+    expect(searchRequest.messages[0]?.content).toContain("5個以下");
+    expect(searchRequest.messages[1]?.content).toContain("検索語ヒント");
+    const selectionRequest = mocks.runDistillationCompletion.mock.calls[1]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(selectionRequest.messages[0]?.content).toContain("候補番号だけ");
+    const finalRequest = mocks.runDistillationCompletion.mock.calls[2]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(finalRequest.messages[0]?.content).toContain("fetch_content の本文だけ");
   });
 
   test("records parser diagnostics when external evidence output cannot be parsed", async () => {
@@ -543,19 +616,9 @@ describe("runCoverEvidence", () => {
       toExclusive: 120,
       returnedTokens: 120,
     });
-    mocks.runDistillationCompletion.mockResolvedValueOnce({
-      content: "The fetched documentation looks useful, but I cannot produce JSON.",
-      toolEvents: [
-        {
-          callId: "call-1",
-          name: "fetch_content",
-          ok: true,
-          content: "Fetched docs",
-          metadata: { url: "https://example.com/docs" },
-        },
-      ],
-      messages: [],
-    });
+    mockExternalEvidenceRounds(
+      "The fetched documentation looks useful, but I cannot produce JSON.",
+    );
 
     const result = await runCoverEvidence({ id: "find-1" });
 
@@ -570,7 +633,7 @@ describe("runCoverEvidence", () => {
           metadata: expect.objectContaining({
             reason: "external_parse_failed",
             contentPreview: expect.stringContaining("cannot produce JSON"),
-            toolEventCount: 1,
+            toolEventCount: 4,
           }),
         }),
       ]),
@@ -604,18 +667,28 @@ describe("runCoverEvidence", () => {
         },
       ],
     });
-    mocks.runDistillationCompletion.mockRejectedValueOnce(error);
+    mocks.runDistillationCompletion.mockReset();
+    mocks.runDistillationCompletion
+      .mockResolvedValueOnce(completion("| API | docs |"))
+      .mockResolvedValueOnce(completion("1"))
+      .mockRejectedValueOnce(error);
 
     const result = await runCoverEvidence({ id: "find-1" });
 
     expect(result.result.status).toBe("provider_failed");
     expect(result.result.reason).toBe("external_provider_timeout");
-    expect(result.result.toolEvents).toEqual([
-      expect.objectContaining({
-        name: "fetch_content",
-        ok: true,
-      }),
-    ]);
+    expect(result.result.toolEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "search_web",
+          ok: true,
+        }),
+        expect.objectContaining({
+          name: "fetch_content",
+          ok: true,
+        }),
+      ]),
+    );
   });
 
   test("keeps failed tool events classified as tool failure even when the LLM also times out", async () => {
@@ -646,17 +719,27 @@ describe("runCoverEvidence", () => {
         },
       ],
     });
-    mocks.runDistillationCompletion.mockRejectedValueOnce(error);
+    mocks.runDistillationCompletion.mockReset();
+    mocks.runDistillationCompletion
+      .mockResolvedValueOnce(completion("| API | docs |"))
+      .mockResolvedValueOnce(completion("1"))
+      .mockRejectedValueOnce(error);
 
     const result = await runCoverEvidence({ id: "find-1" });
 
     expect(result.result.status).toBe("tool_failed");
     expect(result.result.reason).toBe("external_tool_failed");
-    expect(result.result.toolEvents).toEqual([
-      expect.objectContaining({
-        name: "fetch_content",
-        ok: false,
-      }),
-    ]);
+    expect(result.result.toolEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "search_web",
+          ok: true,
+        }),
+        expect.objectContaining({
+          name: "fetch_content",
+          ok: false,
+        }),
+      ]),
+    );
   });
 });

@@ -6,6 +6,11 @@ import {
   distillationToolEventsFromError,
   runDistillationCompletion,
 } from "../distillation/distillation-runtime.service.js";
+import {
+  type DistillationToolCall,
+  type DistillationToolResult,
+  executeDistillationToolCall,
+} from "../distillation/distillation-tools.service.js";
 import type { DistillationProviderName } from "../distillation/llm-resolver.js";
 import {
   PROCEDURE_BODY_NOT_ACTIONABLE_REASON,
@@ -26,8 +31,6 @@ import {
   toolEventsForResult,
 } from "./helpers.js";
 import {
-  coverEvidenceMaxToolRounds,
-  coverEvidenceToolLimits,
   parseFailureToolEvent,
   procedureRepairEvidenceFromCompletion,
 } from "./llm-runner.helpers.js";
@@ -42,13 +45,18 @@ import {
   applicabilityBlankResponseReminderLines,
   applicabilityRefinementSystemPrompt,
   applicabilityRefinementUserPrompt,
-  externalEvidenceSystemPrompt,
-  externalEvidenceUserPrompt,
+  externalEvidenceFetchSelectionSystemPrompt,
+  externalEvidenceFetchSelectionUserPrompt,
+  externalEvidenceFinalSystemPrompt,
+  externalEvidenceFinalUserPrompt,
+  externalEvidenceSearchQuerySystemPrompt,
+  externalEvidenceSearchQueryUserPrompt,
   mcpEvidenceSystemPrompt,
   mcpEvidenceUserPrompt,
   valueAssessmentSystemPrompt,
   valueAssessmentUserPrompt,
 } from "./prompts.js";
+import { buildCoverEvidenceSearchQuery } from "./search-query.service.js";
 import type {
   CoverEvidenceCandidate,
   CoverEvidenceReference,
@@ -516,6 +524,142 @@ export async function runValueAssessment(params: {
   }
 }
 
+const MAX_SEARCH_RESULT_PROMPT_CHARS = 6_000;
+const MAX_FETCH_EVIDENCE_PROMPT_CHARS = 12_000;
+
+function compactWhitespace(value: string): string {
+  return value.replace(/\s+/g, " ").trim();
+}
+
+function externalEvidenceAuditContext(params: {
+  id: string;
+  forceRefreshEvidence?: boolean;
+}): Record<string, unknown> {
+  return {
+    domain: "coverEvidence",
+    id: params.id,
+    stage: "web",
+    assessment: "external-evidence",
+    forceRefreshEvidence: Boolean(params.forceRefreshEvidence),
+  };
+}
+
+function makeToolCall(
+  name: "search_web" | "fetch_content",
+  args: Record<string, unknown>,
+): DistillationToolCall {
+  return {
+    id: `external-${name}-${Date.now()}`,
+    function: {
+      name,
+      arguments: JSON.stringify(args),
+    },
+  };
+}
+
+function parseSearchQueryOutput(
+  output: string,
+  candidate: CoverEvidenceCandidate,
+): {
+  query: string;
+  terms: string[];
+  rawOutput: string;
+  usedFallback: boolean;
+} {
+  const rawOutput = output.trim();
+  const pipeTerms = rawOutput.includes("|")
+    ? rawOutput
+        .split("|")
+        .map((term) => term.trim())
+        .filter(Boolean)
+    : [];
+  const rawQuery = pipeTerms.length > 0 ? pipeTerms.join(" ") : rawOutput;
+  const fallbackSource = `${candidate.title} ${candidate.body}`;
+  let normalized = buildCoverEvidenceSearchQuery(rawQuery || fallbackSource);
+  let usedFallback = false;
+  if (
+    normalized.searchTerms.length === 0 ||
+    normalized.searchTerms.every((term) => /^\d+$/.test(term))
+  ) {
+    normalized = buildCoverEvidenceSearchQuery(fallbackSource);
+    usedFallback = true;
+  }
+  return {
+    query: normalized.query,
+    terms: normalized.searchTerms,
+    rawOutput,
+    usedFallback,
+  };
+}
+
+function parseSearchResultsForPrompt(content: string): string {
+  try {
+    const parsed = JSON.parse(content) as {
+      results?: Array<{ title?: unknown; url?: unknown; snippet?: unknown }>;
+    };
+    const results = Array.isArray(parsed.results) ? parsed.results : [];
+    const lines = results.slice(0, 8).flatMap((result, index) => {
+      const title = typeof result.title === "string" ? compactWhitespace(result.title) : "-";
+      const url = typeof result.url === "string" ? result.url.trim() : "";
+      const snippet = typeof result.snippet === "string" ? compactWhitespace(result.snippet) : "";
+      if (!url) return [];
+      return [`${index + 1}. ${title}`, `   ${url}`, snippet ? `   ${snippet}` : ""].filter(
+        Boolean,
+      );
+    });
+    if (lines.length > 0) return lines.join("\n").slice(0, MAX_SEARCH_RESULT_PROMPT_CHARS);
+  } catch {
+    // Fall through to raw truncated content.
+  }
+  return content.slice(0, MAX_SEARCH_RESULT_PROMPT_CHARS);
+}
+
+function parseFetchSelectionOutput(
+  output: string,
+  maxIndex: number,
+): {
+  selection: string;
+  rawOutput: string;
+  usedFallback: boolean;
+} {
+  const rawOutput = output.trim();
+  const seen = new Set<number>();
+  const indexes: number[] = [];
+  for (const match of rawOutput.matchAll(/\b([1-9]\d*)\b/g)) {
+    const index = Number(match[1]);
+    if (!Number.isInteger(index) || index < 1 || index > maxIndex || seen.has(index)) continue;
+    seen.add(index);
+    indexes.push(index);
+    if (indexes.length >= 3) break;
+  }
+  if (indexes.length > 0) {
+    return { selection: indexes.join(","), rawOutput, usedFallback: false };
+  }
+  const fallback = Array.from(
+    { length: Math.min(3, Math.max(1, maxIndex)) },
+    (_, index) => index + 1,
+  );
+  return { selection: fallback.join(","), rawOutput, usedFallback: true };
+}
+
+function searchResultCount(content: string): number {
+  try {
+    const parsed = JSON.parse(content) as { results?: unknown };
+    return Array.isArray(parsed.results) ? parsed.results.length : 0;
+  } catch {
+    return 0;
+  }
+}
+
+async function executeExternalEvidenceTool(params: {
+  toolExecutor?: DistillationToolExecutor;
+  toolCall: DistillationToolCall;
+  auditContext: Record<string, unknown>;
+}): Promise<DistillationToolResult> {
+  const executor = params.toolExecutor ?? executeDistillationToolCall;
+  return executor(params.toolCall, params.auditContext);
+}
+
 export async function runExternalEvidence(params: {
   id: string;
   candidate: CoverEvidenceCandidate;
@@ -532,19 +676,22 @@ export async function runExternalEvidence(params: {
   toolExecutor?: DistillationToolExecutor;
   signal?: AbortSignal;
 }): Promise<CoverEvidenceResult> {
+  let completedExternalToolResults: DistillationToolResult[] = [];
   try {
-    const completion = await runDistillationCompletion(
+    const auditContext = externalEvidenceAuditContext({
+      id: params.id,
+      forceRefreshEvidence: params.forceRefreshEvidence,
+    });
+    const searchCompletion = await runDistillationCompletion(
       {
         model: params.model,
-        maxTokens: Math.max(2048, groupedConfig.vibeDistillation.maxOutputTokens),
+        maxTokens: 256,
         messages: [
-          { role: "system", content: externalEvidenceSystemPrompt() },
+          { role: "system", content: externalEvidenceSearchQuerySystemPrompt() },
           {
             role: "user",
-            content: externalEvidenceUserPrompt({
+            content: externalEvidenceSearchQueryUserPrompt({
               candidate: params.candidate,
-              sourceReferences: params.sourceReferences,
-              sourceContext: params.sourceContext,
             }),
           },
         ],
@@ -554,52 +701,171 @@ export async function runExternalEvidence(params: {
         fallbackOrder: params.fallbackOrder,
         azureDeploymentSlots: params.azureDeploymentSlots,
         chatClient: params.chatClient,
-        toolExecutor: params.toolExecutor,
-        usageSource: "cover-evidence:external-evidence",
-        enableTools: true,
-        maxToolRounds: coverEvidenceMaxToolRounds(),
-        toolCallLimits: coverEvidenceToolLimits(),
+        usageSource: "cover-evidence:external-search-query",
+        enableTools: false,
+        fallbackToolCallArguments: true,
+        timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+        blankResponseReminder: [
+          "直前の応答は空でした。",
+          "検索語だけを1行で返してください。形式: `| keyword | keyword |`",
+        ],
+        auditContext: { ...auditContext, assessment: "external-search-query" },
+        signal: params.signal,
+      },
+    );
+    const searchQuery = parseSearchQueryOutput(searchCompletion.content, params.candidate);
+    const searchQueryEvent: DistillationToolResult = {
+      callId: "",
+      name: "search_query_generation",
+      ok: true,
+      content: searchQuery.query,
+      metadata: {
+        query: searchQuery.query,
+        terms: searchQuery.terms,
+        rawOutput: searchQuery.rawOutput.slice(0, 500),
+        usedFallback: searchQuery.usedFallback,
+      },
+    };
+    const searchResult = await executeExternalEvidenceTool({
+      toolExecutor: params.toolExecutor,
+      toolCall: makeToolCall("search_web", { query: searchQuery.query }),
+      auditContext,
+    });
+    const externalToolResults: DistillationToolResult[] = [searchQueryEvent, searchResult];
+    completedExternalToolResults = externalToolResults;
+
+    if (!searchResult.ok) {
+      const toolEvents = toolEventsForResult(externalToolResults);
+      return makeResult({
+        status: "tool_failed",
+        stage: "web",
+        candidate: null,
+        references: params.sourceReferences,
+        toolEvents,
+        reason: "external_search_failed",
+      });
+    }
+
+    const maxSearchIndex = searchResultCount(searchResult.content);
+    if (maxSearchIndex === 0) {
+      const toolEvents = toolEventsForResult(externalToolResults);
+      return makeResult({
+        status: "insufficient",
+        stage: "web",
+        candidate: null,
+        references: mergeReferences(params.sourceReferences, referencesFromToolEvents(toolEvents)),
+        toolEvents,
+        reason: "external_search_no_results",
+      });
+    }
+
+    const selectionCompletion = await runDistillationCompletion(
+      {
+        model: params.model,
+        maxTokens: 128,
+        messages: [
+          { role: "system", content: externalEvidenceFetchSelectionSystemPrompt() },
+          {
+            role: "user",
+            content: externalEvidenceFetchSelectionUserPrompt({
+              candidate: params.candidate,
+              searchQuery: searchQuery.query,
+              searchResults: parseSearchResultsForPrompt(searchResult.content),
+            }),
+          },
+        ],
+      },
+      {
+        providerSetting: params.provider,
+        fallbackOrder: params.fallbackOrder,
+        azureDeploymentSlots: params.azureDeploymentSlots,
+        chatClient: params.chatClient,
+        usageSource: "cover-evidence:external-fetch-selection",
+        enableTools: false,
+        fallbackToolCallArguments: true,
+        timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+        blankResponseReminder: [
+          "直前の応答は空でした。",
+          "読む候補番号だけを返してください。形式: `2,3,4`",
+        ],
+        auditContext: { ...auditContext, assessment: "external-fetch-selection" },
+        signal: params.signal,
+      },
+    );
+    const selection = parseFetchSelectionOutput(selectionCompletion.content, maxSearchIndex);
+    const selectionEvent: DistillationToolResult = {
+      callId: "",
+      name: "fetch_selection",
+      ok: true,
+      content: selection.selection,
+      metadata: {
+        selection: selection.selection,
+        rawOutput: selection.rawOutput.slice(0, 500),
+        usedFallback: selection.usedFallback,
+      },
+    };
+    const fetchResult = await executeExternalEvidenceTool({
+      toolExecutor: params.toolExecutor,
+      toolCall: makeToolCall("fetch_content", { url: selection.selection }),
+      auditContext,
+    });
+    externalToolResults.push(selectionEvent, fetchResult);
+
+    if (!fetchResult.ok) {
+      const toolEvents = toolEventsForResult(externalToolResults);
+      return makeResult({
+        status: "tool_failed",
+        stage: "web",
+        candidate: null,
+        references: mergeReferences(params.sourceReferences, referencesFromToolEvents(toolEvents)),
+        toolEvents,
+        reason: "external_fetch_failed",
+      });
+    }
+
+    const finalCompletion = await runDistillationCompletion(
+      {
+        model: params.model,
+        maxTokens: Math.max(2048, groupedConfig.vibeDistillation.maxOutputTokens),
+        messages: [
+          { role: "system", content: externalEvidenceFinalSystemPrompt() },
+          {
+            role: "user",
+            content: externalEvidenceFinalUserPrompt({
+              candidate: params.candidate,
+              sourceReferences: params.sourceReferences,
+              sourceContext: params.sourceContext,
+              searchQuery: searchQuery.query,
+              fetchedEvidence: fetchResult.content.slice(0, MAX_FETCH_EVIDENCE_PROMPT_CHARS),
+            }),
+          },
+        ],
+      },
+      {
+        providerSetting: params.provider,
+        fallbackOrder: params.fallbackOrder,
+        azureDeploymentSlots: params.azureDeploymentSlots,
+        chatClient: params.chatClient,
+        usageSource: "cover-evidence:external-final",
+        enableTools: false,
         timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
         blankResponseReminder: applicabilityBlankResponseReminderLines(
           "web",
           "knowledge_ready|insufficient|duplicate|near_duplicate",
         ),
-        requireToolCallReminder: [
-          "直前の応答はまだ採用できません。",
-          "この検証 session では外部証拠の tool 呼び出しが必須です。",
-          "最初に `| keyword 1 | keyword 2 |` 形式で検索キーワードだけを返してください。",
-          "keyword は1から5個です。名詞・固有名詞・API名・機能名・エラー名だけを選び、文章にしないでください。",
-          "固有名詞・機能名・API名・ライブラリ名・エラー名を優先してください。",
-          "search_web の結果を受け取ったら `2,3,4` のように読む候補番号だけを返してください。",
-          "最終回答は JSON ではなくラベル形式（STATUS/STAGE/TYPE/TITLE/BODY/IMPORTANCE/CONFIDENCE/TECHNOLOGIES/CHANGE_TYPES/DOMAINS/REASON）で返してください。",
-        ],
-        toolResultReminder: (toolResult) => {
-          if (toolResult.name === "search_web") {
-            return [
-              "検索結果を受け取りました。次の応答は読む候補番号だけです。",
-              "形式: `2,3,4`。説明、URL、JSON、ラベルは返さないでください。",
-            ];
-          }
-          if (toolResult.name === "fetch_content") {
-            return [
-              "一次ソース本文を受け取りました。次の応答は最終判定だけです。",
-              "最終判定はラベル形式: STATUS / STAGE / TYPE / TITLE / BODY / IMPORTANCE / CONFIDENCE / TECHNOLOGIES / CHANGE_TYPES / DOMAINS / REASON。",
-              "STATUS は knowledge_ready|insufficient|duplicate|near_duplicate のいずれかです。",
-            ];
-          }
-          return undefined;
-        },
-        toolNames: ["search_web", "fetch_content"],
-        auditContext: {
-          domain: "coverEvidence",
-          id: params.id,
-          stage: "web",
-          assessment: "external-evidence",
-          forceRefreshEvidence: Boolean(params.forceRefreshEvidence),
-        },
+        auditContext: { ...auditContext, assessment: "external-final" },
         signal: params.signal,
       },
     );
+    const completion = {
+      ...finalCompletion,
+      toolEvents: [...externalToolResults, ...finalCompletion.toolEvents],
+      messages: [
+        ...searchCompletion.messages,
+        ...selectionCompletion.messages,
+        ...finalCompletion.messages,
+      ],
+    };
     let parsed: CoverEvidenceResult;
     try {
       parsed = parseCoverEvidenceResult(completion.content, {
@@ -655,7 +921,10 @@ export async function runExternalEvidence(params: {
     if (isAbortError(error)) {
       throw error;
     }
-    const toolEvents = toolEventsForResult(distillationToolEventsFromError(error));
+    const toolEvents = toolEventsForResult([
+      ...completedExternalToolResults,
+      ...distillationToolEventsFromError(error),
+    ]);
     const status = coverEvidenceFailureStatus({ error, toolEvents });
     return makeResult({
       status,

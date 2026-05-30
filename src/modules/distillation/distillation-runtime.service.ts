@@ -274,6 +274,67 @@ function toolLimitExceededResult(
   };
 }
 
+type ToolCallArgumentFallback = {
+  content: string;
+  toolCallName: string;
+  argumentKey?: string;
+  rawArgumentsPreview: string;
+};
+
+function parseToolCallArguments(rawArguments: string): unknown {
+  try {
+    return JSON.parse(rawArguments);
+  } catch {
+    return null;
+  }
+}
+
+function preferredToolArgumentKeys(toolName: string): string[] {
+  if (toolName === "search_web") return ["query", "q", "keywords"];
+  if (toolName === "fetch_content") return ["url", "selection"];
+  return ["query", "url", "selection", "content", "text"];
+}
+
+function stringFromToolArgument(value: unknown): string | null {
+  if (typeof value !== "string") return null;
+  const trimmed = value.trim();
+  return trimmed ? trimmed : null;
+}
+
+function toolCallArgumentFallbackFromResponse(
+  toolCalls: DistillationToolCall[],
+): ToolCallArgumentFallback | null {
+  for (const toolCall of toolCalls) {
+    const rawArguments = toolCall.function.arguments;
+    const parsedArguments = parseToolCallArguments(rawArguments);
+    if (parsedArguments && typeof parsedArguments === "object" && !Array.isArray(parsedArguments)) {
+      const args = parsedArguments as Record<string, unknown>;
+      for (const key of preferredToolArgumentKeys(toolCall.function.name)) {
+        const value = stringFromToolArgument(args[key]);
+        if (value) {
+          return {
+            content: value,
+            toolCallName: toolCall.function.name,
+            argumentKey: key,
+            rawArgumentsPreview: rawArguments.slice(0, 700),
+          };
+        }
+      }
+    }
+
+    const rawValue = stringFromToolArgument(rawArguments);
+    if (rawValue && rawValue !== "{}") {
+      return {
+        content: rawValue,
+        toolCallName: toolCall.function.name,
+        rawArgumentsPreview: rawArguments.slice(0, 700),
+      };
+    }
+  }
+
+  return null;
+}
+
 function createDefaultChatClient(
   providerSetting: DistillationProviderSetting = groupedConfig.distillation.provider,
   usageSource = "distillation",
@@ -522,6 +583,11 @@ export async function runDistillationCompletion(
         throw error;
       }
       const providerRoute = response.providerRoute;
+      const noToolArgumentFallback =
+        !allowTools && options.fallbackToolCallArguments && response.toolCalls.length > 0
+          ? toolCallArgumentFallbackFromResponse(response.toolCalls)
+          : null;
+      const outputContent = noToolArgumentFallback?.content ?? response.content;
       if (auditBase) {
         await recordAuditLogSafe({
           eventType: auditEventTypes.coverEvidenceLlmCompleted,
@@ -532,10 +598,15 @@ export async function runDistillationCompletion(
             provider: response.provider,
             resolvedModel: response.model,
             finishReason: response.finishReason,
-            outputChars: response.content?.length ?? 0,
-            outputPreview: response.content?.slice(0, 700) ?? undefined,
+            outputChars: outputContent?.length ?? 0,
+            outputPreview: outputContent?.slice(0, 700) ?? undefined,
             responseToolCallCount: response.toolCalls.length,
             responseToolCallNames: response.toolCalls.map((call) => call.function.name),
+            toolCallArgumentFallbackUsed: Boolean(noToolArgumentFallback),
+            toolCallArgumentFallbackName: noToolArgumentFallback?.toolCallName,
+            toolCallArgumentFallbackKey: noToolArgumentFallback?.argumentKey,
+            toolCallArgumentFallbackRawArguments:
+              noToolArgumentFallback?.rawArgumentsPreview ?? undefined,
             promptTokens: response.usage?.promptTokens,
             completionTokens: response.usage?.completionTokens,
             totalTokens: response.usage?.totalTokens,
@@ -548,6 +619,18 @@ export async function runDistillationCompletion(
             selectedProviderDetails: providerRoute?.selectedProviderDetails,
           },
         });
+      }
+
+      if (noToolArgumentFallback) {
+        const finalMessage: DistillationMessage = {
+          role: "assistant",
+          content: noToolArgumentFallback.content,
+        };
+        return {
+          content: noToolArgumentFallback.content,
+          toolEvents,
+          messages: [...messages, finalMessage],
+        };
       }
 
       if (response.toolCalls.length > 0 && allowTools) {

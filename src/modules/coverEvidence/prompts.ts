@@ -59,38 +59,82 @@ export function applicabilityBlankResponseReminderLines(
   ];
 }
 
-export function externalEvidenceSystemPrompt(): string {
+export function externalEvidenceSearchQuerySystemPrompt(): string {
   return [
-    "あなたは coverEvidence の外部 evidence 検証器です。",
-    "各応答では、現在の段階で求められている形式だけを1つ返してください。",
-    "段階1: 検索語だけを1行で返す。形式: `| keyword | keyword | keyword |`。",
-    "keyword は1から5個。名詞・固有名詞・API名・機能名・エラー名だけを選び、文章にしないでください。",
-    "段階2: search_web の結果を受け取ったら、読む候補番号だけを返す。形式: `2,3,4`。",
-    "段階3: fetch_content の本文を受け取ったら、最終判定だけをラベル形式で返す。",
-    "最終判定ラベル: STATUS / STAGE / TYPE / TITLE / BODY / IMPORTANCE / CONFIDENCE / TECHNOLOGIES / CHANGE_TYPES / DOMAINS / REASON",
-    "STATUS は knowledge_ready|insufficient|duplicate|near_duplicate のいずれかにしてください。",
-    ...procedureBodyInstructions(),
-    ...applicabilityInstructions(),
-    "insufficient の場合は STATUS / STAGE / REASON だけでも構いません。",
-    "IMPORTANCE と CONFIDENCE は 0 から 100 目安の数値です。",
+    "外部 evidence 検索用の検索語だけを選んでください。",
+    "出力は1行だけです。",
+    "形式: `| keyword | keyword | keyword |`",
+    "keyword は1個以上から5個以下です。",
+    "名詞・固有名詞・API名・機能名だけを選び、文章にしないでください。",
   ].join("\n");
 }
 
-export function externalEvidenceUserPrompt(params: {
+export function externalEvidenceSearchQueryUserPrompt(params: {
   candidate: CoverEvidenceCandidate;
-  sourceReferences: CoverEvidenceReference[];
-  sourceContext: CoverEvidenceSourceContext;
 }): string {
   const query = buildCoverEvidenceSearchQuery(`${params.candidate.title} ${params.candidate.body}`);
   return [
-    "候補を外部 evidence で検証してください。",
+    `title: ${params.candidate.title}`,
+    `body: ${params.candidate.body.slice(0, 800)}`,
+    `検索語ヒント（必要なら選び直してよい・最大5個）: ${query.searchTerms.join(" | ")}`,
+  ].join("\n\n");
+}
+
+export function externalEvidenceFetchSelectionSystemPrompt(): string {
+  return [
+    "search_web の結果から、fetch_content で読む候補番号だけを選んでください。",
+    "出力は番号だけです。",
+    "形式: `2,3,4`",
+    "1から3件まで選んでください。",
+    "説明、URL、JSON、ラベルは返さないでください。",
+  ].join("\n");
+}
+
+export function externalEvidenceFetchSelectionUserPrompt(params: {
+  candidate: CoverEvidenceCandidate;
+  searchQuery: string;
+  searchResults: string;
+}): string {
+  return [
+    `title: ${params.candidate.title}`,
+    `body: ${params.candidate.body.slice(0, 600)}`,
+    `search query: ${params.searchQuery}`,
+    "search results:",
+    params.searchResults,
+  ].join("\n\n");
+}
+
+export function externalEvidenceFinalSystemPrompt(): string {
+  return [
+    "fetch_content の本文だけを外部 evidence として、coverEvidence の最終判定を返してください。",
+    "search snippet は根拠にしないでください。",
+    "最終判定はラベル形式だけで返してください。",
+    "ラベル: STATUS / STAGE / TYPE / TITLE / BODY / IMPORTANCE / CONFIDENCE / TECHNOLOGIES / CHANGE_TYPES / DOMAINS / REASON",
+    "STATUS は knowledge_ready|insufficient|duplicate|near_duplicate のいずれかです。",
+    "insufficient の場合は STATUS / STAGE / REASON だけでも構いません。",
+    "IMPORTANCE と CONFIDENCE は 0 から 100 目安の数値です。",
+    ...procedureBodyInstructions(),
+    ...applicabilityInstructions(),
+  ].join("\n");
+}
+
+export function externalEvidenceFinalUserPrompt(params: {
+  candidate: CoverEvidenceCandidate;
+  sourceReferences: CoverEvidenceReference[];
+  sourceContext: CoverEvidenceSourceContext;
+  searchQuery: string;
+  fetchedEvidence: string;
+}): string {
+  return [
     "候補:",
     JSON.stringify(params.candidate, null, 2),
     "source references:",
     JSON.stringify(params.sourceReferences, null, 2),
     "system/source metadata:",
     JSON.stringify(params.sourceContext, null, 2),
-    `検索語ヒント（必要なら選び直してよい・最大5個）: ${query.searchTerms.join(" | ")}`,
+    `search query: ${params.searchQuery}`,
+    "fetch_content evidence:",
+    params.fetchedEvidence,
   ].join("\n\n");
 }
 

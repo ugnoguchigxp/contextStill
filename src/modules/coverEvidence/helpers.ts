@@ -294,32 +294,46 @@ export function referencesFromToolEvents(
 ): CoverEvidenceReference[] {
   const webReferences = toolEvents
     .filter((event) => event.ok)
-    .map((event): CoverEvidenceReference | null => {
+    .flatMap((event): CoverEvidenceReference[] => {
       const metadata = event.metadata ?? {};
       if (event.name === "fetch_content") {
+        if (Array.isArray(metadata.selectedUrls)) {
+          return metadata.selectedUrls
+            .filter((uri): uri is string => typeof uri === "string" && uri.trim().length > 0)
+            .map((uri) => ({
+              kind: "web" as const,
+              uri,
+              note: "fetch_content verified external evidence",
+              evidenceRole: "external_verification" as const,
+            }));
+        }
         const uri =
           typeof metadata.finalUrl === "string"
             ? metadata.finalUrl
             : typeof metadata.url === "string"
               ? metadata.url
               : "";
-        if (!uri) return null;
-        return {
-          kind: "web",
-          uri,
-          note: "fetch_content verified external evidence",
-          evidenceRole: "external_verification",
-        };
+        if (!uri) return [];
+        return [
+          {
+            kind: "web",
+            uri,
+            note: "fetch_content verified external evidence",
+            evidenceRole: "external_verification",
+          },
+        ];
       }
       if (event.name === "search_web" && typeof metadata.query === "string") {
-        return {
-          kind: "web",
-          uri: `search:${metadata.query}`,
-          note: "search_web located external evidence candidates",
-          evidenceRole: "external_verification",
-        };
+        return [
+          {
+            kind: "web",
+            uri: `search:${metadata.query}`,
+            note: "search_web located external evidence candidates",
+            evidenceRole: "external_verification",
+          },
+        ];
       }
-      return null;
+      return [];
     })
     .filter((reference): reference is CoverEvidenceReference => Boolean(reference));
   return [...webReferences, ...referencesFromMcpToolEvents(toolEvents)];

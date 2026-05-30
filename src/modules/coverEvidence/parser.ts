@@ -315,20 +315,121 @@ function parseLabelledResultRecord(text: string): Record<string, unknown> | null
   return record;
 }
 
+const slashKnownLabels = new Set([
+  "STATUS",
+  "STAGE",
+  "TYPE",
+  "TITLE",
+  "BODY",
+  "IMPORTANCE",
+  "CONFIDENCE",
+  "TECHNOLOGIES",
+  "CHANGE_TYPES",
+  "CHANGETYPES",
+  "DOMAINS",
+  "DOMAIN",
+  "REASON",
+]);
+
+function normalizeSlashValue(value: string | undefined): string {
+  const normalized = (value ?? "").trim();
+  return /^(?:n\/a|na|null|none|-|なし)$/i.test(normalized) ? "" : normalized;
+}
+
+function assignLabelValue(record: Record<string, unknown>, label: string, value: string): void {
+  const normalized = normalizeSlashValue(value);
+  if (!normalized) return;
+  switch (label) {
+    case "STATUS":
+      record.status = normalized;
+      return;
+    case "STAGE":
+      record.stage = normalized;
+      return;
+    case "TYPE":
+      record.type = normalized;
+      return;
+    case "TITLE":
+      record.title = normalized;
+      return;
+    case "BODY":
+      record.body = normalized;
+      return;
+    case "IMPORTANCE":
+      record.importance = normalized;
+      return;
+    case "CONFIDENCE":
+      record.confidence = normalized;
+      return;
+    case "TECHNOLOGIES":
+      record.technologies = normalized;
+      return;
+    case "CHANGE_TYPES":
+    case "CHANGETYPES":
+      record.changeTypes = normalized;
+      return;
+    case "DOMAINS":
+    case "DOMAIN":
+      record.domains = normalized;
+      return;
+    case "REASON":
+      record.reason = normalized;
+      return;
+  }
+}
+
+function parseSlashResultRecord(text: string): Record<string, unknown> | null {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (!compact.includes("/")) return null;
+  const tokens = compact
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (tokens.length < 2) return null;
+
+  const record: Record<string, unknown> = {};
+  for (let index = 0; index < tokens.length - 1; index += 2) {
+    const label = tokens[index]?.toUpperCase();
+    if (!label || !slashKnownLabels.has(label)) {
+      break;
+    }
+    assignLabelValue(record, label, tokens[index + 1] ?? "");
+  }
+
+  if (Object.keys(record).length > 1) {
+    return record;
+  }
+
+  if (tokens[0]?.toUpperCase() !== "STATUS") return null;
+  const status = asString(record.status) || normalizeSlashValue(tokens[1]);
+  if (!isCoverEvidenceStatus(status)) return null;
+  record.status = status;
+  const remaining = tokens.slice(2).map(normalizeSlashValue).filter(Boolean);
+  if (status === "insufficient" && remaining.length > 0) {
+    record.reason = remaining[remaining.length - 1];
+  }
+  return record;
+}
+
 export function parseCoverEvidenceResult(
   llmOutput: string,
   options: ParseCoverEvidenceResultOptions = {},
 ): CoverEvidenceResult {
   const parsed = parseLlmJsonLike(llmOutput);
   const labelledFallback = parseLabelledResultRecord(llmOutput);
-  if ((!parsed || !parsed.value || typeof parsed.value !== "object") && !labelledFallback) {
+  const slashFallback = labelledFallback ? null : parseSlashResultRecord(llmOutput);
+  if (
+    (!parsed || !parsed.value || typeof parsed.value !== "object") &&
+    !labelledFallback &&
+    !slashFallback
+  ) {
     throw new Error("coverEvidence output must be a JSON object");
   }
 
   const record =
     parsed?.value && typeof parsed.value === "object"
       ? asRecord(parsed.value)
-      : (labelledFallback ?? {});
+      : (labelledFallback ?? slashFallback ?? {});
   const statusValue = asString(record.status);
   const hasCandidateShape = Object.keys(candidateRecordFromResult(record)).some((key) =>
     ["title", "candidateTitle", "body", "content", "candidateBody", "candidateContent"].includes(

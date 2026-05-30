@@ -98,6 +98,49 @@ function asNonEmptyString(value: unknown): string | null {
   return trimmed.length > 0 ? trimmed : null;
 }
 
+function asFindingSourceKind(value: unknown): FindingSourceKind | null {
+  return value === "wiki_file" ||
+    value === "vibe_memory" ||
+    value === "knowledge_candidate" ||
+    value === "web_ingest"
+    ? value
+    : null;
+}
+
+function coverEvidenceOrigin(params: {
+  candidate: typeof foundCandidates.$inferSelect;
+  findingJob: typeof findingCandidateQueue.$inferSelect;
+  sourceKind: FindingSourceKind;
+}): Record<string, unknown> {
+  const origin = asRecord(params.candidate.origin);
+  const metadata = asRecord(params.candidate.metadata);
+  const originReadRanges = Array.isArray(origin.readRanges) ? origin.readRanges : undefined;
+  const metadataReadRanges = Array.isArray(metadata.readRanges) ? metadata.readRanges : undefined;
+  const sourceSummary =
+    asNonEmptyString(origin.sourceSummary) ??
+    asNonEmptyString(origin.source_summary) ??
+    asNonEmptyString(params.candidate.sourceSummary);
+
+  return {
+    ...origin,
+    sourceKind:
+      asFindingSourceKind(origin.sourceKind) ??
+      asFindingSourceKind(metadata.sourceKind) ??
+      params.sourceKind,
+    sourceKey:
+      asNonEmptyString(origin.sourceKey) ??
+      asNonEmptyString(metadata.sourceKey) ??
+      params.findingJob.sourceKey,
+    sourceUri:
+      asNonEmptyString(origin.sourceUri) ??
+      asNonEmptyString(metadata.sourceUri) ??
+      params.findingJob.sourceUri,
+    ...(originReadRanges ? { readRanges: originReadRanges } : {}),
+    ...(!originReadRanges && metadataReadRanges ? { readRanges: metadataReadRanges } : {}),
+    ...(sourceSummary ? { sourceSummary } : {}),
+  };
+}
+
 function isMissingSourceError(message: string): boolean {
   const normalized = message.toLowerCase();
   return (
@@ -435,7 +478,6 @@ async function processCoveringJob(
     message: "covering evidence claimed",
   });
 
-  const origin = asRecord(candidate.origin);
   const [findingJob] = await db
     .select()
     .from(findingCandidateQueue)
@@ -450,6 +492,8 @@ async function processCoveringJob(
     findingJob.sourceKind === "knowledge_candidate"
       ? findingJob.sourceKind
       : "vibe_memory";
+  const origin = coverEvidenceOrigin({ candidate, findingJob, sourceKind });
+  const coverTargetKind = asFindingSourceKind(origin.sourceKind) ?? sourceKind;
   const queuePayload = asRecord(job.payload);
   const forceRefreshEvidence = queuePayload.forceRefreshEvidence === true;
   const cover = await runCoverEvidence({
@@ -459,11 +503,11 @@ async function processCoveringJob(
       status: "selected",
       title: candidate.title,
       content: candidate.content,
-      origin: candidate.origin,
+      origin,
       targetStateId: null,
-      targetKind: sourceKind,
-      targetKey: findingJob.sourceKey,
-      sourceUri: findingJob.sourceUri,
+      targetKind: coverTargetKind,
+      targetKey: asNonEmptyString(origin.sourceKey) ?? findingJob.sourceKey,
+      sourceUri: asNonEmptyString(origin.sourceUri) ?? findingJob.sourceUri,
     },
     providerPolicy: (job.providerPolicy as "default" | "cloud_api") ?? "default",
     write: false,

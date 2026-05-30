@@ -234,6 +234,82 @@ describe("runQueueWorkerOnce", () => {
     );
   });
 
+  test("passes found candidate source summary and metadata read ranges into covering evidence", async () => {
+    mocks.selectRows = [
+      [
+        {
+          id: "cover-job-1",
+          foundCandidateId: "candidate-1",
+          distillationVersion: "v-test",
+          attemptCount: 0,
+          maxAttempts: 2,
+          priority: 50,
+          providerPolicy: "default",
+          payload: {},
+        },
+      ],
+      [
+        {
+          id: "candidate-1",
+          title: "Candidate title",
+          content: "Candidate body",
+          origin: {
+            sourceKind: "vibe_memory",
+            sourceKey: "memory-1",
+            sourceUri: "vibe_memory:memory-1",
+          },
+          type: "rule",
+          findingJobId: "finding-job-1",
+          sourceSummary: "Summarized source evidence from finding.",
+          metadata: {
+            sourceKind: "vibe_memory",
+            sourceKey: "memory-1",
+            sourceUri: "vibe_memory:memory-1",
+            readRanges: [{ from: 120, toExclusive: 240 }],
+          },
+        },
+      ],
+      [
+        {
+          id: "finding-job-1",
+          sourceKind: "vibe_memory",
+          sourceKey: "memory-1",
+          sourceUri: "vibe_memory:memory-1",
+        },
+      ],
+    ];
+    mocks.runCoverEvidence.mockResolvedValue({
+      result: {
+        status: "insufficient",
+        stage: "final",
+        candidate: null,
+        references: [],
+        duplicateRefs: [],
+        toolEvents: [],
+        reason: "not_actionable",
+      },
+    });
+
+    await runQueueWorkerOnce({
+      queueName: "coveringEvidence",
+      workerId: "worker-1",
+    });
+
+    expect(mocks.runCoverEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidate: expect.objectContaining({
+          targetKind: "vibe_memory",
+          targetKey: "memory-1",
+          sourceUri: "vibe_memory:memory-1",
+          origin: expect.objectContaining({
+            sourceSummary: "Summarized source evidence from finding.",
+            readRanges: [{ from: 120, toExclusive: 240 }],
+          }),
+        }),
+      }),
+    );
+  });
+
   test("returns idle when lane is paused", async () => {
     mocks.isQueuePaused.mockResolvedValue(true);
 

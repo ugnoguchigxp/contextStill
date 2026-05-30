@@ -81,6 +81,50 @@ describe("Distillation Runtime Service", () => {
     expect(chatClient).toHaveBeenCalledTimes(1);
   });
 
+  test("runDistillationCompletion can treat unexpected no-tools tool call arguments as content", async () => {
+    const chatClient = vi.fn().mockResolvedValue({
+      content: null,
+      toolCalls: [
+        {
+          id: "c1",
+          function: { name: "search_web", arguments: '{"query":"json repair parser"}' },
+        },
+      ],
+    });
+
+    const result = await runDistillationCompletion(
+      { model: "test", messages: [], maxTokens: 100 },
+      { chatClient, enableTools: false, fallbackToolCallArguments: true },
+    );
+
+    expect(result.content).toBe("json repair parser");
+    expect(result.messages.at(-1)).toEqual({
+      role: "assistant",
+      content: "json repair parser",
+    });
+    expect(chatClient).toHaveBeenCalledWith(expect.objectContaining({ toolChoice: "none" }));
+    expect(chatClient).toHaveBeenCalledTimes(1);
+  });
+
+  test("runDistillationCompletion still rejects unexpected no-tools tool calls without fallback", async () => {
+    const chatClient = vi.fn().mockResolvedValue({
+      content: null,
+      toolCalls: [
+        {
+          id: "c1",
+          function: { name: "search_web", arguments: '{"query":"json repair parser"}' },
+        },
+      ],
+    });
+
+    await expect(
+      runDistillationCompletion(
+        { model: "test", messages: [], maxTokens: 100 },
+        { chatClient, enableTools: false },
+      ),
+    ).rejects.toThrow("distillation tool loop exceeded max rounds");
+  });
+
   test("records coverEvidence LLM audit events with input and output diagnostics", async () => {
     const chatClient = vi.fn().mockResolvedValue({
       content: "Hello result",
