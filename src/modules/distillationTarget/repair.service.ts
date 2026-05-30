@@ -5,9 +5,9 @@ import { groupedConfig } from "../../config.js";
 import { APP_CONSTANTS } from "../../constants.js";
 import { getDb } from "../../db/index.js";
 import { distillationTargetStates } from "../../db/schema.js";
-import { priorityGroupFromRowLike } from "./priority-group.js";
 import type { DistillationTargetKind } from "./domain.js";
 import { isManualPauseTarget } from "./manual-pause.js";
+import { priorityGroupFromRowLike } from "./priority-group.js";
 import {
   DEFAULT_DISTILLATION_TARGET_VERSION,
   recoverStaleDistillationTargets,

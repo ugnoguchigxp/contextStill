@@ -1,11 +1,11 @@
 import { describe, expect, test, vi } from "vitest";
 import {
-  nowIso,
-  minutesSince,
   cursorFileCount,
-  metadataWarnings,
   metadataSkipped,
+  metadataWarnings,
+  minutesSince,
   normalizeReasonCounts,
+  nowIso,
 } from "../src/modules/doctor/doctor.utils.js";
 
 describe("Doctor Utils", () => {

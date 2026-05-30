@@ -1,8 +1,8 @@
 import { sql } from "drizzle-orm";
 import { groupedConfig } from "../../../config.js";
 import { db } from "../../../db/index.js";
-import type { DistillationQueueName } from "./types.js";
 import { isQueuePaused } from "./control.js";
+import type { DistillationQueueName } from "./types.js";
 import { queueTableNameByQueue } from "./types.js";
 
 export async function claimNextQueueJob(params: {

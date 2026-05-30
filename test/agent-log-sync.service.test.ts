@@ -2,8 +2,8 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { db } from "../src/db/client.js";
 import {
   ingestAntigravityLogs,
-  ingestCodexLogs,
   ingestClaudeLogs,
+  ingestCodexLogs,
 } from "../src/modules/agent-log-sync/ingest.service.js";
 import {
   buildReadableTranscript,

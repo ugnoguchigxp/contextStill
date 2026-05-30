@@ -9,8 +9,8 @@ import { buildProcedureSystemContext } from "../distillation/procedure-system-co
 import type { CandidateKnowledgeType } from "../findCandidate/repository.js";
 import { referencesFromMcpToolEvents } from "./mcp-evidence.service.js";
 import type {
-  CoverEvidenceCandidateInput,
   CoverEvidenceCandidate,
+  CoverEvidenceCandidateInput,
   CoverEvidenceReference,
   CoverEvidenceResult,
   CoverEvidenceStage,

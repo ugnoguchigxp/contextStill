@@ -3,6 +3,22 @@ import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { GraphPage } from "../../../web/src/modules/admin/components/graph.page";
+import {
+  createLandscapeReviewCandidates,
+  fetchGraphNodeDetail,
+  fetchGraphSnapshot,
+  fetchLandscapeContradictionOverlay,
+  fetchLandscapeReplayComparison,
+  fetchLandscapeReplaySnapshot,
+  fetchLandscapeReviewItems,
+  fetchLandscapeSnapshot,
+  fetchLandscapeSnapshotCacheStatus,
+  fetchLandscapeTrajectory,
+  materializeLandscapeReviewItems,
+  updateGraphCommunityLabel,
+  updateLandscapeReviewItemStatus,
+} from "../../../web/src/modules/admin/repositories/admin.repository";
 import {
   mockGraphData,
   mockLandscapeData,
@@ -13,22 +29,6 @@ import {
   mockReplayData,
   mockTrajectoryData,
 } from "../../fixtures/graph-page-fixtures";
-import { GraphPage } from "../../../web/src/modules/admin/components/graph.page";
-import {
-  createLandscapeReviewCandidates,
-  fetchLandscapeContradictionOverlay,
-  fetchGraphNodeDetail,
-  fetchGraphSnapshot,
-  fetchLandscapeReplayComparison,
-  fetchLandscapeReplaySnapshot,
-  fetchLandscapeSnapshotCacheStatus,
-  fetchLandscapeTrajectory,
-  fetchLandscapeReviewItems,
-  fetchLandscapeSnapshot,
-  materializeLandscapeReviewItems,
-  updateGraphCommunityLabel,
-  updateLandscapeReviewItemStatus,
-} from "../../../web/src/modules/admin/repositories/admin.repository";
 
 // ResizeObserver のモック
 class ResizeObserverMock {

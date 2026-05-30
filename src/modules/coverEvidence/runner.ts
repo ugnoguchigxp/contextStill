@@ -1,6 +1,6 @@
 import type { DistillationProviderSetting } from "../distillation/distillation-runtime.service.js";
-import type { CoverEvidenceProviderPolicy } from "./provider-policy.js";
 import { runCoverEvidence } from "./domain.js";
+import type { CoverEvidenceProviderPolicy } from "./provider-policy.js";
 import type {
   CoverEvidenceCandidateInput,
   CoverEvidenceStage,

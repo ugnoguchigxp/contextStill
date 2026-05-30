@@ -2,12 +2,12 @@ import { sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { knowledgeItems } from "../../db/schema.js";
 import { buildCommunityAssignments } from "../graph/community-builder.js";
-import type { LandscapeClassificationPrimary } from "./landscape.types.js";
 import type {
   LandscapeCommunityComparison,
   LandscapeCommunityComparisonKind,
   LandscapeCommunityComparisonSummary,
 } from "./landscape-replay.types.js";
+import type { LandscapeClassificationPrimary } from "./landscape.types.js";
 
 export type LandscapeRelationCommunityAssignment = {
   knowledgeId: string;

@@ -6,6 +6,12 @@ import { Select } from "@/components/ui/select";
 import { TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table";
 import { Textarea } from "@/components/ui/textarea";
 import { asRecord, parseCsvList as parseCsv } from "@/lib/data-utils";
+import {
+  formatInTimezone,
+  formatDate as tzFormatDate,
+  formatDateTime as tzFormatDateTime,
+  useTimezone,
+} from "@/lib/timezone";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type ColumnDef,
@@ -45,12 +51,7 @@ import { AdminFilterChipSelect } from "./admin-filter-chip-select";
 import { AdminModalShell } from "./admin-modal-shell";
 import { AdminPaginationFooter } from "./admin-pagination-footer";
 import { AdminSortableTableHead } from "./admin-sortable-table-head";
-import {
-  useTimezone,
-  formatDate as tzFormatDate,
-  formatDateTime as tzFormatDateTime,
-  formatInTimezone,
-} from "@/lib/timezone";
+import { CopyableIdField } from "./copyable-id-field";
 
 const knowledgeTypes: KnowledgeType[] = ["rule", "procedure"];
 
@@ -115,6 +116,10 @@ function csvFrom(value: unknown): string {
   return toStringArray(value).join(", ");
 }
 
+function asOptionalString(value: unknown): string | null {
+  return typeof value === "string" && value.trim().length > 0 ? value : null;
+}
+
 function summarizeApplicability(appliesTo: unknown): Array<{ label: string; values: string[] }> {
   const record = asRecord(appliesTo);
   const facets: Array<{ label: string; values: string[] }> = [];
@@ -172,6 +177,8 @@ export function KnowledgePage() {
   const [modalDetail, setModalDetail] = useState<{
     sourceRefs: string[];
     sourceVibeMemoryIds: string[];
+    foundCandidateId: string | null;
+    findCandidateResultId: string | null;
     compileSelectCount: number;
     lastCompiledAt: string | null;
     agenticAcceptCount: number;
@@ -378,12 +385,15 @@ export function KnowledgePage() {
   });
 
   const openEdit = useCallback((item: KnowledgeItem) => {
+    const metadata = asRecord(item.metadata);
     setEditingId(item.id);
     setEditingOriginalType(item.type);
     setTypeChangedInForm(false);
     setModalDetail({
       sourceRefs: item.sourceRefs ?? [],
       sourceVibeMemoryIds: item.sourceVibeMemoryIds ?? [],
+      foundCandidateId: asOptionalString(metadata.foundCandidateId),
+      findCandidateResultId: asOptionalString(metadata.findCandidateResultId),
       compileSelectCount: item.compileSelectCount,
       lastCompiledAt: item.lastCompiledAt,
       agenticAcceptCount: item.agenticAcceptCount,
@@ -1042,6 +1052,15 @@ export function KnowledgePage() {
         bodyClassName="p-6"
       >
         <CardContent className="space-y-4 overflow-y-auto p-0">
+          {editingId ? (
+            <div className="flex items-center gap-2 overflow-x-auto whitespace-nowrap pb-1">
+              <CopyableIdField label="Knowledge ID" value={editingId} />
+              <CopyableIdField
+                label="Candidate ID"
+                value={modalDetail?.foundCandidateId ?? modalDetail?.findCandidateResultId ?? null}
+              />
+            </div>
+          ) : null}
           <div className="space-y-1">
             <label
               htmlFor="knowledge-title"

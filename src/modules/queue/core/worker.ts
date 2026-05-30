@@ -15,13 +15,13 @@ import { asRecord } from "../../../shared/utils/normalize.js";
 import { runCoverEvidence } from "../../coverEvidence/domain.js";
 import type { CoverEvidenceResult } from "../../coverEvidence/types.js";
 import { runFinalizeDistille } from "../../finalizeDistille/domain.js";
-import { runFindCandidate, type FindCandidateResult } from "../../findCandidate/domain.js";
+import { type FindCandidateResult, runFindCandidate } from "../../findCandidate/domain.js";
 import { researchWebSourceToMarkdown } from "../../sources/web/source-research.service.js";
-import { appendQueueEvent } from "./events.js";
 import { claimNextQueueJob } from "./claim.js";
 import { isQueuePaused } from "./control.js";
+import { appendQueueEvent } from "./events.js";
 import { pauseQueueJob } from "./state.js";
-import { queueTableNameByQueue, type DistillationQueueName } from "./types.js";
+import { type DistillationQueueName, queueTableNameByQueue } from "./types.js";
 
 type QueueRunResult = {
   ok: boolean;

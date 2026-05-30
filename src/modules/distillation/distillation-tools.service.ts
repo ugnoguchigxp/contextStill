@@ -47,6 +47,9 @@ export type DistillationToolResult = {
   error?: string;
 };
 
+const SEARCH_SELECTION_MAX = 3;
+const searchResultUrlCache = new Map<string, string[]>();
+
 export const distillationToolDefinitions: DistillationToolDefinition[] = [
   {
     type: "function",
@@ -186,6 +189,99 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === "object" && !Array.isArray(value);
 }
 
+function searchCacheKey(auditContext?: Record<string, unknown>): string {
+  const domain = stringValue(auditContext?.domain) ?? "unknown";
+  const id = stringValue(auditContext?.id) ?? "global";
+  const stage = stringValue(auditContext?.stage) ?? "unknown";
+  return `${domain}:${id}:${stage}`;
+}
+
+function extractSearchResultUrls(content: string): string[] {
+  const parsed = parseLlmJsonLike(content)?.value;
+  if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
+  const results = (parsed as { results?: unknown }).results;
+  if (!Array.isArray(results)) return [];
+  return results
+    .map((entry) =>
+      entry && typeof entry === "object" && !Array.isArray(entry)
+        ? stringValue((entry as Record<string, unknown>).url)
+        : undefined,
+    )
+    .filter((url): url is string => Boolean(url));
+}
+
+function parseSelectionIndexes(value: string): number[] {
+  const trimmed = value.trim();
+  if (!trimmed) return [];
+  if (!/^\d+(?:\s*,\s*\d+)*$/.test(trimmed)) return [];
+  const unique = new Set<number>();
+  for (const token of trimmed.split(",")) {
+    const parsed = Number.parseInt(token.trim(), 10);
+    if (Number.isFinite(parsed) && parsed > 0) unique.add(parsed);
+  }
+  return [...unique];
+}
+
+async function fetchContentBySelection(params: {
+  selection: string;
+  auditContext?: Record<string, unknown>;
+}): Promise<DistillationToolResult> {
+  const key = searchCacheKey(params.auditContext);
+  const urls = searchResultUrlCache.get(key) ?? [];
+  const indexes = parseSelectionIndexes(params.selection);
+  if (indexes.length === 0) {
+    throw new Error("invalid fetch_content selection format (expected: 2,3,4)");
+  }
+  const selectedUrls = indexes
+    .map((index) => urls[index - 1])
+    .filter((url): url is string => Boolean(url))
+    .slice(0, SEARCH_SELECTION_MAX);
+  if (selectedUrls.length === 0) {
+    throw new Error("no cached search results for selected indexes");
+  }
+  // Selection format is used as a one-shot control step.
+  // Remove cached URLs to avoid reusing stale rankings in later unrelated rounds.
+  searchResultUrlCache.delete(key);
+
+  const results: Array<{ index: number; url: string; ok: boolean; content?: string; error?: string }> = [];
+  for (const index of indexes.slice(0, SEARCH_SELECTION_MAX)) {
+    const url = urls[index - 1];
+    if (!url) continue;
+    const fetched = await fetchContent(url, {
+      forceRefreshEvidence: Boolean(params.auditContext?.forceRefreshEvidence),
+    });
+    results.push({
+      index,
+      url,
+      ok: fetched.ok,
+      ...(fetched.ok ? { content: fetched.content } : { error: fetched.error ?? "fetch_failed" }),
+    });
+  }
+  return {
+    callId: "",
+    name: "fetch_content",
+    ok: results.some((result) => result.ok),
+    content: JSON.stringify(
+      {
+        selected: results.map((result) => ({
+          index: result.index,
+          url: result.url,
+          ok: result.ok,
+          ...(result.ok ? { content: result.content } : { error: result.error }),
+        })),
+        instruction: "Use fetched primary source content to produce the final coverEvidence result.",
+      },
+      null,
+      2,
+    ),
+    metadata: {
+      selection: params.selection,
+      selectedUrls: results.map((result) => result.url),
+      selectedCount: results.length,
+    },
+  };
+}
+
 async function recordDistillationToolAudit(params: {
   toolCall: DistillationToolCall;
   args: Record<string, unknown>;
@@ -268,14 +364,27 @@ const distillationToolHandlers: Record<
     auditContext?: Record<string, unknown>,
   ) => Promise<DistillationToolResult>
 > = {
-  search_web: (args, auditContext) =>
-    searchWeb(args.query, {
+  search_web: async (args, auditContext) => {
+    const result = await searchWeb(args.query, {
       forceRefreshEvidence: Boolean(auditContext?.forceRefreshEvidence),
-    }),
-  fetch_content: (args, auditContext) =>
-    fetchContent(args.url, {
+    });
+    if (result.ok) {
+      const urls = extractSearchResultUrls(result.content);
+      if (urls.length > 0) {
+        searchResultUrlCache.set(searchCacheKey(auditContext), urls);
+      }
+    }
+    return result;
+  },
+  fetch_content: async (args, auditContext) => {
+    const rawUrl = stringValue(args.url);
+    if (rawUrl && !/^https?:\/\//i.test(rawUrl) && parseSelectionIndexes(rawUrl).length > 0) {
+      return fetchContentBySelection({ selection: rawUrl, auditContext });
+    }
+    return fetchContent(args.url, {
       forceRefreshEvidence: Boolean(auditContext?.forceRefreshEvidence),
-    }),
+    });
+  },
   context7: (args) => executeMcpEvidenceTool("context7", args),
   deepwiki: (args) => executeMcpEvidenceTool("deepwiki", args),
 };

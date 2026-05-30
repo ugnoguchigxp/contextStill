@@ -54,34 +54,25 @@ export function applicabilityBlankResponseReminderLines(
 ): string[] {
   return [
     "直前の応答は空でした。",
-    `次のようなフラット JSON を返してください: {"status":"${statuses}","stage":"${stage}","type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80,"technologies":"...","changeTypes":"...","domains":"...","applicabilityGeneral":false}`,
-    "またはラベル付きテキストを返してください: STATUS / STAGE / TYPE / TITLE / BODY / TECHNOLOGIES / CHANGE_TYPES / DOMAINS / APPLICABILITY_GENERAL / REPO_PATH / REPO_KEY。",
+    `ラベル付きテキストで返してください: STATUS / STAGE / TYPE / TITLE / BODY / IMPORTANCE / CONFIDENCE / TECHNOLOGIES / CHANGE_TYPES / DOMAINS / REASON（STATUS は ${statuses}、STAGE は ${stage}）。`,
+    "TYPE / TITLE / BODY の見出しだけで終わらせず、値まで埋めてください。",
   ];
 }
 
 export function externalEvidenceSystemPrompt(): string {
   return [
     "あなたは coverEvidence の外部 evidence 検証器です。",
-    "必ず search_web または fetch_content を使ってから、JSON だけを返してください。",
-    "入力 candidate.type は暫定ヒントです。最終 JSON では type を独立に再分類してください。",
-    "procedure は順序付き作業、コマンドフロー、検証/復旧/レビューの再利用可能な手順です。",
-    "rule は持続的な制約・方針・不変条件・意思決定です。",
-    "手順・運用フロー・レビュー手順を小さな rule に分解して返さないでください。",
+    "各応答では、現在の段階で求められている形式だけを1つ返してください。",
+    "段階1: 検索語だけを1行で返す。形式: `| keyword | keyword | keyword |`。",
+    "keyword は1から5個。名詞・固有名詞・API名・機能名・エラー名だけを選び、文章にしないでください。",
+    "段階2: search_web の結果を受け取ったら、読む候補番号だけを返す。形式: `2,3,4`。",
+    "段階3: fetch_content の本文を受け取ったら、最終判定だけをラベル形式で返す。",
+    "最終判定ラベル: STATUS / STAGE / TYPE / TITLE / BODY / IMPORTANCE / CONFIDENCE / TECHNOLOGIES / CHANGE_TYPES / DOMAINS / REASON",
+    "STATUS は knowledge_ready|insufficient|duplicate|near_duplicate のいずれかにしてください。",
     ...procedureBodyInstructions(),
     ...applicabilityInstructions(),
-    "search_web は URL 発見用です。検索結果 snippet だけを最終根拠にしてはいけません。",
-    "search_web は最大 1 回だけ使ってください。",
-    "search_web の結果を受け取ったら、採用候補の一次ソース URL を 1 から 3 件選び、最終 JSON の前に fetch_content を呼んでください。",
-    "fetch_content は最大 3 回まで使ってください。",
-    "fetch_content は同じ検証 session で複数回呼んで構いません。失敗した URL があれば、別の有望な URL を fetch_content してください。",
-    "fetch_content の対象は http:// または https:// の URL だけです。",
-    "vibe_memory:, agent://, file://, knowledge://, search: は fetch_content の対象外です。",
-    "候補や source references に http/https URL が含まれる場合は、search_web より先にその URL を fetch_content してください。",
-    "search_web を同義の言い換え query で繰り返さないでください。query は短く安定した公式名・API名・概念名を優先してください。",
-    "外部主張を採用するなら fetch_content の成功結果に基づけてください。",
-    "JSON は次の形を基本にしてください。applicability field は任意で、省略しても構いません:",
-    '{"schemaVersion":1,"status":"knowledge_ready|insufficient|duplicate|near_duplicate","stage":"web","type":"rule|procedure","title":"...","body":"...","importance":80,"confidence":80,"technologies":"...","changeTypes":"...","domains":"...","applicabilityGeneral":false,"references":[],"duplicateRefs":[],"toolEvents":[],"reason":null}',
-    "importance と confidence は 0 から 100 目安の数値で返してください。整数でなくても構いません。",
+    "insufficient の場合は STATUS / STAGE / REASON だけでも構いません。",
+    "IMPORTANCE と CONFIDENCE は 0 から 100 目安の数値です。",
   ].join("\n");
 }
 
@@ -99,7 +90,7 @@ export function externalEvidenceUserPrompt(params: {
     JSON.stringify(params.sourceReferences, null, 2),
     "system/source metadata:",
     JSON.stringify(params.sourceContext, null, 2),
-    `推奨検索 query: ${query.query}`,
+    `検索語ヒント（必要なら選び直してよい・最大5個）: ${query.searchTerms.join(" | ")}`,
   ].join("\n\n");
 }
 

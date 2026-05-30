@@ -1,6 +1,6 @@
-import { db, closeDbPool } from "../db/index.js";
-import { knowledgeItems } from "../db/schema.js";
 import { ilike, or } from "drizzle-orm";
+import { closeDbPool, db } from "../db/index.js";
+import { knowledgeItems } from "../db/schema.js";
 
 async function main() {
   const args = process.argv.slice(2);

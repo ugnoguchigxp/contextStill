@@ -2,8 +2,8 @@ import { sql } from "drizzle-orm";
 import { groupedConfig } from "../../../src/config.js";
 import { APP_CONSTANTS } from "../../../src/constants.js";
 import { getDb } from "../../../src/db/index.js";
-import { resolveCostRate } from "../../../src/modules/llm/llm-cost-config.js";
 import { inspectCompileRuns } from "../../../src/modules/doctor/inspectors/compile.inspector.js";
+import { resolveCostRate } from "../../../src/modules/llm/llm-cost-config.js";
 import { ensureRuntimeSettingsLoaded } from "../../../src/modules/settings/settings.service.js";
 import {
   type OverviewDashboard,
@@ -20,17 +20,17 @@ import {
 } from "../../../src/shared/schemas/overview.schema.js";
 import { buildGraphSnapshot } from "../graph/graph.repository.js";
 import {
+  DASHBOARD_TIMEZONE,
+  LLM_KPI_DAY_RANGE,
+  OVERVIEW_DAY_RANGE,
   buildCommunitySourceCoverage,
   buildDistillationQueueChart,
   buildKnowledgeStatusTypeChart,
   buildOverviewLandscapeSummary,
   checkedAt,
   countWikiPages,
-  DASHBOARD_TIMEZONE,
   latestCheckedAt,
-  LLM_KPI_DAY_RANGE,
   normalizeSearchApiStatus,
-  OVERVIEW_DAY_RANGE,
   stringValue,
   toNullableNumber,
   toNumber,
@@ -56,11 +56,19 @@ export async function fetchOverviewKnowledgeAssetsDomainForApi(): Promise<Overvi
     dynamicScoreBucketResult,
     vibeRecordsByDayResult,
     wikiPages,
+    originKindSummaryResult,
   ] = await Promise.all([
     db.execute(sql`
-      with linked as (
-        select distinct knowledge_id
-        from knowledge_source_links
+      with source_linked as (
+        select distinct knowledge_id from knowledge_source_links
+      ),
+      origin_linked as (
+        select distinct knowledge_id from knowledge_origin_links
+      ),
+      provenance_traceable as (
+        select knowledge_id from source_linked
+        union
+        select knowledge_id from origin_linked
       )
       select
         count(*)::int as knowledge_total,
@@ -71,7 +79,9 @@ export async function fetchOverviewKnowledgeAssetsDomainForApi(): Promise<Overvi
         count(*) filter (where type = 'procedure')::int as procedures,
         count(*) filter (where embedding is not null)::int as embedded_knowledge,
         count(*) filter (where status = 'active' and compile_select_count = 0)::int as zero_use_active_knowledge,
-        coalesce((select count(*)::int from linked), 0)::int as linked_knowledge
+        coalesce((select count(*)::int from source_linked), 0)::int as source_evidence_linked_knowledge,
+        coalesce((select count(*)::int from origin_linked), 0)::int as origin_linked_knowledge,
+        coalesce((select count(*)::int from provenance_traceable), 0)::int as provenance_traceable_knowledge
       from knowledge_items
     `),
     db.execute(sql`
@@ -138,6 +148,13 @@ export async function fetchOverviewKnowledgeAssetsDomainForApi(): Promise<Overvi
       order by days.day asc
     `),
     countWikiPages(),
+    db.execute(sql`
+      select
+        origin_kind,
+        count(distinct knowledge_id)::int as count
+      from knowledge_origin_links
+      group by origin_kind
+    `),
   ]);
 
   const knowledgeSummaryRow = (knowledgeSummaryResult.rows[0] ?? {}) as Record<string, unknown>;
@@ -146,7 +163,21 @@ export async function fetchOverviewKnowledgeAssetsDomainForApi(): Promise<Overvi
   const dynamicScoreBucketRow = (dynamicScoreBucketResult.rows[0] ?? {}) as Record<string, unknown>;
 
   const knowledgeTotal = toNumber(knowledgeSummaryRow.knowledge_total);
-  const linkedKnowledge = toNumber(knowledgeSummaryRow.linked_knowledge);
+  const sourceEvidenceLinkedKnowledge = toNumber(
+    knowledgeSummaryRow.source_evidence_linked_knowledge,
+  );
+  const originLinkedKnowledge = toNumber(knowledgeSummaryRow.origin_linked_knowledge);
+  const provenanceTraceableKnowledge = toNumber(knowledgeSummaryRow.provenance_traceable_knowledge);
+
+  const originLinksByKind: Record<string, number> = {
+    vibe_memory: 0,
+    agent_candidate: 0,
+    landscape_review_item: 0,
+  };
+  for (const row of originKindSummaryResult.rows as Array<{ origin_kind: string; count: number }>) {
+    originLinksByKind[row.origin_kind] = toNumber(row.count);
+  }
+
   const communityGraph = await buildGraphSnapshot({
     limit: Math.max(1, knowledgeTotal),
     status: "all",
@@ -170,8 +201,15 @@ export async function fetchOverviewKnowledgeAssetsDomainForApi(): Promise<Overvi
       indexedSources: toNumber(sourceSummaryRow.indexed_sources),
       sourceFragments: toNumber(sourceSummaryRow.source_fragments),
       sourceLinks: toNumber(sourceSummaryRow.source_links),
-      linkedKnowledge,
-      unlinkedKnowledge: Math.max(0, knowledgeTotal - linkedKnowledge),
+      linkedKnowledge: sourceEvidenceLinkedKnowledge,
+      unlinkedKnowledge: Math.max(0, knowledgeTotal - sourceEvidenceLinkedKnowledge),
+      sourceEvidenceLinkedKnowledge,
+      sourceEvidenceUnlinkedKnowledge: Math.max(0, knowledgeTotal - sourceEvidenceLinkedKnowledge),
+      originLinkedKnowledge,
+      originUnlinkedKnowledge: Math.max(0, knowledgeTotal - originLinkedKnowledge),
+      provenanceTraceableKnowledge,
+      provenanceUntraceableKnowledge: Math.max(0, knowledgeTotal - provenanceTraceableKnowledge),
+      originLinksByKind,
       ...communitySourceCoverage,
       vibeRecords: toNumber(vibeSummaryRow.vibe_records),
       vibeSessions: toNumber(vibeSummaryRow.vibe_sessions),
@@ -207,8 +245,8 @@ export async function fetchOverviewKnowledgeAssetsDomainForApi(): Promise<Overvi
         }),
       ),
       sourceCoverage: [
-        { label: "linked", count: linkedKnowledge },
-        { label: "unlinked", count: Math.max(0, knowledgeTotal - linkedKnowledge) },
+        { label: "linked", count: sourceEvidenceLinkedKnowledge },
+        { label: "unlinked", count: Math.max(0, knowledgeTotal - sourceEvidenceLinkedKnowledge) },
       ],
       communitySourceCoverage: [
         { label: "covered", count: communitySourceCoverage.sourceCoveredCommunities },

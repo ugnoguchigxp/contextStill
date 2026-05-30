@@ -1,7 +1,7 @@
-import React from "react";
-import { Database } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { formatNumber } from "@/lib/admin-formatters";
+import { Database } from "lucide-react";
+import React from "react";
 import type {
   DoctorReport,
   OverviewKnowledgeAssetsDomain,
@@ -209,10 +209,10 @@ export function KnowledgeAssetsDomain({ dashboard, doctorReport }: KnowledgeAsse
           })()}
         </div>
 
-        {/* 2. Knowledge Graph Status (縦積みダブルプログレスバー) */}
+        {/* 2. Knowledge Relations (用途別関連指標) */}
         <div className="border-t border-slate-100 pt-4 flex flex-col gap-3.5 text-[13.5px] leading-relaxed">
           <div className="flex items-center justify-between">
-            <span className="text-[15px] font-bold text-slate-700">Knowledge Graph Status</span>
+            <span className="text-[15px] font-bold text-slate-700">Knowledge Relations</span>
             <Badge
               variant="outline"
               className="text-[11.5px] border-emerald-500/20 text-emerald-600 bg-emerald-50/50 py-0 h-4 px-2"
@@ -247,48 +247,115 @@ export function KnowledgeAssetsDomain({ dashboard, doctorReport }: KnowledgeAsse
               <span>Thin Communities: {dashboard.kpis.sourceThinCommunities}</span>
               <span>
                 No-Source:{" "}
-                {dashboard.kpis.sourceCommunities -
-                  dashboard.kpis.sourceCoveredCommunities -
-                  dashboard.kpis.sourceThinCommunities}
+                {dashboard.kpis.sourceMissingCommunities ??
+                  dashboard.kpis.sourceCommunities -
+                    dashboard.kpis.sourceCoveredCommunities -
+                    dashboard.kpis.sourceThinCommunities}
               </span>
             </div>
           </div>
 
           <div className="border-t border-slate-100/60 my-1" />
 
-          {/* 2. Knowledge Linkage */}
+          {/* 2. Source Evidence */}
           <div className="flex flex-col gap-1">
             <div className="flex justify-between items-baseline text-slate-500 text-[12.5px]">
-              <span className="font-semibold text-slate-600">Knowledge Linkage</span>
+              <span className="font-semibold text-slate-600">Source Evidence</span>
               <span className="font-semibold text-slate-700">
-                {dashboard.kpis.linkedKnowledge}/{dashboard.kpis.knowledgeTotal} (
-                {toPercent(dashboard.kpis.linkedKnowledge, dashboard.kpis.knowledgeTotal)} Linked)
+                {dashboard.kpis.sourceEvidenceLinkedKnowledge}/{dashboard.kpis.knowledgeTotal} (
+                {toPercent(
+                  dashboard.kpis.sourceEvidenceLinkedKnowledge,
+                  dashboard.kpis.knowledgeTotal,
+                )}{" "}
+                Linked)
               </span>
             </div>
             <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
               <div
                 className="h-full bg-sky-400 transition-all duration-300"
                 style={{
-                  width: `${(dashboard.kpis.linkedKnowledge / (dashboard.kpis.knowledgeTotal || 1)) * 100}%`,
+                  width: `${(dashboard.kpis.sourceEvidenceLinkedKnowledge / (dashboard.kpis.knowledgeTotal || 1)) * 100}%`,
                 }}
               />
             </div>
-            {dashboard.kpis.unlinkedKnowledge > 0 ? (
+            {dashboard.kpis.sourceEvidenceUnlinkedKnowledge > 0 ? (
               <div className="flex justify-between text-[11.5px] text-amber-600 font-medium mt-0.5">
-                <span>Unlinked: {dashboard.kpis.unlinkedKnowledge} items</span>
-                <span>Linked: {dashboard.kpis.linkedKnowledge} items</span>
+                <span>
+                  Unresolved Sources: {dashboard.kpis.sourceEvidenceUnlinkedKnowledge} items
+                </span>
+                <span>Linked: {dashboard.kpis.sourceEvidenceLinkedKnowledge} items</span>
               </div>
             ) : (
               <div className="flex justify-between text-[11.5px] text-emerald-600 font-medium mt-0.5">
-                <span>All items successfully linked</span>
+                <span>All items have source evidence</span>
               </div>
             )}
           </div>
+
+          <div className="border-t border-slate-100/60 my-1" />
+
+          {/* 3. Provenance Traceability */}
+          <div className="flex flex-col gap-1">
+            <div className="flex justify-between items-baseline text-slate-500 text-[12.5px]">
+              <span className="font-semibold text-slate-600">Provenance Traceable</span>
+              <span className="font-semibold text-slate-700">
+                {dashboard.kpis.provenanceTraceableKnowledge}/{dashboard.kpis.knowledgeTotal} (
+                {toPercent(
+                  dashboard.kpis.provenanceTraceableKnowledge,
+                  dashboard.kpis.knowledgeTotal,
+                )}{" "}
+                Traceable)
+              </span>
+            </div>
+            <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden">
+              <div
+                className="h-full bg-indigo-500 transition-all duration-300"
+                style={{
+                  width: `${(dashboard.kpis.provenanceTraceableKnowledge / (dashboard.kpis.knowledgeTotal || 1)) * 100}%`,
+                }}
+              />
+            </div>
+            <div className="flex justify-between text-[11.5px] text-slate-400 mt-0.5">
+              <span>Untraceable: {dashboard.kpis.provenanceUntraceableKnowledge} items</span>
+              <span>Traceable: {dashboard.kpis.provenanceTraceableKnowledge} items</span>
+            </div>
+          </div>
+
+          {/* 4. Origin Links Breakdown */}
+          {dashboard.kpis.originLinksByKind && (
+            <div className="flex flex-col gap-1.5 bg-slate-50 rounded-lg p-2.5 border border-slate-100/80 text-[12px] text-slate-500 mt-1">
+              <div className="font-semibold text-slate-600">
+                Origin Links: {dashboard.kpis.originLinkedKnowledge} items
+              </div>
+              <div className="flex flex-wrap gap-x-3 gap-y-1">
+                <span>
+                  Vibe Memory:{" "}
+                  <strong className="text-slate-700">
+                    {dashboard.kpis.originLinksByKind.vibe_memory ?? 0}
+                  </strong>
+                </span>
+                <span className="text-slate-200">|</span>
+                <span>
+                  Agent Candidate:{" "}
+                  <strong className="text-slate-700">
+                    {dashboard.kpis.originLinksByKind.agent_candidate ?? 0}
+                  </strong>
+                </span>
+                <span className="text-slate-200">|</span>
+                <span>
+                  Landscape Review:{" "}
+                  <strong className="text-slate-700">
+                    {dashboard.kpis.originLinksByKind.landscape_review_item ?? 0}
+                  </strong>
+                </span>
+              </div>
+            </div>
+          )}
         </div>
 
         {/* テスト互換性アサーション用の非表示データ */}
         <span className="sr-only">
-          {`unlinked ${formatNumber(dashboard.kpis.unlinkedKnowledge)} / communities ${formatNumber(dashboard.kpis.sourceCoveredCommunities)}/${formatNumber(dashboard.kpis.sourceCommunities)} covered, thin ${formatNumber(dashboard.kpis.sourceThinCommunities)}, no-source ${formatNumber(dashboard.kpis.sourceMissingCommunities)}`}
+          {`unlinked ${formatNumber(dashboard.kpis.sourceEvidenceUnlinkedKnowledge)} / communities ${formatNumber(dashboard.kpis.sourceCoveredCommunities)}/${formatNumber(dashboard.kpis.sourceCommunities)} covered, thin ${formatNumber(dashboard.kpis.sourceThinCommunities)}, no-source ${formatNumber(dashboard.kpis.sourceMissingCommunities)}`}
         </span>
       </div>
 

@@ -7,23 +7,23 @@ import {
   recordAuditLogSafe,
 } from "../../../src/modules/audit/audit-log.service.js";
 import { embedOne } from "../../../src/modules/embedding/embedding.service.js";
+import { canTransitionKnowledgeStatus } from "../../../src/modules/knowledge/knowledge-lifecycle.service.js";
 import {
   type KnowledgeTagKind,
   type KnowledgeTagStatus,
   listKnowledgeTagDefinitions,
 } from "../../../src/modules/knowledge/knowledge-tags.repository.js";
-import { linkKnowledgeFromMetadata } from "../../../src/modules/knowledge/source-linking.service.js";
 import {
   computeDecayFactor,
   computeDynamicScore,
 } from "../../../src/modules/knowledge/knowledge-value.service.js";
-import { canTransitionKnowledgeStatus } from "../../../src/modules/knowledge/knowledge-lifecycle.service.js";
+import { linkKnowledgeFromMetadata } from "../../../src/modules/knowledge/source-linking.service.js";
 import type { KnowledgeStatus } from "../../../src/shared/schemas/knowledge.schema.js";
 import {
   asRecord,
-  buildNormalizedApplicability,
   buildKnowledgeListOrderBy,
   buildKnowledgeListWhere,
+  buildNormalizedApplicability,
   extractSourceRefs,
   extractSourceVibeMemoryIds,
   isMissingKnowledgeLifecycleColumnsError,
@@ -39,8 +39,8 @@ import type {
   KnowledgeListItem,
   KnowledgeListParams,
   KnowledgeListSortBy,
-  KnowledgeUpdateInput,
   KnowledgeTagDefinitionApi,
+  KnowledgeUpdateInput,
 } from "./knowledge.repository.types.js";
 
 export type {

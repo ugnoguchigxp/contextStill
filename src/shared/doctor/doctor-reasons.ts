@@ -1,5 +1,4 @@
 import {
-  doctorReasonCatalog,
   type DoctorReasonArea,
   type DoctorReasonCatalogEntry,
   type DoctorReasonCommands,
@@ -7,6 +6,7 @@ import {
   type DoctorReasonEnvironmentScope,
   type DoctorReasonImpactLevel,
   type DoctorReasonSeverity,
+  doctorReasonCatalog,
 } from "./doctor-reason-catalog.js";
 
 export {

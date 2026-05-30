@@ -1,4 +1,3 @@
-import type { ToolEntry } from "../registry.js";
 import {
   markVibeMemory,
   recordVibeMemoryCapsule,
@@ -8,6 +7,7 @@ import {
   markVibeMemoryInputSchema,
   recordVibeMemoryCapsuleInputSchema,
 } from "../../shared/schemas/vibe-memory.schema.js";
+import type { ToolEntry } from "../registry.js";
 
 function resolveActorId(
   explicitActorId: string | undefined,

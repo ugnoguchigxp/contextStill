@@ -39,8 +39,8 @@ import {
 } from "./context-compiler.repository.js";
 import { composeContextResponse } from "./context-response-composer.service.js";
 import {
-  suppressNearDuplicateKnowledge,
   type DuplicateSuppressionInfo,
+  suppressNearDuplicateKnowledge,
 } from "./duplicate-suppression.service.js";
 import { renderContextPackMarkdown } from "./pack-renderer.js";
 import { normalizeRepoKey, normalizeRepoPath } from "./query-context.js";

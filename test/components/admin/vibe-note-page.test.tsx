@@ -1,3 +1,4 @@
+import { useMutation, useQuery } from "@tanstack/react-query";
 /** @vitest-environment jsdom */
 import { act, render, screen, within } from "@testing-library/react";
 import React from "react";
@@ -8,7 +9,6 @@ import {
   setTimezoneSetting,
 } from "../../../web/src/lib/timezone";
 import { VibeNotePage } from "../../../web/src/modules/admin/components/vibe-note.page";
-import { useQuery, useMutation } from "@tanstack/react-query";
 
 const routerState = vi.hoisted(() => ({
   searchStr: "?goalId=goal-1",

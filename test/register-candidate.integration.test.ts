@@ -2,12 +2,12 @@ import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { getDb } from "../src/db/index.js";
 import {
-  distillationTargetStates,
-  findingCandidateQueue,
-  findCandidateResults,
-  knowledgeItems,
-  foundCandidates,
   coveringEvidenceQueue,
+  distillationTargetStates,
+  findCandidateResults,
+  findingCandidateQueue,
+  foundCandidates,
+  knowledgeItems,
 } from "../src/db/schema.js";
 import { registerCandidate } from "../src/modules/registerCandidate/register-candidate.service.js";
 import {

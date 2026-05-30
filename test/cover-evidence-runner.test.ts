@@ -1,6 +1,6 @@
-import { describe, expect, test, vi, beforeEach } from "vitest";
-import { runCoverEvidenceForCandidate } from "../src/modules/coverEvidence/runner.js";
+import { beforeEach, describe, expect, test, vi } from "vitest";
 import { runCoverEvidence } from "../src/modules/coverEvidence/domain.js";
+import { runCoverEvidenceForCandidate } from "../src/modules/coverEvidence/runner.js";
 
 vi.mock("../src/modules/coverEvidence/domain.js", () => {
   return {

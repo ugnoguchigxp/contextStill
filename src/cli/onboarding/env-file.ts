@@ -1,5 +1,5 @@
-import { copyFile, readFile, writeFile } from "node:fs/promises";
 import { existsSync } from "node:fs";
+import { copyFile, readFile, writeFile } from "node:fs/promises";
 import type { SupportedLocale } from "../../shared/locales/locale.js";
 
 const envAssignmentPattern = /^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=/;

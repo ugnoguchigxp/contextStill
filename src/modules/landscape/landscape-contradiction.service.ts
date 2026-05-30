@@ -1,17 +1,17 @@
 import { createHash } from "node:crypto";
 import { buildGraphSnapshot } from "../../../api/modules/graph/graph.repository.js";
 import {
-  landscapeContradictionCandidateSchema,
-  landscapeContradictionDetectionInputSchema,
   type LandscapeContradictionCandidate,
   type LandscapeContradictionDetectionInput,
+  landscapeContradictionCandidateSchema,
+  landscapeContradictionDetectionInputSchema,
 } from "../../shared/schemas/landscape-contradiction.schema.js";
 import {
+  type LandscapeContradictionKnowledgeRow,
   contradictionPairKey,
   loadContradictionKnowledgeRows,
   loadRecentSelectionCountByKnowledgeId,
   loadSemanticNeighborPairs,
-  type LandscapeContradictionKnowledgeRow,
 } from "./landscape-contradiction.repository.js";
 
 const REQUIREMENT_MARKERS_LATIN = ["must", "required", "always"];

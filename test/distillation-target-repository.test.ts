@@ -11,9 +11,9 @@ import {
   listDistillationTargetStatesForCandidates,
   pauseDistillationTargetState,
   requeueDistillationTargetState,
-  updateDistillationTargetSource,
   updateDistillationTargetHeartbeat,
   updateDistillationTargetPhase,
+  updateDistillationTargetSource,
   upsertDistillationTargetState,
 } from "../src/modules/distillationTarget/repository.js";
 

@@ -12,8 +12,8 @@ import {
   type ChatMessage,
   type IngestCursor,
   ingestAntigravityLogs,
-  ingestCodexLogs,
   ingestClaudeLogs,
+  ingestCodexLogs,
   normalizeIngestCursor,
 } from "./ingest.service.js";
 import {

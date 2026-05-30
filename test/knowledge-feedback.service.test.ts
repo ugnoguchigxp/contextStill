@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { db } from "../src/db/index.js";
-import { recalculateKnowledgeDynamicScoresSafe } from "../src/modules/knowledge/knowledge-value.service.js";
 import {
   CompileRunKnowledgeFeedbackError,
   recordCompileRunKnowledgeFeedback,
 } from "../src/modules/knowledge/knowledge-feedback.service.js";
+import { recalculateKnowledgeDynamicScoresSafe } from "../src/modules/knowledge/knowledge-value.service.js";
 
 const mockSelect = vi.fn();
 const mockUpdate = vi.fn();

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 import { groupedConfig } from "../src/config.js";
+import { recordAuditLogSafe } from "../src/modules/audit/audit-log.service.js";
 import {
   insertCompileRun,
   insertContextCompileCandidateTraces,
@@ -11,7 +12,6 @@ import { recordCompileRunKnowledgeUsageSignals } from "../src/modules/knowledge/
 import { recordKnowledgeCompileSelectionSafe } from "../src/modules/knowledge/knowledge-value.service.js";
 import { retrieveKnowledge } from "../src/modules/knowledge/knowledge.service.js";
 import { retrieveSources } from "../src/modules/sources/source-retrieval.service.js";
-import { recordAuditLogSafe } from "../src/modules/audit/audit-log.service.js";
 
 const { agenticRefineMock } = vi.hoisted(() => ({
   agenticRefineMock: vi.fn(),

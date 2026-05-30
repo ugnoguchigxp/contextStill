@@ -7,10 +7,10 @@ import {
   getAgenticLlmProviders,
 } from "../src/modules/llm/agentic-llm.service.js";
 import { recordLlmUsage } from "../src/modules/llm/llm-usage-logger.js";
-import { createOpenAiProvider } from "../src/modules/llm/providers/openai.provider.js";
 import { createAzureOpenAiProvider } from "../src/modules/llm/providers/azure-openai.provider.js";
 import { createBedrockProvider } from "../src/modules/llm/providers/bedrock.provider.js";
 import { createLocalLlmProvider } from "../src/modules/llm/providers/local-llm.provider.js";
+import { createOpenAiProvider } from "../src/modules/llm/providers/openai.provider.js";
 
 vi.mock("../src/modules/llm/llm-usage-logger.js", () => ({
   recordLlmUsage: vi.fn(),

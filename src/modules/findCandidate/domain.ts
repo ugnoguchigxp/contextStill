@@ -11,9 +11,9 @@ import {
   runDistillationCompletion,
 } from "../distillation/distillation-runtime.service.js";
 import type { DistillationToolCall } from "../distillation/distillation-tools.service.js";
+import { getDistillationTargetStateById } from "../distillationTarget/repository.js";
 import { readVibeMemoryByTokenWindow } from "../memoryReader/reader.service.js";
 import { readFileDomain } from "../readFile/domain.js";
-import { getDistillationTargetStateById } from "../distillationTarget/repository.js";
 import {
   ensureRuntimeSettingsLoaded,
   resolveFindCandidateRoute,

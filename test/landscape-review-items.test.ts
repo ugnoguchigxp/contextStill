@@ -64,6 +64,7 @@ import {
   materializeLandscapeReviewItems,
   updateLandscapeReviewItemStatus,
 } from "../src/modules/landscape/landscape-review-items.service.js";
+import type { LandscapeSnapshot } from "../src/modules/landscape/landscape.types.js";
 import {
   landscapeReplaySnapshotFixture,
   landscapeSnapshotFixture,
@@ -71,7 +72,6 @@ import {
   replayComparisonForPromotionGate,
   reviewItemRowFixture,
 } from "./fixtures/landscape-review-items-fixtures.ts";
-import type { LandscapeSnapshot } from "../src/modules/landscape/landscape.types.js";
 
 describe("landscape review items service", () => {
   beforeEach(() => {

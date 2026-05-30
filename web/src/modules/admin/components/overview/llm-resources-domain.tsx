@@ -1,7 +1,7 @@
-import React from "react";
-import { CreditCard } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { formatNumber } from "@/lib/admin-formatters";
+import { CreditCard } from "lucide-react";
+import React from "react";
 import type { OverviewLlmResourcesDomain } from "../../repositories/admin.repository";
 import { LlmCharts } from "../overview-charts";
 

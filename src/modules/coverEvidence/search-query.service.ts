@@ -4,6 +4,8 @@ export type CoverEvidenceSearchQuery = {
   searchTerms: string[];
 };
 
+const maxSearchTerms = 5;
+
 const searchStopWords = new Set([
   "a",
   "an",
@@ -39,7 +41,7 @@ export function normalizeCoverEvidenceSearchTerms(query: string): string[] {
   const normalized = query.normalize("NFKC").toLowerCase();
   const tokens =
     normalized.match(
-      /(?:--?)?[a-z0-9][a-z0-9._:/@+-]*|[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}ー]+/giu,
+      /(?:--?)?[a-z0-9][a-z0-9._:/@+-]*|[\p{Script=Han}\p{Script=Katakana}ー]{2,}/giu,
     ) ?? [];
   const terms: string[] = [];
   for (const token of tokens) {
@@ -50,7 +52,7 @@ export function normalizeCoverEvidenceSearchTerms(query: string): string[] {
       terms.push(value);
     }
   }
-  return terms.slice(0, 12);
+  return terms.slice(0, maxSearchTerms);
 }
 
 export function buildCoverEvidenceSearchQuery(query: string): CoverEvidenceSearchQuery {

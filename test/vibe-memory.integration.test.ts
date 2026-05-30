@@ -1,5 +1,5 @@
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { eq } from "drizzle-orm";
+import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { db } from "../src/db/client.js";
 import { vibeGoals, vibeMemories, vibeMemoryMarks } from "../src/db/schema.js";
 import {

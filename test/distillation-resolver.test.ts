@@ -1,4 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
+import { groupedConfig } from "../src/config.js";
 import {
   defaultModelForProvider,
   isProviderConfigured,
@@ -6,7 +7,6 @@ import {
   resolveDistillationProviderOrder,
   resolveProviderForDistillation,
 } from "../src/modules/distillation/llm-resolver.js";
-import { groupedConfig } from "../src/config.js";
 
 describe("distillation llm-resolver", () => {
   describe("resolveDistillationProviderOrder", () => {

@@ -1,5 +1,5 @@
 import { sql } from "drizzle-orm";
-import { db, closeDbPool } from "../db/index.js";
+import { closeDbPool, db } from "../db/index.js";
 
 async function main() {
   console.log("Starting queue priority update batch job...");

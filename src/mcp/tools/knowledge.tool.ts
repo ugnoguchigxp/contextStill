@@ -7,8 +7,8 @@ import { db } from "../../db/index.js";
 import { knowledgeItems } from "../../db/schema.js";
 import { normalizeKnowledgeScore } from "../../lib/score-scale.js";
 import { rankAndDedupe } from "../../modules/context-compiler/ranking.service.js";
-import { searchKnowledgeCandidates } from "../../modules/knowledge/knowledge.service.js";
 import { canTransitionKnowledgeStatus } from "../../modules/knowledge/knowledge-lifecycle.service.js";
+import { searchKnowledgeCandidates } from "../../modules/knowledge/knowledge.service.js";
 import {
   registerCandidate,
   registerCandidatesBulk,

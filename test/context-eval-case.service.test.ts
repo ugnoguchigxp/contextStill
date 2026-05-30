@@ -1,5 +1,5 @@
-import fs from "fs/promises";
-import path from "path";
+import fs from "node:fs/promises";
+import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 const { retrieveKnowledgeMock } = vi.hoisted(() => ({
@@ -58,7 +58,9 @@ describe("context eval case service", () => {
     const jsonlContent = `{"id":"case-1","changeTypes":["debug"]}`;
     await fs.writeFile(tempFilePath, jsonlContent, "utf-8");
 
-    await expect(loadContextEvalCases(tempFilePath)).rejects.toThrow("Validation failed on line 1: goal");
+    await expect(loadContextEvalCases(tempFilePath)).rejects.toThrow(
+      "Validation failed on line 1: goal",
+    );
   });
 
   test("loadContextEvalCases throws an error on expected-forbidden overlap", async () => {
@@ -71,7 +73,7 @@ describe("context eval case service", () => {
   });
 
   test("buildContextEvalCaseReport returns no_data for empty cases file", async () => {
-    const jsonlContent = ``;
+    const jsonlContent = "";
     await fs.writeFile(tempFilePath, jsonlContent, "utf-8");
 
     const report = await buildContextEvalCaseReport({

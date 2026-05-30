@@ -1,4 +1,8 @@
+import { retrieveKnowledge } from "../knowledge/knowledge.service.js";
+import { extractLandscapeTaskFacets } from "./landscape-facets.js";
 import {
+  type PackItemForComparison,
+  type UsageEventForComparison,
   averageRunRate,
   buildVerdictMix,
   classifyReplayComparison,
@@ -10,13 +14,8 @@ import {
   orderPackItems,
   rate,
   uniqueOrdered,
-  type PackItemForComparison,
-  type UsageEventForComparison,
 } from "./landscape-replay-comparison.helpers.js";
-import { retrieveKnowledge } from "../knowledge/knowledge.service.js";
-import { extractLandscapeTaskFacets } from "./landscape-facets.js";
 import { loadLandscapeReplayCorpus } from "./landscape-replay.repository.js";
-import { runWithLandscapeSnapshotCache } from "./landscape-snapshot-cache.service.js";
 import type {
   BuildLandscapeReplayComparisonInput,
   LandscapeAppliesToRefineCandidate,
@@ -30,6 +29,7 @@ import type {
   LandscapeRunStatus,
   LandscapeScoreTuningSummary,
 } from "./landscape-replay.types.js";
+import { runWithLandscapeSnapshotCache } from "./landscape-snapshot-cache.service.js";
 
 const HIGH_CHURN_REPLACEMENT_RATE = 0.5;
 const LOW_OVERLAP_RATE = 0.6;

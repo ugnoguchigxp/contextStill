@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
 /** @vitest-environment jsdom */
-import { render, screen, fireEvent, act } from "@testing-library/react";
+import { act, fireEvent, render, screen } from "@testing-library/react";
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { OverviewPage } from "../../../web/src/modules/admin/components/overview.page";
@@ -69,6 +69,17 @@ const defaultOverviewData = {
     sourceLinks: 8,
     linkedKnowledge: 6,
     unlinkedKnowledge: 4,
+    sourceEvidenceLinkedKnowledge: 6,
+    sourceEvidenceUnlinkedKnowledge: 4,
+    originLinkedKnowledge: 3,
+    originUnlinkedKnowledge: 7,
+    provenanceTraceableKnowledge: 8,
+    provenanceUntraceableKnowledge: 2,
+    originLinksByKind: {
+      vibe_memory: 2,
+      agent_candidate: 1,
+      landscape_review_item: 0,
+    },
     sourceCommunities: 3,
     sourceCoveredCommunities: 1,
     sourceThinCommunities: 1,
@@ -421,9 +432,9 @@ describe("OverviewPage", () => {
     vi.useRealTimers();
   });
 
-  it("displays 'All items successfully linked' when unlinkedKnowledge is 0", () => {
-    queryMockState.domainData["knowledge-assets"].kpis.unlinkedKnowledge = 0;
-    queryMockState.domainData["knowledge-assets"].kpis.linkedKnowledge = 10;
+  it("displays 'All items have source evidence' when sourceEvidenceUnlinkedKnowledge is 0", () => {
+    queryMockState.domainData["knowledge-assets"].kpis.sourceEvidenceUnlinkedKnowledge = 0;
+    queryMockState.domainData["knowledge-assets"].kpis.sourceEvidenceLinkedKnowledge = 10;
     queryMockState.domainData["knowledge-assets"].kpis.knowledgeTotal = 10;
 
     render(
@@ -432,7 +443,7 @@ describe("OverviewPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getByText("All items successfully linked")).toBeInTheDocument();
+    expect(screen.getByText("All items have source evidence")).toBeInTheDocument();
   });
 
   it("displays 'No active LLM sources' when bySource list is empty", () => {

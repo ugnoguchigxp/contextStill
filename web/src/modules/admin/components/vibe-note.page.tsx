@@ -1,22 +1,12 @@
 import { Badge } from "@/components/ui/badge";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { useRouterState } from "@tanstack/react-router";
-import mermaid from "mermaid";
-import { MarkdownEditor } from "markdown-wysiwyg-editor";
-import { useEffect, useMemo, useState } from "react";
 import {
   formatDateTime,
   formatDateTimeCompact,
   formatDateTimeShort,
   useTimezone,
 } from "@/lib/timezone";
-import {
-  type VibeGoal,
-  type VibeMemoryCapsule,
-  fetchVibeGoals,
-  fetchVibeMemoryContext,
-  postMarkVibeMemory,
-} from "../repositories/admin.repository";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useRouterState } from "@tanstack/react-router";
 import {
   AlertTriangle,
   Check,
@@ -31,6 +21,16 @@ import {
   Tag,
   Zap,
 } from "lucide-react";
+import { MarkdownEditor } from "markdown-wysiwyg-editor";
+import mermaid from "mermaid";
+import { useEffect, useMemo, useState } from "react";
+import {
+  type VibeGoal,
+  type VibeMemoryCapsule,
+  fetchVibeGoals,
+  fetchVibeMemoryContext,
+  postMarkVibeMemory,
+} from "../repositories/admin.repository";
 
 mermaid.initialize({ startOnLoad: false });
 

@@ -1,15 +1,15 @@
-import { describe, expect, it, vi, beforeEach, afterEach } from "vitest";
-import {
-  normalizeDistillationSearchQuery,
-  searchWeb,
-  SearchProviderException,
-} from "../src/modules/distillation/search-providers.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { groupedConfig } from "../src/config.js";
 import { db } from "../src/db/client.js";
 import {
   findDistillationEvidenceCache,
   upsertDistillationEvidenceCache,
 } from "../src/modules/distillation/distillation-evidence-cache.repository.js";
-import { groupedConfig } from "../src/config.js";
+import {
+  SearchProviderException,
+  normalizeDistillationSearchQuery,
+  searchWeb,
+} from "../src/modules/distillation/search-providers.js";
 
 // モック定義
 vi.mock("../src/db/client.js", () => {

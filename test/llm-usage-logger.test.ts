@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { db } from "../src/db/index.js";
 import { llmUsageLogs } from "../src/db/schema.js";
 import { logLlmUsage, recordLlmUsage } from "../src/modules/llm/llm-usage-logger.js";
-import { db } from "../src/db/index.js";
 
 const valuesMock = vi.hoisted(() => vi.fn());
 

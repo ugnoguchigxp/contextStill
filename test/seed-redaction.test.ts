@@ -1,5 +1,5 @@
 import { describe, expect, test, vi } from "vitest";
-import { sanitizeSeedPayloadForPersistence, type SeedPayload } from "../src/db/seed.js";
+import { type SeedPayload, sanitizeSeedPayloadForPersistence } from "../src/db/seed.js";
 
 vi.mock("../src/db/index.js", () => ({
   closeDbPool: vi.fn(),

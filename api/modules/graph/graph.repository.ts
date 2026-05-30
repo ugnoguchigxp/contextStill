@@ -11,9 +11,9 @@ import {
 import { normalizeKnowledgeScore, toUnitKnowledgeScore } from "../../../src/lib/score-scale.js";
 import { normalizeRepoKey } from "../../../src/modules/context-compiler/query-context.js";
 import {
-  buildCommunityAssignments,
   type CommunityAssignment,
   type CommunityComponent,
+  buildCommunityAssignments,
 } from "../../../src/modules/graph/community-builder.js";
 import { computeDecayFactor } from "../../../src/modules/knowledge/knowledge-value.service.js";
 

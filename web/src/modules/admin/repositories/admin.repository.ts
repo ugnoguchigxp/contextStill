@@ -526,6 +526,13 @@ export type OverviewDashboard = {
     sourceLinks: number;
     linkedKnowledge: number;
     unlinkedKnowledge: number;
+    sourceEvidenceLinkedKnowledge: number;
+    sourceEvidenceUnlinkedKnowledge: number;
+    originLinkedKnowledge: number;
+    originUnlinkedKnowledge: number;
+    provenanceTraceableKnowledge: number;
+    provenanceUntraceableKnowledge: number;
+    originLinksByKind: Record<string, number>;
     sourceCommunities: number;
     sourceCoveredCommunities: number;
     sourceThinCommunities: number;
@@ -703,6 +710,13 @@ export type OverviewKnowledgeAssetsDomain = {
     | "sourceLinks"
     | "linkedKnowledge"
     | "unlinkedKnowledge"
+    | "sourceEvidenceLinkedKnowledge"
+    | "sourceEvidenceUnlinkedKnowledge"
+    | "originLinkedKnowledge"
+    | "originUnlinkedKnowledge"
+    | "provenanceTraceableKnowledge"
+    | "provenanceUntraceableKnowledge"
+    | "originLinksByKind"
     | "sourceCommunities"
     | "sourceCoveredCommunities"
     | "sourceThinCommunities"

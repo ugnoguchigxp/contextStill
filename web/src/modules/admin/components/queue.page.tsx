@@ -1,4 +1,7 @@
-import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
+import { TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type ColumnDef,
@@ -13,6 +16,7 @@ import {
   CircleCheck,
   Cpu,
   Gem,
+  type LucideIcon,
   Mail,
   Pause,
   Play,
@@ -20,27 +24,24 @@ import {
   RotateCcw,
   Search,
   Timer,
-  type LucideIcon,
 } from "lucide-react";
-import { Badge } from "@/components/ui/badge";
-import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
-import { TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table";
-import { AdminPageHeader } from "./admin-page-header";
-import { AdminSortableTableHead } from "./admin-sortable-table-head";
+import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
-  fetchActiveQueueTasksV2,
-  fetchQueueDashboardStatsV2,
-  fetchQueueItemsV2,
-  pauseQueueLaneV2,
-  pauseQueueJobV2,
-  resumeQueueLaneV2,
-  resumeQueueJobV2,
-  retryQueueJobV2,
   type DistillationQueueName,
   type DistillationQueueStatus,
   type QueueListItemV2,
+  fetchActiveQueueTasksV2,
+  fetchQueueDashboardStatsV2,
+  fetchQueueItemsV2,
+  pauseQueueJobV2,
+  pauseQueueLaneV2,
+  resumeQueueJobV2,
+  resumeQueueLaneV2,
+  retryQueueJobV2,
 } from "../repositories/admin.repository";
+import { AdminPageHeader } from "./admin-page-header";
+import { AdminSortableTableHead } from "./admin-sortable-table-head";
+import { CopyableIdField } from "./copyable-id-field";
 
 const QUEUE_TABS: Array<{ name: DistillationQueueName; label: string }> = [
   { name: "findingCandidate", label: "Finding" },
@@ -175,6 +176,11 @@ function statusTone(status: DistillationQueueStatus): string {
     default:
       return "border-slate-300 bg-slate-50 text-slate-700";
   }
+}
+
+function extractCandidateId(subjectDetail: string): string | null {
+  const match = /(?:^|\|\s*)candidate=([0-9a-f-]{36})/i.exec(subjectDetail);
+  return match?.[1] ?? null;
 }
 
 type ActionMode = "pause" | "resume" | "retry";
@@ -443,10 +449,16 @@ export function QueuePage() {
         header: "Subject",
         cell: ({ row }) => {
           const item = row.original;
+          const candidateId = extractCandidateId(item.subjectDetail);
           return (
             <div className="whitespace-normal">
               <div className="font-medium text-slate-800">{item.subjectTitle}</div>
               <div className="text-xs text-muted-foreground">{item.subjectDetail}</div>
+              {candidateId ? (
+                <div className="mt-1">
+                  <CopyableIdField label="Candidate ID" value={candidateId} />
+                </div>
+              ) : null}
               {item.lastError ? (
                 <div className="mt-1 text-xs text-rose-600">{item.lastError}</div>
               ) : null}

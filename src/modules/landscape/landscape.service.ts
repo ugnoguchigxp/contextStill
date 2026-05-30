@@ -1,7 +1,6 @@
 import { buildGraphSnapshot } from "../../../api/modules/graph/graph.repository.js";
 import { computeDecayFactor } from "../knowledge/knowledge-value.service.js";
 import { runWithLandscapeSnapshotCache } from "./landscape-snapshot-cache.service.js";
-import { LANDSCAPE_DEFAULT_THRESHOLDS, scoreLandscapeCommunity } from "./landscape.scoring.js";
 import {
   loadLandscapeFeedbackAggregates,
   loadLandscapeKnowledgeRows,
@@ -9,6 +8,7 @@ import {
   loadLandscapeSelectionPairs,
   loadLandscapeSourceRefCountMap,
 } from "./landscape.repository.js";
+import { LANDSCAPE_DEFAULT_THRESHOLDS, scoreLandscapeCommunity } from "./landscape.scoring.js";
 import type {
   BuildLandscapeSnapshotInput,
   LandscapeCommunity,

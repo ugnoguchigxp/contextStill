@@ -5,8 +5,8 @@ import {
   retrievalModeSchema,
 } from "../../shared/schemas/compile.schema.js";
 import {
-  extractLandscapeTaskFacets,
   type LandscapeReplayCompileRunInput,
+  extractLandscapeTaskFacets,
 } from "./landscape-facets.js";
 import type {
   LandscapeReplayComparisonKind,

@@ -1,14 +1,14 @@
-import type { ToolEntry } from "../registry.js";
-import {
-  sessionMemoSlotLimit,
-  sessionMemoToolInputSchema,
-} from "../../shared/schemas/session-memo.schema.js";
 import {
   getSessionMemo,
   listSessionMemos,
   putManySessionMemos,
   putSessionMemo,
 } from "../../modules/session-memo/session-memo.service.js";
+import {
+  sessionMemoSlotLimit,
+  sessionMemoToolInputSchema,
+} from "../../shared/schemas/session-memo.schema.js";
+import type { ToolEntry } from "../registry.js";
 
 function resolveSessionId(
   explicitSessionId: string | undefined,

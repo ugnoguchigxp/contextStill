@@ -1,14 +1,14 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
 import os from "node:os";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../src/db/index.js";
 import { recordAuditLogSafe } from "../src/modules/audit/audit-log.service.js";
 import {
-  releaseRetryablePausedDistillationTargets,
-  recoverOrphanedRunningDistillationTargets,
-  recoverStaleDistillationTargets,
+  getDistillationTargetSummary,
   markMissingVibeMemoryTargetsSkipped,
   markMissingWikiTargetsSkipped,
-  getDistillationTargetSummary,
+  recoverOrphanedRunningDistillationTargets,
+  recoverStaleDistillationTargets,
+  releaseRetryablePausedDistillationTargets,
 } from "../src/modules/distillationTarget/repository-maintenance.js";
 
 const mockSelect = vi.fn();

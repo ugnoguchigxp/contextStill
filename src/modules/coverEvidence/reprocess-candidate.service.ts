@@ -9,13 +9,13 @@ import {
 import { parseCoverEvidenceReprocessRequest } from "../../shared/schemas/distillation-target-metadata.schema.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import {
-  CoverEvidenceProviderPolicyError,
-  ensureCloudApiCoverEvidenceRoutesAvailable,
-} from "./provider-policy.js";
-import {
   ensureRuntimeSettingsLoaded,
   resolveCoverEvidenceRoutes,
 } from "../settings/settings.service.js";
+import {
+  CoverEvidenceProviderPolicyError,
+  ensureCloudApiCoverEvidenceRoutesAvailable,
+} from "./provider-policy.js";
 
 export type CoverEvidenceReprocessMode = "cloud_api";
 export type CoverEvidenceReprocessActor = "user" | "system";

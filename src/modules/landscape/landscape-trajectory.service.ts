@@ -3,9 +3,9 @@ import {
   landscapeTrajectoryResultSchema,
 } from "../../shared/schemas/landscape-trajectory.schema.js";
 import {
+  type ContextCompileTaskTrace,
   findContextCompileTaskTraceByRunId,
   listRecentContextCompileTaskTraces,
-  type ContextCompileTaskTrace,
 } from "../context-compiler/context-compile-task-trace.repository.js";
 import { loadLandscapeTrajectory } from "./landscape-trajectory.repository.js";
 

@@ -1,11 +1,11 @@
 import { groupedConfig } from "../../config.js";
 import type { LlmHealthStatus, LlmProvider, LlmProviderName } from "./llm-provider.js";
 import { recordLlmUsage } from "./llm-usage-logger.js";
-import { createOpenAiProvider } from "./providers/openai.provider.js";
-import { createAzureOpenAiProvider } from "./providers/azure-openai.provider.js";
 import { configuredAzureOpenAiDeploymentSlots } from "./providers/azure-openai-config.js";
+import { createAzureOpenAiProvider } from "./providers/azure-openai.provider.js";
 import { createBedrockProvider } from "./providers/bedrock.provider.js";
 import { createLocalLlmProvider } from "./providers/local-llm.provider.js";
+import { createOpenAiProvider } from "./providers/openai.provider.js";
 
 export type AgenticCompileProvider = "openai" | "azure-openai" | "bedrock" | "local-llm" | "auto";
 

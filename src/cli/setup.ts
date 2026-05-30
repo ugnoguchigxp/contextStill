@@ -1,10 +1,10 @@
-import path from "node:path";
 import { readFile } from "node:fs/promises";
-import { detectDockerComposeRunner, runSetupChecks, type SetupCheck } from "./onboarding/checks.js";
-import { runSetupCommand, type SetupCommandResult } from "./onboarding/command-runner.js";
+import path from "node:path";
+import { type SupportedLocale, resolveLocale } from "../shared/locales/locale.js";
+import { type SetupCheck, detectDockerComposeRunner, runSetupChecks } from "./onboarding/checks.js";
+import { type SetupCommandResult, runSetupCommand } from "./onboarding/command-runner.js";
 import { ensureEnvFile, parseEnvValues } from "./onboarding/env-file.js";
 import { buildMcpConfigSnippet } from "./onboarding/mcp-config.js";
-import { resolveLocale, type SupportedLocale } from "../shared/locales/locale.js";
 
 type SetupOptions = {
   dryRun: boolean;

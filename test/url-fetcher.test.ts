@@ -1,15 +1,15 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import {
+  findDistillationEvidenceCache,
+  upsertDistillationEvidenceCache,
+} from "../src/modules/distillation/distillation-evidence-cache.repository.js";
+import {
   compactWhitespace,
   decodeHtmlEntities,
   fetchContent,
   stripMarkup,
   validateFetchContentUrl,
 } from "../src/modules/distillation/url-fetcher.js";
-import {
-  findDistillationEvidenceCache,
-  upsertDistillationEvidenceCache,
-} from "../src/modules/distillation/distillation-evidence-cache.repository.js";
 
 vi.mock("../src/modules/distillation/distillation-evidence-cache.repository.js", () => ({
   evidenceCacheFreshAfter: vi.fn().mockReturnValue(new Date()),

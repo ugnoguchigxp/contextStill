@@ -17,14 +17,14 @@ import { groupedConfig } from "../config.js";
 import { knowledgeItems } from "./schema-knowledge.js";
 import {
   auditLogActorValues,
-  compileRunSourceValues,
   compileEvalOutcomeValues,
+  compileRunSourceValues,
   contextCompileCandidateTraceAgenticDecisionValues,
   contextCompileTaskTraceEmbeddingStatusValues,
   knowledgeReviewProposedActionValues,
   knowledgeReviewQueueStatusValues,
-  knowledgeUsageVerdictValues,
   knowledgeTypeValues,
+  knowledgeUsageVerdictValues,
   packSectionValues,
   runStatusValues,
 } from "./schema.constants.js";

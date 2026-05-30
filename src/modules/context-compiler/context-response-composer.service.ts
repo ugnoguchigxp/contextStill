@@ -1,6 +1,6 @@
+import { groupedConfig } from "../../config.js";
 import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
 import type { ContextPackItem } from "../../shared/schemas/context-pack.schema.js";
-import { groupedConfig } from "../../config.js";
 import { getAgenticLlmProviders } from "../llm/agentic-llm.service.js";
 import {
   isRateLimitError,

@@ -39,9 +39,9 @@ import {
 import { parseCoverEvidenceResult } from "./parser.js";
 import { repairProcedureCandidate } from "./procedure-repair.service.js";
 import {
+  applicabilityBlankResponseReminderLines,
   applicabilityRefinementSystemPrompt,
   applicabilityRefinementUserPrompt,
-  applicabilityBlankResponseReminderLines,
   externalEvidenceSystemPrompt,
   externalEvidenceUserPrompt,
   mcpEvidenceSystemPrompt,
@@ -564,6 +564,31 @@ export async function runExternalEvidence(params: {
           "web",
           "knowledge_ready|insufficient|duplicate|near_duplicate",
         ),
+        requireToolCallReminder: [
+          "直前の応答はまだ採用できません。",
+          "この検証 session では外部証拠の tool 呼び出しが必須です。",
+          "最初に `| keyword 1 | keyword 2 |` 形式で検索キーワードだけを返してください。",
+          "keyword は1から5個です。名詞・固有名詞・API名・機能名・エラー名だけを選び、文章にしないでください。",
+          "固有名詞・機能名・API名・ライブラリ名・エラー名を優先してください。",
+          "search_web の結果を受け取ったら `2,3,4` のように読む候補番号だけを返してください。",
+          "最終回答は JSON ではなくラベル形式（STATUS/STAGE/TYPE/TITLE/BODY/IMPORTANCE/CONFIDENCE/TECHNOLOGIES/CHANGE_TYPES/DOMAINS/REASON）で返してください。",
+        ],
+        toolResultReminder: (toolResult) => {
+          if (toolResult.name === "search_web") {
+            return [
+              "検索結果を受け取りました。次の応答は読む候補番号だけです。",
+              "形式: `2,3,4`。説明、URL、JSON、ラベルは返さないでください。",
+            ];
+          }
+          if (toolResult.name === "fetch_content") {
+            return [
+              "一次ソース本文を受け取りました。次の応答は最終判定だけです。",
+              "最終判定はラベル形式: STATUS / STAGE / TYPE / TITLE / BODY / IMPORTANCE / CONFIDENCE / TECHNOLOGIES / CHANGE_TYPES / DOMAINS / REASON。",
+              "STATUS は knowledge_ready|insufficient|duplicate|near_duplicate のいずれかです。",
+            ];
+          }
+          return undefined;
+        },
         toolNames: ["search_web", "fetch_content"],
         auditContext: {
           domain: "coverEvidence",

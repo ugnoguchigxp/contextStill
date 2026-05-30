@@ -13,9 +13,9 @@ import { graphRouter } from "./modules/graph/graph.routes.js";
 import { knowledgeRouter } from "./modules/knowledge/knowledge.routes.js";
 import { overviewRouter } from "./modules/overview/overview.routes.js";
 import { queueRouter } from "./modules/queue/queue.routes.js";
+import { sessionMemoRouter } from "./modules/session-memo/session-memo.routes.js";
 import { settingsRouter } from "./modules/settings/settings.routes.js";
 import { sourcesRouter } from "./modules/sources/sources.routes.js";
-import { sessionMemoRouter } from "./modules/session-memo/session-memo.routes.js";
 import { vibeMemoryRouter } from "./modules/vibe-memory/vibe-memory.routes.js";
 
 const app = new Hono();

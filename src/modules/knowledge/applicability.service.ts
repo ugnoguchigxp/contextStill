@@ -1,5 +1,5 @@
-import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
 import { asRecord } from "../../shared/utils/normalize.js";
+import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
 import { type KnowledgeTagKind, listKnowledgeTagDefinitions } from "./knowledge-tags.repository.js";
 
 export type KnowledgeApplicabilityInput = {

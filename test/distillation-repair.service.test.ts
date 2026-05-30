@@ -2,8 +2,8 @@ import fs from "node:fs/promises";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { readFileLockState } from "../src/cli/file-lock.js";
 import { getDb } from "../src/db/index.js";
-import { runDistillationRepair } from "../src/modules/distillationTarget/repair.service.js";
 import { isManualPauseTarget } from "../src/modules/distillationTarget/manual-pause.js";
+import { runDistillationRepair } from "../src/modules/distillationTarget/repair.service.js";
 import {
   recoverStaleDistillationTargets,
   releaseRetryablePausedDistillationTargets,

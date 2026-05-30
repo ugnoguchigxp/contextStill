@@ -33,8 +33,8 @@ import {
   listKnowledgeItems,
   updateKnowledgeItem,
 } from "../api/modules/knowledge/knowledge.repository.js";
-import { contextCompileTool } from "../src/mcp/tools/context-compile.tool.js";
 import { compileEvalTool } from "../src/mcp/tools/compile-eval.tool.js";
+import { contextCompileTool } from "../src/mcp/tools/context-compile.tool.js";
 import {
   listKnowledgeTool,
   registerCandidateTool,
@@ -50,8 +50,8 @@ import {
 } from "../src/mcp/tools/memory.tool.js";
 import { sessionMemoTool } from "../src/mcp/tools/session-memo.tool.js";
 import { doctorTool, initialInstructionsTool } from "../src/mcp/tools/system.tool.js";
-import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
 import { recordCompileEval } from "../src/modules/context-compiler/context-compile-eval.service.js";
+import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
 import { runDoctor } from "../src/modules/doctor/doctor.service.js";
 import { searchKnowledgeCandidates } from "../src/modules/knowledge/knowledge.service.js";
 import { registerCandidate } from "../src/modules/registerCandidate/register-candidate.service.js";

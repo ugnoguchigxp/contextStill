@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
-import { closeDbPool, db } from "../db/index.js";
 import { sql } from "drizzle-orm";
+import { closeDbPool, db } from "../db/index.js";
 
 type CliOptions = {
   dryRun: boolean;

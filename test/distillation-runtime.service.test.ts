@@ -435,6 +435,113 @@ describe("Distillation Runtime Service", () => {
     expect(assistantWithToolCall?.tool_calls?.[0]?.function.name).toBe("tool_from_content");
   });
 
+  test("parseOpenAiStyleResponse recovers malformed content-embedded tool call JSON", async () => {
+    const { parseOpenAiStyleResponse } = await import(
+      "../src/modules/distillation/distillation-runtime.service.js"
+    );
+    const malformedToolCall =
+      '{"name":"search_web","arguments":{"query":"compileContextPack は呼び出し元 source run に記録する"}akad}}';
+
+    const parsed = parseOpenAiStyleResponse({
+      choices: [{ message: { content: malformedToolCall, tool_calls: [] } }],
+    });
+
+    expect(parsed.content).toBeNull();
+    expect(parsed.toolCalls).toHaveLength(1);
+    expect(parsed.toolCalls[0]?.function.name).toBe("search_web");
+    expect(parsed.toolCalls[0]?.function.arguments).toContain("compileContextPack");
+  });
+
+  test("parseOpenAiStyleResponse recovers slash-delimited search_web format", async () => {
+    const { parseOpenAiStyleResponse } = await import(
+      "../src/modules/distillation/distillation-runtime.service.js"
+    );
+    const parsed = parseOpenAiStyleResponse({
+      choices: [
+        {
+          message: {
+            content: "name/search_web/query/JSON repair package for malformed output",
+            tool_calls: [],
+          },
+        },
+      ],
+    });
+
+    expect(parsed.content).toBeNull();
+    expect(parsed.toolCalls).toHaveLength(1);
+    expect(parsed.toolCalls[0]?.function.name).toBe("search_web");
+    expect(parsed.toolCalls[0]?.function.arguments).toContain("JSON repair package");
+  });
+
+  test("parseOpenAiStyleResponse recovers pipe-delimited keyword format", async () => {
+    const { parseOpenAiStyleResponse } = await import(
+      "../src/modules/distillation/distillation-runtime.service.js"
+    );
+    const parsed = parseOpenAiStyleResponse({
+      choices: [
+        {
+          message: {
+            content: "| json repair | llm output parser |",
+            tool_calls: [],
+          },
+        },
+      ],
+    });
+
+    expect(parsed.content).toBeNull();
+    expect(parsed.toolCalls).toHaveLength(1);
+    expect(parsed.toolCalls[0]?.function.name).toBe("search_web");
+    expect(parsed.toolCalls[0]?.function.arguments).toContain("json repair");
+  });
+
+  test("parseOpenAiStyleResponse compacts long pipe-delimited keyword text", async () => {
+    const { parseOpenAiStyleResponse } = await import(
+      "../src/modules/distillation/distillation-runtime.service.js"
+    );
+    const parsed = parseOpenAiStyleResponse({
+      choices: [
+        {
+          message: {
+            content: "| 仕様変更時は段階的テスト実行で検証する |",
+            tool_calls: [],
+          },
+        },
+      ],
+    });
+
+    expect(parsed.content).toBeNull();
+    expect(parsed.toolCalls).toHaveLength(1);
+    const args = JSON.parse(parsed.toolCalls[0]?.function.arguments ?? "{}") as {
+      query?: string;
+      normalizedFrom?: string;
+      rawQueryPreview?: string;
+    };
+    expect(args.query).toBe("仕様変更時 段階的テスト実行 検証");
+    expect(args.normalizedFrom).toBe("pipe_keywords");
+    expect(args.rawQueryPreview).toContain("仕様変更時は");
+  });
+
+  test("parseOpenAiStyleResponse recovers numeric selection format for fetch_content", async () => {
+    const { parseOpenAiStyleResponse } = await import(
+      "../src/modules/distillation/distillation-runtime.service.js"
+    );
+    const parsed = parseOpenAiStyleResponse({
+      choices: [
+        {
+          message: {
+            content: "2,3,4",
+            tool_calls: [],
+          },
+        },
+      ],
+    });
+
+    expect(parsed.content).toBeNull();
+    expect(parsed.toolCalls).toHaveLength(1);
+    expect(parsed.toolCalls[0]?.function.name).toBe("fetch_content");
+    expect(parsed.toolCalls[0]?.function.arguments).toContain("2,3,4");
+  });
+
   test("resolveDistillationModel uses selected provider model", () => {
     groupedConfig.distillation.provider = "azure-openai";
     groupedConfig.azureOpenAi.apiKey = "key";

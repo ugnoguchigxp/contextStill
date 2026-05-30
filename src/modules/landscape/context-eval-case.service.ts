@@ -1,10 +1,11 @@
-import fs from "fs/promises";
+import fs from "node:fs/promises";
 import { deriveRetrievalModeFromChangeTypes } from "../../shared/schemas/compile.schema.js";
 import {
-  contextEvalCaseSchema,
   type ContextEvalCase,
   type ContextEvalCaseReport,
   type ContextEvalCaseResult,
+  contextEvalCaseReportSchema,
+  contextEvalCaseSchema,
 } from "../../shared/schemas/context-eval-case.schema.js";
 import { retrieveKnowledge } from "../knowledge/knowledge.service.js";
 
@@ -62,7 +63,7 @@ export async function buildContextEvalCaseReport(
   const cases = await loadContextEvalCases(input.casesPath);
 
   if (cases.length === 0) {
-    return {
+    return contextEvalCaseReportSchema.parse({
       generatedAt,
       source: {
         mode: "cases",
@@ -92,7 +93,7 @@ export async function buildContextEvalCaseReport(
         degradedCaseCount: 0,
       },
       cases: [],
-    };
+    });
   }
 
   const results: ContextEvalCaseResult[] = [];
@@ -127,7 +128,8 @@ export async function buildContextEvalCaseReport(
       retrievedKnowledgeIds.includes(forbiddenId),
     );
 
-    const status = missingExpectedIds.length === 0 && forbiddenHitIds.length === 0 ? "passed" : "failed";
+    const status =
+      missingExpectedIds.length === 0 && forbiddenHitIds.length === 0 ? "passed" : "failed";
 
     results.push({
       id,
@@ -173,7 +175,7 @@ export async function buildContextEvalCaseReport(
       ? "All evaluation cases passed."
       : `${failedCount} of ${caseCount} cases failed expected or forbidden assertions.`;
 
-  return {
+  return contextEvalCaseReportSchema.parse({
     generatedAt,
     source: {
       mode: "cases",
@@ -203,5 +205,5 @@ export async function buildContextEvalCaseReport(
       degradedCaseCount,
     },
     cases: results,
-  };
+  });
 }

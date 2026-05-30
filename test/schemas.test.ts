@@ -9,11 +9,11 @@ import {
   registerKnowledgeInputSchema,
   updateKnowledgeInputSchema,
 } from "../src/shared/schemas/knowledge.schema.ts";
-import { landscapeSnapshotSchema } from "../src/shared/schemas/landscape.schema.ts";
 import {
   landscapeReviewItemSchema,
   landscapeReviewItemsMaterializeInputSchema,
 } from "../src/shared/schemas/landscape-review.schema.ts";
+import { landscapeSnapshotSchema } from "../src/shared/schemas/landscape.schema.ts";
 import { overviewDashboardSchema } from "../src/shared/schemas/overview.schema.ts";
 import { recordVibeMemoryInputSchema } from "../src/shared/schemas/vibe-memory.schema.ts";
 import {

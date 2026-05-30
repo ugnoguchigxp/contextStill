@@ -2,20 +2,20 @@ import { randomUUID } from "node:crypto";
 import type { z } from "zod";
 import { db } from "../../db/index.js";
 import {
+  coveringEvidenceQueue,
   distillationTargetStates,
   findCandidateResults,
   findingCandidateQueue,
   foundCandidates,
-  coveringEvidenceQueue,
 } from "../../db/schema.js";
 import { registerCandidateInputSchema } from "../../shared/schemas/knowledge.schema.js";
 import { registerCandidatesBulkInputSchema } from "../../shared/schemas/knowledge.schema.js";
 import { hasSkillLikeProcedureBody } from "../distillation/procedure-quality.js";
+import { resolveKnowledgeCandidatePriorityGroup } from "../distillationTarget/priority-group.js";
+import { DEFAULT_DISTILLATION_TARGET_VERSION } from "../distillationTarget/repository.js";
 import { parseStorageCandidatesFromLlmOutput } from "../findCandidate/parser.js";
 import type { CandidateKnowledgeType } from "../findCandidate/repository.js";
 import { appendQueueEvent } from "../queue/core/events.js";
-import { DEFAULT_DISTILLATION_TARGET_VERSION } from "../distillationTarget/repository.js";
-import { resolveKnowledgeCandidatePriorityGroup } from "../distillationTarget/priority-group.js";
 
 export type RegisterCandidateInput = z.input<typeof registerCandidateInputSchema>;
 

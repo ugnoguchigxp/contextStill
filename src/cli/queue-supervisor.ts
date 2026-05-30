@@ -1,9 +1,9 @@
 import { groupedConfig } from "../config.js";
 import { closeDbPool } from "../db/index.js";
 import {
+  type DistillationQueueName,
   distillationQueueNames,
   runQueueWorkerOnce,
-  type DistillationQueueName,
 } from "../modules/queue/core/index.js";
 
 type CliOptions = {

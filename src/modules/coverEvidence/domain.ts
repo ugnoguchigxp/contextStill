@@ -13,7 +13,6 @@ import {
   resolveCoverEvidenceRoutes,
 } from "../settings/settings.service.js";
 import type { RuntimeSettingsRoute } from "../settings/settings.types.js";
-import { resolveCoverEvidenceRouteByPolicy } from "./provider-policy.js";
 import { dedupeCoverEvidenceCandidate } from "./dedupe.service.js";
 import {
   baseCandidate,
@@ -27,6 +26,7 @@ import {
 } from "./helpers.js";
 import { appendOptionalMcpEvidence, runExternalEvidence } from "./llm-runner.js";
 import { parseCoverEvidenceResult } from "./parser.js";
+import { resolveCoverEvidenceRouteByPolicy } from "./provider-policy.js";
 import {
   coverEvidenceResultFromRow,
   saveCoverEvidenceResult,
@@ -55,6 +55,38 @@ type CoverEvidenceResolvedProviderRoute = {
   model: string;
   azureDeploymentSlots?: number[];
 };
+
+function isCoverEvidenceFailureStatus(status: string): boolean {
+  return status === "parse_failed" || status === "tool_failed" || status === "provider_failed";
+}
+
+function summarizeCoverEvidenceFailure(result: CoverEvidenceResult): Record<string, unknown> {
+  const parseFailureEvent = result.toolEvents.find(
+    (event) => event.name === "parse_cover_evidence_result" && event.ok === false,
+  );
+  const metadata =
+    parseFailureEvent && parseFailureEvent.metadata && typeof parseFailureEvent.metadata === "object"
+      ? (parseFailureEvent.metadata as Record<string, unknown>)
+      : null;
+  return {
+    reason: result.reason ?? null,
+    candidatePresent: Boolean(result.candidate),
+    toolEventCount: result.toolEvents.length,
+    failedToolEventNames: result.toolEvents
+      .filter((event) => event.ok === false)
+      .map((event) => event.name),
+    parseFailure: metadata
+      ? {
+          parserEventName: parseFailureEvent?.name ?? null,
+          parserError: parseFailureEvent?.error ?? null,
+          parserReason: metadata.reason ?? null,
+          contentChars: metadata.contentChars ?? null,
+          contentPreview: metadata.contentPreview ?? null,
+          toolEventCount: metadata.toolEventCount ?? null,
+        }
+      : null,
+  };
+}
 
 function dedupeProviderFallbackOrder(
   values: DistillationProviderName[],
@@ -408,8 +440,23 @@ export async function runCoverEvidence(
         status: result.status,
         stage: result.stage,
         saved: Boolean(input.write),
+        ...summarizeCoverEvidenceFailure(result),
       },
     });
+
+    if (isCoverEvidenceFailureStatus(result.status)) {
+      await recordAuditLogSafe({
+        eventType: auditEventTypes.coverEvidenceFailed,
+        actor: "system",
+        payload: {
+          id,
+          status: result.status,
+          stage: result.stage,
+          saved: Boolean(input.write),
+          ...summarizeCoverEvidenceFailure(result),
+        },
+      });
+    }
 
     return { id, result };
   } catch (error) {

@@ -16,11 +16,11 @@ import {
   readCodexFileContext,
 } from "./codex-parser.js";
 import {
+  type RootBuildOptions,
   buildAntigravityIngestRoots,
   buildClaudeIngestRoots,
   buildCodexIngestRoots,
   decodeClaudeProjectPath,
-  type RootBuildOptions,
 } from "./ingest-roots.js";
 import { filterSensitiveData } from "./log-filter.js";
 import { deriveProjectFromPath } from "./project-analyzer.js";

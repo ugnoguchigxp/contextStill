@@ -1,6 +1,6 @@
-import { eq, and } from "drizzle-orm";
-import { db, closeDbPool } from "../db/index.js";
-import { findingCandidateQueue, foundCandidates, coveringEvidenceQueue } from "../db/schema.js";
+import { and, eq } from "drizzle-orm";
+import { closeDbPool, db } from "../db/index.js";
+import { coveringEvidenceQueue, findingCandidateQueue, foundCandidates } from "../db/schema.js";
 import { appendQueueEvent } from "../modules/queue/core/events.js";
 
 async function main() {

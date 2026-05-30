@@ -1,7 +1,7 @@
 import os from "node:os";
 import { and, eq, isNull, lt, lte, or } from "drizzle-orm";
-import { distillationTargetStates } from "../../db/schema.js";
 import { APP_CONSTANTS } from "../../constants.js";
+import { distillationTargetStates } from "../../db/schema.js";
 
 export const DEFAULT_DISTILLATION_TARGET_VERSION = APP_CONSTANTS.distillationTargetVersion;
 

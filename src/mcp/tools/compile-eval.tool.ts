@@ -35,7 +35,7 @@ export const compileEvalTool: ToolEntry = {
         type: "integer",
         minimum: 0,
         maximum: 100,
-        description: "余計な情報が少なかったか (0-100)",
+        description: "低ノイズ度。100=余計な情報がほぼない、0=余計な情報が多い",
       },
       specificity: {
         type: "integer",

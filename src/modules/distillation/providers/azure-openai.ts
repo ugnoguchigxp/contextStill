@@ -2,8 +2,8 @@ import { groupedConfig } from "../../../config.js";
 import { LlmProviderHttpError, parseRetryAfterSeconds } from "../../llm/provider-http-error.js";
 import {
   type AzureOpenAiRuntimeDeployment,
-  azureOpenAiDeploymentAuditLabel,
   azureOpenAiCooldownError,
+  azureOpenAiDeploymentAuditLabel,
   azureOpenAiDeploymentsForTask,
   azureOpenAiHeaders,
   buildAzureOpenAiChatUrl,

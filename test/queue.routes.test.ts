@@ -1,7 +1,7 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { queueRouter } from "../api/modules/queue/queue.routes.js";
 import * as repo from "../api/modules/queue/queue.repository.js";
+import { queueRouter } from "../api/modules/queue/queue.routes.js";
 
 vi.mock("../api/modules/queue/queue.repository.js", () => ({
   fetchQueueDashboardStats: vi.fn(),

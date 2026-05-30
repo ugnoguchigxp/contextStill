@@ -1,13 +1,15 @@
 import { buildGraphSnapshot } from "../../../api/modules/graph/graph.repository.js";
 import {
-  extractLandscapeTaskFacets,
-  enumerateLandscapeTaskFacetEntries,
-} from "./landscape-facets.js";
-import {
-  buildLandscapeCommunityComparison,
   type LandscapeRelationCommunityAssignment,
+  buildLandscapeCommunityComparison,
 } from "./landscape-community-comparison.js";
 import {
+  enumerateLandscapeTaskFacetEntries,
+  extractLandscapeTaskFacets,
+} from "./landscape-facets.js";
+import {
+  type PackItemForReplay,
+  type UsageEventForReplay,
   addVerdictMix,
   asClassificationConfidence,
   asFeedbackConfidence,
@@ -18,11 +20,8 @@ import {
   groupByRunId,
   incrementVerdict,
   rate,
-  type PackItemForReplay,
-  type UsageEventForReplay,
 } from "./landscape-replay.helpers.js";
 import { loadLandscapeReplayCorpus } from "./landscape-replay.repository.js";
-import { runWithLandscapeSnapshotCache } from "./landscape-snapshot-cache.service.js";
 import type {
   BuildLandscapeReplaySnapshotInput,
   LandscapeAcceptanceWindowSummary,
@@ -34,6 +33,7 @@ import type {
   LandscapeReplaySnapshot,
   LandscapeVerdictMix,
 } from "./landscape-replay.types.js";
+import { runWithLandscapeSnapshotCache } from "./landscape-snapshot-cache.service.js";
 import { buildLandscapeSnapshot } from "./landscape.service.js";
 import type { LandscapeClassificationPrimary, LandscapeCommunity } from "./landscape.types.js";
 

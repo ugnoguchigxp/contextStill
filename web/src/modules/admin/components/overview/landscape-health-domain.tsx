@@ -1,8 +1,8 @@
-import React from "react";
-import { Activity } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
-import { cn } from "@/lib/utils";
 import { formatNumber } from "@/lib/admin-formatters";
+import { cn } from "@/lib/utils";
+import { Activity } from "lucide-react";
+import React from "react";
 import type { OverviewLandscapeHealthDomain } from "../../repositories/admin.repository";
 
 type LandscapeHealthDomainProps = {

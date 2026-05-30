@@ -1,10 +1,10 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { groupedConfig } from "../src/config.js";
-import {
-  applyRuntimeSettingsToProcess,
-  type SecretValueEntry,
-} from "../src/modules/settings/settings.runtime-cache.js";
 import { cloneDefaultSettings } from "../src/modules/settings/settings.defaults.js";
+import {
+  type SecretValueEntry,
+  applyRuntimeSettingsToProcess,
+} from "../src/modules/settings/settings.runtime-cache.js";
 import type {
   RuntimeSecretKey,
   RuntimeSettingsEditable,

@@ -8,12 +8,15 @@ import type {
   KnowledgeStatus,
 } from "../../shared/schemas/knowledge.schema.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
-import { linkKnowledgeFromMetadata } from "./source-linking.service.js";
 import { computeDecayFactor } from "./knowledge-value.service.js";
 import {
+  type ApplicabilityQuery,
+  type KnowledgeSearchOptions,
+  type KnowledgeSearchQueryInput,
+  type KnowledgeSearchResult,
+  type UpsertKnowledgeFromSourceParams,
   asRecord,
   buildApplicabilityQuery,
-  type ApplicabilityQuery,
   buildKnowledgeScopeMetadata,
   buildRepoScopedCondition,
   computeApplicability,
@@ -21,11 +24,8 @@ import {
   finiteOrZero,
   hasApplicabilityQuery,
   resolveKnowledgeActor,
-  type KnowledgeSearchOptions,
-  type KnowledgeSearchQueryInput,
-  type KnowledgeSearchResult,
-  type UpsertKnowledgeFromSourceParams,
 } from "./knowledge.repository.shared.js";
+import { linkKnowledgeFromMetadata } from "./source-linking.service.js";
 
 export type { KnowledgeSearchOptions, KnowledgeSearchResult, UpsertKnowledgeFromSourceParams };
 

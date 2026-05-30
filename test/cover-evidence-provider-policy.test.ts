@@ -1,10 +1,10 @@
 import { describe, expect, test } from "vitest";
-import type { RuntimeSettingsRoute } from "../src/modules/settings/settings.types.js";
 import {
   CoverEvidenceProviderPolicyError,
   resolveCloudApiRuntimeRoute,
   resolveCoverEvidenceRouteByPolicy,
 } from "../src/modules/coverEvidence/provider-policy.js";
+import type { RuntimeSettingsRoute } from "../src/modules/settings/settings.types.js";
 
 function runtimeRoute(
   provider: RuntimeSettingsRoute["provider"],

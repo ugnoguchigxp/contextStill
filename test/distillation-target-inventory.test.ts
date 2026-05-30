@@ -1,13 +1,13 @@
+import { readFile, readdir } from "node:fs/promises";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { readdir, readFile } from "node:fs/promises";
 import { db } from "../src/db/index.js";
 import { recordAuditLogSafe } from "../src/modules/audit/audit-log.service.js";
 import {
+  findNextSelectableDistillationTargetState,
   listDistillationTargetStatesForCandidates,
-  upsertDistillationTargetState,
   markMissingVibeMemoryTargetsSkipped,
   markMissingWikiTargetsSkipped,
-  findNextSelectableDistillationTargetState,
+  upsertDistillationTargetState,
 } from "../src/modules/distillationTarget/repository.js";
 
 const mocks = vi.hoisted(() => ({

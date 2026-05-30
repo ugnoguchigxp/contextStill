@@ -5,18 +5,19 @@ import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
 import { asRecord, parseCsvListOptional } from "@/lib/data-utils";
+import { formatDate as tzFormatDate, useTimezone } from "@/lib/timezone";
 import { Settings2 } from "lucide-react";
 import { MarkdownEditor } from "markdown-wysiwyg-editor";
 import mermaid from "mermaid";
 import { useMemo, useState } from "react";
 import { useForm } from "react-hook-form";
 import {
-  ResponsiveContainer,
-  RadarChart,
-  PolarGrid,
   PolarAngleAxis,
+  PolarGrid,
   PolarRadiusAxis,
   Radar,
+  RadarChart,
+  ResponsiveContainer,
 } from "recharts";
 import {
   useCompilePack,
@@ -31,18 +32,17 @@ import type {
   CompileRunDetail,
   CompileRunKnowledgeFeedbackResult,
   CompileRunKnowledgeFeedbackWriteItem,
-  CompileRunKnowledgeVerdict,
   CompileRunKnowledgeSignal,
+  CompileRunKnowledgeVerdict,
   CompileRunRankingTrace,
   CompileRunSource,
   CompileRunSummary,
 } from "../repositories/context-compiler.repository";
-import { useTimezone, formatDate as tzFormatDate } from "@/lib/timezone";
 import {
-  formatLatency,
   RunSidebar,
   SourceBadge,
   StatusBadge,
+  formatLatency,
 } from "./context-compiler.run-sidebar";
 
 type FormValues = {
@@ -540,7 +540,7 @@ function EvaluationRadarChart({
     { subject: `目的適合: ${relevance}`, value: relevance },
     { subject: `実行可能: ${actionability}`, value: actionability },
     { subject: `網羅性: ${coverage}`, value: coverage },
-    { subject: `ノイズ削減: ${noise}`, value: noise },
+    { subject: `低ノイズ: ${noise}`, value: noise },
     { subject: `具体性: ${specificity}`, value: specificity },
   ];
 
@@ -614,10 +614,7 @@ function EvaluationRadarChart({
           margin={{ top: 10, right: 30, bottom: 10, left: 30 }}
         >
           <PolarGrid stroke="rgba(0, 0, 0, 0.08)" gridType="polygon" />
-          <PolarAngleAxis
-            dataKey="subject"
-            tick={renderCustomTick}
-          />
+          <PolarAngleAxis dataKey="subject" tick={renderCustomTick} />
           <PolarRadiusAxis
             angle={90}
             domain={[0, 100]}
@@ -731,7 +728,9 @@ function RunDetailPane({
               <SourceBadge source={detail.run.source} />
               <span>{detail.run.retrievalMode}</span>
               <span>{formatLatency(detail.run.durationMs)}</span>
-              <span style={{ fontFamily: "monospace", fontSize: "11px", color: "#6b7280" }}>id: {detail.run.id}</span>
+              <span style={{ fontFamily: "monospace", fontSize: "11px", color: "#6b7280" }}>
+                id: {detail.run.id}
+              </span>
             </div>
           </div>
           <time>{tzFormatDate(detail.run.createdAt, tz)}</time>

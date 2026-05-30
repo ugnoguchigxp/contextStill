@@ -1,7 +1,7 @@
+import { groupedConfig } from "../../config.js";
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
 import type { CompileInput, RetrievalMode } from "../../shared/schemas/compile.schema.js";
 import type { KnowledgeItem, KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
-import { groupedConfig } from "../../config.js";
 import { getAgenticLlmProviders } from "../llm/agentic-llm.service.js";
 import {
   isRateLimitError,

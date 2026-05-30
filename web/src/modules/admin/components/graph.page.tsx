@@ -5,13 +5,6 @@ import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
-import { ContradictionReviewList } from "./contradiction-review-list";
-import {
-  SandboxComparisonPanel,
-  sandboxChangedKnowledgeIds,
-  type SandboxDiffFilter,
-} from "./sandbox-comparison-panel";
-import { TrajectoryPanel, type TrajectoryStageFilter } from "./trajectory-panel";
 import {
   type GraphCommunityDisplayMode,
   type GraphCommunitySummary,
@@ -25,23 +18,30 @@ import {
   type GraphViewMode,
   type LandscapeCommunity,
   type LandscapeContradictionOverlayItem,
-  type LandscapeTrajectoryCandidate,
   type LandscapeReplayComparisonRun,
   type LandscapeReviewItem,
-  fetchLandscapeContradictionOverlay,
-  fetchLandscapeTrajectory,
+  type LandscapeTrajectoryCandidate,
   createLandscapeReviewCandidates,
   fetchGraphNodeDetail,
   fetchGraphSnapshot,
+  fetchLandscapeContradictionOverlay,
   fetchLandscapeReplayComparison,
   fetchLandscapeReplaySnapshot,
-  fetchLandscapeSnapshotCacheStatus,
   fetchLandscapeReviewItems,
   fetchLandscapeSnapshot,
+  fetchLandscapeSnapshotCacheStatus,
+  fetchLandscapeTrajectory,
   materializeLandscapeReviewItems,
   updateGraphCommunityLabel,
   updateLandscapeReviewItemStatus,
 } from "../repositories/admin.repository";
+import { ContradictionReviewList } from "./contradiction-review-list";
+import {
+  SandboxComparisonPanel,
+  type SandboxDiffFilter,
+  sandboxChangedKnowledgeIds,
+} from "./sandbox-comparison-panel";
+import { TrajectoryPanel, type TrajectoryStageFilter } from "./trajectory-panel";
 
 const nodeColors: Record<string, string> = {
   rule: "#14b8a6",

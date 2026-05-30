@@ -512,15 +512,18 @@ describe("runCoverEvidence", () => {
       maxToolRounds: number;
       timeoutMs: number;
       toolCallLimits: Record<string, number>;
+      toolResultReminder?: unknown;
     };
     expect(options.maxToolRounds).toBe(4);
     expect(options.timeoutMs).toBe(600_000);
     expect(options.toolCallLimits).toEqual({ search_web: 1, fetch_content: 3 });
+    expect(options.toolResultReminder).toEqual(expect.any(Function));
     const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
-    expect(request.messages[0]?.content).toContain("fetch_content は同じ検証 session で複数回");
-    expect(request.messages[0]?.content).toContain("search_web を同義の言い換え query");
+    expect(request.messages[0]?.content).toContain("段階1");
+    expect(request.messages[0]?.content).toContain("keyword は1から5個");
+    expect(request.messages[1]?.content).toContain("検索語ヒント");
     expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(1);
   });
 

@@ -91,6 +91,7 @@ export type DistillationRuntimeOptions = {
   toolDefinitions?: DistillationRuntimeToolDefinition[];
   usageSource?: string;
   requireToolCallReminder?: string[];
+  toolResultReminder?: (toolResult: DistillationToolResult) => string[] | undefined;
   blankResponseReminder?: string[];
   signal?: AbortSignal;
   timeoutMs?: number;

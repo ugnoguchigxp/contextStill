@@ -3,7 +3,7 @@ import { closeDbPool } from "../db/index.js";
 import { compileContextPack } from "../modules/context-compiler/context-compiler.service.js";
 import { upsertKnowledgeFromSource } from "../modules/knowledge/knowledge.repository.js";
 import { importMarkdownDirectory } from "../modules/sources/markdown-importer.service.js";
-import { resolveLocale, type SupportedLocale } from "../shared/locales/locale.js";
+import { type SupportedLocale, resolveLocale } from "../shared/locales/locale.js";
 import { buildMcpConfigSnippet } from "./onboarding/mcp-config.js";
 
 type CliOptions = {

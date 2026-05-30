@@ -166,6 +166,17 @@ export const overviewDashboardValidInput = {
     sourceLinks: 12,
     linkedKnowledge: 6,
     unlinkedKnowledge: 4,
+    sourceEvidenceLinkedKnowledge: 6,
+    sourceEvidenceUnlinkedKnowledge: 4,
+    originLinkedKnowledge: 3,
+    originUnlinkedKnowledge: 7,
+    provenanceTraceableKnowledge: 8,
+    provenanceUntraceableKnowledge: 2,
+    originLinksByKind: {
+      vibe_memory: 2,
+      agent_candidate: 1,
+      landscape_review_item: 0,
+    },
     sourceCommunities: 3,
     sourceCoveredCommunities: 1,
     sourceThinCommunities: 1,
@@ -279,7 +290,10 @@ export const overviewDashboardValidInput = {
 
 export const overviewDashboardUnavailableLandscapeInput = {
   ...overviewDashboardValidInput,
-  kpis: Object.fromEntries(Object.keys(overviewDashboardValidInput.kpis).map((key) => [key, 0])),
+  kpis: {
+    ...Object.fromEntries(Object.keys(overviewDashboardValidInput.kpis).map((key) => [key, 0])),
+    originLinksByKind: {},
+  },
   charts: {
     knowledgeByStatusType: [],
     dynamicScoreBuckets: [],

@@ -1,5 +1,5 @@
 import { findSettingsRow, upsertSettingsRow } from "../../settings/settings.repository.js";
-import { distillationQueueNames, type DistillationQueueName } from "./types.js";
+import { type DistillationQueueName, distillationQueueNames } from "./types.js";
 
 const QUEUE_CONTROL_NAMESPACE = "runtime";
 const QUEUE_CONTROL_KEY = "queue.controls.v1";

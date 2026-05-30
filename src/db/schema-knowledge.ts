@@ -162,3 +162,32 @@ export const knowledgeQualityAdjustments = pgTable(
     ),
   }),
 );
+
+export const knowledgeOriginLinks = pgTable(
+  "knowledge_origin_links",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    knowledgeId: uuid("knowledge_id")
+      .references(() => knowledgeItems.id, { onDelete: "cascade" })
+      .notNull(),
+    originKind: text("origin_kind").notNull(),
+    originUri: text("origin_uri").notNull(),
+    originKey: text("origin_key").notNull(),
+    confidence: real("confidence").default(1.0).notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    knowledgeIdIdx: index("knowledge_origin_links_knowledge_id_idx").on(table.knowledgeId),
+    originKindIdx: index("knowledge_origin_links_origin_kind_idx").on(table.originKind),
+    originKindUriUniqueIdx: uniqueIndex("knowledge_origin_links_knowledge_kind_uri_unique").on(
+      table.knowledgeId,
+      table.originKind,
+      table.originUri,
+    ),
+    originKindCheck: check(
+      "knowledge_origin_links_origin_kind_check",
+      sql`${table.originKind} IN ('vibe_memory', 'agent_candidate', 'landscape_review_item')`,
+    ),
+  }),
+);

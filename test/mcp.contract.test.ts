@@ -74,6 +74,12 @@ describeDb("mcp contract", () => {
       maximum: 100,
       description: "目的に合っていたか (0-100)",
     });
+    expect(properties?.noise).toEqual({
+      type: "integer",
+      minimum: 0,
+      maximum: 100,
+      description: "低ノイズ度。100=余計な情報がほぼない、0=余計な情報が多い",
+    });
     expect(properties?.outcome).toEqual({
       type: "string",
       enum: ["useful", "partial", "misleading", "unused"],

@@ -1,7 +1,7 @@
-import React from "react";
-import { useQuery } from "@tanstack/react-query";
 import { Badge } from "@/components/ui/badge";
 import { formatCheckedAt } from "@/lib/admin-formatters";
+import { useQuery } from "@tanstack/react-query";
+import React from "react";
 import {
   fetchDoctorReport,
   fetchOverviewKnowledgeAssetsDomain,

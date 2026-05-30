@@ -1,11 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../src/db/index.js";
 import {
-  selectCoverEvidenceResultById,
+  type CoverEvidenceResultRow,
+  coverEvidenceResultFromRow,
   listCoverEvidenceResultsByTargetStateId,
   saveCoverEvidenceResult,
-  coverEvidenceResultFromRow,
-  type CoverEvidenceResultRow,
+  selectCoverEvidenceResultById,
 } from "../src/modules/coverEvidence/repository.js";
 
 const mockSelect = vi.fn();

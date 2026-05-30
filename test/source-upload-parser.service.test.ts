@@ -1,5 +1,5 @@
-import * as XLSX from "xlsx";
 import { describe, expect, it } from "vitest";
+import * as XLSX from "xlsx";
 import { extractWebSourceUrlsFromUpload } from "../src/modules/sources/web/source-upload-parser.service.js";
 
 describe("extractWebSourceUrlsFromUpload", () => {

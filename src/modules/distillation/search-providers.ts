@@ -9,22 +9,22 @@ import {
   upsertDistillationEvidenceCache,
 } from "./distillation-evidence-cache.repository.js";
 import {
-  deriveSearchProviderCooldownSeconds,
-  parseRetryAfterSeconds,
-} from "./search-rate-limit.js";
-import {
-  distillationSearchProviderStateId,
-  providerNames,
-  SearchProviderException,
   type DistillationToolResult,
   type SearchProviderCooldownEntry,
   type SearchProviderCooldownState,
   type SearchProviderErrorState,
+  SearchProviderException,
   type SearchProviderName,
   type SearchProviderRateLimit,
   type SearchProviderResponse,
   type SearchResult,
+  distillationSearchProviderStateId,
+  providerNames,
 } from "./search-provider.types.js";
+import {
+  deriveSearchProviderCooldownSeconds,
+  parseRetryAfterSeconds,
+} from "./search-rate-limit.js";
 import { stripMarkup, truncate } from "./url-fetcher.js";
 
 export { SearchProviderException } from "./search-provider.types.js";
@@ -516,7 +516,7 @@ export async function searchWeb(
           query: normalizedQuery,
           results,
           instruction:
-            "Use search results only to choose primary source URLs. Do not call search_web more than once; call fetch_content for up to 3 promising URLs before returning final JSON. Do not treat snippets as sufficient evidence for saved knowledge.",
+            "Use search results only to choose primary source URLs. Do not call search_web more than once; call fetch_content for up to 3 promising URLs before returning the final result. Do not treat snippets as sufficient evidence for saved knowledge.",
         },
         null,
         2,

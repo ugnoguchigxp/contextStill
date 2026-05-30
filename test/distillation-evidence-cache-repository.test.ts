@@ -1,9 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { db } from "../src/db/index.js";
 import {
+  evidenceCacheFreshAfter,
   findDistillationEvidenceCache,
   upsertDistillationEvidenceCache,
-  evidenceCacheFreshAfter,
 } from "../src/modules/distillation/distillation-evidence-cache.repository.js";
 
 const mockSelect = vi.fn();

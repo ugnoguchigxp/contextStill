@@ -3,8 +3,6 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { buildLandscapeReplayComparison } from "../../../src/modules/landscape/landscape-replay-comparison.service.js";
 import { buildLandscapeReplaySnapshot } from "../../../src/modules/landscape/landscape-replay.service.js";
-import { getLandscapeSnapshotCacheStatus } from "../../../src/modules/landscape/landscape-snapshot-cache.service.js";
-import { buildLandscapeTrajectory } from "../../../src/modules/landscape/landscape-trajectory.service.js";
 import {
   LandscapeReviewCandidateLinkError,
   createLandscapeReviewCandidates,
@@ -17,15 +15,17 @@ import {
   materializeLandscapeReviewItems,
   updateLandscapeReviewItemStatus,
 } from "../../../src/modules/landscape/landscape-review-items.service.js";
+import { getLandscapeSnapshotCacheStatus } from "../../../src/modules/landscape/landscape-snapshot-cache.service.js";
+import { buildLandscapeTrajectory } from "../../../src/modules/landscape/landscape-trajectory.service.js";
 import { buildLandscapeSnapshot } from "../../../src/modules/landscape/landscape.service.js";
+import {
+  landscapeContradictionOverlayListSchema,
+  landscapeContradictionOverlayQuerySchema,
+} from "../../../src/shared/schemas/landscape-contradiction-overlay.schema.js";
 import {
   landscapeReplayComparisonResponseSchema,
   landscapeReplaySnapshotSchema,
 } from "../../../src/shared/schemas/landscape-replay.schema.js";
-import {
-  landscapeTrajectoryQuerySchema,
-  landscapeTrajectoryResultSchema,
-} from "../../../src/shared/schemas/landscape-trajectory.schema.js";
 import {
   landscapeReviewCandidateCreateInputSchema,
   landscapeReviewCandidateCreateResultSchema,
@@ -38,11 +38,11 @@ import {
   landscapeReviewItemsMaterializeInputSchema,
   landscapeReviewItemsMaterializeResultSchema,
 } from "../../../src/shared/schemas/landscape-review.schema.js";
-import {
-  landscapeContradictionOverlayListSchema,
-  landscapeContradictionOverlayQuerySchema,
-} from "../../../src/shared/schemas/landscape-contradiction-overlay.schema.js";
 import { landscapeSnapshotCacheStatusSchema } from "../../../src/shared/schemas/landscape-snapshot-cache.schema.js";
+import {
+  landscapeTrajectoryQuerySchema,
+  landscapeTrajectoryResultSchema,
+} from "../../../src/shared/schemas/landscape-trajectory.schema.js";
 import { landscapeSnapshotSchema } from "../../../src/shared/schemas/landscape.schema.js";
 import {
   type GraphRelationAxis,

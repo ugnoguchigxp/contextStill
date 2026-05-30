@@ -557,6 +557,7 @@ export async function runDistillationCompletion(
           tool_calls: response.toolCalls,
         });
 
+        const toolResultReminderLines: string[] = [];
         for (const toolCall of response.toolCalls) {
           throwIfAborted(options.signal);
           const limit = toolCallLimits.get(toolCall.function.name);
@@ -581,6 +582,16 @@ export async function runDistillationCompletion(
             tool_call_id: toolCall.id,
             name: toolResult.name,
             content: toolResult.content,
+          });
+          const reminderLines = options.toolResultReminder?.(toolResult) ?? [];
+          if (reminderLines.length > 0) {
+            toolResultReminderLines.push(...reminderLines);
+          }
+        }
+        if (toolResultReminderLines.length > 0) {
+          messages.push({
+            role: "user",
+            content: [...new Set(toolResultReminderLines)].join("\n"),
           });
         }
         toolRounds += 1;

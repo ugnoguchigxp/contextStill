@@ -3,9 +3,9 @@ import type {
   GraphSnapshot,
   LandscapeReplayComparisonResponse,
   LandscapeReplaySnapshot,
-  LandscapeTrajectoryResult,
   LandscapeReviewItemsListResponse,
   LandscapeSnapshot,
+  LandscapeTrajectoryResult,
 } from "../../web/src/modules/admin/repositories/admin.repository";
 export const mockGraphData: GraphSnapshot = {
   nodes: [
