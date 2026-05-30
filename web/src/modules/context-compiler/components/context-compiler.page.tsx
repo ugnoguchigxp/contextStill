@@ -55,7 +55,7 @@ type FormValues = {
 type PageMode = "new" | "detail";
 type StatusFilter = "all" | CompileRunSummary["status"];
 type SourceFilter = "all" | CompileRunSource;
-type RunDetailTab = "pack" | "ranking" | "feedback" | "markdown";
+type RunDetailTab = "overview" | "ranking";
 
 function stringArrayValue(value: unknown): string[] {
   return Array.isArray(value)
@@ -361,12 +361,6 @@ function facetLine(label: string, values: string[]) {
   );
 }
 
-function hasLegacyInput(input: Record<string, unknown>): boolean {
-  return ["intent", "files", "repoPath", "lastErrorContext", "errorKind"].some(
-    (key) => key in input,
-  );
-}
-
 function verdictLabel(verdict: CompileRunKnowledgeVerdict): string {
   if (verdict === "used") return "Used in output";
   if (verdict === "not_used") return "Selected, not referenced";
@@ -469,7 +463,14 @@ function RankingTraceSection({
                   {index + 1}
                 </td>
                 <td style={{ padding: "8px 10px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
-                  <div style={{ display: "grid", gap: 2 }}>
+                  <div
+                    style={{
+                      display: "grid",
+                      gap: 2,
+                      whiteSpace: "normal",
+                      overflowWrap: "anywhere",
+                    }}
+                  >
                     <strong>{item.title}</strong>
                     <span className="compile-state-text">
                       {item.itemKind} / {item.status} / {item.itemId.slice(0, 8)}
@@ -477,11 +478,12 @@ function RankingTraceSection({
                   </div>
                 </td>
                 <td style={{ padding: "8px 10px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
-                  <span className="compile-state-text">
-                    t:{item.textRank ?? "-"} v:{item.vectorRank ?? "-"} m:{item.mergedRank ?? "-"}{" "}
-                    f:
-                    {item.finalRank ?? "-"}
-                  </span>
+                  <div className="compile-state-text" style={{ display: "grid", gap: 2 }}>
+                    <span style={{ whiteSpace: "nowrap" }}>text: {item.textRank ?? "-"}</span>
+                    <span style={{ whiteSpace: "nowrap" }}>vector: {item.vectorRank ?? "-"}</span>
+                    <span style={{ whiteSpace: "nowrap" }}>merged: {item.mergedRank ?? "-"}</span>
+                    <span style={{ whiteSpace: "nowrap" }}>final: {item.finalRank ?? "-"}</span>
+                  </div>
                 </td>
                 <td style={{ padding: "8px 10px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
                   <span className="compile-state-text">
@@ -497,10 +499,15 @@ function RankingTraceSection({
                   </span>
                 </td>
                 <td style={{ padding: "8px 10px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
-                  <span className="compile-state-text">
-                    {item.selected ? "selected" : "not selected"} / {item.agenticDecision}
-                    {item.suppressed ? " / suppressed" : ""}
-                  </span>
+                  <div className="compile-state-text" style={{ display: "grid", gap: 2 }}>
+                    <span style={{ whiteSpace: "nowrap" }}>
+                      {item.selected ? "selected" : "not selected"}
+                    </span>
+                    <span style={{ whiteSpace: "nowrap" }}>{item.agenticDecision}</span>
+                    {item.suppressed ? (
+                      <span style={{ whiteSpace: "nowrap" }}>suppressed</span>
+                    ) : null}
+                  </div>
                 </td>
                 <td style={{ padding: "8px 10px", borderBottom: "1px solid rgba(0,0,0,0.06)" }}>
                   <span className="compile-state-text">
@@ -613,7 +620,7 @@ function RunDetailPane({
 }) {
   const tz = useTimezone();
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
-  const [activeTab, setActiveTab] = useState<RunDetailTab>("pack");
+  const [activeTab, setActiveTab] = useState<RunDetailTab>("overview");
 
   if (isLoading) {
     return (
@@ -692,11 +699,11 @@ function RunDetailPane({
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
             <Button
               size="sm"
-              variant={activeTab === "pack" ? "default" : "outline"}
-              onClick={() => setActiveTab("pack")}
+              variant={activeTab === "overview" ? "default" : "outline"}
+              onClick={() => setActiveTab("overview")}
               type="button"
             >
-              Pack
+              Overview
             </Button>
             <Button
               size="sm"
@@ -706,38 +713,42 @@ function RunDetailPane({
             >
               Ranking Trace
             </Button>
-            <Button
-              size="sm"
-              variant={activeTab === "feedback" ? "default" : "outline"}
-              onClick={() => setActiveTab("feedback")}
-              type="button"
-            >
-              Feedback & Eval
-            </Button>
-            <Button
-              size="sm"
-              variant={activeTab === "markdown" ? "default" : "outline"}
-              onClick={() => setActiveTab("markdown")}
-              type="button"
-            >
-              Markdown Output
-            </Button>
           </div>
         </section>
 
-        <section className="compile-pack-section">
-          <div className="compile-pack-section-header">
-            <h3>Input Facets</h3>
-          </div>
-          {facetLine("changeTypes:", changeTypes)}
-          {facetLine("technologies:", technologies)}
-          {facetLine("domains:", domains)}
-          {changeTypes.length === 0 && technologies.length === 0 && domains.length === 0 ? (
-            <p className="compile-state-text">Goal only</p>
-          ) : null}
-        </section>
+        {activeTab === "overview" ? (
+          <section className="compile-pack-section">
+            <div className="compile-pack-section-header">
+              <h3>Compiled Output</h3>
+            </div>
+            <div className="compile-output-markdown">
+              <MarkdownEditor
+                value={outputMarkdown}
+                editable={false}
+                toolbarMode="hidden"
+                enableVerticalScroll
+                enableMermaid
+                mermaidLib={mermaid}
+              />
+            </div>
+          </section>
+        ) : null}
 
-        {activeTab === "feedback" ? (
+        {activeTab === "overview" ? (
+          <section className="compile-pack-section">
+            <div className="compile-pack-section-header">
+              <h3>Input Facets</h3>
+            </div>
+            {facetLine("changeTypes:", changeTypes)}
+            {facetLine("technologies:", technologies)}
+            {facetLine("domains:", domains)}
+            {changeTypes.length === 0 && technologies.length === 0 && domains.length === 0 ? (
+              <p className="compile-state-text">Goal only</p>
+            ) : null}
+          </section>
+        ) : null}
+
+        {activeTab === "overview" ? (
           <section className="compile-pack-section">
             <div className="compile-pack-section-header">
               <h3>Compile Eval</h3>
@@ -864,7 +875,7 @@ function RunDetailPane({
           </section>
         ) : null}
 
-        {activeTab === "pack" && detail.pack ? (
+        {activeTab === "overview" && detail.pack ? (
           <>
             <section className="compile-pack-section">
               <div className="compile-pack-section-header">
@@ -907,7 +918,7 @@ function RunDetailPane({
               </section>
             ) : null}
           </>
-        ) : activeTab === "pack" ? (
+        ) : activeTab === "overview" ? (
           <section className="compile-pack-section">
             <p className="compile-state-text">Snapshot unavailable for this legacy run.</p>
           </section>
@@ -925,33 +936,6 @@ function RunDetailPane({
               error={rankingTraceError}
               tz={tz}
             />
-          </section>
-        ) : null}
-
-        {activeTab === "markdown" ? (
-          <section className="compile-pack-section">
-            <div className="compile-pack-section-header">
-              <h3>Compiled Output</h3>
-            </div>
-            <div className="compile-output-markdown">
-              <MarkdownEditor
-                value={outputMarkdown}
-                editable={false}
-                toolbarMode="hidden"
-                enableVerticalScroll
-                enableMermaid
-                mermaidLib={mermaid}
-              />
-            </div>
-          </section>
-        ) : null}
-
-        {hasLegacyInput(input) ? (
-          <section className="compile-pack-section">
-            <div className="compile-pack-section-header">
-              <h3>Legacy Input Detail</h3>
-            </div>
-            <pre className="knowledge-json-preview">{JSON.stringify(input, null, 2)}</pre>
           </section>
         ) : null}
 

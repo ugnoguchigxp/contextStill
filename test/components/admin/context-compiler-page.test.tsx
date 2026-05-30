@@ -150,7 +150,6 @@ describe("ContextCompilerPage", () => {
     expect(screen.getByTitle("Latest compile_eval avg score")).toHaveTextContent("88");
 
     fireEvent.click(screen.getByRole("button", { name: /run one/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Feedback & Eval" }));
     expect(screen.getByRole("heading", { name: "Compile Eval" })).toBeInTheDocument();
     expect(screen.getByText("Good context")).toBeInTheDocument();
     expect(screen.getByText("Avg: 88 / Useful")).toBeInTheDocument();
@@ -211,7 +210,6 @@ describe("ContextCompilerPage", () => {
 
     render(<ContextCompilerPage />);
     fireEvent.click(screen.getByRole("button", { name: /run one/i }));
-    fireEvent.click(screen.getByRole("button", { name: "Feedback & Eval" }));
     expect(screen.getByText("Evaluation")).toBeInTheDocument();
   });
 });
