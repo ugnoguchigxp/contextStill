@@ -1,10 +1,10 @@
 import { z } from "zod";
 import type { DistillationSearchProvider, EmbeddingProvider } from "../../config.types.js";
 
-export const runtimeProviderNames = ["openai", "azure-openai", "bedrock", "local-llm"] as const;
+export const runtimeProviderNames = ["openai", "azure-openai", "bedrock", "local-llm", "codex"] as const;
 export type RuntimeProviderName = (typeof runtimeProviderNames)[number];
 
-export const runtimeAgenticProviderNames = [...runtimeProviderNames, "codex"] as const;
+export const runtimeAgenticProviderNames = [...runtimeProviderNames] as const;
 export type RuntimeAgenticProviderName = (typeof runtimeAgenticProviderNames)[number];
 
 export const runtimeProviderSettingNames = [...runtimeProviderNames, "auto"] as const;
@@ -107,6 +107,7 @@ export type RuntimeSettingsEditable = {
     };
     codex: {
       enabled: boolean;
+      model: string;
     };
   };
   taskRouting: {
@@ -265,6 +266,7 @@ export const runtimeSettingsEditableSchema = z.object({
     }),
     codex: z.object({
       enabled: z.boolean().default(false),
+      model: z.string().trim().min(1).default("codex-sdk-agent"),
     }),
   }),
   taskRouting: z.object({

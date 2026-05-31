@@ -6,7 +6,8 @@ import { createAzureOpenAiProvider } from "./providers/azure-openai.provider.js"
 import { createBedrockProvider } from "./providers/bedrock.provider.js";
 import { createLocalLlmProvider } from "./providers/local-llm.provider.js";
 import { createOpenAiProvider } from "./providers/openai.provider.js";
-import { createCodexProvider } from "./providers/codex.provider.js";
+import { createCodexProvider } from "./providers/codex.provider.ts";
+import { getRuntimeSettingsSnapshot } from "../settings/settings.service.ts";
 
 export type AgenticCompileProvider = "openai" | "azure-openai" | "bedrock" | "local-llm" | "codex" | "auto";
 
@@ -82,8 +83,16 @@ function buildProvider(
       return createBedrockProvider({ timeoutMs });
     case "local-llm":
       return createLocalLlmProvider({ timeoutMs });
-    case "codex":
-      return createCodexProvider({ timeoutMs });
+    case "codex": {
+      let model: string | undefined;
+      try {
+        const settings = getRuntimeSettingsSnapshot();
+        model = settings.providers.codex.model;
+      } catch {
+        model = undefined;
+      }
+      return createCodexProvider({ timeoutMs, model });
+    }
     default:
       return createAzureOpenAiProvider({ timeoutMs });
   }
@@ -99,8 +108,14 @@ function defaultModelForProvider(provider: LlmProviderName): string {
       return groupedConfig.bedrock.model;
     case "local-llm":
       return groupedConfig.localLlm.model;
-    case "codex":
-      return "codex-sdk-agent";
+    case "codex": {
+      try {
+        const settings = getRuntimeSettingsSnapshot();
+        return settings.providers.codex.model || "codex-sdk-agent";
+      } catch {
+        return "codex-sdk-agent";
+      }
+    }
   }
 }
 

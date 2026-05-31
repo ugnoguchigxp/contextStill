@@ -1,12 +1,16 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import { groupedConfig } from "../../config.js";
 import { isAzureOpenAiConfigured } from "../llm/providers/azure-openai-config.js";
 
-export type DistillationProviderName = "local-llm" | "openai" | "azure-openai" | "bedrock";
+export type DistillationProviderName = "local-llm" | "openai" | "azure-openai" | "bedrock" | "codex";
 export type DistillationProviderSetting =
   | "local-llm"
   | "openai"
   | "azure-openai"
   | "bedrock"
+  | "codex"
   | "auto";
 
 function dedupeProviderOrder(values: DistillationProviderName[]): DistillationProviderName[] {
@@ -38,6 +42,8 @@ export function defaultModelForProvider(provider: DistillationProviderName): str
       return groupedConfig.azureOpenAi.model;
     case "bedrock":
       return groupedConfig.bedrock.model;
+    case "codex":
+      return "codex-sdk-agent";
     default:
       return groupedConfig.localLlm.model;
   }
@@ -55,6 +61,12 @@ export function isProviderConfigured(provider: DistillationProviderName): boolea
       return isAzureOpenAiConfigured();
     case "bedrock":
       return Boolean(groupedConfig.bedrock.region.trim() && groupedConfig.bedrock.model.trim());
+    case "codex": {
+      const hasEnvToken = Boolean(groupedConfig.codex.accessToken.trim());
+      if (hasEnvToken) return true;
+      const authJsonPath = path.join(os.homedir(), ".codex", "auth.json");
+      return fs.existsSync(authJsonPath);
+    }
     default:
       return Boolean(
         groupedConfig.localLlm.apiBaseUrl.trim() && groupedConfig.localLlm.model.trim(),

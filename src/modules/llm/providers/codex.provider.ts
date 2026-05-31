@@ -22,8 +22,9 @@ async function loadCodexSdk() {
   }
 }
 
-export function createCodexProvider(options: { timeoutMs?: number } = {}): LlmProvider {
+export function createCodexProvider(options: { timeoutMs?: number; model?: string } = {}): LlmProvider {
   const defaultTimeoutMs = options.timeoutMs ?? 60_000;
+  const configuredModel = options.model || undefined;
 
   return {
     name: "codex",
@@ -38,23 +39,24 @@ export function createCodexProvider(options: { timeoutMs?: number } = {}): LlmPr
     async chat(request: LlmChatRequest): Promise<LlmChatResponse> {
       const CodexClass = await loadCodexSdk();
       
-      const options: any = {
+      const sdkOptions: any = {
         config: {
           max_tokens: request.maxTokens,
         },
       };
 
       if (groupedConfig.codex.accessToken) {
-        options.env = {
+        sdkOptions.env = {
           ...process.env,
           CODEX_ACCESS_TOKEN: groupedConfig.codex.accessToken,
         };
       }
 
-      const codex = new CodexClass(options);
+      const codex = new CodexClass(sdkOptions);
 
       // Start the conversation thread with safety defaults
       const thread = codex.startThread({
+        model: configuredModel,
         sandboxMode: "read-only",
         approvalPolicy: "never",
         networkAccessEnabled: false,

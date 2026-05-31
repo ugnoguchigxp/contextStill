@@ -1989,6 +1989,7 @@ export type RuntimeSettingsEditable = {
     };
     codex: {
       enabled: boolean;
+      model: string;
     };
   };
   taskRouting: {

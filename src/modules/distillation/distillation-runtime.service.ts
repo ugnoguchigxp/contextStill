@@ -21,6 +21,7 @@ import { createAzureOpenAiChatClient } from "./providers/azure-openai.js";
 import { callBedrockChat } from "./providers/bedrock.js";
 import { callLocalLlmChat } from "./providers/local-llm.js";
 import { callOpenAiChat } from "./providers/openai.js";
+import { createCodexProvider } from "../llm/providers/codex.provider.js";
 
 // Re-export types from types.ts to preserve public schema
 export type {
@@ -335,6 +336,41 @@ function toolCallArgumentFallbackFromResponse(
   return null;
 }
 
+const callCodexChat = async (
+  request: DistillationChatRequest,
+): Promise<DistillationChatResponse> => {
+  const provider = createCodexProvider({
+    timeoutMs: request.timeoutMs,
+    model: request.model,
+  });
+
+  const llmMessages = request.messages.map((msg) => {
+    const role =
+      msg.role === "system" || msg.role === "user" || msg.role === "assistant"
+        ? msg.role
+        : "user";
+    const content =
+      typeof msg.content === "string"
+        ? msg.content
+        : msg.content === null || msg.content === undefined
+          ? ""
+          : JSON.stringify(msg.content);
+    return { role, content };
+  });
+
+  const response = await provider.chat({
+    messages: llmMessages,
+    maxTokens: request.maxTokens,
+  });
+
+  return {
+    content: response.content || null,
+    finishReason: response.finishReason,
+    usage: response.usage,
+    toolCalls: [],
+  };
+};
+
 function createDefaultChatClient(
   providerSetting: DistillationProviderSetting = groupedConfig.distillation.provider,
   usageSource = "distillation",
@@ -354,6 +390,7 @@ function createDefaultChatClient(
     openai: callOpenAiChat,
     "azure-openai": azureOpenAiChatClient,
     bedrock: callBedrockChat,
+    codex: callCodexChat,
   };
 
   return async (request: DistillationChatRequest): Promise<DistillationChatResponse> => {

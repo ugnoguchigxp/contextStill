@@ -255,6 +255,7 @@ export const bootstrap: BootstrapConfig = {
     },
     codex: {
       enabled: false,
+      model: "codex-sdk-agent",
     },
   },
   taskRouting: {
@@ -496,7 +497,7 @@ function resolveConfiguredRouteModel(
     case "local-llm":
       return settings.providers["local-llm"].model.trim() || undefined;
     case "codex":
-      return "codex-sdk";
+      return settings.providers.codex.model.trim() || undefined;
   }
 }
 

@@ -70,9 +70,9 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string; path: SettingsTabP
   { id: "advanced", label: "Advanced", path: "advanced" },
 ];
 
-const runtimeProviders: RuntimeProviderName[] = ["openai", "azure-openai", "bedrock", "local-llm"];
+const runtimeProviders: RuntimeProviderName[] = ["openai", "azure-openai", "bedrock", "local-llm", "codex"];
 const runtimeProviderOptions: RuntimeProviderSetting[] = [...runtimeProviders, "auto"];
-const agenticProviders: RuntimeProviderName[] = [...runtimeProviders, "codex"];
+const agenticProviders: RuntimeProviderName[] = [...runtimeProviders];
 const runtimeSearchProviders: RuntimeSearchProvider[] = ["brave", "exa", "duckduckgo"];
 const distillationPriorityTargetKinds = [
   "knowledge_candidate",
@@ -161,7 +161,7 @@ function getConfiguredModelByProvider(
         ?.model.trim() ?? settings.providers["azure-openai"].model.trim(),
     bedrock: settings.providers.bedrock.model.trim(),
     "local-llm": settings.providers["local-llm"].model.trim(),
-    codex: "codex-sdk-agent",
+    codex: settings.providers.codex?.model?.trim() ?? "codex-sdk-agent",
   };
 }
 
@@ -315,6 +315,7 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
       },
       codex: {
         enabled: view.providers.codex?.enabled ?? false,
+        model: view.providers.codex?.model ?? "codex-sdk-agent",
       },
     },
     taskRouting: {
@@ -1555,6 +1556,7 @@ export function SettingsPage() {
                             providers: {
                               ...current.providers,
                               codex: {
+                                ...current.providers.codex,
                                 enabled: event.target.checked,
                               },
                             },
@@ -1562,6 +1564,29 @@ export function SettingsPage() {
                         }
                       />
                       enabled
+                    </label>
+                    <label className="settings-field">
+                      <span>Model</span>
+                      <Select
+                        value={draft.providers.codex?.model ?? "codex-sdk-agent"}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            providers: {
+                              ...current.providers,
+                              codex: {
+                                ...current.providers.codex,
+                                model: event.target.value,
+                              },
+                            },
+                          }))
+                        }
+                      >
+                        <option value="codex-sdk-agent">codex-sdk-agent (Default Agent)</option>
+                        <option value="gpt-5.5">gpt-5.5 (Next-Gen Reasoner)</option>
+                        <option value="gpt-5.4-mini">gpt-5.4-mini (Efficient Assistant)</option>
+                        <option value="gpt-5.2-codex">gpt-5.2-codex (Specialized Codex)</option>
+                      </Select>
                     </label>
 
                     {codexAuthQuery.data && (

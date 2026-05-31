@@ -119,6 +119,7 @@ function buildSettingsView(): RuntimeSettingsView {
       },
       codex: {
         enabled: false,
+        model: "codex-sdk-agent",
       },
     },
     taskRouting: {
