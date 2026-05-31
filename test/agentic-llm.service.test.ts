@@ -11,6 +11,7 @@ import { createAzureOpenAiProvider } from "../src/modules/llm/providers/azure-op
 import { createBedrockProvider } from "../src/modules/llm/providers/bedrock.provider.js";
 import { createLocalLlmProvider } from "../src/modules/llm/providers/local-llm.provider.js";
 import { createOpenAiProvider } from "../src/modules/llm/providers/openai.provider.js";
+import { createCodexProvider } from "../src/modules/llm/providers/codex.provider.js";
 
 vi.mock("../src/modules/llm/llm-usage-logger.js", () => ({
   recordLlmUsage: vi.fn(),
@@ -24,14 +25,22 @@ vi.mock("../src/modules/llm/providers/azure-openai.provider.js", () => ({
 vi.mock("../src/modules/llm/providers/bedrock.provider.js", () => ({
   createBedrockProvider: vi.fn(),
 }));
-vi.mock("../src/modules/llm/providers/local-llm.provider.js", () => ({
+vi.mock("../src/modules/llm/providers/local-llm.provider.ts", () => ({
   createLocalLlmProvider: vi.fn(),
+}));
+vi.mock("../src/modules/llm/providers/codex.provider.ts", () => ({
+  createCodexProvider: vi.fn(),
 }));
 
 describe("agentic-llm service tests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     groupedConfig.azureOpenAi.deployments = [];
+    vi.mocked(createOpenAiProvider).mockReturnValue(mockProvider("openai", false, false) as any);
+    vi.mocked(createAzureOpenAiProvider).mockReturnValue(mockProvider("azure-openai", false, false) as any);
+    vi.mocked(createBedrockProvider).mockReturnValue(mockProvider("bedrock", false, false) as any);
+    vi.mocked(createLocalLlmProvider).mockReturnValue(mockProvider("local-llm", false, false) as any);
+    vi.mocked(createCodexProvider).mockReturnValue(mockProvider("codex", false, false) as any);
   });
 
   const mockProvider = (name: string, configured: boolean, reachable: boolean, error?: string) => {
@@ -55,6 +64,7 @@ describe("agentic-llm service tests", () => {
     );
     vi.mocked(createBedrockProvider).mockReturnValue(mockProvider("bedrock", true, true) as any);
     vi.mocked(createLocalLlmProvider).mockReturnValue(mockProvider("local-llm", true, true) as any);
+    vi.mocked(createCodexProvider).mockReturnValue(mockProvider("codex", true, true) as any);
 
     const providers = getAgenticLlmProviders("auto", 2000);
     expect(providers).toHaveLength(4);

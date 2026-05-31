@@ -169,6 +169,7 @@ export const groupedConfig: GroupedConfig = {
     archivedSessionDir:
       process.env.MEMORY_ROUTER_CODEX_ARCHIVED_SESSION_DIR ||
       path.join(os.homedir(), ".codex", "archived_sessions"),
+    accessToken: process.env.CODEX_ACCESS_TOKEN || "",
   },
   antigravity: {
     logDir:
@@ -235,7 +236,7 @@ export const groupedConfig: GroupedConfig = {
     apiBaseUrl: (
       process.env.MEMORY_ROUTER_OPENAI_API_BASE_URL || "https://api.openai.com/v1"
     ).replace(/\/+$/, ""),
-    model: process.env.MEMORY_ROUTER_OPENAI_MODEL || "gpt-5-4-mini",
+    model: process.env.MEMORY_ROUTER_OPENAI_MODEL || "gpt-5.4-mini",
   },
   azureOpenAi: {
     apiKey:

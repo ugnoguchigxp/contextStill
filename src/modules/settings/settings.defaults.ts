@@ -9,6 +9,7 @@ import {
   type RuntimeSettingsEditable,
   type RuntimeSettingsRoute,
   type RuntimeSettingsSecrets,
+  type RuntimeAgenticProviderName,
   distillationPriorityTargetKindValues,
   runtimeProviderNames,
   runtimeSettingsEditableSchema,
@@ -252,6 +253,9 @@ export const bootstrap: BootstrapConfig = {
       apiBaseUrl: groupedConfig.localLlm.apiBaseUrl,
       model: groupedConfig.localLlm.model,
     },
+    codex: {
+      enabled: false,
+    },
   },
   taskRouting: {
     findCandidate: {
@@ -389,6 +393,7 @@ export function cloneDefaultSettings(): RuntimeSettingsEditable {
       },
       bedrock: { ...bootstrap.providers.bedrock },
       "local-llm": { ...bootstrap.providers["local-llm"] },
+      codex: { ...bootstrap.providers.codex },
     },
     taskRouting: {
       findCandidate: {
@@ -472,7 +477,7 @@ export function cloneDefaultSettings(): RuntimeSettingsEditable {
 
 function resolveConfiguredRouteModel(
   settings: RuntimeSettingsEditable,
-  provider: RuntimeProviderSetting,
+  provider: RuntimeProviderSetting | RuntimeAgenticProviderName,
 ): string | undefined {
   if (provider === "auto") return undefined;
   switch (provider) {
@@ -490,6 +495,8 @@ function resolveConfiguredRouteModel(
       return settings.providers.bedrock.model.trim() || undefined;
     case "local-llm":
       return settings.providers["local-llm"].model.trim() || undefined;
+    case "codex":
+      return "codex-sdk";
   }
 }
 
@@ -547,6 +554,10 @@ function mergeRuntimeSettings(
       "local-llm": {
         ...defaults.providers["local-llm"],
         ...asRecord(asRecord(input.providers)["local-llm"]),
+      },
+      codex: {
+        ...defaults.providers.codex,
+        ...asRecord(asRecord(input.providers).codex),
       },
     },
     taskRouting: {

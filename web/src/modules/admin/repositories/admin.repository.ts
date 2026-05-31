@@ -1903,7 +1903,7 @@ export type CandidatePremiumReprocessResponse = {
   };
 };
 
-export type RuntimeProviderName = "openai" | "azure-openai" | "bedrock" | "local-llm";
+export type RuntimeProviderName = "openai" | "azure-openai" | "bedrock" | "local-llm" | "codex";
 export type RuntimeProviderSetting = RuntimeProviderName | "auto";
 export type RuntimeSearchProvider = "brave" | "exa" | "duckduckgo";
 export type RuntimeSecretKey =
@@ -1986,6 +1986,9 @@ export type RuntimeSettingsEditable = {
       enabled: boolean;
       apiBaseUrl: string;
       model: string;
+    };
+    codex: {
+      enabled: boolean;
     };
   };
   taskRouting: {
@@ -2076,6 +2079,7 @@ export type RuntimeSettingsView = RuntimeSettingsEditable & {
     "local-llm": RuntimeSettingsEditable["providers"]["local-llm"] & {
       apiKeySecret: RuntimeSecretStatus;
     };
+    codex: RuntimeSettingsEditable["providers"]["codex"];
   };
   search: RuntimeSettingsEditable["search"] & {
     providers: RuntimeSettingsEditable["search"]["providers"] & {
@@ -2899,6 +2903,33 @@ export async function testAzureOpenAiDeployment(
 
 export async function reloadRuntimeSettingsCache(): Promise<RuntimeSettingsReloadResponse> {
   return requestJson<RuntimeSettingsReloadResponse>("/api/settings/reload-runtime-cache", "POST");
+}
+
+export type CodexAuthStatus = {
+  codexHome: string;
+  cliAvailable: boolean;
+  authJsonExists: boolean;
+  accessTokenConfigured: boolean;
+  recommendedAction:
+    | "ready"
+    | "run-codex-login"
+    | "set-codex-access-token"
+    | "install-codex-cli";
+};
+
+export type CodexLoginCommandResponse = {
+  command: string;
+};
+
+export async function fetchCodexAuthStatus(): Promise<CodexAuthStatus> {
+  return getJson<CodexAuthStatus>("/api/settings/providers/codex/auth/status");
+}
+
+export async function fetchCodexLoginCommand(): Promise<CodexLoginCommandResponse> {
+  return requestJson<CodexLoginCommandResponse>(
+    "/api/settings/providers/codex/auth/login-command",
+    "POST",
+  );
 }
 
 export type DistillationTargetState = {

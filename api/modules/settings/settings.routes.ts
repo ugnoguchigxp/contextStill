@@ -8,10 +8,12 @@ import {
   testAzureOpenAiDeploymentForApi,
   testProviderForApi,
   updateSettingsForApi,
+  getCodexAuthStatusForApi,
+  getCodexLoginCommandForApi,
 } from "./settings.service.js";
 
 const providerParamSchema = z.object({
-  provider: z.enum(["openai", "azure-openai", "bedrock", "local-llm"] as const),
+  provider: z.enum(["openai", "azure-openai", "bedrock", "local-llm", "codex"] as const),
 });
 const azureOpenAiDeploymentParamSchema = z.object({
   deployment: z.coerce.number().int().min(1).max(3),
@@ -39,6 +41,14 @@ export const settingsRouter = new Hono()
     const { provider } = c.req.valid("param");
     const health = await testProviderForApi(provider);
     return c.json({ provider, health });
+  })
+  .get("/providers/codex/auth/status", async (c) => {
+    const status = await getCodexAuthStatusForApi();
+    return c.json(status);
+  })
+  .post("/providers/codex/auth/login-command", async (c) => {
+    const command = getCodexLoginCommandForApi();
+    return c.json(command);
   })
   .post("/reload-runtime-cache", async (c) => {
     const result = await reloadRuntimeCacheForApi();

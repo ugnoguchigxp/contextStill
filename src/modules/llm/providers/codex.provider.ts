@@ -1,0 +1,162 @@
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
+import { groupedConfig } from "../../../config.js";
+import type {
+  LlmChatRequest,
+  LlmChatResponse,
+  LlmHealthStatus,
+  LlmProvider,
+} from "../llm-provider.js";
+import { checkCodexAuthStatus } from "../../codex/codex-auth.service.js";
+
+// Safe dynamic import to allow compilation when package is not fully installed
+async function loadCodexSdk() {
+  try {
+    const { Codex } = await import("@openai/codex-sdk");
+    return Codex;
+  } catch (error) {
+    throw new Error(
+      "Codex SDK is not installed. Please run `bun add @openai/codex-sdk` to install it.",
+    );
+  }
+}
+
+export function createCodexProvider(options: { timeoutMs?: number } = {}): LlmProvider {
+  const defaultTimeoutMs = options.timeoutMs ?? 60_000;
+
+  return {
+    name: "codex",
+
+    isConfigured(): boolean {
+      const hasEnvToken = Boolean(groupedConfig.codex.accessToken.trim());
+      if (hasEnvToken) return true;
+      const authJsonPath = path.join(os.homedir(), ".codex", "auth.json");
+      return fs.existsSync(authJsonPath);
+    },
+
+    async chat(request: LlmChatRequest): Promise<LlmChatResponse> {
+      const CodexClass = await loadCodexSdk();
+      
+      const options: any = {
+        config: {
+          max_tokens: request.maxTokens,
+        },
+      };
+
+      if (groupedConfig.codex.accessToken) {
+        options.env = {
+          ...process.env,
+          CODEX_ACCESS_TOKEN: groupedConfig.codex.accessToken,
+        };
+      }
+
+      const codex = new CodexClass(options);
+
+      // Start the conversation thread with safety defaults
+      const thread = codex.startThread({
+        sandboxMode: "read-only",
+        approvalPolicy: "never",
+        networkAccessEnabled: false,
+        webSearchMode: "disabled",
+      });
+
+      // P1: Reconstruct system prompt and conversation history into a single prompt context
+      // to ensure Codex doesn't throw away system goals/output contracts.
+      const formattedMessages = request.messages
+        .map((msg) => {
+          const roleLabel =
+            msg.role === "system"
+              ? "System Instructions"
+              : msg.role === "user"
+                ? "User"
+                : "Assistant";
+          return `[${roleLabel}]\n${msg.content}`;
+        })
+        .join("\n\n");
+
+      const prompt = `${formattedMessages}\n\n[Instructions]\nBased on the instructions and history above, generate the final response. Output only the requested content/JSON structure directly, without markdown blocks or conversational text outside the format.`;
+
+      // P1: Wire timeout guard using AbortController
+      const timeoutMs = defaultTimeoutMs;
+      const controller = new AbortController();
+      const timer = setTimeout(() => controller.abort(), timeoutMs);
+
+      try {
+        const turn = await thread.run(prompt, {
+          signal: controller.signal,
+          outputSchema: {
+            type: "object",
+            properties: {
+              selectedIds: {
+                type: "array",
+                items: { type: "string" },
+                description: "The list of selected knowledge candidate IDs in order of relevance.",
+              },
+              reasoning: {
+                type: "string",
+                description: "A brief reason for the selection.",
+              },
+            },
+            required: ["selectedIds"],
+          },
+        });
+
+        return {
+          content: turn.finalResponse,
+          finishReason: "stop",
+          usage: turn.usage
+            ? {
+                promptTokens: turn.usage.input_tokens,
+                completionTokens: turn.usage.output_tokens,
+                totalTokens: turn.usage.input_tokens + turn.usage.output_tokens,
+              }
+            : {
+                promptTokens: 0,
+                completionTokens: 0,
+                totalTokens: 0,
+              },
+        };
+      } finally {
+        clearTimeout(timer);
+      }
+    },
+
+    async healthCheck(): Promise<LlmHealthStatus> {
+      const authStatus = await checkCodexAuthStatus();
+      const configured = authStatus.recommendedAction === "ready";
+
+      const statusResult: LlmHealthStatus = {
+        provider: "codex",
+        configured,
+        reachable: false,
+        model: "codex-sdk-agent",
+        endpoint: "codex-api",
+      };
+
+      if (!configured) {
+        return {
+          ...statusResult,
+          error: "Codex SDK is not logged in or configured.",
+        };
+      }
+
+      try {
+        const result = await this.chat({
+          messages: [{ role: "user", content: "ping" }],
+          maxTokens: 5,
+        });
+
+        return {
+          ...statusResult,
+          reachable: result.content.length > 0,
+        };
+      } catch (error) {
+        return {
+          ...statusResult,
+          error: error instanceof Error ? error.message : String(error),
+        };
+      }
+    },
+  };
+}

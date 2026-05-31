@@ -117,6 +117,9 @@ function buildSettingsView(): RuntimeSettingsView {
         model: "gemma-4-e4b-it",
         apiKeySecret: secretStatus(false),
       },
+      codex: {
+        enabled: false,
+      },
     },
     taskRouting: {
       findCandidate: {

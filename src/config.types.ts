@@ -1,5 +1,5 @@
 export type EmbeddingProvider = "auto" | "daemon" | "cli" | "openai" | "disabled";
-export type AgenticCompileProvider = "openai" | "azure-openai" | "bedrock" | "local-llm" | "auto";
+export type AgenticCompileProvider = "openai" | "azure-openai" | "bedrock" | "local-llm" | "codex" | "auto";
 export type DistillationProvider = "openai" | "local-llm" | "azure-openai" | "bedrock" | "auto";
 export type DistillationSearchProvider = "brave" | "exa" | "duckduckgo";
 
@@ -27,7 +27,11 @@ export type GroupedConfig = {
     defaultTokens: number;
     maxTokens: number;
   };
-  codex: { sessionDir: string; archivedSessionDir: string };
+  codex: {
+    sessionDir: string;
+    archivedSessionDir: string;
+    accessToken: string;
+  };
   antigravity: { logDir: string; initialLookbackHours: number };
   agentLogSync: {
     intervalSeconds: number;

@@ -51,7 +51,12 @@ export function measureLlmUsage(params: LlmUsageLogInput): LlmUsageLogRow | null
   const reasoningTokens = resolvedUsage.reasoningTokens ?? 0;
 
   // JPYコスト計算
-  const costJpy = calculateCost(model, promptTokens, completionTokens);
+  let costJpy = calculateCost(model, promptTokens, completionTokens);
+  let resolvedUsageMode = usageMode;
+  if (provider === "codex") {
+    costJpy = 0;
+    resolvedUsageMode = "unknown";
+  }
 
   return {
     provider,
@@ -61,7 +66,7 @@ export function measureLlmUsage(params: LlmUsageLogInput): LlmUsageLogRow | null
     totalTokens,
     reasoningTokens,
     costJpy,
-    usageMode,
+    usageMode: resolvedUsageMode,
     source,
   };
 }

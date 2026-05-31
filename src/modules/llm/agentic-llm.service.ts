@@ -6,8 +6,9 @@ import { createAzureOpenAiProvider } from "./providers/azure-openai.provider.js"
 import { createBedrockProvider } from "./providers/bedrock.provider.js";
 import { createLocalLlmProvider } from "./providers/local-llm.provider.js";
 import { createOpenAiProvider } from "./providers/openai.provider.js";
+import { createCodexProvider } from "./providers/codex.provider.js";
 
-export type AgenticCompileProvider = "openai" | "azure-openai" | "bedrock" | "local-llm" | "auto";
+export type AgenticCompileProvider = "openai" | "azure-openai" | "bedrock" | "local-llm" | "codex" | "auto";
 
 export type AgenticLlmHealthStatus = LlmHealthStatus & {
   providerSetting: AgenticCompileProvider;
@@ -32,7 +33,7 @@ type LlmProviderHealthEntry = {
   deploymentIndex?: number;
 };
 
-const nonAzureProviderNames: LlmProviderName[] = ["openai", "bedrock", "local-llm"];
+const nonAzureProviderNames: LlmProviderName[] = ["openai", "bedrock", "local-llm", "codex"];
 
 function dedupeOrder(values: LlmProviderName[]): LlmProviderName[] {
   const seen = new Set<LlmProviderName>();
@@ -81,6 +82,8 @@ function buildProvider(
       return createBedrockProvider({ timeoutMs });
     case "local-llm":
       return createLocalLlmProvider({ timeoutMs });
+    case "codex":
+      return createCodexProvider({ timeoutMs });
     default:
       return createAzureOpenAiProvider({ timeoutMs });
   }
@@ -96,6 +99,8 @@ function defaultModelForProvider(provider: LlmProviderName): string {
       return groupedConfig.bedrock.model;
     case "local-llm":
       return groupedConfig.localLlm.model;
+    case "codex":
+      return "codex-sdk-agent";
   }
 }
 
@@ -109,6 +114,8 @@ function defaultEndpointForProvider(provider: LlmProviderName): string {
       return groupedConfig.bedrock.region;
     case "local-llm":
       return groupedConfig.localLlm.apiBaseUrl;
+    case "codex":
+      return "codex-api";
   }
 }
 
@@ -122,6 +129,8 @@ function defaultLabelForProvider(provider: LlmProviderName): string {
       return "Bedrock";
     case "local-llm":
       return "Local LLM";
+    case "codex":
+      return "Codex Auth";
   }
 }
 

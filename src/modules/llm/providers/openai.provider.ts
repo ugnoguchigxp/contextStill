@@ -102,6 +102,7 @@ export function createOpenAiProvider(options: OpenAiProviderOptions = {}): LlmPr
             provider: "openai",
             status: response.status,
             retryAfterSeconds: parseRetryAfterSeconds(response.headers),
+            requestId: response.headers.get("x-request-id") || undefined,
             message: `OpenAI HTTP ${response.status}: ${body.slice(0, 500)}`,
           });
         }

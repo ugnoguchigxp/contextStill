@@ -14,7 +14,13 @@ import {
   settingsUpdateRequestSchema,
 } from "../../../src/modules/settings/settings.types.js";
 
-const providerNameSchema = z.enum(["openai", "azure-openai", "bedrock", "local-llm"] as const);
+import {
+  checkCodexAuthStatus,
+  getCodexLoginCommand,
+} from "../../../src/modules/codex/codex-auth.service.js";
+import { createCodexProvider } from "../../../src/modules/llm/providers/codex.provider.js";
+
+const providerNameSchema = z.enum(["openai", "azure-openai", "bedrock", "local-llm", "codex"] as const);
 const azureOpenAiDeploymentSchema = z.coerce.number().int().min(1).max(3);
 
 export async function getSettingsForApi() {
@@ -55,6 +61,8 @@ export async function testProviderForApi(providerRaw: string) {
       return createBedrockProvider({ timeoutMs: 10_000 }).healthCheck();
     case "local-llm":
       return createLocalLlmProvider({ timeoutMs: 10_000 }).healthCheck();
+    case "codex":
+      return createCodexProvider({ timeoutMs: 10_000 }).healthCheck();
   }
 }
 
@@ -65,4 +73,14 @@ export async function testAzureOpenAiDeploymentForApi(deploymentRaw: string | nu
     timeoutMs: 10_000,
     deploymentIndex: deployment - 1,
   }).healthCheck();
+}
+
+export async function getCodexAuthStatusForApi() {
+  return checkCodexAuthStatus();
+}
+
+export function getCodexLoginCommandForApi() {
+  return {
+    command: getCodexLoginCommand(),
+  };
 }

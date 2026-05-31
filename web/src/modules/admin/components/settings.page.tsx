@@ -30,6 +30,8 @@ import {
   testAzureOpenAiDeployment,
   testRuntimeProvider,
   updateRuntimeSettings,
+  fetchCodexAuthStatus,
+  fetchCodexLoginCommand,
 } from "../repositories/admin.repository";
 import { AdminPageHeader } from "./admin-page-header";
 
@@ -70,6 +72,7 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string; path: SettingsTabP
 
 const runtimeProviders: RuntimeProviderName[] = ["openai", "azure-openai", "bedrock", "local-llm"];
 const runtimeProviderOptions: RuntimeProviderSetting[] = [...runtimeProviders, "auto"];
+const agenticProviders: RuntimeProviderName[] = [...runtimeProviders, "codex"];
 const runtimeSearchProviders: RuntimeSearchProvider[] = ["brave", "exa", "duckduckgo"];
 const distillationPriorityTargetKinds = [
   "knowledge_candidate",
@@ -158,6 +161,7 @@ function getConfiguredModelByProvider(
         ?.model.trim() ?? settings.providers["azure-openai"].model.trim(),
     bedrock: settings.providers.bedrock.model.trim(),
     "local-llm": settings.providers["local-llm"].model.trim(),
+    codex: "codex-sdk-agent",
   };
 }
 
@@ -308,6 +312,9 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
         enabled: view.providers["local-llm"].enabled,
         apiBaseUrl: view.providers["local-llm"].apiBaseUrl,
         model: view.providers["local-llm"].model,
+      },
+      codex: {
+        enabled: view.providers.codex?.enabled ?? false,
       },
     },
     taskRouting: {
@@ -606,6 +613,21 @@ export function SettingsPage() {
     queryFn: () => fetchRuntimeSettings(),
   });
 
+  const codexAuthQuery = useQuery({
+    queryKey: ["codex-auth-status"],
+    queryFn: () => fetchCodexAuthStatus(),
+    enabled: activeTab === "providers",
+  });
+
+  const [loginCommand, setLoginCommand] = useState<string | null>(null);
+
+  const getLoginCommandMutation = useMutation({
+    mutationFn: () => fetchCodexLoginCommand(),
+    onSuccess: (result) => {
+      setLoginCommand(result.command);
+    },
+  });
+
   const snapshot = settingsQuery.data;
   const sourceView = snapshot?.settings;
   const baseEditable = useMemo(
@@ -854,6 +876,8 @@ export function SettingsPage() {
         return "AWS Bedrock";
       case "local-llm":
         return "Local LLM";
+      case "codex":
+        return "Codex Auth";
     }
   };
 
@@ -1501,6 +1525,99 @@ export function SettingsPage() {
                       : null}
                   </CardContent>
                 </Card>
+
+                <Card>
+                  <CardHeader className="settings-provider-header">
+                    <CardTitle>Codex Auth</CardTitle>
+                    <div className="settings-provider-actions">
+                      {codexAuthQuery.data ? (
+                        <Badge
+                          variant={
+                            codexAuthQuery.data.recommendedAction === "ready"
+                              ? "success"
+                              : "warning"
+                          }
+                        >
+                          {codexAuthQuery.data.recommendedAction === "ready" ? "Ready" : "Action Required"}
+                        </Badge>
+                      ) : (
+                        <Badge variant="outline">Loading...</Badge>
+                      )}
+                    </div>
+                  </CardHeader>
+                  <CardContent className="settings-card-grid">
+                    <label className="settings-check">
+                      <Checkbox
+                        checked={draft.providers.codex?.enabled ?? false}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            providers: {
+                              ...current.providers,
+                              codex: {
+                                enabled: event.target.checked,
+                              },
+                            },
+                          }))
+                        }
+                      />
+                      enabled
+                    </label>
+
+                    {codexAuthQuery.data && (
+                      <div className="settings-codex-status-details space-y-2 text-sm text-foreground">
+                        <div className="flex justify-between border-b pb-1">
+                          <span className="text-muted-foreground">Codex Home</span>
+                          <span className="font-mono">{codexAuthQuery.data.codexHome}</span>
+                        </div>
+                        <div className="flex justify-between border-b pb-1">
+                          <span className="text-muted-foreground">CLI Available</span>
+                          <span>{codexAuthQuery.data.cliAvailable ? "✅ Yes" : "❌ No"}</span>
+                        </div>
+                        <div className="flex justify-between border-b pb-1">
+                          <span className="text-muted-foreground">Auth JSON Exists</span>
+                          <span>{codexAuthQuery.data.authJsonExists ? "✅ Yes" : "❌ No"}</span>
+                        </div>
+                        <div className="flex justify-between border-b pb-1">
+                          <span className="text-muted-foreground">Access Token Configured</span>
+                          <span>{codexAuthQuery.data.accessTokenConfigured ? "✅ Yes" : "❌ No"}</span>
+                        </div>
+                        
+                        <div className="settings-codex-action-guide bg-muted p-3 rounded mt-3">
+                          <strong>Recommended Action:</strong>
+                          <div className="text-xs text-muted-foreground mt-1">
+                            {codexAuthQuery.data.recommendedAction === "ready" && (
+                              <span className="text-success font-semibold">Ready to compile with Codex.</span>
+                            )}
+                            {codexAuthQuery.data.recommendedAction === "install-codex-cli" && (
+                              <span>Please install the Codex CLI to authenticate locally, or configure <code>CODEX_ACCESS_TOKEN</code> in your environment.</span>
+                            )}
+                            {codexAuthQuery.data.recommendedAction === "run-codex-login" && (
+                              <div className="space-y-2">
+                                <span>Authenticate by running the following command in your terminal:</span>
+                                <div className="flex items-center gap-2 mt-1">
+                                  <Input
+                                    readOnly
+                                    value={loginCommand || "Click Get Command..."}
+                                    className="font-mono text-xs"
+                                  />
+                                  <Button
+                                    type="button"
+                                    size="sm"
+                                    onClick={() => getLoginCommandMutation.mutate()}
+                                    disabled={getLoginCommandMutation.isPending}
+                                  >
+                                    Get Command
+                                  </Button>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+                        </div>
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
               </section>
             ) : null}
 
@@ -2101,7 +2218,7 @@ export function SettingsPage() {
                               }));
                             }}
                           >
-                            {runtimeProviders.map((provider) => (
+                            {agenticProviders.map((provider) => (
                               <option key={provider} value={provider}>
                                 {providerOptionLabel(draft, provider)}
                               </option>

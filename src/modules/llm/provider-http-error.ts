@@ -2,12 +2,14 @@ export class LlmProviderHttpError extends Error {
   readonly provider: string;
   readonly status: number;
   readonly retryAfterSeconds: number | null;
+  readonly requestId?: string;
 
   constructor(params: {
     provider: string;
     status: number;
     message: string;
     retryAfterSeconds?: number | null;
+    requestId?: string;
   }) {
     super(params.message);
     this.name = "LlmProviderHttpError";
@@ -17,6 +19,7 @@ export class LlmProviderHttpError extends Error {
       typeof params.retryAfterSeconds === "number" && Number.isFinite(params.retryAfterSeconds)
         ? Math.max(0, params.retryAfterSeconds)
         : null;
+    this.requestId = params.requestId;
   }
 }
 

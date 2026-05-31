@@ -4,6 +4,9 @@ import type { DistillationSearchProvider, EmbeddingProvider } from "../../config
 export const runtimeProviderNames = ["openai", "azure-openai", "bedrock", "local-llm"] as const;
 export type RuntimeProviderName = (typeof runtimeProviderNames)[number];
 
+export const runtimeAgenticProviderNames = [...runtimeProviderNames, "codex"] as const;
+export type RuntimeAgenticProviderName = (typeof runtimeAgenticProviderNames)[number];
+
 export const runtimeProviderSettingNames = [...runtimeProviderNames, "auto"] as const;
 export type RuntimeProviderSetting = (typeof runtimeProviderSettingNames)[number];
 
@@ -102,6 +105,9 @@ export type RuntimeSettingsEditable = {
       apiBaseUrl: string;
       model: string;
     };
+    codex: {
+      enabled: boolean;
+    };
   };
   taskRouting: {
     findCandidate: {
@@ -118,7 +124,7 @@ export type RuntimeSettingsEditable = {
     finalizeDistille: RuntimeSettingsRoute;
     agenticCompile: {
       enabled: boolean;
-      provider: RuntimeProviderName;
+      provider: RuntimeAgenticProviderName;
       model: string;
       fallback: RuntimeProviderName[];
       azureDeploymentSlots?: number[];
@@ -191,6 +197,7 @@ export type RuntimeSettingsView = RuntimeSettingsEditable & {
     "local-llm": RuntimeSettingsEditable["providers"]["local-llm"] & {
       apiKeySecret: RuntimeSecretStatus;
     };
+    codex: RuntimeSettingsEditable["providers"]["codex"];
   };
   search: RuntimeSettingsEditable["search"] & {
     providers: RuntimeSettingsEditable["search"]["providers"] & {
@@ -256,6 +263,9 @@ export const runtimeSettingsEditableSchema = z.object({
       apiBaseUrl: z.string().trim().url(),
       model: z.string().trim().min(1),
     }),
+    codex: z.object({
+      enabled: z.boolean().default(false),
+    }),
   }),
   taskRouting: z.object({
     findCandidate: z.object({
@@ -282,7 +292,7 @@ export const runtimeSettingsEditableSchema = z.object({
     finalizeDistille: runtimeRouteSchema,
     agenticCompile: z.object({
       enabled: z.boolean().default(true),
-      provider: runtimeProviderSchema,
+      provider: z.enum(runtimeAgenticProviderNames),
       model: z.string().trim().min(1),
       fallback: z.array(runtimeProviderSchema).max(8).default([]),
       azureDeploymentSlots: z.array(z.number().int().min(1).max(3)).max(3).optional(),
