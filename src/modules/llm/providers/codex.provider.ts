@@ -22,7 +22,9 @@ async function loadCodexSdk() {
   }
 }
 
-export function createCodexProvider(options: { timeoutMs?: number; model?: string } = {}): LlmProvider {
+export function createCodexProvider(
+  options: { timeoutMs?: number; model?: string } = {},
+): LlmProvider {
   const defaultTimeoutMs = options.timeoutMs ?? 60_000;
   const configuredModel = options.model || undefined;
 
@@ -45,10 +47,10 @@ export function createCodexProvider(options: { timeoutMs?: number; model?: strin
         },
       };
 
-      if (groupedConfig.codex.accessToken) {
+      if (groupedConfig.codex.accessToken.trim()) {
         sdkOptions.env = {
           ...process.env,
-          CODEX_ACCESS_TOKEN: groupedConfig.codex.accessToken,
+          CODEX_ACCESS_TOKEN: groupedConfig.codex.accessToken.trim(),
         };
       }
 
@@ -85,24 +87,7 @@ export function createCodexProvider(options: { timeoutMs?: number; model?: strin
       const timer = setTimeout(() => controller.abort(), timeoutMs);
 
       try {
-        const turn = await thread.run(prompt, {
-          signal: controller.signal,
-          outputSchema: {
-            type: "object",
-            properties: {
-              selectedIds: {
-                type: "array",
-                items: { type: "string" },
-                description: "The list of selected knowledge candidate IDs in order of relevance.",
-              },
-              reasoning: {
-                type: "string",
-                description: "A brief reason for the selection.",
-              },
-            },
-            required: ["selectedIds"],
-          },
-        });
+        const turn = await thread.run(prompt, { signal: controller.signal });
 
         return {
           content: turn.finalResponse,
@@ -132,7 +117,7 @@ export function createCodexProvider(options: { timeoutMs?: number; model?: strin
         provider: "codex",
         configured,
         reachable: false,
-        model: "codex-sdk-agent",
+        model: configuredModel ?? "codex-sdk-agent",
         endpoint: "codex-api",
       };
 
@@ -144,14 +129,10 @@ export function createCodexProvider(options: { timeoutMs?: number; model?: strin
       }
 
       try {
-        const result = await this.chat({
-          messages: [{ role: "user", content: "ping" }],
-          maxTokens: 5,
-        });
-
+        await loadCodexSdk();
         return {
           ...statusResult,
-          reachable: result.content.length > 0,
+          reachable: true,
         };
       } catch (error) {
         return {

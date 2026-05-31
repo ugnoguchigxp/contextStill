@@ -20,6 +20,7 @@ describe("distillation llm-resolver", () => {
       expect(resolveDistillationProviderOrder("openai")).toEqual(["openai"]);
       expect(resolveDistillationProviderOrder("azure-openai")).toEqual(["azure-openai"]);
       expect(resolveDistillationProviderOrder("bedrock")).toEqual(["bedrock"]);
+      expect(resolveDistillationProviderOrder("codex")).toEqual(["codex"]);
     });
   });
 
@@ -41,6 +42,7 @@ describe("distillation llm-resolver", () => {
         expect(defaultModelForProvider("azure-openai")).toBe("test-azure-model");
         expect(defaultModelForProvider("bedrock")).toBe("test-bedrock-model");
         expect(defaultModelForProvider("local-llm")).toBe("test-local-model");
+        expect(defaultModelForProvider("codex")).toBe("codex-sdk-agent");
       } finally {
         // Restore configs
         groupedConfig.openAi.model = originalOpenAiModel;
@@ -57,6 +59,7 @@ describe("distillation llm-resolver", () => {
       const originalAzure = { ...groupedConfig.azureOpenAi };
       const originalBedrock = { ...groupedConfig.bedrock };
       const originalLocal = { ...groupedConfig.localLlm };
+      const originalCodex = { ...groupedConfig.codex };
 
       try {
         // Case: Fully configured
@@ -74,10 +77,13 @@ describe("distillation llm-resolver", () => {
         groupedConfig.localLlm.apiBaseUrl = "http://base";
         groupedConfig.localLlm.model = "model";
 
+        groupedConfig.codex.accessToken = "token";
+
         expect(isProviderConfigured("openai")).toBe(true);
         expect(isProviderConfigured("azure-openai")).toBe(true);
         expect(isProviderConfigured("bedrock")).toBe(true);
         expect(isProviderConfigured("local-llm")).toBe(true);
+        expect(isProviderConfigured("codex")).toBe(true);
 
         // Case: Unconfigured
         groupedConfig.openAi.apiKey = "";
@@ -96,6 +102,7 @@ describe("distillation llm-resolver", () => {
         groupedConfig.azureOpenAi = originalAzure;
         groupedConfig.bedrock = originalBedrock;
         groupedConfig.localLlm = originalLocal;
+        groupedConfig.codex = originalCodex;
       }
     });
   });

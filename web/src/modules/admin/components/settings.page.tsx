@@ -1219,391 +1219,392 @@ export function SettingsPage() {
 
             {activeTab === "providers" ? (
               <section className="settings-provider-grid">
-                <Card>
-                  <CardHeader className="settings-provider-header">
-                    <CardTitle>OpenAI</CardTitle>
-                    <div className="settings-provider-actions">
-                      <ProviderHealthBadge health={providerHealth.openai} />
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => providerTestMutation.mutate("openai")}
-                        disabled={providerTestMutation.isPending}
-                      >
-                        <Stethoscope size={14} />
-                        Test
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="settings-card-grid">
-                    <label className="settings-check">
-                      <Checkbox
-                        checked={draft.providers.openai.enabled}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              openai: {
-                                ...current.providers.openai,
-                                enabled: event.target.checked,
+                {/* === Azure OpenAI (left) | OpenAI + Codex (right) === */}
+                <div className="settings-openai-group">
+                  {/* Left: Azure OpenAI */}
+                  <Card className="settings-openai-group__azure">
+                    <CardHeader className="settings-provider-header">
+                      <CardTitle>Azure OpenAI</CardTitle>
+                    </CardHeader>
+                    <CardContent className="settings-card-grid">
+                      <label className="settings-check">
+                        <Checkbox
+                          checked={draft.providers["azure-openai"].enabled}
+                          onChange={(event) =>
+                            patchDraft((current) => ({
+                              ...current,
+                              providers: {
+                                ...current.providers,
+                                "azure-openai": {
+                                  ...current.providers["azure-openai"],
+                                  enabled: event.target.checked,
+                                },
                               },
-                            },
-                          }))
-                        }
-                      />
-                      enabled
-                    </label>
-                    <label className="settings-field">
-                      <span>API Base URL</span>
-                      <Input
-                        value={draft.providers.openai.apiBaseUrl}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              openai: {
-                                ...current.providers.openai,
-                                apiBaseUrl: event.target.value,
-                              },
-                            },
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="settings-field">
-                      <span>Model</span>
-                      <Input
-                        value={draft.providers.openai.model}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              openai: {
-                                ...current.providers.openai,
-                                model: event.target.value,
-                              },
-                            },
-                          }))
-                        }
-                      />
-                    </label>
-                    {sourceView
-                      ? renderSecretEditor(
-                          "openaiApiKey",
-                          "API Key",
-                          sourceView.providers.openai.apiKeySecret,
-                        )
-                      : null}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="settings-provider-header">
-                    <CardTitle>Codex Auth</CardTitle>
-                    <div className="settings-provider-actions">
-                      {codexAuthQuery.isLoading ? (
-                        <Badge variant="outline">Checking...</Badge>
-                      ) : codexAuthQuery.data ? (
-                        <Badge
-                          variant={
-                            codexAuthQuery.data.recommendedAction === "ready"
-                              ? "success"
-                              : codexAuthQuery.data.tokenInfo?.isExpired
-                                ? "destructive"
-                                : "warning"
+                            }))
                           }
-                        >
-                          {codexAuthQuery.data.recommendedAction === "ready"
-                            ? "✓ Logged in"
-                            : codexAuthQuery.data.tokenInfo?.isExpired
-                              ? "Token Expired"
-                              : "Login Required"}
-                        </Badge>
-                      ) : null}
-                    </div>
-                  </CardHeader>
-                  <CardContent className="settings-card-grid">
-                    <label className="settings-check">
-                      <Checkbox
-                        checked={draft.providers.codex?.enabled ?? false}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              codex: {
-                                ...current.providers.codex,
-                                enabled: event.target.checked,
-                              },
-                            },
-                          }))
-                        }
-                      />
-                      enabled
-                    </label>
-                    <label className="settings-field">
-                      <span>Model</span>
-                      <Select
-                        value={draft.providers.codex?.model ?? "codex-sdk-agent"}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              codex: {
-                                ...current.providers.codex,
-                                model: event.target.value,
-                              },
-                            },
-                          }))
-                        }
-                      >
-                        <option value="codex-sdk-agent">codex-sdk-agent (Default Agent)</option>
-                        <option value="gpt-5.5">gpt-5.5 (Next-Gen Reasoner)</option>
-                        <option value="gpt-5.4-mini">gpt-5.4-mini (Efficient Assistant)</option>
-                        <option value="gpt-5.2-codex">gpt-5.2-codex (Specialized Codex)</option>
-                      </Select>
-                    </label>
-
-                    {codexAuthQuery.data && (
-                      <div className="settings-codex-status-details space-y-2 text-sm text-foreground">
-                        {/* --- Token / Account Info --- */}
-                        {codexAuthQuery.data.tokenInfo && (
-                          <CodexTokenInfoPanel tokenInfo={codexAuthQuery.data.tokenInfo} />
-                        )}
-
-                        {/* --- System Details (collapsed) --- */}
-                        <details className="text-xs text-muted-foreground">
-                          <summary className="cursor-pointer select-none py-1 font-medium">System Details</summary>
-                          <div className="mt-2 space-y-1">
-                            <div className="flex justify-between border-b pb-1">
-                              <span>Codex Home</span>
-                              <span className="font-mono">{codexAuthQuery.data.codexHome}</span>
-                            </div>
-                            <div className="flex justify-between border-b pb-1">
-                              <span>CLI (codex) Available</span>
-                              <span>{codexAuthQuery.data.cliAvailable ? "✅ Yes" : "❌ No"}</span>
-                            </div>
-                            <div className="flex justify-between border-b pb-1">
-                              <span>~/.codex/auth.json</span>
-                              <span>{codexAuthQuery.data.authJsonExists ? "✅ Exists" : "❌ Not found"}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>CODEX_ACCESS_TOKEN env</span>
-                              <span>{codexAuthQuery.data.accessTokenConfigured ? "✅ Set" : "— Not set"}</span>
-                            </div>
-                          </div>
-                        </details>
-
-                        {/* --- Action Guide --- */}
-                        <CodexActionGuide
-                          recommendedAction={codexAuthQuery.data.recommendedAction}
-                          isExpired={codexAuthQuery.data.tokenInfo?.isExpired ?? false}
-                          loginCommand={loginCommand}
-                          onGetCommand={() => getLoginCommandMutation.mutate()}
-                          isPending={getLoginCommandMutation.isPending}
-                          onRefresh={() => void codexAuthQuery.refetch()}
                         />
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="settings-provider-header">
-                    <CardTitle>Azure OpenAI</CardTitle>
-                  </CardHeader>
-                  <CardContent className="settings-card-grid">
-                    <label className="settings-check">
-                      <Checkbox
-                        checked={draft.providers["azure-openai"].enabled}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              "azure-openai": {
-                                ...current.providers["azure-openai"],
-                                enabled: event.target.checked,
-                              },
-                            },
-                          }))
-                        }
-                      />
-                      enabled
-                    </label>
-                    {draft.providers["azure-openai"].deployments.map((deployment, index) => {
-                      const secretKey = azureOpenAiSecretKeys[index] ?? "azureOpenAiApiKey";
-                      const secretStatus =
-                        sourceView?.providers["azure-openai"].apiKeySecrets[index] ??
-                        (sourceView ? emptyRuntimeSecretStatus() : null);
-                      return (
-                        <div key={secretKey} className="settings-provider-deployment">
-                          <div className="settings-deployment-header">
-                            <div className="settings-secret-meta">
-                              <strong>Deployment {index + 1}</strong>
+                        enabled
+                      </label>
+                      {draft.providers["azure-openai"].deployments.map((deployment, index) => {
+                        const secretKey = azureOpenAiSecretKeys[index] ?? "azureOpenAiApiKey";
+                        const secretStatus =
+                          sourceView?.providers["azure-openai"].apiKeySecrets[index] ??
+                          (sourceView ? emptyRuntimeSecretStatus() : null);
+                        return (
+                          <div key={secretKey} className="settings-provider-deployment">
+                            <div className="settings-deployment-header">
+                              <div className="settings-secret-meta">
+                                <strong>Deployment {index + 1}</strong>
+                              </div>
+                            </div>
+                            <label className="settings-field">
+                              <span>Deployment {index + 1} Name</span>
+                              <Input
+                                value={deployment.name}
+                                onChange={(event) =>
+                                  patchDraft((current) => {
+                                    const deployments = current.providers[
+                                      "azure-openai"
+                                    ].deployments.map((item, itemIndex) =>
+                                      itemIndex === index
+                                        ? { ...item, name: event.target.value }
+                                        : item,
+                                    );
+                                    return {
+                                      ...current,
+                                      providers: {
+                                        ...current.providers,
+                                        "azure-openai": syncAzureOpenAiProviderForDraft(
+                                          current.providers["azure-openai"],
+                                          deployments,
+                                        ),
+                                      },
+                                    };
+                                  })
+                                }
+                              />
+                            </label>
+                            <label className="settings-field">
+                              <span>Deployment {index + 1} Endpoint</span>
+                              <Input
+                                value={deployment.apiBaseUrl}
+                                onChange={(event) =>
+                                  patchDraft((current) => {
+                                    const deployments = current.providers[
+                                      "azure-openai"
+                                    ].deployments.map((item, itemIndex) =>
+                                      itemIndex === index
+                                        ? { ...item, apiBaseUrl: event.target.value }
+                                        : item,
+                                    );
+                                    return {
+                                      ...current,
+                                      providers: {
+                                        ...current.providers,
+                                        "azure-openai": syncAzureOpenAiProviderForDraft(
+                                          current.providers["azure-openai"],
+                                          deployments,
+                                        ),
+                                      },
+                                    };
+                                  })
+                                }
+                              />
+                            </label>
+                            <label className="settings-field">
+                              <span>Deployment {index + 1} API Path</span>
+                              <Input
+                                value={deployment.apiPath}
+                                onChange={(event) =>
+                                  patchDraft((current) => {
+                                    const deployments = current.providers[
+                                      "azure-openai"
+                                    ].deployments.map((item, itemIndex) =>
+                                      itemIndex === index
+                                        ? { ...item, apiPath: event.target.value }
+                                        : item,
+                                    );
+                                    return {
+                                      ...current,
+                                      providers: {
+                                        ...current.providers,
+                                        "azure-openai": syncAzureOpenAiProviderForDraft(
+                                          current.providers["azure-openai"],
+                                          deployments,
+                                        ),
+                                      },
+                                    };
+                                  })
+                                }
+                              />
+                            </label>
+                            <label className="settings-field">
+                              <span>Deployment {index + 1} API Version</span>
+                              <Input
+                                value={deployment.apiVersion}
+                                onChange={(event) =>
+                                  patchDraft((current) => {
+                                    const deployments = current.providers[
+                                      "azure-openai"
+                                    ].deployments.map((item, itemIndex) =>
+                                      itemIndex === index
+                                        ? { ...item, apiVersion: event.target.value }
+                                        : item,
+                                    );
+                                    return {
+                                      ...current,
+                                      providers: {
+                                        ...current.providers,
+                                        "azure-openai": syncAzureOpenAiProviderForDraft(
+                                          current.providers["azure-openai"],
+                                          deployments,
+                                        ),
+                                      },
+                                    };
+                                  })
+                                }
+                              />
+                            </label>
+                            <label className="settings-field">
+                              <span>Deployment {index + 1} Model</span>
+                              <Input
+                                value={deployment.model}
+                                onChange={(event) =>
+                                  patchDraft((current) => {
+                                    const deployments = current.providers[
+                                      "azure-openai"
+                                    ].deployments.map((item, itemIndex) =>
+                                      itemIndex === index
+                                        ? { ...item, model: event.target.value }
+                                        : item,
+                                    );
+                                    return {
+                                      ...current,
+                                      providers: {
+                                        ...current.providers,
+                                        "azure-openai": syncAzureOpenAiProviderForDraft(
+                                          current.providers["azure-openai"],
+                                          deployments,
+                                        ),
+                                      },
+                                    };
+                                  })
+                                }
+                              />
+                            </label>
+                            {secretStatus
+                              ? renderSecretEditor(secretKey, `API Key ${index + 1}`, secretStatus)
+                              : null}
+                            <div className="settings-deployment-health">
+                              <ProviderHealthBadge health={azureDeploymentHealth[index]} />
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => azureDeploymentTestMutation.mutate(index)}
+                                disabled={azureDeploymentTestMutation.isPending}
+                              >
+                                <Stethoscope size={14} />
+                                Test {index + 1}
+                              </Button>
                             </div>
                           </div>
-                          <label className="settings-field">
-                            <span>Deployment {index + 1} Name</span>
-                            <Input
-                              value={deployment.name}
-                              onChange={(event) =>
-                                patchDraft((current) => {
-                                  const deployments = current.providers[
-                                    "azure-openai"
-                                  ].deployments.map((item, itemIndex) =>
-                                    itemIndex === index
-                                      ? { ...item, name: event.target.value }
-                                      : item,
-                                  );
-                                  return {
-                                    ...current,
-                                    providers: {
-                                      ...current.providers,
-                                      "azure-openai": syncAzureOpenAiProviderForDraft(
-                                        current.providers["azure-openai"],
-                                        deployments,
-                                      ),
-                                    },
-                                  };
-                                })
-                              }
-                            />
-                          </label>
-                          <label className="settings-field">
-                            <span>Deployment {index + 1} Endpoint</span>
-                            <Input
-                              value={deployment.apiBaseUrl}
-                              onChange={(event) =>
-                                patchDraft((current) => {
-                                  const deployments = current.providers[
-                                    "azure-openai"
-                                  ].deployments.map((item, itemIndex) =>
-                                    itemIndex === index
-                                      ? { ...item, apiBaseUrl: event.target.value }
-                                      : item,
-                                  );
-                                  return {
-                                    ...current,
-                                    providers: {
-                                      ...current.providers,
-                                      "azure-openai": syncAzureOpenAiProviderForDraft(
-                                        current.providers["azure-openai"],
-                                        deployments,
-                                      ),
-                                    },
-                                  };
-                                })
-                              }
-                            />
-                          </label>
-                          <label className="settings-field">
-                            <span>Deployment {index + 1} API Path</span>
-                            <Input
-                              value={deployment.apiPath}
-                              onChange={(event) =>
-                                patchDraft((current) => {
-                                  const deployments = current.providers[
-                                    "azure-openai"
-                                  ].deployments.map((item, itemIndex) =>
-                                    itemIndex === index
-                                      ? { ...item, apiPath: event.target.value }
-                                      : item,
-                                  );
-                                  return {
-                                    ...current,
-                                    providers: {
-                                      ...current.providers,
-                                      "azure-openai": syncAzureOpenAiProviderForDraft(
-                                        current.providers["azure-openai"],
-                                        deployments,
-                                      ),
-                                    },
-                                  };
-                                })
-                              }
-                            />
-                          </label>
-                          <label className="settings-field">
-                            <span>Deployment {index + 1} API Version</span>
-                            <Input
-                              value={deployment.apiVersion}
-                              onChange={(event) =>
-                                patchDraft((current) => {
-                                  const deployments = current.providers[
-                                    "azure-openai"
-                                  ].deployments.map((item, itemIndex) =>
-                                    itemIndex === index
-                                      ? { ...item, apiVersion: event.target.value }
-                                      : item,
-                                  );
-                                  return {
-                                    ...current,
-                                    providers: {
-                                      ...current.providers,
-                                      "azure-openai": syncAzureOpenAiProviderForDraft(
-                                        current.providers["azure-openai"],
-                                        deployments,
-                                      ),
-                                    },
-                                  };
-                                })
-                              }
-                            />
-                          </label>
-                          <label className="settings-field">
-                            <span>Deployment {index + 1} Model</span>
-                            <Input
-                              value={deployment.model}
-                              onChange={(event) =>
-                                patchDraft((current) => {
-                                  const deployments = current.providers[
-                                    "azure-openai"
-                                  ].deployments.map((item, itemIndex) =>
-                                    itemIndex === index
-                                      ? { ...item, model: event.target.value }
-                                      : item,
-                                  );
-                                  return {
-                                    ...current,
-                                    providers: {
-                                      ...current.providers,
-                                      "azure-openai": syncAzureOpenAiProviderForDraft(
-                                        current.providers["azure-openai"],
-                                        deployments,
-                                      ),
-                                    },
-                                  };
-                                })
-                              }
-                            />
-                          </label>
-                          {secretStatus
-                            ? renderSecretEditor(secretKey, `API Key ${index + 1}`, secretStatus)
-                            : null}
-                          <div className="settings-deployment-health">
-                            <ProviderHealthBadge health={azureDeploymentHealth[index]} />
-                            <Button
-                              type="button"
-                              size="sm"
-                              variant="outline"
-                              onClick={() => azureDeploymentTestMutation.mutate(index)}
-                              disabled={azureDeploymentTestMutation.isPending}
-                            >
-                              <Stethoscope size={14} />
-                              Test {index + 1}
-                            </Button>
-                          </div>
+                        );
+                      })}
+                    </CardContent>
+                  </Card>
+
+                  {/* Right: OpenAI (top) + Codex (bottom) */}
+                  <div className="settings-openai-group__stack">
+                    <Card>
+                      <CardHeader className="settings-provider-header">
+                        <CardTitle>OpenAI</CardTitle>
+                        <div className="settings-provider-actions">
+                          <ProviderHealthBadge health={providerHealth.openai} />
+                          <Button
+                            type="button"
+                            size="sm"
+                            variant="outline"
+                            onClick={() => providerTestMutation.mutate("openai")}
+                            disabled={providerTestMutation.isPending}
+                          >
+                            <Stethoscope size={14} />
+                            Test
+                          </Button>
                         </div>
-                      );
-                    })}
-                  </CardContent>
-                </Card>
+                      </CardHeader>
+                      <CardContent className="settings-card-grid">
+                        <label className="settings-check">
+                          <Checkbox
+                            checked={draft.providers.openai.enabled}
+                            onChange={(event) =>
+                              patchDraft((current) => ({
+                                ...current,
+                                providers: {
+                                  ...current.providers,
+                                  openai: {
+                                    ...current.providers.openai,
+                                    enabled: event.target.checked,
+                                  },
+                                },
+                              }))
+                            }
+                          />
+                          enabled
+                        </label>
+                        <label className="settings-field">
+                          <span>API Base URL</span>
+                          <Input
+                            value={draft.providers.openai.apiBaseUrl}
+                            onChange={(event) =>
+                              patchDraft((current) => ({
+                                ...current,
+                                providers: {
+                                  ...current.providers,
+                                  openai: {
+                                    ...current.providers.openai,
+                                    apiBaseUrl: event.target.value,
+                                  },
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        <label className="settings-field">
+                          <span>Model</span>
+                          <Input
+                            value={draft.providers.openai.model}
+                            onChange={(event) =>
+                              patchDraft((current) => ({
+                                ...current,
+                                providers: {
+                                  ...current.providers,
+                                  openai: {
+                                    ...current.providers.openai,
+                                    model: event.target.value,
+                                  },
+                                },
+                              }))
+                            }
+                          />
+                        </label>
+                        {sourceView
+                          ? renderSecretEditor(
+                              "openaiApiKey",
+                              "API Key",
+                              sourceView.providers.openai.apiKeySecret,
+                            )
+                          : null}
+                      </CardContent>
+                    </Card>
+
+                    <Card>
+                      <CardHeader className="settings-provider-header">
+                        <CardTitle>Codex</CardTitle>
+                        <div className="settings-provider-actions">
+                          {codexAuthQuery.isLoading ? (
+                            <Badge variant="outline">Checking...</Badge>
+                          ) : codexAuthQuery.data ? (
+                            <Badge
+                              variant={
+                                codexAuthQuery.data.recommendedAction === "ready"
+                                  ? "success"
+                                  : codexAuthQuery.data.tokenInfo?.isExpired
+                                    ? "destructive"
+                                    : "warning"
+                              }
+                            >
+                              {codexAuthQuery.data.recommendedAction === "ready"
+                                ? "✓ Logged in"
+                                : codexAuthQuery.data.tokenInfo?.isExpired
+                                  ? "Token Expired"
+                                  : "Login Required"}
+                            </Badge>
+                          ) : null}
+                        </div>
+                      </CardHeader>
+                      <CardContent className="settings-card-grid">
+                        <label className="settings-check">
+                          <Checkbox
+                            checked={draft.providers.codex?.enabled ?? false}
+                            onChange={(event) =>
+                              patchDraft((current) => ({
+                                ...current,
+                                providers: {
+                                  ...current.providers,
+                                  codex: {
+                                    ...current.providers.codex,
+                                    enabled: event.target.checked,
+                                  },
+                                },
+                              }))
+                            }
+                          />
+                          enabled
+                        </label>
+                        <label className="settings-field">
+                          <span>Model</span>
+                          <Select
+                            value={draft.providers.codex?.model ?? "codex-sdk-agent"}
+                            onChange={(event) =>
+                              patchDraft((current) => ({
+                                ...current,
+                                providers: {
+                                  ...current.providers,
+                                  codex: {
+                                    ...current.providers.codex,
+                                    model: event.target.value,
+                                  },
+                                },
+                              }))
+                            }
+                          >
+                            <option value="codex-sdk-agent">codex-sdk-agent (Default Agent)</option>
+                            <option value="gpt-5.5">gpt-5.5 (Next-Gen Reasoner)</option>
+                            <option value="gpt-5.4-mini">gpt-5.4-mini (Efficient Assistant)</option>
+                            <option value="gpt-5.2-codex">gpt-5.2-codex (Specialized Codex)</option>
+                          </Select>
+                        </label>
+                        {codexAuthQuery.data && (
+                          <div className="settings-codex-status-details space-y-2 text-sm text-foreground">
+                            {codexAuthQuery.data.tokenInfo && (
+                              <CodexTokenInfoPanel tokenInfo={codexAuthQuery.data.tokenInfo} />
+                            )}
+                            <details className="text-xs text-muted-foreground">
+                              <summary className="cursor-pointer select-none py-1 font-medium">System Details</summary>
+                              <div className="mt-2 space-y-1">
+                                <div className="flex justify-between border-b pb-1">
+                                  <span>Codex Home</span>
+                                  <span className="font-mono">{codexAuthQuery.data.codexHome}</span>
+                                </div>
+                                <div className="flex justify-between border-b pb-1">
+                                  <span>CLI (codex) Available</span>
+                                  <span>{codexAuthQuery.data.cliAvailable ? "✅ Yes" : "❌ No"}</span>
+                                </div>
+                                <div className="flex justify-between border-b pb-1">
+                                  <span>~/.codex/auth.json</span>
+                                  <span>{codexAuthQuery.data.authJsonExists ? "✅ Exists" : "❌ Not found"}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                  <span>CODEX_ACCESS_TOKEN env</span>
+                                  <span>{codexAuthQuery.data.accessTokenConfigured ? "✅ Set" : "— Not set"}</span>
+                                </div>
+                              </div>
+                            </details>
+                            <CodexActionGuide
+                              recommendedAction={codexAuthQuery.data.recommendedAction}
+                              isExpired={codexAuthQuery.data.tokenInfo?.isExpired ?? false}
+                              loginCommand={loginCommand}
+                              onGetCommand={() => getLoginCommandMutation.mutate()}
+                              isPending={getLoginCommandMutation.isPending}
+                              onRefresh={() => void codexAuthQuery.refetch()}
+                            />
+                          </div>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </div>
+                </div>
 
                 <Card>
                   <CardHeader className="settings-provider-header">

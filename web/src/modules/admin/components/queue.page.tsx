@@ -153,11 +153,29 @@ function resolveTaskStartAt(item: QueueListItemV2): string | null {
   return item.lockedAt ?? item.heartbeatAt ?? null;
 }
 
+function formatProviderLabel(provider: string): string {
+  switch (provider) {
+    case "azure-openai":
+      return "Azure OpenAI API";
+    case "codex":
+      return "Codex SDK";
+    case "openai":
+      return "OpenAI API";
+    case "local-llm":
+      return "Local LLM";
+    case "bedrock":
+      return "Bedrock";
+    default:
+      return provider;
+  }
+}
+
 function resolveModelLabel(item: QueueListItemV2): string {
-  const model = item.model?.trim();
-  if (model) return model;
   const provider = item.provider?.trim();
-  if (provider) return provider;
+  const model = item.model?.trim();
+  if (provider && model) return `${formatProviderLabel(provider)} / ${model}`;
+  if (provider) return formatProviderLabel(provider);
+  if (model) return model;
   return "unknown-model";
 }
 
@@ -365,6 +383,7 @@ export function QueuePage() {
       const runningCount = queueStats?.[tab.name]?.counters.running ?? 0;
       const rows = telemetryByQueue.get(tab.name) ?? [];
       for (const item of rows) {
+        const modelLabel = resolveModelLabel(item);
         cards.push(
           <div
             key={`active-${item.queueName}-${item.id}`}
@@ -398,9 +417,9 @@ export function QueuePage() {
                 <Timer size={12} className="text-amber-600" />
                 {formatElapsed(resolveTaskStartAt(item), nowMs)}
               </span>
-              <span className="inline-flex items-center gap-1 truncate">
+              <span className="inline-flex items-center gap-1 truncate" title={modelLabel}>
                 <Cpu size={12} className="text-cyan-600" />
-                {resolveModelLabel(item)}
+                {modelLabel}
               </span>
               <span className="truncate text-right text-slate-500">p{item.priority}</span>
             </div>
@@ -485,12 +504,23 @@ export function QueuePage() {
         header: "Worker",
         cell: ({ row }) => {
           const item = row.original;
+          const provider = item.provider?.trim();
+          const model = item.model?.trim();
+          const providerLabel = provider ? formatProviderLabel(provider) : null;
+          const modelLabel = resolveModelLabel(item);
           return (
             <div className="text-xs">
               <div className="truncate text-slate-700">{item.lockedBy ?? "-"}</div>
-              <div className="truncate text-muted-foreground">
-                {item.model ?? item.provider ?? "-"}
-              </div>
+              {providerLabel && model ? (
+                <div className="min-w-0 text-muted-foreground" title={modelLabel}>
+                  <div className="truncate">{providerLabel} /</div>
+                  <div className="truncate font-mono text-[11px]">{model}</div>
+                </div>
+              ) : (
+                <div className="truncate text-muted-foreground" title={modelLabel}>
+                  {modelLabel}
+                </div>
+              )}
             </div>
           );
         },

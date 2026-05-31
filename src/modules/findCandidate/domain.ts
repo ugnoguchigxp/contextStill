@@ -239,6 +239,22 @@ function vibeMemoryAfterInitialReadPrompt(): string {
   ].join("\n");
 }
 
+function readerAfterInitialReadPrompt(toolName: string): string {
+  return [
+    `上の ${toolName} tool result を source content として評価してください。`,
+    "追加の window が必要なら reader tool を呼び出してください。",
+    "十分なら、候補 JSON だけを返してください。",
+    "候補がなければ [] を返してください。",
+  ].join("\n");
+}
+
+function routeMayUseCodex(params: {
+  provider: DistillationProviderSetting;
+  fallbackOrder: Array<Exclude<DistillationProviderSetting, "auto">>;
+}): boolean {
+  return params.provider === "codex" || params.fallbackOrder.includes("codex");
+}
+
 function buildInitialUserMessages(targetKind: FindCandidateTargetKind): DistillationMessage[] {
   return [
     {
@@ -259,6 +275,21 @@ function buildInitialVibeMemoryToolCall(input: FindCandidateInput): Distillation
         fromToken: Math.max(0, Math.floor(input.fromToken ?? 0)),
         readTokens: readTokens(input),
         mode,
+      }),
+    },
+  };
+}
+
+function buildInitialReadFileToolCall(input: FindCandidateInput): DistillationToolCall {
+  return {
+    id: "initial-read-file",
+    type: "function",
+    function: {
+      name: "read_file",
+      arguments: JSON.stringify({
+        fromToken: Math.max(0, Math.floor(input.fromToken ?? 0)),
+        readTokens: readTokens(input),
+        minify: input.wikiMinify ?? true,
       }),
     },
   };
@@ -431,6 +462,37 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
       { role: "system", content: systemPromptForTarget(target.targetKind) },
       ...buildInitialUserMessages(target.targetKind),
     ];
+    let deterministicInitialRead = false;
+
+    if (
+      (target.targetKind === "wiki_file" || target.targetKind === "web_ingest") &&
+      routeMayUseCodex({ provider, fallbackOrder })
+    ) {
+      const initialToolCall = buildInitialReadFileToolCall(input);
+      const initialToolResult = await toolExecutor(initialToolCall);
+      if (!initialToolResult.ok) {
+        throw new Error(initialToolResult.error ?? "initial read_file failed");
+      }
+      deterministicInitialRead = true;
+      messages.push(
+        {
+          role: "assistant",
+          content: null,
+          tool_calls: [initialToolCall],
+        },
+        {
+          role: "tool",
+          tool_call_id: initialToolCall.id,
+          name: initialToolResult.name,
+          content: initialToolResult.content,
+        },
+        {
+          role: "user",
+          content: readerAfterInitialReadPrompt(initialToolResult.name),
+        },
+      );
+      await recordReaderUsed({ initialRead: true, reader: initialToolResult.name });
+    }
 
     if (target.targetKind === "vibe_memory") {
       const initialToolCall = buildInitialVibeMemoryToolCall(input);
@@ -474,7 +536,9 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         enableTools: reads < readLimit,
         maxToolRounds: Math.max(0, readLimit - reads),
         timeoutMs: groupedConfig.distillation.findCandidateTimeoutMs,
-        requireToolCall: target.targetKind === "wiki_file" || target.targetKind === "web_ingest",
+        requireToolCall:
+          (target.targetKind === "wiki_file" || target.targetKind === "web_ingest") &&
+          !deterministicInitialRead,
         requireToolCallReminder: [
           "まだ本文を読んでいません。",
           "まず提供された reader tool を呼び出して本文 content を読んでください。",

@@ -3,7 +3,7 @@ import { groupedConfig } from "../src/config.js";
 import { runFindCandidate } from "../src/modules/findCandidate/domain.js";
 import { parseStorageCandidatesFromLlmOutput } from "../src/modules/findCandidate/parser.js";
 
-type RuntimeProviderName = "openai" | "azure-openai" | "bedrock" | "local-llm";
+type RuntimeProviderName = "openai" | "azure-openai" | "bedrock" | "local-llm" | "codex";
 type RuntimeRouteMock = {
   provider: string;
   model: string;
@@ -256,6 +256,65 @@ describe("runFindCandidate", () => {
         azureDeploymentSlots: [2],
       }),
     );
+  });
+
+  test("preloads wiki content before Codex candidate extraction because Codex chat has no local tool loop", async () => {
+    mocks.resolveFindCandidateRoute.mockReturnValue({
+      provider: "codex",
+      model: "gpt-5.4-mini",
+      fallback: [] as RuntimeProviderName[],
+    });
+    mocks.runDistillationCompletion.mockResolvedValue({
+      content: JSON.stringify({
+        candidates: [
+          {
+            type: "procedure",
+            title: "Run smoke tests before finalizing changes",
+            content: "Run smoke tests before finalizing implementation changes.",
+            sourceSummary:
+              "The source says to run smoke tests before finalizing implementation changes.",
+          },
+        ],
+      }),
+      toolEvents: [],
+      messages: [],
+    });
+
+    const result = await runFindCandidate({
+      targetStateId: "target-1",
+      callerMode: "storage",
+      readTokens: 50,
+      provider: "codex",
+    });
+
+    expect(mocks.readFileDomain).toHaveBeenCalledWith({
+      path: "rules/testing.md",
+      fromToken: 0,
+      readTokens: 50,
+      minify: true,
+    });
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledWith(
+      expect.objectContaining({
+        messages: expect.arrayContaining([
+          expect.objectContaining({
+            role: "tool",
+            name: "read_file",
+            content: expect.stringContaining("Run smoke tests"),
+          }),
+          expect.objectContaining({
+            role: "user",
+            content: expect.stringContaining("read_file tool result"),
+          }),
+        ]),
+      }),
+      expect.objectContaining({
+        providerSetting: "codex",
+        requireToolCall: false,
+        maxToolRounds: 7,
+      }),
+    );
+    expect(result.candidates).toHaveLength(1);
+    expect(result.readRanges).toEqual([{ from: 0, toExclusive: 20 }]);
   });
 
   test("fails when the LLM returns candidates without using the reader tool", async () => {

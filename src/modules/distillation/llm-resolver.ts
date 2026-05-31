@@ -4,7 +4,12 @@ import path from "node:path";
 import { groupedConfig } from "../../config.js";
 import { isAzureOpenAiConfigured } from "../llm/providers/azure-openai-config.js";
 
-export type DistillationProviderName = "local-llm" | "openai" | "azure-openai" | "bedrock" | "codex";
+export type DistillationProviderName =
+  | "local-llm"
+  | "openai"
+  | "azure-openai"
+  | "bedrock"
+  | "codex";
 export type DistillationProviderSetting =
   | "local-llm"
   | "openai"

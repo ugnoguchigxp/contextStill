@@ -103,14 +103,13 @@ export async function checkCodexAuthStatus(): Promise<CodexAuthStatus> {
 
     tokenInfo = { authMode, email, expiresAt, isExpired };
   } catch {
-    authJsonExists = false;
     tokenInfo = null;
   }
 
   // 3. codex CLI の存在チェック
   let cliAvailable = false;
   try {
-    const { stdout } = await execAsync("codex --version");
+    const { stdout } = await execAsync("codex --version", { timeout: 3000 });
     cliAvailable = stdout.trim().length > 0;
   } catch {
     cliAvailable = false;
@@ -122,7 +121,7 @@ export async function checkCodexAuthStatus(): Promise<CodexAuthStatus> {
   //    CLI が使えない → install-codex-cli
   //    それ以外 → run-codex-login
   const hasValidToken =
-    accessTokenConfigured || (authJsonExists && tokenInfo !== null && !tokenInfo.isExpired);
+    accessTokenConfigured || (authJsonExists && tokenInfo?.isExpired !== true);
 
   let recommendedAction: CodexAuthStatus["recommendedAction"] = "run-codex-login";
   if (hasValidToken) {

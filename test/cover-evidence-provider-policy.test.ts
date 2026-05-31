@@ -32,6 +32,14 @@ describe("coverEvidence provider policy", () => {
     });
   });
 
+  test("allows codex as a cloud provider candidate", () => {
+    const route = resolveCloudApiRuntimeRoute(runtimeRoute("local-llm", ["codex", "openai"]));
+    expect(route).toEqual({
+      provider: "codex",
+      fallback: ["openai"],
+    });
+  });
+
   test("throws when no cloud providers are available", () => {
     expect(() =>
       resolveCloudApiRuntimeRoute(runtimeRoute("local-llm", []), { routeName: "sourceSupport" }),

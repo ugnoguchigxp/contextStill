@@ -386,5 +386,18 @@ describe("agentic-llm service tests", () => {
       expect(azure.healthCheck).toHaveBeenCalled();
       expect(health.fallbackOrder).toEqual(["local-llm", "azure-openai"]);
     });
+
+    test("allows codex as an explicit distillation provider", async () => {
+      const codex = mockProvider("codex", true, true);
+
+      vi.mocked(createCodexProvider).mockReturnValue(codex as any);
+
+      const health = await checkDistillationLlmHealth("codex");
+
+      expect(health.reachable).toBe(true);
+      expect(health.selectedProvider).toBe("codex");
+      expect(codex.healthCheck).toHaveBeenCalled();
+      expect(health.fallbackOrder).toEqual(["codex"]);
+    });
   });
 });

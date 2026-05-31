@@ -107,8 +107,8 @@ describe("QueuePage v2", () => {
         attemptCount: 1,
         subjectTitle: "candidate A",
         subjectDetail: "detail",
-        provider: "default",
-        model: null,
+        provider: "codex",
+        model: "gpt-5.4-mini",
         lastError: null,
         lastOutcomeKind: null,
         lockedBy: "worker-1",
@@ -133,8 +133,8 @@ describe("QueuePage v2", () => {
           attemptCount: 0,
           subjectTitle: "wiki/page.md",
           subjectDetail: "wiki_file | file:///wiki/page.md",
-          provider: null,
-          model: null,
+          provider: "azure-openai",
+          model: "gpt-5.4-mini",
           lastError: null,
           lastOutcomeKind: null,
           lockedBy: null,
@@ -177,6 +177,18 @@ describe("QueuePage v2", () => {
     expect(screen.getByText("Completed")).toBeInTheDocument();
     expect(screen.getByText("Total")).toBeInTheDocument();
     expect(screen.getByText("wiki/page.md")).toBeInTheDocument();
+  });
+
+  it("identifies queue task model by provider", async () => {
+    renderQueuePage();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(screen.getByText("Codex SDK / gpt-5.4-mini")).toBeInTheDocument();
+    const azureProviderLabel = screen.getByText("Azure OpenAI API /");
+    expect(azureProviderLabel).toBeInTheDocument();
+    expect(azureProviderLabel.parentElement).toHaveTextContent("gpt-5.4-mini");
   });
 
   it("switches queue tab and refetches list with selected queue", async () => {

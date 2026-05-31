@@ -349,12 +349,20 @@ const callCodexChat = async (
       msg.role === "system" || msg.role === "user" || msg.role === "assistant"
         ? msg.role
         : "user";
-    const content =
+    const baseContent =
       typeof msg.content === "string"
         ? msg.content
         : msg.content === null || msg.content === undefined
           ? ""
           : JSON.stringify(msg.content);
+    const toolCalls =
+      msg.tool_calls && msg.tool_calls.length > 0
+        ? `\n\n[Tool Calls]\n${JSON.stringify(msg.tool_calls)}`
+        : "";
+    const content =
+      msg.role === "tool"
+        ? `[Tool Result: ${msg.name ?? "tool"}]\n${baseContent}`
+        : `${baseContent}${toolCalls}`;
     return { role, content };
   });
 

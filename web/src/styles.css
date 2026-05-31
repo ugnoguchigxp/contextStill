@@ -246,6 +246,26 @@
   grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
+/* Azure (left) | OpenAI + Codex stack (right) group */
+.settings-openai-group {
+  grid-column: 1 / -1; /* span full width of the provider grid */
+  display: grid;
+  gap: 1rem;
+  grid-template-columns: 1fr 1fr;
+  align-items: start;
+}
+
+.settings-openai-group__azure {
+  /* Azure card stretches to match the right stack height */
+  height: 100%;
+}
+
+.settings-openai-group__stack {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
 .settings-provider-header {
   align-items: center;
   display: flex;

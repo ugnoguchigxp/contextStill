@@ -127,7 +127,7 @@ export const doctorDistillationHealthSchema = z.object({
 const llmProviderHealthSchema = z.object({
   id: z.string(),
   label: z.string(),
-  provider: z.enum(["openai", "azure-openai", "bedrock", "local-llm"]),
+  provider: z.enum(["openai", "azure-openai", "bedrock", "local-llm", "codex"]),
   configured: z.boolean(),
   reachable: z.boolean(),
   model: z.string(),
