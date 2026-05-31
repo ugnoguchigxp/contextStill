@@ -16,6 +16,7 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp, RotateCcw, Save, Stethoscope, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
+  type CodexAuthTokenInfo,
   type RuntimeProviderHealth,
   type RuntimeProviderName,
   type RuntimeProviderSetting,
@@ -589,7 +590,168 @@ function RouteEditor({
   );
 }
 
+// ---------------------------------------------------------------------------
+// Codex Auth sub-components
+// ---------------------------------------------------------------------------
+
+function CodexTokenInfoPanel({ tokenInfo }: { tokenInfo: CodexAuthTokenInfo }) {
+  const expiresDate = tokenInfo.expiresAt ? new Date(tokenInfo.expiresAt) : null;
+  const formattedExpiry = expiresDate
+    ? expiresDate.toLocaleString(undefined, {
+        year: "numeric",
+        month: "short",
+        day: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+      })
+    : null;
+
+  return (
+    <div
+      className={`rounded-md border p-3 text-sm ${
+        tokenInfo.isExpired
+          ? "border-destructive/50 bg-destructive/5"
+          : "border-success/40 bg-success/5"
+      }`}
+    >
+      <div className="mb-1 flex items-center gap-2 font-semibold">
+        <span>{tokenInfo.isExpired ? "⚠️" : "✅"}</span>
+        <span>
+          {tokenInfo.isExpired ? "Token Expired — Re-login Required" : "Authenticated via ChatGPT OAuth"}
+        </span>
+      </div>
+      <div className="space-y-1 text-xs text-muted-foreground">
+        {tokenInfo.email && (
+          <div className="flex gap-2">
+            <span className="w-24 shrink-0">Account</span>
+            <span className="font-medium text-foreground">{tokenInfo.email}</span>
+          </div>
+        )}
+        <div className="flex gap-2">
+          <span className="w-24 shrink-0">Auth Mode</span>
+          <span className="font-mono">{tokenInfo.authMode}</span>
+        </div>
+        {formattedExpiry && (
+          <div className="flex gap-2">
+            <span className="w-24 shrink-0">Token Expiry</span>
+            <span className={tokenInfo.isExpired ? "text-destructive font-medium" : ""}>
+              {formattedExpiry}
+              {tokenInfo.isExpired ? " (expired)" : ""}
+            </span>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+function CodexActionGuide({
+  recommendedAction,
+  isExpired,
+  loginCommand,
+  onGetCommand,
+  isPending,
+  onRefresh,
+}: {
+  recommendedAction: "ready" | "run-codex-login" | "set-codex-access-token" | "install-codex-cli";
+  isExpired: boolean;
+  loginCommand: string | null;
+  onGetCommand: () => void;
+  isPending: boolean;
+  onRefresh: () => void;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const handleCopy = () => {
+    const text = loginCommand ?? "codex login";
+    void navigator.clipboard.writeText(text).then(() => {
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    });
+  };
+
+  if (recommendedAction === "ready" && !isExpired) {
+    return (
+      <div className="flex items-center gap-2 rounded bg-success/10 px-3 py-2 text-xs text-success">
+        <span>🎉</span>
+        <span className="font-semibold">Ready to use Codex as an LLM provider.</span>
+        <Button type="button" size="sm" variant="outline" className="ml-auto h-6 text-xs" onClick={onRefresh}>
+          Refresh
+        </Button>
+      </div>
+    );
+  }
+
+  if (recommendedAction === "install-codex-cli") {
+    return (
+      <div className="rounded bg-muted px-3 py-2 text-xs text-muted-foreground">
+        <p className="font-semibold">Install Codex CLI first:</p>
+        <div className="mt-1 flex items-center gap-2">
+          <code className="flex-1 rounded bg-background px-2 py-1 font-mono">npm install -g @openai/codex</code>
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-6 shrink-0 text-xs"
+            onClick={() => void navigator.clipboard.writeText("npm install -g @openai/codex")}
+          >
+            Copy
+          </Button>
+        </div>
+        <p className="mt-2">
+          Or configure <code>CODEX_ACCESS_TOKEN</code> in your environment.
+        </p>
+      </div>
+    );
+  }
+
+  // run-codex-login or expired
+  const cmd = loginCommand ?? "codex login";
+  return (
+    <div className="rounded bg-muted px-3 py-2 text-xs text-muted-foreground">
+      <p className="font-semibold">
+        {isExpired ? "Re-authenticate by running in your terminal:" : "Authenticate by running in your terminal:"}
+      </p>
+      <div className="mt-1 flex items-center gap-2">
+        {loginCommand ? (
+          <code className="flex-1 rounded bg-background px-2 py-1 font-mono">{cmd}</code>
+        ) : (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="text-xs"
+            onClick={onGetCommand}
+            disabled={isPending}
+          >
+            {isPending ? "Loading…" : "Get Login Command"}
+          </Button>
+        )}
+        {loginCommand && (
+          <Button
+            type="button"
+            size="sm"
+            variant="outline"
+            className="h-6 shrink-0 text-xs"
+            onClick={handleCopy}
+          >
+            {copied ? "Copied!" : "Copy"}
+          </Button>
+        )}
+      </div>
+      <p className="mt-2 text-muted-foreground/70">
+        After login, click{" "}
+        <button type="button" className="underline hover:text-foreground" onClick={onRefresh}>
+          Refresh
+        </button>{" "}
+        to update the status.
+      </p>
+    </div>
+  );
+}
+
 export function SettingsPage() {
+
   const tz = useTimezone();
   const formatDateTime = (value: string | null | undefined): string => {
     return formatDateTimeTz(value, tz);
@@ -1531,19 +1693,25 @@ export function SettingsPage() {
                   <CardHeader className="settings-provider-header">
                     <CardTitle>Codex Auth</CardTitle>
                     <div className="settings-provider-actions">
-                      {codexAuthQuery.data ? (
+                      {codexAuthQuery.isLoading ? (
+                        <Badge variant="outline">Checking...</Badge>
+                      ) : codexAuthQuery.data ? (
                         <Badge
                           variant={
                             codexAuthQuery.data.recommendedAction === "ready"
                               ? "success"
-                              : "warning"
+                              : codexAuthQuery.data.tokenInfo?.isExpired
+                                ? "destructive"
+                                : "warning"
                           }
                         >
-                          {codexAuthQuery.data.recommendedAction === "ready" ? "Ready" : "Action Required"}
+                          {codexAuthQuery.data.recommendedAction === "ready"
+                            ? "✓ Logged in"
+                            : codexAuthQuery.data.tokenInfo?.isExpired
+                              ? "Token Expired"
+                              : "Login Required"}
                         </Badge>
-                      ) : (
-                        <Badge variant="outline">Loading...</Badge>
-                      )}
+                      ) : null}
                     </div>
                   </CardHeader>
                   <CardContent className="settings-card-grid">
@@ -1591,54 +1759,43 @@ export function SettingsPage() {
 
                     {codexAuthQuery.data && (
                       <div className="settings-codex-status-details space-y-2 text-sm text-foreground">
-                        <div className="flex justify-between border-b pb-1">
-                          <span className="text-muted-foreground">Codex Home</span>
-                          <span className="font-mono">{codexAuthQuery.data.codexHome}</span>
-                        </div>
-                        <div className="flex justify-between border-b pb-1">
-                          <span className="text-muted-foreground">CLI Available</span>
-                          <span>{codexAuthQuery.data.cliAvailable ? "✅ Yes" : "❌ No"}</span>
-                        </div>
-                        <div className="flex justify-between border-b pb-1">
-                          <span className="text-muted-foreground">Auth JSON Exists</span>
-                          <span>{codexAuthQuery.data.authJsonExists ? "✅ Yes" : "❌ No"}</span>
-                        </div>
-                        <div className="flex justify-between border-b pb-1">
-                          <span className="text-muted-foreground">Access Token Configured</span>
-                          <span>{codexAuthQuery.data.accessTokenConfigured ? "✅ Yes" : "❌ No"}</span>
-                        </div>
-                        
-                        <div className="settings-codex-action-guide bg-muted p-3 rounded mt-3">
-                          <strong>Recommended Action:</strong>
-                          <div className="text-xs text-muted-foreground mt-1">
-                            {codexAuthQuery.data.recommendedAction === "ready" && (
-                              <span className="text-success font-semibold">Ready to compile with Codex.</span>
-                            )}
-                            {codexAuthQuery.data.recommendedAction === "install-codex-cli" && (
-                              <span>Please install the Codex CLI to authenticate locally, or configure <code>CODEX_ACCESS_TOKEN</code> in your environment.</span>
-                            )}
-                            {codexAuthQuery.data.recommendedAction === "run-codex-login" && (
-                              <div className="space-y-2">
-                                <span>Authenticate by running the following command in your terminal:</span>
-                                <div className="flex items-center gap-2 mt-1">
-                                  <Input
-                                    readOnly
-                                    value={loginCommand || "Click Get Command..."}
-                                    className="font-mono text-xs"
-                                  />
-                                  <Button
-                                    type="button"
-                                    size="sm"
-                                    onClick={() => getLoginCommandMutation.mutate()}
-                                    disabled={getLoginCommandMutation.isPending}
-                                  >
-                                    Get Command
-                                  </Button>
-                                </div>
-                              </div>
-                            )}
+                        {/* --- Token / Account Info --- */}
+                        {codexAuthQuery.data.tokenInfo && (
+                          <CodexTokenInfoPanel tokenInfo={codexAuthQuery.data.tokenInfo} />
+                        )}
+
+                        {/* --- System Details (collapsed) --- */}
+                        <details className="text-xs text-muted-foreground">
+                          <summary className="cursor-pointer select-none py-1 font-medium">System Details</summary>
+                          <div className="mt-2 space-y-1">
+                            <div className="flex justify-between border-b pb-1">
+                              <span>Codex Home</span>
+                              <span className="font-mono">{codexAuthQuery.data.codexHome}</span>
+                            </div>
+                            <div className="flex justify-between border-b pb-1">
+                              <span>CLI (codex) Available</span>
+                              <span>{codexAuthQuery.data.cliAvailable ? "✅ Yes" : "❌ No"}</span>
+                            </div>
+                            <div className="flex justify-between border-b pb-1">
+                              <span>~/.codex/auth.json</span>
+                              <span>{codexAuthQuery.data.authJsonExists ? "✅ Exists" : "❌ Not found"}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>CODEX_ACCESS_TOKEN env</span>
+                              <span>{codexAuthQuery.data.accessTokenConfigured ? "✅ Set" : "— Not set"}</span>
+                            </div>
                           </div>
-                        </div>
+                        </details>
+
+                        {/* --- Action Guide --- */}
+                        <CodexActionGuide
+                          recommendedAction={codexAuthQuery.data.recommendedAction}
+                          isExpired={codexAuthQuery.data.tokenInfo?.isExpired ?? false}
+                          loginCommand={loginCommand}
+                          onGetCommand={() => getLoginCommandMutation.mutate()}
+                          isPending={getLoginCommandMutation.isPending}
+                          onRefresh={() => void codexAuthQuery.refetch()}
+                        />
                       </div>
                     )}
                   </CardContent>

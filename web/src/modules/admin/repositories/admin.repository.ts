@@ -2906,11 +2906,20 @@ export async function reloadRuntimeSettingsCache(): Promise<RuntimeSettingsReloa
   return requestJson<RuntimeSettingsReloadResponse>("/api/settings/reload-runtime-cache", "POST");
 }
 
+export type CodexAuthTokenInfo = {
+  authMode: string;
+  email: string | null;
+  expiresAt: string | null;
+  isExpired: boolean;
+};
+
 export type CodexAuthStatus = {
   codexHome: string;
   cliAvailable: boolean;
   authJsonExists: boolean;
   accessTokenConfigured: boolean;
+  /** Detailed token information parsed from auth.json */
+  tokenInfo: CodexAuthTokenInfo | null;
   recommendedAction:
     | "ready"
     | "run-codex-login"
