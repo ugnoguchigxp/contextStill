@@ -1303,6 +1303,118 @@ export function SettingsPage() {
 
                 <Card>
                   <CardHeader className="settings-provider-header">
+                    <CardTitle>Codex Auth</CardTitle>
+                    <div className="settings-provider-actions">
+                      {codexAuthQuery.isLoading ? (
+                        <Badge variant="outline">Checking...</Badge>
+                      ) : codexAuthQuery.data ? (
+                        <Badge
+                          variant={
+                            codexAuthQuery.data.recommendedAction === "ready"
+                              ? "success"
+                              : codexAuthQuery.data.tokenInfo?.isExpired
+                                ? "destructive"
+                                : "warning"
+                          }
+                        >
+                          {codexAuthQuery.data.recommendedAction === "ready"
+                            ? "✓ Logged in"
+                            : codexAuthQuery.data.tokenInfo?.isExpired
+                              ? "Token Expired"
+                              : "Login Required"}
+                        </Badge>
+                      ) : null}
+                    </div>
+                  </CardHeader>
+                  <CardContent className="settings-card-grid">
+                    <label className="settings-check">
+                      <Checkbox
+                        checked={draft.providers.codex?.enabled ?? false}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            providers: {
+                              ...current.providers,
+                              codex: {
+                                ...current.providers.codex,
+                                enabled: event.target.checked,
+                              },
+                            },
+                          }))
+                        }
+                      />
+                      enabled
+                    </label>
+                    <label className="settings-field">
+                      <span>Model</span>
+                      <Select
+                        value={draft.providers.codex?.model ?? "codex-sdk-agent"}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            providers: {
+                              ...current.providers,
+                              codex: {
+                                ...current.providers.codex,
+                                model: event.target.value,
+                              },
+                            },
+                          }))
+                        }
+                      >
+                        <option value="codex-sdk-agent">codex-sdk-agent (Default Agent)</option>
+                        <option value="gpt-5.5">gpt-5.5 (Next-Gen Reasoner)</option>
+                        <option value="gpt-5.4-mini">gpt-5.4-mini (Efficient Assistant)</option>
+                        <option value="gpt-5.2-codex">gpt-5.2-codex (Specialized Codex)</option>
+                      </Select>
+                    </label>
+
+                    {codexAuthQuery.data && (
+                      <div className="settings-codex-status-details space-y-2 text-sm text-foreground">
+                        {/* --- Token / Account Info --- */}
+                        {codexAuthQuery.data.tokenInfo && (
+                          <CodexTokenInfoPanel tokenInfo={codexAuthQuery.data.tokenInfo} />
+                        )}
+
+                        {/* --- System Details (collapsed) --- */}
+                        <details className="text-xs text-muted-foreground">
+                          <summary className="cursor-pointer select-none py-1 font-medium">System Details</summary>
+                          <div className="mt-2 space-y-1">
+                            <div className="flex justify-between border-b pb-1">
+                              <span>Codex Home</span>
+                              <span className="font-mono">{codexAuthQuery.data.codexHome}</span>
+                            </div>
+                            <div className="flex justify-between border-b pb-1">
+                              <span>CLI (codex) Available</span>
+                              <span>{codexAuthQuery.data.cliAvailable ? "✅ Yes" : "❌ No"}</span>
+                            </div>
+                            <div className="flex justify-between border-b pb-1">
+                              <span>~/.codex/auth.json</span>
+                              <span>{codexAuthQuery.data.authJsonExists ? "✅ Exists" : "❌ Not found"}</span>
+                            </div>
+                            <div className="flex justify-between">
+                              <span>CODEX_ACCESS_TOKEN env</span>
+                              <span>{codexAuthQuery.data.accessTokenConfigured ? "✅ Set" : "— Not set"}</span>
+                            </div>
+                          </div>
+                        </details>
+
+                        {/* --- Action Guide --- */}
+                        <CodexActionGuide
+                          recommendedAction={codexAuthQuery.data.recommendedAction}
+                          isExpired={codexAuthQuery.data.tokenInfo?.isExpired ?? false}
+                          loginCommand={loginCommand}
+                          onGetCommand={() => getLoginCommandMutation.mutate()}
+                          isPending={getLoginCommandMutation.isPending}
+                          onRefresh={() => void codexAuthQuery.refetch()}
+                        />
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+
+                <Card>
+                  <CardHeader className="settings-provider-header">
                     <CardTitle>Azure OpenAI</CardTitle>
                   </CardHeader>
                   <CardContent className="settings-card-grid">
@@ -1689,117 +1801,6 @@ export function SettingsPage() {
                   </CardContent>
                 </Card>
 
-                <Card>
-                  <CardHeader className="settings-provider-header">
-                    <CardTitle>Codex Auth</CardTitle>
-                    <div className="settings-provider-actions">
-                      {codexAuthQuery.isLoading ? (
-                        <Badge variant="outline">Checking...</Badge>
-                      ) : codexAuthQuery.data ? (
-                        <Badge
-                          variant={
-                            codexAuthQuery.data.recommendedAction === "ready"
-                              ? "success"
-                              : codexAuthQuery.data.tokenInfo?.isExpired
-                                ? "destructive"
-                                : "warning"
-                          }
-                        >
-                          {codexAuthQuery.data.recommendedAction === "ready"
-                            ? "✓ Logged in"
-                            : codexAuthQuery.data.tokenInfo?.isExpired
-                              ? "Token Expired"
-                              : "Login Required"}
-                        </Badge>
-                      ) : null}
-                    </div>
-                  </CardHeader>
-                  <CardContent className="settings-card-grid">
-                    <label className="settings-check">
-                      <Checkbox
-                        checked={draft.providers.codex?.enabled ?? false}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              codex: {
-                                ...current.providers.codex,
-                                enabled: event.target.checked,
-                              },
-                            },
-                          }))
-                        }
-                      />
-                      enabled
-                    </label>
-                    <label className="settings-field">
-                      <span>Model</span>
-                      <Select
-                        value={draft.providers.codex?.model ?? "codex-sdk-agent"}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              codex: {
-                                ...current.providers.codex,
-                                model: event.target.value,
-                              },
-                            },
-                          }))
-                        }
-                      >
-                        <option value="codex-sdk-agent">codex-sdk-agent (Default Agent)</option>
-                        <option value="gpt-5.5">gpt-5.5 (Next-Gen Reasoner)</option>
-                        <option value="gpt-5.4-mini">gpt-5.4-mini (Efficient Assistant)</option>
-                        <option value="gpt-5.2-codex">gpt-5.2-codex (Specialized Codex)</option>
-                      </Select>
-                    </label>
-
-                    {codexAuthQuery.data && (
-                      <div className="settings-codex-status-details space-y-2 text-sm text-foreground">
-                        {/* --- Token / Account Info --- */}
-                        {codexAuthQuery.data.tokenInfo && (
-                          <CodexTokenInfoPanel tokenInfo={codexAuthQuery.data.tokenInfo} />
-                        )}
-
-                        {/* --- System Details (collapsed) --- */}
-                        <details className="text-xs text-muted-foreground">
-                          <summary className="cursor-pointer select-none py-1 font-medium">System Details</summary>
-                          <div className="mt-2 space-y-1">
-                            <div className="flex justify-between border-b pb-1">
-                              <span>Codex Home</span>
-                              <span className="font-mono">{codexAuthQuery.data.codexHome}</span>
-                            </div>
-                            <div className="flex justify-between border-b pb-1">
-                              <span>CLI (codex) Available</span>
-                              <span>{codexAuthQuery.data.cliAvailable ? "✅ Yes" : "❌ No"}</span>
-                            </div>
-                            <div className="flex justify-between border-b pb-1">
-                              <span>~/.codex/auth.json</span>
-                              <span>{codexAuthQuery.data.authJsonExists ? "✅ Exists" : "❌ Not found"}</span>
-                            </div>
-                            <div className="flex justify-between">
-                              <span>CODEX_ACCESS_TOKEN env</span>
-                              <span>{codexAuthQuery.data.accessTokenConfigured ? "✅ Set" : "— Not set"}</span>
-                            </div>
-                          </div>
-                        </details>
-
-                        {/* --- Action Guide --- */}
-                        <CodexActionGuide
-                          recommendedAction={codexAuthQuery.data.recommendedAction}
-                          isExpired={codexAuthQuery.data.tokenInfo?.isExpired ?? false}
-                          loginCommand={loginCommand}
-                          onGetCommand={() => getLoginCommandMutation.mutate()}
-                          isPending={getLoginCommandMutation.isPending}
-                          onRefresh={() => void codexAuthQuery.refetch()}
-                        />
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
               </section>
             ) : null}
 
