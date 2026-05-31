@@ -388,6 +388,48 @@ export function VibeNotePage() {
                   )}
                 </div>
 
+                {/* Middle: Non-loop agent memos */}
+                <div className="vibe-kanban-section">
+                  <div className="vibe-pane-header" style={{ marginBottom: "5px" }}>
+                    <h3>Agent Memos ({contextQuery.data?.agentMemos?.length ?? 0})</h3>
+                  </div>
+                  <div className="vibe-pane-body timeline-stream">
+                    {contextQuery.data?.agentMemos?.map((memo) => (
+                      <div key={memo.id} className="timeline-card">
+                        <div className="card-header">
+                          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                            {getIntentIcon(memo.intent)}
+                            <strong>{memo.actorId}</strong>
+                            <Badge variant="outline">{memo.intent}</Badge>
+                          </div>
+                          <span className="time">
+                            {formatDateTimeCompact(new Date(memo.createdAt), tz)}
+                          </span>
+                        </div>
+                        <p className="text">{memo.text}</p>
+                        {memo.subject ? (
+                          <div className="loop-meta-item">
+                            <span className="meta-lbl">Subject:</span> <span>{memo.subject}</span>
+                          </div>
+                        ) : null}
+                        {memo.refs?.length > 0 ? (
+                          <div className="refs-bar">
+                            <span>Refs:</span>
+                            {memo.refs.map((r) => (
+                              <code key={r} className="ref-node" title={r}>
+                                {parseFileName(r)}
+                              </code>
+                            ))}
+                          </div>
+                        ) : null}
+                      </div>
+                    ))}
+                    {(contextQuery.data?.agentMemos?.length ?? 0) === 0 ? (
+                      <span className="vibe-muted-text">No agent memos yet.</span>
+                    ) : null}
+                  </div>
+                </div>
+
                 {/* Bottom: Kanban Board for Open Loops & Capsules */}
                 <div className="vibe-kanban-section">
                   <div className="vibe-pane-header" style={{ marginBottom: "5px" }}>
@@ -640,38 +682,41 @@ export function VibeNotePage() {
                   <h3>🕒 Capsule History Stream</h3>
                 </div>
                 <div className="vibe-pane-body timeline-stream">
-                  {contextQuery.data?.openLoops?.map((cap) => (
-                    <div key={cap.id} className="timeline-item-row">
-                      <div className="timeline-dot-connector">
-                        <div className="dot" />
-                        <div className="connector" />
-                      </div>
-                      <div className="timeline-card">
-                        <div className="card-header">
-                          <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
-                            {getIntentIcon(cap.intent)}
-                            <strong>{cap.actorId}</strong>
-                            <Badge variant="outline">{cap.intent}</Badge>
-                          </div>
-                          <span className="time">
-                            {formatDateTime(new Date(cap.createdAt), tz)}
-                          </span>
+                  {(contextQuery.data?.recentTimeline ?? contextQuery.data?.openLoops ?? []).map(
+                    (cap) => (
+                      <div key={cap.id} className="timeline-item-row">
+                        <div className="timeline-dot-connector">
+                          <div className="dot" />
+                          <div className="connector" />
                         </div>
-                        <p className="text">{cap.text}</p>
-                        {cap.refs?.length > 0 ? (
-                          <div className="refs-bar">
-                            <span>Refs:</span>
-                            {cap.refs.map((r) => (
-                              <code key={r} className="ref-node" title={r}>
-                                {parseFileName(r)}
-                              </code>
-                            ))}
+                        <div className="timeline-card">
+                          <div className="card-header">
+                            <div style={{ display: "flex", gap: "8px", alignItems: "center" }}>
+                              {getIntentIcon(cap.intent)}
+                              <strong>{cap.actorId}</strong>
+                              <Badge variant="outline">{cap.intent}</Badge>
+                            </div>
+                            <span className="time">
+                              {formatDateTime(new Date(cap.createdAt), tz)}
+                            </span>
                           </div>
-                        ) : null}
+                          <p className="text">{cap.text}</p>
+                          {cap.refs?.length > 0 ? (
+                            <div className="refs-bar">
+                              <span>Refs:</span>
+                              {cap.refs.map((r) => (
+                                <code key={r} className="ref-node" title={r}>
+                                  {parseFileName(r)}
+                                </code>
+                              ))}
+                            </div>
+                          ) : null}
+                        </div>
                       </div>
-                    </div>
-                  ))}
-                  {contextQuery.data?.openLoops?.length === 0 ? (
+                    ),
+                  )}
+                  {(contextQuery.data?.recentTimeline ?? contextQuery.data?.openLoops ?? [])
+                    .length === 0 ? (
                     <span className="vibe-muted-text">No Capsule logs yet.</span>
                   ) : null}
                 </div>

@@ -3183,6 +3183,8 @@ export type VibeMemoryCapsule = {
 export type VibeMemoryContextPack = {
   brief: string;
   openLoops: VibeMemoryCapsule[];
+  agentMemos: VibeMemoryCapsule[];
+  recentTimeline: VibeMemoryCapsule[];
   pinned: any[];
   decisions: any[];
   goal: VibeGoal | null;

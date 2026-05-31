@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { coveringEvidenceQueue, premiumCoveringEvidenceQueue } from "../src/db/schema.js";
-import { runQueueWorkerOnce } from "../src/modules/queue/core/worker.js";
+import {
+  coveringEvidenceQueue,
+  findingCandidateQueue,
+  premiumCoveringEvidenceQueue,
+} from "../src/db/schema.js";
+import { enqueueFindingJob, runQueueWorkerOnce } from "../src/modules/queue/core/worker.js";
 
 const mocks = vi.hoisted(() => ({
   appendQueueEvent: vi.fn(),
@@ -308,6 +312,34 @@ describe("runQueueWorkerOnce", () => {
         }),
       }),
     );
+  });
+
+  test("does not enqueue missing vibe memory sources", async () => {
+    mocks.selectRows = [[]];
+
+    const result = await enqueueFindingJob({
+      inputKind: "source_target",
+      sourceKind: "vibe_memory",
+      sourceKey: "missing-memory",
+      sourceUri: "vibe_memory:missing-memory",
+    });
+
+    expect(result).toBeNull();
+    expect(mocks.insertCalls.map((call) => call.table)).not.toContain(findingCandidateQueue);
+  });
+
+  test("enqueues existing vibe memory sources", async () => {
+    mocks.selectRows = [[{ id: "memory-1" }]];
+
+    const result = await enqueueFindingJob({
+      inputKind: "source_target",
+      sourceKind: "vibe_memory",
+      sourceKey: "memory-1",
+      sourceUri: "vibe_memory:memory-1",
+    });
+
+    expect(result).toEqual({ id: "evidence-1" });
+    expect(mocks.insertCalls.map((call) => call.table)).toContain(findingCandidateQueue);
   });
 
   test("returns idle when lane is paused", async () => {

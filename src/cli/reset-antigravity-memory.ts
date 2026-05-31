@@ -1,10 +1,11 @@
-import { ilike, or } from "drizzle-orm";
+import { count, ilike, or } from "drizzle-orm";
 import { closeDbPool, db } from "../db/index.js";
 import { knowledgeItems } from "../db/schema.js";
 
 async function main() {
   const args = process.argv.slice(2);
   const isAll = args.includes("--all");
+  const confirmed = args.includes("--yes");
   const queryArgIndex = args.indexOf("--query");
   const query = queryArgIndex !== -1 ? args[queryArgIndex + 1] : null;
 
@@ -13,6 +14,13 @@ async function main() {
       console.log(
         "⚠️  WARNING: You are about to clear ALL distilled knowledge items in the memory system.",
       );
+      if (!confirmed) {
+        const [row] = await db.select({ total: count() }).from(knowledgeItems);
+        console.log(
+          `Dry run only: ${row.total} knowledge items would be deleted. Re-run with --yes to execute.`,
+        );
+        return;
+      }
       console.log("Clearing knowledge_items database table...");
 
       const result = await db.delete(knowledgeItems).returning({ id: knowledgeItems.id });
@@ -39,6 +47,12 @@ async function main() {
         console.log(`- [${item.id}] ${item.title}`);
       }
 
+      if (!confirmed) {
+        console.log(`\nDry run only: ${matched.length} matching items would be deleted.`);
+        console.log("Re-run with --yes to execute deletion.");
+        return;
+      }
+
       console.log(`\nDeleting ${matched.length} matching items...`);
       const deleted = await db
         .delete(knowledgeItems)
@@ -54,11 +68,12 @@ async function main() {
       console.log("Antigravity / Memory-Router Knowledge Memory Reset Utility");
       console.log("Usage:");
       console.log(
-        "  bun run src/cli/reset-antigravity-memory.ts --all            Clear ALL knowledge items in the system",
+        "  bun run src/cli/reset-antigravity-memory.ts --all --yes       Clear ALL knowledge items in the system",
       );
       console.log(
-        "  bun run src/cli/reset-antigravity-memory.ts --query <text>   Find and delete specific knowledge items matching <text>",
+        "  bun run src/cli/reset-antigravity-memory.ts --query <text> --yes   Delete specific knowledge items matching <text>",
       );
+      console.log("  Omit --yes to preview the affected rows without deleting anything.");
     }
   } catch (error) {
     console.error("❌ Failed to reset knowledge memory:", error);

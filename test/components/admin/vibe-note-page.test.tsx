@@ -74,6 +74,36 @@ const mockVibeContext = {
       marks: [],
     },
   ],
+  agentMemos: [
+    {
+      id: "memo-1",
+      intent: "finding",
+      text: "Agent memo: keep Vibe Memory free of raw capsules",
+      subject: "vibe-note",
+      wants: [],
+      refs: ["file:///Users/y.noguchi/Code/memoryRouter/vibe-note.md"],
+      score: 0,
+      evidenceStatus: "referenced",
+      actorId: "agent-vibe",
+      createdAt: "2026-05-26T06:00:00.000Z",
+      marks: [],
+    },
+  ],
+  recentTimeline: [
+    {
+      id: "memo-1",
+      intent: "finding",
+      text: "Agent memo: keep Vibe Memory free of raw capsules",
+      subject: "vibe-note",
+      wants: [],
+      refs: [],
+      score: 0,
+      evidenceStatus: "referenced",
+      actorId: "agent-vibe",
+      createdAt: "2026-05-26T06:00:00.000Z",
+      marks: [],
+    },
+  ],
   pinned: [
     {
       id: "pin-1",
@@ -143,6 +173,14 @@ describe("VibeNotePage", () => {
     expect(screen.getByText(/Add unit tests/)).toBeInTheDocument();
     expect(screen.getByText(/test\/vibe-memory\.test\.ts/)).toBeInTheDocument();
     expect(screen.getByText("未検証")).toBeInTheDocument();
+  });
+
+  it("renders non-loop capsules as agent memos", () => {
+    render(<VibeNotePage />);
+
+    expect(screen.getByText("Agent Memos (1)")).toBeInTheDocument();
+    expect(screen.getAllByText(/keep Vibe Memory free of raw capsules/).length).toBeGreaterThan(0);
+    expect(screen.getAllByText("finding").length).toBeGreaterThan(0);
   });
 
   it("renders match badge for high score loops", () => {

@@ -1,27 +1,32 @@
-import { eq } from "drizzle-orm";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { db } from "../src/db/client.js";
-import { vibeGoals, vibeMemories, vibeMemoryMarks } from "../src/db/schema.js";
+import { vibeGoals, vibeMemoryMarks } from "../src/db/schema.js";
+import {
+  closeIntegrationDb,
+  ensureDbIntegrationReady,
+  isDbIntegrationEnabled,
+  truncateIntegrationTables,
+} from "./helpers/integration.js";
 import {
   markVibeMemory,
   recordVibeMemoryCapsule,
   retrieveVibeMemoryContext,
 } from "../src/modules/vibe-memory/vibe-memory.service.js";
+import { eq } from "drizzle-orm";
 
-// Skip tests if DATABASE is not configured or integration test flag is missing
-const runDbTests = process.env.MEMORY_ROUTER_RUN_DB_TESTS || process.env.DATABASE_URL;
+const describeDb = isDbIntegrationEnabled() ? describe : describe.skip;
 
-describe("Goal Room Memory Database Integration Tests", () => {
-  if (!runDbTests) {
-    test.skip("Skipping DB integration tests because DATABASE_URL is not set", () => {});
-    return;
-  }
+describeDb("Goal Room Memory Database Integration Tests", () => {
+  beforeAll(async () => {
+    await ensureDbIntegrationReady();
+  });
+
+  afterAll(async () => {
+    await closeIntegrationDb();
+  });
 
   beforeEach(async () => {
-    // Clean up test tables in correct dependency order
-    await db.delete(vibeMemoryMarks);
-    await db.delete(vibeMemories);
-    await db.delete(vibeGoals);
+    await truncateIntegrationTables();
   });
 
   test("recordVibeMemoryCapsule inserts goal and capsule successfully", async () => {
@@ -115,7 +120,15 @@ describe("Goal Room Memory Database Integration Tests", () => {
       actorId: "agent-a",
     });
 
-    // 4. Retrieve Context with 'code-review' profile matching the ask wants ['review']
+    // 4. Post a non-loop memo that should remain visible in Goal Room context
+    const memoCapsule = await recordVibeMemoryCapsule({
+      goalId,
+      intent: "finding",
+      text: "Agent memo belongs in VibeNote, not the raw Vibe Sessions list.",
+      actorId: "agent-c",
+    });
+
+    // 5. Retrieve Context with 'code-review' profile matching the ask wants ['review']
     const [result] = await retrieveVibeMemoryContext({
       goalId,
       profile: ["code-review"],
@@ -131,6 +144,7 @@ describe("Goal Room Memory Database Integration Tests", () => {
     expect(result.brief).toContain("🔥 (Match)"); // profile code-review matches wants review
 
     expect(result.openLoops).toHaveLength(2); // ask and question are unresolved
+    expect(result.agentMemos.map((memo: any) => memo.id)).toContain(memoCapsule.id);
     expect(result.pinned).toHaveLength(1);
   });
 

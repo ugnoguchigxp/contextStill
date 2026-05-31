@@ -1,6 +1,7 @@
 import { eq, like } from "drizzle-orm";
 import { db } from "../../db/client.js";
 import { agentDiffEntries, syncStates, vibeMemories } from "../../db/schema.js";
+import { readProjectEnv } from "../../project-identity.js";
 import { redactSecretRecord, redactSecrets } from "../../shared/utils/secret-redaction.js";
 import {
   auditEventTypes,
@@ -24,7 +25,9 @@ import {
   chunkMessages,
   extractAgentDiffsFromToolCalls,
   extractUnifiedDiffsFromText,
+  filterDistillableAgentLogMessages,
   getCheckpointDate,
+  isCodexInternalProviderPromptMessage,
   isNonDistillableAgentTaskLogMessage,
   isToolCallMessage,
   mergeMessageMetadata,
@@ -76,12 +79,20 @@ const sources: AgentLogSource[] = [
   { id: "antigravity_logs", label: "Antigravity", ingest: ingestAntigravityLogs },
   { id: "claude_logs", label: "Claude", ingest: ingestClaudeLogs },
 ];
+
+function shouldDeleteLegacyAntigravityVibeMemories(): boolean {
+  return readProjectEnv("DELETE_LEGACY_ANTIGRAVITY_VIBE_MEMORIES") === "1";
+}
+
 export {
   buildDedupeKey,
   buildReadableTranscript,
   chunkMessages,
   extractUnifiedDiffsFromText,
+  filterDistillableAgentLogMessages,
+  isCodexInternalProviderPromptMessage,
   isNonDistillableAgentTaskLogMessage,
+  shouldDeleteLegacyAntigravityVibeMemories,
 };
 
 export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
@@ -160,10 +171,7 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
         continue;
       }
 
-      const messages = ingestResult.messages.filter(
-        (message) =>
-          message.content.trim().length > 0 && !isNonDistillableAgentTaskLogMessage(message),
-      );
+      const messages = filterDistillableAgentLogMessages(ingestResult.messages);
       const checkpointDate = getCheckpointDate(ingestResult.maxObservedMtimeMs, since);
       const sourceMetadata = {
         checkedFiles: ingestResult.checkedFiles,
@@ -207,7 +215,7 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
       let insertedDiffs = 0;
 
       await db.transaction(async (tx) => {
-        if (isFirst20Sync) {
+        if (isFirst20Sync && shouldDeleteLegacyAntigravityVibeMemories()) {
           // 旧 Antigravity 会話ログに関連するメモリデータを DB から全削除
           if (typeof tx.delete === "function") {
             await tx.delete(vibeMemories).where(like(vibeMemories.sessionId, "antigravity_logs:%"));

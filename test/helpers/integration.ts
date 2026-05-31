@@ -33,7 +33,9 @@ const requiredTables = [
 const requiredTableSqlList = requiredTables.map((tableName) => `'${tableName}'`).join(", ");
 
 export function isDbIntegrationEnabled(): boolean {
-  return process.env.MEMORY_ROUTER_RUN_DB_TESTS === "1";
+  return (
+    process.env.CONTEXT_STILL_RUN_DB_TESTS === "1" || process.env.MEMORY_ROUTER_RUN_DB_TESTS === "1"
+  );
 }
 
 function isSafeIntegrationDatabase(databaseUrl: string): boolean {
@@ -50,12 +52,13 @@ export async function ensureDbIntegrationReady(): Promise<void> {
     process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:7889/memory_router";
   if (
     !isSafeIntegrationDatabase(databaseUrl) &&
+    process.env.CONTEXT_STILL_ALLOW_DESTRUCTIVE_DB_TESTS !== "1" &&
     process.env.MEMORY_ROUTER_ALLOW_DESTRUCTIVE_DB_TESTS !== "1"
   ) {
     throw new Error(
       [
-        "DB integration tests truncate tables and must not run against the live memory_router database.",
-        "Use a test database whose name includes 'test', or set MEMORY_ROUTER_ALLOW_DESTRUCTIVE_DB_TESTS=1 explicitly.",
+        "DB integration tests truncate tables and must not run against the live contextStill database.",
+        "Use a test database whose name includes 'test', or set CONTEXT_STILL_ALLOW_DESTRUCTIVE_DB_TESTS=1 explicitly.",
       ].join(" "),
     );
   }

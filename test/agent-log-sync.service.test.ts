@@ -8,7 +8,10 @@ import {
 import {
   buildReadableTranscript,
   chunkMessages,
+  filterDistillableAgentLogMessages,
+  isCodexInternalProviderPromptMessage,
   isNonDistillableAgentTaskLogMessage,
+  shouldDeleteLegacyAntigravityVibeMemories,
   syncAllAgentLogs,
 } from "../src/modules/agent-log-sync/sync.service.js";
 
@@ -38,6 +41,8 @@ vi.mock("../src/db/client.js", () => {
 describe("Agent Log Sync Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    process.env.CONTEXT_STILL_DELETE_LEGACY_ANTIGRAVITY_VIBE_MEMORIES = undefined;
+    process.env.MEMORY_ROUTER_DELETE_LEGACY_ANTIGRAVITY_VIBE_MEMORIES = undefined;
     vi.mocked(ingestAntigravityLogs).mockResolvedValue({
       ok: true,
       messages: [],
@@ -181,6 +186,72 @@ describe("Agent Log Sync Service", () => {
     ).toBe(true);
   });
 
+  test("identifies Codex provider internal prompts as non-distillable", () => {
+    const message = {
+      role: "user" as const,
+      content: [
+        "[System Instructions]",
+        "Return JSON for this task.",
+        "",
+        "[User]",
+        "ping",
+        "",
+        "[Instructions]",
+        "Based on the instructions and history above, generate the final response. Output only the requested content/JSON structure directly, without markdown blocks or conversational text outside the format.",
+      ].join("\n"),
+      metadata: {
+        sourceId: "codex_logs",
+        sessionId: "codex-provider-session",
+      },
+    };
+
+    expect(isCodexInternalProviderPromptMessage(message)).toBe(true);
+    expect(isNonDistillableAgentTaskLogMessage(message)).toBe(true);
+  });
+
+  test("keeps legacy Antigravity memory cleanup opt-in", () => {
+    expect(shouldDeleteLegacyAntigravityVibeMemories()).toBe(false);
+
+    process.env.CONTEXT_STILL_DELETE_LEGACY_ANTIGRAVITY_VIBE_MEMORIES = "1";
+    expect(shouldDeleteLegacyAntigravityVibeMemories()).toBe(true);
+  });
+
+  test("filterDistillableAgentLogMessages drops Codex provider prompt and immediate response only", () => {
+    const messages = [
+      {
+        role: "user" as const,
+        content: [
+          "[System Instructions]",
+          "Return JSON for this task.",
+          "",
+          "[User]",
+          "ping",
+          "",
+          "[Instructions]",
+          "Based on the instructions and history above, generate the final response. Output only the requested content/JSON structure directly, without markdown blocks or conversational text outside the format.",
+        ].join("\n"),
+        metadata: { sourceId: "codex_logs", sessionId: "internal-session" },
+      },
+      {
+        role: "assistant" as const,
+        content: '{"type":"rule","title":"noise","content":"prompt-derived"}',
+        metadata: { sourceId: "codex_logs", sessionId: "internal-session" },
+      },
+      {
+        role: "user" as const,
+        content: "[System Instructions] という文字列をREADMEで説明してください",
+        metadata: { sourceId: "codex_logs", sessionId: "normal-session" },
+      },
+      {
+        role: "assistant" as const,
+        content: "説明しました。",
+        metadata: { sourceId: "codex_logs", sessionId: "normal-session" },
+      },
+    ];
+
+    expect(filterDistillableAgentLogMessages(messages)).toEqual(messages.slice(2));
+  });
+
   test("syncAllAgentLogs skips background task log messages", async () => {
     vi.mocked(ingestAntigravityLogs).mockResolvedValue({
       ok: true,
@@ -220,6 +291,60 @@ describe("Agent Log Sync Service", () => {
 
     expect(summary.imported).toBe(1);
     expect(summary.sources.find((source) => source.id === "antigravity_logs")?.messages).toBe(1);
+  });
+
+  test("syncAllAgentLogs skips Codex provider internal prompt records", async () => {
+    vi.mocked(ingestCodexLogs).mockResolvedValue({
+      ok: true,
+      messages: [
+        {
+          role: "user",
+          content: [
+            "[System Instructions]",
+            "Return JSON for this task.",
+            "",
+            "[User]",
+            "ping",
+            "",
+            "[Instructions]",
+            "Based on the instructions and history above, generate the final response. Output only the requested content/JSON structure directly, without markdown blocks or conversational text outside the format.",
+          ].join("\n"),
+          metadata: {
+            sourceId: "codex_logs",
+            projectName: "contextStill",
+            sessionId: "internal-session",
+          },
+        },
+        {
+          role: "assistant",
+          content: '{"ok":true}',
+          metadata: {
+            sourceId: "codex_logs",
+            projectName: "contextStill",
+            sessionId: "internal-session",
+          },
+        },
+        {
+          role: "user",
+          content: "Keep this real Codex user request",
+          metadata: {
+            sourceId: "codex_logs",
+            projectName: "contextStill",
+            sessionId: "normal-session",
+          },
+        },
+      ],
+      cursor: {},
+      maxObservedMtimeMs: 4500,
+      checkedFiles: 1,
+      errors: [],
+      warnings: [],
+    } as any);
+
+    const summary = await syncAllAgentLogs();
+
+    expect(summary.imported).toBe(1);
+    expect(summary.sources.find((source) => source.id === "codex_logs")?.messages).toBe(1);
   });
 
   test("syncAllAgentLogs redacts secrets before storing memories and metadata", async () => {

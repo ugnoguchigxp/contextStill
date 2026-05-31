@@ -10,6 +10,7 @@ import {
   findingCandidateQueue,
   foundCandidates,
   premiumCoveringEvidenceQueue,
+  vibeMemories,
 } from "../../../db/schema.js";
 import { asRecord } from "../../../shared/utils/normalize.js";
 import { runCoverEvidence } from "../../coverEvidence/domain.js";
@@ -227,6 +228,15 @@ async function enqueueCoveringJob(params: {
       updatedAt: new Date(),
     })
     .onConflictDoNothing({ target: coveringEvidenceQueue.foundCandidateId });
+}
+
+async function vibeMemorySourceExists(sourceKey: string): Promise<boolean> {
+  const [row] = await db
+    .select({ id: vibeMemories.id })
+    .from(vibeMemories)
+    .where(eq(vibeMemories.id, sourceKey))
+    .limit(1);
+  return Boolean(row);
 }
 
 async function upsertFoundCandidateRow(params: {
@@ -1089,7 +1099,11 @@ export async function enqueueFindingJob(params: {
   payload?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
   priority?: number;
-}): Promise<typeof findingCandidateQueue.$inferSelect> {
+}): Promise<typeof findingCandidateQueue.$inferSelect | null> {
+  if (params.sourceKind === "vibe_memory" && !(await vibeMemorySourceExists(params.sourceKey))) {
+    return null;
+  }
+
   const distillationVersion = params.distillationVersion ?? APP_CONSTANTS.distillationTargetVersion;
   const priority = params.priority ?? priorityForSourceKind(params.sourceKind);
   const [row] = await db

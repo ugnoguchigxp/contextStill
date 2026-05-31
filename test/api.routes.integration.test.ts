@@ -173,10 +173,22 @@ describeDb("api route integration", () => {
     });
     expect(createOlderResponse.status).toBe(201);
 
+    const createCapsuleResponse = await app.request("/api/vibe-memory/record", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        goalId: "integration-goal-list-hidden",
+        intent: "finding",
+        text: "capsule should not appear in raw vibe sessions",
+        actorId: "agent-test",
+      }),
+    });
+    expect(createCapsuleResponse.status).toBe(201);
+
     const listResponse = await app.request("/api/vibe-memory?limit=10");
     expect(listResponse.status).toBe(200);
     const json = (await listResponse.json()) as {
-      memories: Array<{ sessionId: string; content: string }>;
+      memories: Array<{ sessionId: string; content: string; memoryType: string }>;
     };
     expect(json.memories[0]?.sessionId).toBe("integration-session-newer");
     expect(
@@ -193,6 +205,12 @@ describeDb("api route integration", () => {
           memory.content.includes("integration vibe memory older token"),
       ),
     ).toBe(true);
+    expect(json.memories.some((memory) => memory.memoryType === "capsule")).toBe(false);
+    expect(
+      json.memories.some((memory) =>
+        memory.content.includes("capsule should not appear in raw vibe sessions"),
+      ),
+    ).toBe(false);
   });
 
   test("POST /api/session-memo/item and GET /api/session-memo work with session-scoped slots", async () => {

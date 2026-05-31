@@ -101,6 +101,13 @@ export async function queueWebSourceUrl(params: {
     },
     priority: 80,
   });
+  if (!state) {
+    return {
+      ok: false,
+      url: redactedUrl,
+      reason: "source not found",
+    };
+  }
 
   return {
     ok: true,

@@ -335,18 +335,39 @@ export async function retrieveVibeMemoryContext(params: {
         ),
       );
 
-    const recentTimeline = await db
-      .select({
-        id: vibeMemories.id,
-        text: vibeMemories.content,
-        intent: vibeMemories.intent,
-        actorId: vibeMemories.actorId,
-        createdAt: vibeMemories.createdAt,
-      })
-      .from(vibeMemories)
-      .where(and(eq(vibeMemories.goalId, goalId), eq(vibeMemories.memoryType, "capsule")))
-      .orderBy(desc(vibeMemories.createdAt))
-      .limit(10);
+    const recentCapsulesQuery = await db.execute(sql`
+      SELECT
+        vm.id, vm.goal_id as "goalId", vm.parent_id as "parentId", vm.subject,
+        vm.intent, vm.wants, vm.content as "text", vm.refs, vm.confidence,
+        vm.evidence_status as "evidenceStatus", vm.actor_id as "actorId", vm.created_at as "createdAt",
+        COALESCE(
+          (
+            SELECT json_agg(json_build_object('id', vmm.id, 'mark', vmm.mark, 'note', vmm.note, 'actorId', vmm.actor_id))
+            FROM vibe_memory_marks vmm
+            WHERE vmm.target_memory_id = vm.id
+          ),
+          '[]'::json
+        ) as "marks"
+      FROM vibe_memories vm
+      WHERE vm.goal_id = ${goalId}
+        AND vm.memory_type = 'capsule'
+        AND NOT EXISTS (
+          SELECT 1 FROM vibe_memory_marks vmm
+          WHERE vmm.target_memory_id = vm.id
+            AND vmm.mark IN ('stale', 'superseded')
+        )
+      ORDER BY vm.created_at DESC
+      LIMIT 20;
+    `);
+    const recentCapsules = recentCapsulesQuery.rows as any[];
+    const openLoopIds = new Set(openLoops.map((loop) => loop.id));
+    const pinnedIds = new Set(pinnedMemories.map((memory) => memory.id));
+    const decisionIds = new Set(verifiedDecisions.map((decision) => decision.id));
+    const agentMemos = recentCapsules.filter(
+      (capsule) =>
+        !openLoopIds.has(capsule.id) && !pinnedIds.has(capsule.id) && !decisionIds.has(capsule.id),
+    );
+    const recentTimeline = recentCapsules.slice(0, 10);
 
     const [goal] = await db.select().from(vibeGoals).where(eq(vibeGoals.id, goalId));
 
@@ -449,6 +470,8 @@ export async function retrieveVibeMemoryContext(params: {
       {
         brief,
         openLoops: scoredLoops,
+        agentMemos,
+        recentTimeline,
         pinned: pinnedMemories,
         decisions: verifiedDecisions,
         goal: goal,

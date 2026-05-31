@@ -16,6 +16,8 @@ const BACKGROUND_TASK_STARTED_RE =
   /Tool is running as a background task with task id: [^\s]+\/task-\d+/i;
 const BACKGROUND_TASK_STATUS_RE = /(^|\n)Task:\s*[^\s]+\/task-\d+/i;
 const BACKGROUND_TASK_LOG_PATH_RE = /(^|\n)Log:\s*.*task-\d+\.log/i;
+const CODEX_INTERNAL_PROVIDER_PROMPT_RE =
+  /^\[System Instructions\]\n[\s\S]*\n\n\[Instructions\]\nBased on the instructions and history above, generate the final response\./;
 const diffExtractionToolNames = new Set([
   "replace_file_content",
   "write_to_file",
@@ -24,7 +26,31 @@ const diffExtractionToolNames = new Set([
   "apply_patch",
 ]);
 
+function agentLogThreadKey(message: ChatMessage): string | undefined {
+  const sessionId = message.metadata.sessionId;
+  if (typeof sessionId === "string" && sessionId.trim().length > 0) {
+    return sessionId.trim();
+  }
+
+  const sessionFile = message.metadata.sessionFile;
+  if (typeof sessionFile === "string" && sessionFile.trim().length > 0) {
+    return sessionFile.trim();
+  }
+
+  return undefined;
+}
+
+export function isCodexInternalProviderPromptMessage(message: ChatMessage): boolean {
+  return (
+    message.role === "user" &&
+    message.metadata.sourceId === "codex_logs" &&
+    CODEX_INTERNAL_PROVIDER_PROMPT_RE.test(message.content.trim())
+  );
+}
+
 export function isNonDistillableAgentTaskLogMessage(message: ChatMessage): boolean {
+  if (isCodexInternalProviderPromptMessage(message)) return true;
+
   const projectName = message.metadata.projectName;
   if (typeof projectName === "string" && AGENT_TASK_LOG_BASENAME_RE.test(projectName.trim())) {
     return true;
@@ -36,6 +62,35 @@ export function isNonDistillableAgentTaskLogMessage(message: ChatMessage): boole
     BACKGROUND_TASK_STARTED_RE.test(content) ||
     (BACKGROUND_TASK_STATUS_RE.test(content) && BACKGROUND_TASK_LOG_PATH_RE.test(content))
   );
+}
+
+export function filterDistillableAgentLogMessages(messages: ChatMessage[]): ChatMessage[] {
+  const skipNextCodexAssistantByThread = new Set<string>();
+  const result: ChatMessage[] = [];
+
+  for (const message of messages) {
+    if (!message.content.trim()) continue;
+
+    const threadKey = agentLogThreadKey(message);
+    if (
+      message.role === "assistant" &&
+      threadKey &&
+      skipNextCodexAssistantByThread.has(threadKey)
+    ) {
+      skipNextCodexAssistantByThread.delete(threadKey);
+      continue;
+    }
+
+    if (isCodexInternalProviderPromptMessage(message)) {
+      if (threadKey) skipNextCodexAssistantByThread.add(threadKey);
+      continue;
+    }
+
+    if (isNonDistillableAgentTaskLogMessage(message)) continue;
+    result.push(message);
+  }
+
+  return result;
 }
 
 export function chunkMessages(

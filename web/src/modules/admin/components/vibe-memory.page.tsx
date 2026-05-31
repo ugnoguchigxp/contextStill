@@ -58,14 +58,16 @@ export function VibeMemoryPage() {
     queryFn: () => fetchVibeMemories(200),
   });
 
+  const visibleMemories = memories.data?.filter((memory) => memory.memoryType !== "capsule") ?? [];
+
   const sessionMap =
-    memories.data?.reduce(
+    visibleMemories.reduce(
       (acc, m) => {
         if (!acc[m.sessionId]) acc[m.sessionId] = [];
         acc[m.sessionId].push(m);
         return acc;
       },
-      {} as Record<string, typeof memories.data>,
+      {} as Record<string, VibeMemory[]>,
     ) ?? {};
 
   const sessions = Object.entries(sessionMap)

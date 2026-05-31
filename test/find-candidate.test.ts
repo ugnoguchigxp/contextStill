@@ -188,9 +188,10 @@ describe("runFindCandidate", () => {
       callerMode: "storage",
     });
 
-    expect(mocks.resolveDistillationModel).toHaveBeenCalledWith("local-llm");
     expect(mocks.runDistillationCompletion).toHaveBeenCalledWith(
-      expect.any(Object),
+      expect.objectContaining({
+        model: "test-model",
+      }),
       expect.objectContaining({
         providerSetting: "local-llm",
       }),
@@ -205,9 +206,10 @@ describe("runFindCandidate", () => {
       callerMode: "storage",
     });
 
-    expect(mocks.resolveDistillationModel).toHaveBeenCalledWith("azure-openai");
     expect(mocks.runDistillationCompletion).toHaveBeenCalledWith(
-      expect.any(Object),
+      expect.objectContaining({
+        model: "test-model",
+      }),
       expect.objectContaining({
         fallbackOrder: [],
         providerSetting: "azure-openai",
@@ -258,7 +260,7 @@ describe("runFindCandidate", () => {
     );
   });
 
-  test("preloads wiki content before Codex candidate extraction because Codex chat has no local tool loop", async () => {
+  test("preloads wiki content before Codex candidate extraction and passes the configured Codex model", async () => {
     mocks.resolveFindCandidateRoute.mockReturnValue({
       provider: "codex",
       model: "gpt-5.4-mini",
@@ -284,9 +286,9 @@ describe("runFindCandidate", () => {
       targetStateId: "target-1",
       callerMode: "storage",
       readTokens: 50,
-      provider: "codex",
     });
 
+    expect(mocks.resolveDistillationModel).not.toHaveBeenCalledWith("codex");
     expect(mocks.readFileDomain).toHaveBeenCalledWith({
       path: "rules/testing.md",
       fromToken: 0,
@@ -295,6 +297,7 @@ describe("runFindCandidate", () => {
     });
     expect(mocks.runDistillationCompletion).toHaveBeenCalledWith(
       expect.objectContaining({
+        model: "gpt-5.4-mini",
         messages: expect.arrayContaining([
           expect.objectContaining({
             role: "tool",

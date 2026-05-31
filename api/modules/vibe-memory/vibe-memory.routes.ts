@@ -1,5 +1,5 @@
 import { zValidator } from "@hono/zod-validator";
-import { desc, eq, sql } from "drizzle-orm";
+import { and, desc, eq, ne, sql } from "drizzle-orm";
 import { Hono } from "hono";
 import { db } from "../../../src/db/client.js";
 import { vibeMemories } from "../../../src/db/schema.js";
@@ -29,6 +29,7 @@ vibeMemoryRouter.get("/", async (c) => {
   const memories = await db
     .select()
     .from(vibeMemories)
+    .where(and(ne(vibeMemories.memoryType, "capsule")))
     .orderBy(desc(effectiveTimestamp), desc(vibeMemories.createdAt))
     .limit(limit);
   return c.json({ memories });

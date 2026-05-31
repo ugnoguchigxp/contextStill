@@ -103,6 +103,7 @@ function candidateOutputMaxTokens(): number {
 
 async function defaultFindCandidateRoute(targetKind: FindCandidateTargetKind): Promise<{
   provider: DistillationProviderSetting;
+  model: string;
   fallback: Array<Exclude<DistillationProviderSetting, "auto">>;
   azureDeploymentSlots?: number[];
 }> {
@@ -110,6 +111,7 @@ async function defaultFindCandidateRoute(targetKind: FindCandidateTargetKind): P
   const route = resolveFindCandidateRoute(targetKind);
   return {
     provider: route.provider as DistillationProviderSetting,
+    model: route.model ?? "",
     fallback: [...route.fallback] as Array<Exclude<DistillationProviderSetting, "auto">>,
     azureDeploymentSlots: route.azureDeploymentSlots ? [...route.azureDeploymentSlots] : undefined,
   };
@@ -255,6 +257,15 @@ function routeMayUseCodex(params: {
   return params.provider === "codex" || params.fallbackOrder.includes("codex");
 }
 
+function modelForFindCandidateRoute(params: {
+  routeProvider: DistillationProviderSetting;
+  routeModel: string;
+  provider: DistillationProviderSetting;
+}): string {
+  const routeModel = params.routeProvider === params.provider ? params.routeModel.trim() : "";
+  return routeModel || resolveDistillationModel(params.provider);
+}
+
 function buildInitialUserMessages(targetKind: FindCandidateTargetKind): DistillationMessage[] {
   return [
     {
@@ -342,7 +353,11 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
   const provider = input.provider ?? defaultRoute.provider;
   const fallbackOrder = input.provider ? [] : defaultRoute.fallback;
   const azureDeploymentSlots = input.provider ? undefined : defaultRoute.azureDeploymentSlots;
-  const model = resolveDistillationModel(provider);
+  const model = modelForFindCandidateRoute({
+    routeProvider: defaultRoute.provider,
+    routeModel: defaultRoute.model,
+    provider,
+  });
   const toolDefinition = buildToolDefinitionForTarget(target.targetKind);
   const readLog: Array<{ from: number; toExclusive: number }> = [];
   const readLimit = maxReads(input);
