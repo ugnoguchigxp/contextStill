@@ -6,9 +6,10 @@ import { knowledgeItems, sources } from "../db/schema.js";
 import { normalizeRepoKey, normalizeRepoPath } from "../modules/context-compiler/query-context.js";
 import { upsertKnowledgeFromSource } from "../modules/knowledge/knowledge.repository.js";
 import { upsertSourceDocument } from "../modules/sources/source.repository.js";
+import { readProjectEnv } from "../project-identity.js";
 
 function resolveRequiredPrimaryTools(): readonly string[] {
-  const raw = process.env.MEMORY_ROUTER_MCP_V2?.trim().toLowerCase();
+  const raw = readProjectEnv("MCP_V2")?.trim().toLowerCase();
   const isV2 = !raw || !(raw === "0" || raw === "false" || raw === "no" || raw === "off");
   if (!isV2) {
     return [
@@ -137,7 +138,7 @@ async function main(): Promise<void> {
 
   const client = new Client(
     {
-      name: "memory-router-smoke",
+      name: "context-still-smoke",
       version: "0.1.0",
     },
     {
@@ -212,7 +213,7 @@ async function main(): Promise<void> {
       throw new Error("context_compile no-hit check failed.");
     }
     const noHitSnapshot = parseResourceJson(
-      await client.readResource({ uri: "memory-router://packs/latest" }),
+      await client.readResource({ uri: "context-still://packs/latest" }),
     );
     const noHitRun = (noHitSnapshot.run ?? {}) as Record<string, unknown>;
     const noHitReasons = Array.isArray(noHitRun.degradedReasons) ? noHitRun.degradedReasons : [];
@@ -234,7 +235,7 @@ async function main(): Promise<void> {
       throw new Error("context_compile hit response did not include the smoke token.");
     }
     const hitSnapshot = parseResourceJson(
-      await client.readResource({ uri: "memory-router://packs/latest" }),
+      await client.readResource({ uri: "context-still://packs/latest" }),
     );
     const hitRun = (hitSnapshot.run ?? {}) as Record<string, unknown>;
     const hitItems = Array.isArray(hitSnapshot.items) ? hitSnapshot.items : [];

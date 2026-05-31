@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 
-const TIMEZONE_KEY = "memory_router_timezone";
+const TIMEZONE_KEY = "context_still_timezone";
+const LEGACY_TIMEZONE_KEY = "memory_router_timezone";
 
 export interface TimezoneOption {
   value: string;
@@ -39,7 +40,14 @@ export const timezoneOptions: TimezoneOption[] = [
 ];
 
 export function getRawTimezoneSetting(): string {
-  return localStorage.getItem(TIMEZONE_KEY) || "system";
+  const value = localStorage.getItem(TIMEZONE_KEY);
+  if (value) return value;
+  const legacyValue = localStorage.getItem(LEGACY_TIMEZONE_KEY);
+  if (legacyValue) {
+    localStorage.setItem(TIMEZONE_KEY, legacyValue);
+    return legacyValue;
+  }
+  return "system";
 }
 
 export function getTimezone(): string {

@@ -1,6 +1,18 @@
 export type EmbeddingProvider = "auto" | "daemon" | "cli" | "openai" | "disabled";
-export type AgenticCompileProvider = "openai" | "azure-openai" | "bedrock" | "local-llm" | "codex" | "auto";
-export type DistillationProvider = "openai" | "local-llm" | "azure-openai" | "bedrock" | "codex" | "auto";
+export type AgenticCompileProvider =
+  | "openai"
+  | "azure-openai"
+  | "bedrock"
+  | "local-llm"
+  | "codex"
+  | "auto";
+export type DistillationProvider =
+  | "openai"
+  | "local-llm"
+  | "azure-openai"
+  | "bedrock"
+  | "codex"
+  | "auto";
 export type DistillationSearchProvider = "brave" | "exa" | "duckduckgo";
 
 export type GroupedConfig = {

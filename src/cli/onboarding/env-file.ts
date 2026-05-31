@@ -68,9 +68,9 @@ export async function ensureEnvFile(input: EnsureEnvFileInput): Promise<EnsureEn
     .map((line) => line.match(envAssignmentPattern)?.[1])
     .filter((key): key is string => Boolean(key));
 
-  if (input.preferredLocale && !existingKeys.has("MEMORY_ROUTER_LANG")) {
-    appendLines.push(`MEMORY_ROUTER_LANG=${input.preferredLocale}`);
-    appendedKeys.push("MEMORY_ROUTER_LANG");
+  if (input.preferredLocale && !existingKeys.has("CONTEXT_STILL_LANG")) {
+    appendLines.push(`CONTEXT_STILL_LANG=${input.preferredLocale}`);
+    appendedKeys.push("CONTEXT_STILL_LANG");
   }
 
   if (appendLines.length > 0) {

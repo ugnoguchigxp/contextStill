@@ -1,10 +1,10 @@
 <p align="center">
-  <strong>memory-router</strong><br/>
+  <strong>context-still</strong><br/>
   <em>Local-first Adaptive Knowledge Compiler for Coding Agents</em>
 </p>
 
 <p align="center">
-  <a href="https://github.com/ugnoguchigxp/memoryRouter/actions/workflows/verify.yml"><img alt="verify" src="https://github.com/ugnoguchigxp/memoryRouter/actions/workflows/verify.yml/badge.svg"></a>
+  <a href="https://github.com/ugnoguchigxp/contextStill/actions/workflows/verify.yml"><img alt="verify" src="https://github.com/ugnoguchigxp/contextStill/actions/workflows/verify.yml/badge.svg"></a>
 </p>
 
 <p align="center">
@@ -23,9 +23,9 @@
 
 ---
 
-## What is memory-router?
+## What is context-still?
 
-**memory-router** is a local-first adaptive knowledge compiler for coding agents.
+**context-still** is a local-first adaptive knowledge compiler for coding agents.
 
 It turns working evidence (wiki/docs, website URLs, agent logs, and candidate knowledge proposed by agents) into reusable `rule` / `procedure` knowledge, compiles task-specific context packs under token budgets, and improves future selection quality through compile evaluations and usage feedback.
 
@@ -73,12 +73,12 @@ It is not a "document chunks -> prompt stuffing" system. It is an evidence-backe
 ### Admin UI Snapshot
 
 <p align="center">
-  <img src="artifacts/overview.webp" alt="memory-router admin overview dashboard" width="980">
+  <img src="artifacts/overview.webp" alt="context-still admin overview dashboard" width="980">
 </p>
 
 ### Key Differentiators
 
-| Feature | memory-router | Naive RAG | CLAUDE.md / Cursor Rules |
+| Feature | context-still | Naive RAG | CLAUDE.md / Cursor Rules |
 |---|---|---|---|
 | Knowledge distillation | ✅ Staged pipeline (`finding -> covering -> premium -> finalize`) | ❌ Raw search | ❌ Manual |
 | Knowledge model | ✅ `rule` / `procedure` split + skill-like procedure checks | ❌ Chunk-centric | ❌ Flat instruction text |
@@ -94,7 +94,7 @@ It is not a "document chunks -> prompt stuffing" system. It is an evidence-backe
 
 ### Project Status
 
-memory-router is an active local-first project for personal and team coding-agent workflows. It runs as a local MCP server, REST API, and admin UI. It is not a hosted multi-tenant SaaS product.
+context-still is an active local-first project for personal and team coding-agent workflows. It runs as a local MCP server, REST API, and admin UI. It is not a hosted multi-tenant SaaS product.
 
 The current checkout includes staged distillation, web URL ingestion queueing, Codex/Antigravity/Claude log sync, context compile run diagnostics, compile evaluation storage, knowledge usage signals, knowledge graph + landscape replay diagnostics, persisted review items, candidate-draft generation, queue control plane, and manual approval enforcement for landscape-origin candidates.
 
@@ -123,8 +123,8 @@ The easiest way to get started is by running the interactive startup script, whi
 By default, it runs in **dry-run** mode to protect your environment:
 
 ```bash
-git clone https://github.com/ugnoguchigxp/memoryRouter.git
-cd memoryRouter
+git clone https://github.com/ugnoguchigxp/contextStill.git
+cd contextStill
 bun install
 bun run startup
 ```
@@ -171,7 +171,7 @@ The admin UI includes views for Overview, Source, Vibe Memory, Candidates, Queue
 
 ## How It Works
 
-memory-router operates as a three-stage pipeline:
+context-still operates as a three-stage pipeline:
 
 ### Stage 1: Collect
 
@@ -239,7 +239,7 @@ The compiler:
 
 ### Operational Feedback Loop
 
-After compile, memory-router records and uses multiple feedback channels:
+After compile, context-still records and uses multiple feedback channels:
 
 1. `context_pack_items` records what was selected for a run.
 2. `knowledge_usage_events` records per-knowledge usage signals (`used`, `not_used`, `off_topic`, `wrong`).
@@ -323,7 +323,7 @@ The queue and approval flow is deliberately explicit. Landscape diagnostics do n
 
 ## MCP Integration
 
-memory-router exposes an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for seamless integration with AI coding agents.
+context-still exposes an [MCP (Model Context Protocol)](https://modelcontextprotocol.io/) server for seamless integration with AI coding agents.
 
 ### Starting the MCP server
 
@@ -338,10 +338,10 @@ Add to your MCP client configuration:
 ```json
 {
   "mcpServers": {
-    "memory-router": {
+    "context-still": {
       "command": "bun",
       "args": ["run", "start:mcp"],
-      "cwd": "/path/to/memory-router"
+      "cwd": "/path/to/context-still"
     }
   }
 }
@@ -525,7 +525,7 @@ bun run start:api
 
 ## Data Model
 
-memory-router separates **evidence** (raw data) from **instructions** (distilled knowledge):
+context-still separates **evidence** (raw data) from **instructions** (distilled knowledge):
 
 ### Evidence layer
 
@@ -573,7 +573,7 @@ The default content root is `./wiki`. The `wiki/` directory is gitignored from t
 
 ```bash
 # Override the wiki location
-MEMORY_ROUTER_SOURCE_CONTENT_ROOT=/path/to/your/wiki
+CONTEXT_STILL_SOURCE_CONTENT_ROOT=/path/to/your/wiki
 ```
 
 ---
@@ -664,22 +664,22 @@ Behavior (when installed):
 ./scripts/backup-db.sh
 ```
 
-The script uses the `memory-router-db` Docker container by default and writes `backup/db_backup_<timestamp>.zip`. Override `BACKUP_DIR`, `CONTAINER_NAME`, `DB_USER`, `DB_NAME`, or `DB_PASSWORD` when your local deployment differs from `docker-compose.yml`.
+The script uses the `context-still-db` Docker container by default, falls back to the legacy `memory-router-db` container for migrated local installs, and writes `backup/db_backup_<timestamp>.zip`. Override `BACKUP_DIR`, `CONTAINER_NAME`, `DB_USER`, `DB_NAME`, or `DB_PASSWORD` when your local deployment differs from `docker-compose.yml`.
 
 ---
 
 ## Embedding
 
-memory-router supports two embedding providers with automatic fallback:
+context-still supports two embedding providers with automatic fallback:
 
 | Provider | Description | Configuration |
 |---|---|---|
-| **daemon** (default) | HTTP API embedding service | `MEMORY_ROUTER_EMBEDDING_DAEMON_URL` |
-| **cli** | Python CLI fallback (`e5embed.cli`) | `MEMORY_ROUTER_LOCAL_LLM_EMBEDDING_*` |
+| **daemon** (default) | HTTP API embedding service | `CONTEXT_STILL_EMBEDDING_DAEMON_URL` |
+| **cli** | Python CLI fallback (`e5embed.cli`) | `CONTEXT_STILL_LOCAL_LLM_EMBEDDING_*` |
 
 ```bash
 # Provider selection
-MEMORY_ROUTER_EMBEDDING_PROVIDER=auto|daemon|cli|disabled
+CONTEXT_STILL_EMBEDDING_PROVIDER=auto|daemon|cli|disabled
 ```
 
 When set to `auto` (default), the daemon is tried first; on failure, the CLI fallback is used.
@@ -689,10 +689,10 @@ When set to `auto` (default), the daemon is tried first; on failure, the CLI fal
 ## Privacy and Safety
 
 - The primary datastore is your local PostgreSQL/pgvector database.
-- Wiki pages are stored under the local `MEMORY_ROUTER_SOURCE_CONTENT_ROOT` directory.
+- Wiki pages are stored under the local `CONTEXT_STILL_SOURCE_CONTENT_ROOT` directory.
 - Agent log sync reads local Codex, Antigravity, and Claude log directories when configured.
 - Distillation can call external search providers (`brave`, `exa`) and external LLM providers (`azure-openai`, `bedrock`) if you configure those providers.
-- Use `MEMORY_ROUTER_DISTILLATION_PROVIDER=local-llm` and omit search API keys for the most local setup.
+- Use `CONTEXT_STILL_DISTILLATION_PROVIDER=local-llm` and omit search API keys for the most local setup.
 - `test:integration` is destructive and must target a dedicated database whose name includes `test`.
 
 ---
@@ -718,7 +718,7 @@ bun run verify
 bun run verify:mcp
 
 # Integration tests (requires a test database)
-DATABASE_URL=postgres://postgres:postgres@localhost:7889/memory_router_test \
+DATABASE_URL=postgres://postgres:postgres@localhost:7889/context_still_test \
   bun run test:integration
 
 # End-to-end UI tests
@@ -737,46 +737,46 @@ All configuration is done through environment variables. See [`.env.example`](.e
 
 | Variable | Default | Description |
 |---|---|---|
-| `DATABASE_URL` | `postgres://...localhost:7889/memory_router` | PostgreSQL connection string |
-| `MEMORY_ROUTER_SOURCE_CONTENT_ROOT` | `./wiki` | Wiki content directory |
+| `DATABASE_URL` | `postgres://...localhost:7889/context_still` | PostgreSQL connection string |
+| `CONTEXT_STILL_SOURCE_CONTENT_ROOT` | `./wiki` | Wiki content directory |
 
 ### Embedding
 
 | Variable | Default | Description |
 |---|---|---|
-| `MEMORY_ROUTER_EMBEDDING_PROVIDER` | `auto` | `auto`, `daemon`, `cli`, or `disabled` |
-| `MEMORY_ROUTER_EMBEDDING_DAEMON_URL` | `http://127.0.0.1:44512` | Embedding daemon URL |
-| `MEMORY_ROUTER_EMBEDDING_DIMENSION` | `384` | Embedding vector dimension |
+| `CONTEXT_STILL_EMBEDDING_PROVIDER` | `auto` | `auto`, `daemon`, `cli`, or `disabled` |
+| `CONTEXT_STILL_EMBEDDING_DAEMON_URL` | `http://127.0.0.1:44512` | Embedding daemon URL |
+| `CONTEXT_STILL_EMBEDDING_DIMENSION` | `384` | Embedding vector dimension |
 
 ### Distillation (LLM)
 
 | Variable | Default | Description |
 |---|---|---|
-| `MEMORY_ROUTER_LOCAL_LLM_API_BASE_URL` | `http://127.0.0.1:44448` | Local LLM API endpoint |
-| `MEMORY_ROUTER_DISTILLATION_PROVIDER` | `local-llm` | `local-llm`, `azure-openai`, `bedrock`, or `auto` |
-| `MEMORY_ROUTER_DISTILLATION_FIND_CANDIDATE_PROVIDER` | inherits `MEMORY_ROUTER_DISTILLATION_PROVIDER` | Optional `findCandidate` provider override; use `azure-openai` for OpenAI/Azure extraction, or `local-llm` / `bedrock` / `auto` |
-| `MEMORY_ROUTER_DISTILLATION_SEARCH_PROVIDERS` | `brave,exa` | Ordered search providers for `search_web` |
-| `MEMORY_ROUTER_EXA_API_KEY` / `EXA_API_KEY` | empty | Exa search API key |
+| `CONTEXT_STILL_LOCAL_LLM_API_BASE_URL` | `http://127.0.0.1:44448` | Local LLM API endpoint |
+| `CONTEXT_STILL_DISTILLATION_PROVIDER` | `local-llm` | `local-llm`, `azure-openai`, `bedrock`, or `auto` |
+| `CONTEXT_STILL_DISTILLATION_FIND_CANDIDATE_PROVIDER` | inherits `CONTEXT_STILL_DISTILLATION_PROVIDER` | Optional `findCandidate` provider override; use `azure-openai` for OpenAI/Azure extraction, or `local-llm` / `bedrock` / `auto` |
+| `CONTEXT_STILL_DISTILLATION_SEARCH_PROVIDERS` | `brave,exa` | Ordered search providers for `search_web` |
+| `CONTEXT_STILL_EXA_API_KEY` / `EXA_API_KEY` | empty | Exa search API key |
 | `BRAVE_SEARCH_API_KEY` | empty | Brave Search API key |
 
 ### Agent Log Sync
 
 | Variable | Default | Description |
 |---|---|---|
-| `MEMORY_ROUTER_CODEX_SESSION_DIR` | `~/.codex/sessions` | Codex sessions directory |
-| `MEMORY_ROUTER_CODEX_SESSION_DIRS` | empty | Additional Codex session roots (comma/semicolon-separated) |
-| `MEMORY_ROUTER_CODEX_ARCHIVED_SESSION_DIRS` | empty | Additional Codex archived-session roots (comma/semicolon-separated) |
-| `MEMORY_ROUTER_ANTIGRAVITY_LOG_DIR` | `~/.gemini/antigravity/brain` | Antigravity logs directory |
-| `MEMORY_ROUTER_ANTIGRAVITY_LOG_DIRS` | empty | Additional Antigravity log roots (comma/semicolon-separated) |
-| `MEMORY_ROUTER_AGENT_LOG_SYNC_INTERVAL_SECONDS` | `3600` | Sync interval |
-| `MEMORY_ROUTER_AGENT_LOG_INITIAL_LOOKBACK_HOURS` | `168` | Initial lookback window |
+| `CONTEXT_STILL_CODEX_SESSION_DIR` | `~/.codex/sessions` | Codex sessions directory |
+| `CONTEXT_STILL_CODEX_SESSION_DIRS` | empty | Additional Codex session roots (comma/semicolon-separated) |
+| `CONTEXT_STILL_CODEX_ARCHIVED_SESSION_DIRS` | empty | Additional Codex archived-session roots (comma/semicolon-separated) |
+| `CONTEXT_STILL_ANTIGRAVITY_LOG_DIR` | `~/.gemini/antigravity/brain` | Antigravity logs directory |
+| `CONTEXT_STILL_ANTIGRAVITY_LOG_DIRS` | empty | Additional Antigravity log roots (comma/semicolon-separated) |
+| `CONTEXT_STILL_AGENT_LOG_SYNC_INTERVAL_SECONDS` | `3600` | Sync interval |
+| `CONTEXT_STILL_AGENT_LOG_INITIAL_LOOKBACK_HOURS` | `168` | Initial lookback window |
 
 ---
 
 ## Project Structure
 
 ```
-memory-router/
+context-still/
 ├── src/
 │   ├── cli/              # CLI commands (compile, sync, distill, doctor, import)
 │   ├── db/               # Drizzle ORM schema + client
@@ -833,7 +833,7 @@ memory-router/
 
 - `bun run verify` is the primary quality gate (typecheck → lint → format → unit tests → web build)
 - `test:unit` runs all `test/**/*.test.ts` and `web/src/**/*.test.ts(x)` via Vitest (integration/e2e tests are excluded)
-- Integration tests require a `memory_router_test` database
+- Integration tests require a `context_still_test` database
 - The `wiki/` directory has its own Git repository
 
 ---

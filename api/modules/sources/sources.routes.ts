@@ -145,7 +145,7 @@ export const sourcesRouter = new Hono()
     await ensureSourceRuntime();
     const git = await getGitSummary(groupedConfig.sourceContent.root);
     return c.json({
-      app: "memory-router",
+      app: "context-still",
       version: "0.1.0",
       git,
     });

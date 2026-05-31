@@ -14,6 +14,7 @@ import {
   listRecentCompileRuns,
 } from "../modules/context-compiler/context-compiler.repository.js";
 import { runDoctor } from "../modules/doctor/doctor.service.js";
+import { mcpResourceUri, normalizeMcpResourceUri, projectIdentity } from "../project-identity.js";
 import { getCallableToolEntries, getExposedToolEntries } from "./tools/index.js";
 
 function toErrorResult(error: unknown) {
@@ -27,25 +28,25 @@ function toErrorResult(error: unknown) {
 const staticResources: Resource[] = [
   {
     name: "context-compiler-summary",
-    uri: "memory-router://summary/context-compiler",
-    description: "Memory Router Context Compiler summary and retrieval modes.",
+    uri: mcpResourceUri("summary/context-compiler"),
+    description: "contextStill Context Compiler summary and retrieval modes.",
     mimeType: "text/plain",
   },
   {
     name: "context-pack-runs-list",
-    uri: "memory-router://packs/list",
+    uri: mcpResourceUri("packs/list"),
     description: "Recent context_compile run summaries.",
     mimeType: "application/json",
   },
   {
     name: "context-pack-latest",
-    uri: "memory-router://packs/latest",
+    uri: mcpResourceUri("packs/latest"),
     description: "Latest context_compile run with selected items.",
     mimeType: "application/json",
   },
   {
     name: "doctor-health",
-    uri: "memory-router://health/doctor",
+    uri: mcpResourceUri("health/doctor"),
     description: "Doctor health report including DB, table, and run-health diagnostics.",
     mimeType: "application/json",
   },
@@ -53,7 +54,7 @@ const staticResources: Resource[] = [
 
 function buildSummaryText(): string {
   return [
-    "# memory-router context compiler",
+    "# contextStill context compiler",
     "",
     "- tool: context_compile",
     "- retrieval modes: task_context, review_context, debug_context, architecture_context, procedure_context, learning_context",
@@ -79,16 +80,18 @@ export function listStaticResources(): Resource[] {
 }
 
 export async function readStaticResource(uri: string) {
-  if (uri === "memory-router://summary/context-compiler") {
+  const canonicalUri = normalizeMcpResourceUri(uri);
+
+  if (canonicalUri === mcpResourceUri("summary/context-compiler")) {
     return asTextContent(uri, buildSummaryText());
   }
 
-  if (uri === "memory-router://packs/list") {
+  if (canonicalUri === mcpResourceUri("packs/list")) {
     const runs = await listRecentCompileRuns(20);
     return asJsonContent(uri, { runs });
   }
 
-  if (uri === "memory-router://packs/latest") {
+  if (canonicalUri === mcpResourceUri("packs/latest")) {
     const snapshot = await getLatestCompileRunSnapshot();
     if (!snapshot) {
       return asJsonContent(uri, { message: "No context_compile run found yet." });
@@ -96,13 +99,14 @@ export async function readStaticResource(uri: string) {
     return asJsonContent(uri, snapshot);
   }
 
-  if (uri === "memory-router://health/doctor") {
+  if (canonicalUri === mcpResourceUri("health/doctor")) {
     const doctor = await runDoctor();
     return asJsonContent(uri, doctor);
   }
 
-  if (uri.startsWith("memory-router://packs/run/")) {
-    const runId = uri.replace("memory-router://packs/run/", "").trim();
+  const runPrefix = mcpResourceUri("packs/run/");
+  if (canonicalUri.startsWith(runPrefix)) {
+    const runId = canonicalUri.replace(runPrefix, "").trim();
     if (!runId) {
       return asJsonContent(uri, { error: "run id is required" });
     }
@@ -119,7 +123,7 @@ export async function readStaticResource(uri: string) {
 export function createMcpServer(): Server {
   const server = new Server(
     {
-      name: "memory-router",
+      name: projectIdentity.packageName,
       version: "0.1.0",
     },
     {

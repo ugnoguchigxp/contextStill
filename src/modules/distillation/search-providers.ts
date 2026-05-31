@@ -1,6 +1,7 @@
 import { eq } from "drizzle-orm";
 import { groupedConfig } from "../../config.js";
 import { db } from "../../db/client.js";
+import { readProjectEnv } from "../../project-identity.js";
 import { syncStates } from "../../db/schema.js";
 import { ensureRuntimeSettingsLoaded } from "../settings/settings.service.js";
 import {
@@ -32,7 +33,7 @@ export type { SearchProviderName, SearchProviderRateLimit } from "./search-provi
 
 const defaultHeaders = {
   "user-agent":
-    "memory-router-distillation/0.1 (+https://localhost; compile-ready knowledge verifier)",
+    "context-still-distillation/0.1 (+https://localhost; compile-ready knowledge verifier)",
   accept: "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
 };
 
@@ -284,7 +285,7 @@ async function searchWithBrave(query: string): Promise<SearchProviderResponse> {
 
 async function searchWithExa(query: string): Promise<SearchProviderResponse> {
   const provider: SearchProviderName = "exa";
-  const apiKey = process.env.MEMORY_ROUTER_EXA_API_KEY?.trim() || process.env.EXA_API_KEY?.trim();
+  const apiKey = readProjectEnv("EXA_API_KEY")?.trim() || process.env.EXA_API_KEY?.trim();
   if (!apiKey) {
     throw new SearchProviderException({
       provider,

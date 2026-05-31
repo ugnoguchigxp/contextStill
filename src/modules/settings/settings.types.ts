@@ -1,7 +1,13 @@
 import { z } from "zod";
 import type { DistillationSearchProvider, EmbeddingProvider } from "../../config.types.js";
 
-export const runtimeProviderNames = ["openai", "azure-openai", "bedrock", "local-llm", "codex"] as const;
+export const runtimeProviderNames = [
+  "openai",
+  "azure-openai",
+  "bedrock",
+  "local-llm",
+  "codex",
+] as const;
 export type RuntimeProviderName = (typeof runtimeProviderNames)[number];
 
 export const runtimeAgenticProviderNames = [...runtimeProviderNames] as const;

@@ -8,6 +8,7 @@ import {
 import { type SetupCommandResult, runSetupCommand } from "../../cli/onboarding/command-runner.js";
 import { ensureEnvFile, parseEnvValues } from "../../cli/onboarding/env-file.js";
 import { buildMcpConfigSnippet } from "../../cli/onboarding/mcp-config.js";
+import { readProjectEnvFrom } from "../../project-identity.js";
 import { type SupportedLocale, resolveLocale } from "../../shared/locales/locale.js";
 
 export type SetupOptions = {
@@ -98,7 +99,7 @@ export function parseSetupArgs(args: string[], env: NodeJS.ProcessEnv = process.
     noMigrate: false,
     skipInit: false,
     wikiRoot: path.resolve(process.cwd(), "wiki/pages"),
-    lang: resolveLocale(env.MEMORY_ROUTER_LANG),
+    lang: resolveLocale(readProjectEnvFrom(env, "LANG")),
     langExplicit: false,
   };
 

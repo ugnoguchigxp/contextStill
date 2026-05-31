@@ -1,6 +1,7 @@
 import os from "node:os";
 import path from "node:path";
 import { groupedConfig } from "../../config.js";
+import { readProjectEnvFrom } from "../../project-identity.js";
 
 export type RootBuildOptions = {
   platform?: NodeJS.Platform;
@@ -80,8 +81,8 @@ export function buildCodexIngestRoots(options?: RootBuildOptions): string[] {
     codexArchivedSessionDir,
     ...windowsFallback.sessionRoots,
     ...windowsFallback.archivedRoots,
-    ...parseAdditionalRoots(env.MEMORY_ROUTER_CODEX_SESSION_DIRS),
-    ...parseAdditionalRoots(env.MEMORY_ROUTER_CODEX_ARCHIVED_SESSION_DIRS),
+    ...parseAdditionalRoots(readProjectEnvFrom(env, "CODEX_SESSION_DIRS")),
+    ...parseAdditionalRoots(readProjectEnvFrom(env, "CODEX_ARCHIVED_SESSION_DIRS")),
   ]);
 }
 
@@ -97,7 +98,7 @@ export function buildAntigravityIngestRoots(options?: RootBuildOptions): string[
     path.join(homeGeminiDir, "antigravity-ide", "brain"),
     path.join(homeGeminiDir, "antigravity", "brain"),
     ...windowsAntigravityFallbackRoots(options),
-    ...parseAdditionalRoots(env.MEMORY_ROUTER_ANTIGRAVITY_LOG_DIRS),
+    ...parseAdditionalRoots(readProjectEnvFrom(env, "ANTIGRAVITY_LOG_DIRS")),
   ]);
 }
 
@@ -119,6 +120,6 @@ export function buildClaudeIngestRoots(options?: RootBuildOptions): string[] {
 
   return uniqueNonEmptyPaths([
     claudeProjectsDir,
-    ...parseAdditionalRoots(env.MEMORY_ROUTER_CLAUDE_LOG_DIRS),
+    ...parseAdditionalRoots(readProjectEnvFrom(env, "CLAUDE_LOG_DIRS")),
   ]);
 }

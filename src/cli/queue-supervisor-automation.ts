@@ -15,13 +15,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "../..");
 const plistDir = path.resolve(projectRoot, "scripts/automation");
 const launchAgentsDir = path.resolve(os.homedir(), "Library/LaunchAgents");
-const plist = "com.memory-router.queue-supervisor.plist";
-const label = "com.memory-router.queue-supervisor";
+const plist = "com.context-still.queue-supervisor.plist";
+const label = "com.context-still.queue-supervisor";
+const legacyPlist = "com.memory-router.queue-supervisor.plist";
+const legacyLabel = "com.memory-router.queue-supervisor";
 const windowsTaskTemplatePath = path.resolve(
   projectRoot,
-  "scripts/automation/windows/com.memory-router.queue-supervisor.task.xml",
+  "scripts/automation/windows/com.context-still.queue-supervisor.task.xml",
 );
-const windowsTaskName = "\\memory-router\\queue-supervisor";
+const windowsTaskName = "\\context-still\\queue-supervisor";
+const legacyWindowsTaskName = "\\memory-router\\queue-supervisor";
 
 function isDarwin(): boolean {
   return process.platform === "darwin";
@@ -50,7 +53,7 @@ function install(): void {
   if (process.platform === "win32") {
     installWindowsTask({
       taskName: windowsTaskName,
-      description: "Run memory-router queue supervisor continuously",
+      description: "Run context-still queue supervisor continuously",
       templatePath: windowsTaskTemplatePath,
       command: resolveBunPath(),
       arguments: `run ${path.resolve(projectRoot, "src/cli/queue-supervisor-automation.ts")} run-once`,
@@ -100,25 +103,33 @@ function loadJob(): void {
 function unloadJob(): void {
   if (process.platform === "win32") {
     disableWindowsTask(windowsTaskName);
+    disableWindowsTask(legacyWindowsTaskName);
     return;
   }
   ensureDarwinForLaunchCtl("unload");
   const target = path.resolve(launchAgentsDir, plist);
+  const legacyTarget = path.resolve(launchAgentsDir, legacyPlist);
   const uid = getUid();
   launchctlQuiet("bootout", `gui/${uid}`, target);
+  launchctlQuiet("bootout", `gui/${uid}`, legacyTarget);
+  launchctlQuiet("bootout", `gui/${uid}/${legacyLabel}`);
   console.log(`unloaded: ${label}`);
 }
 
 function uninstall(): void {
   if (process.platform === "win32") {
     uninstallWindowsTask(windowsTaskName);
+    uninstallWindowsTask(legacyWindowsTaskName);
     return;
   }
   ensureDarwinForLaunchCtl("uninstall");
   unloadJob();
   const target = path.resolve(launchAgentsDir, plist);
+  const legacyTarget = path.resolve(launchAgentsDir, legacyPlist);
   rmSync(target, { force: true });
+  rmSync(legacyTarget, { force: true });
   console.log(`removed: ${target}`);
+  console.log(`removed: ${legacyTarget}`);
 }
 
 function status(): void {

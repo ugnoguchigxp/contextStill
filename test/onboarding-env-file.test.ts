@@ -31,11 +31,11 @@ describe("onboarding env-file", () => {
     });
 
     expect(result.created).toBe(true);
-    expect(result.appendedKeys).toContain("MEMORY_ROUTER_LANG");
+    expect(result.appendedKeys).toContain("CONTEXT_STILL_LANG");
 
     const env = parseEnvValues(await readFile(envPath, "utf8"));
     expect(env.DATABASE_URL).toBe("postgres://example");
-    expect(env.MEMORY_ROUTER_LANG).toBe("en");
+    expect(env.CONTEXT_STILL_LANG).toBe("en");
   });
 
   test("keeps existing values and appends only missing keys", async () => {

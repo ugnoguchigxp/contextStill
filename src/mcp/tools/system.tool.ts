@@ -1,4 +1,5 @@
 import { runDoctor } from "../../modules/doctor/doctor.service.js";
+import { readProjectEnv } from "../../project-identity.js";
 import { buildInitialInstructionsText } from "../../shared/locales/initial-instructions.js";
 import { resolveLocale } from "../../shared/locales/locale.js";
 
@@ -10,7 +11,7 @@ export const initialInstructionsTool = {
     properties: {},
   },
   handler: async () => {
-    const locale = resolveLocale(process.env.MEMORY_ROUTER_LANG);
+    const locale = resolveLocale(readProjectEnv("LANG"));
     return {
       content: [{ type: "text", text: buildInitialInstructionsText(locale) }],
     };
@@ -19,7 +20,7 @@ export const initialInstructionsTool = {
 
 export const doctorTool = {
   name: "doctor",
-  description: "Run diagnostic checks on the memory-router system (Gnosis compatible).",
+  description: "Run diagnostic checks on the contextStill system (Gnosis compatible).",
   inputSchema: {
     type: "object",
     properties: {},

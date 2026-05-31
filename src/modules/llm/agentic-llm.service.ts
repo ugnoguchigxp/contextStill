@@ -9,7 +9,13 @@ import { createOpenAiProvider } from "./providers/openai.provider.js";
 import { createCodexProvider } from "./providers/codex.provider.ts";
 import { getRuntimeSettingsSnapshot } from "../settings/settings.service.ts";
 
-export type AgenticCompileProvider = "openai" | "azure-openai" | "bedrock" | "local-llm" | "codex" | "auto";
+export type AgenticCompileProvider =
+  | "openai"
+  | "azure-openai"
+  | "bedrock"
+  | "local-llm"
+  | "codex"
+  | "auto";
 
 export type AgenticLlmHealthStatus = LlmHealthStatus & {
   providerSetting: AgenticCompileProvider;

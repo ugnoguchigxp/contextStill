@@ -1,4 +1,5 @@
 import { Hono } from "hono";
+import { projectIdentity } from "../src/project-identity.js";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
@@ -28,9 +29,13 @@ const corsMiddleware =
 app.use("*", logger(), prettyJSON(), corsMiddleware);
 app.use("/api/*", adminApiKeyAuth());
 
-app.get("/api/health/live", (c) => c.json({ status: "alive", service: "memory-router-api" }));
-app.get("/api/health/ready", (c) => c.json({ status: "ready", service: "memory-router-api" }));
-app.get("/api/health", (c) => c.json({ status: "ok", service: "memory-router-api" }));
+app.get("/api/health/live", (c) =>
+  c.json({ status: "alive", service: projectIdentity.apiServiceName }),
+);
+app.get("/api/health/ready", (c) =>
+  c.json({ status: "ready", service: projectIdentity.apiServiceName }),
+);
+app.get("/api/health", (c) => c.json({ status: "ok", service: projectIdentity.apiServiceName }));
 app.route("/api/context", contextCompilerRouter);
 app.route("/api/doctor", doctorRouter);
 app.route("/api/knowledge", knowledgeRouter);

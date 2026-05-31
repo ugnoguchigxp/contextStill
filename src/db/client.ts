@@ -1,6 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pkg from "pg";
 import { groupedConfig } from "../config.js";
+import { readProjectEnv } from "../project-identity.js";
 import * as schema from "./schema.js";
 
 const { Pool } = pkg;
@@ -34,12 +35,12 @@ function isSafeTestDatabase(databaseUrl: string): boolean {
 function assertSafeTestDatabase(databaseUrl: string): void {
   if (!isVitestRuntime()) return;
   if (isSafeTestDatabase(databaseUrl)) return;
-  if (process.env.MEMORY_ROUTER_ALLOW_DESTRUCTIVE_DB_TESTS === "1") return;
+  if (readProjectEnv("ALLOW_DESTRUCTIVE_DB_TESTS") === "1") return;
 
   throw new Error(
     [
       "Refusing to open a non-test database from Vitest.",
-      "Use a DATABASE_URL whose database name includes 'test', or set MEMORY_ROUTER_ALLOW_DESTRUCTIVE_DB_TESTS=1 explicitly.",
+      "Use a DATABASE_URL whose database name includes 'test', or set CONTEXT_STILL_ALLOW_DESTRUCTIVE_DB_TESTS=1 explicitly.",
     ].join(" "),
   );
 }

@@ -1,6 +1,6 @@
 # MCP Tools
 
-`memory-router` の公開 MCP surface は次の 13 ツールです。
+`context-still` の公開 MCP surface は次の 13 ツールです。
 
 1. `initial_instructions`
 2. `context_compile`

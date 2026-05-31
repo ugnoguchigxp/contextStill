@@ -1,16 +1,16 @@
 services:
-  memory-router-db:
+  context-still-db:
     image: pgvector/pgvector:pg16
-    container_name: memory-router-db
+    container_name: context-still-db
     restart: unless-stopped
     ports:
       - '127.0.0.1:7889:5432'
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
-      POSTGRES_DB: memory_router
+      POSTGRES_DB: context_still
     volumes:
-      - memory_router_pgdata:/var/lib/postgresql/data
+      - context_still_pgdata:/var/lib/postgresql/data
     command:
       - 'postgres'
       - '-c'
@@ -23,4 +23,4 @@ services:
       - 'max_connections=20'
 
 volumes:
-  memory_router_pgdata:
+  context_still_pgdata:

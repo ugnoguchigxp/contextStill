@@ -65,7 +65,7 @@ Antigravity プラットフォームが提供する **hooksLLM (LLM Hooks)** 機
 ### hooks.json 設定例 (`hooks.json.example` より)
 ```json
 {
-  "memory-router-hooks": {
+  "context-still-hooks": {
     "PreToolUse": [
       {
         "matcher": "write_file|replace_file_content|multi_replace_file_content",

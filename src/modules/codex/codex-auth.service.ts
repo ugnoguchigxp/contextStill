@@ -21,11 +21,7 @@ export type CodexAuthStatus = {
   accessTokenConfigured: boolean;
   /** Detailed token information parsed from auth.json */
   tokenInfo: CodexAuthTokenInfo | null;
-  recommendedAction:
-    | "ready"
-    | "run-codex-login"
-    | "set-codex-access-token"
-    | "install-codex-cli";
+  recommendedAction: "ready" | "run-codex-login" | "set-codex-access-token" | "install-codex-cli";
 };
 
 type AuthJsonTokens = {
@@ -86,10 +82,8 @@ export async function checkCodexAuthStatus(): Promise<CodexAuthStatus> {
       const payload = decodeJwtPayload(tokenToDecode);
       if (payload) {
         // email
-        const profile = payload["https://api.openai.com/profile"] as
-          | { email?: string }
-          | undefined;
-        email = (profile?.email ?? (payload.email as string | undefined)) ?? null;
+        const profile = payload["https://api.openai.com/profile"] as { email?: string } | undefined;
+        email = profile?.email ?? (payload.email as string | undefined) ?? null;
 
         // exp
         const exp = payload.exp;
@@ -120,8 +114,7 @@ export async function checkCodexAuthStatus(): Promise<CodexAuthStatus> {
   //    環境変数 CODEX_ACCESS_TOKEN が設定されている → ready
   //    CLI が使えない → install-codex-cli
   //    それ以外 → run-codex-login
-  const hasValidToken =
-    accessTokenConfigured || (authJsonExists && tokenInfo?.isExpired !== true);
+  const hasValidToken = accessTokenConfigured || (authJsonExists && tokenInfo?.isExpired !== true);
 
   let recommendedAction: CodexAuthStatus["recommendedAction"] = "run-codex-login";
   if (hasValidToken) {

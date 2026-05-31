@@ -27,7 +27,7 @@ export const validPack: ContextPack = {
   rules: [],
   procedures: [],
   warnings: [],
-  sourceRefs: ["memory-router://packs/run/550e8400-e29b-41d4-a716-446655440000#full"],
+  sourceRefs: ["context-still://packs/run/550e8400-e29b-41d4-a716-446655440000#full"],
   diagnostics: {
     degradedReasons: [],
     retrievalStats: {},

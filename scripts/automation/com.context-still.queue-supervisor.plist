@@ -3,23 +3,24 @@
 <plist version="1.0">
 <dict>
     <key>Label</key>
-    <string>com.memory-router.agent-log-sync</string>
+    <string>com.context-still.queue-supervisor</string>
     <key>ProgramArguments</key>
     <array>
         <string>{{BUN_PATH}}</string>
         <string>run</string>
-        <string>src/cli/sync-agent-logs.ts</string>
+        <string>src/cli/queue-supervisor-automation.ts</string>
+        <string>run-continuous</string>
     </array>
     <key>WorkingDirectory</key>
     <string>{{PROJECT_ROOT}}</string>
-    <key>StartInterval</key>
-    <integer>{{INTERVAL_SECONDS}}</integer>
+    <key>KeepAlive</key>
+    <true/>
     <key>StandardOutPath</key>
-    <string>{{PROJECT_ROOT}}/logs/agent-log-sync.log</string>
+    <string>{{PROJECT_ROOT}}/logs/queue-supervisor.log</string>
     <key>StandardErrorPath</key>
-    <string>{{PROJECT_ROOT}}/logs/agent-log-sync.log</string>
+    <string>{{PROJECT_ROOT}}/logs/queue-supervisor.log</string>
     <key>RunAtLoad</key>
-    <false/>
+    <true/>
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>

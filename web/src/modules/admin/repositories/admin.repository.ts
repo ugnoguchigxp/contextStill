@@ -2139,7 +2139,8 @@ export type RuntimeSettingsReloadResponse = {
   reloadedAt: string;
 };
 
-const ADMIN_API_KEY_STORAGE_KEY = "memory_router_admin_api_key";
+const ADMIN_API_KEY_STORAGE_KEY = "context_still_admin_api_key";
+const LEGACY_ADMIN_API_KEY_STORAGE_KEY = "memory_router_admin_api_key";
 const ADMIN_API_KEY_QUERY_PARAM_KEYS = ["admin_api_key", "adminApiKey", "x-admin-api-key"];
 
 function normalizeAdminApiKey(value: unknown): string | null {
@@ -2202,7 +2203,13 @@ function readAdminApiKeyFromUrl(): string | null {
 function readAdminApiKeyFromStorage(): string | null {
   if (typeof window === "undefined") return null;
   try {
-    return normalizeAdminApiKey(window.localStorage.getItem(ADMIN_API_KEY_STORAGE_KEY));
+    const stored = normalizeAdminApiKey(window.localStorage.getItem(ADMIN_API_KEY_STORAGE_KEY));
+    if (stored) return stored;
+    const legacyStored = normalizeAdminApiKey(
+      window.localStorage.getItem(LEGACY_ADMIN_API_KEY_STORAGE_KEY),
+    );
+    if (legacyStored) persistAdminApiKey(legacyStored);
+    return legacyStored;
   } catch {
     return null;
   }
@@ -2920,11 +2927,7 @@ export type CodexAuthStatus = {
   accessTokenConfigured: boolean;
   /** Detailed token information parsed from auth.json */
   tokenInfo: CodexAuthTokenInfo | null;
-  recommendedAction:
-    | "ready"
-    | "run-codex-login"
-    | "set-codex-access-token"
-    | "install-codex-cli";
+  recommendedAction: "ready" | "run-codex-login" | "set-codex-access-token" | "install-codex-cli";
 };
 
 export type CodexLoginCommandResponse = {

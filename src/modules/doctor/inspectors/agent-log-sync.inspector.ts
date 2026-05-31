@@ -27,7 +27,7 @@ export async function inspectAgentLogSync({
   const antigravityExists = antigravityConfigured
     ? await pathExists(groupedConfig.antigravity.logDir)
     : false;
-  const launchAgent = await inspectLaunchAgent("com.memory-router.agent-log-sync");
+  const launchAgent = await inspectLaunchAgent("com.context-still.agent-log-sync");
   const states: DoctorReport["agentLogSync"]["states"] = [];
 
   if (canQueryDb && syncStatesTableAvailable) {

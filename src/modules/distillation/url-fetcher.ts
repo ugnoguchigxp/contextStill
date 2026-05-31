@@ -20,7 +20,7 @@ export type DistillationToolResult = {
 
 const defaultHeaders = {
   "user-agent":
-    "memory-router-distillation/0.1 (+https://localhost; compile-ready knowledge verifier)",
+    "context-still-distillation/0.1 (+https://localhost; compile-ready knowledge verifier)",
   accept: "text/html,application/xhtml+xml,application/xml;q=0.9,text/plain;q=0.8,*/*;q=0.5",
 };
 

@@ -37,9 +37,13 @@ describe("agentic-llm service tests", () => {
     vi.clearAllMocks();
     groupedConfig.azureOpenAi.deployments = [];
     vi.mocked(createOpenAiProvider).mockReturnValue(mockProvider("openai", false, false) as any);
-    vi.mocked(createAzureOpenAiProvider).mockReturnValue(mockProvider("azure-openai", false, false) as any);
+    vi.mocked(createAzureOpenAiProvider).mockReturnValue(
+      mockProvider("azure-openai", false, false) as any,
+    );
     vi.mocked(createBedrockProvider).mockReturnValue(mockProvider("bedrock", false, false) as any);
-    vi.mocked(createLocalLlmProvider).mockReturnValue(mockProvider("local-llm", false, false) as any);
+    vi.mocked(createLocalLlmProvider).mockReturnValue(
+      mockProvider("local-llm", false, false) as any,
+    );
     vi.mocked(createCodexProvider).mockReturnValue(mockProvider("codex", false, false) as any);
   });
 

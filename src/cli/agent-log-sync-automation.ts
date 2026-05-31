@@ -15,13 +15,16 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const projectRoot = path.resolve(__dirname, "../..");
 const plistDir = path.resolve(projectRoot, "scripts/automation");
 const launchAgentsDir = path.resolve(os.homedir(), "Library/LaunchAgents");
-const plist = "com.memory-router.agent-log-sync.plist";
-const label = "com.memory-router.agent-log-sync";
+const plist = "com.context-still.agent-log-sync.plist";
+const label = "com.context-still.agent-log-sync";
+const legacyPlist = "com.memory-router.agent-log-sync.plist";
+const legacyLabel = "com.memory-router.agent-log-sync";
 const windowsTaskTemplatePath = path.resolve(
   projectRoot,
-  "scripts/automation/windows/com.memory-router.agent-log-sync.task.xml",
+  "scripts/automation/windows/com.context-still.agent-log-sync.task.xml",
 );
-const windowsTaskName = "\\memory-router\\agent-log-sync";
+const windowsTaskName = "\\context-still\\agent-log-sync";
+const legacyWindowsTaskName = "\\memory-router\\agent-log-sync";
 
 function isDarwin(): boolean {
   return process.platform === "darwin";
@@ -47,14 +50,16 @@ function resolveBunPath(): string {
 function install(): void {
   if (process.platform === "win32") {
     const intervalSeconds = Number(
-      process.env.MEMORY_ROUTER_AGENT_LOG_SYNC_INTERVAL_SECONDS ?? "3600",
+      process.env.CONTEXT_STILL_AGENT_LOG_SYNC_INTERVAL_SECONDS ??
+        process.env.MEMORY_ROUTER_AGENT_LOG_SYNC_INTERVAL_SECONDS ??
+        "3600",
     );
     const intervalMinutes = Number.isFinite(intervalSeconds)
       ? Math.max(1, Math.floor(intervalSeconds / 60))
       : 60;
     installWindowsTask({
       taskName: windowsTaskName,
-      description: "Sync Codex and Antigravity logs into memory-router vibe memories",
+      description: "Sync Codex and Antigravity logs into context-still vibe memories",
       templatePath: windowsTaskTemplatePath,
       command: resolveBunPath(),
       arguments: `run ${path.resolve(projectRoot, "src/cli/sync-agent-logs.ts")}`,
@@ -67,7 +72,10 @@ function install(): void {
   mkdirSync(launchAgentsDir, { recursive: true });
   mkdirSync(path.resolve(projectRoot, "logs"), { recursive: true });
   const template = readFileSync(path.resolve(plistDir, plist), "utf8");
-  const intervalSeconds = process.env.MEMORY_ROUTER_AGENT_LOG_SYNC_INTERVAL_SECONDS ?? "3600";
+  const intervalSeconds =
+    process.env.CONTEXT_STILL_AGENT_LOG_SYNC_INTERVAL_SECONDS ??
+    process.env.MEMORY_ROUTER_AGENT_LOG_SYNC_INTERVAL_SECONDS ??
+    "3600";
   const rendered = template
     .replaceAll("{{PROJECT_ROOT}}", projectRoot)
     .replaceAll("{{BUN_PATH}}", resolveBunPath())
@@ -106,25 +114,33 @@ function loadJob(): void {
 function unloadJob(): void {
   if (process.platform === "win32") {
     disableWindowsTask(windowsTaskName);
+    disableWindowsTask(legacyWindowsTaskName);
     return;
   }
   ensureDarwinForLaunchCtl("unload");
   const target = path.resolve(launchAgentsDir, plist);
+  const legacyTarget = path.resolve(launchAgentsDir, legacyPlist);
   const uid = getUid();
   launchctlQuiet("bootout", `gui/${uid}`, target);
+  launchctlQuiet("bootout", `gui/${uid}`, legacyTarget);
+  launchctlQuiet("bootout", `gui/${uid}/${legacyLabel}`);
   console.log(`unloaded: ${label}`);
 }
 
 function uninstall(): void {
   if (process.platform === "win32") {
     uninstallWindowsTask(windowsTaskName);
+    uninstallWindowsTask(legacyWindowsTaskName);
     return;
   }
   ensureDarwinForLaunchCtl("uninstall");
   unloadJob();
   const target = path.resolve(launchAgentsDir, plist);
+  const legacyTarget = path.resolve(launchAgentsDir, legacyPlist);
   rmSync(target, { force: true });
+  rmSync(legacyTarget, { force: true });
   console.log(`removed: ${target}`);
+  console.log(`removed: ${legacyTarget}`);
 }
 
 function status(): void {

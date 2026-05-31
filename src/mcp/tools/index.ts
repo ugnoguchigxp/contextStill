@@ -1,4 +1,5 @@
 import type { ToolEntry } from "../registry.js";
+import { readProjectEnv } from "../../project-identity.js";
 import { compileEvalTool } from "./compile-eval.tool.js";
 import { contextCompileTool } from "./context-compile.tool.js";
 import {
@@ -25,7 +26,7 @@ import {
 } from "./vibe-memory.tool.js";
 
 function isMcpV2Enabled(): boolean {
-  const raw = process.env.MEMORY_ROUTER_MCP_V2?.trim().toLowerCase();
+  const raw = readProjectEnv("MCP_V2")?.trim().toLowerCase();
   if (!raw) return true;
   return !(raw === "0" || raw === "false" || raw === "no" || raw === "off");
 }

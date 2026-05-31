@@ -59,7 +59,7 @@ function buildTaskXml(definition: WindowsTaskDefinition): string {
 }
 
 function writeTempTaskXml(taskName: string, xml: string): string {
-  const tempDir = path.join(os.tmpdir(), "memory-router-task-xml");
+  const tempDir = path.join(os.tmpdir(), "context-still-task-xml");
   fs.mkdirSync(tempDir, { recursive: true });
   const safeName = taskName.replaceAll(/[\\/:*?"<>|]/g, "_");
   const tempPath = path.join(tempDir, `${safeName}.xml`);

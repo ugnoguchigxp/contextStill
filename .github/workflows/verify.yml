@@ -18,14 +18,14 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: memory_router_test
+          POSTGRES_DB: context_still_test
         options: >-
-          --health-cmd "pg_isready -U postgres -d memory_router_test"
+          --health-cmd "pg_isready -U postgres -d context_still_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/memory_router_test
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/context_still_test
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2
@@ -49,15 +49,15 @@ jobs:
         env:
           POSTGRES_USER: postgres
           POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: memory_router_test
+          POSTGRES_DB: context_still_test
         options: >-
-          --health-cmd "pg_isready -U postgres -d memory_router_test"
+          --health-cmd "pg_isready -U postgres -d context_still_test"
           --health-interval 10s
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgres://postgres:postgres@localhost:5432/memory_router_test
-      MEMORY_ROUTER_RUN_DB_TESTS: "1"
+      DATABASE_URL: postgres://postgres:postgres@localhost:5432/context_still_test
+      CONTEXT_STILL_RUN_DB_TESTS: "1"
     steps:
       - uses: actions/checkout@v4
       - uses: oven-sh/setup-bun@v2

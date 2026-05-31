@@ -1053,7 +1053,7 @@ export function ContextCompilerPage() {
         <div className="compile-page-title">
           <div className="header-title">
             <h1>Context Compiler Control Plane</h1>
-            <Badge variant="outline">memory-router</Badge>
+            <Badge variant="outline">contextStill</Badge>
           </div>
         </div>
         {mode === "new" ? (

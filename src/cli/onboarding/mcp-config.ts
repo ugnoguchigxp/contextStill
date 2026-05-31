@@ -2,7 +2,7 @@ export function buildMcpConfigSnippet(cwd: string): string {
   return JSON.stringify(
     {
       mcpServers: {
-        "memory-router": {
+        "context-still": {
           command: "bun",
           args: ["run", "start:mcp"],
           cwd,

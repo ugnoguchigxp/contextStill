@@ -1,8 +1,9 @@
 import { closeDbPool } from "./db/client.js";
 import { runMcpServer } from "./mcp/server.js";
+import { projectIdentity } from "./project-identity.js";
 
 runMcpServer().catch((error) => {
-  console.error("[memory-router] failed to start MCP server:", error);
+  console.error(`[${projectIdentity.packageName}] failed to start MCP server:`, error);
   process.exit(1);
 });
 

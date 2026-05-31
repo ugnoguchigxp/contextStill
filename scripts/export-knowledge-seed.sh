@@ -3,9 +3,9 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 OUT_FILE="${OUT_FILE:-${ROOT_DIR}/src/db/seeds/knowledge-seed.json}"
-CONTAINER_NAME="${CONTAINER_NAME:-memory-router-db}"
+CONTAINER_NAME="${CONTAINER_NAME:-context-still-db}"
 DB_USER="${DB_USER:-postgres}"
-DB_NAME="${DB_NAME:-memory_router}"
+DB_NAME="${DB_NAME:-context_still}"
 DB_PASSWORD="${DB_PASSWORD:-postgres}"
 
 require_command() {

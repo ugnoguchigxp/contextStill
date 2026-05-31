@@ -40,7 +40,7 @@ export function createCodexProvider(
 
     async chat(request: LlmChatRequest): Promise<LlmChatResponse> {
       const CodexClass = await loadCodexSdk();
-      
+
       const sdkOptions: any = {
         config: {
           max_tokens: request.maxTokens,

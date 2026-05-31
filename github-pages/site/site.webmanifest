@@ -3,8 +3,8 @@ layout: null
 permalink: /site.webmanifest
 ---
 {
-  "name": "memoryRouter",
-  "short_name": "memoryRouter",
+  "name": "contextStill",
+  "short_name": "contextStill",
   "description": "Evidence-backed adaptive knowledge compiler for coding agents.",
   "lang": "{{ site.lang | default: 'ja' }}",
   "start_url": "{{ '/' | relative_url }}",

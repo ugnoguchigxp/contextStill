@@ -1,6 +1,6 @@
 # GitHub Pages LP
 
-このディレクトリは `memoryRouter` の LP 用 Jekyll サイトです。
+このディレクトリは `contextStill` の LP 用 Jekyll サイトです。
 
 ## Stack
 
@@ -54,7 +54,7 @@ cd github-pages
 ヒーロー画像は Bun の `Bun.Image` API で WebP/JPEG を生成できます。
 
 ```bash
-cd /Users/y.noguchi/Code/memoryRouter
+cd /path/to/repo
 bun run github-pages/scripts/optimize-hero-image.ts
 ```
 
@@ -63,8 +63,8 @@ bun run github-pages/scripts/optimize-hero-image.ts
 
 ## Local Preview
 
-`_config.yml` の `baseurl` は本番向けに `/memoryRouter` になっています。  
-そのため、リポジトリ直下で `npx serve .` を実行すると `/memoryRouter/assets/...` が 404 になります。
+`_config.yml` はカスタムドメイン `https://contextstill.com/` 向けに `baseurl: ""` を使います。
+ローカル確認では `_config.local.yml` を重ね、URL だけを `http://localhost:4000` に切り替えます。
 
 ローカル確認は以下のどちらかを使ってください。
 
@@ -88,7 +88,7 @@ npx serve .preview
 Lighthouse をローカルで実行して、主要カテゴリと CWV を確認できます。
 
 ```bash
-cd /Users/y.noguchi/Code/memoryRouter
+cd /path/to/repo
 github-pages/scripts/run-lighthouse.sh
 ```
 
@@ -111,9 +111,9 @@ GitHub Actions でも定期実行します:
 
 クロール・インデックス運用は Search Console 側で以下を実施します。
 
-1. プロパティ追加: `https://ugnoguchigxp.github.io/memoryRouter/`
-2. Sitemap 送信: `https://ugnoguchigxp.github.io/memoryRouter/sitemap.xml`
-3. URL 検査: `https://ugnoguchigxp.github.io/memoryRouter/` を検査してインデックス登録をリクエスト
+1. プロパティ追加: `https://contextstill.com/`
+2. Sitemap 送信: `https://contextstill.com/sitemap.xml`
+3. URL 検査: `https://contextstill.com/` を検査してインデックス登録をリクエスト
 4. カバレッジ/ページ状況の確認（数日〜数週間で反映）
 
 Search Console / Bing の所有権確認が必要な場合は `github-pages/_config.yml` に以下を設定します。

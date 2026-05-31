@@ -53,6 +53,7 @@ function splitRef(raw: string): { uri: string; locator?: string } | null {
 function shouldIgnoreUri(uri: string): boolean {
   return (
     uri.startsWith("cover-evidence-result://") ||
+    uri.startsWith("context-still://") ||
     uri.startsWith("memory-router://") ||
     uri.startsWith("search:")
   );

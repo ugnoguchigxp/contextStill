@@ -25,47 +25,47 @@ describe("MCP Server", () => {
 
   describe("readStaticResource", () => {
     test("reads context-compiler-summary", async () => {
-      const result = await readStaticResource("memory-router://summary/context-compiler");
-      expect(result.contents[0].text).toContain("# memory-router");
+      const result = await readStaticResource("context-still://summary/context-compiler");
+      expect(result.contents[0].text).toContain("# contextStill");
     });
 
     test("reads packs/list", async () => {
       vi.mocked(listRecentCompileRuns).mockResolvedValue([{ id: "r1" } as any]);
-      const result = await readStaticResource("memory-router://packs/list");
+      const result = await readStaticResource("context-still://packs/list");
       const data = JSON.parse(result.contents[0].text);
       expect(data.runs).toHaveLength(1);
     });
 
     test("reads packs/latest", async () => {
       vi.mocked(getLatestCompileRunSnapshot).mockResolvedValue({ run: { id: "latest" } } as any);
-      const result = await readStaticResource("memory-router://packs/latest");
+      const result = await readStaticResource("context-still://packs/latest");
       const data = JSON.parse(result.contents[0].text);
       expect(data.run.id).toBe("latest");
     });
 
     test("reads packs/latest - not found", async () => {
       vi.mocked(getLatestCompileRunSnapshot).mockResolvedValue(null);
-      const result = await readStaticResource("memory-router://packs/latest");
+      const result = await readStaticResource("context-still://packs/latest");
       expect(result.contents[0].text).toContain("No context_compile run found yet");
     });
 
     test("reads doctor-health", async () => {
       vi.mocked(runDoctor).mockResolvedValue({ status: "ok" } as any);
-      const result = await readStaticResource("memory-router://health/doctor");
+      const result = await readStaticResource("context-still://health/doctor");
       const data = JSON.parse(result.contents[0].text);
       expect(data.status).toBe("ok");
     });
 
     test("reads specific pack run", async () => {
       vi.mocked(getCompileRunSnapshot).mockResolvedValue({ run: { id: "r123" } } as any);
-      const result = await readStaticResource("memory-router://packs/run/r123");
+      const result = await readStaticResource("context-still://packs/run/r123");
       const data = JSON.parse(result.contents[0].text);
       expect(data.run.id).toBe("r123");
     });
 
     test("reads specific pack run - not found", async () => {
       vi.mocked(getCompileRunSnapshot).mockResolvedValue(null);
-      const result = await readStaticResource("memory-router://packs/run/missing");
+      const result = await readStaticResource("context-still://packs/run/missing");
       const data = JSON.parse(result.contents[0].text);
       expect(data.error).toBe("run not found");
     });

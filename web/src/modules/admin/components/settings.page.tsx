@@ -71,7 +71,13 @@ const settingsTabs: Array<{ id: SettingsTabId; label: string; path: SettingsTabP
   { id: "advanced", label: "Advanced", path: "advanced" },
 ];
 
-const runtimeProviders: RuntimeProviderName[] = ["openai", "azure-openai", "bedrock", "local-llm", "codex"];
+const runtimeProviders: RuntimeProviderName[] = [
+  "openai",
+  "azure-openai",
+  "bedrock",
+  "local-llm",
+  "codex",
+];
 const runtimeProviderOptions: RuntimeProviderSetting[] = [...runtimeProviders, "auto"];
 const agenticProviders: RuntimeProviderName[] = [...runtimeProviders];
 const runtimeSearchProviders: RuntimeSearchProvider[] = ["brave", "exa", "duckduckgo"];
@@ -617,7 +623,9 @@ function CodexTokenInfoPanel({ tokenInfo }: { tokenInfo: CodexAuthTokenInfo }) {
       <div className="mb-1 flex items-center gap-2 font-semibold">
         <span>{tokenInfo.isExpired ? "⚠️" : "✅"}</span>
         <span>
-          {tokenInfo.isExpired ? "Token Expired — Re-login Required" : "Authenticated via ChatGPT OAuth"}
+          {tokenInfo.isExpired
+            ? "Token Expired — Re-login Required"
+            : "Authenticated via ChatGPT OAuth"}
         </span>
       </div>
       <div className="space-y-1 text-xs text-muted-foreground">
@@ -675,7 +683,13 @@ function CodexActionGuide({
       <div className="flex items-center gap-2 rounded bg-success/10 px-3 py-2 text-xs text-success">
         <span>🎉</span>
         <span className="font-semibold">Ready to use Codex as an LLM provider.</span>
-        <Button type="button" size="sm" variant="outline" className="ml-auto h-6 text-xs" onClick={onRefresh}>
+        <Button
+          type="button"
+          size="sm"
+          variant="outline"
+          className="ml-auto h-6 text-xs"
+          onClick={onRefresh}
+        >
           Refresh
         </Button>
       </div>
@@ -687,7 +701,9 @@ function CodexActionGuide({
       <div className="rounded bg-muted px-3 py-2 text-xs text-muted-foreground">
         <p className="font-semibold">Install Codex CLI first:</p>
         <div className="mt-1 flex items-center gap-2">
-          <code className="flex-1 rounded bg-background px-2 py-1 font-mono">npm install -g @openai/codex</code>
+          <code className="flex-1 rounded bg-background px-2 py-1 font-mono">
+            npm install -g @openai/codex
+          </code>
           <Button
             type="button"
             size="sm"
@@ -710,7 +726,9 @@ function CodexActionGuide({
   return (
     <div className="rounded bg-muted px-3 py-2 text-xs text-muted-foreground">
       <p className="font-semibold">
-        {isExpired ? "Re-authenticate by running in your terminal:" : "Authenticate by running in your terminal:"}
+        {isExpired
+          ? "Re-authenticate by running in your terminal:"
+          : "Authenticate by running in your terminal:"}
       </p>
       <div className="mt-1 flex items-center gap-2">
         {loginCommand ? (
@@ -751,7 +769,6 @@ function CodexActionGuide({
 }
 
 export function SettingsPage() {
-
   const tz = useTimezone();
   const formatDateTime = (value: string | null | undefined): string => {
     return formatDateTimeTz(value, tz);
@@ -1571,7 +1588,9 @@ export function SettingsPage() {
                               <CodexTokenInfoPanel tokenInfo={codexAuthQuery.data.tokenInfo} />
                             )}
                             <details className="text-xs text-muted-foreground">
-                              <summary className="cursor-pointer select-none py-1 font-medium">System Details</summary>
+                              <summary className="cursor-pointer select-none py-1 font-medium">
+                                System Details
+                              </summary>
                               <div className="mt-2 space-y-1">
                                 <div className="flex justify-between border-b pb-1">
                                   <span>Codex Home</span>
@@ -1579,15 +1598,25 @@ export function SettingsPage() {
                                 </div>
                                 <div className="flex justify-between border-b pb-1">
                                   <span>CLI (codex) Available</span>
-                                  <span>{codexAuthQuery.data.cliAvailable ? "✅ Yes" : "❌ No"}</span>
+                                  <span>
+                                    {codexAuthQuery.data.cliAvailable ? "✅ Yes" : "❌ No"}
+                                  </span>
                                 </div>
                                 <div className="flex justify-between border-b pb-1">
                                   <span>~/.codex/auth.json</span>
-                                  <span>{codexAuthQuery.data.authJsonExists ? "✅ Exists" : "❌ Not found"}</span>
+                                  <span>
+                                    {codexAuthQuery.data.authJsonExists
+                                      ? "✅ Exists"
+                                      : "❌ Not found"}
+                                  </span>
                                 </div>
                                 <div className="flex justify-between">
                                   <span>CODEX_ACCESS_TOKEN env</span>
-                                  <span>{codexAuthQuery.data.accessTokenConfigured ? "✅ Set" : "— Not set"}</span>
+                                  <span>
+                                    {codexAuthQuery.data.accessTokenConfigured
+                                      ? "✅ Set"
+                                      : "— Not set"}
+                                  </span>
                                 </div>
                               </div>
                             </details>
@@ -1801,7 +1830,6 @@ export function SettingsPage() {
                       : null}
                   </CardContent>
                 </Card>
-
               </section>
             ) : null}
 

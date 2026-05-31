@@ -3,7 +3,7 @@
   "configVersion": 1,
   "workspaces": {
     "": {
-      "name": "memory-router",
+      "name": "context-still",
       "dependencies": {
         "@aws-sdk/client-bedrock-runtime": "^3.1047.0",
         "@hono/node-server": "2.0.2",

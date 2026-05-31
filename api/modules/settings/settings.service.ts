@@ -20,7 +20,13 @@ import {
 } from "../../../src/modules/codex/codex-auth.service.js";
 import { createCodexProvider } from "../../../src/modules/llm/providers/codex.provider.js";
 
-const providerNameSchema = z.enum(["openai", "azure-openai", "bedrock", "local-llm", "codex"] as const);
+const providerNameSchema = z.enum([
+  "openai",
+  "azure-openai",
+  "bedrock",
+  "local-llm",
+  "codex",
+] as const);
 const azureOpenAiDeploymentSchema = z.coerce.number().int().min(1).max(3);
 
 export async function getSettingsForApi() {

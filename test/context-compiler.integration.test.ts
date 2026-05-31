@@ -74,7 +74,7 @@ describeDb("context compiler integration", () => {
       noMatch.pack.diagnostics.degradedReasons.some((reason) => reason.endsWith("_FAILED")),
     ).toBe(false);
     expect(noMatch.pack.sourceRefs.length).toBeGreaterThan(0);
-    expect(noMatch.pack.sourceRefs[0]?.startsWith("memory-router://packs/run/")).toBe(true);
+    expect(noMatch.pack.sourceRefs[0]?.startsWith("context-still://packs/run/")).toBe(true);
 
     const db = getDb();
     await db.execute(sql`alter table source_fragments rename to source_fragments_tmp`);

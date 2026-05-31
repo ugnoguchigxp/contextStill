@@ -2,7 +2,7 @@
 
 ## 1. Technical SEO (implemented)
 
-- Canonical URL (`/memoryRouter/`)
+- Canonical URL (`/`)
 - Open Graph / Twitter Card metadata
 - JSON-LD (`WebSite`)
 - `robots.txt` with sitemap URL
@@ -15,15 +15,15 @@
 
 対象プロパティ:
 
-- `https://ugnoguchigxp.github.io/memoryRouter/`
+- `https://contextstill.com/`
 
 実施手順:
 
 1. Search Console に URL-prefix プロパティを追加
 2. サイトマップを送信
-   - `https://ugnoguchigxp.github.io/memoryRouter/sitemap.xml`
+   - `https://contextstill.com/sitemap.xml`
 3. URL 検査でトップページを検査
-   - `https://ugnoguchigxp.github.io/memoryRouter/`
+   - `https://contextstill.com/`
 4. 「インデックス登録をリクエスト」を実行
 5. 24-72時間後に「ページのインデックス登録」ステータスを確認
 

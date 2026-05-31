@@ -125,6 +125,7 @@ function shouldIgnoreUri(uri: string): boolean {
   return (
     uri.startsWith("cover-evidence-result://") ||
     uri.startsWith("agent://") ||
+    uri.startsWith("context-still://") ||
     uri.startsWith("memory-router://") ||
     uri.startsWith("vibe_memory:") ||
     uri.startsWith("search:")

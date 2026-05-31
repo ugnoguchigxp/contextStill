@@ -25,7 +25,7 @@ describeDb("mcp contract", () => {
   });
 
   beforeEach(async () => {
-    process.env.MEMORY_ROUTER_MCP_V2 = "1";
+    process.env.CONTEXT_STILL_MCP_V2 = "1";
     await truncateIntegrationTables();
   });
 
@@ -148,22 +148,22 @@ describeDb("mcp contract", () => {
     expect(resources).toEqual([
       {
         name: "context-compiler-summary",
-        uri: "memory-router://summary/context-compiler",
+        uri: "context-still://summary/context-compiler",
         mimeType: "text/plain",
       },
       {
         name: "context-pack-runs-list",
-        uri: "memory-router://packs/list",
+        uri: "context-still://packs/list",
         mimeType: "application/json",
       },
       {
         name: "context-pack-latest",
-        uri: "memory-router://packs/latest",
+        uri: "context-still://packs/latest",
         mimeType: "application/json",
       },
       {
         name: "doctor-health",
-        uri: "memory-router://health/doctor",
+        uri: "context-still://health/doctor",
         mimeType: "application/json",
       },
     ]);
@@ -191,19 +191,19 @@ describeDb("mcp contract", () => {
       },
     ]);
 
-    const summary = (await readStaticResource("memory-router://summary/context-compiler")) as {
+    const summary = (await readStaticResource("context-still://summary/context-compiler")) as {
       contents: Array<{ text: string }>;
     };
     expect(summary.contents[0]?.text).toContain("retrieval modes");
 
-    const latest = (await readStaticResource("memory-router://packs/latest")) as {
+    const latest = (await readStaticResource("context-still://packs/latest")) as {
       contents: Array<{ text: string }>;
     };
     const latestJson = JSON.parse(latest.contents[0]?.text ?? "{}") as Record<string, unknown>;
     expect((latestJson.run as { id?: string }).id).toBe(runId);
     expect(Array.isArray(latestJson.items)).toBe(true);
 
-    const doctor = (await readStaticResource("memory-router://health/doctor")) as {
+    const doctor = (await readStaticResource("context-still://health/doctor")) as {
       contents: Array<{ text: string }>;
     };
     const doctorJson = JSON.parse(doctor.contents[0]?.text ?? "{}") as Record<string, unknown>;

@@ -16,11 +16,11 @@ timestamp_utc() {
 }
 
 resolve_log_file() {
-  if [ -n "${MEMORY_ROUTER_CANDIDATE_HOOK_LOG_FILE:-}" ]; then
-    printf "%s" "$MEMORY_ROUTER_CANDIDATE_HOOK_LOG_FILE"
+  if [ -n "${CONTEXT_STILL_CANDIDATE_HOOK_LOG_FILE:-}" ]; then
+    printf "%s" "$CONTEXT_STILL_CANDIDATE_HOOK_LOG_FILE"
     return 0
   fi
-  printf "%s" "${XDG_STATE_HOME:-$HOME/.local/state}/memory-router/hook-events.log"
+  printf "%s" "${XDG_STATE_HOME:-$HOME/.local/state}/context-still/hook-events.log"
 }
 
 append_hook_log() {
@@ -33,15 +33,15 @@ append_hook_log() {
 
 if [ "$MODE" = "pre-commit" ]; then
   append_hook_log "pre-commit reminder emitted"
-  echo "[memory-router] pre-commit reminder"
+  echo "[context-still] pre-commit reminder"
   echo "  if this task used context_compile, compile_eval is required before final completion report"
   echo "  ask user first: Fill compile_eval now? (Yes/No)"
   exit 0
 fi
 
 resolve_repo_root() {
-  if [ -n "${MEMORY_ROUTER_CANDIDATE_HOOK_REPO_ROOT:-}" ]; then
-    cd "$MEMORY_ROUTER_CANDIDATE_HOOK_REPO_ROOT"
+  if [ -n "${CONTEXT_STILL_CANDIDATE_HOOK_REPO_ROOT:-}" ]; then
+    cd "$CONTEXT_STILL_CANDIDATE_HOOK_REPO_ROOT"
     git rev-parse --show-toplevel 2>/dev/null || pwd
     return 0
   fi
@@ -56,7 +56,7 @@ sanitize_repo_key() {
 REPO_ROOT="$(resolve_repo_root)"
 if [ -z "$REPO_ROOT" ]; then
   append_hook_log "skipped: not inside a git worktree"
-  echo "[memory-router] candidate reminder skipped: not inside a git worktree"
+  echo "[context-still] candidate reminder skipped: not inside a git worktree"
   exit 0
 fi
 
@@ -65,7 +65,7 @@ cd "$REPO_ROOT"
 COMMIT_SHA="$(git rev-parse HEAD 2>/dev/null || true)"
 if [ -z "$COMMIT_SHA" ]; then
   append_hook_log "skipped: no HEAD commit"
-  echo "[memory-router] candidate reminder skipped: no HEAD commit"
+  echo "[context-still] candidate reminder skipped: no HEAD commit"
   exit 0
 fi
 
@@ -74,12 +74,12 @@ SUBJECT="$(git log -1 --format=%s "$COMMIT_SHA")"
 AUTHOR="$(git log -1 --format='%an <%ae>' "$COMMIT_SHA")"
 COMMITTED_AT="$(git log -1 --format=%cI "$COMMIT_SHA")"
 REPO_KEY="$(sanitize_repo_key "$REPO_ROOT")"
-if [ -n "${MEMORY_ROUTER_CANDIDATE_HOOK_LOG_DIR:-}" ]; then
-  LOG_DIR="$MEMORY_ROUTER_CANDIDATE_HOOK_LOG_DIR"
+if [ -n "${CONTEXT_STILL_CANDIDATE_HOOK_LOG_DIR:-}" ]; then
+  LOG_DIR="$CONTEXT_STILL_CANDIDATE_HOOK_LOG_DIR"
 elif [ "$REPO_ROOT" = "$SCRIPT_ROOT" ]; then
   LOG_DIR="$SCRIPT_ROOT/logs/post-commit-candidate-reminders"
 else
-  STATE_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/memory-router/post-commit-candidate-reminders"
+  STATE_ROOT="${XDG_STATE_HOME:-$HOME/.local/state}/context-still/post-commit-candidate-reminders"
   LOG_DIR="$STATE_ROOT/$REPO_KEY"
 fi
 PROMPT_FILE="$LOG_DIR/$SHORT_SHA.md"
@@ -103,7 +103,7 @@ Repository: $REPO_ROOT
 
 このコミットを確認し、将来にわたって再利用可能なレッスン、ルール、または手順（手続き）が含まれているかを判断してください。
 
-再利用可能な知見が存在する場合は、対象の候補ごとに memory-router の MCP ツール \`register_candidate\` を呼び出して登録してください。コミット内容の要約だけで終わらせないでください。
+再利用可能な知見が存在する場合は、対象の候補ごとに context-still の MCP ツール \`register_candidate\` を呼び出して登録してください。コミット内容の要約だけで終わらせないでください。
 
 一回限りのタスクメモ、未検証の仮説、ファイル固有のトリビア、またはこのコミットに裏付けられていない一般的なベストプラクティスは登録しないでください。
 
@@ -176,9 +176,9 @@ EOF
 ln -sf "$(basename "$PROMPT_FILE")" "$LATEST_FILE"
 append_hook_log "wrote prompt=$PROMPT_FILE latest=$LATEST_FILE commit=$SHORT_SHA"
 
-if [ "${MEMORY_ROUTER_CANDIDATE_HOOK_QUIET:-0}" != "1" ]; then
+if [ "${CONTEXT_STILL_CANDIDATE_HOOK_QUIET:-0}" != "1" ]; then
   cat <<EOF
-[memory-router] post-commit candidate reminder
+[context-still] post-commit candidate reminder
   commit: $SHORT_SHA $SUBJECT
   prompt: $LATEST_FILE
   action: ask the coding agent to review the commit, call register_candidate for durable lessons, and call compile_eval for context_compile quality

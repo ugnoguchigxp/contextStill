@@ -4,6 +4,7 @@ import type {
   DistillationProvider,
   EmbeddingProvider,
 } from "../../config.types.js";
+import { projectIdentity, readProjectEnvFrom } from "../../project-identity.js";
 import { type SupportedLocale, resolveLocale } from "../../shared/locales/locale.js";
 import type { StartupPlan } from "./onboarding.types.js";
 
@@ -99,7 +100,7 @@ export async function promptStartupPlan(
   env: NodeJS.ProcessEnv = process.env,
 ): Promise<StartupPlan> {
   // 1. Language Select
-  const defaultLang = resolveLocale(env.MEMORY_ROUTER_LANG);
+  const defaultLang = resolveLocale(readProjectEnvFrom(env, "LANG"));
   const langInput = await ask(onboardingPromptsText.ja.langSelect, defaultLang);
   const lang: SupportedLocale = langInput.toLowerCase().startsWith("j") ? "ja" : "en";
   const t = onboardingPromptsText[lang];
@@ -108,7 +109,8 @@ export async function promptStartupPlan(
 
   // 2. Database
   const defaultDbUrl =
-    env.DATABASE_URL || "postgres://postgres:postgres@localhost:7889/memory_router";
+    env.DATABASE_URL ||
+    `postgres://postgres:postgres@localhost:7889/${projectIdentity.databaseName}`;
   const dbUrl = await ask(t.dbUrl, defaultDbUrl);
   const startDocker = await askYesNo(
     t.dbDocker,
@@ -116,7 +118,7 @@ export async function promptStartupPlan(
   );
 
   // 3. Compile LLM Provider
-  const defaultProvider = (env.MEMORY_ROUTER_AGENTIC_COMPILE_PROVIDER ||
+  const defaultProvider = (readProjectEnvFrom(env, "AGENTIC_COMPILE_PROVIDER") ||
     "openai") as AgenticCompileProvider;
   const compileProviderInput = await ask(t.llmProvider, defaultProvider);
   let compileProvider = compileProviderInput.trim().toLowerCase() as AgenticCompileProvider;
@@ -134,42 +136,60 @@ export async function promptStartupPlan(
   };
 
   if (compileProvider === "openai") {
-    compileConfig.openaiKey = await ask(t.openaiKey, env.MEMORY_ROUTER_OPENAI_API_KEY || "");
+    compileConfig.openaiKey = await ask(
+      t.openaiKey,
+      readProjectEnvFrom(env, "OPENAI_API_KEY") || "",
+    );
     compileConfig.openaiBaseUrl = await ask(
       t.openaiBaseUrl,
-      env.MEMORY_ROUTER_OPENAI_API_BASE_URL || "",
+      readProjectEnvFrom(env, "OPENAI_API_BASE_URL") || "",
     );
-    compileConfig.openaiModel = await ask(t.openaiModel, env.MEMORY_ROUTER_OPENAI_MODEL || "");
+    compileConfig.openaiModel = await ask(
+      t.openaiModel,
+      readProjectEnvFrom(env, "OPENAI_MODEL") || "",
+    );
   } else if (compileProvider === "azure-openai") {
-    compileConfig.azureKey = await ask(t.azureKey, env.MEMORY_ROUTER_AZURE_OPENAI_API_KEY || "");
+    compileConfig.azureKey = await ask(
+      t.azureKey,
+      readProjectEnvFrom(env, "AZURE_OPENAI_API_KEY") || "",
+    );
     compileConfig.azureBaseUrl = await ask(
       t.azureBaseUrl,
-      env.MEMORY_ROUTER_AZURE_OPENAI_API_BASE_URL || "",
+      readProjectEnvFrom(env, "AZURE_OPENAI_API_BASE_URL") || "",
     );
-    compileConfig.azureModel = await ask(t.azureModel, env.MEMORY_ROUTER_AZURE_OPENAI_MODEL || "");
+    compileConfig.azureModel = await ask(
+      t.azureModel,
+      readProjectEnvFrom(env, "AZURE_OPENAI_MODEL") || "",
+    );
     compileConfig.azureVersion = await ask(
       t.azureVersion,
-      env.MEMORY_ROUTER_AZURE_OPENAI_API_VERSION || "",
+      readProjectEnvFrom(env, "AZURE_OPENAI_API_VERSION") || "",
     );
   } else if (compileProvider === "bedrock") {
-    compileConfig.bedrockModel = await ask(t.bedrockModel, env.MEMORY_ROUTER_BEDROCK_MODEL || "");
+    compileConfig.bedrockModel = await ask(
+      t.bedrockModel,
+      readProjectEnvFrom(env, "BEDROCK_MODEL") || "",
+    );
     compileConfig.bedrockRegion = await ask(
       t.bedrockRegion,
-      env.MEMORY_ROUTER_BEDROCK_REGION || "",
+      readProjectEnvFrom(env, "BEDROCK_REGION") || "",
     );
     compileConfig.bedrockProfile = await ask(
       t.bedrockProfile,
-      env.MEMORY_ROUTER_BEDROCK_PROFILE || "",
+      readProjectEnvFrom(env, "BEDROCK_PROFILE") || "",
     );
   } else if (compileProvider === "local-llm") {
     compileConfig.localLlmBaseUrl = await ask(
       t.localLlmBase,
-      env.MEMORY_ROUTER_LOCAL_LLM_API_BASE_URL || "http://127.0.0.1:44448",
+      readProjectEnvFrom(env, "LOCAL_LLM_API_BASE_URL") || "http://127.0.0.1:44448",
     );
-    compileConfig.localLlmKey = await ask(t.localLlmKey, env.MEMORY_ROUTER_LOCAL_LLM_API_KEY || "");
+    compileConfig.localLlmKey = await ask(
+      t.localLlmKey,
+      readProjectEnvFrom(env, "LOCAL_LLM_API_KEY") || "",
+    );
     compileConfig.localLlmModel = await ask(
       t.localLlmModel,
-      env.MEMORY_ROUTER_LOCAL_LLM_MODEL || "gemma-4-e4b-it",
+      readProjectEnvFrom(env, "LOCAL_LLM_MODEL") || "gemma-4-e4b-it",
     );
   }
 
@@ -194,7 +214,8 @@ export async function promptStartupPlan(
   }
 
   // 5. Embedding
-  const defaultEmbed = (env.MEMORY_ROUTER_EMBEDDING_PROVIDER || "auto") as EmbeddingProvider;
+  const defaultEmbed = (readProjectEnvFrom(env, "EMBEDDING_PROVIDER") ||
+    "auto") as EmbeddingProvider;
   const embedProviderInput = await ask(t.embeddingSelect, defaultEmbed);
   let embeddingProvider = embedProviderInput.trim().toLowerCase() as EmbeddingProvider;
 
@@ -213,12 +234,12 @@ export async function promptStartupPlan(
   if (embeddingProvider === "daemon") {
     embeddingConfig.daemonUrl = await ask(
       t.embeddingDaemonUrl,
-      env.MEMORY_ROUTER_EMBEDDING_DAEMON_URL || "http://127.0.0.1:44512",
+      readProjectEnvFrom(env, "EMBEDDING_DAEMON_URL") || "http://127.0.0.1:44512",
     );
   }
 
   // 6. Project Init
-  const defaultWiki = env.MEMORY_ROUTER_WIKI_ROOT || "wiki/pages";
+  const defaultWiki = readProjectEnvFrom(env, "WIKI_ROOT") || "wiki/pages";
   const wikiRoot = await ask(t.wikiRoot, defaultWiki);
   const importSeed = await askYesNo(t.importSeed, true);
 

@@ -1,3 +1,5 @@
+import { readProjectEnv } from "../../project-identity.js";
+
 export const requiredTables = [
   "audit_logs",
   "knowledge_items",
@@ -23,7 +25,7 @@ export const requiredTables = [
 export const requiredTableSqlList = requiredTables.map((tableName) => `'${tableName}'`).join(", ");
 
 export function getRequiredPrimaryMcpTools(): readonly string[] {
-  const raw = process.env.MEMORY_ROUTER_MCP_V2?.trim().toLowerCase();
+  const raw = readProjectEnv("MCP_V2")?.trim().toLowerCase();
   const isV2 = !raw || !(raw === "0" || raw === "false" || raw === "no" || raw === "off");
   if (!isV2) {
     return [

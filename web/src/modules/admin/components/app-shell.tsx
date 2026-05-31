@@ -22,7 +22,7 @@ export function AppShell() {
     <div className="app-shell">
       <header className="app-nav">
         <div className="brand-block">
-          <span className="brand-title">memory-router</span>
+          <span className="brand-title">contextStill</span>
           <span className="brand-subtitle">Context Compiler Control Plane</span>
         </div>
         <nav className="nav-links" aria-label="main navigation">

@@ -138,7 +138,7 @@ function extractOrigin(uri: string): { origin: OriginExtract } | { ignored: Igno
   if (trimmed.startsWith("cover-evidence-result://")) {
     return { ignored: "cover_evidence" };
   }
-  if (trimmed.startsWith("memory-router://")) {
+  if (trimmed.startsWith("context-still://") || trimmed.startsWith("memory-router://")) {
     return { ignored: "memory_router" };
   }
   if (trimmed.startsWith("search:")) {

@@ -13,7 +13,7 @@ type McpEvidenceServerConfig = {
 };
 
 function envKey(toolName: DistillationMcpToolName, suffix: string): string {
-  return `MEMORY_ROUTER_${toolName.toUpperCase()}_MCP_${suffix}`;
+  return `CONTEXT_STILL_${toolName.toUpperCase()}_MCP_${suffix}`;
 }
 
 function stringValue(value: unknown): string | undefined {
@@ -150,7 +150,7 @@ export async function executeMcpEvidenceTool(
   }
 
   const client = new Client({
-    name: "memory-router-distillation",
+    name: "context-still-distillation",
     version: "0.1.0",
   });
   const transport = new StdioClientTransport({

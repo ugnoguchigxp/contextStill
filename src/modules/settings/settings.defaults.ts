@@ -1,5 +1,6 @@
 import { groupedConfig } from "../../config.js";
 import type { DistillationSearchProvider } from "../../config.types.js";
+import { readProjectEnv } from "../../project-identity.js";
 import type { SettingsRow } from "./settings.repository.js";
 import {
   type DistillationPriorityTargetKind,
@@ -223,17 +224,16 @@ export const bootstrap: BootstrapConfig = {
           .map((slot) => ({
             name: `Deployment ${slot}`,
             apiBaseUrl:
-              process.env[`MEMORY_ROUTER_AZURE_OPENAI_${slot}_API_BASE_URL`]?.trim() ??
+              readProjectEnv(`AZURE_OPENAI_${slot}_API_BASE_URL`)?.trim() ??
               process.env[`AZURE_OPENAI_${slot}_API_BASE_URL`]?.trim() ??
               "",
             apiPath:
-              process.env[`MEMORY_ROUTER_AZURE_OPENAI_${slot}_API_PATH`]?.trim() ||
-              "/openai/deployments",
+              readProjectEnv(`AZURE_OPENAI_${slot}_API_PATH`)?.trim() || "/openai/deployments",
             apiVersion:
-              process.env[`MEMORY_ROUTER_AZURE_OPENAI_${slot}_API_VERSION`]?.trim() ||
+              readProjectEnv(`AZURE_OPENAI_${slot}_API_VERSION`)?.trim() ||
               groupedConfig.azureOpenAi.apiVersion,
             model:
-              process.env[`MEMORY_ROUTER_AZURE_OPENAI_${slot}_MODEL`]?.trim() ??
+              readProjectEnv(`AZURE_OPENAI_${slot}_MODEL`)?.trim() ??
               process.env[`AZURE_OPENAI_${slot}_MODEL`]?.trim() ??
               "",
           }))
@@ -363,17 +363,17 @@ export const bootstrap: BootstrapConfig = {
     openaiApiKey: groupedConfig.openAi.apiKey.trim() || undefined,
     azureOpenAiApiKey: groupedConfig.azureOpenAi.apiKey.trim() || undefined,
     azureOpenAiApiKey2:
-      process.env.MEMORY_ROUTER_AZURE_OPENAI_2_API_KEY?.trim() ||
+      readProjectEnv("AZURE_OPENAI_2_API_KEY")?.trim() ||
       process.env.AZURE_OPENAI_2_API_KEY?.trim() ||
       undefined,
     azureOpenAiApiKey3:
-      process.env.MEMORY_ROUTER_AZURE_OPENAI_3_API_KEY?.trim() ||
+      readProjectEnv("AZURE_OPENAI_3_API_KEY")?.trim() ||
       process.env.AZURE_OPENAI_3_API_KEY?.trim() ||
       undefined,
     localLlmApiKey: groupedConfig.localLlm.apiKey.trim() || undefined,
     braveApiKey: process.env.BRAVE_SEARCH_API_KEY?.trim() || undefined,
     exaApiKey:
-      process.env.MEMORY_ROUTER_EXA_API_KEY?.trim() || process.env.EXA_API_KEY?.trim() || undefined,
+      readProjectEnv("EXA_API_KEY")?.trim() || process.env.EXA_API_KEY?.trim() || undefined,
   },
 };
 

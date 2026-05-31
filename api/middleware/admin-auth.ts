@@ -1,6 +1,7 @@
 import { createHash, timingSafeEqual } from "node:crypto";
 import type { MiddlewareHandler } from "hono";
 import { groupedConfig } from "../../src/config.js";
+import { projectIdentity } from "../../src/project-identity.js";
 
 function readApiKeyFromAuthorizationHeader(value: string | undefined): string | null {
   if (!value) return null;
@@ -41,7 +42,7 @@ export function adminApiKeyAuth(): MiddlewareHandler {
       "";
 
     if (!provided || !isAuthorizedApiKey(configuredKey, provided)) {
-      ctx.header("WWW-Authenticate", 'ApiKey realm="memory-router-admin"');
+      ctx.header("WWW-Authenticate", `ApiKey realm="${projectIdentity.adminRealm}"`);
       return ctx.json({ error: "unauthorized" }, 401);
     }
     return next();

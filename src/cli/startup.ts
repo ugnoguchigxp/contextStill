@@ -25,7 +25,7 @@ async function main(): Promise<void> {
   const isDryRun = !isApply || args.includes("--dry-run");
 
   console.log("=========================================");
-  console.log("    memory-router Interactive Onboarding");
+  console.log("    context-still Interactive Onboarding");
   console.log("=========================================");
   if (isDryRun) {
     console.log("NOTE: Running in DRY-RUN mode by default.");

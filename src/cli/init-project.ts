@@ -3,6 +3,7 @@ import { closeDbPool } from "../db/index.js";
 import { compileContextPack } from "../modules/context-compiler/context-compiler.service.js";
 import { upsertKnowledgeFromSource } from "../modules/knowledge/knowledge.repository.js";
 import { importMarkdownDirectory } from "../modules/sources/markdown-importer.service.js";
+import { readProjectEnvFrom } from "../project-identity.js";
 import { type SupportedLocale, resolveLocale } from "../shared/locales/locale.js";
 import { buildMcpConfigSnippet } from "./onboarding/mcp-config.js";
 
@@ -228,7 +229,7 @@ function parseExplicitLocale(value: string): SupportedLocale {
 }
 
 export function parseArgs(args: string[], env: NodeJS.ProcessEnv = process.env): CliOptions {
-  const defaultLocale = resolveLocale(env.MEMORY_ROUTER_LANG);
+  const defaultLocale = resolveLocale(readProjectEnvFrom(env, "LANG"));
   const options: CliOptions = {
     wikiRoot: path.resolve(process.cwd(), "wiki/pages"),
     runImport: true,

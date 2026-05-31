@@ -19,15 +19,15 @@ describe("MCP server", () => {
 
   describe("readStaticResource", () => {
     test("returns summary text", async () => {
-      const result = await readStaticResource("memory-router://summary/context-compiler");
-      expect(result.contents[0].text).toContain("# memory-router context compiler");
+      const result = await readStaticResource("context-still://summary/context-compiler");
+      expect(result.contents[0].text).toContain("# contextStill context compiler");
     });
 
     test("returns recent runs from repository", async () => {
       vi.mocked(repository.listRecentCompileRuns).mockResolvedValue([
         { id: "run1" } as unknown as never,
       ]);
-      const result = await readStaticResource("memory-router://packs/list");
+      const result = await readStaticResource("context-still://packs/list");
       expect(result.contents[0].text).toContain("run1");
     });
 
@@ -35,13 +35,13 @@ describe("MCP server", () => {
       vi.mocked(repository.getLatestCompileRunSnapshot).mockResolvedValue({
         runId: "latest",
       } as unknown as never);
-      const result = await readStaticResource("memory-router://packs/latest");
+      const result = await readStaticResource("context-still://packs/latest");
       expect(result.contents[0].text).toContain("latest");
     });
 
     test("returns health report", async () => {
       vi.mocked(doctorService.runDoctor).mockResolvedValue({ ok: true } as unknown as never);
-      const result = await readStaticResource("memory-router://health/doctor");
+      const result = await readStaticResource("context-still://health/doctor");
       expect(result.contents[0].text).toContain('"ok": true');
     });
 
@@ -49,7 +49,7 @@ describe("MCP server", () => {
       vi.mocked(repository.getCompileRunSnapshot).mockResolvedValue({
         runId: "target-run",
       } as unknown as never);
-      const result = await readStaticResource("memory-router://packs/run/target-run");
+      const result = await readStaticResource("context-still://packs/run/target-run");
       expect(result.contents[0].text).toContain("target-run");
     });
   });

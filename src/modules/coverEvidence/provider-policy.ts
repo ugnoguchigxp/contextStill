@@ -3,7 +3,12 @@ import type { RuntimeSettingsRoute } from "../settings/settings.types.js";
 
 export type CoverEvidenceProviderPolicy = "default" | "cloud_api";
 
-const cloudApiProviders = new Set<DistillationProviderName>(["openai", "azure-openai", "bedrock", "codex"]);
+const cloudApiProviders = new Set<DistillationProviderName>([
+  "openai",
+  "azure-openai",
+  "bedrock",
+  "codex",
+]);
 const distillationProviders = new Set<DistillationProviderName>([
   "local-llm",
   "openai",

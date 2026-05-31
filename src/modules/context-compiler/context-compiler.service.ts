@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { groupedConfig } from "../../config.js";
+import { mcpResourceUri } from "../../project-identity.js";
 import type { CompileRunSource } from "../../shared/schemas/compile-run.schema.js";
 import {
   type CompileInput,
@@ -128,7 +129,7 @@ function buildFallbackSourceRef(params: {
     params.degradedReasons.find((item) => item.startsWith("NO_")) ??
     params.degradedReasons[0] ??
     "NO_SOURCE_MATCH";
-  return `memory-router://packs/run/${params.runId}#${params.retrievalMode}:${reason}`;
+  return `${mcpResourceUri(`packs/run/${params.runId}`)}#${params.retrievalMode}:${reason}`;
 }
 
 function selectSourceRefsForKnowledge(

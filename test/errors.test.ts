@@ -1,20 +1,20 @@
 import { describe, expect, test } from "vitest";
-import { MemoryRouterError, isMemoryRouterError } from "../src/lib/errors.js";
+import { ContextStillError, isContextStillError } from "../src/lib/errors.js";
 
 describe("error utilities", () => {
-  test("MemoryRouterError captures code and details", () => {
-    const error = new MemoryRouterError("TEST_ERROR", "Something failed", { foo: "bar" });
+  test("ContextStillError captures code and details", () => {
+    const error = new ContextStillError("TEST_ERROR", "Something failed", { foo: "bar" });
     expect(error.code).toBe("TEST_ERROR");
     expect(error.message).toBe("Something failed");
     expect(error.details).toEqual({ foo: "bar" });
-    expect(error.name).toBe("MemoryRouterError");
+    expect(error.name).toBe("ContextStillError");
   });
 
-  test("isMemoryRouterError identifies error correctly", () => {
-    const error = new MemoryRouterError("CODE", "MSG");
-    expect(isMemoryRouterError(error)).toBe(true);
-    expect(isMemoryRouterError(new Error("standard"))).toBe(false);
-    expect(isMemoryRouterError({})).toBe(false);
-    expect(isMemoryRouterError(null)).toBe(false);
+  test("isContextStillError identifies error correctly", () => {
+    const error = new ContextStillError("CODE", "MSG");
+    expect(isContextStillError(error)).toBe(true);
+    expect(isContextStillError(new Error("standard"))).toBe(false);
+    expect(isContextStillError({})).toBe(false);
+    expect(isContextStillError(null)).toBe(false);
   });
 });

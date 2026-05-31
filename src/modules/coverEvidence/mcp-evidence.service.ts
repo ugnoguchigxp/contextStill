@@ -1,4 +1,5 @@
 import type { CoverEvidenceReference, CoverEvidenceToolEvent } from "./types.js";
+import { legacyProjectEnvKey, projectEnvKey } from "../../project-identity.js";
 
 type McpReferenceKind = Extract<CoverEvidenceReference["kind"], "context7" | "deepwiki">;
 export type McpEvidenceToolName = McpReferenceKind;
@@ -9,7 +10,11 @@ const mcpEvidenceToolNames = [
 ] as const satisfies readonly McpEvidenceToolName[];
 
 function mcpCommandEnvKey(toolName: McpEvidenceToolName): string {
-  return `MEMORY_ROUTER_${toolName.toUpperCase()}_MCP_COMMAND`;
+  return projectEnvKey(`${toolName.toUpperCase()}_MCP_COMMAND`);
+}
+
+function legacyMcpCommandEnvKey(toolName: McpEvidenceToolName): string {
+  return legacyProjectEnvKey(`${toolName.toUpperCase()}_MCP_COMMAND`);
 }
 
 function mcpReferenceKind(value: string): McpReferenceKind | null {
@@ -19,7 +24,8 @@ function mcpReferenceKind(value: string): McpReferenceKind | null {
 
 export function configuredMcpEvidenceToolNames(): McpEvidenceToolName[] {
   return mcpEvidenceToolNames.filter((toolName) => {
-    const command = process.env[mcpCommandEnvKey(toolName)];
+    const command =
+      process.env[mcpCommandEnvKey(toolName)] ?? process.env[legacyMcpCommandEnvKey(toolName)];
     return typeof command === "string" && Boolean(command.trim());
   });
 }

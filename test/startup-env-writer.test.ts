@@ -34,11 +34,11 @@ describe("env-writer", () => {
 
   it("should mask secret values correctly", () => {
     expect(maskSecretValue("DATABASE_URL", "postgres://foo")).toBe("postgres://foo");
-    expect(maskSecretValue("MEMORY_ROUTER_OPENAI_API_KEY", "sk-abcdefghijklmnopqrstuvwxyz")).toBe(
+    expect(maskSecretValue("CONTEXT_STILL_OPENAI_API_KEY", "sk-abcdefghijklmnopqrstuvwxyz")).toBe(
       "sk-...wxyz",
     );
-    expect(maskSecretValue("MEMORY_ROUTER_OPENAI_API_KEY", "short")).toBe("****");
-    expect(maskSecretValue("MEMORY_ROUTER_EMBEDDING_ACCESS_TOKEN", "1234567890")).toBe("123...890");
+    expect(maskSecretValue("CONTEXT_STILL_OPENAI_API_KEY", "short")).toBe("****");
+    expect(maskSecretValue("CONTEXT_STILL_EMBEDDING_ACCESS_TOKEN", "1234567890")).toBe("123...890");
   });
 
   it("should build env record from plan", () => {
@@ -54,9 +54,9 @@ describe("env-writer", () => {
 
     const record = buildEnvRecord(plan);
     expect(record.DATABASE_URL).toBe("postgres://test-db");
-    expect(record.MEMORY_ROUTER_LANG).toBe("ja");
-    expect(record.MEMORY_ROUTER_OPENAI_API_KEY).toBe("test-key");
-    expect(record.MEMORY_ROUTER_AGENTIC_COMPILE_PROVIDER).toBe("openai");
+    expect(record.CONTEXT_STILL_LANG).toBe("ja");
+    expect(record.CONTEXT_STILL_OPENAI_API_KEY).toBe("test-key");
+    expect(record.CONTEXT_STILL_AGENTIC_COMPILE_PROVIDER).toBe("openai");
   });
 
   it("should build env diff compared to current env", () => {
@@ -70,12 +70,12 @@ describe("env-writer", () => {
       mcpClient: "generic",
     };
 
-    const currentEnv = "DATABASE_URL=postgres://old-db\nMEMORY_ROUTER_LANG=en\n";
+    const currentEnv = "DATABASE_URL=postgres://old-db\nCONTEXT_STILL_LANG=en\n";
     const diff = buildEnvDiff(plan, currentEnv);
 
     expect(diff).toContain("~ DATABASE_URL=postgres://old-db -> postgres://new-db");
-    expect(diff).toContain("+ MEMORY_ROUTER_OPENAI_API_KEY=sec...key");
-    expect(diff).toContain("  MEMORY_ROUTER_LANG=en (unchanged)");
+    expect(diff).toContain("+ CONTEXT_STILL_OPENAI_API_KEY=sec...key");
+    expect(diff).toContain("  CONTEXT_STILL_LANG=en (unchanged)");
   });
 
   it("should write new values to .env and preserve other unrelated env keys", async () => {
@@ -97,6 +97,6 @@ describe("env-writer", () => {
     const writtenContent = await readFile(testEnvPath, "utf8");
     expect(writtenContent).toContain("SOME_OTHER_KEY=do-not-touch");
     expect(writtenContent).toContain("DATABASE_URL=postgres://new");
-    expect(writtenContent).toContain("MEMORY_ROUTER_LANG=ja");
+    expect(writtenContent).toContain("CONTEXT_STILL_LANG=ja");
   });
 });

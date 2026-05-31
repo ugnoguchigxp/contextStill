@@ -382,7 +382,7 @@ export async function runStartupSeq(
   const mcpSnippet = `
 {
   "mcpServers": {
-    "memory-router": {
+    "context-still": {
       "command": "bun",
       "args": ["run", "start:mcp"],
       "cwd": "${cwd}"

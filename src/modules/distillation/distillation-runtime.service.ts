@@ -346,9 +346,7 @@ const callCodexChat = async (
 
   const llmMessages = request.messages.map((msg) => {
     const role =
-      msg.role === "system" || msg.role === "user" || msg.role === "assistant"
-        ? msg.role
-        : "user";
+      msg.role === "system" || msg.role === "user" || msg.role === "assistant" ? msg.role : "user";
     const baseContent =
       typeof msg.content === "string"
         ? msg.content

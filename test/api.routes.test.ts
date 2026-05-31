@@ -398,15 +398,15 @@ describe("API route contract tests", () => {
   test("app health endpoints return liveness/readiness payloads", async () => {
     const health = await app.request("/api/health");
     expect(health.status).toBe(200);
-    await expect(health.json()).resolves.toEqual({ status: "ok", service: "memory-router-api" });
+    await expect(health.json()).resolves.toEqual({ status: "ok", service: "context-still-api" });
 
     const live = await app.request("/api/health/live");
     expect(live.status).toBe(200);
-    await expect(live.json()).resolves.toEqual({ status: "alive", service: "memory-router-api" });
+    await expect(live.json()).resolves.toEqual({ status: "alive", service: "context-still-api" });
 
     const ready = await app.request("/api/health/ready");
     expect(ready.status).toBe(200);
-    await expect(ready.json()).resolves.toEqual({ status: "ready", service: "memory-router-api" });
+    await expect(ready.json()).resolves.toEqual({ status: "ready", service: "context-still-api" });
   });
 
   test("GET /api/audit-logs rejects invalid query", async () => {

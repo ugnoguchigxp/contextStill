@@ -1,16 +1,16 @@
 {
-  "name": "memoryRouter",
-  "short_name": "memoryRouter",
+  "name": "contextStill",
+  "short_name": "contextStill",
   "description": "Evidence-backed adaptive knowledge compiler for coding agents.",
   "lang": "ja",
-  "start_url": "/memoryRouter/",
-  "scope": "/memoryRouter/",
+  "start_url": "/",
+  "scope": "/",
   "display": "standalone",
   "background_color": "#f3f1eb",
   "theme_color": "#0f8078",
   "icons": [
     {
-      "src": "/memoryRouter/assets/img/favicon.svg",
+      "src": "/assets/img/favicon.svg",
       "sizes": "any",
       "type": "image/svg+xml"
     }

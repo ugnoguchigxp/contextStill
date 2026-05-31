@@ -1,5 +1,6 @@
 import { groupedConfig } from "../../config.js";
 import type { DistillationSearchProvider } from "../../config.types.js";
+import { projectEnvKey } from "../../project-identity.js";
 import { bootstrap, cloneDefaultSettings, secretRowKeys } from "./settings.defaults.js";
 import type { SettingsRow } from "./settings.repository.js";
 import type {
@@ -226,7 +227,7 @@ export function applyRuntimeSettingsToProcess(
   groupedConfig.doctor.knowledgeZeroUseWarningMinActiveCount =
     settings.advanced.doctorKnowledgeZeroUseWarningMinActiveCount;
   process.env.BRAVE_SEARCH_API_KEY = secrets.braveApiKey?.value ?? "";
-  process.env.MEMORY_ROUTER_EXA_API_KEY = secrets.exaApiKey?.value ?? "";
+  process.env[projectEnvKey("EXA_API_KEY")] = secrets.exaApiKey?.value ?? "";
 }
 
 export function buildRuntimeSettingsView(

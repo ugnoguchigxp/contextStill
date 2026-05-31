@@ -9,6 +9,7 @@ import type {
   GroupedConfig,
 } from "./config.types.js";
 import { APP_CONSTANTS } from "./constants.js";
+import { projectIdentity, readProjectEnv, readProjectEnvWithFallback } from "./project-identity.js";
 
 loadEnv({ quiet: true });
 
@@ -114,12 +115,12 @@ const parseAgenticCompileProvider = (
 };
 
 const distillationProvider = parseDistillationProvider(
-  process.env.MEMORY_ROUTER_DISTILLATION_PROVIDER,
+  readProjectEnv("DISTILLATION_PROVIDER"),
   "local-llm",
 );
 const findCandidateProvider = parseDistillationProvider(
-  process.env.MEMORY_ROUTER_DISTILLATION_FIND_CANDIDATE_PROVIDER ||
-    process.env.MEMORY_ROUTER_FIND_CANDIDATE_PROVIDER,
+  readProjectEnv("DISTILLATION_FIND_CANDIDATE_PROVIDER") ||
+    readProjectEnv("FIND_CANDIDATE_PROVIDER"),
   "openai",
 );
 
@@ -128,19 +129,21 @@ const readFileRoot = path.resolve(sourceContentRoot, "pages");
 
 export const groupedConfig: GroupedConfig = {
   database: {
-    url: process.env.DATABASE_URL || "postgres://postgres:postgres@localhost:7889/memory_router",
+    url:
+      process.env.DATABASE_URL ||
+      `postgres://postgres:postgres@localhost:7889/${projectIdentity.databaseName}`,
   },
   embedding: {
     dimension: APP_CONSTANTS.embeddingDimension,
-    provider: (process.env.MEMORY_ROUTER_EMBEDDING_PROVIDER || "auto") as EmbeddingProvider,
-    daemonUrl: (process.env.MEMORY_ROUTER_EMBEDDING_DAEMON_URL || "http://127.0.0.1:44512").replace(
+    provider: (readProjectEnv("EMBEDDING_PROVIDER") || "auto") as EmbeddingProvider,
+    daemonUrl: (readProjectEnv("EMBEDDING_DAEMON_URL") || "http://127.0.0.1:44512").replace(
       /\/+$/,
       "",
     ),
     accessToken:
-      process.env.MEMORY_ROUTER_EMBEDDING_ACCESS_TOKEN || process.env.LOCAL_LLM_ACCESS_TOKEN || "",
+      readProjectEnv("EMBEDDING_ACCESS_TOKEN") || process.env.LOCAL_LLM_ACCESS_TOKEN || "",
     timeoutMs: APP_CONSTANTS.embeddingTimeoutMs,
-    openaiModel: process.env.MEMORY_ROUTER_EMBEDDING_OPENAI_MODEL || "text-embedding-3-small",
+    openaiModel: readProjectEnv("EMBEDDING_OPENAI_MODEL") || "text-embedding-3-small",
   },
   localLlm: {
     embeddingRoot: path.resolve(process.cwd(), "../local-llm/embedding"),
@@ -149,11 +152,12 @@ export const groupedConfig: GroupedConfig = {
       process.cwd(),
       "../local-llm/embedding/models/multilingual-e5-small",
     ),
-    apiBaseUrl: (
-      process.env.MEMORY_ROUTER_LOCAL_LLM_API_BASE_URL || "http://127.0.0.1:44448"
-    ).replace(/\/+$/, ""),
-    apiKey: process.env.MEMORY_ROUTER_LOCAL_LLM_API_KEY || process.env.LOCAL_LLM_ACCESS_TOKEN || "",
-    model: process.env.MEMORY_ROUTER_LOCAL_LLM_MODEL || "gemma-4-e4b-it",
+    apiBaseUrl: (readProjectEnv("LOCAL_LLM_API_BASE_URL") || "http://127.0.0.1:44448").replace(
+      /\/+$/,
+      "",
+    ),
+    apiKey: readProjectEnv("LOCAL_LLM_API_KEY") || process.env.LOCAL_LLM_ACCESS_TOKEN || "",
+    model: readProjectEnv("LOCAL_LLM_MODEL") || "gemma-4-e4b-it",
   },
   sourceContent: {
     root: sourceContentRoot,
@@ -165,15 +169,15 @@ export const groupedConfig: GroupedConfig = {
   },
   codex: {
     sessionDir:
-      process.env.MEMORY_ROUTER_CODEX_SESSION_DIR || path.join(os.homedir(), ".codex", "sessions"),
+      readProjectEnv("CODEX_SESSION_DIR") || path.join(os.homedir(), ".codex", "sessions"),
     archivedSessionDir:
-      process.env.MEMORY_ROUTER_CODEX_ARCHIVED_SESSION_DIR ||
+      readProjectEnv("CODEX_ARCHIVED_SESSION_DIR") ||
       path.join(os.homedir(), ".codex", "archived_sessions"),
     accessToken: process.env.CODEX_ACCESS_TOKEN || "",
   },
   antigravity: {
     logDir:
-      process.env.MEMORY_ROUTER_ANTIGRAVITY_LOG_DIR ||
+      readProjectEnv("ANTIGRAVITY_LOG_DIR") ||
       path.join(os.homedir(), ".gemini", "antigravity", "brain"),
     initialLookbackHours: APP_CONSTANTS.antigravityLogInitialLookbackHours,
   },
@@ -210,7 +214,7 @@ export const groupedConfig: GroupedConfig = {
     resultMaxChars: APP_CONSTANTS.distillationToolResultMaxChars,
     searchResultCount: APP_CONSTANTS.distillationSearchResultCount,
     searchProviders: parseDistillationSearchProviders(
-      process.env.MEMORY_ROUTER_DISTILLATION_SEARCH_PROVIDERS,
+      readProjectEnv("DISTILLATION_SEARCH_PROVIDERS"),
       APP_CONSTANTS.distillationSearchProviders,
     ),
     searchMaxProviderAttempts: APP_CONSTANTS.distillationSearchMaxProviderAttempts,
@@ -223,8 +227,7 @@ export const groupedConfig: GroupedConfig = {
   compile: {
     defaultTokenBudget: APP_CONSTANTS.defaultTokenBudget,
     candidateTraceLimit: resolvePositiveInt(
-      process.env.MEMORY_ROUTER_CONTEXT_COMPILE_TRACE_LIMIT ??
-        process.env.CONTEXT_COMPILE_TRACE_LIMIT,
+      readProjectEnv("CONTEXT_COMPILE_TRACE_LIMIT") ?? process.env.CONTEXT_COMPILE_TRACE_LIMIT,
       APP_CONSTANTS.defaultCandidateTraceLimit,
       { min: 1, max: APP_CONSTANTS.compileCandidateTraceLimitMax },
     ),
@@ -232,43 +235,36 @@ export const groupedConfig: GroupedConfig = {
     enableVectorSearch: APP_CONSTANTS.enableVectorSearch,
   },
   openAi: {
-    apiKey: process.env.MEMORY_ROUTER_OPENAI_API_KEY || process.env.OPENAI_API_KEY || "",
-    apiBaseUrl: (
-      process.env.MEMORY_ROUTER_OPENAI_API_BASE_URL || "https://api.openai.com/v1"
-    ).replace(/\/+$/, ""),
-    model: process.env.MEMORY_ROUTER_OPENAI_MODEL || "gpt-5.4-mini",
+    apiKey: readProjectEnvWithFallback("OPENAI_API_KEY", ["OPENAI_API_KEY"]) || "",
+    apiBaseUrl: (readProjectEnv("OPENAI_API_BASE_URL") || "https://api.openai.com/v1").replace(
+      /\/+$/,
+      "",
+    ),
+    model: readProjectEnv("OPENAI_MODEL") || "gpt-5.4-mini",
   },
   azureOpenAi: {
-    apiKey:
-      process.env.MEMORY_ROUTER_AZURE_OPENAI_API_KEY || process.env.AZURE_OPENAI_API_KEY || "",
+    apiKey: readProjectEnvWithFallback("AZURE_OPENAI_API_KEY", ["AZURE_OPENAI_API_KEY"]) || "",
     apiBaseUrl: (
-      process.env.MEMORY_ROUTER_AZURE_OPENAI_API_BASE_URL ||
-      process.env.AZURE_OPENAI_API_BASE_URL ||
+      readProjectEnvWithFallback("AZURE_OPENAI_API_BASE_URL", ["AZURE_OPENAI_API_BASE_URL"]) ||
       process.env.AZURE_OPENAI_ENDPOINT ||
       process.env.GNOSIS_REVIEW_LLM_API_BASE_URL ||
       ""
     ).replace(/\/+$/, ""),
     apiPath: "/openai/deployments",
     apiVersion:
-      process.env.MEMORY_ROUTER_AZURE_OPENAI_API_VERSION ||
-      process.env.AZURE_OPENAI_API_VERSION ||
+      readProjectEnvWithFallback("AZURE_OPENAI_API_VERSION", ["AZURE_OPENAI_API_VERSION"]) ||
       "2025-04-01-preview",
     model:
-      process.env.MEMORY_ROUTER_AZURE_OPENAI_MODEL ||
-      process.env.AZURE_OPENAI_MODEL ||
-      "gpt-5-4-mini",
+      readProjectEnvWithFallback("AZURE_OPENAI_MODEL", ["AZURE_OPENAI_MODEL"]) || "gpt-5-4-mini",
     deployments: [],
   },
   bedrock: {
-    model: process.env.MEMORY_ROUTER_BEDROCK_MODEL || "",
-    region: process.env.MEMORY_ROUTER_BEDROCK_REGION || process.env.AWS_REGION || "us-east-1",
-    profile: process.env.MEMORY_ROUTER_BEDROCK_PROFILE || process.env.AWS_PROFILE || "",
+    model: readProjectEnv("BEDROCK_MODEL") || "",
+    region: readProjectEnv("BEDROCK_REGION") || process.env.AWS_REGION || "us-east-1",
+    profile: readProjectEnv("BEDROCK_PROFILE") || process.env.AWS_PROFILE || "",
   },
   agenticCompile: {
-    provider: parseAgenticCompileProvider(
-      process.env.MEMORY_ROUTER_AGENTIC_COMPILE_PROVIDER,
-      "openai",
-    ),
+    provider: parseAgenticCompileProvider(readProjectEnv("AGENTIC_COMPILE_PROVIDER"), "openai"),
     enabled: APP_CONSTANTS.agenticCompileEnabled,
     timeoutMs: APP_CONSTANTS.agenticCompileTimeoutMs,
     maxTokens: APP_CONSTANTS.agenticCompileMaxTokens,
@@ -280,7 +276,7 @@ export const groupedConfig: GroupedConfig = {
     findCandidateTimeoutMs: APP_CONSTANTS.distillationFindCandidateTimeoutMs,
     coverEvidenceTimeoutMs: APP_CONSTANTS.distillationCoverEvidenceTimeoutMs,
     coverEvidenceConcurrency: resolvePositiveInt(
-      process.env.MEMORY_ROUTER_COVER_EVIDENCE_CONCURRENCY,
+      readProjectEnv("COVER_EVIDENCE_CONCURRENCY"),
       APP_CONSTANTS.distillationCoverEvidenceConcurrency,
       { min: 1, max: 8 },
     ),
@@ -290,7 +286,7 @@ export const groupedConfig: GroupedConfig = {
     candidateTimeoutMs: APP_CONSTANTS.distillationCandidateTimeoutMs,
     pipelineLockStaleSeconds: APP_CONSTANTS.distillationPipelineLockStaleSeconds,
     pipelineClaimLimit: resolvePositiveInt(
-      process.env.MEMORY_ROUTER_DISTILL_PIPELINE_LIMIT,
+      readProjectEnv("DISTILL_PIPELINE_LIMIT"),
       APP_CONSTANTS.distillationPipelineClaimLimit,
       { min: 1, max: 1000 },
     ),
@@ -299,7 +295,7 @@ export const groupedConfig: GroupedConfig = {
     inventoryRefreshIntervalMs: APP_CONSTANTS.distillationInventoryRefreshIntervalMs,
     findCandidateBackgroundEnabled: APP_CONSTANTS.findCandidateBackgroundEnabled,
     findCandidateNoWait: resolveBoolean(
-      process.env.MEMORY_ROUTER_FIND_CANDIDATE_NO_WAIT,
+      readProjectEnv("FIND_CANDIDATE_NO_WAIT"),
       APP_CONSTANTS.findCandidateNoWait,
     ),
     findCandidateInteractiveWindowSeconds: APP_CONSTANTS.findCandidateInteractiveWindowSeconds,
@@ -311,7 +307,7 @@ export const groupedConfig: GroupedConfig = {
     findCandidateRateLimitCooldownSeconds: APP_CONSTANTS.findCandidateRateLimitCooldownSeconds,
     findCandidateJitterSeconds: APP_CONSTANTS.findCandidateJitterSeconds,
     findingQueueTaskIntervalSeconds: resolveNonNegativeInt(
-      process.env.MEMORY_ROUTER_FINDING_QUEUE_TASK_INTERVAL_SECONDS,
+      readProjectEnv("FINDING_QUEUE_TASK_INTERVAL_SECONDS"),
       APP_CONSTANTS.findingQueueTaskIntervalSeconds,
       { max: 3600 },
     ),
@@ -326,8 +322,8 @@ export const groupedConfig: GroupedConfig = {
     vibeAgenticReaderManualEnabled: APP_CONSTANTS.vibeDistillationAgenticReaderManualEnabled,
   },
   admin: {
-    apiKey: (process.env.MEMORY_ROUTER_ADMIN_API_KEY ?? "").trim(),
-    allowedOrigins: parseCsvValues(process.env.MEMORY_ROUTER_ALLOWED_ORIGINS),
+    apiKey: (readProjectEnv("ADMIN_API_KEY") ?? "").trim(),
+    allowedOrigins: parseCsvValues(readProjectEnv("ALLOWED_ORIGINS")),
   },
   doctor: {
     freshnessThresholdMinutes: APP_CONSTANTS.doctorFreshnessThresholdMinutes,
