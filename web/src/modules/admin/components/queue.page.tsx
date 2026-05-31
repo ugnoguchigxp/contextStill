@@ -217,14 +217,19 @@ function actionState(item: QueueListItemV2): {
     item.status === "failed" ||
     item.status === "skipped"
   );
-  const retryDisabled = item.status === "running";
+  const retryDisabled = item.status === "pending" || item.status === "running";
   return {
     pauseDisabled,
     pauseReason: pauseDisabled ? "Only pending/running can pause" : "Pause queue job",
     resumeDisabled,
     resumeReason: resumeDisabled ? "Only paused/failed/skipped can resume" : "Resume queue job",
     retryDisabled,
-    retryReason: retryDisabled ? "Running job cannot retry" : "Retry from the beginning",
+    retryReason:
+      item.status === "pending"
+        ? "Already queued"
+        : item.status === "running"
+          ? "Running job cannot requeue"
+          : "Requeue job",
   };
 }
 
@@ -297,6 +302,7 @@ export function QueuePage() {
         id: input.id,
         mode: input.queue === "premiumCoveringEvidence" ? "cloud_api" : "default",
         forceRefreshEvidence: true,
+        reason: "requeued from queue dashboard",
       }),
     onSuccess: () => void invalidateQueue(),
     onSettled: () => setActioning(null),

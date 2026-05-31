@@ -192,31 +192,35 @@ function inferTitleFromBody(body: string): string {
 function parseCandidate(
   record: Record<string, unknown>,
   defaults: Partial<CoverEvidenceCandidate> = {},
+  options: { useDefaults?: boolean } = {},
 ): CoverEvidenceCandidate | null {
+  const useDefaults = options.useDefaults !== false;
   const candidateRecord = candidateRecordFromResult(record);
-  const title = asString(
-    recordValue(candidateRecord, [
-      "title",
-      "TITLE",
-      "candidateTitle",
-      "candidate_title",
-      "CANDIDATE_TITLE",
-    ]),
-  );
-  const body = asString(
-    recordValue(candidateRecord, [
-      "body",
-      "BODY",
-      "content",
-      "CONTENT",
-      "candidateBody",
-      "candidate_body",
-      "CANDIDATE_BODY",
-      "candidateContent",
-      "candidate_content",
-      "CANDIDATE_CONTENT",
-    ]),
-  );
+  const title =
+    asString(
+      recordValue(candidateRecord, [
+        "title",
+        "TITLE",
+        "candidateTitle",
+        "candidate_title",
+        "CANDIDATE_TITLE",
+      ]),
+    ) || (useDefaults ? defaults.title : undefined);
+  const body =
+    asString(
+      recordValue(candidateRecord, [
+        "body",
+        "BODY",
+        "content",
+        "CONTENT",
+        "candidateBody",
+        "candidate_body",
+        "CANDIDATE_BODY",
+        "candidateContent",
+        "candidate_content",
+        "CANDIDATE_CONTENT",
+      ]),
+    ) || (useDefaults ? defaults.body : undefined);
   const normalizedTitle = title || (body ? inferTitleFromBody(body) : "");
   const normalizedBody = body || title;
   if (!normalizedTitle || !normalizedBody) {
@@ -234,19 +238,20 @@ function parseCandidate(
       "KIND",
     ]),
   ).toLowerCase();
-  const type = typeHint === "procedure" ? "procedure" : (defaults.type ?? "rule");
-  const applicability = parseApplicability(candidateRecord, defaults);
+  const type =
+    typeHint === "procedure" ? "procedure" : ((useDefaults ? defaults.type : "rule") ?? "rule");
+  const applicability = parseApplicability(candidateRecord, useDefaults ? defaults : {});
   return {
     type,
     title: normalizedTitle,
     body: normalizedBody,
     importance: parseScore(
       recordValue(candidateRecord, ["importance", "IMPORTANCE"]),
-      defaults.importance ?? DEFAULT_IMPORTANCE,
+      useDefaults ? (defaults.importance ?? DEFAULT_IMPORTANCE) : DEFAULT_IMPORTANCE,
     ),
     confidence: parseScore(
       recordValue(candidateRecord, ["confidence", "CONFIDENCE"]),
-      defaults.confidence ?? DEFAULT_CONFIDENCE,
+      useDefaults ? (defaults.confidence ?? DEFAULT_CONFIDENCE) : DEFAULT_CONFIDENCE,
     ),
     ...applicability,
   };
@@ -331,8 +336,6 @@ function isToolEvent(value: CoverEvidenceToolEvent | null): value is CoverEviden
 function parseLabelledResultRecord(text: string): Record<string, unknown> | null {
   const lines = text.split(/\r?\n/);
   const labelValues = new Map<string, string>();
-  const bodyLines: string[] = [];
-  let inBody = false;
   const knownLabels = new Set([
     "STATUS",
     "STAGE",
@@ -350,32 +353,50 @@ function parseLabelledResultRecord(text: string): Record<string, unknown> | null
     "GENERAL",
     "REPO_PATH",
     "REPO_KEY",
+    "REASON",
   ]);
+  let currentLabel: string | null = null;
+  const currentValueLines: string[] = [];
+
+  const flushCurrentLabel = () => {
+    if (!currentLabel) return;
+    const value = currentValueLines.join("\n").trim();
+    if (value || currentLabel === "BODY") {
+      labelValues.set(currentLabel, value);
+    }
+    currentLabel = null;
+    currentValueLines.length = 0;
+  };
 
   for (const line of lines) {
     const match = line.match(/^([A-Z_]+):\s*(.*)$/);
     if (match && knownLabels.has(match[1])) {
+      flushCurrentLabel();
       const label = match[1];
       const value = match[2] ?? "";
-      if (label === "BODY") {
-        inBody = true;
-        if (value.trim()) bodyLines.push(value);
-      } else {
-        inBody = false;
-        labelValues.set(label, value.trim());
-      }
+      currentLabel = label;
+      if (value.trim()) currentValueLines.push(value);
       continue;
     }
-    if (inBody) {
-      bodyLines.push(line);
+    const bareLabel = line.trim().toUpperCase();
+    if (knownLabels.has(bareLabel)) {
+      flushCurrentLabel();
+      currentLabel = bareLabel;
+      continue;
+    }
+    if (currentLabel) {
+      currentValueLines.push(line);
     }
   }
+  flushCurrentLabel();
 
   const title = (labelValues.get("TITLE") ?? "").trim();
-  const body = bodyLines.join("\n").trim();
-  if (!title && !body) return null;
+  const body = (labelValues.get("BODY") ?? "").trim();
+  const status = (labelValues.get("STATUS") ?? "").trim();
+  const reason = (labelValues.get("REASON") ?? "").trim();
+  if (!title && !body && !status && !reason) return null;
   const record: Record<string, unknown> = {
-    ...(labelValues.get("STATUS") ? { status: labelValues.get("STATUS") } : {}),
+    ...(status ? { status } : {}),
     ...(labelValues.get("STAGE") ? { stage: labelValues.get("STAGE") } : {}),
     ...(labelValues.get("TYPE") ? { type: labelValues.get("TYPE") } : {}),
     ...(title ? { title } : {}),
@@ -393,6 +414,7 @@ function parseLabelledResultRecord(text: string): Record<string, unknown> | null
     ...(labelValues.get("GENERAL") ? { general: labelValues.get("GENERAL") } : {}),
     ...(labelValues.get("REPO_PATH") ? { repoPath: labelValues.get("REPO_PATH") } : {}),
     ...(labelValues.get("REPO_KEY") ? { repoKey: labelValues.get("REPO_KEY") } : {}),
+    ...(reason ? { reason } : {}),
   };
   return record;
 }
@@ -493,6 +515,22 @@ function parseSlashResultRecord(text: string): Record<string, unknown> | null {
   return record;
 }
 
+function parseStatusOnlyResultRecord(text: string): Record<string, unknown> | null {
+  const normalized = text
+    .trim()
+    .replace(/[:/]+$/, "")
+    .toLowerCase();
+  if (
+    normalized !== "knowledge_ready" &&
+    normalized !== "insufficient" &&
+    normalized !== "duplicate" &&
+    normalized !== "near_duplicate"
+  ) {
+    return null;
+  }
+  return { status: normalized };
+}
+
 export function parseCoverEvidenceResult(
   llmOutput: string,
   options: ParseCoverEvidenceResultOptions = {},
@@ -500,10 +538,13 @@ export function parseCoverEvidenceResult(
   const parsed = parseLlmJsonLike(llmOutput);
   const labelledFallback = parseLabelledResultRecord(llmOutput);
   const slashFallback = labelledFallback ? null : parseSlashResultRecord(llmOutput);
+  const statusOnlyFallback =
+    labelledFallback || slashFallback ? null : parseStatusOnlyResultRecord(llmOutput);
   if (
     (!parsed || !parsed.value || typeof parsed.value !== "object") &&
     !labelledFallback &&
-    !slashFallback
+    !slashFallback &&
+    !statusOnlyFallback
   ) {
     throw new Error("coverEvidence output must be a JSON object");
   }
@@ -511,14 +552,15 @@ export function parseCoverEvidenceResult(
   const record =
     parsed?.value && typeof parsed.value === "object" && !Array.isArray(parsed.value)
       ? asRecord(parsed.value)
-      : (labelledFallback ?? slashFallback ?? {});
-  const candidate = parseCandidate(record, options.candidateDefaults);
+      : (labelledFallback ?? slashFallback ?? statusOnlyFallback ?? {});
   const statusValue = asString(recordValue(record, ["status", "STATUS"])).toLowerCase();
   const status: CoverEvidenceStatus = isCoverEvidenceStatus(statusValue)
     ? statusValue
-    : candidate
+    : parseCandidate(record, {}, { useDefaults: false })
       ? "knowledge_ready"
       : "insufficient";
+  const candidate =
+    status === "knowledge_ready" ? parseCandidate(record, options.candidateDefaults) : null;
 
   const stageValue = asString(recordValue(record, ["stage", "STAGE"])).toLowerCase();
   const stage: CoverEvidenceStage = isCoverEvidenceStage(stageValue) ? stageValue : "final";

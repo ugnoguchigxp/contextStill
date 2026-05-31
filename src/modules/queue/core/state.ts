@@ -89,9 +89,9 @@ export async function retryQueueJob(params: {
             heartbeat_at = null,
             payload = coalesce(payload, '{}'::jsonb) ||
               jsonb_build_object(
-                'forceRefreshEvidence', ${params.forceRefreshEvidence},
-                'retryMode', ${params.mode},
-                'retryReason', ${params.reason ?? null},
+                'forceRefreshEvidence', ${params.forceRefreshEvidence}::boolean,
+                'retryMode', ${params.mode}::text,
+                'retryReason', ${params.reason ?? null}::text,
                 'retryRequestedAt', now()::text
               ),
             updated_at = now()
@@ -110,14 +110,14 @@ export async function retryQueueJob(params: {
               locked_at = null,
               heartbeat_at = null,
               provider_policy = case
-                when ${params.mode} = 'cloud_api' then 'cloud_api'
+                when ${params.mode}::text = 'cloud_api' then 'cloud_api'
                 else provider_policy
               end,
               metadata = coalesce(metadata, '{}'::jsonb) ||
                 jsonb_build_object(
-                  'forceRefreshEvidence', ${params.forceRefreshEvidence},
-                  'retryMode', ${params.mode},
-                  'retryReason', ${params.reason ?? null},
+                  'forceRefreshEvidence', ${params.forceRefreshEvidence}::boolean,
+                  'retryMode', ${params.mode}::text,
+                  'retryReason', ${params.reason ?? null}::text,
                   'retryRequestedAt', now()::text
                 ),
               updated_at = now()
@@ -136,14 +136,14 @@ export async function retryQueueJob(params: {
             locked_at = null,
             heartbeat_at = null,
             provider_policy = case
-              when ${params.mode} = 'cloud_api' then 'cloud_api'
+              when ${params.mode}::text = 'cloud_api' then 'cloud_api'
               else provider_policy
             end,
             payload = coalesce(payload, '{}'::jsonb) ||
               jsonb_build_object(
-                'forceRefreshEvidence', ${params.forceRefreshEvidence},
-                'retryMode', ${params.mode},
-                'retryReason', ${params.reason ?? null},
+                'forceRefreshEvidence', ${params.forceRefreshEvidence}::boolean,
+                'retryMode', ${params.mode}::text,
+                'retryReason', ${params.reason ?? null}::text,
                 'retryRequestedAt', now()::text
               ),
             updated_at = now()

@@ -376,6 +376,127 @@ describe("coverEvidence parser", () => {
     expect(parsed.candidate?.body).toContain("Run focused tests.");
   });
 
+  test("recovers newline-separated label output", () => {
+    const parsed = parseCoverEvidenceResult(
+      [
+        "STATUS",
+        "knowledge_ready",
+        "STAGE",
+        "web",
+        "TYPE",
+        "rule",
+        "TITLE",
+        "Keep parser and prompt label formats aligned",
+        "BODY",
+        "When prompts ask for labels, parsers should accept the same label layout.",
+        "IMPORTANCE",
+        "70",
+        "CONFIDENCE",
+        "90",
+        "TECHNOLOGIES",
+        "typescript",
+        "CHANGE_TYPES",
+        "bugfix",
+        "DOMAINS",
+        "cover-evidence",
+        "REASON",
+        "source_supported",
+      ].join("\n"),
+    );
+
+    expect(parsed.status).toBe("knowledge_ready");
+    expect(parsed.stage).toBe("web");
+    expect(parsed.reason).toBe("source_supported");
+    expect(parsed.candidate).toMatchObject({
+      type: "rule",
+      title: "Keep parser and prompt label formats aligned",
+      body: "When prompts ask for labels, parsers should accept the same label layout.",
+      importance: 70,
+      confidence: 90,
+      technologies: ["typescript"],
+      changeTypes: ["bugfix"],
+      domains: ["cover-evidence"],
+    });
+  });
+
+  test("uses caller defaults for status-only knowledge_ready recovery", () => {
+    const parsed = parseCoverEvidenceResult("knowledge_ready", {
+      candidateDefaults: {
+        type: "rule",
+        title: "Keep the source-supported candidate",
+        body: "If final formatting collapses to status only, reuse the already source-supported candidate.",
+        importance: 80,
+        confidence: 75,
+        technologies: ["typescript"],
+        changeTypes: ["bugfix"],
+        domains: ["cover-evidence"],
+      },
+    });
+
+    expect(parsed.status).toBe("knowledge_ready");
+    expect(parsed.reason).toBeNull();
+    expect(parsed.candidate).toMatchObject({
+      title: "Keep the source-supported candidate",
+      technologies: ["typescript"],
+    });
+  });
+
+  test("keeps status-only knowledge_ready insufficient without caller defaults", () => {
+    const parsed = parseCoverEvidenceResult("knowledge_ready");
+
+    expect(parsed.status).toBe("insufficient");
+    expect(parsed.candidate).toBeNull();
+    expect(parsed.reason).toBe("candidate_missing");
+  });
+
+  test("does not fill explicit insufficient results from caller defaults", () => {
+    const parsed = parseCoverEvidenceResult("insufficient", {
+      candidateDefaults: {
+        type: "rule",
+        title: "Do not resurrect this candidate",
+        body: "Explicit insufficient output should not become knowledge_ready through defaults.",
+      },
+    });
+
+    expect(parsed.status).toBe("insufficient");
+    expect(parsed.candidate).toBeNull();
+    expect(parsed.reason).toBe("insufficient");
+  });
+
+  test("drops candidate fields from explicit insufficient results", () => {
+    const parsed = parseCoverEvidenceResult(
+      [
+        "STATUS",
+        "insufficient",
+        "STAGE",
+        "web",
+        "TITLE",
+        "Do not store partial candidates",
+        "BODY",
+        "Partial candidates should not survive an explicit insufficient status.",
+        "REASON",
+        "unsupported_by_source",
+      ].join("\n"),
+    );
+
+    expect(parsed.status).toBe("insufficient");
+    expect(parsed.candidate).toBeNull();
+    expect(parsed.reason).toBe("unsupported_by_source");
+  });
+
+  test("does not recover status-only duplicate as a candidate", () => {
+    const parsed = parseCoverEvidenceResult("duplicate", {
+      candidateDefaults: {
+        type: "rule",
+        title: "Existing rule",
+        body: "This default candidate should not be stored for duplicate status.",
+      },
+    });
+
+    expect(parsed.status).toBe("duplicate");
+    expect(parsed.candidate).toBeNull();
+  });
+
   test("parses slash-delimited status fallbacks as non-parse failures", () => {
     const parsed = parseCoverEvidenceResult(
       "STATUS/insufficient/N/A/N/A/N/A/N/A/Evidence URI could not be parsed as a valid URL.",

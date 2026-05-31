@@ -221,6 +221,73 @@ describe("QueuePage v2", () => {
     expect(adminRepository.pauseQueueJobV2).toHaveBeenCalledWith("findingCandidate", "job-1");
   });
 
+  it("keeps requeue disabled for already queued jobs", async () => {
+    renderQueuePage();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    const requeueButton = screen.getByTitle("Already queued");
+    expect(requeueButton).toBeDisabled();
+
+    fireEvent.click(requeueButton);
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(adminRepository.retryQueueJobV2).not.toHaveBeenCalled();
+  });
+
+  it("requeues non-running jobs from the rightmost action button", async () => {
+    vi.mocked(adminRepository.fetchQueueItemsV2).mockResolvedValue({
+      queue: "findingCandidate",
+      items: [
+        {
+          queueName: "findingCandidate",
+          id: "job-failed",
+          status: "failed",
+          priority: 20,
+          attemptCount: 2,
+          subjectTitle: "failed source",
+          subjectDetail: "wiki_file | file:///wiki/failed.md",
+          provider: "azure-openai",
+          model: "gpt-5.4-mini",
+          lastError: "previous failure",
+          lastOutcomeKind: null,
+          lockedBy: null,
+          lockedAt: null,
+          heartbeatAt: null,
+          createdAt: "2026-05-25T11:00:00.000Z",
+          updatedAt: "2026-05-25T11:30:00.000Z",
+          completedAt: null,
+          nextRunAt: null,
+          metadataSummary: "input=source_target",
+        },
+      ],
+      total: 1,
+      page: 1,
+      limit: 20,
+    });
+
+    renderQueuePage();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    fireEvent.click(screen.getByTitle("Requeue job"));
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(adminRepository.retryQueueJobV2).toHaveBeenCalledWith({
+      queue: "findingCandidate",
+      id: "job-failed",
+      mode: "default",
+      forceRefreshEvidence: true,
+      reason: "requeued from queue dashboard",
+    });
+  });
+
   it("shows LLM status labels (Ready/Active/Offline) and does not show 待機中 label", async () => {
     renderQueuePage();
     await act(async () => {
