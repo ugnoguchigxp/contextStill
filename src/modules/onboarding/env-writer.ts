@@ -1,7 +1,7 @@
 import { existsSync } from "node:fs";
 import { copyFile, readFile, writeFile } from "node:fs/promises";
-import type { StartupPlan } from "./onboarding.types.js";
 import { parseEnvValues } from "../../cli/onboarding/env-file.js";
+import type { StartupPlan } from "./onboarding.types.js";
 
 export const ALLOWED_ENV_KEYS = [
   "DATABASE_URL",
@@ -52,52 +52,55 @@ export function maskSecretValue(key: string, value: string): string {
 export function buildEnvRecord(plan: StartupPlan): Record<string, string> {
   const record: Record<string, string> = {};
 
-  if (plan.lang) record["MEMORY_ROUTER_LANG"] = plan.lang;
-  if (plan.database?.url) record["DATABASE_URL"] = plan.database.url;
+  if (plan.lang) record.MEMORY_ROUTER_LANG = plan.lang;
+  if (plan.database?.url) record.DATABASE_URL = plan.database.url;
 
   if (plan.compile?.provider) {
-    record["MEMORY_ROUTER_AGENTIC_COMPILE_PROVIDER"] = plan.compile.provider;
+    record.MEMORY_ROUTER_AGENTIC_COMPILE_PROVIDER = plan.compile.provider;
   }
 
   // Compile LLM Provider specific configs
   if (plan.compile) {
     const cp = plan.compile;
     if (cp.provider === "openai" || cp.openaiKey) {
-      if (cp.openaiKey) record["MEMORY_ROUTER_OPENAI_API_KEY"] = cp.openaiKey;
-      if (cp.openaiBaseUrl) record["MEMORY_ROUTER_OPENAI_API_BASE_URL"] = cp.openaiBaseUrl;
-      if (cp.openaiModel) record["MEMORY_ROUTER_OPENAI_MODEL"] = cp.openaiModel;
+      if (cp.openaiKey) record.MEMORY_ROUTER_OPENAI_API_KEY = cp.openaiKey;
+      if (cp.openaiBaseUrl) record.MEMORY_ROUTER_OPENAI_API_BASE_URL = cp.openaiBaseUrl;
+      if (cp.openaiModel) record.MEMORY_ROUTER_OPENAI_MODEL = cp.openaiModel;
     }
     if (cp.provider === "azure-openai" || cp.azureKey) {
-      if (cp.azureKey) record["MEMORY_ROUTER_AZURE_OPENAI_API_KEY"] = cp.azureKey;
-      if (cp.azureBaseUrl) record["MEMORY_ROUTER_AZURE_OPENAI_API_BASE_URL"] = cp.azureBaseUrl;
-      if (cp.azureModel) record["MEMORY_ROUTER_AZURE_OPENAI_MODEL"] = cp.azureModel;
-      if (cp.azureVersion) record["MEMORY_ROUTER_AZURE_OPENAI_API_VERSION"] = cp.azureVersion;
+      if (cp.azureKey) record.MEMORY_ROUTER_AZURE_OPENAI_API_KEY = cp.azureKey;
+      if (cp.azureBaseUrl) record.MEMORY_ROUTER_AZURE_OPENAI_API_BASE_URL = cp.azureBaseUrl;
+      if (cp.azureModel) record.MEMORY_ROUTER_AZURE_OPENAI_MODEL = cp.azureModel;
+      if (cp.azureVersion) record.MEMORY_ROUTER_AZURE_OPENAI_API_VERSION = cp.azureVersion;
     }
     if (cp.provider === "bedrock" || cp.bedrockModel) {
-      if (cp.bedrockModel) record["MEMORY_ROUTER_BEDROCK_MODEL"] = cp.bedrockModel;
-      if (cp.bedrockRegion) record["MEMORY_ROUTER_BEDROCK_REGION"] = cp.bedrockRegion;
-      if (cp.bedrockProfile) record["MEMORY_ROUTER_BEDROCK_PROFILE"] = cp.bedrockProfile;
+      if (cp.bedrockModel) record.MEMORY_ROUTER_BEDROCK_MODEL = cp.bedrockModel;
+      if (cp.bedrockRegion) record.MEMORY_ROUTER_BEDROCK_REGION = cp.bedrockRegion;
+      if (cp.bedrockProfile) record.MEMORY_ROUTER_BEDROCK_PROFILE = cp.bedrockProfile;
     }
     if (cp.provider === "local-llm" || cp.localLlmModel) {
-      if (cp.localLlmBaseUrl) record["MEMORY_ROUTER_LOCAL_LLM_API_BASE_URL"] = cp.localLlmBaseUrl;
-      if (cp.localLlmKey) record["MEMORY_ROUTER_LOCAL_LLM_API_KEY"] = cp.localLlmKey;
-      if (cp.localLlmModel) record["MEMORY_ROUTER_LOCAL_LLM_MODEL"] = cp.localLlmModel;
+      if (cp.localLlmBaseUrl) record.MEMORY_ROUTER_LOCAL_LLM_API_BASE_URL = cp.localLlmBaseUrl;
+      if (cp.localLlmKey) record.MEMORY_ROUTER_LOCAL_LLM_API_KEY = cp.localLlmKey;
+      if (cp.localLlmModel) record.MEMORY_ROUTER_LOCAL_LLM_MODEL = cp.localLlmModel;
     }
   }
 
   // Distillation
   if (plan.distillation?.provider) {
-    record["MEMORY_ROUTER_DISTILLATION_PROVIDER"] = plan.distillation.provider;
+    record.MEMORY_ROUTER_DISTILLATION_PROVIDER = plan.distillation.provider;
   }
   if (plan.distillation?.findCandidateProvider) {
-    record["MEMORY_ROUTER_DISTILLATION_FIND_CANDIDATE_PROVIDER"] = plan.distillation.findCandidateProvider;
+    record.MEMORY_ROUTER_DISTILLATION_FIND_CANDIDATE_PROVIDER =
+      plan.distillation.findCandidateProvider;
   }
 
   // Embedding
   if (plan.embedding?.provider) {
-    record["MEMORY_ROUTER_EMBEDDING_PROVIDER"] = plan.embedding.provider;
-    if (plan.embedding.daemonUrl) record["MEMORY_ROUTER_EMBEDDING_DAEMON_URL"] = plan.embedding.daemonUrl;
-    if (plan.embedding.accessToken) record["MEMORY_ROUTER_EMBEDDING_ACCESS_TOKEN"] = plan.embedding.accessToken;
+    record.MEMORY_ROUTER_EMBEDDING_PROVIDER = plan.embedding.provider;
+    if (plan.embedding.daemonUrl)
+      record.MEMORY_ROUTER_EMBEDDING_DAEMON_URL = plan.embedding.daemonUrl;
+    if (plan.embedding.accessToken)
+      record.MEMORY_ROUTER_EMBEDDING_ACCESS_TOKEN = plan.embedding.accessToken;
   }
 
   return record;
@@ -128,7 +131,10 @@ export function buildEnvDiff(plan: StartupPlan, currentEnvContent: string): stri
   return lines.join("\n");
 }
 
-export async function writeEnv(plan: StartupPlan, envPath: string): Promise<{ backupPath?: string }> {
+export async function writeEnv(
+  plan: StartupPlan,
+  envPath: string,
+): Promise<{ backupPath?: string }> {
   let backupPath: string | undefined;
 
   if (existsSync(envPath)) {
@@ -158,8 +164,8 @@ export async function writeEnv(plan: StartupPlan, envPath: string): Promise<{ ba
 
   for (const key of keysToWrite) {
     const newValue = newRecord[key];
-    if (keyToLineIndex.has(key)) {
-      const index = keyToLineIndex.get(key)!;
+    const index = keyToLineIndex.get(key);
+    if (index !== undefined) {
       lines[index] = `${key}=${newValue}`;
       writtenKeys.add(key);
     }

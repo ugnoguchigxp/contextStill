@@ -67,7 +67,13 @@ const maintenanceReasonSet = new Set([
 const usablePackFallbackReasonSet = new Set([
   "AGENTIC_REFINE_FAILED",
   "CONTEXT_RESPONSE_COMPOSE_FAILED",
-  "COMPOSED_CONTEXT_NO_ALIGNMENT",
+]);
+
+const searchFailureReasonSet = new Set([
+  "KNOWLEDGE_TEXT_SEARCH_FAILED",
+  "KNOWLEDGE_VECTOR_SEARCH_FAILED",
+  "SOURCE_SEARCH_FAILED",
+  "SOURCE_VECTOR_SEARCH_FAILED",
 ]);
 const designDocumentPathPattern =
   /(?:^|[\s"'`(（])(?:file:\/\/\/[^\s"'`）)]+|(?:\.{1,2}\/)?(?:docs?|design|specs?|requirements?|roadmap|proposal|architecture)\/[^\s"'`）)]+)\.(?:md|mdx)(?=$|[\s"'`）).,])/i;
@@ -284,8 +290,12 @@ function classifyCompileReasons(params: {
       continue;
     }
     if (reason.endsWith("_FAILED") || reason.includes("ERROR")) {
-      hardFailureReasons.push(reason);
-      blockingReasons.push(reason);
+      if (searchFailureReasonSet.has(reason)) {
+        blockingReasons.push(reason);
+      } else {
+        hardFailureReasons.push(reason);
+        blockingReasons.push(reason);
+      }
       continue;
     }
     blockingReasons.push(reason);

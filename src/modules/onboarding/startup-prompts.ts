@@ -1,11 +1,11 @@
 import readline from "node:readline";
-import { type SupportedLocale, resolveLocale } from "../../shared/locales/locale.js";
-import type { StartupPlan } from "./onboarding.types.js";
 import type {
   AgenticCompileProvider,
   DistillationProvider,
   EmbeddingProvider,
 } from "../../config.types.js";
+import { type SupportedLocale, resolveLocale } from "../../shared/locales/locale.js";
+import type { StartupPlan } from "./onboarding.types.js";
 
 async function ask(query: string, defaultValue = ""): Promise<string> {
   const rl = readline.createInterface({
@@ -55,12 +55,14 @@ export const onboardingPromptsText = {
     localLlmKey: "Local LLM API キー (不要な場合は省略)",
     localLlmModel: "Local LLM モデル名",
     distillSame: "Distillation (蒸留) プロバイダの設定を Compile プロバイダと同一にしますか？",
-    distillProvider: "Distillation プロバイダを選択してください (openai, local-llm, azure-openai, bedrock)",
+    distillProvider:
+      "Distillation プロバイダを選択してください (openai, local-llm, azure-openai, bedrock)",
     embeddingSelect: "Embedding プロバイダを選択してください (auto, daemon, cli, openai, disabled)",
     embeddingDaemonUrl: "Embedding デーモン URL",
     wikiRoot: "Wiki ページのディレクトリパス",
     importSeed: "初期サンプルシードデータをインポートしますか？",
-    mcpSelect: "MCP クライアントの設定用スニペットを選択しますか？ (generic, cursor, cline, claude-desktop, skip)",
+    mcpSelect:
+      "MCP クライアントの設定用スニペットを選択しますか？ (generic, cursor, cline, claude-desktop, skip)",
     confirmApply: "上記の内容で .env ファイルを更新し、起動シーケンスを開始しますか？",
   },
   en: {
@@ -87,12 +89,15 @@ export const onboardingPromptsText = {
     embeddingDaemonUrl: "Embedding Daemon URL",
     wikiRoot: "Wiki pages directory root path",
     importSeed: "Import initial sample seed data?",
-    mcpSelect: "Select MCP client configuration snippet (generic, cursor, cline, claude-desktop, skip)",
+    mcpSelect:
+      "Select MCP client configuration snippet (generic, cursor, cline, claude-desktop, skip)",
     confirmApply: "Do you want to update .env and start the apply sequence?",
   },
 };
 
-export async function promptStartupPlan(env: NodeJS.ProcessEnv = process.env): Promise<StartupPlan> {
+export async function promptStartupPlan(
+  env: NodeJS.ProcessEnv = process.env,
+): Promise<StartupPlan> {
   // 1. Language Select
   const defaultLang = resolveLocale(env.MEMORY_ROUTER_LANG);
   const langInput = await ask(onboardingPromptsText.ja.langSelect, defaultLang);
@@ -102,18 +107,25 @@ export async function promptStartupPlan(env: NodeJS.ProcessEnv = process.env): P
   console.log(`\n--- Starting configuration in [${lang.toUpperCase()}] ---`);
 
   // 2. Database
-  const defaultDbUrl = env.DATABASE_URL || "postgres://postgres:postgres@localhost:7889/memory_router";
+  const defaultDbUrl =
+    env.DATABASE_URL || "postgres://postgres:postgres@localhost:7889/memory_router";
   const dbUrl = await ask(t.dbUrl, defaultDbUrl);
-  const startDocker = await askYesNo(t.dbDocker, dbUrl.includes("localhost") || dbUrl.includes("127.0.0.1"));
+  const startDocker = await askYesNo(
+    t.dbDocker,
+    dbUrl.includes("localhost") || dbUrl.includes("127.0.0.1"),
+  );
 
   // 3. Compile LLM Provider
-  const defaultProvider = (env.MEMORY_ROUTER_AGENTIC_COMPILE_PROVIDER || "openai") as AgenticCompileProvider;
+  const defaultProvider = (env.MEMORY_ROUTER_AGENTIC_COMPILE_PROVIDER ||
+    "openai") as AgenticCompileProvider;
   const compileProviderInput = await ask(t.llmProvider, defaultProvider);
   let compileProvider = compileProviderInput.trim().toLowerCase() as AgenticCompileProvider;
 
   const validCompileProviders = ["openai", "local-llm", "azure-openai", "bedrock", "auto"];
   if (!validCompileProviders.includes(compileProvider)) {
-    console.log(`\n⚠️ Invalid provider [${compileProviderInput}]. Falling back to default [${defaultProvider}].`);
+    console.log(
+      `\n⚠️ Invalid provider [${compileProviderInput}]. Falling back to default [${defaultProvider}].`,
+    );
     compileProvider = defaultProvider;
   }
 
@@ -123,21 +135,42 @@ export async function promptStartupPlan(env: NodeJS.ProcessEnv = process.env): P
 
   if (compileProvider === "openai") {
     compileConfig.openaiKey = await ask(t.openaiKey, env.MEMORY_ROUTER_OPENAI_API_KEY || "");
-    compileConfig.openaiBaseUrl = await ask(t.openaiBaseUrl, env.MEMORY_ROUTER_OPENAI_API_BASE_URL || "");
+    compileConfig.openaiBaseUrl = await ask(
+      t.openaiBaseUrl,
+      env.MEMORY_ROUTER_OPENAI_API_BASE_URL || "",
+    );
     compileConfig.openaiModel = await ask(t.openaiModel, env.MEMORY_ROUTER_OPENAI_MODEL || "");
   } else if (compileProvider === "azure-openai") {
     compileConfig.azureKey = await ask(t.azureKey, env.MEMORY_ROUTER_AZURE_OPENAI_API_KEY || "");
-    compileConfig.azureBaseUrl = await ask(t.azureBaseUrl, env.MEMORY_ROUTER_AZURE_OPENAI_API_BASE_URL || "");
+    compileConfig.azureBaseUrl = await ask(
+      t.azureBaseUrl,
+      env.MEMORY_ROUTER_AZURE_OPENAI_API_BASE_URL || "",
+    );
     compileConfig.azureModel = await ask(t.azureModel, env.MEMORY_ROUTER_AZURE_OPENAI_MODEL || "");
-    compileConfig.azureVersion = await ask(t.azureVersion, env.MEMORY_ROUTER_AZURE_OPENAI_API_VERSION || "");
+    compileConfig.azureVersion = await ask(
+      t.azureVersion,
+      env.MEMORY_ROUTER_AZURE_OPENAI_API_VERSION || "",
+    );
   } else if (compileProvider === "bedrock") {
     compileConfig.bedrockModel = await ask(t.bedrockModel, env.MEMORY_ROUTER_BEDROCK_MODEL || "");
-    compileConfig.bedrockRegion = await ask(t.bedrockRegion, env.MEMORY_ROUTER_BEDROCK_REGION || "");
-    compileConfig.bedrockProfile = await ask(t.bedrockProfile, env.MEMORY_ROUTER_BEDROCK_PROFILE || "");
+    compileConfig.bedrockRegion = await ask(
+      t.bedrockRegion,
+      env.MEMORY_ROUTER_BEDROCK_REGION || "",
+    );
+    compileConfig.bedrockProfile = await ask(
+      t.bedrockProfile,
+      env.MEMORY_ROUTER_BEDROCK_PROFILE || "",
+    );
   } else if (compileProvider === "local-llm") {
-    compileConfig.localLlmBaseUrl = await ask(t.localLlmBase, env.MEMORY_ROUTER_LOCAL_LLM_API_BASE_URL || "http://127.0.0.1:44448");
+    compileConfig.localLlmBaseUrl = await ask(
+      t.localLlmBase,
+      env.MEMORY_ROUTER_LOCAL_LLM_API_BASE_URL || "http://127.0.0.1:44448",
+    );
     compileConfig.localLlmKey = await ask(t.localLlmKey, env.MEMORY_ROUTER_LOCAL_LLM_API_KEY || "");
-    compileConfig.localLlmModel = await ask(t.localLlmModel, env.MEMORY_ROUTER_LOCAL_LLM_MODEL || "gemma-4-e4b-it");
+    compileConfig.localLlmModel = await ask(
+      t.localLlmModel,
+      env.MEMORY_ROUTER_LOCAL_LLM_MODEL || "gemma-4-e4b-it",
+    );
   }
 
   // 4. Distillation Provider
@@ -167,7 +200,9 @@ export async function promptStartupPlan(env: NodeJS.ProcessEnv = process.env): P
 
   const validEmbedProviders = ["auto", "daemon", "cli", "openai", "disabled"];
   if (!validEmbedProviders.includes(embeddingProvider)) {
-    console.log(`\n⚠️ Invalid provider [${embedProviderInput}]. Falling back to default [${defaultEmbed}].`);
+    console.log(
+      `\n⚠️ Invalid provider [${embedProviderInput}]. Falling back to default [${defaultEmbed}].`,
+    );
     embeddingProvider = defaultEmbed;
   }
 
@@ -176,7 +211,10 @@ export async function promptStartupPlan(env: NodeJS.ProcessEnv = process.env): P
   };
 
   if (embeddingProvider === "daemon") {
-    embeddingConfig.daemonUrl = await ask(t.embeddingDaemonUrl, env.MEMORY_ROUTER_EMBEDDING_DAEMON_URL || "http://127.0.0.1:44512");
+    embeddingConfig.daemonUrl = await ask(
+      t.embeddingDaemonUrl,
+      env.MEMORY_ROUTER_EMBEDDING_DAEMON_URL || "http://127.0.0.1:44512",
+    );
   }
 
   // 6. Project Init

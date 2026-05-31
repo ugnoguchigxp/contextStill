@@ -42,7 +42,10 @@ export function CopyableIdField({ label, value }: CopyableIdFieldProps) {
   return (
     <div className="inline-flex min-w-0 items-center gap-1.5 rounded-md border border-border/60 bg-muted/20 px-2 py-1">
       <span className="text-[11px] font-bold uppercase text-muted-foreground">{label}</span>
-      <span className="min-w-0 truncate font-mono text-xs text-foreground" title={hasValue ? value : "-"}>
+      <span
+        className="min-w-0 truncate font-mono text-xs text-foreground"
+        title={hasValue ? value : "-"}
+      >
         {displayValue}
       </span>
       <Button

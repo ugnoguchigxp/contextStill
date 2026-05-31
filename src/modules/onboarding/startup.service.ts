@@ -1,16 +1,18 @@
-import pg from "pg";
-import path from "node:path";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
-import type { StartupPlan } from "./onboarding.types.js";
-import { checkPlanLlmHealth } from "./llm-health.service.js";
-import { writeEnv, buildEnvDiff } from "./env-writer.js";
-import { runSetupCommand } from "../../cli/onboarding/command-runner.js";
+import path from "node:path";
+import pg from "pg";
 import { detectDockerComposeRunner } from "../../cli/onboarding/checks.js";
-import { runDoctor } from "../doctor/doctor.service.js";
+import { type SetupCommandResult, runSetupCommand } from "../../cli/onboarding/command-runner.js";
 import { closeDbPool } from "../../db/index.js";
+import { runDoctor } from "../doctor/doctor.service.js";
+import { buildEnvDiff, writeEnv } from "./env-writer.js";
+import { checkPlanLlmHealth } from "./llm-health.service.js";
+import type { StartupPlan } from "./onboarding.types.js";
 
-export async function validateDatabaseConnection(url: string): Promise<{ ok: boolean; error?: string }> {
+export async function validateDatabaseConnection(
+  url: string,
+): Promise<{ ok: boolean; error?: string }> {
   const client = new pg.Client({
     connectionString: url,
     connectionTimeoutMillis: 5000,
@@ -43,6 +45,15 @@ export type StartupSummary = {
   backupPath?: string;
   mcpSnippet?: string;
 };
+
+function commandFailureDetails(result: SetupCommandResult): string | undefined {
+  return (
+    result.stderr ||
+    result.reason ||
+    result.stdout ||
+    (result.exitCode === undefined ? undefined : `exit code ${result.exitCode}`)
+  );
+}
 
 export async function runStartupSeq(
   plan: StartupPlan,
@@ -104,10 +115,9 @@ export async function runStartupSeq(
   }
 
   // Step 2: Docker preparation
-  const dockerComposeRunner = await detectDockerComposeRunner(cwd, commandEnv);
   const startDocker = plan.database.startDocker;
-  const dockerCommand = dockerComposeRunner?.command ?? "docker";
-  const dockerArgs = [...(dockerComposeRunner?.argsPrefix ?? ["compose"]), "up", "-d"];
+  let dockerCommand = "docker";
+  let dockerArgs = ["compose", "up", "-d"];
 
   if (options.dryRun) {
     steps.push({
@@ -118,6 +128,10 @@ export async function runStartupSeq(
         : "Docker startup skipped (startDocker is false)",
     });
   } else {
+    const dockerComposeRunner = await detectDockerComposeRunner(cwd, commandEnv);
+    dockerCommand = dockerComposeRunner?.command ?? "docker";
+    dockerArgs = [...(dockerComposeRunner?.argsPrefix ?? ["compose"]), "up", "-d"];
+
     if (startDocker) {
       const dockerResult = await runSetupCommand({
         command: dockerCommand,
@@ -132,19 +146,18 @@ export async function runStartupSeq(
           step: "db-docker",
           status: "failed",
           message: "Failed to start database via docker compose",
-          details: dockerResult.error,
+          details: commandFailureDetails(dockerResult),
         });
         return { ok: false, mode: "apply", steps, envDiff, backupPath };
-      } else {
-        steps.push({
-          step: "db-docker",
-          status: "success",
-          message: "Database container verified/started via docker compose",
-        });
-
-        // Wait a few seconds for DB to warm up
-        await new Promise((resolve) => setTimeout(resolve, 3000));
       }
+      steps.push({
+        step: "db-docker",
+        status: "success",
+        message: "Database container verified/started via docker compose",
+      });
+
+      // Wait a few seconds for DB to warm up
+      await new Promise((resolve) => setTimeout(resolve, 3000));
     } else {
       steps.push({
         step: "db-docker",
@@ -172,13 +185,12 @@ export async function runStartupSeq(
         details: connResult.error,
       });
       return { ok: false, mode: "apply", steps, envDiff, backupPath };
-    } else {
-      steps.push({
-        step: "db-connection",
-        status: "success",
-        message: "Successfully connected to the database",
-      });
     }
+    steps.push({
+      step: "db-connection",
+      status: "success",
+      message: "Successfully connected to the database",
+    });
   }
 
   // Step 4: DB Migration
@@ -202,16 +214,15 @@ export async function runStartupSeq(
         step: "db-migration",
         status: "failed",
         message: "Database migrations failed",
-        details: migrateResult.error,
+        details: commandFailureDetails(migrateResult),
       });
       return { ok: false, mode: "apply", steps, envDiff, backupPath };
-    } else {
-      steps.push({
-        step: "db-migration",
-        status: "success",
-        message: "Database migrations applied successfully",
-      });
     }
+    steps.push({
+      step: "db-migration",
+      status: "success",
+      message: "Database migrations applied successfully",
+    });
   }
 
   // Step 5: Initial project init & seed
@@ -249,31 +260,38 @@ export async function runStartupSeq(
         step: "project-init",
         status: "failed",
         message: "Project initialization failed",
-        details: initResult.error,
+        details: commandFailureDetails(initResult),
       });
       return { ok: false, mode: "apply", steps, envDiff, backupPath };
-    } else {
-      steps.push({
-        step: "project-init",
-        status: "success",
-        message: "Project initialized successfully",
-      });
     }
+    steps.push({
+      step: "project-init",
+      status: "success",
+      message: "Project initialized successfully",
+    });
   }
 
-  // Step 6: LLM Health check (always check in-memory first for safety)
-  const healthRes = await checkPlanLlmHealth(plan);
-  steps.push({
-    step: "llm-health",
-    status: healthRes.ok ? "success" : "failed",
-    message: healthRes.ok
-      ? `LLM health verified successfully for ${plan.compile.provider}`
-      : `LLM health check failed for ${plan.compile.provider}: ${healthRes.message}`,
-    details: healthRes.error,
-  });
+  // Step 6: LLM Health check
+  if (options.dryRun) {
+    steps.push({
+      step: "llm-health",
+      status: "skipped",
+      message: `Dry-run: Would verify LLM health for ${plan.compile.provider}`,
+    });
+  } else {
+    const healthRes = await checkPlanLlmHealth(plan);
+    steps.push({
+      step: "llm-health",
+      status: healthRes.ok ? "success" : "failed",
+      message: healthRes.ok
+        ? `LLM health verified successfully for ${plan.compile.provider}`
+        : `LLM health check failed for ${plan.compile.provider}: ${healthRes.message}`,
+      details: healthRes.error,
+    });
 
-  if (!healthRes.ok) {
-    return { ok: false, mode: options.dryRun ? "dry-run" : "apply", steps, envDiff, backupPath };
+    if (!healthRes.ok) {
+      return { ok: false, mode: "apply", steps, envDiff, backupPath };
+    }
   }
 
   // Step 7: Compile smoke test
@@ -299,7 +317,7 @@ export async function runStartupSeq(
         step: "compile-smoke",
         status: "failed",
         message: "Compile smoke test failed",
-        details: smokeResult.error,
+        details: commandFailureDetails(smokeResult),
       });
       // We don't abort immediately as DB works, but we flag it
     } else {
@@ -322,9 +340,9 @@ export async function runStartupSeq(
   } else {
     // Run doctor in current process context by updating process.env keys temporarily or running doctor command
     // Let's run doctor CLI directly or through doctor service to be safe and close the pool
+    const backupEnv: Record<string, string | undefined> = {};
     try {
       // Need to temporarily set variables in process.env so doctor inspects correct database & provider
-      const backupEnv: Record<string, string | undefined> = {};
       for (const key of Object.keys(commandEnv)) {
         backupEnv[key] = process.env[key];
         process.env[key] = commandEnv[key];
@@ -341,15 +359,6 @@ export async function runStartupSeq(
           : `Doctor check returned status: ${doctorReport.status}. Reason count: ${doctorReport.reasons.length}`,
         details: JSON.stringify(doctorReport.reasonDetails, null, 2),
       });
-
-      // Restore environment
-      for (const key of Object.keys(commandEnv)) {
-        if (backupEnv[key] === undefined) {
-          delete process.env[key];
-        } else {
-          process.env[key] = backupEnv[key];
-        }
-      }
     } catch (err) {
       steps.push({
         step: "doctor-validation",
@@ -358,6 +367,13 @@ export async function runStartupSeq(
         details: err instanceof Error ? err.message : String(err),
       });
     } finally {
+      for (const key of Object.keys(backupEnv)) {
+        if (backupEnv[key] === undefined) {
+          delete process.env[key];
+        } else {
+          process.env[key] = backupEnv[key];
+        }
+      }
       await closeDbPool();
     }
   }

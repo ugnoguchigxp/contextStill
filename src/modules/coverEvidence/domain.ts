@@ -65,7 +65,7 @@ function summarizeCoverEvidenceFailure(result: CoverEvidenceResult): Record<stri
     (event) => event.name === "parse_cover_evidence_result" && event.ok === false,
   );
   const metadata =
-    parseFailureEvent && parseFailureEvent.metadata && typeof parseFailureEvent.metadata === "object"
+    parseFailureEvent?.metadata && typeof parseFailureEvent.metadata === "object"
       ? (parseFailureEvent.metadata as Record<string, unknown>)
       : null;
   return {

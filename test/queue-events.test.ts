@@ -1,7 +1,7 @@
 import { describe, expect, test, vi } from "vitest";
-import { appendQueueEvent } from "../src/modules/queue/core/events.js";
 import { db } from "../src/db/index.js";
 import { distillationQueueEvents } from "../src/db/schema.js";
+import { appendQueueEvent } from "../src/modules/queue/core/events.js";
 
 vi.mock("../src/db/index.js", () => ({
   db: {

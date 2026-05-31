@@ -1,8 +1,8 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { existsSync, rmSync } from "node:fs";
 import path from "node:path";
-import { runStartupSeq } from "../src/modules/onboarding/startup.service.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { StartupPlan } from "../src/modules/onboarding/onboarding.types.js";
+import { runStartupSeq } from "../src/modules/onboarding/startup.service.js";
 
 // Mock child processes and db connections to prevent environmental dependency
 vi.mock("../src/cli/onboarding/command-runner.js", () => ({
@@ -27,7 +27,9 @@ vi.mock("pg", () => {
 });
 
 vi.mock("../src/modules/onboarding/llm-health.service.js", () => ({
-  checkPlanLlmHealth: vi.fn().mockResolvedValue({ ok: true, provider: "openai", message: "healthy" }),
+  checkPlanLlmHealth: vi
+    .fn()
+    .mockResolvedValue({ ok: true, provider: "openai", message: "healthy" }),
 }));
 
 vi.mock("../src/modules/doctor/doctor.service.js", () => ({
@@ -63,7 +65,7 @@ describe("startup.service apply flow", () => {
     const res = await runStartupSeq(plan, { dryRun: false, envPath: testEnvPath });
     expect(res.ok).toBe(true);
     expect(res.mode).toBe("apply");
-    
+
     // Verify steps were successfully executed rather than skipped
     const dbConnStep = res.steps.find((s) => s.step === "db-connection");
     expect(dbConnStep?.status).toBe("success");

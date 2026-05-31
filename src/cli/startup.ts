@@ -1,6 +1,6 @@
-import path from "node:path";
 import { existsSync } from "node:fs";
-import { promptStartupPlan, onboardingPromptsText } from "../modules/onboarding/startup-prompts.js";
+import path from "node:path";
+import { onboardingPromptsText, promptStartupPlan } from "../modules/onboarding/startup-prompts.js";
 import { runStartupSeq } from "../modules/onboarding/startup.service.js";
 
 async function askConfirmApply(lang: "ja" | "en"): Promise<boolean> {

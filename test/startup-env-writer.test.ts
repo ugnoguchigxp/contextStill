@@ -1,11 +1,11 @@
-import { describe, it, expect, beforeEach, afterEach } from "vitest";
-import { existsSync, rmSync, readdirSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import {
-  maskSecretValue,
-  buildEnvRecord,
   buildEnvDiff,
+  buildEnvRecord,
+  maskSecretValue,
   writeEnv,
 } from "../src/modules/onboarding/env-writer.js";
 import type { StartupPlan } from "../src/modules/onboarding/onboarding.types.js";
@@ -34,7 +34,9 @@ describe("env-writer", () => {
 
   it("should mask secret values correctly", () => {
     expect(maskSecretValue("DATABASE_URL", "postgres://foo")).toBe("postgres://foo");
-    expect(maskSecretValue("MEMORY_ROUTER_OPENAI_API_KEY", "sk-abcdefghijklmnopqrstuvwxyz")).toBe("sk-...wxyz");
+    expect(maskSecretValue("MEMORY_ROUTER_OPENAI_API_KEY", "sk-abcdefghijklmnopqrstuvwxyz")).toBe(
+      "sk-...wxyz",
+    );
     expect(maskSecretValue("MEMORY_ROUTER_OPENAI_API_KEY", "short")).toBe("****");
     expect(maskSecretValue("MEMORY_ROUTER_EMBEDDING_ACCESS_TOKEN", "1234567890")).toBe("123...890");
   });
@@ -51,10 +53,10 @@ describe("env-writer", () => {
     };
 
     const record = buildEnvRecord(plan);
-    expect(record["DATABASE_URL"]).toBe("postgres://test-db");
-    expect(record["MEMORY_ROUTER_LANG"]).toBe("ja");
-    expect(record["MEMORY_ROUTER_OPENAI_API_KEY"]).toBe("test-key");
-    expect(record["MEMORY_ROUTER_AGENTIC_COMPILE_PROVIDER"]).toBe("openai");
+    expect(record.DATABASE_URL).toBe("postgres://test-db");
+    expect(record.MEMORY_ROUTER_LANG).toBe("ja");
+    expect(record.MEMORY_ROUTER_OPENAI_API_KEY).toBe("test-key");
+    expect(record.MEMORY_ROUTER_AGENTIC_COMPILE_PROVIDER).toBe("openai");
   });
 
   it("should build env diff compared to current env", () => {

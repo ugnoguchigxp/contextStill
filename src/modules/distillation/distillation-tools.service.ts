@@ -243,7 +243,13 @@ async function fetchContentBySelection(params: {
   // Remove cached URLs to avoid reusing stale rankings in later unrelated rounds.
   searchResultUrlCache.delete(key);
 
-  const results: Array<{ index: number; url: string; ok: boolean; content?: string; error?: string }> = [];
+  const results: Array<{
+    index: number;
+    url: string;
+    ok: boolean;
+    content?: string;
+    error?: string;
+  }> = [];
   for (const index of indexes.slice(0, SEARCH_SELECTION_MAX)) {
     const url = urls[index - 1];
     if (!url) continue;
@@ -269,7 +275,8 @@ async function fetchContentBySelection(params: {
           ok: result.ok,
           ...(result.ok ? { content: result.content } : { error: result.error }),
         })),
-        instruction: "Use fetched primary source content to produce the final coverEvidence result.",
+        instruction:
+          "Use fetched primary source content to produce the final coverEvidence result.",
       },
       null,
       2,

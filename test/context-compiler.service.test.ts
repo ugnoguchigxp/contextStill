@@ -716,4 +716,61 @@ describe("Context Compiler Service", () => {
     });
     expect(learningPack.retrievalMode).toBe("learning_context");
   });
+
+  test("marks status as degraded when COMPOSED_CONTEXT_NO_ALIGNMENT occurs", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [
+        {
+          id: "k1",
+          type: "rule",
+          status: "active",
+          title: "Rule 1",
+          body: "Body 1",
+          score: 0.9,
+          sourceRefs: [],
+          hasSourceLinks: false,
+        },
+      ],
+      degradedReasons: [],
+      stats: {} as any,
+    } as any);
+    vi.mocked(composeContextResponse).mockResolvedValueOnce({
+      markdown: "No Content",
+      agenticUsed: false,
+      usedKnowledge: [],
+    });
+
+    const { pack } = await compileContextPack({ goal: "no alignment test" });
+    expect(pack.status).toBe("degraded");
+    expect(pack.diagnostics.degradedReasons).toContain("COMPOSED_CONTEXT_NO_ALIGNMENT");
+  });
+
+  test("marks status as degraded (not failed) when multiple search failures occur", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [
+        {
+          id: "k1",
+          type: "rule",
+          status: "active",
+          title: "Rule 1",
+          body: "Body 1",
+          score: 0.9,
+          sourceRefs: [],
+          hasSourceLinks: false,
+        },
+      ],
+      degradedReasons: ["KNOWLEDGE_TEXT_SEARCH_FAILED"],
+      stats: {} as any,
+    } as any);
+    vi.mocked(retrieveSources).mockResolvedValue({
+      items: [],
+      degradedReasons: ["SOURCE_SEARCH_FAILED"],
+      stats: {} as any,
+    } as any);
+
+    const { pack } = await compileContextPack({ goal: "multiple search failures test" });
+    expect(pack.status).toBe("degraded");
+    expect(pack.diagnostics.degradedReasons).toContain("KNOWLEDGE_TEXT_SEARCH_FAILED");
+    expect(pack.diagnostics.degradedReasons).toContain("SOURCE_SEARCH_FAILED");
+  });
 });

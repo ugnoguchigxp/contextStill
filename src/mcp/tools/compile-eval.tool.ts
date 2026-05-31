@@ -44,7 +44,15 @@ export const compileEvalTool: ToolEntry = {
         description: "抽象すぎなかったか (0-100)",
       },
     },
-    required: ["outcome", "body", "relevance", "actionability", "coverage", "clarity", "specificity"],
+    required: [
+      "outcome",
+      "body",
+      "relevance",
+      "actionability",
+      "coverage",
+      "clarity",
+      "specificity",
+    ],
   },
   handler: async (args, context) => {
     const input = compileEvalInputSchema.parse(args ?? {});

@@ -1,4 +1,4 @@
-import { describe, it, expect, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { checkPlanLlmHealth } from "../src/modules/onboarding/llm-health.service.js";
 import type { StartupPlan } from "../src/modules/onboarding/onboarding.types.js";
 

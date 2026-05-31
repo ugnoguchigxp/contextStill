@@ -29,7 +29,6 @@ const warningReasonSet = new Set([
 const usablePackFallbackReasonSet = new Set([
   "AGENTIC_REFINE_FAILED",
   "CONTEXT_RESPONSE_COMPOSE_FAILED",
-  "COMPOSED_CONTEXT_NO_ALIGNMENT",
 ]);
 
 function isBlockingReason(reason: string, hasUsablePack: boolean): boolean {

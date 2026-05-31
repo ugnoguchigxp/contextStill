@@ -1,9 +1,9 @@
-import type { SupportedLocale } from "../../shared/locales/locale.js";
 import type {
   AgenticCompileProvider,
   DistillationProvider,
   EmbeddingProvider,
 } from "../../config.types.js";
+import type { SupportedLocale } from "../../shared/locales/locale.js";
 
 export interface StartupPlan {
   lang: SupportedLocale;
