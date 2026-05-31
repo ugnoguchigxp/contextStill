@@ -21,6 +21,7 @@
     "compile": "bun run src/cli/compile.ts",
     "init:project": "bun run src/cli/init-project.ts",
     "setup": "bun run src/cli/setup.ts",
+    "setup:mcp-config": "bun run src/cli/setup-mcp-config.ts",
     "startup": "bun run src/cli/startup.ts",
     "setup:interactive": "bun run src/cli/startup.ts",
     "import:markdown": "bun run src/cli/import-markdown.ts",
