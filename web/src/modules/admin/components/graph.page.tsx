@@ -16,12 +16,15 @@ import {
   type GraphSuperedge,
   type GraphSupernode,
   type GraphViewMode,
+  type DeadZoneKnowledgeReviewBadge,
+  type DeadZoneKnowledgeReviewReason,
   type LandscapeCommunity,
   type LandscapeContradictionOverlayItem,
   type LandscapeReplayComparisonRun,
   type LandscapeReviewItem,
   type LandscapeTrajectoryCandidate,
   createLandscapeReviewCandidates,
+  fetchDeadZoneKnowledgeReview,
   fetchGraphNodeDetail,
   fetchGraphSnapshot,
   fetchLandscapeContradictionOverlay,
@@ -36,6 +39,7 @@ import {
   updateLandscapeReviewItemStatus,
 } from "../repositories/admin.repository";
 import { ContradictionReviewList } from "./contradiction-review-list";
+import { DeadZoneReviewPanel } from "./deadzone-review-panel";
 import {
   SandboxComparisonPanel,
   type SandboxDiffFilter,
@@ -629,6 +633,8 @@ export function GraphPage() {
   const [contradictionQueueConfidence, setContradictionQueueConfidence] = useState<
     "all" | "medium" | "high"
   >("all");
+  const [deadZoneReason, setDeadZoneReason] = useState<DeadZoneKnowledgeReviewReason>("all");
+  const [deadZoneBadge, setDeadZoneBadge] = useState<DeadZoneKnowledgeReviewBadge | "all">("all");
 
   const [transform, setTransform] = useState<Transform>({ x: 0, y: 0, scale: 1 });
   const [viewport, setViewport] = useState<Viewport>({ width: 0, height: 0 });
@@ -699,6 +705,31 @@ export function GraphPage() {
         runStatus: "all",
         currentLimit: 12,
         includeRuns: true,
+      }),
+    enabled: viewMode === "community",
+    staleTime: 60_000,
+  });
+
+  const deadZoneKnowledgeReview = useQuery({
+    queryKey: [
+      "graph-landscape-dead-zone-knowledge",
+      30,
+      50,
+      statusFilter,
+      relationAxes.join(","),
+      deadZoneReason,
+      deadZoneBadge,
+    ],
+    queryFn: () =>
+      fetchDeadZoneKnowledgeReview({
+        windowDays: 30,
+        limit: 50,
+        status: statusFilter,
+        reason: deadZoneReason,
+        minSimilarity: 0.9,
+        similarTopK: 5,
+        relationAxes,
+        badge: deadZoneBadge,
       }),
     enabled: viewMode === "community",
     staleTime: 60_000,
@@ -1503,7 +1534,7 @@ export function GraphPage() {
         </div>
       </div>
 
-      {selectedId ? (
+      {selectedId || viewMode === "community" ? (
         <div className="graph-overlay-right-detail" style={{ top: detailPanelTop }}>
           <aside className="graph-detail-panel" aria-live="polite">
             <div className="graph-detail-panel-header">
@@ -2577,6 +2608,20 @@ export function GraphPage() {
                 ) : (
                   <div className="graph-detail-empty">Community data is not available.</div>
                 )}
+                <DeadZoneReviewPanel
+                  data={deadZoneKnowledgeReview.data}
+                  isLoading={deadZoneKnowledgeReview.isLoading}
+                  errorMessage={
+                    deadZoneKnowledgeReview.error instanceof Error
+                      ? deadZoneKnowledgeReview.error.message
+                      : null
+                  }
+                  reason={deadZoneReason}
+                  badge={deadZoneBadge}
+                  onReasonChange={setDeadZoneReason}
+                  onBadgeChange={setDeadZoneBadge}
+                  onSelectKnowledge={(knowledgeId) => setSelectedId(`knowledge:${knowledgeId}`)}
+                />
               </section>
             ) : null}
           </aside>

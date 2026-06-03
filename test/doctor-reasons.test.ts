@@ -67,4 +67,16 @@ describe("doctor reason catalog", () => {
     expect(detail.label).toBe("Unmapped Custom Reason");
     expect(detail.description).toBe("Doctor が未定義の診断コードを返しました。");
   });
+
+  test("low-impact operational signals stay informational", () => {
+    for (const code of ["KNOWLEDGE_ZERO_USE_HIGH", "VIBE_DISTILLATION_STALE"]) {
+      const detail = formatDoctorReasonDetail(code);
+      const strictDetail = formatDoctorReasonDetail(code, { strict: true });
+
+      expect(detail.severity).toBe("info");
+      expect(detail.impactLevel).toBe("maintenance");
+      expect(strictDetail.severity).toBe("info");
+      expect(strictDetail.impactLevel).toBe("maintenance");
+    }
+  });
 });

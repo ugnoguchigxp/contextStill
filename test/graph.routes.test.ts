@@ -1,6 +1,10 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
+  deadZoneKnowledgeReviewResponseSchema,
+  type DeadZoneKnowledgeReviewResponse,
+} from "../src/shared/schemas/landscape-deadzone-review.schema.js";
+import {
   landscapeReplayComparisonResponseSchema,
   landscapeReplaySnapshotSchema,
 } from "../src/shared/schemas/landscape-replay.schema.js";
@@ -27,6 +31,7 @@ const {
   listLandscapeContradictionOverlayMock,
   materializeLandscapeReviewItemsMock,
   updateLandscapeReviewItemStatusMock,
+  buildDeadZoneKnowledgeReviewMock,
   LandscapeReviewCandidateLinkErrorMock,
   LandscapeReviewItemsErrorMock,
 } = vi.hoisted(() => ({
@@ -41,6 +46,7 @@ const {
   listLandscapeContradictionOverlayMock: vi.fn(),
   materializeLandscapeReviewItemsMock: vi.fn(),
   updateLandscapeReviewItemStatusMock: vi.fn(),
+  buildDeadZoneKnowledgeReviewMock: vi.fn(),
   LandscapeReviewCandidateLinkErrorMock: class LandscapeReviewCandidateLinkErrorMock extends Error {
     readonly statusCode: number;
 
@@ -67,6 +73,10 @@ vi.mock("../src/modules/landscape/landscape-replay-comparison.service.js", () =>
 
 vi.mock("../src/modules/landscape/landscape-replay.service.js", () => ({
   buildLandscapeReplaySnapshot: buildLandscapeReplaySnapshotMock,
+}));
+
+vi.mock("../src/modules/landscape/landscape-deadzone-review.service.js", () => ({
+  buildDeadZoneKnowledgeReview: buildDeadZoneKnowledgeReviewMock,
 }));
 
 vi.mock("../src/modules/landscape/landscape.service.js", () => ({
@@ -110,6 +120,64 @@ function buildApp() {
   return app;
 }
 
+function validDeadZoneReview(): DeadZoneKnowledgeReviewResponse {
+  return {
+    generatedAt: "2026-05-24T00:00:00.000Z",
+    windowDays: 30,
+    minSimilarity: 0.9,
+    similarTopK: 5,
+    communityCount: 1,
+    itemCount: 1,
+    unavailableReason: null,
+    items: [
+      {
+        knowledge: {
+          id: "knowledge-dead-1",
+          title: "DeadZone procedure",
+          bodyPreview: "Use when...",
+          type: "procedure",
+          status: "active",
+          appliesTo: { domains: ["landscape"] },
+          confidence: 80,
+          importance: 75,
+          compileSelectCount: 0,
+          lastCompiledAt: null,
+          sourceRefCount: 0,
+          sourceRefDensity: 0,
+          communityKey: "a".repeat(64),
+          communityLabel: "DeadZone community",
+        },
+        classification: {
+          primary: "dead_zone_stale",
+          confidence: "medium",
+          reason: "unused and thin evidence",
+        },
+        indicators: {
+          evidenceStrength: "thin",
+          usageStrength: "none",
+          structureQuality: "partial",
+          graphHealth: "thin",
+          badges: ["Evidence thin", "Stale"],
+        },
+        similarKnowledge: [
+          {
+            id: "knowledge-active-1",
+            title: "Active canonical knowledge",
+            status: "active",
+            similarity: 0.94,
+            applicabilityMatch: "high",
+            evidenceStrength: "strong",
+            usageStrength: "moderate",
+            suggestedAction: "merge_into_similar",
+            reasons: ["applicability aligns", "similarity 94%"],
+          },
+        ],
+        reviewItemId: null,
+      },
+    ],
+  };
+}
+
 describe("graph routes landscape", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -117,6 +185,7 @@ describe("graph routes landscape", () => {
     getLandscapeSnapshotCacheStatusMock.mockResolvedValue(validLandscapeSnapshotCacheStatus());
     buildLandscapeReplaySnapshotMock.mockResolvedValue(validReplaySnapshot());
     buildLandscapeReplayComparisonMock.mockResolvedValue(validReplayComparison());
+    buildDeadZoneKnowledgeReviewMock.mockResolvedValue(validDeadZoneReview());
     buildLandscapeTrajectoryMock.mockResolvedValue(validTrajectory());
     materializeLandscapeReviewItemsMock.mockResolvedValue({
       dryRun: true,
@@ -358,6 +427,24 @@ describe("graph routes landscape", () => {
     const json = await response.json();
     expect(landscapeSnapshotCacheStatusSchema.safeParse(json).success).toBe(true);
     expect(getLandscapeSnapshotCacheStatusMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("GET /api/graph/landscape/dead-zone-knowledge applies defaults", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/graph/landscape/dead-zone-knowledge");
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(deadZoneKnowledgeReviewResponseSchema.safeParse(json).success).toBe(true);
+    expect(buildDeadZoneKnowledgeReviewMock).toHaveBeenCalledWith({
+      windowDays: 30,
+      limit: 50,
+      status: "active",
+      reason: "all",
+      minSimilarity: 0.9,
+      similarTopK: 5,
+      relationAxes: ["session", "project", "source"],
+      badge: "all",
+    });
   });
 
   test("GET /api/graph/landscape/replay/compare parses comparison filters", async () => {

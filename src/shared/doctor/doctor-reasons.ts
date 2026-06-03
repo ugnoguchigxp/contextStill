@@ -38,10 +38,11 @@ const impactRules: Partial<Record<string, ImpactRule>> = {
   SOURCE_DISTILLATION_QUEUE_STOPPED: { normal: "blocking" },
   AGENTIC_LLM_NOT_CONFIGURED: { normal: "maintenance", strict: "degraded" },
   AGENTIC_LLM_UNREACHABLE: { normal: "maintenance", strict: "degraded" },
-  KNOWLEDGE_ZERO_USE_HIGH: { normal: "maintenance", strict: "degraded" },
+  KNOWLEDGE_ZERO_USE_HIGH: { normal: "maintenance" },
   HITL_DRAFT_BACKLOG_HIGH: { normal: "maintenance", strict: "degraded" },
   HITL_DRAFT_REVIEW_STALE: { normal: "maintenance", strict: "degraded" },
   KNOWLEDGE_DECAY_STALE_HIGH: { normal: "maintenance", strict: "degraded" },
+  VIBE_DISTILLATION_STALE: { normal: "maintenance" },
   NO_COMPILE_RUN_HISTORY: { normal: "maintenance" },
   RUN_HEALTH_SKIPPED_TABLE_MISSING: { normal: "maintenance" },
 };

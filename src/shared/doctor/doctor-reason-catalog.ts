@@ -208,11 +208,11 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
   },
   KNOWLEDGE_ZERO_USE_HIGH: {
     label: "未使用の active knowledge が多い",
-    severity: "warning",
+    severity: "info",
     area: "Knowledge",
     description:
       "active knowledge の多くが compile で選択されていません。スコープやタグが広すぎる可能性があります。",
-    impact: "コンテキスト品質が下がり、必要な知識が選ばれにくくなります。",
+    impact: "単独利用や用途が偏った環境では自然に発生するため、整理対象の参考情報として扱います。",
     action:
       "Knowledge 画面で未使用 active を確認し、不要な項目を deprecated にするか、appliesTo を見直してください。",
   },
@@ -331,11 +331,13 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
   },
   VIBE_DISTILLATION_STALE: {
     label: "Vibe distillation 成功実行が古い",
-    severity: "warning",
+    severity: "info",
     area: "Distillation",
     description: "Vibe distillation の最新成功 run が freshness threshold を超過しています。",
-    impact: "新規会話ログが知識化されにくくなります。",
-    action: "run 履歴とキューを確認し、再実行してください。",
+    impact:
+      "意図的に自動実行を止めている環境では、直近の知識化が進んでいないことを示す参考情報です。",
+    action:
+      "必要になったタイミングで queue supervisor または `bun run queue:finding:once` を実行してください。",
   },
   VIBE_DISTILLATION_QUEUE_STALE_RUNNING: {
     label: "Vibe distillation に stale running job",

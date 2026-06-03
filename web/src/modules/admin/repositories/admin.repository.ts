@@ -1050,6 +1050,82 @@ export type LandscapeSnapshot = {
   }>;
 };
 
+export type DeadZoneKnowledgeReviewBadge =
+  | "Strong merge candidate"
+  | "Canonical candidate"
+  | "Likely duplicate"
+  | "Scope differs"
+  | "Evidence thin"
+  | "Stale"
+  | "Niche but valid"
+  | "Needs embedding"
+  | "Similarity unavailable";
+
+export type DeadZoneKnowledgeReviewReason =
+  | "all"
+  | "dead_zone_reachability_risk"
+  | "dead_zone_stale";
+
+export type DeadZoneKnowledgeReviewItem = {
+  knowledge: {
+    id: string;
+    title: string;
+    bodyPreview: string;
+    type: "rule" | "procedure";
+    status: "draft" | "active" | "deprecated";
+    appliesTo: Record<string, unknown>;
+    confidence: number;
+    importance: number;
+    compileSelectCount: number;
+    lastCompiledAt: string | null;
+    sourceRefCount: number;
+    sourceRefDensity: number;
+    communityKey: string | null;
+    communityLabel: string | null;
+  };
+  classification: {
+    primary: "dead_zone_reachability_risk" | "dead_zone_stale";
+    confidence: LandscapeClassificationConfidence;
+    reason: string;
+  };
+  indicators: {
+    evidenceStrength: "none" | "thin" | "moderate" | "strong";
+    usageStrength: "none" | "low" | "moderate" | "strong";
+    structureQuality: "weak" | "partial" | "strong";
+    graphHealth: "orphan" | "thin" | "connected";
+    badges: DeadZoneKnowledgeReviewBadge[];
+  };
+  similarKnowledge: Array<{
+    id: string;
+    title: string;
+    status: "draft" | "active" | "deprecated";
+    similarity: number;
+    applicabilityMatch: "low" | "medium" | "high";
+    evidenceStrength: "none" | "thin" | "moderate" | "strong";
+    usageStrength: "none" | "low" | "moderate" | "strong";
+    suggestedAction:
+      | "merge_into_similar"
+      | "deadzone_is_canonical"
+      | "likely_duplicate"
+      | "scope_differs"
+      | "needs_evidence"
+      | "keep_separate";
+    reasons: string[];
+  }>;
+  reviewItemId: string | null;
+};
+
+export type DeadZoneKnowledgeReviewResponse = {
+  generatedAt: string;
+  windowDays: number;
+  minSimilarity: number;
+  similarTopK: number;
+  communityCount: number;
+  itemCount: number;
+  unavailableReason: string | null;
+  items: DeadZoneKnowledgeReviewItem[];
+};
+
 export type LandscapeSnapshotCacheType =
   | "landscape_snapshot"
   | "landscape_replay_snapshot"
@@ -2527,6 +2603,36 @@ export async function fetchLandscapeSnapshot(input?: {
 
 export async function fetchLandscapeSnapshotCacheStatus(): Promise<LandscapeSnapshotCacheStatus> {
   return getJson<LandscapeSnapshotCacheStatus>("/api/graph/landscape/cache-status");
+}
+
+export async function fetchDeadZoneKnowledgeReview(input?: {
+  windowDays?: number;
+  limit?: number;
+  status?: GraphStatusFilter;
+  reason?: DeadZoneKnowledgeReviewReason;
+  minSimilarity?: number;
+  similarTopK?: number;
+  relationAxes?: GraphRelationAxis[];
+  communityKey?: string;
+  badge?: DeadZoneKnowledgeReviewBadge | "all";
+}): Promise<DeadZoneKnowledgeReviewResponse> {
+  const params = new URLSearchParams();
+  params.set("windowDays", String(input?.windowDays ?? 30));
+  params.set("limit", String(input?.limit ?? 50));
+  params.set("status", input?.status ?? "active");
+  params.set("reason", input?.reason ?? "all");
+  params.set("minSimilarity", String(input?.minSimilarity ?? 0.9));
+  params.set("similarTopK", String(input?.similarTopK ?? 5));
+  params.set("badge", input?.badge ?? "all");
+  if (input?.relationAxes?.length) {
+    params.set("relationAxes", input.relationAxes.join(","));
+  } else {
+    params.set("relationAxes", "session,project,source");
+  }
+  if (input?.communityKey) params.set("communityKey", input.communityKey);
+  return getJson<DeadZoneKnowledgeReviewResponse>(
+    `/api/graph/landscape/dead-zone-knowledge?${params.toString()}`,
+  );
 }
 
 export async function fetchLandscapeReplaySnapshot(input?: {

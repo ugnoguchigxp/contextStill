@@ -11,7 +11,12 @@ import {
   checkLlmProviderHealthMatrix,
 } from "../src/modules/llm/agentic-llm.service.js";
 
-vi.mock("../src/db/index.js");
+vi.mock("../src/db/index.js", () => ({
+  getDb: vi.fn(),
+}));
+vi.mock("../src/modules/audit/audit-log.service.js", () => ({
+  cleanupExpiredAuditLogsSafe: vi.fn(),
+}));
 vi.mock("node:fs/promises");
 vi.mock("node:child_process");
 vi.mock("../src/mcp/tools/index.js");

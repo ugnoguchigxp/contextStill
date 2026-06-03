@@ -1,5 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { appendAutomationReasons } from "../src/modules/doctor/doctor-reason-resolution.js";
+import {
+  appendAutomationReasons,
+  createReasonResolutionContext,
+  resolveReasonDetails,
+} from "../src/modules/doctor/doctor-reason-resolution.js";
 import type { DoctorReport } from "../src/shared/schemas/doctor.schema.js";
 
 const loadedLaunchAgent = {
@@ -60,6 +64,47 @@ function createDistillationHealth(
 }
 
 describe("doctor reason resolution", () => {
+  test("keeps low-impact operational signals out of degraded status", () => {
+    const options = {
+      windowSize: 20,
+      freshnessThresholdMinutes: 720,
+      degradedRateThreshold: 0.5,
+      strict: true,
+    };
+    const result = resolveReasonDetails(
+      ["KNOWLEDGE_ZERO_USE_HIGH", "VIBE_DISTILLATION_STALE"],
+      createReasonResolutionContext(options, {
+        knowledgeLifecycle: {
+          activeCount: 100,
+          zeroUseActiveCount: 90,
+          staleByDecayCount: 0,
+          staleProcedureCount: 0,
+          dynamicScoreAvg: null,
+          dynamicScoreP95: null,
+          lastCompiledAt: null,
+          lastCompiledAgeMinutes: null,
+          thresholds: {
+            staleDecayFactor: 0.5,
+            zeroUseWarningMinActiveCount: 10,
+          },
+        },
+        vibeDistillation: createDistillationHealth(),
+      }),
+    );
+
+    expect(result.status).toBe("ok");
+    expect(result.summary).toMatchObject({
+      blocking: 0,
+      degraded: 0,
+      maintenance: 2,
+      skipped: 0,
+    });
+    expect(result.reasonDetails.map((detail) => detail.impactLevel)).toEqual([
+      "maintenance",
+      "maintenance",
+    ]);
+  });
+
   test("adds pipeline lock reasons when a stale distillation lock is blocking work", () => {
     const reasons: string[] = [];
     const agentLogSync: DoctorReport["agentLogSync"] = {

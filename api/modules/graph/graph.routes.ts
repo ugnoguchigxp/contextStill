@@ -3,6 +3,7 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { buildLandscapeReplayComparison } from "../../../src/modules/landscape/landscape-replay-comparison.service.js";
 import { buildLandscapeReplaySnapshot } from "../../../src/modules/landscape/landscape-replay.service.js";
+import { buildDeadZoneKnowledgeReview } from "../../../src/modules/landscape/landscape-deadzone-review.service.js";
 import {
   LandscapeReviewCandidateLinkError,
   createLandscapeReviewCandidates,
@@ -22,6 +23,10 @@ import {
   landscapeContradictionOverlayListSchema,
   landscapeContradictionOverlayQuerySchema,
 } from "../../../src/shared/schemas/landscape-contradiction-overlay.schema.js";
+import {
+  deadZoneKnowledgeReviewQuerySchema,
+  deadZoneKnowledgeReviewResponseSchema,
+} from "../../../src/shared/schemas/landscape-deadzone-review.schema.js";
 import {
   landscapeReplayComparisonResponseSchema,
   landscapeReplaySnapshotSchema,
@@ -181,6 +186,15 @@ export const graphRouter = new Hono()
     const cacheStatus = await getLandscapeSnapshotCacheStatus();
     return c.json(landscapeSnapshotCacheStatusSchema.parse(cacheStatus));
   })
+  .get(
+    "/landscape/dead-zone-knowledge",
+    zValidator("query", deadZoneKnowledgeReviewQuerySchema),
+    async (c) => {
+      const query = c.req.valid("query");
+      const review = await buildDeadZoneKnowledgeReview(query);
+      return c.json(deadZoneKnowledgeReviewResponseSchema.parse(review));
+    },
+  )
   .get("/landscape/replay", zValidator("query", landscapeReplayQuerySchema), async (c) => {
     const query = c.req.valid("query");
     const snapshot = await buildLandscapeReplaySnapshot({
