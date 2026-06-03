@@ -7,5 +7,6 @@ These documents are allowed to discuss unfinished work, implementation constrain
 | Document | Purpose |
 |---|---|
 | [MCP Tool Design Best Practices](mcp-tool-design-best-practices.md) | General MCP tool design guidance used by this project |
+| [DeadZone Knowledge Review UI Plan](deadzone-knowledge-review-ui-plan.md) | Implementation plan for reviewing DeadZone knowledge against similar knowledge and approval-gated maintenance actions |
 | [Vibe Note / Session Memo Design](vibe-note-session-memo-design.md) | Historical design note for Vibe Note and session memo behavior |
 | [Zero-Config Instant Onboarding Plan](zero-config-instant-onboarding-plan.md) | Internal implementation plan for startup/onboarding |

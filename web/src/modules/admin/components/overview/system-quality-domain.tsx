@@ -6,9 +6,9 @@ import React, { useState, useEffect } from "react";
 import type { OverviewSystemQualityDomain } from "../../repositories/admin.repository";
 import { SystemHealthCharts } from "../overview-charts";
 
-function formatRatePercent(value: number | undefined): string {
+function formatScore(value: number | null | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "-";
-  return `${(value * 100).toFixed(1)}%`;
+  return value.toFixed(1);
 }
 
 function formatCountdown(cooldownUntil: string | null, nowMs: number): string {
@@ -42,19 +42,7 @@ export function SystemQualityDomain({ dashboard }: SystemQualityDomainProps) {
     return () => window.clearInterval(timer);
   }, []);
 
-  const compileRunHealth = dashboard.compileRunHealth;
-
-  const queueTotals = (dashboard.charts.distillationQueue ?? []).reduce(
-    (acc, item) => ({
-      pending: acc.pending + item.pending,
-      running: acc.running + item.running,
-      completed: acc.completed + item.completed,
-      failed: acc.failed + item.failed,
-    }),
-    { pending: 0, running: 0, completed: 0, failed: 0 },
-  );
-
-  const usableRate = compileRunHealth.usableRate;
+  const compileEvalStats = dashboard.compileEvalStats;
 
   return (
     <section className="overview-domain-section accent-cyan">
@@ -79,7 +67,7 @@ export function SystemQualityDomain({ dashboard }: SystemQualityDomainProps) {
           variant="outline"
           className="text-[12px] font-bold border-cyan-500/20 text-cyan-700 bg-cyan-50/50 py-0.5 px-2"
         >
-          Usable Rate: {formatRatePercent(usableRate)}
+          Eval Avg: {formatScore(compileEvalStats.averageAvg)} ({compileEvalStats.windowLabel})
         </Badge>
       </div>
 
@@ -89,51 +77,58 @@ export function SystemQualityDomain({ dashboard }: SystemQualityDomainProps) {
         <div className="grid grid-cols-3 gap-2 border-b border-slate-100 pb-3 mb-1 text-center md:text-left">
           <div className="flex flex-col">
             <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
-              Compile Usable
+              Compile Avg Score
             </span>
             <strong className="text-slate-800 text-2xl font-extrabold mt-1 leading-none">
-              {formatRatePercent(usableRate)}
+              {formatScore(compileEvalStats.averageAvg)}
             </strong>
           </div>
           <div className="flex flex-col">
             <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
-              Queue Pending
+              Feedback Count
             </span>
             <strong className="text-slate-800 text-2xl font-extrabold mt-1 leading-none">
-              {formatNumber(queueTotals.pending)}
+              {formatNumber(compileEvalStats.evaluationCount)}
             </strong>
           </div>
           <div className="flex flex-col">
             <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
-              Queue Running
+              Evaluated Runs
             </span>
-            <strong
-              className={cn(
-                "text-2xl font-extrabold mt-1 leading-none",
-                queueTotals.running > 0 ? "text-amber-600 animate-pulse" : "text-slate-800",
-              )}
-            >
-              {formatNumber(queueTotals.running)}
+            <strong className="text-slate-800 text-2xl font-extrabold mt-1 leading-none">
+              {formatNumber(compileEvalStats.evaluatedRunCount)}
             </strong>
           </div>
         </div>
 
         {/* 📂 内訳セクション */}
         <div className="flex flex-col gap-2.5 pb-3 mb-1 border-b border-slate-100/60 text-[13px] text-slate-500 font-medium">
-          {/* Queue Stats */}
+          {/* Compile Eval */}
           <div className="flex flex-wrap gap-x-3 gap-y-1 items-center justify-between md:justify-start">
             <span className="text-slate-400 font-bold text-[11.5px] uppercase tracking-wider pr-0.5 w-[85px]">
-              Queue Stats:
+              Eval Stats:
             </span>
             <div className="flex items-center gap-0.5">
-              <span>Completed:</span>
-              <strong className="text-slate-700">{formatNumber(queueTotals.completed)}</strong>
+              <span>Window:</span>
+              <strong className="text-slate-700">{compileEvalStats.windowLabel}</strong>
             </div>
             <div className="text-slate-200">|</div>
             <div className="flex items-center gap-0.5">
-              <span className={queueTotals.failed > 0 ? "text-red-600" : ""}>Failed:</span>
-              <strong className={queueTotals.failed > 0 ? "text-red-700" : "text-slate-700"}>
-                {formatNumber(queueTotals.failed)}
+              <span className="text-cyan-600">Avg:</span>
+              <strong className="text-slate-700">{formatScore(compileEvalStats.averageAvg)}</strong>
+            </div>
+            <div className="text-slate-200">|</div>
+            <div className="flex items-center gap-0.5">
+              <span>Feedback:</span>
+              <strong className="text-slate-700">
+                {formatNumber(compileEvalStats.evaluationCount)}
+              </strong>
+            </div>
+            <div className="text-slate-200">|</div>
+            <div className="flex items-center gap-0.5">
+              <span>Runs:</span>
+              <strong className="text-slate-700">
+                {formatNumber(compileEvalStats.evaluatedRunCount)}
               </strong>
             </div>
           </div>
@@ -141,33 +136,26 @@ export function SystemQualityDomain({ dashboard }: SystemQualityDomainProps) {
           {/* Compile Runs */}
           <div className="flex flex-wrap gap-x-3 gap-y-1 items-center justify-between md:justify-start">
             <span className="text-slate-400 font-bold text-[11.5px] uppercase tracking-wider pr-0.5 w-[85px]">
-              Compile runs:
+              Compile:
             </span>
             <div className="flex items-center gap-0.5">
-              <span className="text-cyan-600">Usable:</span>
+              <span className="text-emerald-600">Ok:</span>
               <strong className="text-slate-700">
-                {formatNumber(compileRunHealth.usableRuns ?? 0)}
+                {formatNumber(dashboard.kpis.compileOkRuns)}
               </strong>
             </div>
             <div className="text-slate-200">|</div>
             <div className="flex items-center gap-0.5">
-              <span className="text-amber-600">Warning:</span>
+              <span className="text-amber-600">Degraded:</span>
               <strong className="text-slate-700">
-                {formatNumber(compileRunHealth.warningOnlyRuns ?? 0)}
+                {formatNumber(dashboard.kpis.compileDegradedRuns)}
               </strong>
             </div>
             <div className="text-slate-200">|</div>
             <div className="flex items-center gap-0.5">
-              <span className="text-red-600">Blocking:</span>
+              <span className="text-red-600">Failed:</span>
               <strong className="text-slate-700">
-                {formatNumber(compileRunHealth.blockingRuns ?? 0)}
-              </strong>
-            </div>
-            <div className="text-slate-200">|</div>
-            <div className="flex items-center gap-0.5">
-              <span className="text-slate-400">No Content:</span>
-              <strong className="text-slate-700">
-                {formatNumber(compileRunHealth.noContentRuns ?? 0)}
+                {formatNumber(dashboard.kpis.compileFailedRuns)}
               </strong>
             </div>
           </div>

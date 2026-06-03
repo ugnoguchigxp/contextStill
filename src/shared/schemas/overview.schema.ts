@@ -18,12 +18,6 @@ export const overviewDynamicScoreBucketSchema = z.enum([
 ]);
 export const overviewSourceCoverageLabelSchema = z.enum(["linked", "unlinked"]);
 export const overviewCommunitySourceCoverageLabelSchema = z.enum(["covered", "thin", "no-source"]);
-export const overviewDistillationTargetKindSchema = z.enum([
-  "wiki_file",
-  "vibe_memory",
-  "knowledge_candidate",
-  "web_ingest",
-]);
 export const overviewSearchApiStatusSchema = z.enum(["ok", "cooldown"]);
 export const overviewLandscapeStatusSchema = z.enum(["ok", "unavailable"]);
 export const overviewLandscapePromotionGateModeSchema = z.enum(["normal", "review_required"]);
@@ -152,16 +146,6 @@ export const overviewDashboardChartsSchema = z.object({
       count: z.number().int().nonnegative(),
     }),
   ),
-  distillationQueue: z.array(
-    z.object({
-      targetKind: overviewDistillationTargetKindSchema,
-      pending: z.number().int().nonnegative(),
-      running: z.number().int().nonnegative(),
-      paused: z.number().int().nonnegative(),
-      completed: z.number().int().nonnegative(),
-      failed: z.number().int().nonnegative(),
-    }),
-  ),
 });
 
 export const overviewDashboardLlmUsageSchema = z.object({
@@ -227,12 +211,27 @@ export const overviewDashboardSearchApiStatusSchema = z.object({
   }),
 });
 
+export const overviewCompileEvalMetricSchema = z.object({
+  metric: z.enum(["relevance", "actionability", "coverage", "clarity", "specificity"]),
+  label: z.string().min(1),
+  average: z.number().min(0).max(100).nullable(),
+});
+
+export const overviewCompileEvalStatsSchema = z.object({
+  windowLabel: z.string().min(1),
+  evaluatedRunCount: z.number().int().nonnegative(),
+  evaluationCount: z.number().int().nonnegative(),
+  averageAvg: z.number().min(0).max(100).nullable(),
+  metrics: z.array(overviewCompileEvalMetricSchema),
+});
+
 export const overviewDashboardSchema = z.object({
   checkedAt: overviewCheckedAtSchema,
   kpis: overviewDashboardKpisSchema,
   charts: overviewDashboardChartsSchema,
   llmUsage: overviewDashboardLlmUsageSchema,
   searchApiStatus: overviewDashboardSearchApiStatusSchema,
+  compileEvalStats: overviewCompileEvalStatsSchema,
   landscape: overviewLandscapeSummarySchema,
 });
 
@@ -293,9 +292,9 @@ export const overviewSystemQualityDomainSchema = z.object({
     compileFailedRuns: true,
   }),
   compileRunHealth: doctorReportSchema.shape.runs,
+  compileEvalStats: overviewCompileEvalStatsSchema,
   charts: overviewDashboardChartsSchema.pick({
     compileRunsByDay: true,
-    distillationQueue: true,
   }),
   searchApiStatus: overviewDashboardSearchApiStatusSchema,
 });

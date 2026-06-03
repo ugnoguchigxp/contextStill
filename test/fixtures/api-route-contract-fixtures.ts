@@ -396,10 +396,6 @@ export const validOverviewDashboard: OverviewDashboard = overviewDashboardSchema
       { label: "thin", count: 7 },
       { label: "no-source", count: 5 },
     ],
-    distillationQueue: [
-      { targetKind: "wiki_file", pending: 100, running: 1, paused: 0, completed: 20, failed: 0 },
-      { targetKind: "vibe_memory", pending: 17, running: 0, paused: 0, completed: 2, failed: 0 },
-    ],
   },
   llmUsage: {
     kpis: {
@@ -486,6 +482,19 @@ export const validOverviewDashboard: OverviewDashboard = overviewDashboardSchema
       lastError: null,
     },
   },
+  compileEvalStats: {
+    windowLabel: "All time",
+    evaluatedRunCount: 12,
+    evaluationCount: 14,
+    averageAvg: 83.6,
+    metrics: [
+      { metric: "relevance", label: "Relevance", average: 88.2 },
+      { metric: "actionability", label: "Actionability", average: 81.4 },
+      { metric: "coverage", label: "Coverage", average: 79.1 },
+      { metric: "clarity", label: "Clarity", average: 86.8 },
+      { metric: "specificity", label: "Specificity", average: 82.5 },
+    ],
+  },
   landscape: {
     status: "ok",
     windowDays: 30,
@@ -530,6 +539,7 @@ export const validOverviewSystemQuality = overviewSystemQualityDomainSchema.pars
   checkedAt: validOverviewDashboard.checkedAt,
   kpis: validOverviewDashboard.kpis,
   compileRunHealth: validDoctorReport.runs,
+  compileEvalStats: validOverviewDashboard.compileEvalStats,
   charts: validOverviewDashboard.charts,
   searchApiStatus: validOverviewDashboard.searchApiStatus,
 });

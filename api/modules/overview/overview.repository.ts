@@ -1,6 +1,5 @@
 import { sql } from "drizzle-orm";
 import { groupedConfig } from "../../../src/config.js";
-import { APP_CONSTANTS } from "../../../src/constants.js";
 import { getDb } from "../../../src/db/index.js";
 import { inspectCompileRuns } from "../../../src/modules/doctor/inspectors/compile.inspector.js";
 import { resolveCostRate } from "../../../src/modules/llm/llm-cost-config.js";
@@ -12,6 +11,7 @@ import {
   type OverviewLandscapeHealthDomain,
   type OverviewLlmResourcesDomain,
   type OverviewSystemQualityDomain,
+  overviewCompileEvalStatsSchema,
   overviewDashboardSchema,
   overviewKnowledgeAssetsDomainSchema,
   overviewLandscapeHealthDomainSchema,
@@ -24,7 +24,6 @@ import {
   LLM_KPI_DAY_RANGE,
   OVERVIEW_DAY_RANGE,
   buildCommunitySourceCoverage,
-  buildDistillationQueueChart,
   buildKnowledgeStatusTypeChart,
   buildOverviewLandscapeSummary,
   checkedAt,
@@ -43,6 +42,30 @@ type OverviewDomainPayload =
   | OverviewLlmResourcesDomain;
 
 export { normalizeSearchApiStatus } from "./overview.repository.helpers.js";
+
+function buildCompileEvalStats(row: Record<string, unknown>) {
+  return overviewCompileEvalStatsSchema.parse({
+    windowLabel: "All time",
+    evaluatedRunCount: toNumber(row.evaluated_run_count),
+    evaluationCount: toNumber(row.evaluation_count),
+    averageAvg: toNullableNumber(row.average_avg),
+    metrics: [
+      { metric: "relevance", label: "Relevance", average: toNullableNumber(row.relevance_avg) },
+      {
+        metric: "actionability",
+        label: "Actionability",
+        average: toNullableNumber(row.actionability_avg),
+      },
+      { metric: "coverage", label: "Coverage", average: toNullableNumber(row.coverage_avg) },
+      { metric: "clarity", label: "Clarity", average: toNullableNumber(row.clarity_avg) },
+      {
+        metric: "specificity",
+        label: "Specificity",
+        average: toNullableNumber(row.specificity_avg),
+      },
+    ],
+  });
+}
 
 export async function fetchOverviewKnowledgeAssetsDomainForApi(): Promise<OverviewKnowledgeAssetsDomain> {
   await ensureRuntimeSettingsLoaded();
@@ -266,9 +289,9 @@ export async function fetchOverviewSystemQualityDomainForApi(): Promise<Overview
   const [
     compileSummaryResult,
     compileRunsByDayResult,
-    distillationQueueResult,
     searchProviderStateResult,
     compileRunHealthResult,
+    compileEvalStatsResult,
   ] = await Promise.all([
     db.execute(sql`
       select
@@ -308,18 +331,6 @@ export async function fetchOverviewSystemQualityDomainForApi(): Promise<Overview
       order by days.day asc
     `),
     db.execute(sql`
-      select
-        target_kind,
-        count(*) filter (where status = 'pending')::int as pending,
-        count(*) filter (where status = 'running')::int as running,
-        count(*) filter (where status = 'paused')::int as paused,
-        count(*) filter (where status = 'completed')::int as completed,
-        count(*) filter (where status = 'failed')::int as failed
-      from distillation_target_states
-      where distillation_version = ${APP_CONSTANTS.distillationTargetVersion}
-      group by target_kind
-    `),
-    db.execute(sql`
       select metadata
       from sync_states
       where id = 'distillation_search_providers'
@@ -331,6 +342,18 @@ export async function fetchOverviewSystemQualityDomainForApi(): Promise<Overview
       degradedRateThreshold: groupedConfig.doctor.degradedRateThreshold,
       compileRunsTableAvailable: true,
     }),
+    db.execute(sql`
+      select
+        count(distinct run_id)::int as evaluated_run_count,
+        count(*)::int as evaluation_count,
+        round(avg(score)::numeric, 1)::float as average_avg,
+        round(avg(relevance)::numeric, 1)::float as relevance_avg,
+        round(avg(actionability)::numeric, 1)::float as actionability_avg,
+        round(avg(coverage)::numeric, 1)::float as coverage_avg,
+        round(avg(clarity)::numeric, 1)::float as clarity_avg,
+        round(avg(specificity)::numeric, 1)::float as specificity_avg
+      from context_compile_evals
+    `),
   ]);
 
   const compileSummaryRow = (compileSummaryResult.rows[0] ?? {}) as Record<string, unknown>;
@@ -338,6 +361,7 @@ export async function fetchOverviewSystemQualityDomainForApi(): Promise<Overview
     string,
     unknown
   >;
+  const compileEvalStatsRow = (compileEvalStatsResult.rows[0] ?? {}) as Record<string, unknown>;
 
   const domain: OverviewSystemQualityDomain = {
     checkedAt: checkedAt(),
@@ -348,6 +372,7 @@ export async function fetchOverviewSystemQualityDomainForApi(): Promise<Overview
       compileFailedRuns: toNumber(compileSummaryRow.compile_failed_runs),
     },
     compileRunHealth: compileRunHealthResult.runs,
+    compileEvalStats: buildCompileEvalStats(compileEvalStatsRow),
     charts: {
       compileRunsByDay: (compileRunsByDayResult.rows as Array<Record<string, unknown>>).map(
         (row) => ({
@@ -357,9 +382,6 @@ export async function fetchOverviewSystemQualityDomainForApi(): Promise<Overview
           failed: toNumber(row.failed),
           avgDurationMs: toNullableNumber(row.avg_duration_ms),
         }),
-      ),
-      distillationQueue: buildDistillationQueueChart(
-        distillationQueueResult.rows as Array<Record<string, unknown>>,
       ),
     },
     searchApiStatus: normalizeSearchApiStatus(searchProviderStateRow.metadata),
@@ -602,6 +624,7 @@ export async function fetchOverviewDashboardForApi(): Promise<OverviewDashboard>
     },
     llmUsage: llmResources.llmUsage,
     searchApiStatus: systemQuality.searchApiStatus,
+    compileEvalStats: systemQuality.compileEvalStats,
     landscape: landscapeHealth.landscape,
   };
 

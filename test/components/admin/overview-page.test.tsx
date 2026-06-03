@@ -94,7 +94,6 @@ const defaultOverviewData = {
     compileFailedRuns: 0,
   },
   charts: {
-    distillationQueue: [{ pending: 1, running: 2, completed: 5, failed: 0 }],
     knowledgeByStatusType: [],
     dynamicScoreBuckets: [],
     compileRunsByDay: [],
@@ -166,6 +165,19 @@ const defaultOverviewData = {
       cooldownUntil: "2026-05-20T00:10:00.000Z",
       lastError: "Exa search HTTP 429",
     },
+  },
+  compileEvalStats: {
+    windowLabel: "All time",
+    evaluatedRunCount: 2,
+    evaluationCount: 3,
+    averageAvg: 84.3,
+    metrics: [
+      { metric: "relevance", label: "Relevance", average: 90 },
+      { metric: "actionability", label: "Actionability", average: 82 },
+      { metric: "coverage", label: "Coverage", average: 78 },
+      { metric: "clarity", label: "Clarity", average: 88 },
+      { metric: "specificity", label: "Specificity", average: 83.5 },
+    ],
   },
   landscape: {
     status: "ok",
@@ -277,6 +289,7 @@ describe("OverviewPage", () => {
         checkedAt: defaultOverviewData.checkedAt,
         kpis: JSON.parse(JSON.stringify(defaultOverviewData.kpis)),
         compileRunHealth: JSON.parse(JSON.stringify(defaultDoctorData.runs)),
+        compileEvalStats: JSON.parse(JSON.stringify(defaultOverviewData.compileEvalStats)),
         charts: JSON.parse(JSON.stringify(defaultOverviewData.charts)),
         searchApiStatus: JSON.parse(JSON.stringify(defaultOverviewData.searchApiStatus)),
       },
@@ -300,17 +313,22 @@ describe("OverviewPage", () => {
       </QueryClientProvider>,
     );
     expect(screen.getByText(/overview/i)).toBeInTheDocument();
-    expect(screen.getByText("Compile Usable")).toBeInTheDocument();
-    expect(screen.getByText("Compile runs:")).toBeInTheDocument();
-    expect(screen.getByText("Usable:")).toBeInTheDocument();
-    expect(screen.getByText("Warning:")).toBeInTheDocument();
-    expect(screen.getByText("Blocking:")).toBeInTheDocument();
-    expect(screen.getByText("No Content:")).toBeInTheDocument();
+    expect(screen.getByText("Compile Avg Score")).toBeInTheDocument();
+    expect(screen.getByText("Feedback Count")).toBeInTheDocument();
+    expect(screen.getByText("Evaluated Runs")).toBeInTheDocument();
+    expect(screen.getAllByText("84.3").length).toBeGreaterThan(0);
+    expect(screen.getByText("Eval Stats:")).toBeInTheDocument();
+    expect(screen.getByText("Window:")).toBeInTheDocument();
+    expect(screen.getAllByText("All time").length).toBeGreaterThan(0);
+    expect(screen.getByText("Compile:")).toBeInTheDocument();
+    expect(screen.getByText("Ok:")).toBeInTheDocument();
+    expect(screen.getByText("Degraded:")).toBeInTheDocument();
+    expect(screen.getAllByText("Failed:").length).toBeGreaterThan(0);
     expect(screen.getByText("Local LLM 30d")).toBeInTheDocument();
     expect(screen.getByText("Cloud LLM Cost 30d")).toBeInTheDocument();
     expect(screen.getByText(/gpt-5-4-mini/)).toBeInTheDocument();
     expect(screen.getByText("Daily LLM Tokens & Cloud Cost (14d)")).toBeInTheDocument();
-    expect(screen.getByText("Compile Quality Mix")).toBeInTheDocument();
+    expect(screen.getByText("Compile Eval Metrics (All time, n=3)")).toBeInTheDocument();
     expect(screen.getByText("Compile Latency")).toBeInTheDocument();
     expect(screen.getByText("Knowledge Usage Lifecycle")).toBeInTheDocument();
     expect(screen.getByText("Knowledge Source & Community Coverage")).toBeInTheDocument();
@@ -458,7 +476,7 @@ describe("OverviewPage", () => {
     expect(screen.getByText("No active LLM sources")).toBeInTheDocument();
   });
 
-  it("uses system-quality compile health instead of the separate doctor query", () => {
+  it("uses system-quality compile eval stats instead of legacy doctor usable rate", () => {
     queryMockState.domainData["system-quality"].kpis.compileRuns = 10;
     queryMockState.domainData["system-quality"].kpis.compileOkRuns = 9;
     queryMockState.domainData["system-quality"].kpis.compileDegradedRuns = 1;
@@ -477,6 +495,10 @@ describe("OverviewPage", () => {
       noContentRuns: 0,
       noContentRate: 0,
     };
+    queryMockState.domainData["system-quality"].compileEvalStats = {
+      ...JSON.parse(JSON.stringify(defaultOverviewData.compileEvalStats)),
+      averageAvg: 91.5,
+    };
     queryMockState.doctorData = {
       ...JSON.parse(JSON.stringify(defaultDoctorData)),
       runs: {
@@ -493,7 +515,7 @@ describe("OverviewPage", () => {
       </QueryClientProvider>,
     );
 
-    expect(screen.getAllByText("90.0%").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("91.5").length).toBeGreaterThan(0);
     expect(screen.queryByText("10.0%")).not.toBeInTheDocument();
   });
 });

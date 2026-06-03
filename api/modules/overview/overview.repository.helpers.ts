@@ -15,12 +15,6 @@ const LANDSCAPE_OVERVIEW_LIMIT = 1000;
 const LANDSCAPE_OVERVIEW_REPLAY_LIMIT = 20;
 const LANDSCAPE_OVERVIEW_CURRENT_LIMIT = 12;
 const KNOWLEDGE_STATUS_ORDER = ["active", "draft", "deprecated"] as const;
-const DISTILLATION_TARGET_KIND_ORDER = [
-  "knowledge_candidate",
-  "web_ingest",
-  "wiki_file",
-  "vibe_memory",
-] as const;
 type SearchRateLimitInput = Parameters<typeof deriveSearchProviderCooldownUntil>[0];
 
 export const OVERVIEW_DAY_RANGE = 14;
@@ -260,27 +254,4 @@ export function buildKnowledgeStatusTypeChart(
     rule: statusTypeMap.get(status)?.rule ?? 0,
     procedure: statusTypeMap.get(status)?.procedure ?? 0,
   }));
-}
-
-export function buildDistillationQueueChart(
-  rows: Array<Record<string, unknown>>,
-): OverviewSystemQualityDomain["charts"]["distillationQueue"] {
-  const distillationQueueMap = new Map<string, Record<string, unknown>>();
-  for (const row of rows) {
-    const targetKind = typeof row.target_kind === "string" ? row.target_kind : "";
-    if (!targetKind) continue;
-    distillationQueueMap.set(targetKind, row);
-  }
-
-  return DISTILLATION_TARGET_KIND_ORDER.map((targetKind) => {
-    const row = distillationQueueMap.get(targetKind);
-    return {
-      targetKind,
-      pending: toNumber(row?.pending),
-      running: toNumber(row?.running),
-      paused: toNumber(row?.paused),
-      completed: toNumber(row?.completed),
-      failed: toNumber(row?.failed),
-    };
-  });
 }

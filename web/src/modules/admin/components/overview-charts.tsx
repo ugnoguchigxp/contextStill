@@ -2,11 +2,15 @@ import {
   Bar,
   BarChart,
   CartesianGrid,
-  Cell,
   ComposedChart,
   Legend,
   Line,
   LineChart,
+  PolarAngleAxis,
+  PolarGrid,
+  PolarRadiusAxis,
+  Radar,
+  RadarChart,
   ReferenceLine,
   Tooltip,
   XAxis,
@@ -26,16 +30,6 @@ const knowledgeStatusLabel: Record<"active" | "draft" | "deprecated", string> = 
   active: "active",
   draft: "draft",
   deprecated: "deprecated",
-};
-
-const distillationLabel: Record<
-  "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest",
-  string
-> = {
-  knowledge_candidate: "candidate",
-  web_ingest: "web",
-  wiki_file: "wiki",
-  vibe_memory: "vibe",
 };
 
 function roundDuration(value: number | null): string {
@@ -77,43 +71,9 @@ const llmTooltipLabel: Record<string, string> = {
   costJpy: "cloud cost",
 };
 
-function toPercent(value: number | undefined): string {
-  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
-  return `${(value * 100).toFixed(1)}%`;
-}
-
 function formatDurationSeconds(value: number | null | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "-";
   return `${(value / 1000).toFixed(1)}s`;
-}
-
-function compileMixData(runHealth: CompileRunHealth) {
-  return [
-    {
-      label: "usable",
-      count: runHealth.usableRuns ?? 0,
-      rate: toPercent(runHealth.usableRate),
-      color: "#16a34a",
-    },
-    {
-      label: "warning",
-      count: runHealth.warningOnlyRuns ?? 0,
-      rate: toPercent(runHealth.warningOnlyRate),
-      color: "#f59e0b",
-    },
-    {
-      label: "blocking",
-      count: runHealth.blockingRuns ?? 0,
-      rate: toPercent(runHealth.blockingRate),
-      color: "#dc2626",
-    },
-    {
-      label: "no content",
-      count: runHealth.noContentRuns ?? 0,
-      rate: toPercent(runHealth.noContentRate),
-      color: "#64748b",
-    },
-  ];
 }
 
 function compileLatencyData(runHealth: CompileRunHealth) {
@@ -269,11 +229,12 @@ export function SystemHealthCharts({
 }: {
   dashboard: OverviewSystemQualityDomain;
 }) {
-  const compileMix = compileMixData(dashboard.compileRunHealth);
   const compileLatency = compileLatencyData(dashboard.compileRunHealth);
-  const queueData = dashboard.charts.distillationQueue.map((item) => ({
+  const compileEvalData = dashboard.compileEvalStats.metrics.map((item) => ({
     ...item,
-    targetLabel: distillationLabel[item.targetKind],
+    average: item.average ?? 0,
+    displayAverage: item.average === null ? "-" : `${item.average.toFixed(1)}`,
+    axisLabel: `${item.label}: ${item.average === null ? "-" : item.average.toFixed(1)}`,
   }));
   const avgLatencyMs =
     typeof dashboard.compileRunHealth.durationMsAvg === "number" &&
@@ -284,26 +245,27 @@ export function SystemHealthCharts({
 
   return (
     <div className="domain-charts-grid">
-      {compileMix.length > 0 ? (
-        <AdminChartCard title="Compile Quality Mix">
+      {dashboard.compileEvalStats.evaluationCount > 0 ? (
+        <AdminChartCard
+          title={`Compile Eval Metrics (${dashboard.compileEvalStats.windowLabel}, n=${dashboard.compileEvalStats.evaluationCount})`}
+        >
           <div className="overview-chart-frame">
-            <BarChart responsive style={{ width: "100%", height: "100%" }} data={compileMix}>
-              <CartesianGrid strokeDasharray="3 3" vertical={false} />
-              <XAxis dataKey="label" />
-              <YAxis allowDecimals={false} />
+            <RadarChart responsive style={{ width: "100%", height: "100%" }} data={compileEvalData}>
+              <PolarGrid />
+              <PolarAngleAxis dataKey="axisLabel" />
+              <PolarRadiusAxis angle={90} domain={[0, 100]} tick={false} tickCount={6} />
               <Tooltip
-                formatter={(value, _name, item) => [
-                  `${value} (${item.payload.rate})`,
-                  item.payload.label,
-                ]}
+                formatter={(value, _name, item) => [item.payload.displayAverage, "avg score"]}
               />
               <Legend />
-              <Bar dataKey="count" name="runs">
-                {compileMix.map((item) => (
-                  <Cell key={item.label} fill={item.color} />
-                ))}
-              </Bar>
-            </BarChart>
+              <Radar
+                dataKey="average"
+                name="eval avg"
+                stroke="#06b6d4"
+                fill="#06b6d4"
+                fillOpacity={0.22}
+              />
+            </RadarChart>
           </div>
         </AdminChartCard>
       ) : null}
@@ -369,23 +331,6 @@ export function SystemHealthCharts({
               strokeWidth={2}
             />
           </ComposedChart>
-        </div>
-      </AdminChartCard>
-
-      <AdminChartCard title="Distillation Queue Status">
-        <div className="overview-chart-frame">
-          <BarChart responsive style={{ width: "100%", height: "100%" }} data={queueData}>
-            <CartesianGrid strokeDasharray="3 3" vertical={false} />
-            <XAxis dataKey="targetLabel" />
-            <YAxis allowDecimals={false} />
-            <Tooltip />
-            <Legend />
-            <Bar dataKey="pending" stackId="queue" name="pending" fill="#38bdf8" />
-            <Bar dataKey="running" stackId="queue" name="running" fill="#0284c7" />
-            <Bar dataKey="paused" stackId="queue" name="paused" fill="#94a3b8" />
-            <Bar dataKey="completed" stackId="queue" name="completed" fill="#10b981" />
-            <Bar dataKey="failed" stackId="queue" name="failed" fill="#ef4444" />
-          </BarChart>
         </div>
       </AdminChartCard>
     </div>

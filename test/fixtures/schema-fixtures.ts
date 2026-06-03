@@ -201,10 +201,6 @@ export const overviewDashboardValidInput = {
     vibeRecordsByDay: [{ day: "2026-05-20", records: 3 }],
     sourceCoverage: [{ label: "linked", count: 6 }],
     communitySourceCoverage: [{ label: "covered", count: 1 }],
-    distillationQueue: [
-      { targetKind: "wiki_file", pending: 4, running: 1, paused: 0, completed: 2, failed: 0 },
-      { targetKind: "vibe_memory", pending: 3, running: 0, paused: 1, completed: 1, failed: 1 },
-    ],
   },
   llmUsage: {
     kpis: {
@@ -259,6 +255,19 @@ export const overviewDashboardValidInput = {
     brave: { status: "cooldown", cooldownUntil: "2026-05-21T00:00:00.000Z", lastError: "429" },
     exa: { status: "ok", cooldownUntil: null, lastError: null },
   },
+  compileEvalStats: {
+    windowLabel: "All time",
+    evaluatedRunCount: 4,
+    evaluationCount: 5,
+    averageAvg: 82.4,
+    metrics: [
+      { metric: "relevance", label: "Relevance", average: 86 },
+      { metric: "actionability", label: "Actionability", average: 80 },
+      { metric: "coverage", label: "Coverage", average: 78 },
+      { metric: "clarity", label: "Clarity", average: 85 },
+      { metric: "specificity", label: "Specificity", average: 83 },
+    ],
+  },
   landscape: {
     status: "ok",
     windowDays: 30,
@@ -301,7 +310,6 @@ export const overviewDashboardUnavailableLandscapeInput = {
     vibeRecordsByDay: [],
     sourceCoverage: [],
     communitySourceCoverage: [],
-    distillationQueue: [],
   },
   llmUsage: {
     kpis: {
@@ -329,6 +337,19 @@ export const overviewDashboardUnavailableLandscapeInput = {
   searchApiStatus: {
     brave: { status: "ok", cooldownUntil: null, lastError: null },
     exa: { status: "ok", cooldownUntil: null, lastError: null },
+  },
+  compileEvalStats: {
+    windowLabel: "All time",
+    evaluatedRunCount: 0,
+    evaluationCount: 0,
+    averageAvg: null,
+    metrics: [
+      { metric: "relevance", label: "Relevance", average: null },
+      { metric: "actionability", label: "Actionability", average: null },
+      { metric: "coverage", label: "Coverage", average: null },
+      { metric: "clarity", label: "Clarity", average: null },
+      { metric: "specificity", label: "Specificity", average: null },
+    ],
   },
   landscape: {
     status: "unavailable",

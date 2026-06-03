@@ -591,14 +591,6 @@ export type OverviewDashboard = {
       label: "covered" | "thin" | "no-source";
       count: number;
     }>;
-    distillationQueue: Array<{
-      targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest";
-      pending: number;
-      running: number;
-      paused: number;
-      completed: number;
-      failed: number;
-    }>;
   };
   llmUsage: {
     kpis: {
@@ -656,6 +648,17 @@ export type OverviewDashboard = {
       cooldownUntil: string | null;
       lastError: string | null;
     };
+  };
+  compileEvalStats: {
+    windowLabel: string;
+    evaluatedRunCount: number;
+    evaluationCount: number;
+    averageAvg: number | null;
+    metrics: Array<{
+      metric: "relevance" | "actionability" | "coverage" | "clarity" | "specificity";
+      label: string;
+      average: number | null;
+    }>;
   };
   landscape:
     | {
@@ -749,7 +752,8 @@ export type OverviewSystemQualityDomain = {
     "compileRuns" | "compileOkRuns" | "compileDegradedRuns" | "compileFailedRuns"
   >;
   compileRunHealth: DoctorReport["runs"];
-  charts: Pick<OverviewDashboard["charts"], "compileRunsByDay" | "distillationQueue">;
+  compileEvalStats: OverviewDashboard["compileEvalStats"];
+  charts: Pick<OverviewDashboard["charts"], "compileRunsByDay">;
   searchApiStatus: OverviewDashboard["searchApiStatus"];
 };
 
