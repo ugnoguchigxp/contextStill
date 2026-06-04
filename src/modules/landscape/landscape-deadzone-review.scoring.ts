@@ -201,3 +201,62 @@ export function deriveDeadZoneReviewBadges(input: {
   if (badges.size === 0) badges.add("Niche but valid");
   return [...badges];
 }
+
+function indicatorWeight<T extends string>(value: T, weights: Record<T, number>): number {
+  return weights[value] ?? 0;
+}
+
+export function scoreDeadZoneRisk(input: {
+  evidenceStrength: DeadZoneEvidenceStrength;
+  usageStrength: DeadZoneUsageStrength;
+  structureQuality: DeadZoneStructureQuality;
+  graphHealth: DeadZoneGraphHealth;
+  badges: DeadZoneKnowledgeReviewBadge[];
+  similarActions: DeadZoneSuggestedAction[];
+  classificationPrimary: "dead_zone_reachability_risk" | "dead_zone_stale";
+  classificationConfidence: "low" | "medium" | "high";
+}): number {
+  const evidence = indicatorWeight(input.evidenceStrength, {
+    none: 28,
+    thin: 22,
+    moderate: 10,
+    strong: 0,
+  });
+  const usage = indicatorWeight(input.usageStrength, {
+    none: 24,
+    low: 16,
+    moderate: 6,
+    strong: 0,
+  });
+  const graph = indicatorWeight(input.graphHealth, {
+    orphan: 16,
+    thin: 10,
+    connected: 0,
+  });
+  const structure = indicatorWeight(input.structureQuality, {
+    weak: 8,
+    partial: 4,
+    strong: 0,
+  });
+  const action =
+    input.similarActions.includes("merge_into_similar") ||
+    input.similarActions.includes("likely_duplicate")
+      ? 12
+      : input.similarActions.includes("needs_evidence")
+        ? 8
+        : 0;
+  const embedding = input.badges.includes("Needs embedding") ? 6 : 0;
+  const classification = input.classificationPrimary === "dead_zone_reachability_risk" ? 8 : 4;
+  const confidence = indicatorWeight(input.classificationConfidence, {
+    low: 0,
+    medium: 3,
+    high: 6,
+  });
+  return Math.max(
+    0,
+    Math.min(
+      100,
+      evidence + usage + graph + structure + action + embedding + classification + confidence,
+    ),
+  );
+}

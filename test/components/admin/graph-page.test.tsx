@@ -6,8 +6,6 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { GraphPage } from "../../../web/src/modules/admin/components/graph.page";
 import {
   createLandscapeReviewCandidates,
-  type DeadZoneKnowledgeReviewResponse,
-  fetchDeadZoneKnowledgeReview,
   fetchGraphNodeDetail,
   fetchGraphSnapshot,
   fetchLandscapeContradictionOverlay,
@@ -40,73 +38,9 @@ class ResizeObserverMock {
 }
 global.ResizeObserver = ResizeObserverMock as any;
 
-const emptyDeadZoneKnowledgeReview: DeadZoneKnowledgeReviewResponse = {
-  generatedAt: "2026-05-24T00:00:00.000Z",
-  windowDays: 30,
-  minSimilarity: 0.9,
-  similarTopK: 5,
-  communityCount: 0,
-  itemCount: 0,
-  unavailableReason: null,
-  items: [],
-};
-
-const populatedDeadZoneKnowledgeReview: DeadZoneKnowledgeReviewResponse = {
-  ...emptyDeadZoneKnowledgeReview,
-  communityCount: 1,
-  itemCount: 1,
-  items: [
-    {
-      knowledge: {
-        id: "k-dead",
-        title: "DeadZone Procedure",
-        bodyPreview: "Use when a DeadZone item needs review.",
-        type: "procedure",
-        status: "active",
-        appliesTo: { domains: ["landscape"] },
-        confidence: 80,
-        importance: 75,
-        compileSelectCount: 0,
-        lastCompiledAt: null,
-        sourceRefCount: 0,
-        sourceRefDensity: 0,
-        communityKey: "a".repeat(64),
-        communityLabel: "Community A",
-      },
-      classification: {
-        primary: "dead_zone_stale",
-        confidence: "medium",
-        reason: "unused and thin evidence",
-      },
-      indicators: {
-        evidenceStrength: "thin",
-        usageStrength: "none",
-        structureQuality: "partial",
-        graphHealth: "thin",
-        badges: ["Evidence thin", "Stale"],
-      },
-      similarKnowledge: [
-        {
-          id: "k-active",
-          title: "Active Canonical Knowledge",
-          status: "active",
-          similarity: 0.94,
-          applicabilityMatch: "high",
-          evidenceStrength: "strong",
-          usageStrength: "moderate",
-          suggestedAction: "merge_into_similar",
-          reasons: ["applicability aligns", "similarity 94%"],
-        },
-      ],
-      reviewItemId: null,
-    },
-  ],
-};
-
 // Repositories API のモック
 vi.mock("../../../web/src/modules/admin/repositories/admin.repository", () => ({
   fetchGraphSnapshot: vi.fn(),
-  fetchDeadZoneKnowledgeReview: vi.fn(),
   fetchLandscapeSnapshot: vi.fn(),
   fetchLandscapeSnapshotCacheStatus: vi.fn(),
   fetchLandscapeReplayComparison: vi.fn(),
@@ -134,7 +68,6 @@ describe("GraphPage", () => {
     queryClient.clear();
     vi.clearAllMocks();
     vi.mocked(fetchLandscapeSnapshot).mockResolvedValue(mockLandscapeData);
-    vi.mocked(fetchDeadZoneKnowledgeReview).mockResolvedValue(emptyDeadZoneKnowledgeReview);
     vi.mocked(fetchLandscapeSnapshotCacheStatus).mockResolvedValue(
       mockLandscapeSnapshotCacheStatus,
     );
@@ -256,7 +189,6 @@ describe("GraphPage", () => {
     expect(fetchLandscapeReplaySnapshot).not.toHaveBeenCalled();
     expect(fetchLandscapeReplayComparison).not.toHaveBeenCalled();
     expect(fetchLandscapeReviewItems).not.toHaveBeenCalled();
-    expect(fetchDeadZoneKnowledgeReview).not.toHaveBeenCalled();
 
     const selects = screen.getAllByRole("combobox");
     const viewModeSelect = selects[1];
@@ -265,7 +197,6 @@ describe("GraphPage", () => {
     expect(fetchLandscapeReplaySnapshot).not.toHaveBeenCalled();
     expect(fetchLandscapeReplayComparison).not.toHaveBeenCalled();
     expect(fetchLandscapeReviewItems).not.toHaveBeenCalled();
-    expect(fetchDeadZoneKnowledgeReview).not.toHaveBeenCalled();
 
     fireEvent.change(viewModeSelect, { target: { value: "community" } });
     await waitFor(() => {
@@ -279,9 +210,6 @@ describe("GraphPage", () => {
     });
     await waitFor(() => {
       expect(fetchLandscapeReviewItems).toHaveBeenCalledTimes(1);
-    });
-    await waitFor(() => {
-      expect(fetchDeadZoneKnowledgeReview).toHaveBeenCalledTimes(1);
     });
   });
 
@@ -415,8 +343,6 @@ describe("GraphPage", () => {
       ],
       risks: [],
     });
-    vi.mocked(fetchDeadZoneKnowledgeReview).mockResolvedValue(populatedDeadZoneKnowledgeReview);
-
     render(
       <QueryClientProvider client={queryClient}>
         <GraphPage />
@@ -487,8 +413,6 @@ describe("GraphPage", () => {
     expect(screen.getAllByText("k-lost").length).toBeGreaterThan(0);
     expect(screen.getByText("Replay risky graph UI task")).toBeInTheDocument();
     expect(screen.getByText("Top Facet Risks")).toBeInTheDocument();
-    expect(screen.getByText("DeadZone Knowledge Review")).toBeInTheDocument();
-    expect(screen.getByText("DeadZone Procedure")).toBeInTheDocument();
     expect(screen.getAllByText("Strong Attractor").length).toBeGreaterThan(0);
   });
 

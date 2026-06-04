@@ -40,6 +40,7 @@ export const deadZoneSuggestedActionSchema = z.enum([
 export const deadZoneKnowledgeReviewQuerySchema = z.object({
   windowDays: z.coerce.number().int().min(1).max(180).default(30),
   limit: z.coerce.number().int().min(1).max(200).default(50),
+  page: z.coerce.number().int().min(1).default(1),
   status: landscapeStatusFilterSchema.default("active"),
   reason: deadZoneKnowledgeReviewReasonSchema.default("all"),
   minSimilarity: z.coerce.number().min(0).max(1).default(0.9),
@@ -58,6 +59,29 @@ export const deadZoneKnowledgeReviewQuerySchema = z.object({
   ),
   communityKey: z.string().trim().min(1).optional(),
   badge: z.union([deadZoneKnowledgeReviewBadgeSchema, z.literal("all")]).default("all"),
+  sortBy: z
+    .enum(["deadZoneScore", "compileSelectCount", "title", "similarity", "evidence", "usage"])
+    .default("deadZoneScore"),
+  sortDir: z.enum(["asc", "desc"]).default("desc"),
+});
+
+export const deadZoneKnowledgeMaintenanceActionSchema = z.enum([
+  "merge_deadzone_into_similar",
+  "merge_similar_into_deadzone",
+  "deprecate_deadzone",
+  "deprecate_similar",
+]);
+
+export const deadZoneKnowledgeMaintenanceInputSchema = z.object({
+  action: deadZoneKnowledgeMaintenanceActionSchema,
+  deadZoneKnowledgeId: z.string().trim().min(1),
+  similarKnowledgeId: z.string().trim().min(1).optional(),
+});
+
+export const deadZoneKnowledgeMaintenanceResultSchema = z.object({
+  action: deadZoneKnowledgeMaintenanceActionSchema,
+  keptKnowledgeId: z.string().nullable(),
+  deprecatedKnowledgeId: z.string(),
 });
 
 export const deadZoneKnowledgeSummarySchema = z.object({
@@ -78,6 +102,7 @@ export const deadZoneKnowledgeSummarySchema = z.object({
 });
 
 export const deadZoneKnowledgeIndicatorsSchema = z.object({
+  deadZoneScore: z.number().int().min(0).max(100),
   evidenceStrength: deadZoneEvidenceStrengthSchema,
   usageStrength: deadZoneUsageStrengthSchema,
   structureQuality: deadZoneStructureQualitySchema,
@@ -120,7 +145,16 @@ export const deadZoneKnowledgeReviewResponseSchema = z.object({
   items: z.array(deadZoneKnowledgeReviewItemSchema),
 });
 
-export type DeadZoneKnowledgeReviewQuery = z.infer<typeof deadZoneKnowledgeReviewQuerySchema>;
+export type DeadZoneKnowledgeReviewQuery = z.input<typeof deadZoneKnowledgeReviewQuerySchema>;
+export type DeadZoneKnowledgeMaintenanceAction = z.infer<
+  typeof deadZoneKnowledgeMaintenanceActionSchema
+>;
+export type DeadZoneKnowledgeMaintenanceInput = z.infer<
+  typeof deadZoneKnowledgeMaintenanceInputSchema
+>;
+export type DeadZoneKnowledgeMaintenanceResult = z.infer<
+  typeof deadZoneKnowledgeMaintenanceResultSchema
+>;
 export type DeadZoneKnowledgeReviewBadge = z.infer<typeof deadZoneKnowledgeReviewBadgeSchema>;
 export type DeadZoneEvidenceStrength = z.infer<typeof deadZoneEvidenceStrengthSchema>;
 export type DeadZoneUsageStrength = z.infer<typeof deadZoneUsageStrengthSchema>;

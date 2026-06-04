@@ -1066,6 +1066,20 @@ export type DeadZoneKnowledgeReviewReason =
   | "dead_zone_reachability_risk"
   | "dead_zone_stale";
 
+export type DeadZoneKnowledgeReviewSortBy =
+  | "deadZoneScore"
+  | "compileSelectCount"
+  | "title"
+  | "similarity"
+  | "evidence"
+  | "usage";
+
+export type DeadZoneKnowledgeMaintenanceAction =
+  | "merge_deadzone_into_similar"
+  | "merge_similar_into_deadzone"
+  | "deprecate_deadzone"
+  | "deprecate_similar";
+
 export type DeadZoneKnowledgeReviewItem = {
   knowledge: {
     id: string;
@@ -1089,6 +1103,7 @@ export type DeadZoneKnowledgeReviewItem = {
     reason: string;
   };
   indicators: {
+    deadZoneScore: number;
     evidenceStrength: "none" | "thin" | "moderate" | "strong";
     usageStrength: "none" | "low" | "moderate" | "strong";
     structureQuality: "weak" | "partial" | "strong";
@@ -1124,6 +1139,12 @@ export type DeadZoneKnowledgeReviewResponse = {
   itemCount: number;
   unavailableReason: string | null;
   items: DeadZoneKnowledgeReviewItem[];
+};
+
+export type DeadZoneKnowledgeMaintenanceResult = {
+  action: DeadZoneKnowledgeMaintenanceAction;
+  keptKnowledgeId: string | null;
+  deprecatedKnowledgeId: string;
 };
 
 export type LandscapeSnapshotCacheType =
@@ -2608,6 +2629,7 @@ export async function fetchLandscapeSnapshotCacheStatus(): Promise<LandscapeSnap
 export async function fetchDeadZoneKnowledgeReview(input?: {
   windowDays?: number;
   limit?: number;
+  page?: number;
   status?: GraphStatusFilter;
   reason?: DeadZoneKnowledgeReviewReason;
   minSimilarity?: number;
@@ -2615,15 +2637,20 @@ export async function fetchDeadZoneKnowledgeReview(input?: {
   relationAxes?: GraphRelationAxis[];
   communityKey?: string;
   badge?: DeadZoneKnowledgeReviewBadge | "all";
+  sortBy?: DeadZoneKnowledgeReviewSortBy;
+  sortDir?: "asc" | "desc";
 }): Promise<DeadZoneKnowledgeReviewResponse> {
   const params = new URLSearchParams();
   params.set("windowDays", String(input?.windowDays ?? 30));
   params.set("limit", String(input?.limit ?? 50));
+  params.set("page", String(input?.page ?? 1));
   params.set("status", input?.status ?? "active");
   params.set("reason", input?.reason ?? "all");
   params.set("minSimilarity", String(input?.minSimilarity ?? 0.9));
   params.set("similarTopK", String(input?.similarTopK ?? 5));
   params.set("badge", input?.badge ?? "all");
+  params.set("sortBy", input?.sortBy ?? "deadZoneScore");
+  params.set("sortDir", input?.sortDir ?? "desc");
   if (input?.relationAxes?.length) {
     params.set("relationAxes", input.relationAxes.join(","));
   } else {
@@ -2632,6 +2659,18 @@ export async function fetchDeadZoneKnowledgeReview(input?: {
   if (input?.communityKey) params.set("communityKey", input.communityKey);
   return getJson<DeadZoneKnowledgeReviewResponse>(
     `/api/graph/landscape/dead-zone-knowledge?${params.toString()}`,
+  );
+}
+
+export async function maintainDeadZoneKnowledge(input: {
+  action: DeadZoneKnowledgeMaintenanceAction;
+  deadZoneKnowledgeId: string;
+  similarKnowledgeId?: string;
+}): Promise<DeadZoneKnowledgeMaintenanceResult> {
+  return requestJson<DeadZoneKnowledgeMaintenanceResult>(
+    "/api/graph/landscape/dead-zone-knowledge/maintenance",
+    "POST",
+    input,
   );
 }
 

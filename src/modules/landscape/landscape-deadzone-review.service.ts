@@ -1,14 +1,22 @@
 import { buildGraphSnapshot } from "../../../api/modules/graph/graph.repository.js";
+import { updateKnowledgeItem } from "../../../api/modules/knowledge/knowledge.repository.js";
+import { inArray } from "drizzle-orm";
+import { db } from "../../db/index.js";
+import { knowledgeItems } from "../../db/schema.js";
 import {
+  type DeadZoneKnowledgeMaintenanceInput,
+  type DeadZoneKnowledgeMaintenanceResult,
   type DeadZoneKnowledgeReviewBadge,
   type DeadZoneKnowledgeReviewItem,
   type DeadZoneKnowledgeReviewQuery,
   type DeadZoneKnowledgeReviewResponse,
+  deadZoneKnowledgeReviewQuerySchema,
   deadZoneKnowledgeReviewResponseSchema,
 } from "../../shared/schemas/landscape-deadzone-review.schema.js";
 import type { LandscapeCommunity } from "./landscape.types.js";
 import {
   deriveDeadZoneReviewBadges,
+  scoreDeadZoneRisk,
   scoreApplicabilityMatch,
   scoreEvidenceStrength,
   scoreGraphHealth,
@@ -113,9 +121,103 @@ function evidenceById(
   );
 }
 
-export async function buildDeadZoneKnowledgeReview(
+function compareDirection(input: DeadZoneKnowledgeReviewQuery): 1 | -1 {
+  return input.sortDir === "asc" ? 1 : -1;
+}
+
+function strongestSimilarity(item: DeadZoneKnowledgeReviewItem): number {
+  return item.similarKnowledge[0]?.similarity ?? 0;
+}
+
+function strengthRank(value: string): number {
+  switch (value) {
+    case "none":
+      return 0;
+    case "thin":
+    case "low":
+      return 1;
+    case "moderate":
+      return 2;
+    case "strong":
+      return 3;
+    default:
+      return 0;
+  }
+}
+
+function sortDeadZoneReviewItems(
+  items: DeadZoneKnowledgeReviewItem[],
   input: DeadZoneKnowledgeReviewQuery,
+): DeadZoneKnowledgeReviewItem[] {
+  const direction = compareDirection(input);
+  return [...items].sort((left, right) => {
+    const primary = (() => {
+      switch (input.sortBy) {
+        case "compileSelectCount":
+          return left.knowledge.compileSelectCount - right.knowledge.compileSelectCount;
+        case "title":
+          return left.knowledge.title.localeCompare(right.knowledge.title);
+        case "similarity":
+          return strongestSimilarity(left) - strongestSimilarity(right);
+        case "evidence":
+          return (
+            strengthRank(left.indicators.evidenceStrength) -
+            strengthRank(right.indicators.evidenceStrength)
+          );
+        case "usage":
+          return (
+            strengthRank(left.indicators.usageStrength) -
+            strengthRank(right.indicators.usageStrength)
+          );
+        default:
+          return left.indicators.deadZoneScore - right.indicators.deadZoneScore;
+      }
+    })();
+    return (
+      primary * direction ||
+      right.indicators.deadZoneScore - left.indicators.deadZoneScore ||
+      left.knowledge.compileSelectCount - right.knowledge.compileSelectCount ||
+      left.knowledge.title.localeCompare(right.knowledge.title)
+    );
+  });
+}
+
+function requireSimilarId(input: DeadZoneKnowledgeMaintenanceInput): string {
+  if (!input.similarKnowledgeId) {
+    throw new DeadZoneKnowledgeMaintenanceError(400, "similarKnowledgeId is required");
+  }
+  return input.similarKnowledgeId;
+}
+
+function appendMergedKnowledgeBody(params: {
+  keptBody: string;
+  deprecatedTitle: string;
+  deprecatedBody: string;
+}): string {
+  return [
+    params.keptBody.trim(),
+    "",
+    "Merged DeadZone knowledge:",
+    `- Deprecated source: ${params.deprecatedTitle}`,
+    "",
+    params.deprecatedBody.trim(),
+  ].join("\n");
+}
+
+export class DeadZoneKnowledgeMaintenanceError extends Error {
+  readonly statusCode: number;
+
+  constructor(statusCode: number, message: string) {
+    super(message);
+    this.name = "DeadZoneKnowledgeMaintenanceError";
+    this.statusCode = statusCode;
+  }
+}
+
+export async function buildDeadZoneKnowledgeReview(
+  rawInput: DeadZoneKnowledgeReviewQuery,
 ): Promise<DeadZoneKnowledgeReviewResponse> {
+  const input = deadZoneKnowledgeReviewQuerySchema.parse(rawInput);
   const generatedAt = new Date().toISOString();
   const landscape = await buildLandscapeSnapshot({
     windowDays: input.windowDays,
@@ -185,13 +287,13 @@ export async function buildDeadZoneKnowledgeReview(
     candidatesByCommunityKey.set(community.communityKey, rows);
   }
 
-  const orderedCandidates = [...candidatesByCommunityKey.entries()]
-    .flatMap(([communityKey, rows]) => {
+  const orderedCandidates = [...candidatesByCommunityKey.entries()].flatMap(
+    ([communityKey, rows]) => {
       const community = deadCommunityByKey.get(communityKey);
       if (!community) return [];
       return rows.sort(sortCandidateRows).map((row) => ({ row, community }));
-    })
-    .slice(0, input.limit);
+    },
+  );
   const orderedIds = orderedCandidates.map((candidate) => candidate.row.id);
 
   const similarRows = await listSimilarKnowledgeRows({
@@ -277,6 +379,18 @@ export async function buildDeadZoneKnowledgeReview(
     });
     const allBadges: DeadZoneKnowledgeReviewBadge[] =
       row.embedded || similarKnowledge.length > 0 ? badges : [...badges, "Similarity unavailable"];
+    const deadZoneScore = scoreDeadZoneRisk({
+      evidenceStrength,
+      usageStrength,
+      structureQuality,
+      graphHealth,
+      badges: allBadges,
+      similarActions: similarKnowledge.map((similar) => similar.suggestedAction),
+      classificationPrimary: community.classification.primary as
+        | "dead_zone_reachability_risk"
+        | "dead_zone_stale",
+      classificationConfidence: community.classification.confidence,
+    });
 
     return {
       knowledge: knowledgeSummary({
@@ -293,6 +407,7 @@ export async function buildDeadZoneKnowledgeReview(
         reason: community.classification.reason,
       },
       indicators: {
+        deadZoneScore,
         evidenceStrength,
         usageStrength,
         structureQuality,
@@ -309,6 +424,8 @@ export async function buildDeadZoneKnowledgeReview(
     const badge: DeadZoneKnowledgeReviewBadge = input.badge;
     return items.filter((item) => item.indicators.badges.includes(badge));
   })();
+  const sortedItems = sortDeadZoneReviewItems(filteredItems, input);
+  const offset = (input.page - 1) * input.limit;
 
   return deadZoneKnowledgeReviewResponseSchema.parse({
     generatedAt,
@@ -318,6 +435,90 @@ export async function buildDeadZoneKnowledgeReview(
     communityCount: deadZoneCommunities.length,
     itemCount: filteredItems.length,
     unavailableReason: null,
-    items: filteredItems,
+    items: sortedItems.slice(offset, offset + input.limit),
   });
+}
+
+export async function maintainDeadZoneKnowledge(
+  input: DeadZoneKnowledgeMaintenanceInput,
+): Promise<DeadZoneKnowledgeMaintenanceResult> {
+  const similarKnowledgeId =
+    input.action === "merge_deadzone_into_similar" ||
+    input.action === "merge_similar_into_deadzone" ||
+    input.action === "deprecate_similar"
+      ? requireSimilarId(input)
+      : null;
+
+  const ids = [
+    ...new Set(
+      [input.deadZoneKnowledgeId, similarKnowledgeId].filter((id): id is string => Boolean(id)),
+    ),
+  ];
+  const rows = await db
+    .select({
+      id: knowledgeItems.id,
+      title: knowledgeItems.title,
+      body: knowledgeItems.body,
+      status: knowledgeItems.status,
+    })
+    .from(knowledgeItems)
+    .where(inArray(knowledgeItems.id, ids));
+  const rowById = new Map(rows.map((row) => [row.id, row]));
+  const deadZone = rowById.get(input.deadZoneKnowledgeId);
+  if (!deadZone) throw new DeadZoneKnowledgeMaintenanceError(404, "deadZone knowledge not found");
+  const similar = similarKnowledgeId ? rowById.get(similarKnowledgeId) : null;
+  if (similarKnowledgeId && !similar) {
+    throw new DeadZoneKnowledgeMaintenanceError(404, "similar knowledge not found");
+  }
+
+  if (input.action === "deprecate_deadzone") {
+    await updateKnowledgeItem(input.deadZoneKnowledgeId, { status: "deprecated" });
+    return {
+      action: input.action,
+      keptKnowledgeId: null,
+      deprecatedKnowledgeId: input.deadZoneKnowledgeId,
+    };
+  }
+
+  if (input.action === "deprecate_similar") {
+    if (!similarKnowledgeId) {
+      throw new DeadZoneKnowledgeMaintenanceError(400, "similarKnowledgeId is required");
+    }
+    await updateKnowledgeItem(similarKnowledgeId, { status: "deprecated" });
+    return {
+      action: input.action,
+      keptKnowledgeId: input.deadZoneKnowledgeId,
+      deprecatedKnowledgeId: similarKnowledgeId,
+    };
+  }
+
+  if (!similar) throw new DeadZoneKnowledgeMaintenanceError(400, "similarKnowledgeId is required");
+  const keep =
+    input.action === "merge_deadzone_into_similar"
+      ? similar
+      : input.action === "merge_similar_into_deadzone"
+        ? deadZone
+        : null;
+  const deprecate =
+    input.action === "merge_deadzone_into_similar"
+      ? deadZone
+      : input.action === "merge_similar_into_deadzone"
+        ? similar
+        : null;
+  if (!keep || !deprecate) throw new DeadZoneKnowledgeMaintenanceError(400, "unsupported action");
+
+  await updateKnowledgeItem(keep.id, {
+    body: appendMergedKnowledgeBody({
+      keptBody: keep.body,
+      deprecatedTitle: deprecate.title,
+      deprecatedBody: deprecate.body,
+    }),
+  });
+  await updateKnowledgeItem(deprecate.id, { status: "deprecated" });
+
+  return {
+    action: input.action,
+    keptKnowledgeId: keep.id,
+    deprecatedKnowledgeId: deprecate.id,
+  };
 }

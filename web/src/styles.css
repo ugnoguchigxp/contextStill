@@ -1836,6 +1836,219 @@
   flex-wrap: wrap;
 }
 
+.landscape-page {
+  display: flex;
+  min-height: calc(100vh - 56px);
+  flex-direction: column;
+  background: var(--background);
+}
+
+.landscape-toolbar {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  overflow-x: auto;
+  border-bottom: 1px solid var(--border);
+  padding: 0.75rem 1.5rem;
+}
+
+.landscape-toolbar-group {
+  display: flex;
+  min-width: max-content;
+  flex-wrap: nowrap;
+  gap: 0.75rem;
+}
+
+.landscape-toolbar label {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  min-width: 0;
+  color: var(--muted-foreground);
+  font-size: 0.75rem;
+  font-weight: 700;
+  text-transform: uppercase;
+  white-space: nowrap;
+}
+
+.landscape-toolbar label [data-slot="native-select"] {
+  width: 240px;
+  min-width: 240px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.landscape-content {
+  display: grid;
+  gap: 0.75rem;
+  min-width: 0;
+  padding: 1.25rem 1.5rem 2rem;
+}
+
+.landscape-content .graph-review-section,
+.landscape-content [data-slot="table-container"] {
+  min-width: 0;
+}
+
+.landscape-content .graph-review-section-header {
+  color: var(--muted-foreground);
+}
+
+.landscape-content .graph-review-section-header strong {
+  color: var(--foreground);
+}
+
+.landscape-content .graph-review-status-note {
+  color: var(--muted-foreground);
+}
+
+.landscape-list-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.landscape-list-header h2 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 1rem;
+  font-weight: 800;
+}
+
+.landscape-list-badges {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.landscape-action-error {
+  color: var(--destructive);
+  font-size: 0.75rem;
+  font-weight: 700;
+}
+
+.landscape-sort-dir {
+  color: var(--muted-foreground);
+  font-size: 0.62rem;
+  text-transform: uppercase;
+}
+
+.landscape-review-table {
+  min-width: 1120px;
+  table-layout: fixed;
+}
+
+.landscape-review-table th:nth-child(1),
+.landscape-review-table td:nth-child(1) {
+  width: 92px;
+}
+
+.landscape-review-table th:nth-child(2),
+.landscape-review-table td:nth-child(2) {
+  width: 30%;
+}
+
+.landscape-review-table th:nth-child(3),
+.landscape-review-table td:nth-child(3) {
+  width: 220px;
+}
+
+.landscape-review-table th:nth-child(5),
+.landscape-review-table td:nth-child(5) {
+  width: 96px;
+}
+
+.landscape-knowledge-cell,
+.landscape-signal-cell,
+.landscape-similar-group,
+.landscape-similar-item {
+  display: grid;
+  gap: 0.35rem;
+  min-width: 0;
+}
+
+.landscape-knowledge-cell strong,
+.landscape-similar-item strong {
+  color: var(--foreground);
+  font-size: 0.78rem;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.landscape-knowledge-cell small,
+.landscape-signal-cell small,
+.landscape-similar-item small,
+.landscape-table-muted {
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  line-height: 1.35;
+  white-space: normal;
+}
+
+.landscape-signal-cell,
+.landscape-similar-item-head {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.35rem;
+}
+
+.landscape-signal-cell small {
+  flex-basis: 100%;
+}
+
+.landscape-similar-group {
+  gap: 0.55rem;
+}
+
+.landscape-similar-item {
+  border-bottom: 1px solid var(--border);
+  padding-bottom: 0.45rem;
+}
+
+.landscape-similar-item:last-child {
+  border-bottom: 0;
+  padding-bottom: 0;
+}
+
+.landscape-similar-item-head span {
+  color: var(--muted-foreground);
+  font-size: 0.68rem;
+  font-weight: 700;
+}
+
+.landscape-row-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+
+.landscape-footer-actions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+@media (max-width: 640px) {
+  .landscape-toolbar {
+    padding: 0.75rem 1rem;
+  }
+
+  .landscape-toolbar label {
+    justify-content: flex-start;
+  }
+
+  .landscape-toolbar label [data-slot="native-select"] {
+    width: 220px;
+    min-width: 220px;
+  }
+
+  .landscape-content {
+    padding: 1rem;
+  }
+}
+
 .graph-trajectory-panel {
   display: flex;
   flex-direction: column;

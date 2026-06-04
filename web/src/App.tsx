@@ -94,6 +94,15 @@ const graphRoute = createRoute({
   component: lazyRouteComponent(() => import("./modules/admin/components/graph.page"), "GraphPage"),
 });
 
+const landscapeRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/landscape",
+  component: lazyRouteComponent(
+    () => import("./modules/admin/components/landscape.page"),
+    "LandscapePage",
+  ),
+});
+
 const doctorRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/doctor",
@@ -179,9 +188,10 @@ const settingsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   compileRoute,
-  knowledgeRoute,
   candidatesRoute,
   queueRoute,
+  knowledgeRoute,
+  landscapeRoute,
   graphRoute,
   vibeMemoryRoute,
   vibeNoteRoute,

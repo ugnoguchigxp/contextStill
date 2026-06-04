@@ -3,7 +3,11 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { buildLandscapeReplayComparison } from "../../../src/modules/landscape/landscape-replay-comparison.service.js";
 import { buildLandscapeReplaySnapshot } from "../../../src/modules/landscape/landscape-replay.service.js";
-import { buildDeadZoneKnowledgeReview } from "../../../src/modules/landscape/landscape-deadzone-review.service.js";
+import {
+  DeadZoneKnowledgeMaintenanceError,
+  buildDeadZoneKnowledgeReview,
+  maintainDeadZoneKnowledge,
+} from "../../../src/modules/landscape/landscape-deadzone-review.service.js";
 import {
   LandscapeReviewCandidateLinkError,
   createLandscapeReviewCandidates,
@@ -24,6 +28,8 @@ import {
   landscapeContradictionOverlayQuerySchema,
 } from "../../../src/shared/schemas/landscape-contradiction-overlay.schema.js";
 import {
+  deadZoneKnowledgeMaintenanceInputSchema,
+  deadZoneKnowledgeMaintenanceResultSchema,
   deadZoneKnowledgeReviewQuerySchema,
   deadZoneKnowledgeReviewResponseSchema,
 } from "../../../src/shared/schemas/landscape-deadzone-review.schema.js";
@@ -193,6 +199,22 @@ export const graphRouter = new Hono()
       const query = c.req.valid("query");
       const review = await buildDeadZoneKnowledgeReview(query);
       return c.json(deadZoneKnowledgeReviewResponseSchema.parse(review));
+    },
+  )
+  .post(
+    "/landscape/dead-zone-knowledge/maintenance",
+    zValidator("json", deadZoneKnowledgeMaintenanceInputSchema),
+    async (c) => {
+      try {
+        const result = await maintainDeadZoneKnowledge(c.req.valid("json"));
+        return c.json(deadZoneKnowledgeMaintenanceResultSchema.parse(result));
+      } catch (error) {
+        if (error instanceof DeadZoneKnowledgeMaintenanceError) {
+          const status = error.statusCode === 404 ? 404 : 400;
+          return c.json({ error: error.message }, status);
+        }
+        throw error;
+      }
     },
   )
   .get("/landscape/replay", zValidator("query", landscapeReplayQuerySchema), async (c) => {

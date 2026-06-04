@@ -32,6 +32,7 @@ const {
   materializeLandscapeReviewItemsMock,
   updateLandscapeReviewItemStatusMock,
   buildDeadZoneKnowledgeReviewMock,
+  maintainDeadZoneKnowledgeMock,
   LandscapeReviewCandidateLinkErrorMock,
   LandscapeReviewItemsErrorMock,
 } = vi.hoisted(() => ({
@@ -47,6 +48,7 @@ const {
   materializeLandscapeReviewItemsMock: vi.fn(),
   updateLandscapeReviewItemStatusMock: vi.fn(),
   buildDeadZoneKnowledgeReviewMock: vi.fn(),
+  maintainDeadZoneKnowledgeMock: vi.fn(),
   LandscapeReviewCandidateLinkErrorMock: class LandscapeReviewCandidateLinkErrorMock extends Error {
     readonly statusCode: number;
 
@@ -76,7 +78,16 @@ vi.mock("../src/modules/landscape/landscape-replay.service.js", () => ({
 }));
 
 vi.mock("../src/modules/landscape/landscape-deadzone-review.service.js", () => ({
+  DeadZoneKnowledgeMaintenanceError: class DeadZoneKnowledgeMaintenanceErrorMock extends Error {
+    readonly statusCode: number;
+
+    constructor(statusCode: number, message: string) {
+      super(message);
+      this.statusCode = statusCode;
+    }
+  },
   buildDeadZoneKnowledgeReview: buildDeadZoneKnowledgeReviewMock,
+  maintainDeadZoneKnowledge: maintainDeadZoneKnowledgeMock,
 }));
 
 vi.mock("../src/modules/landscape/landscape.service.js", () => ({
@@ -153,6 +164,7 @@ function validDeadZoneReview(): DeadZoneKnowledgeReviewResponse {
           reason: "unused and thin evidence",
         },
         indicators: {
+          deadZoneScore: 82,
           evidenceStrength: "thin",
           usageStrength: "none",
           structureQuality: "partial",
@@ -186,6 +198,11 @@ describe("graph routes landscape", () => {
     buildLandscapeReplaySnapshotMock.mockResolvedValue(validReplaySnapshot());
     buildLandscapeReplayComparisonMock.mockResolvedValue(validReplayComparison());
     buildDeadZoneKnowledgeReviewMock.mockResolvedValue(validDeadZoneReview());
+    maintainDeadZoneKnowledgeMock.mockResolvedValue({
+      action: "deprecate_deadzone",
+      keptKnowledgeId: null,
+      deprecatedKnowledgeId: "knowledge-dead-1",
+    });
     buildLandscapeTrajectoryMock.mockResolvedValue(validTrajectory());
     materializeLandscapeReviewItemsMock.mockResolvedValue({
       dryRun: true,
@@ -438,12 +455,37 @@ describe("graph routes landscape", () => {
     expect(buildDeadZoneKnowledgeReviewMock).toHaveBeenCalledWith({
       windowDays: 30,
       limit: 50,
+      page: 1,
       status: "active",
       reason: "all",
       minSimilarity: 0.9,
       similarTopK: 5,
       relationAxes: ["session", "project", "source"],
       badge: "all",
+      sortBy: "deadZoneScore",
+      sortDir: "desc",
+    });
+  });
+
+  test("POST /api/graph/landscape/dead-zone-knowledge/maintenance runs maintenance action", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/graph/landscape/dead-zone-knowledge/maintenance", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "deprecate_deadzone",
+        deadZoneKnowledgeId: "knowledge-dead-1",
+      }),
+    });
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({
+      action: "deprecate_deadzone",
+      keptKnowledgeId: null,
+      deprecatedKnowledgeId: "knowledge-dead-1",
+    });
+    expect(maintainDeadZoneKnowledgeMock).toHaveBeenCalledWith({
+      action: "deprecate_deadzone",
+      deadZoneKnowledgeId: "knowledge-dead-1",
     });
   });
 
