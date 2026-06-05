@@ -43,6 +43,16 @@ export type DeadZoneReviewItemLinkRow = {
   reviewItemId: string;
 };
 
+export type DeadZoneReviewDecisionRecordInput = {
+  reviewItemId?: string | null;
+  deadZoneKnowledgeId: string;
+  canonicalKnowledgeId?: string | null;
+  action: string;
+  note?: string | null;
+  status: "recorded" | "applied";
+  message: string;
+};
+
 function asNumber(value: unknown, fallback = 0): number {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
@@ -325,4 +335,82 @@ export async function listDeadZoneReviewItemLinks(
   return rows
     .filter((row): row is typeof row & { knowledgeId: string } => Boolean(row.knowledgeId))
     .map((row) => ({ knowledgeId: row.knowledgeId, reviewItemId: row.reviewItemId }));
+}
+
+function deadZoneDecisionPayload(input: DeadZoneReviewDecisionRecordInput, decidedAt: Date) {
+  return {
+    decision: {
+      action: input.action,
+      note: input.note ?? null,
+      status: input.status,
+      message: input.message,
+      decidedAt: decidedAt.toISOString(),
+    },
+    deadZoneKnowledgeId: input.deadZoneKnowledgeId,
+    canonicalKnowledgeId: input.canonicalKnowledgeId ?? null,
+  };
+}
+
+function deadZoneDecisionIdempotencyKey(input: DeadZoneReviewDecisionRecordInput): string {
+  return [
+    "dead-zone-decision",
+    input.deadZoneKnowledgeId,
+    input.canonicalKnowledgeId ?? "none",
+    input.action,
+  ].join(":");
+}
+
+export async function recordDeadZoneReviewDecision(
+  input: DeadZoneReviewDecisionRecordInput,
+): Promise<string> {
+  const now = new Date();
+  const payload = deadZoneDecisionPayload(input, now);
+  const note = input.note?.trim() ? input.note.trim() : input.message;
+
+  if (input.reviewItemId) {
+    const [updated] = await db
+      .update(landscapeReviewItems)
+      .set({
+        status: "resolved",
+        note,
+        resolvedAt: now,
+        updatedAt: now,
+        payload: sql`${landscapeReviewItems.payload} || ${JSON.stringify(payload)}::jsonb` as never,
+      })
+      .where(eq(landscapeReviewItems.id, input.reviewItemId))
+      .returning({ id: landscapeReviewItems.id });
+    if (updated) return updated.id;
+  }
+
+  const [row] = await db
+    .insert(landscapeReviewItems)
+    .values({
+      source: "landscape_snapshot",
+      reason: "dead_zone_reachability_risk",
+      status: "resolved",
+      proposedAction: "review_only",
+      priority: 50,
+      confidence: "low",
+      idempotencyKey: deadZoneDecisionIdempotencyKey(input),
+      knowledgeId: input.deadZoneKnowledgeId,
+      suggestedAppliesTo: {},
+      evidence: [],
+      payload,
+      note,
+      resolvedAt: now,
+      updatedAt: now,
+    })
+    .onConflictDoUpdate({
+      target: landscapeReviewItems.idempotencyKey,
+      set: {
+        status: "resolved",
+        note,
+        resolvedAt: now,
+        updatedAt: now,
+        payload: sql`${landscapeReviewItems.payload} || ${JSON.stringify(payload)}::jsonb` as never,
+      },
+    })
+    .returning({ id: landscapeReviewItems.id });
+
+  return row.id;
 }

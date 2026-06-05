@@ -1,6 +1,7 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
+  deadZoneKnowledgeReviewActionResultSchema,
   deadZoneKnowledgeReviewResponseSchema,
   type DeadZoneKnowledgeReviewResponse,
 } from "../src/shared/schemas/landscape-deadzone-review.schema.js";
@@ -32,6 +33,7 @@ const {
   materializeLandscapeReviewItemsMock,
   updateLandscapeReviewItemStatusMock,
   buildDeadZoneKnowledgeReviewMock,
+  applyDeadZoneKnowledgeReviewActionMock,
   maintainDeadZoneKnowledgeMock,
   LandscapeReviewCandidateLinkErrorMock,
   LandscapeReviewItemsErrorMock,
@@ -48,6 +50,7 @@ const {
   materializeLandscapeReviewItemsMock: vi.fn(),
   updateLandscapeReviewItemStatusMock: vi.fn(),
   buildDeadZoneKnowledgeReviewMock: vi.fn(),
+  applyDeadZoneKnowledgeReviewActionMock: vi.fn(),
   maintainDeadZoneKnowledgeMock: vi.fn(),
   LandscapeReviewCandidateLinkErrorMock: class LandscapeReviewCandidateLinkErrorMock extends Error {
     readonly statusCode: number;
@@ -87,6 +90,7 @@ vi.mock("../src/modules/landscape/landscape-deadzone-review.service.js", () => (
     }
   },
   buildDeadZoneKnowledgeReview: buildDeadZoneKnowledgeReviewMock,
+  applyDeadZoneKnowledgeReviewAction: applyDeadZoneKnowledgeReviewActionMock,
   maintainDeadZoneKnowledge: maintainDeadZoneKnowledgeMock,
 }));
 
@@ -171,6 +175,30 @@ function validDeadZoneReview(): DeadZoneKnowledgeReviewResponse {
           graphHealth: "thin",
           badges: ["Evidence thin", "Stale"],
         },
+        bestCanonicalCandidate: {
+          id: "knowledge-active-1",
+          title: "Active canonical knowledge",
+          status: "active",
+          similarity: 0.94,
+          applicabilityMatch: "high",
+          evidenceStrength: "strong",
+          usageStrength: "moderate",
+          suggestedAction: "merge_into_similar",
+          reasons: ["applicability aligns", "similarity 94%"],
+        },
+        alternativeCandidates: [],
+        recommendation: {
+          action: "merge_deadzone_into_canonical",
+          confidence: "high",
+          reasons: ["applicability aligns", "similarity 94%"],
+          blockers: [],
+        },
+        allowedActions: [
+          "keep_separate",
+          "needs_evidence",
+          "merge_deadzone_into_canonical",
+          "deprecate_deadzone",
+        ],
         similarKnowledge: [
           {
             id: "knowledge-active-1",
@@ -201,6 +229,12 @@ describe("graph routes landscape", () => {
     maintainDeadZoneKnowledgeMock.mockResolvedValue({
       action: "deprecate_deadzone",
       keptKnowledgeId: null,
+      deprecatedKnowledgeId: "knowledge-dead-1",
+    });
+    applyDeadZoneKnowledgeReviewActionMock.mockResolvedValue({
+      action: "deprecate_deadzone",
+      status: "applied",
+      message: 'Deprecated DeadZone "DeadZone procedure".',
       deprecatedKnowledgeId: "knowledge-dead-1",
     });
     buildLandscapeTrajectoryMock.mockResolvedValue(validTrajectory());
@@ -484,6 +518,31 @@ describe("graph routes landscape", () => {
       deprecatedKnowledgeId: "knowledge-dead-1",
     });
     expect(maintainDeadZoneKnowledgeMock).toHaveBeenCalledWith({
+      action: "deprecate_deadzone",
+      deadZoneKnowledgeId: "knowledge-dead-1",
+    });
+  });
+
+  test("POST /api/graph/landscape/dead-zone-knowledge/actions runs review action", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/graph/landscape/dead-zone-knowledge/actions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        action: "deprecate_deadzone",
+        deadZoneKnowledgeId: "knowledge-dead-1",
+      }),
+    });
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(deadZoneKnowledgeReviewActionResultSchema.safeParse(json).success).toBe(true);
+    expect(json).toEqual({
+      action: "deprecate_deadzone",
+      status: "applied",
+      message: 'Deprecated DeadZone "DeadZone procedure".',
+      deprecatedKnowledgeId: "knowledge-dead-1",
+    });
+    expect(applyDeadZoneKnowledgeReviewActionMock).toHaveBeenCalledWith({
       action: "deprecate_deadzone",
       deadZoneKnowledgeId: "knowledge-dead-1",
     });

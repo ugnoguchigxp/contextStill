@@ -9,15 +9,16 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { type ColumnDef, flexRender, getCoreRowModel, useReactTable } from "@tanstack/react-table";
-import { Archive, ArrowLeft, ArrowRight, ChevronsUpDown } from "lucide-react";
+import { Archive, ChevronsUpDown, FileWarning, GitMerge, ShieldCheck, Star } from "lucide-react";
 import { useMemo } from "react";
 import type {
-  DeadZoneKnowledgeMaintenanceAction,
   DeadZoneKnowledgeReviewBadge,
   DeadZoneKnowledgeReviewItem,
   DeadZoneKnowledgeReviewReason,
   DeadZoneKnowledgeReviewResponse,
   DeadZoneKnowledgeReviewSortBy,
+  DeadZoneRecommendationAction,
+  DeadZoneSimilarKnowledge,
 } from "../repositories/admin.repository";
 
 type DeadZoneReviewPanelProps = {
@@ -27,10 +28,12 @@ type DeadZoneReviewPanelProps = {
   sortBy: DeadZoneKnowledgeReviewSortBy;
   sortDir: "asc" | "desc";
   onSortChange: (sortBy: DeadZoneKnowledgeReviewSortBy) => void;
-  onMaintenanceAction: (input: {
-    action: DeadZoneKnowledgeMaintenanceAction;
+  sortDisabled?: boolean;
+  onReviewAction: (input: {
+    action: DeadZoneRecommendationAction;
     deadZoneKnowledgeId: string;
-    similarKnowledgeId?: string;
+    canonicalKnowledgeId?: string;
+    reviewItemId?: string;
   }) => void;
   actionPending: boolean;
 };
@@ -44,37 +47,6 @@ function reasonLabel(value: DeadZoneKnowledgeReviewReason): string {
     default:
       return "DeadZone";
   }
-}
-
-function actionLabel(
-  value: DeadZoneKnowledgeReviewItem["similarKnowledge"][number]["suggestedAction"],
-) {
-  switch (value) {
-    case "merge_into_similar":
-      return "Merge target";
-    case "deadzone_is_canonical":
-      return "DeadZone canonical";
-    case "likely_duplicate":
-      return "Likely duplicate";
-    case "scope_differs":
-      return "Scope differs";
-    case "needs_evidence":
-      return "Needs evidence";
-    default:
-      return "Keep separate";
-  }
-}
-
-function actionClass(
-  value: DeadZoneKnowledgeReviewItem["similarKnowledge"][number]["suggestedAction"],
-) {
-  if (value === "merge_into_similar" || value === "likely_duplicate") {
-    return "border-amber-300 bg-amber-50 text-amber-800";
-  }
-  if (value === "deadzone_is_canonical") return "border-emerald-300 bg-emerald-50 text-emerald-800";
-  if (value === "scope_differs") return "border-sky-300 bg-sky-50 text-sky-800";
-  if (value === "needs_evidence") return "border-rose-300 bg-rose-50 text-rose-800";
-  return "border-slate-300 bg-slate-50 text-slate-700";
 }
 
 function badgeClass(value: DeadZoneKnowledgeReviewBadge): string {
@@ -101,6 +73,7 @@ function SortHeader(props: {
   activeSortBy: DeadZoneKnowledgeReviewSortBy;
   sortDir: "asc" | "desc";
   onSortChange: (sortBy: DeadZoneKnowledgeReviewSortBy) => void;
+  disabled?: boolean;
 }) {
   const isActive = props.activeSortBy === props.sortKey;
   return (
@@ -109,6 +82,7 @@ function SortHeader(props: {
       variant="ghost"
       size="sm"
       className="h-7 px-1 text-xs font-semibold"
+      disabled={props.disabled}
       onClick={() => props.onSortChange(props.sortKey)}
     >
       {props.label}
@@ -122,104 +96,151 @@ function confirmMaintenance(message: string, action: () => void) {
   if (window.confirm(message)) action();
 }
 
-function SimilarGroupCell({
+function recommendationLabel(value: DeadZoneRecommendationAction): string {
+  switch (value) {
+    case "merge_deadzone_into_canonical":
+      return "Merge into canonical";
+    case "deprecate_deadzone":
+      return "Deprecate DeadZone";
+    case "keep_separate":
+      return "Keep separate";
+    case "promote_deadzone":
+      return "Promote DeadZone";
+    case "needs_evidence":
+      return "Needs evidence";
+  }
+}
+
+function recommendationClass(value: DeadZoneRecommendationAction): string {
+  if (value === "merge_deadzone_into_canonical") {
+    return "border-amber-300 bg-amber-50 text-amber-800";
+  }
+  if (value === "promote_deadzone" || value === "keep_separate") {
+    return "border-emerald-300 bg-emerald-50 text-emerald-800";
+  }
+  if (value === "deprecate_deadzone") return "border-orange-300 bg-orange-50 text-orange-800";
+  return "border-rose-300 bg-rose-50 text-rose-800";
+}
+
+function CandidateSummary({ candidate }: { candidate: DeadZoneSimilarKnowledge | null }) {
+  if (!candidate) {
+    return <span className="landscape-table-muted">No reliable canonical candidate</span>;
+  }
+  return (
+    <div className="landscape-candidate-cell">
+      <div className="landscape-candidate-head">
+        <Badge variant="outline" className="h-5 border-slate-300 bg-slate-50 text-[11px]">
+          {percent(candidate.similarity)}
+        </Badge>
+        <span>scope {candidate.applicabilityMatch}</span>
+      </div>
+      <strong>{candidate.title}</strong>
+      <small>
+        evidence {candidate.evidenceStrength} / usage {candidate.usageStrength}
+      </small>
+      <small>{candidate.reasons.slice(0, 3).join(" / ")}</small>
+    </div>
+  );
+}
+
+function RecommendationCell({ item }: { item: DeadZoneKnowledgeReviewItem }) {
+  return (
+    <div className="landscape-recommendation-cell">
+      <Badge
+        variant="outline"
+        className={`h-5 text-[11px] ${recommendationClass(item.recommendation.action)}`}
+      >
+        {recommendationLabel(item.recommendation.action)}
+      </Badge>
+      <small>confidence {item.recommendation.confidence}</small>
+      {item.recommendation.reasons.slice(0, 3).map((reason) => (
+        <small key={`${item.knowledge.id}:reason:${reason}`}>{reason}</small>
+      ))}
+      {item.recommendation.blockers.length > 0 ? (
+        <small className="landscape-blocker-text">
+          blockers {item.recommendation.blockers.join(" / ")}
+        </small>
+      ) : null}
+    </div>
+  );
+}
+
+function actionIcon(value: DeadZoneRecommendationAction) {
+  switch (value) {
+    case "merge_deadzone_into_canonical":
+      return <GitMerge size={14} />;
+    case "deprecate_deadzone":
+      return <Archive size={14} />;
+    case "keep_separate":
+      return <ShieldCheck size={14} />;
+    case "promote_deadzone":
+      return <Star size={14} />;
+    case "needs_evidence":
+      return <FileWarning size={14} />;
+  }
+}
+
+function DecisionCell({
   item,
   actionPending,
-  onMaintenanceAction,
+  onReviewAction,
 }: {
   item: DeadZoneKnowledgeReviewItem;
   actionPending: boolean;
-  onMaintenanceAction: DeadZoneReviewPanelProps["onMaintenanceAction"];
+  onReviewAction: DeadZoneReviewPanelProps["onReviewAction"];
 }) {
-  if (item.similarKnowledge.length === 0) {
-    return <span className="landscape-table-muted">No close active knowledge</span>;
-  }
+  const orderedActions = [
+    item.recommendation.action,
+    "keep_separate",
+    "needs_evidence",
+    "deprecate_deadzone",
+  ].filter(
+    (action, index, values): action is DeadZoneRecommendationAction =>
+      item.allowedActions.includes(action as DeadZoneRecommendationAction) &&
+      values.indexOf(action) === index,
+  );
+
   return (
-    <div className="landscape-similar-group">
-      {item.similarKnowledge.slice(0, 4).map((similar) => (
-        <div key={`${item.knowledge.id}:${similar.id}`} className="landscape-similar-item">
-          <div className="landscape-similar-item-head">
-            <Badge
-              variant="outline"
-              className={`h-5 text-[11px] ${actionClass(similar.suggestedAction)}`}
-            >
-              {actionLabel(similar.suggestedAction)}
-            </Badge>
-            <span>{percent(similar.similarity)}</span>
-            <span>scope {similar.applicabilityMatch}</span>
-          </div>
-          <strong>{similar.title}</strong>
-          <small>
-            evidence {similar.evidenceStrength} / usage {similar.usageStrength}
-          </small>
-          <small>{similar.reasons.slice(0, 3).join(" / ")}</small>
-          <div className="landscape-row-actions">
-            <Button
-              type="button"
-              size="icon"
-              variant="outline"
-              className="h-7 w-7"
-              title="Merge DeadZone into similar knowledge"
-              aria-label={`Merge ${item.knowledge.title} into ${similar.title}`}
-              disabled={actionPending}
-              onClick={() =>
-                confirmMaintenance(
-                  `Merge "${item.knowledge.title}" into "${similar.title}" and deprecate the DeadZone item?`,
-                  () =>
-                    onMaintenanceAction({
-                      action: "merge_deadzone_into_similar",
-                      deadZoneKnowledgeId: item.knowledge.id,
-                      similarKnowledgeId: similar.id,
-                    }),
-                )
-              }
-            >
-              <ArrowRight size={14} />
-            </Button>
-            <Button
-              type="button"
-              size="icon"
-              variant="outline"
-              className="h-7 w-7"
-              title="Merge similar knowledge into DeadZone item"
-              aria-label={`Merge ${similar.title} into ${item.knowledge.title}`}
-              disabled={actionPending}
-              onClick={() =>
-                confirmMaintenance(
-                  `Merge "${similar.title}" into "${item.knowledge.title}" and deprecate the similar item?`,
-                  () =>
-                    onMaintenanceAction({
-                      action: "merge_similar_into_deadzone",
-                      deadZoneKnowledgeId: item.knowledge.id,
-                      similarKnowledgeId: similar.id,
-                    }),
-                )
-              }
-            >
-              <ArrowLeft size={14} />
-            </Button>
-            <Button
-              type="button"
-              size="icon"
-              variant="outline"
-              className="h-7 w-7 border-orange-200 text-orange-700 hover:bg-orange-50"
-              title="Deprecate similar knowledge"
-              aria-label={`Deprecate ${similar.title}`}
-              disabled={actionPending}
-              onClick={() =>
-                confirmMaintenance(`Deprecate similar knowledge "${similar.title}"?`, () =>
-                  onMaintenanceAction({
-                    action: "deprecate_similar",
-                    deadZoneKnowledgeId: item.knowledge.id,
-                    similarKnowledgeId: similar.id,
-                  }),
-                )
-              }
-            >
-              <Archive size={14} />
-            </Button>
-          </div>
-        </div>
+    <div className="landscape-row-actions">
+      {orderedActions.map((action) => (
+        <Button
+          key={`${item.knowledge.id}:${action}`}
+          type="button"
+          variant={action === item.recommendation.action ? "default" : "outline"}
+          className="landscape-action-button"
+          aria-label={`${recommendationLabel(action)} for ${item.knowledge.title}`}
+          disabled={
+            actionPending ||
+            (action === "merge_deadzone_into_canonical" && !item.bestCanonicalCandidate)
+          }
+          onClick={() => {
+            const run = () =>
+              onReviewAction({
+                action,
+                deadZoneKnowledgeId: item.knowledge.id,
+                canonicalKnowledgeId:
+                  action === "merge_deadzone_into_canonical"
+                    ? item.bestCanonicalCandidate?.id
+                    : undefined,
+                reviewItemId: item.reviewItemId ?? undefined,
+              });
+            if (action === "merge_deadzone_into_canonical") {
+              confirmMaintenance(
+                `Merge "${item.knowledge.title}" into canonical "${item.bestCanonicalCandidate?.title}" and deprecate the DeadZone item?`,
+                run,
+              );
+              return;
+            }
+            if (action === "deprecate_deadzone") {
+              confirmMaintenance(`Deprecate DeadZone knowledge "${item.knowledge.title}"?`, run);
+              return;
+            }
+            run();
+          }}
+        >
+          {actionIcon(action)}
+          <span>{recommendationLabel(action)}</span>
+        </Button>
       ))}
     </div>
   );
@@ -239,6 +260,7 @@ export function DeadZoneReviewPanel(props: DeadZoneReviewPanelProps) {
             activeSortBy={props.sortBy}
             sortDir={props.sortDir}
             onSortChange={props.onSortChange}
+            disabled={props.sortDisabled}
           />
         ),
         cell: ({ row }) => (
@@ -259,6 +281,7 @@ export function DeadZoneReviewPanel(props: DeadZoneReviewPanelProps) {
             activeSortBy={props.sortBy}
             sortDir={props.sortDir}
             onSortChange={props.onSortChange}
+            disabled={props.sortDisabled}
           />
         ),
         cell: ({ row }) => (
@@ -283,6 +306,7 @@ export function DeadZoneReviewPanel(props: DeadZoneReviewPanelProps) {
             activeSortBy={props.sortBy}
             sortDir={props.sortDir}
             onSortChange={props.onSortChange}
+            disabled={props.sortDisabled}
           />
         ),
         cell: ({ row }) => (
@@ -310,58 +334,43 @@ export function DeadZoneReviewPanel(props: DeadZoneReviewPanelProps) {
         ),
       },
       {
-        id: "similar",
+        id: "candidate",
         header: () => (
           <SortHeader
-            label="Similar Group"
+            label="Best Candidate"
             sortKey="similarity"
             activeSortBy={props.sortBy}
             sortDir={props.sortDir}
             onSortChange={props.onSortChange}
+            disabled={props.sortDisabled}
           />
         ),
-        cell: ({ row }) => (
-          <SimilarGroupCell
-            item={row.original}
-            actionPending={props.actionPending}
-            onMaintenanceAction={props.onMaintenanceAction}
-          />
-        ),
+        cell: ({ row }) => <CandidateSummary candidate={row.original.bestCanonicalCandidate} />,
       },
       {
-        id: "actions",
-        header: "Actions",
+        id: "recommendation",
+        header: "Recommendation",
+        cell: ({ row }) => <RecommendationCell item={row.original} />,
+      },
+      {
+        id: "decision",
+        header: "Decision",
         cell: ({ row }) => (
-          <Button
-            type="button"
-            size="icon"
-            variant="outline"
-            className="h-7 w-7 border-orange-200 text-orange-700 hover:bg-orange-50"
-            title="Deprecate DeadZone knowledge"
-            aria-label={`Deprecate ${row.original.knowledge.title}`}
-            disabled={props.actionPending}
-            onClick={() =>
-              confirmMaintenance(
-                `Deprecate DeadZone knowledge "${row.original.knowledge.title}"?`,
-                () =>
-                  props.onMaintenanceAction({
-                    action: "deprecate_deadzone",
-                    deadZoneKnowledgeId: row.original.knowledge.id,
-                  }),
-              )
-            }
-          >
-            <Archive size={14} />
-          </Button>
+          <DecisionCell
+            item={row.original}
+            actionPending={props.actionPending}
+            onReviewAction={props.onReviewAction}
+          />
         ),
       },
     ],
     [
       props.actionPending,
-      props.onMaintenanceAction,
+      props.onReviewAction,
       props.onSortChange,
       props.sortBy,
       props.sortDir,
+      props.sortDisabled,
     ],
   );
 

@@ -32,6 +32,7 @@ type AdminPaginationFooterProps = {
   keyPrefix: string;
   previousAriaLabel?: string;
   nextAriaLabel?: string;
+  disabled?: boolean;
 };
 
 export function AdminPaginationFooter({
@@ -46,6 +47,7 @@ export function AdminPaginationFooter({
   keyPrefix,
   previousAriaLabel = "Previous page",
   nextAriaLabel = "Next page",
+  disabled = false,
 }: AdminPaginationFooterProps) {
   const pageNumbers = visiblePageNumbers(currentPage, totalPages);
 
@@ -66,7 +68,7 @@ export function AdminPaginationFooter({
           variant="outline"
           size="sm"
           className="h-7 gap-1 px-2"
-          disabled={!canPreviousPage}
+          disabled={disabled || !canPreviousPage}
           onClick={onPreviousPage}
           aria-label={previousAriaLabel}
         >
@@ -92,6 +94,7 @@ export function AdminPaginationFooter({
                     ? "bg-primary font-bold text-primary-foreground"
                     : "text-muted-foreground hover:bg-muted"
                 }`}
+                disabled={disabled}
                 onClick={() => onPageSelect(pageNumber)}
                 aria-current={currentPage === pageNumber ? "page" : undefined}
               >
@@ -104,7 +107,7 @@ export function AdminPaginationFooter({
           variant="outline"
           size="sm"
           className="h-7 gap-1 px-2"
-          disabled={!canNextPage}
+          disabled={disabled || !canNextPage}
           onClick={onNextPage}
           aria-label={nextAriaLabel}
         >

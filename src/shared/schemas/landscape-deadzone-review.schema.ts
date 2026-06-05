@@ -37,6 +37,21 @@ export const deadZoneSuggestedActionSchema = z.enum([
   "keep_separate",
 ]);
 
+export const deadZoneRecommendationActionSchema = z.enum([
+  "merge_deadzone_into_canonical",
+  "deprecate_deadzone",
+  "keep_separate",
+  "promote_deadzone",
+  "needs_evidence",
+]);
+
+export const deadZoneReviewRecommendationSchema = z.object({
+  action: deadZoneRecommendationActionSchema,
+  confidence: z.enum(["low", "medium", "high"]),
+  reasons: z.array(z.string()),
+  blockers: z.array(z.string()),
+});
+
 export const deadZoneKnowledgeReviewQuerySchema = z.object({
   windowDays: z.coerce.number().int().min(1).max(180).default(30),
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -82,6 +97,23 @@ export const deadZoneKnowledgeMaintenanceResultSchema = z.object({
   action: deadZoneKnowledgeMaintenanceActionSchema,
   keptKnowledgeId: z.string().nullable(),
   deprecatedKnowledgeId: z.string(),
+});
+
+export const deadZoneKnowledgeReviewActionInputSchema = z.object({
+  action: deadZoneRecommendationActionSchema,
+  deadZoneKnowledgeId: z.string().trim().min(1),
+  canonicalKnowledgeId: z.string().trim().min(1).optional(),
+  reviewItemId: z.string().trim().min(1).optional(),
+  note: z.string().trim().max(1000).optional(),
+});
+
+export const deadZoneKnowledgeReviewActionResultSchema = z.object({
+  action: deadZoneRecommendationActionSchema,
+  status: z.enum(["recorded", "applied"]),
+  message: z.string(),
+  keptKnowledgeId: z.string().optional(),
+  deprecatedKnowledgeId: z.string().optional(),
+  reviewItemId: z.string().optional(),
 });
 
 export const deadZoneKnowledgeSummarySchema = z.object({
@@ -130,6 +162,10 @@ export const deadZoneKnowledgeReviewItemSchema = z.object({
     reason: z.string(),
   }),
   indicators: deadZoneKnowledgeIndicatorsSchema,
+  bestCanonicalCandidate: deadZoneSimilarKnowledgeSchema.nullable(),
+  alternativeCandidates: z.array(deadZoneSimilarKnowledgeSchema),
+  recommendation: deadZoneReviewRecommendationSchema,
+  allowedActions: z.array(deadZoneRecommendationActionSchema),
   similarKnowledge: z.array(deadZoneSimilarKnowledgeSchema),
   reviewItemId: z.string().nullable(),
 });
@@ -154,6 +190,14 @@ export type DeadZoneKnowledgeMaintenanceInput = z.infer<
 >;
 export type DeadZoneKnowledgeMaintenanceResult = z.infer<
   typeof deadZoneKnowledgeMaintenanceResultSchema
+>;
+export type DeadZoneRecommendationAction = z.infer<typeof deadZoneRecommendationActionSchema>;
+export type DeadZoneReviewRecommendation = z.infer<typeof deadZoneReviewRecommendationSchema>;
+export type DeadZoneKnowledgeReviewActionInput = z.infer<
+  typeof deadZoneKnowledgeReviewActionInputSchema
+>;
+export type DeadZoneKnowledgeReviewActionResult = z.infer<
+  typeof deadZoneKnowledgeReviewActionResultSchema
 >;
 export type DeadZoneKnowledgeReviewBadge = z.infer<typeof deadZoneKnowledgeReviewBadgeSchema>;
 export type DeadZoneEvidenceStrength = z.infer<typeof deadZoneEvidenceStrengthSchema>;

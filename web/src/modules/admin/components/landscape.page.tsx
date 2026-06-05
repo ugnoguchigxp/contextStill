@@ -3,12 +3,13 @@ import { Select } from "@/components/ui/select";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { useEffect, useMemo, useState } from "react";
 import {
-  type DeadZoneKnowledgeMaintenanceAction,
+  type DeadZoneKnowledgeReviewActionResult,
   type DeadZoneKnowledgeReviewBadge,
   type DeadZoneKnowledgeReviewReason,
   type DeadZoneKnowledgeReviewSortBy,
+  type DeadZoneRecommendationAction,
+  applyDeadZoneKnowledgeReviewAction,
   fetchDeadZoneKnowledgeReview,
-  maintainDeadZoneKnowledge,
 } from "../repositories/admin.repository";
 import { AdminPageHeader } from "./admin-page-header";
 import { AdminPaginationFooter } from "./admin-pagination-footer";
@@ -36,6 +37,7 @@ export function LandscapePage() {
   const [sortDir, setSortDir] = useState<"asc" | "desc">("desc");
   const [pagination, setPagination] = useState({ pageIndex: 0, pageSize: 50 });
   const [actionError, setActionError] = useState<string | null>(null);
+  const [actionStatus, setActionStatus] = useState<string | null>(null);
 
   const resetToFirstPage = () => {
     setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
@@ -98,17 +100,20 @@ export function LandscapePage() {
 
   const maintenance = useMutation({
     mutationFn: (input: {
-      action: DeadZoneKnowledgeMaintenanceAction;
+      action: DeadZoneRecommendationAction;
       deadZoneKnowledgeId: string;
-      similarKnowledgeId?: string;
-    }) => maintainDeadZoneKnowledge(input),
-    onSuccess: async () => {
+      canonicalKnowledgeId?: string;
+      reviewItemId?: string;
+    }) => applyDeadZoneKnowledgeReviewAction(input),
+    onSuccess: async (result: DeadZoneKnowledgeReviewActionResult) => {
       setActionError(null);
+      setActionStatus(result.message);
       await queryClient.invalidateQueries({ queryKey: ["landscape-dead-zone-knowledge"] });
       await queryClient.invalidateQueries({ queryKey: ["knowledge"] });
       await queryClient.invalidateQueries({ queryKey: ["graph"] });
     },
     onError: (error) => {
+      setActionStatus(null);
       setActionError(error instanceof Error ? error.message : String(error));
     },
   });
@@ -119,6 +124,21 @@ export function LandscapePage() {
     ],
     [currentPage, pageEnd, pageStart, total, totalPages],
   );
+  const pendingActionLabel = useMemo(() => {
+    if (!maintenance.isPending) return null;
+    switch (maintenance.variables?.action) {
+      case "merge_deadzone_into_canonical":
+        return "Merging knowledge...";
+      case "deprecate_deadzone":
+        return "Deprecating knowledge...";
+      case "keep_separate":
+      case "promote_deadzone":
+      case "needs_evidence":
+        return "Recording review decision...";
+      default:
+        return "Recording review decision...";
+    }
+  }, [maintenance.isPending, maintenance.variables?.action]);
 
   return (
     <div className="landscape-page">
@@ -137,6 +157,7 @@ export function LandscapePage() {
             Reason
             <Select
               value={reason}
+              disabled={maintenance.isPending}
               onChange={(event) => {
                 setReason(event.target.value as DeadZoneKnowledgeReviewReason);
                 resetToFirstPage();
@@ -151,6 +172,7 @@ export function LandscapePage() {
             Badge
             <Select
               value={badge}
+              disabled={maintenance.isPending}
               onChange={(event) => {
                 setBadge(event.target.value as DeadZoneKnowledgeReviewBadge | "all");
                 resetToFirstPage();
@@ -167,6 +189,7 @@ export function LandscapePage() {
             Similarity
             <Select
               value={String(minSimilarity)}
+              disabled={maintenance.isPending}
               onChange={(event) => {
                 setMinSimilarity(Number(event.target.value));
                 resetToFirstPage();
@@ -186,6 +209,10 @@ export function LandscapePage() {
             <h2>DeadZone Score Queue</h2>
           </div>
           <div className="landscape-list-badges">
+            {pendingActionLabel ? (
+              <span className="landscape-action-pending">{pendingActionLabel}</span>
+            ) : null}
+            {actionStatus ? <span className="landscape-action-success">{actionStatus}</span> : null}
             {actionError ? <span className="landscape-action-error">{actionError}</span> : null}
           </div>
         </div>
@@ -200,8 +227,9 @@ export function LandscapePage() {
           sortBy={sortBy}
           sortDir={sortDir}
           onSortChange={updateSort}
+          sortDisabled={maintenance.isPending}
           actionPending={maintenance.isPending}
-          onMaintenanceAction={(input) => maintenance.mutate(input)}
+          onReviewAction={(input) => maintenance.mutate(input)}
         />
         <AdminPaginationFooter
           keyPrefix="landscape-deadzone"
@@ -209,6 +237,7 @@ export function LandscapePage() {
           totalPages={totalPages}
           canPreviousPage={pagination.pageIndex > 0}
           canNextPage={currentPage < totalPages}
+          disabled={maintenance.isPending}
           onPreviousPage={() =>
             setPagination((current) => ({
               ...current,
@@ -227,7 +256,11 @@ export function LandscapePage() {
           summaryItems={summaryItems}
         />
         <div className="landscape-footer-actions">
-          <Button variant="outline" onClick={() => void deadZoneKnowledgeReview.refetch()}>
+          <Button
+            variant="outline"
+            disabled={maintenance.isPending}
+            onClick={() => void deadZoneKnowledgeReview.refetch()}
+          >
             Refresh DeadZone Queue
           </Button>
         </div>

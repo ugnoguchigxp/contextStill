@@ -1923,10 +1923,23 @@
   gap: 0.5rem;
 }
 
+.landscape-action-pending,
+.landscape-action-success,
 .landscape-action-error {
-  color: var(--destructive);
   font-size: 0.75rem;
   font-weight: 700;
+}
+
+.landscape-action-pending {
+  color: var(--muted-foreground);
+}
+
+.landscape-action-success {
+  color: rgb(4 120 87);
+}
+
+.landscape-action-error {
+  color: var(--destructive);
 }
 
 .landscape-sort-dir {
@@ -1936,7 +1949,7 @@
 }
 
 .landscape-review-table {
-  min-width: 1120px;
+  min-width: 1280px;
   table-layout: fixed;
 }
 
@@ -1947,7 +1960,7 @@
 
 .landscape-review-table th:nth-child(2),
 .landscape-review-table td:nth-child(2) {
-  width: 30%;
+  width: 24%;
 }
 
 .landscape-review-table th:nth-child(3),
@@ -1957,20 +1970,25 @@
 
 .landscape-review-table th:nth-child(5),
 .landscape-review-table td:nth-child(5) {
-  width: 96px;
+  width: 240px;
+}
+
+.landscape-review-table th:nth-child(6),
+.landscape-review-table td:nth-child(6) {
+  width: 210px;
 }
 
 .landscape-knowledge-cell,
 .landscape-signal-cell,
-.landscape-similar-group,
-.landscape-similar-item {
+.landscape-candidate-cell,
+.landscape-recommendation-cell {
   display: grid;
   gap: 0.35rem;
   min-width: 0;
 }
 
 .landscape-knowledge-cell strong,
-.landscape-similar-item strong {
+.landscape-candidate-cell strong {
   color: var(--foreground);
   font-size: 0.78rem;
   line-height: 1.35;
@@ -1979,7 +1997,8 @@
 
 .landscape-knowledge-cell small,
 .landscape-signal-cell small,
-.landscape-similar-item small,
+.landscape-candidate-cell small,
+.landscape-recommendation-cell small,
 .landscape-table-muted {
   color: var(--muted-foreground);
   font-size: 0.68rem;
@@ -1988,7 +2007,7 @@
 }
 
 .landscape-signal-cell,
-.landscape-similar-item-head {
+.landscape-candidate-head {
   display: flex;
   flex-wrap: wrap;
   align-items: center;
@@ -1999,21 +2018,7 @@
   flex-basis: 100%;
 }
 
-.landscape-similar-group {
-  gap: 0.55rem;
-}
-
-.landscape-similar-item {
-  border-bottom: 1px solid var(--border);
-  padding-bottom: 0.45rem;
-}
-
-.landscape-similar-item:last-child {
-  border-bottom: 0;
-  padding-bottom: 0;
-}
-
-.landscape-similar-item-head span {
+.landscape-candidate-head span {
   color: var(--muted-foreground);
   font-size: 0.68rem;
   font-weight: 700;
@@ -2023,6 +2028,20 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.35rem;
+}
+
+.landscape-action-button {
+  min-height: 1.75rem;
+  gap: 0.3rem;
+  padding: 0.2rem 0.45rem;
+  font-size: 0.68rem;
+  font-weight: 700;
+  white-space: normal;
+}
+
+.landscape-blocker-text {
+  color: var(--destructive) !important;
+  font-weight: 700;
 }
 
 .landscape-footer-actions {

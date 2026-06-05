@@ -7,9 +7,12 @@ import {
   type DeadZoneKnowledgeMaintenanceInput,
   type DeadZoneKnowledgeMaintenanceResult,
   type DeadZoneKnowledgeReviewBadge,
+  type DeadZoneKnowledgeReviewActionInput,
+  type DeadZoneKnowledgeReviewActionResult,
   type DeadZoneKnowledgeReviewItem,
   type DeadZoneKnowledgeReviewQuery,
   type DeadZoneKnowledgeReviewResponse,
+  type DeadZoneRecommendationAction,
   deadZoneKnowledgeReviewQuerySchema,
   deadZoneKnowledgeReviewResponseSchema,
 } from "../../shared/schemas/landscape-deadzone-review.schema.js";
@@ -31,6 +34,7 @@ import {
   listDeadZoneKnowledgeRows,
   listDeadZoneReviewItemLinks,
   listSimilarKnowledgeRows,
+  recordDeadZoneReviewDecision,
 } from "./landscape-deadzone-review.repository.js";
 import { buildLandscapeSnapshot } from "./landscape.service.js";
 
@@ -143,6 +147,143 @@ function strengthRank(value: string): number {
     default:
       return 0;
   }
+}
+
+function strongerThan(left: string, right: string): boolean {
+  return strengthRank(left) > strengthRank(right);
+}
+
+function decideDeadZoneRecommendation(input: {
+  knowledge: DeadZoneScoringKnowledge;
+  evidenceStrength: DeadZoneKnowledgeReviewItem["indicators"]["evidenceStrength"];
+  usageStrength: DeadZoneKnowledgeReviewItem["indicators"]["usageStrength"];
+  structureQuality: DeadZoneKnowledgeReviewItem["indicators"]["structureQuality"];
+  bestCanonicalCandidate: DeadZoneKnowledgeReviewItem["bestCanonicalCandidate"];
+  similarKnowledge: DeadZoneKnowledgeReviewItem["similarKnowledge"];
+}): Pick<DeadZoneKnowledgeReviewItem, "recommendation" | "allowedActions"> {
+  const reasons: string[] = [];
+  const blockers: string[] = [];
+  const allowed = new Set<DeadZoneRecommendationAction>(["keep_separate", "needs_evidence"]);
+  const best = input.bestCanonicalCandidate;
+
+  if (!input.knowledge.embedded) {
+    blockers.push("missing embedding");
+    reasons.push("Similarity cannot be trusted until the DeadZone item has an embedding.");
+    return {
+      recommendation: {
+        action: "needs_evidence",
+        confidence: "high",
+        reasons,
+        blockers,
+      },
+      allowedActions: [...allowed],
+    };
+  }
+
+  if (best?.status === "deprecated") {
+    blockers.push("deprecated candidate cannot be canonical");
+  }
+
+  if (best?.applicabilityMatch === "low") {
+    blockers.push("low scope overlap");
+  }
+
+  const weakDeadZone =
+    (input.evidenceStrength === "none" || input.evidenceStrength === "thin") &&
+    input.usageStrength === "none";
+  if (weakDeadZone) allowed.add("deprecate_deadzone");
+
+  if (best && best.status === "active" && best.applicabilityMatch !== "low") {
+    const targetStronger =
+      strongerThan(best.evidenceStrength, input.evidenceStrength) ||
+      strongerThan(best.usageStrength, input.usageStrength);
+    const deadZoneStronger =
+      strongerThan(input.evidenceStrength, best.evidenceStrength) ||
+      strongerThan(input.usageStrength, best.usageStrength);
+
+    if (targetStronger) {
+      allowed.add("merge_deadzone_into_canonical");
+      reasons.push(...best.reasons.slice(0, 3), "canonical candidate has stronger signals");
+      return {
+        recommendation: {
+          action: "merge_deadzone_into_canonical",
+          confidence:
+            best.applicabilityMatch === "high" && best.similarity >= 0.9 ? "high" : "medium",
+          reasons,
+          blockers,
+        },
+        allowedActions: [...allowed],
+      };
+    }
+
+    if (deadZoneStronger || best.suggestedAction === "deadzone_is_canonical") {
+      allowed.add("promote_deadzone");
+      reasons.push("DeadZone item has stronger retention or evidence signals.");
+      return {
+        recommendation: {
+          action: "promote_deadzone",
+          confidence: deadZoneStronger ? "medium" : "low",
+          reasons,
+          blockers,
+        },
+        allowedActions: [...allowed],
+      };
+    }
+
+    if (best.suggestedAction === "scope_differs") {
+      reasons.push(...best.reasons.slice(0, 3));
+      return {
+        recommendation: {
+          action: "keep_separate",
+          confidence: "medium",
+          reasons,
+          blockers,
+        },
+        allowedActions: [...allowed],
+      };
+    }
+  }
+
+  if (best?.applicabilityMatch === "low") {
+    reasons.push(...best.reasons.slice(0, 3));
+    return {
+      recommendation: {
+        action: "keep_separate",
+        confidence: "medium",
+        reasons,
+        blockers,
+      },
+      allowedActions: [...allowed],
+    };
+  }
+
+  if (weakDeadZone && input.structureQuality !== "strong") {
+    reasons.push("DeadZone evidence and usage are weak.");
+    return {
+      recommendation: {
+        action: "deprecate_deadzone",
+        confidence: "medium",
+        reasons,
+        blockers,
+      },
+      allowedActions: [...allowed],
+    };
+  }
+
+  reasons.push(
+    input.similarKnowledge.length > 0
+      ? "Similar knowledge is available, but signals are insufficient for a destructive action."
+      : "No reliable canonical candidate was found.",
+  );
+  return {
+    recommendation: {
+      action: "needs_evidence",
+      confidence: "low",
+      reasons,
+      blockers,
+    },
+    allowedActions: [...allowed],
+  };
 }
 
 function sortDeadZoneReviewItems(
@@ -369,6 +510,29 @@ export async function buildDeadZoneKnowledgeReview(
       };
     });
 
+    const bestCanonicalCandidate =
+      similarKnowledge.find(
+        (similar) =>
+          similar.status === "active" &&
+          similar.applicabilityMatch !== "low" &&
+          (similar.suggestedAction === "merge_into_similar" ||
+            similar.suggestedAction === "likely_duplicate" ||
+            similar.suggestedAction === "deadzone_is_canonical"),
+      ) ??
+      similarKnowledge.find((similar) => similar.status === "active") ??
+      null;
+    const alternativeCandidates = similarKnowledge.filter(
+      (similar) => similar.id !== bestCanonicalCandidate?.id,
+    );
+    const recommendation = decideDeadZoneRecommendation({
+      knowledge: scoringKnowledge,
+      evidenceStrength,
+      usageStrength,
+      structureQuality,
+      bestCanonicalCandidate,
+      similarKnowledge,
+    });
+
     const badges = deriveDeadZoneReviewBadges({
       knowledge: scoringKnowledge,
       evidenceStrength,
@@ -414,6 +578,10 @@ export async function buildDeadZoneKnowledgeReview(
         graphHealth,
         badges: allBadges,
       },
+      bestCanonicalCandidate,
+      alternativeCandidates,
+      recommendation: recommendation.recommendation,
+      allowedActions: recommendation.allowedActions,
       similarKnowledge,
       reviewItemId: reviewLinks.get(row.id) ?? null,
     };
@@ -437,6 +605,119 @@ export async function buildDeadZoneKnowledgeReview(
     unavailableReason: null,
     items: sortedItems.slice(offset, offset + input.limit),
   });
+}
+
+function requireCanonicalId(input: DeadZoneKnowledgeReviewActionInput): string {
+  if (!input.canonicalKnowledgeId) {
+    throw new DeadZoneKnowledgeMaintenanceError(400, "canonicalKnowledgeId is required");
+  }
+  return input.canonicalKnowledgeId;
+}
+
+export async function applyDeadZoneKnowledgeReviewAction(
+  input: DeadZoneKnowledgeReviewActionInput,
+): Promise<DeadZoneKnowledgeReviewActionResult> {
+  const deadZoneId = input.deadZoneKnowledgeId;
+  const ids = [
+    ...new Set([deadZoneId, input.canonicalKnowledgeId].filter((id): id is string => Boolean(id))),
+  ];
+  const rows = await db
+    .select({
+      id: knowledgeItems.id,
+      title: knowledgeItems.title,
+      status: knowledgeItems.status,
+    })
+    .from(knowledgeItems)
+    .where(inArray(knowledgeItems.id, ids));
+  const rowById = new Map(rows.map((row) => [row.id, row]));
+  const deadZone = rowById.get(deadZoneId);
+  if (!deadZone) throw new DeadZoneKnowledgeMaintenanceError(404, "deadZone knowledge not found");
+
+  if (input.action === "merge_deadzone_into_canonical") {
+    const canonicalId = requireCanonicalId(input);
+    if (canonicalId === deadZoneId) {
+      throw new DeadZoneKnowledgeMaintenanceError(
+        400,
+        "canonicalKnowledgeId must differ from deadZoneKnowledgeId",
+      );
+    }
+    const canonical = rowById.get(canonicalId);
+    if (!canonical)
+      throw new DeadZoneKnowledgeMaintenanceError(404, "canonical knowledge not found");
+    if (canonical.status !== "active") {
+      throw new DeadZoneKnowledgeMaintenanceError(400, "canonical target must be active");
+    }
+    const result = await maintainDeadZoneKnowledge({
+      action: "merge_deadzone_into_similar",
+      deadZoneKnowledgeId: deadZoneId,
+      similarKnowledgeId: canonicalId,
+    });
+    const message = `Merged DeadZone "${deadZone.title}" into canonical "${canonical.title}" and deprecated "${deadZone.title}".`;
+    const reviewItemId = await recordDeadZoneReviewDecision({
+      reviewItemId: input.reviewItemId,
+      deadZoneKnowledgeId: deadZoneId,
+      canonicalKnowledgeId: canonicalId,
+      action: input.action,
+      note: input.note,
+      status: "applied",
+      message,
+    });
+    return {
+      action: input.action,
+      status: "applied",
+      message,
+      keptKnowledgeId: result.keptKnowledgeId ?? undefined,
+      deprecatedKnowledgeId: result.deprecatedKnowledgeId,
+      reviewItemId,
+    };
+  }
+
+  if (input.action === "deprecate_deadzone") {
+    const result = await maintainDeadZoneKnowledge({
+      action: "deprecate_deadzone",
+      deadZoneKnowledgeId: deadZoneId,
+    });
+    const message = `Deprecated DeadZone "${deadZone.title}".`;
+    const reviewItemId = await recordDeadZoneReviewDecision({
+      reviewItemId: input.reviewItemId,
+      deadZoneKnowledgeId: deadZoneId,
+      action: input.action,
+      note: input.note,
+      status: "applied",
+      message,
+    });
+    return {
+      action: input.action,
+      status: "applied",
+      message,
+      deprecatedKnowledgeId: result.deprecatedKnowledgeId,
+      reviewItemId,
+    };
+  }
+
+  const messages: Record<DeadZoneRecommendationAction, string> = {
+    merge_deadzone_into_canonical: "",
+    deprecate_deadzone: "",
+    keep_separate: `Recorded Keep separate for "${deadZone.title}".`,
+    promote_deadzone: `Recorded Promote DeadZone for "${deadZone.title}".`,
+    needs_evidence: `Marked "${deadZone.title}" as Needs evidence.`,
+  };
+  const message = messages[input.action];
+  const reviewItemId = await recordDeadZoneReviewDecision({
+    reviewItemId: input.reviewItemId,
+    deadZoneKnowledgeId: deadZoneId,
+    action: input.action,
+    note: input.note,
+    status: "recorded",
+    message,
+  });
+  return {
+    action: input.action,
+    status: "recorded",
+    message,
+    keptKnowledgeId: deadZoneId,
+    reviewItemId,
+  };
 }
 
 export async function maintainDeadZoneKnowledge(

@@ -1080,6 +1080,38 @@ export type DeadZoneKnowledgeMaintenanceAction =
   | "deprecate_deadzone"
   | "deprecate_similar";
 
+export type DeadZoneRecommendationAction =
+  | "merge_deadzone_into_canonical"
+  | "deprecate_deadzone"
+  | "keep_separate"
+  | "promote_deadzone"
+  | "needs_evidence";
+
+export type DeadZoneReviewRecommendation = {
+  action: DeadZoneRecommendationAction;
+  confidence: "low" | "medium" | "high";
+  reasons: string[];
+  blockers: string[];
+};
+
+export type DeadZoneSimilarKnowledge = {
+  id: string;
+  title: string;
+  status: "draft" | "active" | "deprecated";
+  similarity: number;
+  applicabilityMatch: "low" | "medium" | "high";
+  evidenceStrength: "none" | "thin" | "moderate" | "strong";
+  usageStrength: "none" | "low" | "moderate" | "strong";
+  suggestedAction:
+    | "merge_into_similar"
+    | "deadzone_is_canonical"
+    | "likely_duplicate"
+    | "scope_differs"
+    | "needs_evidence"
+    | "keep_separate";
+  reasons: string[];
+};
+
 export type DeadZoneKnowledgeReviewItem = {
   knowledge: {
     id: string;
@@ -1110,23 +1142,11 @@ export type DeadZoneKnowledgeReviewItem = {
     graphHealth: "orphan" | "thin" | "connected";
     badges: DeadZoneKnowledgeReviewBadge[];
   };
-  similarKnowledge: Array<{
-    id: string;
-    title: string;
-    status: "draft" | "active" | "deprecated";
-    similarity: number;
-    applicabilityMatch: "low" | "medium" | "high";
-    evidenceStrength: "none" | "thin" | "moderate" | "strong";
-    usageStrength: "none" | "low" | "moderate" | "strong";
-    suggestedAction:
-      | "merge_into_similar"
-      | "deadzone_is_canonical"
-      | "likely_duplicate"
-      | "scope_differs"
-      | "needs_evidence"
-      | "keep_separate";
-    reasons: string[];
-  }>;
+  bestCanonicalCandidate: DeadZoneSimilarKnowledge | null;
+  alternativeCandidates: DeadZoneSimilarKnowledge[];
+  recommendation: DeadZoneReviewRecommendation;
+  allowedActions: DeadZoneRecommendationAction[];
+  similarKnowledge: DeadZoneSimilarKnowledge[];
   reviewItemId: string | null;
 };
 
@@ -1145,6 +1165,15 @@ export type DeadZoneKnowledgeMaintenanceResult = {
   action: DeadZoneKnowledgeMaintenanceAction;
   keptKnowledgeId: string | null;
   deprecatedKnowledgeId: string;
+};
+
+export type DeadZoneKnowledgeReviewActionResult = {
+  action: DeadZoneRecommendationAction;
+  status: "recorded" | "applied";
+  message: string;
+  keptKnowledgeId?: string;
+  deprecatedKnowledgeId?: string;
+  reviewItemId?: string;
 };
 
 export type LandscapeSnapshotCacheType =
@@ -2669,6 +2698,20 @@ export async function maintainDeadZoneKnowledge(input: {
 }): Promise<DeadZoneKnowledgeMaintenanceResult> {
   return requestJson<DeadZoneKnowledgeMaintenanceResult>(
     "/api/graph/landscape/dead-zone-knowledge/maintenance",
+    "POST",
+    input,
+  );
+}
+
+export async function applyDeadZoneKnowledgeReviewAction(input: {
+  action: DeadZoneRecommendationAction;
+  deadZoneKnowledgeId: string;
+  canonicalKnowledgeId?: string;
+  reviewItemId?: string;
+  note?: string;
+}): Promise<DeadZoneKnowledgeReviewActionResult> {
+  return requestJson<DeadZoneKnowledgeReviewActionResult>(
+    "/api/graph/landscape/dead-zone-knowledge/actions",
     "POST",
     input,
   );

@@ -6,8 +6,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import { LandscapePage } from "../../../web/src/modules/admin/components/landscape.page";
 import {
   type DeadZoneKnowledgeReviewResponse,
+  applyDeadZoneKnowledgeReviewAction,
   fetchDeadZoneKnowledgeReview,
-  maintainDeadZoneKnowledge,
 } from "../../../web/src/modules/admin/repositories/admin.repository";
 
 const deadZoneReview: DeadZoneKnowledgeReviewResponse = {
@@ -49,6 +49,30 @@ const deadZoneReview: DeadZoneKnowledgeReviewResponse = {
         graphHealth: "thin",
         badges: ["Strong merge candidate", "Evidence thin"],
       },
+      bestCanonicalCandidate: {
+        id: "k-active",
+        title: "Active Canonical",
+        status: "active",
+        similarity: 0.94,
+        applicabilityMatch: "high",
+        evidenceStrength: "strong",
+        usageStrength: "moderate",
+        suggestedAction: "merge_into_similar",
+        reasons: ["similarity 94%"],
+      },
+      alternativeCandidates: [],
+      recommendation: {
+        action: "merge_deadzone_into_canonical",
+        confidence: "high",
+        reasons: ["similarity 94%", "canonical candidate has stronger signals"],
+        blockers: [],
+      },
+      allowedActions: [
+        "merge_deadzone_into_canonical",
+        "keep_separate",
+        "needs_evidence",
+        "deprecate_deadzone",
+      ],
       similarKnowledge: [
         {
           id: "k-active",
@@ -94,6 +118,15 @@ const deadZoneReview: DeadZoneKnowledgeReviewResponse = {
         graphHealth: "connected",
         badges: ["Niche but valid"],
       },
+      bestCanonicalCandidate: null,
+      alternativeCandidates: [],
+      recommendation: {
+        action: "keep_separate",
+        confidence: "medium",
+        reasons: ["Niche but valid"],
+        blockers: [],
+      },
+      allowedActions: ["keep_separate", "needs_evidence"],
       similarKnowledge: [],
       reviewItemId: null,
     },
@@ -102,7 +135,7 @@ const deadZoneReview: DeadZoneKnowledgeReviewResponse = {
 
 vi.mock("../../../web/src/modules/admin/repositories/admin.repository", () => ({
   fetchDeadZoneKnowledgeReview: vi.fn(),
-  maintainDeadZoneKnowledge: vi.fn(),
+  applyDeadZoneKnowledgeReviewAction: vi.fn(),
 }));
 
 function renderLandscapePage() {
@@ -124,9 +157,10 @@ describe("LandscapePage", () => {
       value: vi.fn(() => true),
     });
     vi.mocked(fetchDeadZoneKnowledgeReview).mockResolvedValue(deadZoneReview);
-    vi.mocked(maintainDeadZoneKnowledge).mockResolvedValue({
+    vi.mocked(applyDeadZoneKnowledgeReviewAction).mockResolvedValue({
       action: "deprecate_deadzone",
-      keptKnowledgeId: null,
+      status: "applied",
+      message: 'Deprecated DeadZone "High Score DeadZone".',
       deprecatedKnowledgeId: "k-dead-high",
     });
   });
@@ -190,18 +224,87 @@ describe("LandscapePage", () => {
     });
   });
 
-  it("runs DeadZone maintenance actions from icon buttons", async () => {
+  it("runs DeadZone review actions from decision buttons", async () => {
     renderLandscapePage();
 
     await screen.findByText("High Score DeadZone");
-    fireEvent.click(screen.getByRole("button", { name: "Deprecate High Score DeadZone" }));
+    fireEvent.click(
+      screen.getByRole("button", { name: "Deprecate DeadZone for High Score DeadZone" }),
+    );
 
     await waitFor(() => {
-      expect(maintainDeadZoneKnowledge).toHaveBeenCalledWith({
+      expect(applyDeadZoneKnowledgeReviewAction).toHaveBeenCalledWith({
         action: "deprecate_deadzone",
         deadZoneKnowledgeId: "k-dead-high",
+        reviewItemId: undefined,
       });
     });
+  });
+
+  it("shows a visible result after merging DeadZone into canonical", async () => {
+    vi.mocked(applyDeadZoneKnowledgeReviewAction).mockResolvedValue({
+      action: "merge_deadzone_into_canonical",
+      status: "applied",
+      message:
+        'Merged DeadZone "High Score DeadZone" into canonical "Active Canonical" and deprecated "High Score DeadZone".',
+      keptKnowledgeId: "k-active",
+      deprecatedKnowledgeId: "k-dead-high",
+    });
+    renderLandscapePage();
+
+    await screen.findByText("High Score DeadZone");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Merge into canonical for High Score DeadZone" }),
+    );
+
+    await waitFor(() => {
+      expect(applyDeadZoneKnowledgeReviewAction).toHaveBeenCalledWith({
+        action: "merge_deadzone_into_canonical",
+        deadZoneKnowledgeId: "k-dead-high",
+        canonicalKnowledgeId: "k-active",
+        reviewItemId: undefined,
+      });
+    });
+    expect(
+      await screen.findByText(
+        'Merged DeadZone "High Score DeadZone" into canonical "Active Canonical" and deprecated "High Score DeadZone".',
+      ),
+    ).toBeInTheDocument();
+  });
+
+  it("blocks queue controls while a merge action is pending", async () => {
+    vi.mocked(applyDeadZoneKnowledgeReviewAction).mockReturnValue(new Promise(() => undefined));
+    renderLandscapePage();
+
+    await screen.findByText("High Score DeadZone");
+    fireEvent.click(
+      screen.getByRole("button", { name: "Merge into canonical for High Score DeadZone" }),
+    );
+
+    expect(await screen.findByText("Merging knowledge...")).toBeInTheDocument();
+    expect(screen.getAllByRole("combobox")[0]).toBeDisabled();
+    expect(screen.getByRole("button", { name: /Knowledge/i })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Refresh DeadZone Queue" })).toBeDisabled();
+    expect(
+      screen.getByRole("button", { name: "Merge into canonical for High Score DeadZone" }),
+    ).toBeDisabled();
+  });
+
+  it("does not render directional merge or deprecate-similar controls", async () => {
+    renderLandscapePage();
+
+    await screen.findByText("High Score DeadZone");
+    expect(screen.getByText("Best Candidate")).toBeInTheDocument();
+    expect(screen.getByText("Recommendation")).toBeInTheDocument();
+    expect(screen.queryByText("Into similar")).not.toBeInTheDocument();
+    expect(screen.queryByText("Into DeadZone")).not.toBeInTheDocument();
+    expect(screen.queryByText("Deprecate similar")).not.toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Keep separate for High Score DeadZone" }),
+    ).toBeInTheDocument();
+    expect(
+      screen.getByRole("button", { name: "Needs evidence for High Score DeadZone" }),
+    ).toBeInTheDocument();
   });
 
   it("uses pagination controls instead of show more", async () => {
