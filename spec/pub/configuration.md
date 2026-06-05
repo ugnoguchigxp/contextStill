@@ -50,6 +50,7 @@ Configuration is environment-variable based. See `.env.example` for the authorit
 | `CONTEXT_STILL_CLAUDE_PROJECTS_DIR` | Claude projects directory |
 | `CONTEXT_STILL_AGENT_LOG_SYNC_INTERVAL_SECONDS` | LaunchAgent / scheduled sync interval |
 | `CONTEXT_STILL_AGENT_LOG_INITIAL_LOOKBACK_HOURS` | Initial import lookback window |
+| `CONTEXT_STILL_AGENT_LOG_MIN_DISTILLABLE_CHARS` | Minimum agent-log chunk size to save for distillation; default `2000` |
 
 ## Local-First Notes
 

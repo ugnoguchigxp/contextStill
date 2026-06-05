@@ -64,12 +64,43 @@ export function isNonDistillableAgentTaskLogMessage(message: ChatMessage): boole
   );
 }
 
+function normalizedSet(values: string[]): Set<string> {
+  return new Set(values.map((value) => value.trim()).filter((value) => value.length > 0));
+}
+
+function metadataString(metadata: Record<string, unknown>, key: string): string | undefined {
+  const value = metadata[key];
+  return typeof value === "string" && value.trim().length > 0 ? value.trim() : undefined;
+}
+
+export function isExcludedAgentLogMetadata(metadata: Record<string, unknown>): boolean {
+  const projectNames = normalizedSet(groupedConfig.agentLogSync.excludedProjectNames);
+  const sessionIds = normalizedSet(groupedConfig.agentLogSync.excludedSessionIds);
+  const titleContains = groupedConfig.agentLogSync.excludedSessionTitleContains
+    .map((value) => value.trim())
+    .filter((value) => value.length > 0);
+
+  const projectName = metadataString(metadata, "projectName");
+  if (projectName && projectNames.has(projectName)) return true;
+
+  const sessionId = metadataString(metadata, "sessionId");
+  if (sessionId && sessionIds.has(sessionId)) return true;
+
+  const sessionTitle = metadataString(metadata, "sessionTitle");
+  return Boolean(sessionTitle && titleContains.some((pattern) => sessionTitle.includes(pattern)));
+}
+
+export function isExcludedAgentLogMessage(message: ChatMessage): boolean {
+  return isExcludedAgentLogMetadata(message.metadata);
+}
+
 export function filterDistillableAgentLogMessages(messages: ChatMessage[]): ChatMessage[] {
   const skipNextCodexAssistantByThread = new Set<string>();
   const result: ChatMessage[] = [];
 
   for (const message of messages) {
     if (!message.content.trim()) continue;
+    if (isExcludedAgentLogMessage(message)) continue;
 
     const threadKey = agentLogThreadKey(message);
     if (

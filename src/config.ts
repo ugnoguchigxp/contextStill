@@ -188,6 +188,15 @@ export const groupedConfig: GroupedConfig = {
     maxCharsPerChunk: APP_CONSTANTS.agentLogMaxCharsPerChunk,
     lockTtlSeconds: APP_CONSTANTS.agentLogSyncLockTtlSeconds,
     lockFile: path.resolve(process.cwd(), "logs", "agent-log-sync.lock"),
+    excludedProjectNames: parseCsvValues(readProjectEnv("AGENT_LOG_EXCLUDED_PROJECT_NAMES")),
+    excludedSessionIds: parseCsvValues(readProjectEnv("AGENT_LOG_EXCLUDED_SESSION_IDS")),
+    excludedSessionTitleContains: parseCsvValues(
+      readProjectEnv("AGENT_LOG_EXCLUDED_SESSION_TITLE_CONTAINS"),
+    ),
+    minDistillableChars: resolveNonNegativeInt(
+      readProjectEnv("AGENT_LOG_MIN_DISTILLABLE_CHARS"),
+      2000,
+    ),
   },
   vibeDistillation: {
     promptVersion: APP_CONSTANTS.vibeDistillationPromptVersion,

@@ -1,6 +1,13 @@
 import { eq, like } from "drizzle-orm";
+import { groupedConfig } from "../../config.js";
+import { APP_CONSTANTS } from "../../constants.js";
 import { db } from "../../db/client.js";
-import { agentDiffEntries, syncStates, vibeMemories } from "../../db/schema.js";
+import {
+  agentDiffEntries,
+  findingCandidateQueue,
+  syncStates,
+  vibeMemories,
+} from "../../db/schema.js";
 import { readProjectEnv } from "../../project-identity.js";
 import { redactSecretRecord, redactSecrets } from "../../shared/utils/secret-redaction.js";
 import {
@@ -8,6 +15,7 @@ import {
   cleanupExpiredAuditLogsSafe,
   recordAuditLogSafe,
 } from "../audit/audit-log.service.js";
+import { appendQueueEvent } from "../queue/core/events.js";
 import { normalizeAgentDiffEntries } from "../vibe-memory/agent-diff-ingestion.service.js";
 import {
   type ChatMessage,
@@ -28,6 +36,7 @@ import {
   filterDistillableAgentLogMessages,
   getCheckpointDate,
   isCodexInternalProviderPromptMessage,
+  isExcludedAgentLogMetadata,
   isNonDistillableAgentTaskLogMessage,
   isToolCallMessage,
   mergeMessageMetadata,
@@ -82,6 +91,12 @@ const sources: AgentLogSource[] = [
 
 function shouldDeleteLegacyAntigravityVibeMemories(): boolean {
   return readProjectEnv("DELETE_LEGACY_ANTIGRAVITY_VIBE_MEMORIES") === "1";
+}
+
+function isBelowMinDistillableChars(readableContent: string): boolean {
+  const threshold = groupedConfig.agentLogSync.minDistillableChars;
+  if (threshold <= 0) return false;
+  return readableContent.trim().length <= threshold;
 }
 
 export {
@@ -213,6 +228,7 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
 
       let insertedMemories = 0;
       let insertedDiffs = 0;
+      const enqueuedFindingJobs: Array<{ id: string; sourceKey: string }> = [];
 
       await db.transaction(async (tx) => {
         if (isFirst20Sync && shouldDeleteLegacyAntigravityVibeMemories()) {
@@ -245,12 +261,25 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
             const content =
               readableContent.trim() ||
               (diffEntries.length > 0 ? "Agent diff recorded." : "Tool usage recorded.");
+            if (isBelowMinDistillableChars(readableContent)) {
+              continue;
+            }
             const redactedContent = redactSecrets(content);
             const dedupeKey = buildDedupeKey({
               sourceId: source.id,
               memorySessionId,
               chunkIndex,
             });
+            const memoryMetadata = redactSecretRecord({
+              ...mergeMessageMetadata(source, chunk),
+              chunkIndex,
+              dedupeKey,
+              hiddenToolCallCount,
+              agentDiffCount: diffEntries.length,
+            });
+            if (isExcludedAgentLogMetadata(memoryMetadata)) {
+              continue;
+            }
             const [inserted] = await tx
               .insert(vibeMemories)
               .values({
@@ -258,13 +287,7 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
                 content: redactedContent,
                 memoryType: "chat",
                 dedupeKey,
-                metadata: redactSecretRecord({
-                  ...mergeMessageMetadata(source, chunk),
-                  chunkIndex,
-                  dedupeKey,
-                  hiddenToolCallCount,
-                  agentDiffCount: diffEntries.length,
-                }),
+                metadata: memoryMetadata,
               })
               .onConflictDoNothing({
                 target: [vibeMemories.sessionId, vibeMemories.dedupeKey],
@@ -276,6 +299,53 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
             }
 
             insertedMemories += 1;
+
+            const [findingJob] = await tx
+              .insert(findingCandidateQueue)
+              .values({
+                inputKind: "source_target",
+                sourceKind: "vibe_memory",
+                sourceKey: inserted.id,
+                sourceUri: `vibe_memory:${inserted.id}`,
+                distillationVersion: APP_CONSTANTS.distillationTargetVersion,
+                payload: {
+                  sourceType: "agent_log_sync",
+                  sourceId: source.id,
+                  memorySessionId,
+                  chunkIndex,
+                  dedupeKey,
+                },
+                metadata: {
+                  sourceType: "agent_log_sync",
+                  sourceId: source.id,
+                  memorySessionId,
+                  chunkIndex,
+                  dedupeKey,
+                  sessionTitle:
+                    typeof memoryMetadata.sessionTitle === "string"
+                      ? memoryMetadata.sessionTitle
+                      : undefined,
+                  projectName:
+                    typeof memoryMetadata.projectName === "string"
+                      ? memoryMetadata.projectName
+                      : undefined,
+                },
+                priority: 50,
+                status: "pending",
+                updatedAt: new Date(),
+              })
+              .onConflictDoNothing({
+                target: [
+                  findingCandidateQueue.inputKind,
+                  findingCandidateQueue.sourceKind,
+                  findingCandidateQueue.sourceKey,
+                  findingCandidateQueue.distillationVersion,
+                ],
+              })
+              .returning({ id: findingCandidateQueue.id });
+            if (findingJob) {
+              enqueuedFindingJobs.push({ id: findingJob.id, sourceKey: inserted.id });
+            }
 
             if (diffEntries.length === 0) continue;
 
@@ -329,6 +399,19 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
 
       summary.imported += insertedMemories;
       summary.insertedDiffs += insertedDiffs;
+      for (const job of enqueuedFindingJobs) {
+        await appendQueueEvent({
+          queueName: "findingCandidate",
+          queueJobId: job.id,
+          eventType: "enqueued",
+          message: "finding candidate enqueued from agent log sync",
+          metadata: {
+            sourceKind: "vibe_memory",
+            sourceKey: job.sourceKey,
+            inputKind: "source_target",
+          },
+        });
+      }
       summary.sources.push({
         id: source.id,
         label: source.label,

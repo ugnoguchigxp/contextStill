@@ -52,6 +52,10 @@ export type GroupedConfig = {
     maxCharsPerChunk: number;
     lockTtlSeconds: number;
     lockFile: string;
+    excludedProjectNames: string[];
+    excludedSessionIds: string[];
+    excludedSessionTitleContains: string[];
+    minDistillableChars: number;
   };
   vibeDistillation: {
     promptVersion: string;

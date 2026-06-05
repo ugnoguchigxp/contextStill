@@ -1,145 +1,125 @@
-# DeadZone Knowledge Review UI Implementation Plan
+# DeadZone Knowledge Review Queue Design
 
 Status: draft  
 Created: 2026-06-04  
+Reviewed: 2026-06-05  
 Owner: ContextStill admin / Knowledge Landscape
 
 ## Purpose
 
-DeadZone が増加したときに、DeadZone にいる knowledge を近傍 knowledge と比較し、canonical 化、統合、Deprecated、分離維持、根拠補強のどれが妥当かを人間が判断できる画面を追加する。
+DeadZone が増加したときに、到達されにくい knowledge を安全に整理するための admin UI を設計する。
 
-この計画の主語は candidate ではなく knowledge である。Candidate Review 風の操作感は利用するが、扱う対象は `knowledge_items` と既存 Knowledge Landscape の状態であり、最初の段階では retrieval / ranking / compile の本番挙動を変更しない。
+この画面の主語は similarity ではない。主語は DeadZone knowledge の処遇決定である。Similarity は近傍候補を発見するための signal に限定し、merge / deprecated / keep / evidence 補強の最終判断は scope、evidence、usage、graph health、replay stability を合わせて行う。
 
-## Review Outcome
+## Decision
 
-2026-06-04 の文書レビューで、次の点を実装前提として明確化した。
+Landscape page に `DeadZone Review Queue` を置く。Graph canvas 上では扱わない。
 
-- 現在の DeadZone は主に community 健康指標なので、画面に出す knowledge 単位の候補集合を明示する。
-- similarity は discovery 指標に限定し、write action の根拠には applicability / evidence / usage / content quality / graph health を必ず併記する。
-- Phase 1 は read-only に固定し、DB migration と production ranking 変更を禁止する。
-- Phase 2 は既存 `landscape_review_items` を再利用し、enum 追加なしで進める。
-- Phase 3 以降の write action は audit trail と required note を必須にし、merge は自動本文変更ではなく記録済み review decision から始める。
+UI は merge tool ではなく decision queue として設計する。
 
-## Current Repo Context
+- 1 row = 1 DeadZone knowledge item.
+- Similar knowledge は操作対象の一覧ではなく、判断材料として表示する。
+- Primary action は recommendation に沿った明示ボタンにする。
+- `Merge similar into DeadZone` のような左右矢印操作は通常 action から外す。
+- State-changing action は実行中の状態、完了結果、失敗理由を画面上に必ず残す。
 
-- Knowledge Landscape の既存 UI は `web/src/modules/admin/components/graph.page.tsx` に集約されている。
-- Graph/Landscape API は `api/modules/graph/graph.routes.ts` と `api/modules/graph/graph.repository.ts` が入口になっている。
-- Landscape の健康分類は `src/modules/landscape/landscape.scoring.ts` にあり、`dead_zone_reachability_risk` と `dead_zone_stale` が既に存在する。
-- Review artifact は `landscape_review_items` に保存され、schema は `src/shared/schemas/landscape-review.schema.ts` と `src/db/schema-landscape.ts` にある。
-- Knowledge の status 遷移は `src/modules/knowledge/knowledge-lifecycle.service.ts` で `active -> deprecated` と `deprecated -> active` が許可されている。
-- Audit trail は `src/modules/audit/audit-log.service.ts` の `recordAuditLogSafe` を使う。
+## Current Implementation Gap
+
+The current Landscape page already lists DeadZone knowledge and can call a maintenance endpoint. The risky parts are:
+
+- action buttons are still directional merge controls
+- the action model contains `merge_similar_into_deadzone`
+- the UI presents similar knowledge as direct action targets instead of evidence
+- non-destructive outcomes such as `keep_separate` and `needs_evidence` are not durable decisions
+- API response does not yet expose row-level `recommendation`, `allowedActions`, or `blockers`
+
+The next implementation should not add more merge behavior on top of this model. It should first replace the action vocabulary and UI affordances.
+
+## Why This Is Safer
+
+DeadZone knowledge は不要 knowledge と同義ではない。次のような状態が混在する。
+
+| State | Meaning | Safe decision |
+|---|---|---|
+| Duplicate of reachable canonical | 既存の reachable knowledge と重複している | Merge DeadZone into canonical |
+| Weak and unused | 根拠が薄く、使われていない | Deprecate DeadZone |
+| Scope differs | Semantic は近いが用途が違う | Keep separate |
+| DeadZone is better | DeadZone 側の方が正確または一般化されている | Promote / strengthen DeadZone |
+| Insufficient evidence | 判断材料が足りない | Needs evidence |
+
+左右矢印でどちらかへ merge する UI は、この違いを隠す。特に `similar -> DeadZone` は、reachable な知識を deprecated にして、到達不能な knowledge を残す可能性がある。これは DeadZone maintenance の目的と逆になる。
 
 ## Non-Goals
 
-- 初期実装で自動 merge や自動 Deprecated を行わない。
-- similarity だけで統合可否を決めない。
-- `context_compile` の ranking / retrieval 挙動を初期実装で変えない。
-- Candidate 生成フローの代替画面にしない。
-- DeadZone を不要知識と同義にしない。孤立しているが有効な niche knowledge は残す。
+- Similarity だけで merge / deprecated を決めない。
+- Graph canvas に DeadZone maintenance 操作を戻さない。
+- 初期改善で bulk destructive action を追加しない。
+- `context_compile` ranking / retrieval の本番挙動をこの UI から直接変更しない。
+- Candidate review の代替画面にしない。
 
-## Review Indicators
+## Review Signals
 
-UI は similarity を入口にしつつ、判断に使う指標を以下に分けて表示する。
+UI と API は similarity 以外の判断材料を明示する。
 
-| Indicator | Purpose | Example signal | Primary action impact |
+| Signal | Purpose | Example | Decision impact |
 |---|---|---|---|
-| Similarity | 近傍候補を出す | cosine similarity `>= 0.9` | 比較対象の発見 |
-| Applicability match | 同じ用途か判定する | `domains`, `technologies`, `changeTypes`, `appliesTo`, `Use when` | Merge / Keep separate |
-| Evidence strength | 根拠の強さを見る | source link count, origin link, source URI, evidence result | Merge into stronger / Needs evidence / Deprecate |
-| Usage history | 実際に使われているか見る | `compileSelectCount`, `lastCompiledAt`, replay used/not_used/churn | Canonical / Deprecate |
-| Content quality | 知識として維持可能か見る | structured body, actionable workflow, verification, stale implementation names | Canonical / Needs evidence |
-| Graph health | DeadZone の性質を見る | community, relation count, source density, stale ratio | Keep separate / repair reachability |
+| Semantic similarity | 近傍候補の発見 | cosine similarity `>= 0.9` | discovery only |
+| Scope compatibility | 同じ用途か判定 | `domains`, `technologies`, `changeTypes`, `appliesTo` overlap | merge / keep separate |
+| Evidence strength | 根拠の強さ | source links, origin links, evidence density | canonical selection / needs evidence |
+| Usage history | 実際に使われているか | `compileSelectCount`, `lastCompiledAt`, replay usage | canonical / deprecated |
+| Graph health | DeadZone の性質 | orphan, thin, connected, community label | repair / review priority |
+| Replay impact | 実運用への影響 | used lost, churn, retained | risk ranking |
+| Staleness | 古い前提か | no recent compile, old source, stale body markers | review priority |
+| Contradiction risk | 似ているが逆のことを言っていないか | polarity conflict, deprecated reuse | blocks merge |
 
-### Knowledge Candidate Set
+## Recommendation Model
 
-現行 Landscape では DeadZone は community 単位で集計される。UI に並べる knowledge は、次の順で決める。
+API は row ごとに deterministic recommendation を返す。LLM には判断させない。
 
-1. `buildLandscapeSnapshot()` の `communities` から `classification.primary` が `dead_zone_reachability_risk` または `dead_zone_stale` の community を抽出する。
-2. 抽出した community の `representativeKnowledgeIds` を最初の候補にする。
-3. Graph snapshot の community assignment が取得できる場合は、同じ `communityKey` に属する active knowledge も追加する。
-4. 候補内では `compileSelectCount = 0`、`lastCompiledAt IS NULL`、source density が低いものを優先する。
-5. embedding がない knowledge は similar comparison の対象からは外すが、DeadZone list には `Needs embedding` badge 付きで残す。
+```ts
+type DeadZoneRecommendationAction =
+  | "merge_deadzone_into_canonical"
+  | "deprecate_deadzone"
+  | "keep_separate"
+  | "promote_deadzone"
+  | "needs_evidence";
 
-この定義により、community health を起点にしつつ、レビュー対象は明確に knowledge 単位になる。
+type DeadZoneReviewRecommendation = {
+  action: DeadZoneRecommendationAction;
+  confidence: "low" | "medium" | "high";
+  reasons: string[];
+  blockers: string[];
+};
+```
 
-### Indicator Thresholds
+Recommendation の基本ルール:
 
-初期値は固定し、UI から変えられる値と内部判定値を分ける。
+- `merge_deadzone_into_canonical`
+  - similarity high
+  - scope medium/high
+  - target evidence or usage is stronger
+  - no contradiction blocker
+- `deprecate_deadzone`
+  - evidence none/thin
+  - usage none
+  - stale or duplicate
+  - no signal that DeadZone is canonical
+- `keep_separate`
+  - semantic similarity high but scope low
+  - technologies/domains differ
+  - both items have valid but different applicability
+- `promote_deadzone`
+  - DeadZone evidence/usage/content quality is stronger than similar candidate
+  - DeadZone body is specific enough to become reachable canonical
+  - this is not a command to deprecate the similar item
+- `needs_evidence`
+  - no reliable canonical target
+  - missing source/origin evidence
+  - missing embedding or contradictory signals
 
-| Signal | Initial threshold | UI configurable | Notes |
-|---|---:|---|---|
-| similar knowledge | `similarity >= 0.9` | yes | discovery only |
-| applicability high | overlap score `>= 0.75` | no | normalized tags and `appliesTo` keys |
-| applicability medium | overlap score `>= 0.4` | no | below this is `Scope differs` |
-| evidence strong | source/origin refs `>= 2` or source density `>= 1.0` | no | either side can be canonical |
-| evidence thin | no source/origin refs and source density `< 0.5` | no | suggests `Needs evidence` |
-| usage strong | `compileSelectCount >= 3` or recent replay used | no | suggests canonical |
-| stale | no compile selection and low freshness factor | no | suggests review, not automatic deprecation |
+## API Contract
 
-### Review Badges
-
-Raw 指標をそのまま大量表示するだけでなく、一覧と比較 pane では次の badge にまとめる。
-
-- `Strong merge candidate`: similarity が高く、applicability も一致し、近傍 knowledge の根拠が強い。
-- `Canonical candidate`: DeadZone 側の方が根拠、構造、利用実績のいずれかで強い。
-- `Likely duplicate`: similarity と applicability が高く、差分が薄い。
-- `Scope differs`: similarity は高いが、domain / technology / appliesTo が違う。
-- `Evidence thin`: source / origin / evidence が薄い。
-- `Stale`: 古い前提、古い実装名、または長期未使用が強い。
-- `Niche but valid`: 孤立しているが適用条件と根拠が明確。
-
-## UI Design
-
-### Placement
-
-新規画面名は `DeadZone Review` とする。導線は次のどちらかで実装する。
-
-1. 初期実装: Graph page 内の Landscape tab / panel として追加する。
-2. 後続整理: `app-shell.tsx` の admin nav に独立項目として追加する。
-
-初期実装では Graph page への追加を優先する。既存 Landscape データ、review item、trajectory、contradiction panel と近い文脈で確認できるため。
-
-### Layout
-
-- Left: DeadZone knowledge list
-  - title, type, status, primary classification, badges, community label, last compiled, source density
-  - filters: reason, badge, community, status, minimum similarity, evidence strength
-- Center: selected DeadZone knowledge detail
-  - title/body/appliesTo/metadata
-  - origin/source/evidence summary
-  - usage history and replay signals
-  - generated decision reasons
-- Right: similar knowledge comparison
-  - similarity `>= 0.9` by default
-  - top K configurable, default 5
-  - applicability diff
-  - evidence/usage/content quality comparison
-  - suggested action badge
-- Footer/action rail:
-  - `Merge into selected`
-  - `Mark DeadZone as canonical`
-  - `Deprecate DeadZone`
-  - `Keep separate`
-  - `Needs evidence`
-  - required note field for write actions
-
-### Interaction Rules
-
-- Read-only comparison is available without note.
-- Any state-changing action requires a note.
-- Actions first create or update a review artifact; destructive or ranking-affecting changes are not applied silently.
-- `Merge into selected` initially means "record merge review decision", not automatic body rewrite.
-- `Deprecate DeadZone` may call the existing knowledge status transition only after a review item is in `reviewing` and the note is present.
-- `Keep separate` should store why the similarity is misleading, especially applicability differences.
-- If the selected similar knowledge is `deprecated`, only `Keep separate` and `Needs evidence` are enabled until the reviewer chooses a non-deprecated target.
-- If the DeadZone knowledge has no embedding, merge/canonical/deprecate actions are disabled in Phase 1 and the item is marked `Needs embedding`.
-- If there is no similar knowledge above threshold, the panel should still show the DeadZone item and bias toward `Needs evidence` or `repair reachability`, not hide it.
-
-## API Plan
-
-### Phase 1: Read-Only Diagnostics
-
-Add a read-only endpoint:
+Existing endpoint remains the list source:
 
 `GET /api/graph/landscape/dead-zone-knowledge`
 
@@ -147,388 +127,372 @@ Query:
 
 - `windowDays`: default 30
 - `limit`: default 50, max 200
+- `page`: default 1
 - `status`: default `active`
 - `reason`: `all | dead_zone_reachability_risk | dead_zone_stale`
 - `minSimilarity`: default `0.9`
 - `similarTopK`: default 5, max 10
-- `communityKey`: optional
 - `badge`: optional
+- `sortBy`: `deadZoneScore | compileSelectCount | title | similarity | evidence | usage`
+- `sortDir`: `asc | desc`
 
-Response shape:
+Response should evolve toward this shape:
 
 ```ts
 type DeadZoneKnowledgeReviewItem = {
-  knowledge: {
-    id: string;
-    title: string;
-    bodyPreview: string;
-    type: "rule" | "procedure";
-    status: "draft" | "active" | "deprecated";
-    appliesTo: Record<string, unknown>;
-    confidence: number;
-    importance: number;
-    compileSelectCount: number;
-    lastCompiledAt: string | null;
-    sourceRefCount: number;
-    sourceRefDensity: number;
-    communityKey: string | null;
-    communityLabel: string | null;
-  };
+  knowledge: DeadZoneKnowledgeSummary;
   classification: {
     primary: "dead_zone_reachability_risk" | "dead_zone_stale";
     confidence: "low" | "medium" | "high";
     reason: string;
   };
   indicators: {
+    deadZoneScore: number;
     evidenceStrength: "none" | "thin" | "moderate" | "strong";
     usageStrength: "none" | "low" | "moderate" | "strong";
     structureQuality: "weak" | "partial" | "strong";
     graphHealth: "orphan" | "thin" | "connected";
     badges: string[];
   };
-  similarKnowledge: Array<{
-    id: string;
-    title: string;
-    status: string;
-    similarity: number;
-    applicabilityMatch: "low" | "medium" | "high";
-    evidenceStrength: "none" | "thin" | "moderate" | "strong";
-    usageStrength: "none" | "low" | "moderate" | "strong";
-    suggestedAction:
-      | "merge_into_similar"
-      | "deadzone_is_canonical"
-      | "likely_duplicate"
-      | "scope_differs"
-      | "needs_evidence"
-      | "keep_separate";
-    reasons: string[];
-  }>;
+  bestCanonicalCandidate: DeadZoneSimilarKnowledge | null;
+  alternativeCandidates: DeadZoneSimilarKnowledge[];
+  recommendation: DeadZoneReviewRecommendation;
+  allowedActions: DeadZoneRecommendationAction[];
   reviewItemId: string | null;
 };
 ```
 
-Implementation files:
+Compatibility note:
 
-- `src/shared/schemas/landscape-deadzone-review.schema.ts`
-- `src/modules/landscape/landscape-deadzone-review.service.ts`
-- `src/modules/landscape/landscape-deadzone-review.repository.ts`
-- `api/modules/graph/graph.routes.ts`
-- `web/src/modules/admin/repositories/admin.repository.ts`
+- Current implementation may still return `similarKnowledge`.
+- UI can derive `bestCanonicalCandidate` from the first recommended similar item during the transition.
+- Once API returns `recommendation`, UI should stop deriving destructive action labels from `similarKnowledge.suggestedAction`.
 
-Phase 1 data source:
+## Action Contract
 
-- Use `buildLandscapeSnapshot()` to identify DeadZone communities and risk reasons.
-- Use `buildGraphSnapshot({ view: "community" })` or equivalent repository query to map candidate knowledge to `communityKey`.
-- Query `knowledge_items` directly for candidate details and similar knowledge.
-- Query `knowledge_origin_links` and metadata source refs for evidence strength.
-- Do not write `landscape_review_items` in this phase.
+State-changing endpoint should expose decision actions, not directional arrows.
 
-Route placement:
-
-- Register `/landscape/dead-zone-knowledge` before generic or broad graph routes if new broad routes are added later.
-- Keep the endpoint under `api/modules/graph/graph.routes.ts` until it becomes large enough to split into a dedicated landscape router.
-
-Failure behavior:
-
-- If Landscape snapshot generation fails, return a structured `503` with the reason and render an empty-state panel.
-- If pgvector similarity query fails because embeddings are unavailable, return the DeadZone list with `similarKnowledge: []` and `Needs embedding` / `Similarity unavailable` badges.
-- If source/origin evidence tables are unavailable in a migrated test DB, evidence strength should degrade to `none`, not fail the entire endpoint.
-
-### Phase 2: Materialize Review Items
-
-Extend review item materialization so DeadZone knowledge items can be explicitly queued for review.
-
-Preferred approach:
-
-- Reuse `landscape_review_items`.
-- Use existing reasons:
-  - `dead_zone_reachability_risk`
-  - `dead_zone_stale`
-  - `semantic_merge` when similarity/applicability suggest consolidation
-- Use existing proposed actions where possible:
-  - `repair_reachability`
-  - `split_or_merge_review`
-  - `review_only`
-- Do not add new review item enum values in Phase 2. The existing values in `src/db/schema.constants.ts` are sufficient.
-
-Add endpoint:
-
-`POST /api/graph/landscape/dead-zone-knowledge/review-items`
-
-Body:
-
-```ts
-type DeadZoneReviewItemsMaterializeInput = {
-  dryRun: boolean;
-  knowledgeIds?: string[];
-  windowDays?: number;
-  minSimilarity?: number;
-  similarTopK?: number;
-  limit?: number;
-};
-```
-
-The idempotency key must include:
-
-- deadzone knowledge id
-- primary reason
-- nearest similar knowledge id if present
-- current threshold bundle
-
-Payload requirements:
-
-- `payload.deadZoneKnowledgeId`
-- `payload.similarKnowledgeIds`
-- `payload.indicators`
-- `payload.badges`
-- `payload.thresholds`
-- `payload.recommendedAction`
-
-Dry-run response must include the candidate review items that would be inserted and whether each idempotency key already exists.
-
-### Phase 3: Review Actions
-
-Add an explicit action endpoint:
-
-`POST /api/graph/landscape/dead-zone-knowledge/:knowledgeId/actions`
-
-Body:
+`POST /api/graph/landscape/dead-zone-knowledge/actions`
 
 ```ts
 type DeadZoneKnowledgeReviewActionInput = {
   action:
-    | "merge_into_selected"
-    | "mark_deadzone_canonical"
+    | "merge_deadzone_into_canonical"
     | "deprecate_deadzone"
     | "keep_separate"
+    | "promote_deadzone"
     | "needs_evidence";
-  targetKnowledgeId?: string;
+  deadZoneKnowledgeId: string;
+  canonicalKnowledgeId?: string;
   reviewItemId?: string;
-  note: string;
+  note?: string;
 };
 ```
 
-Initial write behavior:
+Action semantics:
 
-- `merge_into_selected`: store review decision and audit event; do not rewrite bodies automatically.
-- `mark_deadzone_canonical`: store decision and optionally resolve review item; do not change other knowledge automatically.
-- `deprecate_deadzone`: transition knowledge status to `deprecated` only if allowed by `canTransitionKnowledgeStatus`, then audit.
-- `keep_separate`: resolve or dismiss review item with note explaining applicability difference.
-- `needs_evidence`: keep review item pending/reviewing and add note.
+- `merge_deadzone_into_canonical`
+  - requires `canonicalKnowledgeId`
+  - canonical target must be active and non-deprecated
+  - appends or previews merge content only through an explicit merge path
+  - deprecates the DeadZone item only after the decision is recorded
+- `deprecate_deadzone`
+  - only changes the DeadZone item status
+  - uses existing lifecycle transition validation
+- `keep_separate`
+  - records why semantic similarity is misleading
+  - does not mutate knowledge status
+- `promote_deadzone`
+  - records that DeadZone should be strengthened
+  - does not deprecate similar knowledge automatically
+  - should lead to edit/evidence/reachability repair flow
+- `needs_evidence`
+  - records that evidence is missing
+  - does not mutate knowledge status
 
-Audit events to add:
+Every action must return a visible result:
 
-- `LANDSCAPE_DEADZONE_REVIEW_ACTION_RECORDED`
-- `LANDSCAPE_DEADZONE_KNOWLEDGE_DEPRECATED`
-
-Action validation:
-
-- `merge_into_selected` requires `targetKnowledgeId` and target status must not be `deprecated`.
-- `mark_deadzone_canonical` must not mutate the target knowledge. If a similar item should later be deprecated, that is a separate review action.
-- `deprecate_deadzone` requires either `reviewItemId` or a newly created review item in the same transaction.
-- `keep_separate` should resolve/dismiss the review item only when the note states the scope difference.
-- `needs_evidence` must leave the review item open unless the reviewer explicitly dismisses it later.
-
-## DB Plan
-
-Phase 1 should not require a migration.
-
-Phase 2 can reuse `landscape_review_items` and store comparison details in `payload`.
-
-Phase 3 has two options:
-
-1. Minimal: store decisions in `landscape_review_items.note` and `payload.reviewDecision`.
-2. Durable: add `landscape_knowledge_review_actions`.
-
-Recommended durable table for Phase 3:
-
-```sql
-create table landscape_knowledge_review_actions (
-  id uuid primary key default gen_random_uuid(),
-  review_item_id uuid references landscape_review_items(id) on delete set null,
-  knowledge_id uuid not null references knowledge_items(id) on delete cascade,
-  target_knowledge_id uuid references knowledge_items(id) on delete set null,
-  action text not null,
-  note text not null,
-  indicators jsonb not null default '{}',
-  actor text not null default 'user',
-  created_at timestamp not null default now()
-);
+```ts
+type DeadZoneKnowledgeReviewActionResult = {
+  action: DeadZoneRecommendationAction;
+  status: "recorded" | "applied";
+  message: string;
+  keptKnowledgeId?: string;
+  deprecatedKnowledgeId?: string;
+  reviewItemId?: string;
+};
 ```
 
-Do not add this table in Phase 1 or Phase 2. Add it only when write actions are implemented. If Phase 3 starts without this table, the implementation must explicitly choose the minimal storage option and document why it is acceptable.
+### Transition from Current Maintenance Endpoint
 
-## Scoring Helpers
+Current endpoint:
 
-Implement small deterministic helpers before UI rendering:
+`POST /api/graph/landscape/dead-zone-knowledge/maintenance`
 
-- `scoreApplicabilityMatch(a, b)`
-  - compares normalized `domains`, `technologies`, `changeTypes`, repo fields, and simple `appliesTo` keys.
-- `scoreEvidenceStrength(knowledgeId)`
-  - combines source/origin links, evidence references, and sourceRefDensity.
-- `scoreUsageStrength(knowledge)`
-  - uses `compileSelectCount`, `lastCompiledAt`, replay feedback where available.
-- `scoreStructureQuality(knowledge)`
-  - checks procedure sections, body specificity, and stale markers.
-- `deriveDeadZoneReviewBadges(item, similarItems)`
-  - maps raw indicators to the badge vocabulary.
+Current actions:
 
-Keep these deterministic. Do not call an LLM to decide review actions.
+- `merge_deadzone_into_similar`
+- `merge_similar_into_deadzone`
+- `deprecate_deadzone`
+- `deprecate_similar`
 
-Suggested file placement:
+Transition plan:
 
-- Put pure scoring helpers in `src/modules/landscape/landscape-deadzone-review.scoring.ts`.
-- Keep DB access in `landscape-deadzone-review.repository.ts`.
-- Keep orchestration and schema mapping in `landscape-deadzone-review.service.ts`.
-- Export shared zod schemas from `src/shared/schemas/landscape-deadzone-review.schema.ts`.
+| Current action | Replacement | Notes |
+|---|---|---|
+| `merge_deadzone_into_similar` | `merge_deadzone_into_canonical` | Rename target from similar to canonical and require recommendation evidence |
+| `merge_similar_into_deadzone` | `promote_deadzone` | Do not deprecate the similar item automatically |
+| `deprecate_deadzone` | `deprecate_deadzone` | Keep, but require recommendation or reviewer note |
+| `deprecate_similar` | remove from this screen | Similar item deprecation should be a separate Knowledge review action |
 
-## Frontend Implementation Plan
+The old endpoint can remain temporarily as a compatibility layer, but the UI should stop calling directional actions before new write paths are expanded.
 
-### Components
+## UI Design
 
-- `deadzone-review.page.tsx` or `deadzone-review-panel.tsx`
-- `deadzone-review-list.tsx`
-- `deadzone-knowledge-detail.tsx`
-- `deadzone-similar-knowledge-panel.tsx`
-- `deadzone-review-action-bar.tsx`
+### Page
 
-If added inside Graph page first, start with `deadzone-review-panel.tsx` and import it from `graph.page.tsx`.
+Admin nav:
 
-### UI Constraints
+```txt
+Knowledge
+Landscape
+Graph
+```
 
-- Use compact operational layout, not a marketing/card-heavy page.
-- Avoid nested cards. Use full-width panels, table/list rows, and a detail split.
-- Badges should explain why an item is risky or safe to keep.
-- Long knowledge titles/body previews must wrap without overflowing.
-- Action buttons should be disabled until required target/note is present.
+`Landscape` contains the DeadZone Review Queue. It does not render the graph canvas.
+
+### Table Columns
+
+| Column | Contents |
+|---|---|
+| Score | `deadZoneScore`, primary reason badge |
+| Knowledge | title, preview, community, selected count |
+| Signals | evidence, usage, graph, stale, scope badges |
+| Best Candidate | canonical candidate summary, similarity, scope, evidence/usage comparison |
+| Recommendation | action, confidence, reasons, blockers |
+| Decision | action buttons |
+
+### Expanded Row / Drawer
+
+Rows should be expandable for detail review.
+
+Detail sections:
+
+- DeadZone knowledge body and appliesTo
+- evidence/source summary
+- usage/replay summary
+- best canonical candidate comparison
+- alternative candidates
+- recommendation reasons
+- blockers
+- optional note
+
+### Buttons
+
+Use text + icon buttons. Avoid icon-only directional merge controls.
+
+Primary button depends on recommendation:
+
+- `Merge into canonical`
+- `Deprecate DeadZone`
+- `Keep separate`
+- `Promote DeadZone`
+- `Needs evidence`
+
+Secondary buttons:
+
+- `Keep separate`
+- `Needs evidence`
+- `Deprecate DeadZone` only when allowed
+
+Dangerous actions must not be hidden behind arrows.
+
+### Pending and Result Feedback
+
+When an action starts:
+
+- show action-specific text:
+  - `Merging knowledge...`
+  - `Deprecating knowledge...`
+  - `Recording review decision...`
+- disable filters, sort, pagination, refresh, and all row actions
+- keep the row visible until the request resolves
+
+When action succeeds:
+
+- show a durable inline result, for example:
+  - `Merged DeadZone "A" into canonical "B" and deprecated "A".`
+  - `Recorded Keep separate for "A".`
+  - `Marked "A" as Needs evidence.`
+- invalidate Landscape, Knowledge, and Graph queries
+
+When action fails:
+
+- show the API error near the table header
+- do not clear the row
+- leave controls enabled after failure
+
+## Safety Rules
+
+- No action may be enabled solely because similarity is high.
+- `merge_deadzone_into_canonical` requires a canonical target with stronger evidence, usage, or graph reachability unless reviewer overrides with note.
+- `promote_deadzone` must not deprecate the similar item.
+- `keep_separate` and `needs_evidence` are first-class outcomes, not no-op fallbacks.
+- Missing embedding disables merge recommendation and biases toward `needs_evidence`.
+- Deprecated similar knowledge cannot be canonical target.
+- Contradiction blocker disables merge until explicitly reviewed.
+- Bulk action is disabled until single-action audit behavior is stable.
+
+## Data and Persistence
+
+Use `landscape_review_items` for durable review workflow before adding a new table.
+
+Recommended payload fields:
+
+```ts
+type DeadZoneReviewPayload = {
+  deadZoneKnowledgeId: string;
+  bestCanonicalCandidateId?: string;
+  alternativeCandidateIds: string[];
+  indicators: Record<string, unknown>;
+  recommendation: DeadZoneReviewRecommendation;
+  thresholds: {
+    minSimilarity: number;
+    windowDays: number;
+  };
+  decision?: {
+    action: DeadZoneRecommendationAction;
+    note?: string;
+    decidedAt: string;
+  };
+};
+```
+
+If direct knowledge mutation remains available, it must also write audit evidence with:
+
+- action
+- deadZoneKnowledgeId
+- target/canonical knowledge id
+- previous status
+- next status
+- reviewer note or generated rationale
+- indicators at decision time
+
+## Implementation Plan
+
+### Milestone 1: Convert Current UI to Decision Queue
+
+- Remove left/right merge semantics.
+- Replace similar group action buttons with decision buttons.
+- Remove `deprecate_similar` from the Landscape row actions.
+- Display `Best Candidate` and `Recommendation`.
+- Keep `Keep separate` and `Needs evidence` visible.
+- Show pending state and action result text.
+- Keep API-backed sorting and Knowledge-style pagination.
+
+Exit criteria:
+
+- User can understand what will happen before clicking.
+- Left/right arrow ambiguity is gone.
+- A successful action visibly changes page state or records a visible decision result.
+
+### Milestone 2: Add Recommendation to API
+
+- Add deterministic `recommendation` and `allowedActions`.
+- Add `bestCanonicalCandidate`.
+- Preserve `similarKnowledge` temporarily for compatibility.
+- Add service tests for each recommendation outcome.
+- Add blockers for missing embedding, deprecated candidate, low scope overlap, and contradiction risk.
+
+Exit criteria:
+
+- UI no longer infers action meaning from button position.
+- Similarity is used as discovery signal only.
+
+### Milestone 3: Review Item Decisions
+
+- Persist `keep_separate`, `needs_evidence`, and `promote_deadzone` as review decisions.
+- Prevent already-decided items from reappearing unless landscape signals change materially.
+- Add note support where required.
+- Add idempotency key based on deadZoneKnowledgeId, recommendation action, best candidate id, and threshold bundle.
+
+Exit criteria:
+
+- Non-destructive decisions are durable.
+- Queue size can shrink without mutating knowledge status.
+
+### Milestone 4: Explicit Merge Preview
+
+- Add merge preview drawer.
+- Show DeadZone body, canonical body, proposed merged body, and diff.
+- Require explicit confirmation.
+- Store previous body and decision payload in audit evidence.
+
+Exit criteria:
+
+- Body rewrite is explicit and reviewable.
+- Merge is reversible from audit evidence.
 
 ## Test Plan
 
-### Unit Tests
+### Service Tests
 
-- `test/landscape-deadzone-review.service.test.ts`
-  - DeadZone knowledge is selected from `dead_zone_reachability_risk` / `dead_zone_stale`.
-  - Community-level DeadZone classification maps to knowledge-level list items.
-  - Similar knowledge below threshold is excluded.
-  - Applicability mismatch produces `Scope differs`.
-  - Strong target evidence produces `Strong merge candidate`.
-  - DeadZone item with stronger evidence becomes `Canonical candidate`.
-  - Missing embedding keeps the knowledge in the list but returns no similarity comparison.
-  - Deprecated similar knowledge does not produce merge/canonical actions.
+- High similarity + high scope + stronger target evidence recommends `merge_deadzone_into_canonical`.
+- Low evidence + no usage recommends `deprecate_deadzone`.
+- High similarity + low scope recommends `keep_separate`.
+- Strong DeadZone evidence recommends `promote_deadzone`.
+- Missing embedding recommends or allows only `needs_evidence` / `keep_separate`.
+- Deprecated similar item is never canonical target.
+- Contradiction blocker disables merge recommendation.
 
-- `test/landscape-deadzone-review-actions.test.ts`
-  - State-changing actions require note.
-  - Deprecated transition uses `canTransitionKnowledgeStatus`.
-  - Merge action records decision without rewriting knowledge body.
-  - Audit log safe path is called.
+### Route Tests
 
-### API Tests
-
-- Add route coverage in `test/graph.routes.test.ts` or a dedicated `test/graph.routes.deadzone-review.test.ts`.
-- Validate query parsing defaults.
-- Validate dry-run materialization does not insert.
-- Validate idempotent materialization does not duplicate review items.
+- Query defaults include page, sort, threshold, and status.
+- Action endpoint rejects missing canonical target for merge.
+- Action endpoint rejects deprecated canonical target.
+- Action endpoint returns visible message.
 
 ### Component Tests
 
-- Add test under `test/components/admin/`.
-- Verify list, detail, similar panel, badge rendering, and disabled/enabled action states.
+- Table renders recommendation and best candidate.
+- Directional arrow buttons are absent.
+- Pending action disables filters, sort, pagination, refresh, and row actions.
+- Success result is visible after action.
+- `Keep separate` and `Needs evidence` are visible outcomes.
 
-### E2E
-
-- Extend `e2e/admin-ui.spec.ts` only after Phase 1 UI is stable.
-- Verify the page opens, filters render, a row can be selected, and no text overlaps in desktop viewport.
-
-### Acceptance Gate
+### Verification
 
 Run targeted tests first:
 
 ```bash
-bun test test/landscape-deadzone-review.service.test.ts
-bun test test/graph.routes.deadzone-review.test.ts
-bun test test/components/admin/deadzone-review-panel.test.tsx
+bunx vitest run test/landscape-deadzone-review.service.test.ts test/graph.routes.test.ts test/components/admin/landscape-page.test.tsx
 ```
 
-Then run the repo gate:
+Then run:
 
 ```bash
 bun run verify
 ```
 
-Failure handling:
+## Documentation Review Notes
 
-- If targeted service tests fail, do not proceed to UI work.
-- If route tests fail because the endpoint contract is too broad, reduce Phase 1 response shape rather than weakening validation.
-- If component tests show overflow or text overlap, adjust layout constraints before adding write actions.
-- If `bun run verify` fails on unrelated pre-existing changes, record the failing command and isolate whether the DeadZone files introduced any failures before continuing.
+2026-06-05 review changes:
 
-## Rollout Plan
-
-### Milestone 1: Read-Only Review Surface
-
-- Add schema, repository, service, API endpoint.
-- Add admin repository fetch function.
-- Add Graph page panel with list/detail/similar comparison.
-- Include knowledge-level derivation from DeadZone communities.
-- Include missing-embedding and no-similar-results empty states.
-- No DB migration.
-- No write action.
-
-Exit criteria:
-
-- DeadZone knowledge can be listed with similar knowledge `>= 0.9`.
-- Badges are deterministic and visible.
-- Community-level DeadZone counts can be reconciled with visible knowledge-level rows.
-- No production knowledge status or ranking changes.
-
-### Milestone 2: Review Item Materialization
-
-- Add materialization endpoint.
-- Reuse `landscape_review_items`.
-- Store comparison payload and evidence strings.
-- Add dry-run mode and idempotency.
-- Use existing reason/proposedAction enum values only.
-
-Exit criteria:
-
-- Operator can create review items for selected DeadZone knowledge.
-- Dry-run shows what would be inserted.
-- Duplicate materialization is idempotent.
-
-### Milestone 3: Approval-Gated Actions
-
-- Add action endpoint.
-- Add required note and audit log.
-- Support `keep_separate`, `needs_evidence`, `deprecate_deadzone`.
-- Keep merge/canonical actions as recorded decisions unless a separate merge editor is implemented.
-- Add `landscape_knowledge_review_actions` or explicitly document the minimal storage choice.
-
-Exit criteria:
-
-- No silent merge.
-- Deprecated action uses existing lifecycle transition.
-- Every action leaves review/audit evidence.
-
-### Milestone 4: Merge Editor
-
-- Add explicit merge preview.
-- Show source body, target body, proposed merged body, and diff.
-- Require confirmation before changing any knowledge body.
-- Keep previous body in audit payload.
-
-Exit criteria:
-
-- Body rewrite is explicit, reversible from audit evidence, and covered by tests.
+- Reframed the feature from merge UI to decision queue.
+- Removed Graph page placement as the recommended path because Graph rendering capacity is not suitable for this workflow.
+- Removed `Merge similar into DeadZone` as a normal action.
+- Added recommendation model, allowed actions, blockers, and action result feedback.
+- Promoted `keep_separate` and `needs_evidence` to first-class outcomes.
+- Added milestone order that starts by removing ambiguous UI before adding stronger mutations.
 
 ## Open Questions
 
-- Should `DeadZone Review` be a Graph page tab or a separate admin nav item after Phase 1?
-- Should merge decisions eventually create a new canonical knowledge item, or update one existing item?
-- Should `keep_separate` add a durable relation explaining why two similar items are intentionally separate?
-- What retention policy should apply to old review actions after the knowledge landscape changes?
-- Should missing embeddings be repaired from this screen, or only surfaced as a separate maintenance task?
-- Should review actions be user-only, or can agent-triggered actions be allowed after the UI contract is stable?
+- Should `keep_separate` create a durable relation explaining intentional separation?
+- What threshold change should make an already-reviewed item reappear?
+- Should `needs_evidence` create a source/evidence repair task, or only mark the review item?
+- Should `promote_deadzone` open the Knowledge edit drawer immediately?
+- Should merge require a note even when recommendation confidence is high?
 
-## Initial Recommendation
+## Recommendation
 
-Implement Milestone 1 first. Add Milestone 2 only after the knowledge-level candidate set reconciles with the community-level DeadZone counts and the read-only UI proves useful. The first useful outcome is not mutation; it is making the current DeadZone knowledge reviewable with enough evidence to decide the next action safely.
+Implement Milestone 1 first. The first useful correction is not a smarter merge. It is replacing ambiguous directional controls with an explicit decision queue where similarity is only one signal among several.

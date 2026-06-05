@@ -1,4 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
+import { groupedConfig } from "../src/config.js";
 import { db } from "../src/db/client.js";
 import {
   ingestAntigravityLogs,
@@ -43,6 +44,10 @@ describe("Agent Log Sync Service", () => {
     vi.clearAllMocks();
     process.env.CONTEXT_STILL_DELETE_LEGACY_ANTIGRAVITY_VIBE_MEMORIES = undefined;
     process.env.MEMORY_ROUTER_DELETE_LEGACY_ANTIGRAVITY_VIBE_MEMORIES = undefined;
+    groupedConfig.agentLogSync.excludedProjectNames = [];
+    groupedConfig.agentLogSync.excludedSessionIds = [];
+    groupedConfig.agentLogSync.excludedSessionTitleContains = [];
+    groupedConfig.agentLogSync.minDistillableChars = 0;
     vi.mocked(ingestAntigravityLogs).mockResolvedValue({
       ok: true,
       messages: [],
@@ -140,16 +145,126 @@ describe("Agent Log Sync Service", () => {
       warnings: [],
     } as any);
 
-    // First vibeMemory insert succeeds, second fails (dedupe), then syncState update succeeds
+    // First vibeMemory insert succeeds, its finding job is enqueued, second memory is deduped.
     const chain = db.insert({} as any) as any;
 
     chain.returning
       .mockResolvedValueOnce([{ id: "m1" }]) // Vibe 1
-      .mockResolvedValueOnce([]) // Vibe 2 (dedupe)
-      .mockResolvedValueOnce([{ id: "s1" }]); // Sync state
+      .mockResolvedValueOnce([{ id: "q1" }]) // Finding job for Vibe 1
+      .mockResolvedValueOnce([]); // Vibe 2 (dedupe)
 
     const summary = await syncAllAgentLogs();
     expect(summary.imported).toBe(1);
+  });
+
+  test("syncAllAgentLogs skips configured excluded projects before storing memories", async () => {
+    groupedConfig.agentLogSync.excludedProjectNames = ["nightworkers-codex-supervisor-decisions"];
+    vi.mocked(ingestCodexLogs).mockResolvedValue({
+      ok: true,
+      messages: [
+        {
+          role: "user",
+          content: "Noisy SDK task",
+          metadata: {
+            sourceId: "codex_logs",
+            projectName: "nightworkers-codex-supervisor-decisions",
+            sessionId: "sdk-session",
+          },
+        },
+        {
+          role: "user",
+          content: "Keep normal session",
+          metadata: {
+            sourceId: "codex_logs",
+            projectName: "contextStill",
+            sessionId: "normal-session",
+          },
+        },
+      ],
+      cursor: {},
+      maxObservedMtimeMs: 2000,
+      checkedFiles: 1,
+      errors: [],
+      warnings: [],
+    } as any);
+
+    const summary = await syncAllAgentLogs();
+
+    expect(summary.imported).toBe(1);
+    expect(summary.sources.find((source) => source.id === "codex_logs")?.messages).toBe(1);
+  });
+
+  test("syncAllAgentLogs skips short chunks below the distillable character threshold", async () => {
+    groupedConfig.agentLogSync.minDistillableChars = 2000;
+    vi.mocked(ingestCodexLogs).mockResolvedValue({
+      ok: true,
+      messages: [
+        {
+          role: "user",
+          content: "short status update",
+          metadata: {
+            sourceId: "codex_logs",
+            projectName: "nightWorkers",
+            sessionId: "short-session",
+          },
+        },
+        {
+          role: "user",
+          content: "valuable context ".repeat(160),
+          metadata: {
+            sourceId: "codex_logs",
+            projectName: "nightWorkers",
+            sessionId: "long-session",
+          },
+        },
+      ],
+      cursor: {},
+      maxObservedMtimeMs: 2000,
+      checkedFiles: 1,
+      errors: [],
+      warnings: [],
+    } as any);
+
+    const summary = await syncAllAgentLogs();
+
+    expect(summary.imported).toBe(1);
+    expect(summary.sources.find((source) => source.id === "codex_logs")?.messages).toBe(2);
+  });
+
+  test("syncAllAgentLogs does not let large diff-only chunks bypass the text threshold", async () => {
+    groupedConfig.agentLogSync.minDistillableChars = 2000;
+    vi.mocked(ingestCodexLogs).mockResolvedValue({
+      ok: true,
+      messages: [
+        {
+          role: "assistant",
+          content: [
+            "diff --git a/a.ts b/a.ts",
+            "--- a/a.ts",
+            "+++ b/a.ts",
+            "@@ -1 +1 @@",
+            "-old",
+            `+${"new line ".repeat(400)}`,
+          ].join("\n"),
+          metadata: {
+            sourceId: "codex_logs",
+            projectName: "nightWorkers",
+            sessionId: "diff-only-session",
+          },
+        },
+      ],
+      cursor: {},
+      maxObservedMtimeMs: 2000,
+      checkedFiles: 1,
+      errors: [],
+      warnings: [],
+    } as any);
+
+    const summary = await syncAllAgentLogs();
+
+    expect(summary.imported).toBe(0);
+    expect(summary.insertedDiffs).toBe(0);
+    expect(summary.sources.find((source) => source.id === "codex_logs")?.messages).toBe(1);
   });
 
   test("buildReadableTranscript excludes tool calls", () => {
