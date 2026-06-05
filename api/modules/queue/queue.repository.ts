@@ -54,7 +54,6 @@ type QueueStatsAggregateRow = {
   status: string;
   count: number;
   oldest_pending_at: Date | string | number | null;
-  escalated_count: number;
   offline_count: number;
   non_registered_count: number;
 };
@@ -185,7 +184,7 @@ function resolveQueueRuntimeModel(
     return { provider, model: resolveRouteModel(provider, route.model) };
   }
 
-  if (queueName === "coveringEvidence" || queueName === "premiumCoveringEvidence") {
+  if (queueName === "coveringEvidence") {
     const policy = normalizeProviderPolicy(row.provider_policy);
     const routes = resolveCoverEvidenceRoutes();
     try {
@@ -248,7 +247,7 @@ function buildDynamicOrderBy(
     case "subjectTitle":
       if (queueName === "findingCandidate") {
         sortColumn = sql`q.source_key`;
-      } else if (queueName === "coveringEvidence" || queueName === "premiumCoveringEvidence") {
+      } else if (queueName === "coveringEvidence") {
         sortColumn = sql`c.title`;
       } else {
         sortColumn = sql`coalesce(e.title, c.title)`;
@@ -355,48 +354,6 @@ async function queryQueueRows(
     return result.rows as unknown as QueueListRow[];
   }
 
-  if (queueName === "premiumCoveringEvidence") {
-    const result = await db.execute(sql`
-      select
-        q.id,
-        q.status,
-        q.priority,
-        q.attempt_count,
-        c.title as subject_title,
-        concat(
-          'candidate=', q.found_candidate_id,
-          ' | sourceCovering=', coalesce(q.source_covering_job_id::text, '-')
-        ) as subject_detail,
-        q.provider_policy as provider,
-        null::text as model,
-        q.last_error,
-        q.last_outcome_kind,
-        q.locked_by,
-        q.locked_at,
-        q.heartbeat_at,
-        q.created_at,
-        q.updated_at,
-        q.completed_at,
-        q.next_run_at,
-        q.payload ->> 'escalationReason' as metadata_summary,
-        null::text as source_kind,
-        q.provider_policy
-      from premium_covering_evidence_queue q
-      left join found_candidates c on c.id = q.found_candidate_id
-      where (${statusFilter}::text is null or q.status = ${statusFilter})
-        and (
-          ${pattern}::text is null
-          or c.title ilike ${pattern}
-          or q.found_candidate_id::text ilike ${pattern}
-        )
-      order by
-        ${buildDynamicOrderBy("premiumCoveringEvidence", sortBy, sortDir)}
-      limit ${params.limit}
-      offset ${params.offset}
-    `);
-    return result.rows as unknown as QueueListRow[];
-  }
-
   const result = await db.execute(sql`
     select
       q.id,
@@ -480,7 +437,6 @@ async function queueStatsFor(queueName: DistillationQueueName) {
       status,
       count(*)::int as count,
       min(case when status = 'pending' then created_at end) as oldest_pending_at,
-      count(*) filter (where last_outcome_kind = 'escalated_to_premium')::int as escalated_count,
       count(*) filter (
         where status = 'failed'
           and (
@@ -499,7 +455,6 @@ async function queueStatsFor(queueName: DistillationQueueName) {
   const rows = result.rows as unknown as QueueStatsAggregateRow[];
   const counters = emptyCounters();
   let oldestPendingAt: string | null = null;
-  let escalated = 0;
   let offline = 0;
   let nonRegistered = 0;
   for (const row of rows) {
@@ -512,11 +467,10 @@ async function queueStatsFor(queueName: DistillationQueueName) {
         oldestPendingAt = normalized;
       }
     }
-    escalated += Number(row.escalated_count ?? 0);
     offline += Number(row.offline_count ?? 0);
     nonRegistered += Number(row.non_registered_count ?? 0);
   }
-  if (queueName !== "coveringEvidence" && queueName !== "premiumCoveringEvidence") {
+  if (queueName !== "coveringEvidence") {
     nonRegistered = 0;
   }
   return {
@@ -526,7 +480,6 @@ async function queueStatsFor(queueName: DistillationQueueName) {
     failed: counters.failed,
     offline,
     nonRegistered,
-    escalated,
   };
 }
 
@@ -550,7 +503,6 @@ export async function fetchQueueDashboardStats(): Promise<{
     failed: 0,
     offline: 0,
     nonRegistered: 0,
-    escalated: 0,
   } as QueueStatsByQueue[DistillationQueueName];
 
   for (const queueName of distillationQueueNames) {
@@ -562,7 +514,6 @@ export async function fetchQueueDashboardStats(): Promise<{
     totals.failed += snapshot.failed;
     totals.offline += snapshot.offline;
     totals.nonRegistered += snapshot.nonRegistered;
-    totals.escalated += snapshot.escalated;
     if (snapshot.oldestPendingAt) {
       if (
         !totals.oldestPendingAt ||

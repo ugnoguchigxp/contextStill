@@ -1,9 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import {
-  coveringEvidenceQueue,
-  findingCandidateQueue,
-  premiumCoveringEvidenceQueue,
-} from "../src/db/schema.js";
+import { coveringEvidenceQueue, findingCandidateQueue } from "../src/db/schema.js";
 import { enqueueFindingJob, runQueueWorkerOnce } from "../src/modules/queue/core/worker.js";
 
 const mocks = vi.hoisted(() => ({
@@ -104,7 +100,7 @@ describe("runQueueWorkerOnce", () => {
     mocks.db.execute.mockResolvedValue({ rows: [] });
   });
 
-  test("completes covering insufficient results without enqueueing premium", async () => {
+  test("completes covering insufficient results", async () => {
     mocks.selectRows = [
       [
         {
@@ -156,8 +152,6 @@ describe("runQueueWorkerOnce", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(mocks.db.insert).not.toHaveBeenCalledWith(premiumCoveringEvidenceQueue);
-    expect(mocks.insertCalls.map((call) => call.table)).not.toContain(premiumCoveringEvidenceQueue);
     expect(mocks.updateCalls).toContainEqual(
       expect.objectContaining({
         table: coveringEvidenceQueue,
@@ -171,7 +165,7 @@ describe("runQueueWorkerOnce", () => {
     );
   });
 
-  test("marks covering retryable failures as failed on max attempts without premium escalation", async () => {
+  test("marks covering retryable failures as failed on max attempts", async () => {
     mocks.selectRows = [
       [
         {
@@ -223,8 +217,6 @@ describe("runQueueWorkerOnce", () => {
     });
 
     expect(result.ok).toBe(true);
-    expect(mocks.db.insert).not.toHaveBeenCalledWith(premiumCoveringEvidenceQueue);
-    expect(mocks.insertCalls.map((call) => call.table)).not.toContain(premiumCoveringEvidenceQueue);
     expect(mocks.updateCalls).toContainEqual(
       expect.objectContaining({
         table: coveringEvidenceQueue,

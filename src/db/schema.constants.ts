@@ -22,7 +22,6 @@ export const distillationTargetKindValues = [
 export const distillationQueueNameValues = [
   "findingCandidate",
   "coveringEvidence",
-  "premiumCoveringEvidence",
   "finalizeDistille",
 ] as const;
 export const distillationQueueStatusValues = [
@@ -40,10 +39,7 @@ export const distillationQueueSourceKindValues = [
   "knowledge_candidate",
   "web_ingest",
 ] as const;
-export const distillationQueueProducerValues = [
-  "coveringEvidence",
-  "premiumCoveringEvidence",
-] as const;
+export const distillationQueueProducerValues = ["coveringEvidence"] as const;
 export const distillationQueueProviderPolicyValues = ["default", "cloud_api"] as const;
 export const evidenceCoverageStatusValues = [
   "knowledge_ready",
@@ -61,7 +57,6 @@ export const distillationQueueEventTypeValues = [
   "resumed",
   "retried",
   "reprocess_requested",
-  "escalated_to_premium",
   "enqueued",
   "migration_mapped",
   "migration_failed",

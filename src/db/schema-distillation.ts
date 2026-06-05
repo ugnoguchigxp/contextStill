@@ -349,60 +349,6 @@ export const coveringEvidenceQueue = pgTable(
   }),
 );
 
-export const premiumCoveringEvidenceQueue = pgTable(
-  "premium_covering_evidence_queue",
-  {
-    id: uuid("id").primaryKey().defaultRandom(),
-    foundCandidateId: uuid("found_candidate_id")
-      .references(() => foundCandidates.id, { onDelete: "cascade" })
-      .notNull(),
-    sourceCoveringJobId: uuid("source_covering_job_id").references(() => coveringEvidenceQueue.id, {
-      onDelete: "set null",
-    }),
-    distillationVersion: text("distillation_version").notNull(),
-    status: text("status").notNull().default("pending"),
-    priority: integer("priority").notNull().default(50),
-    attemptCount: integer("attempt_count").notNull().default(0),
-    maxAttempts: integer("max_attempts").notNull().default(3),
-    providerPolicy: text("provider_policy").notNull().default("cloud_api"),
-    nextRunAt: timestamp("next_run_at"),
-    lockedBy: text("locked_by"),
-    lockedAt: timestamp("locked_at"),
-    heartbeatAt: timestamp("heartbeat_at"),
-    lastError: text("last_error"),
-    lastOutcomeKind: text("last_outcome_kind"),
-    payload: jsonb("payload").default({}).notNull(),
-    metadata: jsonb("metadata").default({}).notNull(),
-    createdAt: timestamp("created_at").defaultNow().notNull(),
-    updatedAt: timestamp("updated_at").defaultNow().notNull(),
-    completedAt: timestamp("completed_at"),
-  },
-  (table) => ({
-    foundCandidateUniqueIdx: uniqueIndex(
-      "premium_covering_evidence_queue_found_candidate_unique_idx",
-    ).on(table.foundCandidateId),
-    statusPriorityCreatedAtIdx: index(
-      "premium_covering_evidence_queue_status_priority_created_at_idx",
-    ).on(table.status, table.priority, table.createdAt),
-    statusCheck: check(
-      "premium_covering_evidence_queue_status_check",
-      sql`${table.status} IN (${sql.raw(toSqlList(distillationQueueStatusValues))})`,
-    ),
-    providerPolicyCheck: check(
-      "premium_covering_evidence_queue_provider_policy_check",
-      sql`${table.providerPolicy} IN (${sql.raw(toSqlList(distillationQueueProviderPolicyValues))})`,
-    ),
-    payloadObjectCheck: check(
-      "premium_covering_evidence_queue_payload_object_check",
-      sql`jsonb_typeof(${table.payload}) = 'object'`,
-    ),
-    metadataObjectCheck: check(
-      "premium_covering_evidence_queue_metadata_object_check",
-      sql`jsonb_typeof(${table.metadata}) = 'object'`,
-    ),
-  }),
-);
-
 export const evidenceCoverageResults = pgTable(
   "evidence_coverage_results",
   {
@@ -570,9 +516,6 @@ export const distillationQueueMigrationMap = pgTable(
       onDelete: "set null",
     }),
     coveringJobId: uuid("covering_job_id").references(() => coveringEvidenceQueue.id, {
-      onDelete: "set null",
-    }),
-    premiumJobId: uuid("premium_job_id").references(() => premiumCoveringEvidenceQueue.id, {
       onDelete: "set null",
     }),
     evidenceResultId: uuid("evidence_result_id").references(() => evidenceCoverageResults.id, {

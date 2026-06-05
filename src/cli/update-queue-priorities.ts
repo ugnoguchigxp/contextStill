@@ -33,23 +33,7 @@ async function main() {
   `);
   console.log(`Updated ${coveringResult.rowCount} jobs in covering_evidence_queue.`);
 
-  console.log("3. Updating premium_covering_evidence_queue...");
-  const premiumResult = await db.execute(sql`
-    update premium_covering_evidence_queue q
-    set priority = case
-      when fq.source_kind = 'knowledge_candidate' then 90
-      when fq.source_kind = 'web_ingest' then 80
-      when fq.source_kind = 'wiki_file' then 70
-      else 50
-    end
-    from found_candidates c
-    join finding_candidate_queue fq on fq.id = c.finding_job_id
-    where q.found_candidate_id = c.id
-      and q.status in ('pending', 'paused', 'failed')
-  `);
-  console.log(`Updated ${premiumResult.rowCount} jobs in premium_covering_evidence_queue.`);
-
-  console.log("4. Updating finalize_distille_queue...");
+  console.log("3. Updating finalize_distille_queue...");
   const finalizeResult = await db.execute(sql`
     update finalize_distille_queue q
     set priority = case

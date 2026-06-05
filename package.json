@@ -48,7 +48,6 @@
     "finalize-distille": "bun run src/cli/finalize-distille.ts",
     "queue:finding:once": "bun run src/cli/queue.ts --queue findingCandidate --once --limit 1",
     "queue:covering:once": "bun run src/cli/queue.ts --queue coveringEvidence --once --limit 1",
-    "queue:premium:once": "bun run src/cli/queue.ts --queue premiumCoveringEvidence --once --limit 1",
     "queue:finalize:once": "bun run src/cli/queue.ts --queue finalizeDistille --once --limit 1",
     "queue:supervisor": "bun run src/cli/queue-supervisor.ts --continuous --limit 1",
     "queue:migrate:dry-run": "bun run src/cli/queue-migrate.ts --dry-run",

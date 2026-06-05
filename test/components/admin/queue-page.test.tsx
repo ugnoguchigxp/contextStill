@@ -46,7 +46,6 @@ describe("QueuePage v2", () => {
       queueControls: {
         findingCandidate: { paused: false, updatedAt: null, updatedBy: null, reason: null },
         coveringEvidence: { paused: false, updatedAt: null, updatedBy: null, reason: null },
-        premiumCoveringEvidence: { paused: false, updatedAt: null, updatedBy: null, reason: null },
         finalizeDistille: { paused: false, updatedAt: null, updatedBy: null, reason: null },
       },
       queues: {
@@ -57,7 +56,6 @@ describe("QueuePage v2", () => {
           failed: 0,
           offline: 0,
           nonRegistered: 0,
-          escalated: 0,
         },
         coveringEvidence: {
           counters: { pending: 0, running: 1, completed: 0, skipped: 0, failed: 0, paused: 0 },
@@ -66,16 +64,6 @@ describe("QueuePage v2", () => {
           failed: 0,
           offline: 0,
           nonRegistered: 2,
-          escalated: 1,
-        },
-        premiumCoveringEvidence: {
-          counters: { pending: 0, running: 0, completed: 0, skipped: 0, failed: 1, paused: 0 },
-          oldestPendingAt: null,
-          running: 0,
-          failed: 1,
-          offline: 1,
-          nonRegistered: 1,
-          escalated: 0,
         },
         finalizeDistille: {
           counters: { pending: 0, running: 0, completed: 2, skipped: 0, failed: 0, paused: 0 },
@@ -84,7 +72,6 @@ describe("QueuePage v2", () => {
           failed: 0,
           offline: 0,
           nonRegistered: 0,
-          escalated: 0,
         },
       },
       totals: {
@@ -93,8 +80,7 @@ describe("QueuePage v2", () => {
         running: 1,
         failed: 1,
         offline: 1,
-        nonRegistered: 3,
-        escalated: 1,
+        nonRegistered: 2,
       },
     });
 
@@ -164,7 +150,7 @@ describe("QueuePage v2", () => {
     vi.clearAllMocks();
   });
 
-  it("renders 4 queue tabs and table rows", async () => {
+  it("renders 3 queue tabs and table rows", async () => {
     renderQueuePage();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
@@ -172,7 +158,6 @@ describe("QueuePage v2", () => {
 
     expect(screen.getByRole("button", { name: "Finding" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Covering" })).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Premium" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Finalize" })).toBeInTheDocument();
     expect(screen.getByText("Completed")).toBeInTheDocument();
     expect(screen.getByText("Total")).toBeInTheDocument();
@@ -298,9 +283,8 @@ describe("QueuePage v2", () => {
     expect(screen.getByRole("button", { name: "Covering" })).toHaveTextContent("Active");
     expect(screen.getByRole("button", { name: "Covering" })).toHaveTextContent("非登録");
     expect(screen.getByRole("button", { name: "Covering" })).toHaveTextContent("2");
-    expect(screen.getByRole("button", { name: "Premium" })).toHaveTextContent("Offline");
-    expect(screen.getByRole("button", { name: "Premium" })).toHaveTextContent("非登録");
-    expect(screen.getAllByText("非登録")).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: "Premium" })).not.toBeInTheDocument();
+    expect(screen.getAllByText("非登録")).toHaveLength(1);
     expect(screen.queryByText("待機中")).not.toBeInTheDocument();
   });
 

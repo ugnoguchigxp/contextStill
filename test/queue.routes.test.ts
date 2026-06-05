@@ -30,7 +30,6 @@ describe("queue routes v2", () => {
       queueControls: {
         findingCandidate: { paused: false, updatedAt: null, updatedBy: null, reason: null },
         coveringEvidence: { paused: false, updatedAt: null, updatedBy: null, reason: null },
-        premiumCoveringEvidence: { paused: false, updatedAt: null, updatedBy: null, reason: null },
         finalizeDistille: { paused: false, updatedAt: null, updatedBy: null, reason: null },
       },
       queues: {
@@ -41,7 +40,6 @@ describe("queue routes v2", () => {
           failed: 0,
           offline: 0,
           nonRegistered: 0,
-          escalated: 0,
         },
         coveringEvidence: {
           counters: { pending: 2, running: 0, completed: 0, skipped: 0, failed: 1, paused: 0 },
@@ -50,16 +48,6 @@ describe("queue routes v2", () => {
           failed: 1,
           offline: 1,
           nonRegistered: 1,
-          escalated: 1,
-        },
-        premiumCoveringEvidence: {
-          counters: { pending: 0, running: 0, completed: 0, skipped: 0, failed: 0, paused: 0 },
-          oldestPendingAt: null,
-          running: 0,
-          failed: 0,
-          offline: 0,
-          nonRegistered: 0,
-          escalated: 0,
         },
         finalizeDistille: {
           counters: { pending: 0, running: 0, completed: 3, skipped: 0, failed: 0, paused: 0 },
@@ -68,7 +56,6 @@ describe("queue routes v2", () => {
           failed: 0,
           offline: 0,
           nonRegistered: 0,
-          escalated: 0,
         },
       },
       totals: {
@@ -78,7 +65,6 @@ describe("queue routes v2", () => {
         failed: 1,
         offline: 1,
         nonRegistered: 1,
-        escalated: 1,
       },
     });
 

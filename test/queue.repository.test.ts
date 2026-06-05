@@ -27,7 +27,6 @@ function aggregateRow(overrides: Record<string, unknown> = {}) {
     status: "completed",
     count: 0,
     oldest_pending_at: null,
-    escalated_count: 0,
     offline_count: 0,
     non_registered_count: 0,
     ...overrides,
@@ -40,7 +39,6 @@ describe("queue repository stats", () => {
     mocks.getQueueControlStates.mockResolvedValue({
       findingCandidate: { paused: false, updatedAt: null, updatedBy: null, reason: null },
       coveringEvidence: { paused: false, updatedAt: null, updatedBy: null, reason: null },
-      premiumCoveringEvidence: { paused: false, updatedAt: null, updatedBy: null, reason: null },
       finalizeDistille: { paused: false, updatedAt: null, updatedBy: null, reason: null },
     });
   });
@@ -49,7 +47,6 @@ describe("queue repository stats", () => {
     const rowsByQueue = [
       [aggregateRow({ status: "completed", count: 1, non_registered_count: 4 })],
       [aggregateRow({ status: "completed", count: 2, non_registered_count: 2 })],
-      [aggregateRow({ status: "completed", count: 1, non_registered_count: 1 })],
       [aggregateRow({ status: "completed", count: 3, non_registered_count: 5 })],
     ];
     mocks.execute.mockImplementation(async () => ({
@@ -60,8 +57,7 @@ describe("queue repository stats", () => {
 
     expect(stats.queues.findingCandidate.nonRegistered).toBe(0);
     expect(stats.queues.coveringEvidence.nonRegistered).toBe(2);
-    expect(stats.queues.premiumCoveringEvidence.nonRegistered).toBe(1);
     expect(stats.queues.finalizeDistille.nonRegistered).toBe(0);
-    expect(stats.totals.nonRegistered).toBe(3);
+    expect(stats.totals.nonRegistered).toBe(2);
   });
 });

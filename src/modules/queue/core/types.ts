@@ -13,7 +13,6 @@ export type DistillationQueueStatus = (typeof distillationQueueStatusValues)[num
 export const queueTableNameByQueue: Record<DistillationQueueName, string> = {
   findingCandidate: "finding_candidate_queue",
   coveringEvidence: "covering_evidence_queue",
-  premiumCoveringEvidence: "premium_covering_evidence_queue",
   finalizeDistille: "finalize_distille_queue",
 };
 
@@ -52,6 +51,5 @@ export type QueueStatsByQueue = Record<
     failed: number;
     offline: number;
     nonRegistered: number;
-    escalated: number;
   }
 >;

@@ -1,11 +1,7 @@
 import { closeDbPool } from "../db/index.js";
 import { runQueueWorkerOnce } from "../modules/queue/core/index.js";
 
-type QueueName =
-  | "findingCandidate"
-  | "coveringEvidence"
-  | "premiumCoveringEvidence"
-  | "finalizeDistille";
+type QueueName = "findingCandidate" | "coveringEvidence" | "finalizeDistille";
 
 type CliOptions = {
   queue: QueueName;
@@ -34,15 +30,8 @@ function parseArgs(args: string[]): CliOptions {
               index += 1;
               return next.trim();
             })();
-      if (
-        raw !== "findingCandidate" &&
-        raw !== "coveringEvidence" &&
-        raw !== "premiumCoveringEvidence" &&
-        raw !== "finalizeDistille"
-      ) {
-        throw new Error(
-          "--queue must be findingCandidate|coveringEvidence|premiumCoveringEvidence|finalizeDistille",
-        );
+      if (raw !== "findingCandidate" && raw !== "coveringEvidence" && raw !== "finalizeDistille") {
+        throw new Error("--queue must be findingCandidate|coveringEvidence|finalizeDistille");
       }
       options.queue = raw;
     } else if (arg === "--once") {

@@ -156,7 +156,6 @@ distillation pipeline を 1 stage ずつ実行:
 ```bash
 bun run queue:finding:once
 bun run queue:covering:once
-bun run queue:premium:once
 bun run queue:finalize:once
 ```
 

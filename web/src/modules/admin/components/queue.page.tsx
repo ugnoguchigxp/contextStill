@@ -15,7 +15,6 @@ import {
   Activity,
   CircleCheck,
   Cpu,
-  Gem,
   type LucideIcon,
   Mail,
   Pause,
@@ -46,7 +45,6 @@ import { CopyableIdField } from "./copyable-id-field";
 const QUEUE_TABS: Array<{ name: DistillationQueueName; label: string }> = [
   { name: "findingCandidate", label: "Finding" },
   { name: "coveringEvidence", label: "Covering" },
-  { name: "premiumCoveringEvidence", label: "Premium" },
   { name: "finalizeDistille", label: "Finalize" },
 ];
 
@@ -63,7 +61,6 @@ const STATUS_FILTERS: Array<DistillationQueueStatus | "all"> = [
 const queueLabel: Record<DistillationQueueName, string> = {
   findingCandidate: "Finding",
   coveringEvidence: "Covering",
-  premiumCoveringEvidence: "Premium",
   finalizeDistille: "Finalize",
 };
 
@@ -87,12 +84,6 @@ const queueCardVisuals: Record<
     iconColor: "text-emerald-600",
     selectedBorder: "border-emerald-300",
     selectedRing: "ring-emerald-100",
-  },
-  premiumCoveringEvidence: {
-    Icon: Gem,
-    iconColor: "text-orange-500",
-    selectedBorder: "border-orange-300",
-    selectedRing: "ring-orange-100",
   },
   finalizeDistille: {
     Icon: CircleCheck,
@@ -300,7 +291,7 @@ export function QueuePage() {
       retryQueueJobV2({
         queue: input.queue,
         id: input.id,
-        mode: input.queue === "premiumCoveringEvidence" ? "cloud_api" : "default",
+        mode: "default",
         forceRefreshEvidence: true,
         reason: "requeued from queue dashboard",
       }),
@@ -697,8 +688,7 @@ export function QueuePage() {
                   const lanePaused = laneControl?.paused === true;
                   const llmStatus = resolveQueueLlmStatus({ running, offline, paused: lanePaused });
                   const laneActionKey = `${lanePaused ? "lane-resume" : "lane-pause"}:${tab.name}`;
-                  const showsNonRegistered =
-                    tab.name === "coveringEvidence" || tab.name === "premiumCoveringEvidence";
+                  const showsNonRegistered = tab.name === "coveringEvidence";
                   const visuals = queueCardVisuals[tab.name];
                   const selected = queue === tab.name;
                   return (

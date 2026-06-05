@@ -9,7 +9,6 @@ import {
   finalizeDistilleQueue,
   findingCandidateQueue,
   foundCandidates,
-  premiumCoveringEvidenceQueue,
   vibeMemories,
 } from "../../../db/schema.js";
 import { asRecord } from "../../../shared/utils/normalize.js";
@@ -438,7 +437,6 @@ async function processFindingCandidate(jobId: string, signal?: AbortSignal): Pro
 }
 
 async function markCoveringCompleted(params: {
-  queue: "coveringEvidence" | "premiumCoveringEvidence";
   jobId: string;
   status: "completed" | "failed" | "paused" | "skipped";
   attemptCount?: number;
@@ -446,13 +444,11 @@ async function markCoveringCompleted(params: {
   outcome: string;
   lastError?: string | null;
 }): Promise<void> {
-  const table =
-    params.queue === "coveringEvidence" ? coveringEvidenceQueue : premiumCoveringEvidenceQueue;
   await db
-    .update(table)
+    .update(coveringEvidenceQueue)
     .set({
       status: params.status,
-      attemptCount: params.attemptCount ?? table.attemptCount,
+      attemptCount: params.attemptCount ?? coveringEvidenceQueue.attemptCount,
       nextRunAt: params.nextRunAt ?? null,
       completedAt: params.status === "completed" || params.status === "skipped" ? new Date() : null,
       lockedBy: null,
@@ -462,17 +458,16 @@ async function markCoveringCompleted(params: {
       lastOutcomeKind: params.outcome,
       updatedAt: new Date(),
     })
-    .where(eq(table.id, params.jobId));
+    .where(eq(coveringEvidenceQueue.id, params.jobId));
 }
 
-async function processCoveringJob(
-  queue: "coveringEvidence" | "premiumCoveringEvidence",
-  jobId: string,
-  signal?: AbortSignal,
-): Promise<void> {
-  const table = queue === "coveringEvidence" ? coveringEvidenceQueue : premiumCoveringEvidenceQueue;
-  const [job] = await db.select().from(table).where(eq(table.id, jobId)).limit(1);
-  if (!job) throw new Error(`${queue} job not found: ${jobId}`);
+async function processCoveringJob(jobId: string, signal?: AbortSignal): Promise<void> {
+  const [job] = await db
+    .select()
+    .from(coveringEvidenceQueue)
+    .where(eq(coveringEvidenceQueue.id, jobId))
+    .limit(1);
+  if (!job) throw new Error(`coveringEvidence job not found: ${jobId}`);
 
   const [candidate] = await db
     .select()
@@ -482,7 +477,7 @@ async function processCoveringJob(
   if (!candidate) throw new Error(`found candidate not found: ${job.foundCandidateId}`);
 
   await appendQueueEvent({
-    queueName: queue,
+    queueName: "coveringEvidence",
     queueJobId: job.id,
     eventType: "claimed",
     message: "covering evidence claimed",
@@ -533,7 +528,7 @@ async function processCoveringJob(
       .insert(evidenceCoverageResults)
       .values({
         foundCandidateId: candidate.id,
-        producerQueue: queue,
+        producerQueue: "coveringEvidence",
         producerJobId: job.id,
         distillationVersion: job.distillationVersion,
         status: mappedStatus,
@@ -601,7 +596,7 @@ async function processCoveringJob(
         providerPolicy: job.providerPolicy,
         metadata: {
           queueVersion: "v2",
-          sourceQueue: queue,
+          sourceQueue: "coveringEvidence",
           sourceQueueJobId: job.id,
         },
         updatedAt: new Date(),
@@ -612,7 +607,6 @@ async function processCoveringJob(
   if (retryableCoverStatuses.has(cover.result.status)) {
     if (exhausted) {
       await markCoveringCompleted({
-        queue,
         jobId: job.id,
         status: "failed",
         attemptCount: nextAttemptCount,
@@ -622,7 +616,6 @@ async function processCoveringJob(
       return;
     }
     await markCoveringCompleted({
-      queue,
       jobId: job.id,
       status: "paused",
       attemptCount: nextAttemptCount,
@@ -634,7 +627,6 @@ async function processCoveringJob(
   }
 
   await markCoveringCompleted({
-    queue,
     jobId: job.id,
     status:
       cover.result.status === "knowledge_ready" ||
@@ -943,13 +935,7 @@ export async function runQueueWorkerOnce(params: {
             await runWithTimeout({
               timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
               signal: pauseController.signal,
-              run: (signal) => processCoveringJob("coveringEvidence", claimed.id, signal),
-            });
-          } else if (params.queueName === "premiumCoveringEvidence") {
-            await runWithTimeout({
-              timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
-              signal: pauseController.signal,
-              run: (signal) => processCoveringJob("premiumCoveringEvidence", claimed.id, signal),
+              run: (signal) => processCoveringJob(claimed.id, signal),
             });
           } else {
             await runWithTimeout({
@@ -1031,18 +1017,14 @@ export async function runQueueWorkerOnce(params: {
         jobId: claimed.id,
         error: message,
       });
-    } else if (
-      params.queueName === "coveringEvidence" ||
-      params.queueName === "premiumCoveringEvidence"
-    ) {
-      const table =
-        params.queueName === "coveringEvidence"
-          ? coveringEvidenceQueue
-          : premiumCoveringEvidenceQueue;
-      const [current] = await db.select().from(table).where(eq(table.id, claimed.id)).limit(1);
+    } else if (params.queueName === "coveringEvidence") {
+      const [current] = await db
+        .select()
+        .from(coveringEvidenceQueue)
+        .where(eq(coveringEvidenceQueue.id, claimed.id))
+        .limit(1);
       const currentAttempt = current?.attemptCount ?? 0;
       await markCoveringCompleted({
-        queue: params.queueName,
         jobId: claimed.id,
         status: "failed",
         attemptCount: currentAttempt + 1,

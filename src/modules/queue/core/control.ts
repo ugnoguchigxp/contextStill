@@ -38,7 +38,6 @@ function defaultQueueControlStates(): QueueControlStates {
   return {
     findingCandidate: defaultQueueControlState(),
     coveringEvidence: defaultQueueControlState(),
-    premiumCoveringEvidence: defaultQueueControlState(),
     finalizeDistille: defaultQueueControlState(),
   };
 }
@@ -66,7 +65,6 @@ function serializeQueueControlStates(states: QueueControlStates): Record<string,
     queues: {
       findingCandidate: states.findingCandidate,
       coveringEvidence: states.coveringEvidence,
-      premiumCoveringEvidence: states.premiumCoveringEvidence,
       finalizeDistille: states.finalizeDistille,
     },
   };

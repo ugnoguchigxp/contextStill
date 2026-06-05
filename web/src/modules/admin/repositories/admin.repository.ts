@@ -3172,11 +3172,7 @@ export type DistillationTargetState = {
   completedAt: string | null;
 };
 
-export type DistillationQueueName =
-  | "findingCandidate"
-  | "coveringEvidence"
-  | "premiumCoveringEvidence"
-  | "finalizeDistille";
+export type DistillationQueueName = "findingCandidate" | "coveringEvidence" | "finalizeDistille";
 export type DistillationQueueStatus =
   | "pending"
   | "running"
@@ -3204,7 +3200,6 @@ export type QueueDashboardStatsV2 = {
       failed: number;
       offline: number;
       nonRegistered: number;
-      escalated: number;
     }
   >;
   totals: {
@@ -3214,7 +3209,6 @@ export type QueueDashboardStatsV2 = {
     failed: number;
     offline: number;
     nonRegistered: number;
-    escalated: number;
   };
 };
 
