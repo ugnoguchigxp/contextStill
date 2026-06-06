@@ -31,6 +31,7 @@ import {
   type DistillationQueueName,
   type DistillationQueueStatus,
   type QueueListItemV2,
+  type VisibleDistillationQueueName,
   fetchActiveQueueTasksV2,
   fetchQueueDashboardStatsV2,
   fetchQueueItemsV2,
@@ -44,7 +45,7 @@ import { AdminPageHeader } from "./admin-page-header";
 import { AdminSortableTableHead } from "./admin-sortable-table-head";
 import { CopyableIdField } from "./copyable-id-field";
 
-const QUEUE_TABS: Array<{ name: DistillationQueueName; label: string }> = [
+const QUEUE_TABS: Array<{ name: VisibleDistillationQueueName; label: string }> = [
   { name: "findingCandidate", label: "Finding" },
   { name: "coveringEvidence", label: "Covering" },
   { name: "deadZoneMergeReview", label: "Merge Review" },
@@ -66,6 +67,7 @@ const queueLabel: Record<DistillationQueueName, string> = {
   coveringEvidence: "Covering",
   deadZoneMergeReview: "Merge Review",
   finalizeDistille: "Finalize",
+  mergeActivationFinalize: "Finalize",
 };
 
 const queueCardVisuals: Record<
@@ -96,6 +98,12 @@ const queueCardVisuals: Record<
     selectedRing: "ring-amber-100",
   },
   finalizeDistille: {
+    Icon: CircleCheck,
+    iconColor: "text-cyan-600",
+    selectedBorder: "border-cyan-300",
+    selectedRing: "ring-cyan-100",
+  },
+  mergeActivationFinalize: {
     Icon: CircleCheck,
     iconColor: "text-cyan-600",
     selectedBorder: "border-cyan-300",
@@ -244,7 +252,7 @@ function actionState(item: QueueListItemV2): {
 
 export function QueuePage() {
   const queryClient = useQueryClient();
-  const [queue, setQueue] = useState<DistillationQueueName>("findingCandidate");
+  const [queue, setQueue] = useState<VisibleDistillationQueueName>("findingCandidate");
   const [status, setStatus] = useState<DistillationQueueStatus | "all">("all");
   const [query, setQuery] = useState("");
   const [page, setPage] = useState(1);
@@ -360,7 +368,7 @@ export function QueuePage() {
   );
 
   const onLaneControl = useCallback(
-    (queueName: DistillationQueueName, paused: boolean) => {
+    (queueName: VisibleDistillationQueueName, paused: boolean) => {
       const actionKey = `${paused ? "lane-resume" : "lane-pause"}:${queueName}`;
       setActioning(actionKey);
       if (paused) {
@@ -382,19 +390,25 @@ export function QueuePage() {
   const activeItems = activeQuery.data ?? [];
 
   const activeByQueue = useMemo(() => {
-    const map = new Map<DistillationQueueName, number>();
+    const map = new Map<VisibleDistillationQueueName, number>();
     for (const tab of QUEUE_TABS) map.set(tab.name, 0);
-    for (const item of activeItems) map.set(item.queueName, (map.get(item.queueName) ?? 0) + 1);
+    for (const item of activeItems) {
+      const visibleQueueName = (item.visibleQueueName ??
+        item.queueName) as VisibleDistillationQueueName;
+      map.set(visibleQueueName, (map.get(visibleQueueName) ?? 0) + 1);
+    }
     return map;
   }, [activeItems]);
 
   const telemetryByQueue = useMemo(() => {
-    const map = new Map<DistillationQueueName, QueueListItemV2[]>();
+    const map = new Map<VisibleDistillationQueueName, QueueListItemV2[]>();
     for (const tab of QUEUE_TABS) {
       map.set(tab.name, []);
     }
     for (const item of activeItems) {
-      map.set(item.queueName, [...(map.get(item.queueName) ?? []), item]);
+      const visibleQueueName = (item.visibleQueueName ??
+        item.queueName) as VisibleDistillationQueueName;
+      map.set(visibleQueueName, [...(map.get(visibleQueueName) ?? []), item]);
     }
     return map;
   }, [activeItems]);
@@ -428,7 +442,7 @@ export function QueuePage() {
                   {item.status}
                 </Badge>
                 <Badge variant="outline" className="text-[10px]">
-                  {queueLabel[item.queueName]}
+                  {queueLabel[item.visibleQueueName ?? item.queueName]}
                 </Badge>
               </div>
             </div>
@@ -494,6 +508,11 @@ export function QueuePage() {
           return (
             <div className="whitespace-normal">
               <div className="font-medium text-slate-800">{item.subjectTitle}</div>
+              {item.jobType ? (
+                <Badge variant="outline" className="mt-1 text-[10px]">
+                  {item.jobType}
+                </Badge>
+              ) : null}
               <div className="text-xs text-muted-foreground">{item.subjectDetail}</div>
               {candidateId ? (
                 <div className="mt-1">

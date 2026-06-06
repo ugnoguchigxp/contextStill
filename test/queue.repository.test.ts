@@ -39,7 +39,9 @@ describe("queue repository stats", () => {
     mocks.getQueueControlStates.mockResolvedValue({
       findingCandidate: { paused: false, updatedAt: null, updatedBy: null, reason: null },
       coveringEvidence: { paused: false, updatedAt: null, updatedBy: null, reason: null },
+      deadZoneMergeReview: { paused: false, updatedAt: null, updatedBy: null, reason: null },
       finalizeDistille: { paused: false, updatedAt: null, updatedBy: null, reason: null },
+      mergeActivationFinalize: { paused: false, updatedAt: null, updatedBy: null, reason: null },
     });
   });
 
@@ -48,6 +50,8 @@ describe("queue repository stats", () => {
       [aggregateRow({ status: "completed", count: 1, non_registered_count: 4 })],
       [aggregateRow({ status: "completed", count: 2, non_registered_count: 2 })],
       [aggregateRow({ status: "completed", count: 3, non_registered_count: 5 })],
+      [aggregateRow({ status: "completed", count: 4, non_registered_count: 7 })],
+      [aggregateRow({ status: "completed", count: 5, non_registered_count: 9 })],
     ];
     mocks.execute.mockImplementation(async () => ({
       rows: rowsByQueue.shift() ?? [],
@@ -58,6 +62,8 @@ describe("queue repository stats", () => {
     expect(stats.queues.findingCandidate.nonRegistered).toBe(0);
     expect(stats.queues.coveringEvidence.nonRegistered).toBe(2);
     expect(stats.queues.finalizeDistille.nonRegistered).toBe(0);
+    expect("mergeActivationFinalize" in stats.queues).toBe(false);
+    expect("mergeActivationFinalize" in stats.queueControls).toBe(false);
     expect(stats.totals.nonRegistered).toBe(2);
   });
 });

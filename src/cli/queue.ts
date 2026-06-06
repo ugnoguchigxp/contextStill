@@ -5,7 +5,8 @@ type QueueName =
   | "findingCandidate"
   | "coveringEvidence"
   | "deadZoneMergeReview"
-  | "finalizeDistille";
+  | "finalizeDistille"
+  | "mergeActivationFinalize";
 
 type CliOptions = {
   queue: QueueName;
@@ -38,10 +39,11 @@ function parseArgs(args: string[]): CliOptions {
         raw !== "findingCandidate" &&
         raw !== "coveringEvidence" &&
         raw !== "deadZoneMergeReview" &&
-        raw !== "finalizeDistille"
+        raw !== "finalizeDistille" &&
+        raw !== "mergeActivationFinalize"
       ) {
         throw new Error(
-          "--queue must be findingCandidate|coveringEvidence|deadZoneMergeReview|finalizeDistille",
+          "--queue must be findingCandidate|coveringEvidence|deadZoneMergeReview|finalizeDistille|mergeActivationFinalize",
         );
       }
       options.queue = raw;

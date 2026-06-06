@@ -15,6 +15,7 @@ import {
   createDeadZoneMergeReviewJob,
   listDeadZoneMergeReviewQueueJobs,
 } from "../../../src/modules/landscape/deadzone-merge-review-queue.service.js";
+import { createMergeActivationFinalizeJob } from "../../../src/modules/landscape/merge-activation-finalize.service.js";
 import {
   LandscapeReviewCandidateLinkError,
   createLandscapeReviewCandidates,
@@ -251,6 +252,21 @@ export const graphRouter = new Hono()
       } catch (error) {
         if (error instanceof DeadZoneMergeReviewQueueError) {
           return c.json({ error: error.message }, error.statusCode as 400 | 404 | 409);
+        }
+        throw error;
+      }
+    },
+  )
+  .post(
+    "/landscape/dead-zone-knowledge/merge-review-jobs/:id/finalize",
+    zValidator("param", deadZoneMergeReviewJobParamSchema),
+    async (c) => {
+      try {
+        const result = await createMergeActivationFinalizeJob(c.req.valid("param").id);
+        return c.json(result, 201);
+      } catch (error) {
+        if (error instanceof DeadZoneMergeReviewQueueError) {
+          return c.json({ error: error.message }, error.statusCode as 400 | 404 | 409 | 500);
         }
         throw error;
       }

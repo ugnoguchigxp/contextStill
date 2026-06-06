@@ -2823,6 +2823,21 @@ export async function applyDeadZoneMergeReviewJob(jobId: string): Promise<{
   );
 }
 
+export async function sendDeadZoneMergeReviewToFinalize(jobId: string): Promise<{
+  id: string;
+  status: string;
+  jobType: "merge_activation_finalize";
+  mergeReviewJobId: string;
+  deadZoneKnowledgeId: string;
+  canonicalKnowledgeId: string;
+  reviewItemId: string | null;
+}> {
+  return requestJson(
+    `/api/graph/landscape/dead-zone-knowledge/merge-review-jobs/${jobId}/finalize`,
+    "POST",
+  );
+}
+
 export async function fetchLandscapeReplaySnapshot(input?: {
   windowDays?: number;
   limit?: number;
@@ -3282,7 +3297,12 @@ export type DistillationQueueName =
   | "findingCandidate"
   | "coveringEvidence"
   | "deadZoneMergeReview"
-  | "finalizeDistille";
+  | "finalizeDistille"
+  | "mergeActivationFinalize";
+export type VisibleDistillationQueueName = Exclude<
+  DistillationQueueName,
+  "mergeActivationFinalize"
+>;
 export type DistillationQueueStatus =
   | "pending"
   | "running"
@@ -3293,7 +3313,7 @@ export type DistillationQueueStatus =
 
 export type QueueDashboardStatsV2 = {
   queueControls: Record<
-    DistillationQueueName,
+    VisibleDistillationQueueName,
     {
       paused: boolean;
       updatedAt: string | null;
@@ -3302,7 +3322,7 @@ export type QueueDashboardStatsV2 = {
     }
   >;
   queues: Record<
-    DistillationQueueName,
+    VisibleDistillationQueueName,
     {
       counters: Record<DistillationQueueStatus, number>;
       oldestPendingAt: string | null;
@@ -3324,6 +3344,14 @@ export type QueueDashboardStatsV2 = {
 
 export type QueueListItemV2 = {
   queueName: DistillationQueueName;
+  visibleQueueName: DistillationQueueName;
+  jobType?: "candidate_finalize" | "merge_activation_finalize";
+  backendKind:
+    | "finding_candidate_queue"
+    | "covering_evidence_queue"
+    | "dead_zone_merge_review_queue"
+    | "finalize_distille_queue"
+    | "merge_activation_finalize_queue";
   id: string;
   status: DistillationQueueStatus;
   priority: number;

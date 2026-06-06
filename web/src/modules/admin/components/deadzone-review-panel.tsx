@@ -220,7 +220,7 @@ function DecisionCell({
         const buttonLabel =
           action === "merge_deadzone_into_canonical"
             ? canApplyReviewedMerge
-              ? "Apply reviewed merge"
+              ? "Send to Finalize"
               : mergeInProgress
                 ? `Review ${mergeJob.status}`
                 : "Request merge review"
@@ -241,7 +241,7 @@ function DecisionCell({
               if (action === "merge_deadzone_into_canonical") {
                 if (canApplyReviewedMerge && mergeJob) {
                   confirmMaintenance(
-                    `Apply reviewed merge for "${item.knowledge.title}" into canonical "${item.bestCanonicalCandidate?.title}"?`,
+                    `Send reviewed merge for "${item.knowledge.title}" into canonical "${item.bestCanonicalCandidate?.title}" to Finalize?`,
                     () => onApplyMergeReview(mergeJob.id),
                   );
                   return;

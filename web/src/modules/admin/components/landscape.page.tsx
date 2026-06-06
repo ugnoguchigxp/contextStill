@@ -8,10 +8,10 @@ import {
   type DeadZoneKnowledgeReviewReason,
   type DeadZoneKnowledgeReviewSortBy,
   type DeadZoneRecommendationAction,
-  applyDeadZoneMergeReviewJob,
   applyDeadZoneKnowledgeReviewAction,
   fetchDeadZoneKnowledgeReview,
   requestDeadZoneMergeReviewJob,
+  sendDeadZoneMergeReviewToFinalize,
 } from "../repositories/admin.repository";
 import { AdminPageHeader } from "./admin-page-header";
 import { AdminPaginationFooter } from "./admin-pagination-footer";
@@ -140,13 +140,11 @@ export function LandscapePage() {
   });
 
   const applyMergeReview = useMutation({
-    mutationFn: (jobId: string) => applyDeadZoneMergeReviewJob(jobId),
+    mutationFn: (jobId: string) => sendDeadZoneMergeReviewToFinalize(jobId),
     onSuccess: async () => {
       setActionError(null);
-      setActionStatus("Reviewed merge applied.");
+      setActionStatus("Reviewed merge sent to Finalize.");
       await queryClient.invalidateQueries({ queryKey: ["landscape-dead-zone-knowledge"] });
-      await queryClient.invalidateQueries({ queryKey: ["knowledge"] });
-      await queryClient.invalidateQueries({ queryKey: ["graph"] });
       await queryClient.invalidateQueries({ queryKey: ["queue-v2-stats"] });
       await queryClient.invalidateQueries({ queryKey: ["queue-v2-items"] });
     },
@@ -164,7 +162,7 @@ export function LandscapePage() {
   );
   const pendingActionLabel = useMemo(() => {
     if (requestMergeReview.isPending) return "Queueing merge review...";
-    if (applyMergeReview.isPending) return "Applying reviewed merge...";
+    if (applyMergeReview.isPending) return "Sending reviewed merge to Finalize...";
     if (!maintenance.isPending) return null;
     switch (maintenance.variables?.action) {
       case "merge_deadzone_into_canonical":

@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   runCoverEvidence: vi.fn(),
   runFindCandidate: vi.fn(),
   runFinalizeDistille: vi.fn(),
+  processMergeActivationFinalizeJob: vi.fn(),
   researchWebSourceToMarkdown: vi.fn(),
   isQueuePaused: vi.fn(),
   selectRows: [] as unknown[][],
@@ -43,6 +44,10 @@ vi.mock("../src/modules/findCandidate/domain.js", () => ({
 
 vi.mock("../src/modules/finalizeDistille/domain.js", () => ({
   runFinalizeDistille: mocks.runFinalizeDistille,
+}));
+
+vi.mock("../src/modules/landscape/merge-activation-finalize.worker.js", () => ({
+  processMergeActivationFinalizeJob: mocks.processMergeActivationFinalizeJob,
 }));
 
 vi.mock("../src/modules/sources/web/source-research.service.js", () => ({
@@ -345,5 +350,22 @@ describe("runQueueWorkerOnce", () => {
     expect(result.idle).toBe(true);
     expect(result.message).toContain("queue paused");
     expect(mocks.claimNextQueueJob).not.toHaveBeenCalled();
+  });
+
+  test("dispatches merge activation finalize jobs to the activation worker", async () => {
+    mocks.claimNextQueueJob.mockResolvedValue({ id: "merge-finalize-job-1" });
+    mocks.processMergeActivationFinalizeJob.mockResolvedValue(undefined);
+
+    const result = await runQueueWorkerOnce({
+      queueName: "mergeActivationFinalize",
+      workerId: "worker-1",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.completedJobId).toBe("merge-finalize-job-1");
+    expect(mocks.processMergeActivationFinalizeJob).toHaveBeenCalledWith(
+      "merge-finalize-job-1",
+      expect.any(AbortSignal),
+    );
   });
 });

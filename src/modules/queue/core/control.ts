@@ -35,12 +35,9 @@ function defaultQueueControlState(): QueueControlState {
 }
 
 function defaultQueueControlStates(): QueueControlStates {
-  return {
-    findingCandidate: defaultQueueControlState(),
-    coveringEvidence: defaultQueueControlState(),
-    deadZoneMergeReview: defaultQueueControlState(),
-    finalizeDistille: defaultQueueControlState(),
-  };
+  return Object.fromEntries(
+    distillationQueueNames.map((queueName) => [queueName, defaultQueueControlState()]),
+  ) as QueueControlStates;
 }
 
 function normalizeQueueControlStates(value: unknown): QueueControlStates {
@@ -63,12 +60,9 @@ function normalizeQueueControlStates(value: unknown): QueueControlStates {
 
 function serializeQueueControlStates(states: QueueControlStates): Record<string, unknown> {
   return {
-    queues: {
-      findingCandidate: states.findingCandidate,
-      coveringEvidence: states.coveringEvidence,
-      deadZoneMergeReview: states.deadZoneMergeReview,
-      finalizeDistille: states.finalizeDistille,
-    },
+    queues: Object.fromEntries(
+      distillationQueueNames.map((queueName) => [queueName, states[queueName]]),
+    ),
   };
 }
 

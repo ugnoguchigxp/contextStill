@@ -17,6 +17,8 @@ import {
 import {
   type DistillationQueueName,
   type DistillationQueueStatus,
+  type FinalizeQueueJobType,
+  type QueueBackendKind,
   type QueueListItem,
   type QueueRetryMode,
   type QueueStatsByQueue,
@@ -49,7 +51,16 @@ export type QueueControlState = {
   reason: string | null;
 };
 
-export type QueueControlStatesByQueue = Record<DistillationQueueName, QueueControlState>;
+type VisibleDistillationQueueName = Exclude<DistillationQueueName, "mergeActivationFinalize">;
+type QueueStatsByVisibleQueue = Record<
+  VisibleDistillationQueueName,
+  QueueStatsByQueue[DistillationQueueName]
+>;
+export type QueueControlStatesByQueue = Record<VisibleDistillationQueueName, QueueControlState>;
+
+const visibleDistillationQueueNames = distillationQueueNames.filter(
+  (queueName): queueName is VisibleDistillationQueueName => queueName !== "mergeActivationFinalize",
+);
 
 type QueueStatsAggregateRow = {
   status: string;
@@ -60,6 +71,10 @@ type QueueStatsAggregateRow = {
 };
 
 type QueueListRow = {
+  queue_name?: string | null;
+  visible_queue_name?: string | null;
+  job_type?: string | null;
+  backend_kind?: string | null;
   id: string;
   status: string;
   priority: number;
@@ -129,12 +144,36 @@ function toIsoTimestamp(value: Date | string | number | null): string | null {
 }
 
 function normalizeRow(queueName: DistillationQueueName, row: QueueListRow): QueueListItem {
+  const backendQueueName = distillationQueueNames.includes(row.queue_name as DistillationQueueName)
+    ? (row.queue_name as DistillationQueueName)
+    : queueName;
+  const visibleQueueName = distillationQueueNames.includes(
+    row.visible_queue_name as DistillationQueueName,
+  )
+    ? (row.visible_queue_name as DistillationQueueName)
+    : backendQueueName === "mergeActivationFinalize"
+      ? "finalizeDistille"
+      : backendQueueName;
+  const backendKind =
+    (row.backend_kind as QueueBackendKind | null) ??
+    (queueTableNameByQueue[backendQueueName] as QueueBackendKind);
+  const jobType =
+    row.job_type === "merge_activation_finalize" || row.job_type === "candidate_finalize"
+      ? (row.job_type as FinalizeQueueJobType)
+      : backendQueueName === "mergeActivationFinalize"
+        ? "merge_activation_finalize"
+        : backendQueueName === "finalizeDistille"
+          ? "candidate_finalize"
+          : undefined;
   const createdAt =
     toIsoTimestamp(row.created_at) ?? toIsoTimestamp(row.updated_at) ?? new Date(0).toISOString();
   const updatedAt = toIsoTimestamp(row.updated_at) ?? createdAt;
-  const resolved = resolveQueueRuntimeModel(queueName, row);
+  const resolved = resolveQueueRuntimeModel(backendQueueName, row);
   return {
-    queueName,
+    queueName: backendQueueName,
+    visibleQueueName,
+    jobType,
+    backendKind,
     id: row.id,
     status: row.status as DistillationQueueStatus,
     priority: Number(row.priority ?? 50),
@@ -258,6 +297,8 @@ function buildDynamicOrderBy(
         sortColumn = sql`c.title`;
       } else if (queueName === "deadZoneMergeReview") {
         sortColumn = sql`dz.title`;
+      } else if (queueName === "mergeActivationFinalize" || queueName === "finalizeDistille") {
+        sortColumn = sql`q.subject_title`;
       } else {
         sortColumn = sql`coalesce(e.title, c.title)`;
       }
@@ -406,8 +447,61 @@ async function queryQueueRows(
     return result.rows as unknown as QueueListRow[];
   }
 
+  if (queueName === "mergeActivationFinalize") {
+    const result = await db.execute(sql`
+      select
+        'mergeActivationFinalize'::text as queue_name,
+        'finalizeDistille'::text as visible_queue_name,
+        'merge_activation_finalize'::text as job_type,
+        'merge_activation_finalize_queue'::text as backend_kind,
+        q.id,
+        q.status,
+        q.priority,
+        q.attempt_count,
+        canonical.title as subject_title,
+        concat(
+          'deadZone=', q.dead_zone_knowledge_id,
+          ' | canonical=', q.canonical_knowledge_id,
+          ' | mergeReview=', q.merge_review_job_id
+        ) as subject_detail,
+        q.provider,
+        q.model,
+        q.last_error,
+        q.last_outcome_kind,
+        q.locked_by,
+        q.locked_at,
+        q.heartbeat_at,
+        q.created_at,
+        q.updated_at,
+        q.completed_at,
+        q.next_run_at,
+        coalesce(q.activation_result->>'outcome', q.last_outcome_kind) as metadata_summary,
+        null::text as source_kind,
+        null::text as provider_policy
+      from merge_activation_finalize_queue q
+      left join knowledge_items canonical on canonical.id = q.canonical_knowledge_id
+      where (${statusFilter}::text is null or q.status = ${statusFilter})
+        and (
+          ${pattern}::text is null
+          or canonical.title ilike ${pattern}
+          or q.dead_zone_knowledge_id::text ilike ${pattern}
+          or q.canonical_knowledge_id::text ilike ${pattern}
+          or q.merge_review_job_id::text ilike ${pattern}
+        )
+      order by
+        ${buildDynamicOrderBy("mergeActivationFinalize", sortBy, sortDir)}
+      limit ${params.limit}
+      offset ${params.offset}
+    `);
+    return result.rows as unknown as QueueListRow[];
+  }
+
   const result = await db.execute(sql`
     select
+      q.queue_name,
+      q.visible_queue_name,
+      q.job_type,
+      q.backend_kind,
       q.id,
       q.status,
       q.priority,
@@ -431,14 +525,76 @@ async function queryQueueRows(
       null::text as metadata_summary,
       null::text as source_kind,
       q.provider_policy
-    from finalize_distille_queue q
-    left join evidence_coverage_results e on e.id = q.evidence_result_id
-    left join found_candidates c on c.id = e.found_candidate_id
+    from (
+      select
+        'finalizeDistille'::text as queue_name,
+        'finalizeDistille'::text as visible_queue_name,
+        'candidate_finalize'::text as job_type,
+        'finalize_distille_queue'::text as backend_kind,
+        q.id,
+        q.status,
+        q.priority,
+        q.attempt_count,
+        coalesce(e.title, c.title) as subject_title,
+        concat(
+          'evidence=', q.evidence_result_id,
+          ' | knowledge=', coalesce(q.knowledge_id::text, '-')
+        ) as subject_detail,
+        q.provider_policy as provider,
+        null::text as model,
+        q.last_error,
+        q.last_outcome_kind,
+        q.locked_by,
+        q.locked_at,
+        q.heartbeat_at,
+        q.created_at,
+        q.updated_at,
+        q.completed_at,
+        null::timestamp as next_run_at,
+        null::text as metadata_summary,
+        null::text as source_kind,
+        q.provider_policy
+      from finalize_distille_queue q
+      left join evidence_coverage_results e on e.id = q.evidence_result_id
+      left join found_candidates c on c.id = e.found_candidate_id
+      union all
+      select
+        'mergeActivationFinalize'::text as queue_name,
+        'finalizeDistille'::text as visible_queue_name,
+        'merge_activation_finalize'::text as job_type,
+        'merge_activation_finalize_queue'::text as backend_kind,
+        q.id,
+        q.status,
+        q.priority,
+        q.attempt_count,
+        canonical.title as subject_title,
+        concat(
+          'deadZone=', q.dead_zone_knowledge_id,
+          ' | canonical=', q.canonical_knowledge_id,
+          ' | mergeReview=', q.merge_review_job_id
+        ) as subject_detail,
+        q.provider,
+        q.model,
+        q.last_error,
+        q.last_outcome_kind,
+        q.locked_by,
+        q.locked_at,
+        q.heartbeat_at,
+        q.created_at,
+        q.updated_at,
+        q.completed_at,
+        q.next_run_at,
+        coalesce(q.activation_result->>'outcome', q.last_outcome_kind) as metadata_summary,
+        null::text as source_kind,
+        null::text as provider_policy
+      from merge_activation_finalize_queue q
+      left join knowledge_items canonical on canonical.id = q.canonical_knowledge_id
+    ) q
     where (${statusFilter}::text is null or q.status = ${statusFilter})
       and (
         ${pattern}::text is null
-        or coalesce(e.title, c.title) ilike ${pattern}
-        or q.evidence_result_id::text ilike ${pattern}
+        or q.subject_title ilike ${pattern}
+        or q.subject_detail ilike ${pattern}
       )
     order by
       ${buildDynamicOrderBy("finalizeDistille", sortBy, sortDir)}
@@ -459,8 +615,8 @@ async function countQueueRows(
   const column =
     queueName === "findingCandidate"
       ? sql`q.source_key || ' ' || coalesce(q.source_uri, '')`
-      : queueName === "finalizeDistille"
-        ? sql`coalesce(e.title, c.title, q.evidence_result_id::text)`
+      : queueName === "finalizeDistille" || queueName === "mergeActivationFinalize"
+        ? sql`coalesce(q.subject_title, q.subject_detail, q.id::text)`
         : queueName === "deadZoneMergeReview"
           ? sql`coalesce(dz.title, q.dead_zone_knowledge_id::text, q.canonical_knowledge_id::text)`
           : sql`coalesce(c.title, q.found_candidate_id::text)`;
@@ -468,16 +624,47 @@ async function countQueueRows(
   const joinSql =
     queueName === "findingCandidate"
       ? sql``
-      : queueName === "finalizeDistille"
-        ? sql`left join evidence_coverage_results e on e.id = q.evidence_result_id
-              left join found_candidates c on c.id = e.found_candidate_id`
+      : queueName === "finalizeDistille" || queueName === "mergeActivationFinalize"
+        ? sql``
         : queueName === "deadZoneMergeReview"
           ? sql`left join knowledge_items dz on dz.id = q.dead_zone_knowledge_id`
           : sql`left join found_candidates c on c.id = q.found_candidate_id`;
 
+  const fromSql =
+    queueName === "finalizeDistille"
+      ? sql`(
+          select
+            q.id,
+            coalesce(e.title, c.title) as subject_title,
+            concat('evidence=', q.evidence_result_id, ' | knowledge=', coalesce(q.knowledge_id::text, '-')) as subject_detail,
+            q.status
+          from finalize_distille_queue q
+          left join evidence_coverage_results e on e.id = q.evidence_result_id
+          left join found_candidates c on c.id = e.found_candidate_id
+          union all
+          select
+            q.id,
+            canonical.title as subject_title,
+            concat('deadZone=', q.dead_zone_knowledge_id, ' | canonical=', q.canonical_knowledge_id, ' | mergeReview=', q.merge_review_job_id) as subject_detail,
+            q.status
+          from merge_activation_finalize_queue q
+          left join knowledge_items canonical on canonical.id = q.canonical_knowledge_id
+        )`
+      : queueName === "mergeActivationFinalize"
+        ? sql`(
+            select
+              q.id,
+              canonical.title as subject_title,
+              concat('deadZone=', q.dead_zone_knowledge_id, ' | canonical=', q.canonical_knowledge_id, ' | mergeReview=', q.merge_review_job_id) as subject_detail,
+              q.status
+            from merge_activation_finalize_queue q
+            left join knowledge_items canonical on canonical.id = q.canonical_knowledge_id
+          )`
+        : sql.raw(tableName);
+
   const result = await db.execute(sql`
     select count(*)::int as count
-    from ${sql.raw(tableName)} q
+    from ${fromSql} q
     ${joinSql}
     where (${statusFilter}::text is null or q.status = ${statusFilter})
       and (${pattern}::text is null or ${column} ilike ${pattern})
@@ -488,6 +675,14 @@ async function countQueueRows(
 
 async function queueStatsFor(queueName: DistillationQueueName) {
   const tableName = queueTableNameByQueue[queueName];
+  const fromSql =
+    queueName === "finalizeDistille"
+      ? sql`(
+          select status, created_at, last_outcome_kind from finalize_distille_queue
+          union all
+          select status, created_at, last_outcome_kind from merge_activation_finalize_queue
+        )`
+      : sql.raw(tableName);
   const result = await db.execute(sql`
     select
       status,
@@ -505,7 +700,7 @@ async function queueStatsFor(queueName: DistillationQueueName) {
         where status = 'completed'
           and coalesce(last_outcome_kind, '') = 'insufficient'
       )::int as non_registered_count
-    from ${sql.raw(tableName)}
+    from ${fromSql}
     group by status
   `);
   const rows = result.rows as unknown as QueueStatsAggregateRow[];
@@ -540,7 +735,7 @@ async function queueStatsFor(queueName: DistillationQueueName) {
 }
 
 export async function fetchQueueDashboardStats(): Promise<{
-  queues: QueueStatsByQueue;
+  queues: QueueStatsByVisibleQueue;
   totals: QueueStatsByQueue[DistillationQueueName];
   queueControls: QueueControlStatesByQueue;
 }> {
@@ -548,9 +743,15 @@ export async function fetchQueueDashboardStats(): Promise<{
     Promise.all(distillationQueueNames.map((queueName) => queueStatsFor(queueName))),
     getQueueControlStates(),
   ]);
-  const queues = Object.fromEntries(
+  const allQueues = Object.fromEntries(
     distillationQueueNames.map((queueName, index) => [queueName, values[index]]),
   ) as QueueStatsByQueue;
+  const queues = Object.fromEntries(
+    visibleDistillationQueueNames.map((queueName) => [queueName, allQueues[queueName]]),
+  ) as QueueStatsByVisibleQueue;
+  const visibleQueueControls = Object.fromEntries(
+    visibleDistillationQueueNames.map((queueName) => [queueName, queueControls[queueName]]),
+  ) as QueueControlStatesByQueue;
 
   const totals = {
     counters: emptyCounters(),
@@ -561,7 +762,7 @@ export async function fetchQueueDashboardStats(): Promise<{
     nonRegistered: 0,
   } as QueueStatsByQueue[DistillationQueueName];
 
-  for (const queueName of distillationQueueNames) {
+  for (const queueName of visibleDistillationQueueNames) {
     const snapshot = queues[queueName];
     for (const status of distillationQueueStatuses) {
       totals.counters[status] += snapshot.counters[status];
@@ -580,7 +781,7 @@ export async function fetchQueueDashboardStats(): Promise<{
     }
   }
 
-  return { queues, totals, queueControls };
+  return { queues, totals, queueControls: visibleQueueControls };
 }
 
 export async function listQueueItems(params: QueueListQuery) {
@@ -685,11 +886,24 @@ export async function pauseQueueLane(queueName: DistillationQueueName, reason?: 
     queueName,
     reason: reason ?? "paused from queue lane control",
   });
+  let mergedPausedRunningCount = 0;
+  if (queueName === "finalizeDistille") {
+    await setQueuePaused({
+      queueName: "mergeActivationFinalize",
+      paused: true,
+      reason,
+      updatedBy: "queue-dashboard",
+    });
+    mergedPausedRunningCount = await pauseRunningQueueJobs({
+      queueName: "mergeActivationFinalize",
+      reason: reason ?? "paused from queue lane control",
+    });
+  }
 
   return {
     queueName,
     state: queueControls[queueName],
-    pausedRunningCount,
+    pausedRunningCount: pausedRunningCount + mergedPausedRunningCount,
   };
 }
 
@@ -700,6 +914,14 @@ export async function resumeQueueLane(queueName: DistillationQueueName, reason?:
     reason,
     updatedBy: "queue-dashboard",
   });
+  if (queueName === "finalizeDistille") {
+    await setQueuePaused({
+      queueName: "mergeActivationFinalize",
+      paused: false,
+      reason,
+      updatedBy: "queue-dashboard",
+    });
+  }
 
   return {
     queueName,

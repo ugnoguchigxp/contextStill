@@ -15,12 +15,23 @@ export const queueTableNameByQueue: Record<DistillationQueueName, string> = {
   coveringEvidence: "covering_evidence_queue",
   deadZoneMergeReview: "dead_zone_merge_review_queue",
   finalizeDistille: "finalize_distille_queue",
+  mergeActivationFinalize: "merge_activation_finalize_queue",
 };
 
 export type QueueRetryMode = "default" | "cloud_api";
+export type FinalizeQueueJobType = "candidate_finalize" | "merge_activation_finalize";
+export type QueueBackendKind =
+  | "finding_candidate_queue"
+  | "covering_evidence_queue"
+  | "dead_zone_merge_review_queue"
+  | "finalize_distille_queue"
+  | "merge_activation_finalize_queue";
 
 export type QueueListItem = {
   queueName: DistillationQueueName;
+  visibleQueueName: DistillationQueueName;
+  jobType?: FinalizeQueueJobType;
+  backendKind: QueueBackendKind;
   id: string;
   status: DistillationQueueStatus;
   priority: number;

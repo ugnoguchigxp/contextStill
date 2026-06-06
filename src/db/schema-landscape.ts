@@ -275,6 +275,95 @@ export const deadZoneMergeReviewQueue = pgTable(
   }),
 );
 
+export const mergeActivationFinalizeQueue = pgTable(
+  "merge_activation_finalize_queue",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    mergeReviewJobId: uuid("merge_review_job_id")
+      .references(() => deadZoneMergeReviewQueue.id, { onDelete: "cascade" })
+      .notNull(),
+    deadZoneKnowledgeId: uuid("dead_zone_knowledge_id")
+      .references(() => knowledgeItems.id, { onDelete: "cascade" })
+      .notNull(),
+    canonicalKnowledgeId: uuid("canonical_knowledge_id")
+      .references(() => knowledgeItems.id, { onDelete: "cascade" })
+      .notNull(),
+    reviewItemId: uuid("review_item_id").references(() => landscapeReviewItems.id, {
+      onDelete: "set null",
+    }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    status: text("status").notNull().default("pending"),
+    priority: integer("priority").notNull().default(50),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(2),
+    nextRunAt: timestamp("next_run_at"),
+    lockedBy: text("locked_by"),
+    lockedAt: timestamp("locked_at"),
+    heartbeatAt: timestamp("heartbeat_at"),
+    lastError: text("last_error"),
+    lastOutcomeKind: text("last_outcome_kind"),
+    provider: text("provider").notNull().default("local-llm"),
+    model: text("model"),
+    inputSnapshot: jsonb("input_snapshot").default({}).notNull(),
+    activationResult: jsonb("activation_result").default({}).notNull(),
+    knowledgeId: uuid("knowledge_id").references(() => knowledgeItems.id, {
+      onDelete: "set null",
+    }),
+    payload: jsonb("payload").default({}).notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    completedAt: timestamp("completed_at"),
+  },
+  (table) => ({
+    idempotencyKeyUnique: uniqueIndex("merge_activation_finalize_queue_idempotency_unique").on(
+      table.idempotencyKey,
+    ),
+    statusPriorityCreatedAtIdx: index(
+      "merge_activation_finalize_queue_status_priority_created_at_idx",
+    ).on(table.status, table.priority, table.createdAt),
+    mergeReviewJobIdx: index("merge_activation_finalize_queue_merge_review_job_idx").on(
+      table.mergeReviewJobId,
+    ),
+    deadZoneStatusIdx: index("merge_activation_finalize_queue_dead_zone_status_idx").on(
+      table.deadZoneKnowledgeId,
+      table.status,
+    ),
+    canonicalStatusIdx: index("merge_activation_finalize_queue_canonical_status_idx").on(
+      table.canonicalKnowledgeId,
+      table.status,
+    ),
+    reviewItemStatusIdx: index("merge_activation_finalize_queue_review_item_status_idx").on(
+      table.reviewItemId,
+      table.status,
+    ),
+    statusCheck: check(
+      "merge_activation_finalize_queue_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(distillationQueueStatusValues))})`,
+    ),
+    distinctKnowledgeCheck: check(
+      "merge_activation_finalize_queue_distinct_knowledge_check",
+      sql`${table.deadZoneKnowledgeId} <> ${table.canonicalKnowledgeId}`,
+    ),
+    payloadObjectCheck: check(
+      "merge_activation_finalize_queue_payload_object_check",
+      sql`jsonb_typeof(${table.payload}) = 'object'`,
+    ),
+    metadataObjectCheck: check(
+      "merge_activation_finalize_queue_metadata_object_check",
+      sql`jsonb_typeof(${table.metadata}) = 'object'`,
+    ),
+    inputSnapshotObjectCheck: check(
+      "merge_activation_finalize_queue_input_snapshot_object_check",
+      sql`jsonb_typeof(${table.inputSnapshot}) = 'object'`,
+    ),
+    activationResultObjectCheck: check(
+      "merge_activation_finalize_queue_activation_result_object_check",
+      sql`jsonb_typeof(${table.activationResult}) = 'object'`,
+    ),
+  }),
+);
+
 export const landscapeSnapshots = pgTable(
   "landscape_snapshots",
   {

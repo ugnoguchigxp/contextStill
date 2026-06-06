@@ -9,6 +9,7 @@ import {
   finalizeDistilleQueue,
   findingCandidateQueue,
   foundCandidates,
+  mergeActivationFinalizeQueue,
   vibeMemories,
 } from "../../../db/schema.js";
 import { asRecord } from "../../../shared/utils/normalize.js";
@@ -17,6 +18,7 @@ import type { CoverEvidenceResult } from "../../coverEvidence/types.js";
 import { runFinalizeDistille } from "../../finalizeDistille/domain.js";
 import { type FindCandidateResult, runFindCandidate } from "../../findCandidate/domain.js";
 import { processDeadZoneMergeReviewJob } from "../../landscape/deadzone-merge-review-queue.service.js";
+import { processMergeActivationFinalizeJob } from "../../landscape/merge-activation-finalize.worker.js";
 import { researchWebSourceToMarkdown } from "../../sources/web/source-research.service.js";
 import { claimNextQueueJob } from "./claim.js";
 import { isQueuePaused } from "./control.js";
@@ -944,6 +946,12 @@ export async function runQueueWorkerOnce(params: {
               signal: pauseController.signal,
               run: (signal) => processDeadZoneMergeReviewJob(claimed.id, signal),
             });
+          } else if (params.queueName === "mergeActivationFinalize") {
+            await runWithTimeout({
+              timeoutMs: groupedConfig.distillation.timeoutMs,
+              signal: pauseController.signal,
+              run: (signal) => processMergeActivationFinalizeJob(claimed.id, signal),
+            });
           } else {
             await runWithTimeout({
               timeoutMs: groupedConfig.distillation.timeoutMs,
@@ -1040,6 +1048,26 @@ export async function runQueueWorkerOnce(params: {
       });
     } else if (params.queueName === "deadZoneMergeReview") {
       // The merge-review service records job failure details so it can classify parse/provider failures.
+    } else if (params.queueName === "mergeActivationFinalize") {
+      const [current] = await db
+        .select()
+        .from(mergeActivationFinalizeQueue)
+        .where(eq(mergeActivationFinalizeQueue.id, claimed.id))
+        .limit(1);
+      const currentAttempt = current?.attemptCount ?? 0;
+      await db
+        .update(mergeActivationFinalizeQueue)
+        .set({
+          status: "failed",
+          attemptCount: currentAttempt + 1,
+          lockedBy: null,
+          lockedAt: null,
+          heartbeatAt: null,
+          lastError: message,
+          lastOutcomeKind: "failed",
+          updatedAt: new Date(),
+        })
+        .where(eq(mergeActivationFinalizeQueue.id, claimed.id));
     } else {
       const [current] = await db
         .select()

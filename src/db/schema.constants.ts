@@ -24,6 +24,7 @@ export const distillationQueueNameValues = [
   "coveringEvidence",
   "deadZoneMergeReview",
   "finalizeDistille",
+  "mergeActivationFinalize",
 ] as const;
 export const distillationQueueStatusValues = [
   "pending",

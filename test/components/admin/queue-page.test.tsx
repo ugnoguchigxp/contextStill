@@ -96,6 +96,8 @@ describe("QueuePage v2", () => {
     vi.mocked(adminRepository.fetchActiveQueueTasksV2).mockResolvedValue([
       {
         queueName: "coveringEvidence",
+        visibleQueueName: "coveringEvidence",
+        backendKind: "covering_evidence_queue",
         id: "job-running",
         status: "running",
         priority: 50,
@@ -122,6 +124,8 @@ describe("QueuePage v2", () => {
       items: [
         {
           queueName: "findingCandidate",
+          visibleQueueName: "findingCandidate",
+          backendKind: "finding_candidate_queue",
           id: "job-1",
           status: "pending",
           priority: 50,
@@ -262,6 +266,8 @@ describe("QueuePage v2", () => {
       items: [
         {
           queueName: "findingCandidate",
+          visibleQueueName: "findingCandidate",
+          backendKind: "finding_candidate_queue",
           id: "job-failed",
           status: "failed",
           priority: 20,

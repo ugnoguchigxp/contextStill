@@ -393,6 +393,13 @@
       "when": 1780275600000,
       "tag": "0055_dead_zone_merge_review_queue",
       "breakpoints": true
+    },
+    {
+      "idx": 56,
+      "version": "7",
+      "when": 1780790400000,
+      "tag": "0056_merge_activation_finalize_queue",
+      "breakpoints": true
     }
   ]
 }

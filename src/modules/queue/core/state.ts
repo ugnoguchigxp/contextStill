@@ -125,7 +125,8 @@ export async function retryQueueJob(params: {
               and status <> 'running'
             returning id, status
           `)
-        : params.queueName === "deadZoneMergeReview"
+        : params.queueName === "deadZoneMergeReview" ||
+            params.queueName === "mergeActivationFinalize"
           ? await db.execute(sql`
             update ${sql.raw(tableName)}
             set
