@@ -18,7 +18,7 @@ DeadZone merge review で作った merged knowledge を、単なる body 統合�
 
 Queue UI では `Finalize` に統合する。
 
-Implementation では job type を分ける。
+Implementation では job type を分ける。Visible lane と storage/worker boundary を混同しない。
 
 - `candidate_finalize`
   - existing `coveringEvidence -> finalizeDistille`
@@ -32,6 +32,8 @@ Implementation では job type を分ける。
 `deadZoneMergeReview` は review/decision/proposed body までを担当する。実際の knowledge mutation と retrieval-ready 化は Finalize 側へ移す。
 
 Do not force `merge_activation_finalize` into the current `finalize_distille_queue` row shape without schema changes. Current `finalize_distille_queue.evidence_result_id` is `not null` and semantically tied to candidate finalization. Reusing it with dummy evidence rows would hide the real source of the operation and make queue diagnostics misleading.
+
+Adopt the minimal safe storage model: keep `finalize_distille_queue` unchanged for `candidate_finalize`, add `merge_activation_finalize_queue` for `merge_activation_finalize`, and make Queue API/UI present both as the visible `Finalize` lane. This avoids a broad migration of existing finalize jobs while still giving operators one finalization surface.
 
 ## Conceptual Flow
 
@@ -72,21 +74,13 @@ Meaning:
 - `needs_evidence`: merge may be useful but source support is too weak.
 - `blocked`: contradiction, stale snapshot, missing rows, status drift, or invalid LLM output.
 
-Only the first three outcomes should update the canonical knowledge as active retrieval target. `dormant_valid` should preserve auditability without pretending the knowledge should be selected often.
+Only `personalized_active`, `general_active`, and `scope_refined` should update canonical body/title/appliesTo as an active retrieval target. `merged_deprecated` may update metadata only when the canonical body already contains the useful content from the merge review. `dormant_valid` should preserve auditability without pretending the knowledge should be selected often.
 
 ## Data Model
 
 Prefer adding a typed finalize work table over overloading `finalize_distille_queue` with nullable foreign keys.
 
-Option A: add `finalize_activation_queue`
-
-```ts
-type FinalizeActivationJobType =
-  | "candidate_finalize"
-  | "merge_activation_finalize";
-```
-
-For a minimal migration, keep existing `finalize_distille_queue` for `candidate_finalize` and add a separate table for merge activation, while Queue repository presents both as the `Finalize` lane.
+Chosen migration path: keep existing `finalize_distille_queue` for `candidate_finalize` and add a separate table for merge activation, while Queue repository presents both as the `Finalize` lane.
 
 New table: `merge_activation_finalize_queue`
 
@@ -112,11 +106,41 @@ Indexes:
 - `(canonical_knowledge_id, status)`
 - `(review_item_id, status)`
 
-The visible queue name can remain `finalizeDistille` for compatibility, but queue list rows should expose `jobType`.
+Checks:
+
+- `status in distillationQueueStatusValues`
+- `jsonb_typeof(payload) = 'object'`
+- `jsonb_typeof(metadata) = 'object'`
+- `jsonb_typeof(input_snapshot) = 'object'`
+- `jsonb_typeof(activation_result) = 'object'`
+- `dead_zone_knowledge_id <> canonical_knowledge_id`
+
+The visible queue name can remain `finalizeDistille` for compatibility, but queue list rows must expose `jobType`.
 
 ```ts
 type FinalizeQueueJobType = "candidate_finalize" | "merge_activation_finalize";
 ```
+
+`QueueListItem` should also expose a stable backend discriminator so row-level controls can address the correct table.
+
+```ts
+type QueueBackendKind =
+  | "finding_candidate_queue"
+  | "covering_evidence_queue"
+  | "dead_zone_merge_review_queue"
+  | "finalize_distille_queue"
+  | "merge_activation_finalize_queue";
+
+type QueueListItem = {
+  queueName: DistillationQueueName;
+  visibleQueueName: DistillationQueueName;
+  jobType?: FinalizeQueueJobType;
+  backendKind: QueueBackendKind;
+  id: string;
+};
+```
+
+This is required because existing queue controls resolve a table from `queueName`. Once `Finalize` is a union view, row-level retry/pause/resume cannot safely use only `queue=finalizeDistille&id=...`; it must either pass `backendKind`/`jobType` or call a typed endpoint.
 
 ## Input Snapshot
 
@@ -272,6 +296,20 @@ Add a producer from successful merge review apply/request:
 - Producer creates one idempotent `merge_activation_finalize` job.
 - The destructive knowledge mutation happens only in Finalize worker.
 
+Claiming model:
+
+- Keep existing `processFinalizeJob` unchanged for rows from `finalize_distille_queue`.
+- Add `processMergeActivationFinalizeJob` for rows from `merge_activation_finalize_queue`.
+- Queue UI presents both under `Finalize`, but worker dispatch must know the backend table.
+- Do not let the generic `finalizeDistille` claim query silently ignore `merge_activation_finalize_queue`; otherwise visible pending jobs would never run.
+
+Implementation options:
+
+- Option 1: introduce an internal queue name such as `mergeActivationFinalize` and mark it `visibleAs: "finalizeDistille"` in API/UI.
+- Option 2: keep queue names unchanged and add a typed finalize dispatcher that claims from both finalize tables.
+
+Prefer Option 1 for smaller blast radius. It keeps common queue controls table-driven and avoids special-case union claiming. UI can still hide the internal lane by grouping it under `Finalize`.
+
 Worker steps:
 
 1. Claim `merge_activation_finalize` job through common queue claim semantics.
@@ -309,6 +347,8 @@ In `Finalize`, show both job types:
 - `candidate_finalize`
 - `merge_activation_finalize`
 
+The tab count and stats should aggregate both backends. The row model must keep enough backend identity for controls.
+
 Rows should include:
 
 - job type badge
@@ -319,6 +359,7 @@ Rows should include:
 - outcome
 - source queue/job id
 - activation outcome for merge finalization
+- backend kind, hidden from normal display but used by row actions
 
 For `merge_activation_finalize`, subject should be canonical title, with detail:
 
@@ -338,12 +379,21 @@ Completed drawer:
 
 The old `deadZoneMergeReview` completed drawer should no longer directly mutate knowledge. Its primary action should enqueue Finalize.
 
+Row controls:
+
+- lane pause/resume for visible `Finalize` should affect both `candidate_finalize` and `merge_activation_finalize`, or display separate scoped controls.
+- row retry/pause/resume must route to the backend table of that row.
+- bulk retry from the `Finalize` tab must include job type filters, so candidate finalization is not retried accidentally when the operator only means merge activation.
+
 ## API Plan
 
 Add endpoints:
 
 - `POST /api/graph/landscape/dead-zone-knowledge/merge-review-jobs/:id/finalize`
 - `GET /api/queue?queue=finalizeDistille&type=merge_activation_finalize`
+- `POST /api/queue/:backendKind/:id/retry` or equivalent typed row action route
+- `POST /api/queue/:backendKind/:id/pause`
+- `POST /api/queue/:backendKind/:id/resume`
 
 Potential internal service names:
 
@@ -367,13 +417,16 @@ Milestone 2: Merge activation finalize queue table
 - Add `merge_activation_finalize_queue` migration.
 - Add Drizzle schema.
 - Add repository/service create/list/process functions.
+- Add either internal queue name `mergeActivationFinalize` with `visibleAs: "finalizeDistille"` or a typed finalize dispatcher.
 - Add queue stats/list union support under visible `Finalize`.
+- Add backend-aware row controls before exposing merge activation rows in the UI.
 
 Milestone 3: Producer and UI
 
 - Change completed `merge_recommended` merge review action to enqueue Finalize.
 - Add job type badge and filtering in Queue page.
 - Show merge activation rows in Finalize.
+- Ensure lane-level pause/resume semantics are explicit for both finalize backends.
 
 Milestone 4: Activation LLM and appliesTo normalization
 
@@ -395,6 +448,7 @@ Schema tests:
 - `merge_activation_finalize_queue` exists with queue status checks.
 - idempotency key prevents duplicate finalize jobs.
 - visible Finalize stats include both candidate and merge activation rows.
+- queue list rows expose `jobType` and backend discriminator.
 
 Service tests:
 
@@ -411,14 +465,37 @@ Queue worker tests:
 - `candidate_finalize` continues to use existing finalize behavior.
 - `merge_activation_finalize` uses activation worker.
 - pause/resume/retry works for both visible Finalize job types.
+- row retry/pause/resume routes to the correct backend table.
+- visible Finalize lane controls either pause both backends or expose separate scoped controls.
 - concurrent claims do not double-apply the same merge.
 
 Component tests:
 
 - Merge Review completed action says `Send to Finalize`.
 - Finalize tab shows job type badge.
+- Finalize stats aggregate candidate and merge activation jobs.
 - Merge activation drawer shows activation outcome and appliesTo diff.
 - Direct destructive apply is not the primary path.
+
+## Review Checklist
+
+Before implementation starts:
+
+- Confirm whether Option 1 (`mergeActivationFinalize` internal queue name) or Option 2 (typed finalize dispatcher) is selected.
+- Confirm Queue row actions can address separate backend tables before UI union is shipped.
+- Confirm `dormant_valid` and `merged_deprecated` mutation semantics with product owner.
+- Confirm whether source docs need updates at the same time as implementation:
+  - `spec/pub/architecture.md`
+  - `spec/pub/operations.md`
+  - `spec/pub/cli.md`
+- Confirm migration can be smoke-tested on a fresh database and on the current local database.
+
+During implementation review:
+
+- Verify reachability risk and community context are loaded before replay comparison is interpreted.
+- Verify LLM proposals are normalized before persistence.
+- Verify metadata records both the proposal and the persisted appliesTo decision.
+- Verify direct destructive merge apply is not exposed as the primary UI action.
 
 Verification:
 
