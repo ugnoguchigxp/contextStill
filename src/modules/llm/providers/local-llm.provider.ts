@@ -6,6 +6,7 @@ import type {
   LlmProvider,
 } from "../llm-provider.js";
 import { normalizeLlmUsage } from "../usage-normalizer.js";
+import { resolveLocalLlmModelConfig } from "./local-llm-config.js";
 
 type LocalLlmResponse = {
   choices?: Array<{
@@ -30,10 +31,25 @@ type LocalLlmHealthResponse = {
 
 type LocalLlmProviderOptions = {
   timeoutMs?: number;
+  modelConfig?: {
+    apiBaseUrl: string;
+    model: string;
+  };
 };
 
-function isConfigured(): boolean {
-  return Boolean(groupedConfig.localLlm.apiBaseUrl.trim() && groupedConfig.localLlm.model.trim());
+function resolveProviderConfig(providerOptions: LocalLlmProviderOptions, model?: string) {
+  if (!model?.trim() && providerOptions.modelConfig) {
+    return {
+      apiBaseUrl: providerOptions.modelConfig.apiBaseUrl.replace(/\/+$/, ""),
+      model: providerOptions.modelConfig.model,
+    };
+  }
+  return resolveLocalLlmModelConfig(model);
+}
+
+function isConfigured(providerOptions: LocalLlmProviderOptions, model?: string): boolean {
+  const config = resolveProviderConfig(providerOptions, model);
+  return Boolean(config.apiBaseUrl.trim() && config.model.trim());
 }
 
 function headers(): HeadersInit {
@@ -45,12 +61,8 @@ function headers(): HeadersInit {
   return result;
 }
 
-function healthUrl(): string {
-  return `${groupedConfig.localLlm.apiBaseUrl.replace(/\/+$/, "")}/health`;
-}
-
-function chatUrl(): string {
-  return `${groupedConfig.localLlm.apiBaseUrl.replace(/\/+$/, "")}/v1/chat/completions`;
+function healthUrl(providerOptions: LocalLlmProviderOptions, model?: string): string {
+  return `${resolveProviderConfig(providerOptions, model).apiBaseUrl}/health`;
 }
 
 async function parseResponse(response: Response): Promise<LlmChatResponse> {
@@ -79,20 +91,21 @@ export function createLocalLlmProvider(options: LocalLlmProviderOptions = {}): L
 
   return {
     name: "local-llm",
-    isConfigured,
+    isConfigured: () => isConfigured(options),
     async chat(request: LlmChatRequest): Promise<LlmChatResponse> {
-      if (!isConfigured()) {
+      if (!isConfigured(options, request.model)) {
         throw new Error("local-llm is not configured");
       }
 
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const response = await fetch(chatUrl(), {
+        const config = resolveProviderConfig(options, request.model);
+        const response = await fetch(`${config.apiBaseUrl}/v1/chat/completions`, {
           method: "POST",
           headers: headers(),
           body: JSON.stringify({
-            model: groupedConfig.localLlm.model,
+            model: config.model,
             messages: request.messages,
             stream: false,
             temperature: request.temperature ?? 0,
@@ -114,13 +127,15 @@ export function createLocalLlmProvider(options: LocalLlmProviderOptions = {}): L
         clearTimeout(timer);
       }
     },
-    async healthCheck(): Promise<LlmHealthStatus> {
+    async healthCheck(healthOptions = {}): Promise<LlmHealthStatus> {
+      const requestedModel = healthOptions.model?.trim();
+      const config = resolveProviderConfig(options, requestedModel);
       const result: LlmHealthStatus = {
         provider: "local-llm",
-        configured: isConfigured(),
+        configured: isConfigured(options, requestedModel),
         reachable: false,
-        model: groupedConfig.localLlm.model,
-        endpoint: groupedConfig.localLlm.apiBaseUrl,
+        model: config.model,
+        endpoint: config.apiBaseUrl,
       };
 
       if (!result.configured) {
@@ -130,7 +145,7 @@ export function createLocalLlmProvider(options: LocalLlmProviderOptions = {}): L
       const controller = new AbortController();
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
-        const health = await fetch(healthUrl(), {
+        const health = await fetch(healthUrl(options, requestedModel), {
           method: "GET",
           headers: headers(),
           signal: controller.signal,
@@ -173,6 +188,7 @@ export function createLocalLlmProvider(options: LocalLlmProviderOptions = {}): L
 
       try {
         const ping = await this.chat({
+          model: requestedModel,
           messages: [{ role: "user", content: "ping" }],
           maxTokens: 8,
           temperature: 0,

@@ -71,6 +71,12 @@ export type AzureOpenAiDeploymentSettings = {
   model: string;
 };
 
+export type LocalLlmModelSettings = {
+  name: string;
+  apiBaseUrl: string;
+  model: string;
+};
+
 export const distillationPriorityTargetKindValues = [
   "knowledge_candidate",
   "web_ingest",
@@ -110,6 +116,7 @@ export type RuntimeSettingsEditable = {
       enabled: boolean;
       apiBaseUrl: string;
       model: string;
+      models: LocalLlmModelSettings[];
     };
     codex: {
       enabled: boolean;
@@ -178,6 +185,8 @@ export type RuntimeSettingsEditable = {
     pipelineLockStaleSeconds: number;
     lockTtlSeconds: number;
     pipelineClaimLimit: number;
+    findingQueueTaskIntervalSeconds: number;
+    coveringQueueTaskIntervalSeconds: number;
     continuousIdleSleepMs: number;
     continuousErrorSleepMs: number;
     inventoryRefreshIntervalMs: number;
@@ -233,6 +242,12 @@ const azureOpenAiDeploymentSchema = z.object({
   model: z.string().trim().min(1).or(z.literal("")),
 });
 
+const localLlmModelSchema = z.object({
+  name: z.string().trim().max(80).default(""),
+  apiBaseUrl: z.string().trim().url(),
+  model: z.string().trim().min(1),
+});
+
 const runtimeRouteSchema = z.object({
   provider: runtimeProviderSettingSchema,
   model: z.string().trim().min(1).optional(),
@@ -270,6 +285,7 @@ export const runtimeSettingsEditableSchema = z.object({
       enabled: z.boolean().default(true),
       apiBaseUrl: z.string().trim().url(),
       model: z.string().trim().min(1),
+      models: z.array(localLlmModelSchema).max(10).default([]),
     }),
     codex: z.object({
       enabled: z.boolean().default(false),
@@ -348,6 +364,8 @@ export const runtimeSettingsEditableSchema = z.object({
     pipelineLockStaleSeconds: z.number().int().min(30).max(604_800),
     lockTtlSeconds: z.number().int().min(30).max(604_800),
     pipelineClaimLimit: z.number().int().min(1).max(1000),
+    findingQueueTaskIntervalSeconds: z.number().int().min(0).max(3_600),
+    coveringQueueTaskIntervalSeconds: z.number().int().min(0).max(3_600),
     continuousIdleSleepMs: z.number().int().min(100).max(3_600_000),
     continuousErrorSleepMs: z.number().int().min(100).max(3_600_000),
     inventoryRefreshIntervalMs: z.number().int().min(100).max(3_600_000),

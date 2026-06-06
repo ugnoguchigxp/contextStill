@@ -1,6 +1,9 @@
 import { afterEach, beforeEach, describe, expect, test } from "vitest";
 import { groupedConfig } from "../src/config.js";
-import { cloneDefaultSettings } from "../src/modules/settings/settings.defaults.js";
+import {
+  cloneDefaultSettings,
+  parseDocumentValue,
+} from "../src/modules/settings/settings.defaults.js";
 import {
   type SecretValueEntry,
   applyRuntimeSettingsToProcess,
@@ -103,6 +106,7 @@ describe("settings runtime cache", () => {
       enabled: false,
       apiBaseUrl: "http://127.0.0.1:44448",
       model: "gemma-test",
+      models: [{ name: "Primary", apiBaseUrl: "http://127.0.0.1:44448", model: "gemma-test" }],
     };
 
     applyRuntimeSettingsToProcess(settings, {
@@ -118,6 +122,7 @@ describe("settings runtime cache", () => {
     expect(groupedConfig.azureOpenAi.deployments).toEqual([]);
     expect(groupedConfig.bedrock.model).toBe("");
     expect(groupedConfig.localLlm.model).toBe("");
+    expect(groupedConfig.localLlm.models).toEqual([]);
     expect(groupedConfig.localLlm.apiKey).toBe("");
   });
 
@@ -167,5 +172,129 @@ describe("settings runtime cache", () => {
         model: "gpt-secondary",
       },
     ]);
+  });
+
+  test("keeps multiple Local LLM model endpoints active when the provider is enabled", () => {
+    settings.providers["local-llm"] = {
+      enabled: true,
+      apiBaseUrl: "http://127.0.0.1:44448",
+      model: "local-primary",
+      models: [
+        { name: "Primary", apiBaseUrl: "http://127.0.0.1:44448", model: "local-primary" },
+        { name: "Coder", apiBaseUrl: "http://127.0.0.1:44449", model: "local-coder" },
+        { name: "Reasoner", apiBaseUrl: "http://127.0.0.1:44450", model: "local-reasoner" },
+      ],
+    };
+
+    applyRuntimeSettingsToProcess(settings, {
+      ...emptySecrets(),
+      localLlmApiKey: secret("local-key"),
+    });
+
+    expect(groupedConfig.localLlm.apiBaseUrl).toBe("http://127.0.0.1:44448");
+    expect(groupedConfig.localLlm.model).toBe("local-primary");
+    expect(groupedConfig.localLlm.models).toEqual([
+      { name: "Primary", apiBaseUrl: "http://127.0.0.1:44448", model: "local-primary" },
+      { name: "Coder", apiBaseUrl: "http://127.0.0.1:44449", model: "local-coder" },
+      { name: "Reasoner", apiBaseUrl: "http://127.0.0.1:44450", model: "local-reasoner" },
+    ]);
+  });
+
+  test("applies queue task intervals from runtime settings", () => {
+    const originalFindingInterval = groupedConfig.distillation.findingQueueTaskIntervalSeconds;
+    const originalCoveringInterval = groupedConfig.distillation.coveringQueueTaskIntervalSeconds;
+    try {
+      settings.advanced.findingQueueTaskIntervalSeconds = 17;
+      settings.advanced.coveringQueueTaskIntervalSeconds = 3;
+
+      applyRuntimeSettingsToProcess(settings, emptySecrets());
+
+      expect(groupedConfig.distillation.findingQueueTaskIntervalSeconds).toBe(17);
+      expect(groupedConfig.distillation.coveringQueueTaskIntervalSeconds).toBe(3);
+    } finally {
+      groupedConfig.distillation.findingQueueTaskIntervalSeconds = originalFindingInterval;
+      groupedConfig.distillation.coveringQueueTaskIntervalSeconds = originalCoveringInterval;
+    }
+  });
+
+  test("normalizes Cover Evidence routing to one queue processing route", () => {
+    const row = {
+      id: "settings-row-1",
+      namespace: "runtime",
+      key: "runtime_settings",
+      value: {
+        ...settings,
+        taskRouting: {
+          ...settings.taskRouting,
+          coverEvidence: {
+            sourceSupport: { provider: "openai", model: "gpt-source", fallback: [] },
+            externalEvidence: {
+              provider: "local-llm",
+              model: "gemma-test",
+              fallback: ["azure-openai"],
+            },
+            mcpEvidence: { provider: "bedrock", model: "bedrock-mcp", fallback: [] },
+          },
+        },
+      },
+      valueKind: "json",
+      secretRef: null,
+      isSecret: false,
+      description: null,
+      schemaVersion: 1,
+      updatedBy: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const parsed = parseDocumentValue(row);
+
+    expect(parsed.taskRouting.coverEvidence.sourceSupport).toEqual(
+      parsed.taskRouting.coverEvidence.externalEvidence,
+    );
+    expect(parsed.taskRouting.coverEvidence.mcpEvidence).toEqual(
+      parsed.taskRouting.coverEvidence.externalEvidence,
+    );
+    expect(parsed.taskRouting.coverEvidence.externalEvidence).toMatchObject({
+      provider: "local-llm",
+      model: "gemma-4-e4b-it",
+      fallback: ["azure-openai"],
+    });
+  });
+
+  test("normalizes Find Candidate routing to one queue processing route", () => {
+    const row = {
+      id: "settings-row-2",
+      namespace: "runtime",
+      key: "runtime_settings",
+      value: {
+        ...settings,
+        taskRouting: {
+          ...settings.taskRouting,
+          findCandidate: {
+            ...settings.taskRouting.findCandidate,
+            source: { provider: "azure-openai", model: "gpt-source", fallback: ["local-llm"] },
+            vibe: { provider: "bedrock", model: "bedrock-vibe", fallback: [] },
+          },
+        },
+      },
+      valueKind: "json",
+      secretRef: null,
+      isSecret: false,
+      description: null,
+      schemaVersion: 1,
+      updatedBy: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const parsed = parseDocumentValue(row);
+
+    expect(parsed.taskRouting.findCandidate.vibe).toEqual(parsed.taskRouting.findCandidate.source);
+    expect(parsed.taskRouting.findCandidate.source).toMatchObject({
+      provider: "azure-openai",
+      model: "gpt-5-4-mini",
+      fallback: ["local-llm"],
+    });
   });
 });

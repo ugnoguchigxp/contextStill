@@ -412,4 +412,32 @@ describe("Doctor Service", () => {
     expect(report.mcp.staleSourceCount).toBe(0);
     expect(getDb).not.toHaveBeenCalled();
   });
+
+  test("AI service-tools domain selects local LLM health by the resolved provider model", async () => {
+    vi.mocked(getDb).mockImplementation(() => {
+      throw new Error("AI service-tools domain should not inspect the database");
+    });
+    vi.mocked(checkAgenticLlmHealth).mockResolvedValue({
+      providerSetting: "openai",
+      selectedProvider: "local-llm",
+      fallbackOrder: ["openai", "local-llm"],
+      provider: "local-llm",
+      configured: true,
+      reachable: true,
+      model: "qwen3",
+      endpoint: "http://127.0.0.1:11434",
+    });
+
+    await runDoctorAiServiceTools();
+
+    expect(checkLlmProviderHealthMatrix).toHaveBeenCalledWith(
+      5000,
+      expect.objectContaining({
+        selectedProvider: "local-llm",
+        routeOrder: ["openai", "local-llm"],
+        selectedLocalLlmModel: "qwen3",
+      }),
+    );
+    expect(getDb).not.toHaveBeenCalled();
+  });
 });

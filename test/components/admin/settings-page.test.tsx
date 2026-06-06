@@ -20,6 +20,7 @@ const repositoryMocks = vi.hoisted(() => ({
   updateRuntimeSettings: vi.fn(),
   reloadRuntimeSettingsCache: vi.fn(),
   testAzureOpenAiDeployment: vi.fn(),
+  testLocalLlmModel: vi.fn(),
   testRuntimeProvider: vi.fn(),
 }));
 
@@ -54,6 +55,7 @@ vi.mock("../../../web/src/modules/admin/repositories/admin.repository", async ()
     updateRuntimeSettings: repositoryMocks.updateRuntimeSettings,
     reloadRuntimeSettingsCache: repositoryMocks.reloadRuntimeSettingsCache,
     testAzureOpenAiDeployment: repositoryMocks.testAzureOpenAiDeployment,
+    testLocalLlmModel: repositoryMocks.testLocalLlmModel,
     testRuntimeProvider: repositoryMocks.testRuntimeProvider,
   };
 });
@@ -115,6 +117,18 @@ function buildSettingsView(): RuntimeSettingsView {
         enabled: true,
         apiBaseUrl: "http://127.0.0.1:44448",
         model: "gemma-4-e4b-it",
+        models: [
+          {
+            name: "Primary",
+            apiBaseUrl: "http://127.0.0.1:44448",
+            model: "gemma-4-e4b-it",
+          },
+          {
+            name: "Qwen",
+            apiBaseUrl: "http://127.0.0.1:44449",
+            model: "qwen-3.6-14b-it",
+          },
+        ],
         apiKeySecret: secretStatus(false),
       },
       codex: {
@@ -217,6 +231,8 @@ function buildSettingsView(): RuntimeSettingsView {
       pipelineLockStaleSeconds: 1200,
       lockTtlSeconds: 1800,
       pipelineClaimLimit: 1,
+      findingQueueTaskIntervalSeconds: 30,
+      coveringQueueTaskIntervalSeconds: 10,
       continuousIdleSleepMs: 5000,
       continuousErrorSleepMs: 12000,
       inventoryRefreshIntervalMs: 30000,
@@ -275,6 +291,7 @@ describe("SettingsPage", () => {
     repositoryMocks.updateRuntimeSettings.mockReset();
     repositoryMocks.reloadRuntimeSettingsCache.mockReset();
     repositoryMocks.testAzureOpenAiDeployment.mockReset();
+    repositoryMocks.testLocalLlmModel.mockReset();
     repositoryMocks.testRuntimeProvider.mockReset();
 
     repositoryMocks.fetchRuntimeSettings.mockResolvedValue(buildSnapshot());
@@ -308,6 +325,17 @@ describe("SettingsPage", () => {
         },
       }),
     );
+    repositoryMocks.testLocalLlmModel.mockImplementation(async (model: string) => ({
+      provider: "local-llm",
+      model,
+      health: {
+        provider: "local-llm",
+        configured: true,
+        reachable: true,
+        model,
+        endpoint: "http://127.0.0.1:44449",
+      },
+    }));
   });
 
   it("renders task-routing tab from URL and keeps tab links canonical", async () => {
@@ -318,7 +346,10 @@ describe("SettingsPage", () => {
     expect(screen.getByText("Find Candidate")).toBeInTheDocument();
     expect(screen.getByText("Cover Evidence")).toBeInTheDocument();
     expect(screen.getByText("Shared Distillation Runtime")).toBeInTheDocument();
+    expect(screen.getByLabelText("Find Candidate LLM Timeout (seconds)")).toHaveValue(600);
     expect(screen.getByLabelText("Find Candidate Tool Calls")).toBeInTheDocument();
+    expect(screen.getByLabelText("Finding Queue Task Interval (seconds)")).toHaveValue(30);
+    expect(screen.getByLabelText("Covering Queue Task Interval (seconds)")).toHaveValue(10);
     expect(screen.getByLabelText("Cover Evidence Search Calls")).toBeInTheDocument();
     expect(screen.getByText("Agentic Compile")).toBeInTheDocument();
     expect(screen.queryByRole("link", { name: "Distillation Runtime" })).not.toBeInTheDocument();
@@ -360,7 +391,9 @@ describe("SettingsPage", () => {
     const saveButton = screen.getByRole("button", { name: "Save Settings" });
     expect(saveButton).toBeDisabled();
 
-    const sourceRow = screen.getByText("findCandidate.source").closest(".settings-route-row");
+    expect(screen.queryByText("findCandidate.source")).not.toBeInTheDocument();
+    expect(screen.queryByText("findCandidate.vibe")).not.toBeInTheDocument();
+    const sourceRow = screen.getByText("findCandidate").closest(".settings-route-row");
     expect(sourceRow).not.toBeNull();
     const rowScope = within(sourceRow as HTMLElement);
 
@@ -370,8 +403,20 @@ describe("SettingsPage", () => {
     fireEvent.change(screen.getByLabelText("Find Candidate Tool Calls"), {
       target: { value: "6" },
     });
+    fireEvent.change(screen.getByLabelText("Find Candidate LLM Timeout (seconds)"), {
+      target: { value: "45" },
+    });
+    fireEvent.change(screen.getByLabelText("Rate Limit Cooldown (sec)"), {
+      target: { value: "120" },
+    });
     fireEvent.change(screen.getByLabelText("Cover Evidence Fetch Calls"), {
       target: { value: "2" },
+    });
+    fireEvent.change(screen.getByLabelText("Finding Queue Task Interval (seconds)"), {
+      target: { value: "45" },
+    });
+    fireEvent.change(screen.getByLabelText("Covering Queue Task Interval (seconds)"), {
+      target: { value: "10" },
     });
 
     expect(saveButton).toBeEnabled();
@@ -385,8 +430,49 @@ describe("SettingsPage", () => {
       model: "gpt-5-4-mini",
       fallback: ["local-llm"],
     });
+    expect(payload.settings.taskRouting.findCandidate.vibe).toEqual({
+      provider: "azure-openai",
+      model: "gpt-5-4-mini",
+      fallback: ["local-llm"],
+    });
+    expect(payload.settings.taskRouting.findCandidate.throttling.rateLimitCooldownSeconds).toBe(
+      120,
+    );
+    expect(payload.settings.distillationRuntime.findCandidateTimeoutMs).toBe(45_000);
     expect(payload.settings.distillationRuntime.findCandidateMaxToolCalls).toBe(6);
     expect(payload.settings.distillationRuntime.coverEvidenceFetchMaxCalls).toBe(2);
+    expect(payload.settings.advanced.findingQueueTaskIntervalSeconds).toBe(45);
+    expect(payload.settings.advanced.coveringQueueTaskIntervalSeconds).toBe(10);
+  });
+
+  it("edits Cover Evidence as one queue processing route", async () => {
+    routerState.pathname = "/setting/taskrouting";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
+
+    expect(screen.getByText("coverEvidence")).toBeInTheDocument();
+    expect(screen.queryByText("coverEvidence.sourceSupport")).not.toBeInTheDocument();
+    expect(screen.queryByText("coverEvidence.externalEvidence")).not.toBeInTheDocument();
+    expect(screen.queryByText("coverEvidence.mcpEvidence")).not.toBeInTheDocument();
+
+    const coverEvidenceRow = screen.getByText("coverEvidence").closest(".settings-route-row");
+    expect(coverEvidenceRow).not.toBeNull();
+    const rowScope = within(coverEvidenceRow as HTMLElement);
+    fireEvent.change(rowScope.getByLabelText("Provider"), { target: { value: "azure-openai" } });
+    fireEvent.change(rowScope.getByLabelText("Fallback 1"), { target: { value: "local-llm" } });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    const route = {
+      provider: "azure-openai",
+      model: "gpt-5-4-mini",
+      fallback: ["local-llm"],
+    };
+    expect(payload.settings.taskRouting.coverEvidence.sourceSupport).toEqual(route);
+    expect(payload.settings.taskRouting.coverEvidence.externalEvidence).toEqual(route);
+    expect(payload.settings.taskRouting.coverEvidence.mcpEvidence).toEqual(route);
   });
 
   it("calls provider health test for selected provider card", async () => {
@@ -410,6 +496,45 @@ describe("SettingsPage", () => {
 
     await waitFor(() => expect(repositoryMocks.testAzureOpenAiDeployment).toHaveBeenCalledTimes(1));
     expect(repositoryMocks.testAzureOpenAiDeployment).toHaveBeenCalledWith(1);
+  });
+
+  it("calls Local LLM model health test for an added model", async () => {
+    routerState.pathname = "/setting/llmprovider";
+    renderPage();
+    expect(await screen.findByText("Qwen")).toBeInTheDocument();
+
+    const qwenRow = screen.getByText("Qwen").closest(".settings-local-llm-model");
+    expect(qwenRow).not.toBeNull();
+    fireEvent.click(within(qwenRow as HTMLElement).getByRole("button", { name: "Test" }));
+
+    await waitFor(() => expect(repositoryMocks.testLocalLlmModel).toHaveBeenCalledTimes(1));
+    expect(repositoryMocks.testLocalLlmModel).toHaveBeenCalledWith("qwen-3.6-14b-it");
+  });
+
+  it("shows added Local LLM models in Task Routing and Agentic Compile model choices", async () => {
+    routerState.pathname = "/setting/taskrouting";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
+
+    const webResearchRow = screen.getByText("webSourceResearch").closest(".settings-route-row");
+    expect(webResearchRow).not.toBeNull();
+    expect(
+      within(webResearchRow as HTMLElement).getByRole("option", {
+        name: "qwen-3.6-14b-it",
+      }),
+    ).toBeInTheDocument();
+
+    const agenticProvider = screen.getAllByLabelText("Provider").at(-1);
+    expect(agenticProvider).toBeDefined();
+    fireEvent.change(agenticProvider as HTMLElement, { target: { value: "local-llm" } });
+
+    const agenticRow = screen.getByText("agenticCompile").closest(".settings-route-row");
+    expect(agenticRow).not.toBeNull();
+    expect(
+      within(agenticRow as HTMLElement).getByRole("option", {
+        name: "qwen-3.6-14b-it",
+      }),
+    ).toBeInTheDocument();
   });
 
   it("saves up to three Azure OpenAI deployments and separate API keys", async () => {
@@ -446,6 +571,13 @@ describe("SettingsPage", () => {
       await screen.findByRole("heading", { name: "Advanced Runtime Controls" }),
     ).toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "Agent Log Synchronization" })).toBeInTheDocument();
+    expect(screen.getByLabelText("Continuous Idle Sleep (seconds)")).toHaveValue(5);
+    expect(
+      screen.queryByLabelText("Finding Queue Task Interval (seconds)"),
+    ).not.toBeInTheDocument();
+    expect(
+      screen.queryByLabelText("Covering Queue Task Interval (seconds)"),
+    ).not.toBeInTheDocument();
 
     const codexCheckbox = screen.getByLabelText("Enable Codex (Cursor) Log Sync");
     const antigravityCheckbox = screen.getByLabelText("Enable Antigravity Log Sync");
@@ -457,7 +589,9 @@ describe("SettingsPage", () => {
 
     fireEvent.click(claudeCheckbox);
     expect(claudeCheckbox).not.toBeChecked();
-
+    fireEvent.change(screen.getByLabelText("Continuous Idle Sleep (seconds)"), {
+      target: { value: "7.5" },
+    });
     const saveButton = screen.getByRole("button", { name: "Save Settings" });
     expect(saveButton).toBeEnabled();
     fireEvent.click(saveButton);
@@ -465,5 +599,6 @@ describe("SettingsPage", () => {
     await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
     const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
     expect(payload.settings.advanced.claudeLogSyncEnabled).toBe(false);
+    expect(payload.settings.advanced.continuousIdleSleepMs).toBe(7500);
   });
 });

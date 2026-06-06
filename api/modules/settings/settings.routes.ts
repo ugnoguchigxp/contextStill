@@ -6,6 +6,7 @@ import {
   getSettingsForApi,
   reloadRuntimeCacheForApi,
   testAzureOpenAiDeploymentForApi,
+  testLocalLlmModelForApi,
   testProviderForApi,
   updateSettingsForApi,
   getCodexAuthStatusForApi,
@@ -17,6 +18,9 @@ const providerParamSchema = z.object({
 });
 const azureOpenAiDeploymentParamSchema = z.object({
   deployment: z.coerce.number().int().min(1).max(3),
+});
+const localLlmModelTestBodySchema = z.object({
+  model: z.string().trim().min(1),
 });
 
 export const settingsRouter = new Hono()
@@ -35,6 +39,15 @@ export const settingsRouter = new Hono()
       const { deployment } = c.req.valid("param");
       const health = await testAzureOpenAiDeploymentForApi(deployment);
       return c.json({ provider: "azure-openai", deployment, health });
+    },
+  )
+  .post(
+    "/providers/local-llm/models/test",
+    zValidator("json", localLlmModelTestBodySchema),
+    async (c) => {
+      const body = c.req.valid("json");
+      const health = await testLocalLlmModelForApi(body);
+      return c.json({ provider: "local-llm", model: body.model, health });
     },
   )
   .post("/providers/:provider/test", zValidator("param", providerParamSchema), async (c) => {

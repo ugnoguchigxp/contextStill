@@ -163,7 +163,7 @@ function formatAutoFallbackError(messages: string[]): string {
   return `AGENTIC_REFINE_FAILED: ${detail}`;
 }
 
-function modelForProvider(provider: string): string {
+function modelForProvider(provider: string, routeModel?: string): string {
   switch (provider) {
     case "openai":
       return groupedConfig.openAi.model;
@@ -172,7 +172,7 @@ function modelForProvider(provider: string): string {
     case "bedrock":
       return groupedConfig.bedrock.model;
     case "local-llm":
-      return groupedConfig.localLlm.model;
+      return routeModel?.trim() || groupedConfig.localLlm.model;
     default:
       return groupedConfig.openAi.model;
   }
@@ -220,7 +220,7 @@ export async function agenticRefine(
     }
 
     attempted += 1;
-    const providerModel = modelForProvider(provider.name);
+    const providerModel = modelForProvider(provider.name, routing.model);
     void recordProviderUsage({
       provider: provider.name,
       model: providerModel,
@@ -230,6 +230,7 @@ export async function agenticRefine(
 
     try {
       const response = await provider.chat({
+        model: provider.name === "local-llm" ? providerModel : undefined,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },

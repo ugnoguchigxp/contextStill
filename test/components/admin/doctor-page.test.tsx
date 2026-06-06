@@ -91,6 +91,18 @@ const baseReport = {
         selected: false,
         routeOrder: 1,
       },
+      {
+        id: "local-llm:2",
+        label: "Local LLM: Gemma",
+        provider: "local-llm",
+        configured: true,
+        reachable: false,
+        model: "gemma4",
+        endpoint: "http://127.0.0.1:11435",
+        error: "unreachable",
+        selected: false,
+        routeOrder: 1,
+      },
     ],
   },
   tables: {
@@ -395,8 +407,13 @@ describe("DoctorPage", () => {
     expect(screen.getByText("Azure OpenAI #1")).toBeInTheDocument();
     expect(screen.getByText("Azure OpenAI #2")).toBeInTheDocument();
     expect(screen.getByText("Local LLM")).toBeInTheDocument();
+    expect(screen.getByText("Local LLM: Gemma")).toBeInTheDocument();
     expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
     expect(screen.queryByText("Bedrock")).not.toBeInTheDocument();
+    expect(screen.getByText("Distill Runs")).toBeInTheDocument();
+    expect(screen.getByText("Stale Running")).toBeInTheDocument();
+    expect(screen.queryByText("Queue Pending")).not.toBeInTheDocument();
+    expect(screen.queryByText("Queue Running")).not.toBeInTheDocument();
 
     expect(screen.getByText("未使用の active knowledge が多い")).toBeInTheDocument();
     expect(screen.getByText("Agentic LLM に到達できない")).toBeInTheDocument();

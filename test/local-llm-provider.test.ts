@@ -8,6 +8,7 @@ vi.mock("../src/config.js", () => ({
       apiBaseUrl: "http://127.0.0.1:44448",
       apiKey: "",
       model: "gemma-4-e4b-it",
+      models: [],
     },
   },
 }));
@@ -18,6 +19,7 @@ describe("local-llm provider", () => {
     groupedConfig.localLlm.apiBaseUrl = "http://127.0.0.1:44448";
     groupedConfig.localLlm.apiKey = "";
     groupedConfig.localLlm.model = "gemma-4-e4b-it";
+    groupedConfig.localLlm.models = [];
   });
 
   test("healthCheck uses the lightweight health endpoint when available", async () => {
@@ -42,6 +44,44 @@ describe("local-llm provider", () => {
     });
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy.mock.calls[0]?.[0]).toBe("http://127.0.0.1:44448/health");
+  });
+
+  test("healthCheck can target a configured local model", async () => {
+    groupedConfig.localLlm.models = [
+      {
+        name: "Primary",
+        apiBaseUrl: "http://127.0.0.1:44448",
+        model: "gemma-4-e4b-it",
+      },
+      {
+        name: "Qwen",
+        apiBaseUrl: "http://127.0.0.1:44449",
+        model: "qwen-3.6-14b-it",
+      },
+    ];
+    const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        status: "ok",
+        ready: true,
+        loaded: true,
+        modelId: "qwen-3.6-14b-it",
+      }),
+    } as unknown as Response);
+
+    const status = await createLocalLlmProvider({ timeoutMs: 1000 }).healthCheck({
+      model: "qwen-3.6-14b-it",
+    });
+
+    expect(status).toMatchObject({
+      provider: "local-llm",
+      configured: true,
+      reachable: true,
+      model: "qwen-3.6-14b-it",
+      endpoint: "http://127.0.0.1:44449",
+    });
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]?.[0]).toBe("http://127.0.0.1:44449/health");
   });
 
   test("healthCheck reports not-ready health payloads without waiting for chat", async () => {

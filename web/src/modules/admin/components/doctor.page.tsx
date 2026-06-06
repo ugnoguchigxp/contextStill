@@ -476,8 +476,11 @@ function AiServiceToolsDomain({ data }: { data: DoctorAiServiceToolsDomain }) {
 function PipelineAutomationDomain({ data }: { data: DoctorPipelineAutomationDomain }) {
   const pipelineSignals = getDomainSignals(getDoctorReasonDetails(data), "pipeline");
   const pipelineNextActions = getDomainNextActions(data, "pipeline");
-  const queuePending = data.vibeDistillation.jobs.queued + data.sourceDistillation.jobs.queued;
-  const queueRunning = data.vibeDistillation.jobs.running + data.sourceDistillation.jobs.running;
+  const totalDistillationRuns =
+    data.vibeDistillation.runs.totalRuns + data.sourceDistillation.runs.totalRuns;
+  const staleTrackedJobs =
+    data.vibeDistillation.queueHealth.staleRunning +
+    data.sourceDistillation.queueHealth.staleRunning;
   const maxSyncAge =
     data.agentLogSync.states.length > 0
       ? Math.max(
@@ -516,22 +519,22 @@ function PipelineAutomationDomain({ data }: { data: DoctorPipelineAutomationDoma
           </div>
           <div className="flex flex-col">
             <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
-              Queue Pending
+              Distill Runs
             </span>
             <strong className="text-slate-800 text-2xl font-extrabold mt-1 leading-none">
-              {formatNumber(queuePending)}
+              {formatNumber(totalDistillationRuns)}
             </strong>
           </div>
           <div className="flex flex-col">
             <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
-              Queue Running
+              Stale Running
             </span>
             <strong
               className={`text-2xl font-extrabold mt-1 leading-none ${
-                queueRunning > 0 ? "text-amber-600 animate-pulse" : "text-slate-800"
+                staleTrackedJobs > 0 ? "text-amber-600" : "text-slate-800"
               }`}
             >
-              {formatNumber(queueRunning)}
+              {formatNumber(staleTrackedJobs)}
             </strong>
           </div>
         </div>

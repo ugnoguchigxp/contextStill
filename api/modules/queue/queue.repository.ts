@@ -506,11 +506,8 @@ async function queryQueueRows(
       q.status,
       q.priority,
       q.attempt_count,
-      coalesce(e.title, c.title) as subject_title,
-      concat(
-        'evidence=', q.evidence_result_id,
-        ' | knowledge=', coalesce(q.knowledge_id::text, '-')
-      ) as subject_detail,
+      q.subject_title,
+      q.subject_detail,
       q.provider_policy as provider,
       null::text as model,
       q.last_error,

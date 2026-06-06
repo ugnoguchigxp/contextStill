@@ -41,6 +41,7 @@ import {
   getSettingsForApi,
   reloadRuntimeCacheForApi,
   testAzureOpenAiDeploymentForApi,
+  testLocalLlmModelForApi,
   testProviderForApi,
   updateSettingsForApi,
 } from "../api/modules/settings/settings.service.js";
@@ -103,6 +104,7 @@ vi.mock("../api/modules/settings/settings.service.js", () => ({
   getSettingsForApi: vi.fn(),
   updateSettingsForApi: vi.fn(),
   testAzureOpenAiDeploymentForApi: vi.fn(),
+  testLocalLlmModelForApi: vi.fn(),
   testProviderForApi: vi.fn(),
   reloadRuntimeCacheForApi: vi.fn(),
 }));
@@ -271,6 +273,13 @@ describe("API route contract tests", () => {
       reachable: true,
       model: "5.4mini",
       endpoint: "https://example.openai.azure.com",
+    });
+    vi.mocked(testLocalLlmModelForApi).mockResolvedValue({
+      provider: "local-llm",
+      configured: true,
+      reachable: true,
+      model: "qwen-3.6-14b-it",
+      endpoint: "http://127.0.0.1:44449",
     });
     vi.mocked(reloadRuntimeCacheForApi).mockResolvedValue({
       ok: true,
@@ -474,6 +483,29 @@ describe("API route contract tests", () => {
     expect(json.deployment).toBe(2);
     expect(json.health.configured).toBe(true);
     expect(testAzureOpenAiDeploymentForApi).toHaveBeenCalledWith(2);
+  });
+
+  test("POST /api/settings/providers/local-llm/models/test returns model health", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/settings/providers/local-llm/models/test", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ model: "qwen-3.6-14b-it" }),
+    });
+    const json = (await response.json()) as {
+      provider: string;
+      model: string;
+      health: {
+        configured: boolean;
+        reachable: boolean;
+      };
+    };
+
+    expect(response.status).toBe(200);
+    expect(json.provider).toBe("local-llm");
+    expect(json.model).toBe("qwen-3.6-14b-it");
+    expect(json.health.configured).toBe(true);
+    expect(testLocalLlmModelForApi).toHaveBeenCalledWith({ model: "qwen-3.6-14b-it" });
   });
 
   test("POST /api/settings/reload-runtime-cache returns reload result", async () => {

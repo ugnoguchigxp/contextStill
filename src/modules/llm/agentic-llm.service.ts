@@ -1,13 +1,13 @@
 import { groupedConfig } from "../../config.js";
+import { getRuntimeSettingsSnapshot } from "../settings/settings.service.ts";
 import type { LlmHealthStatus, LlmProvider, LlmProviderName } from "./llm-provider.js";
 import { recordLlmUsage } from "./llm-usage-logger.js";
 import { configuredAzureOpenAiDeploymentSlots } from "./providers/azure-openai-config.js";
 import { createAzureOpenAiProvider } from "./providers/azure-openai.provider.js";
 import { createBedrockProvider } from "./providers/bedrock.provider.js";
+import { createCodexProvider } from "./providers/codex.provider.ts";
 import { createLocalLlmProvider } from "./providers/local-llm.provider.js";
 import { createOpenAiProvider } from "./providers/openai.provider.js";
-import { createCodexProvider } from "./providers/codex.provider.ts";
-import { getRuntimeSettingsSnapshot } from "../settings/settings.service.ts";
 
 export type AgenticCompileProvider =
   | "openai"
@@ -38,9 +38,10 @@ type LlmProviderHealthEntry = {
   providerName: LlmProviderName;
   provider: LlmProvider;
   deploymentIndex?: number;
+  model?: string;
 };
 
-const nonAzureProviderNames: LlmProviderName[] = ["openai", "bedrock", "local-llm", "codex"];
+const singleInstanceProviderNames: LlmProviderName[] = ["openai", "bedrock", "codex"];
 
 function dedupeOrder(values: LlmProviderName[]): LlmProviderName[] {
   const seen = new Set<LlmProviderName>();
@@ -162,7 +163,7 @@ function withUsageLogging(provider: LlmProvider, source: string): LlmProvider {
       const response = await provider.chat(request);
       recordLlmUsage({
         provider: provider.name,
-        model: defaultModelForProvider(provider.name),
+        model: request.model ?? defaultModelForProvider(provider.name),
         usage: response.usage,
         promptMessages: request.messages,
         completionText: response.content,
@@ -193,6 +194,7 @@ export async function checkLlmProviderHealthMatrix(
     selectedProvider?: LlmProviderName;
     routeOrder?: LlmProviderName[];
     selectedAzureDeploymentSlots?: number[];
+    selectedLocalLlmModel?: string;
   } = {},
 ): Promise<LlmProviderHealthStatus[]> {
   const routeOrder = options.routeOrder ?? [];
@@ -203,7 +205,7 @@ export async function checkLlmProviderHealthMatrix(
   );
   const entries: LlmProviderHealthEntry[] = [];
 
-  for (const providerName of nonAzureProviderNames) {
+  for (const providerName of singleInstanceProviderNames) {
     const provider = buildProvider(providerName, timeoutMs);
     if (!provider.isConfigured()) continue;
     entries.push({
@@ -212,6 +214,38 @@ export async function checkLlmProviderHealthMatrix(
       providerName,
       provider,
     });
+  }
+
+  const localLlmModels = (groupedConfig.localLlm.models ?? [])
+    .filter((model) => model.apiBaseUrl.trim() && model.model.trim())
+    .slice(0, 10);
+  if (localLlmModels.length > 0) {
+    for (const [index, model] of localLlmModels.entries()) {
+      entries.push({
+        id: `local-llm:${index + 1}`,
+        label: model.name.trim() || `Local LLM #${index + 1}`,
+        providerName: "local-llm",
+        provider: createLocalLlmProvider({
+          timeoutMs,
+          modelConfig: {
+            apiBaseUrl: model.apiBaseUrl,
+            model: model.model,
+          },
+        }),
+        model: model.model,
+      });
+    }
+  } else {
+    const provider = buildProvider("local-llm", timeoutMs);
+    if (provider.isConfigured()) {
+      entries.push({
+        id: "local-llm",
+        label: defaultLabelForProvider("local-llm"),
+        providerName: "local-llm",
+        provider,
+        model: groupedConfig.localLlm.model,
+      });
+    }
   }
 
   for (const slot of configuredAzureOpenAiDeploymentSlots()) {
@@ -259,7 +293,10 @@ export async function checkLlmProviderHealthMatrix(
         (entry.providerName !== "azure-openai" ||
           selectedAzureDeploymentSlots.size === 0 ||
           (typeof entry.deploymentIndex === "number" &&
-            selectedAzureDeploymentSlots.has(entry.deploymentIndex)));
+            selectedAzureDeploymentSlots.has(entry.deploymentIndex))) &&
+        (entry.providerName !== "local-llm" ||
+          !options.selectedLocalLlmModel ||
+          entry.model === options.selectedLocalLlmModel);
       return {
         ...status,
         id: entry.id,

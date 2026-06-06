@@ -296,6 +296,21 @@
   padding-top: 0;
 }
 
+.settings-local-llm-model {
+  border-top: 1px solid rgba(15, 23, 42, 0.08);
+  display: grid;
+  gap: 0.75rem;
+  padding-top: 0.85rem;
+}
+
+.settings-local-llm-model-header,
+.settings-local-llm-add {
+  align-items: center;
+  display: flex;
+  gap: 0.75rem;
+  justify-content: space-between;
+}
+
 .settings-deployment-header {
   align-items: center;
   display: flex;

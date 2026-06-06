@@ -4,6 +4,7 @@ export type LlmChatMessage = {
 };
 
 export type LlmChatRequest = {
+  model?: string;
   messages: LlmChatMessage[];
   maxTokens: number;
   temperature?: number;
@@ -32,9 +33,13 @@ export type LlmHealthStatus = {
   error?: string;
 };
 
+export type LlmHealthCheckOptions = {
+  model?: string;
+};
+
 export type LlmProvider = {
   name: LlmProviderName;
   isConfigured(): boolean;
   chat(request: LlmChatRequest): Promise<LlmChatResponse>;
-  healthCheck(): Promise<LlmHealthStatus>;
+  healthCheck(options?: LlmHealthCheckOptions): Promise<LlmHealthStatus>;
 };

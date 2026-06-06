@@ -415,6 +415,8 @@ describe("Admin Repository sources/settings", () => {
             pipelineLockStaleSeconds: 1200,
             lockTtlSeconds: 1800,
             pipelineClaimLimit: 1,
+            findingQueueTaskIntervalSeconds: 30,
+            coveringQueueTaskIntervalSeconds: 10,
             continuousIdleSleepMs: 5000,
             continuousErrorSleepMs: 12000,
             inventoryRefreshIntervalMs: 30000,

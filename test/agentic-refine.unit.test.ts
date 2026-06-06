@@ -39,6 +39,7 @@ describe("agentic-refine.service", () => {
     localLlmApiBaseUrl: groupedConfig.localLlm.apiBaseUrl,
     localLlmApiKey: groupedConfig.localLlm.apiKey,
     localLlmModel: groupedConfig.localLlm.model,
+    localLlmModels: groupedConfig.localLlm.models,
     bedrockModel: groupedConfig.bedrock.model,
     bedrockRegion: groupedConfig.bedrock.region,
   };
@@ -58,6 +59,7 @@ describe("agentic-refine.service", () => {
     groupedConfig.localLlm.apiBaseUrl = "http://127.0.0.1:44448";
     groupedConfig.localLlm.apiKey = "";
     groupedConfig.localLlm.model = "gemma-4-e4b-it";
+    groupedConfig.localLlm.models = [];
     groupedConfig.bedrock.model = "";
     groupedConfig.bedrock.region = "us-east-1";
     settingsMocks.resolveAgenticCompileRouting.mockImplementation(() => ({
@@ -91,6 +93,7 @@ describe("agentic-refine.service", () => {
     groupedConfig.localLlm.apiBaseUrl = originalConfig.localLlmApiBaseUrl;
     groupedConfig.localLlm.apiKey = originalConfig.localLlmApiKey;
     groupedConfig.localLlm.model = originalConfig.localLlmModel;
+    groupedConfig.localLlm.models = originalConfig.localLlmModels;
     groupedConfig.bedrock.model = originalConfig.bedrockModel;
     groupedConfig.bedrock.region = originalConfig.bedrockRegion;
   });
@@ -388,6 +391,46 @@ describe("agentic-refine.service", () => {
       expect(result.items[0].id).toBe("1");
       expect(mockFetch).toHaveBeenCalledTimes(2);
       expect(mockFetch.mock.calls[1][0]).toBe("http://127.0.0.1:44448/v1/chat/completions");
+    });
+
+    it("uses the routed Local LLM model when provider is local-llm", async () => {
+      settingsMocks.resolveAgenticCompileRouting.mockReturnValue({
+        enabled: true,
+        provider: "local-llm",
+        model: "qwen-3.6-14b-it",
+        fallback: [],
+        timeoutMs: groupedConfig.agenticCompile.timeoutMs,
+        maxTokens: groupedConfig.agenticCompile.maxTokens,
+      });
+      groupedConfig.localLlm.models = [
+        {
+          name: "Qwen",
+          apiBaseUrl: "http://127.0.0.1:44449",
+          model: "qwen-3.6-14b-it",
+        },
+      ];
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  selectedIds: ["2"],
+                  reasoning: "routed local model selected",
+                }),
+              },
+            },
+          ],
+        }),
+      });
+
+      const result = await agenticRefine(candidates, input, "task_context");
+
+      expect(result.agenticUsed).toBe(true);
+      expect(mockFetch.mock.calls[0]?.[0]).toBe("http://127.0.0.1:44449/v1/chat/completions");
+      const body = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body));
+      expect(body.model).toBe("qwen-3.6-14b-it");
     });
 
     it("returns aggregate error when all auto providers fail", async () => {

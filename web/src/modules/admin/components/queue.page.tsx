@@ -213,6 +213,19 @@ function statusTone(status: DistillationQueueStatus): string {
   }
 }
 
+function lastErrorTone(item: QueueListItemV2): string {
+  if (
+    item.status === "failed" ||
+    item.status === "paused" ||
+    item.lastOutcomeKind === "tool_failed" ||
+    item.lastOutcomeKind === "provider_failed" ||
+    item.lastOutcomeKind === "parse_failed"
+  ) {
+    return "text-rose-600";
+  }
+  return "text-muted-foreground";
+}
+
 function extractCandidateId(subjectDetail: string): string | null {
   const match = /(?:^|\|\s*)candidate=([0-9a-f-]{36})/i.exec(subjectDetail);
   return match?.[1] ?? null;
@@ -520,7 +533,7 @@ export function QueuePage() {
                 </div>
               ) : null}
               {item.lastError ? (
-                <div className="mt-1 text-xs text-rose-600">{item.lastError}</div>
+                <div className={`mt-1 text-xs ${lastErrorTone(item)}`}>{item.lastError}</div>
               ) : null}
             </div>
           );

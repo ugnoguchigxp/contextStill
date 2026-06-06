@@ -16,7 +16,12 @@ export type DistillationProvider =
 export type DistillationSearchProvider = "brave" | "exa" | "duckduckgo";
 
 export type GroupedConfig = {
-  database: { url: string };
+  database: {
+    url: string;
+    poolMax: number;
+    idleTimeoutMillis: number;
+    connectionTimeoutMillis: number;
+  };
   embedding: {
     dimension: number;
     provider: EmbeddingProvider;
@@ -32,6 +37,11 @@ export type GroupedConfig = {
     apiBaseUrl: string;
     apiKey: string;
     model: string;
+    models: Array<{
+      name: string;
+      apiBaseUrl: string;
+      model: string;
+    }>;
   };
   sourceContent: { root: string };
   readFile: {
@@ -152,6 +162,7 @@ export type GroupedConfig = {
     findCandidateRateLimitCooldownSeconds: number;
     findCandidateJitterSeconds: number;
     findingQueueTaskIntervalSeconds: number;
+    coveringQueueTaskIntervalSeconds: number;
     promotionBacklogThresholdCount: number;
     lowImportanceRejectThreshold: number;
     circuitBreakerEnabled: boolean;

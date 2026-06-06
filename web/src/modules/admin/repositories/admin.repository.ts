@@ -2108,6 +2108,12 @@ export type AzureOpenAiDeploymentSettings = {
   model: string;
 };
 
+export type LocalLlmModelSettings = {
+  name: string;
+  apiBaseUrl: string;
+  model: string;
+};
+
 export type DistillationPriorityTargetKind =
   | "knowledge_candidate"
   | "web_ingest"
@@ -2144,6 +2150,7 @@ export type RuntimeSettingsEditable = {
       enabled: boolean;
       apiBaseUrl: string;
       model: string;
+      models: LocalLlmModelSettings[];
     };
     codex: {
       enabled: boolean;
@@ -2212,6 +2219,8 @@ export type RuntimeSettingsEditable = {
     pipelineLockStaleSeconds: number;
     lockTtlSeconds: number;
     pipelineClaimLimit: number;
+    findingQueueTaskIntervalSeconds: number;
+    coveringQueueTaskIntervalSeconds: number;
     continuousIdleSleepMs: number;
     continuousErrorSleepMs: number;
     inventoryRefreshIntervalMs: number;
@@ -2290,6 +2299,12 @@ export type RuntimeProviderHealthResponse = {
 export type RuntimeAzureOpenAiDeploymentHealthResponse = {
   provider: "azure-openai";
   deployment: number;
+  health: RuntimeProviderHealth;
+};
+
+export type RuntimeLocalLlmModelHealthResponse = {
+  provider: "local-llm";
+  model: string;
   health: RuntimeProviderHealth;
 };
 
@@ -3219,6 +3234,16 @@ export async function testAzureOpenAiDeployment(
   return requestJson<RuntimeAzureOpenAiDeploymentHealthResponse>(
     `/api/settings/providers/azure-openai/deployments/${deployment}/test`,
     "POST",
+  );
+}
+
+export async function testLocalLlmModel(
+  model: string,
+): Promise<RuntimeLocalLlmModelHealthResponse> {
+  return requestJson<RuntimeLocalLlmModelHealthResponse>(
+    "/api/settings/providers/local-llm/models/test",
+    "POST",
+    { model },
   );
 }
 

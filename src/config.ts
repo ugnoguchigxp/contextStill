@@ -132,6 +132,16 @@ export const groupedConfig: GroupedConfig = {
     url:
       process.env.DATABASE_URL ||
       `postgres://postgres:postgres@localhost:7889/${projectIdentity.databaseName}`,
+    poolMax: resolvePositiveInt(readProjectEnv("DB_POOL_MAX"), 3, { min: 1, max: 20 }),
+    idleTimeoutMillis: resolvePositiveInt(readProjectEnv("DB_POOL_IDLE_TIMEOUT_MS"), 10_000, {
+      min: 1_000,
+      max: 300_000,
+    }),
+    connectionTimeoutMillis: resolvePositiveInt(
+      readProjectEnv("DB_POOL_CONNECTION_TIMEOUT_MS"),
+      5_000,
+      { min: 500, max: 60_000 },
+    ),
   },
   embedding: {
     dimension: APP_CONSTANTS.embeddingDimension,
@@ -158,6 +168,16 @@ export const groupedConfig: GroupedConfig = {
     ),
     apiKey: readProjectEnv("LOCAL_LLM_API_KEY") || process.env.LOCAL_LLM_ACCESS_TOKEN || "",
     model: readProjectEnv("LOCAL_LLM_MODEL") || "gemma-4-e4b-it",
+    models: [
+      {
+        name: "Primary",
+        apiBaseUrl: (readProjectEnv("LOCAL_LLM_API_BASE_URL") || "http://127.0.0.1:44448").replace(
+          /\/+$/,
+          "",
+        ),
+        model: readProjectEnv("LOCAL_LLM_MODEL") || "gemma-4-e4b-it",
+      },
+    ],
   },
   sourceContent: {
     root: sourceContentRoot,
@@ -318,6 +338,11 @@ export const groupedConfig: GroupedConfig = {
     findingQueueTaskIntervalSeconds: resolveNonNegativeInt(
       readProjectEnv("FINDING_QUEUE_TASK_INTERVAL_SECONDS"),
       APP_CONSTANTS.findingQueueTaskIntervalSeconds,
+      { max: 3600 },
+    ),
+    coveringQueueTaskIntervalSeconds: resolveNonNegativeInt(
+      readProjectEnv("COVERING_QUEUE_TASK_INTERVAL_SECONDS"),
+      APP_CONSTANTS.coveringQueueTaskIntervalSeconds,
       { max: 3600 },
     ),
     promotionBacklogThresholdCount: APP_CONSTANTS.distillationPromotionBacklogThresholdCount,

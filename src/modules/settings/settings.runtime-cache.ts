@@ -144,11 +144,23 @@ export function applyRuntimeSettingsToProcess(
   groupedConfig.bedrock.region = settings.providers.bedrock.region;
   groupedConfig.bedrock.profile = settings.providers.bedrock.profile;
   groupedConfig.bedrock.model = bedrockEnabled ? settings.providers.bedrock.model : "";
-  groupedConfig.localLlm.apiBaseUrl = settings.providers["local-llm"].apiBaseUrl.replace(
-    /\/+$/,
-    "",
-  );
-  groupedConfig.localLlm.model = localLlmEnabled ? settings.providers["local-llm"].model : "";
+  const localLlmModels = localLlmEnabled
+    ? settings.providers["local-llm"].models
+        .slice(0, 10)
+        .map((model) => ({
+          name: model.name,
+          apiBaseUrl: model.apiBaseUrl.replace(/\/+$/, ""),
+          model: model.model,
+        }))
+        .filter((model) => model.apiBaseUrl.trim() && model.model.trim())
+    : [];
+  const primaryLocalLlm = localLlmModels[0] ?? {
+    apiBaseUrl: settings.providers["local-llm"].apiBaseUrl.replace(/\/+$/, ""),
+    model: localLlmEnabled ? settings.providers["local-llm"].model : "",
+  };
+  groupedConfig.localLlm.apiBaseUrl = primaryLocalLlm.apiBaseUrl;
+  groupedConfig.localLlm.model = primaryLocalLlm.model;
+  groupedConfig.localLlm.models = localLlmModels;
   groupedConfig.localLlm.apiKey = localLlmEnabled ? (secrets.localLlmApiKey?.value ?? "") : "";
   groupedConfig.embedding.provider = settings.embedding.provider;
   groupedConfig.embedding.daemonUrl = settings.embedding.daemonUrl.replace(/\/+$/, "");
@@ -190,6 +202,10 @@ export function applyRuntimeSettingsToProcess(
   groupedConfig.distillation.lockTtlSeconds = settings.advanced.lockTtlSeconds;
   groupedConfig.distillation.pipelineLockStaleSeconds = settings.advanced.pipelineLockStaleSeconds;
   groupedConfig.distillation.pipelineClaimLimit = settings.advanced.pipelineClaimLimit;
+  groupedConfig.distillation.findingQueueTaskIntervalSeconds =
+    settings.advanced.findingQueueTaskIntervalSeconds;
+  groupedConfig.distillation.coveringQueueTaskIntervalSeconds =
+    settings.advanced.coveringQueueTaskIntervalSeconds;
   groupedConfig.distillation.continuousIdleSleepMs = settings.advanced.continuousIdleSleepMs;
   groupedConfig.distillation.continuousErrorSleepMs = settings.advanced.continuousErrorSleepMs;
   groupedConfig.distillation.inventoryRefreshIntervalMs =
@@ -290,6 +306,8 @@ export function buildSourceMap(view: RuntimeSettingsView): Record<string, string
     "findCandidate.timeoutMs": "db",
     "findCandidate.maxToolCalls": "db",
     "distillation.pipelineClaimLimit": "db",
+    "findingQueue.taskIntervalSeconds": "db",
+    "coveringQueue.taskIntervalSeconds": "db",
     "coverEvidence.timeoutMs": "db",
     "coverEvidence.searchMaxCalls": "db",
     "coverEvidence.fetchMaxCalls": "db",

@@ -48,37 +48,38 @@ const retryBodySchema = z.object({
 });
 
 function isMissingRelationError(error: unknown): boolean {
+  let sawMissingRelationMessage = false;
   const queue: unknown[] = [error];
   while (queue.length > 0) {
     const current = queue.shift();
     if (!current) continue;
     if (typeof current === "string") {
-      if (current.includes('relation "') && current.includes('" does not exist')) return true;
+      if (current.includes('relation "') && current.includes('" does not exist')) {
+        sawMissingRelationMessage = true;
+      }
       continue;
     }
     if (current instanceof Error) {
       if (current.message.includes('relation "') && current.message.includes('" does not exist')) {
-        return true;
+        sawMissingRelationMessage = true;
       }
       const coded = current as Error & { code?: string; cause?: unknown };
-      if (coded.code === "42P01") return true;
       if (coded.cause) queue.push(coded.cause);
       continue;
     }
     if (typeof current === "object") {
       const shaped = current as { code?: unknown; message?: unknown; cause?: unknown };
-      if (shaped.code === "42P01") return true;
       if (
         typeof shaped.message === "string" &&
         shaped.message.includes('relation "') &&
         shaped.message.includes('" does not exist')
       ) {
-        return true;
+        sawMissingRelationMessage = true;
       }
       if (shaped.cause) queue.push(shaped.cause);
     }
   }
-  return false;
+  return sawMissingRelationMessage;
 }
 
 function queueSchemaNotReadyResponse(c: Context) {

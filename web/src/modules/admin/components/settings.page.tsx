@@ -13,7 +13,7 @@ import {
 } from "@/lib/timezone";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Link, useRouterState } from "@tanstack/react-router";
-import { ArrowDown, ArrowUp, RotateCcw, Save, Stethoscope, Trash2 } from "lucide-react";
+import { ArrowDown, ArrowUp, Plus, RotateCcw, Save, Stethoscope, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
   type CodexAuthTokenInfo,
@@ -26,13 +26,14 @@ import {
   type RuntimeSettingsEditable,
   type RuntimeSettingsRoute,
   type RuntimeSettingsView,
+  fetchCodexAuthStatus,
+  fetchCodexLoginCommand,
   fetchRuntimeSettings,
   reloadRuntimeSettingsCache,
   testAzureOpenAiDeployment,
+  testLocalLlmModel,
   testRuntimeProvider,
   updateRuntimeSettings,
-  fetchCodexAuthStatus,
-  fetchCodexLoginCommand,
 } from "../repositories/admin.repository";
 import { AdminPageHeader } from "./admin-page-header";
 
@@ -99,6 +100,16 @@ function parseFloatInput(value: string, fallback: number): number {
   return Number.isFinite(parsed) ? parsed : fallback;
 }
 
+function millisecondsToSeconds(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Number((value / 1000).toFixed(3));
+}
+
+function parseSecondsToMillisecondsInput(value: string, fallbackMs: number): number {
+  const parsed = Number.parseFloat(value);
+  return Number.isFinite(parsed) ? Math.round(parsed * 1000) : fallbackMs;
+}
+
 type FallbackSelectValue = RuntimeProviderName | "";
 
 function normalizeFallbackProviders(
@@ -131,6 +142,7 @@ function patchFallbackSlot(
 }
 
 const azureDeploymentSlotOptions = [1, 2, 3] as const;
+const localLlmMaxModels = 10;
 
 function normalizeAzureDeploymentSlots(values: number[] | undefined): number[] {
   if (!values || values.length === 0) return [];
@@ -182,30 +194,18 @@ function resolveConfiguredRouteModel(
   return model ? model : undefined;
 }
 
-function routeModelDisplayText(
-  settings: RuntimeSettingsEditable,
-  provider: RuntimeProviderSetting,
-): string {
-  if (provider === "auto") {
-    const labels = runtimeProviders
-      .map((name) => {
-        const model = resolveConfiguredRouteModel(settings, name);
-        return model ? `${name}: ${model}` : null;
-      })
-      .filter((item): item is string => Boolean(item));
-    if (labels.length === 0) return "auto (not configured)";
-    return `auto (${labels.join(" / ")})`;
-  }
-
-  return resolveConfiguredRouteModel(settings, provider) ?? "not configured";
+function localLlmRouteModelOptions(settings: RuntimeSettingsEditable): string[] {
+  return [
+    ...new Set(
+      settings.providers["local-llm"].models
+        .map((item) => item.model.trim())
+        .filter((item): item is string => Boolean(item)),
+    ),
+  ];
 }
 
-function providerOptionLabel(
-  settings: RuntimeSettingsEditable,
-  provider: RuntimeProviderSetting,
-): string {
-  if (provider === "auto") return "auto";
-  return `${provider} / ${routeModelDisplayText(settings, provider)}`;
+function providerNameOptionLabel(provider: RuntimeProviderSetting): string {
+  return provider;
 }
 
 function resolveActiveSettingsTab(pathname: string): SettingsTabId {
@@ -270,6 +270,39 @@ function syncAzureOpenAiProviderForDraft(
   };
 }
 
+function normalizeLocalLlmModelsForForm(
+  provider: RuntimeSettingsView["providers"]["local-llm"],
+): RuntimeSettingsEditable["providers"]["local-llm"]["models"] {
+  const models = provider.models?.length
+    ? provider.models
+    : [
+        {
+          name: "Primary",
+          apiBaseUrl: provider.apiBaseUrl,
+          model: provider.model,
+        },
+      ];
+  return models.slice(0, localLlmMaxModels).map((model, index) => ({
+    name: model.name || (index === 0 ? "Primary" : `Local LLM ${index + 1}`),
+    apiBaseUrl: model.apiBaseUrl ?? (index === 0 ? provider.apiBaseUrl : ""),
+    model: model.model ?? (index === 0 ? provider.model : ""),
+  }));
+}
+
+function syncLocalLlmProviderForDraft(
+  provider: RuntimeSettingsEditable["providers"]["local-llm"],
+  models: RuntimeSettingsEditable["providers"]["local-llm"]["models"],
+): RuntimeSettingsEditable["providers"]["local-llm"] {
+  const nextModels = models.slice(0, localLlmMaxModels);
+  const primary = nextModels[0];
+  return {
+    ...provider,
+    apiBaseUrl: primary?.apiBaseUrl ?? provider.apiBaseUrl,
+    model: primary?.model ?? provider.model,
+    models: nextModels,
+  };
+}
+
 function buildSecretPayload(
   secretDrafts: SecretDraftState,
 ): Partial<Record<RuntimeSecretKey, { value?: string; clear?: boolean }>> | undefined {
@@ -319,6 +352,7 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
         enabled: view.providers["local-llm"].enabled,
         apiBaseUrl: view.providers["local-llm"].apiBaseUrl,
         model: view.providers["local-llm"].model,
+        models: normalizeLocalLlmModelsForForm(view.providers["local-llm"]),
       },
       codex: {
         enabled: view.providers.codex?.enabled ?? false,
@@ -457,6 +491,8 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
       pipelineLockStaleSeconds: view.advanced.pipelineLockStaleSeconds,
       lockTtlSeconds: view.advanced.lockTtlSeconds,
       pipelineClaimLimit: view.advanced.pipelineClaimLimit,
+      findingQueueTaskIntervalSeconds: view.advanced.findingQueueTaskIntervalSeconds,
+      coveringQueueTaskIntervalSeconds: view.advanced.coveringQueueTaskIntervalSeconds,
       continuousIdleSleepMs: view.advanced.continuousIdleSleepMs,
       continuousErrorSleepMs: view.advanced.continuousErrorSleepMs,
       inventoryRefreshIntervalMs: view.advanced.inventoryRefreshIntervalMs,
@@ -501,6 +537,7 @@ function RouteEditor({
 }) {
   const fallbackSlots = toFallbackSlots(route.fallback);
   const azureSlots = normalizeAzureDeploymentSlots(route.azureDeploymentSlots);
+  const localModelOptions = localLlmRouteModelOptions(settings);
 
   return (
     <div className="settings-route-row">
@@ -524,11 +561,36 @@ function RouteEditor({
           >
             {runtimeProviderOptions.map((provider) => (
               <option key={provider} value={provider}>
-                {providerOptionLabel(settings, provider)}
+                {providerNameOptionLabel(provider)}
               </option>
             ))}
           </Select>
         </label>
+        {route.provider === "local-llm" ? (
+          <label className="settings-field">
+            <span>Model</span>
+            <Select
+              value={route.model ?? ""}
+              onChange={(event) =>
+                onChange({
+                  ...route,
+                  model:
+                    event.target.value || resolveConfiguredRouteModel(settings, route.provider),
+                })
+              }
+            >
+              {localModelOptions.length === 0 ? (
+                <option value="">not configured</option>
+              ) : (
+                localModelOptions.map((model) => (
+                  <option key={model} value={model}>
+                    {model}
+                  </option>
+                ))
+              )}
+            </Select>
+          </label>
+        ) : null}
         <label className="settings-field">
           <span>Fallback 1</span>
           <Select
@@ -547,7 +609,7 @@ function RouteEditor({
             <option value="">none</option>
             {runtimeProviders.map((provider) => (
               <option key={provider} value={provider}>
-                {providerOptionLabel(settings, provider)}
+                {providerNameOptionLabel(provider)}
               </option>
             ))}
           </Select>
@@ -570,7 +632,7 @@ function RouteEditor({
             <option value="">none</option>
             {runtimeProviders.map((provider) => (
               <option key={provider} value={provider}>
-                {providerOptionLabel(settings, provider)}
+                {providerNameOptionLabel(provider)}
               </option>
             ))}
           </Select>
@@ -795,6 +857,9 @@ export function SettingsPage() {
   const [azureDeploymentHealth, setAzureDeploymentHealth] = useState<
     Partial<Record<number, RuntimeProviderHealth>>
   >({});
+  const [localLlmModelHealth, setLocalLlmModelHealth] = useState<
+    Partial<Record<string, RuntimeProviderHealth>>
+  >({});
 
   const settingsQuery = useQuery({
     queryKey: ["runtime-settings"],
@@ -858,6 +923,7 @@ export function SettingsPage() {
     max,
     step,
     parse = parseIntegerInput,
+    unit = "raw",
   }: {
     label: string;
     settingKey: keyof RuntimeSettingsEditable["distillationRuntime"];
@@ -865,6 +931,7 @@ export function SettingsPage() {
     max?: number;
     step?: number;
     parse?: (value: string, fallback: number) => number;
+    unit?: "raw" | "secondsFromMilliseconds";
   }) => (
     <label className="settings-field">
       <span>{label}</span>
@@ -873,13 +940,23 @@ export function SettingsPage() {
         min={min}
         max={max}
         step={step}
-        value={draft?.distillationRuntime[settingKey] ?? 0}
+        value={
+          unit === "secondsFromMilliseconds"
+            ? millisecondsToSeconds(Number(draft?.distillationRuntime[settingKey] ?? 0))
+            : (draft?.distillationRuntime[settingKey] ?? 0)
+        }
         onChange={(event) =>
           patchDraft((current) => ({
             ...current,
             distillationRuntime: {
               ...current.distillationRuntime,
-              [settingKey]: parse(event.target.value, current.distillationRuntime[settingKey]),
+              [settingKey]:
+                unit === "secondsFromMilliseconds"
+                  ? parseSecondsToMillisecondsInput(
+                      event.target.value,
+                      Number(current.distillationRuntime[settingKey]),
+                    )
+                  : parse(event.target.value, current.distillationRuntime[settingKey]),
             },
           }))
         }
@@ -943,6 +1020,20 @@ export function SettingsPage() {
       setAzureDeploymentHealth((current) => ({
         ...current,
         [deploymentIndex]: result.health,
+      }));
+    },
+    onError: (error) => {
+      setSaveMessage(null);
+      setSaveError(error instanceof Error ? error.message : String(error));
+    },
+  });
+
+  const localLlmModelTestMutation = useMutation({
+    mutationFn: (model: string) => testLocalLlmModel(model),
+    onSuccess: (result) => {
+      setLocalLlmModelHealth((current) => ({
+        ...current,
+        [result.model]: result.health,
       }));
     },
     onError: (error) => {
@@ -1802,10 +1893,12 @@ export function SettingsPage() {
                             ...current,
                             providers: {
                               ...current.providers,
-                              "local-llm": {
-                                ...current.providers["local-llm"],
-                                apiBaseUrl: event.target.value,
-                              },
+                              "local-llm": syncLocalLlmProviderForDraft(
+                                current.providers["local-llm"],
+                                current.providers["local-llm"].models.map((item, index) =>
+                                  index === 0 ? { ...item, apiBaseUrl: event.target.value } : item,
+                                ),
+                              ),
                             },
                           }))
                         }
@@ -1820,15 +1913,170 @@ export function SettingsPage() {
                             ...current,
                             providers: {
                               ...current.providers,
-                              "local-llm": {
-                                ...current.providers["local-llm"],
-                                model: event.target.value,
-                              },
+                              "local-llm": syncLocalLlmProviderForDraft(
+                                current.providers["local-llm"],
+                                current.providers["local-llm"].models.map((item, index) =>
+                                  index === 0 ? { ...item, model: event.target.value } : item,
+                                ),
+                              ),
                             },
                           }))
                         }
                       />
                     </label>
+                    {draft.providers["local-llm"].models.slice(1).map((model, modelIndex) => {
+                      const index = modelIndex + 1;
+                      return (
+                        <div key={index} className="settings-local-llm-model">
+                          <div className="settings-local-llm-model-header">
+                            <strong>{model.name || `Local LLM ${index + 1}`}</strong>
+                            <div className="settings-provider-actions">
+                              <ProviderHealthBadge health={localLlmModelHealth[model.model]} />
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="outline"
+                                onClick={() => localLlmModelTestMutation.mutate(model.model)}
+                                disabled={
+                                  !model.model.trim() || localLlmModelTestMutation.isPending
+                                }
+                              >
+                                <Stethoscope size={14} />
+                                Test
+                              </Button>
+                              <Button
+                                type="button"
+                                size="sm"
+                                variant="ghost"
+                                onClick={() =>
+                                  patchDraft((current) => ({
+                                    ...current,
+                                    providers: {
+                                      ...current.providers,
+                                      "local-llm": syncLocalLlmProviderForDraft(
+                                        current.providers["local-llm"],
+                                        current.providers["local-llm"].models.filter(
+                                          (_item, itemIndex) => itemIndex !== index,
+                                        ),
+                                      ),
+                                    },
+                                  }))
+                                }
+                              >
+                                <Trash2 size={14} />
+                              </Button>
+                            </div>
+                          </div>
+                          <label className="settings-field">
+                            <span>Name</span>
+                            <Input
+                              value={model.name}
+                              onChange={(event) =>
+                                patchDraft((current) => ({
+                                  ...current,
+                                  providers: {
+                                    ...current.providers,
+                                    "local-llm": syncLocalLlmProviderForDraft(
+                                      current.providers["local-llm"],
+                                      current.providers["local-llm"].models.map(
+                                        (item, itemIndex) =>
+                                          itemIndex === index
+                                            ? { ...item, name: event.target.value }
+                                            : item,
+                                      ),
+                                    ),
+                                  },
+                                }))
+                              }
+                            />
+                          </label>
+                          <label className="settings-field">
+                            <span>API Base URL</span>
+                            <Input
+                              value={model.apiBaseUrl}
+                              onChange={(event) =>
+                                patchDraft((current) => ({
+                                  ...current,
+                                  providers: {
+                                    ...current.providers,
+                                    "local-llm": syncLocalLlmProviderForDraft(
+                                      current.providers["local-llm"],
+                                      current.providers["local-llm"].models.map(
+                                        (item, itemIndex) =>
+                                          itemIndex === index
+                                            ? { ...item, apiBaseUrl: event.target.value }
+                                            : item,
+                                      ),
+                                    ),
+                                  },
+                                }))
+                              }
+                            />
+                          </label>
+                          <label className="settings-field">
+                            <span>Model</span>
+                            <Input
+                              value={model.model}
+                              onChange={(event) =>
+                                patchDraft((current) => ({
+                                  ...current,
+                                  providers: {
+                                    ...current.providers,
+                                    "local-llm": syncLocalLlmProviderForDraft(
+                                      current.providers["local-llm"],
+                                      current.providers["local-llm"].models.map(
+                                        (item, itemIndex) =>
+                                          itemIndex === index
+                                            ? { ...item, model: event.target.value }
+                                            : item,
+                                      ),
+                                    ),
+                                  },
+                                }))
+                              }
+                            />
+                          </label>
+                        </div>
+                      );
+                    })}
+                    <div className="settings-local-llm-add">
+                      <Button
+                        type="button"
+                        size="sm"
+                        variant="outline"
+                        onClick={() =>
+                          patchDraft((current) => {
+                            const models = current.providers["local-llm"].models;
+                            if (models.length >= localLlmMaxModels) return current;
+                            const nextIndex = models.length;
+                            return {
+                              ...current,
+                              providers: {
+                                ...current.providers,
+                                "local-llm": syncLocalLlmProviderForDraft(
+                                  current.providers["local-llm"],
+                                  [
+                                    ...models,
+                                    {
+                                      name: `Local LLM ${nextIndex + 1}`,
+                                      apiBaseUrl: "",
+                                      model: "",
+                                    },
+                                  ],
+                                ),
+                              },
+                            };
+                          })
+                        }
+                        disabled={draft.providers["local-llm"].models.length >= localLlmMaxModels}
+                      >
+                        <Plus size={14} />
+                        Add Local LLM
+                      </Button>
+                      <span className="text-xs text-muted-foreground">
+                        {draft.providers["local-llm"].models.length}/{localLlmMaxModels}
+                      </span>
+                    </div>
                     {sourceView
                       ? renderSecretEditor(
                           "localLlmApiKey",
@@ -1855,12 +2103,13 @@ export function SettingsPage() {
                     <div className="settings-route-section-header">
                       <h3>Find Candidate</h3>
                       <p>
-                        Pick models for extracting candidate knowledge from sources and vibe memory.
+                        Pick the single route used to extract candidate knowledge from sources and
+                        vibe memory.
                       </p>
                     </div>
                     <RouteEditor
-                      label="findCandidate.source"
-                      description="Extract candidate items from source documents."
+                      label="findCandidate"
+                      description="Process candidate extraction with one provider/model route."
                       settings={draft}
                       route={draft.taskRouting.findCandidate.source}
                       onChange={(next) =>
@@ -1871,23 +2120,6 @@ export function SettingsPage() {
                             findCandidate: {
                               ...current.taskRouting.findCandidate,
                               source: next,
-                            },
-                          },
-                        }))
-                      }
-                    />
-                    <RouteEditor
-                      label="findCandidate.vibe"
-                      description="Extract candidate items from vibe memory/session history."
-                      settings={draft}
-                      route={draft.taskRouting.findCandidate.vibe}
-                      onChange={(next) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          taskRouting: {
-                            ...current.taskRouting,
-                            findCandidate: {
-                              ...current.taskRouting.findCandidate,
                               vibe: next,
                             },
                           },
@@ -1903,10 +2135,11 @@ export function SettingsPage() {
                       </div>
                       <div className="settings-route-fields">
                         {renderDistillationRuntimeNumberField({
-                          label: "Find Candidate LLM Timeout (ms)",
+                          label: "Find Candidate LLM Timeout (seconds)",
                           settingKey: "findCandidateTimeoutMs",
-                          min: 1000,
-                          max: 3_600_000,
+                          min: 1,
+                          max: 3600,
+                          unit: "secondsFromMilliseconds",
                         })}
                         {renderDistillationRuntimeNumberField({
                           label: "Find Candidate Tool Calls",
@@ -1924,6 +2157,27 @@ export function SettingsPage() {
                         </p>
                       </div>
                       <div className="settings-route-fields">
+                        <label className="settings-field">
+                          <span>Finding Queue Task Interval (seconds)</span>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={3600}
+                            value={draft.advanced.findingQueueTaskIntervalSeconds}
+                            onChange={(event) =>
+                              patchDraft((current) => ({
+                                ...current,
+                                advanced: {
+                                  ...current.advanced,
+                                  findingQueueTaskIntervalSeconds: parseIntegerInput(
+                                    event.target.value,
+                                    current.advanced.findingQueueTaskIntervalSeconds,
+                                  ),
+                                },
+                              }))
+                            }
+                          />
+                        </label>
                         <label className="settings-field">
                           <span>Enable Background Scheduler</span>
                           <Checkbox
@@ -2202,31 +2456,13 @@ export function SettingsPage() {
                     <div className="settings-route-section-header">
                       <h3>Cover Evidence</h3>
                       <p>
-                        Choose how evidence quality checks run before final distillation output is
-                        produced.
+                        Choose the single route used by source checks, external evidence, and
+                        optional MCP evidence while processing the Covering Evidence queue.
                       </p>
                     </div>
                     <RouteEditor
-                      label="coverEvidence.sourceSupport"
-                      description="Validate supporting evidence from source-level context."
-                      settings={draft}
-                      route={draft.taskRouting.coverEvidence.sourceSupport}
-                      onChange={(next) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          taskRouting: {
-                            ...current.taskRouting,
-                            coverEvidence: {
-                              ...current.taskRouting.coverEvidence,
-                              sourceSupport: next,
-                            },
-                          },
-                        }))
-                      }
-                    />
-                    <RouteEditor
-                      label="coverEvidence.externalEvidence"
-                      description="Validate claims against external search/fetch results."
+                      label="coverEvidence"
+                      description="Process the Covering Evidence queue with one provider/model route."
                       settings={draft}
                       route={draft.taskRouting.coverEvidence.externalEvidence}
                       onChange={(next) =>
@@ -2235,25 +2471,8 @@ export function SettingsPage() {
                           taskRouting: {
                             ...current.taskRouting,
                             coverEvidence: {
-                              ...current.taskRouting.coverEvidence,
+                              sourceSupport: next,
                               externalEvidence: next,
-                            },
-                          },
-                        }))
-                      }
-                    />
-                    <RouteEditor
-                      label="coverEvidence.mcpEvidence"
-                      description="Validate evidence gathered from MCP tools."
-                      settings={draft}
-                      route={draft.taskRouting.coverEvidence.mcpEvidence}
-                      onChange={(next) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          taskRouting: {
-                            ...current.taskRouting,
-                            coverEvidence: {
-                              ...current.taskRouting.coverEvidence,
                               mcpEvidence: next,
                             },
                           },
@@ -2268,11 +2487,33 @@ export function SettingsPage() {
                         </p>
                       </div>
                       <div className="settings-route-fields">
+                        <label className="settings-field">
+                          <span>Covering Queue Task Interval (seconds)</span>
+                          <Input
+                            type="number"
+                            min={0}
+                            max={3600}
+                            value={draft.advanced.coveringQueueTaskIntervalSeconds}
+                            onChange={(event) =>
+                              patchDraft((current) => ({
+                                ...current,
+                                advanced: {
+                                  ...current.advanced,
+                                  coveringQueueTaskIntervalSeconds: parseIntegerInput(
+                                    event.target.value,
+                                    current.advanced.coveringQueueTaskIntervalSeconds,
+                                  ),
+                                },
+                              }))
+                            }
+                          />
+                        </label>
                         {renderDistillationRuntimeNumberField({
-                          label: "Cover Evidence LLM Timeout (ms)",
+                          label: "Cover Evidence LLM Timeout (seconds)",
                           settingKey: "coverEvidenceTimeoutMs",
-                          min: 1000,
-                          max: 3_600_000,
+                          min: 1,
+                          max: 3600,
+                          unit: "secondsFromMilliseconds",
                         })}
                         {renderDistillationRuntimeNumberField({
                           label: "Cover Evidence Search Calls",
@@ -2307,16 +2548,18 @@ export function SettingsPage() {
                       </div>
                       <div className="settings-route-fields">
                         {renderDistillationRuntimeNumberField({
-                          label: "Distillation Timeout (ms)",
+                          label: "Distillation Timeout (seconds)",
                           settingKey: "timeoutMs",
-                          min: 1000,
-                          max: 3_600_000,
+                          min: 1,
+                          max: 3600,
+                          unit: "secondsFromMilliseconds",
                         })}
                         {renderDistillationRuntimeNumberField({
-                          label: "Candidate Timeout (ms)",
+                          label: "Candidate Timeout (seconds)",
                           settingKey: "candidateTimeoutMs",
-                          min: 1000,
-                          max: 3_600_000,
+                          min: 1,
+                          max: 3600,
+                          unit: "secondsFromMilliseconds",
                         })}
                         {renderDistillationRuntimeNumberField({
                           label: "Max Tool Rounds",
@@ -2462,11 +2705,44 @@ export function SettingsPage() {
                           >
                             {agenticProviders.map((provider) => (
                               <option key={provider} value={provider}>
-                                {providerOptionLabel(draft, provider)}
+                                {providerNameOptionLabel(provider)}
                               </option>
                             ))}
                           </Select>
                         </label>
+                        {draft.taskRouting.agenticCompile.provider === "local-llm" ? (
+                          <label className="settings-field">
+                            <span>Model</span>
+                            <Select
+                              value={draft.taskRouting.agenticCompile.model}
+                              onChange={(event) =>
+                                patchDraft((current) => ({
+                                  ...current,
+                                  taskRouting: {
+                                    ...current.taskRouting,
+                                    agenticCompile: {
+                                      ...current.taskRouting.agenticCompile,
+                                      model:
+                                        event.target.value ||
+                                        resolveConfiguredRouteModel(current, "local-llm") ||
+                                        current.taskRouting.agenticCompile.model,
+                                    },
+                                  },
+                                }))
+                              }
+                            >
+                              {localLlmRouteModelOptions(draft).length === 0 ? (
+                                <option value="">not configured</option>
+                              ) : (
+                                localLlmRouteModelOptions(draft).map((model) => (
+                                  <option key={model} value={model}>
+                                    {model}
+                                  </option>
+                                ))
+                              )}
+                            </Select>
+                          </label>
+                        ) : null}
                         <label className="settings-field">
                           <span>Fallback 1</span>
                           <Select
@@ -2491,7 +2767,7 @@ export function SettingsPage() {
                             <option value="">none</option>
                             {runtimeProviders.map((provider) => (
                               <option key={provider} value={provider}>
-                                {providerOptionLabel(draft, provider)}
+                                {providerNameOptionLabel(provider)}
                               </option>
                             ))}
                           </Select>
@@ -2520,7 +2796,7 @@ export function SettingsPage() {
                             <option value="">none</option>
                             {runtimeProviders.map((provider) => (
                               <option key={provider} value={provider}>
-                                {providerOptionLabel(draft, provider)}
+                                {providerNameOptionLabel(provider)}
                               </option>
                             ))}
                           </Select>
@@ -2560,11 +2836,13 @@ export function SettingsPage() {
                           </span>
                         </div>
                         <label className="settings-field">
-                          <span>Timeout (ms)</span>
+                          <span>Timeout (seconds)</span>
                           <Input
                             type="number"
-                            min={1000}
-                            value={draft.taskRouting.agenticCompile.timeoutMs}
+                            min={1}
+                            value={millisecondsToSeconds(
+                              draft.taskRouting.agenticCompile.timeoutMs,
+                            )}
                             onChange={(event) =>
                               patchDraft((current) => ({
                                 ...current,
@@ -2572,7 +2850,7 @@ export function SettingsPage() {
                                   ...current.taskRouting,
                                   agenticCompile: {
                                     ...current.taskRouting.agenticCompile,
-                                    timeoutMs: parseIntegerInput(
+                                    timeoutMs: parseSecondsToMillisecondsInput(
                                       event.target.value,
                                       current.taskRouting.agenticCompile.timeoutMs,
                                     ),
@@ -2755,18 +3033,18 @@ export function SettingsPage() {
                       />
                     </label>
                     <label className="settings-field">
-                      <span>Timeout (ms)</span>
+                      <span>Timeout (seconds)</span>
                       <Input
                         type="number"
-                        min={1000}
-                        max={120000}
-                        value={draft.search.timeoutMs}
+                        min={1}
+                        max={120}
+                        value={millisecondsToSeconds(draft.search.timeoutMs)}
                         onChange={(event) =>
                           patchDraft((current) => ({
                             ...current,
                             search: {
                               ...current.search,
-                              timeoutMs: parseIntegerInput(
+                              timeoutMs: parseSecondsToMillisecondsInput(
                                 event.target.value,
                                 current.search.timeoutMs,
                               ),
@@ -2882,18 +3160,18 @@ export function SettingsPage() {
                     />
                   </label>
                   <label className="settings-field">
-                    <span>Timeout (ms)</span>
+                    <span>Timeout (seconds)</span>
                     <Input
                       type="number"
-                      min={1000}
-                      max={120000}
-                      value={draft.embedding.timeoutMs}
+                      min={1}
+                      max={120}
+                      value={millisecondsToSeconds(draft.embedding.timeoutMs)}
                       onChange={(event) =>
                         patchDraft((current) => ({
                           ...current,
                           embedding: {
                             ...current.embedding,
-                            timeoutMs: parseIntegerInput(
+                            timeoutMs: parseSecondsToMillisecondsInput(
                               event.target.value,
                               current.embedding.timeoutMs,
                             ),
@@ -2975,17 +3253,18 @@ export function SettingsPage() {
                       />
                     </label>
                     <label className="settings-field">
-                      <span>Continuous Idle Sleep (ms)</span>
+                      <span>Continuous Idle Sleep (seconds)</span>
                       <Input
                         type="number"
-                        min={100}
-                        value={draft.advanced.continuousIdleSleepMs}
+                        min={0.1}
+                        step={0.1}
+                        value={millisecondsToSeconds(draft.advanced.continuousIdleSleepMs)}
                         onChange={(event) =>
                           patchDraft((current) => ({
                             ...current,
                             advanced: {
                               ...current.advanced,
-                              continuousIdleSleepMs: parseIntegerInput(
+                              continuousIdleSleepMs: parseSecondsToMillisecondsInput(
                                 event.target.value,
                                 current.advanced.continuousIdleSleepMs,
                               ),
@@ -2995,17 +3274,18 @@ export function SettingsPage() {
                       />
                     </label>
                     <label className="settings-field">
-                      <span>Continuous Error Sleep (ms)</span>
+                      <span>Continuous Error Sleep (seconds)</span>
                       <Input
                         type="number"
-                        min={100}
-                        value={draft.advanced.continuousErrorSleepMs}
+                        min={0.1}
+                        step={0.1}
+                        value={millisecondsToSeconds(draft.advanced.continuousErrorSleepMs)}
                         onChange={(event) =>
                           patchDraft((current) => ({
                             ...current,
                             advanced: {
                               ...current.advanced,
-                              continuousErrorSleepMs: parseIntegerInput(
+                              continuousErrorSleepMs: parseSecondsToMillisecondsInput(
                                 event.target.value,
                                 current.advanced.continuousErrorSleepMs,
                               ),
@@ -3015,17 +3295,18 @@ export function SettingsPage() {
                       />
                     </label>
                     <label className="settings-field">
-                      <span>Inventory Refresh Interval (ms)</span>
+                      <span>Inventory Refresh Interval (seconds)</span>
                       <Input
                         type="number"
-                        min={100}
-                        value={draft.advanced.inventoryRefreshIntervalMs}
+                        min={0.1}
+                        step={0.1}
+                        value={millisecondsToSeconds(draft.advanced.inventoryRefreshIntervalMs)}
                         onChange={(event) =>
                           patchDraft((current) => ({
                             ...current,
                             advanced: {
                               ...current.advanced,
-                              inventoryRefreshIntervalMs: parseIntegerInput(
+                              inventoryRefreshIntervalMs: parseSecondsToMillisecondsInput(
                                 event.target.value,
                                 current.advanced.inventoryRefreshIntervalMs,
                               ),

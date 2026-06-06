@@ -48,7 +48,12 @@ function assertSafeTestDatabase(databaseUrl: string): void {
 function ensureDatabase(): Database {
   if (!globalForDb.pool) {
     assertSafeTestDatabase(groupedConfig.database.url);
-    globalForDb.pool = new Pool({ connectionString: groupedConfig.database.url });
+    globalForDb.pool = new Pool({
+      connectionString: groupedConfig.database.url,
+      max: groupedConfig.database.poolMax,
+      idleTimeoutMillis: groupedConfig.database.idleTimeoutMillis,
+      connectionTimeoutMillis: groupedConfig.database.connectionTimeoutMillis,
+    });
   }
   if (!globalForDb.database) {
     globalForDb.database = createDatabase(globalForDb.pool);

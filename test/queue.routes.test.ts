@@ -217,4 +217,22 @@ describe("queue routes v2", () => {
     const json = await response.json();
     expect(json.code).toBe("QUEUE_SCHEMA_NOT_READY");
   });
+
+  test("GET /api/queue/active does not hide non-migration 42P01 query bugs as schema-not-ready", async () => {
+    const error = new Error('missing FROM-clause entry for table "e"') as Error & {
+      code?: string;
+    };
+    error.code = "42P01";
+    vi.mocked(repo.fetchActiveTasks).mockRejectedValueOnce(error);
+
+    const app = buildApp();
+    app.onError((caughtError, c) =>
+      c.json({ code: "INTERNAL_ERROR", error: caughtError.message }, 500),
+    );
+
+    const response = await app.request("/api/queue/active");
+    expect(response.status).toBe(500);
+    const json = await response.json();
+    expect(json.code).toBe("INTERNAL_ERROR");
+  });
 });

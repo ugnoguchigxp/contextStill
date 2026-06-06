@@ -71,6 +71,7 @@ async function inspectAgenticLlmWithProviderHealth(
     selectedProvider: agenticLlm.selectedProvider,
     routeOrder: agenticLlm.fallbackOrder,
     selectedAzureDeploymentSlots: agenticRouting.azureDeploymentSlots,
+    selectedLocalLlmModel: agenticLlm.provider === "local-llm" ? agenticLlm.model : undefined,
   });
   return {
     ...agenticLlm,

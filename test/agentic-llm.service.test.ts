@@ -9,9 +9,9 @@ import {
 import { recordLlmUsage } from "../src/modules/llm/llm-usage-logger.js";
 import { createAzureOpenAiProvider } from "../src/modules/llm/providers/azure-openai.provider.js";
 import { createBedrockProvider } from "../src/modules/llm/providers/bedrock.provider.js";
+import { createCodexProvider } from "../src/modules/llm/providers/codex.provider.js";
 import { createLocalLlmProvider } from "../src/modules/llm/providers/local-llm.provider.js";
 import { createOpenAiProvider } from "../src/modules/llm/providers/openai.provider.js";
-import { createCodexProvider } from "../src/modules/llm/providers/codex.provider.js";
 
 vi.mock("../src/modules/llm/llm-usage-logger.js", () => ({
   recordLlmUsage: vi.fn(),
@@ -36,6 +36,7 @@ describe("agentic-llm service tests", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     groupedConfig.azureOpenAi.deployments = [];
+    groupedConfig.localLlm.models = [];
     vi.mocked(createOpenAiProvider).mockReturnValue(mockProvider("openai", false, false) as any);
     vi.mocked(createAzureOpenAiProvider).mockReturnValue(
       mockProvider("azure-openai", false, false) as any,
@@ -95,6 +96,7 @@ describe("agentic-llm service tests", () => {
 
     const [provider] = getAgenticLlmProviders("azure-openai", 2000, "context-compiler");
     await provider?.chat({
+      model: "deployment-override",
       messages: [{ role: "user", content: "hi" }],
       maxTokens: 10,
     });
@@ -103,7 +105,7 @@ describe("agentic-llm service tests", () => {
     expect(recordLlmUsage).toHaveBeenCalledWith(
       expect.objectContaining({
         provider: "azure-openai",
-        model: expect.any(String),
+        model: "deployment-override",
         usage,
         promptMessages: [{ role: "user", content: "hi" }],
         completionText: "ok",
@@ -159,6 +161,13 @@ describe("agentic-llm service tests", () => {
         apiVersion: "2025-04-01-preview",
       },
     ];
+    groupedConfig.localLlm.models = [
+      {
+        name: "Primary",
+        apiBaseUrl: "http://127.0.0.1:44448",
+        model: "gemma-4-e4b-it",
+      },
+    ];
     vi.mocked(createOpenAiProvider).mockReturnValue(mockProvider("openai", false, false) as any);
     vi.mocked(createAzureOpenAiProvider).mockImplementation(
       (options?: { deploymentIndex?: number }) =>
@@ -183,7 +192,7 @@ describe("agentic-llm service tests", () => {
     expect(health.map((item) => item.id)).toEqual([
       "azure-openai:1",
       "azure-openai:2",
-      "local-llm",
+      "local-llm:1",
     ]);
     expect(health[0]).toMatchObject({
       label: "Azure OpenAI #1",
@@ -203,11 +212,20 @@ describe("agentic-llm service tests", () => {
       deploymentIndex: 2,
     });
     expect(health[2]).toMatchObject({
+      id: "local-llm:1",
+      label: "Primary",
       provider: "local-llm",
       configured: true,
       reachable: true,
       selected: false,
       routeOrder: 1,
+    });
+    expect(createLocalLlmProvider).toHaveBeenCalledWith({
+      timeoutMs: 2000,
+      modelConfig: {
+        apiBaseUrl: "http://127.0.0.1:44448",
+        model: "gemma-4-e4b-it",
+      },
     });
   });
 
@@ -245,6 +263,42 @@ describe("agentic-llm service tests", () => {
 
     expect(health.find((item) => item.id === "azure-openai:1")?.selected).toBe(false);
     expect(health.find((item) => item.id === "azure-openai:2")?.selected).toBe(true);
+  });
+
+  test("checkLlmProviderHealthMatrix reports each configured local LLM model", async () => {
+    groupedConfig.localLlm.models = [
+      { name: "Qwen", apiBaseUrl: "http://127.0.0.1:11434", model: "qwen3" },
+      { name: "Gemma", apiBaseUrl: "http://127.0.0.1:11435", model: "gemma4" },
+    ];
+    vi.mocked(createOpenAiProvider).mockReturnValue(mockProvider("openai", false, false) as any);
+    vi.mocked(createAzureOpenAiProvider).mockReturnValue(
+      mockProvider("azure-openai", false, false) as any,
+    );
+    vi.mocked(createBedrockProvider).mockReturnValue(mockProvider("bedrock", false, false) as any);
+    vi.mocked(createLocalLlmProvider).mockImplementation(
+      (options?: { modelConfig?: { apiBaseUrl: string; model: string } }) =>
+        mockProvider("local-llm", Boolean(options?.modelConfig), true) as any,
+    );
+
+    const health = await checkLlmProviderHealthMatrix(2000, {
+      selectedProvider: "local-llm",
+      routeOrder: ["local-llm"],
+      selectedLocalLlmModel: "gemma4",
+    });
+
+    expect(health.map((item) => item.id)).toEqual(["local-llm:1", "local-llm:2"]);
+    expect(health.map((item) => item.label)).toEqual(["Qwen", "Gemma"]);
+    expect(health.map((item) => item.routeOrder)).toEqual([0, 0]);
+    expect(health.find((item) => item.id === "local-llm:1")?.selected).toBe(false);
+    expect(health.find((item) => item.id === "local-llm:2")?.selected).toBe(true);
+    expect(createLocalLlmProvider).toHaveBeenCalledWith({
+      timeoutMs: 2000,
+      modelConfig: { apiBaseUrl: "http://127.0.0.1:11434", model: "qwen3" },
+    });
+    expect(createLocalLlmProvider).toHaveBeenCalledWith({
+      timeoutMs: 2000,
+      modelConfig: { apiBaseUrl: "http://127.0.0.1:11435", model: "gemma4" },
+    });
   });
 
   describe("checkAgenticLlmHealth fallback logic", () => {

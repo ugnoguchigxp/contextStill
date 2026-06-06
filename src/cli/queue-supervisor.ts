@@ -5,6 +5,10 @@ import {
   distillationQueueNames,
   runQueueWorkerOnce,
 } from "../modules/queue/core/index.js";
+import {
+  ensureRuntimeSettingsLoaded,
+  reloadRuntimeSettingsCache,
+} from "../modules/settings/settings.service.js";
 
 type CliOptions = {
   continuous: boolean;
@@ -85,6 +89,47 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+const runtimeSettingsRefreshIntervalMs = 5_000;
+let nextRuntimeSettingsRefreshAt = 0;
+let runtimeSettingsRefreshPromise: Promise<void> | null = null;
+
+async function refreshRuntimeSettings(force = false): Promise<void> {
+  const now = Date.now();
+  if (!force && now < nextRuntimeSettingsRefreshAt) return;
+  if (runtimeSettingsRefreshPromise) {
+    await runtimeSettingsRefreshPromise;
+    return;
+  }
+
+  runtimeSettingsRefreshPromise = reloadRuntimeSettingsCache().finally(() => {
+    nextRuntimeSettingsRefreshAt = Date.now() + runtimeSettingsRefreshIntervalMs;
+    runtimeSettingsRefreshPromise = null;
+  });
+  await runtimeSettingsRefreshPromise;
+}
+
+function queueTaskDelayMs(queueName: DistillationQueueName, idle: boolean): number {
+  if (idle) return groupedConfig.distillation.continuousIdleSleepMs;
+  if (queueName === "findingCandidate") {
+    return groupedConfig.distillation.findingQueueTaskIntervalSeconds * 1000;
+  }
+  if (queueName === "coveringEvidence") {
+    return groupedConfig.distillation.coveringQueueTaskIntervalSeconds * 1000;
+  }
+  return 0;
+}
+
+async function sleepForQueueDelay(queueName: DistillationQueueName, idle: boolean): Promise<void> {
+  const start = Date.now();
+  while (!stopping) {
+    await refreshRuntimeSettings();
+    const sleepMs = queueTaskDelayMs(queueName, idle);
+    const elapsed = Date.now() - start;
+    if (elapsed >= sleepMs) return;
+    await sleep(Math.max(1, Math.min(100, sleepMs - elapsed)));
+  }
+}
+
 async function runOnce(options: CliOptions) {
   const runTasks = options.queueNames.flatMap((queueName) =>
     Array.from({ length: options.limit }, (_, index) =>
@@ -114,9 +159,7 @@ let stopping = false;
 let activeLoopsPromise: Promise<unknown[]> | null = null;
 
 async function runContinuous(options: CliOptions): Promise<void> {
-  const busySleepMs = 0;
-  const findingQueueTaskIntervalMs =
-    groupedConfig.distillation.findingQueueTaskIntervalSeconds * 1000;
+  await refreshRuntimeSettings(true);
   const runLoop = async (queueName: DistillationQueueName): Promise<void> => {
     let wasIdle = false;
     while (!stopping) {
@@ -139,16 +182,7 @@ async function runContinuous(options: CliOptions): Promise<void> {
           );
         }
         wasIdle = run.idle;
-        const sleepMs = run.idle
-          ? groupedConfig.distillation.continuousIdleSleepMs
-          : queueName === "findingCandidate"
-            ? findingQueueTaskIntervalMs
-            : busySleepMs;
-
-        const start = Date.now();
-        while (Date.now() - start < sleepMs && !stopping) {
-          await sleep(Math.max(1, Math.min(100, sleepMs - (Date.now() - start))));
-        }
+        await sleepForQueueDelay(queueName, run.idle);
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));
         const start = Date.now();
@@ -205,6 +239,7 @@ async function main(): Promise<void> {
     await runContinuous(options);
     return;
   }
+  await ensureRuntimeSettingsLoaded();
   await runOnce(options);
 }
 

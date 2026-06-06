@@ -244,7 +244,7 @@ function plannerMaxTokens(markdownTargetTokens: number): number {
   );
 }
 
-function modelForProvider(provider: string): string {
+function modelForProvider(provider: string, routeModel?: string): string {
   switch (provider) {
     case "openai":
       return groupedConfig.openAi.model;
@@ -253,7 +253,7 @@ function modelForProvider(provider: string): string {
     case "bedrock":
       return groupedConfig.bedrock.model;
     case "local-llm":
-      return groupedConfig.localLlm.model;
+      return routeModel?.trim() || groupedConfig.localLlm.model;
     default:
       return groupedConfig.openAi.model;
   }
@@ -718,7 +718,7 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
     routing.azureDeploymentSlots,
   );
   const primaryProviderName = providers[0]?.name ?? routing.provider;
-  const primaryModel = modelForProvider(primaryProviderName);
+  const primaryModel = modelForProvider(primaryProviderName, routing.model);
   const pressure = await readProviderPressureState({
     provider: routing.provider,
     model: primaryModel,
@@ -747,7 +747,7 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
   for (const provider of providers) {
     if (!provider.isConfigured()) continue;
     attempted += 1;
-    const providerModel = modelForProvider(provider.name);
+    const providerModel = modelForProvider(provider.name, routing.model);
     void recordProviderUsage({
       provider: provider.name,
       model: providerModel,
@@ -758,6 +758,7 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
     let plannerError: string | undefined;
     try {
       const plannerResponse = await provider.chat({
+        model: provider.name === "local-llm" ? providerModel : undefined,
         messages: [
           { role: "system", content: plannerSystemPrompt },
           { role: "user", content: plannerUserPrompt },
@@ -795,6 +796,7 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
     const userPrompt = buildComposerUserPrompt(params, effectivePlan);
     try {
       const response = await provider.chat({
+        model: provider.name === "local-llm" ? providerModel : undefined,
         messages: [
           { role: "system", content: systemPrompt },
           { role: "user", content: userPrompt },

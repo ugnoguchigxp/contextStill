@@ -4,13 +4,13 @@ import { readProjectEnv } from "../../project-identity.js";
 import type { SettingsRow } from "./settings.repository.js";
 import {
   type DistillationPriorityTargetKind,
+  type RuntimeAgenticProviderName,
   type RuntimeProviderName,
   type RuntimeProviderSetting,
   type RuntimeSecretKey,
   type RuntimeSettingsEditable,
   type RuntimeSettingsRoute,
   type RuntimeSettingsSecrets,
-  type RuntimeAgenticProviderName,
   distillationPriorityTargetKindValues,
   runtimeProviderNames,
   runtimeSettingsEditableSchema,
@@ -73,6 +73,7 @@ const distillationPriorityTargetKindSet = new Set<DistillationPriorityTargetKind
 );
 
 const AZURE_OPENAI_MAX_DEPLOYMENTS = 3;
+const LOCAL_LLM_MAX_MODELS = 10;
 
 function normalizeAzureDeploymentSlots(values: unknown): number[] | undefined {
   if (!Array.isArray(values)) return undefined;
@@ -173,6 +174,77 @@ function syncAzureOpenAiProvider(
   };
 }
 
+function localLlmModelName(index: number): string {
+  return index === 0 ? "Primary" : `Local LLM ${index + 1}`;
+}
+
+function normalizeLocalLlmModel(
+  value: Record<string, unknown>,
+  index: number,
+  fallback: RuntimeSettingsEditable["providers"]["local-llm"],
+): RuntimeSettingsEditable["providers"]["local-llm"]["models"][number] {
+  const name = typeof value.name === "string" ? value.name.trim() : "";
+  const apiBaseUrl =
+    typeof value.apiBaseUrl === "string" && value.apiBaseUrl.trim()
+      ? value.apiBaseUrl.trim().replace(/\/+$/, "")
+      : index === 0
+        ? fallback.apiBaseUrl
+        : "";
+  const model =
+    typeof value.model === "string" && value.model.trim()
+      ? value.model.trim()
+      : index === 0
+        ? fallback.model
+        : "";
+  return {
+    name: name || localLlmModelName(index),
+    apiBaseUrl,
+    model,
+  };
+}
+
+function normalizeLocalLlmModels(
+  provider: RuntimeSettingsEditable["providers"]["local-llm"],
+): RuntimeSettingsEditable["providers"]["local-llm"]["models"] {
+  const rawModels = Array.isArray(provider.models) ? provider.models : [];
+  const source =
+    rawModels.length > 0
+      ? rawModels
+      : [
+          {
+            name: "Primary",
+            apiBaseUrl: provider.apiBaseUrl,
+            model: provider.model,
+          },
+        ];
+  const models = source
+    .slice(0, LOCAL_LLM_MAX_MODELS)
+    .map((value, index) => normalizeLocalLlmModel(asRecord(value), index, provider))
+    .filter((item, index) => index === 0 || (item.apiBaseUrl.trim() && item.model.trim()));
+  return models.length > 0
+    ? models
+    : [
+        {
+          name: "Primary",
+          apiBaseUrl: provider.apiBaseUrl,
+          model: provider.model,
+        },
+      ];
+}
+
+function syncLocalLlmProvider(
+  provider: RuntimeSettingsEditable["providers"]["local-llm"],
+): RuntimeSettingsEditable["providers"]["local-llm"] {
+  const models = normalizeLocalLlmModels(provider);
+  const primary = models[0];
+  return {
+    ...provider,
+    apiBaseUrl: primary?.apiBaseUrl ?? provider.apiBaseUrl,
+    model: primary?.model ?? provider.model,
+    models,
+  };
+}
+
 export function normalizeDistillationTargetPriorityOrder(
   values: unknown,
 ): DistillationPriorityTargetKind[] {
@@ -252,6 +324,13 @@ export const bootstrap: BootstrapConfig = {
       ),
       apiBaseUrl: groupedConfig.localLlm.apiBaseUrl,
       model: groupedConfig.localLlm.model,
+      models: [
+        {
+          name: "Primary",
+          apiBaseUrl: groupedConfig.localLlm.apiBaseUrl,
+          model: groupedConfig.localLlm.model,
+        },
+      ],
     },
     codex: {
       enabled: false,
@@ -353,6 +432,8 @@ export const bootstrap: BootstrapConfig = {
     pipelineLockStaleSeconds: groupedConfig.distillation.pipelineLockStaleSeconds,
     lockTtlSeconds: groupedConfig.distillation.lockTtlSeconds,
     pipelineClaimLimit: groupedConfig.distillation.pipelineClaimLimit,
+    findingQueueTaskIntervalSeconds: groupedConfig.distillation.findingQueueTaskIntervalSeconds,
+    coveringQueueTaskIntervalSeconds: groupedConfig.distillation.coveringQueueTaskIntervalSeconds,
     continuousIdleSleepMs: groupedConfig.distillation.continuousIdleSleepMs,
     continuousErrorSleepMs: groupedConfig.distillation.continuousErrorSleepMs,
     inventoryRefreshIntervalMs: groupedConfig.distillation.inventoryRefreshIntervalMs,
@@ -398,7 +479,10 @@ export function cloneDefaultSettings(): RuntimeSettingsEditable {
         })),
       },
       bedrock: { ...bootstrap.providers.bedrock },
-      "local-llm": { ...bootstrap.providers["local-llm"] },
+      "local-llm": {
+        ...bootstrap.providers["local-llm"],
+        models: bootstrap.providers["local-llm"].models.map((model) => ({ ...model })),
+      },
       codex: { ...bootstrap.providers.codex },
     },
     taskRouting: {
@@ -507,7 +591,11 @@ function resolveConfiguredRouteModel(
     case "bedrock":
       return settings.providers.bedrock.model.trim() || undefined;
     case "local-llm":
-      return settings.providers["local-llm"].model.trim() || undefined;
+      return (
+        settings.providers["local-llm"].models.find((model) => model.model.trim())?.model.trim() ||
+        settings.providers["local-llm"].model.trim() ||
+        undefined
+      );
     case "codex":
       return settings.providers.codex.model.trim() || undefined;
   }
@@ -517,9 +605,16 @@ function sanitizeRoute(
   settings: RuntimeSettingsEditable,
   route: RuntimeSettingsRoute,
 ): RuntimeSettingsRoute {
+  const model =
+    route.provider === "local-llm"
+      ? (settings.providers["local-llm"].models
+          .map((item) => item.model.trim())
+          .find((configuredModel) => configuredModel && configuredModel === route.model?.trim()) ??
+        resolveConfiguredRouteModel(settings, route.provider))
+      : resolveConfiguredRouteModel(settings, route.provider);
   return {
     provider: route.provider,
-    model: resolveConfiguredRouteModel(settings, route.provider),
+    model,
     fallback: normalizeProviderList(route.fallback),
     azureDeploymentSlots: normalizeAzureDeploymentSlots(route.azureDeploymentSlots),
   };
@@ -532,6 +627,14 @@ function ensureLocalLlmAzureFallback(route: RuntimeSettingsRoute): RuntimeSettin
   return {
     ...route,
     fallback: [...route.fallback, "azure-openai"],
+  };
+}
+
+function cloneRoute(route: RuntimeSettingsRoute): RuntimeSettingsRoute {
+  return {
+    ...route,
+    fallback: [...route.fallback],
+    azureDeploymentSlots: route.azureDeploymentSlots ? [...route.azureDeploymentSlots] : undefined,
   };
 }
 
@@ -660,15 +763,13 @@ function mergeRuntimeSettings(
   };
 
   merged.providers["azure-openai"] = syncAzureOpenAiProvider(merged.providers["azure-openai"]);
+  merged.providers["local-llm"] = syncLocalLlmProvider(merged.providers["local-llm"]);
 
   merged.taskRouting.findCandidate.source = sanitizeRoute(
     merged,
     merged.taskRouting.findCandidate.source,
   );
-  merged.taskRouting.findCandidate.vibe = sanitizeRoute(
-    merged,
-    merged.taskRouting.findCandidate.vibe,
-  );
+  merged.taskRouting.findCandidate.vibe = cloneRoute(merged.taskRouting.findCandidate.source);
   merged.taskRouting.webSourceResearch = sanitizeRoute(
     merged,
     merged.taskRouting.webSourceResearch,
@@ -690,13 +791,9 @@ function mergeRuntimeSettings(
   merged.taskRouting.coverEvidence.externalEvidence = ensureLocalLlmAzureFallback(
     merged.taskRouting.coverEvidence.externalEvidence,
   );
-  merged.taskRouting.coverEvidence.mcpEvidence = sanitizeRoute(
-    merged,
-    merged.taskRouting.coverEvidence.mcpEvidence,
-  );
-  merged.taskRouting.coverEvidence.mcpEvidence = ensureLocalLlmAzureFallback(
-    merged.taskRouting.coverEvidence.mcpEvidence,
-  );
+  const coverEvidenceRoute = cloneRoute(merged.taskRouting.coverEvidence.externalEvidence);
+  merged.taskRouting.coverEvidence.sourceSupport = cloneRoute(coverEvidenceRoute);
+  merged.taskRouting.coverEvidence.mcpEvidence = cloneRoute(coverEvidenceRoute);
   merged.taskRouting.finalizeDistille = sanitizeRoute(merged, merged.taskRouting.finalizeDistille);
   merged.taskRouting.finalizeDistille = ensureLocalLlmAzureFallback(
     merged.taskRouting.finalizeDistille,

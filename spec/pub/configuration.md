@@ -7,6 +7,9 @@ Configuration is environment-variable based. See `.env.example` for the authorit
 | Variable | Default | Purpose |
 |---|---|---|
 | `DATABASE_URL` | `postgres://postgres:postgres@localhost:7889/context_still` | PostgreSQL connection |
+| `CONTEXT_STILL_DB_POOL_MAX` | `3` | Per-process PostgreSQL pool max. Keep Hono/MCP/queue totals below DB `max_connections` |
+| `CONTEXT_STILL_DB_POOL_IDLE_TIMEOUT_MS` | `10000` | Milliseconds before idle DB pool clients are released |
+| `CONTEXT_STILL_DB_POOL_CONNECTION_TIMEOUT_MS` | `5000` | Milliseconds to wait for a DB connection before failing |
 | `CONTEXT_STILL_SOURCE_CONTENT_ROOT` | `./wiki` | Local wiki/source repository |
 | `CONTEXT_STILL_ADMIN_API_KEY` | empty | Optional admin API key |
 
