@@ -50,6 +50,26 @@ describe("Admin Repository", () => {
       await expect(fetchDoctorReport()).rejects.toThrow("/api/doctor failed: 500");
     });
 
+    it("getJson should preserve nested error payload code and message", async () => {
+      vi.spyOn(global, "fetch").mockResolvedValue({
+        ok: false,
+        status: 503,
+        json: async () => ({
+          error: {
+            code: "QUEUE_SCHEMA_NOT_READY",
+            message: "queue schema is not ready",
+          },
+        }),
+      } as unknown as Response);
+
+      await expect(fetchDoctorReport()).rejects.toMatchObject({
+        name: "AdminApiError",
+        status: 503,
+        code: "QUEUE_SCHEMA_NOT_READY",
+        message: "queue schema is not ready",
+      });
+    });
+
     it("requestJson should throw custom error payload if response has outcome", async () => {
       const payload = { outcome: "invalid", message: "something wrong" };
       vi.spyOn(global, "fetch").mockResolvedValue({

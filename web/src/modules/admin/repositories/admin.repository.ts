@@ -2404,28 +2404,34 @@ export class AdminApiError extends Error {
   }
 }
 
+function parseErrorRecord(value: unknown): Record<string, unknown> | null {
+  return typeof value === "object" && value !== null && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function parseStringField(record: Record<string, unknown> | null, field: string): string | null {
+  const value = record?.[field];
+  return typeof value === "string" ? value : null;
+}
+
 function parseResponseErrorPayload(payload: unknown): {
   message: string | null;
   code: string | null;
 } {
-  if (typeof payload !== "object" || payload === null) {
+  const record = parseErrorRecord(payload);
+  if (!record) {
     return { message: null, code: null };
   }
-  const record = payload as {
-    code?: unknown;
-    error?: unknown;
-    message?: unknown;
-    reason?: unknown;
-  };
-  const code = typeof record.code === "string" ? record.code : null;
+  const nestedError = parseErrorRecord(record.error);
+  const code = parseStringField(record, "code") ?? parseStringField(nestedError, "code");
   const message =
     typeof record.error === "string"
       ? record.error
-      : typeof record.message === "string"
-        ? record.message
-        : typeof record.reason === "string"
-          ? record.reason
-          : null;
+      : (parseStringField(record, "message") ??
+        parseStringField(record, "reason") ??
+        parseStringField(nestedError, "message") ??
+        parseStringField(nestedError, "reason"));
   return { message, code };
 }
 
