@@ -16,6 +16,7 @@ import { runCoverEvidence } from "../../coverEvidence/domain.js";
 import type { CoverEvidenceResult } from "../../coverEvidence/types.js";
 import { runFinalizeDistille } from "../../finalizeDistille/domain.js";
 import { type FindCandidateResult, runFindCandidate } from "../../findCandidate/domain.js";
+import { processDeadZoneMergeReviewJob } from "../../landscape/deadzone-merge-review-queue.service.js";
 import { researchWebSourceToMarkdown } from "../../sources/web/source-research.service.js";
 import { claimNextQueueJob } from "./claim.js";
 import { isQueuePaused } from "./control.js";
@@ -937,6 +938,12 @@ export async function runQueueWorkerOnce(params: {
               signal: pauseController.signal,
               run: (signal) => processCoveringJob(claimed.id, signal),
             });
+          } else if (params.queueName === "deadZoneMergeReview") {
+            await runWithTimeout({
+              timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+              signal: pauseController.signal,
+              run: (signal) => processDeadZoneMergeReviewJob(claimed.id, signal),
+            });
           } else {
             await runWithTimeout({
               timeoutMs: groupedConfig.distillation.timeoutMs,
@@ -1031,6 +1038,8 @@ export async function runQueueWorkerOnce(params: {
         outcome: "failed",
         lastError: message,
       });
+    } else if (params.queueName === "deadZoneMergeReview") {
+      // The merge-review service records job failure details so it can classify parse/provider failures.
     } else {
       const [current] = await db
         .select()

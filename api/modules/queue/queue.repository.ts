@@ -28,6 +28,7 @@ import {
   ensureRuntimeSettingsLoaded,
   getRuntimeSettingsSnapshot,
   resolveCoverEvidenceRoutes,
+  resolveDeadZoneMergeReviewRoute,
   resolveFindCandidateRoute,
 } from "../../../src/modules/settings/settings.service.js";
 
@@ -201,6 +202,12 @@ function resolveQueueRuntimeModel(
     }
   }
 
+  if (queueName === "deadZoneMergeReview") {
+    const route = resolveDeadZoneMergeReviewRoute();
+    const provider = row.provider?.trim() || route.provider;
+    return { provider, model: row.model?.trim() || resolveRouteModel(provider, route.model) };
+  }
+
   const settings = getRuntimeSettingsSnapshot();
   const finalizeRoute = settings.taskRouting.finalizeDistille;
   const provider = finalizeRoute.provider;
@@ -249,6 +256,8 @@ function buildDynamicOrderBy(
         sortColumn = sql`q.source_key`;
       } else if (queueName === "coveringEvidence") {
         sortColumn = sql`c.title`;
+      } else if (queueName === "deadZoneMergeReview") {
+        sortColumn = sql`dz.title`;
       } else {
         sortColumn = sql`coalesce(e.title, c.title)`;
       }
@@ -354,6 +363,49 @@ async function queryQueueRows(
     return result.rows as unknown as QueueListRow[];
   }
 
+  if (queueName === "deadZoneMergeReview") {
+    const result = await db.execute(sql`
+      select
+        q.id,
+        q.status,
+        q.priority,
+        q.attempt_count,
+        dz.title as subject_title,
+        concat(
+          'canonical=', coalesce(q.canonical_knowledge_id::text, '-'),
+          ' | review=', coalesce(q.review_item_id::text, '-')
+        ) as subject_detail,
+        q.provider,
+        q.model,
+        q.last_error,
+        q.last_outcome_kind,
+        q.locked_by,
+        q.locked_at,
+        q.heartbeat_at,
+        q.created_at,
+        q.updated_at,
+        q.completed_at,
+        q.next_run_at,
+        q.result->>'decision' as metadata_summary,
+        null::text as source_kind,
+        null::text as provider_policy
+      from dead_zone_merge_review_queue q
+      left join knowledge_items dz on dz.id = q.dead_zone_knowledge_id
+      where (${statusFilter}::text is null or q.status = ${statusFilter})
+        and (
+          ${pattern}::text is null
+          or dz.title ilike ${pattern}
+          or q.dead_zone_knowledge_id::text ilike ${pattern}
+          or q.canonical_knowledge_id::text ilike ${pattern}
+        )
+      order by
+        ${buildDynamicOrderBy("deadZoneMergeReview", sortBy, sortDir)}
+      limit ${params.limit}
+      offset ${params.offset}
+    `);
+    return result.rows as unknown as QueueListRow[];
+  }
+
   const result = await db.execute(sql`
     select
       q.id,
@@ -409,7 +461,9 @@ async function countQueueRows(
       ? sql`q.source_key || ' ' || coalesce(q.source_uri, '')`
       : queueName === "finalizeDistille"
         ? sql`coalesce(e.title, c.title, q.evidence_result_id::text)`
-        : sql`coalesce(c.title, q.found_candidate_id::text)`;
+        : queueName === "deadZoneMergeReview"
+          ? sql`coalesce(dz.title, q.dead_zone_knowledge_id::text, q.canonical_knowledge_id::text)`
+          : sql`coalesce(c.title, q.found_candidate_id::text)`;
 
   const joinSql =
     queueName === "findingCandidate"
@@ -417,7 +471,9 @@ async function countQueueRows(
       : queueName === "finalizeDistille"
         ? sql`left join evidence_coverage_results e on e.id = q.evidence_result_id
               left join found_candidates c on c.id = e.found_candidate_id`
-        : sql`left join found_candidates c on c.id = q.found_candidate_id`;
+        : queueName === "deadZoneMergeReview"
+          ? sql`left join knowledge_items dz on dz.id = q.dead_zone_knowledge_id`
+          : sql`left join found_candidates c on c.id = q.found_candidate_id`;
 
   const result = await db.execute(sql`
     select count(*)::int as count

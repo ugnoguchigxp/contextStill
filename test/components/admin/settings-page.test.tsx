@@ -165,6 +165,11 @@ function buildSettingsView(): RuntimeSettingsView {
         model: "gemma-4-e4b-it",
         fallback: ["azure-openai"],
       },
+      deadZoneMergeReview: {
+        provider: "local-llm",
+        model: "gemma-4-e4b-it",
+        fallback: [],
+      },
       agenticCompile: {
         enabled: true,
         provider: "openai",

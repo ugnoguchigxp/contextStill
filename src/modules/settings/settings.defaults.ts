@@ -296,6 +296,11 @@ export const bootstrap: BootstrapConfig = {
         fallback: [...localLlmAzureFallback],
       },
     },
+    deadZoneMergeReview: {
+      provider: "local-llm",
+      model: groupedConfig.localLlm.model,
+      fallback: [],
+    },
     finalizeDistille: {
       provider: "local-llm",
       model: groupedConfig.localLlm.model,
@@ -453,6 +458,13 @@ export function cloneDefaultSettings(): RuntimeSettingsEditable {
           ? [...bootstrap.taskRouting.finalizeDistille.azureDeploymentSlots]
           : undefined,
       },
+      deadZoneMergeReview: {
+        ...bootstrap.taskRouting.deadZoneMergeReview,
+        fallback: [...bootstrap.taskRouting.deadZoneMergeReview.fallback],
+        azureDeploymentSlots: bootstrap.taskRouting.deadZoneMergeReview.azureDeploymentSlots
+          ? [...bootstrap.taskRouting.deadZoneMergeReview.azureDeploymentSlots]
+          : undefined,
+      },
       agenticCompile: {
         ...bootstrap.taskRouting.agenticCompile,
         fallback: [...bootstrap.taskRouting.agenticCompile.fallback],
@@ -604,6 +616,10 @@ function mergeRuntimeSettings(
         ...defaults.taskRouting.finalizeDistille,
         ...asRecord(asRecord(input.taskRouting).finalizeDistille),
       },
+      deadZoneMergeReview: {
+        ...defaults.taskRouting.deadZoneMergeReview,
+        ...asRecord(asRecord(input.taskRouting).deadZoneMergeReview),
+      },
       agenticCompile: {
         ...defaults.taskRouting.agenticCompile,
         ...asRecord(asRecord(input.taskRouting).agenticCompile),
@@ -684,6 +700,10 @@ function mergeRuntimeSettings(
   merged.taskRouting.finalizeDistille = sanitizeRoute(merged, merged.taskRouting.finalizeDistille);
   merged.taskRouting.finalizeDistille = ensureLocalLlmAzureFallback(
     merged.taskRouting.finalizeDistille,
+  );
+  merged.taskRouting.deadZoneMergeReview = sanitizeRoute(
+    merged,
+    merged.taskRouting.deadZoneMergeReview,
   );
   merged.taskRouting.agenticCompile.fallback = normalizeProviderList(
     merged.taskRouting.agenticCompile.fallback,

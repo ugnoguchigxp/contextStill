@@ -34,6 +34,7 @@ Run commands from the repository root.
 |---|---|
 | `bun run queue:finding:once` | Run one finding-candidate cycle |
 | `bun run queue:covering:once` | Run one evidence-coverage cycle |
+| `bun run queue:merge-review:once` | Run one DeadZone merge-review cycle |
 | `bun run queue:finalize:once` | Run one finalization cycle |
 | `bun run queue:supervisor` | Run the queue supervisor continuously |
 | `bun run queue:migrate:dry-run` | Preview queue migration mapping |

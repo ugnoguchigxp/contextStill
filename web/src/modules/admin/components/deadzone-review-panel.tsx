@@ -35,6 +35,12 @@ type DeadZoneReviewPanelProps = {
     canonicalKnowledgeId?: string;
     reviewItemId?: string;
   }) => void;
+  onRequestMergeReview: (input: {
+    deadZoneKnowledgeId: string;
+    canonicalKnowledgeId: string;
+    reviewItemId?: string;
+  }) => void;
+  onApplyMergeReview: (jobId: string) => void;
   actionPending: boolean;
 };
 
@@ -184,10 +190,14 @@ function DecisionCell({
   item,
   actionPending,
   onReviewAction,
+  onRequestMergeReview,
+  onApplyMergeReview,
 }: {
   item: DeadZoneKnowledgeReviewItem;
   actionPending: boolean;
   onReviewAction: DeadZoneReviewPanelProps["onReviewAction"];
+  onRequestMergeReview: DeadZoneReviewPanelProps["onRequestMergeReview"];
+  onApplyMergeReview: DeadZoneReviewPanelProps["onApplyMergeReview"];
 }) {
   const orderedActions = [
     item.recommendation.action,
@@ -202,46 +212,71 @@ function DecisionCell({
 
   return (
     <div className="landscape-row-actions">
-      {orderedActions.map((action) => (
-        <Button
-          key={`${item.knowledge.id}:${action}`}
-          type="button"
-          variant={action === item.recommendation.action ? "default" : "outline"}
-          className="landscape-action-button"
-          aria-label={`${recommendationLabel(action)} for ${item.knowledge.title}`}
-          disabled={
-            actionPending ||
-            (action === "merge_deadzone_into_canonical" && !item.bestCanonicalCandidate)
-          }
-          onClick={() => {
-            const run = () =>
-              onReviewAction({
-                action,
-                deadZoneKnowledgeId: item.knowledge.id,
-                canonicalKnowledgeId:
-                  action === "merge_deadzone_into_canonical"
-                    ? item.bestCanonicalCandidate?.id
-                    : undefined,
-                reviewItemId: item.reviewItemId ?? undefined,
-              });
-            if (action === "merge_deadzone_into_canonical") {
-              confirmMaintenance(
-                `Merge "${item.knowledge.title}" into canonical "${item.bestCanonicalCandidate?.title}" and deprecate the DeadZone item?`,
-                run,
-              );
-              return;
+      {orderedActions.map((action) => {
+        const mergeJob = action === "merge_deadzone_into_canonical" ? item.mergeReviewJob : null;
+        const canApplyReviewedMerge =
+          mergeJob?.status === "completed" && mergeJob.result?.decision === "merge_recommended";
+        const mergeInProgress = mergeJob?.status === "pending" || mergeJob?.status === "running";
+        const buttonLabel =
+          action === "merge_deadzone_into_canonical"
+            ? canApplyReviewedMerge
+              ? "Apply reviewed merge"
+              : mergeInProgress
+                ? `Review ${mergeJob.status}`
+                : "Request merge review"
+            : recommendationLabel(action);
+        return (
+          <Button
+            key={`${item.knowledge.id}:${action}`}
+            type="button"
+            variant={action === item.recommendation.action ? "default" : "outline"}
+            className="landscape-action-button"
+            aria-label={`${buttonLabel} for ${item.knowledge.title}`}
+            disabled={
+              actionPending ||
+              (action === "merge_deadzone_into_canonical" &&
+                (!item.bestCanonicalCandidate || mergeInProgress))
             }
-            if (action === "deprecate_deadzone") {
-              confirmMaintenance(`Deprecate DeadZone knowledge "${item.knowledge.title}"?`, run);
-              return;
-            }
-            run();
-          }}
-        >
-          {actionIcon(action)}
-          <span>{recommendationLabel(action)}</span>
-        </Button>
-      ))}
+            onClick={() => {
+              if (action === "merge_deadzone_into_canonical") {
+                if (canApplyReviewedMerge && mergeJob) {
+                  confirmMaintenance(
+                    `Apply reviewed merge for "${item.knowledge.title}" into canonical "${item.bestCanonicalCandidate?.title}"?`,
+                    () => onApplyMergeReview(mergeJob.id),
+                  );
+                  return;
+                }
+                const canonicalKnowledgeId = item.bestCanonicalCandidate?.id;
+                if (!canonicalKnowledgeId) return;
+                confirmMaintenance(
+                  `Queue LLM review for merging "${item.knowledge.title}" into canonical "${item.bestCanonicalCandidate?.title}"?`,
+                  () =>
+                    onRequestMergeReview({
+                      deadZoneKnowledgeId: item.knowledge.id,
+                      canonicalKnowledgeId,
+                      reviewItemId: item.reviewItemId ?? undefined,
+                    }),
+                );
+                return;
+              }
+              const run = () =>
+                onReviewAction({
+                  action,
+                  deadZoneKnowledgeId: item.knowledge.id,
+                  reviewItemId: item.reviewItemId ?? undefined,
+                });
+              if (action === "deprecate_deadzone") {
+                confirmMaintenance(`Deprecate DeadZone knowledge "${item.knowledge.title}"?`, run);
+                return;
+              }
+              run();
+            }}
+          >
+            {actionIcon(action)}
+            <span>{buttonLabel}</span>
+          </Button>
+        );
+      })}
     </div>
   );
 }
@@ -360,6 +395,8 @@ export function DeadZoneReviewPanel(props: DeadZoneReviewPanelProps) {
             item={row.original}
             actionPending={props.actionPending}
             onReviewAction={props.onReviewAction}
+            onRequestMergeReview={props.onRequestMergeReview}
+            onApplyMergeReview={props.onApplyMergeReview}
           />
         ),
       },
@@ -367,6 +404,8 @@ export function DeadZoneReviewPanel(props: DeadZoneReviewPanelProps) {
     [
       props.actionPending,
       props.onReviewAction,
+      props.onRequestMergeReview,
+      props.onApplyMergeReview,
       props.onSortChange,
       props.sortBy,
       props.sortDir,

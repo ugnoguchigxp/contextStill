@@ -15,6 +15,7 @@ import {
   Activity,
   CircleCheck,
   Cpu,
+  GitMerge,
   type LucideIcon,
   Mail,
   Pause,
@@ -45,6 +46,7 @@ import { CopyableIdField } from "./copyable-id-field";
 const QUEUE_TABS: Array<{ name: DistillationQueueName; label: string }> = [
   { name: "findingCandidate", label: "Finding" },
   { name: "coveringEvidence", label: "Covering" },
+  { name: "deadZoneMergeReview", label: "Merge Review" },
   { name: "finalizeDistille", label: "Finalize" },
 ];
 
@@ -61,6 +63,7 @@ const STATUS_FILTERS: Array<DistillationQueueStatus | "all"> = [
 const queueLabel: Record<DistillationQueueName, string> = {
   findingCandidate: "Finding",
   coveringEvidence: "Covering",
+  deadZoneMergeReview: "Merge Review",
   finalizeDistille: "Finalize",
 };
 
@@ -84,6 +87,12 @@ const queueCardVisuals: Record<
     iconColor: "text-emerald-600",
     selectedBorder: "border-emerald-300",
     selectedRing: "ring-emerald-100",
+  },
+  deadZoneMergeReview: {
+    Icon: GitMerge,
+    iconColor: "text-amber-600",
+    selectedBorder: "border-amber-300",
+    selectedRing: "ring-amber-100",
   },
   finalizeDistille: {
     Icon: CircleCheck,

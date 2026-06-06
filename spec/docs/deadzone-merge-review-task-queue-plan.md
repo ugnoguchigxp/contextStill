@@ -1,8 +1,17 @@
 # DeadZone Merge Review Task Queue Plan
 
-Status: draft  
+Status: implemented  
 Created: 2026-06-06  
 Owner: ContextStill admin / Knowledge Landscape
+
+Implemented: 2026-06-06
+
+Implementation notes:
+
+- `deadZoneMergeReview` queue lane, DB table, migration, worker branch, queue controls, Queue UI tab, and CLI script are implemented.
+- DeadZone merge actions in the Landscape UI now enqueue LLM review jobs instead of directly applying destructive merges.
+- Completed `merge_recommended` jobs can be explicitly applied from the DeadZone review row; apply verifies snapshot body hashes and updates canonical knowledge through `updateKnowledgeItem`.
+- Queue retry/pause/resume works through the shared queue controls.
 
 ## Purpose
 

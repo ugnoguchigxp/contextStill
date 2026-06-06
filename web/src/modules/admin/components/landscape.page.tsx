@@ -8,8 +8,10 @@ import {
   type DeadZoneKnowledgeReviewReason,
   type DeadZoneKnowledgeReviewSortBy,
   type DeadZoneRecommendationAction,
+  applyDeadZoneMergeReviewJob,
   applyDeadZoneKnowledgeReviewAction,
   fetchDeadZoneKnowledgeReview,
+  requestDeadZoneMergeReviewJob,
 } from "../repositories/admin.repository";
 import { AdminPageHeader } from "./admin-page-header";
 import { AdminPaginationFooter } from "./admin-pagination-footer";
@@ -118,6 +120,42 @@ export function LandscapePage() {
     },
   });
 
+  const requestMergeReview = useMutation({
+    mutationFn: (input: {
+      deadZoneKnowledgeId: string;
+      canonicalKnowledgeId: string;
+      reviewItemId?: string;
+    }) => requestDeadZoneMergeReviewJob(input),
+    onSuccess: async () => {
+      setActionError(null);
+      setActionStatus("Merge review queued.");
+      await queryClient.invalidateQueries({ queryKey: ["landscape-dead-zone-knowledge"] });
+      await queryClient.invalidateQueries({ queryKey: ["queue-v2-stats"] });
+      await queryClient.invalidateQueries({ queryKey: ["queue-v2-items"] });
+    },
+    onError: (error) => {
+      setActionStatus(null);
+      setActionError(error instanceof Error ? error.message : String(error));
+    },
+  });
+
+  const applyMergeReview = useMutation({
+    mutationFn: (jobId: string) => applyDeadZoneMergeReviewJob(jobId),
+    onSuccess: async () => {
+      setActionError(null);
+      setActionStatus("Reviewed merge applied.");
+      await queryClient.invalidateQueries({ queryKey: ["landscape-dead-zone-knowledge"] });
+      await queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+      await queryClient.invalidateQueries({ queryKey: ["graph"] });
+      await queryClient.invalidateQueries({ queryKey: ["queue-v2-stats"] });
+      await queryClient.invalidateQueries({ queryKey: ["queue-v2-items"] });
+    },
+    onError: (error) => {
+      setActionStatus(null);
+      setActionError(error instanceof Error ? error.message : String(error));
+    },
+  });
+
   const summaryItems = useMemo(
     () => [
       `Showing ${pageStart} to ${pageEnd} of ${total} items | Page ${currentPage} / ${totalPages}`,
@@ -125,6 +163,8 @@ export function LandscapePage() {
     [currentPage, pageEnd, pageStart, total, totalPages],
   );
   const pendingActionLabel = useMemo(() => {
+    if (requestMergeReview.isPending) return "Queueing merge review...";
+    if (applyMergeReview.isPending) return "Applying reviewed merge...";
     if (!maintenance.isPending) return null;
     switch (maintenance.variables?.action) {
       case "merge_deadzone_into_canonical":
@@ -138,7 +178,12 @@ export function LandscapePage() {
       default:
         return "Recording review decision...";
     }
-  }, [maintenance.isPending, maintenance.variables?.action]);
+  }, [
+    applyMergeReview.isPending,
+    maintenance.isPending,
+    maintenance.variables?.action,
+    requestMergeReview.isPending,
+  ]);
 
   return (
     <div className="landscape-page">
@@ -157,7 +202,9 @@ export function LandscapePage() {
             Reason
             <Select
               value={reason}
-              disabled={maintenance.isPending}
+              disabled={
+                maintenance.isPending || requestMergeReview.isPending || applyMergeReview.isPending
+              }
               onChange={(event) => {
                 setReason(event.target.value as DeadZoneKnowledgeReviewReason);
                 resetToFirstPage();
@@ -172,7 +219,9 @@ export function LandscapePage() {
             Badge
             <Select
               value={badge}
-              disabled={maintenance.isPending}
+              disabled={
+                maintenance.isPending || requestMergeReview.isPending || applyMergeReview.isPending
+              }
               onChange={(event) => {
                 setBadge(event.target.value as DeadZoneKnowledgeReviewBadge | "all");
                 resetToFirstPage();
@@ -189,7 +238,9 @@ export function LandscapePage() {
             Similarity
             <Select
               value={String(minSimilarity)}
-              disabled={maintenance.isPending}
+              disabled={
+                maintenance.isPending || requestMergeReview.isPending || applyMergeReview.isPending
+              }
               onChange={(event) => {
                 setMinSimilarity(Number(event.target.value));
                 resetToFirstPage();
@@ -227,9 +278,15 @@ export function LandscapePage() {
           sortBy={sortBy}
           sortDir={sortDir}
           onSortChange={updateSort}
-          sortDisabled={maintenance.isPending}
-          actionPending={maintenance.isPending}
+          sortDisabled={
+            maintenance.isPending || requestMergeReview.isPending || applyMergeReview.isPending
+          }
+          actionPending={
+            maintenance.isPending || requestMergeReview.isPending || applyMergeReview.isPending
+          }
           onReviewAction={(input) => maintenance.mutate(input)}
+          onRequestMergeReview={(input) => requestMergeReview.mutate(input)}
+          onApplyMergeReview={(jobId) => applyMergeReview.mutate(jobId)}
         />
         <AdminPaginationFooter
           keyPrefix="landscape-deadzone"
@@ -237,7 +294,9 @@ export function LandscapePage() {
           totalPages={totalPages}
           canPreviousPage={pagination.pageIndex > 0}
           canNextPage={currentPage < totalPages}
-          disabled={maintenance.isPending}
+          disabled={
+            maintenance.isPending || requestMergeReview.isPending || applyMergeReview.isPending
+          }
           onPreviousPage={() =>
             setPagination((current) => ({
               ...current,
@@ -258,7 +317,9 @@ export function LandscapePage() {
         <div className="landscape-footer-actions">
           <Button
             variant="outline"
-            disabled={maintenance.isPending}
+            disabled={
+              maintenance.isPending || requestMergeReview.isPending || applyMergeReview.isPending
+            }
             onClick={() => void deadZoneKnowledgeReview.refetch()}
           >
             Refresh DeadZone Queue

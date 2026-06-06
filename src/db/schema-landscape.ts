@@ -28,6 +28,7 @@ import {
   landscapeReviewItemStatusValues,
   landscapeSnapshotCacheStatusValues,
   landscapeSnapshotCacheTypeValues,
+  distillationQueueStatusValues,
 } from "./schema.constants.js";
 import { toSqlList } from "./schema.utils.js";
 
@@ -190,6 +191,86 @@ export const landscapeReviewItemCandidateLinks = pgTable(
     statusCheck: check(
       "landscape_review_item_candidate_links_status_check",
       sql`${table.status} IN (${sql.raw(toSqlList(landscapeReviewItemCandidateLinkStatusValues))})`,
+    ),
+  }),
+);
+
+export const deadZoneMergeReviewQueue = pgTable(
+  "dead_zone_merge_review_queue",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    reviewItemId: uuid("review_item_id").references(() => landscapeReviewItems.id, {
+      onDelete: "set null",
+    }),
+    deadZoneKnowledgeId: uuid("dead_zone_knowledge_id")
+      .references(() => knowledgeItems.id, { onDelete: "cascade" })
+      .notNull(),
+    canonicalKnowledgeId: uuid("canonical_knowledge_id").references(() => knowledgeItems.id, {
+      onDelete: "set null",
+    }),
+    idempotencyKey: text("idempotency_key").notNull(),
+    status: text("status").notNull().default("pending"),
+    priority: integer("priority").notNull().default(50),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(2),
+    nextRunAt: timestamp("next_run_at"),
+    lockedBy: text("locked_by"),
+    lockedAt: timestamp("locked_at"),
+    heartbeatAt: timestamp("heartbeat_at"),
+    lastError: text("last_error"),
+    lastOutcomeKind: text("last_outcome_kind"),
+    provider: text("provider").notNull().default("local-llm"),
+    model: text("model"),
+    inputSnapshot: jsonb("input_snapshot").default({}).notNull(),
+    result: jsonb("result").default({}).notNull(),
+    payload: jsonb("payload").default({}).notNull(),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    completedAt: timestamp("completed_at"),
+  },
+  (table) => ({
+    idempotencyKeyUnique: uniqueIndex("dead_zone_merge_review_queue_idempotency_unique").on(
+      table.idempotencyKey,
+    ),
+    statusPriorityCreatedAtIdx: index(
+      "dead_zone_merge_review_queue_status_priority_created_at_idx",
+    ).on(table.status, table.priority, table.createdAt),
+    deadZoneStatusIdx: index("dead_zone_merge_review_queue_dead_zone_status_idx").on(
+      table.deadZoneKnowledgeId,
+      table.status,
+    ),
+    canonicalStatusIdx: index("dead_zone_merge_review_queue_canonical_status_idx").on(
+      table.canonicalKnowledgeId,
+      table.status,
+    ),
+    reviewItemStatusIdx: index("dead_zone_merge_review_queue_review_item_status_idx").on(
+      table.reviewItemId,
+      table.status,
+    ),
+    statusCheck: check(
+      "dead_zone_merge_review_queue_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(distillationQueueStatusValues))})`,
+    ),
+    distinctKnowledgeCheck: check(
+      "dead_zone_merge_review_queue_distinct_knowledge_check",
+      sql`${table.canonicalKnowledgeId} IS NULL OR ${table.deadZoneKnowledgeId} <> ${table.canonicalKnowledgeId}`,
+    ),
+    inputSnapshotObjectCheck: check(
+      "dead_zone_merge_review_queue_input_snapshot_object_check",
+      sql`jsonb_typeof(${table.inputSnapshot}) = 'object'`,
+    ),
+    resultObjectCheck: check(
+      "dead_zone_merge_review_queue_result_object_check",
+      sql`jsonb_typeof(${table.result}) = 'object'`,
+    ),
+    payloadObjectCheck: check(
+      "dead_zone_merge_review_queue_payload_object_check",
+      sql`jsonb_typeof(${table.payload}) = 'object'`,
+    ),
+    metadataObjectCheck: check(
+      "dead_zone_merge_review_queue_metadata_object_check",
+      sql`jsonb_typeof(${table.metadata}) = 'object'`,
     ),
   }),
 );

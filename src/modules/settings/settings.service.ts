@@ -266,6 +266,10 @@ export function resolveCoverEvidenceRoutes(): {
   return runtimeSettingsCache.settings.taskRouting.coverEvidence;
 }
 
+export function resolveDeadZoneMergeReviewRoute(): RuntimeSettingsRoute {
+  return runtimeSettingsCache.settings.taskRouting.deadZoneMergeReview;
+}
+
 export function resolveAgenticCompileRouting(): RuntimeSettingsEditable["taskRouting"]["agenticCompile"] {
   return runtimeSettingsCache.settings.taskRouting.agenticCompile;
 }

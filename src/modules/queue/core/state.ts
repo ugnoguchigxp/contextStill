@@ -125,7 +125,30 @@ export async function retryQueueJob(params: {
               and status <> 'running'
             returning id, status
           `)
-        : await db.execute(sql`
+        : params.queueName === "deadZoneMergeReview"
+          ? await db.execute(sql`
+            update ${sql.raw(tableName)}
+            set
+              status = 'pending',
+              attempt_count = 0,
+              next_run_at = null,
+              completed_at = null,
+              locked_by = null,
+              locked_at = null,
+              heartbeat_at = null,
+              last_error = null,
+              payload = coalesce(payload, '{}'::jsonb) ||
+                jsonb_build_object(
+                  'retryMode', ${params.mode}::text,
+                  'retryReason', ${params.reason ?? null}::text,
+                  'retryRequestedAt', now()::text
+                ),
+              updated_at = now()
+            where id = ${params.id}
+              and status <> 'running'
+            returning id, status
+          `)
+          : await db.execute(sql`
           update ${sql.raw(tableName)}
           set
             status = 'pending',

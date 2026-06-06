@@ -37,6 +37,7 @@ import {
   recordDeadZoneReviewDecision,
 } from "./landscape-deadzone-review.repository.js";
 import { buildLandscapeSnapshot } from "./landscape.service.js";
+import { listLatestDeadZoneMergeReviewJobsByDeadZoneIds } from "./deadzone-merge-review-queue.repository.js";
 
 function preview(value: string, max = 220): string {
   const normalized = value.replace(/\s+/g, " ").trim();
@@ -452,6 +453,7 @@ export async function buildDeadZoneKnowledgeReview(
       row.reviewItemId,
     ]),
   );
+  const mergeReviewJobs = await listLatestDeadZoneMergeReviewJobsByDeadZoneIds(orderedIds);
   const similarBySource = new Map<string, typeof similarRows>();
   for (const row of similarRows) {
     const rows = similarBySource.get(row.sourceKnowledgeId) ?? [];
@@ -584,6 +586,7 @@ export async function buildDeadZoneKnowledgeReview(
       allowedActions: recommendation.allowedActions,
       similarKnowledge,
       reviewItemId: reviewLinks.get(row.id) ?? null,
+      mergeReviewJob: mergeReviewJobs.get(row.id) ?? null,
     };
   });
 

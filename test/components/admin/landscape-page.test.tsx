@@ -8,6 +8,7 @@ import {
   type DeadZoneKnowledgeReviewResponse,
   applyDeadZoneKnowledgeReviewAction,
   fetchDeadZoneKnowledgeReview,
+  requestDeadZoneMergeReviewJob,
 } from "../../../web/src/modules/admin/repositories/admin.repository";
 
 const deadZoneReview: DeadZoneKnowledgeReviewResponse = {
@@ -136,6 +137,8 @@ const deadZoneReview: DeadZoneKnowledgeReviewResponse = {
 vi.mock("../../../web/src/modules/admin/repositories/admin.repository", () => ({
   fetchDeadZoneKnowledgeReview: vi.fn(),
   applyDeadZoneKnowledgeReviewAction: vi.fn(),
+  requestDeadZoneMergeReviewJob: vi.fn(),
+  applyDeadZoneMergeReviewJob: vi.fn(),
 }));
 
 function renderLandscapePage() {
@@ -162,6 +165,21 @@ describe("LandscapePage", () => {
       status: "applied",
       message: 'Deprecated DeadZone "High Score DeadZone".',
       deprecatedKnowledgeId: "k-dead-high",
+    });
+    vi.mocked(requestDeadZoneMergeReviewJob).mockResolvedValue({
+      id: "merge-job-1",
+      status: "pending",
+      deadZoneKnowledgeId: "k-dead-high",
+      canonicalKnowledgeId: "k-active",
+      reviewItemId: null,
+      provider: "local-llm",
+      model: "gemma-4-e4b-it",
+      lastError: null,
+      lastOutcomeKind: null,
+      result: null,
+      createdAt: "2026-05-24T00:00:00.000Z",
+      updatedAt: "2026-05-24T00:00:00.000Z",
+      completedAt: null,
     });
   });
 
@@ -241,52 +259,39 @@ describe("LandscapePage", () => {
     });
   });
 
-  it("shows a visible result after merging DeadZone into canonical", async () => {
-    vi.mocked(applyDeadZoneKnowledgeReviewAction).mockResolvedValue({
-      action: "merge_deadzone_into_canonical",
-      status: "applied",
-      message:
-        'Merged DeadZone "High Score DeadZone" into canonical "Active Canonical" and deprecated "High Score DeadZone".',
-      keptKnowledgeId: "k-active",
-      deprecatedKnowledgeId: "k-dead-high",
-    });
+  it("shows a visible result after queueing DeadZone merge review", async () => {
     renderLandscapePage();
 
     await screen.findByText("High Score DeadZone");
     fireEvent.click(
-      screen.getByRole("button", { name: "Merge into canonical for High Score DeadZone" }),
+      screen.getByRole("button", { name: "Request merge review for High Score DeadZone" }),
     );
 
     await waitFor(() => {
-      expect(applyDeadZoneKnowledgeReviewAction).toHaveBeenCalledWith({
-        action: "merge_deadzone_into_canonical",
+      expect(requestDeadZoneMergeReviewJob).toHaveBeenCalledWith({
         deadZoneKnowledgeId: "k-dead-high",
         canonicalKnowledgeId: "k-active",
         reviewItemId: undefined,
       });
     });
-    expect(
-      await screen.findByText(
-        'Merged DeadZone "High Score DeadZone" into canonical "Active Canonical" and deprecated "High Score DeadZone".',
-      ),
-    ).toBeInTheDocument();
+    expect(await screen.findByText("Merge review queued.")).toBeInTheDocument();
   });
 
-  it("blocks queue controls while a merge action is pending", async () => {
-    vi.mocked(applyDeadZoneKnowledgeReviewAction).mockReturnValue(new Promise(() => undefined));
+  it("blocks queue controls while a merge review request is pending", async () => {
+    vi.mocked(requestDeadZoneMergeReviewJob).mockReturnValue(new Promise(() => undefined));
     renderLandscapePage();
 
     await screen.findByText("High Score DeadZone");
     fireEvent.click(
-      screen.getByRole("button", { name: "Merge into canonical for High Score DeadZone" }),
+      screen.getByRole("button", { name: "Request merge review for High Score DeadZone" }),
     );
 
-    expect(await screen.findByText("Merging knowledge...")).toBeInTheDocument();
+    expect(await screen.findByText("Queueing merge review...")).toBeInTheDocument();
     expect(screen.getAllByRole("combobox")[0]).toBeDisabled();
     expect(screen.getByRole("button", { name: /Knowledge/i })).toBeDisabled();
     expect(screen.getByRole("button", { name: "Refresh DeadZone Queue" })).toBeDisabled();
     expect(
-      screen.getByRole("button", { name: "Merge into canonical for High Score DeadZone" }),
+      screen.getByRole("button", { name: "Request merge review for High Score DeadZone" }),
     ).toBeDisabled();
   });
 

@@ -52,6 +52,76 @@ export const deadZoneReviewRecommendationSchema = z.object({
   blockers: z.array(z.string()),
 });
 
+export const deadZoneMergeReviewDecisionSchema = z.enum([
+  "merge_recommended",
+  "merge_blocked",
+  "keep_separate",
+  "needs_evidence",
+]);
+
+export const deadZoneMergeReviewResultSchema = z.object({
+  decision: deadZoneMergeReviewDecisionSchema,
+  confidence: z.enum(["low", "medium", "high"]),
+  rationale: z.array(z.string()),
+  blockers: z.array(z.string()),
+  proposedCanonicalBody: z.string().nullable(),
+  proposedSummary: z.string().nullable(),
+  rawOutputExcerpt: z.string(),
+  parseStatus: z.enum(["parsed", "recovered", "failed"]),
+});
+
+export const deadZoneMergeReviewJobStatusSchema = z.enum([
+  "pending",
+  "running",
+  "completed",
+  "skipped",
+  "failed",
+  "paused",
+]);
+
+export const deadZoneMergeReviewJobSchema = z.object({
+  id: z.string(),
+  status: deadZoneMergeReviewJobStatusSchema,
+  deadZoneKnowledgeId: z.string(),
+  canonicalKnowledgeId: z.string().nullable(),
+  reviewItemId: z.string().nullable(),
+  provider: z.string(),
+  model: z.string().nullable(),
+  lastError: z.string().nullable(),
+  lastOutcomeKind: z.string().nullable(),
+  result: deadZoneMergeReviewResultSchema.nullable(),
+  createdAt: z.string().datetime(),
+  updatedAt: z.string().datetime(),
+  completedAt: z.string().datetime().nullable(),
+});
+
+export const deadZoneMergeReviewJobCreateInputSchema = z.object({
+  deadZoneKnowledgeId: z.string().trim().min(1),
+  canonicalKnowledgeId: z.string().trim().min(1),
+  reviewItemId: z.string().trim().min(1).optional(),
+  note: z.string().trim().max(1000).optional(),
+});
+
+export const deadZoneMergeReviewJobListQuerySchema = z.object({
+  status: z.union([deadZoneMergeReviewJobStatusSchema, z.literal("all")]).default("all"),
+  deadZoneKnowledgeId: z.string().trim().min(1).optional(),
+  canonicalKnowledgeId: z.string().trim().min(1).optional(),
+  reviewItemId: z.string().trim().min(1).optional(),
+  limit: z.coerce.number().int().min(1).max(100).default(50),
+});
+
+export const deadZoneMergeReviewJobListResponseSchema = z.object({
+  items: z.array(deadZoneMergeReviewJobSchema),
+});
+
+export const deadZoneMergeReviewJobApplyResultSchema = z.object({
+  status: z.enum(["applied"]),
+  jobId: z.string(),
+  keptKnowledgeId: z.string(),
+  deprecatedKnowledgeId: z.string(),
+  reviewItemId: z.string().nullable(),
+});
+
 export const deadZoneKnowledgeReviewQuerySchema = z.object({
   windowDays: z.coerce.number().int().min(1).max(180).default(30),
   limit: z.coerce.number().int().min(1).max(200).default(50),
@@ -168,6 +238,7 @@ export const deadZoneKnowledgeReviewItemSchema = z.object({
   allowedActions: z.array(deadZoneRecommendationActionSchema),
   similarKnowledge: z.array(deadZoneSimilarKnowledgeSchema),
   reviewItemId: z.string().nullable(),
+  mergeReviewJob: deadZoneMergeReviewJobSchema.nullable().optional(),
 });
 
 export const deadZoneKnowledgeReviewResponseSchema = z.object({
@@ -193,6 +264,16 @@ export type DeadZoneKnowledgeMaintenanceResult = z.infer<
 >;
 export type DeadZoneRecommendationAction = z.infer<typeof deadZoneRecommendationActionSchema>;
 export type DeadZoneReviewRecommendation = z.infer<typeof deadZoneReviewRecommendationSchema>;
+export type DeadZoneMergeReviewDecision = z.infer<typeof deadZoneMergeReviewDecisionSchema>;
+export type DeadZoneMergeReviewResult = z.infer<typeof deadZoneMergeReviewResultSchema>;
+export type DeadZoneMergeReviewJob = z.infer<typeof deadZoneMergeReviewJobSchema>;
+export type DeadZoneMergeReviewJobCreateInput = z.infer<
+  typeof deadZoneMergeReviewJobCreateInputSchema
+>;
+export type DeadZoneMergeReviewJobListQuery = z.infer<typeof deadZoneMergeReviewJobListQuerySchema>;
+export type DeadZoneMergeReviewJobApplyResult = z.infer<
+  typeof deadZoneMergeReviewJobApplyResultSchema
+>;
 export type DeadZoneKnowledgeReviewActionInput = z.infer<
   typeof deadZoneKnowledgeReviewActionInputSchema
 >;

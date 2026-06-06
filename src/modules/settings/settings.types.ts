@@ -128,6 +128,7 @@ export type RuntimeSettingsEditable = {
       externalEvidence: RuntimeSettingsRoute;
       mcpEvidence: RuntimeSettingsRoute;
     };
+    deadZoneMergeReview: RuntimeSettingsRoute;
     finalizeDistille: RuntimeSettingsRoute;
     agenticCompile: {
       enabled: boolean;
@@ -297,6 +298,7 @@ export const runtimeSettingsEditableSchema = z.object({
       externalEvidence: runtimeRouteSchema,
       mcpEvidence: runtimeRouteSchema,
     }),
+    deadZoneMergeReview: runtimeRouteSchema,
     finalizeDistille: runtimeRouteSchema,
     agenticCompile: z.object({
       enabled: z.boolean().default(true),

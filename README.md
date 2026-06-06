@@ -158,6 +158,7 @@ Run the distillation pipeline one stage at a time:
 ```bash
 bun run queue:finding:once
 bun run queue:covering:once
+bun run queue:merge-review:once
 bun run queue:finalize:once
 ```
 

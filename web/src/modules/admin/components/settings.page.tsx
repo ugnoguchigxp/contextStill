@@ -399,6 +399,14 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
           ? [...view.taskRouting.finalizeDistille.azureDeploymentSlots]
           : undefined,
       },
+      deadZoneMergeReview: {
+        provider: view.taskRouting.deadZoneMergeReview.provider,
+        model: view.taskRouting.deadZoneMergeReview.model,
+        fallback: [...view.taskRouting.deadZoneMergeReview.fallback],
+        azureDeploymentSlots: view.taskRouting.deadZoneMergeReview.azureDeploymentSlots
+          ? [...view.taskRouting.deadZoneMergeReview.azureDeploymentSlots]
+          : undefined,
+      },
       agenticCompile: {
         enabled: view.taskRouting.agenticCompile.enabled,
         provider: view.taskRouting.agenticCompile.provider,
@@ -2350,6 +2358,28 @@ export function SettingsPage() {
                         })}
                       </div>
                     </div>
+                  </section>
+
+                  <section className="settings-route-section">
+                    <div className="settings-route-section-header">
+                      <h3>DeadZone Merge Review</h3>
+                      <p>Set model routing for queued DeadZone merge verification and cleanup.</p>
+                    </div>
+                    <RouteEditor
+                      label="deadZoneMergeReview"
+                      description="Review and rewrite canonical knowledge before applying DeadZone merges."
+                      settings={draft}
+                      route={draft.taskRouting.deadZoneMergeReview}
+                      onChange={(next) =>
+                        patchDraft((current) => ({
+                          ...current,
+                          taskRouting: {
+                            ...current.taskRouting,
+                            deadZoneMergeReview: next,
+                          },
+                        }))
+                      }
+                    />
                   </section>
 
                   <section className="settings-route-section">

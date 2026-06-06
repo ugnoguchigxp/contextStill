@@ -10,6 +10,12 @@ import {
   maintainDeadZoneKnowledge,
 } from "../../../src/modules/landscape/landscape-deadzone-review.service.js";
 import {
+  DeadZoneMergeReviewQueueError,
+  applyDeadZoneMergeReviewJob,
+  createDeadZoneMergeReviewJob,
+  listDeadZoneMergeReviewQueueJobs,
+} from "../../../src/modules/landscape/deadzone-merge-review-queue.service.js";
+import {
   LandscapeReviewCandidateLinkError,
   createLandscapeReviewCandidates,
   updateLandscapeReviewCandidateLink,
@@ -35,6 +41,11 @@ import {
   deadZoneKnowledgeReviewActionResultSchema,
   deadZoneKnowledgeReviewQuerySchema,
   deadZoneKnowledgeReviewResponseSchema,
+  deadZoneMergeReviewJobApplyResultSchema,
+  deadZoneMergeReviewJobCreateInputSchema,
+  deadZoneMergeReviewJobListQuerySchema,
+  deadZoneMergeReviewJobListResponseSchema,
+  deadZoneMergeReviewJobSchema,
 } from "../../../src/shared/schemas/landscape-deadzone-review.schema.js";
 import {
   landscapeReplayComparisonResponseSchema,
@@ -97,6 +108,9 @@ const landscapeReviewItemCandidateLinkParamSchema = z.object({
 });
 const landscapeTrajectoryParamSchema = z.object({
   runId: z.string().trim().min(1),
+});
+const deadZoneMergeReviewJobParamSchema = z.object({
+  id: z.string().trim().min(1),
 });
 
 const communityLabelBodySchema = z.object({
@@ -202,6 +216,44 @@ export const graphRouter = new Hono()
       const query = c.req.valid("query");
       const review = await buildDeadZoneKnowledgeReview(query);
       return c.json(deadZoneKnowledgeReviewResponseSchema.parse(review));
+    },
+  )
+  .get(
+    "/landscape/dead-zone-knowledge/merge-review-jobs",
+    zValidator("query", deadZoneMergeReviewJobListQuerySchema),
+    async (c) => {
+      const items = await listDeadZoneMergeReviewQueueJobs(c.req.valid("query"));
+      return c.json(deadZoneMergeReviewJobListResponseSchema.parse({ items }));
+    },
+  )
+  .post(
+    "/landscape/dead-zone-knowledge/merge-review-jobs",
+    zValidator("json", deadZoneMergeReviewJobCreateInputSchema),
+    async (c) => {
+      try {
+        const job = await createDeadZoneMergeReviewJob(c.req.valid("json"));
+        return c.json(deadZoneMergeReviewJobSchema.parse(job), 201);
+      } catch (error) {
+        if (error instanceof DeadZoneMergeReviewQueueError) {
+          return c.json({ error: error.message }, error.statusCode as 400 | 404 | 409);
+        }
+        throw error;
+      }
+    },
+  )
+  .post(
+    "/landscape/dead-zone-knowledge/merge-review-jobs/:id/apply",
+    zValidator("param", deadZoneMergeReviewJobParamSchema),
+    async (c) => {
+      try {
+        const result = await applyDeadZoneMergeReviewJob(c.req.valid("param").id);
+        return c.json(deadZoneMergeReviewJobApplyResultSchema.parse(result));
+      } catch (error) {
+        if (error instanceof DeadZoneMergeReviewQueueError) {
+          return c.json({ error: error.message }, error.statusCode as 400 | 404 | 409);
+        }
+        throw error;
+      }
     },
   )
   .post(

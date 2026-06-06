@@ -1094,6 +1094,33 @@ export type DeadZoneReviewRecommendation = {
   blockers: string[];
 };
 
+export type DeadZoneMergeReviewResult = {
+  decision: "merge_recommended" | "merge_blocked" | "keep_separate" | "needs_evidence";
+  confidence: "low" | "medium" | "high";
+  rationale: string[];
+  blockers: string[];
+  proposedCanonicalBody: string | null;
+  proposedSummary: string | null;
+  rawOutputExcerpt: string;
+  parseStatus: "parsed" | "recovered" | "failed";
+};
+
+export type DeadZoneMergeReviewJob = {
+  id: string;
+  status: DistillationQueueStatus;
+  deadZoneKnowledgeId: string;
+  canonicalKnowledgeId: string | null;
+  reviewItemId: string | null;
+  provider: string;
+  model: string | null;
+  lastError: string | null;
+  lastOutcomeKind: string | null;
+  result: DeadZoneMergeReviewResult | null;
+  createdAt: string;
+  updatedAt: string;
+  completedAt: string | null;
+};
+
 export type DeadZoneSimilarKnowledge = {
   id: string;
   title: string;
@@ -1148,6 +1175,7 @@ export type DeadZoneKnowledgeReviewItem = {
   allowedActions: DeadZoneRecommendationAction[];
   similarKnowledge: DeadZoneSimilarKnowledge[];
   reviewItemId: string | null;
+  mergeReviewJob?: DeadZoneMergeReviewJob | null;
 };
 
 export type DeadZoneKnowledgeReviewResponse = {
@@ -2134,6 +2162,7 @@ export type RuntimeSettingsEditable = {
       externalEvidence: RuntimeSettingsRoute;
       mcpEvidence: RuntimeSettingsRoute;
     };
+    deadZoneMergeReview: RuntimeSettingsRoute;
     finalizeDistille: RuntimeSettingsRoute;
     agenticCompile: {
       enabled: boolean;
@@ -2717,6 +2746,32 @@ export async function applyDeadZoneKnowledgeReviewAction(input: {
   );
 }
 
+export async function requestDeadZoneMergeReviewJob(input: {
+  deadZoneKnowledgeId: string;
+  canonicalKnowledgeId: string;
+  reviewItemId?: string;
+  note?: string;
+}): Promise<DeadZoneMergeReviewJob> {
+  return requestJson<DeadZoneMergeReviewJob>(
+    "/api/graph/landscape/dead-zone-knowledge/merge-review-jobs",
+    "POST",
+    input,
+  );
+}
+
+export async function applyDeadZoneMergeReviewJob(jobId: string): Promise<{
+  status: "applied";
+  jobId: string;
+  keptKnowledgeId: string;
+  deprecatedKnowledgeId: string;
+  reviewItemId: string | null;
+}> {
+  return requestJson(
+    `/api/graph/landscape/dead-zone-knowledge/merge-review-jobs/${jobId}/apply`,
+    "POST",
+  );
+}
+
 export async function fetchLandscapeReplaySnapshot(input?: {
   windowDays?: number;
   limit?: number;
@@ -3172,7 +3227,11 @@ export type DistillationTargetState = {
   completedAt: string | null;
 };
 
-export type DistillationQueueName = "findingCandidate" | "coveringEvidence" | "finalizeDistille";
+export type DistillationQueueName =
+  | "findingCandidate"
+  | "coveringEvidence"
+  | "deadZoneMergeReview"
+  | "finalizeDistille";
 export type DistillationQueueStatus =
   | "pending"
   | "running"
