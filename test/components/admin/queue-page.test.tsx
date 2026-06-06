@@ -159,7 +159,7 @@ describe("QueuePage v2", () => {
     vi.clearAllMocks();
   });
 
-  it("renders 3 queue tabs and table rows", async () => {
+  it("renders queue tabs and table rows", async () => {
     renderQueuePage();
     await act(async () => {
       await vi.advanceTimersByTimeAsync(0);
@@ -167,10 +167,34 @@ describe("QueuePage v2", () => {
 
     expect(screen.getByRole("button", { name: "Finding" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Covering" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Merge Review" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Finalize" })).toBeInTheDocument();
     expect(screen.getByText("Completed")).toBeInTheDocument();
     expect(screen.getByText("Total")).toBeInTheDocument();
     expect(screen.getByText("wiki/page.md")).toBeInTheDocument();
+  });
+
+  it("shows schema-not-ready state without retrying the stats poll", async () => {
+    vi.mocked(adminRepository.fetchQueueDashboardStatsV2).mockRejectedValue(
+      new adminRepository.AdminApiError(
+        "Queue schema is not ready. Run `bun run db:migrate` and restart the API.",
+        503,
+        "QUEUE_SCHEMA_NOT_READY",
+      ),
+    );
+
+    renderQueuePage();
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(screen.getByText("Queue Schema Not Ready")).toBeInTheDocument();
+    expect(screen.getByText(/bun run db:migrate/)).toBeInTheDocument();
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(15_000);
+    });
+    expect(adminRepository.fetchQueueDashboardStatsV2).toHaveBeenCalledTimes(1);
   });
 
   it("identifies queue task model by provider", async () => {

@@ -2392,11 +2392,56 @@ function buildRequestHeaders(options?: {
   return Object.keys(headers).length > 0 ? headers : undefined;
 }
 
+export class AdminApiError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly code: string | null = null,
+    public readonly payload: unknown = null,
+  ) {
+    super(message);
+    this.name = "AdminApiError";
+  }
+}
+
+function parseResponseErrorPayload(payload: unknown): {
+  message: string | null;
+  code: string | null;
+} {
+  if (typeof payload !== "object" || payload === null) {
+    return { message: null, code: null };
+  }
+  const record = payload as {
+    code?: unknown;
+    error?: unknown;
+    message?: unknown;
+    reason?: unknown;
+  };
+  const code = typeof record.code === "string" ? record.code : null;
+  const message =
+    typeof record.error === "string"
+      ? record.error
+      : typeof record.message === "string"
+        ? record.message
+        : typeof record.reason === "string"
+          ? record.reason
+          : null;
+  return { message, code };
+}
+
 async function getJson<T>(url: string): Promise<T> {
   const headers = buildRequestHeaders();
   const response = headers ? await fetch(url, { headers }) : await fetch(url);
   if (!response.ok) {
-    throw new Error(`${url} failed: ${response.status}`);
+    const payload =
+      typeof response.json === "function" ? await response.json().catch(() => null) : null;
+    const parsed = parseResponseErrorPayload(payload);
+    throw new AdminApiError(
+      parsed.message ?? `${url} failed: ${response.status}`,
+      response.status,
+      parsed.code,
+      payload,
+    );
   }
   return response.json() as Promise<T>;
 }

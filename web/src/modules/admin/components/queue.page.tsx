@@ -27,6 +27,7 @@ import {
 } from "lucide-react";
 import { type ReactNode, useCallback, useEffect, useMemo, useState } from "react";
 import {
+  AdminApiError,
   type DistillationQueueName,
   type DistillationQueueStatus,
   type QueueListItemV2,
@@ -137,6 +138,14 @@ function formatCount(value: number | undefined): string {
 }
 
 type QueueLlmStatus = "Active" | "Ready" | "Offline" | "Paused";
+
+function isQueueSchemaNotReadyError(error: unknown): boolean {
+  return error instanceof AdminApiError && error.code === "QUEUE_SCHEMA_NOT_READY";
+}
+
+function queueQueryRetry(failureCount: number, error: unknown): boolean {
+  return !isQueueSchemaNotReadyError(error) && failureCount < 3;
+}
 
 function resolveQueueLlmStatus(params: {
   running: number;
@@ -253,12 +262,14 @@ export function QueuePage() {
   const statsQuery = useQuery({
     queryKey: ["queue-v2-stats"],
     queryFn: fetchQueueDashboardStatsV2,
-    refetchInterval: 5000,
+    retry: queueQueryRetry,
+    refetchInterval: (query) => (isQueueSchemaNotReadyError(query.state.error) ? false : 5000),
   });
   const activeQuery = useQuery({
     queryKey: ["queue-v2-active"],
     queryFn: fetchActiveQueueTasksV2,
-    refetchInterval: 2500,
+    retry: queueQueryRetry,
+    refetchInterval: (query) => (isQueueSchemaNotReadyError(query.state.error) ? false : 2500),
   });
   const itemsQuery = useQuery({
     queryKey: ["queue-v2-items", queue, status, query, page, sorting],
@@ -273,6 +284,7 @@ export function QueuePage() {
         sortDir: sorting[0]?.desc ? "desc" : "asc",
       }),
     placeholderData: (prev) => prev,
+    retry: queueQueryRetry,
   });
 
   const invalidateQueue = async () => {
@@ -324,6 +336,10 @@ export function QueuePage() {
     itemsQuery.dataUpdatedAt ?? 0,
   );
   const hasError = statsQuery.isError || activeQuery.isError || itemsQuery.isError;
+  const schemaNotReady =
+    isQueueSchemaNotReadyError(statsQuery.error) ||
+    isQueueSchemaNotReadyError(activeQuery.error) ||
+    isQueueSchemaNotReadyError(itemsQuery.error);
   const activeCount = activeQuery.data?.length ?? 0;
 
   const onAction = useCallback(
@@ -611,12 +627,24 @@ export function QueuePage() {
         refreshDisabled={statsQuery.isFetching || activeQuery.isFetching || itemsQuery.isFetching}
         status={hasError ? "failed" : activeCount > 0 ? "ok" : "degraded"}
         statusLabel={
-          hasError ? "Queue API Error" : activeCount > 0 ? `${activeCount} Running` : "Idle"
+          schemaNotReady
+            ? "Queue Schema Not Ready"
+            : hasError
+              ? "Queue API Error"
+              : activeCount > 0
+                ? `${activeCount} Running`
+                : "Idle"
         }
       />
 
       <div className="min-h-0 flex-1 overflow-hidden p-4">
         <div className="grid h-full min-h-0 grid-cols-1 gap-4 xl:grid-cols-[360px_minmax(0,1fr)]">
+          {schemaNotReady ? (
+            <div className="xl:col-span-2 rounded-md border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-900">
+              Queue schema is not ready. Run <code>bun run db:migrate</code> and restart the API.
+              Automatic refresh is paused until the next manual refresh.
+            </div>
+          ) : null}
           <div className="min-h-0 space-y-4 overflow-y-auto pr-1">
             <section className="overview-domain-section accent-cyan">
               <div className="overview-domain-header justify-between items-center border-b border-cyan-500/10 pb-3">
