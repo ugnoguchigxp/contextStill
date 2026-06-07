@@ -594,12 +594,14 @@ describe("MCP Tools Handlers", () => {
       process.env.MEMORY_ROUTER_LANG = undefined;
       const response = await initialInstructionsTool.handler();
       expect(response.content[0].text).toContain("## 常用ルール");
+      expect(response.content[0].text).toContain("汎用的に使える知識として体裁を整える");
     });
 
     test("initial_instructions returns English text when MEMORY_ROUTER_LANG=en", async () => {
       process.env.MEMORY_ROUTER_LANG = "en";
       const response = await initialInstructionsTool.handler();
       expect(response.content[0].text).toContain("## Operational Rules");
+      expect(response.content[0].text).toContain("shape them as generally usable knowledge");
     });
 
     test("doctor calls runDoctor and returns JSON", async () => {

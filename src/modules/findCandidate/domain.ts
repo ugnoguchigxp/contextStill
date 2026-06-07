@@ -179,6 +179,7 @@ function commonCandidateRules(): string[] {
     "- 単独の判断、制約、使うべき API/コマンド、避けるべき実装方針は procedure ではなく rule",
     "- procedure は 2 step 以上の workflow と成功確認まで書ける候補だけにする",
     "- procedure の content には、最終工程で SKILL.md 風に展開できるよう、使う場面・順序・確認方法・避けることの根拠を含める",
+    "- 候補の title/content は、汎用的に使える知識として体裁を整える",
     "- 各候補には sourceSummary を含め、候補を支える source content の該当部分を 1000 文字以内で要約する",
     "- sourceSummary は source から確認できる根拠だけにし、推測や候補 content の言い換えで水増ししない",
     "- 候補件数は内容に応じて決める。件数合わせはしない",

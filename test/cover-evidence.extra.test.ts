@@ -612,6 +612,7 @@ describe("runCoverEvidence", () => {
     expect(finalRequest.messages[0]?.content).toContain(
       "source evidence と fetch_content evidence",
     );
+    expect(finalRequest.messages[0]?.content).toContain("汎用的に使える知識として体裁");
   });
 
   test("refines missing applicability facets before accepting external evidence", async () => {
