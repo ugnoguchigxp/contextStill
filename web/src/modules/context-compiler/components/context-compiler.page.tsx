@@ -24,6 +24,7 @@ import {
   useCompileRunDetail,
   useCompileRunRankingTrace,
   useCompileRuns,
+  useDeprecateKnowledgeMutation,
   useRunKnowledgeFeedbackMutation,
 } from "../hooks/context-compiler.hooks";
 import type {
@@ -56,6 +57,12 @@ type PageMode = "new" | "detail";
 type StatusFilter = "all" | CompileRunSummary["status"];
 type SourceFilter = "all" | CompileRunSource;
 type RunDetailTab = "overview" | "ranking";
+
+type DeprecateTarget = {
+  knowledgeId: string;
+  title: string;
+  itemKind: string;
+};
 
 function stringArrayValue(value: unknown): string[] {
   return Array.isArray(value)
@@ -172,13 +179,19 @@ function PackSection({
   items,
   signals,
   onFeedback,
+  onRequestDeprecate,
   feedbackPending,
+  deprecatePending,
+  deprecatedIds,
 }: {
   title: string;
   items: CompilePackItem[];
   signals: CompileRunKnowledgeSignal[];
   onFeedback: (knowledgeId: string, verdict: CompileRunKnowledgeVerdict) => Promise<void>;
+  onRequestDeprecate: (target: DeprecateTarget) => void;
   feedbackPending: boolean;
+  deprecatePending: boolean;
+  deprecatedIds: Set<string>;
 }) {
   return (
     <section className="compile-pack-section">
@@ -192,11 +205,15 @@ function PackSection({
         <div className="compile-pack-items">
           {items.map((item) => {
             const sig = signals.find((s) => s.knowledgeId === item.itemId);
+            const isDeprecated = deprecatedIds.has(item.itemId);
             return (
               <article key={item.id} className="compile-pack-item" style={{ padding: "16px" }}>
                 <div className="compile-pack-item-header">
                   <strong>{item.title}</strong>
-                  <Badge variant="secondary">{item.itemKind}</Badge>
+                  <div className="compile-pack-item-meta">
+                    {isDeprecated ? <Badge variant="destructive">deprecated</Badge> : null}
+                    <Badge variant="secondary">{item.itemKind}</Badge>
+                  </div>
                 </div>
 
                 {/* 常に表示する Knowledge ID */}
@@ -341,6 +358,21 @@ function PackSection({
                     >
                       Wrong
                     </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="destructive"
+                      onClick={() =>
+                        onRequestDeprecate({
+                          knowledgeId: item.itemId,
+                          title: item.title,
+                          itemKind: item.itemKind,
+                        })
+                      }
+                      disabled={deprecatePending || isDeprecated}
+                    >
+                      Deprecate
+                    </Button>
                   </div>
                 </div>
               </article>
@@ -349,6 +381,53 @@ function PackSection({
         </div>
       )}
     </section>
+  );
+}
+
+function DeprecateKnowledgeModal({
+  target,
+  pending,
+  onCancel,
+  onConfirm,
+}: {
+  target: DeprecateTarget | null;
+  pending: boolean;
+  onCancel: () => void;
+  onConfirm: () => Promise<void>;
+}) {
+  if (!target) return null;
+  return (
+    <div className="compile-modal-backdrop" role="presentation">
+      <dialog aria-labelledby="deprecate-knowledge-title" className="compile-danger-modal" open>
+        <div className="compile-danger-modal-header">
+          <Badge variant="destructive">danger</Badge>
+          <h3 id="deprecate-knowledge-title">Deprecate selected knowledge?</h3>
+        </div>
+        <p>
+          This will remove the knowledge from active context selection. Use this only when the
+          knowledge is too project-specific, obsolete, duplicated, or harmful to future context
+          quality.
+        </p>
+        <div className="compile-danger-modal-target">
+          <span>{target.itemKind}</span>
+          <strong>{target.title}</strong>
+          <code>{target.knowledgeId}</code>
+        </div>
+        <div className="compile-danger-modal-actions">
+          <Button type="button" variant="outline" onClick={onCancel} disabled={pending}>
+            Cancel
+          </Button>
+          <Button
+            type="button"
+            variant="destructive"
+            onClick={() => void onConfirm()}
+            disabled={pending}
+          >
+            {pending ? "Deprecating..." : "Deprecate knowledge"}
+          </Button>
+        </div>
+      </dialog>
+    </div>
   );
 }
 
@@ -645,7 +724,9 @@ function RunDetailPane({
   isLoading,
   error,
   onSubmitKnowledgeFeedback,
+  onDeprecateKnowledge,
   feedbackPending,
+  deprecatePending,
 }: {
   detail: CompileRunDetail | undefined;
   rankingTrace: CompileRunRankingTrace | undefined;
@@ -657,11 +738,15 @@ function RunDetailPane({
     runId: string,
     items: CompileRunKnowledgeFeedbackWriteItem[],
   ) => Promise<CompileRunKnowledgeFeedbackResult>;
+  onDeprecateKnowledge: (runId: string, knowledgeId: string) => Promise<void>;
   feedbackPending: boolean;
+  deprecatePending: boolean;
 }) {
   const tz = useTimezone();
   const [feedbackMessage, setFeedbackMessage] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<RunDetailTab>("overview");
+  const [deprecateTarget, setDeprecateTarget] = useState<DeprecateTarget | null>(null);
+  const [deprecatedIds, setDeprecatedIds] = useState<Set<string>>(() => new Set());
 
   if (isLoading) {
     return (
@@ -713,6 +798,24 @@ function RunDetailPane({
     } catch (submitError) {
       setFeedbackMessage(
         submitError instanceof Error ? submitError.message : "Failed to save knowledge feedback",
+      );
+    }
+  };
+
+  const confirmDeprecateKnowledge = async () => {
+    if (!deprecateTarget) return;
+    try {
+      await onDeprecateKnowledge(detail.run.id, deprecateTarget.knowledgeId);
+      setDeprecatedIds((current) => {
+        const next = new Set(current);
+        next.add(deprecateTarget.knowledgeId);
+        return next;
+      });
+      setFeedbackMessage(`Deprecated knowledge: ${deprecateTarget.title}`);
+      setDeprecateTarget(null);
+    } catch (submitError) {
+      setFeedbackMessage(
+        submitError instanceof Error ? submitError.message : "Failed to deprecate knowledge",
       );
     }
   };
@@ -934,14 +1037,20 @@ function RunDetailPane({
               items={detail.pack.rules}
               signals={knowledgeSignals}
               onFeedback={applyKnowledgeFeedback}
+              onRequestDeprecate={setDeprecateTarget}
               feedbackPending={feedbackPending}
+              deprecatePending={deprecatePending}
+              deprecatedIds={deprecatedIds}
             />
             <PackSection
               title="Procedures"
               items={detail.pack.procedures}
               signals={knowledgeSignals}
               onFeedback={applyKnowledgeFeedback}
+              onRequestDeprecate={setDeprecateTarget}
               feedbackPending={feedbackPending}
+              deprecatePending={deprecatePending}
+              deprecatedIds={deprecatedIds}
             />
             {feedbackMessage ? (
               <div style={{ padding: "0 8px 16px" }}>
@@ -990,6 +1099,12 @@ function RunDetailPane({
           </div>
           <SourceRefsList refs={detail.pack?.sourceRefs ?? []} />
         </section>
+        <DeprecateKnowledgeModal
+          target={deprecateTarget}
+          pending={deprecatePending}
+          onCancel={() => setDeprecateTarget(null)}
+          onConfirm={confirmDeprecateKnowledge}
+        />
       </CardContent>
     </Card>
   );
@@ -1002,6 +1117,7 @@ export function ContextCompilerPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const compile = useCompilePack();
   const runKnowledgeFeedback = useRunKnowledgeFeedbackMutation();
+  const deprecateKnowledge = useDeprecateKnowledgeMutation();
   const runs = useCompileRuns(50);
   const detail = useCompileRunDetail(mode === "detail" ? activeRunId : null);
   const rankingTrace = useCompileRunRankingTrace(mode === "detail" ? activeRunId : null);
@@ -1072,10 +1188,17 @@ export function ContextCompilerPage() {
             isLoading={detail.isLoading}
             error={detail.error}
             feedbackPending={runKnowledgeFeedback.isPending}
+            deprecatePending={deprecateKnowledge.isPending}
             onSubmitKnowledgeFeedback={(runId, items) =>
               runKnowledgeFeedback.mutateAsync({
                 runId,
                 items,
+              })
+            }
+            onDeprecateKnowledge={(runId, knowledgeId) =>
+              deprecateKnowledge.mutateAsync({
+                runId,
+                knowledgeId,
               })
             }
           />

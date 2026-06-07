@@ -1,5 +1,5 @@
 /** @vitest-environment jsdom */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { describe, expect, it, vi } from "vitest";
 import { ContextCompilerPage } from "../../../web/src/modules/context-compiler/components/context-compiler.page";
@@ -10,6 +10,7 @@ vi.mock("../../../web/src/modules/context-compiler/hooks/context-compiler.hooks"
   useCompileRunDetail: vi.fn(),
   useCompileRunRankingTrace: vi.fn(),
   useCompileRuns: vi.fn(),
+  useDeprecateKnowledgeMutation: vi.fn(),
   useRunKnowledgeFeedbackMutation: vi.fn(),
 }));
 
@@ -140,6 +141,11 @@ function setupHooks() {
     isPending: false,
     mutateAsync: vi.fn(),
   } as unknown as ReturnType<typeof hooks.useRunKnowledgeFeedbackMutation>);
+
+  mockedHooks.useDeprecateKnowledgeMutation.mockReturnValue({
+    isPending: false,
+    mutateAsync: vi.fn().mockResolvedValue(undefined),
+  } as unknown as ReturnType<typeof hooks.useDeprecateKnowledgeMutation>);
 }
 
 describe("ContextCompilerPage", () => {
@@ -211,5 +217,87 @@ describe("ContextCompilerPage", () => {
     render(<ContextCompilerPage />);
     fireEvent.click(screen.getByRole("button", { name: /run one/i }));
     expect(screen.getByText("Evaluation")).toBeInTheDocument();
+  });
+
+  it("confirms before deprecating selected knowledge", async () => {
+    setupHooks();
+    const deprecateMutateAsync = vi.fn().mockResolvedValue(undefined);
+    mockedHooks.useDeprecateKnowledgeMutation.mockReturnValue({
+      isPending: false,
+      mutateAsync: deprecateMutateAsync,
+    } as unknown as ReturnType<typeof hooks.useDeprecateKnowledgeMutation>);
+    mockedHooks.useCompileRunDetail.mockReturnValue({
+      data: {
+        run: {
+          id: "run-1",
+          goal: "Run one",
+          retrievalMode: "task_context",
+          status: "ok",
+          degradedReasons: [],
+          durationMs: 123,
+          source: "mcp",
+          evalSummary: {
+            count: 0,
+            latestAvg: null,
+            averageAvg: null,
+            latestOutcome: null,
+            latestEvaluatedAt: null,
+          },
+          createdAt: "2026-05-27T00:00:00.000Z",
+          tokenBudget: 2048,
+          input: {},
+        },
+        pack: {
+          runId: "run-1",
+          goal: "Run one",
+          retrievalMode: "task_context",
+          status: "ok",
+          minimalTasks: [],
+          rules: [
+            {
+              id: "knowledge:k-1",
+              itemId: "550e8400-e29b-41d4-a716-446655440001",
+              itemKind: "rule",
+              title: "Project-specific rule",
+              content: "Use only in one project.",
+              score: 0.8,
+              rankingReason: "test",
+              sourceRefs: [],
+            },
+          ],
+          procedures: [],
+          warnings: [],
+          sourceRefs: [],
+          diagnostics: {
+            degradedReasons: [],
+            retrievalStats: {},
+          },
+        },
+        outputMarkdown: "Compiled output",
+        selectedItems: [],
+        knowledgeFeedback: [],
+        knowledgeSignals: [],
+        evaluations: [],
+        snapshotAvailable: true,
+      },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof hooks.useCompileRunDetail>);
+
+    render(<ContextCompilerPage />);
+    fireEvent.click(screen.getByRole("button", { name: /run one/i }));
+    fireEvent.click(screen.getByRole("button", { name: "Deprecate" }));
+
+    expect(deprecateMutateAsync).not.toHaveBeenCalled();
+    expect(screen.getByRole("dialog")).toHaveTextContent("Deprecate selected knowledge?");
+
+    fireEvent.click(screen.getByRole("button", { name: "Deprecate knowledge" }));
+
+    await waitFor(() => {
+      expect(deprecateMutateAsync).toHaveBeenCalledWith({
+        runId: "run-1",
+        knowledgeId: "550e8400-e29b-41d4-a716-446655440001",
+      });
+    });
   });
 });

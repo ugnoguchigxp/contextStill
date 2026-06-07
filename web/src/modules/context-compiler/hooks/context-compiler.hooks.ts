@@ -3,6 +3,7 @@ import {
   type CompileRequest,
   type CompileRunKnowledgeFeedbackWriteItem,
   compilePack,
+  deprecateKnowledgeItem,
   fetchRecentRuns,
   fetchRunDetail,
   fetchRunRankingTrace,
@@ -52,6 +53,22 @@ export function useRunKnowledgeFeedbackMutation() {
       await queryClient.invalidateQueries({
         queryKey: ["compile-run-ranking-trace", variables.runId],
       });
+    },
+  });
+}
+
+export function useDeprecateKnowledgeMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { runId: string; knowledgeId: string }) =>
+      deprecateKnowledgeItem(input.knowledgeId),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: ["compile-run-detail", variables.runId] });
+      await queryClient.invalidateQueries({
+        queryKey: ["compile-run-ranking-trace", variables.runId],
+      });
+      await queryClient.invalidateQueries({ queryKey: ["knowledge"] });
+      await queryClient.invalidateQueries({ queryKey: ["graph"] });
     },
   });
 }

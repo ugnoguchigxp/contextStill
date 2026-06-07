@@ -269,3 +269,14 @@ export async function submitRunKnowledgeFeedback(
   const json = (await response.json()) as { feedback: CompileRunKnowledgeFeedbackResult };
   return json.feedback;
 }
+
+export async function deprecateKnowledgeItem(knowledgeId: string): Promise<void> {
+  const response = await fetch(`/api/knowledge/${encodeURIComponent(knowledgeId)}`, {
+    method: "PUT",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ status: "deprecated" }),
+  });
+  if (!response.ok) {
+    throw new Error(`Deprecate knowledge failed: ${response.status}`);
+  }
+}

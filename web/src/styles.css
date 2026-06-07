@@ -90,6 +90,37 @@
   }
 }
 
+/* Keep imported markdown editor headings in scale with the app's dense admin UI. */
+.ProseMirror h1 {
+  font-size: 1.75rem;
+  line-height: 2.15rem;
+}
+
+.ProseMirror h2 {
+  font-size: 1.45rem;
+  line-height: 1.9rem;
+}
+
+.ProseMirror h3 {
+  font-size: 1.25rem;
+  line-height: 1.7rem;
+}
+
+.ProseMirror h4 {
+  font-size: 1.1rem;
+  line-height: 1.55rem;
+}
+
+.ProseMirror h5 {
+  font-size: 1rem;
+  line-height: 1.45rem;
+}
+
+.ProseMirror h6 {
+  font-size: 0.92rem;
+  line-height: 1.35rem;
+}
+
 .app-shell {
   display: flex;
   flex-direction: column;
@@ -3305,6 +3336,88 @@
   display: flex;
   flex-wrap: wrap;
   gap: 0.45rem;
+}
+
+.compile-modal-backdrop {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.48);
+  display: flex;
+  inset: 0;
+  justify-content: center;
+  padding: 1rem;
+  position: fixed;
+  z-index: 80;
+}
+
+.compile-danger-modal {
+  background: var(--card);
+  border: 1px solid rgba(220, 38, 38, 0.42);
+  border-radius: var(--radius);
+  box-shadow: 0 24px 80px rgba(15, 23, 42, 0.32);
+  display: grid;
+  gap: 1rem;
+  max-width: 34rem;
+  padding: 1.25rem;
+  width: min(100%, 34rem);
+}
+
+.compile-danger-modal-header {
+  align-items: center;
+  display: flex;
+  gap: 0.65rem;
+}
+
+.compile-danger-modal-header h3 {
+  color: var(--foreground);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: 0;
+  line-height: 1.2;
+}
+
+.compile-danger-modal p {
+  color: var(--muted-foreground);
+  font-size: 0.86rem;
+  line-height: 1.55;
+  margin: 0;
+}
+
+.compile-danger-modal-target {
+  background: rgba(220, 38, 38, 0.06);
+  border: 1px solid rgba(220, 38, 38, 0.22);
+  border-radius: var(--radius-sm);
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.75rem;
+}
+
+.compile-danger-modal-target span {
+  color: var(--muted-foreground);
+  font-size: 0.72rem;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.compile-danger-modal-target strong,
+.compile-danger-modal-target code {
+  overflow-wrap: anywhere;
+}
+
+.compile-danger-modal-target strong {
+  color: var(--foreground);
+  font-size: 0.9rem;
+}
+
+.compile-danger-modal-target code {
+  color: var(--muted-foreground);
+  font-size: 0.74rem;
+}
+
+.compile-danger-modal-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  justify-content: flex-end;
 }
 
 .compile-output-markdown {
