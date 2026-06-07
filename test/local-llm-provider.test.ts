@@ -124,4 +124,24 @@ describe("local-llm provider", () => {
     expect(spy.mock.calls[1]?.[0]).toBe("http://127.0.0.1:44448/v1/chat/completions");
     expect(JSON.parse(spy.mock.calls[1]?.[1]?.body as string).max_tokens).toBe(8);
   });
+
+  test("chat does not append a second v1 segment when base URL already includes v1", async () => {
+    groupedConfig.localLlm.apiBaseUrl = "http://127.0.0.1:44448/v1";
+    const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: "pong" }, finish_reason: "stop" }],
+      }),
+    } as unknown as Response);
+
+    const response = await createLocalLlmProvider({ timeoutMs: 1000 }).chat({
+      messages: [{ role: "user", content: "ping" }],
+      maxTokens: 8,
+      temperature: 0,
+    });
+
+    expect(response.content).toBe("pong");
+    expect(spy).toHaveBeenCalledTimes(1);
+    expect(spy.mock.calls[0]?.[0]).toBe("http://127.0.0.1:44448/v1/chat/completions");
+  });
 });

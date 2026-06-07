@@ -6,7 +6,7 @@ import type {
   LlmProvider,
 } from "../llm-provider.js";
 import { normalizeLlmUsage } from "../usage-normalizer.js";
-import { resolveLocalLlmModelConfig } from "./local-llm-config.js";
+import { buildLocalLlmChatCompletionsUrl, resolveLocalLlmModelConfig } from "./local-llm-config.js";
 
 type LocalLlmResponse = {
   choices?: Array<{
@@ -101,7 +101,7 @@ export function createLocalLlmProvider(options: LocalLlmProviderOptions = {}): L
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const config = resolveProviderConfig(options, request.model);
-        const response = await fetch(`${config.apiBaseUrl}/v1/chat/completions`, {
+        const response = await fetch(buildLocalLlmChatCompletionsUrl(config.apiBaseUrl), {
           method: "POST",
           headers: headers(),
           body: JSON.stringify({

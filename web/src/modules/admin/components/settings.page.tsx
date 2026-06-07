@@ -303,6 +303,42 @@ function syncLocalLlmProviderForDraft(
   };
 }
 
+function normalizeLocalLlmModelsForSave(
+  provider: RuntimeSettingsEditable["providers"]["local-llm"],
+): RuntimeSettingsEditable["providers"]["local-llm"]["models"] {
+  const primary = provider.models[0] ?? {
+    name: "Primary",
+    apiBaseUrl: provider.apiBaseUrl,
+    model: provider.model,
+  };
+  const models = [
+    {
+      name: primary.name?.trim() || "Primary",
+      apiBaseUrl: primary.apiBaseUrl.trim(),
+      model: primary.model.trim(),
+    },
+    ...provider.models.slice(1).map((model, index) => ({
+      name: model.name.trim() || `Local LLM ${index + 2}`,
+      apiBaseUrl: model.apiBaseUrl.trim(),
+      model: model.model.trim(),
+    })),
+  ];
+  return models
+    .slice(0, localLlmMaxModels)
+    .filter((model, index) => index === 0 || (model.apiBaseUrl && model.model));
+}
+
+function prepareSettingsForSave(settings: RuntimeSettingsEditable): RuntimeSettingsEditable {
+  const localLlmModels = normalizeLocalLlmModelsForSave(settings.providers["local-llm"]);
+  return {
+    ...settings,
+    providers: {
+      ...settings.providers,
+      "local-llm": syncLocalLlmProviderForDraft(settings.providers["local-llm"], localLlmModels),
+    },
+  };
+}
+
 function buildSecretPayload(
   secretDrafts: SecretDraftState,
 ): Partial<Record<RuntimeSecretKey, { value?: string; clear?: boolean }>> | undefined {
@@ -968,7 +1004,7 @@ export function SettingsPage() {
     mutationFn: async () => {
       if (!draft) throw new Error("settings are not loaded");
       return updateRuntimeSettings({
-        settings: draft,
+        settings: prepareSettingsForSave(draft),
         secrets: buildSecretPayload(secretDrafts),
         updatedBy: "admin-ui",
       });

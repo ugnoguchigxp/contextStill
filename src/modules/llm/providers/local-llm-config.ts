@@ -19,3 +19,8 @@ export function resolveLocalLlmModelConfig(model?: string): ResolvedLocalLlmMode
     model: selected?.model || requestedModel || groupedConfig.localLlm.model,
   };
 }
+
+export function buildLocalLlmChatCompletionsUrl(apiBaseUrl: string): string {
+  const base = apiBaseUrl.replace(/\/+$/, "");
+  return base.endsWith("/v1") ? `${base}/chat/completions` : `${base}/v1/chat/completions`;
+}

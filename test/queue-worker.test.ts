@@ -372,7 +372,7 @@ describe("runQueueWorkerOnce", () => {
     );
   });
 
-  test("pauses any queue lane when the worker dependency is unavailable", async () => {
+  test("keeps the queue lane running when the worker dependency is unavailable", async () => {
     mocks.selectRows = [
       [
         {
@@ -417,18 +417,65 @@ describe("runQueueWorkerOnce", () => {
 
     expect(result.ok).toBe(false);
     expect(result.message).toContain("worker_unavailable");
-    expect(mocks.setQueuePaused).toHaveBeenCalledWith(
-      expect.objectContaining({
-        queueName: "coveringEvidence",
-        paused: true,
-        updatedBy: "queue-worker",
-      }),
-    );
+    expect(mocks.setQueuePaused).not.toHaveBeenCalled();
     expect(mocks.db.execute).toHaveBeenCalled();
     expect(mocks.updateCalls).not.toContainEqual(
       expect.objectContaining({
         table: coveringEvidenceQueue,
         values: expect.objectContaining({ status: "failed" }),
+      }),
+    );
+    expect(mocks.appendQueueEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queueName: "coveringEvidence",
+        queueJobId: "cover-job-1",
+        eventType: "retried",
+        message: "job kept waiting because worker dependency is unavailable",
+      }),
+    );
+  });
+
+  test("keeps finding candidate jobs waiting when the worker dependency is unavailable", async () => {
+    mocks.claimNextQueueJob.mockResolvedValue({ id: "finding-job-1" });
+    mocks.selectRows = [
+      [
+        {
+          id: "finding-job-1",
+          inputKind: "source_target",
+          sourceKind: "vibe_memory",
+          sourceKey: "memory-1",
+          sourceUri: "vibe_memory:memory-1",
+          distillationVersion: "v-test",
+          payload: {},
+          priority: 50,
+        },
+      ],
+    ];
+    mocks.runFindCandidate.mockRejectedValue(
+      new Error("Unable to connect. Is the computer able to access the url?"),
+    );
+
+    const result = await runQueueWorkerOnce({
+      queueName: "findingCandidate",
+      workerId: "worker-1",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("worker_unavailable");
+    expect(mocks.setQueuePaused).not.toHaveBeenCalled();
+    expect(mocks.db.execute).toHaveBeenCalled();
+    expect(mocks.updateCalls).not.toContainEqual(
+      expect.objectContaining({
+        table: findingCandidateQueue,
+        values: expect.objectContaining({ status: "failed" }),
+      }),
+    );
+    expect(mocks.appendQueueEvent).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queueName: "findingCandidate",
+        queueJobId: "finding-job-1",
+        eventType: "retried",
+        message: "job kept waiting because worker dependency is unavailable",
       }),
     );
   });

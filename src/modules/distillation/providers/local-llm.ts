@@ -1,5 +1,8 @@
 import { groupedConfig } from "../../../config.js";
-import { resolveLocalLlmModelConfig } from "../../llm/providers/local-llm-config.js";
+import {
+  buildLocalLlmChatCompletionsUrl,
+  resolveLocalLlmModelConfig,
+} from "../../llm/providers/local-llm-config.js";
 import type { DistillationChatRequest, DistillationChatResponse } from "../types.js";
 import { parseOpenAiStyleResponse, withRequestTimeout } from "./helpers.js";
 
@@ -18,7 +21,7 @@ export async function callLocalLlmChat(
     request.timeoutMs ?? groupedConfig.distillation.timeoutMs,
     async (signal) => {
       const config = resolveLocalLlmModelConfig(request.model);
-      const response = await fetch(`${config.apiBaseUrl}/v1/chat/completions`, {
+      const response = await fetch(buildLocalLlmChatCompletionsUrl(config.apiBaseUrl), {
         method: "POST",
         headers: localLlmHeaders(),
         body: JSON.stringify({

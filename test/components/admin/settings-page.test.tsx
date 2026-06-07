@@ -511,6 +511,61 @@ describe("SettingsPage", () => {
     expect(repositoryMocks.testLocalLlmModel).toHaveBeenCalledWith("qwen-3.6-14b-it");
   });
 
+  it("saves only complete added Local LLM model rows", async () => {
+    routerState.pathname = "/setting/llmprovider";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Local LLM" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Local LLM" }));
+    const addedRows = screen.getAllByText("Local LLM 3");
+    expect(addedRows.length).toBeGreaterThan(0);
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    expect(payload.settings.providers["local-llm"].models).toEqual([
+      {
+        name: "Primary",
+        apiBaseUrl: "http://127.0.0.1:44448",
+        model: "gemma-4-e4b-it",
+      },
+      {
+        name: "Qwen",
+        apiBaseUrl: "http://127.0.0.1:44449",
+        model: "qwen-3.6-14b-it",
+      },
+    ]);
+  });
+
+  it("includes a filled added Local LLM model row in the save payload", async () => {
+    routerState.pathname = "/setting/llmprovider";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Local LLM" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Add Local LLM" }));
+    const row = screen.getByText("Local LLM 3").closest(".settings-local-llm-model");
+    expect(row).not.toBeNull();
+    const rowScope = within(row as HTMLElement);
+    fireEvent.change(rowScope.getByLabelText("Name"), { target: { value: "Reasoner" } });
+    fireEvent.change(rowScope.getByLabelText("API Base URL"), {
+      target: { value: "http://127.0.0.1:44450" },
+    });
+    fireEvent.change(rowScope.getByLabelText("Model"), {
+      target: { value: "local-reasoner" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    expect(payload.settings.providers["local-llm"].models).toContainEqual({
+      name: "Reasoner",
+      apiBaseUrl: "http://127.0.0.1:44450",
+      model: "local-reasoner",
+    });
+  });
+
   it("shows added Local LLM models in Task Routing and Agentic Compile model choices", async () => {
     routerState.pathname = "/setting/taskrouting";
     renderPage();

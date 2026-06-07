@@ -30,6 +30,7 @@ const originalConfig = {
   localLlmApiBaseUrl: groupedConfig.localLlm.apiBaseUrl,
   localLlmApiKey: groupedConfig.localLlm.apiKey,
   localLlmModel: groupedConfig.localLlm.model,
+  localLlmModels: [...groupedConfig.localLlm.models],
   azureOpenAiApiKey: groupedConfig.azureOpenAi.apiKey,
   azureOpenAiApiBaseUrl: groupedConfig.azureOpenAi.apiBaseUrl,
   azureOpenAiApiPath: groupedConfig.azureOpenAi.apiPath,
@@ -54,6 +55,7 @@ describe("Distillation Runtime Service", () => {
     groupedConfig.localLlm.apiBaseUrl = "http://llm";
     groupedConfig.localLlm.apiKey = "test-key";
     groupedConfig.localLlm.model = "mock-local-model";
+    groupedConfig.localLlm.models = [];
 
     groupedConfig.azureOpenAi.apiKey = "";
     groupedConfig.azureOpenAi.apiBaseUrl = "";
@@ -313,6 +315,7 @@ describe("Distillation Runtime Service", () => {
   });
 
   test("callLocalLlmChat performs fetch and parses response", async () => {
+    groupedConfig.localLlm.apiBaseUrl = "http://llm/v1";
     const mockFetch = vi.fn().mockResolvedValue({
       ok: true,
       json: () =>
@@ -333,7 +336,7 @@ describe("Distillation Runtime Service", () => {
 
     expect(result.content).toBe("Fetched content");
     expect(mockFetch).toHaveBeenCalledWith(
-      expect.stringContaining("/v1/chat/completions"),
+      "http://llm/v1/chat/completions",
       expect.objectContaining({ signal: expect.any(AbortSignal) }),
     );
     expect(recordLlmUsage).toHaveBeenCalledWith(
@@ -946,6 +949,7 @@ describe("Distillation Runtime Service", () => {
     groupedConfig.localLlm.apiBaseUrl = originalConfig.localLlmApiBaseUrl;
     groupedConfig.localLlm.apiKey = originalConfig.localLlmApiKey;
     groupedConfig.localLlm.model = originalConfig.localLlmModel;
+    groupedConfig.localLlm.models = [...originalConfig.localLlmModels];
     groupedConfig.azureOpenAi.apiKey = originalConfig.azureOpenAiApiKey;
     groupedConfig.azureOpenAi.apiBaseUrl = originalConfig.azureOpenAiApiBaseUrl;
     groupedConfig.azureOpenAi.apiPath = originalConfig.azureOpenAiApiPath;

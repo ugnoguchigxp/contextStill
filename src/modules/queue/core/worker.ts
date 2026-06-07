@@ -21,9 +21,9 @@ import { processDeadZoneMergeReviewJob } from "../../landscape/deadzone-merge-re
 import { processMergeActivationFinalizeJob } from "../../landscape/merge-activation-finalize.worker.js";
 import { researchWebSourceToMarkdown } from "../../sources/web/source-research.service.js";
 import { claimNextQueueJob } from "./claim.js";
-import { isQueuePaused, setQueuePaused } from "./control.js";
+import { isQueuePaused } from "./control.js";
 import { appendQueueEvent } from "./events.js";
-import { pauseQueueJob } from "./state.js";
+import { keepQueueJobWaitingForWorker, pauseQueueJob } from "./state.js";
 import { type DistillationQueueName, queueTableNameByQueue } from "./types.js";
 
 type QueueRunResult = {
@@ -1022,13 +1022,7 @@ export async function runQueueWorkerOnce(params: {
 
     if (isQueueWorkerUnavailableError(message)) {
       const reason = `worker_unavailable:${message}`.slice(0, 500);
-      await setQueuePaused({
-        queueName: params.queueName,
-        paused: true,
-        reason,
-        updatedBy: "queue-worker",
-      });
-      await pauseQueueJob({
+      await keepQueueJobWaitingForWorker({
         queueName: params.queueName,
         id: claimed.id,
         reason,
@@ -1036,8 +1030,8 @@ export async function runQueueWorkerOnce(params: {
       await appendQueueEvent({
         queueName: params.queueName,
         queueJobId: claimed.id,
-        eventType: "paused",
-        message: "queue lane paused because worker dependency is unavailable",
+        eventType: "retried",
+        message: "job kept waiting because worker dependency is unavailable",
         metadata: {
           error: message,
           reason,

@@ -30,6 +30,46 @@ export async function pauseQueueJob(params: {
   return (result.rows[0] as QueueStateRow | undefined) ?? null;
 }
 
+export async function keepQueueJobWaitingForWorker(params: {
+  queueName: DistillationQueueName;
+  id: string;
+  reason: string;
+}): Promise<QueueStateRow | null> {
+  const tableName = queueTableNameByQueue[params.queueName];
+  const result =
+    params.queueName === "finalizeDistille"
+      ? await db.execute(sql`
+          update ${sql.raw(tableName)}
+          set
+            status = 'pending',
+            last_error = ${params.reason},
+            last_outcome_kind = 'worker_unavailable',
+            locked_by = null,
+            locked_at = null,
+            heartbeat_at = null,
+            updated_at = now()
+          where id = ${params.id}
+            and status = 'running'
+          returning id, status
+        `)
+      : await db.execute(sql`
+          update ${sql.raw(tableName)}
+          set
+            status = 'pending',
+            next_run_at = null,
+            last_error = ${params.reason},
+            last_outcome_kind = 'worker_unavailable',
+            locked_by = null,
+            locked_at = null,
+            heartbeat_at = null,
+            updated_at = now()
+          where id = ${params.id}
+            and status = 'running'
+          returning id, status
+        `);
+  return (result.rows[0] as QueueStateRow | undefined) ?? null;
+}
+
 export async function resumeQueueJob(params: {
   queueName: DistillationQueueName;
   id: string;
