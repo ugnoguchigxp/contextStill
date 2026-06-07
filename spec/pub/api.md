@@ -62,12 +62,9 @@ If `CONTEXT_STILL_ADMIN_API_KEY` is configured, requests under `/api/*` must inc
 |---|---|---|
 | `GET` | `/api/vibe-memory` | List memories |
 | `POST` | `/api/vibe-memory` | Create memory |
-| `GET` | `/api/vibe-memory/context` | Get contextual memory view |
-| `GET` | `/api/vibe-memory/goals` | List goal rooms |
+| `GET` | `/api/vibe-memory/context` | Search contextual raw memory view |
 | `GET` | `/api/vibe-memory/:id` | Read memory |
 | `DELETE` | `/api/vibe-memory/:id` | Delete memory |
-| `POST` | `/api/vibe-memory/reply` | Reply to a memory capsule |
-| `POST` | `/api/vibe-memory/mark` | Mark memory status |
 | `GET` | `/api/session-memo` | List legacy session memos |
 | `GET` | `/api/session-memo/item` | Fetch one legacy memo |
 | `POST` | `/api/session-memo` | Write legacy memo |

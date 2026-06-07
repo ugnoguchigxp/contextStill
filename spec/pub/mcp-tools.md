@@ -1,9 +1,9 @@
 # MCP Tools
 
-context-still exposes a compact MCP surface for coding agents. The tools are designed around a repeatable workflow:
+context-still exposes a compact MCP surface for coding agents. The tools are designed around this repeatable workflow:
 
 ```text
-initial_instructions -> vibe_memory_peek -> context_compile -> work -> vibe_memory_* -> compile_eval -> register_candidate(s)
+initial_instructions -> context_compile -> work -> compile_eval -> register_candidate(s)
 ```
 
 ## Tool Inventory
@@ -16,10 +16,7 @@ initial_instructions -> vibe_memory_peek -> context_compile -> work -> vibe_memo
 | `search_knowledge` | Inspect raw knowledge candidates and retrieval behavior |
 | `register_candidate` | Register one reusable rule/procedure candidate |
 | `register_candidates` | Register multiple candidates in one call |
-| `vibe_memory_peek` | Read Goal Room brief and open loops before work |
-| `vibe_memory_say` | Add a Capsule to a Goal Room |
-| `vibe_memory_reply` | Reply to an existing Capsule |
-| `vibe_memory_mark` | Mark Capsule state such as resolved or pinned |
+| `session_memo` | Store short-lived session scratch notes |
 | `search_memory` | Search past sessions and diffs |
 | `fetch_memory` | Fetch one memory item |
 | `doctor` | Diagnose DB, embedding, sync, queue, provider, and compile health |
@@ -29,18 +26,14 @@ Deprecated hidden aliases remain for compatibility but are not listed:
 - `memory_search` -> `search_memory`
 - `memory_fetch` -> `fetch_memory`
 
-The old slot-based `session_memo` workflow has been replaced by Goal Room Memory through the `vibe_memory_*` tools.
-
 ## Recommended Agent Workflow
 
 1. Call `initial_instructions` once when starting work in this project.
-2. Call `vibe_memory_peek` for the relevant `goalId`.
-3. Call `context_compile` with the actual task goal.
-4. Do the work and verify changes.
-5. Use `vibe_memory_say`, `vibe_memory_reply`, or `vibe_memory_mark` for findings, decisions, questions, and resolved loops.
-6. Call `compile_eval` for the compile run used during the task.
-7. Call `register_candidate` or `register_candidates` for durable lessons discovered during the task.
-8. Call `doctor` if compile output is weak, stale, degraded, or failed.
+2. Call `context_compile` with the actual task goal.
+3. Do the work and verify changes.
+4. Call `compile_eval` for the compile run used during the task.
+5. Call `register_candidate` or `register_candidates` for durable lessons discovered during the task.
+6. Call `doctor` if compile output is weak, stale, degraded, or failed.
 
 ## Tool Contracts
 
@@ -53,7 +46,6 @@ Input: none.
 Output:
 
 - Common rules.
-- Goal Room Memory usage guidance.
 - MCP tool categories.
 - Hook/compile evaluation reminders.
 
@@ -155,77 +147,11 @@ Input:
 
 Behavior is best-effort. Inspect the result for per-item failures.
 
-### `vibe_memory_peek`
+### `session_memo`
 
-Purpose: Preview Goal Room context before work.
+Purpose: Store and retrieve short-lived session scratch notes.
 
-Input:
-
-| Field | Required | Description |
-|---|---:|---|
-| `goalId` | yes | Stable Goal Room identifier. |
-| `profile` | no | Capability/profile hints such as `code-review` or `implementation`. |
-
-Output:
-
-- Brief.
-- Open loops.
-- Relevant recent Capsules.
-
-Use before starting work when the task belongs to an ongoing goal.
-
-### `vibe_memory_say`
-
-Purpose: Add a Capsule to a Goal Room timeline.
-
-Input:
-
-| Field | Required | Description |
-|---|---:|---|
-| `goalId` | yes | Goal Room identifier. |
-| `intent` | yes | Intent such as `ask`, `note`, `finding`, `review`, `decision`. |
-| `text` | yes | Capsule body. |
-| `goalUri` | no | External or repository URI for the goal. |
-| `goalAnchorRef` | no | File/path/anchor reference. |
-| `wants` | no | Requested follow-up. |
-| `refs` | no | Supporting references. |
-| `confidence` | no | Confidence score. |
-| `actorId` | no | Actor identifier. |
-| `ttlHours` | no | Optional time-to-live hint. |
-
-### `vibe_memory_reply`
-
-Purpose: Reply to an existing Capsule.
-
-Input:
-
-| Field | Required | Description |
-|---|---:|---|
-| `goalId` | yes | Goal Room identifier. |
-| `parentId` | yes | Parent Capsule ID. |
-| `intent` | yes | Reply intent. |
-| `text` | yes | Reply body. |
-| `subject` | no | Short subject. |
-| `wants` | no | Requested follow-up. |
-| `refs` | no | Supporting references. |
-| `confidence` | no | Confidence score. |
-| `actorId` | no | Actor identifier. |
-
-### `vibe_memory_mark`
-
-Purpose: Attach deterministic state to a Capsule.
-
-Input:
-
-| Field | Required | Description |
-|---|---:|---|
-| `goalId` | yes | Goal Room identifier. |
-| `targetMemoryId` | yes | Capsule ID. |
-| `mark` | yes | Mark such as `resolved`, `stale`, or `pinned`. |
-| `note` | no | Short explanation. |
-| `actorId` | no | Actor identifier. |
-
-Use when an open loop is resolved, a checkpoint should be pinned, or stale work should be marked.
+Use it only for ephemeral working notes. Durable lessons should use `register_candidate` or `register_candidates`.
 
 ### `search_memory`
 
@@ -284,7 +210,6 @@ Use when task context is unexpectedly empty, stale, degraded, or when automation
 | `doctor` reports DB failure | Check `DATABASE_URL`, Docker containers, and migrations. |
 | Search tools return no matches | Broaden query/tags, inspect source imports, and check knowledge status. |
 | Candidate registration succeeds but no draft appears | Check queue status and distillation logs. |
-| Goal Room is noisy | Use `vibe_memory_mark` to resolve/stale old Capsules and `vibe_memory_say` to pin a new decision. |
 
 ## Client Configuration
 

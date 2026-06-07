@@ -1,5 +1,7 @@
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import app from "../api/app.js";
+import { db } from "../src/db/client.js";
+import { vibeMemories } from "../src/db/schema.js";
 import { upsertKnowledgeFromSource } from "../src/modules/knowledge/knowledge.repository.js";
 import {
   getRuntimeSettingsSnapshot,
@@ -173,17 +175,11 @@ describeDb("api route integration", () => {
     });
     expect(createOlderResponse.status).toBe(201);
 
-    const createCapsuleResponse = await app.request("/api/vibe-memory/record", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify({
-        goalId: "integration-goal-list-hidden",
-        intent: "finding",
-        text: "capsule should not appear in raw vibe sessions",
-        actorId: "agent-test",
-      }),
+    await db.insert(vibeMemories).values({
+      sessionId: "goal:integration-goal-list-hidden",
+      content: "capsule should not appear in raw vibe sessions",
+      memoryType: "capsule",
     });
-    expect(createCapsuleResponse.status).toBe(201);
 
     const listResponse = await app.request("/api/vibe-memory?limit=10");
     expect(listResponse.status).toBe(200);

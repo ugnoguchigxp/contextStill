@@ -49,7 +49,10 @@ import {
   CoverEvidenceReprocessError,
   requestCoverEvidenceReprocess,
 } from "../src/modules/coverEvidence/reprocess-candidate.service.js";
-import { recordVibeMemoryWithDiffEntries } from "../src/modules/vibe-memory/vibe-memory.service.js";
+import {
+  recordVibeMemoryWithDiffEntries,
+  retrieveVibeMemoryContext,
+} from "../src/modules/vibe-memory/vibe-memory.service.js";
 import { compileRunDetailSchema } from "../src/shared/schemas/compile-run.schema.js";
 import { type ContextPack, contextPackSchema } from "../src/shared/schemas/context-pack.schema.js";
 import {
@@ -181,6 +184,7 @@ vi.mock("../api/modules/audit/audit.repository.js", () => ({
 
 vi.mock("../src/modules/vibe-memory/vibe-memory.service.js", () => ({
   recordVibeMemoryWithDiffEntries: vi.fn(),
+  retrieveVibeMemoryContext: vi.fn(),
 }));
 
 vi.mock("../src/modules/coverEvidence/reprocess-candidate.service.js", () => ({
@@ -332,6 +336,7 @@ describe("API route contract tests", () => {
       } as never,
       diffEntries: [],
     });
+    vi.mocked(retrieveVibeMemoryContext).mockResolvedValue([]);
     vi.mocked(requestCoverEvidenceReprocess).mockResolvedValue({
       findCandidateResultId: "candidate-1",
       coverEvidenceResultId: "candidate-1",
@@ -341,6 +346,16 @@ describe("API route contract tests", () => {
       previousStatus: "insufficient",
       previousReason: "rule_body_not_actionable",
     });
+  });
+
+  test("GET /api/vibe-memory/context rejects removed Goal Room query params", async () => {
+    const app = buildApp();
+    const response = await app.request("/api/vibe-memory/context?goalId=legacy-goal");
+    expect(response.status).toBe(400);
+    await expect(response.json()).resolves.toEqual({
+      error: "Goal Room context has been removed.",
+    });
+    expect(retrieveVibeMemoryContext).not.toHaveBeenCalled();
   });
 
   test("adminApiKeyAuth rejects missing key when configured", async () => {

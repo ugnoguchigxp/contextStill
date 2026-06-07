@@ -151,11 +151,6 @@ export function VibeMemoryPage() {
                 <h1>{activeSession?.title ?? activeSessionId}</h1>
                 <Badge variant="outline">{activeMemories.length} records</Badge>
               </div>
-              <div className="header-meta">
-                <a href={`/vibe-note?sessionId=${encodeURIComponent(activeSessionId)}`}>
-                  Vibe Note
-                </a>
-              </div>
               {activeSession?.projectRoot ? (
                 <div className="header-meta">
                   <span>{activeSession.projectRoot}</span>

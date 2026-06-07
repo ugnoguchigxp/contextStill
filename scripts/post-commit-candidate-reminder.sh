@@ -140,7 +140,7 @@ Evidence:
 - 5つの詳細評価指標: \`relevance\`, \`actionability\`, \`coverage\`, \`clarity\`, \`specificity\` (すべて 0〜100 の数値)
 - 評価結果 (\`useful\` / \`partial\` / \`misleading\` / \`unused\`)
 - 評価コメントである \`body\` (※極力、日本語を用いて具体的かつ詳細に記述することが強く推奨されます)
-- 同一セッション内に複数の \`context_compile\` 実行がある場合は、Vibe Note の \`compile_result\` エントリを参照し、すべての runId に対して個別に評価を保存してください（\`runId\` を明示的に渡してください）
+- 同一セッション内に複数の \`context_compile\` 実行がある場合は、直近の tool 実行結果や作業ログで runId を確認し、すべての runId に対して個別に評価を保存してください（\`runId\` を明示的に渡してください）
 - 完了前に、まずユーザーへ確認してください: 「今から compile_eval を入力しますか？ (Yes/No)」 Yes なら直ちに実行します。
 - 完了報告の前に、以下の件数を自己申告してください：
   - このタスクでの \`context_compile\` の実行回数

@@ -245,7 +245,7 @@ function CoreInfrastructureDomain({ data }: { data: DoctorCoreInfrastructureDoma
       title="Core Infrastructure"
       subtitle="Database & Vector Engine Health"
       icon={<Database className="w-4 h-4" style={{ color: "#10b981" }} />}
-      badge={`Latency: ${formatDurationMs(data.db.durationMs)}`}
+      badge={`DB check: ${formatDurationMs(data.db.durationMs)}`}
     >
       <div className="flex flex-col justify-between h-full py-1 gap-4">
         <div className="grid grid-cols-3 gap-2 border-b border-slate-100 pb-3 mb-1 text-center md:text-left">
@@ -263,7 +263,7 @@ function CoreInfrastructureDomain({ data }: { data: DoctorCoreInfrastructureDoma
           </div>
           <div className="flex flex-col">
             <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
-              DB Latency
+              DB Check
             </span>
             <strong className="text-slate-800 text-2xl font-extrabold mt-1 leading-none">
               {formatDurationMs(data.db.durationMs)}

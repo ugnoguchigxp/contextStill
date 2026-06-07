@@ -44,7 +44,7 @@ export const vibeMemories = pgTable(
     embedding: vector("embedding", { dimensions: groupedConfig.embedding.dimension }),
     metadata: jsonb("metadata").default({}).notNull(),
     createdAt: timestamp("created_at").defaultNow().notNull(),
-    // Goal Room Memory Extensions
+    // Legacy capsule columns retained for historical Vibe Memory rows.
     goalId: text("goal_id").references(() => vibeGoals.id, { onDelete: "cascade" }),
     parentId: uuid("parent_id").references((): any => vibeMemories.id, { onDelete: "cascade" }),
     subject: text("subject"),
@@ -71,7 +71,7 @@ export const vibeMemories = pgTable(
       "hnsw",
       table.embedding.op("vector_cosine_ops"),
     ),
-    // Goal Room Memory Index Extensions
+    // Legacy capsule indexes retained until a separate physical cleanup migration.
     goalIdIdx: index("vibe_memories_goal_id_idx").on(table.goalId),
     parentIdIdx: index("vibe_memories_parent_id_idx").on(table.parentId),
     intentIdx: index("vibe_memories_intent_idx").on(table.intent),
