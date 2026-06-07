@@ -21,7 +21,7 @@ import { processDeadZoneMergeReviewJob } from "../../landscape/deadzone-merge-re
 import { processMergeActivationFinalizeJob } from "../../landscape/merge-activation-finalize.worker.js";
 import { researchWebSourceToMarkdown } from "../../sources/web/source-research.service.js";
 import { claimNextQueueJob } from "./claim.js";
-import { isQueuePaused } from "./control.js";
+import { isQueuePaused, setQueuePaused } from "./control.js";
 import { appendQueueEvent } from "./events.js";
 import { pauseQueueJob } from "./state.js";
 import { type DistillationQueueName, queueTableNameByQueue } from "./types.js";
@@ -150,6 +150,24 @@ function isMissingSourceError(message: string): boolean {
     normalized.includes("enoent") ||
     normalized.includes("no such file or directory") ||
     normalized.includes("vibe memory not found")
+  );
+}
+
+function isQueueWorkerUnavailableError(message: string): boolean {
+  const normalized = message.trim().toLowerCase();
+  if (!normalized) return false;
+  return (
+    normalized.includes("unable to connect. is the computer able to access the url") ||
+    normalized.includes("connection timed out") ||
+    normalized.includes("connection refused") ||
+    normalized.includes("connection reset") ||
+    normalized.includes("socket connection was closed unexpectedly") ||
+    normalized.includes("the operation timed out") ||
+    normalized.includes("failed to fetch") ||
+    normalized.includes("fetch failed") ||
+    normalized.includes("was there a typo in the url or port") ||
+    normalized.includes("local-llm http 404") ||
+    normalized.includes("unsupported model:")
   );
 }
 
@@ -999,6 +1017,39 @@ export async function runQueueWorkerOnce(params: {
         idle: false,
         claimedJobId: claimed.id,
         message: "paused by queue lane control",
+      };
+    }
+
+    if (isQueueWorkerUnavailableError(message)) {
+      const reason = `worker_unavailable:${message}`.slice(0, 500);
+      await setQueuePaused({
+        queueName: params.queueName,
+        paused: true,
+        reason,
+        updatedBy: "queue-worker",
+      });
+      await pauseQueueJob({
+        queueName: params.queueName,
+        id: claimed.id,
+        reason,
+      });
+      await appendQueueEvent({
+        queueName: params.queueName,
+        queueJobId: claimed.id,
+        eventType: "paused",
+        message: "queue lane paused because worker dependency is unavailable",
+        metadata: {
+          error: message,
+          reason,
+        },
+      });
+      return {
+        ok: false,
+        queue: params.queueName,
+        worker: params.workerId,
+        idle: false,
+        claimedJobId: claimed.id,
+        message: reason,
       };
     }
 

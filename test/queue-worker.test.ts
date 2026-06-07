@@ -11,6 +11,7 @@ const mocks = vi.hoisted(() => ({
   processMergeActivationFinalizeJob: vi.fn(),
   researchWebSourceToMarkdown: vi.fn(),
   isQueuePaused: vi.fn(),
+  setQueuePaused: vi.fn(),
   selectRows: [] as unknown[][],
   insertCalls: [] as Array<{ table: unknown; values: unknown }>,
   updateCalls: [] as Array<{ table: unknown; values: Record<string, unknown> }>,
@@ -56,6 +57,7 @@ vi.mock("../src/modules/sources/web/source-research.service.js", () => ({
 
 vi.mock("../src/modules/queue/core/control.js", () => ({
   isQueuePaused: mocks.isQueuePaused,
+  setQueuePaused: mocks.setQueuePaused,
 }));
 
 function selectChain(rows: unknown[]) {
@@ -99,6 +101,7 @@ describe("runQueueWorkerOnce", () => {
     mocks.updateCalls = [];
     mocks.claimNextQueueJob.mockResolvedValue({ id: "cover-job-1" });
     mocks.isQueuePaused.mockResolvedValue(false);
+    mocks.setQueuePaused.mockResolvedValue({});
     mocks.db.select.mockImplementation(() => selectChain(mocks.selectRows.shift() ?? []));
     mocks.db.insert.mockImplementation((table: unknown) => insertChain(table));
     mocks.db.update.mockImplementation((table: unknown) => updateChain(table));
@@ -366,6 +369,67 @@ describe("runQueueWorkerOnce", () => {
     expect(mocks.processMergeActivationFinalizeJob).toHaveBeenCalledWith(
       "merge-finalize-job-1",
       expect.any(AbortSignal),
+    );
+  });
+
+  test("pauses any queue lane when the worker dependency is unavailable", async () => {
+    mocks.selectRows = [
+      [
+        {
+          id: "cover-job-1",
+          foundCandidateId: "candidate-1",
+          distillationVersion: "v-test",
+          attemptCount: 0,
+          maxAttempts: 2,
+          priority: 50,
+          providerPolicy: "default",
+          payload: {},
+        },
+      ],
+      [
+        {
+          id: "candidate-1",
+          title: "Candidate title",
+          content: "Candidate body",
+          origin: {},
+          type: "rule",
+          findingJobId: "finding-job-1",
+          metadata: {},
+        },
+      ],
+      [
+        {
+          id: "finding-job-1",
+          sourceKind: "wiki_file",
+          sourceKey: "docs/example.md",
+          sourceUri: "file:///docs/example.md",
+        },
+      ],
+    ];
+    mocks.runCoverEvidence.mockRejectedValue(
+      new Error("Unable to connect. Is the computer able to access the url?"),
+    );
+
+    const result = await runQueueWorkerOnce({
+      queueName: "coveringEvidence",
+      workerId: "worker-1",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toContain("worker_unavailable");
+    expect(mocks.setQueuePaused).toHaveBeenCalledWith(
+      expect.objectContaining({
+        queueName: "coveringEvidence",
+        paused: true,
+        updatedBy: "queue-worker",
+      }),
+    );
+    expect(mocks.db.execute).toHaveBeenCalled();
+    expect(mocks.updateCalls).not.toContainEqual(
+      expect.objectContaining({
+        table: coveringEvidenceQueue,
+        values: expect.objectContaining({ status: "failed" }),
+      }),
     );
   });
 });
