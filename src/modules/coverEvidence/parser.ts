@@ -490,6 +490,7 @@ function parseSlashResultRecord(text: string): Record<string, unknown> | null {
     .map((part) => part.trim())
     .filter(Boolean);
   if (tokens.length < 2) return null;
+  if (tokens.every((token) => slashKnownLabels.has(token.toUpperCase()))) return null;
 
   const record: Record<string, unknown> = {};
   for (let index = 0; index < tokens.length - 1; index += 2) {
@@ -515,6 +516,65 @@ function parseSlashResultRecord(text: string): Record<string, unknown> | null {
   return record;
 }
 
+function parseSlashTableResultRecord(text: string): Record<string, unknown> | null {
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const headerIndex = lines.findIndex((line) => {
+    if (!line.includes("/")) return false;
+    const labels = line
+      .split("/")
+      .map((part) => part.trim().toUpperCase())
+      .filter(Boolean);
+    return labels.length > 1 && labels.every((label) => slashKnownLabels.has(label));
+  });
+  if (headerIndex < 0) return null;
+  const valueLine = lines.slice(headerIndex + 1).find((line) => line.includes("/"));
+  if (!valueLine) return null;
+
+  const labels = lines[headerIndex]
+    ?.split("/")
+    .map((part) => part.trim().toUpperCase())
+    .filter(Boolean);
+  const values = valueLine.split("/").map((part) => part.trim());
+  while (values[0] === "") values.shift();
+  while (values[values.length - 1] === "") values.pop();
+  if (!labels || labels.length < 2 || values.length < 2) return null;
+
+  const record: Record<string, unknown> = {};
+  for (let index = 0; index < Math.min(labels.length, values.length); index += 1) {
+    assignLabelValue(record, labels[index] ?? "", values[index] ?? "");
+  }
+  if (!record.status && !record.title && !record.body && !record.reason) return null;
+  return record;
+}
+
+function parseTitleBodyFinalMetadataRecord(text: string): Record<string, unknown> | null {
+  const lines = text.split(/\r?\n/);
+  let metadataIndex = -1;
+  for (let index = lines.length - 1; index >= 0; index -= 1) {
+    if (/^\s*TYPE\s*\//i.test(lines[index] ?? "")) {
+      metadataIndex = index;
+      break;
+    }
+  }
+  if (metadataIndex <= 0) return null;
+  const contentLines = lines.slice(0, metadataIndex);
+  const titleIndex = contentLines.findIndex((line) => line.trim().length > 0);
+  if (titleIndex < 0) return null;
+
+  const title = contentLines[titleIndex]?.trim() ?? "";
+  const body = contentLines.slice(titleIndex + 1).join("\n").trim();
+  const metadata = parseSlashResultRecord(lines[metadataIndex] ?? "") ?? {};
+  if (!title && !body) return null;
+  return {
+    ...metadata,
+    ...(title ? { title } : {}),
+    ...(body ? { body } : {}),
+  };
+}
+
 function parseStatusOnlyResultRecord(text: string): Record<string, unknown> | null {
   const normalized = text
     .trim()
@@ -536,12 +596,18 @@ export function parseCoverEvidenceResult(
   options: ParseCoverEvidenceResultOptions = {},
 ): CoverEvidenceResult {
   const parsed = parseLlmJsonLike(llmOutput);
-  const labelledFallback = parseLabelledResultRecord(llmOutput);
-  const slashFallback = labelledFallback ? null : parseSlashResultRecord(llmOutput);
+  const titleBodyMetadataFallback = parseTitleBodyFinalMetadataRecord(llmOutput);
+  const labelledFallback = titleBodyMetadataFallback ? null : parseLabelledResultRecord(llmOutput);
+  const slashFallback = titleBodyMetadataFallback || labelledFallback
+    ? null
+    : (parseSlashTableResultRecord(llmOutput) ?? parseSlashResultRecord(llmOutput));
   const statusOnlyFallback =
-    labelledFallback || slashFallback ? null : parseStatusOnlyResultRecord(llmOutput);
+    titleBodyMetadataFallback || labelledFallback || slashFallback
+      ? null
+      : parseStatusOnlyResultRecord(llmOutput);
   if (
     (!parsed || !parsed.value || typeof parsed.value !== "object") &&
+    !titleBodyMetadataFallback &&
     !labelledFallback &&
     !slashFallback &&
     !statusOnlyFallback
@@ -552,7 +618,7 @@ export function parseCoverEvidenceResult(
   const record =
     parsed?.value && typeof parsed.value === "object" && !Array.isArray(parsed.value)
       ? asRecord(parsed.value)
-      : (labelledFallback ?? slashFallback ?? statusOnlyFallback ?? {});
+      : (titleBodyMetadataFallback ?? labelledFallback ?? slashFallback ?? statusOnlyFallback ?? {});
   const statusValue = asString(recordValue(record, ["status", "STATUS"])).toLowerCase();
   const status: CoverEvidenceStatus = isCoverEvidenceStatus(statusValue)
     ? statusValue

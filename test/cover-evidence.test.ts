@@ -376,6 +376,64 @@ describe("coverEvidence parser", () => {
     expect(parsed.candidate?.body).toContain("Run focused tests.");
   });
 
+  test("does not treat slash header labels as candidate body", () => {
+    const parsed = parseCoverEvidenceResult(
+      [
+        "STATUS / STAGE / TYPE / TITLE / BODY / IMPORTANCE / CONFIDENCE / TECHNOLOGIES / CHANGE_TYPES / DOMAINS / REASON",
+        "",
+        "knowledge_ready / web / rule / Keep parser labels out of body / The candidate body must remain the actual reusable rule text. / 82 / 91 / typescript / bugfix / cover-evidence / source_supported",
+      ].join("\n"),
+      {
+        candidateDefaults: {
+          type: "rule",
+          title: "Keep parser labels out of body",
+          body: "The candidate body must remain the actual reusable rule text.",
+          importance: 80,
+          confidence: 80,
+        },
+      },
+    );
+
+    expect(parsed.status).toBe("knowledge_ready");
+    expect(parsed.candidate).toMatchObject({
+      title: "Keep parser labels out of body",
+      body: "The candidate body must remain the actual reusable rule text.",
+      importance: 82,
+      confidence: 91,
+      technologies: ["typescript"],
+      changeTypes: ["bugfix"],
+      domains: ["cover-evidence"],
+    });
+    expect(parsed.candidate?.body).not.toBe("IMPORTANCE");
+  });
+
+  test("parses simple title body and final slash metadata output", () => {
+    const parsed = parseCoverEvidenceResult(
+      [
+        "Keep parser labels out of body",
+        "The candidate body can contain spaces and / slash characters.",
+        "It should stay body text until the final metadata line.",
+        "TYPE / rule / STATUS / knowledge_ready / STAGE / web / IMPORTANCE / 82 / CONFIDENCE / 91 / TECHNOLOGIES / typescript / CHANGE_TYPES / bugfix / DOMAINS / cover-evidence / REASON / source_supported",
+      ].join("\n"),
+    );
+
+    expect(parsed.status).toBe("knowledge_ready");
+    expect(parsed.stage).toBe("web");
+    expect(parsed.candidate).toMatchObject({
+      title: "Keep parser labels out of body",
+      body: [
+        "The candidate body can contain spaces and / slash characters.",
+        "It should stay body text until the final metadata line.",
+      ].join("\n"),
+      type: "rule",
+      importance: 82,
+      confidence: 91,
+      technologies: ["typescript"],
+      changeTypes: ["bugfix"],
+      domains: ["cover-evidence"],
+    });
+  });
+
   test("recovers newline-separated label output", () => {
     const parsed = parseCoverEvidenceResult(
       [
@@ -524,6 +582,17 @@ describe("coverEvidence prompts", () => {
   test("asks applicability facets to prefer ASCII tags", () => {
     expect(externalEvidenceFinalSystemPrompt()).toContain("lowercase kebab-case の ASCII tag");
     expect(applicabilityRefinementSystemPrompt()).toContain("lowercase kebab-case の ASCII tag");
+  });
+
+  test("instructs simple title body and final metadata output", () => {
+    const prompt = externalEvidenceFinalSystemPrompt();
+
+    expect(prompt).toContain("1行目: タイトル");
+    expect(prompt).toContain("2行目から最終行の前まで: 本文");
+    expect(prompt).toContain("最終行: TYPE / rule|procedure");
+    expect(prompt).toContain("/ 区切りとして読むのは最終行だけ");
+    expect(prompt).not.toContain("TITLE\n<タイトル>");
+    expect(prompt).not.toContain("BODY\n<本文");
   });
 });
 

@@ -21,6 +21,18 @@ import {
   compileRunSourceValues,
   contextCompileCandidateTraceAgenticDecisionValues,
   contextCompileTaskTraceEmbeddingStatusValues,
+  contextDecisionAutonomyLevelValues,
+  contextDecisionCoverageQueryRoleValues,
+  contextDecisionEffectValues,
+  contextDecisionEvidenceRoleValues,
+  contextDecisionFeedbackEffectStatusValues,
+  contextDecisionFeedbackOutcomeValues,
+  contextDecisionFeedbackSourceValues,
+  contextDecisionHumanFeedbackValues,
+  contextDecisionKnowledgePolicyValues,
+  contextDecisionRiskBudgetValues,
+  contextDecisionStatusValues,
+  contextDecisionValues,
   knowledgeReviewProposedActionValues,
   knowledgeReviewQueueStatusValues,
   knowledgeTypeValues,
@@ -375,6 +387,308 @@ export const knowledgeReviewQueue = pgTable(
     proposedActionCheck: check(
       "knowledge_review_queue_proposed_action_check",
       sql`${table.proposedAction} IN (${sql.raw(toSqlList(knowledgeReviewProposedActionValues))})`,
+    ),
+  }),
+);
+
+export const contextDecisionRuns = pgTable(
+  "context_decision_runs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sessionId: text("session_id"),
+    taskGoal: text("task_goal").notNull(),
+    decisionPoint: text("decision_point").notNull(),
+    proposedAction: text("proposed_action"),
+    options: jsonb("options").notNull().default([]),
+    decision: text("decision").notNull(),
+    selectedAction: text("selected_action"),
+    rejectedActions: jsonb("rejected_actions").notNull().default([]),
+    mandate: text("mandate").notNull(),
+    agentMessage: text("agent_message").notNull(),
+    confidence: integer("confidence").notNull(),
+    confidenceTrace: jsonb("confidence_trace").notNull().default({}),
+    autonomyLevel: text("autonomy_level").notNull().default("high"),
+    riskBudget: text("risk_budget").notNull().default("medium"),
+    knowledgePolicy: text("knowledge_policy").notNull().default("optional"),
+    availableRollback: text("available_rollback"),
+    verificationPlan: text("verification_plan"),
+    guardrails: jsonb("guardrails").notNull().default({}),
+    unsupportedAlternatives: jsonb("unsupported_alternatives").notNull().default([]),
+    status: text("status").notNull().default("completed"),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+    updatedAt: timestamp("updated_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    createdAtIdx: index("context_decision_runs_created_at_idx").on(table.createdAt),
+    decisionCreatedAtIdx: index("context_decision_runs_decision_created_at_idx").on(
+      table.decision,
+      table.createdAt,
+    ),
+    statusCreatedAtIdx: index("context_decision_runs_status_created_at_idx").on(
+      table.status,
+      table.createdAt,
+    ),
+    sessionCreatedAtIdx: index("context_decision_runs_session_created_at_idx").on(
+      table.sessionId,
+      table.createdAt,
+    ),
+    decisionCheck: check(
+      "context_decision_runs_decision_check",
+      sql`${table.decision} IN (${sql.raw(toSqlList(contextDecisionValues))})`,
+    ),
+    confidenceRangeCheck: check(
+      "context_decision_runs_confidence_range_check",
+      sql`${table.confidence} >= 0 and ${table.confidence} <= 100`,
+    ),
+    autonomyLevelCheck: check(
+      "context_decision_runs_autonomy_level_check",
+      sql`${table.autonomyLevel} IN (${sql.raw(toSqlList(contextDecisionAutonomyLevelValues))})`,
+    ),
+    riskBudgetCheck: check(
+      "context_decision_runs_risk_budget_check",
+      sql`${table.riskBudget} IN (${sql.raw(toSqlList(contextDecisionRiskBudgetValues))})`,
+    ),
+    knowledgePolicyCheck: check(
+      "context_decision_runs_knowledge_policy_check",
+      sql`${table.knowledgePolicy} IN (${sql.raw(
+        toSqlList(contextDecisionKnowledgePolicyValues),
+      )})`,
+    ),
+    statusCheck: check(
+      "context_decision_runs_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(contextDecisionStatusValues))})`,
+    ),
+    optionsArrayCheck: check(
+      "context_decision_runs_options_array_check",
+      sql`jsonb_typeof(${table.options}) = 'array'`,
+    ),
+    rejectedActionsArrayCheck: check(
+      "context_decision_runs_rejected_actions_array_check",
+      sql`jsonb_typeof(${table.rejectedActions}) = 'array'`,
+    ),
+    confidenceTraceObjectCheck: check(
+      "context_decision_runs_confidence_trace_object_check",
+      sql`jsonb_typeof(${table.confidenceTrace}) = 'object'`,
+    ),
+    guardrailsObjectCheck: check(
+      "context_decision_runs_guardrails_object_check",
+      sql`jsonb_typeof(${table.guardrails}) = 'object'`,
+    ),
+    unsupportedAlternativesArrayCheck: check(
+      "context_decision_runs_unsupported_alternatives_array_check",
+      sql`jsonb_typeof(${table.unsupportedAlternatives}) = 'array'`,
+    ),
+    metadataObjectCheck: check(
+      "context_decision_runs_metadata_object_check",
+      sql`jsonb_typeof(${table.metadata}) = 'object'`,
+    ),
+  }),
+);
+
+export const contextDecisionEvidence = pgTable(
+  "context_decision_evidence",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    decisionRunId: uuid("decision_run_id")
+      .references(() => contextDecisionRuns.id, { onDelete: "cascade" })
+      .notNull(),
+    knowledgeId: uuid("knowledge_id").references(() => knowledgeItems.id, {
+      onDelete: "set null",
+    }),
+    role: text("role").notNull(),
+    weightAtDecision: integer("weight_at_decision").notNull(),
+    dynamicScoreAtDecision: integer("dynamic_score_at_decision"),
+    applicabilityScore: integer("applicability_score"),
+    temporalRelevance: integer("temporal_relevance"),
+    summary: text("summary").notNull(),
+    sourceRefs: jsonb("source_refs").notNull().default([]),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    decisionRoleIdx: index("context_decision_evidence_decision_role_idx").on(
+      table.decisionRunId,
+      table.role,
+    ),
+    knowledgeRoleIdx: index("context_decision_evidence_knowledge_role_idx").on(
+      table.knowledgeId,
+      table.role,
+    ),
+    roleCheck: check(
+      "context_decision_evidence_role_check",
+      sql`${table.role} IN (${sql.raw(toSqlList(contextDecisionEvidenceRoleValues))})`,
+    ),
+    sourceRefsArrayCheck: check(
+      "context_decision_evidence_source_refs_array_check",
+      sql`jsonb_typeof(${table.sourceRefs}) = 'array'`,
+    ),
+    metadataObjectCheck: check(
+      "context_decision_evidence_metadata_object_check",
+      sql`jsonb_typeof(${table.metadata}) = 'object'`,
+    ),
+  }),
+);
+
+export const contextDecisionCoverageTraces = pgTable(
+  "context_decision_coverage_traces",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    decisionRunId: uuid("decision_run_id")
+      .references(() => contextDecisionRuns.id, { onDelete: "cascade" })
+      .notNull(),
+    query: text("query").notNull(),
+    queryRole: text("query_role").notNull(),
+    scope: jsonb("scope").notNull().default({}),
+    hitCount: integer("hit_count").notNull().default(0),
+    maxSimilarity: integer("max_similarity"),
+    selectedKnowledgeIds: jsonb("selected_knowledge_ids").notNull().default([]),
+    rejectedKnowledgeIds: jsonb("rejected_knowledge_ids").notNull().default([]),
+    reason: text("reason").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    decisionRoleIdx: index("context_decision_coverage_decision_role_idx").on(
+      table.decisionRunId,
+      table.queryRole,
+    ),
+    queryRoleCheck: check(
+      "context_decision_coverage_query_role_check",
+      sql`${table.queryRole} IN (${sql.raw(toSqlList(contextDecisionCoverageQueryRoleValues))})`,
+    ),
+    scopeObjectCheck: check(
+      "context_decision_coverage_scope_object_check",
+      sql`jsonb_typeof(${table.scope}) = 'object'`,
+    ),
+    selectedKnowledgeIdsArrayCheck: check(
+      "context_decision_coverage_selected_knowledge_ids_array_check",
+      sql`jsonb_typeof(${table.selectedKnowledgeIds}) = 'array'`,
+    ),
+    rejectedKnowledgeIdsArrayCheck: check(
+      "context_decision_coverage_rejected_knowledge_ids_array_check",
+      sql`jsonb_typeof(${table.rejectedKnowledgeIds}) = 'array'`,
+    ),
+  }),
+);
+
+export const contextDecisionHumanFeedback = pgTable(
+  "context_decision_human_feedback",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    decisionRunId: uuid("decision_run_id")
+      .references(() => contextDecisionRuns.id, { onDelete: "cascade" })
+      .notNull(),
+    value: text("value").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    decisionRunUnique: uniqueIndex("context_decision_human_feedback_run_unique").on(
+      table.decisionRunId,
+    ),
+    valueCheck: check(
+      "context_decision_human_feedback_value_check",
+      sql`${table.value} IN (${sql.raw(toSqlList(contextDecisionHumanFeedbackValues))})`,
+    ),
+  }),
+);
+
+export const contextDecisionFeedback = pgTable(
+  "context_decision_feedback",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    decisionRunId: uuid("decision_run_id")
+      .references(() => contextDecisionRuns.id, { onDelete: "cascade" })
+      .notNull(),
+    source: text("source").notNull(),
+    outcome: text("outcome").notNull(),
+    inferredReason: text("inferred_reason").notNull(),
+    affectedKnowledgeIds: jsonb("affected_knowledge_ids").notNull().default([]),
+    suggestedAdjustment: jsonb("suggested_adjustment").notNull().default({}),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    decisionRunIdx: index("context_decision_feedback_run_idx").on(table.decisionRunId),
+    outcomeCreatedAtIdx: index("context_decision_feedback_outcome_created_at_idx").on(
+      table.outcome,
+      table.createdAt,
+    ),
+    sourceCheck: check(
+      "context_decision_feedback_source_check",
+      sql`${table.source} IN (${sql.raw(toSqlList(contextDecisionFeedbackSourceValues))})`,
+    ),
+    outcomeCheck: check(
+      "context_decision_feedback_outcome_check",
+      sql`${table.outcome} IN (${sql.raw(toSqlList(contextDecisionFeedbackOutcomeValues))})`,
+    ),
+    affectedKnowledgeIdsArrayCheck: check(
+      "context_decision_feedback_affected_knowledge_ids_array_check",
+      sql`jsonb_typeof(${table.affectedKnowledgeIds}) = 'array'`,
+    ),
+    suggestedAdjustmentObjectCheck: check(
+      "context_decision_feedback_suggested_adjustment_object_check",
+      sql`jsonb_typeof(${table.suggestedAdjustment}) = 'object'`,
+    ),
+    metadataObjectCheck: check(
+      "context_decision_feedback_metadata_object_check",
+      sql`jsonb_typeof(${table.metadata}) = 'object'`,
+    ),
+  }),
+);
+
+export const contextDecisionFeedbackEffects = pgTable(
+  "context_decision_feedback_effects",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    feedbackId: uuid("feedback_id").references(() => contextDecisionFeedback.id, {
+      onDelete: "cascade",
+    }),
+    humanFeedbackId: uuid("human_feedback_id").references(() => contextDecisionHumanFeedback.id, {
+      onDelete: "cascade",
+    }),
+    decisionRunId: uuid("decision_run_id")
+      .references(() => contextDecisionRuns.id, { onDelete: "cascade" })
+      .notNull(),
+    knowledgeId: uuid("knowledge_id").references(() => knowledgeItems.id, {
+      onDelete: "set null",
+    }),
+    effect: text("effect").notNull(),
+    amount: integer("amount").notNull(),
+    reason: text("reason").notNull(),
+    confidence: integer("confidence").notNull(),
+    status: text("status").notNull().default("applied"),
+    appliedAt: timestamp("applied_at", { withTimezone: true }),
+    metadata: jsonb("metadata").notNull().default({}),
+    createdAt: timestamp("created_at", { withTimezone: true }).defaultNow().notNull(),
+  },
+  (table) => ({
+    decisionRunStatusIdx: index("context_decision_feedback_effects_run_status_idx").on(
+      table.decisionRunId,
+      table.status,
+    ),
+    knowledgeStatusIdx: index("context_decision_feedback_effects_knowledge_status_idx").on(
+      table.knowledgeId,
+      table.status,
+    ),
+    effectCheck: check(
+      "context_decision_feedback_effects_effect_check",
+      sql`${table.effect} IN (${sql.raw(toSqlList(contextDecisionEffectValues))})`,
+    ),
+    confidenceRangeCheck: check(
+      "context_decision_feedback_effects_confidence_range_check",
+      sql`${table.confidence} >= 0 and ${table.confidence} <= 100`,
+    ),
+    statusCheck: check(
+      "context_decision_feedback_effects_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(contextDecisionFeedbackEffectStatusValues))})`,
+    ),
+    feedbackSourceCheck: check(
+      "context_decision_feedback_effects_source_check",
+      sql`((${table.feedbackId} is not null and ${table.humanFeedbackId} is null) or (${table.feedbackId} is null and ${table.humanFeedbackId} is not null))`,
+    ),
+    metadataObjectCheck: check(
+      "context_decision_feedback_effects_metadata_object_check",
+      sql`jsonb_typeof(${table.metadata}) = 'object'`,
     ),
   }),
 );

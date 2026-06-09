@@ -199,3 +199,45 @@ export const landscapeSnapshotCacheStatusValues = ["ready", "stale"] as const;
 
 export const knowledgeQualityAdjustmentKindValues = ["off_topic_quality_decrement"] as const;
 export const auditLogActorValues = ["agent", "user", "system"] as const;
+
+export const contextDecisionValues = [
+  "execute",
+  "reject",
+  "revise_and_execute",
+  "rollback",
+  "discard",
+  "escalate",
+] as const;
+export const contextDecisionAutonomyLevelValues = ["low", "medium", "high"] as const;
+export const contextDecisionRiskBudgetValues = ["low", "medium", "high"] as const;
+export const contextDecisionKnowledgePolicyValues = ["optional", "required"] as const;
+export const contextDecisionStatusValues = ["completed", "degraded", "failed"] as const;
+export const contextDecisionEvidenceRoleValues = [
+  "selected_support",
+  "rejected_alternative",
+  "user_preference",
+  "risk_warning",
+  "missing_counter_evidence",
+] as const;
+export const contextDecisionCoverageQueryRoleValues = [
+  "support",
+  "counter_evidence",
+  "user_preference",
+  "risk",
+] as const;
+export const contextDecisionHumanFeedbackValues = ["good", "bad"] as const;
+export const contextDecisionFeedbackSourceValues = ["ai", "system"] as const;
+export const contextDecisionFeedbackOutcomeValues = [
+  "success",
+  "failed",
+  "discarded_pr",
+  "user_overrode",
+  "regression_found",
+  "still_unknown",
+] as const;
+export const contextDecisionEffectValues = ["boost", "penalize", "neutral"] as const;
+export const contextDecisionFeedbackEffectStatusValues = [
+  "applied",
+  "queued_for_review",
+  "skipped",
+] as const;

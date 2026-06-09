@@ -237,6 +237,22 @@ export const doctorReportSchema = z.object({
     staleSourceCount: z.number().int().nonnegative(),
     nextActions: z.array(z.string()),
   }),
+  contextDecision: z.object({
+    available: z.boolean(),
+    totalDecisions: z.number().int().nonnegative(),
+    decisionCounts: z.record(z.number().int().nonnegative()),
+    escalateRate: z.number().min(0).max(1),
+    escalateTargetRate: z.number().min(0).max(1),
+    goodFeedbackCount: z.number().int().nonnegative(),
+    badFeedbackCount: z.number().int().nonnegative(),
+    prDiscardFeedbackCount: z.number().int().nonnegative(),
+    autoAppliedEffectsCount: z.number().int().nonnegative(),
+    queuedEffectsCount: z.number().int().nonnegative(),
+    degradedDecisionsCount: z.number().int().nonnegative(),
+    requiredZeroEvidenceCount: z.number().int().nonnegative(),
+    ghAvailable: z.boolean(),
+    nextActions: z.array(z.string()),
+  }),
   agentLogSync: z.object({
     codex: z.object({
       sessionDir: z.string(),

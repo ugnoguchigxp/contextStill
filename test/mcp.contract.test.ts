@@ -2,6 +2,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest"
 import { listStaticResources, readStaticResource } from "../src/mcp/server.js";
 import { compileEvalTool } from "../src/mcp/tools/compile-eval.tool.js";
 import { contextCompileTool } from "../src/mcp/tools/context-compile.tool.js";
+import {
+  contextDecisionFeedbackTool,
+  contextDecisionTool,
+} from "../src/mcp/tools/context-decision.tool.js";
 import { getCallableToolEntries, getExposedToolEntries } from "../src/mcp/tools/index.js";
 import { searchKnowledgeTool } from "../src/mcp/tools/knowledge.tool.js";
 import { initialInstructionsTool } from "../src/mcp/tools/system.tool.js";
@@ -53,6 +57,35 @@ describeDb("mcp contract", () => {
     expect(properties).not.toHaveProperty("queryEmbedding");
   });
 
+  test("context_decision tool input schema contract", () => {
+    expect(contextDecisionTool.inputSchema).toMatchObject({
+      type: "object",
+      required: ["taskGoal", "decisionPoint"],
+    });
+    const properties = (contextDecisionTool.inputSchema as { properties?: Record<string, unknown> })
+      .properties;
+    expect(properties?.knowledgePolicy).toEqual({
+      type: "string",
+      enum: ["optional", "required"],
+    });
+    expect(properties?.autonomyLevel).toEqual({
+      type: "string",
+      enum: ["low", "medium", "high"],
+    });
+  });
+
+  test("context_decision_feedback tool input schema contract", () => {
+    expect(contextDecisionFeedbackTool.inputSchema).toMatchObject({
+      type: "object",
+      required: ["decisionId", "source"],
+    });
+    const properties = (
+      contextDecisionFeedbackTool.inputSchema as { properties?: Record<string, unknown> }
+    ).properties;
+    expect(properties?.value).toEqual({ type: "string", enum: ["good", "bad"] });
+    expect(properties?.source).toEqual({ type: "string", enum: ["human", "ai", "system"] });
+  });
+
   test("compile_eval tool input schema contract", () => {
     expect(compileEvalTool.inputSchema).toMatchObject({
       type: "object",
@@ -92,6 +125,8 @@ describeDb("mcp contract", () => {
       "initial_instructions",
       "context_compile",
       "compile_eval",
+      "context_decision",
+      "context_decision_feedback",
       "search_knowledge",
       "register_candidate",
       "register_candidates",

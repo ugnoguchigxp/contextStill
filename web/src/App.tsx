@@ -37,6 +37,15 @@ const compileRoute = createRoute({
   ),
 });
 
+const decisionRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/decision",
+  component: lazyRouteComponent(
+    () => import("./modules/context-decision/components/context-decision.page"),
+    "ContextDecisionPage",
+  ),
+});
+
 const knowledgeRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/knowledge",
@@ -179,6 +188,7 @@ const settingsRoute = createRoute({
 const routeTree = rootRoute.addChildren([
   indexRoute,
   compileRoute,
+  decisionRoute,
   candidatesRoute,
   queueRoute,
   knowledgeRoute,

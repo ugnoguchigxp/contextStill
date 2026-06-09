@@ -195,6 +195,22 @@ export const validDoctorReport: DoctorReport = {
     staleSourceCount: 0,
     nextActions: [],
   },
+  contextDecision: {
+    available: true,
+    totalDecisions: 0,
+    decisionCounts: {},
+    escalateRate: 0,
+    escalateTargetRate: 0.1,
+    goodFeedbackCount: 0,
+    badFeedbackCount: 0,
+    prDiscardFeedbackCount: 0,
+    autoAppliedEffectsCount: 0,
+    queuedEffectsCount: 0,
+    degradedDecisionsCount: 0,
+    requiredZeroEvidenceCount: 0,
+    ghAvailable: true,
+    nextActions: [],
+  },
   agentLogSync: {
     codex: {
       sessionDir: "/tmp/codex",

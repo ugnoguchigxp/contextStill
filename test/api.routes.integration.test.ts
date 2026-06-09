@@ -146,6 +146,56 @@ describeDb("api route integration", () => {
     }
   });
 
+  test("POST /api/context-decisions persists decision detail and Good feedback", async () => {
+    await upsertKnowledgeFromSource({
+      sourceUri: "file:///integration/context-decision.md",
+      type: "procedure",
+      status: "active",
+      scope: "repo",
+      title: "Context decision integration evidence",
+      body: "context decision integration token should continue autonomously before asking user",
+    });
+
+    const createResponse = await app.request("/api/context-decisions", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        taskGoal: "context decision integration token",
+        decisionPoint: "continue autonomously before asking user",
+        proposedAction: "continue with implementation",
+        knowledgePolicy: "required",
+        verificationPlan: "run targeted tests",
+      }),
+    });
+    expect(createResponse.status).toBe(200);
+    const createJson = (await createResponse.json()) as { decisionId: string; confidence: number };
+    expect(createJson.decisionId).toBeTruthy();
+    expect(createJson.confidence).toBeGreaterThan(0);
+
+    const detailResponse = await app.request(`/api/context-decisions/${createJson.decisionId}`);
+    expect(detailResponse.status).toBe(200);
+    const detailJson = (await detailResponse.json()) as {
+      detail: { evidence: unknown[]; coverage: unknown[] };
+    };
+    expect(detailJson.detail.evidence.length).toBeGreaterThan(0);
+    expect(detailJson.detail.coverage.length).toBeGreaterThan(0);
+
+    const feedbackResponse = await app.request(
+      `/api/context-decisions/${createJson.decisionId}/human-feedback`,
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ value: "good" }),
+      },
+    );
+    expect(feedbackResponse.status).toBe(200);
+    const feedbackJson = (await feedbackResponse.json()) as {
+      detail: { run: { humanFeedback: string | null }; effects: unknown[] } | null;
+    };
+    expect(feedbackJson.detail?.run.humanFeedback).toBe("good");
+    expect(feedbackJson.detail?.effects.length).toBeGreaterThan(0);
+  }, 15000);
+
   test("POST /api/vibe-memory persists memory and GET /api/vibe-memory lists it", async () => {
     const createResponse = await app.request("/api/vibe-memory", {
       method: "POST",

@@ -8,6 +8,7 @@ import { adminApiKeyAuth } from "./middleware/admin-auth.js";
 import { agentDiffsRouter } from "./modules/agent-diffs/agent-diffs.routes.js";
 import { auditLogsRouter } from "./modules/audit/audit.routes.js";
 import { candidatesRouter } from "./modules/candidates/candidates.routes.js";
+import { contextDecisionRouter } from "./modules/context-decision/context-decision.routes.js";
 import { contextCompilerRouter } from "./modules/context-compiler/context-compiler.routes.js";
 import { doctorRouter } from "./modules/doctor/doctor.routes.js";
 import { graphRouter } from "./modules/graph/graph.routes.js";
@@ -37,6 +38,7 @@ app.get("/api/health/ready", (c) =>
 );
 app.get("/api/health", (c) => c.json({ status: "ok", service: projectIdentity.apiServiceName }));
 app.route("/api/context", contextCompilerRouter);
+app.route("/api/context-decisions", contextDecisionRouter);
 app.route("/api/doctor", doctorRouter);
 app.route("/api/knowledge", knowledgeRouter);
 app.route("/api/sources", sourcesRouter);

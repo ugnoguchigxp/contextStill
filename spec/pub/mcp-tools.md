@@ -13,6 +13,8 @@ initial_instructions -> context_compile -> work -> compile_eval -> register_cand
 | `initial_instructions` | Load operating rules and hook guidance once per project session |
 | `context_compile` | Compile task-specific context before work |
 | `compile_eval` | Record post-task usefulness of compiled context |
+| `context_decision` | Decide execute/revise/reject/rollback/discard/escalate from Knowledge evidence before asking the user |
+| `context_decision_feedback` | Record Good/Bad or system/AI outcome feedback for a decision |
 | `search_knowledge` | Inspect raw knowledge candidates and retrieval behavior |
 | `register_candidate` | Register one reusable rule/procedure candidate |
 | `register_candidates` | Register multiple candidates in one call |
@@ -30,10 +32,12 @@ Deprecated hidden aliases remain for compatibility but are not listed:
 
 1. Call `initial_instructions` once when starting work in this project.
 2. Call `context_compile` with the actual task goal.
-3. Do the work and verify changes.
-4. Call `compile_eval` for the compile run used during the task.
-5. Call `register_candidate` or `register_candidates` for durable lessons discovered during the task.
-6. Call `doctor` if compile output is weak, stale, degraded, or failed.
+3. Call `context_decision` before asking the user when autonomous progress might still be possible.
+4. Do the work and verify changes.
+5. Call `context_decision_feedback` when Good/Bad or system outcome feedback is available.
+6. Call `compile_eval` for the compile run used during the task.
+7. Call `register_candidate` or `register_candidates` for durable lessons discovered during the task.
+8. Call `doctor` if compile output is weak, stale, degraded, or failed.
 
 ## Tool Contracts
 
@@ -91,6 +95,45 @@ Input:
 | `title` | no | Short label for the evaluation. |
 
 Use after completing the task that used `context_compile`.
+
+### `context_decision`
+
+Purpose: Make an autonomous decision from Knowledge evidence before asking the user.
+
+Input:
+
+| Field | Required | Description |
+|---|---:|---|
+| `taskGoal` | yes | Current task goal. |
+| `decisionPoint` | yes | The decision that would otherwise block progress or ask the user. |
+| `proposedAction` | no | Preferred next action if known. |
+| `options` | no | Candidate actions. |
+| `autonomyLevel` | no | `low`, `medium`, or `high`; default `high`. |
+| `riskBudget` | no | `low`, `medium`, or `high`; default `medium`. |
+| `availableRollback` | no | Rollback/undo path. |
+| `verificationPlan` | no | Planned verification before/after action. |
+| `knowledgePolicy` | no | `optional` or `required`; required decisions degrade without support evidence. |
+| `sessionId` | no | External session/thread identifier. |
+| `metadata` | no | Optional branch, PR, Todo, task, or caller metadata. |
+
+Output includes `decisionId`, decision, selected/rejected actions, mandate, confidence, evidence, coverage summary, and feedback handle.
+
+### `context_decision_feedback`
+
+Purpose: Feed Good/Bad or system/AI outcome feedback back into the decision record and effects table.
+
+Input:
+
+| Field | Required | Description |
+|---|---:|---|
+| `decisionId` | yes | ID returned by `context_decision`. |
+| `source` | yes | `human`, `ai`, or `system`. |
+| `value` | conditional | Human `good` or `bad`. |
+| `outcome` | conditional | AI/system outcome such as `success`, `failed`, or `discarded_pr`. |
+| `reason` | no | Short inferred reason. |
+| `metadata` | no | Optional trace data. |
+
+Human feedback is intentionally Good/Bad only.
 
 ### `search_knowledge`
 

@@ -54,8 +54,11 @@ export function applicabilityBlankResponseReminderLines(
 ): string[] {
   return [
     "直前の応答は空でした。",
-    `ラベル付きテキストで返してください: STATUS / STAGE / TYPE / TITLE / BODY / IMPORTANCE / CONFIDENCE / TECHNOLOGIES / CHANGE_TYPES / DOMAINS / REASON（STATUS は ${statuses}、STAGE は ${stage}）。`,
-    "TYPE / TITLE / BODY の見出しだけで終わらせず、値まで埋めてください。",
+    "出力はこの形だけです。",
+    "1行目: タイトル",
+    "2行目から最終行の前まで: 本文",
+    `最終行: TYPE / rule|procedure / STATUS / ${statuses} / STAGE / ${stage} / IMPORTANCE / 0-100 / CONFIDENCE / 0-100 / TECHNOLOGIES / ... / CHANGE_TYPES / ... / DOMAINS / ... / REASON / ...`,
+    "本文では空白や / を自由に使ってください。/ 区切りとして読むのは最終行だけです。",
   ];
 }
 
@@ -117,13 +120,17 @@ export function externalEvidenceFinalSystemPrompt(): string {
     "source evidence と fetch_content evidence から、coverEvidence の最終判定を返してください。",
     "source evidence は候補の直接根拠です。fetch_content evidence は公開Webの補助根拠です。",
     "内部実装、repo運用、coding agent 作業手順は公開Webだけでは直接検証できない場合があります。その場合、source evidence が十分なら knowledge_ready にしてください。",
-    "knowledge_ready の TITLE/BODY は、汎用的に使える知識として体裁を整えてください。",
+    "knowledge_ready のタイトルと本文は、汎用的に使える知識として体裁を整えてください。",
     "search snippet は根拠にしないでください。",
     "最終判定はJSONではなくラベル形式だけで返してください。",
-    "ラベル: STATUS / STAGE / TYPE / TITLE / BODY / IMPORTANCE / CONFIDENCE / TECHNOLOGIES / CHANGE_TYPES / DOMAINS / REASON",
+    "出力はこの形だけです。",
+    "1行目: タイトル",
+    "2行目から最終行の前まで: 本文",
+    "最終行: TYPE / rule|procedure / STATUS / knowledge_ready|insufficient|duplicate|near_duplicate / STAGE / web / IMPORTANCE / 0-100 / CONFIDENCE / 0-100 / TECHNOLOGIES / ... / CHANGE_TYPES / ... / DOMAINS / ... / REASON / ...",
+    "本文では空白や / を自由に使ってください。/ 区切りとして読むのは最終行だけです。",
     "STATUS は knowledge_ready|insufficient|duplicate|near_duplicate のいずれかです。STAGE は web 固定です。",
     "TYPE は rule|procedure の小文字だけです。",
-    "insufficient の場合は STATUS / STAGE / REASON だけでも構いません。",
+    "insufficient の場合も同じ形式で返し、本文が不要なら短い理由を書いてください。",
     "IMPORTANCE と CONFIDENCE は 0 から 100 目安の数値です。",
     ...procedureBodyInstructions(),
     ...applicabilityInstructions(),
