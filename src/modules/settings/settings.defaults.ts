@@ -623,7 +623,10 @@ function sanitizeRoute(
     model,
     localLlmModel:
       route.provider === "local-llm" || route.fallback.includes("local-llm")
-        ? (configuredLocalLlmModel ?? (route.provider === "local-llm" ? model : undefined))
+        ? (configuredLocalLlmModel ??
+          (route.provider === "local-llm"
+            ? model
+            : resolveConfiguredRouteModel(settings, "local-llm")))
         : undefined,
     fallback: normalizeProviderList(route.fallback),
     azureDeploymentSlots: normalizeAzureDeploymentSlots(route.azureDeploymentSlots),

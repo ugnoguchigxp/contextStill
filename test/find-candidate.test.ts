@@ -135,6 +135,10 @@ describe("runFindCandidate", () => {
             content: expect.stringContaining("汎用的に使える知識として体裁を整える"),
           }),
           expect.objectContaining({
+            role: "system",
+            content: expect.stringContaining("Use when: / Workflow: / Verification: / Avoid:"),
+          }),
+          expect.objectContaining({
             role: "user",
             content: expect.stringContaining("まず tool で本文を読んでください"),
           }),

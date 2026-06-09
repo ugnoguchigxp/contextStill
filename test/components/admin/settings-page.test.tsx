@@ -482,6 +482,31 @@ describe("SettingsPage", () => {
     expect(payload.settings.taskRouting.coverEvidence.mcpEvidence).toEqual(route);
   });
 
+  it("saves the Local LLM API selected for Agentic Compile fallback", async () => {
+    routerState.pathname = "/setting/taskrouting";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
+
+    const agenticRow = screen.getByText("agenticCompile").closest(".settings-route-row");
+    expect(agenticRow).not.toBeNull();
+    const rowScope = within(agenticRow as HTMLElement);
+    expect(rowScope.getByLabelText("Local LLM API")).toBeInTheDocument();
+    fireEvent.change(rowScope.getByLabelText("Local LLM API"), {
+      target: { value: "qwen-3.6-14b-it" },
+    });
+
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    expect(payload.settings.taskRouting.agenticCompile).toMatchObject({
+      provider: "openai",
+      model: "gpt-5-4-mini",
+      localLlmModel: "qwen-3.6-14b-it",
+      fallback: ["local-llm"],
+    });
+  });
+
   it("calls provider health test for selected provider card", async () => {
     routerState.pathname = "/setting/llmprovider";
     renderPage();

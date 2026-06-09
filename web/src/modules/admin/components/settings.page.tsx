@@ -692,9 +692,10 @@ function RouteEditor({
               onChange({
                 ...route,
                 fallback,
-                localLlmModel: fallback.includes("local-llm")
-                  ? (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings))
-                  : undefined,
+                localLlmModel:
+                  route.provider === "local-llm" || fallback.includes("local-llm")
+                    ? (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings))
+                    : undefined,
               });
             }}
           >
@@ -719,9 +720,10 @@ function RouteEditor({
               onChange({
                 ...route,
                 fallback,
-                localLlmModel: fallback.includes("local-llm")
-                  ? (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings))
-                  : undefined,
+                localLlmModel:
+                  route.provider === "local-llm" || fallback.includes("local-llm")
+                    ? (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings))
+                    : undefined,
               });
             }}
           >
@@ -2886,10 +2888,12 @@ export function SettingsPage() {
                                     agenticCompile: {
                                       ...current.taskRouting.agenticCompile,
                                       fallback,
-                                      localLlmModel: fallback.includes("local-llm")
-                                        ? (current.taskRouting.agenticCompile.localLlmModel ??
-                                          resolveConfiguredLocalLlmModel(current))
-                                        : undefined,
+                                      localLlmModel:
+                                        current.taskRouting.agenticCompile.provider ===
+                                          "local-llm" || fallback.includes("local-llm")
+                                          ? (current.taskRouting.agenticCompile.localLlmModel ??
+                                            resolveConfiguredLocalLlmModel(current))
+                                          : undefined,
                                     },
                                   },
                                 };
@@ -2922,10 +2926,12 @@ export function SettingsPage() {
                                     agenticCompile: {
                                       ...current.taskRouting.agenticCompile,
                                       fallback,
-                                      localLlmModel: fallback.includes("local-llm")
-                                        ? (current.taskRouting.agenticCompile.localLlmModel ??
-                                          resolveConfiguredLocalLlmModel(current))
-                                        : undefined,
+                                      localLlmModel:
+                                        current.taskRouting.agenticCompile.provider ===
+                                          "local-llm" || fallback.includes("local-llm")
+                                          ? (current.taskRouting.agenticCompile.localLlmModel ??
+                                            resolveConfiguredLocalLlmModel(current))
+                                          : undefined,
                                     },
                                   },
                                 };
