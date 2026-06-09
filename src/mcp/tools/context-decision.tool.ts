@@ -9,24 +9,24 @@ export const contextDecisionTool: ToolEntry = {
   inputSchema: {
     type: "object",
     properties: {
-      taskGoal: { type: "string" },
       decisionPoint: { type: "string" },
-      proposedAction: { type: "string" },
-      options: { type: "array", items: { type: "string" } },
-      autonomyLevel: { type: "string", enum: ["low", "medium", "high"] },
-      riskBudget: { type: "string", enum: ["low", "medium", "high"] },
-      availableRollback: { type: "string" },
-      verificationPlan: { type: "string" },
-      knowledgePolicy: { type: "string", enum: ["optional", "required"] },
+      retrievalHints: {
+        type: "object",
+        properties: {
+          technologies: { type: "array", items: { type: "string" } },
+          changeTypes: { type: "array", items: { type: "string" } },
+          domains: { type: "array", items: { type: "string" } },
+        },
+      },
       sessionId: { type: "string" },
       metadata: { type: "object" },
     },
-    required: ["taskGoal", "decisionPoint"],
+    required: ["decisionPoint"],
   },
   handler: async (args) => {
     const result = await decideContext(args ?? {});
     return {
-      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
+      content: [{ type: "text", text: JSON.stringify(result) }],
     };
   },
 };

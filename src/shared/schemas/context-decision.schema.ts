@@ -39,16 +39,17 @@ export const contextDecisionFeedbackEffectStatusSchema = z.enum([
   "skipped",
 ]);
 
+export const contextDecisionRetrievalHintsSchema = z
+  .object({
+    technologies: z.array(z.string()).default([]),
+    changeTypes: z.array(z.string()).default([]),
+    domains: z.array(z.string()).default([]),
+  })
+  .default({});
+
 export const contextDecisionInputSchema = z.object({
-  taskGoal: z.string().min(1),
   decisionPoint: z.string().min(1),
-  proposedAction: z.string().optional(),
-  options: z.array(z.string()).default([]),
-  autonomyLevel: z.enum(["low", "medium", "high"]).default("high"),
-  riskBudget: z.enum(["low", "medium", "high"]).default("medium"),
-  availableRollback: z.string().optional(),
-  verificationPlan: z.string().optional(),
-  knowledgePolicy: z.enum(["optional", "required"]).default("optional"),
+  retrievalHints: contextDecisionRetrievalHintsSchema,
   sessionId: z.string().optional(),
   metadata: z.record(z.unknown()).default({}),
 });
@@ -114,6 +115,7 @@ export type ContextDecisionEffect = z.infer<typeof contextDecisionEffectSchema>;
 export type ContextDecisionFeedbackEffectStatus = z.infer<
   typeof contextDecisionFeedbackEffectStatusSchema
 >;
+export type ContextDecisionRetrievalHints = z.infer<typeof contextDecisionRetrievalHintsSchema>;
 
 export type ContextDecisionConfidenceTrace = {
   supportScore: number;
@@ -194,9 +196,7 @@ export type ContextDecisionFeedbackEffect = {
 export type ContextDecisionRunSummary = {
   id: string;
   sessionId: string | null;
-  taskGoal: string;
   decisionPoint: string;
-  proposedAction: string | null;
   decision: ContextDecisionValue;
   selectedAction: string | null;
   mandate: string;
@@ -209,15 +209,10 @@ export type ContextDecisionRunSummary = {
 
 export type ContextDecisionRunDetail = {
   run: ContextDecisionRunSummary & {
-    options: string[];
     rejectedActions: string[];
+    retrievalHints: ContextDecisionRetrievalHints;
     agentMessage: string;
     confidenceTrace: ContextDecisionConfidenceTrace;
-    autonomyLevel: "low" | "medium" | "high";
-    riskBudget: "low" | "medium" | "high";
-    knowledgePolicy: "optional" | "required";
-    availableRollback: string | null;
-    verificationPlan: string | null;
     guardrails: Record<string, unknown>;
     unsupportedAlternatives: Array<Record<string, unknown>>;
     metadata: Record<string, unknown>;
@@ -231,14 +226,9 @@ export type ContextDecisionRunDetail = {
 export type ContextDecisionResult = {
   decisionId: string;
   decision: ContextDecisionValue;
-  selected: string | null;
-  rejected: string[];
   mandate: string;
   confidence: number;
   agentMessage: string;
-  guardrails: Record<string, unknown>;
-  evidence: ContextDecisionEvidence[];
-  unsupportedAlternatives: Array<Record<string, unknown>>;
   feedbackHandle: {
     decisionId: string;
     tool: "context_decision_feedback";

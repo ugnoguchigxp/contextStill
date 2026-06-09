@@ -1,9 +1,6 @@
 import { describe, expect, test } from "vitest";
 import type { KnowledgeSearchResult } from "../src/modules/knowledge/knowledge.repository.js";
-import {
-  resolveContextDecisionOutcome,
-  scoreContextDecision,
-} from "../src/modules/context-decision/context-decision.scoring.js";
+import { scoreContextDecision } from "../src/modules/context-decision/context-decision.scoring.js";
 
 function knowledge(overrides: Partial<KnowledgeSearchResult> = {}): KnowledgeSearchResult {
   return {
@@ -36,17 +33,13 @@ function knowledge(overrides: Partial<KnowledgeSearchResult> = {}): KnowledgeSea
 }
 
 const baseInput = {
-  taskGoal: "finish implementation",
   decisionPoint: "continue or ask user",
-  options: [],
-  autonomyLevel: "high" as const,
-  riskBudget: "medium" as const,
-  knowledgePolicy: "required" as const,
+  retrievalHints: { technologies: ["typescript"], changeTypes: [], domains: [] },
   metadata: {},
 };
 
 describe("context decision scoring", () => {
-  test("required Knowledge with no selected support degrades to zero confidence", () => {
+  test("no selected support degrades the decision without forcing zero confidence", () => {
     const result = scoreContextDecision({
       input: baseInput,
       evidence: [],
@@ -55,8 +48,8 @@ describe("context decision scoring", () => {
     });
 
     expect(result.status).toBe("degraded");
-    expect(result.confidence).toBe(0);
-    expect(result.trace.forcedRules).toContain("knowledge_required_without_selected_support");
+    expect(result.confidence).toBeGreaterThan(0);
+    expect(result.trace.forcedRules).toContain("no_selected_support_evidence");
   });
 
   test("missing counter evidence coverage does not raise confidence by itself", () => {
@@ -89,34 +82,5 @@ describe("context decision scoring", () => {
     });
 
     expect(withBad.confidence).toBeLessThan(withoutBad.confidence);
-  });
-
-  test("option selection without proposed action is execute, not revise", () => {
-    const result = resolveContextDecisionOutcome({
-      input: {
-        ...baseInput,
-        knowledgePolicy: "optional",
-        options: ["run the focused verification"],
-      },
-      selectedAction: "run the focused verification",
-      confidence: 65,
-    });
-
-    expect(result).toBe("execute");
-  });
-
-  test("option selection that changes a proposed action is revise_and_execute", () => {
-    const result = resolveContextDecisionOutcome({
-      input: {
-        ...baseInput,
-        knowledgePolicy: "optional",
-        proposedAction: "ask the user",
-        options: ["continue implementation"],
-      },
-      selectedAction: "continue implementation",
-      confidence: 65,
-    });
-
-    expect(result).toBe("revise_and_execute");
   });
 });

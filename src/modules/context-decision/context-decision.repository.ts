@@ -22,6 +22,7 @@ import type {
   ContextDecisionHumanFeedbackValue,
   ContextDecisionInput,
   ContextDecisionListQuery,
+  ContextDecisionRetrievalHints,
   ContextDecisionRunDetail,
   ContextDecisionRunSummary,
   ContextDecisionStatus,
@@ -47,6 +48,15 @@ function asObjectArray(value: unknown): Array<Record<string, unknown>> {
           item !== null && typeof item === "object" && !Array.isArray(item),
       )
     : [];
+}
+
+function normalizeRetrievalHints(value: unknown): ContextDecisionRetrievalHints {
+  const record = asRecord(value);
+  return {
+    technologies: asStringArray(record.technologies),
+    changeTypes: asStringArray(record.changeTypes),
+    domains: asStringArray(record.domains),
+  };
 }
 
 function toIso(value: Date | string | null): string {
@@ -100,10 +110,11 @@ export async function insertContextDecisionRun(params: {
     .insert(contextDecisionRuns)
     .values({
       sessionId: params.input.sessionId ?? null,
-      taskGoal: params.input.taskGoal,
+      premise: null,
       decisionPoint: params.input.decisionPoint,
-      proposedAction: params.input.proposedAction ?? null,
-      options: params.input.options,
+      proposedAction: null,
+      options: [],
+      retrievalHints: params.input.retrievalHints,
       decision: params.decision,
       selectedAction: params.selectedAction,
       rejectedActions: params.rejectedActions,
@@ -111,11 +122,11 @@ export async function insertContextDecisionRun(params: {
       agentMessage: params.agentMessage,
       confidence: params.confidence,
       confidenceTrace: params.confidenceTrace,
-      autonomyLevel: params.input.autonomyLevel,
-      riskBudget: params.input.riskBudget,
-      knowledgePolicy: params.input.knowledgePolicy,
-      availableRollback: params.input.availableRollback ?? null,
-      verificationPlan: params.input.verificationPlan ?? null,
+      autonomyLevel: "high",
+      riskBudget: "medium",
+      knowledgePolicy: "optional",
+      availableRollback: null,
+      verificationPlan: null,
       guardrails: params.guardrails,
       unsupportedAlternatives: params.unsupportedAlternatives,
       status: params.status,
@@ -207,9 +218,7 @@ function mapRunSummary(
   return {
     id: row.id,
     sessionId: row.sessionId,
-    taskGoal: row.taskGoal,
     decisionPoint: row.decisionPoint,
-    proposedAction: row.proposedAction,
     decision: normalizeDecision(row.decision),
     selectedAction: row.selectedAction,
     mandate: row.mandate,
@@ -233,9 +242,7 @@ export async function listContextDecisionRuns(
   if (query.q?.trim()) {
     const term = `%${query.q.trim()}%`;
     const textCondition = or(
-      ilike(contextDecisionRuns.taskGoal, term),
       ilike(contextDecisionRuns.decisionPoint, term),
-      ilike(contextDecisionRuns.proposedAction, term),
       ilike(contextDecisionRuns.agentMessage, term),
     );
     if (textCondition) conditions.push(textCondition);
@@ -250,10 +257,11 @@ export async function listContextDecisionRuns(
     .select({
       id: contextDecisionRuns.id,
       sessionId: contextDecisionRuns.sessionId,
-      taskGoal: contextDecisionRuns.taskGoal,
+      premise: contextDecisionRuns.premise,
       decisionPoint: contextDecisionRuns.decisionPoint,
       proposedAction: contextDecisionRuns.proposedAction,
       options: contextDecisionRuns.options,
+      retrievalHints: contextDecisionRuns.retrievalHints,
       decision: contextDecisionRuns.decision,
       selectedAction: contextDecisionRuns.selectedAction,
       rejectedActions: contextDecisionRuns.rejectedActions,
@@ -284,11 +292,6 @@ export async function listContextDecisionRuns(
     .limit(query.limit);
 
   return rows.map((row) => mapRunSummary(row));
-}
-
-function normalizeAutonomy(value: string): "low" | "medium" | "high" {
-  if (value === "low" || value === "medium" || value === "high") return value;
-  return "high";
 }
 
 export async function getContextDecisionDetail(
@@ -331,17 +334,12 @@ export async function getContextDecisionDetail(
   return {
     run: {
       ...mapRunSummary({ ...row, humanFeedbackValue: humanFeedback }),
-      options: asStringArray(row.options),
       rejectedActions: asStringArray(row.rejectedActions),
+      retrievalHints: normalizeRetrievalHints(row.retrievalHints),
       agentMessage: row.agentMessage,
       confidenceTrace: asRecord(
         row.confidenceTrace,
       ) as ContextDecisionRunDetail["run"]["confidenceTrace"],
-      autonomyLevel: normalizeAutonomy(row.autonomyLevel),
-      riskBudget: normalizeAutonomy(row.riskBudget),
-      knowledgePolicy: row.knowledgePolicy === "required" ? "required" : "optional",
-      availableRollback: row.availableRollback,
-      verificationPlan: row.verificationPlan,
       guardrails: asRecord(row.guardrails),
       unsupportedAlternatives: asObjectArray(row.unsupportedAlternatives),
       metadata: asRecord(row.metadata),

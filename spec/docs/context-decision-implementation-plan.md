@@ -53,10 +53,8 @@ Core columns:
 
 - `id uuid primary key default gen_random_uuid()`
 - `session_id text`
-- `task_goal text not null`
 - `decision_point text not null`
-- `proposed_action text`
-- `options jsonb not null default '[]'`
+- `retrieval_hints jsonb not null default '{}'`
 - `decision text not null`
 - `selected_action text`
 - `rejected_actions jsonb not null default '[]'`
@@ -75,6 +73,8 @@ Core columns:
 - `metadata jsonb not null default '{}'`
 - `created_at timestamptz not null default now()`
 - `updated_at timestamptz not null default now()`
+
+Compatibility/history columns may remain for previously recorded runs, but they are not part of the MVP MCP/API input contract.
 
 Checks:
 
@@ -279,7 +279,7 @@ Files:
 `context-decision.scoring.ts`:
 
 - Compute score from Knowledge evidence.
-- Do not make a decision without Knowledge evidence when `knowledgePolicy=required`.
+- Degrade decisions without selected Knowledge evidence.
 - Treat `missing_counter_evidence` as neutral unless coverage requirements are met.
 - Keep `risk_warning` separate from simple negative scoring.
 - Produce `confidence_trace`.
@@ -322,7 +322,7 @@ Initial scoring features:
 - related decision outcome history
 - counter-evidence strength
 - coverage quality
-- rollback / verification availability
+- coverage quality
 
 Output:
 
@@ -342,7 +342,7 @@ type ContextDecisionConfidenceTrace = {
 
 Rules:
 
-- `knowledgePolicy=required` + selected support evidence 0 -> `confidence=0`, status `degraded`.
+- selected support evidence 0 -> status `degraded`.
 - `missing_counter_evidence` alone never raises confidence.
 - If coverage is weak, unsupported alternatives remain unsupported but do not strengthen confidence.
 - Human Bad outcome history should lower confidence for the same evidence / decision type.
@@ -358,7 +358,7 @@ bunx vitest run test/context-decision.service.test.ts test/context-decision.scor
 Expected:
 
 - v1 scoring uses Knowledge evidence rows.
-- `knowledgePolicy=required` with no evidence returns degraded.
+- no evidence returns degraded.
 - `missing_counter_evidence` is neutral without coverage trace.
 - Human Bad is reflected in subsequent scoring.
 - Risk warnings do not always reduce confidence when they become guardrails.
@@ -376,31 +376,22 @@ Add tools under `src/mcp/tools/`.
 
 Input:
 
-- `taskGoal`
 - `decisionPoint`
-- `proposedAction`
-- `options`
-- `autonomyLevel`
-- `riskBudget`
-- `availableRollback`
-- `verificationPlan`
-- `knowledgePolicy`
+- `retrievalHints`
 - optional `sessionId`
 - optional `metadata`
 
 Output:
 
+- `decisionId`
 - `decision`
-- `selected`
-- `rejected`
 - `mandate`
 - `confidence`
 - `agentMessage`
-- `guardrails`
-- `evidence`
-- `unsupportedAlternatives`
 - `feedbackHandle`
 - `coverageSummary`
+
+The MCP response must stay compact enough for an 8k token response budget. Evidence bodies, source refs, guardrails, and unsupported alternatives remain persisted for audit/detail inspection, but are not returned by the MCP tool result.
 
 Tool description must tell the LLM:
 
@@ -724,14 +715,10 @@ NightWorkers should call `context_decision`:
 
 NightWorkers should pass:
 
-- task goal
+- task context
 - decision point
-- proposed action
-- options if known
 - Todo / status context
 - blocker summary
-- verification plan
-- rollback availability
 - PR / branch / commit metadata if available
 - autonomy level, default high
 - risk budget

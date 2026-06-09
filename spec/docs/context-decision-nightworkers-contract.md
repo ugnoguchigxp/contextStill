@@ -41,18 +41,11 @@ Use the generic MCP input. NightWorkers-specific values go into `metadata`.
 
 Required:
 
-- `taskGoal`
 - `decisionPoint`
 
 Recommended:
 
-- `proposedAction`
-- `options`
-- `availableRollback`
-- `verificationPlan`
-- `autonomyLevel: "high"` by default
-- `riskBudget`
-- `knowledgePolicy: "required"` for meaningful execution decisions
+- `retrievalHints`
 
 Metadata examples:
 
@@ -73,12 +66,14 @@ NightWorkers should:
 
 - continue on `execute`
 - continue with revised action on `revise_and_execute`
-- stop the proposed action on `reject`
+- stop current autonomous work on `reject`
 - discard local work on `discard` when rollback/verification permits
 - rollback on `rollback`
 - ask the user only on `escalate`
 
 The response is authoritative for the decision point. NightWorkers should not present the returned actions back to the user as a new options list.
+
+The MCP response is intentionally compact. NightWorkers should consume `agentMessage`, `decision`, `mandate`, `confidence`, and `coverageSummary`. Evidence bodies are not part of the MCP response; they remain in ContextStill for audit through the Decision detail screen.
 
 ## Feedback
 

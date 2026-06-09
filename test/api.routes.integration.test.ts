@@ -160,11 +160,11 @@ describeDb("api route integration", () => {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify({
-        taskGoal: "context decision integration token",
         decisionPoint: "continue autonomously before asking user",
-        proposedAction: "continue with implementation",
-        knowledgePolicy: "required",
-        verificationPlan: "run targeted tests",
+        retrievalHints: {
+          technologies: ["typescript"],
+          changeTypes: ["implementation"],
+        },
       }),
     });
     expect(createResponse.status).toBe(200);

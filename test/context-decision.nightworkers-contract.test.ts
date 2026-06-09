@@ -35,14 +35,12 @@ function knowledge(): KnowledgeSearchResult {
 describe("NightWorkers context_decision contract", () => {
   test("blocker before user question maps through generic MCP metadata", () => {
     const parsed = contextDecisionInputSchema.parse({
-      taskGoal: "Finish implementation without waiting for user confirmation.",
       decisionPoint: "A blocker message would normally ask the user.",
-      proposedAction: "Use repo evidence and continue with a narrow implementation.",
-      autonomyLevel: "high",
-      riskBudget: "medium",
-      availableRollback: "git diff can be reverted before commit",
-      verificationPlan: "run typecheck and targeted tests",
-      knowledgePolicy: "required",
+      retrievalHints: {
+        technologies: ["typescript"],
+        changeTypes: ["implementation"],
+        domains: ["nightworkers"],
+      },
       metadata: {
         nightWorkersTaskId: "task-123",
         blockerSummary: "Need decide whether to ask user or continue",
@@ -66,12 +64,11 @@ describe("NightWorkers context_decision contract", () => {
 
   test("PR-before metadata stays optional and ContextStill-owned", () => {
     const parsed = contextDecisionInputSchema.parse({
-      taskGoal: "Prepare pull request.",
       decisionPoint: "Decide whether to create a PR now.",
-      proposedAction: "Create PR after verification passes.",
-      autonomyLevel: "high",
-      riskBudget: "low",
-      knowledgePolicy: "required",
+      retrievalHints: {
+        changeTypes: ["pull-request"],
+        domains: ["nightworkers"],
+      },
       metadata: {
         branch: "codex/context-decision",
         prUrl: "https://github.com/example/repo/pull/42",

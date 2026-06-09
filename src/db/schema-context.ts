@@ -396,10 +396,11 @@ export const contextDecisionRuns = pgTable(
   {
     id: uuid("id").primaryKey().defaultRandom(),
     sessionId: text("session_id"),
-    taskGoal: text("task_goal").notNull(),
+    premise: text("premise"),
     decisionPoint: text("decision_point").notNull(),
     proposedAction: text("proposed_action"),
     options: jsonb("options").notNull().default([]),
+    retrievalHints: jsonb("retrieval_hints").notNull().default({}),
     decision: text("decision").notNull(),
     selectedAction: text("selected_action"),
     rejectedActions: jsonb("rejected_actions").notNull().default([]),
@@ -462,6 +463,10 @@ export const contextDecisionRuns = pgTable(
     optionsArrayCheck: check(
       "context_decision_runs_options_array_check",
       sql`jsonb_typeof(${table.options}) = 'array'`,
+    ),
+    retrievalHintsObjectCheck: check(
+      "context_decision_runs_retrieval_hints_object_check",
+      sql`jsonb_typeof(${table.retrievalHints}) = 'object'`,
     ),
     rejectedActionsArrayCheck: check(
       "context_decision_runs_rejected_actions_array_check",

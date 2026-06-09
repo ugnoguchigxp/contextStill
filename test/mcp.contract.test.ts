@@ -60,18 +60,26 @@ describeDb("mcp contract", () => {
   test("context_decision tool input schema contract", () => {
     expect(contextDecisionTool.inputSchema).toMatchObject({
       type: "object",
-      required: ["taskGoal", "decisionPoint"],
+      required: ["decisionPoint"],
     });
     const properties = (contextDecisionTool.inputSchema as { properties?: Record<string, unknown> })
       .properties;
-    expect(properties?.knowledgePolicy).toEqual({
-      type: "string",
-      enum: ["optional", "required"],
+    expect(properties?.retrievalHints).toMatchObject({
+      type: "object",
+      properties: {
+        technologies: { type: "array", items: { type: "string" } },
+        changeTypes: { type: "array", items: { type: "string" } },
+        domains: { type: "array", items: { type: "string" } },
+      },
     });
-    expect(properties?.autonomyLevel).toEqual({
-      type: "string",
-      enum: ["low", "medium", "high"],
-    });
+    expect(properties).not.toHaveProperty("premise");
+    expect(properties).not.toHaveProperty("proposedAction");
+    expect(properties).not.toHaveProperty("options");
+    expect(properties).not.toHaveProperty("knowledgePolicy");
+    expect(properties).not.toHaveProperty("autonomyLevel");
+    expect(properties).not.toHaveProperty("riskBudget");
+    expect(properties).not.toHaveProperty("availableRollback");
+    expect(properties).not.toHaveProperty("verificationPlan");
   });
 
   test("context_decision_feedback tool input schema contract", () => {

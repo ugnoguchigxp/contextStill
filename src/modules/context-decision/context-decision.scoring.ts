@@ -59,27 +59,9 @@ export function scoreContextDecision(params: {
       counterCoverage.length > 0 ? 70 : 30,
     ]),
   );
-  const verificationScore = clamp(
-    (params.input.verificationPlan ? 42 : 0) + (params.input.availableRollback ? 28 : 0) + 20,
-  );
+  const verificationScore = 50;
   const historicalFeedbackScore = clamp(50 - params.relatedBadSignalCount * 12);
   const forcedRules: string[] = [];
-
-  if (params.input.knowledgePolicy === "required" && selectedSupport.length === 0) {
-    forcedRules.push("knowledge_required_without_selected_support");
-    const trace = {
-      supportScore: 0,
-      counterScore,
-      preferenceScore,
-      riskSignalScore: counterScore,
-      coverageScore,
-      verificationScore,
-      historicalFeedbackScore,
-      finalConfidence: 0,
-      forcedRules,
-    };
-    return { confidence: 0, status: "degraded", trace };
-  }
 
   if (selectedSupport.length === 0) {
     forcedRules.push("no_selected_support_evidence");
@@ -110,22 +92,11 @@ export function scoreContextDecision(params: {
 }
 
 export function resolveContextDecisionOutcome(params: {
-  input: ContextDecisionInput;
   selectedAction: string | null;
   confidence: number;
 }): "execute" | "revise_and_execute" | "escalate" {
-  if (params.confidence === 0 && params.input.knowledgePolicy === "required") {
+  if (params.confidence < 35) {
     return "escalate";
-  }
-  if (params.confidence < 35 && params.input.autonomyLevel === "low") {
-    return "escalate";
-  }
-  if (
-    params.selectedAction &&
-    params.input.proposedAction &&
-    params.selectedAction !== params.input.proposedAction
-  ) {
-    return "revise_and_execute";
   }
   return "execute";
 }

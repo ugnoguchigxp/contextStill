@@ -6,12 +6,38 @@ export type ContextDecisionValue =
   | "discard"
   | "escalate";
 
+export type ContextDecisionRequest = {
+  decisionPoint: string;
+  retrievalHints?: {
+    technologies?: string[];
+    changeTypes?: string[];
+    domains?: string[];
+  };
+  metadata?: Record<string, unknown>;
+};
+
+export type ContextDecisionResult = {
+  decisionId: string;
+  decision: ContextDecisionValue;
+  mandate: string;
+  confidence: number;
+  agentMessage: string;
+  feedbackHandle: {
+    decisionId: string;
+    tool: "context_decision_feedback";
+  };
+  coverageSummary: {
+    queryCount: number;
+    supportHits: number;
+    counterEvidenceHits: number;
+    degraded: boolean;
+  };
+};
+
 export type ContextDecisionRunSummary = {
   id: string;
   sessionId: string | null;
-  taskGoal: string;
   decisionPoint: string;
-  proposedAction: string | null;
   decision: ContextDecisionValue;
   selectedAction: string | null;
   mandate: string;
@@ -41,15 +67,14 @@ export type ContextDecisionEvidence = {
 
 export type ContextDecisionRunDetail = {
   run: ContextDecisionRunSummary & {
-    options: string[];
     rejectedActions: string[];
+    retrievalHints: {
+      technologies: string[];
+      changeTypes: string[];
+      domains: string[];
+    };
     agentMessage: string;
     confidenceTrace: Record<string, unknown>;
-    autonomyLevel: "low" | "medium" | "high";
-    riskBudget: "low" | "medium" | "high";
-    knowledgePolicy: "optional" | "required";
-    availableRollback: string | null;
-    verificationPlan: string | null;
     guardrails: Record<string, unknown>;
     unsupportedAlternatives: Array<Record<string, unknown>>;
     metadata: Record<string, unknown>;
@@ -91,12 +116,28 @@ export type ContextDecisionRunDetail = {
   }>;
 };
 
+export async function createContextDecision(
+  input: ContextDecisionRequest,
+): Promise<ContextDecisionResult> {
+  const response = await fetch("/api/context-decisions", {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify(input),
+  });
+  if (!response.ok) {
+    throw new Error(`Create context decision failed: ${response.status}`);
+  }
+  return (await response.json()) as ContextDecisionResult;
+}
+
 export async function fetchContextDecisionRuns(limit = 30): Promise<ContextDecisionRunSummary[]> {
   const response = await fetch(`/api/context-decisions?limit=${limit}`);
   if (!response.ok) {
     throw new Error(`Fetch context decisions failed: ${response.status}`);
   }
-  const json = (await response.json()) as { decisions: ContextDecisionRunSummary[] };
+  const json = (await response.json()) as {
+    decisions: ContextDecisionRunSummary[];
+  };
   return json.decisions;
 }
 
@@ -126,6 +167,8 @@ export async function submitContextDecisionHumanFeedback(
   if (!response.ok) {
     throw new Error(`Save context decision feedback failed: ${response.status}`);
   }
-  const json = (await response.json()) as { detail: ContextDecisionRunDetail | null };
+  const json = (await response.json()) as {
+    detail: ContextDecisionRunDetail | null;
+  };
   return json.detail;
 }

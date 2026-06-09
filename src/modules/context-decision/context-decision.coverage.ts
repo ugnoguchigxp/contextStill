@@ -13,15 +13,30 @@ function compactText(parts: Array<string | undefined>): string {
     .join(" ");
 }
 
+function hintLine(label: string, values: string[] | undefined): string | undefined {
+  const compacted = (values ?? []).map((value) => value.trim()).filter(Boolean);
+  if (compacted.length === 0) return undefined;
+  return `${label}: ${compacted.join(" ")}`;
+}
+
+function retrievalHintText(input: ContextDecisionInput): string {
+  return compactText([
+    hintLine("technologies", input.retrievalHints.technologies),
+    hintLine("changeTypes", input.retrievalHints.changeTypes),
+    hintLine("domains", input.retrievalHints.domains),
+  ]);
+}
+
 export function buildDecisionCoverageQueries(input: ContextDecisionInput): DecisionCoverageQuery[] {
-  const support = compactText([input.taskGoal, input.decisionPoint, input.proposedAction]);
+  const hints = retrievalHintText(input);
+  const support = compactText([input.decisionPoint, hints]);
   const counter = compactText([
     "avoid rollback discard risk counter evidence",
     input.decisionPoint,
-    input.proposedAction,
+    hints,
   ]);
-  const preference = compactText(["user preference prior decision", input.taskGoal]);
-  const risk = compactText(["risk warning guardrail verification", input.decisionPoint]);
+  const preference = compactText(["user preference prior decision", input.decisionPoint, hints]);
+  const risk = compactText(["risk warning guardrail verification", input.decisionPoint, hints]);
 
   return [
     {

@@ -1,5 +1,7 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
+  type ContextDecisionRequest,
+  createContextDecision,
   fetchContextDecisionDetail,
   fetchContextDecisionRuns,
   submitContextDecisionHumanFeedback,
@@ -17,6 +19,16 @@ export function useContextDecisionDetail(decisionId: string | null) {
     queryKey: ["context-decision-detail", decisionId],
     queryFn: () => fetchContextDecisionDetail(decisionId as string),
     enabled: Boolean(decisionId),
+  });
+}
+
+export function useCreateContextDecisionMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: ContextDecisionRequest) => createContextDecision(input),
+    onSuccess: async () => {
+      await queryClient.invalidateQueries({ queryKey: ["context-decisions"] });
+    },
   });
 }
 
