@@ -2084,6 +2084,7 @@ export type RuntimeSecretStatus = {
 export type RuntimeSettingsRoute = {
   provider: RuntimeProviderSetting;
   model?: string;
+  localLlmModel?: string;
   fallback: RuntimeProviderName[];
   azureDeploymentSlots?: number[];
 };
@@ -2175,6 +2176,7 @@ export type RuntimeSettingsEditable = {
       enabled: boolean;
       provider: RuntimeProviderName;
       model: string;
+      localLlmModel?: string;
       fallback: RuntimeProviderName[];
       azureDeploymentSlots?: number[];
       timeoutMs: number;

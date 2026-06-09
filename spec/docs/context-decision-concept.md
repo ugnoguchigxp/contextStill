@@ -111,7 +111,7 @@ type ContextDecisionResult = {
 };
 ```
 
-MCP response は 8k token 未満を前提に compact に返す。Knowledge evidence の本文や source refs は返却せず、監査ログとして Decision detail 画面 / detail API で追跡する。
+MCP response は 8k token 未満を前提に compact に返す。Knowledge evidence の本文や source refs は返却せず、監査ログとして Decision detail 画面 / detail API で追跡する。ただし `agentMessage` の生成時には、選定された Knowledge の短い本文抜粋を使い、過去傾向・ベストプラクティス・手続き定義に合う理由を説明してよい。
 
 `agentMessage` は LLM が生成し、呼び出し元エージェントがそのまま判断として受け取れる文体にする。
 
@@ -119,7 +119,7 @@ MCP response は 8k token 未満を前提に compact に返す。Knowledge evide
 
 - 結論を先に置く。
 - 「おすすめ」ではなく「判断」として書く。
-- 根拠本文ではなく、coverage / confidence / retrieval hints の要約に基づく。
+- 選定Knowledgeのタイトル・本文抜粋から、過去傾向、best practice、procedure guidance のどれに合っているかを短く説明する。
 - 証跡確認が必要な場合は Decision detail の監査ログに誘導できる粒度に留める。
 
 避ける文体:

@@ -28,6 +28,14 @@ Run commands from the repository root.
 | `bun run backfill:knowledge-origin-links` | Backfill origin trace links |
 | `bun run knowledge:apply-feedback-quality` | Apply feedback-derived quality adjustments |
 
+## Decisions
+
+| Command | Description |
+|---|---|
+| `bun run decision:pr-discard-scan -- --dry-run` | Preview `discarded_pr` feedback for closed PRs linked from Context Decision metadata |
+| `bun run decision:pr-discard-scan -- --apply` | Create `discarded_pr` system feedback and effects for confirmed closed linked PRs |
+| `bun run decision:pr-discard-scan -- --since <iso-date>` | Limit the scan to recent decision runs |
+
 ## Distillation Queue
 
 | Command | Description |
@@ -36,6 +44,7 @@ Run commands from the repository root.
 | `bun run queue:covering:once` | Run one evidence-coverage cycle |
 | `bun run queue:merge-review:once` | Run one DeadZone merge-review cycle |
 | `bun run queue:finalize:once` | Run one finalization cycle |
+| `bun run queue:merge-activation-finalize:once` | Run one merge-activation finalization cycle |
 | `bun run queue:supervisor` | Run the queue supervisor continuously |
 | `bun run queue:migrate:dry-run` | Preview queue migration mapping |
 | `bun run queue:migrate:write` | Write queue migration mapping rows |

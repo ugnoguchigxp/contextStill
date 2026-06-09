@@ -24,6 +24,8 @@ Configuration is environment-variable based. See `.env.example` for the authorit
 | `CONTEXT_STILL_AZURE_OPENAI_*` | Azure OpenAI endpoint, deployment, and key settings |
 | `CONTEXT_STILL_BEDROCK_*` | AWS Bedrock region/model settings |
 
+Runtime task routing can also be edited from the admin Settings page. Each route stores a primary provider/model plus fallback providers. When `local-llm` is used as either the primary provider or a fallback provider, the route can carry a `localLlmModel` value so the fallback uses a configured local LLM API/model instead of silently falling back to the global default.
+
 ## Search Providers
 
 | Variable | Purpose |

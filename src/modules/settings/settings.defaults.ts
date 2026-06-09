@@ -605,6 +605,12 @@ function sanitizeRoute(
   settings: RuntimeSettingsEditable,
   route: RuntimeSettingsRoute,
 ): RuntimeSettingsRoute {
+  const configuredLocalLlmModel =
+    settings.providers["local-llm"].models
+      .map((item) => item.model.trim())
+      .find(
+        (configuredModel) => configuredModel && configuredModel === route.localLlmModel?.trim(),
+      ) ?? undefined;
   const model =
     route.provider === "local-llm"
       ? (settings.providers["local-llm"].models
@@ -615,6 +621,10 @@ function sanitizeRoute(
   return {
     provider: route.provider,
     model,
+    localLlmModel:
+      route.provider === "local-llm" || route.fallback.includes("local-llm")
+        ? (configuredLocalLlmModel ?? (route.provider === "local-llm" ? model : undefined))
+        : undefined,
     fallback: normalizeProviderList(route.fallback),
     azureDeploymentSlots: normalizeAzureDeploymentSlots(route.azureDeploymentSlots),
   };
@@ -805,6 +815,23 @@ function mergeRuntimeSettings(
   merged.taskRouting.agenticCompile.fallback = normalizeProviderList(
     merged.taskRouting.agenticCompile.fallback,
   );
+  merged.taskRouting.agenticCompile.model =
+    resolveConfiguredRouteModel(merged, merged.taskRouting.agenticCompile.provider) ??
+    merged.taskRouting.agenticCompile.model;
+  merged.taskRouting.agenticCompile.localLlmModel =
+    merged.taskRouting.agenticCompile.provider === "local-llm" ||
+    merged.taskRouting.agenticCompile.fallback.includes("local-llm")
+      ? (merged.providers["local-llm"].models
+          .map((item) => item.model.trim())
+          .find(
+            (configuredModel) =>
+              configuredModel &&
+              configuredModel === merged.taskRouting.agenticCompile.localLlmModel?.trim(),
+          ) ??
+        (merged.taskRouting.agenticCompile.provider === "local-llm"
+          ? merged.taskRouting.agenticCompile.model
+          : resolveConfiguredRouteModel(merged, "local-llm")))
+      : undefined;
   merged.taskRouting.agenticCompile.azureDeploymentSlots = normalizeAzureDeploymentSlots(
     merged.taskRouting.agenticCompile.azureDeploymentSlots,
   );

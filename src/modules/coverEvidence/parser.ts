@@ -565,7 +565,10 @@ function parseTitleBodyFinalMetadataRecord(text: string): Record<string, unknown
   if (titleIndex < 0) return null;
 
   const title = contentLines[titleIndex]?.trim() ?? "";
-  const body = contentLines.slice(titleIndex + 1).join("\n").trim();
+  const body = contentLines
+    .slice(titleIndex + 1)
+    .join("\n")
+    .trim();
   const metadata = parseSlashResultRecord(lines[metadataIndex] ?? "") ?? {};
   if (!title && !body) return null;
   return {
@@ -598,9 +601,10 @@ export function parseCoverEvidenceResult(
   const parsed = parseLlmJsonLike(llmOutput);
   const titleBodyMetadataFallback = parseTitleBodyFinalMetadataRecord(llmOutput);
   const labelledFallback = titleBodyMetadataFallback ? null : parseLabelledResultRecord(llmOutput);
-  const slashFallback = titleBodyMetadataFallback || labelledFallback
-    ? null
-    : (parseSlashTableResultRecord(llmOutput) ?? parseSlashResultRecord(llmOutput));
+  const slashFallback =
+    titleBodyMetadataFallback || labelledFallback
+      ? null
+      : (parseSlashTableResultRecord(llmOutput) ?? parseSlashResultRecord(llmOutput));
   const statusOnlyFallback =
     titleBodyMetadataFallback || labelledFallback || slashFallback
       ? null
@@ -618,7 +622,11 @@ export function parseCoverEvidenceResult(
   const record =
     parsed?.value && typeof parsed.value === "object" && !Array.isArray(parsed.value)
       ? asRecord(parsed.value)
-      : (titleBodyMetadataFallback ?? labelledFallback ?? slashFallback ?? statusOnlyFallback ?? {});
+      : (titleBodyMetadataFallback ??
+        labelledFallback ??
+        slashFallback ??
+        statusOnlyFallback ??
+        {});
   const statusValue = asString(recordValue(record, ["status", "STATUS"])).toLowerCase();
   const status: CoverEvidenceStatus = isCoverEvidenceStatus(statusValue)
     ? statusValue

@@ -80,6 +80,7 @@ bun run queue:finding:once
 bun run queue:covering:once
 bun run queue:merge-review:once
 bun run queue:finalize:once
+bun run queue:merge-activation-finalize:once
 ```
 
 ## First Review Loop
@@ -89,4 +90,5 @@ bun run queue:finalize:once
 3. Use **Sources** to import or edit source pages.
 4. Use **Queue** to inspect distillation target state.
 5. Use **Knowledge** to review draft knowledge and promote useful items.
-6. Use MCP `context_compile` for task context and `compile_eval` after the task.
+6. Use **Decision** to inspect Knowledge-backed autonomous decisions, evidence, coverage traces, and Good/Bad feedback.
+7. Use MCP `context_compile` for task context, `context_decision` before a blocking user question or PR decision, and `compile_eval` after the task.

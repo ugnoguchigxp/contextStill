@@ -8,7 +8,7 @@ Run:
 bun run doctor
 ```
 
-Doctor checks database reachability, pgvector, embedding, LLM providers, expected tables, compile run health, agent log sync, queue automation, and distillation freshness.
+Doctor checks database reachability, pgvector, embedding, LLM providers, expected tables, compile run health, context decision readiness, agent log sync, queue automation, and distillation freshness.
 
 ## Agent Log Sync
 
@@ -37,6 +37,7 @@ bun run queue:finding:once
 bun run queue:covering:once
 bun run queue:merge-review:once
 bun run queue:finalize:once
+bun run queue:merge-activation-finalize:once
 ```
 
 Continuous supervisor:
@@ -68,6 +69,24 @@ Common commands:
 
 The hooks remind agents to run `compile_eval` after tasks that used `context_compile` and to register durable candidates after commits.
 
+## Context Decision Feedback
+
+Context Decision records can learn from linked PR outcomes when the decision metadata includes a PR URL, PR number, or branch and GitHub CLI can confirm the PR state.
+
+Preview first:
+
+```bash
+bun run decision:pr-discard-scan -- --dry-run
+```
+
+Apply only after reviewing the planned feedback:
+
+```bash
+bun run decision:pr-discard-scan -- --apply
+```
+
+The scan writes `discarded_pr` system feedback only for strongly linked PRs confirmed as closed. If `gh` is unavailable or the PR state is ambiguous, it skips writes and reports a degraded scan.
+
 ## Backups
 
 ```bash
@@ -90,6 +109,8 @@ Override with `BACKUP_DIR`, `CONTAINER_NAME`, `DB_USER`, `DB_NAME`, or `DB_PASSW
 | `context_compile` returns `No Content` | Run `doctor`, check active knowledge count, source import state, and tags |
 | Queue not moving | Check `bun run automation:queue-supervisor -- status`, `logs/queue-supervisor.log`, and queue stats |
 | Agent logs stale | Run `bun run automation:agent-log-sync -- run-once` and inspect `logs/agent-log-sync.log` |
+| Decision output is degraded | Inspect the Decision detail evidence/coverage tabs, then broaden `retrievalHints` or add missing Knowledge |
+| PR discard feedback is missing | Run `bun run decision:pr-discard-scan -- --dry-run` and confirm `gh pr view` can resolve the linked PR |
 | Embedding failures | Check daemon URL, CLI fallback paths, and `CONTEXT_STILL_EMBEDDING_DIMENSION` |
 | API returns unauthorized | Check `CONTEXT_STILL_ADMIN_API_KEY` and client header configuration |
 | Integration tests hit live DB | Stop immediately and set a `DATABASE_URL` whose database name includes `test` |

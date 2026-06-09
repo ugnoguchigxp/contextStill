@@ -3,7 +3,7 @@
 context-still exposes a compact MCP surface for coding agents. The tools are designed around this repeatable workflow:
 
 ```text
-initial_instructions -> context_compile -> work -> compile_eval -> register_candidate(s)
+initial_instructions -> context_compile -> context_decision when a decision would block progress -> work -> compile_eval -> register_candidate(s)
 ```
 
 ## Tool Inventory
@@ -12,7 +12,7 @@ initial_instructions -> context_compile -> work -> compile_eval -> register_cand
 | --------------------------- | ----------------------------------------------------------------------------------------------------- |
 | `initial_instructions`      | Load operating rules and hook guidance once per project session                                       |
 | `context_compile`           | Compile task-specific context before work                                                             |
-| `compile_eval`              | Record post-task usefulness of compiled context                                                       |
+| `compile_eval`              | Record post-task usefulness scores for compiled context                                               |
 | `context_decision`          | Decide execute/revise/reject/rollback/discard/escalate from Knowledge evidence before asking the user |
 | `context_decision_feedback` | Record Good/Bad or system/AI outcome feedback for a decision                                          |
 | `search_knowledge`          | Inspect raw knowledge candidates and retrieval behavior                                               |
@@ -21,7 +21,7 @@ initial_instructions -> context_compile -> work -> compile_eval -> register_cand
 | `session_memo`              | Store short-lived session scratch notes                                                               |
 | `search_memory`             | Search past sessions and diffs                                                                        |
 | `fetch_memory`              | Fetch one memory item                                                                                 |
-| `doctor`                    | Diagnose DB, embedding, sync, queue, provider, and compile health                                     |
+| `doctor`                    | Diagnose DB, embedding, sync, queue, provider, decision, and compile health                           |
 
 Deprecated hidden aliases remain for compatibility but are not listed:
 
@@ -86,13 +86,17 @@ Purpose: Persist a post-task evaluation of a compile run.
 
 Input:
 
-| Field     | Required | Description                                                                          |
-| --------- | -------: | ------------------------------------------------------------------------------------ |
-| `score`   |      yes | Integer from `0` to `100`.                                                           |
-| `outcome` |      yes | `useful`, `partial`, `misleading`, or `unused`.                                      |
-| `body`    |      yes | Short rationale.                                                                     |
-| `runId`   |       no | Explicit compile run ID. If omitted, latest session compile is used when resolvable. |
-| `title`   |       no | Short label for the evaluation.                                                      |
+| Field           | Required | Description                                                                          |
+| --------------- | -------: | ------------------------------------------------------------------------------------ |
+| `outcome`       |      yes | `useful`, `partial`, `misleading`, or `unused`.                                      |
+| `body`          |      yes | Short rationale.                                                                     |
+| `relevance`     |      yes | `0` to `100`, how well the pack matched the goal.                                    |
+| `actionability` |      yes | `0` to `100`, how directly it supported implementation or judgment.                  |
+| `coverage`      |      yes | `0` to `100`, whether required information was covered.                              |
+| `clarity`       |      yes | `0` to `100`, where `100` means clean and low-noise.                                 |
+| `specificity`   |      yes | `0` to `100`, whether the pack was concrete rather than abstract.                    |
+| `runId`         |       no | Explicit compile run ID. If omitted, latest session compile is used when resolvable. |
+| `title`         |       no | Short label for the evaluation.                                                      |
 
 Use after completing the task that used `context_compile`.
 
@@ -109,7 +113,14 @@ Input:
 | `sessionId`      |       no | External session/thread identifier.                                               |
 | `metadata`       |       no | Optional branch, PR, Todo, task, or caller metadata.                              |
 
-Output is compact and intended to stay under an 8k token response budget. It includes `decisionId`, decision, mandate, confidence, the LLM-written `agentMessage`, coverage summary, and feedback handle. Evidence bodies are not returned by the MCP tool; they remain persisted for audit and can be inspected from the Decision screen/detail API.
+Behavior:
+
+- Builds four Knowledge searches: support, counter-evidence, prior user preference, and risk/guardrail.
+- Persists the decision run, selected evidence, coverage traces, confidence trace, and metadata.
+- Returns one decision, not a menu of options.
+- In the current v1 implementation, `execute` is returned when Knowledge support clears the confidence threshold; otherwise it returns `escalate`.
+
+Output is compact and intended to stay under an 8k token response budget. It includes `decisionId`, decision, mandate, confidence, the LLM-written `agentMessage`, coverage summary, and feedback handle. Evidence bodies and source refs are not returned by the MCP tool; they remain persisted for audit and can be inspected from the Decision screen/detail API. The generated `agentMessage` may use short selected-Knowledge excerpts to explain the supporting prior tendency, best-practice rule, or procedure guidance.
 
 ### `context_decision_feedback`
 

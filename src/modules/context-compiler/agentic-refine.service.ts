@@ -178,6 +178,16 @@ function modelForProvider(provider: string, routeModel?: string): string {
   }
 }
 
+function routeModelForProvider(
+  provider: string,
+  routing: ReturnType<typeof resolveAgenticCompileRouting>,
+): string {
+  return modelForProvider(
+    provider,
+    provider === "local-llm" ? (routing.localLlmModel ?? routing.model) : routing.model,
+  );
+}
+
 /**
  * LLM を使って knowledge 候補を goal に対して選別・並べ替えする。
  *
@@ -220,7 +230,7 @@ export async function agenticRefine(
     }
 
     attempted += 1;
-    const providerModel = modelForProvider(provider.name, routing.model);
+    const providerModel = routeModelForProvider(provider.name, routing);
     void recordProviderUsage({
       provider: provider.name,
       model: providerModel,

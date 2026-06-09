@@ -91,6 +91,7 @@ export async function runDeadZoneMergeReviewLlm(params: {
       providerSetting: route.provider === "auto" ? "local-llm" : route.provider,
       fallbackOrder: route.fallback,
       azureDeploymentSlots: route.azureDeploymentSlots,
+      localLlmModel: route.localLlmModel,
       enableTools: false,
       maxToolRounds: 0,
       usageSource: "dead-zone-merge-review",

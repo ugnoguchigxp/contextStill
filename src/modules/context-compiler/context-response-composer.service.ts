@@ -259,6 +259,16 @@ function modelForProvider(provider: string, routeModel?: string): string {
   }
 }
 
+function routeModelForProvider(
+  provider: string,
+  routing: ReturnType<typeof resolveAgenticCompileRouting>,
+): string {
+  return modelForProvider(
+    provider,
+    provider === "local-llm" ? (routing.localLlmModel ?? routing.model) : routing.model,
+  );
+}
+
 function buildFallbackCompose(params: ComposeInput, plan: ComposePlan): FallbackComposeResult {
   const { headings } = plan;
   const allItems = [...params.rules, ...params.procedures];
@@ -718,7 +728,7 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
     routing.azureDeploymentSlots,
   );
   const primaryProviderName = providers[0]?.name ?? routing.provider;
-  const primaryModel = modelForProvider(primaryProviderName, routing.model);
+  const primaryModel = routeModelForProvider(primaryProviderName, routing);
   const pressure = await readProviderPressureState({
     provider: routing.provider,
     model: primaryModel,
@@ -747,7 +757,7 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
   for (const provider of providers) {
     if (!provider.isConfigured()) continue;
     attempted += 1;
-    const providerModel = modelForProvider(provider.name, routing.model);
+    const providerModel = routeModelForProvider(provider.name, routing);
     void recordProviderUsage({
       provider: provider.name,
       model: providerModel,

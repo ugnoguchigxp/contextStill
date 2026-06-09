@@ -47,6 +47,7 @@ export type RuntimeSecretStatus = {
 export type RuntimeSettingsRoute = {
   provider: RuntimeProviderSetting;
   model?: string;
+  localLlmModel?: string;
   fallback: RuntimeProviderName[];
   azureDeploymentSlots?: number[];
 };
@@ -141,6 +142,7 @@ export type RuntimeSettingsEditable = {
       enabled: boolean;
       provider: RuntimeAgenticProviderName;
       model: string;
+      localLlmModel?: string;
       fallback: RuntimeProviderName[];
       azureDeploymentSlots?: number[];
       timeoutMs: number;
@@ -251,6 +253,7 @@ const localLlmModelSchema = z.object({
 const runtimeRouteSchema = z.object({
   provider: runtimeProviderSettingSchema,
   model: z.string().trim().min(1).optional(),
+  localLlmModel: z.string().trim().min(1).optional(),
   fallback: z.array(runtimeProviderSchema).max(8).default([]),
   azureDeploymentSlots: z.array(z.number().int().min(1).max(3)).max(3).optional(),
 });
@@ -320,6 +323,7 @@ export const runtimeSettingsEditableSchema = z.object({
       enabled: z.boolean().default(true),
       provider: z.enum(runtimeAgenticProviderNames),
       model: z.string().trim().min(1),
+      localLlmModel: z.string().trim().min(1).optional(),
       fallback: z.array(runtimeProviderSchema).max(8).default([]),
       azureDeploymentSlots: z.array(z.number().int().min(1).max(3)).max(3).optional(),
       timeoutMs: z.number().int().min(1000).max(3_600_000),

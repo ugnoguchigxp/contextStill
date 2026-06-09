@@ -204,6 +204,23 @@ function localLlmRouteModelOptions(settings: RuntimeSettingsEditable): string[] 
   ];
 }
 
+function localLlmModelOptionLabel(
+  model: RuntimeSettingsEditable["providers"]["local-llm"]["models"][number],
+): string {
+  const name = model.name.trim();
+  const modelName = model.model.trim();
+  const endpoint = model.apiBaseUrl.trim();
+  return [name || modelName, modelName && name !== modelName ? modelName : "", endpoint]
+    .filter(Boolean)
+    .join(" / ");
+}
+
+function resolveConfiguredLocalLlmModel(settings: RuntimeSettingsEditable): string | undefined {
+  return (
+    localLlmRouteModelOptions(settings)[0] ?? resolveConfiguredRouteModel(settings, "local-llm")
+  );
+}
+
 function providerNameOptionLabel(provider: RuntimeProviderSetting): string {
   return provider;
 }
@@ -400,6 +417,7 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
         source: {
           provider: view.taskRouting.findCandidate.source.provider,
           model: view.taskRouting.findCandidate.source.model,
+          localLlmModel: view.taskRouting.findCandidate.source.localLlmModel,
           fallback: [...view.taskRouting.findCandidate.source.fallback],
           azureDeploymentSlots: view.taskRouting.findCandidate.source.azureDeploymentSlots
             ? [...view.taskRouting.findCandidate.source.azureDeploymentSlots]
@@ -408,6 +426,7 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
         vibe: {
           provider: view.taskRouting.findCandidate.vibe.provider,
           model: view.taskRouting.findCandidate.vibe.model,
+          localLlmModel: view.taskRouting.findCandidate.vibe.localLlmModel,
           fallback: [...view.taskRouting.findCandidate.vibe.fallback],
           azureDeploymentSlots: view.taskRouting.findCandidate.vibe.azureDeploymentSlots
             ? [...view.taskRouting.findCandidate.vibe.azureDeploymentSlots]
@@ -430,6 +449,7 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
       webSourceResearch: {
         provider: view.taskRouting.webSourceResearch.provider,
         model: view.taskRouting.webSourceResearch.model,
+        localLlmModel: view.taskRouting.webSourceResearch.localLlmModel,
         fallback: [...view.taskRouting.webSourceResearch.fallback],
         azureDeploymentSlots: view.taskRouting.webSourceResearch.azureDeploymentSlots
           ? [...view.taskRouting.webSourceResearch.azureDeploymentSlots]
@@ -439,6 +459,7 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
         sourceSupport: {
           provider: view.taskRouting.coverEvidence.sourceSupport.provider,
           model: view.taskRouting.coverEvidence.sourceSupport.model,
+          localLlmModel: view.taskRouting.coverEvidence.sourceSupport.localLlmModel,
           fallback: [...view.taskRouting.coverEvidence.sourceSupport.fallback],
           azureDeploymentSlots: view.taskRouting.coverEvidence.sourceSupport.azureDeploymentSlots
             ? [...view.taskRouting.coverEvidence.sourceSupport.azureDeploymentSlots]
@@ -447,6 +468,7 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
         externalEvidence: {
           provider: view.taskRouting.coverEvidence.externalEvidence.provider,
           model: view.taskRouting.coverEvidence.externalEvidence.model,
+          localLlmModel: view.taskRouting.coverEvidence.externalEvidence.localLlmModel,
           fallback: [...view.taskRouting.coverEvidence.externalEvidence.fallback],
           azureDeploymentSlots: view.taskRouting.coverEvidence.externalEvidence.azureDeploymentSlots
             ? [...view.taskRouting.coverEvidence.externalEvidence.azureDeploymentSlots]
@@ -455,6 +477,7 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
         mcpEvidence: {
           provider: view.taskRouting.coverEvidence.mcpEvidence.provider,
           model: view.taskRouting.coverEvidence.mcpEvidence.model,
+          localLlmModel: view.taskRouting.coverEvidence.mcpEvidence.localLlmModel,
           fallback: [...view.taskRouting.coverEvidence.mcpEvidence.fallback],
           azureDeploymentSlots: view.taskRouting.coverEvidence.mcpEvidence.azureDeploymentSlots
             ? [...view.taskRouting.coverEvidence.mcpEvidence.azureDeploymentSlots]
@@ -464,6 +487,7 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
       finalizeDistille: {
         provider: view.taskRouting.finalizeDistille.provider,
         model: view.taskRouting.finalizeDistille.model,
+        localLlmModel: view.taskRouting.finalizeDistille.localLlmModel,
         fallback: [...view.taskRouting.finalizeDistille.fallback],
         azureDeploymentSlots: view.taskRouting.finalizeDistille.azureDeploymentSlots
           ? [...view.taskRouting.finalizeDistille.azureDeploymentSlots]
@@ -472,6 +496,7 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
       deadZoneMergeReview: {
         provider: view.taskRouting.deadZoneMergeReview.provider,
         model: view.taskRouting.deadZoneMergeReview.model,
+        localLlmModel: view.taskRouting.deadZoneMergeReview.localLlmModel,
         fallback: [...view.taskRouting.deadZoneMergeReview.fallback],
         azureDeploymentSlots: view.taskRouting.deadZoneMergeReview.azureDeploymentSlots
           ? [...view.taskRouting.deadZoneMergeReview.azureDeploymentSlots]
@@ -481,6 +506,7 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
         enabled: view.taskRouting.agenticCompile.enabled,
         provider: view.taskRouting.agenticCompile.provider,
         model: view.taskRouting.agenticCompile.model,
+        localLlmModel: view.taskRouting.agenticCompile.localLlmModel,
         fallback: [...view.taskRouting.agenticCompile.fallback],
         azureDeploymentSlots: view.taskRouting.agenticCompile.azureDeploymentSlots
           ? [...view.taskRouting.agenticCompile.azureDeploymentSlots]
@@ -574,6 +600,11 @@ function RouteEditor({
   const fallbackSlots = toFallbackSlots(route.fallback);
   const azureSlots = normalizeAzureDeploymentSlots(route.azureDeploymentSlots);
   const localModelOptions = localLlmRouteModelOptions(settings);
+  const usesLocalLlm = route.provider === "local-llm" || route.fallback.includes("local-llm");
+  const selectedLocalLlmModel =
+    route.provider === "local-llm"
+      ? (route.model ?? "")
+      : (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings) ?? "");
 
   return (
     <div className="settings-route-row">
@@ -592,6 +623,10 @@ function RouteEditor({
                 ...route,
                 provider,
                 model: resolveConfiguredRouteModel(settings, provider),
+                localLlmModel:
+                  provider === "local-llm" || route.fallback.includes("local-llm")
+                    ? (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings))
+                    : undefined,
               });
             }}
           >
@@ -602,45 +637,66 @@ function RouteEditor({
             ))}
           </Select>
         </label>
-        {route.provider === "local-llm" ? (
+        {usesLocalLlm ? (
           <label className="settings-field">
-            <span>Model</span>
+            <span>Local LLM API</span>
             <Select
-              value={route.model ?? ""}
+              value={selectedLocalLlmModel}
               onChange={(event) =>
                 onChange({
                   ...route,
-                  model:
-                    event.target.value || resolveConfiguredRouteModel(settings, route.provider),
+                  ...(route.provider === "local-llm"
+                    ? {
+                        model:
+                          event.target.value ||
+                          resolveConfiguredRouteModel(settings, route.provider),
+                        localLlmModel:
+                          event.target.value || resolveConfiguredLocalLlmModel(settings),
+                      }
+                    : {
+                        localLlmModel:
+                          event.target.value || resolveConfiguredLocalLlmModel(settings),
+                      }),
                 })
               }
             >
               {localModelOptions.length === 0 ? (
                 <option value="">not configured</option>
               ) : (
-                localModelOptions.map((model) => (
-                  <option key={model} value={model}>
-                    {model}
-                  </option>
-                ))
+                settings.providers["local-llm"].models
+                  .filter((model) => model.model.trim())
+                  .map((model) => (
+                    <option key={model.model} value={model.model}>
+                      {localLlmModelOptionLabel(model)}
+                    </option>
+                  ))
               )}
             </Select>
           </label>
+        ) : null}
+        {route.fallback.includes("local-llm") && route.provider !== "local-llm" ? (
+          <span className="settings-field-hint">
+            Local LLM fallback uses the selected Local LLM API/model.
+          </span>
         ) : null}
         <label className="settings-field">
           <span>Fallback 1</span>
           <Select
             value={fallbackSlots[0]}
-            onChange={(event) =>
+            onChange={(event) => {
+              const fallback = patchFallbackSlot(
+                route.fallback,
+                0,
+                event.target.value as FallbackSelectValue,
+              );
               onChange({
                 ...route,
-                fallback: patchFallbackSlot(
-                  route.fallback,
-                  0,
-                  event.target.value as FallbackSelectValue,
-                ),
-              })
-            }
+                fallback,
+                localLlmModel: fallback.includes("local-llm")
+                  ? (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings))
+                  : undefined,
+              });
+            }}
           >
             <option value="">none</option>
             {runtimeProviders.map((provider) => (
@@ -654,16 +710,20 @@ function RouteEditor({
           <span>Fallback 2</span>
           <Select
             value={fallbackSlots[1]}
-            onChange={(event) =>
+            onChange={(event) => {
+              const fallback = patchFallbackSlot(
+                route.fallback,
+                1,
+                event.target.value as FallbackSelectValue,
+              );
               onChange({
                 ...route,
-                fallback: patchFallbackSlot(
-                  route.fallback,
-                  1,
-                  event.target.value as FallbackSelectValue,
-                ),
-              })
-            }
+                fallback,
+                localLlmModel: fallback.includes("local-llm")
+                  ? (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings))
+                  : undefined,
+              });
+            }}
           >
             <option value="">none</option>
             {runtimeProviders.map((provider) => (
@@ -2734,6 +2794,14 @@ export function SettingsPage() {
                                     model:
                                       resolveConfiguredRouteModel(current, provider) ??
                                       current.taskRouting.agenticCompile.model,
+                                    localLlmModel:
+                                      provider === "local-llm" ||
+                                      current.taskRouting.agenticCompile.fallback.includes(
+                                        "local-llm",
+                                      )
+                                        ? (current.taskRouting.agenticCompile.localLlmModel ??
+                                          resolveConfiguredLocalLlmModel(current))
+                                        : undefined,
                                   },
                                 },
                               }));
@@ -2746,11 +2814,18 @@ export function SettingsPage() {
                             ))}
                           </Select>
                         </label>
-                        {draft.taskRouting.agenticCompile.provider === "local-llm" ? (
+                        {draft.taskRouting.agenticCompile.provider === "local-llm" ||
+                        draft.taskRouting.agenticCompile.fallback.includes("local-llm") ? (
                           <label className="settings-field">
-                            <span>Model</span>
+                            <span>Local LLM API</span>
                             <Select
-                              value={draft.taskRouting.agenticCompile.model}
+                              value={
+                                draft.taskRouting.agenticCompile.provider === "local-llm"
+                                  ? draft.taskRouting.agenticCompile.model
+                                  : (draft.taskRouting.agenticCompile.localLlmModel ??
+                                    resolveConfiguredLocalLlmModel(draft) ??
+                                    "")
+                              }
                               onChange={(event) =>
                                 patchDraft((current) => ({
                                   ...current,
@@ -2758,10 +2833,22 @@ export function SettingsPage() {
                                     ...current.taskRouting,
                                     agenticCompile: {
                                       ...current.taskRouting.agenticCompile,
-                                      model:
-                                        event.target.value ||
-                                        resolveConfiguredRouteModel(current, "local-llm") ||
-                                        current.taskRouting.agenticCompile.model,
+                                      ...(current.taskRouting.agenticCompile.provider ===
+                                      "local-llm"
+                                        ? {
+                                            model:
+                                              event.target.value ||
+                                              resolveConfiguredRouteModel(current, "local-llm") ||
+                                              current.taskRouting.agenticCompile.model,
+                                            localLlmModel:
+                                              event.target.value ||
+                                              resolveConfiguredLocalLlmModel(current),
+                                          }
+                                        : {
+                                            localLlmModel:
+                                              event.target.value ||
+                                              resolveConfiguredLocalLlmModel(current),
+                                          }),
                                     },
                                   },
                                 }))
@@ -2770,11 +2857,13 @@ export function SettingsPage() {
                               {localLlmRouteModelOptions(draft).length === 0 ? (
                                 <option value="">not configured</option>
                               ) : (
-                                localLlmRouteModelOptions(draft).map((model) => (
-                                  <option key={model} value={model}>
-                                    {model}
-                                  </option>
-                                ))
+                                draft.providers["local-llm"].models
+                                  .filter((model) => model.model.trim())
+                                  .map((model) => (
+                                    <option key={model.model} value={model.model}>
+                                      {localLlmModelOptionLabel(model)}
+                                    </option>
+                                  ))
                               )}
                             </Select>
                           </label>
@@ -2784,20 +2873,27 @@ export function SettingsPage() {
                           <Select
                             value={toFallbackSlots(draft.taskRouting.agenticCompile.fallback)[0]}
                             onChange={(event) =>
-                              patchDraft((current) => ({
-                                ...current,
-                                taskRouting: {
-                                  ...current.taskRouting,
-                                  agenticCompile: {
-                                    ...current.taskRouting.agenticCompile,
-                                    fallback: patchFallbackSlot(
-                                      current.taskRouting.agenticCompile.fallback,
-                                      0,
-                                      event.target.value as FallbackSelectValue,
-                                    ),
+                              patchDraft((current) => {
+                                const fallback = patchFallbackSlot(
+                                  current.taskRouting.agenticCompile.fallback,
+                                  0,
+                                  event.target.value as FallbackSelectValue,
+                                );
+                                return {
+                                  ...current,
+                                  taskRouting: {
+                                    ...current.taskRouting,
+                                    agenticCompile: {
+                                      ...current.taskRouting.agenticCompile,
+                                      fallback,
+                                      localLlmModel: fallback.includes("local-llm")
+                                        ? (current.taskRouting.agenticCompile.localLlmModel ??
+                                          resolveConfiguredLocalLlmModel(current))
+                                        : undefined,
+                                    },
                                   },
-                                },
-                              }))
+                                };
+                              })
                             }
                           >
                             <option value="">none</option>
@@ -2813,20 +2909,27 @@ export function SettingsPage() {
                           <Select
                             value={toFallbackSlots(draft.taskRouting.agenticCompile.fallback)[1]}
                             onChange={(event) =>
-                              patchDraft((current) => ({
-                                ...current,
-                                taskRouting: {
-                                  ...current.taskRouting,
-                                  agenticCompile: {
-                                    ...current.taskRouting.agenticCompile,
-                                    fallback: patchFallbackSlot(
-                                      current.taskRouting.agenticCompile.fallback,
-                                      1,
-                                      event.target.value as FallbackSelectValue,
-                                    ),
+                              patchDraft((current) => {
+                                const fallback = patchFallbackSlot(
+                                  current.taskRouting.agenticCompile.fallback,
+                                  1,
+                                  event.target.value as FallbackSelectValue,
+                                );
+                                return {
+                                  ...current,
+                                  taskRouting: {
+                                    ...current.taskRouting,
+                                    agenticCompile: {
+                                      ...current.taskRouting.agenticCompile,
+                                      fallback,
+                                      localLlmModel: fallback.includes("local-llm")
+                                        ? (current.taskRouting.agenticCompile.localLlmModel ??
+                                          resolveConfiguredLocalLlmModel(current))
+                                        : undefined,
+                                    },
                                   },
-                                },
-                              }))
+                                };
+                              })
                             }
                           >
                             <option value="">none</option>

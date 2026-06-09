@@ -9,7 +9,8 @@ sources + web + agent logs + candidates
   -> staged distillation
   -> draft/active knowledge
   -> task-specific context_compile
-  -> compile_eval + usage feedback
+  -> context_decision at blocking judgment points
+  -> compile_eval + decision/usage feedback
   -> new candidates
 ```
 
@@ -24,6 +25,7 @@ sources + web + agent logs + candidates
 | Database | `src/db/`, `drizzle/` | PostgreSQL schema, migrations, and seed tooling |
 | Distillation | `src/modules/distillation*`, `src/modules/finalizeDistille/` | Candidate extraction, evidence coverage, and finalization |
 | Context compiler | `src/modules/context-compiler/` | Retrieval, ranking, budget allocation, and pack formatting |
+| Context decision | `src/modules/context-decision/`, `api/modules/context-decision/`, `web/src/modules/context-decision/` | Knowledge-backed autonomous decisions, audit traces, and feedback effects |
 | Knowledge graph | `src/modules/landscape/`, `api/modules/graph/` | Graph/replay diagnostics and review-item workflows |
 | Doctor | `src/modules/doctor/` | System health checks |
 
@@ -35,6 +37,7 @@ sources + web + agent logs + candidates
 | Knowledge | `knowledge_items`, `knowledge_source_links`, `knowledge_tag_definitions` | Reusable `rule` / `procedure` knowledge and traceability |
 | Distillation | `distillation_target_states`, `find_candidate_results`, `cover_evidence_results`, `distillation_evidence_cache` | Staged extraction and evidence coverage |
 | Compile | `context_compile_runs`, `context_pack_items`, `context_compile_evals`, `knowledge_usage_events` | Compile output, selected items, and usefulness feedback |
+| Decision | `context_decision_runs`, `context_decision_evidence`, `context_decision_coverage_traces`, `context_decision_feedback*` | Autonomous decision history, selected Knowledge evidence, coverage traces, and feedback effects |
 | Landscape | `landscape_review_items`, `landscape_review_item_candidate_links`, `knowledge_community_labels` | Graph/replay review loop and approval-gated candidates |
 | Operations | `sync_states`, `settings`, `audit_logs`, `llm_usage_logs` | Runtime state, settings, audit, and observability |
 

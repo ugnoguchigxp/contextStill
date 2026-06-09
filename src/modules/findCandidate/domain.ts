@@ -106,6 +106,7 @@ async function defaultFindCandidateRoute(targetKind: FindCandidateTargetKind): P
   model: string;
   fallback: Array<Exclude<DistillationProviderSetting, "auto">>;
   azureDeploymentSlots?: number[];
+  localLlmModel?: string;
 }> {
   await ensureRuntimeSettingsLoaded();
   const route = resolveFindCandidateRoute(targetKind);
@@ -114,6 +115,7 @@ async function defaultFindCandidateRoute(targetKind: FindCandidateTargetKind): P
     model: route.model ?? "",
     fallback: [...route.fallback] as Array<Exclude<DistillationProviderSetting, "auto">>,
     azureDeploymentSlots: route.azureDeploymentSlots ? [...route.azureDeploymentSlots] : undefined,
+    localLlmModel: route.localLlmModel,
   };
 }
 
@@ -354,6 +356,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
   const provider = input.provider ?? defaultRoute.provider;
   const fallbackOrder = input.provider ? [] : defaultRoute.fallback;
   const azureDeploymentSlots = input.provider ? undefined : defaultRoute.azureDeploymentSlots;
+  const localLlmModel = input.provider ? undefined : defaultRoute.localLlmModel;
   const model = modelForFindCandidateRoute({
     routeProvider: defaultRoute.provider,
     routeModel: defaultRoute.model,
@@ -546,6 +549,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         providerSetting: provider,
         fallbackOrder,
         azureDeploymentSlots,
+        localLlmModel,
         toolDefinitions: [toolDefinition],
         toolExecutor,
         usageSource: "find-candidate",

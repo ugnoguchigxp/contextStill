@@ -54,6 +54,7 @@ type CoverEvidenceResolvedProviderRoute = {
   fallbackOrder: DistillationProviderName[];
   model: string;
   azureDeploymentSlots?: number[];
+  localLlmModel?: string;
 };
 
 function isCoverEvidenceFailureStatus(status: string): boolean {
@@ -121,6 +122,7 @@ function resolveCoverEvidenceProviderRoute(params: {
     azureDeploymentSlots: params.route.azureDeploymentSlots
       ? [...params.route.azureDeploymentSlots]
       : undefined,
+    localLlmModel: params.route.localLlmModel,
   };
 }
 
@@ -223,6 +225,7 @@ export async function runCoverEvidence(
   const sourceSupportFallbackOrder = sourceSupportRoute.fallbackOrder;
   const sourceSupportModel = sourceSupportRoute.model;
   const sourceSupportAzureDeploymentSlots = sourceSupportRoute.azureDeploymentSlots;
+  const sourceSupportLocalLlmModel = sourceSupportRoute.localLlmModel;
 
   const externalEvidenceRoute = resolveCoverEvidenceProviderRoute({
     route: externalEvidenceRuntimeRoute,
@@ -233,6 +236,7 @@ export async function runCoverEvidence(
   const externalEvidenceFallbackOrder = externalEvidenceRoute.fallbackOrder;
   const externalEvidenceModel = externalEvidenceRoute.model;
   const externalEvidenceAzureDeploymentSlots = externalEvidenceRoute.azureDeploymentSlots;
+  const externalEvidenceLocalLlmModel = externalEvidenceRoute.localLlmModel;
 
   const mcpEvidenceRoute = resolveCoverEvidenceProviderRoute({
     route: mcpEvidenceRuntimeRoute,
@@ -243,6 +247,7 @@ export async function runCoverEvidence(
   const mcpEvidenceFallbackOrder = mcpEvidenceRoute.fallbackOrder;
   const mcpEvidenceModel = mcpEvidenceRoute.model;
   const mcpEvidenceAzureDeploymentSlots = mcpEvidenceRoute.azureDeploymentSlots;
+  const mcpEvidenceLocalLlmModel = mcpEvidenceRoute.localLlmModel;
 
   if (input.write) {
     const existing = await selectCoverEvidenceResultById(id);
@@ -292,16 +297,19 @@ export async function runCoverEvidence(
           provider: sourceSupportProvider,
           fallbackOrder: sourceSupportFallbackOrder,
           azureDeploymentSlots: sourceSupportAzureDeploymentSlots,
+          localLlmModel: sourceSupportLocalLlmModel,
         },
         externalEvidence: {
           provider: externalEvidenceProvider,
           fallbackOrder: externalEvidenceFallbackOrder,
           azureDeploymentSlots: externalEvidenceAzureDeploymentSlots,
+          localLlmModel: externalEvidenceLocalLlmModel,
         },
         mcpEvidence: {
           provider: mcpEvidenceProvider,
           fallbackOrder: mcpEvidenceFallbackOrder,
           azureDeploymentSlots: mcpEvidenceAzureDeploymentSlots,
+          localLlmModel: mcpEvidenceLocalLlmModel,
         },
       },
     },
@@ -392,6 +400,7 @@ export async function runCoverEvidence(
               model: externalEvidenceModel,
               fallbackOrder: externalEvidenceFallbackOrder,
               azureDeploymentSlots: externalEvidenceAzureDeploymentSlots,
+              localLlmModel: externalEvidenceLocalLlmModel,
               forceRefreshEvidence: input.forceRefreshEvidence,
               chatClient: input.chatClient,
               toolExecutor: input.toolExecutor,
@@ -404,6 +413,7 @@ export async function runCoverEvidence(
               model: mcpEvidenceModel,
               fallbackOrder: mcpEvidenceFallbackOrder,
               azureDeploymentSlots: mcpEvidenceAzureDeploymentSlots,
+              localLlmModel: mcpEvidenceLocalLlmModel,
               chatClient: input.chatClient,
               toolExecutor: input.toolExecutor,
               signal: input.signal,

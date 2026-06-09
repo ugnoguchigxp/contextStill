@@ -382,6 +382,7 @@ function createDefaultChatClient(
   usageSource = "distillation",
   fallbackOrder: DistillationProviderName[] = [],
   azureDeploymentSlots?: number[],
+  localLlmModel?: string,
 ): DistillationChatClient {
   const order = resolveDistillationProviderOrder(providerSetting, fallbackOrder);
   let pinnedProvider: DistillationProviderName | null = null;
@@ -421,7 +422,9 @@ function createDefaultChatClient(
       const model =
         requestModel && provider === requestModelOwner
           ? requestModel
-          : defaultModelForProvider(provider);
+          : provider === "local-llm" && localLlmModel?.trim()
+            ? localLlmModel.trim()
+            : defaultModelForProvider(provider);
 
       try {
         const response = await callByProvider[provider]({ ...request, model });
@@ -508,6 +511,7 @@ export async function runDistillationCompletion(
       options.usageSource ?? "distillation",
       options.fallbackOrder,
       options.azureDeploymentSlots,
+      options.localLlmModel,
     );
   const toolExecutor = options.toolExecutor ?? executeDistillationToolCall;
   const maxToolRounds = Math.max(

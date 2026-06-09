@@ -4,7 +4,7 @@ This directory contains public-facing documentation for context-still.
 
 | Document | Purpose |
 |---|---|
-| [Getting Started](getting-started.md) | Install, configure, and run the first compile |
+| [Getting Started](getting-started.md) | Install, configure, run the first compile, and inspect decisions |
 | [Architecture Overview](architecture.md) | Core concepts and runtime components |
 | [MCP Tools](mcp-tools.md) | MCP workflow and tool contract |
 | [CLI Reference](cli.md) | Command inventory and examples |

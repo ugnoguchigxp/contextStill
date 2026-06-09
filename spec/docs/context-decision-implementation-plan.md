@@ -391,7 +391,7 @@ Output:
 - `feedbackHandle`
 - `coverageSummary`
 
-The MCP response must stay compact enough for an 8k token response budget. Evidence bodies, source refs, guardrails, and unsupported alternatives remain persisted for audit/detail inspection, but are not returned by the MCP tool result.
+The MCP response must stay compact enough for an 8k token response budget. Evidence bodies, source refs, guardrails, and unsupported alternatives remain persisted for audit/detail inspection, but are not returned by the MCP tool result. The `agentMessage` composer may use short excerpts from selected Knowledge to make the answer persuasive and grounded in prior tendencies, best-practice rules, or procedure guidance.
 
 Tool description must tell the LLM:
 

@@ -399,6 +399,10 @@ describe("SettingsPage", () => {
 
     fireEvent.change(rowScope.getByLabelText("Provider"), { target: { value: "azure-openai" } });
     fireEvent.change(rowScope.getByLabelText("Fallback 1"), { target: { value: "local-llm" } });
+    expect(rowScope.getByLabelText("Local LLM API")).toBeInTheDocument();
+    fireEvent.change(rowScope.getByLabelText("Local LLM API"), {
+      target: { value: "qwen-3.6-14b-it" },
+    });
     fireEvent.change(rowScope.getByLabelText("Fallback 2"), { target: { value: "local-llm" } });
     fireEvent.change(screen.getByLabelText("Find Candidate Tool Calls"), {
       target: { value: "6" },
@@ -428,11 +432,13 @@ describe("SettingsPage", () => {
     expect(payload.settings.taskRouting.findCandidate.source).toEqual({
       provider: "azure-openai",
       model: "gpt-5-4-mini",
+      localLlmModel: "qwen-3.6-14b-it",
       fallback: ["local-llm"],
     });
     expect(payload.settings.taskRouting.findCandidate.vibe).toEqual({
       provider: "azure-openai",
       model: "gpt-5-4-mini",
+      localLlmModel: "qwen-3.6-14b-it",
       fallback: ["local-llm"],
     });
     expect(payload.settings.taskRouting.findCandidate.throttling.rateLimitCooldownSeconds).toBe(
@@ -468,6 +474,7 @@ describe("SettingsPage", () => {
     const route = {
       provider: "azure-openai",
       model: "gpt-5-4-mini",
+      localLlmModel: "gemma-4-e4b-it",
       fallback: ["local-llm"],
     };
     expect(payload.settings.taskRouting.coverEvidence.sourceSupport).toEqual(route);
@@ -575,7 +582,7 @@ describe("SettingsPage", () => {
     expect(webResearchRow).not.toBeNull();
     expect(
       within(webResearchRow as HTMLElement).getByRole("option", {
-        name: "qwen-3.6-14b-it",
+        name: /qwen-3\.6-14b-it/,
       }),
     ).toBeInTheDocument();
 
@@ -587,7 +594,7 @@ describe("SettingsPage", () => {
     expect(agenticRow).not.toBeNull();
     expect(
       within(agenticRow as HTMLElement).getByRole("option", {
-        name: "qwen-3.6-14b-it",
+        name: /qwen-3\.6-14b-it/,
       }),
     ).toBeInTheDocument();
   });

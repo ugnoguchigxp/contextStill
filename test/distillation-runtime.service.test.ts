@@ -791,6 +791,68 @@ describe("Distillation Runtime Service", () => {
     );
   });
 
+  test("runDistillationCompletion uses configured Local LLM model for fallback", async () => {
+    groupedConfig.openAi.apiKey = "openai-key";
+    groupedConfig.openAi.apiBaseUrl = "https://api.openai.test/v1";
+    groupedConfig.openAi.model = "gpt-5-4-mini";
+    groupedConfig.localLlm.apiKey = "local-key";
+    groupedConfig.localLlm.apiBaseUrl = "http://127.0.0.1:44448";
+    groupedConfig.localLlm.model = "gemma-4-e4b-it";
+    groupedConfig.localLlm.models = [
+      {
+        name: "Primary",
+        apiBaseUrl: "http://127.0.0.1:44448",
+        model: "gemma-4-e4b-it",
+      },
+      {
+        name: "Qwen",
+        apiBaseUrl: "http://127.0.0.1:44449",
+        model: "qwen-3.6-14b-it",
+      },
+    ];
+
+    const mockFetch = vi
+      .fn()
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: async () => "openai failure",
+      })
+      .mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [{ message: { content: '{"ok":true}' } }],
+        }),
+      });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await runDistillationCompletion(
+      {
+        model: "gpt-5-4-mini",
+        messages: [{ role: "user", content: "local fallback model" }],
+        maxTokens: 128,
+      },
+      {
+        providerSetting: "openai",
+        fallbackOrder: ["local-llm"],
+        localLlmModel: "qwen-3.6-14b-it",
+        enableTools: false,
+      },
+    );
+
+    expect(result.content).toBe('{"ok":true}');
+    expect(String(mockFetch.mock.calls[1]?.[0])).toBe("http://127.0.0.1:44449/v1/chat/completions");
+    expect(JSON.parse(String(mockFetch.mock.calls[1]?.[1]?.body))).toMatchObject({
+      model: "qwen-3.6-14b-it",
+    });
+    expect(recordLlmUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "local-llm",
+        model: "qwen-3.6-14b-it",
+      }),
+    );
+  });
+
   test("records provider route diagnostics on non-fallback provider failure", async () => {
     groupedConfig.openAi.apiKey = "openai-key";
     groupedConfig.openAi.apiBaseUrl = "https://api.openai.test/v1";

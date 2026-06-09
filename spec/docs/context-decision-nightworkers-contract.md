@@ -73,7 +73,7 @@ NightWorkers should:
 
 The response is authoritative for the decision point. NightWorkers should not present the returned actions back to the user as a new options list.
 
-The MCP response is intentionally compact. NightWorkers should consume `agentMessage`, `decision`, `mandate`, `confidence`, and `coverageSummary`. Evidence bodies are not part of the MCP response; they remain in ContextStill for audit through the Decision detail screen.
+The MCP response is intentionally compact. NightWorkers should consume `agentMessage`, `decision`, `mandate`, `confidence`, and `coverageSummary`. Evidence bodies are not part of the MCP response; they remain in ContextStill for audit through the Decision detail screen. `agentMessage` may still be grounded in short selected-Knowledge excerpts so the answer explains which prior tendency, best-practice rule, or procedure guidance supports the decision.
 
 ## Feedback
 

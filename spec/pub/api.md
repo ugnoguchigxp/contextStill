@@ -22,6 +22,17 @@ If `CONTEXT_STILL_ADMIN_API_KEY` is configured, requests under `/api/*` must inc
 | `GET` | `/api/context/runs/:id/ranking-trace` | Get ranking trace for a run |
 | `POST` | `/api/context/runs/:id/knowledge-feedback` | Record per-knowledge usage feedback |
 
+## Context Decisions
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `POST` | `/api/context-decisions` | Create a Knowledge-backed decision run |
+| `GET` | `/api/context-decisions` | List decision runs with optional `decision`, `status`, `feedback`, `q`, `limit`, and `cursor` filters |
+| `GET` | `/api/context-decisions/:id` | Get a decision detail with evidence, coverage traces, feedback, and effects |
+| `POST` | `/api/context-decisions/:id/human-feedback` | Record Good/Bad human feedback |
+| `POST` | `/api/context-decisions/:id/system-feedback` | Record AI/system outcome feedback |
+| `POST` | `/api/context-decisions/pr-discard-scan` | Scan linked PR metadata and optionally record `discarded_pr` feedback |
+
 ## Knowledge
 
 | Method | Endpoint | Description |

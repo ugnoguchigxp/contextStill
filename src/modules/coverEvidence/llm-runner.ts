@@ -122,6 +122,7 @@ async function enrichApplicabilityFacets(params: {
   model: string;
   fallbackOrder?: DistillationProviderName[];
   azureDeploymentSlots?: number[];
+  localLlmModel?: string;
   chatClient?: DistillationChatClient;
   signal?: AbortSignal;
 }): Promise<CoverEvidenceResult> {
@@ -155,6 +156,7 @@ async function enrichApplicabilityFacets(params: {
         providerSetting: params.provider,
         fallbackOrder: params.fallbackOrder,
         azureDeploymentSlots: params.azureDeploymentSlots,
+        localLlmModel: params.localLlmModel,
         chatClient: params.chatClient,
         usageSource: "cover-evidence:applicability-refinement",
         enableTools: false,
@@ -262,6 +264,7 @@ async function ensureApplicabilityFacets(params: {
   model: string;
   fallbackOrder?: DistillationProviderName[];
   azureDeploymentSlots?: number[];
+  localLlmModel?: string;
   chatClient?: DistillationChatClient;
   signal?: AbortSignal;
 }): Promise<CoverEvidenceResult> {
@@ -321,6 +324,7 @@ async function normalizeOrRepairProcedureQuality(params: {
   model: string;
   fallbackOrder?: DistillationProviderName[];
   azureDeploymentSlots?: number[];
+  localLlmModel?: string;
   chatClient?: DistillationChatClient;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -356,6 +360,7 @@ async function normalizeOrRepairProcedureQuality(params: {
     model: params.model,
     fallbackOrder: params.fallbackOrder,
     azureDeploymentSlots: params.azureDeploymentSlots,
+    localLlmModel: params.localLlmModel,
     chatClient: params.chatClient,
     signal: params.signal,
     timeoutMs: params.timeoutMs,
@@ -455,6 +460,7 @@ async function finalizeKnowledgeReadyResult(params: {
   model: string;
   fallbackOrder?: DistillationProviderName[];
   azureDeploymentSlots?: number[];
+  localLlmModel?: string;
   chatClient?: DistillationChatClient;
   signal?: AbortSignal;
   timeoutMs?: number;
@@ -469,6 +475,7 @@ async function finalizeKnowledgeReadyResult(params: {
     model: params.model,
     fallbackOrder: params.fallbackOrder,
     azureDeploymentSlots: params.azureDeploymentSlots,
+    localLlmModel: params.localLlmModel,
     chatClient: params.chatClient,
     signal: params.signal,
     timeoutMs: params.timeoutMs,
@@ -483,6 +490,7 @@ async function finalizeKnowledgeReadyResult(params: {
     model: params.model,
     fallbackOrder: params.fallbackOrder,
     azureDeploymentSlots: params.azureDeploymentSlots,
+    localLlmModel: params.localLlmModel,
     chatClient: params.chatClient,
     signal: params.signal,
   });
@@ -499,6 +507,7 @@ export async function runValueAssessment(params: {
   model: string;
   fallbackOrder?: DistillationProviderName[];
   azureDeploymentSlots?: number[];
+  localLlmModel?: string;
   chatClient?: DistillationChatClient;
   signal?: AbortSignal;
 }): Promise<CoverEvidenceResult> {
@@ -524,6 +533,7 @@ export async function runValueAssessment(params: {
         providerSetting: params.provider,
         fallbackOrder: params.fallbackOrder,
         azureDeploymentSlots: params.azureDeploymentSlots,
+        localLlmModel: params.localLlmModel,
         chatClient: params.chatClient,
         usageSource: "cover-evidence:value-assessment",
         enableTools: false,
@@ -585,6 +595,7 @@ export async function runValueAssessment(params: {
       model: params.model,
       fallbackOrder: params.fallbackOrder,
       azureDeploymentSlots: params.azureDeploymentSlots,
+      localLlmModel: params.localLlmModel,
       chatClient: params.chatClient,
       signal: params.signal,
       timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
@@ -779,6 +790,7 @@ export async function runExternalEvidence(params: {
   model: string;
   fallbackOrder?: DistillationProviderName[];
   azureDeploymentSlots?: number[];
+  localLlmModel?: string;
   forceRefreshEvidence?: boolean;
   chatClient?: DistillationChatClient;
   toolExecutor?: DistillationToolExecutor;
@@ -808,6 +820,7 @@ export async function runExternalEvidence(params: {
         providerSetting: params.provider,
         fallbackOrder: params.fallbackOrder,
         azureDeploymentSlots: params.azureDeploymentSlots,
+        localLlmModel: params.localLlmModel,
         chatClient: params.chatClient,
         usageSource: "cover-evidence:external-search-query",
         enableTools: false,
@@ -887,6 +900,7 @@ export async function runExternalEvidence(params: {
         providerSetting: params.provider,
         fallbackOrder: params.fallbackOrder,
         azureDeploymentSlots: params.azureDeploymentSlots,
+        localLlmModel: params.localLlmModel,
         chatClient: params.chatClient,
         usageSource: "cover-evidence:external-fetch-selection",
         enableTools: false,
@@ -956,6 +970,7 @@ export async function runExternalEvidence(params: {
           providerSetting: params.provider,
           fallbackOrder: params.fallbackOrder,
           azureDeploymentSlots: params.azureDeploymentSlots,
+          localLlmModel: params.localLlmModel,
           chatClient: params.chatClient,
           usageSource: "cover-evidence:external-final",
           enableTools: false,
@@ -1008,6 +1023,7 @@ export async function runExternalEvidence(params: {
         model: params.model,
         fallbackOrder: params.fallbackOrder,
         azureDeploymentSlots: params.azureDeploymentSlots,
+        localLlmModel: params.localLlmModel,
         chatClient: params.chatClient,
         signal: params.signal,
         timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
@@ -1065,6 +1081,7 @@ export async function runExternalEvidence(params: {
           model: params.model,
           fallbackOrder: params.fallbackOrder,
           azureDeploymentSlots: params.azureDeploymentSlots,
+          localLlmModel: params.localLlmModel,
           chatClient: params.chatClient,
           signal: params.signal,
           timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
@@ -1113,6 +1130,7 @@ export async function runExternalEvidence(params: {
       model: params.model,
       fallbackOrder: params.fallbackOrder,
       azureDeploymentSlots: params.azureDeploymentSlots,
+      localLlmModel: params.localLlmModel,
       chatClient: params.chatClient,
       signal: params.signal,
       timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
@@ -1144,6 +1162,7 @@ export async function runOptionalMcpEvidence(params: {
   model: string;
   fallbackOrder?: DistillationProviderName[];
   azureDeploymentSlots?: number[];
+  localLlmModel?: string;
   chatClient?: DistillationChatClient;
   toolExecutor?: DistillationToolExecutor;
   signal?: AbortSignal;
@@ -1167,6 +1186,7 @@ export async function runOptionalMcpEvidence(params: {
         providerSetting: params.provider,
         fallbackOrder: params.fallbackOrder,
         azureDeploymentSlots: params.azureDeploymentSlots,
+        localLlmModel: params.localLlmModel,
         chatClient: params.chatClient,
         toolExecutor: params.toolExecutor,
         usageSource: "cover-evidence:mcp-evidence",
@@ -1214,6 +1234,7 @@ export async function appendOptionalMcpEvidence(params: {
   model: string;
   fallbackOrder?: DistillationProviderName[];
   azureDeploymentSlots?: number[];
+  localLlmModel?: string;
   chatClient?: DistillationChatClient;
   toolExecutor?: DistillationToolExecutor;
   signal?: AbortSignal;
@@ -1229,6 +1250,7 @@ export async function appendOptionalMcpEvidence(params: {
     model: params.model,
     fallbackOrder: params.fallbackOrder,
     azureDeploymentSlots: params.azureDeploymentSlots,
+    localLlmModel: params.localLlmModel,
     chatClient: params.chatClient,
     toolExecutor: params.toolExecutor,
     signal: params.signal,

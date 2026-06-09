@@ -31,11 +31,12 @@ collect evidence -> distill knowledge -> compile task context -> evaluate useful
 Core capabilities:
 
 - Evidence-backed knowledge distillation with source links and candidate review.
-- MCP tools for `initial_instructions`, `context_compile`, `compile_eval`, knowledge search, memory search, and candidate registration.
+- MCP tools for `initial_instructions`, `context_compile`, `compile_eval`, `context_decision`, knowledge search, memory search, and candidate registration.
 - Local PostgreSQL/pgvector storage with a React admin UI.
 - Agent log sync for Codex, Antigravity, and Claude logs.
 - Queue-based distillation workers and health diagnostics.
 - Knowledge Landscape diagnostics for graph, replay, review items, and approval-gated candidates.
+- Decision history that persists autonomous execute/escalate decisions, Knowledge evidence, coverage traces, and Good/Bad or system feedback.
 
 context-still is local-first infrastructure, not a hosted SaaS. You run the database, API, MCP server, automation workers, and admin UI in your environment.
 
@@ -137,7 +138,7 @@ For an MCP client, use:
 }
 ```
 
-After connecting the MCP server, call `initial_instructions` once at the start of a project session, then use `context_compile` before task work and `compile_eval` after task work.
+After connecting the MCP server, call `initial_instructions` once at the start of a project session. Use `context_compile` before task work, `context_decision` before asking the user or creating a PR when autonomous progress may still be possible, and `compile_eval` after task work.
 
 ## Common Workflows
 
@@ -160,6 +161,14 @@ bun run queue:finding:once
 bun run queue:covering:once
 bun run queue:merge-review:once
 bun run queue:finalize:once
+bun run queue:merge-activation-finalize:once
+```
+
+Scan Context Decision records for closed linked PRs and record `discarded_pr` feedback when you explicitly apply it:
+
+```bash
+bun run decision:pr-discard-scan -- --dry-run
+bun run decision:pr-discard-scan -- --apply
 ```
 
 Install local automation on macOS:
