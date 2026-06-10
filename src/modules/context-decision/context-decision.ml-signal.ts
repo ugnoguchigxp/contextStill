@@ -4,13 +4,13 @@ import type {
   ContextDecisionValue,
 } from "../../shared/schemas/context-decision.schema.js";
 import { contextDecisionValueSchema } from "../../shared/schemas/context-decision.schema.js";
-import type { ContextDecisionMlTrainingRow } from "./context-decision.repository.js";
 import {
+  type ContextDecisionMlFeatures,
   contextDecisionMlFeatureVector,
   contextDecisionMlFeatureVersion,
   readContextDecisionMlFeaturesFromTrace,
-  type ContextDecisionMlFeatures,
 } from "./context-decision.ml-features.js";
+import type { ContextDecisionMlTrainingRow } from "./context-decision.repository.js";
 
 const modelVersion = "ml-random-forest@2.1.0/context-decision-v1";
 const minTrainingSamples = 30;

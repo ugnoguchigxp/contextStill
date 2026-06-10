@@ -92,4 +92,56 @@ describe("bedrock provider", () => {
     expect(status.reachable).toBe(false);
     expect(status.error).toBe("Connection Failed");
   });
+
+  test("configures AWS profile if provided in config", async () => {
+    const { groupedConfig } = await import("../src/config.js");
+    groupedConfig.bedrock.profile = "my-custom-profile";
+
+    const provider = createBedrockProvider();
+    const mockResponse = { output: { message: { content: [{ text: "response" }] } } };
+    mockSend.mockResolvedValue(mockResponse);
+
+    await provider.chat({ messages: [{ role: "user", content: "hi" }], maxTokens: 10 });
+    expect(process.env.AWS_PROFILE).toBe("my-custom-profile");
+
+    // Clean up
+    groupedConfig.bedrock.profile = "";
+    process.env.AWS_PROFILE = undefined;
+  });
+
+  test("healthCheck returns reachable true if error metadata contains httpStatusCode < 500", async () => {
+    const provider = createBedrockProvider();
+    const error = new Error("Resource not found");
+    (error as any).$metadata = { httpStatusCode: 404 };
+    mockSend.mockRejectedValue(error);
+
+    const status = await provider.healthCheck();
+    expect(status.reachable).toBe(true);
+  });
+
+  test("chat throws if bedrock is not configured", async () => {
+    const { groupedConfig } = await import("../src/config.js");
+    const originalRegion = groupedConfig.bedrock.region;
+    groupedConfig.bedrock.region = "";
+    try {
+      const provider = createBedrockProvider();
+      await expect(
+        provider.chat({ messages: [{ role: "user", content: "hi" }], maxTokens: 10 }),
+      ).rejects.toThrow("Bedrock is not configured");
+    } finally {
+      groupedConfig.bedrock.region = originalRegion;
+    }
+  });
+
+  test("chat supports system messages and empty messages fallback", async () => {
+    const provider = createBedrockProvider();
+    const mockResponse = { output: { message: { content: [{ text: "hi back" }] } } };
+    mockSend.mockResolvedValue(mockResponse);
+
+    const res = await provider.chat({
+      messages: [{ role: "system", content: "you are helpful" }],
+      maxTokens: 10,
+    });
+    expect(res.content).toBe("hi back");
+  });
 });

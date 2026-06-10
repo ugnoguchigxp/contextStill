@@ -1,0 +1,322 @@
+/** @vitest-environment jsdom */
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import { fireEvent, render, screen, waitFor } from "@testing-library/react";
+import React from "react";
+import { beforeEach, describe, expect, test, vi } from "vitest";
+import { ContextDecisionPage } from "../../../web/src/modules/context-decision/components/context-decision.page";
+import {
+  useContextDecisionDetail,
+  useContextDecisionFeedbackMutation,
+  useContextDecisionRuns,
+  useCreateContextDecisionMutation,
+} from "../../../web/src/modules/context-decision/hooks/context-decision.hooks";
+
+// Recharts のモック
+vi.mock("recharts", () => ({
+  ResponsiveContainer: ({ children }: any) => <div>{children}</div>,
+  RadarChart: ({ children }: any) => <div>{children}</div>,
+  PolarGrid: () => null,
+  PolarAngleAxis: () => null,
+  PolarRadiusAxis: () => null,
+  Radar: () => null,
+}));
+
+// hooks のモック
+vi.mock("../../../web/src/modules/context-decision/hooks/context-decision.hooks", () => ({
+  useCreateContextDecisionMutation: vi.fn(),
+  useContextDecisionDetail: vi.fn(),
+  useContextDecisionFeedbackMutation: vi.fn(),
+  useContextDecisionRuns: vi.fn(),
+}));
+
+const queryClient = new QueryClient({
+  defaultOptions: {
+    queries: {
+      retry: false,
+    },
+  },
+});
+
+const mockRuns = [
+  {
+    id: "run-1",
+    sessionId: "sess-1",
+    decisionPoint: "Should we build?",
+    decision: "execute",
+    selectedAction: "build",
+    mandate: "Do build",
+    confidence: 90,
+    status: "completed",
+    humanFeedback: null,
+    createdAt: "2026-06-10T12:00:00.000Z",
+    updatedAt: "2026-06-10T12:00:00.000Z",
+  },
+  {
+    id: "run-2",
+    sessionId: "sess-1",
+    decisionPoint: "Should we release?",
+    decision: "escalate",
+    selectedAction: null,
+    mandate: "Escalate to admin",
+    confidence: 50,
+    status: "failed",
+    humanFeedback: "good",
+    createdAt: "2026-06-10T12:10:00.000Z",
+    updatedAt: "2026-06-10T12:10:00.000Z",
+  },
+];
+
+const mockDetail = {
+  run: {
+    ...mockRuns[0],
+    rejectedActions: [],
+    retrievalHints: {
+      technologies: ["typescript"],
+      changeTypes: ["feat"],
+      domains: ["core"],
+    },
+    agentMessage: "Yes, you should build.",
+    confidenceTrace: {
+      supportScore: 90,
+      counterScore: 10,
+      preferenceScore: 80,
+      coverageScore: 85,
+      verificationScore: 70,
+      historicalFeedbackScore: 50,
+      knowledgePrior: {
+        status: "available",
+        source: "retrieval_prior_v1",
+        referenceOnly: true,
+        notUsedForScoring: true,
+        evidenceCount: 3,
+        candidateCount: 5,
+        summary: "Prior summary",
+        signals: ["ok"],
+        cautions: ["careful"],
+      },
+      knowledgeAssessment: {
+        status: "evaluable",
+        recommendedDirection: "execute",
+        knowledgeCoverage: 80,
+        supportStrength: 90,
+        counterEvidenceStrength: 10,
+        riskStrength: 5,
+        preferenceAlignment: 90,
+        applicabilityScore: 85,
+        consensusScore: 95,
+        conflictScore: 5,
+        sourceQualityScore: 80,
+        outOfDistributionScore: 10,
+        retrievalMethods: ["vector"],
+        reason: "Looks good",
+        meaningfulMetrics: [],
+      },
+      outcomePredictor: {
+        status: "ready",
+        model: "ml-random-forest",
+        modelVersion: "1.0",
+        featureVersion: "context-decision-ml-features-v1",
+        predictedDecision: "execute",
+        confidence: 0.85,
+        trainingSampleCount: 10,
+        classDistribution: { execute: 8, reject: 2 },
+        features: {
+          supportHitCount: 3,
+          selectedSupportCount: 2,
+          deterministicConfidence: 90,
+          relatedBadSignalCount: 0,
+        },
+        reason: "Matches previous executions",
+      },
+    },
+    guardrails: { riskEvidenceCount: 0 },
+    unsupportedAlternatives: [],
+    metadata: {},
+  },
+  evidence: [
+    {
+      id: "ev-1",
+      decisionRunId: "run-1",
+      knowledgeId: "kb-1",
+      role: "selected_support",
+      weightAtDecision: 90,
+      summary: "Rule: Always build on green",
+      sourceRefs: ["green.md"],
+      metadata: { status: "active", type: "rule" },
+      createdAt: "2026-06-10T12:00:00.000Z",
+    },
+  ],
+  coverage: [
+    {
+      id: "cov-1",
+      query: "always build",
+      queryRole: "support",
+      hitCount: 1,
+      maxSimilarity: 0.95,
+      selectedKnowledgeIds: ["kb-1"],
+      rejectedKnowledgeIds: [],
+      reason: "Matched query",
+      createdAt: "2026-06-10T12:00:00.000Z",
+    },
+  ],
+  feedback: [],
+  effects: [],
+};
+
+describe("ContextDecisionPage", () => {
+  const mockMutateAsync = vi.fn();
+  const mockMutate = vi.fn();
+
+  beforeEach(() => {
+    vi.clearAllMocks();
+
+    vi.mocked(useContextDecisionRuns).mockReturnValue({
+      data: mockRuns,
+      isLoading: false,
+      error: null,
+      refetch: vi.fn(),
+    } as any);
+
+    vi.mocked(useContextDecisionDetail).mockReturnValue({
+      data: mockDetail,
+      isLoading: false,
+      error: null,
+    } as any);
+
+    vi.mocked(useCreateContextDecisionMutation).mockReturnValue({
+      mutateAsync: mockMutateAsync,
+      isPending: false,
+      error: null,
+    } as any);
+
+    vi.mocked(useContextDecisionFeedbackMutation).mockReturnValue({
+      mutate: mockMutate,
+      isPending: false,
+    } as any);
+  });
+
+  test("renders request page by default and populates example form", () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContextDecisionPage />
+      </QueryClientProvider>,
+    );
+
+    // 見出しの確認
+    expect(screen.getByText("Context Decision Control Plane")).toBeInTheDocument();
+    expect(screen.getByText("Decision Request")).toBeInTheDocument();
+
+    // フォームにサンプルを挿入
+    const exampleButton = screen.getByText("Example");
+    fireEvent.click(exampleButton);
+
+    const decisionPointTextarea = screen.getByLabelText("Decision Point") as HTMLTextAreaElement;
+    expect(decisionPointTextarea.value).toContain("Should I continue implementing the UI form");
+
+    const techInput = screen.getByLabelText("Technologies") as HTMLInputElement;
+    expect(techInput.value).toBe("typescript, react");
+  });
+
+  test("validates and submits a new decision request", async () => {
+    mockMutateAsync.mockResolvedValue({ decisionId: "run-1" });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContextDecisionPage />
+      </QueryClientProvider>,
+    );
+
+    const askButton = screen.getByText("Ask Decision");
+    fireEvent.click(askButton);
+
+    // 必須チェックエラーの確認
+    expect(screen.getByText("Decision point is required.", { exact: false })).toBeInTheDocument();
+
+    // フォームを入力して送信
+    const exampleButton = screen.getByText("Example");
+    fireEvent.click(exampleButton);
+    fireEvent.click(askButton);
+
+    expect(mockMutateAsync).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decisionPoint: expect.stringContaining("Should I continue implementing"),
+      }),
+    );
+  });
+
+  test("renders decision details correctly when selected", async () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContextDecisionPage />
+      </QueryClientProvider>,
+    );
+
+    // サイドバーのランをクリックして詳細モードに移行
+    const sidebarItem = screen.getAllByText("Should we build?")[0];
+    fireEvent.click(sidebarItem);
+
+    // 詳細パネルが表示されていることの確認
+    await waitFor(() => {
+      expect(screen.getByText("Yes, you should build.")).toBeInTheDocument();
+    });
+    expect(screen.getByText("Do build")).toBeInTheDocument();
+    expect(screen.getByText("Always build on green")).toBeInTheDocument();
+    expect(screen.getByText("Knowledge Prior")).toBeInTheDocument();
+    expect(screen.getByText("Outcome Predictor")).toBeInTheDocument();
+    expect(screen.getByText("Knowledge Assessment")).toBeInTheDocument();
+
+    // フィードバックの送信
+    const goodButton = screen.getByText("Good");
+    fireEvent.click(goodButton);
+
+    expect(mockMutate).toHaveBeenCalledWith({
+      decisionId: "run-1",
+      value: "good",
+    });
+  });
+
+  test("handles loading state in details", async () => {
+    // 詳細がロード中の状態
+    vi.mocked(useContextDecisionDetail).mockReturnValue({
+      data: undefined,
+      isLoading: true,
+      error: null,
+    } as any);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContextDecisionPage />
+      </QueryClientProvider>,
+    );
+
+    const sidebarItem = screen.getAllByText("Should we build?")[0];
+    fireEvent.click(sidebarItem);
+
+    await waitFor(() => {
+      expect(screen.getByText("Loading detail...")).toBeInTheDocument();
+    });
+  });
+
+  test("handles error state in details", async () => {
+    // エラー状態
+    vi.mocked(useContextDecisionDetail).mockReturnValue({
+      data: undefined,
+      isLoading: false,
+      error: new Error("Failed to fetch detail"),
+    } as any);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <ContextDecisionPage />
+      </QueryClientProvider>,
+    );
+
+    // Sidebar から選択して詳細を表示
+    const sidebarItem = screen.getAllByText("Should we build?")[0];
+    fireEvent.click(sidebarItem);
+
+    await waitFor(() => {
+      expect(screen.getByText("Error: Failed to fetch detail")).toBeInTheDocument();
+    });
+  });
+});

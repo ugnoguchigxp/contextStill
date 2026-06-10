@@ -3,14 +3,14 @@ import { Hono } from "hono";
 import { z } from "zod";
 import { settingsUpdateRequestSchema } from "../../../src/modules/settings/settings.types.js";
 import {
+  getCodexAuthStatusForApi,
+  getCodexLoginCommandForApi,
   getSettingsForApi,
   reloadRuntimeCacheForApi,
   testAzureOpenAiDeploymentForApi,
   testLocalLlmModelForApi,
   testProviderForApi,
   updateSettingsForApi,
-  getCodexAuthStatusForApi,
-  getCodexLoginCommandForApi,
 } from "./settings.service.js";
 
 const providerParamSchema = z.object({

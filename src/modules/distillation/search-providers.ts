@@ -1,8 +1,8 @@
 import { eq } from "drizzle-orm";
 import { groupedConfig } from "../../config.js";
 import { db } from "../../db/client.js";
-import { readProjectEnv } from "../../project-identity.js";
 import { syncStates } from "../../db/schema.js";
+import { readProjectEnv } from "../../project-identity.js";
 import { ensureRuntimeSettingsLoaded } from "../settings/settings.service.js";
 import {
   evidenceCacheFreshAfter,

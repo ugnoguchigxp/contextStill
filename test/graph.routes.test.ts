@@ -1,9 +1,9 @@
 import { Hono } from "hono";
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import {
+  type DeadZoneKnowledgeReviewResponse,
   deadZoneKnowledgeReviewActionResultSchema,
   deadZoneKnowledgeReviewResponseSchema,
-  type DeadZoneKnowledgeReviewResponse,
 } from "../src/shared/schemas/landscape-deadzone-review.schema.js";
 import {
   landscapeReplayComparisonResponseSchema,

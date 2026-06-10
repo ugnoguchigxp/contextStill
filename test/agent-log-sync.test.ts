@@ -2,6 +2,7 @@ import fs from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, test } from "vitest";
+import { readCodexFileContext } from "../src/modules/agent-log-sync/codex-parser.js";
 import {
   buildAntigravityIngestRoots,
   buildCodexIngestRoots,
@@ -423,5 +424,80 @@ diff --git a/src/a.ts b/src/a.ts
     );
 
     expect(turns).toEqual([{ role: "assistant", content: "確認しました。\n<truncated 99 bytes>" }]);
+  });
+
+  test("readCodexFileContext parses session_meta and turn_context correctly", async () => {
+    const root = await makeTempDir();
+    const filePath = path.join(root, "session.jsonl");
+    const metaLine = JSON.stringify({
+      type: "session_meta",
+      payload: { id: "sess-123", cwd: "/tmp/my-proj" },
+    });
+    const turnLine = JSON.stringify({
+      type: "turn_context",
+      payload: { cwd: "/tmp/another-cwd" },
+    });
+    await fs.writeFile(filePath, `${metaLine}\n${turnLine}\n`, "utf-8");
+
+    const context = await readCodexFileContext(filePath);
+    expect(context.sessionId).toBe("sess-123");
+    expect(context.cwd).toBe("/tmp/another-cwd");
+  });
+
+  test("readCodexFileContext handles read error gracefully", async () => {
+    const context = await readCodexFileContext("/nonexistent/file.jsonl");
+    expect(context.sessionId).toBe("file"); // basename on nonexistent file
+  });
+
+  test("processCodexJsonlDelta supports apply_patch with arguments instead of input", () => {
+    const line = `${JSON.stringify({
+      timestamp: "2026-05-14T00:00:00.000Z",
+      type: "response_item",
+      payload: {
+        type: "function_call",
+        name: "apply_patch",
+        arguments: "patch args content",
+      },
+    })}\n`;
+    const result = processCodexJsonlDelta("/tmp/rollout-abc.jsonl", line, 0);
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]?.content).toBe("patch args content");
+  });
+
+  test("processCodexJsonlDelta ignores non-message type or non-user/assistant role", () => {
+    const line1 = `${JSON.stringify({
+      type: "response_item",
+      payload: { type: "system_msg", role: "system", content: "ignore me" },
+    })}\n`;
+    const line2 = `${JSON.stringify({
+      type: "response_item",
+      payload: { type: "message", role: "system", content: "ignore me" },
+    })}\n`;
+    const result1 = processCodexJsonlDelta("/tmp/rollout-abc.jsonl", line1, 0);
+    const result2 = processCodexJsonlDelta("/tmp/rollout-abc.jsonl", line2, 0);
+    expect(result1.messages).toHaveLength(0);
+    expect(result2.messages).toHaveLength(0);
+  });
+
+  test("processCodexJsonlDelta supports inline cwd extraction from user message", () => {
+    const content = "<cwd>/tmp/extracted-cwd</cwd> user message";
+    const line = `${JSON.stringify({
+      type: "response_item",
+      payload: { type: "message", role: "user", content },
+    })}\n`;
+    const result = processCodexJsonlDelta("/tmp/rollout-abc.jsonl", line, 0);
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]?.metadata.cwd).toBe("/tmp/extracted-cwd");
+  });
+
+  test("processCodexJsonlDelta handles trailing segment without newline", () => {
+    const line = JSON.stringify({
+      type: "response_item",
+      payload: { type: "message", role: "user", content: "trailing message" },
+    });
+    // ends without newline
+    const result = processCodexJsonlDelta("/tmp/rollout-abc.jsonl", line, 0);
+    expect(result.messages).toHaveLength(1);
+    expect(result.messages[0]?.content).toBe("trailing message");
   });
 });

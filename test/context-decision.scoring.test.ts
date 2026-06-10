@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import type { KnowledgeSearchResult } from "../src/modules/knowledge/knowledge.repository.js";
 import { scoreContextDecision } from "../src/modules/context-decision/context-decision.scoring.js";
+import type { KnowledgeSearchResult } from "../src/modules/knowledge/knowledge.repository.js";
 
 function knowledge(overrides: Partial<KnowledgeSearchResult> = {}): KnowledgeSearchResult {
   return {

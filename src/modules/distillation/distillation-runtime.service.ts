@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { groupedConfig } from "../../config.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import { recordLlmUsage } from "../llm/llm-usage-logger.js";
+import { createCodexProvider } from "../llm/providers/codex.provider.js";
 import { ensureRuntimeSettingsLoaded } from "../settings/settings.service.js";
 import {
   type DistillationToolCall,
@@ -21,7 +22,6 @@ import { createAzureOpenAiChatClient } from "./providers/azure-openai.js";
 import { callBedrockChat } from "./providers/bedrock.js";
 import { callLocalLlmChat } from "./providers/local-llm.js";
 import { callOpenAiChat } from "./providers/openai.js";
-import { createCodexProvider } from "../llm/providers/codex.provider.js";
 
 // Re-export types from types.ts to preserve public schema
 export type {

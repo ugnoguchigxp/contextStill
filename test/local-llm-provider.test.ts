@@ -144,4 +144,56 @@ describe("local-llm provider", () => {
     expect(spy).toHaveBeenCalledTimes(1);
     expect(spy.mock.calls[0]?.[0]).toBe("http://127.0.0.1:44448/v1/chat/completions");
   });
+
+  test("uses providerOptions.modelConfig when request model is missing", async () => {
+    const provider = createLocalLlmProvider({
+      modelConfig: {
+        apiBaseUrl: "http://options-url",
+        model: "options-model",
+      },
+    });
+
+    const spy = vi.spyOn(global, "fetch").mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: "pong" }, finish_reason: "stop" }],
+      }),
+    } as unknown as Response);
+
+    const response = await provider.chat({
+      messages: [{ role: "user", content: "ping" }],
+      maxTokens: 100,
+    });
+
+    expect(response.content).toBe("pong");
+    expect(spy.mock.calls[0]?.[0]).toBe("http://options-url/v1/chat/completions");
+  });
+
+  test("healthCheck handles AbortError correctly", async () => {
+    const abortError = new Error("The operation was aborted.");
+    abortError.name = "AbortError";
+    vi.spyOn(global, "fetch").mockRejectedValue(abortError);
+
+    const provider = createLocalLlmProvider({ timeoutMs: 1000 });
+    const status = await provider.healthCheck();
+
+    expect(status.reachable).toBe(false);
+    expect(status.error).toBe("The operation was aborted.");
+  });
+
+  test("healthCheck handles fallback chat failure", async () => {
+    vi.spyOn(global, "fetch")
+      .mockResolvedValueOnce({
+        ok: false,
+        status: 500,
+        text: async () => "Internal Server Error",
+      } as unknown as Response)
+      .mockRejectedValueOnce(new Error("Chat failed"));
+
+    const provider = createLocalLlmProvider({ timeoutMs: 1000 });
+    const status = await provider.healthCheck();
+
+    expect(status.reachable).toBe(false);
+    expect(status.error).toBe("Chat failed");
+  });
 });

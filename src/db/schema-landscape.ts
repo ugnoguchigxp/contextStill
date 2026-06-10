@@ -20,6 +20,7 @@ import {
 } from "./schema-distillation.js";
 import { knowledgeItems } from "./schema-knowledge.js";
 import {
+  distillationQueueStatusValues,
   landscapeReviewItemCandidateLinkStatusValues,
   landscapeReviewItemConfidenceValues,
   landscapeReviewItemProposedActionValues,
@@ -28,7 +29,6 @@ import {
   landscapeReviewItemStatusValues,
   landscapeSnapshotCacheStatusValues,
   landscapeSnapshotCacheTypeValues,
-  distillationQueueStatusValues,
 } from "./schema.constants.js";
 import { toSqlList } from "./schema.utils.js";
 

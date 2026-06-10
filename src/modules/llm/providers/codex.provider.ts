@@ -2,13 +2,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { groupedConfig } from "../../../config.js";
+import { checkCodexAuthStatus } from "../../codex/codex-auth.service.js";
 import type {
   LlmChatRequest,
   LlmChatResponse,
   LlmHealthStatus,
   LlmProvider,
 } from "../llm-provider.js";
-import { checkCodexAuthStatus } from "../../codex/codex-auth.service.js";
 
 // Safe dynamic import to allow compilation when package is not fully installed
 async function loadCodexSdk() {

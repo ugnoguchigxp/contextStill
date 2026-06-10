@@ -1,5 +1,5 @@
-import type { ToolEntry } from "../registry.js";
 import { readProjectEnv } from "../../project-identity.js";
+import type { ToolEntry } from "../registry.js";
 import { compileEvalTool } from "./compile-eval.tool.js";
 import { contextCompileTool } from "./context-compile.tool.js";
 import { contextDecisionFeedbackTool, contextDecisionTool } from "./context-decision.tool.js";

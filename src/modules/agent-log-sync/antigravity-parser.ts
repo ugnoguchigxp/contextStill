@@ -87,7 +87,7 @@ function summarizeAntigravityToolCalls(toolCalls: unknown): ToolCallSummary[] {
   return summaries;
 }
 
-function formatToolCallSummary(toolCall: ToolCallSummary): string {
+export function formatToolCallSummary(toolCall: ToolCallSummary): string {
   const details = [
     toolCall.summary,
     toolCall.commandLine ? `$ ${toolCall.commandLine}` : undefined,
@@ -103,7 +103,7 @@ type FileViewAction = {
   endLine: number | null;
 };
 
-function parseAntigravityFileViewAction(content: string): FileViewAction | null {
+export function parseAntigravityFileViewAction(content: string): FileViewAction | null {
   const fileUrlMatch = content.match(/File Path:\s*`(file:\/\/[^`]+)`/);
   const shownPathMatch = content.match(/Show the contents of file (.+?)(?: from lines|\n)/);
   const filePath = fileUrlMatch
@@ -130,7 +130,7 @@ function parseAntigravityFileViewAction(content: string): FileViewAction | null 
   };
 }
 
-async function reconstructFileViewContent(action: FileViewAction): Promise<string | null> {
+export async function reconstructFileViewContent(action: FileViewAction): Promise<string | null> {
   if (!action.startLine || !action.endLine) return null;
 
   try {
@@ -147,7 +147,7 @@ async function reconstructFileViewContent(action: FileViewAction): Promise<strin
   }
 }
 
-async function summarizeAntigravityUserAction(
+export async function summarizeAntigravityUserAction(
   recordType: string,
   content: string,
 ): Promise<ToolCallSummary> {
@@ -185,7 +185,7 @@ async function summarizeAntigravityUserAction(
   };
 }
 
-function pushAntigravityToolMessage(params: {
+export function pushAntigravityToolMessage(params: {
   messages: ChatMessage[];
   toolCalls: ToolCallSummary[];
   logPath: string;

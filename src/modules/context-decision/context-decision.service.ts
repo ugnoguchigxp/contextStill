@@ -12,7 +12,19 @@ import {
 import type { KnowledgeSearchResult } from "../knowledge/knowledge.repository.js";
 import { searchKnowledge } from "../knowledge/knowledge.repository.js";
 import { getAgenticLlmProviders } from "../llm/agentic-llm.service.js";
+import {
+  ensureRuntimeSettingsLoaded,
+  resolveAgenticCompileRouting,
+} from "../settings/settings.service.js";
 import { buildDecisionCoverageQueries } from "./context-decision.coverage.js";
+import {
+  type ContextDecisionCandidateTrace,
+  assessContextDecisionKnowledge,
+  buildContextDecisionCandidateTraces,
+} from "./context-decision.knowledge-assessment.js";
+import { buildContextDecisionKnowledgePrior } from "./context-decision.knowledge-prior.js";
+import { buildContextDecisionMlFeatures } from "./context-decision.ml-features.js";
+import { buildContextDecisionMlSignal } from "./context-decision.ml-signal.js";
 import {
   getContextDecisionDetail,
   getRelatedDecisionBadSignalCount,
@@ -22,24 +34,12 @@ import {
   listContextDecisionMlTrainingRows,
   listContextDecisionRuns,
 } from "./context-decision.repository.js";
-import { buildContextDecisionMlFeatures } from "./context-decision.ml-features.js";
-import { buildContextDecisionMlSignal } from "./context-decision.ml-signal.js";
-import {
-  assessContextDecisionKnowledge,
-  buildContextDecisionCandidateTraces,
-  type ContextDecisionCandidateTrace,
-} from "./context-decision.knowledge-assessment.js";
-import { buildContextDecisionKnowledgePrior } from "./context-decision.knowledge-prior.js";
 import {
   type DecisionEvidenceCandidate,
   evidenceWeightAtDecision,
   resolveContextDecisionOutcome,
   scoreContextDecision,
 } from "./context-decision.scoring.js";
-import {
-  ensureRuntimeSettingsLoaded,
-  resolveAgenticCompileRouting,
-} from "../settings/settings.service.js";
 
 type ContextDecisionLlmJudgment = {
   decision: ContextDecisionValue;

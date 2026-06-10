@@ -35,6 +35,8 @@ export default defineConfig({
         "web/src/main.tsx",
         "web/src/App.tsx",
         "web/src/smoke.test.ts",
+        "web/src/**/*.page.tsx",
+        "web/src/modules/**/*page.tsx",
       ],
     },
   } as any,

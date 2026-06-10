@@ -1,15 +1,15 @@
 import { Hono } from "hono";
-import { projectIdentity } from "../src/project-identity.js";
 import { cors } from "hono/cors";
 import { logger } from "hono/logger";
 import { prettyJSON } from "hono/pretty-json";
 import { groupedConfig } from "../src/config.js";
+import { projectIdentity } from "../src/project-identity.js";
 import { adminApiKeyAuth } from "./middleware/admin-auth.js";
 import { agentDiffsRouter } from "./modules/agent-diffs/agent-diffs.routes.js";
 import { auditLogsRouter } from "./modules/audit/audit.routes.js";
 import { candidatesRouter } from "./modules/candidates/candidates.routes.js";
-import { contextDecisionRouter } from "./modules/context-decision/context-decision.routes.js";
 import { contextCompilerRouter } from "./modules/context-compiler/context-compiler.routes.js";
+import { contextDecisionRouter } from "./modules/context-decision/context-decision.routes.js";
 import { doctorRouter } from "./modules/doctor/doctor.routes.js";
 import { graphRouter } from "./modules/graph/graph.routes.js";
 import { knowledgeRouter } from "./modules/knowledge/knowledge.routes.js";

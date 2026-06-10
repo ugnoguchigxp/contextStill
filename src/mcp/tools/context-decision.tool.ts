@@ -1,5 +1,5 @@
-import { decideContext } from "../../modules/context-decision/context-decision.service.js";
 import { recordContextDecisionFeedback } from "../../modules/context-decision/context-decision.feedback.service.js";
+import { decideContext } from "../../modules/context-decision/context-decision.service.js";
 import type { ToolEntry } from "../registry.js";
 
 export const contextDecisionTool: ToolEntry = {

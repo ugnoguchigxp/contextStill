@@ -1,9 +1,9 @@
 import { describe, expect, test } from "vitest";
-import { buildContextDecisionMlSignal } from "../src/modules/context-decision/context-decision.ml-signal.js";
 import {
-  normalizeContextDecisionMlFeatures,
   type ContextDecisionMlFeatures,
+  normalizeContextDecisionMlFeatures,
 } from "../src/modules/context-decision/context-decision.ml-features.js";
+import { buildContextDecisionMlSignal } from "../src/modules/context-decision/context-decision.ml-signal.js";
 import type { ContextDecisionMlTrainingRow } from "../src/modules/context-decision/context-decision.repository.js";
 import type { ContextDecisionValue } from "../src/shared/schemas/context-decision.schema.js";
 

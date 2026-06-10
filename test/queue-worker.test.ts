@@ -1,6 +1,10 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { coveringEvidenceQueue, findingCandidateQueue } from "../src/db/schema.js";
-import { enqueueFindingJob, runQueueWorkerOnce } from "../src/modules/queue/core/worker.js";
+import {
+  enqueueFindingJob,
+  findFindingJob,
+  runQueueWorkerOnce,
+} from "../src/modules/queue/core/worker.js";
 
 const mocks = vi.hoisted(() => ({
   appendQueueEvent: vi.fn(),
@@ -478,5 +482,174 @@ describe("runQueueWorkerOnce", () => {
         message: "job kept waiting because worker dependency is unavailable",
       }),
     );
+  });
+
+  test("findFindingJob returns found row or null", async () => {
+    // 1. Found case
+    mocks.selectRows = [[{ id: "finding-job-1", sourceKey: "key-1" }]];
+    const found = await findFindingJob({
+      inputKind: "source_target",
+      sourceKind: "wiki_file",
+      sourceKey: "key-1",
+    });
+    expect(found).toEqual({ id: "finding-job-1", sourceKey: "key-1" });
+
+    // 2. Not found case
+    mocks.selectRows = [[]];
+    const notFound = await findFindingJob({
+      inputKind: "source_target",
+      sourceKind: "wiki_file",
+      sourceKey: "key-1",
+    });
+    expect(notFound).toBeNull();
+  });
+
+  test("enqueueFindingJob with non-vibe-memory always inserts", async () => {
+    mocks.selectRows = [];
+    const result = await enqueueFindingJob({
+      inputKind: "source_target",
+      sourceKind: "wiki_file",
+      sourceKey: "wiki-1",
+      sourceUri: "wiki_file:wiki-1",
+    });
+    expect(result).toEqual({ id: "evidence-1" });
+    expect(mocks.insertCalls.map((call) => call.table)).toContain(findingCandidateQueue);
+  });
+
+  test("runQueueWorkerOnce handles missing source error as skipped", async () => {
+    mocks.claimNextQueueJob.mockResolvedValue({ id: "finding-job-1" });
+    mocks.selectRows = [
+      [
+        {
+          id: "finding-job-1",
+          inputKind: "source_target",
+          sourceKind: "wiki_file",
+          sourceKey: "wiki-1",
+          sourceUri: "wiki_file:wiki-1",
+          distillationVersion: "v-test",
+          payload: {},
+          priority: 50,
+        },
+      ],
+    ];
+    mocks.runFindCandidate.mockRejectedValue(new Error("ENOENT: file not found"));
+
+    const result = await runQueueWorkerOnce({
+      queueName: "findingCandidate",
+      workerId: "worker-1",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.message).toContain("source missing skipped");
+    expect(mocks.updateCalls).toContainEqual(
+      expect.objectContaining({
+        table: findingCandidateQueue,
+        values: expect.objectContaining({
+          status: "skipped",
+          lastOutcomeKind: "source_missing",
+        }),
+      }),
+    );
+  });
+
+  test("runQueueWorkerOnce handles other finding candidate failures as failed", async () => {
+    mocks.claimNextQueueJob.mockResolvedValue({ id: "finding-job-1" });
+    mocks.selectRows = [
+      [
+        {
+          id: "finding-job-1",
+          inputKind: "source_target",
+          sourceKind: "wiki_file",
+          sourceKey: "wiki-1",
+          sourceUri: "wiki_file:wiki-1",
+          distillationVersion: "v-test",
+          payload: {},
+          priority: 50,
+        },
+      ],
+      [
+        {
+          attemptCount: 0,
+        },
+      ],
+    ];
+    mocks.runFindCandidate.mockRejectedValue(new Error("some api error"));
+
+    const result = await runQueueWorkerOnce({
+      queueName: "findingCandidate",
+      workerId: "worker-1",
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.message).toBe("some api error");
+    expect(mocks.updateCalls).toContainEqual(
+      expect.objectContaining({
+        table: findingCandidateQueue,
+        values: expect.objectContaining({
+          status: "failed",
+          attemptCount: 1,
+          lastOutcomeKind: "failed",
+        }),
+      }),
+    );
+  });
+
+  test("runs finalizeDistille queue job successfully", async () => {
+    mocks.claimNextQueueJob.mockResolvedValue({ id: "finalize-job-1" });
+    mocks.selectRows = [
+      [
+        {
+          id: "finalize-job-1",
+          evidenceResultId: "evidence-1",
+          distillationVersion: "v-test",
+          attemptCount: 0,
+        },
+      ],
+      [
+        {
+          id: "evidence-1",
+          foundCandidateId: "candidate-1",
+          appliesTo: {},
+          type: "rule",
+          title: "rule title",
+          body: "rule body",
+          importance: 70,
+          confidence: 70,
+          references: [],
+          duplicateRefs: [],
+          toolEvents: [],
+          reason: "reason",
+        },
+      ],
+      [
+        {
+          id: "candidate-1",
+          findingJobId: "finding-job-1",
+          type: "rule",
+        },
+      ],
+      [
+        {
+          id: "finding-job-1",
+          sourceKind: "wiki_file",
+          sourceKey: "wiki-1",
+          sourceUri: "wiki_file:wiki-1",
+        },
+      ],
+    ];
+
+    mocks.runFinalizeDistille.mockResolvedValue({
+      status: "stored",
+      knowledgeId: "k-1",
+      reason: null,
+    });
+
+    const result = await runQueueWorkerOnce({
+      queueName: "finalizeDistille",
+      workerId: "worker-1",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(mocks.runFinalizeDistille).toHaveBeenCalled();
   });
 });

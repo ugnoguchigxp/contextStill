@@ -215,4 +215,135 @@ describe("landscape snapshot cache service", () => {
       }),
     );
   });
+
+  test("covers stableStringify for arrays and nested objects", async () => {
+    process.env.LANDSCAPE_SNAPSHOT_CACHE_ENABLED = "true";
+    const build = vi.fn().mockResolvedValue({ built: true });
+
+    await runWithLandscapeSnapshotCache({
+      snapshotType: "landscape_snapshot",
+      params: {
+        arr: [1, 2, { nested: true }],
+        obj: { b: 2, a: 1, val: null },
+        bool: true,
+        str: "hello",
+      },
+      build,
+    });
+    expect(findLandscapeSnapshotCacheMock).toHaveBeenCalledTimes(1);
+  });
+
+  test("covers cacheTtlSeconds defaults when env value is invalid or non-positive", async () => {
+    process.env.LANDSCAPE_SNAPSHOT_CACHE_ENABLED = "true";
+    process.env.LANDSCAPE_SNAPSHOT_CACHE_TTL_SECONDS = "invalid-ttl";
+    const build = vi.fn().mockResolvedValue({ built: true });
+
+    await runWithLandscapeSnapshotCache({
+      snapshotType: "landscape_snapshot",
+      params: { a: 1 },
+      build,
+    });
+    expect(upsertLandscapeSnapshotCacheMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        ttlSeconds: 300,
+      }),
+    );
+
+    process.env.LANDSCAPE_SNAPSHOT_CACHE_TTL_SECONDS = "-10";
+    await runWithLandscapeSnapshotCache({
+      snapshotType: "landscape_snapshot",
+      params: { a: 1 },
+      build,
+    });
+    expect(upsertLandscapeSnapshotCacheMock).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        ttlSeconds: 300,
+      }),
+    );
+  });
+
+  test("covers loadLastPurgeBySnapshotType with partial/full audit logs and errors", async () => {
+    process.env.LANDSCAPE_SNAPSHOT_CACHE_ENABLED = "true";
+    listAuditLogsMock.mockResolvedValue({
+      items: [
+        {
+          createdAt: new Date("2026-05-24T00:00:00.000Z"),
+          payload: {
+            requestedSnapshotTypes: ["landscape_snapshot"],
+            staleDeletedCount: 1,
+            expiredDeletedCount: 2,
+            deletedCount: 3,
+            purgedAt: "2026-05-24T00:00:00.000Z",
+            error: null,
+          },
+        },
+        {
+          createdAt: new Date("2026-05-24T00:01:00.000Z"),
+          payload: {
+            requestedSnapshotTypes: "not-an-array",
+          },
+        },
+        {
+          createdAt: new Date("2026-05-24T00:02:00.000Z"),
+          payload: {
+            requestedSnapshotTypes: ["landscape_replay_snapshot", "landscape_replay_comparison"],
+            staleDeletedCount: 0,
+            expiredDeletedCount: 0,
+            deletedCount: 0,
+            purgedAt: null,
+            error: "some-error",
+          },
+        },
+      ],
+    });
+
+    const status = await getLandscapeSnapshotCacheStatus();
+    expect(status.snapshots).toHaveLength(3);
+    const snap1 = status.snapshots.find((s) => s.snapshotType === "landscape_snapshot");
+    expect(snap1?.lastPurge).not.toBeNull();
+    expect(snap1?.lastPurge?.deletedCount).toBe(3);
+
+    const snap2 = status.snapshots.find((s) => s.snapshotType === "landscape_replay_snapshot");
+    expect(snap2?.lastPurge).not.toBeNull();
+    expect(snap2?.lastPurge?.error).toBe("some-error");
+
+    listAuditLogsMock.mockRejectedValue(new Error("db error"));
+    const statusError = await getLandscapeSnapshotCacheStatus();
+    expect(statusError.snapshots.every((s) => s.lastPurge === null)).toBe(true);
+  });
+
+  test("covers purgeLandscapeSnapshotCache error handling", async () => {
+    deleteStaleOrExpiredLandscapeSnapshotCacheRowsMock.mockRejectedValue(new Error("purge failed"));
+    const result = await purgeLandscapeSnapshotCache({
+      snapshotTypes: ["landscape_snapshot"],
+    });
+
+    expect(result.deletedCount).toBe(0);
+    expect(result.error).toBe("purge failed");
+    expect(recordAuditLogSafeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        actor: "system",
+        eventType: "LANDSCAPE_SNAPSHOT_CACHE_PURGE",
+      }),
+    );
+  });
+
+  test("covers runWithLandscapeSnapshotCache write failure", async () => {
+    process.env.LANDSCAPE_SNAPSHOT_CACHE_ENABLED = "true";
+    upsertLandscapeSnapshotCacheMock.mockRejectedValue(new Error("write failed"));
+    const build = vi.fn().mockResolvedValue({ built: true });
+
+    const result = await runWithLandscapeSnapshotCache({
+      snapshotType: "landscape_snapshot",
+      params: { a: 1 },
+      build,
+    });
+
+    expect(result).toEqual({ built: true });
+    expect(recordAuditLogSafeMock).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "LANDSCAPE_SNAPSHOT_CACHE_WRITE_FAILED",
+      }),
+    );
+  });
 });

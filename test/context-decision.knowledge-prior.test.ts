@@ -1,6 +1,6 @@
 import { describe, expect, test } from "vitest";
-import { buildContextDecisionKnowledgePrior } from "../src/modules/context-decision/context-decision.knowledge-prior.js";
 import type { ContextDecisionCandidateTrace } from "../src/modules/context-decision/context-decision.knowledge-assessment.js";
+import { buildContextDecisionKnowledgePrior } from "../src/modules/context-decision/context-decision.knowledge-prior.js";
 import type { KnowledgeSearchResult } from "../src/modules/knowledge/knowledge.repository.js";
 
 function knowledge(overrides: Partial<KnowledgeSearchResult> = {}): KnowledgeSearchResult {

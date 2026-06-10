@@ -1,6 +1,6 @@
+import { readProjectEnv } from "../../project-identity.js";
 import type { Rankable } from "../context-compiler/ranking.service.js";
 import type { KnowledgeCandidateEvidence } from "../knowledge/knowledge.service.js";
-import { readProjectEnv } from "../../project-identity.js";
 
 export type LandscapeCompileInterventionRuntimeStrategy = "observe_only" | "diversity_exploration";
 

@@ -1,6 +1,6 @@
 import type { ContextDecisionKnowledgePrior } from "../../shared/schemas/context-decision.schema.js";
-import type { DecisionEvidenceCandidate } from "./context-decision.scoring.js";
 import type { ContextDecisionCandidateTrace } from "./context-decision.knowledge-assessment.js";
+import type { DecisionEvidenceCandidate } from "./context-decision.scoring.js";
 
 function roleLabel(role: string): string {
   if (role === "selected_support") return "support";

@@ -3,8 +3,8 @@ import type {
   DeadZoneEvidenceStrength,
   DeadZoneGraphHealth,
   DeadZoneKnowledgeReviewBadge,
-  DeadZoneSuggestedAction,
   DeadZoneStructureQuality,
+  DeadZoneSuggestedAction,
   DeadZoneUsageStrength,
 } from "../../shared/schemas/landscape-deadzone-review.schema.js";
 

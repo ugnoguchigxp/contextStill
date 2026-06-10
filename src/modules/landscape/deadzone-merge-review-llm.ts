@@ -1,11 +1,11 @@
 import { groupedConfig } from "../../config.js";
-import { runDistillationCompletion } from "../distillation/distillation-runtime.service.js";
-import type { DistillationMessage } from "../distillation/types.js";
-import { resolveDeadZoneMergeReviewRoute } from "../settings/settings.service.js";
 import {
   type DeadZoneMergeReviewResult,
   deadZoneMergeReviewResultSchema,
 } from "../../shared/schemas/landscape-deadzone-review.schema.js";
+import { runDistillationCompletion } from "../distillation/distillation-runtime.service.js";
+import type { DistillationMessage } from "../distillation/types.js";
+import { resolveDeadZoneMergeReviewRoute } from "../settings/settings.service.js";
 
 export type DeadZoneMergeReviewKnowledgeSnapshot = {
   id: string;

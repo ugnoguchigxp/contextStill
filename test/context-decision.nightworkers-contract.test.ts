@@ -1,7 +1,7 @@
 import { describe, expect, test } from "vitest";
-import { contextDecisionInputSchema } from "../src/shared/schemas/context-decision.schema.js";
 import { scoreContextDecision } from "../src/modules/context-decision/context-decision.scoring.js";
 import type { KnowledgeSearchResult } from "../src/modules/knowledge/knowledge.repository.js";
+import { contextDecisionInputSchema } from "../src/shared/schemas/context-decision.schema.js";
 
 function knowledge(): KnowledgeSearchResult {
   return {

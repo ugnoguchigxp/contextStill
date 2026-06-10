@@ -307,4 +307,54 @@ describe("Shared Schemas", () => {
     });
     expect(updateInvalid.success).toBe(false);
   });
+
+  test("landscapeContradictionDetectionInputSchema parses and pre-processes relationAxes", async () => {
+    const { landscapeContradictionDetectionInputSchema } = await import(
+      "../src/shared/schemas/landscape-contradiction.schema.ts"
+    );
+
+    const input = {
+      relationAxes: "Session, Project",
+    };
+    const parsed = landscapeContradictionDetectionInputSchema.parse(input);
+    expect(parsed.relationAxes).toEqual(["session", "project"]);
+
+    const parsedDefault = landscapeContradictionDetectionInputSchema.parse({});
+    expect(parsedDefault.relationAxes).toEqual(["session", "project", "source"]);
+  });
+
+  test("sessionMemo schemas handle compile_eval, empty title, and invalid get requests", async () => {
+    const { sessionMemoItemInputSchema, sessionMemoToolInputSchema } = await import(
+      "../src/shared/schemas/session-memo.schema.ts"
+    );
+
+    // 1. compile_eval kind is rejected in item schema
+    const result1 = sessionMemoItemInputSchema.safeParse({
+      body: "test body",
+      kind: "compile_eval",
+    });
+    expect(result1.success).toBe(false);
+
+    // 2. empty string / spaces for title gets parsed as undefined
+    const parsedItem = sessionMemoItemInputSchema.parse({
+      body: "test body",
+      title: "   ",
+    });
+    expect(parsedItem.title).toBeUndefined();
+
+    // 3. get action without slot or label is rejected in tool schema
+    const result2 = sessionMemoToolInputSchema.safeParse({
+      action: "get",
+      sessionId: "s1",
+    });
+    expect(result2.success).toBe(false);
+
+    // 4. get action with slot is accepted
+    const result3 = sessionMemoToolInputSchema.safeParse({
+      action: "get",
+      sessionId: "s1",
+      slot: 0,
+    });
+    expect(result3.success).toBe(true);
+  });
 });

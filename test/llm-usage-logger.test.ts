@@ -116,4 +116,53 @@ describe("logLlmUsage", () => {
       }),
     );
   });
+
+  test("returns null when resolvedUsage is not resolved (no usage, no text, no messages)", async () => {
+    await logLlmUsage({
+      provider: "local-llm",
+      model: "gemma-4-e4b-it",
+    });
+
+    expect(db.insert).not.toHaveBeenCalled();
+  });
+
+  test("handles codex provider by setting costJpy to 0 and usageMode to unknown", async () => {
+    await logLlmUsage({
+      provider: "codex",
+      model: "gpt-4o",
+      usage: {
+        promptTokens: 10,
+        completionTokens: 20,
+        totalTokens: 30,
+      },
+    });
+
+    expect(db.insert).toHaveBeenCalled();
+    const row = valuesMock.mock.calls[0]?.[0];
+    expect(row).toEqual(
+      expect.objectContaining({
+        provider: "codex",
+        model: "gpt-4o",
+        costJpy: 0,
+        usageMode: "unknown",
+      }),
+    );
+  });
+
+  test("logs error to console when db insert fails", async () => {
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    valuesMock.mockRejectedValueOnce(new Error("DB Connection Error"));
+
+    await logLlmUsage({
+      provider: "local-llm",
+      model: "gemma-4-e4b-it",
+      promptMessages: [{ role: "user", content: "test" }],
+      completionText: "ok",
+    });
+
+    expect(consoleErrorSpy).toHaveBeenCalledWith(
+      "[LlmUsageLogger] Failed to write usage log to DB:",
+      expect.any(Error),
+    );
+  });
 });

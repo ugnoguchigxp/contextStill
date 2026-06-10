@@ -1,5 +1,5 @@
-import type { CoverEvidenceReference, CoverEvidenceToolEvent } from "./types.js";
 import { legacyProjectEnvKey, projectEnvKey } from "../../project-identity.js";
+import type { CoverEvidenceReference, CoverEvidenceToolEvent } from "./types.js";
 
 type McpReferenceKind = Extract<CoverEvidenceReference["kind"], "context7" | "deepwiki">;
 export type McpEvidenceToolName = McpReferenceKind;

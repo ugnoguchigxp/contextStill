@@ -1,14 +1,14 @@
+import { inArray } from "drizzle-orm";
 import { buildGraphSnapshot } from "../../../api/modules/graph/graph.repository.js";
 import { updateKnowledgeItem } from "../../../api/modules/knowledge/knowledge.repository.js";
-import { inArray } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { knowledgeItems } from "../../db/schema.js";
 import {
   type DeadZoneKnowledgeMaintenanceInput,
   type DeadZoneKnowledgeMaintenanceResult,
-  type DeadZoneKnowledgeReviewBadge,
   type DeadZoneKnowledgeReviewActionInput,
   type DeadZoneKnowledgeReviewActionResult,
+  type DeadZoneKnowledgeReviewBadge,
   type DeadZoneKnowledgeReviewItem,
   type DeadZoneKnowledgeReviewQuery,
   type DeadZoneKnowledgeReviewResponse,
@@ -16,18 +16,7 @@ import {
   deadZoneKnowledgeReviewQuerySchema,
   deadZoneKnowledgeReviewResponseSchema,
 } from "../../shared/schemas/landscape-deadzone-review.schema.js";
-import type { LandscapeCommunity } from "./landscape.types.js";
-import {
-  deriveDeadZoneReviewBadges,
-  scoreDeadZoneRisk,
-  scoreApplicabilityMatch,
-  scoreEvidenceStrength,
-  scoreGraphHealth,
-  scoreStructureQuality,
-  scoreUsageStrength,
-  suggestedActionForSimilar,
-  type DeadZoneScoringKnowledge,
-} from "./landscape-deadzone-review.scoring.js";
+import { listLatestDeadZoneMergeReviewJobsByDeadZoneIds } from "./deadzone-merge-review-queue.repository.js";
 import {
   type DeadZoneKnowledgeRow,
   listDeadZoneKnowledgeEvidenceRows,
@@ -36,8 +25,19 @@ import {
   listSimilarKnowledgeRows,
   recordDeadZoneReviewDecision,
 } from "./landscape-deadzone-review.repository.js";
+import {
+  type DeadZoneScoringKnowledge,
+  deriveDeadZoneReviewBadges,
+  scoreApplicabilityMatch,
+  scoreDeadZoneRisk,
+  scoreEvidenceStrength,
+  scoreGraphHealth,
+  scoreStructureQuality,
+  scoreUsageStrength,
+  suggestedActionForSimilar,
+} from "./landscape-deadzone-review.scoring.js";
 import { buildLandscapeSnapshot } from "./landscape.service.js";
-import { listLatestDeadZoneMergeReviewJobsByDeadZoneIds } from "./deadzone-merge-review-queue.repository.js";
+import type { LandscapeCommunity } from "./landscape.types.js";
 
 function preview(value: string, max = 220): string {
   const normalized = value.replace(/\s+/g, " ").trim();

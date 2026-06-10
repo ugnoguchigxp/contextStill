@@ -671,4 +671,67 @@ describe("azure openai provider", () => {
     expect(status.reachable).toBe(false);
     expect(status.error).toContain("Azure OpenAI HTTP 401");
   });
+
+  describe("azure-openai-config edge cases", () => {
+    test("cooldown expires and deletes cooldown entry", async () => {
+      const config = await import("../src/modules/llm/providers/azure-openai-config.js");
+      groupedConfig.azureOpenAi.apiKey = "";
+      groupedConfig.azureOpenAi.deployments = [
+        {
+          apiKey: "key1",
+          apiBaseUrl: "https://test.openai.azure.com",
+          apiPath: "/openai/deployments",
+          model: "gpt-4",
+          apiVersion: "2023-05-15",
+        },
+      ];
+      const deployment = config.configuredAzureOpenAiDeployments()[0];
+
+      // rate limit it for 1 second
+      config.markAzureOpenAiDeploymentRateLimited(deployment, { retryAfterSeconds: 1 });
+
+      // it should be cooling down
+      expect(config.azureOpenAiDeploymentsForTask(null)).toEqual([]);
+
+      // mock Date.now to be 2 seconds in the future
+      const originalNow = Date.now;
+      Date.now = () => originalNow() + 2000;
+      try {
+        // should delete cooldown entry and return the deployment
+        expect(config.azureOpenAiDeploymentsForTask(null)).toEqual([deployment]);
+      } finally {
+        Date.now = originalNow;
+      }
+    });
+
+    test("azureOpenAiCooldownError formats timestamp suffix", async () => {
+      const config = await import("../src/modules/llm/providers/azure-openai-config.js");
+      groupedConfig.azureOpenAi.deployments = [
+        {
+          apiKey: "key1",
+          apiBaseUrl: "https://test.openai.azure.com",
+          apiPath: "/openai/deployments",
+          model: "gpt-4",
+          apiVersion: "2023-05-15",
+        },
+      ];
+      const deployment = config.configuredAzureOpenAiDeployments()[0];
+      config.markAzureOpenAiDeploymentRateLimited(deployment, { retryAfterSeconds: 60 });
+
+      const err = config.azureOpenAiCooldownError();
+      expect(err.message).toContain("Azure OpenAI deployments are cooling down until");
+    });
+
+    test("azureOpenAiDeploymentAuditLabel handles invalid URL", async () => {
+      const config = await import("../src/modules/llm/providers/azure-openai-config.js");
+      const label = config.azureOpenAiDeploymentAuditLabel({
+        apiKey: "k",
+        apiBaseUrl: "invalid-url-string",
+        apiPath: "p",
+        apiVersion: "v",
+        model: "m",
+      });
+      expect(label.host).toBe("invalid-url-string");
+    });
+  });
 });
