@@ -191,7 +191,7 @@ export type ContextDecisionCandidateTrace = {
 
 export type ContextDecisionKnowledgePrior = {
   status: "available" | "limited" | "unavailable";
-  source: "retrieval_prior_v1" | "corpus_prior_v1";
+  source: "retrieval_prior_v1";
   referenceOnly: true;
   notUsedForScoring: true;
   evidenceCount: number;
@@ -213,7 +213,6 @@ export type ContextDecisionConfidenceTrace = {
   forcedRules: string[];
   knowledgeAssessment?: ContextDecisionKnowledgeAssessment;
   knowledgePrior?: ContextDecisionKnowledgePrior;
-  corpusKnowledgePrior?: ContextDecisionKnowledgePrior;
   outcomePredictor?: ContextDecisionMlSignal;
   candidateTraces?: ContextDecisionCandidateTrace[];
   mlSignal?: ContextDecisionMlSignal;

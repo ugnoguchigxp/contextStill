@@ -101,7 +101,7 @@ export type ContextDecisionKnowledgeAssessment = {
 
 export type ContextDecisionKnowledgePrior = {
   status: "available" | "limited" | "unavailable";
-  source: "retrieval_prior_v1" | "corpus_prior_v1";
+  source: "retrieval_prior_v1";
   referenceOnly: true;
   notUsedForScoring: true;
   evidenceCount: number;

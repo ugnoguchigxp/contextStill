@@ -255,7 +255,7 @@ function asKnowledgeAssessment(value: unknown): ContextDecisionKnowledgeAssessme
 
 function asKnowledgePrior(value: unknown): ContextDecisionKnowledgePrior | null {
   if (!isRecord(value)) return null;
-  if (value.source !== "retrieval_prior_v1" && value.source !== "corpus_prior_v1") return null;
+  if (value.source !== "retrieval_prior_v1") return null;
   if (value.referenceOnly !== true || value.notUsedForScoring !== true) return null;
   const toStringArray = (raw: unknown) =>
     Array.isArray(raw) ? raw.filter((item): item is string => typeof item === "string") : [];
@@ -287,12 +287,11 @@ function KnowledgePriorPanel({
   missingText,
 }: {
   trace: Record<string, unknown>;
-  traceKey: "knowledgePrior" | "corpusKnowledgePrior";
+  traceKey: "knowledgePrior";
   title: string;
   missingText: string;
 }) {
   const prior = asKnowledgePrior(trace[traceKey]);
-  const isCorpusPrior = prior?.source === "corpus_prior_v1";
   if (!prior) {
     return (
       <article className="compile-pack-item">
@@ -315,12 +314,10 @@ function KnowledgePriorPanel({
           <Badge variant="outline">reference only</Badge>
         </div>
       </div>
-      {!isCorpusPrior ? (
-        <div className="compile-metric-grid" style={{ marginTop: 8 }}>
-          <Metric label="Evidence" value={prior.evidenceCount} />
-          <Metric label="Candidates" value={prior.candidateCount} />
-        </div>
-      ) : null}
+      <div className="compile-metric-grid" style={{ marginTop: 8 }}>
+        <Metric label="Evidence" value={prior.evidenceCount} />
+        <Metric label="Candidates" value={prior.candidateCount} />
+      </div>
       {[...prior.signals, ...prior.cautions].length > 0 ? (
         <div className="compile-code-badge-list" style={{ marginTop: 10 }}>
           {[...prior.signals, ...prior.cautions].slice(0, 6).map((item) => (
@@ -802,12 +799,6 @@ function DecisionDetailPane({
                 traceKey="knowledgePrior"
                 title="Knowledge Prior"
                 missingText="This decision does not include a retrieval-scoped Knowledge Prior."
-              />
-              <KnowledgePriorPanel
-                trace={detail.run.confidenceTrace}
-                traceKey="corpusKnowledgePrior"
-                title="Corpus Knowledge Prior"
-                missingText="This decision does not include a generated corpus Knowledge Prior."
               />
               <OutcomePredictorPanel trace={detail.run.confidenceTrace} />
             </div>

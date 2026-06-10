@@ -18,45 +18,17 @@ Context Decision should evaluate retrieved Knowledge deterministically, then use
    - Kept as `referenceOnly: true` and `notUsedForScoring: true`.
    - This is the existing current prior and remains unchanged in role.
 
-3. Corpus Knowledge Prior
-   - Stored in `confidenceTrace.corpusKnowledgePrior` when a generated artifact exists.
-   - Source is `corpus_prior_v1`.
-   - Generated from active Knowledge rows without creating or updating embeddings.
-   - Saved as `artifacts/context-decision/knowledge-prior.json`.
-   - Loaded during Context Decision as background reference material for the LLM.
-   - Kept as `referenceOnly: true` and `notUsedForScoring: true`.
-
-4. Outcome Predictor
+3. Outcome Predictor
    - Uses existing decision history and deterministic features.
    - Does not train from Knowledge embeddings.
    - Does not change final confidence directly.
 
-## Corpus Prior Operation
-
-Generate a dry-run preview:
-
-```sh
-bun run knowledge:train-prior --dry-run
-```
-
-Write the artifact used by Context Decision:
-
-```sh
-bun run knowledge:train-prior --apply
-```
-
-Optional output path:
-
-```sh
-bun run knowledge:train-prior --apply --output artifacts/context-decision/knowledge-prior.json
-```
-
 ## Non-Goals
 
 - Do not add a new embedding model or vectorization pass.
-- Do not require every Knowledge item to have an embedding before it can inform the corpus prior.
 - Do not replace retrieval-scoped evidence with corpus-wide tendencies.
-- Do not use either prior to compute deterministic confidence.
+- Do not use the retrieval prior to compute deterministic confidence.
+- Do not generate or load a corpus-wide Knowledge Prior. It was removed because it was too broad to help decision quality and added noise.
 
 ## Decision-Time Priority
 
@@ -64,6 +36,5 @@ bun run knowledge:train-prior --apply --output artifacts/context-decision/knowle
 2. Current retrieval evidence and Knowledge Assessment.
 3. Outcome Predictor as advisory historical signal.
 4. Retrieval Knowledge Prior as current-decision background.
-5. Corpus Knowledge Prior as global background tendency.
 
-When the priors conflict with concrete retrieved evidence, the retrieved evidence wins.
+When the retrieval prior conflicts with concrete retrieved evidence, the retrieved evidence wins.
