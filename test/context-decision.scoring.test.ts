@@ -83,4 +83,33 @@ describe("context decision scoring", () => {
 
     expect(withBad.confidence).toBeLessThan(withoutBad.confidence);
   });
+
+  test("risk warnings are guardrail signals, not automatic confidence penalties", () => {
+    const support = knowledge();
+    const withoutRisk = scoreContextDecision({
+      input: baseInput,
+      evidence: [{ knowledge: support, role: "selected_support" }],
+      coverage: [{ queryRole: "support", hitCount: 1 }],
+      relatedBadSignalCount: 0,
+    });
+    const withRisk = scoreContextDecision({
+      input: baseInput,
+      evidence: [
+        { knowledge: support, role: "selected_support" },
+        {
+          knowledge: knowledge({ id: "00000000-0000-0000-0000-000000000002" }),
+          role: "risk_warning",
+        },
+      ],
+      coverage: [
+        { queryRole: "support", hitCount: 1 },
+        { queryRole: "risk", hitCount: 1 },
+      ],
+      relatedBadSignalCount: 0,
+    });
+
+    expect(withRisk.trace.riskSignalScore).toBeGreaterThan(0);
+    expect(withRisk.trace.counterScore).toBe(0);
+    expect(withRisk.confidence).toBe(withoutRisk.confidence);
+  });
 });

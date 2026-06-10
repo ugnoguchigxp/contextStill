@@ -355,6 +355,14 @@ function parseLabelledResultRecord(text: string): Record<string, unknown> | null
     "REPO_KEY",
     "REASON",
   ]);
+  const canonicalLabel = (value: string): string | null => {
+    const normalized = value
+      .trim()
+      .replace(/([a-z])([A-Z])/g, "$1_$2")
+      .replace(/[\s-]+/g, "_")
+      .toUpperCase();
+    return knownLabels.has(normalized) ? normalized : null;
+  };
   let currentLabel: string | null = null;
   const currentValueLines: string[] = [];
 
@@ -369,17 +377,17 @@ function parseLabelledResultRecord(text: string): Record<string, unknown> | null
   };
 
   for (const line of lines) {
-    const match = line.match(/^([A-Z_]+):\s*(.*)$/);
-    if (match && knownLabels.has(match[1])) {
+    const match = line.match(/^([A-Za-z_][A-Za-z0-9_\-\s]*):\s*(.*)$/);
+    const matchedLabel = match ? canonicalLabel(match[1] ?? "") : null;
+    if (match && matchedLabel) {
       flushCurrentLabel();
-      const label = match[1];
       const value = match[2] ?? "";
-      currentLabel = label;
+      currentLabel = matchedLabel;
       if (value.trim()) currentValueLines.push(value);
       continue;
     }
-    const bareLabel = line.trim().toUpperCase();
-    if (knownLabels.has(bareLabel)) {
+    const bareLabel = canonicalLabel(line);
+    if (bareLabel) {
       flushCurrentLabel();
       currentLabel = bareLabel;
       continue;
@@ -432,6 +440,10 @@ const slashKnownLabels = new Set([
   "CHANGETYPES",
   "DOMAINS",
   "DOMAIN",
+  "APPLICABILITY_GENERAL",
+  "GENERAL",
+  "REPO_PATH",
+  "REPO_KEY",
   "REASON",
 ]);
 
@@ -476,10 +488,76 @@ function assignLabelValue(record: Record<string, unknown>, label: string, value:
     case "DOMAIN":
       record.domains = normalized;
       return;
+    case "APPLICABILITY_GENERAL":
+    case "GENERAL":
+      record.applicabilityGeneral = normalized;
+      return;
+    case "REPO_PATH":
+      record.repoPath = normalized;
+      return;
+    case "REPO_KEY":
+      record.repoKey = normalized;
+      return;
     case "REASON":
       record.reason = normalized;
       return;
   }
+}
+
+function normalizeSlashLabel(value: string): string | null {
+  const normalized = value
+    .trim()
+    .replace(/([a-z])([A-Z])/g, "$1_$2")
+    .replace(/[\s-]+/g, "_")
+    .toUpperCase();
+  return slashKnownLabels.has(normalized) ? normalized : null;
+}
+
+function parseMixedSlashResultRecord(text: string): Record<string, unknown> | null {
+  const compact = text.replace(/\s+/g, " ").trim();
+  if (!compact.includes("/")) return null;
+  const tokens = compact
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  if (tokens.length < 2) return null;
+  if (tokens.every((token) => normalizeSlashLabel(token))) return null;
+
+  const record: Record<string, unknown> = {};
+  for (let index = 0; index < tokens.length; index += 1) {
+    const token = tokens[index] ?? "";
+    const lower = token.toLowerCase();
+    if (!record.type && (lower === "rule" || lower === "procedure")) {
+      record.type = lower;
+      continue;
+    }
+    if (!record.status && isCoverEvidenceStatus(lower)) {
+      record.status = lower;
+      continue;
+    }
+    if (
+      !record.status &&
+      (lower === "success" || lower === "ok") &&
+      isCoverEvidenceStatus((tokens[index + 1] ?? "").toLowerCase())
+    ) {
+      record.status = (tokens[index + 1] ?? "").toLowerCase();
+      index += 1;
+      continue;
+    }
+    if (!record.stage && isCoverEvidenceStage(lower)) {
+      record.stage = lower;
+      continue;
+    }
+
+    const label = normalizeSlashLabel(token);
+    if (!label) continue;
+    assignLabelValue(record, label, tokens[index + 1] ?? "");
+    index += 1;
+  }
+
+  return record.status || record.type || record.title || record.body || record.reason
+    ? record
+    : null;
 }
 
 function parseSlashResultRecord(text: string): Record<string, unknown> | null {
@@ -550,11 +628,28 @@ function parseSlashTableResultRecord(text: string): Record<string, unknown> | nu
   return record;
 }
 
+function isSlashHeaderLine(line: string): boolean {
+  if (!line.includes("/")) return false;
+  const labels = line
+    .split("/")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  return labels.length > 1 && labels.every((label) => Boolean(normalizeSlashLabel(label)));
+}
+
 function parseTitleBodyFinalMetadataRecord(text: string): Record<string, unknown> | null {
   const lines = text.split(/\r?\n/);
   let metadataIndex = -1;
   for (let index = lines.length - 1; index >= 0; index -= 1) {
-    if (/^\s*TYPE\s*\//i.test(lines[index] ?? "")) {
+    const line = lines[index] ?? "";
+    const previousNonEmptyLine = lines
+      .slice(0, index)
+      .reverse()
+      .find((candidateLine) => candidateLine.trim());
+    if (previousNonEmptyLine && isSlashHeaderLine(previousNonEmptyLine)) {
+      continue;
+    }
+    if (line.includes("/") && (parseSlashResultRecord(line) || parseMixedSlashResultRecord(line))) {
       metadataIndex = index;
       break;
     }
@@ -569,7 +664,10 @@ function parseTitleBodyFinalMetadataRecord(text: string): Record<string, unknown
     .slice(titleIndex + 1)
     .join("\n")
     .trim();
-  const metadata = parseSlashResultRecord(lines[metadataIndex] ?? "") ?? {};
+  const metadata =
+    parseSlashResultRecord(lines[metadataIndex] ?? "") ??
+    parseMixedSlashResultRecord(lines[metadataIndex] ?? "") ??
+    {};
   if (!title && !body) return null;
   return {
     ...metadata,
@@ -604,7 +702,9 @@ export function parseCoverEvidenceResult(
   const slashFallback =
     titleBodyMetadataFallback || labelledFallback
       ? null
-      : (parseSlashTableResultRecord(llmOutput) ?? parseSlashResultRecord(llmOutput));
+      : (parseSlashTableResultRecord(llmOutput) ??
+        parseSlashResultRecord(llmOutput) ??
+        parseMixedSlashResultRecord(llmOutput));
   const statusOnlyFallback =
     titleBodyMetadataFallback || labelledFallback || slashFallback
       ? null

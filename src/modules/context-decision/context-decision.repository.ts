@@ -603,6 +603,65 @@ export type ContextDecisionMetrics = {
   requiredZeroEvidenceCount: number;
 };
 
+export type ContextDecisionMlTrainingRow = {
+  decisionId: string;
+  decision: ContextDecisionValue;
+  confidenceTrace: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+  humanFeedback: ContextDecisionHumanFeedbackValue | null;
+  systemOutcomes: ContextDecisionFeedbackOutcome[];
+  createdAt: string;
+};
+
+export async function listContextDecisionMlTrainingRows(params: {
+  limit: number;
+  minCreatedAt?: Date;
+}): Promise<ContextDecisionMlTrainingRow[]> {
+  const conditions = [];
+  if (params.minCreatedAt) {
+    conditions.push(sql`${contextDecisionRuns.createdAt} >= ${params.minCreatedAt}`);
+  }
+  const rows = await db
+    .select({
+      id: contextDecisionRuns.id,
+      decision: contextDecisionRuns.decision,
+      confidenceTrace: contextDecisionRuns.confidenceTrace,
+      metadata: contextDecisionRuns.metadata,
+      createdAt: contextDecisionRuns.createdAt,
+      humanFeedback: contextDecisionHumanFeedback.value,
+      systemOutcomes: sql<unknown>`coalesce(
+        jsonb_agg(${contextDecisionFeedback.outcome})
+          filter (where ${contextDecisionFeedback.id} is not null),
+        '[]'::jsonb
+      )`,
+    })
+    .from(contextDecisionRuns)
+    .leftJoin(
+      contextDecisionHumanFeedback,
+      eq(contextDecisionHumanFeedback.decisionRunId, contextDecisionRuns.id),
+    )
+    .leftJoin(
+      contextDecisionFeedback,
+      eq(contextDecisionFeedback.decisionRunId, contextDecisionRuns.id),
+    )
+    .where(conditions.length > 0 ? and(...conditions) : undefined)
+    .groupBy(contextDecisionRuns.id, contextDecisionHumanFeedback.value)
+    .orderBy(desc(contextDecisionRuns.createdAt))
+    .limit(params.limit);
+
+  return rows.map((row) => ({
+    decisionId: row.id,
+    decision: normalizeDecision(row.decision),
+    confidenceTrace: asRecord(row.confidenceTrace),
+    metadata: asRecord(row.metadata),
+    humanFeedback: row.humanFeedback ? normalizeHumanFeedbackValue(row.humanFeedback) : null,
+    systemOutcomes: asStringArray(row.systemOutcomes).map(
+      (outcome) => outcome as ContextDecisionFeedbackOutcome,
+    ),
+    createdAt: toIso(row.createdAt),
+  }));
+}
+
 export async function getContextDecisionMetrics(): Promise<ContextDecisionMetrics> {
   const result = await db.execute(sql`
     select

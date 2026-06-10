@@ -376,6 +376,42 @@ describe("coverEvidence parser", () => {
     expect(parsed.candidate?.body).toContain("Run focused tests.");
   });
 
+  test("repairs lowercase final metadata output", () => {
+    const parsed = parseCoverEvidenceResult(
+      [
+        "Never run production DELETE or UPDATE without dry run",
+        "Do not execute production `DELETE` or `UPDATE` statements without first running a dry run or preview query, confirming the affected row count, and obtaining explicit approval.",
+        "",
+        "rule",
+        "title: Never run production DELETE or UPDATE without dry run",
+        "body: Do not execute production `DELETE` or `UPDATE` statements without first running a dry run or preview query, confirming the affected row count, and obtaining explicit approval.",
+        "importance: 99",
+        "confidence: 95",
+        "applicabilityGeneral: true",
+        "technologies: sql, postgresql, database",
+        "changeTypes: data-deletion, data-migration",
+        "domains: database, production-safety",
+      ].join("\n"),
+      {
+        candidateDefaults: {
+          type: "rule",
+        },
+      },
+    );
+
+    expect(parsed.status).toBe("knowledge_ready");
+    expect(parsed.candidate).toMatchObject({
+      type: "rule",
+      title: "Never run production DELETE or UPDATE without dry run",
+      importance: 99,
+      confidence: 95,
+      applicabilityGeneral: true,
+      technologies: ["sql", "postgresql", "database"],
+      changeTypes: ["data-deletion", "data-migration"],
+      domains: ["database", "production-safety"],
+    });
+  });
+
   test("does not treat slash header labels as candidate body", () => {
     const parsed = parseCoverEvidenceResult(
       [
@@ -431,6 +467,30 @@ describe("coverEvidence parser", () => {
       technologies: ["typescript"],
       changeTypes: ["bugfix"],
       domains: ["cover-evidence"],
+    });
+  });
+
+  test("repairs mixed slash metadata output", () => {
+    const parsed = parseCoverEvidenceResult(
+      [
+        "Never run destructive git reset without explicit user request",
+        "Do not run `git reset --hard`, `git checkout --`, or equivalent commands that discard worktree changes unless the user explicitly requested that destructive operation.",
+        "rule / rule / SUCCESS / knowledge_ready / web / IMPORTANCE / 98 / CONFIDENCE / 95 / technologies / git / CHANGE_TYPES / destructive-change, cleanup / DOMAINS / workspace-safety, version-control / applicabilityGeneral / true",
+      ].join("\n"),
+    );
+
+    expect(parsed.status).toBe("knowledge_ready");
+    expect(parsed.stage).toBe("web");
+    expect(parsed.candidate).toMatchObject({
+      type: "rule",
+      title: "Never run destructive git reset without explicit user request",
+      body: "Do not run `git reset --hard`, `git checkout --`, or equivalent commands that discard worktree changes unless the user explicitly requested that destructive operation.",
+      importance: 98,
+      confidence: 95,
+      applicabilityGeneral: true,
+      technologies: ["git"],
+      changeTypes: ["destructive-change", "cleanup"],
+      domains: ["workspace-safety", "version-control"],
     });
   });
 

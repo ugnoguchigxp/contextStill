@@ -19,4 +19,23 @@ describe("context decision coverage queries", () => {
     expect(combined).toContain("context-decision");
     expect(combined).toContain("Choose whether to continue UI implementation");
   });
+
+  test("generates all knowledge assessment query roles without extra user input", () => {
+    const queries = buildDecisionCoverageQueries({
+      decisionPoint: "Decide whether to implement the planned service change.",
+      retrievalHints: { technologies: [], changeTypes: [], domains: [] },
+      metadata: {},
+    });
+
+    expect(queries.map((query) => query.queryRole)).toEqual([
+      "support",
+      "counter_evidence",
+      "risk",
+      "user_preference",
+      "verification",
+      "alternative",
+    ]);
+    expect(queries.every((query) => query.normalizedKeywords.length > 0)).toBe(true);
+    expect(queries.every((query) => query.retrievalInput.includes(query.query))).toBe(true);
+  });
 });

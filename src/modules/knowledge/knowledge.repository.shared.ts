@@ -157,6 +157,11 @@ function intersect(queryValues: string[], sourceValues: string[]): string[] {
   return matched;
 }
 
+function facetMatchScore(queryValues: string[], matchedValues: string[], weight: number): number {
+  if (queryValues.length === 0 || matchedValues.length === 0) return 0;
+  return weight * Math.min(1, matchedValues.length / queryValues.length);
+}
+
 export function computeApplicability(
   appliesTo: Record<string, unknown>,
   query: ApplicabilityQuery,
@@ -171,7 +176,11 @@ export function computeApplicability(
     sourceTechnologies.length > 0 || sourceChangeTypes.length > 0 || sourceDomains.length > 0;
   const hasExplicitGeneral = typeof appliesTo.general === "boolean";
   const general = appliesTo.general === true || (!hasExplicitGeneral && !hasFacetData);
-  const score = 0;
+  const facetScore =
+    facetMatchScore(query.technologies, technologies, 34) +
+    facetMatchScore(query.changeTypes, changeTypes, 30) +
+    facetMatchScore(query.domains, domains, 28);
+  const score = Math.min(100, Math.round(facetScore));
 
   return {
     score,

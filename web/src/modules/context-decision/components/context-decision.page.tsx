@@ -23,6 +23,9 @@ import {
 } from "../hooks/context-decision.hooks";
 import type {
   ContextDecisionEvidence,
+  ContextDecisionKnowledgeAssessment,
+  ContextDecisionKnowledgePrior,
+  ContextDecisionMlSignal,
   ContextDecisionRequest,
   ContextDecisionResult,
   ContextDecisionRunDetail,
@@ -145,6 +148,316 @@ function evidenceUsageLabel(role: ContextDecisionEvidence["role"]): string {
 function traceNumber(trace: Record<string, unknown>, key: string): number {
   const value = trace[key];
   return typeof value === "number" && Number.isFinite(value) ? Math.round(value) : 0;
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function traceString(trace: Record<string, unknown>, key: string): string | null {
+  const value = trace[key];
+  return typeof value === "string" && value.trim() ? value : null;
+}
+
+function asMlSignal(value: unknown): ContextDecisionMlSignal | null {
+  if (!isRecord(value)) return null;
+  if (value.model !== "ml-random-forest") return null;
+  if (typeof value.status !== "string") return null;
+  const features = isRecord(value.features) ? value.features : {};
+  const classDistribution = isRecord(value.classDistribution) ? value.classDistribution : {};
+  return {
+    status: value.status as ContextDecisionMlSignal["status"],
+    model: "ml-random-forest",
+    modelVersion: typeof value.modelVersion === "string" ? value.modelVersion : "-",
+    featureVersion:
+      value.featureVersion === "context-decision-ml-features-v1"
+        ? "context-decision-ml-features-v1"
+        : "context-decision-ml-features-v1",
+    predictedDecision:
+      typeof value.predictedDecision === "string"
+        ? (value.predictedDecision as ContextDecisionMlSignal["predictedDecision"])
+        : undefined,
+    confidence: typeof value.confidence === "number" ? value.confidence : undefined,
+    trainingSampleCount:
+      typeof value.trainingSampleCount === "number" ? value.trainingSampleCount : 0,
+    classDistribution: Object.fromEntries(
+      Object.entries(classDistribution).map(([key, raw]) => [key, Number(raw) || 0]),
+    ),
+    features: Object.fromEntries(
+      Object.entries(features).map(([key, raw]) => [key, Number(raw) || 0]),
+    ),
+    reason: typeof value.reason === "string" ? value.reason : "-",
+  };
+}
+
+function asKnowledgeAssessment(value: unknown): ContextDecisionKnowledgeAssessment | null {
+  if (!isRecord(value)) return null;
+  if (typeof value.status !== "string" || typeof value.recommendedDirection !== "string") {
+    return null;
+  }
+  const retrievalMethods = Array.isArray(value.retrievalMethods)
+    ? value.retrievalMethods.filter(
+        (item): item is "vector" | "keyword" | "hybrid" =>
+          item === "vector" || item === "keyword" || item === "hybrid",
+      )
+    : [];
+  const numberValue = (key: keyof ContextDecisionKnowledgeAssessment) => {
+    const raw = value[key];
+    return typeof raw === "number" && Number.isFinite(raw) ? Math.round(raw) : 0;
+  };
+  const meaningfulMetrics = Array.isArray(value.meaningfulMetrics)
+    ? value.meaningfulMetrics
+        .filter((item): item is Record<string, unknown> => isRecord(item))
+        .map((item) => ({
+          key: typeof item.key === "string" ? item.key : "knowledgeCoverage",
+          label: typeof item.label === "string" ? item.label : "Metric",
+          value:
+            typeof item.value === "number" && Number.isFinite(item.value)
+              ? Math.round(item.value)
+              : 0,
+        }))
+        .filter(
+          (
+            item,
+          ): item is NonNullable<ContextDecisionKnowledgeAssessment["meaningfulMetrics"]>[number] =>
+            [
+              "knowledgeCoverage",
+              "supportStrength",
+              "counterEvidenceStrength",
+              "riskStrength",
+              "preferenceAlignment",
+              "applicabilityScore",
+              "consensusScore",
+              "conflictScore",
+              "outOfDistributionScore",
+            ].includes(item.key),
+        )
+    : undefined;
+  return {
+    status: value.status as ContextDecisionKnowledgeAssessment["status"],
+    recommendedDirection:
+      value.recommendedDirection as ContextDecisionKnowledgeAssessment["recommendedDirection"],
+    knowledgeCoverage: numberValue("knowledgeCoverage"),
+    supportStrength: numberValue("supportStrength"),
+    counterEvidenceStrength: numberValue("counterEvidenceStrength"),
+    riskStrength: numberValue("riskStrength"),
+    preferenceAlignment: numberValue("preferenceAlignment"),
+    applicabilityScore: numberValue("applicabilityScore"),
+    consensusScore: numberValue("consensusScore"),
+    conflictScore: numberValue("conflictScore"),
+    sourceQualityScore: numberValue("sourceQualityScore"),
+    outOfDistributionScore: numberValue("outOfDistributionScore"),
+    retrievalMethods,
+    reason: typeof value.reason === "string" ? value.reason : "-",
+    meaningfulMetrics,
+  };
+}
+
+function asKnowledgePrior(value: unknown): ContextDecisionKnowledgePrior | null {
+  if (!isRecord(value)) return null;
+  if (value.source !== "retrieval_prior_v1" && value.source !== "corpus_prior_v1") return null;
+  if (value.referenceOnly !== true || value.notUsedForScoring !== true) return null;
+  const toStringArray = (raw: unknown) =>
+    Array.isArray(raw) ? raw.filter((item): item is string => typeof item === "string") : [];
+  return {
+    status:
+      value.status === "available" || value.status === "limited" || value.status === "unavailable"
+        ? value.status
+        : "unavailable",
+    source: value.source,
+    referenceOnly: true,
+    notUsedForScoring: true,
+    evidenceCount: typeof value.evidenceCount === "number" ? value.evidenceCount : 0,
+    candidateCount: typeof value.candidateCount === "number" ? value.candidateCount : 0,
+    summary: typeof value.summary === "string" ? value.summary : "-",
+    signals: toStringArray(value.signals),
+    cautions: toStringArray(value.cautions),
+  };
+}
+
+function mlConfidenceLabel(value: number | undefined): string {
+  if (typeof value !== "number" || !Number.isFinite(value)) return "-";
+  return `${Math.round(value * 100)}%`;
+}
+
+function KnowledgePriorPanel({
+  trace,
+  traceKey,
+  title,
+  missingText,
+}: {
+  trace: Record<string, unknown>;
+  traceKey: "knowledgePrior" | "corpusKnowledgePrior";
+  title: string;
+  missingText: string;
+}) {
+  const prior = asKnowledgePrior(trace[traceKey]);
+  const isCorpusPrior = prior?.source === "corpus_prior_v1";
+  if (!prior) {
+    return (
+      <article className="compile-pack-item">
+        <div className="compile-pack-item-header">
+          <strong>{title}</strong>
+          <Badge variant="outline">not recorded</Badge>
+        </div>
+        <p className="compile-state-text">{missingText}</p>
+      </article>
+    );
+  }
+  return (
+    <article className="compile-pack-item">
+      <div className="compile-pack-item-header">
+        <strong>{title}</strong>
+        <div className="compile-pack-item-meta">
+          <Badge variant={prior.status === "available" ? "secondary" : "outline"}>
+            {prior.status}
+          </Badge>
+          <Badge variant="outline">reference only</Badge>
+        </div>
+      </div>
+      {!isCorpusPrior ? (
+        <div className="compile-metric-grid" style={{ marginTop: 8 }}>
+          <Metric label="Evidence" value={prior.evidenceCount} />
+          <Metric label="Candidates" value={prior.candidateCount} />
+        </div>
+      ) : null}
+      {[...prior.signals, ...prior.cautions].length > 0 ? (
+        <div className="compile-code-badge-list" style={{ marginTop: 10 }}>
+          {[...prior.signals, ...prior.cautions].slice(0, 6).map((item) => (
+            <code key={item}>{item}</code>
+          ))}
+        </div>
+      ) : null}
+    </article>
+  );
+}
+
+function KnowledgeAssessmentPanel({ trace }: { trace: Record<string, unknown> }) {
+  const assessment = asKnowledgeAssessment(trace.knowledgeAssessment);
+  if (!assessment) {
+    return (
+      <article className="compile-pack-item">
+        <div className="compile-pack-item-header">
+          <strong>Knowledge Assessment</strong>
+          <Badge variant="outline">not recorded</Badge>
+        </div>
+        <p className="compile-state-text">
+          This older decision does not include Knowledge Assessment trace data.
+        </p>
+      </article>
+    );
+  }
+  const metrics = assessment.meaningfulMetrics ?? [
+    { key: "knowledgeCoverage", label: "Coverage", value: assessment.knowledgeCoverage },
+    { key: "supportStrength", label: "Support", value: assessment.supportStrength },
+    {
+      key: "counterEvidenceStrength",
+      label: "Counter",
+      value: assessment.counterEvidenceStrength,
+    },
+    { key: "consensusScore", label: "Consensus", value: assessment.consensusScore },
+  ];
+
+  return (
+    <article className="compile-pack-item">
+      <div className="compile-pack-item-header">
+        <strong>Knowledge Assessment</strong>
+        <div className="compile-pack-item-meta">
+          <Badge variant={assessment.status === "evaluable" ? "secondary" : "outline"}>
+            {assessment.status}
+          </Badge>
+          <Badge variant="outline">{assessment.recommendedDirection}</Badge>
+        </div>
+      </div>
+      <div className="compile-metric-grid" style={{ marginTop: 8 }}>
+        {metrics.map((item) => (
+          <Metric key={item.key} label={item.label} value={`${item.value}%`} />
+        ))}
+      </div>
+      <div className="compile-code-badge-list" style={{ marginTop: 10 }}>
+        {assessment.retrievalMethods.length > 0 ? (
+          assessment.retrievalMethods.map((method) => <code key={method}>{method}</code>)
+        ) : (
+          <code>keyword</code>
+        )}
+      </div>
+    </article>
+  );
+}
+
+function OutcomePredictorPanel({ trace }: { trace: Record<string, unknown> }) {
+  const mlSignal = asMlSignal(trace.outcomePredictor ?? trace.mlSignal);
+  const judgmentStatus = traceString(trace, "llmJudgmentStatus");
+  if (!mlSignal) {
+    return (
+      <article className="compile-pack-item">
+        <div className="compile-pack-item-header">
+          <strong>Outcome Predictor</strong>
+          <Badge variant="outline">not recorded</Badge>
+        </div>
+        <p className="compile-state-text">
+          No outcome-history predictor result is stored on this decision trace.
+        </p>
+      </article>
+    );
+  }
+
+  const distributionEntries = Object.entries(mlSignal.classDistribution);
+  const predictorReady = mlSignal.status === "ready";
+  const featureSnapshot = [
+    ["support hits", mlSignal.features.supportHitCount],
+    ["selected support", mlSignal.features.selectedSupportCount],
+    ["deterministic confidence", mlSignal.features.deterministicConfidence],
+    ["related bad signals", mlSignal.features.relatedBadSignalCount],
+  ];
+
+  return (
+    <article className="compile-pack-item">
+      <div className="compile-pack-item-header">
+        <strong>Outcome Predictor</strong>
+        <div className="compile-pack-item-meta">
+          <Badge variant={mlSignal.status === "ready" ? "secondary" : "outline"}>
+            {mlSignal.status}
+          </Badge>
+          {judgmentStatus ? <Badge variant="outline">LLM {judgmentStatus}</Badge> : null}
+        </div>
+      </div>
+
+      {predictorReady ? (
+        <>
+          <div className="compile-metric-grid" style={{ marginTop: 8 }}>
+            <Metric label="Predicted" value={mlSignal.predictedDecision ?? "-"} />
+            <Metric label="Predictor Confidence" value={mlConfidenceLabel(mlSignal.confidence)} />
+            <Metric label="Training Rows" value={mlSignal.trainingSampleCount} />
+          </div>
+
+          {mlSignal.reason ? (
+            <p className="compile-state-text" style={{ marginTop: 10 }}>
+              {mlSignal.reason}
+            </p>
+          ) : null}
+        </>
+      ) : null}
+
+      {predictorReady && distributionEntries.length > 0 ? (
+        <div className="compile-code-badge-list" style={{ marginTop: 10 }}>
+          {distributionEntries.map(([decision, count]) => (
+            <code key={decision}>
+              {decision}: {count}
+            </code>
+          ))}
+        </div>
+      ) : null}
+
+      <div className="compile-code-badge-list" style={{ marginTop: 10 }}>
+        {featureSnapshot.map(([label, value]) => (
+          <code key={label}>
+            {label}: {typeof value === "number" ? Math.round(value) : 0}
+          </code>
+        ))}
+      </div>
+    </article>
+  );
 }
 
 function DecisionScoreRadar({ trace }: { trace: Record<string, unknown> }) {
@@ -483,6 +796,20 @@ function DecisionDetailPane({
                   {selectedEvidence.length}
                 </p>
               </article>
+              <KnowledgeAssessmentPanel trace={detail.run.confidenceTrace} />
+              <KnowledgePriorPanel
+                trace={detail.run.confidenceTrace}
+                traceKey="knowledgePrior"
+                title="Knowledge Prior"
+                missingText="This decision does not include a retrieval-scoped Knowledge Prior."
+              />
+              <KnowledgePriorPanel
+                trace={detail.run.confidenceTrace}
+                traceKey="corpusKnowledgePrior"
+                title="Corpus Knowledge Prior"
+                missingText="This decision does not include a generated corpus Knowledge Prior."
+              />
+              <OutcomePredictorPanel trace={detail.run.confidenceTrace} />
             </div>
           </div>
         </section>

@@ -7,6 +7,7 @@ import {
   upsertKnowledgeFromSource,
   vectorSearchKnowledge,
 } from "../src/modules/knowledge/knowledge.repository.js";
+import { computeApplicability } from "../src/modules/knowledge/knowledge.repository.shared.js";
 
 vi.mock("../src/db/index.js", () => ({
   db: {
@@ -42,7 +43,8 @@ vi.mock("../src/modules/knowledge/source-linking.service.js", () => ({
 
 describe("knowledge repository", () => {
   beforeEach(() => {
-    vi.clearAllMocks();
+    vi.resetAllMocks();
+    (recordAuditLogSafe as any).mockResolvedValue(undefined);
   });
 
   describe("searchKnowledge", () => {
@@ -71,14 +73,6 @@ describe("knowledge repository", () => {
         },
       ];
 
-      (db.select as any).mockReturnValue({
-        from: vi.fn().mockReturnThis(),
-        where: vi.fn().mockReturnThis(),
-        orderBy: vi.fn().mockReturnThis(),
-        limit: vi.fn().mockResolvedValue(mockRows),
-      });
-
-      // Mock listKnowledgeSourceRefs internal call (it uses db.select too)
       (db.select as any)
         .mockReturnValueOnce({
           from: vi.fn().mockReturnThis(),
@@ -120,6 +114,117 @@ describe("knowledge repository", () => {
         { scopeMatchMode: "legacy" },
       );
       expect(db.select).toHaveBeenCalled();
+    });
+
+    test("adds applicability score on the same scale as text rank", async () => {
+      const mockRows = [
+        {
+          id: "k1",
+          type: "rule",
+          status: "active",
+          scope: "repo",
+          title: "Never run destructive git reset",
+          body: "Do not discard user worktree changes.",
+          confidence: 95,
+          importance: 98,
+          appliesTo: {
+            technologies: ["git"],
+            changeTypes: ["destructive-change", "cleanup"],
+            domains: ["workspace-safety", "version-control"],
+            general: true,
+          },
+          metadata: {},
+          dynamicScore: 0,
+          compileSelectCount: 0,
+          agenticAcceptCount: 0,
+          explicitUpvoteCount: 0,
+          explicitDownvoteCount: 0,
+          lastCompiledAt: null,
+          lastVerifiedAt: null,
+          updatedAt: new Date(),
+          score: 0,
+        },
+      ];
+
+      (db.select as any)
+        .mockReturnValueOnce({
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          orderBy: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockResolvedValue(mockRows),
+        })
+        .mockReturnValueOnce({
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          orderBy: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockResolvedValue([]),
+        })
+        .mockReturnValueOnce({
+          from: vi.fn().mockReturnThis(),
+          innerJoin: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          orderBy: vi.fn().mockResolvedValue([]),
+        });
+
+      const result = await searchKnowledge(
+        {
+          query: "git clean destructive cleanup",
+          limit: 10,
+          status: "active",
+          includeDraft: false,
+        },
+        {
+          technologies: ["git"],
+          changeTypes: ["destructive-change", "cleanup"],
+          domains: ["workspace-safety", "version-control"],
+          includeGeneral: true,
+        },
+      );
+
+      expect(result[0].applicabilityScore).toBe(92);
+      expect(result[0].score).toBe(0.92);
+    });
+  });
+
+  describe("computeApplicability", () => {
+    test("scores exact technology, change type, and domain matches", () => {
+      const result = computeApplicability(
+        {
+          technologies: ["git"],
+          changeTypes: ["destructive-change", "cleanup"],
+          domains: ["workspace-safety", "version-control"],
+          general: true,
+        },
+        {
+          technologies: ["git"],
+          changeTypes: ["destructive-change", "cleanup"],
+          domains: ["workspace-safety", "version-control"],
+          includeGeneral: true,
+        },
+      );
+
+      expect(result.score).toBe(92);
+      expect(result.matches).toEqual({
+        technologies: ["git"],
+        changeTypes: ["destructive-change", "cleanup"],
+        domains: ["workspace-safety", "version-control"],
+        general: true,
+      });
+    });
+
+    test("does not score general-only applicability as a facet match", () => {
+      const result = computeApplicability(
+        { general: true },
+        {
+          technologies: ["git"],
+          changeTypes: ["destructive-change"],
+          domains: ["workspace-safety"],
+          includeGeneral: true,
+        },
+      );
+
+      expect(result.score).toBe(0);
+      expect(result.matches.general).toBe(true);
     });
   });
 

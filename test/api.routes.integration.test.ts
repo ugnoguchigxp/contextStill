@@ -175,10 +175,27 @@ describeDb("api route integration", () => {
     const detailResponse = await app.request(`/api/context-decisions/${createJson.decisionId}`);
     expect(detailResponse.status).toBe(200);
     const detailJson = (await detailResponse.json()) as {
-      detail: { evidence: unknown[]; coverage: unknown[] };
+      detail: {
+        run: {
+          confidenceTrace: {
+            knowledgeAssessment?: unknown;
+            knowledgePrior?: unknown;
+            outcomePredictor?: unknown;
+            mlSignal?: unknown;
+            llmJudgmentStatus?: string;
+          };
+        };
+        evidence: unknown[];
+        coverage: unknown[];
+      };
     };
     expect(detailJson.detail.evidence.length).toBeGreaterThan(0);
     expect(detailJson.detail.coverage.length).toBeGreaterThan(0);
+    expect(detailJson.detail.run.confidenceTrace.knowledgeAssessment).toBeTruthy();
+    expect(detailJson.detail.run.confidenceTrace.knowledgePrior).toBeTruthy();
+    expect(detailJson.detail.run.confidenceTrace.outcomePredictor).toBeTruthy();
+    expect(detailJson.detail.run.confidenceTrace.mlSignal).toBeTruthy();
+    expect(detailJson.detail.run.confidenceTrace.llmJudgmentStatus).toBeTruthy();
 
     const feedbackResponse = await app.request(
       `/api/context-decisions/${createJson.decisionId}/human-feedback`,

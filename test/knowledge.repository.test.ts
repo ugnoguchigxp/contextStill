@@ -92,6 +92,7 @@ describe("Knowledge Repository", () => {
     test("maps result rows correctly with mapping functions and applicability calculation", async () => {
       mockSelect
         .mockReturnValueOnce(makeChain([mockRow])) // Main query
+        .mockReturnValueOnce(makeChain([])) // Applicability facet query
         .mockReturnValueOnce(
           makeChain([
             {

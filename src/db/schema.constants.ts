@@ -224,6 +224,8 @@ export const contextDecisionCoverageQueryRoleValues = [
   "counter_evidence",
   "user_preference",
   "risk",
+  "verification",
+  "alternative",
 ] as const;
 export const contextDecisionHumanFeedbackValues = ["good", "bad"] as const;
 export const contextDecisionFeedbackSourceValues = ["ai", "system"] as const;

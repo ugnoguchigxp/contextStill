@@ -120,7 +120,7 @@ function mapKnowledgeRowsToResults(
       body: row.body,
       confidence: normalizeKnowledgeScore(row.confidence, 70),
       importance: normalizeKnowledgeScore(row.importance, 70),
-      score: finiteOrZero(row.score) + applicability.score,
+      score: finiteOrZero(row.score) + applicability.score / 100,
       appliesTo,
       metadata,
       sourceRefs,
@@ -157,9 +157,6 @@ function buildApplicabilityFilterCondition(query: ApplicabilityQuery): SQL | und
   if (changeTypes) clauses.push(changeTypes);
   const domains = buildJsonbArrayAnyMatch("domains", query.domains);
   if (domains) clauses.push(domains);
-  if (query.includeGeneral) {
-    clauses.push(sql`coalesce((${knowledgeItems.appliesTo} ->> 'general')::boolean, false) = true`);
-  }
   if (clauses.length === 0) return undefined;
   return clauses.length === 1 ? clauses[0] : or(...clauses);
 }
@@ -210,7 +207,7 @@ export async function searchKnowledge(
     ) ?? textMatchExpr;
   const applicabilityQuery = buildApplicabilityQuery(input, options);
   const facetRequested = hasApplicabilityQuery(applicabilityQuery);
-  const searchLimit = facetRequested ? Math.max(input.limit * 3, 30) : input.limit;
+  const searchLimit = facetRequested ? Math.max(input.limit * 12, 120) : input.limit;
 
   const selectFields = {
     id: knowledgeItems.id,
@@ -242,7 +239,7 @@ export async function searchKnowledge(
     .limit(searchLimit)) as KnowledgeSearchRow[];
 
   let rows: KnowledgeSearchRow[] = [...rankedRows];
-  if (rows.length === 0 && facetRequested) {
+  if (facetRequested) {
     const applicabilityCondition = buildApplicabilityFilterCondition(applicabilityQuery);
     if (applicabilityCondition) {
       const fallbackRows = (await db
@@ -254,7 +251,10 @@ export async function searchKnowledge(
         .where(and(...conditions, applicabilityCondition))
         .orderBy(desc(importanceOrderExpr), desc(knowledgeItems.updatedAt))
         .limit(searchLimit)) as KnowledgeSearchRow[];
-      rows = fallbackRows;
+      const rowsById = new Map<string, KnowledgeSearchRow>();
+      for (const row of rows) rowsById.set(row.id, row);
+      for (const row of fallbackRows) rowsById.set(row.id, row);
+      rows = [...rowsById.values()];
     }
   }
 

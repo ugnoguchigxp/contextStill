@@ -48,6 +48,69 @@ export type ContextDecisionRunSummary = {
   updatedAt: string;
 };
 
+export type ContextDecisionMlSignal = {
+  status: "ready" | "insufficient_data" | "low_confidence" | "disabled" | "failed";
+  model: "ml-random-forest";
+  modelVersion: string;
+  featureVersion: "context-decision-ml-features-v1";
+  predictedDecision?: ContextDecisionValue;
+  confidence?: number;
+  trainingSampleCount: number;
+  classDistribution: Record<string, number>;
+  features: Record<string, number>;
+  reason: string;
+};
+
+export type ContextDecisionKnowledgeAssessment = {
+  status: "evaluable" | "weak_coverage" | "no_evidence" | "failed";
+  recommendedDirection:
+    | "execute"
+    | "revise_and_execute"
+    | "reject"
+    | "discard"
+    | "rollback"
+    | "escalate"
+    | "unknown";
+  knowledgeCoverage: number;
+  supportStrength: number;
+  counterEvidenceStrength: number;
+  riskStrength: number;
+  preferenceAlignment: number;
+  applicabilityScore: number;
+  consensusScore: number;
+  conflictScore: number;
+  sourceQualityScore: number;
+  outOfDistributionScore: number;
+  retrievalMethods: Array<"vector" | "keyword" | "hybrid">;
+  reason: string;
+  meaningfulMetrics?: Array<{
+    key:
+      | "knowledgeCoverage"
+      | "supportStrength"
+      | "counterEvidenceStrength"
+      | "riskStrength"
+      | "preferenceAlignment"
+      | "applicabilityScore"
+      | "consensusScore"
+      | "conflictScore"
+      | "outOfDistributionScore";
+    label: string;
+    value: number;
+  }>;
+};
+
+export type ContextDecisionKnowledgePrior = {
+  status: "available" | "limited" | "unavailable";
+  source: "retrieval_prior_v1" | "corpus_prior_v1";
+  referenceOnly: true;
+  notUsedForScoring: true;
+  evidenceCount: number;
+  candidateCount: number;
+  summary: string;
+  signals: string[];
+  cautions: string[];
+};
+
 export type ContextDecisionEvidence = {
   id: string;
   decisionRunId: string;
@@ -83,7 +146,13 @@ export type ContextDecisionRunDetail = {
   coverage: Array<{
     id: string;
     query: string;
-    queryRole: "support" | "counter_evidence" | "user_preference" | "risk";
+    queryRole:
+      | "support"
+      | "counter_evidence"
+      | "user_preference"
+      | "risk"
+      | "verification"
+      | "alternative";
     hitCount: number;
     maxSimilarity: number | null;
     selectedKnowledgeIds: string[];

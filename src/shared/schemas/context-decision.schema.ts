@@ -21,6 +21,8 @@ export const contextDecisionCoverageQueryRoleSchema = z.enum([
   "counter_evidence",
   "user_preference",
   "risk",
+  "verification",
+  "alternative",
 ]);
 export const contextDecisionHumanFeedbackValueSchema = z.enum(["good", "bad"]);
 export const contextDecisionFeedbackSourceSchema = z.enum(["ai", "system"]);
@@ -117,6 +119,88 @@ export type ContextDecisionFeedbackEffectStatus = z.infer<
 >;
 export type ContextDecisionRetrievalHints = z.infer<typeof contextDecisionRetrievalHintsSchema>;
 
+export type ContextDecisionMlSignal = {
+  status: "ready" | "insufficient_data" | "low_confidence" | "disabled" | "failed";
+  model: "ml-random-forest";
+  modelVersion: string;
+  featureVersion: "context-decision-ml-features-v1";
+  predictedDecision?: ContextDecisionValue;
+  confidence?: number;
+  trainingSampleCount: number;
+  classDistribution: Record<string, number>;
+  features: Record<string, number>;
+  reason: string;
+};
+
+export type ContextDecisionRetrievalMethod = "vector" | "keyword" | "facet" | "hybrid";
+
+export type ContextDecisionKnowledgeAssessment = {
+  status: "evaluable" | "weak_coverage" | "no_evidence" | "failed";
+  recommendedDirection:
+    | "execute"
+    | "revise_and_execute"
+    | "reject"
+    | "discard"
+    | "rollback"
+    | "escalate"
+    | "unknown";
+  knowledgeCoverage: number;
+  supportStrength: number;
+  counterEvidenceStrength: number;
+  riskStrength: number;
+  preferenceAlignment: number;
+  applicabilityScore: number;
+  consensusScore: number;
+  conflictScore: number;
+  sourceQualityScore: number;
+  outOfDistributionScore: number;
+  retrievalMethods: Array<"vector" | "keyword" | "hybrid">;
+  reason: string;
+  meaningfulMetrics?: Array<{
+    key:
+      | "knowledgeCoverage"
+      | "supportStrength"
+      | "counterEvidenceStrength"
+      | "riskStrength"
+      | "preferenceAlignment"
+      | "applicabilityScore"
+      | "consensusScore"
+      | "conflictScore"
+      | "outOfDistributionScore";
+    label: string;
+    value: number;
+  }>;
+};
+
+export type ContextDecisionCandidateTrace = {
+  knowledgeId: string;
+  chunkId: string | null;
+  role: ContextDecisionCoverageQueryRole;
+  retrievalMethod: ContextDecisionRetrievalMethod;
+  vectorStatus?: "available" | "unavailable";
+  vectorSimilarity: number | null;
+  keywordScore: number;
+  facetScore: number;
+  sourceQualityScore: number;
+  feedbackSignalScore: number;
+  finalCandidateScore: number;
+  selected: boolean;
+  selectionReason: string | null;
+  rejectionReason: string | null;
+};
+
+export type ContextDecisionKnowledgePrior = {
+  status: "available" | "limited" | "unavailable";
+  source: "retrieval_prior_v1" | "corpus_prior_v1";
+  referenceOnly: true;
+  notUsedForScoring: true;
+  evidenceCount: number;
+  candidateCount: number;
+  summary: string;
+  signals: string[];
+  cautions: string[];
+};
+
 export type ContextDecisionConfidenceTrace = {
   supportScore: number;
   counterScore: number;
@@ -127,6 +211,13 @@ export type ContextDecisionConfidenceTrace = {
   historicalFeedbackScore: number;
   finalConfidence: number;
   forcedRules: string[];
+  knowledgeAssessment?: ContextDecisionKnowledgeAssessment;
+  knowledgePrior?: ContextDecisionKnowledgePrior;
+  corpusKnowledgePrior?: ContextDecisionKnowledgePrior;
+  outcomePredictor?: ContextDecisionMlSignal;
+  candidateTraces?: ContextDecisionCandidateTrace[];
+  mlSignal?: ContextDecisionMlSignal;
+  llmJudgmentStatus?: "completed" | "fallback" | "repaired";
 };
 
 export type ContextDecisionEvidence = {

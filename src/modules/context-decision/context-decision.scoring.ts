@@ -42,13 +42,17 @@ export function scoreContextDecision(params: {
   trace: ContextDecisionConfidenceTrace;
 } {
   const selectedSupport = params.evidence.filter((item) => item.role === "selected_support");
-  const counterEvidence = params.evidence.filter((item) => item.role === "risk_warning");
+  const counterEvidence = params.evidence.filter((item) => item.role === "rejected_alternative");
+  const riskWarnings = params.evidence.filter((item) => item.role === "risk_warning");
   const preferences = params.evidence.filter((item) => item.role === "user_preference");
   const supportScore = clamp(
     average(selectedSupport.map((item) => scoreKnowledge(item.knowledge))),
   );
   const counterScore = clamp(
     average(counterEvidence.map((item) => scoreKnowledge(item.knowledge))),
+  );
+  const riskSignalScore = clamp(
+    average(riskWarnings.map((item) => scoreKnowledge(item.knowledge))),
   );
   const preferenceScore = clamp(average(preferences.map((item) => scoreKnowledge(item.knowledge))));
   const supportCoverage = params.coverage.filter((item) => item.queryRole === "support");
@@ -81,7 +85,7 @@ export function scoreContextDecision(params: {
     supportScore,
     counterScore,
     preferenceScore,
-    riskSignalScore: counterScore,
+    riskSignalScore,
     coverageScore,
     verificationScore,
     historicalFeedbackScore,
