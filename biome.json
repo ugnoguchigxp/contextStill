@@ -19,6 +19,7 @@
         }
       },
       "suspicious": {
+        "noExplicitAny": "off",
         "noThenProperty": "off"
       }
     }

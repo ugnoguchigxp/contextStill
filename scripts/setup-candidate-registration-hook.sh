@@ -154,7 +154,16 @@ fi
 if [ -n "\$GIT_DIR" ]; then
   REPO_LOCAL_PRE_COMMIT="\$GIT_DIR/hooks/pre-commit"
   if [ -f "\$REPO_LOCAL_PRE_COMMIT" ] && [ "\$REPO_LOCAL_PRE_COMMIT" != "$GLOBAL_PRE_FILE" ]; then
-    if [ -x "\$REPO_LOCAL_PRE_COMMIT" ]; then
+    if grep -q "$LOCAL_MARKER_PRE" "\$REPO_LOCAL_PRE_COMMIT"; then
+      LOCAL_PREVIOUS_PRE_COMMIT="\$(sed -n "s/^CONTEXT_STILL_PREVIOUS_PRE_COMMIT='\\(.*\\)'$/\\1/p" "\$REPO_LOCAL_PRE_COMMIT" | tail -n 1)"
+      if [ -n "\$LOCAL_PREVIOUS_PRE_COMMIT" ] && [ -f "\$LOCAL_PREVIOUS_PRE_COMMIT" ]; then
+        if [ -x "\$LOCAL_PREVIOUS_PRE_COMMIT" ]; then
+          "\$LOCAL_PREVIOUS_PRE_COMMIT" "\$@"
+        else
+          /bin/sh "\$LOCAL_PREVIOUS_PRE_COMMIT" "\$@"
+        fi
+      fi
+    elif [ -x "\$REPO_LOCAL_PRE_COMMIT" ]; then
       "\$REPO_LOCAL_PRE_COMMIT" "\$@"
     else
       /bin/sh "\$REPO_LOCAL_PRE_COMMIT" "\$@"
@@ -199,7 +208,16 @@ fi
 if [ -n "\$GIT_DIR" ]; then
   REPO_LOCAL_POST_COMMIT="\$GIT_DIR/hooks/post-commit"
   if [ -f "\$REPO_LOCAL_POST_COMMIT" ] && [ "\$REPO_LOCAL_POST_COMMIT" != "$GLOBAL_POST_FILE" ]; then
-    if [ -x "\$REPO_LOCAL_POST_COMMIT" ]; then
+    if grep -q "$LOCAL_MARKER_POST" "\$REPO_LOCAL_POST_COMMIT"; then
+      LOCAL_PREVIOUS_POST_COMMIT="\$(sed -n "s/^CONTEXT_STILL_PREVIOUS_POST_COMMIT='\\(.*\\)'$/\\1/p" "\$REPO_LOCAL_POST_COMMIT" | tail -n 1)"
+      if [ -n "\$LOCAL_PREVIOUS_POST_COMMIT" ] && [ -f "\$LOCAL_PREVIOUS_POST_COMMIT" ]; then
+        if [ -x "\$LOCAL_PREVIOUS_POST_COMMIT" ]; then
+          "\$LOCAL_PREVIOUS_POST_COMMIT" "\$@"
+        else
+          /bin/sh "\$LOCAL_PREVIOUS_POST_COMMIT" "\$@"
+        fi
+      fi
+    elif [ -x "\$REPO_LOCAL_POST_COMMIT" ]; then
       "\$REPO_LOCAL_POST_COMMIT" "\$@"
     else
       /bin/sh "\$REPO_LOCAL_POST_COMMIT" "\$@"
