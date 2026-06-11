@@ -5,7 +5,7 @@
 
 ## Goal
 
-Implement Negative Knowledge in small, reviewable slices so review corrections, regressions, guardrails, and failure patterns can influence `context_compile` and `context_decision` without becoming ordinary positive instructions.
+Implement Negative Knowledge in small, independently verifiable implementation slices so review corrections, regressions, guardrails, and failure patterns can influence `context_compile` and `context_decision` without becoming ordinary positive instructions.
 
 The first milestone is:
 
@@ -13,7 +13,8 @@ The first milestone is:
 accepted review correction
   -> register_review_corrections
   -> negative candidate
-  -> draft/active negative Knowledge
+  -> draft negative Knowledge
+  -> human review activates it
   -> context_compile review_context guardrail
   -> context_decision risk / counter-evidence / verification trace
 ```
@@ -53,7 +54,7 @@ Existing constraints:
 - Do not add file read or shell execution to contextStill.
 - Do not make `intentTags` a closed enum.
 - Do not auto-convert existing "never" or "avoid" Knowledge to negative.
-- Do not change compile or decision ranking in the schema-only PR.
+- Do not change compile or decision ranking in the schema-only slice.
 - Do not build autonomous goal discovery in this plan.
 
 ## Data Model
@@ -71,7 +72,9 @@ Allowed polarity values:
 positive | negative | neutral
 ```
 
-Intent tags remain flexible normalized slugs. Seed initial tag definitions with kind `intent`:
+Intent tags remain flexible normalized slugs stored as `knowledge_items.intent_tags` JSONB in the first implementation pass. Do not normalize them into relation rows until query and maintenance needs prove JSONB is insufficient.
+
+Seed initial tag definitions with kind `intent`:
 
 ```text
 guidance
@@ -101,7 +104,7 @@ review_correction
 
 Do not create a separate negative Knowledge table in the first implementation pass.
 
-## PR 1: Schema And Contracts
+## Slice 1: Schema And Contracts
 
 ### Objective
 
@@ -154,7 +157,7 @@ Add or update focused tests:
 - `test/api.routes.knowledge.test.ts`
 - `test/register-candidate.service.test.ts`
 
-Acceptance criteria:
+Checkpoint:
 
 - migrations add `polarity` and `intent_tags`
 - existing Knowledge reads as `polarity=positive` and `intentTags=[]`
@@ -162,9 +165,9 @@ Acceptance criteria:
 - flexible intent tags are accepted
 - origin links accept review-related origin kinds
 - `register_candidate` and `register_candidates` still pass without polarity fields
-- no compile or decision output changes in this PR
+- no compile or decision output changes in this slice
 
-## PR 2: Search Filters And Retrieval Metadata
+## Slice 2: Search Filters And Retrieval Metadata
 
 ### Objective
 
@@ -212,7 +215,7 @@ Add or update focused tests:
 - `test/mcp.contract.test.ts`
 - `test/api.routes.knowledge.test.ts`
 
-Acceptance criteria:
+Checkpoint:
 
 - `search_knowledge` can return only negative items
 - `search_knowledge` can return only positive items
@@ -220,7 +223,7 @@ Acceptance criteria:
 - omitted filters preserve existing results
 - no ranking behavior changes yet
 
-## PR 3: register_review_corrections MCP Tool
+## Slice 3: register_review_corrections MCP Tool
 
 ### Objective
 
@@ -267,6 +270,7 @@ Rules:
 - reject missing `reviewFindingId`
 - reject empty `finding`
 - reject false-positive/rejected statuses by not including them in the schema
+- treat duplicate `origin.system + origin.reviewFindingId` as an error in the first implementation
 - default `polarity=negative`
 - default `intentTags=["review_finding"]`
 - candidate `type` defaults to `rule`
@@ -296,7 +300,7 @@ Add a service near `src/modules/registerCandidate/`:
 
 Reuse `registerCandidate` / `registerCandidatesBulk` where possible instead of duplicating queue insertion logic.
 
-If idempotency is cheap, use `origin.reviewFindingId` and `origin.system` to report duplicates. If it is not cheap in the first slice, return a per-item error for duplicates once detected in candidate metadata.
+Duplicate handling is intentionally simple for the first implementation: `origin.system + origin.reviewFindingId` must be unique enough for review-correction registration, and duplicates should return a per-item duplicate error. Do not make this idempotent until a source-system contract requires idempotency.
 
 ### Tests
 
@@ -309,20 +313,21 @@ Update:
 - `test/mcp.tools.test.ts`
 - `test/mcp.contract.test.ts`
 
-Acceptance criteria:
+Checkpoint:
 
 - accepted, fixed, and deferred corrections create negative candidates
 - tool output reports per-item success/failure
 - missing `reviewFindingId` is rejected
 - missing `finding` is rejected
+- duplicate `origin.system + origin.reviewFindingId` returns a duplicate error
 - candidate metadata contains polarity, intent tags, and review correction origin
 - MCP registry lists the new tool
 
-## PR 4: Negative Coverage And Finalization
+## Slice 4: Negative Coverage And Draft Finalization
 
 ### Objective
 
-Shape negative candidates into reusable Knowledge using a route that understands failure/risk semantics.
+Shape negative candidates into reusable draft Knowledge using a coverage route that is structurally similar to the existing distillation pipeline but has failure/risk semantics.
 
 ### Changes
 
@@ -330,7 +335,19 @@ Add a separate module:
 
 - `src/modules/coverNegativeEvidence/`
 
-Do not reuse positive coverEvidence prompts unchanged.
+Negative coverage should follow the same broad pattern as distillation/covering evidence:
+
+```text
+candidate
+  -> coverage job
+  -> structured parser
+  -> evidence result
+  -> draft Knowledge finalization
+  -> human review
+  -> active Knowledge
+```
+
+Do not reuse positive coverEvidence prompts unchanged. The job lifecycle can mirror distillation, but the prompt, parser, result statuses, and finalization rules must be specific to negative evidence.
 
 Negative coverage should answer:
 
@@ -361,7 +378,7 @@ Output shape:
 }
 ```
 
-First implementation should finalize `ready` results as `draft` Knowledge by default. Promotion to `active` remains the normal human review path.
+First implementation should finalize `ready` results as `draft` Knowledge by default. Promotion to `active` remains the normal human review path and is not automatic.
 
 ### Tests
 
@@ -371,15 +388,16 @@ Add:
 - negative coverage service tests
 - finalize preservation tests
 
-Acceptance criteria:
+Checkpoint:
 
 - false positives do not create Knowledge
 - not reusable findings do not create Knowledge
 - ready results preserve `polarity`, `intentTags`, and origin metadata
 - finalization creates draft Knowledge by default
+- ready negative results are visible to the human before activation
 - existing positive coverEvidence behavior does not change
 
-## PR 5: context_compile Guardrails
+## Slice 5: context_compile Guardrails
 
 ### Objective
 
@@ -419,14 +437,14 @@ Add or update:
 - `test/context-response-composer.service.test.ts`
 - `test/token-budget.test.ts`
 
-Acceptance criteria:
+Checkpoint:
 
 - negative Knowledge is not rendered in positive procedures
 - guardrails render separately
 - no guardrails case preserves existing output shape
 - `review_context` benefits first; other retrieval modes can follow only after tests prove no noise increase
 
-## PR 6: context_decision Role Mapping
+## Slice 6: context_decision Role Mapping
 
 ### Objective
 
@@ -464,7 +482,7 @@ Add or update:
 - `test/context-decision.service.test.ts`
 - `test/context-decision.scoring.test.ts`
 
-Acceptance criteria:
+Checkpoint:
 
 - negative guardrail appears as risk evidence
 - negative failure pattern can push toward `revise_and_execute`, `reject`, or `escalate` when applicable
@@ -472,7 +490,7 @@ Acceptance criteria:
 - unknown tags do not break decisions
 - conflicting positive and negative evidence is visible in traces
 
-## PR 7: Feedback Semantics And Dynamic Score
+## Slice 7: Feedback Semantics And Dynamic Score
 
 ### Objective
 
@@ -512,14 +530,14 @@ Add or update:
 - `test/knowledge-value.service.test.ts`
 - API route tests for feedback labels if exposed
 
-Acceptance criteria:
+Checkpoint:
 
 - negative `used` increases guardrail/risk selection value, not procedure priority
 - negative `off_topic` suppresses future noisy guardrails
 - negative `wrong` enters the existing wrong-review path
 - no automatic deletion path is added
 
-## PR 8: UI, Seed, Doctor, And Cleanup
+## Slice 8: UI, Seed, Doctor, And Cleanup
 
 ### Objective
 
@@ -534,6 +552,8 @@ Update Knowledge UI:
 - origin kind filter
 - polarity/intent badges
 - review correction provenance panel
+- draft negative Knowledge queue/list that can be reviewed and activated by a human
+- activation action that reuses the existing Knowledge status transition rules
 
 Update compile/decision detail UI:
 
@@ -581,25 +601,27 @@ Add or update:
 - CLI dry-run tests
 - UI tests where existing coverage patterns exist
 
-Acceptance criteria:
+Checkpoint:
 
 - UI can filter and inspect negative Knowledge
+- humans can review draft negative Knowledge and activate it from the Knowledge screen or a closely related review view
+- activation uses the existing draft-to-active Knowledge lifecycle, not a new hidden promotion path
 - Doctor reports maintenance warnings without blocking healthy setups
 - seed import/export preserves polarity and intent tags
 - dry-run script makes no DB changes
 
 ## Recommended Implementation Order
 
-1. PR 1: Schema and contracts.
-2. PR 2: Search filters and retrieval metadata.
-3. PR 3: `register_review_corrections`.
-4. PR 4: Negative coverage and draft finalization.
-5. PR 5: `context_compile` guardrails.
-6. PR 6: `context_decision` role mapping.
-7. PR 7: feedback and dynamic score semantics.
-8. PR 8: UI, seed, doctor, and cleanup.
+1. Slice 1: Schema and contracts.
+2. Slice 2: Search filters and retrieval metadata.
+3. Slice 3: `register_review_corrections`.
+4. Slice 4: Negative coverage and draft finalization.
+5. Slice 5: `context_compile` guardrails.
+6. Slice 6: `context_decision` role mapping.
+7. Slice 7: feedback and dynamic score semantics.
+8. Slice 8: UI, seed, doctor, and cleanup.
 
-Each PR should keep production behavior unchanged unless that PR explicitly owns the behavior change.
+Each slice should keep production behavior unchanged unless that slice explicitly owns the behavior change.
 
 ## Verification Gates
 
@@ -611,13 +633,13 @@ bun run test:unit
 bun run build:web
 ```
 
-Before merge:
+Before committing or moving to the next major slice:
 
 ```bash
 bun run verify
 ```
 
-Use narrower test runs while iterating, then run the full gate before committing or merging.
+Use narrower test runs while iterating, then run the full gate before committing or starting the next major slice.
 
 ## Deferred Decisions
 
