@@ -1,4 +1,4 @@
-import { type SQL, and, asc, desc, eq, ilike, or, sql } from "drizzle-orm";
+import { type SQL, and, asc, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
 import { knowledgeItems } from "../../../src/db/schema.js";
 import {
   mergeApplicabilityInput,
@@ -64,7 +64,10 @@ export function isMissingKnowledgeLifecycleColumnsError(error: unknown): boolean
 }
 
 export function buildKnowledgeListWhere(
-  params: Pick<KnowledgeListParams, "status" | "type" | "query" | "displayFilter" | "minQuality">,
+  params: Pick<
+    KnowledgeListParams,
+    "status" | "type" | "query" | "displayFilter" | "minQuality" | "polarities" | "intentTags"
+  >,
 ) {
   const conditions: SQL[] = [];
   const displayFilter = params.displayFilter ?? "all";
@@ -100,6 +103,15 @@ export function buildKnowledgeListWhere(
   }
   if (params.type) {
     conditions.push(eq(knowledgeItems.type, params.type));
+  }
+  if (params.polarities && params.polarities.length > 0) {
+    conditions.push(inArray(knowledgeItems.polarity, params.polarities));
+  }
+  if (params.intentTags && params.intentTags.length > 0) {
+    conditions.push(sql`coalesce(${knowledgeItems.intentTags}, '[]'::jsonb) ?| array[${sql.join(
+      params.intentTags.map((t) => sql`${t}`),
+      sql`,`,
+    )}]`);
   }
   if (params.query?.trim()) {
     const query = `%${params.query.trim()}%`;

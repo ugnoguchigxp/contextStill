@@ -48,6 +48,8 @@ function createDummyKnowledge(
     type: "rule",
     status: "active",
     scope: "repo",
+    polarity: overrides.polarity ?? "positive",
+    intentTags: overrides.intentTags ?? [],
     title: "Dummy Rule",
     body: "This is a test rule body.",
     confidence: 90,

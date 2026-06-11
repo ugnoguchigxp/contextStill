@@ -584,6 +584,8 @@ describe("API route contract tests", () => {
         dynamicScore: 0,
         decayFactor: 1,
         lastVerifiedAt: null,
+        polarity: "positive",
+        intentTags: [],
         createdAt: new Date("2026-05-15T00:00:00.000Z"),
         updatedAt: new Date("2026-05-15T00:00:00.000Z"),
       },

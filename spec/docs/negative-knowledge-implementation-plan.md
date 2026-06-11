@@ -643,7 +643,6 @@ Use narrower test runs while iterating, then run the full gate before committing
 
 ## Deferred Decisions
 
-- Whether negative coverage needs a dedicated table after route metadata proves insufficient.
 - Whether `intentTags` should move from `knowledge_items.intent_tags` to normalized relation rows.
 - Whether draft-to-active promotion should eventually require stronger evidence thresholds.
 - Whether verification-tagged neutral Knowledge needs a persisted `context_decision_evidence` role beyond coverage traces.

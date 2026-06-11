@@ -51,6 +51,8 @@ select json_build_object(
         type,
         status,
         scope,
+        polarity,
+        intent_tags,
         title,
         body,
         applies_to,

@@ -377,7 +377,7 @@ const callCodexChat = async (
   };
 };
 
-function createDefaultChatClient(
+export function createDefaultChatClient(
   providerSetting: DistillationProviderSetting = groupedConfig.distillation.provider,
   usageSource = "distillation",
   fallbackOrder: DistillationProviderName[] = [],

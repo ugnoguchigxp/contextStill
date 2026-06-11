@@ -6,6 +6,7 @@ import {
   type ContextDecisionMlSignal,
   type ContextDecisionResult,
   type ContextDecisionValue,
+  type ContextDecisionEvidenceRole,
   contextDecisionInputSchema,
   contextDecisionValueSchema,
 } from "../../shared/schemas/context-decision.schema.js";
@@ -688,6 +689,23 @@ async function composeAgentMessage(params: {
   return fallback;
 }
 
+function determineEvidenceRole(
+  knowledge: KnowledgeSearchResult,
+  defaultRole: ContextDecisionEvidenceRole,
+): ContextDecisionEvidenceRole {
+  const tags = knowledge.intentTags || [];
+  if (tags.includes("preference") || tags.includes("user_preference")) {
+    return "user_preference";
+  }
+  if (knowledge.polarity === "negative") {
+    return "risk_warning";
+  }
+  if (knowledge.polarity === "positive") {
+    return "selected_support";
+  }
+  return defaultRole;
+}
+
 export async function decideContext(input: unknown): Promise<ContextDecisionResult> {
   const parsed = contextDecisionInputSchema.parse(input);
   const coverageQueries = buildDecisionCoverageQueries(parsed);
@@ -734,19 +752,19 @@ export async function decideContext(input: unknown): Promise<ContextDecisionResu
   const evidenceCandidates: DecisionEvidenceCandidate[] = [
     ...selectedSupport.map((knowledge) => ({
       knowledge,
-      role: "selected_support" as const,
+      role: determineEvidenceRole(knowledge, "selected_support"),
     })),
     ...selectedPreference.map((knowledge) => ({
       knowledge,
-      role: "user_preference" as const,
+      role: determineEvidenceRole(knowledge, "user_preference"),
     })),
     ...selectedRisk.map((knowledge) => ({
       knowledge,
-      role: "risk_warning" as const,
+      role: determineEvidenceRole(knowledge, "risk_warning"),
     })),
     ...selectedAlternatives.map((knowledge) => ({
       knowledge,
-      role: "rejected_alternative" as const,
+      role: determineEvidenceRole(knowledge, "rejected_alternative"),
     })),
   ];
 

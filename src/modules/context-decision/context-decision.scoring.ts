@@ -71,6 +71,14 @@ export function scoreContextDecision(params: {
     forcedRules.push("no_selected_support_evidence");
   }
 
+  if (riskWarnings.length > 0) {
+    forcedRules.push("risk_warnings_present");
+  }
+
+  if (counterEvidence.length > 0) {
+    forcedRules.push("counter_evidence_present");
+  }
+
   const riskPenalty = Math.min(18, counterScore * 0.18);
   const confidence = clamp(
     supportScore * 0.45 +

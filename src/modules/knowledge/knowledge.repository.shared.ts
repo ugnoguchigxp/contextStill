@@ -14,6 +14,8 @@ export type KnowledgeSearchResult = {
   type: string;
   status: string;
   scope: string;
+  polarity: string;
+  intentTags: string[];
   title: string;
   body: string;
   confidence: number;
@@ -46,6 +48,8 @@ export type UpsertKnowledgeFromSourceParams = {
   type: KnowledgeItem["type"];
   status: KnowledgeStatus;
   scope: KnowledgeItem["scope"];
+  polarity?: string;
+  intentTags?: string[];
   title: string;
   body: string;
   confidence?: number;
@@ -60,6 +64,8 @@ export type KnowledgeSearchOptions = {
   repoKey?: string;
   allowGlobalScope?: boolean;
   types?: KnowledgeItem["type"][];
+  polarities?: Array<"positive" | "negative" | "neutral">;
+  intentTags?: string[];
   scopeMatchMode?: "primary" | "legacy";
   technologies?: string[];
   changeTypes?: string[];

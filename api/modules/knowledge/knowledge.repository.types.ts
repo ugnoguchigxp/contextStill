@@ -8,6 +8,8 @@ export type KnowledgeCreateInput = {
   type: string;
   status: string;
   scope: string;
+  polarity?: string;
+  intentTags?: string[];
   title: string;
   body: string;
   confidence: number;
@@ -26,6 +28,8 @@ export type KnowledgeUpdateInput = {
   type?: string;
   status?: string;
   scope?: string;
+  polarity?: string;
+  intentTags?: string[];
   title?: string;
   body?: string;
   confidence?: number;
@@ -92,6 +96,8 @@ export type KnowledgeListItem = {
   type: string;
   status: string;
   scope: string;
+  polarity: string;
+  intentTags: string[];
   title: string;
   body: string;
   confidence: number;
@@ -137,6 +143,8 @@ export type KnowledgeListParams = {
   status?: string;
   type?: string;
   query?: string;
+  polarities?: string[];
+  intentTags?: string[];
   displayFilter?: KnowledgeDisplayFilter;
   minQuality?: number;
   sortBy?: KnowledgeListSortBy;

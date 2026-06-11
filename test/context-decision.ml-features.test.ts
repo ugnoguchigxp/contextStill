@@ -15,6 +15,8 @@ function knowledge(id: string): KnowledgeSearchResult {
     type: "rule",
     status: "active",
     scope: "repo",
+    polarity: "positive",
+    intentTags: [],
     title: "Evidence rule",
     body: "Evidence backed rule.",
     confidence: 80,

@@ -82,7 +82,7 @@ export async function insertContextPackItems(
   items: Array<{
     itemKind: string;
     itemId: string;
-    section: "rules" | "procedures" | "code_context" | "warnings";
+    section: "rules" | "procedures" | "code_context" | "warnings" | "guardrails";
     score: number;
     rankingReason: string;
     sourceRefs: string[];

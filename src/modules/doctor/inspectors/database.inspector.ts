@@ -257,6 +257,47 @@ export async function inspectDatabase({
     } catch {
       reasons.push("KNOWLEDGE_VALUE_QUERY_FAILED");
     }
+
+    try {
+      const unknownTagsResult = await db.execute(sql`
+        select count(*)::int as count
+        from knowledge_items,
+             jsonb_array_elements_text(intent_tags) as tag
+        where tag not in (
+          'guidance', 'guardrail', 'prohibition', 'warning', 'failure_pattern',
+          'review_finding', 'regression', 'test_gap', 'verification', 'preference',
+          'boundary_violation', 'architecture_risk', 'security_risk', 'performance_risk',
+          'operational_risk'
+        )
+      `);
+      const unknownTagsCount = Number((unknownTagsResult.rows as Array<{ count?: number }>)[0]?.count ?? 0);
+      if (unknownTagsCount > 0) {
+        reasons.push("KNOWLEDGE_UNKNOWN_INTENT_TAGS");
+      }
+
+      const negativeWithoutOriginResult = await db.execute(sql`
+        select count(*)::int as count
+        from knowledge_items
+        where polarity = 'negative'
+          and id not in (select knowledge_id from knowledge_origin_links)
+      `);
+      const negativeWithoutOriginCount = Number((negativeWithoutOriginResult.rows as Array<{ count?: number }>)[0]?.count ?? 0);
+      if (negativeWithoutOriginCount > 0) {
+        reasons.push("KNOWLEDGE_NEGATIVE_WITHOUT_ORIGIN");
+      }
+
+      const negativeAsPositiveResult = await db.execute(sql`
+        select count(*)::int as count
+        from knowledge_items
+        where polarity = 'negative' and type = 'procedure'
+      `);
+      const negativeAsPositiveCount = Number((negativeAsPositiveResult.rows as Array<{ count?: number }>)[0]?.count ?? 0);
+      if (negativeAsPositiveCount > 0) {
+        reasons.push("KNOWLEDGE_NEGATIVE_AS_POSITIVE");
+      }
+    } catch {
+      // 非ブロッキング
+    }
   }
 
   // sources は時間経過で stale と判定する必要がないため、検出を廃止します。

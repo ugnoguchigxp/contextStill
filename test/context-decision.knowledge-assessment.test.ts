@@ -11,6 +11,8 @@ function knowledge(overrides: Partial<KnowledgeSearchResult> = {}): KnowledgeSea
     type: "rule",
     status: "active",
     scope: "repo",
+    polarity: overrides.polarity ?? "positive",
+    intentTags: overrides.intentTags ?? [],
     title: "Evidence based action",
     body: "Use existing repository evidence before asking the user.",
     confidence: 84,

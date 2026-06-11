@@ -281,6 +281,21 @@ export async function runCoverEvidence(
   if (!row) {
     throw new Error(`find candidate result not found: ${id}`);
   }
+
+  const originObj = row.origin && typeof row.origin === "object" ? (row.origin as any) : {};
+  const isNegative = originObj.polarity === "negative";
+  if (isNegative) {
+    const { runCoverNegativeEvidence } = await import("../coverNegativeEvidence/domain.js");
+    return runCoverNegativeEvidence({
+      id,
+      candidate: row,
+      providerPolicy,
+      write: input.write,
+      chatClient: input.chatClient,
+      signal: input.signal,
+    });
+  }
+
   await recordAuditLogSafe({
     eventType: auditEventTypes.coverEvidenceStarted,
     actor: "system",

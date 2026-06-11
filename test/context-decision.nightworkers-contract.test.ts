@@ -9,6 +9,8 @@ function knowledge(): KnowledgeSearchResult {
     type: "procedure",
     status: "active",
     scope: "repo",
+    polarity: "positive",
+    intentTags: [],
     title: "Continue autonomously before asking",
     body: "Use context_decision before asking the user and continue when evidence supports it.",
     confidence: 86,

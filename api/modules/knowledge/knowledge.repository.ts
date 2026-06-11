@@ -79,6 +79,8 @@ export async function listKnowledgeItems(
     type: knowledgeItems.type,
     status: knowledgeItems.status,
     scope: knowledgeItems.scope,
+    polarity: knowledgeItems.polarity,
+    intentTags: knowledgeItems.intentTags,
     title: knowledgeItems.title,
     body: knowledgeItems.body,
     confidence: knowledgeItems.confidence,
@@ -146,6 +148,8 @@ export async function listKnowledgeItems(
       type: String(row.type ?? "rule"),
       status: String(row.status ?? "draft"),
       scope: String(row.scope ?? "repo"),
+      polarity: String(row.polarity ?? "positive"),
+      intentTags: Array.isArray(row.intentTags) ? row.intentTags.map(String) : [],
       title: String(row.title ?? ""),
       body: String(row.body ?? ""),
       appliesTo: asRecord(row.appliesTo),
@@ -195,6 +199,8 @@ export async function createKnowledgeItem(input: KnowledgeCreateInput) {
       type: input.type,
       status: input.status,
       scope: input.scope,
+      polarity: input.polarity ?? "positive",
+      intentTags: input.intentTags ?? [],
       title: input.title,
       body: input.body,
       confidence,
@@ -232,6 +238,8 @@ export async function updateKnowledgeItem(id: string, input: KnowledgeUpdateInpu
       status: knowledgeItems.status,
       scope: knowledgeItems.scope,
       type: knowledgeItems.type,
+      polarity: knowledgeItems.polarity,
+      intentTags: knowledgeItems.intentTags,
       title: knowledgeItems.title,
       body: knowledgeItems.body,
       confidence: knowledgeItems.confidence,
@@ -248,6 +256,8 @@ export async function updateKnowledgeItem(id: string, input: KnowledgeUpdateInpu
   const nextType = input.type ?? existing.type;
   const nextStatus = input.status ?? existing.status;
   const nextScope = input.scope ?? existing.scope;
+  const nextPolarity = input.polarity ?? existing.polarity;
+  const nextIntentTags = input.intentTags ?? existing.intentTags;
   const nextTitle = input.title ?? existing.title;
   const nextBody = input.body ?? existing.body;
   const confidence = normalizeKnowledgeScore(input.confidence, 70);
@@ -314,6 +324,8 @@ export async function updateKnowledgeItem(id: string, input: KnowledgeUpdateInpu
       type: nextType,
       status: nextStatus,
       scope: nextScope,
+      polarity: nextPolarity,
+      intentTags: nextIntentTags,
       title: nextTitle,
       body: nextBody,
       confidence: nextConfidence,

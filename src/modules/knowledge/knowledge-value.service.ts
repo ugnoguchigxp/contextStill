@@ -14,6 +14,7 @@ export type KnowledgeValueSignals = {
   usageUsedCount30d?: number;
   usageNotUsedCount30d?: number;
   usageOffTopicCount30d?: number;
+  polarity?: string;
 };
 
 type RecordKnowledgeCompileSelectionInput = {
@@ -29,6 +30,7 @@ type KnowledgeCounterRow = {
   explicitUpvoteCount: number;
   explicitDownvoteCount: number;
   lastVerifiedAt: Date | null;
+  polarity: string;
 };
 
 type UsageSignals = {
@@ -62,6 +64,7 @@ export function computeDynamicScore(signals: KnowledgeValueSignals): number {
   const usageNotUsedCount30d = asNonNegativeInteger(signals.usageNotUsedCount30d ?? 0);
   const usageOffTopicCount30d = asNonNegativeInteger(signals.usageOffTopicCount30d ?? 0);
 
+  const penaltyNotUsed = signals.polarity === "negative" ? 0 : Math.min(10, usageNotUsedCount30d * 1);
   const score =
     Math.min(35, Math.log1p(compileSelectCount) * 10) +
     Math.min(25, recentSelectCount30d * 3) +
@@ -69,7 +72,7 @@ export function computeDynamicScore(signals: KnowledgeValueSignals): number {
     Math.min(20, explicitUpvoteCount * 10) -
     Math.min(40, explicitDownvoteCount * 15) +
     Math.min(10, usageUsedCount30d * 1.5) -
-    Math.min(10, usageNotUsedCount30d * 1) -
+    penaltyNotUsed -
     Math.min(30, usageOffTopicCount30d * 3);
 
   return clamp(score, 0, 100);
@@ -101,6 +104,7 @@ async function loadKnowledgeCounterRows(knowledgeIds: string[]): Promise<Knowled
       explicitUpvoteCount: knowledgeItems.explicitUpvoteCount,
       explicitDownvoteCount: knowledgeItems.explicitDownvoteCount,
       lastVerifiedAt: knowledgeItems.lastVerifiedAt,
+      polarity: knowledgeItems.polarity,
     })
     .from(knowledgeItems)
     .where(inArray(knowledgeItems.id, knowledgeIds));
@@ -112,6 +116,7 @@ async function loadKnowledgeCounterRows(knowledgeIds: string[]): Promise<Knowled
     explicitUpvoteCount: asNonNegativeInteger(row.explicitUpvoteCount),
     explicitDownvoteCount: asNonNegativeInteger(row.explicitDownvoteCount),
     lastVerifiedAt: row.lastVerifiedAt,
+    polarity: String(row.polarity ?? "positive"),
   }));
 }
 
@@ -201,6 +206,7 @@ export async function recordKnowledgeCompileSelection(
       usageUsedCount30d: usageSignals?.usedCount30d ?? 0,
       usageNotUsedCount30d: usageSignals?.notUsedCount30d ?? 0,
       usageOffTopicCount30d: usageSignals?.offTopicCount30d ?? 0,
+      polarity: row.polarity,
     });
 
     await db
@@ -237,6 +243,7 @@ export async function recalculateKnowledgeDynamicScores(knowledgeIds: string[]):
       usageUsedCount30d: usageSignals?.usedCount30d ?? 0,
       usageNotUsedCount30d: usageSignals?.notUsedCount30d ?? 0,
       usageOffTopicCount30d: usageSignals?.offTopicCount30d ?? 0,
+      polarity: row.polarity,
     });
 
     await db

@@ -1,3 +1,4 @@
+export const knowledgePolarityValues = ["positive", "negative", "neutral"] as const;
 export const knowledgeTypeValues = ["rule", "procedure"] as const;
 export const knowledgeStatusValues = ["draft", "active", "deprecated"] as const;
 export const scopeValues = ["repo", "global"] as const;
@@ -7,8 +8,18 @@ export const knowledgeTagKindValues = [
   "change_type",
   "retrieval_mode",
   "domain",
+  "intent",
 ] as const;
 export const knowledgeTagStatusValues = ["active", "draft", "deprecated"] as const;
+
+export const knowledgeOriginLinkKindValues = [
+  "vibe_memory",
+  "agent_candidate",
+  "landscape_review_item",
+  "review_finding",
+  "external_review_run",
+  "review_correction",
+] as const;
 
 export const sourceKindValues = ["wiki"] as const;
 export const settingValueKindValues = ["json", "string", "secret_ref", "encrypted"] as const;
@@ -117,7 +128,7 @@ export const runStatusValues = ["ok", "degraded", "failed"] as const;
 export const compileRunSourceValues = ["ui", "mcp", "cli", "unknown"] as const;
 export const compileEvalOutcomeValues = ["useful", "partial", "misleading", "unused"] as const;
 
-export const packSectionValues = ["rules", "procedures", "code_context", "warnings"] as const;
+export const packSectionValues = ["rules", "procedures", "code_context", "warnings", "guardrails"] as const;
 export const contextCompileCandidateTraceAgenticDecisionValues = [
   "not_evaluated",
   "accepted",

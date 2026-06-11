@@ -60,6 +60,8 @@ const knowledgeItemSchema = z.object({
   type: knowledgeTypeSchema,
   status: knowledgeStatusSchema,
   scope: scopeSchema,
+  polarity: z.enum(["positive", "negative", "neutral"]).default("positive"),
+  intentTags: z.array(z.string()).default([]),
   title: z.string().min(1),
   body: z.string().min(1),
   appliesTo: z.record(z.unknown()).default({}),
@@ -77,6 +79,8 @@ export const knowledgeSearchInputSchema = z.object({
   types: z.array(knowledgeTypeSchema).optional(),
   statuses: z.array(knowledgeStatusSchema).min(1).optional(),
   status: knowledgeStatusSchema.default("active"),
+  polarities: z.array(z.enum(["positive", "negative", "neutral"])).optional(),
+  intentTags: z.array(z.string().trim().min(1)).optional(),
   repoPath: z.string().trim().min(1).optional(),
   changeTypes: z.array(z.string().trim().min(1)).optional(),
   technologies: z.array(z.string().trim().min(1)).optional(),
@@ -91,6 +95,8 @@ export const registerKnowledgeInputSchema = z.object({
   type: knowledgeTypeSchema.default("rule"),
   status: knowledgeStatusSchema.default("draft"),
   scope: scopeSchema.default("repo"),
+  polarity: z.enum(["positive", "negative", "neutral"]).default("positive").optional(),
+  intentTags: z.array(z.string()).default([]).optional(),
   confidence: optionalKnowledgeScoreSchema,
   importance: optionalKnowledgeScoreSchema,
   appliesTo: knowledgeApplicabilitySchema.optional(),
@@ -109,6 +115,8 @@ export const registerCandidateInputSchema = z
     body: z.string().trim().min(1).optional(),
     text: z.string().trim().min(1).optional(),
     type: knowledgeTypeSchema.optional(),
+    polarity: z.enum(["positive", "negative", "neutral"]).optional(),
+    intentTags: z.array(z.string()).optional(),
     confidence: optionalKnowledgeScoreSchema,
     importance: optionalKnowledgeScoreSchema,
     appliesTo: knowledgeApplicabilitySchema.optional(),
@@ -145,12 +153,16 @@ export const listKnowledgeInputSchema = z.object({
   status: knowledgeStatusSchema.optional(),
   type: knowledgeTypeSchema.optional(),
   query: z.string().trim().optional(),
+  polarities: z.array(z.enum(["positive", "negative", "neutral"])).optional(),
+  intentTags: z.array(z.string().trim().min(1)).optional(),
 });
 
 const knowledgeUpdatePatchSchema = z.object({
   type: knowledgeTypeSchema.optional(),
   status: knowledgeStatusSchema.optional(),
   scope: scopeSchema.optional(),
+  polarity: z.enum(["positive", "negative", "neutral"]).optional(),
+  intentTags: z.array(z.string()).optional(),
   title: z.string().trim().min(1).optional(),
   body: z.string().trim().min(1).optional(),
   confidence: optionalKnowledgeScoreSchema,
@@ -190,7 +202,42 @@ export const updateKnowledgeInputSchema = z
     { message: "at least one update field is required" },
   );
 
+export const registerReviewCorrectionItemSchema = z.object({
+  title: z.string().trim().min(1),
+  finding: z.string().trim().min(1),
+  impact: z.string().trim().optional(),
+  trigger: z.string().trim().optional(),
+  fix: z.string().trim().optional(),
+  verification: z.string().trim().optional(),
+  decisionSignal: z.string().trim().optional(),
+  severity: z.enum(["low", "medium", "high", "critical"]).optional(),
+  status: z.enum(["accepted", "fixed", "deferred"]),
+  origin: z.object({
+    system: z.string().trim().min(1),
+    reviewFindingId: z.string().trim().min(1),
+    runId: z.string().trim().optional(),
+    taskId: z.string().trim().optional(),
+    sessionId: z.string().trim().optional(),
+    repositoryPath: z.string().trim().optional(),
+    artifactRefs: z.array(z.string().trim()).optional(),
+    fileRefs: z.array(z.object({
+      path: z.string().trim().min(1),
+      line: z.number().int().optional()
+    })).optional()
+  }),
+  confidence: optionalKnowledgeScoreSchema,
+  importance: optionalKnowledgeScoreSchema,
+  intentTags: z.array(z.string().trim()).optional(),
+  appliesTo: z.record(z.unknown()).optional()
+});
+
+export const registerReviewCorrectionsInputSchema = z.object({
+  items: z.array(registerReviewCorrectionItemSchema).min(1).max(10)
+}).strict();
+
 export type KnowledgeItem = z.infer<typeof knowledgeItemSchema>;
 export type KnowledgeApplicabilityInput = z.infer<typeof knowledgeApplicabilitySchema>;
 export type KnowledgeSearchInput = z.infer<typeof knowledgeSearchInputSchema>;
 export type KnowledgeStatus = z.infer<typeof knowledgeStatusSchema>;
+export type RegisterReviewCorrectionItem = z.infer<typeof registerReviewCorrectionItemSchema>;
+export type RegisterReviewCorrectionsInput = z.infer<typeof registerReviewCorrectionsInputSchema>;

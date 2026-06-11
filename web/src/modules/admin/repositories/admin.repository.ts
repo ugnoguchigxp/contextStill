@@ -22,6 +22,8 @@ export type KnowledgeItem = {
   decayFactor: number;
   lastVerifiedAt: string | null;
   updatedAt: string;
+  polarity: "positive" | "negative" | "neutral";
+  intentTags: string[];
 };
 
 export type KnowledgeListResponse = {
@@ -48,6 +50,8 @@ export type KnowledgeListRequest = {
   minQuality?: number;
   sortBy?: string;
   sortDir?: "asc" | "desc";
+  polarities?: Array<"positive" | "negative" | "neutral">;
+  intentTags?: string[];
 };
 
 export type KnowledgeFeedback = {
@@ -188,6 +192,8 @@ export type KnowledgeWriteInput = {
   changeTypes?: string[];
   domains?: string[];
   metadata?: Record<string, unknown>;
+  polarity?: "positive" | "negative" | "neutral";
+  intentTags?: string[];
 };
 
 export type KnowledgeUpdateInput = Partial<KnowledgeWriteInput>;
@@ -2550,6 +2556,8 @@ export async function fetchKnowledgeItems(
     if (input.minQuality !== undefined) params.set("minQuality", String(input.minQuality));
     if (input.sortBy) params.set("sortBy", input.sortBy);
     if (input.sortDir) params.set("sortDir", input.sortDir);
+    if (input.polarities && input.polarities.length > 0) params.set("polarities", input.polarities.join(","));
+    if (input.intentTags && input.intentTags.length > 0) params.set("intentTags", input.intentTags.join(","));
   }
   const json = await getJson<KnowledgeListResponse>(`/api/knowledge?${params.toString()}`);
   return json;

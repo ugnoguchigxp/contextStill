@@ -14,10 +14,14 @@ import {
   registerCandidatesBulk,
 } from "../../modules/registerCandidate/register-candidate.service.js";
 import {
+  registerReviewCorrections,
+} from "../../modules/registerCandidate/register-review-corrections.service.js";
+import {
   knowledgeSearchInputSchema,
   listKnowledgeInputSchema,
   registerCandidateInputSchema,
   registerCandidatesToolInputSchema,
+  registerReviewCorrectionsInputSchema,
   updateKnowledgeInputSchema,
 } from "../../shared/schemas/knowledge.schema.js";
 import type { ToolEntry } from "../registry.js";
@@ -45,6 +49,14 @@ export const searchKnowledgeTool: ToolEntry = {
         type: "array",
         items: { type: "string", enum: ["draft", "active", "deprecated"] },
       },
+      polarities: {
+        type: "array",
+        items: { type: "string", enum: ["positive", "negative", "neutral"] },
+      },
+      intentTags: {
+        type: "array",
+        items: { type: "string" },
+      },
       types: {
         type: "array",
         items: { type: "string", enum: ["rule", "procedure"] },
@@ -70,6 +82,8 @@ export const searchKnowledgeTool: ToolEntry = {
       type: item.type,
       status: item.status,
       scope: item.scope,
+      polarity: item.polarity,
+      intentTags: item.intentTags,
       title: item.title,
       body: item.body,
       score: item.score,
@@ -213,6 +227,14 @@ export const listKnowledgeTool: ToolEntry = {
       status: { type: "string", enum: ["draft", "active", "deprecated"] },
       type: { type: "string", enum: ["rule", "procedure"] },
       query: { type: "string" },
+      polarities: {
+        type: "array",
+        items: { type: "string", enum: ["positive", "negative", "neutral"] },
+      },
+      intentTags: {
+        type: "array",
+        items: { type: "string" },
+      },
     },
   },
   handler: async (args) => {
@@ -248,6 +270,8 @@ export const updateKnowledgeTool: ToolEntry = {
       type: { type: "string", enum: ["rule", "procedure"] },
       status: { type: "string", enum: ["draft", "active", "deprecated"] },
       scope: { type: "string", enum: ["repo", "global"] },
+      polarity: { type: "string", enum: ["positive", "negative", "neutral"] },
+      intentTags: { type: "array", items: { type: "string" } },
       title: { type: "string" },
       body: { type: "string" },
       confidence: { type: "number", minimum: 0, maximum: 100 },
@@ -271,6 +295,8 @@ export const updateKnowledgeTool: ToolEntry = {
         type: knowledgeItems.type,
         status: knowledgeItems.status,
         scope: knowledgeItems.scope,
+        polarity: knowledgeItems.polarity,
+        intentTags: knowledgeItems.intentTags,
         title: knowledgeItems.title,
         body: knowledgeItems.body,
         confidence: knowledgeItems.confidence,
@@ -308,6 +334,8 @@ export const updateKnowledgeTool: ToolEntry = {
       type: parsed.type ?? existing.type,
       status: nextStatus,
       scope: parsed.scope ?? existing.scope,
+      polarity: (parsed.polarity ?? existing.polarity) as "positive" | "negative" | "neutral",
+      intentTags: (parsed.intentTags ?? (Array.isArray(existing.intentTags) ? existing.intentTags : [])) as string[],
       title: parsed.title ?? existing.title,
       body: parsed.body ?? existing.body,
       confidence: parsed.confidence ?? normalizeKnowledgeScore(existing.confidence, 70),
@@ -357,4 +385,72 @@ export const updateKnowledgeTool: ToolEntry = {
       ],
     };
   },
+};
+
+export const registerReviewCorrectionsTool: ToolEntry = {
+  name: "register_review_corrections",
+  description:
+    "Bulk-register accepted or valid review corrections as negative candidates.",
+  inputSchema: {
+    type: "object",
+    additionalProperties: false,
+    properties: {
+      items: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            title: { type: "string", description: "Clear, concise title for this correction." },
+            finding: { type: "string", description: "Raw finding description." },
+            impact: { type: "string", description: "Optional impact description." },
+            trigger: { type: "string", description: "Optional trigger description." },
+            fix: { type: "string", description: "Optional fix description." },
+            verification: { type: "string", description: "Optional verification description." },
+            decisionSignal: { type: "string", description: "Optional decision signal description." },
+            severity: { type: "string", enum: ["low", "medium", "high", "critical"] },
+            status: { type: "string", enum: ["accepted", "fixed", "deferred"] },
+            origin: {
+              type: "object",
+              properties: {
+                system: { type: "string", description: "Originating system name." },
+                reviewFindingId: { type: "string", description: "Finding ID in that system." },
+                runId: { type: "string" },
+                taskId: { type: "string" },
+                sessionId: { type: "string" },
+                repositoryPath: { type: "string" },
+                artifactRefs: { type: "array", items: { type: "string" } },
+                fileRefs: {
+                  type: "array",
+                  items: {
+                    type: "object",
+                    properties: {
+                      path: { type: "string" },
+                      line: { type: "number" }
+                    },
+                    required: ["path"]
+                  }
+                }
+              },
+              required: ["system", "reviewFindingId"]
+            },
+            confidence: { type: "number", minimum: 0, maximum: 100 },
+            importance: { type: "number", minimum: 0, maximum: 100 },
+            intentTags: { type: "array", items: { type: "string" } },
+            appliesTo: { type: "object" }
+          },
+          required: ["title", "finding", "status", "origin"]
+        },
+        minItems: 1,
+        maxItems: 10
+      }
+    },
+    required: ["items"]
+  },
+  handler: async (args) => {
+    const parsed = registerReviewCorrectionsInputSchema.parse(args ?? {});
+    const result = await registerReviewCorrections(parsed);
+    return {
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+    };
+  }
 };

@@ -102,6 +102,8 @@ type InternalKnowledgeSearchParams = {
   status: KnowledgeStatus;
   includeDraft: boolean;
   types?: KnowledgeItem["type"][];
+  polarities?: Array<"positive" | "negative" | "neutral">;
+  intentTags?: string[];
   repoPath?: string;
   repoKey?: string;
   scopedSearch: boolean;
@@ -427,6 +429,8 @@ async function executeKnowledgeSearch(
       types: params.types,
       statuses: params.statuses,
       status: params.status,
+      polarities: params.polarities,
+      intentTags: params.intentTags,
       includeDraft: params.includeDraft,
       technologies: params.technologies,
       changeTypes: params.changeTypes,
@@ -465,6 +469,8 @@ async function executeKnowledgeSearch(
       repoKey: scope.repoKey,
       allowGlobalScope: scope.allowGlobalScope,
       types: params.types,
+      polarities: params.polarities,
+      intentTags: params.intentTags,
       scopeMatchMode: scope.scopeMatchMode,
       technologies: params.technologies,
       changeTypes: params.changeTypes,
@@ -522,6 +528,8 @@ async function executeKnowledgeSearch(
               repoKey: scope.repoKey,
               allowGlobalScope: scope.allowGlobalScope,
               types: params.types,
+              polarities: params.polarities,
+              intentTags: params.intentTags,
               scopeMatchMode: scope.scopeMatchMode,
               technologies: params.technologies,
               changeTypes: params.changeTypes,
@@ -644,6 +652,8 @@ export async function retrieveKnowledge(
   options: {
     retrievalMode: RetrievalMode;
     limit?: number;
+    polarities?: Array<"positive" | "negative" | "neutral">;
+    intentTags?: string[];
     facetFilters?: {
       changeTypes?: string[];
       technologies?: string[];
@@ -686,6 +696,8 @@ export async function retrieveKnowledge(
       status: "active",
       includeDraft: false,
       types: profile.types,
+      polarities: options.polarities,
+      intentTags: options.intentTags,
       scopedSearch: false,
       generateEmbeddingIfMissing: true,
       noMatchReason: "NO_ACTIVE_KNOWLEDGE_MATCH",
@@ -719,6 +731,8 @@ export async function retrieveKnowledge(
       status: "active",
       includeDraft: false,
       types: profile.types,
+      polarities: options.polarities,
+      intentTags: options.intentTags,
       scopedSearch: false,
       generateEmbeddingIfMissing: true,
       noMatchReason: "NO_ACTIVE_KNOWLEDGE_MATCH",
@@ -813,6 +827,8 @@ export async function searchKnowledgeCandidates(
     limit: parsed.limit,
     statuses,
     status: parsed.status,
+    polarities: parsed.polarities,
+    intentTags: parsed.intentTags,
     includeDraft: parsed.includeDraft,
     types: parsed.types,
     repoPath,
@@ -835,6 +851,8 @@ export async function registerKnowledgeFromMarkdown(params: {
   type?: "rule" | "procedure";
   status?: KnowledgeStatus;
   scope?: "repo" | "global";
+  polarity?: string;
+  intentTags?: string[];
   confidence?: number;
   importance?: number;
   appliesTo?: Record<string, unknown>;
@@ -860,6 +878,8 @@ export async function registerKnowledgeFromMarkdown(params: {
     type: params.type ?? "rule",
     status: params.status ?? "draft",
     scope: params.scope ?? "repo",
+    polarity: params.polarity,
+    intentTags: params.intentTags,
     title: params.title,
     body: params.body,
     confidence: params.confidence,

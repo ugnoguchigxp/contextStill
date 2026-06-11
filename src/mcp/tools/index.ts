@@ -7,6 +7,7 @@ import {
   listKnowledgeTool,
   registerCandidateTool,
   registerCandidatesTool,
+  registerReviewCorrectionsTool,
   searchKnowledgeTool,
   updateKnowledgeTool,
 } from "./knowledge.tool.js";
@@ -34,6 +35,7 @@ const v1ToolEntries: ToolEntry[] = [
   searchKnowledgeTool,
   registerCandidateTool,
   registerCandidatesTool,
+  registerReviewCorrectionsTool,
   listKnowledgeTool,
   updateKnowledgeTool,
   readFileTool,
@@ -51,6 +53,7 @@ const v2ToolEntries: ToolEntry[] = [
   searchKnowledgeTool,
   registerCandidateTool,
   registerCandidatesTool,
+  registerReviewCorrectionsTool,
   sessionMemoTool,
   searchMemoryTool,
   fetchMemoryTool,

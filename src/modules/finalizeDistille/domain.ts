@@ -430,11 +430,24 @@ export async function runFinalizeDistille(
   }
 
   throwIfAborted(input.signal);
+
+  const negativeEvent = result.toolEvents.find((e) => e.name === "negative_coverage" && e.ok);
+  const polarity =
+    negativeEvent?.metadata && typeof negativeEvent.metadata === "object"
+      ? (negativeEvent.metadata as any).polarity
+      : undefined;
+  const intentTags =
+    negativeEvent?.metadata && typeof negativeEvent.metadata === "object"
+      ? (negativeEvent.metadata as any).intentTags
+      : undefined;
+
   const knowledgeId = await upsertKnowledgeFromSource({
     sourceUri,
     type: candidate.type,
     status: "draft",
     scope: "repo",
+    polarity,
+    intentTags,
     title: candidate.title,
     body: candidate.body,
     confidence: candidate.confidence,

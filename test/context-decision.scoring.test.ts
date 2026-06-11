@@ -8,6 +8,8 @@ function knowledge(overrides: Partial<KnowledgeSearchResult> = {}): KnowledgeSea
     type: "rule",
     status: "active",
     scope: "repo",
+    polarity: overrides.polarity ?? "positive",
+    intentTags: overrides.intentTags ?? [],
     title: "Use evidence",
     body: "Evidence backed rule.",
     confidence: 80,

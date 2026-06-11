@@ -1,7 +1,10 @@
 import type { ContextPack } from "../../shared/schemas/context-pack.schema.js";
 
 export function renderContextPackMarkdown(pack: ContextPack): string {
-  if (pack.status === "failed" || (pack.rules.length === 0 && pack.procedures.length === 0)) {
+  if (
+    pack.status === "failed" ||
+    (pack.rules.length === 0 && pack.procedures.length === 0 && (!pack.guardrails || pack.guardrails.length === 0))
+  ) {
     return "No Content";
   }
 
@@ -20,6 +23,7 @@ export function renderContextPackMarkdown(pack: ContextPack): string {
 
   appendKnowledgeSection("Rules", pack.rules);
   appendKnowledgeSection("Procedures", pack.procedures);
+  appendKnowledgeSection("Avoid / Check / Verify Instructions", pack.guardrails || []);
 
   return lines.join("\n").trim();
 }

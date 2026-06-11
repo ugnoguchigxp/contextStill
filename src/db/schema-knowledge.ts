@@ -20,6 +20,8 @@ import {
   knowledgeTagStatusValues,
   knowledgeTypeValues,
   scopeValues,
+  knowledgePolarityValues,
+  knowledgeOriginLinkKindValues,
 } from "./schema.constants.js";
 import { toSqlList } from "./schema.utils.js";
 
@@ -30,6 +32,8 @@ export const knowledgeItems = pgTable(
     type: text("type").notNull(),
     status: text("status").notNull(),
     scope: text("scope").notNull().default("repo"),
+    polarity: text("polarity").notNull().default("positive"),
+    intentTags: jsonb("intent_tags").notNull().default("[]"),
     title: text("title").notNull(),
     body: text("body").notNull(),
     appliesTo: jsonb("applies_to").default({}).notNull(),
@@ -51,6 +55,9 @@ export const knowledgeItems = pgTable(
     typeIdx: index("knowledge_items_type_idx").on(table.type),
     statusIdx: index("knowledge_items_status_idx").on(table.status),
     scopeIdx: index("knowledge_items_scope_idx").on(table.scope),
+    polarityIdx: index("knowledge_items_polarity_idx").on(table.polarity),
+    intentTagsGinIdx: index("knowledge_items_intent_tags_gin_idx").using("gin", table.intentTags),
+    statusPolarityIdx: index("knowledge_items_status_polarity_idx").on(table.status, table.polarity),
     typeStatusIdx: index("knowledge_items_type_status_idx").on(table.type, table.status),
     appliesToRepoKeyIdx: index("knowledge_items_applies_to_repo_key_idx").on(
       sql`${table.appliesTo} ->> 'repoKey'`,
@@ -86,6 +93,10 @@ export const knowledgeItems = pgTable(
     scopeCheck: check(
       "knowledge_items_scope_check",
       sql`${table.scope} IN (${sql.raw(toSqlList(scopeValues))})`,
+    ),
+    polarityCheck: check(
+      "knowledge_items_polarity_check",
+      sql`${table.polarity} IN (${sql.raw(toSqlList(knowledgePolarityValues))})`,
     ),
   }),
 );
@@ -187,7 +198,7 @@ export const knowledgeOriginLinks = pgTable(
     ),
     originKindCheck: check(
       "knowledge_origin_links_origin_kind_check",
-      sql`${table.originKind} IN ('vibe_memory', 'agent_candidate', 'landscape_review_item')`,
+      sql`${table.originKind} IN (${sql.raw(toSqlList(knowledgeOriginLinkKindValues))})`,
     ),
   }),
 );

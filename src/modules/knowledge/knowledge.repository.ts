@@ -69,6 +69,8 @@ type KnowledgeSearchRow = {
   type: string;
   status: string;
   scope: string;
+  polarity: string;
+  intentTags: unknown;
   title: string;
   body: string;
   confidence: number;
@@ -116,6 +118,8 @@ function mapKnowledgeRowsToResults(
       type: row.type,
       status: row.status,
       scope: row.scope,
+      polarity: String(row.polarity ?? "positive"),
+      intentTags: Array.isArray(row.intentTags) ? row.intentTags.map(String) : [],
       title: row.title,
       body: row.body,
       confidence: normalizeKnowledgeScore(row.confidence, 70),
@@ -187,6 +191,19 @@ export async function searchKnowledge(
     conditions.push(repoScopedCondition);
   }
 
+  const polarities = options.polarities ?? input.polarities;
+  if (polarities && polarities.length > 0) {
+    conditions.push(inArray(knowledgeItems.polarity, polarities));
+  }
+
+  const intentTags = options.intentTags ?? input.intentTags;
+  if (intentTags && intentTags.length > 0) {
+    conditions.push(sql`coalesce(${knowledgeItems.intentTags}, '[]'::jsonb) ?| array[${sql.join(
+      intentTags.map((t) => sql`${t}`),
+      sql`,`,
+    )}]`);
+  }
+
   const query = input.query.trim();
   const importanceOrderExpr = normalizedImportanceExpr();
   const rankExpr = sql<number>`
@@ -214,6 +231,8 @@ export async function searchKnowledge(
     type: knowledgeItems.type,
     status: knowledgeItems.status,
     scope: knowledgeItems.scope,
+    polarity: knowledgeItems.polarity,
+    intentTags: knowledgeItems.intentTags,
     title: knowledgeItems.title,
     body: knowledgeItems.body,
     confidence: knowledgeItems.confidence,
@@ -282,6 +301,8 @@ export async function upsertKnowledgeFromSource(
         type: params.type,
         status: params.status,
         scope: params.scope,
+        polarity: params.polarity ?? existing.polarity ?? "positive",
+        intentTags: params.intentTags ?? existing.intentTags ?? [],
         title: params.title,
         body: params.body,
         confidence: normalizeKnowledgeScore(params.confidence, 70),
@@ -334,6 +355,8 @@ export async function upsertKnowledgeFromSource(
       type: params.type,
       status: params.status,
       scope: params.scope,
+      polarity: params.polarity ?? "positive",
+      intentTags: params.intentTags ?? [],
       title: params.title,
       body: params.body,
       confidence: normalizeKnowledgeScore(params.confidence, 70),
@@ -396,12 +419,24 @@ export async function vectorSearchKnowledge(
     conditions.push(repoScopedCondition);
   }
 
+  if (options.polarities && options.polarities.length > 0) {
+    conditions.push(inArray(knowledgeItems.polarity, options.polarities));
+  }
+  if (options.intentTags && options.intentTags.length > 0) {
+    conditions.push(sql`coalesce(${knowledgeItems.intentTags}, '[]'::jsonb) ?| array[${sql.join(
+      options.intentTags.map((t) => sql`${t}`),
+      sql`,`,
+    )}]`);
+  }
+
   const rows = await db
     .select({
       id: knowledgeItems.id,
       type: knowledgeItems.type,
       status: knowledgeItems.status,
       scope: knowledgeItems.scope,
+      polarity: knowledgeItems.polarity,
+      intentTags: knowledgeItems.intentTags,
       title: knowledgeItems.title,
       body: knowledgeItems.body,
       confidence: knowledgeItems.confidence,

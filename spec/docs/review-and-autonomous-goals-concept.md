@@ -21,12 +21,15 @@ contextStill owns long-lived reusable knowledge and decision support:
 
 NightWorkers owns project state and side effects:
 
-- file tree inspection
-- diff, grep, and test execution
-- review finding ledger
+- file tree inspection via existing worker tools (list_dir, read_file, search_files, find_file)
+- diff, grep, and test execution via worker tools (git_diff, git_status, run_command, run_verification)
+- rubric-based review pipeline (deterministic evaluator, LLM reviewer, firewall, merger)
+- review finding ledger and evidence pack collection
 - verification evidence
 - goal proposal, approval, and execution queue
 - Night Mode and safety policy enforcement
+
+NightWorkers already has a rubric-based review evaluation system with two built-in rubrics (`basic-coding-run` and `review-ready-run`), a deterministic evaluator, an LLM reviewer stub, a firewall that prevents LLM from overriding deterministic blocking findings, and a merger that combines deterministic and LLM results. The review concept here extends that existing pipeline rather than replacing it.
 
 This split keeps contextStill reusable and avoids giving it file read, shell execution, or project mutation responsibilities.
 
@@ -45,6 +48,8 @@ NightWorkers or another review producer
   -> context_compile review_context guardrails
   -> context_decision risk / counter-evidence / verification roles
 ```
+
+`register_review_corrections` is a bulk variant of the existing `register_candidate` / `register_candidates` MCP tools, specialized for review-origin candidates. It should create candidates through the same distillation pipeline (findCandidate → coverEvidence → finalizeDistille) rather than bypassing it. The only difference is the origin metadata (`review_correction` origin kind) and default polarity (`negative`).
 
 Raw review findings and their lifecycle should stay outside contextStill. contextStill should store only distilled, reusable lessons plus provenance metadata.
 
@@ -101,11 +106,12 @@ Autonomous goal discovery means finding plausible next work from evidence, not i
 
 Allowed discovery sources:
 
-- accepted review findings
+- accepted review findings (from NightWorkers rubric evaluation pipeline)
 - failed tests or verification records
-- incomplete task todos
-- explicit TODO or FIXME markers
-- dependency or configuration drift detected by project-owned tooling
+- incomplete task todos (needs_human or pending status in taskRunTodos)
+- explicit TODO or FIXME markers (discovered via worker tool grep)
+- dependency updates available (detected by project-owned tooling)
+- configuration or architecture drift detected by project-owned tooling
 - contextStill landscape gaps, when exposed as evidence rather than commands
 - prior decision outcomes such as failed, regression_found, discarded_pr, or user_overrode
 

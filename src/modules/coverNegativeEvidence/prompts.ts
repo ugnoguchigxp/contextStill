@@ -1,0 +1,30 @@
+export function buildNegativeEvidencePrompt(params: {
+  title: string;
+  content: string;
+}) {
+  return `You are analyzing a review correction candidate representing a failure pattern, regression, or architecture/security risk (Negative Knowledge).
+Please assess whether this correction is a valid reusable rule/guardrail (status='ready') or if it is insufficient, a false positive, or too specific to be reusable.
+
+Candidate Title: ${params.title}
+Candidate Body:
+${params.content}
+
+Analyze the candidate and output a JSON response in the following schema:
+{
+  "status": "ready" | "insufficient" | "false_positive" | "not_reusable",
+  "polarity": "negative" | "neutral",
+  "intentTags": string[], // normalized tags like "guardrail", "failure_pattern", "regression", "security_risk" etc.
+  "distilled": {
+    "failure": string, // description of the failure/risk to avoid
+    "impact": string | null, // optional impact
+    "trigger": string | null, // optional trigger/context where this risk applies
+    "fix": string | null, // optional recommended fix/avoidance guidance
+    "verification": string | null, // optional verification method to check for this failure
+    "decisionSignal": string | null // optional decision signal
+  },
+  "evidence": string[], // key snippets from the candidate supporting this
+  "originRefs": string[] // references from origin
+}
+
+Format the response strictly as a single JSON object. Do not include markdown code block syntax around the JSON.`;
+}

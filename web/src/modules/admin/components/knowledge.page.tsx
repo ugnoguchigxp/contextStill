@@ -59,6 +59,8 @@ const emptyForm: KnowledgeWriteInput = {
   type: "rule",
   status: "draft",
   scope: "repo",
+  polarity: "positive",
+  intentTags: [],
   title: "",
   body: "",
   confidence: 70,
@@ -165,6 +167,10 @@ export function KnowledgePage() {
   const [technologiesInput, setTechnologiesInput] = useState("");
   const [changeTypesInput, setChangeTypesInput] = useState("");
   const [domainsInput, setDomainsInput] = useState("");
+  const [intentTagsInput, setIntentTagsInput] = useState("");
+  const [polarityFilter, setPolarityFilter] = useState<"all" | "positive" | "negative" | "neutral">("all");
+  const [intentTagsSearchInput, setIntentTagsSearchInput] = useState("");
+  const [submittedIntentTags, setSubmittedIntentTags] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [displayFilter, setDisplayFilter] =
@@ -210,6 +216,8 @@ export function KnowledgePage() {
         limit: pagination.pageSize,
         status: serverStatusFilter,
         query: serverSearchQuery,
+        polarities: polarityFilter !== "all" ? [polarityFilter] : undefined,
+        intentTags: submittedIntentTags ? submittedIntentTags.split(",").map((t) => t.trim()).filter(Boolean) : undefined,
         displayFilter: displayFilter !== "all" ? displayFilter : undefined,
         minQuality: minQuality > 0 ? minQuality : undefined,
         sortBy: serverSort.id,
@@ -222,6 +230,8 @@ export function KnowledgePage() {
         limit: pagination.pageSize,
         status: serverStatusFilter,
         query: serverSearchQuery || undefined,
+        polarities: polarityFilter !== "all" ? [polarityFilter] : undefined,
+        intentTags: submittedIntentTags ? submittedIntentTags.split(",").map((t) => t.trim()).filter(Boolean) : undefined,
         displayFilter: displayFilter !== "all" ? displayFilter : undefined,
         minQuality: minQuality > 0 ? minQuality : undefined,
         sortBy: serverSort.id,
@@ -243,6 +253,8 @@ export function KnowledgePage() {
     const payload: KnowledgeUpdateInput = {
       status: form.status,
       scope: form.scope,
+      polarity: form.polarity,
+      intentTags: form.intentTags,
       title: form.title,
       body: form.body,
       confidence: form.confidence,
@@ -408,6 +420,8 @@ export function KnowledgePage() {
       type: normalizeKnowledgeType(item.type),
       status: item.status,
       scope: item.scope,
+      polarity: item.polarity ?? "positive",
+      intentTags: item.intentTags ?? [],
       title: item.title,
       body: item.body,
       confidence: item.confidence,
@@ -415,6 +429,7 @@ export function KnowledgePage() {
       appliesTo: asRecord(item.appliesTo),
       metadata: item.metadata ?? {},
     });
+    setIntentTagsInput(csvFrom(item.intentTags));
     const appliesTo = asRecord(item.appliesTo);
     setTechnologiesInput(csvFrom(appliesTo.technologies));
     setChangeTypesInput(csvFrom(appliesTo.changeTypes));
@@ -431,6 +446,7 @@ export function KnowledgePage() {
     setTechnologiesInput("");
     setChangeTypesInput("");
     setDomainsInput("");
+    setIntentTagsInput("");
     setIsModalOpen(true);
   };
 
@@ -511,10 +527,11 @@ export function KnowledgePage() {
       event?.preventDefault();
       const nextQuery = searchInputValue.trim();
       setSubmittedSearchQuery(nextQuery);
+      setSubmittedIntentTags(intentTagsSearchInput.trim());
       setBulkSelection(null);
       resetToFirstPage();
     },
-    [resetToFirstPage, searchInputValue],
+    [resetToFirstPage, searchInputValue, intentTagsSearchInput],
   );
 
   const columns = useMemo<ColumnDef<KnowledgeItem>[]>(
@@ -563,6 +580,24 @@ export function KnowledgePage() {
                 {item.body}
               </p>
               <div className="mt-1 flex flex-wrap gap-1">
+                {item.polarity === "negative" ? (
+                  <Badge variant="destructive" className="text-[10px] uppercase font-bold">
+                    negative
+                  </Badge>
+                ) : item.polarity === "neutral" ? (
+                  <Badge variant="outline" className="text-[10px] uppercase font-bold border-amber-500 text-amber-500">
+                    neutral
+                  </Badge>
+                ) : (
+                  <Badge variant="success" className="text-[10px] uppercase font-bold">
+                    positive
+                  </Badge>
+                )}
+                {item.intentTags?.map((tag) => (
+                  <Badge key={`${item.id}-intent-${tag}`} variant="warning" className="text-[10px] bg-amber-100 border-amber-300 text-amber-800">
+                    {tag}
+                  </Badge>
+                ))}
                 {generalBadge ? (
                   <Badge variant="secondary" className="text-[10px]">
                     general
@@ -849,13 +884,20 @@ export function KnowledgePage() {
     <div className="knowledge-full-layout">
       <section className="knowledge-header">
         <div className="flex items-center gap-4 flex-1 min-w-[280px]">
-          <form className="flex w-full max-w-lg items-center gap-2" onSubmit={submitSearch}>
+          <form className="flex w-full max-w-xl items-center gap-2" onSubmit={submitSearch}>
             <Input
               type="search"
               placeholder="Knowledgeを検索..."
-              className="h-9"
+              className="h-9 flex-1"
               value={searchInputValue}
               onChange={(e) => setSearchInputValue(e.target.value)}
+            />
+            <Input
+              type="text"
+              placeholder="Tags (e.g. guardrail)"
+              className="h-9 w-[180px]"
+              value={intentTagsSearchInput}
+              onChange={(e) => setIntentTagsSearchInput(e.target.value)}
             />
             <Button type="submit" size="sm" className="h-9 gap-1.5 whitespace-nowrap">
               <Search size={15} />
@@ -882,6 +924,23 @@ export function KnowledgePage() {
                 {option.label}
               </option>
             ))}
+          </AdminFilterChipSelect>
+
+          <AdminFilterChipSelect
+            label="Polarity"
+            value={polarityFilter}
+            className="w-[120px]"
+            onChange={(event) => {
+              const nextPolarity = event.target.value as any;
+              setPolarityFilter(nextPolarity);
+              setBulkSelection(null);
+              resetToFirstPage();
+            }}
+          >
+            <option value="all">All Polarities</option>
+            <option value="positive">Positive</option>
+            <option value="negative">Negative</option>
+            <option value="neutral">Neutral</option>
           </AdminFilterChipSelect>
 
           <AdminFilterChipSelect
@@ -1150,6 +1209,46 @@ export function KnowledgePage() {
                   </option>
                 ))}
               </Select>
+            </div>
+            <div className="space-y-1">
+              <label
+                htmlFor="knowledge-polarity"
+                className="text-xs font-bold uppercase text-muted-foreground"
+              >
+                Polarity
+              </label>
+              <Select
+                id="knowledge-polarity"
+                value={form.polarity}
+                onChange={(event) => setForm({ ...form, polarity: event.target.value as any })}
+              >
+                {["positive", "negative", "neutral"].map((polarity) => (
+                  <option key={polarity} value={polarity}>
+                    {polarity}
+                  </option>
+                ))}
+              </Select>
+            </div>
+            <div className="space-y-1 col-span-2">
+              <label
+                htmlFor="knowledge-intent-tags"
+                className="text-xs font-bold uppercase text-muted-foreground"
+              >
+                Intent Tags
+              </label>
+              <Input
+                id="knowledge-intent-tags"
+                placeholder="guardrail, warning, review_finding, failure_pattern"
+                value={intentTagsInput}
+                onChange={(event) => {
+                  const value = event.target.value;
+                  setIntentTagsInput(value);
+                  setForm((current) => ({
+                    ...current,
+                    intentTags: parseCsv(value),
+                  }));
+                }}
+              />
             </div>
             <div className="space-y-1">
               <label

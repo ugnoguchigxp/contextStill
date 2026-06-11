@@ -25,6 +25,14 @@ const listKnowledgeQuerySchema = z.object({
   status: z.string().trim().min(1).optional(),
   type: z.string().trim().min(1).optional(),
   query: z.string().trim().optional(),
+  polarities: z.preprocess((val) => {
+    if (typeof val === "string") return val.split(",").map((s) => s.trim()).filter(Boolean);
+    return val;
+  }, z.array(z.enum(["positive", "negative", "neutral"]))).optional(),
+  intentTags: z.preprocess((val) => {
+    if (typeof val === "string") return val.split(",").map((s) => s.trim()).filter(Boolean);
+    return val;
+  }, z.array(z.string())).optional(),
   displayFilter: z
     .enum(["all", "draft", "active", "deprecated", "unused-active", "stale", "high-value"])
     .optional(),
@@ -50,6 +58,8 @@ const knowledgeCreateSchema = z.object({
   type: z.enum(knowledgeTypeValues),
   status: z.enum(knowledgeStatusValues),
   scope: z.enum(scopeValues),
+  polarity: z.enum(["positive", "negative", "neutral"]).default("positive"),
+  intentTags: z.array(z.string()).default([]),
   title: z.string().trim().min(1),
   body: z.string().trim().min(1),
   confidence: z.number().min(0).max(100).default(70),
@@ -69,6 +79,8 @@ const knowledgeUpdateSchema = z
     type: z.enum(knowledgeTypeValues).optional(),
     status: z.enum(knowledgeStatusValues).optional(),
     scope: z.enum(scopeValues).optional(),
+    polarity: z.enum(["positive", "negative", "neutral"]).optional(),
+    intentTags: z.array(z.string()).optional(),
     title: z.string().trim().min(1).optional(),
     body: z.string().trim().min(1).optional(),
     confidence: z.number().min(0).max(100).optional(),

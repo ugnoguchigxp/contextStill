@@ -286,7 +286,10 @@ describe("Doctor Service", () => {
             },
           ],
         })
-        .mockResolvedValueOnce({ rows: [{ count: 2 }] }),
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // unknown tags count
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // negative without origin count
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] }) // negative as positive count
+        .mockResolvedValueOnce({ rows: [{ count: 2 }] }), // audit_logs check count
     };
     vi.mocked(getDb).mockReturnValue(mockDb as any);
 
@@ -439,5 +442,53 @@ describe("Doctor Service", () => {
       }),
     );
     expect(getDb).not.toHaveBeenCalled();
+  });
+
+  test("detects negative knowledge diagnostics and warnings", async () => {
+    const mockDb = {
+      execute: vi
+        .fn()
+        .mockResolvedValueOnce({ rows: [{ ok: 1 }] })
+        .mockResolvedValueOnce({ rows: [{ installed: true }] })
+        .mockResolvedValueOnce({
+          rows: [
+            { table_name: "knowledge_items" },
+            { table_name: "sources" },
+            { table_name: "audit_logs" },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              draft_count: 0,
+              oldest_draft_at: null,
+            },
+          ],
+        })
+        .mockResolvedValueOnce({
+          rows: [
+            {
+              active_count: 10,
+              zero_use_active_count: 0,
+              stale_by_decay_count: 0,
+              stale_procedure_count: 0,
+              dynamic_score_avg: 10,
+              dynamic_score_p95: 20,
+              last_compiled_at: new Date(),
+            },
+          ],
+        })
+        .mockResolvedValueOnce({ rows: [{ count: 2 }] }) // unknown tags count
+        .mockResolvedValueOnce({ rows: [{ count: 3 }] }) // negative without origin count
+        .mockResolvedValueOnce({ rows: [{ count: 1 }] }) // negative as positive count
+        .mockResolvedValueOnce({ rows: [{ count: 0 }] }), // audit_logs check count
+    };
+    vi.mocked(getDb).mockReturnValue(mockDb as any);
+
+    const report = await runDoctor();
+    expect(report.reasons).toContain("KNOWLEDGE_UNKNOWN_INTENT_TAGS");
+    expect(report.reasons).toContain("KNOWLEDGE_NEGATIVE_WITHOUT_ORIGIN");
+    expect(report.reasons).toContain("KNOWLEDGE_NEGATIVE_AS_POSITIVE");
   });
 });

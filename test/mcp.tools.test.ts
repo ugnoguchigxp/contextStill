@@ -22,6 +22,7 @@ vi.mock("../src/modules/context-compiler/context-compiler.service.js");
 vi.mock("../src/modules/context-compiler/context-compile-eval.service.js");
 vi.mock("../src/modules/doctor/doctor.service.js");
 vi.mock("../src/modules/registerCandidate/register-candidate.service.js");
+vi.mock("../src/modules/registerCandidate/register-review-corrections.service.js");
 vi.mock("../src/modules/session-memo/session-memo.service.js");
 vi.mock("../src/modules/settings/settings.service.js");
 vi.mock("../api/modules/knowledge/knowledge.repository.js");
@@ -39,6 +40,7 @@ import {
   listKnowledgeTool,
   registerCandidateTool,
   registerCandidatesTool,
+  registerReviewCorrectionsTool,
   searchKnowledgeTool,
   updateKnowledgeTool,
 } from "../src/mcp/tools/knowledge.tool.js";
@@ -56,6 +58,7 @@ import { runDoctor } from "../src/modules/doctor/doctor.service.js";
 import { searchKnowledgeCandidates } from "../src/modules/knowledge/knowledge.service.js";
 import { registerCandidate } from "../src/modules/registerCandidate/register-candidate.service.js";
 import { registerCandidatesBulk } from "../src/modules/registerCandidate/register-candidate.service.js";
+import { registerReviewCorrections } from "../src/modules/registerCandidate/register-review-corrections.service.js";
 import {
   getSessionMemo,
   listSessionMemos,
@@ -339,6 +342,41 @@ describe("MCP Tools Handlers", () => {
         ],
         { strictProcedureSections: true },
       );
+    });
+  });
+
+  describe("register_review_corrections", () => {
+    test("registers review corrections successfully", async () => {
+      vi.mocked(registerReviewCorrections).mockResolvedValue({
+        status: "success",
+        registeredCount: 1,
+        failedCount: 0,
+        duplicateCount: 0,
+        items: [],
+      } as never);
+
+      const response = await registerReviewCorrectionsTool.handler({
+        items: [
+          {
+            title: "T",
+            finding: "F",
+            status: "accepted",
+            origin: { system: "S", reviewFindingId: "1" },
+          },
+        ],
+      });
+      const data = JSON.parse(response.content[0].text);
+      expect(data.registeredCount).toBe(1);
+      expect(registerReviewCorrections).toHaveBeenCalledWith({
+        items: [
+          {
+            title: "T",
+            finding: "F",
+            status: "accepted",
+            origin: { system: "S", reviewFindingId: "1" },
+          },
+        ],
+      });
     });
   });
 
