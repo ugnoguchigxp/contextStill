@@ -363,4 +363,160 @@ describe("landscape-replay-comparison.service", () => {
     expect(result2.scoreTuning.negativeFeedbackRunCount).toBe(0);
     expect(result2.compileInterventionPlan.strategy).toBe("repel_negative_candidates");
   });
+
+  test("buildLandscapeReplayComparison handles stable runs, wrong feedback and low overlap scenarios", async () => {
+    mockLoadLandscapeReplayCorpus.mockResolvedValue({
+      runs: [
+        {
+          id: "run-stable",
+          createdAt: new Date(),
+          goal: "stable test",
+          retrievalMode: "keyword",
+          status: "completed",
+          repoPath: "/repo",
+          source: "mcp",
+          degradedReasons: [],
+          input: {},
+        },
+        {
+          id: "run-low-overlap",
+          createdAt: new Date(),
+          goal: "low overlap test",
+          retrievalMode: "keyword",
+          status: "completed",
+          repoPath: "/repo",
+          source: "mcp",
+          degradedReasons: [],
+          input: {},
+        },
+      ],
+      packItems: [
+        {
+          runId: "run-stable",
+          itemId: "kb-retained",
+          sortOrder: 0,
+          createdAt: new Date(),
+          score: 70,
+        },
+        {
+          runId: "run-low-overlap",
+          itemId: "kb-lost-1",
+          sortOrder: 0,
+          createdAt: new Date(),
+          score: 70,
+        },
+        {
+          runId: "run-low-overlap",
+          itemId: "kb-lost-2",
+          sortOrder: 1,
+          createdAt: new Date(),
+          score: 70,
+        },
+      ],
+      usageEvents: [
+        { runId: "run-stable", knowledgeId: "kb-retained", verdict: "used" },
+        { runId: "run-low-overlap", knowledgeId: "kb-lost-1", verdict: "wrong" },
+      ],
+    });
+
+    mockRetrieveKnowledge.mockImplementation(async (compileInput, options) => {
+      if (compileInput.goal === "stable test") {
+        return {
+          items: [{ id: "kb-retained", title: "Retained" }],
+          stats: {
+            textHitCount: 1,
+            vectorHitCount: 0,
+            mergedCount: 1,
+            textFailed: false,
+            vectorFailed: false,
+            embeddingStatus: "unavailable",
+            repoScopeFallbackUsed: false,
+          },
+          degradedReasons: [],
+        };
+      }
+      return {
+        items: [{ id: "kb-other", title: "Other" }],
+        stats: {
+          textHitCount: 1,
+          vectorHitCount: 0,
+          mergedCount: 1,
+          textFailed: false,
+          vectorFailed: false,
+          embeddingStatus: "unavailable",
+          repoScopeFallbackUsed: false,
+        },
+        degradedReasons: [],
+      };
+    });
+
+    const result = await buildLandscapeReplayComparison({
+      windowDays: 7,
+      limit: 10,
+      currentLimit: 5,
+      runStatus: "ok" as const,
+      includeRuns: true,
+    });
+
+    const hasWrong = result.appliesToRefineCandidates.some((c) => c.reason === "baseline_wrong");
+    expect(hasWrong).toBe(true);
+
+    const hasMissing = result.appliesToRefineCandidates.some(
+      (c) => c.reason === "baseline_missing_after_recompile",
+    );
+    expect(hasMissing).toBe(true);
+
+    expect(result.scoreTuning.recommendations).toContain(
+      "Use off-topic and wrong replay verdicts as a repulsion sandbox signal.",
+    );
+  });
+
+  test("buildLandscapeReplayComparison handles completely stable runs with no signals (observe_only)", async () => {
+    mockLoadLandscapeReplayCorpus.mockResolvedValue({
+      runs: [
+        {
+          id: "run-perfect",
+          createdAt: new Date(),
+          goal: "perfect test",
+          retrievalMode: "keyword",
+          status: "completed",
+          repoPath: "/repo",
+          source: "mcp",
+          degradedReasons: [],
+          input: {},
+        },
+      ],
+      packItems: [
+        { runId: "run-perfect", itemId: "kb-1", sortOrder: 0, createdAt: new Date(), score: 70 },
+      ],
+      usageEvents: [{ runId: "run-perfect", knowledgeId: "kb-1", verdict: "used" }],
+    });
+
+    mockRetrieveKnowledge.mockResolvedValue({
+      items: [{ id: "kb-1", title: "Retained" }],
+      stats: {
+        textHitCount: 1,
+        vectorHitCount: 0,
+        mergedCount: 1,
+        textFailed: false,
+        vectorFailed: false,
+        embeddingStatus: "unavailable",
+        repoScopeFallbackUsed: false,
+      },
+      degradedReasons: [],
+    });
+
+    const result = await buildLandscapeReplayComparison({
+      windowDays: 7,
+      limit: 10,
+      currentLimit: 5,
+      runStatus: "ok" as const,
+      includeRuns: true,
+    });
+
+    expect(result.compileInterventionPlan.strategy).toBe("observe_only");
+    expect(result.scoreTuning.recommendations).toContain(
+      "Keep score tuning in observe-only mode until more replay drift appears.",
+    );
+  });
 });

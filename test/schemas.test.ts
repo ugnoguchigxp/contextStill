@@ -357,4 +357,33 @@ describe("Shared Schemas", () => {
     });
     expect(result3.success).toBe(true);
   });
+
+  test("distillation target metadata schemas parse correctly", async () => {
+    const { parseWebIngestTargetMetadata, parseCoverEvidenceReprocessRequest } = await import(
+      "../src/shared/schemas/distillation-target-metadata.schema.ts"
+    );
+
+    // 1. parseWebIngestTargetMetadata
+    const validMeta = { sourceUrl: "http://example.com" };
+    expect(parseWebIngestTargetMetadata(validMeta)).toEqual(validMeta);
+    expect(parseWebIngestTargetMetadata(null)).toEqual({});
+
+    // 2. parseCoverEvidenceReprocessRequest
+    const reprocessObj = {
+      coverEvidenceReprocessRequest: {
+        mode: "cloud_api",
+        requestedAt: "2026-06-11T12:00:00Z",
+      },
+    };
+    expect(parseCoverEvidenceReprocessRequest(reprocessObj)).toEqual(
+      expect.objectContaining({
+        mode: "cloud_api",
+        requestedAt: "2026-06-11T12:00:00Z",
+        findCandidateResultIds: [],
+        coverEvidenceResultIds: [],
+      }),
+    );
+    expect(parseCoverEvidenceReprocessRequest(null)).toBeNull();
+    expect(parseCoverEvidenceReprocessRequest({})).toBeNull();
+  });
 });

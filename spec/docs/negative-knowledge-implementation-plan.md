@@ -1,122 +1,97 @@
 # Negative Knowledge Implementation Plan
 
-## Scope
+> Updated: 2026-06-11
+> Scope: contextStill implementation plan for [Negative Knowledge Concept](negative-knowledge-concept.md)
 
-Implement the concept from [Negative Knowledge Concept](negative-knowledge-concept.md) in small, reviewable slices.
+## Goal
 
-This plan covers:
+Implement Negative Knowledge in small, reviewable slices so review corrections, regressions, guardrails, and failure patterns can influence `context_compile` and `context_decision` without becoming ordinary positive instructions.
 
-- Knowledge polarity.
-- Flexible intent tags.
-- Review correction registration.
-- Negative evidence coverage.
-- Context compile rendering.
-- Context decision role mapping.
-- Feedback and scoring semantics.
-- Migration, seed, and UI changes.
-
-This plan does not implement code review execution or multi-agent review orchestration. Review findings can come from humans, local scripts, another agent system, or a separate project. context-still only owns distilled reusable Knowledge and the candidate/feedback lifecycle.
-
-## Design Summary
-
-Use a hybrid model:
+The first milestone is:
 
 ```text
-External or human review findings
-  -> manually accepted/deferred valid findings
-  -> context-still register_review_corrections
+accepted review correction
+  -> register_review_corrections
   -> negative candidate
-  -> covering negative evidence
-  -> distilled Knowledge with polarity/tags/origin links
-  -> context_compile guardrails and context_decision risk/counter evidence
+  -> draft/active negative Knowledge
+  -> context_compile review_context guardrail
+  -> context_decision risk / counter-evidence / verification trace
 ```
 
-Fixed fields:
+## Current Repo Baseline
 
-```text
-polarity = positive | negative | neutral
-```
+Existing implementation anchors:
 
-Flexible fields:
+- Knowledge storage: `src/db/schema-knowledge.ts`
+- Knowledge constants: `src/db/schema.constants.ts`
+- Knowledge schemas: `src/shared/schemas/knowledge.schema.ts`
+- Knowledge retrieval: `src/modules/knowledge/knowledge.repository.ts`
+- Knowledge service: `src/modules/knowledge/knowledge.service.ts`
+- Candidate registration: `src/modules/registerCandidate/register-candidate.service.ts`
+- Knowledge MCP tools: `src/mcp/tools/knowledge.tool.ts`
+- Knowledge API: `api/modules/knowledge/`
+- Compile retrieval/rendering: `src/modules/context-compiler/`
+- Decision assessment: `src/modules/context-decision/`
+- Context pack schema: `src/shared/schemas/context-pack.schema.ts`
+- Existing review queue for wrong feedback: `knowledge_review_queue`
+- Existing landscape review items: `landscape_review_items`
+- Existing origin links: `knowledge_origin_links`
 
-```text
-intentTags = string[]
-```
+Existing constraints:
 
-Stable decision behavior:
-
-```text
-decision roles = support | counter_evidence | risk | verification | user_preference | alternative
-```
-
-In the current codebase this means:
-
-- retrieval and coverage query roles use `contextDecisionCoverageQueryRoleValues`
-- persisted evidence roles use `contextDecisionEvidenceRoleValues`
-- `risk` should initially persist as `risk_warning`
-- `support` should initially persist as `selected_support`
-- additional persisted evidence roles should be added only when the existing role set cannot represent the behavior
-
-## Fixed Implementation Decisions
-
-These decisions are fixed for the first implementation pass.
-
-| Topic | Decision |
-|---|---|
-| Polarity storage | First-class `knowledge_items.polarity` column |
-| Intent tag storage | First-class `knowledge_items.intent_tags` JSONB array of normalized slugs |
-| Intent taxonomy | Extend `knowledge_tag_definitions.kind` with `intent`; do not add a closed intent enum |
-| Review correction input | Add bulk MCP tool `register_review_corrections` |
-| Review correction output | Create candidates only; do not persist raw review findings in context-still |
-| Raw review ledger | Out of scope for context-still; source systems or humans own raw review records |
-| Negative coverage module | Add a separate `coverNegativeEvidence` module |
-| Negative coverage storage | Use existing candidate/queue path initially, with route metadata; add a dedicated table only if result shape cannot stay compatible |
-| Context pack rendering | Add structured `guardrails: ContextPackItem[]`; keep `warnings` for compatibility |
-| Draft to active promotion | Same as existing Knowledge: human review/approval. Keep it intentionally loose in the first implementation. |
-| Wrong/noisy negative Knowledge | Same as existing Knowledge: use feedback to identify noise, then manually deprecate or edit from the admin/review surface |
+- `context_compile` already has `review_context`.
+- `context_decision` already has coverage roles: `support`, `counter_evidence`, `user_preference`, `risk`, `verification`, `alternative`.
+- Persisted decision evidence roles already include `selected_support`, `risk_warning`, `user_preference`, and `missing_counter_evidence`.
+- `knowledge_review_queue` is for wrong/off-topic Knowledge feedback and must not become a raw review finding queue.
+- Raw review findings stay in the source system. contextStill stores distilled reusable Knowledge and provenance metadata only.
 
 ## Non-Goals
 
-- Do not store raw review findings as Knowledge.
-- Do not make context-still the code review executor.
-- Do not route review correction flow through `knowledge_review_queue`.
-- Do not make intent tags a closed enum.
-- Do not automatically convert existing "never" rules into active negative Knowledge.
-- Do not make another project depend on context-still internals.
+- Do not make contextStill a code review executor.
+- Do not store raw review findings as first-class review ledger rows.
+- Do not route review correction registration through `knowledge_review_queue`.
+- Do not add file read or shell execution to contextStill.
+- Do not make `intentTags` a closed enum.
+- Do not auto-convert existing "never" or "avoid" Knowledge to negative.
+- Do not change compile or decision ranking in the schema-only PR.
+- Do not build autonomous goal discovery in this plan.
 
-## Phase 1: Schema And Contracts
+## Data Model
 
-### Goal
-
-Add polarity and tag contracts without changing runtime selection behavior.
-
-### Database
-
-Add to `knowledge_items`:
+Add first-class fields to `knowledge_items`:
 
 ```text
 polarity text not null default 'positive'
 intent_tags jsonb not null default '[]'
 ```
 
-Checks:
+Allowed polarity values:
 
 ```text
-polarity in ('positive', 'negative', 'neutral')
-intent_tags is JSON array
+positive | negative | neutral
 ```
 
-Indexes:
+Intent tags remain flexible normalized slugs. Seed initial tag definitions with kind `intent`:
 
 ```text
-knowledge_items_polarity_idx
-knowledge_items_intent_tags_gin_idx
-knowledge_items_status_polarity_idx
+guidance
+guardrail
+prohibition
+warning
+failure_pattern
+review_finding
+regression
+test_gap
+verification
+preference
+boundary_violation
+architecture_risk
+security_risk
+performance_risk
+operational_risk
 ```
 
-Add review-correction compatible origin support to `knowledge_origin_links.origin_kind`.
-
-Initial allowed additions:
+Extend `knowledge_origin_links.origin_kind` to accept:
 
 ```text
 review_finding
@@ -124,144 +99,138 @@ external_review_run
 review_correction
 ```
 
-Do not create a separate negative Knowledge table in this slice.
+Do not create a separate negative Knowledge table in the first implementation pass.
 
-Update constants:
+## PR 1: Schema And Contracts
 
-- add `knowledgePolarityValues = ["positive", "negative", "neutral"]`
+### Objective
+
+Add polarity and intent tag contracts without changing runtime selection behavior.
+
+### Changes
+
+Update `src/db/schema.constants.ts`:
+
+- add `knowledgePolarityValues`
 - add `"intent"` to `knowledgeTagKindValues`
-- add review-origin values through a reusable constant instead of hardcoding the SQL check inline
+- add a reusable origin kind constant for `knowledge_origin_links`
 
-### Shared Schemas
+Update `src/db/schema-knowledge.ts`:
 
-Update Knowledge schemas:
+- add `knowledgeItems.polarity`
+- add `knowledgeItems.intentTags`
+- add check constraints
+- add indexes:
+  - `knowledge_items_polarity_idx`
+  - `knowledge_items_intent_tags_gin_idx`
+  - `knowledge_items_status_polarity_idx`
+- replace the hardcoded `knowledge_origin_links_origin_kind_check` list with the shared constant
 
-- `KnowledgeItem`
-- `registerKnowledgeInputSchema`
-- `registerCandidateInputSchema`
-- `updateKnowledgeInputSchema`
-- `knowledgeSearchInputSchema`
-- Knowledge API list/detail schemas
+Add a Drizzle migration:
 
-Add:
+- backfill all existing rows to `polarity='positive'`
+- backfill all existing rows to `intent_tags=[]`
+- update `knowledge_origin_links.origin_kind` check
+- update `knowledge_tag_definitions.kind` check
 
-```ts
-polarity: "positive" | "negative" | "neutral";
-intentTags: string[];
-```
+Update `src/shared/schemas/knowledge.schema.ts`:
 
-Defaults:
+- expose `polarity` and `intentTags` on Knowledge item schemas
+- allow optional `polarity` and `intentTags` on register/update schemas
+- default omitted register/update values to current behavior
+- keep `register_candidate` and `register_candidates` backward compatible
 
-- new Knowledge defaults to `positive`
-- existing rows are backfilled to `positive`
-- candidates registered without polarity remain `positive`
-- API inputs may omit the fields, but parsed entities should always expose defaulted values
+Update API repository types under `api/modules/knowledge/`:
 
-### Tag Definitions
-
-Extend `knowledge_tag_definitions.kind` to include:
-
-```text
-intent
-```
-
-Seed initial intent tag definitions:
-
-- `guidance`
-- `guardrail`
-- `prohibition`
-- `warning`
-- `failure_pattern`
-- `review_finding`
-- `regression`
-- `test_gap`
-- `verification`
-- `preference`
-- `boundary_violation`
-- `architecture_risk`
-- `security_risk`
-- `performance_risk`
-- `operational_risk`
-
-Keep aliases in tag definitions, not in enum code.
+- include `polarity` and `intentTags` in list/detail/create/update item shapes
+- default legacy row reads to `positive` and `[]` where needed for local/dev migration tolerance
 
 ### Tests
 
-- migration creates polarity and intent tag fields
-- legacy rows default to `positive`
-- schema rejects invalid polarity
-- schema accepts flexible intent tags
-- origin link accepts `review_finding`
-- existing register candidate tests still pass with omitted polarity
+Add or update focused tests:
 
-### PR 1 File Targets
+- `test/schemas.test.ts`
+- `test/knowledge.repository.test.ts`
+- `test/api.routes.knowledge.test.ts`
+- `test/register-candidate.service.test.ts`
 
-- `src/db/schema.constants.ts`
-- `src/db/schema-knowledge.ts`
-- `src/shared/schemas/knowledge.schema.ts`
-- `api/modules/knowledge/*`
-- `src/modules/knowledge/*`
-- focused schema/repository/API tests
+Acceptance criteria:
 
-## Phase 2: Search And Retrieval Filters
+- migrations add `polarity` and `intent_tags`
+- existing Knowledge reads as `polarity=positive` and `intentTags=[]`
+- invalid polarity is rejected
+- flexible intent tags are accepted
+- origin links accept review-related origin kinds
+- `register_candidate` and `register_candidates` still pass without polarity fields
+- no compile or decision output changes in this PR
 
-### Goal
+## PR 2: Search Filters And Retrieval Metadata
 
-Make polarity and intent tags queryable before changing compile or decision behavior.
+### Objective
 
-### MCP And API
+Make polarity and intent tags queryable and consistently returned before changing compile or decision behavior.
 
-Add optional filters to:
+### Changes
 
-- `search_knowledge`
-- Knowledge list API
-- Knowledge admin filters
-
-Fields:
+Update `src/shared/schemas/knowledge.schema.ts`:
 
 ```ts
 polarities?: Array<"positive" | "negative" | "neutral">;
 intentTags?: string[];
 ```
 
-Filtering behavior:
+Update `src/modules/knowledge/knowledge.repository.ts`:
 
-- omitted `polarities` preserves current behavior
-- omitted `intentTags` preserves current behavior
-- intent tag matching should use normalized slug matching
-- include aliases only through tag normalization service, not ad hoc string matching in routes
+- select `polarity` and `intentTags` in text search
+- select `polarity` and `intentTags` in vector search
+- filter by `polarities`
+- filter by normalized `intentTags`
+- ensure `mapKnowledgeRowsToResults` returns the same metadata for text and vector paths
 
-### Repository
+Update `src/modules/knowledge/knowledge.service.ts`:
 
-Update retrieval queries to carry polarity and intent metadata in results.
+- pass new filters through `retrieveKnowledge` and `searchKnowledgeCandidates`
+- keep omitted filters behavior identical to current behavior
 
-Do not change ranking in this phase.
+Update `src/mcp/tools/knowledge.tool.ts`:
 
-Make sure vector and text retrieval return the same polarity/tag metadata, otherwise `context_compile` and `context_decision` will diverge by retrieval method.
+- add `polarities` and `intentTags` to `search_knowledge` input schema
+- include `polarity` and `intentTags` in tool output
+
+Update `api/modules/knowledge/`:
+
+- add list filters for `polarity` and `intentTags`
+- include fields in list/detail responses
 
 ### Tests
 
+Add or update focused tests:
+
+- `test/knowledge.repository.test.ts`
+- `test/knowledge.service.test.ts`
+- `test/mcp.tools.test.ts`
+- `test/mcp.contract.test.ts`
+- `test/api.routes.knowledge.test.ts`
+
+Acceptance criteria:
+
 - `search_knowledge` can return only negative items
 - `search_knowledge` can return only positive items
-- list API supports polarity filter
-- flexible intent tag filters work
-- omitted filters preserve current results
+- text and vector retrieval expose identical polarity/tag fields
+- omitted filters preserve existing results
+- no ranking behavior changes yet
 
-## Phase 3: Review Correction Registration
+## PR 3: register_review_corrections MCP Tool
 
-### Goal
+### Objective
 
-Add a dedicated bulk MCP tool for accepted review findings.
+Add a bulk-oriented MCP tool for accepted or valid review corrections. It creates candidates only.
 
-### MCP Tool
+### Tool
 
-Add:
+Add `register_review_corrections` under `src/mcp/tools/knowledge.tool.ts` or a dedicated review-correction tool module if the file becomes too large.
 
-```text
-register_review_corrections
-```
-
-Input shape:
+Input:
 
 ```ts
 {
@@ -269,6 +238,7 @@ Input shape:
     title: string;
     finding: string;
     impact?: string;
+    trigger?: string;
     fix?: string;
     verification?: string;
     decisionSignal?: string;
@@ -294,26 +264,18 @@ Input shape:
 
 Rules:
 
-- reject `rejected_false_positive`
 - reject missing `reviewFindingId`
-- reject items without `finding`
+- reject empty `finding`
+- reject false-positive/rejected statuses by not including them in the schema
 - default `polarity=negative`
 - default `intentTags=["review_finding"]`
-- write as candidate, not active Knowledge
-- preserve origin metadata and create origin link-compatible metadata
-- set `metadata.reviewCorrection` with the origin payload
-- set candidate origin `source` to `mcp_register_review_corrections`
-- include `polarity` and `intentTags` in the candidate payload and origin metadata
-- `origin.system` must be treated as provenance metadata only, not as a hard dependency on a specific external project
+- candidate `type` defaults to `rule`
+- do not create active Knowledge directly
+- preserve `origin` under metadata as provenance only
+- set candidate metadata source to `mcp_register_review_corrections`
+- keep max items aligned with `register_candidates`
 
-Naming:
-
-- tool name should be plural: `register_review_corrections`
-- it should be bulk-first, with max item count aligned to `register_candidates`
-
-### Candidate Shape
-
-Normalize candidate body:
+Candidate body format:
 
 ```text
 Failure:
@@ -324,48 +286,62 @@ Verification:
 Decision signal:
 ```
 
-If fields are missing, keep placeholders out of the body. Do not invent missing evidence.
+Omit missing sections. Do not invent evidence.
 
-Set candidate `type` to `rule` by default. Negative procedures are not allowed in the first slice because a `procedure` can be misread as something to execute. If a later design needs negative procedures, it must add rendering and scoring rules first.
+### Implementation
+
+Add a service near `src/modules/registerCandidate/`:
+
+- `src/modules/registerCandidate/register-review-corrections.service.ts`
+
+Reuse `registerCandidate` / `registerCandidatesBulk` where possible instead of duplicating queue insertion logic.
+
+If idempotency is cheap, use `origin.reviewFindingId` and `origin.system` to report duplicates. If it is not cheap in the first slice, return a per-item error for duplicates once detected in candidate metadata.
 
 ### Tests
 
-- valid accepted finding creates a negative candidate
-- fixed finding creates a negative candidate
-- deferred valid finding creates a negative candidate
-- false-positive status is rejected
-- duplicate reviewFindingId is idempotent or reported as duplicate
-- bulk partial failures report per item
-- MCP contract lists the new tool
+Add:
 
-## Phase 4: Covering Negative Evidence
+- `test/register-review-corrections.service.test.ts`
 
-### Goal
+Update:
 
-Verify and shape negative candidates with a dedicated coverage route.
+- `test/mcp.tools.test.ts`
+- `test/mcp.contract.test.ts`
 
-### Pipeline
+Acceptance criteria:
 
-Do not reuse positive coverEvidence prompts unchanged.
+- accepted, fixed, and deferred corrections create negative candidates
+- tool output reports per-item success/failure
+- missing `reviewFindingId` is rejected
+- missing `finding` is rejected
+- candidate metadata contains polarity, intent tags, and review correction origin
+- MCP registry lists the new tool
 
-Add a negative evidence route that evaluates:
+## PR 4: Negative Coverage And Finalization
 
-- did the failure/risk really occur?
-- is the finding accepted or fixed/deferred for a valid reason?
-- is it a false positive?
-- is the lesson reusable beyond one run?
-- which tag category fits: guardrail, prohibition, failure pattern, verification, risk?
-- what verification should be required in future?
+### Objective
 
-Working module options:
+Shape negative candidates into reusable Knowledge using a route that understands failure/risk semantics.
+
+### Changes
+
+Add a separate module:
 
 - `src/modules/coverNegativeEvidence/`
 
-Use a separate module because prompt, parser, result statuses, and promotion rules are materially different from positive coverEvidence.
+Do not reuse positive coverEvidence prompts unchanged.
 
-### Output
+Negative coverage should answer:
 
-Negative coverage result should include:
+- did the failure or risk really occur?
+- was the finding accepted, fixed, or validly deferred?
+- is it reusable outside the exact run?
+- is it actually a false positive?
+- what intent tags fit?
+- what verification should future agents run?
+
+Output shape:
 
 ```ts
 {
@@ -385,373 +361,249 @@ Negative coverage result should include:
 }
 ```
 
-### Finalization
-
-Only `ready` negative coverage results can become active/draft Knowledge.
-
-`false_positive` should not create Knowledge. It may record audit metadata for reviewer calibration when a source system provides a ledger, but that ledger is outside context-still.
-
-First implementation should finalize ready negative results as `draft` by default. Promotion to `active` should use the same human review/approval baseline as existing Knowledge. This is intentionally a loose approval model in the first implementation; automation can be reconsidered only after enough feedback evidence exists.
+First implementation should finalize `ready` results as `draft` Knowledge by default. Promotion to `active` remains the normal human review path.
 
 ### Tests
 
-- accepted fixed finding can become ready negative Knowledge
-- false positive result does not create Knowledge
-- not reusable result does not create Knowledge
-- negative output parser rejects positive procedure format
-- finalization preserves polarity and intent tags
-- source/origin links are retained
+Add:
 
-## Phase 5: Context Compile Rendering
+- negative parser tests
+- negative coverage service tests
+- finalize preservation tests
 
-### Goal
+Acceptance criteria:
 
-Allow `context_compile` to use negative Knowledge safely.
+- false positives do not create Knowledge
+- not reusable findings do not create Knowledge
+- ready results preserve `polarity`, `intentTags`, and origin metadata
+- finalization creates draft Knowledge by default
+- existing positive coverEvidence behavior does not change
 
-### Retrieval
+## PR 5: context_compile Guardrails
 
-Initial behavior:
+### Objective
 
-- normal rule/procedure sections continue to prefer `polarity=positive`
-- negative Knowledge is retrieved for warnings/guardrails only
-- neutral verification Knowledge can appear as verification guidance
+Allow `context_compile` to include negative Knowledge safely without presenting it as ordinary work instructions.
 
-Add a guardrail retrieval pass or post-filter:
+### Changes
 
-```text
-positive -> rules/procedures
-negative -> warnings/guardrails
-neutral + verification tags -> verification notes
-```
+Update `src/shared/schemas/context-pack.schema.ts`:
 
-### Pack Schema
+- add `guardrails: ContextPackItem[]` with default `[]`
+- keep `warnings: string[]` for compatibility
 
-Existing schema has `warnings`, but `warnings: string[]` cannot carry Knowledge identity, source refs, polarity, or feedback metadata.
+Update `src/db/schema.constants.ts`:
 
-Implementation path:
+- add `guardrails` to `packSectionValues` only if persisted pack items need a first-class section
 
-- add structured `guardrails: ContextPackItem[]`
-- add `guardrails` to pack schema with default `[]`
-- add `guardrails` to token budgeting and pack rendering
-- keep `warnings` for compatibility and non-Knowledge warnings
-- do not add `risks` in the first slice; use `guardrails` as the structured negative Knowledge section
+Update `src/modules/context-compiler/`:
 
-### Rendering
+- retrieve positive Knowledge for normal rules/procedures
+- retrieve negative Knowledge for guardrails
+- keep neutral verification Knowledge out of positive procedure output unless explicitly selected as verification material
+- include guardrails in token budgeting
+- include guardrails in markdown rendering
+- include guardrail traces in candidate trace evidence where practical
 
-Guardrail text must be framed as avoid/check language, never as a task instruction.
+Rendering rule:
 
-Example:
-
-```text
-Guardrails
-- Avoid changing artifact selectors to prefer task-message metadata before artifact rows.
-  Prior failure: stale preview was shown when canonical artifact data existed.
-  Verify: test both artifact row and task message present, artifact row wins.
-```
+- negative Knowledge must be phrased as avoid/check/verify guidance
+- it must not be phrased as a task to execute
 
 ### Tests
+
+Add or update:
+
+- `test/context-compiler.service.test.ts`
+- `test/context-compiler.test.ts`
+- `test/context-response-composer.service.test.ts`
+- `test/token-budget.test.ts`
+
+Acceptance criteria:
 
 - negative Knowledge is not rendered in positive procedures
 - guardrails render separately
-- pack schema remains backward compatible
-- token budget handles guardrails
-- no content behavior is unchanged when no guardrails exist
+- no guardrails case preserves existing output shape
+- `review_context` benefits first; other retrieval modes can follow only after tests prove no noise increase
 
-## Phase 6: Context Decision Role Mapping
+## PR 6: context_decision Role Mapping
 
-### Goal
+### Objective
 
-Use negative Knowledge as risk and counter-evidence without relying on closed intent enums.
+Use negative Knowledge as risk, counter-evidence, and verification evidence without adding new decision values.
 
-### Mapper
+### Changes
 
-Add a deterministic mapper:
+Add deterministic mapping:
 
 ```text
-Knowledge + query role + polarity + intentTags -> decision evidence role
+Knowledge + coverage query role + polarity + intentTags -> evidence role
 ```
 
-Mapping rules:
+Initial rules:
 
-- `polarity=positive` -> `selected_support` by default when selected
+- `polarity=positive` -> `selected_support`
 - `polarity=negative` + `guardrail` / `prohibition` -> `risk_warning`
-- `polarity=negative` + `failure_pattern` / `regression` -> `risk_warning`; use coverage query role `counter_evidence` to record counter-evidence strength
-- `test_gap` / `verification` -> keep as coverage trace first; add a persisted evidence role only if UI/API needs item-level verification evidence
+- `polarity=negative` + `failure_pattern` / `regression` -> `risk_warning`
+- `verification` / `test_gap` tags -> coverage trace first; add persisted role only if UI/API needs item-level evidence
 - `preference` -> `user_preference`
-- unknown tags fall back to polarity and query role
+- unknown intent tags fall back to polarity and query role
 
-This keeps tags flexible while decision behavior stays stable.
+Update `src/modules/context-decision/`:
 
-### Scoring
-
-Do not reuse positive support scoring blindly.
-
-Negative evidence should influence:
-
-- risk score
-- counter-evidence strength
-- recommended decision
-- verification requirements
-
-It should not become positive support just because its dynamic score is high.
-
-The first slice should not add a new final decision value. It should change evidence assessment and confidence trace only, then let the existing decision set (`execute`, `reject`, `revise_and_execute`, `rollback`, `discard`, `escalate`) carry the outcome.
+- coverage assessment records polarity/tag-aware risk and conflict
+- confidence trace makes risk/counter evidence explicit
+- final decision set remains unchanged
 
 ### Tests
 
-- negative failure pattern can cause revise/reject when applicable
-- negative guardrail appears as risk
-- positive guidance still supports execute
-- unknown intent tags do not break mapping
-- conflicting positive and negative evidence produces explicit conflict trace
+Add or update:
 
-## Phase 7: Feedback And Dynamic Score Semantics
+- `test/context-decision.knowledge-assessment.test.ts`
+- `test/context-decision.coverage.test.ts`
+- `test/context-decision.service.test.ts`
+- `test/context-decision.scoring.test.ts`
 
-### Goal
+Acceptance criteria:
 
-Make usage feedback meaningful for different polarities.
+- negative guardrail appears as risk evidence
+- negative failure pattern can push toward `revise_and_execute`, `reject`, or `escalate` when applicable
+- positive guidance still supports `execute`
+- unknown tags do not break decisions
+- conflicting positive and negative evidence is visible in traces
+
+## PR 7: Feedback Semantics And Dynamic Score
+
+### Objective
+
+Make feedback meaningful for different polarities while reusing existing storage.
 
 ### Semantics
 
 Positive:
 
-- `used`: guidance/procedure helped execution
+- `used`: guidance helped
 - `not_used`: selected but not useful
 - `off_topic`: irrelevant
-- `wrong`: incorrect Knowledge
+- `wrong`: incorrect
 
 Negative:
 
 - `used`: warning/guardrail helped avoid or catch a problem
 - `not_used`: warning was selected but not needed
 - `off_topic`: risk was irrelevant
-- `wrong`: warning or failure pattern was false or misleading
+- `wrong`: warning/failure pattern was false or misleading
 
-### Scoring
+### Changes
 
-Update dynamic scoring to account for polarity.
+Update:
 
-Possible first slice:
+- `src/modules/knowledge/knowledge-feedback.service.ts`
+- `src/modules/knowledge/knowledge-value.service.ts`
+- API/UI labels where feedback is displayed
 
-- keep same storage table
-- keep same verdict values
-- change labels and scoring weights by polarity
-- add tests showing negative `used` increases warning value, not procedure priority
-
-Initial weight rule:
-
-- positive `used`: existing boost semantics
-- negative `used`: boost guardrail/risk selection only
-- negative `not_used`: mild penalty
-- negative `off_topic`: stronger penalty
-- negative `wrong`: route through the existing wrong feedback/review path and strongly suppress until reviewed
+Keep the same verdict values. Adjust scoring and labels by polarity.
 
 ### Tests
 
-- negative used increases dynamic score without moving it into procedure output
-- negative off_topic reduces future guardrail selection
-- wrong negative Knowledge can enter the existing wrong-review path
-- UI labels differ by polarity
+Add or update:
 
-### Noisy Knowledge Removal Baseline
+- `test/knowledge-feedback.service.test.ts`
+- `test/knowledge-value.service.test.ts`
+- API route tests for feedback labels if exposed
 
-If negative Knowledge becomes noise in `context_compile` or `context_decision`, the baseline operation is the same as existing Knowledge:
+Acceptance criteria:
 
-- capture `not_used`, `off_topic`, or `wrong` feedback
-- surface that feedback in the existing review/admin flow
-- let the user manually edit, deprecate, or keep the item
+- negative `used` increases guardrail/risk selection value, not procedure priority
+- negative `off_topic` suppresses future noisy guardrails
+- negative `wrong` enters the existing wrong-review path
+- no automatic deletion path is added
 
-Do not add an automatic deletion path in the first implementation. `deprecated` remains the lifecycle state for removing a noisy or obsolete Knowledge item from active selection.
+## PR 8: UI, Seed, Doctor, And Cleanup
 
-## Phase 8: Admin UI Refresh
+### Objective
 
-### Goal
+Make negative Knowledge understandable and observable after backend behavior exists.
 
-Make polarity and review provenance understandable.
+### UI
 
-### Knowledge UI
-
-Add:
+Update Knowledge UI:
 
 - polarity filter
 - intent tag filter
 - origin kind filter
-- review finding provenance panel
-- badges for guardrail/failure/verification
-- separate rendering for negative body format
+- polarity/intent badges
+- review correction provenance panel
 
-Do not hide negative Knowledge inside the existing positive-only mental model.
+Update compile/decision detail UI:
 
-### Context Compiler UI
-
-Add:
-
-- guardrails/risk section
-- feedback labels that reflect polarity
-- trace detail showing why negative Knowledge was selected
-
-### Decision UI
-
-Add:
-
-- risk/counter evidence grouped separately
+- guardrails section
 - polarity badges
-- conflict trace between positive and negative evidence
+- risk/counter-evidence grouping
 
-### Tests
+### Seed And Migration Cleanup
 
-- Knowledge list can filter negative items
-- context compile detail renders guardrails separately
-- decision detail shows risk evidence separately
-- feedback buttons keep existing behavior but labels reflect polarity
+Update:
 
-## Phase 9: Migration, Cleanup, And Seed
+- `src/db/seed.ts`
+- `src/db/seeds/knowledge-seed.json`
+- seed import/export tests
 
-### Goal
-
-Move existing data safely and prepare curated negative Knowledge.
-
-### Initial Migration
-
-- backfill all existing Knowledge to `polarity=positive`
-- backfill empty `intentTags=[]`
-- do not auto-convert "never" rules
-
-### Candidate Extraction
-
-Add a dry-run script to find prohibition-like existing Knowledge:
-
-Patterns:
-
-- `never`
-- `avoid`
-- `do not`
-- `must not`
-- `禁止`
-- `避ける`
-- `しない`
-
-Output:
-
-- candidate ID
-- suggested polarity
-- suggested intent tags
-- reason
-- confidence
-
-Do not write by default.
-
-Script name:
+Add dry-run candidate finder:
 
 ```text
 bun run knowledge:negative-candidates:dry-run
 ```
 
-Implementation target:
+Target:
 
-```text
-src/cli/negative-knowledge-candidates.ts
-```
+- `src/cli/negative-knowledge-candidates.ts`
 
-### Cleanup
-
-After review:
-
-- deduplicate overlapping positive/negative pairs
-- merge intent tag aliases
-- seed curated intent tag definitions
-- export seed after taxonomy stabilizes
-
-### Tests
-
-- migration is reversible in test DB
-- dry-run script writes no DB changes
-- seed export includes polarity and intent tags
-- seed import preserves polarity and intent tags
-
-## Phase 10: Operations And Doctor
-
-### Goal
-
-Make the new system observable.
+The dry run may suggest polarity and intent tags for existing prohibition-like Knowledge, but it must not write by default.
 
 ### Doctor
 
 Add non-blocking diagnostics:
 
 - negative Knowledge count
-- negative Knowledge with no origin links
-- negative Knowledge selected as positive procedure
-- false-positive candidate leakage count
+- negative Knowledge without origin links
 - unknown intent tag count
-- unnormalized intent alias count
-
-### Metrics
-
-Track:
-
-```text
-negativeKnowledgeCount
-reviewCorrectionCandidateCount
-negativeCoverageReadyCount
-negativeCoverageFalsePositiveCount
-negativeUsedRate
-negativeOffTopicRate
-guardrailSelectionCount
-decisionRiskEvidenceCount
-decisionCounterEvidenceCount
-```
+- negative Knowledge selected as positive procedure
+- false-positive correction leakage count if detectable
 
 ### Tests
 
-- doctor reports counts without blocking healthy local setups
-- unknown tags are maintenance warnings, not failures
-- missing origin links are maintenance warnings
+Add or update:
 
-## PR 1 Acceptance Criteria
+- `test/doctor.service.test.ts`
+- `test/doctor-reasons.test.ts`
+- seed tests
+- CLI dry-run tests
+- UI tests where existing coverage patterns exist
 
-PR 1 is implementation-ready when it satisfies all of these:
+Acceptance criteria:
 
-- migrations add `polarity` and `intent_tags`
-- existing rows read as `polarity=positive` and `intentTags=[]`
-- schemas expose defaulted `polarity` and `intentTags`
-- Knowledge list/detail APIs include the new fields
-- `register_candidate` and `register_candidates` remain backward compatible
-- `knowledge_tag_definitions.kind` accepts `intent`
-- origin links accept `review_finding`, `external_review_run`, and `review_correction`
-- no compile or decision behavior changes yet
-- focused tests plus typecheck pass
+- UI can filter and inspect negative Knowledge
+- Doctor reports maintenance warnings without blocking healthy setups
+- seed import/export preserves polarity and intent tags
+- dry-run script makes no DB changes
 
-## PR 2 Acceptance Criteria
+## Recommended Implementation Order
 
-PR 2 is implementation-ready when it satisfies all of these:
+1. PR 1: Schema and contracts.
+2. PR 2: Search filters and retrieval metadata.
+3. PR 3: `register_review_corrections`.
+4. PR 4: Negative coverage and draft finalization.
+5. PR 5: `context_compile` guardrails.
+6. PR 6: `context_decision` role mapping.
+7. PR 7: feedback and dynamic score semantics.
+8. PR 8: UI, seed, doctor, and cleanup.
 
-- `search_knowledge` accepts `polarities` and `intentTags`
-- Knowledge list API supports polarity/tag filters
-- text and vector retrieval return polarity/tag metadata consistently
-- omitted filters preserve current retrieval behavior
-- no ranking behavior changes yet
-
-## PR Slicing
-
-Recommended implementation order:
-
-1. Schema/contracts only: polarity, intent tags, origin kinds, tests.
-2. Search/list filters and metadata propagation.
-3. `register_review_corrections` MCP tool and candidate normalization.
-4. Negative coverage parser/prompt/result model.
-5. Finalization support for negative candidates.
-6. Context compile guardrail rendering.
-7. Context decision role mapper.
-8. Feedback/scoring semantics by polarity.
-9. Admin UI refresh.
-10. Migration cleanup, seed/export/import, doctor metrics.
-
-Each PR should keep production behavior unchanged unless the PR explicitly owns the behavior change.
+Each PR should keep production behavior unchanged unless that PR explicitly owns the behavior change.
 
 ## Verification Gates
 
-For each PR:
+For focused development:
 
 ```bash
 bun run typecheck
@@ -765,20 +617,12 @@ Before merge:
 bun run verify
 ```
 
-Focused suites:
+Use narrower test runs while iterating, then run the full gate before committing or merging.
 
-- `test/mcp.contract.test.ts`
-- `test/mcp.tools.test.ts`
-- Knowledge repository/API tests
-- coverEvidence or negative coverage parser tests
-- context compiler tests
-- context decision tests
-- doctor tests
+## Deferred Decisions
 
-## Deferred Implementation Decisions
-
-These are intentionally deferred beyond the first implementation pass:
-
-1. Should negative coverage receive a dedicated table after the first route-metadata implementation?
-2. Should intent tags eventually move from `knowledge_items.intent_tags` into normalized relation rows?
-3. Should promotion from draft to active eventually gain stronger evidence thresholds after human-review feedback accumulates?
+- Whether negative coverage needs a dedicated table after route metadata proves insufficient.
+- Whether `intentTags` should move from `knowledge_items.intent_tags` to normalized relation rows.
+- Whether draft-to-active promotion should eventually require stronger evidence thresholds.
+- Whether verification-tagged neutral Knowledge needs a persisted `context_decision_evidence` role beyond coverage traces.
+- Whether NightWorkers should provide a formal review-correction contract after its review ledger stabilizes.

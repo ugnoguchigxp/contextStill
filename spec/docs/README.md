@@ -14,5 +14,6 @@ These documents are allowed to discuss unfinished work, implementation constrain
 | [Git History Episode Candidate Plan](git-history-episode-candidate-plan.md) | Plan for deterministic git file/domain history preprocessing that produces design-evolution episode candidates without letting LocalLLM perform git exploration |
 | [Negative Knowledge Concept](negative-knowledge-concept.md) | Concept for polarity, flexible intent tags, review correction provenance, and negative evidence coverage |
 | [Negative Knowledge Implementation Plan](negative-knowledge-implementation-plan.md) | Implementation plan for polarity, review correction registration, negative evidence coverage, compile guardrails, and decision role mapping |
+| [Review And Autonomous Goals Concept](review-and-autonomous-goals-concept.md) | Concept boundary for review-oriented context support, negative Knowledge dependency, NightWorkers-owned goal discovery, and implementation priority |
 | [Unused Active Knowledge Utilization Plan](unused-active-knowledge-utilization-plan.md) | Implementation plan for exploration slots, unused Knowledge classification, high-quality unused boost, and reviewed `appliesTo` suggestions |
 | [Zero-Config Instant Onboarding Plan](zero-config-instant-onboarding-plan.md) | Internal implementation plan for startup/onboarding |

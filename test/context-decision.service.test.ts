@@ -278,4 +278,38 @@ describe("context-decision.service", () => {
     // recommendedDirection である "escalate" が返ってくる。
     expect(result.decision).toBe("escalate");
   });
+
+  test("decideContext returns deterministic judgment when Agentic Compile Routing is disabled", async () => {
+    mockResolveAgenticCompileRouting.mockReturnValueOnce({
+      enabled: false,
+      provider: "mock-llm",
+      timeoutMs: 5000,
+      fallback: "local-llm",
+      azureDeploymentSlots: [],
+    });
+
+    const input = {
+      decisionPoint: "verify code implementation",
+      retrievalHints: {},
+      metadata: {},
+    };
+
+    const result = await decideContext(input);
+
+    expect(result.decision).toBeDefined();
+    expect(result.agentMessage).toContain("判断は");
+  });
+
+  test("decideContext handles searchKnowledge throwing an error gracefully", async () => {
+    mockSearchKnowledge.mockRejectedValueOnce(new Error("Database connection error"));
+
+    const input = {
+      decisionPoint: "verify code implementation",
+      retrievalHints: {
+        technologies: ["typescript"],
+      },
+    };
+
+    await expect(decideContext(input)).rejects.toThrow("Database connection error");
+  });
 });
