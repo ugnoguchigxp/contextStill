@@ -98,63 +98,6 @@ export type VibeMemory = {
   createdAt: string;
 };
 
-export type SessionMemo = {
-  id: string;
-  sessionId: string;
-  slot: number;
-  kind: string;
-  label: string | null;
-  body: string;
-  metadata?: Record<string, unknown>;
-  source: string;
-  expiresAt: string | null;
-  createdAt: string;
-  updatedAt: string;
-  deletedAt: string | null;
-};
-
-export type SessionMemoEvent = {
-  id: string;
-  sessionId: string;
-  slot: number | null;
-  kind: string;
-  label: string | null;
-  action: string;
-  bodyPreview: string | null;
-  metadata?: Record<string, unknown>;
-  source: string;
-  createdAt: string;
-};
-
-export type SessionMemoListItem = {
-  slot: number;
-  kind?: string;
-  label?: string | null;
-  title?: string | null;
-  preview?: string;
-  previewChars?: number;
-  bodyLength?: number;
-  metadata?: Record<string, unknown>;
-  createdAt?: string;
-  updatedAt?: string;
-  expiresAt?: string | null;
-  linkedGoal?: string | null;
-  linkedOutputMarkdown?: string | null;
-  linkedOutputAvailable?: boolean;
-  linkedOutputSource?: string | null;
-  contextCompileRunId?: string | null;
-  empty?: boolean;
-};
-
-export type SessionMemoSessionListItem = {
-  sessionId: string;
-  memoCount: number;
-  nonCompileResultMemoCount?: number;
-  compileResultMemoCount?: number;
-  compileOnly?: boolean;
-  lastUpdatedAt: string;
-};
-
 export type AgentDiffEntry = {
   id: string;
   vibeMemoryId: string;
@@ -2556,8 +2499,10 @@ export async function fetchKnowledgeItems(
     if (input.minQuality !== undefined) params.set("minQuality", String(input.minQuality));
     if (input.sortBy) params.set("sortBy", input.sortBy);
     if (input.sortDir) params.set("sortDir", input.sortDir);
-    if (input.polarities && input.polarities.length > 0) params.set("polarities", input.polarities.join(","));
-    if (input.intentTags && input.intentTags.length > 0) params.set("intentTags", input.intentTags.join(","));
+    if (input.polarities && input.polarities.length > 0)
+      params.set("polarities", input.polarities.join(","));
+    if (input.intentTags && input.intentTags.length > 0)
+      params.set("intentTags", input.intentTags.join(","));
   }
   const json = await getJson<KnowledgeListResponse>(`/api/knowledge?${params.toString()}`);
   return json;
@@ -2596,43 +2541,6 @@ export async function sendKnowledgeFeedback(
 export async function fetchVibeMemories(limit = 120): Promise<VibeMemory[]> {
   const json = await getJson<{ memories: VibeMemory[] }>(`/api/vibe-memory?limit=${limit}`);
   return json.memories;
-}
-
-export async function fetchSessionMemos(
-  sessionId: string,
-  options?: { includeEmpty?: boolean; previewChars?: number },
-): Promise<{ items: SessionMemoListItem[]; events: SessionMemoEvent[] }> {
-  const params = new URLSearchParams({ sessionId });
-  if (options?.includeEmpty !== undefined) params.set("includeEmpty", String(options.includeEmpty));
-  if (options?.previewChars !== undefined) params.set("previewChars", String(options.previewChars));
-  return getJson<{ items: SessionMemoListItem[]; events: SessionMemoEvent[] }>(
-    `/api/session-memo?${params}`,
-  );
-}
-
-export async function fetchSessionMemoSessions(
-  limit = 200,
-  options?: { includeCompileOnly?: boolean },
-): Promise<SessionMemoSessionListItem[]> {
-  const params = new URLSearchParams({ limit: String(limit) });
-  if (options?.includeCompileOnly) params.set("includeCompileOnly", "true");
-  const json = await getJson<{ items: SessionMemoSessionListItem[] }>(
-    `/api/session-memo/sessions?${params}`,
-  );
-  return json.items;
-}
-
-export async function upsertSessionMemo(input: {
-  sessionId: string;
-  kind?: string;
-  title?: string;
-  label?: string;
-  body: string;
-  metadata?: Record<string, unknown>;
-  expiresAt?: string;
-}): Promise<SessionMemo> {
-  const json = await requestJson<{ memo: SessionMemo }>("/api/session-memo/item", "POST", input);
-  return json.memo;
 }
 
 export async function deleteVibeMemory(id: string): Promise<void> {

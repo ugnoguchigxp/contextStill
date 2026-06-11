@@ -49,7 +49,7 @@ NightWorkers or another review producer
   -> context_decision risk / counter-evidence / verification roles
 ```
 
-`register_review_corrections` is a bulk variant of the existing `register_candidate` / `register_candidates` MCP tools, specialized for review-origin candidates. It should create candidates through the same distillation pipeline (findCandidate → coverEvidence → finalizeDistille) rather than bypassing it. The only difference is the origin metadata (`review_correction` origin kind) and default polarity (`negative`).
+`register_review_corrections` is a bulk variant of the existing `register_candidates` MCP tool, specialized for review-origin candidates. It should create candidates through the same distillation pipeline (findCandidate → coverEvidence → finalizeDistille) rather than bypassing it. The only difference is the origin metadata (`review_correction` origin kind) and default polarity (`negative`).
 
 Raw review findings and their lifecycle should stay outside contextStill. contextStill should store only distilled, reusable lessons plus provenance metadata.
 
@@ -188,4 +188,3 @@ Completion criteria:
 - review corrections do not use `knowledge_review_queue`
 - raw findings remain owned by the source system
 - compile and decision outputs distinguish support from risk
-

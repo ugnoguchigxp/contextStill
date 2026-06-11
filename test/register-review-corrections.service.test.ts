@@ -1,8 +1,6 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { db } from "../src/db/index.js";
-import {
-  registerReviewCorrections,
-} from "../src/modules/registerCandidate/register-review-corrections.service.js";
+import { registerReviewCorrections } from "../src/modules/registerCandidate/register-review-corrections.service.js";
 
 const mockInsert = vi.fn().mockImplementation(() => makeChain([{ id: "default-id" }]));
 const mockSelect = vi.fn().mockImplementation(() => makeSelectChain([]));

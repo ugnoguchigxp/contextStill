@@ -128,7 +128,7 @@ describe("context-compile-eval.service", () => {
     test("successfully records compile eval when runId is resolved from sessionId", async () => {
       mockFindRunIdForCompileEval.mockResolvedValue({
         runId: validRunId,
-        resolvedFrom: "latest_session_compile_result",
+        resolvedFrom: "latest_session_run",
       });
       mockGetCompileRunSessionId.mockResolvedValue({ sessionId: "s1" });
       mockInsertCompileEval.mockResolvedValue({
@@ -155,7 +155,7 @@ describe("context-compile-eval.service", () => {
       });
 
       expect(mockFindRunIdForCompileEval).toHaveBeenCalledWith({ sessionId: "s1" });
-      expect(result.resolvedFrom).toBe("latest_session_compile_result");
+      expect(result.resolvedFrom).toBe("latest_session_run");
       expect(result.evaluation.id).toBe(validUuid);
     });
   });

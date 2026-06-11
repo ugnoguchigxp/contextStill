@@ -41,8 +41,11 @@ describe("Doctor Service", () => {
     vi.mocked(getExposedToolEntries).mockReturnValue([
       { name: "initial_instructions" },
       { name: "context_compile" },
+      { name: "compile_eval" },
+      { name: "context_decision" },
+      { name: "context_decision_feedback" },
       { name: "search_knowledge" },
-      { name: "register_candidate" },
+      { name: "register_candidates" },
       { name: "search_memory" },
       { name: "fetch_memory" },
       { name: "doctor" },

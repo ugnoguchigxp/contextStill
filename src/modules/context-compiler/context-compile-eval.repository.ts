@@ -1,6 +1,6 @@
-import { and, desc, eq, isNotNull, isNull, sql } from "drizzle-orm";
+import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
-import { contextCompileEvals, contextCompileRuns, sessionMemos } from "../../db/schema.js";
+import { contextCompileEvals, contextCompileRuns } from "../../db/schema.js";
 
 export type CompileEvalRecord = {
   id: string;
@@ -179,37 +179,8 @@ export async function findRunIdForCompileEval(params: {
   sessionId: string;
 }): Promise<{
   runId: string;
-  resolvedFrom: "latest_session_compile_result" | "latest_session_run";
+  resolvedFrom: "latest_session_run";
 } | null> {
-  const memoRows = asRows<{ runId: string | null }>(
-    await db
-      .select({
-        runId: sql<string | null>`${sessionMemos.metadata} ->> 'contextCompileRunId'`,
-      })
-      .from(sessionMemos)
-      .where(
-        and(
-          eq(sessionMemos.sessionId, params.sessionId),
-          eq(sessionMemos.kind, "compile_result"),
-          isNull(sessionMemos.deletedAt),
-        ),
-      )
-      .orderBy(desc(sessionMemos.updatedAt), desc(sessionMemos.createdAt))
-      .limit(1),
-  );
-  const memoRow = memoRows[0];
-  const runIdFromMemo = memoRow?.runId?.trim();
-  if (runIdFromMemo) {
-    const [runExists] = await db
-      .select({ id: contextCompileRuns.id })
-      .from(contextCompileRuns)
-      .where(eq(contextCompileRuns.id, runIdFromMemo))
-      .limit(1);
-    if (runExists) {
-      return { runId: runIdFromMemo, resolvedFrom: "latest_session_compile_result" };
-    }
-  }
-
   const [runRow] = await db
     .select({ id: contextCompileRuns.id })
     .from(contextCompileRuns)

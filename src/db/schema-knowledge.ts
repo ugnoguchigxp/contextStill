@@ -57,7 +57,10 @@ export const knowledgeItems = pgTable(
     scopeIdx: index("knowledge_items_scope_idx").on(table.scope),
     polarityIdx: index("knowledge_items_polarity_idx").on(table.polarity),
     intentTagsGinIdx: index("knowledge_items_intent_tags_gin_idx").using("gin", table.intentTags),
-    statusPolarityIdx: index("knowledge_items_status_polarity_idx").on(table.status, table.polarity),
+    statusPolarityIdx: index("knowledge_items_status_polarity_idx").on(
+      table.status,
+      table.polarity,
+    ),
     typeStatusIdx: index("knowledge_items_type_status_idx").on(table.type, table.status),
     appliesToRepoKeyIdx: index("knowledge_items_applies_to_repo_key_idx").on(
       sql`${table.appliesTo} ->> 'repoKey'`,

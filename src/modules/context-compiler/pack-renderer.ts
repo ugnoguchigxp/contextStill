@@ -3,7 +3,9 @@ import type { ContextPack } from "../../shared/schemas/context-pack.schema.js";
 export function renderContextPackMarkdown(pack: ContextPack): string {
   if (
     pack.status === "failed" ||
-    (pack.rules.length === 0 && pack.procedures.length === 0 && (!pack.guardrails || pack.guardrails.length === 0))
+    (pack.rules.length === 0 &&
+      pack.procedures.length === 0 &&
+      (!pack.guardrails || pack.guardrails.length === 0))
   ) {
     return "No Content";
   }

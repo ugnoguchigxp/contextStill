@@ -5,7 +5,6 @@ import { contextCompileTool } from "./context-compile.tool.js";
 import { contextDecisionFeedbackTool, contextDecisionTool } from "./context-decision.tool.js";
 import {
   listKnowledgeTool,
-  registerCandidateTool,
   registerCandidatesTool,
   registerReviewCorrectionsTool,
   searchKnowledgeTool,
@@ -18,7 +17,6 @@ import {
   searchMemoryTool,
 } from "./memory.tool.js";
 import { readFileTool } from "./read-file.tool.js";
-import { sessionMemoTool } from "./session-memo.tool.js";
 import { doctorTool, initialInstructionsTool } from "./system.tool.js";
 
 function isMcpV2Enabled(): boolean {
@@ -33,7 +31,6 @@ const v1ToolEntries: ToolEntry[] = [
   contextDecisionTool,
   contextDecisionFeedbackTool,
   searchKnowledgeTool,
-  registerCandidateTool,
   registerCandidatesTool,
   registerReviewCorrectionsTool,
   listKnowledgeTool,
@@ -51,10 +48,8 @@ const v2ToolEntries: ToolEntry[] = [
   contextDecisionTool,
   contextDecisionFeedbackTool,
   searchKnowledgeTool,
-  registerCandidateTool,
   registerCandidatesTool,
   registerReviewCorrectionsTool,
-  sessionMemoTool,
   searchMemoryTool,
   fetchMemoryTool,
   doctorTool,

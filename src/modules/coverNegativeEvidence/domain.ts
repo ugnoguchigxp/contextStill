@@ -1,6 +1,9 @@
 import { db } from "../../db/index.js";
 import { getFindCandidateResultById } from "../findCandidate/repository.js";
-import { saveCoverEvidenceResult, selectCoverEvidenceResultById } from "../coverEvidence/repository.js";
+import {
+  saveCoverEvidenceResult,
+  selectCoverEvidenceResultById,
+} from "../coverEvidence/repository.js";
 import { parseNegativeEvidenceResult } from "./parser.js";
 import { buildNegativeEvidencePrompt } from "./prompts.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
@@ -10,7 +13,10 @@ import {
   resolveDistillationModel,
   createDefaultChatClient,
 } from "../distillation/distillation-runtime.service.js";
-import { ensureRuntimeSettingsLoaded, resolveCoverEvidenceRoutes } from "../settings/settings.service.js";
+import {
+  ensureRuntimeSettingsLoaded,
+  resolveCoverEvidenceRoutes,
+} from "../settings/settings.service.js";
 import { resolveCoverEvidenceRouteByPolicy } from "../coverEvidence/provider-policy.js";
 
 export async function runCoverNegativeEvidence(params: {
@@ -30,7 +36,7 @@ export async function runCoverNegativeEvidence(params: {
   await ensureRuntimeSettingsLoaded();
   const routes = resolveCoverEvidenceRoutes();
   const providerPolicy = params.providerPolicy ?? "default";
-  
+
   const mcpEvidenceRuntimeRoute = resolveCoverEvidenceRouteByPolicy({
     route: routes.mcpEvidence,
     policy: providerPolicy as any,
@@ -48,7 +54,7 @@ export async function runCoverNegativeEvidence(params: {
   const response = await chat({
     messages: [
       { role: "system", content: "You are a professional software engineering assistant." },
-      { role: "user", content: prompt }
+      { role: "user", content: prompt },
     ],
     model,
     maxTokens: 2048,
@@ -59,24 +65,22 @@ export async function runCoverNegativeEvidence(params: {
 
   // Map to CoverEvidenceResult format to keep compatibility with existing pipeline
   const mappedStatus = parsed.status === "ready" ? "knowledge_ready" : parsed.status;
-  
+
   const result: CoverEvidenceResult = {
     schemaVersion: 1,
     status: mappedStatus as any,
     stage: "final",
-    candidate: parsed.status === "ready" ? {
-      type: "rule",
-      title: row.title,
-      body: `Failure: ${parsed.distilled.failure}\n` + 
-            (parsed.distilled.impact ? `Impact: ${parsed.distilled.impact}\n` : "") +
-            (parsed.distilled.trigger ? `Trigger: ${parsed.distilled.trigger}\n` : "") +
-            (parsed.distilled.fix ? `Fix: ${parsed.distilled.fix}\n` : "") +
-            (parsed.distilled.verification ? `Verification: ${parsed.distilled.verification}\n` : "") +
-            (parsed.distilled.decisionSignal ? `Decision signal: ${parsed.distilled.decisionSignal}\n` : ""),
-      confidence: 90,
-      importance: 80,
-    } : null,
-    references: parsed.evidence.map(e => ({
+    candidate:
+      parsed.status === "ready"
+        ? {
+            type: "rule",
+            title: row.title,
+            body: `Failure: ${parsed.distilled.failure}\n${parsed.distilled.impact ? `Impact: ${parsed.distilled.impact}\n` : ""}${parsed.distilled.trigger ? `Trigger: ${parsed.distilled.trigger}\n` : ""}${parsed.distilled.fix ? `Fix: ${parsed.distilled.fix}\n` : ""}${parsed.distilled.verification ? `Verification: ${parsed.distilled.verification}\n` : ""}${parsed.distilled.decisionSignal ? `Decision signal: ${parsed.distilled.decisionSignal}\n` : ""}`,
+            confidence: 90,
+            importance: 80,
+          }
+        : null,
+    references: parsed.evidence.map((e) => ({
       kind: "source",
       uri: row.sourceUri || `agent://candidate/${row.id}`,
       note: e,
@@ -92,8 +96,8 @@ export async function runCoverNegativeEvidence(params: {
           intentTags: parsed.intentTags,
           originRefs: parsed.originRefs,
           distilled: parsed.distilled,
-        }
-      }
+        },
+      },
     ],
     reason: parsed.status !== "ready" ? parsed.status : null,
   };

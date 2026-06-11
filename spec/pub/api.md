@@ -67,7 +67,7 @@ If `CONTEXT_STILL_ADMIN_API_KEY` is configured, requests under `/api/*` must inc
 | `GET` | `/api/sources/history/*` | Page Git history |
 | `GET` | `/api/sources/diff/*` | Page diff |
 
-## Vibe Memory and Session Memo
+## Vibe Memory
 
 | Method | Endpoint | Description |
 |---|---|---|
@@ -76,9 +76,6 @@ If `CONTEXT_STILL_ADMIN_API_KEY` is configured, requests under `/api/*` must inc
 | `GET` | `/api/vibe-memory/context` | Search contextual raw memory view |
 | `GET` | `/api/vibe-memory/:id` | Read memory |
 | `DELETE` | `/api/vibe-memory/:id` | Delete memory |
-| `GET` | `/api/session-memo` | List legacy session memos |
-| `GET` | `/api/session-memo/item` | Fetch one legacy memo |
-| `POST` | `/api/session-memo` | Write legacy memo |
 
 ## Graph and Landscape
 

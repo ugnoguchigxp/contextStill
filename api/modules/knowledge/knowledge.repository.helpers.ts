@@ -108,10 +108,12 @@ export function buildKnowledgeListWhere(
     conditions.push(inArray(knowledgeItems.polarity, params.polarities));
   }
   if (params.intentTags && params.intentTags.length > 0) {
-    conditions.push(sql`coalesce(${knowledgeItems.intentTags}, '[]'::jsonb) ?| array[${sql.join(
-      params.intentTags.map((t) => sql`${t}`),
-      sql`,`,
-    )}]`);
+    conditions.push(
+      sql`coalesce(${knowledgeItems.intentTags}, '[]'::jsonb) ?| array[${sql.join(
+        params.intentTags.map((t) => sql`${t}`),
+        sql`,`,
+      )}]`,
+    );
   }
   if (params.query?.trim()) {
     const query = `%${params.query.trim()}%`;

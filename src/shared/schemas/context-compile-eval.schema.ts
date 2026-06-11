@@ -42,7 +42,7 @@ export const compileEvalSummarySchema = z.object({
 
 export const compileEvalToolResultSchema = z.object({
   evaluation: compileEvalRecordSchema,
-  resolvedFrom: z.enum(["explicit_run_id", "latest_session_compile_result", "latest_session_run"]),
+  resolvedFrom: z.enum(["explicit_run_id", "latest_session_run"]),
 });
 
 export type CompileEvalInput = z.infer<typeof compileEvalInputSchema>;

@@ -64,7 +64,8 @@ export function computeDynamicScore(signals: KnowledgeValueSignals): number {
   const usageNotUsedCount30d = asNonNegativeInteger(signals.usageNotUsedCount30d ?? 0);
   const usageOffTopicCount30d = asNonNegativeInteger(signals.usageOffTopicCount30d ?? 0);
 
-  const penaltyNotUsed = signals.polarity === "negative" ? 0 : Math.min(10, usageNotUsedCount30d * 1);
+  const penaltyNotUsed =
+    signals.polarity === "negative" ? 0 : Math.min(10, usageNotUsedCount30d * 1);
   const score =
     Math.min(35, Math.log1p(compileSelectCount) * 10) +
     Math.min(25, recentSelectCount30d * 3) +

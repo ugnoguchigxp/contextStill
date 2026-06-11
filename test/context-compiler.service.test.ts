@@ -13,7 +13,6 @@ import { composeContextResponse } from "../src/modules/context-compiler/context-
 import { recordCompileRunKnowledgeUsageSignals } from "../src/modules/knowledge/knowledge-feedback.service.js";
 import { recordKnowledgeCompileSelectionSafe } from "../src/modules/knowledge/knowledge-value.service.js";
 import { retrieveKnowledge } from "../src/modules/knowledge/knowledge.service.js";
-import { putSessionMemo } from "../src/modules/session-memo/session-memo.service.js";
 import { retrieveSources } from "../src/modules/sources/source-retrieval.service.js";
 
 vi.mock("../src/modules/knowledge/knowledge.service.js");
@@ -22,7 +21,6 @@ vi.mock("../src/modules/context-compiler/context-compiler.repository.js");
 vi.mock("../src/modules/knowledge/knowledge-feedback.service.js");
 vi.mock("../src/modules/knowledge/knowledge-value.service.js");
 vi.mock("../src/modules/audit/audit-log.service.js");
-vi.mock("../src/modules/session-memo/session-memo.service.js");
 vi.mock("../src/modules/context-compiler/pack-renderer.js", () => ({
   renderContextPackMarkdown: vi.fn(() => "# Pack Content"),
 }));
@@ -57,7 +55,6 @@ describe("Context Compiler Service", () => {
     vi.mocked(insertContextPackItems).mockResolvedValue();
     vi.mocked(insertContextCompileCandidateTraces).mockResolvedValue();
     vi.mocked(updateCompileRunSnapshot).mockResolvedValue();
-    vi.mocked(putSessionMemo).mockResolvedValue({ id: "memo-1", slot: 0 } as never);
     vi.mocked(recordCompileRunKnowledgeUsageSignals).mockResolvedValue({
       savedCount: 0,
       updatedCount: 0,
@@ -125,18 +122,6 @@ describe("Context Compiler Service", () => {
   test("records run source for caller", async () => {
     await compileContextPack({ goal: "source test" }, { source: "mcp" });
     expect(insertCompileRun).toHaveBeenCalledWith(expect.objectContaining({ source: "mcp" }));
-  });
-
-  test("auto-links compile_result when sessionId is provided", async () => {
-    await compileContextPack({ goal: "session-linked compile" }, { sessionId: "session-1" });
-    expect(putSessionMemo).toHaveBeenCalledWith(
-      expect.objectContaining({
-        sessionId: "session-1",
-        kind: "compile_result",
-        label: "compile_result:550e8400-e29b-41d4-a716-446655440000",
-        source: "system",
-      }),
-    );
   });
 
   test("applies internal token budget and marks compaction warning", async () => {

@@ -28,7 +28,6 @@ import {
   applyLandscapeCompileIntervention,
   isLandscapeCompileInterventionEnabled,
 } from "../landscape/landscape-compile-intervention.service.js";
-import { putSessionMemo } from "../session-memo/session-memo.service.js";
 import { retrieveSources } from "../sources/source-retrieval.service.js";
 import { agenticRefine } from "./agentic-refine.service.js";
 import { upsertContextCompileTaskTrace } from "./context-compile-task-trace.repository.js";
@@ -51,7 +50,7 @@ import { applySectionTokenBudget, estimateTokens } from "./token-budget.js";
 const CONTEXT_COMPILE_SECTION_RATIOS = {
   rules: 0.55,
   procedures: 0.45,
-  guardrails: 0.30,
+  guardrails: 0.3,
 } as const;
 
 const CONTEXT_COMPILE_LIMITS = {
@@ -377,37 +376,6 @@ async function updateCompileRunSnapshotSafe(runId: string, pack: ContextPack): P
     return true;
   } catch {
     return false;
-  }
-}
-
-async function autoLinkCompileResultMemoSafe(params: {
-  sessionId?: string;
-  runId: string;
-  runCreatedAt: Date;
-}): Promise<void> {
-  const sessionId = params.sessionId?.trim();
-  if (!sessionId) return;
-  try {
-    await putSessionMemo({
-      sessionId,
-      kind: "compile_result",
-      label: `compile_result:${params.runId}`,
-      body: "context_compile output reference",
-      metadata: {
-        kind: "compile_result",
-        contextCompileRunId: params.runId,
-        contextCompileRunCreatedAt: params.runCreatedAt.toISOString(),
-        source: "auto_context_compile",
-        linkMode: "compile_output_reference",
-        linkStatus: "linked",
-      },
-      source: "system",
-    });
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.warn(
-      `[compileContextPack] failed to auto-link compile_result memo for runId=${params.runId}: ${message}`,
-    );
   }
 }
 
@@ -965,14 +933,7 @@ export async function compileContextPack(
 
     const markdown = renderContextPackMarkdown(pack);
     const packWithMarkdown = attachOutputMarkdownToPack(pack, markdown);
-    const snapshotSaved = await updateCompileRunSnapshotSafe(runId, packWithMarkdown);
-    if (snapshotSaved) {
-      await autoLinkCompileResultMemoSafe({
-        sessionId: options?.sessionId,
-        runId,
-        runCreatedAt: new Date(),
-      });
-    }
+    await updateCompileRunSnapshotSafe(runId, packWithMarkdown);
     await recordKnowledgeCompileSelectionSafe({
       runId,
       selectedKnowledgeIds: [],
@@ -1025,10 +986,7 @@ export async function compileContextPack(
     ...sourceContext.degradedReasons,
   ];
 
-  const combinedItems = [
-    ...positiveKnowledge.items,
-    ...negativeKnowledge.items,
-  ];
+  const combinedItems = [...positiveKnowledge.items, ...negativeKnowledge.items];
 
   const rankedKnowledgeBeforeIntervention = rankAndDedupe<KnowledgeRankable>(
     combinedItems.map((item) => ({
@@ -1336,7 +1294,8 @@ export async function compileContextPack(
         knowledge: {
           ...positiveKnowledge.stats,
           textHitCount: positiveKnowledge.stats.textHitCount + negativeKnowledge.stats.textHitCount,
-          vectorHitCount: positiveKnowledge.stats.vectorHitCount + negativeKnowledge.stats.vectorHitCount,
+          vectorHitCount:
+            positiveKnowledge.stats.vectorHitCount + negativeKnowledge.stats.vectorHitCount,
           mergedCount: positiveKnowledge.stats.mergedCount + negativeKnowledge.stats.mergedCount,
         },
         sources: sourceContext.stats,
@@ -1371,14 +1330,7 @@ export async function compileContextPack(
     ? "No Content"
     : composedResponse.markdown || renderContextPackMarkdown(pack);
   const packWithMarkdown = attachOutputMarkdownToPack(pack, markdown);
-  const snapshotSaved = await updateCompileRunSnapshotSafe(runId, packWithMarkdown);
-  if (snapshotSaved) {
-    await autoLinkCompileResultMemoSafe({
-      sessionId: options?.sessionId,
-      runId,
-      runCreatedAt: new Date(),
-    });
-  }
+  await updateCompileRunSnapshotSafe(runId, packWithMarkdown);
 
   await recordAuditLogSafe({
     eventType: auditEventTypes.contextCompileRun,

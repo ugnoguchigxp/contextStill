@@ -220,20 +220,26 @@ export const registerReviewCorrectionItemSchema = z.object({
     sessionId: z.string().trim().optional(),
     repositoryPath: z.string().trim().optional(),
     artifactRefs: z.array(z.string().trim()).optional(),
-    fileRefs: z.array(z.object({
-      path: z.string().trim().min(1),
-      line: z.number().int().optional()
-    })).optional()
+    fileRefs: z
+      .array(
+        z.object({
+          path: z.string().trim().min(1),
+          line: z.number().int().optional(),
+        }),
+      )
+      .optional(),
   }),
   confidence: optionalKnowledgeScoreSchema,
   importance: optionalKnowledgeScoreSchema,
   intentTags: z.array(z.string().trim()).optional(),
-  appliesTo: z.record(z.unknown()).optional()
+  appliesTo: z.record(z.unknown()).optional(),
 });
 
-export const registerReviewCorrectionsInputSchema = z.object({
-  items: z.array(registerReviewCorrectionItemSchema).min(1).max(10)
-}).strict();
+export const registerReviewCorrectionsInputSchema = z
+  .object({
+    items: z.array(registerReviewCorrectionItemSchema).min(1).max(10),
+  })
+  .strict();
 
 export type KnowledgeItem = z.infer<typeof knowledgeItemSchema>;
 export type KnowledgeApplicabilityInput = z.infer<typeof knowledgeApplicabilitySchema>;

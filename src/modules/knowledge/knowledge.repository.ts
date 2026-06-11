@@ -198,10 +198,12 @@ export async function searchKnowledge(
 
   const intentTags = options.intentTags ?? input.intentTags;
   if (intentTags && intentTags.length > 0) {
-    conditions.push(sql`coalesce(${knowledgeItems.intentTags}, '[]'::jsonb) ?| array[${sql.join(
-      intentTags.map((t) => sql`${t}`),
-      sql`,`,
-    )}]`);
+    conditions.push(
+      sql`coalesce(${knowledgeItems.intentTags}, '[]'::jsonb) ?| array[${sql.join(
+        intentTags.map((t) => sql`${t}`),
+        sql`,`,
+      )}]`,
+    );
   }
 
   const query = input.query.trim();
@@ -423,10 +425,12 @@ export async function vectorSearchKnowledge(
     conditions.push(inArray(knowledgeItems.polarity, options.polarities));
   }
   if (options.intentTags && options.intentTags.length > 0) {
-    conditions.push(sql`coalesce(${knowledgeItems.intentTags}, '[]'::jsonb) ?| array[${sql.join(
-      options.intentTags.map((t) => sql`${t}`),
-      sql`,`,
-    )}]`);
+    conditions.push(
+      sql`coalesce(${knowledgeItems.intentTags}, '[]'::jsonb) ?| array[${sql.join(
+        options.intentTags.map((t) => sql`${t}`),
+        sql`,`,
+      )}]`,
+    );
   }
 
   const rows = await db

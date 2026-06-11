@@ -13,9 +13,7 @@ import {
   registerCandidate,
   registerCandidatesBulk,
 } from "../../modules/registerCandidate/register-candidate.service.js";
-import {
-  registerReviewCorrections,
-} from "../../modules/registerCandidate/register-review-corrections.service.js";
+import { registerReviewCorrections } from "../../modules/registerCandidate/register-review-corrections.service.js";
 import {
   knowledgeSearchInputSchema,
   listKnowledgeInputSchema,
@@ -335,7 +333,8 @@ export const updateKnowledgeTool: ToolEntry = {
       status: nextStatus,
       scope: parsed.scope ?? existing.scope,
       polarity: (parsed.polarity ?? existing.polarity) as "positive" | "negative" | "neutral",
-      intentTags: (parsed.intentTags ?? (Array.isArray(existing.intentTags) ? existing.intentTags : [])) as string[],
+      intentTags: (parsed.intentTags ??
+        (Array.isArray(existing.intentTags) ? existing.intentTags : [])) as string[],
       title: parsed.title ?? existing.title,
       body: parsed.body ?? existing.body,
       confidence: parsed.confidence ?? normalizeKnowledgeScore(existing.confidence, 70),
@@ -389,8 +388,7 @@ export const updateKnowledgeTool: ToolEntry = {
 
 export const registerReviewCorrectionsTool: ToolEntry = {
   name: "register_review_corrections",
-  description:
-    "Bulk-register accepted or valid review corrections as negative candidates.",
+  description: "Bulk-register accepted or valid review corrections as negative candidates.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -406,7 +404,10 @@ export const registerReviewCorrectionsTool: ToolEntry = {
             trigger: { type: "string", description: "Optional trigger description." },
             fix: { type: "string", description: "Optional fix description." },
             verification: { type: "string", description: "Optional verification description." },
-            decisionSignal: { type: "string", description: "Optional decision signal description." },
+            decisionSignal: {
+              type: "string",
+              description: "Optional decision signal description.",
+            },
             severity: { type: "string", enum: ["low", "medium", "high", "critical"] },
             status: { type: "string", enum: ["accepted", "fixed", "deferred"] },
             origin: {
@@ -425,32 +426,32 @@ export const registerReviewCorrectionsTool: ToolEntry = {
                     type: "object",
                     properties: {
                       path: { type: "string" },
-                      line: { type: "number" }
+                      line: { type: "number" },
                     },
-                    required: ["path"]
-                  }
-                }
+                    required: ["path"],
+                  },
+                },
               },
-              required: ["system", "reviewFindingId"]
+              required: ["system", "reviewFindingId"],
             },
             confidence: { type: "number", minimum: 0, maximum: 100 },
             importance: { type: "number", minimum: 0, maximum: 100 },
             intentTags: { type: "array", items: { type: "string" } },
-            appliesTo: { type: "object" }
+            appliesTo: { type: "object" },
           },
-          required: ["title", "finding", "status", "origin"]
+          required: ["title", "finding", "status", "origin"],
         },
         minItems: 1,
-        maxItems: 10
-      }
+        maxItems: 10,
+      },
     },
-    required: ["items"]
+    required: ["items"],
   },
   handler: async (args) => {
     const parsed = registerReviewCorrectionsInputSchema.parse(args ?? {});
     const result = await registerReviewCorrections(parsed);
     return {
-      content: [{ type: "text", text: JSON.stringify(result, null, 2) }]
+      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
     };
-  }
+  },
 };

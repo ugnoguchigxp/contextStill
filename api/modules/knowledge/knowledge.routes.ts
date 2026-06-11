@@ -25,14 +25,29 @@ const listKnowledgeQuerySchema = z.object({
   status: z.string().trim().min(1).optional(),
   type: z.string().trim().min(1).optional(),
   query: z.string().trim().optional(),
-  polarities: z.preprocess((val) => {
-    if (typeof val === "string") return val.split(",").map((s) => s.trim()).filter(Boolean);
-    return val;
-  }, z.array(z.enum(["positive", "negative", "neutral"]))).optional(),
-  intentTags: z.preprocess((val) => {
-    if (typeof val === "string") return val.split(",").map((s) => s.trim()).filter(Boolean);
-    return val;
-  }, z.array(z.string())).optional(),
+  polarities: z
+    .preprocess(
+      (val) => {
+        if (typeof val === "string")
+          return val
+            .split(",")
+            .map((s) => s.trim())
+            .filter(Boolean);
+        return val;
+      },
+      z.array(z.enum(["positive", "negative", "neutral"])),
+    )
+    .optional(),
+  intentTags: z
+    .preprocess((val) => {
+      if (typeof val === "string")
+        return val
+          .split(",")
+          .map((s) => s.trim())
+          .filter(Boolean);
+      return val;
+    }, z.array(z.string()))
+    .optional(),
   displayFilter: z
     .enum(["all", "draft", "active", "deprecated", "unused-active", "stale", "high-value"])
     .optional(),

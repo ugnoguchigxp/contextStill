@@ -270,7 +270,9 @@ export async function inspectDatabase({
           'operational_risk'
         )
       `);
-      const unknownTagsCount = Number((unknownTagsResult.rows as Array<{ count?: number }>)[0]?.count ?? 0);
+      const unknownTagsCount = Number(
+        (unknownTagsResult.rows as Array<{ count?: number }>)[0]?.count ?? 0,
+      );
       if (unknownTagsCount > 0) {
         reasons.push("KNOWLEDGE_UNKNOWN_INTENT_TAGS");
       }
@@ -281,7 +283,9 @@ export async function inspectDatabase({
         where polarity = 'negative'
           and id not in (select knowledge_id from knowledge_origin_links)
       `);
-      const negativeWithoutOriginCount = Number((negativeWithoutOriginResult.rows as Array<{ count?: number }>)[0]?.count ?? 0);
+      const negativeWithoutOriginCount = Number(
+        (negativeWithoutOriginResult.rows as Array<{ count?: number }>)[0]?.count ?? 0,
+      );
       if (negativeWithoutOriginCount > 0) {
         reasons.push("KNOWLEDGE_NEGATIVE_WITHOUT_ORIGIN");
       }
@@ -291,7 +295,9 @@ export async function inspectDatabase({
         from knowledge_items
         where polarity = 'negative' and type = 'procedure'
       `);
-      const negativeAsPositiveCount = Number((negativeAsPositiveResult.rows as Array<{ count?: number }>)[0]?.count ?? 0);
+      const negativeAsPositiveCount = Number(
+        (negativeAsPositiveResult.rows as Array<{ count?: number }>)[0]?.count ?? 0,
+      );
       if (negativeAsPositiveCount > 0) {
         reasons.push("KNOWLEDGE_NEGATIVE_AS_POSITIVE");
       }

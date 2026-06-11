@@ -19,15 +19,12 @@ import {
   fetchOverviewLandscapeHealthDomain,
   fetchOverviewLlmResourcesDomain,
   fetchOverviewSystemQualityDomain,
-  fetchSessionMemoSessions,
-  fetchSessionMemos,
   fetchVibeMemories,
   queueWebSourceUrl,
   queueWebSourceUrlsUpload,
   sendKnowledgeFeedback,
   updateGraphCommunityLabel,
   updateKnowledgeItem,
-  upsertSessionMemo,
 } from "../../web/src/modules/admin/repositories/admin.repository.js";
 
 describe("Admin Repository", () => {
@@ -296,52 +293,6 @@ describe("Admin Repository", () => {
         method: "DELETE",
         headers: undefined,
         body: undefined,
-      });
-    });
-  });
-
-  describe("session memos", () => {
-    it("fetchSessionMemoSessions includes limit query", async () => {
-      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
-        ok: true,
-        json: async () => ({ items: [] }),
-      } as Response);
-      await fetchSessionMemoSessions(150);
-      expect(spy).toHaveBeenCalledWith("/api/session-memo/sessions?limit=150");
-    });
-
-    it("fetchSessionMemoSessions can include compile_result only sessions", async () => {
-      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
-        ok: true,
-        json: async () => ({ items: [] }),
-      } as Response);
-      await fetchSessionMemoSessions(150, { includeCompileOnly: true });
-      expect(spy).toHaveBeenCalledWith(
-        "/api/session-memo/sessions?limit=150&includeCompileOnly=true",
-      );
-    });
-
-    it("fetchSessionMemos includes query params", async () => {
-      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
-        ok: true,
-        json: async () => ({ items: [], events: [] }),
-      } as Response);
-      await fetchSessionMemos("s-1", { includeEmpty: true, previewChars: 480 });
-      expect(spy).toHaveBeenCalledWith(
-        "/api/session-memo?sessionId=s-1&includeEmpty=true&previewChars=480",
-      );
-    });
-
-    it("upsertSessionMemo posts JSON body", async () => {
-      const spy = vi.spyOn(global, "fetch").mockResolvedValue({
-        ok: true,
-        json: async () => ({ memo: { id: "m-1", body: "x" } }),
-      } as Response);
-      await upsertSessionMemo({ sessionId: "s-1", label: "goal", body: "x" });
-      expect(spy).toHaveBeenCalledWith("/api/session-memo/item", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ sessionId: "s-1", label: "goal", body: "x" }),
       });
     });
   });

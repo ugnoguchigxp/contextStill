@@ -19,4 +19,30 @@ describe("locale helpers", () => {
     expect(buildInitialInstructionsText("ja")).toContain("## 常用ルール");
     expect(buildInitialInstructionsText("en")).toContain("## Operational Rules");
   });
+
+  test("initial instructions prefer generalized bulk candidate registration", () => {
+    const ja = buildInitialInstructionsText("ja");
+    const en = buildInitialInstructionsText("en");
+
+    for (const text of [ja, en]) {
+      expect(text).toContain("context_decision");
+      expect(text).toContain("context_decision_feedback");
+      expect(text).toContain("register_candidates");
+      expect(text).toContain("Use when:");
+      expect(text).toContain("Workflow:");
+      expect(text).toContain("Verification:");
+      expect(text).toContain("Avoid:");
+      expect(text).not.toContain("`register_candidate`");
+      expect(text).not.toContain("`session_memo`");
+    }
+
+    expect(ja).toContain("ブロッカー由来");
+    expect(ja).toContain("pre-commit");
+    expect(ja).toContain("プロジェクト依存の記述を除いて");
+    expect(ja).toContain("SKILL.md 相当");
+    expect(en).toContain("blocker-derived");
+    expect(en).toContain("pre-commit");
+    expect(en).toContain("remove project-specific wording");
+    expect(en).toContain("SKILL.md-like shape");
+  });
 });

@@ -35,6 +35,7 @@ if [ "$MODE" = "pre-commit" ]; then
   append_hook_log "pre-commit reminder emitted"
   echo "[context-still] pre-commit reminder"
   echo "  if this task used context_compile, compile_eval is required before final completion report"
+  echo "  if this task followed context_decision, record context_decision_feedback when outcome is known"
   echo "  ask user first: Fill compile_eval now? (Yes/No)"
   exit 0
 fi
@@ -103,7 +104,7 @@ Repository: $REPO_ROOT
 
 このコミットを確認し、将来にわたって再利用可能なレッスン、ルール、または手順（手続き）が含まれているかを判断してください。
 
-再利用可能な知見が存在する場合は、対象の候補ごとに context-still の MCP ツール \`register_candidate\` を呼び出して登録してください。コミット内容の要約だけで終わらせないでください。
+再利用可能な知見が存在する場合は、context-still の MCP ツール \`register_candidates\` を呼び出して登録してください。コミット内容の要約だけで終わらせないでください。
 
 一回限りのタスクメモ、未検証の仮説、ファイル固有のトリビア、またはこのコミットに裏付けられていない一般的なベストプラクティスは登録しないでください。
 
@@ -147,7 +148,13 @@ Evidence:
   - このタスクでの \`compile_eval\` の実行回数
   - 評価回数が不足している場合は、先に不足分の \`compile_eval\` を追加実行してから完了報告を行ってください
 
-候補登録の前に、\`register_candidate\` のための選出準備を行ってください：
+【重要】\`context_decision\` を利用した判断に従って作業した場合は、作業結果が分かった時点で MCP ツール \`context_decision_feedback\` を保存してください。pre-commit 時点で検証結果が分かっている場合は、そのタイミングで記録してください：
+- 成功した場合: \`source\` は \`system\` または \`ai\`、\`outcome\` は \`success\`
+- 失敗、回帰検出、ユーザー上書き、PR破棄などの場合: \`outcome\` は \`failed\` / \`regression_found\` / \`user_overrode\` / \`discarded_pr\`
+- まだ結果不明の場合: \`outcome\` は \`still_unknown\`
+- \`context_decision\` の戻り値に含まれる \`decisionId\` または \`feedbackHandle\` を使って対象判断へ紐付けてください
+
+候補登録の前に、\`register_candidates\` のための選出準備を行ってください：
 - 再利用可能な手順やルールのみを含めること
 - 汎用的に使える知識として体裁を整えること
 - プロジェクト固有の事実、個人名、パス名、一回限りのインシデント詳細は除外すること
@@ -182,6 +189,6 @@ if [ "${CONTEXT_STILL_CANDIDATE_HOOK_QUIET:-0}" != "1" ]; then
 [context-still] post-commit candidate reminder
   commit: $SHORT_SHA $SUBJECT
   prompt: $LATEST_FILE
-  action: ask the coding agent to review the commit, call register_candidate for durable lessons, and call compile_eval for context_compile quality
+  action: ask the coding agent to review the commit, call register_candidates for durable lessons, call compile_eval for context_compile quality, and call context_decision_feedback for completed decisions
 EOF
 fi

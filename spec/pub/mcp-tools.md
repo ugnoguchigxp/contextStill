@@ -3,7 +3,7 @@
 context-still exposes a compact MCP surface for coding agents. The tools are designed around this repeatable workflow:
 
 ```text
-initial_instructions -> context_compile -> context_decision when a decision would block progress -> work -> compile_eval -> register_candidate(s)
+initial_instructions -> context_compile -> context_decision when a blocker-derived decision would stop progress -> work -> context_decision_feedback when the decision outcome is known -> compile_eval -> register_candidates
 ```
 
 ## Tool Inventory
@@ -16,9 +16,7 @@ initial_instructions -> context_compile -> context_decision when a decision woul
 | `context_decision`          | Decide execute/revise/reject/rollback/discard/escalate from Knowledge evidence before asking the user |
 | `context_decision_feedback` | Record Good/Bad or system/AI outcome feedback for a decision                                          |
 | `search_knowledge`          | Inspect raw knowledge candidates and retrieval behavior                                               |
-| `register_candidate`        | Register one reusable rule/procedure candidate                                                        |
 | `register_candidates`       | Register multiple candidates in one call                                                              |
-| `session_memo`              | Store short-lived session scratch notes                                                               |
 | `search_memory`             | Search past sessions and diffs                                                                        |
 | `fetch_memory`              | Fetch one memory item                                                                                 |
 | `doctor`                    | Diagnose DB, embedding, sync, queue, provider, decision, and compile health                           |
@@ -32,11 +30,11 @@ Deprecated hidden aliases remain for compatibility but are not listed:
 
 1. Call `initial_instructions` once when starting work in this project.
 2. Call `context_compile` with the actual task goal.
-3. Call `context_decision` before asking the user when autonomous progress might still be possible.
+3. Call `context_decision` before asking the user when a blocker-derived judgment is needed and autonomous progress might still be possible.
 4. Do the work and verify changes.
-5. Call `context_decision_feedback` when Good/Bad or system outcome feedback is available.
+5. Call `context_decision_feedback` after work based on a decision completes, including at pre-commit time when the outcome is known.
 6. Call `compile_eval` for the compile run used during the task.
-7. Call `register_candidate` or `register_candidates` for durable lessons discovered during the task.
+7. Call `register_candidates` for durable lessons discovered during the task.
 8. Call `doctor` if compile output is weak, stale, degraded, or failed.
 
 ## Tool Contracts
@@ -102,7 +100,7 @@ Use after completing the task that used `context_compile`.
 
 ### `context_decision`
 
-Purpose: Make an autonomous decision from Knowledge evidence before asking the user.
+Purpose: Make an autonomous blocker-derived decision from Knowledge evidence before asking the user.
 
 Input:
 
@@ -118,13 +116,14 @@ Behavior:
 - Builds four Knowledge searches: support, counter-evidence, prior user preference, and risk/guardrail.
 - Persists the decision run, selected evidence, coverage traces, confidence trace, and metadata.
 - Returns one decision, not a menu of options.
+- Use it for decisions that would otherwise block progress, such as proceed vs revise, reject, rollback, discard, escalation, PR creation readiness, risky operations, or unfinished Todo/status handling.
 - In the current v1 implementation, `execute` is returned when Knowledge support clears the confidence threshold; otherwise it returns `escalate`.
 
 Output is compact and intended to stay under an 8k token response budget. It includes `decisionId`, decision, mandate, confidence, the LLM-written `agentMessage`, coverage summary, and feedback handle. Evidence bodies and source refs are not returned by the MCP tool; they remain persisted for audit and can be inspected from the Decision screen/detail API. The generated `agentMessage` may use short selected-Knowledge excerpts to explain the supporting prior tendency, best-practice rule, or procedure guidance.
 
 ### `context_decision_feedback`
 
-Purpose: Feed Good/Bad or system/AI outcome feedback back into the decision record and effects table.
+Purpose: Feed Good/Bad or system/AI outcome feedback back into the decision record and effects table after work based on a decision completes.
 
 Input:
 
@@ -138,6 +137,8 @@ Input:
 | `metadata`   |          no | Optional trace data.                                              |
 
 Human feedback is intentionally Good/Bad only.
+
+Record feedback as soon as the outcome is known. Pre-commit is an appropriate point when verification has completed and the result of the decision is clear.
 
 ### `search_knowledge`
 
@@ -159,29 +160,6 @@ Input:
 
 Output includes candidates, scores, status, scope, source refs, metadata, degraded reasons, and stats.
 
-### `register_candidate`
-
-Purpose: Register one reusable lesson as a distillation candidate.
-
-Input:
-
-| Field            |    Required | Description                                                                        |
-| ---------------- | ----------: | ---------------------------------------------------------------------------------- |
-| `title` + `body` | conditional | Structured candidate text.                                                         |
-| `text`           | conditional | Free-form candidate text. Use when the candidate is easier to express as one note. |
-| `type`           |          no | `rule` or `procedure`.                                                             |
-| `confidence`     |          no | Confidence score.                                                                  |
-| `importance`     |          no | Importance/value score.                                                            |
-| `metadata`       |          no | Additional trace metadata.                                                         |
-
-At least `title` + `body` or `text` is required.
-
-Behavior:
-
-- Writes a `knowledge_candidate` target.
-- Writes candidate content into `find_candidate_results`.
-- Returns immediately; draft knowledge creation happens asynchronously through the distillation pipeline.
-
 ### `register_candidates`
 
 Purpose: Register multiple candidates.
@@ -190,15 +168,9 @@ Input:
 
 | Field   | Required | Description                                                              |
 | ------- | -------: | ------------------------------------------------------------------------ |
-| `items` |      yes | Array of 1 to 10 candidate objects using the `register_candidate` shape. |
+| `items` |      yes | Array of 1 to 10 candidate objects. |
 
 Behavior is best-effort. Inspect the result for per-item failures.
-
-### `session_memo`
-
-Purpose: Store and retrieve short-lived session scratch notes.
-
-Use it only for ephemeral working notes. Durable lessons should use `register_candidate` or `register_candidates`.
 
 ### `search_memory`
 

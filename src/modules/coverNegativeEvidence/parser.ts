@@ -15,7 +15,10 @@ export type NegativeEvidenceResult = {
 };
 
 export function parseNegativeEvidenceResult(text: string): NegativeEvidenceResult {
-  const cleanText = text.replace(/```json/g, "").replace(/```/g, "").trim();
+  const cleanText = text
+    .replace(/```json/g, "")
+    .replace(/```/g, "")
+    .trim();
   try {
     const parsed = JSON.parse(cleanText);
     if (!parsed.status || !parsed.polarity || !parsed.distilled || !parsed.distilled.failure) {
@@ -30,13 +33,19 @@ export function parseNegativeEvidenceResult(text: string): NegativeEvidenceResul
         impact: parsed.distilled.impact ? String(parsed.distilled.impact) : undefined,
         trigger: parsed.distilled.trigger ? String(parsed.distilled.trigger) : undefined,
         fix: parsed.distilled.fix ? String(parsed.distilled.fix) : undefined,
-        verification: parsed.distilled.verification ? String(parsed.distilled.verification) : undefined,
-        decisionSignal: parsed.distilled.decisionSignal ? String(parsed.distilled.decisionSignal) : undefined,
+        verification: parsed.distilled.verification
+          ? String(parsed.distilled.verification)
+          : undefined,
+        decisionSignal: parsed.distilled.decisionSignal
+          ? String(parsed.distilled.decisionSignal)
+          : undefined,
       },
       evidence: Array.isArray(parsed.evidence) ? parsed.evidence.map(String) : [],
       originRefs: Array.isArray(parsed.originRefs) ? parsed.originRefs.map(String) : [],
     };
   } catch (error) {
-    throw new Error(`Failed to parse negative evidence result JSON: ${error instanceof Error ? error.message : String(error)}`);
+    throw new Error(
+      `Failed to parse negative evidence result JSON: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }

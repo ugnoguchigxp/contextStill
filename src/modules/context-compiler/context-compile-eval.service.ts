@@ -26,8 +26,7 @@ export async function recordCompileEval(params: {
   source?: "mcp" | "ui" | "system" | "import";
 }) {
   const sessionId = resolveSessionIdFromMeta(params.requestMeta);
-  let resolvedFrom: "explicit_run_id" | "latest_session_compile_result" | "latest_session_run" =
-    "explicit_run_id";
+  let resolvedFrom: "explicit_run_id" | "latest_session_run" = "explicit_run_id";
   let runId = params.input.runId;
   if (!runId) {
     if (!sessionId) {

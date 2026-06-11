@@ -285,11 +285,7 @@ export async function registerReviewCorrections(
   }
 
   const status =
-    registeredCount === input.items.length
-      ? "success"
-      : registeredCount > 0
-        ? "partial"
-        : "failed";
+    registeredCount === input.items.length ? "success" : registeredCount > 0 ? "partial" : "failed";
 
   return {
     status,

@@ -23,7 +23,6 @@ vi.mock("../src/modules/context-compiler/context-compile-eval.service.js");
 vi.mock("../src/modules/doctor/doctor.service.js");
 vi.mock("../src/modules/registerCandidate/register-candidate.service.js");
 vi.mock("../src/modules/registerCandidate/register-review-corrections.service.js");
-vi.mock("../src/modules/session-memo/session-memo.service.js");
 vi.mock("../src/modules/settings/settings.service.js");
 vi.mock("../api/modules/knowledge/knowledge.repository.js");
 vi.mock("../src/db/client.js", () => ({
@@ -50,7 +49,6 @@ import {
   memorySearchTool as searchMemoryLegacyTool,
   searchMemoryTool as searchMemoryPrimaryTool,
 } from "../src/mcp/tools/memory.tool.js";
-import { sessionMemoTool } from "../src/mcp/tools/session-memo.tool.js";
 import { doctorTool, initialInstructionsTool } from "../src/mcp/tools/system.tool.js";
 import { recordCompileEval } from "../src/modules/context-compiler/context-compile-eval.service.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
@@ -59,12 +57,6 @@ import { searchKnowledgeCandidates } from "../src/modules/knowledge/knowledge.se
 import { registerCandidate } from "../src/modules/registerCandidate/register-candidate.service.js";
 import { registerCandidatesBulk } from "../src/modules/registerCandidate/register-candidate.service.js";
 import { registerReviewCorrections } from "../src/modules/registerCandidate/register-review-corrections.service.js";
-import {
-  getSessionMemo,
-  listSessionMemos,
-  putManySessionMemos,
-  putSessionMemo,
-} from "../src/modules/session-memo/session-memo.service.js";
 import { reloadRuntimeSettingsCache } from "../src/modules/settings/settings.service.js";
 import { retrieveVibeMemoryContext } from "../src/modules/vibe-memory/vibe-memory.service.js";
 
@@ -380,92 +372,6 @@ describe("MCP Tools Handlers", () => {
     });
   });
 
-  describe("session_memo", () => {
-    test("list resolves session id from metadata", async () => {
-      vi.mocked(listSessionMemos).mockResolvedValue([{ slot: 0, preview: "a" }] as never);
-
-      const response = await sessionMemoTool.handler(
-        { action: "list" },
-        { toolName: "session_memo", requestMeta: { sessionId: "meta-session" } },
-      );
-      const data = JSON.parse(response.content[0].text);
-      expect(data.sessionId).toBe("meta-session");
-      expect(listSessionMemos).toHaveBeenCalledWith({
-        sessionId: "meta-session",
-        includeEmpty: false,
-        previewChars: 320,
-      });
-    });
-
-    test("put_many delegates items to service", async () => {
-      vi.mocked(putManySessionMemos).mockResolvedValue([{ slot: 1, label: "x" }] as never);
-      const response = await sessionMemoTool.handler(
-        {
-          action: "put_many",
-          sessionId: "s-1",
-          items: [{ slot: 1, label: "x", body: "hello" }],
-        },
-        { toolName: "session_memo" },
-      );
-      const data = JSON.parse(response.content[0].text);
-      expect(data.items[0].slot).toBe(1);
-      expect(putManySessionMemos).toHaveBeenCalledWith(
-        "s-1",
-        [
-          {
-            slot: undefined,
-            kind: undefined,
-            title: undefined,
-            label: "x",
-            body: "hello",
-            metadata: {},
-            expiresAt: undefined,
-          },
-        ],
-        "mcp",
-      );
-    });
-
-    test("put/get delegate to corresponding services", async () => {
-      vi.mocked(putSessionMemo).mockResolvedValue({ slot: 2, label: "goal" } as never);
-      vi.mocked(getSessionMemo).mockResolvedValue({ slot: 2, body: "body" } as never);
-
-      const putResponse = await sessionMemoTool.handler(
-        { action: "put", sessionId: "s-1", slot: 2, label: "goal", body: "body" },
-        { toolName: "session_memo" },
-      );
-      expect(JSON.parse(putResponse.content[0].text).memo.slot).toBe(2);
-
-      await sessionMemoTool.handler(
-        { action: "get", sessionId: "s-1", slot: 2 },
-        { toolName: "session_memo" },
-      );
-      expect(getSessionMemo).toHaveBeenCalledWith({ sessionId: "s-1", slot: 2, label: undefined });
-    });
-
-    test("rejects compile_eval kind", async () => {
-      vi.mocked(putSessionMemo).mockResolvedValue({ slot: 1, label: "x" } as never);
-
-      await expect(
-        sessionMemoTool.handler(
-          {
-            action: "put",
-            sessionId: "s-1",
-            kind: "compile_eval",
-            body: "evaluation",
-          },
-          { toolName: "session_memo" },
-        ),
-      ).rejects.toThrow("compile_eval kind is no longer supported");
-    });
-
-    test("fails when session id is missing", async () => {
-      await expect(
-        sessionMemoTool.handler({ action: "list" }, { toolName: "session_memo" }),
-      ).rejects.toThrow("SESSION_ID_REQUIRED");
-    });
-  });
-
   describe("compile_eval", () => {
     test("records compile evaluation and returns JSON", async () => {
       vi.mocked(recordCompileEval).mockResolvedValue({
@@ -486,7 +392,7 @@ describe("MCP Tools Handlers", () => {
           createdAt: "2026-01-01T00:00:00.000Z",
           updatedAt: "2026-01-01T00:00:00.000Z",
         },
-        resolvedFrom: "latest_session_compile_result",
+        resolvedFrom: "latest_session_run",
       } as never);
       const response = await compileEvalTool.handler(
         {
@@ -632,14 +538,16 @@ describe("MCP Tools Handlers", () => {
       process.env.MEMORY_ROUTER_LANG = undefined;
       const response = await initialInstructionsTool.handler();
       expect(response.content[0].text).toContain("## 常用ルール");
-      expect(response.content[0].text).toContain("汎用的に使える知識として体裁を整える");
+      expect(response.content[0].text).toContain("プロジェクト依存の記述を除いて汎用化");
+      expect(response.content[0].text).not.toContain("hooksLLM");
     });
 
     test("initial_instructions returns English text when MEMORY_ROUTER_LANG=en", async () => {
       process.env.MEMORY_ROUTER_LANG = "en";
       const response = await initialInstructionsTool.handler();
       expect(response.content[0].text).toContain("## Operational Rules");
-      expect(response.content[0].text).toContain("shape them as generally usable knowledge");
+      expect(response.content[0].text).toContain("remove project-specific wording");
+      expect(response.content[0].text).not.toContain("hooksLLM");
     });
 
     test("doctor calls runDoctor and returns JSON", async () => {

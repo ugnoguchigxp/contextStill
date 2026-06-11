@@ -141,7 +141,7 @@ Update `src/shared/schemas/knowledge.schema.ts`:
 - expose `polarity` and `intentTags` on Knowledge item schemas
 - allow optional `polarity` and `intentTags` on register/update schemas
 - default omitted register/update values to current behavior
-- keep `register_candidate` and `register_candidates` backward compatible
+- keep `register_candidates` backward compatible
 
 Update API repository types under `api/modules/knowledge/`:
 
@@ -164,7 +164,7 @@ Checkpoint:
 - invalid polarity is rejected
 - flexible intent tags are accepted
 - origin links accept review-related origin kinds
-- `register_candidate` and `register_candidates` still pass without polarity fields
+- `register_candidates` still passes without polarity fields
 - no compile or decision output changes in this slice
 
 ## Slice 2: Search Filters And Retrieval Metadata

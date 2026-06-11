@@ -79,7 +79,9 @@ describe("cover-negative-evidence", () => {
     expect(result.result.status).toBe("knowledge_ready");
     expect(result.result.candidate).toBeDefined();
     expect(result.result.candidate?.title).toBe("Prohibit hardcoded API urls");
-    expect(result.result.candidate?.body).toContain("Failure: Hardcoded API host in production config");
+    expect(result.result.candidate?.body).toContain(
+      "Failure: Hardcoded API host in production config",
+    );
     expect(result.result.toolEvents[0].name).toBe("negative_coverage");
     expect((result.result.toolEvents[0].metadata as any).polarity).toBe("negative");
     expect((result.result.toolEvents[0].metadata as any).intentTags).toContain("security_risk");

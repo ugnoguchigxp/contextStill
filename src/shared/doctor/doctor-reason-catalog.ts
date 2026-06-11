@@ -227,7 +227,8 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     severity: "warning",
     area: "Knowledge",
     description: "定義済みのリストに含まれない intent tag を持つ Knowledge が存在します。",
-    impact: "コンパイルや意思決定時における、intent に基づくフィルタリングや処理の正確性が低下する可能性があります。",
+    impact:
+      "コンパイルや意思決定時における、intent に基づくフィルタリングや処理の正確性が低下する可能性があります。",
     action: "該当する tag を定義されたリストに追加するか、正しいタグに修正してください。",
   },
   KNOWLEDGE_NEGATIVE_WITHOUT_ORIGIN: {
@@ -235,16 +236,21 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     severity: "warning",
     area: "Knowledge",
     description: "polarity が negative なのに、関連する origin link が登録されていません。",
-    impact: "ネガティブな指示（回避・確認手順）の背景や根拠（修正された課題やバグなど）が追跡できなくなります。",
-    action: "該当する negative knowledge に origin link を紐付けるか、不要な項目を整理してください。",
+    impact:
+      "ネガティブな指示（回避・確認手順）の背景や根拠（修正された課題やバグなど）が追跡できなくなります。",
+    action:
+      "該当する negative knowledge に origin link を紐付けるか、不要な項目を整理してください。",
   },
   KNOWLEDGE_NEGATIVE_AS_POSITIVE: {
     label: "negative knowledge が positive procedure として配置されている",
     severity: "warning",
     area: "Knowledge",
-    description: "polarity='negative' なのに type='procedure' に設定されている Knowledge が存在します。",
-    impact: "コンパイル時に回避指示（guardrails）ではなく、通常の実行手順（positive procedure）としてコード生成に紛れ込むリスクがあります。",
-    action: "該当する knowledge の type を rule に変更するか、polarity / タグの整合性を確認してください。",
+    description:
+      "polarity='negative' なのに type='procedure' に設定されている Knowledge が存在します。",
+    impact:
+      "コンパイル時に回避指示（guardrails）ではなく、通常の実行手順（positive procedure）としてコード生成に紛れ込むリスクがあります。",
+    action:
+      "該当する knowledge の type を rule に変更するか、polarity / タグの整合性を確認してください。",
   },
   HITL_BACKLOG_QUERY_FAILED: {
     label: "HITL backlog 集計失敗",

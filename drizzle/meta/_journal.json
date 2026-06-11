@@ -428,6 +428,13 @@
       "when": 1781162246293,
       "tag": "0060_add_negative_knowledge",
       "breakpoints": true
+    },
+    {
+      "idx": 61,
+      "version": "7",
+      "when": 1781196800000,
+      "tag": "0062_drop_session_memos",
+      "breakpoints": true
     }
   ]
 }

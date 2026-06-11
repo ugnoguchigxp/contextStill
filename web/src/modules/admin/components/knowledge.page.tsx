@@ -168,7 +168,9 @@ export function KnowledgePage() {
   const [changeTypesInput, setChangeTypesInput] = useState("");
   const [domainsInput, setDomainsInput] = useState("");
   const [intentTagsInput, setIntentTagsInput] = useState("");
-  const [polarityFilter, setPolarityFilter] = useState<"all" | "positive" | "negative" | "neutral">("all");
+  const [polarityFilter, setPolarityFilter] = useState<"all" | "positive" | "negative" | "neutral">(
+    "all",
+  );
   const [intentTagsSearchInput, setIntentTagsSearchInput] = useState("");
   const [submittedIntentTags, setSubmittedIntentTags] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -217,7 +219,12 @@ export function KnowledgePage() {
         status: serverStatusFilter,
         query: serverSearchQuery,
         polarities: polarityFilter !== "all" ? [polarityFilter] : undefined,
-        intentTags: submittedIntentTags ? submittedIntentTags.split(",").map((t) => t.trim()).filter(Boolean) : undefined,
+        intentTags: submittedIntentTags
+          ? submittedIntentTags
+              .split(",")
+              .map((t) => t.trim())
+              .filter(Boolean)
+          : undefined,
         displayFilter: displayFilter !== "all" ? displayFilter : undefined,
         minQuality: minQuality > 0 ? minQuality : undefined,
         sortBy: serverSort.id,
@@ -231,7 +238,12 @@ export function KnowledgePage() {
         status: serverStatusFilter,
         query: serverSearchQuery || undefined,
         polarities: polarityFilter !== "all" ? [polarityFilter] : undefined,
-        intentTags: submittedIntentTags ? submittedIntentTags.split(",").map((t) => t.trim()).filter(Boolean) : undefined,
+        intentTags: submittedIntentTags
+          ? submittedIntentTags
+              .split(",")
+              .map((t) => t.trim())
+              .filter(Boolean)
+          : undefined,
         displayFilter: displayFilter !== "all" ? displayFilter : undefined,
         minQuality: minQuality > 0 ? minQuality : undefined,
         sortBy: serverSort.id,
@@ -585,7 +597,10 @@ export function KnowledgePage() {
                     negative
                   </Badge>
                 ) : item.polarity === "neutral" ? (
-                  <Badge variant="outline" className="text-[10px] uppercase font-bold border-amber-500 text-amber-500">
+                  <Badge
+                    variant="outline"
+                    className="text-[10px] uppercase font-bold border-amber-500 text-amber-500"
+                  >
                     neutral
                   </Badge>
                 ) : (
@@ -594,7 +609,11 @@ export function KnowledgePage() {
                   </Badge>
                 )}
                 {item.intentTags?.map((tag) => (
-                  <Badge key={`${item.id}-intent-${tag}`} variant="warning" className="text-[10px] bg-amber-100 border-amber-300 text-amber-800">
+                  <Badge
+                    key={`${item.id}-intent-${tag}`}
+                    variant="warning"
+                    className="text-[10px] bg-amber-100 border-amber-300 text-amber-800"
+                  >
                     {tag}
                   </Badge>
                 ))}

@@ -2,7 +2,12 @@ import { and, asc, eq, inArray, sql } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { knowledgeTagDefinitions } from "../../db/schema.js";
 
-export type KnowledgeTagKind = "technology" | "change_type" | "retrieval_mode" | "domain" | "intent";
+export type KnowledgeTagKind =
+  | "technology"
+  | "change_type"
+  | "retrieval_mode"
+  | "domain"
+  | "intent";
 export type KnowledgeTagStatus = "active" | "draft" | "deprecated";
 
 export type KnowledgeTagDefinition = {
@@ -27,7 +32,13 @@ function asStringArray(value: unknown): string[] {
 }
 
 function normalizeKind(value: string): KnowledgeTagKind {
-  if (value === "change_type" || value === "retrieval_mode" || value === "domain" || value === "intent") return value;
+  if (
+    value === "change_type" ||
+    value === "retrieval_mode" ||
+    value === "domain" ||
+    value === "intent"
+  )
+    return value;
   return "technology";
 }
 
