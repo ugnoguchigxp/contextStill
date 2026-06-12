@@ -236,11 +236,11 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     severity: "warning",
     area: "Knowledge",
     description:
-      "polarity が negative なのに、関連する origin link も source evidence も登録されていません。",
+      "polarity が negative なのに、関連する origin link、source evidence、legacy sourceDocumentUri のいずれも登録されていません。",
     impact:
-      "ネガティブな指示（回避・確認手順）の背景や根拠（修正された課題、バグ、source evidence など）が追跡できなくなります。",
+      "ネガティブな指示（回避・確認手順）の背景や根拠（修正された課題、バグ、source evidence、legacy metadata など）が追跡できなくなります。",
     action:
-      "該当する negative knowledge に origin link または source evidence を紐付けるか、不要な項目を整理してください。",
+      "該当する negative knowledge に origin link、source evidence、sourceDocumentUri のいずれかを紐付けるか、不要な項目を整理してください。",
   },
   KNOWLEDGE_NEGATIVE_AS_POSITIVE: {
     label: "negative knowledge が positive procedure として配置されている",

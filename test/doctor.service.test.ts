@@ -508,5 +508,6 @@ describe("Doctor Service", () => {
       .join("\n");
     expect(executedSql).toContain("knowledge_origin_links");
     expect(executedSql).toContain("knowledge_source_links");
+    expect(executedSql).toContain("sourceDocumentUri");
   });
 });

@@ -283,6 +283,7 @@ export async function inspectDatabase({
         where polarity = 'negative'
           and id not in (select knowledge_id from knowledge_origin_links)
           and id not in (select knowledge_id from knowledge_source_links)
+          and nullif(metadata ->> 'sourceDocumentUri', '') is null
       `);
       const negativeWithoutOriginCount = Number(
         (negativeWithoutOriginResult.rows as Array<{ count?: number }>)[0]?.count ?? 0,
