@@ -14,6 +14,8 @@ async function main(): Promise<void> {
         importedFiles: result.importedFiles,
         importedSources: result.importedSources,
         importedKnowledge: result.importedKnowledge,
+        enqueuedFindingJobs: result.enqueuedFindingJobs,
+        skippedFindingJobs: result.skippedFindingJobs,
         skippedFiles: result.skippedFiles,
         removedSources: result.removedSources,
       },

@@ -12,6 +12,9 @@ import {
 } from "../src/modules/llm/agentic-llm.service.js";
 
 vi.mock("../src/db/index.js", () => ({
+  db: {
+    transaction: vi.fn(),
+  },
   getDb: vi.fn(),
 }));
 vi.mock("../src/modules/audit/audit-log.service.js", () => ({

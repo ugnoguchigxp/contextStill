@@ -1,7 +1,7 @@
 import { drizzle } from "drizzle-orm/node-postgres";
 import pkg from "pg";
 import { groupedConfig } from "../config.js";
-import { readProjectEnv } from "../project-identity.js";
+import { projectIdentity, readProjectEnv } from "../project-identity.js";
 import * as schema from "./schema.js";
 
 const { Pool } = pkg;
@@ -45,11 +45,21 @@ function assertSafeTestDatabase(databaseUrl: string): void {
   );
 }
 
+function resolveApplicationName(): string {
+  const entrypoint =
+    process.argv[1]
+      ?.split("/")
+      .at(-1)
+      ?.replace(/\.[cm]?[tj]sx?$/, "") || "process";
+  return `${projectIdentity.packageName}:${entrypoint}:${process.pid}`.slice(0, 63);
+}
+
 function ensureDatabase(): Database {
   if (!globalForDb.pool) {
     assertSafeTestDatabase(groupedConfig.database.url);
     globalForDb.pool = new Pool({
       connectionString: groupedConfig.database.url,
+      application_name: resolveApplicationName(),
       max: groupedConfig.database.poolMax,
       idleTimeoutMillis: groupedConfig.database.idleTimeoutMillis,
       connectionTimeoutMillis: groupedConfig.database.connectionTimeoutMillis,

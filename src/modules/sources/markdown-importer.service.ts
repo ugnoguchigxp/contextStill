@@ -1,12 +1,16 @@
 import { readFile, readdir } from "node:fs/promises";
 import path from "node:path";
+import { groupedConfig } from "../../config.js";
 import { normalizeRepoKey, normalizeRepoPath } from "../context-compiler/query-context.js";
+import { enqueueFindingJob, findFindingJob } from "../queue/core/index.js";
 import { deleteStaleSourcesForRoot, upsertSourceDocument } from "./source.repository.js";
 
 type MarkdownImportResult = {
   importedFiles: number;
   importedSources: number;
   importedKnowledge: number;
+  enqueuedFindingJobs: number;
+  skippedFindingJobs: number;
   skippedFiles: number;
   removedSources: number;
   files: Array<{ path: string; sourceId: string }>;
@@ -49,6 +53,18 @@ function firstMarkdownHeading(body: string): string | null {
   return null;
 }
 
+function toPosixPath(value: string): string {
+  return value.split(path.sep).join("/");
+}
+
+function wikiTargetKeyForFile(filePath: string): string | null {
+  const readRoot = path.resolve(groupedConfig.readFile.root);
+  const absolutePath = path.resolve(filePath);
+  const relative = path.relative(readRoot, absolutePath);
+  if (!relative || relative.startsWith("..") || path.isAbsolute(relative)) return null;
+  return toPosixPath(relative);
+}
+
 export async function collectMarkdownFiles(rootDir: string): Promise<string[]> {
   const entries = await readdir(rootDir, { recursive: true, withFileTypes: true });
   const files: string[] = [];
@@ -68,6 +84,8 @@ export async function importMarkdownDirectory(rootDir: string): Promise<Markdown
     importedFiles: 0,
     importedSources: 0,
     importedKnowledge: 0,
+    enqueuedFindingJobs: 0,
+    skippedFindingJobs: 0,
     skippedFiles: 0,
     removedSources: 0,
     files: [],
@@ -102,6 +120,46 @@ export async function importMarkdownDirectory(rootDir: string): Promise<Markdown
     results.importedFiles += 1;
     results.importedSources += 1;
     results.files.push({ path: filePath, sourceId });
+
+    const targetKey = wikiTargetKeyForFile(filePath);
+    if (!targetKey) {
+      results.skippedFindingJobs += 1;
+      continue;
+    }
+
+    const existingFindingJob = await findFindingJob({
+      inputKind: "source_target",
+      sourceKind: "wiki_file",
+      sourceKey: targetKey,
+    });
+    if (existingFindingJob) {
+      results.skippedFindingJobs += 1;
+      continue;
+    }
+
+    const findingJob = await enqueueFindingJob({
+      inputKind: "source_target",
+      sourceKind: "wiki_file",
+      sourceKey: targetKey,
+      sourceUri: path.resolve(filePath),
+      payload: {
+        sourceType: "wiki_markdown_import",
+        importedVia: "importMarkdownDirectory",
+        sourceRootPath: normalizedRootPath,
+      },
+      metadata: {
+        sourceType: "wiki_markdown_import",
+        importedVia: "importMarkdownDirectory",
+        sourceRootPath: normalizedRootPath,
+        repoPath: workspaceRepoPath,
+        repoKey: workspaceRepoKey,
+      },
+    });
+    if (findingJob) {
+      results.enqueuedFindingJobs += 1;
+    } else {
+      results.skippedFindingJobs += 1;
+    }
   }
 
   results.removedSources = await deleteStaleSourcesForRoot({

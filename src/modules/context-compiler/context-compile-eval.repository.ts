@@ -1,6 +1,8 @@
 import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
-import { db } from "../../db/index.js";
+import { getDefaultDbSession } from "../../db/session.js";
 import { contextCompileEvals, contextCompileRuns } from "../../db/schema.js";
+
+const db = getDefaultDbSession().db;
 
 export type CompileEvalRecord = {
   id: string;

@@ -1,5 +1,5 @@
 import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
-import { db } from "../../db/index.js";
+import { getDefaultDbSession } from "../../db/session.js";
 import {
   contextCompileCandidateTraces,
   contextCompileRuns,
@@ -36,6 +36,8 @@ import {
   normalizeRunStatus,
   normalizeStringArray,
 } from "./context-compiler.repository.utils.js";
+
+const db = getDefaultDbSession().db;
 
 export async function insertCompileRun(params: {
   goal: string;

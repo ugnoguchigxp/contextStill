@@ -20,7 +20,7 @@ services:
       - '-c'
       - 'maintenance_work_mem=128MB'
       - '-c'
-      - 'max_connections=20'
+      - 'max_connections=80'
 
 volumes:
   context_still_pgdata:

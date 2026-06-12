@@ -1,6 +1,8 @@
 import { and, desc, eq, ne } from "drizzle-orm";
-import { db } from "../../db/index.js";
+import { getDefaultDbSession } from "../../db/session.js";
 import { contextCompileTaskTraces } from "../../db/schema.js";
+
+const db = getDefaultDbSession().db;
 
 export type ContextCompileTaskTraceEmbeddingStatus =
   | "facets_only"
