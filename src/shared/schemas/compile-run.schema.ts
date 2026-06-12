@@ -80,7 +80,7 @@ export const compileRunKnowledgeSignalSchema = z.object({
   knowledgeId: z.string(),
   rawId: z.string(),
   itemKind: z.enum(["rule", "procedure"]),
-  section: z.enum(["rules", "procedures"]),
+  section: z.enum(["rules", "procedures", "guardrails"]),
   title: z.string(),
   score: z.number(),
   rankingReason: z.string(),

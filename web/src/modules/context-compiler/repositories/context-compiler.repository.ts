@@ -90,7 +90,7 @@ export type CompileRunKnowledgeSignal = {
   knowledgeId: string;
   rawId: string;
   itemKind: "rule" | "procedure";
-  section: "rules" | "procedures";
+  section: "rules" | "procedures" | "guardrails";
   title: string;
   score: number;
   rankingReason: string;

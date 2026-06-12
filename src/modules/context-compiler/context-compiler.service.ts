@@ -35,6 +35,7 @@ import {
   insertCompileRun,
   insertContextCompileCandidateTraces,
   insertContextPackItems,
+  updateCompileRunFailure,
   updateCompileRunSnapshot,
 } from "./context-compiler.repository.js";
 import { composeContextResponse } from "./context-response-composer.service.js";
@@ -373,6 +374,20 @@ function buildInputFacets(params: {
 async function updateCompileRunSnapshotSafe(runId: string, pack: ContextPack): Promise<boolean> {
   try {
     await updateCompileRunSnapshot(runId, pack);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+async function updateCompileRunFailureSafe(params: {
+  runId: string;
+  degradedReasons: string[];
+  durationMs: number;
+  pack: ContextPack;
+}): Promise<boolean> {
+  try {
+    await updateCompileRunFailure(params);
     return true;
   } catch {
     return false;
@@ -1239,24 +1254,115 @@ export async function compileContextPack(
     ? [...new Set(finalKnowledge.map((item) => item.id))]
     : [];
 
-  const [candidateTracePersistResult] = await Promise.all([
-    persistCandidateTraceRows({
+  let candidateTracePersistResult: Awaited<ReturnType<typeof persistCandidateTraceRows>>;
+  try {
+    [candidateTracePersistResult] = await Promise.all([
+      persistCandidateTraceRows({
+        runId,
+        rows: candidateTraceRows,
+        traceLimit: candidateTraceLimit,
+      }),
+      insertContextPackItems(
+        runId,
+        selectedPackItems.map((item) => ({
+          itemKind: item.itemKind,
+          itemId: item.itemId,
+          section: item.section,
+          score: item.score,
+          rankingReason: item.rankingReason,
+          sourceRefs: item.sourceRefs,
+        })),
+      ),
+    ]);
+  } catch (error) {
+    const failureReasons = [...new Set([...degradedReasons, "CONTEXT_PACK_PERSIST_FAILED"])];
+    const failedDurationMs = Math.max(0, Date.now() - compileStartedAt);
+    const failedPack = contextPackSchema.parse({
       runId,
-      rows: candidateTraceRows,
-      traceLimit: candidateTraceLimit,
-    }),
-    insertContextPackItems(
+      goal: input.goal,
+      retrievalMode,
+      status: "failed",
+      minimalTasks,
+      rules: budgetedRules.items,
+      procedures: budgetedProcedures.items,
+      guardrails: budgetedGuardrails.items,
+      warnings: [],
+      sourceRefs:
+        sourceRefsCandidate.length > 0
+          ? sourceRefsCandidate
+          : [buildFallbackSourceRef({ runId, retrievalMode, degradedReasons: failureReasons })],
+      diagnostics: {
+        degradedReasons: failureReasons,
+        retrievalStats: {
+          knowledge: {
+            ...positiveKnowledge.stats,
+            textHitCount:
+              positiveKnowledge.stats.textHitCount + negativeKnowledge.stats.textHitCount,
+            vectorHitCount:
+              positiveKnowledge.stats.vectorHitCount + negativeKnowledge.stats.vectorHitCount,
+            mergedCount: positiveKnowledge.stats.mergedCount + negativeKnowledge.stats.mergedCount,
+          },
+          sources: sourceContext.stats,
+          tokenBudget,
+          compileDurationMs: failedDurationMs,
+          candidateTraceSavedCount: 0,
+          candidateTraceTruncated: false,
+          candidateTraceLimit,
+          candidateTraceSkippedReason: "context_pack_persist_failed",
+          duplicateSuppressedCount: duplicateSuppression.suppressedById.size,
+          duplicateSuppressedGroupCount: duplicateSuppression.groups.length,
+          landscapeIntervention: landscapeIntervention.diagnostics,
+          agenticUsed: agenticResult.agenticUsed,
+          agenticReasoning: agenticResult.reasoning,
+          reasonBuckets: {
+            blocking: [
+              ...new Set([...reasonBuckets.blockingReasons, "CONTEXT_PACK_PERSIST_FAILED"]),
+            ],
+            maintenanceWarnings: reasonBuckets.maintenanceWarnings,
+            hardFailures: [
+              ...new Set([...reasonBuckets.hardFailureReasons, "CONTEXT_PACK_PERSIST_FAILED"]),
+            ],
+          },
+          responseComposer: {
+            used: composedResponse.agenticUsed,
+            markdownKind: composedResponse.markdown === "No Content" ? "no-content" : "narrative",
+            ...(composedResponse.error ? { error: composedResponse.error } : {}),
+          },
+          persistError: error instanceof Error ? error.message : String(error),
+          suggestedNextCalls: [...new Set([...suggestedNextCalls, "doctor"])],
+        },
+        inputFacets,
+      },
+    });
+    const failedPackWithMarkdown = attachOutputMarkdownToPack(failedPack, "No Content");
+    await updateCompileRunFailureSafe({
       runId,
-      selectedPackItems.map((item) => ({
-        itemKind: item.itemKind,
-        itemId: item.itemId,
-        section: item.section,
-        score: item.score,
-        rankingReason: item.rankingReason,
-        sourceRefs: item.sourceRefs,
-      })),
-    ),
-  ]);
+      degradedReasons: failureReasons,
+      durationMs: failedDurationMs,
+      pack: failedPackWithMarkdown,
+    });
+    await recordAuditLogSafe({
+      eventType: auditEventTypes.contextCompileRun,
+      actor: "agent",
+      payload: {
+        runId,
+        goal: input.goal,
+        retrievalMode,
+        status: "failed",
+        degradedReasons: failureReasons,
+        tokenBudget,
+        compileDurationMs: failedDurationMs,
+        source: options?.source ?? "unknown",
+        selectedCounts: {
+          rules: budgetedRules.items.length,
+          procedures: budgetedProcedures.items.length,
+          guardrails: budgetedGuardrails.items.length,
+        },
+        persistError: error instanceof Error ? error.message : String(error),
+      },
+    });
+    throw error;
+  }
   await recordKnowledgeCompileSelectionSafe({
     runId,
     selectedKnowledgeIds,

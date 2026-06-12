@@ -199,6 +199,32 @@ describe("Shared Schemas", () => {
     );
   });
 
+  test("compileRunKnowledgeSignalSchema accepts guardrail sections", async () => {
+    const { compileRunKnowledgeSignalSchema } = await import(
+      "../src/shared/schemas/compile-run.schema.ts"
+    );
+
+    expect(
+      compileRunKnowledgeSignalSchema.parse({
+        knowledgeId: "g1",
+        rawId: "knowledge:g1",
+        itemKind: "rule",
+        section: "guardrails",
+        title: "Guardrail Rule",
+        score: 0.95,
+        rankingReason: "ranked",
+        autoVerdict: null,
+        autoActor: null,
+        autoReason: null,
+        effectiveVerdict: null,
+        effectiveActor: null,
+        effectiveReason: null,
+        hasUserOverride: false,
+        updatedAt: null,
+      }),
+    ).toEqual(expect.objectContaining({ section: "guardrails" }));
+  });
+
   test("recordVibeMemoryInputSchema transforms and refines diffs", () => {
     const input = {
       sessionId: "s1",

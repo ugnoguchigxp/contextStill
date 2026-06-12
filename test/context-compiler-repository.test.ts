@@ -393,6 +393,60 @@ describe("context-compiler repository", () => {
       expect(result?.knowledgeSignals[0]?.knowledgeId).toBe("i1");
       expect(result?.knowledgeSignals[0]?.title).toBe("Dedup Rule");
     });
+
+    test("keeps guardrail knowledge signals with guardrail titles", async () => {
+      const mockRun = {
+        id: validPack.runId,
+        goal: validPack.goal,
+        retrievalMode: validPack.retrievalMode,
+        status: validPack.status,
+        degradedReasons: [],
+        durationMs: 100,
+        source: "ui",
+        createdAt: new Date("2026-05-15T00:00:00.000Z"),
+        tokenBudget: 5000,
+        input: { goal: validPack.goal, changeTypes: ["review"] },
+        packSnapshot: {
+          ...validPack,
+          guardrails: [
+            {
+              id: "knowledge:g1",
+              itemKind: "rule",
+              itemId: "g1",
+              section: "guardrails",
+              title: "Guardrail Rule",
+              content: "Avoid unsafe flow",
+              score: 0.95,
+              rankingReason: "ranked",
+              sourceRefs: [],
+            },
+          ],
+        },
+      };
+      const mockItems = [
+        {
+          itemKind: "rule",
+          itemId: "g1",
+          section: "guardrails",
+          score: 95,
+          rankingReason: "guardrail score",
+          sourceRefs: ["s1"],
+        },
+      ];
+
+      (db.select as any)
+        .mockReturnValueOnce(createSelectChain({ limitResult: [mockRun] }))
+        .mockReturnValueOnce(createSelectChain({ orderByResult: mockItems }))
+        .mockReturnValueOnce(createSelectChain({ orderByResult: [] }))
+        .mockReturnValueOnce(createSelectChain({ orderByResult: [] }))
+        .mockReturnValueOnce(createSelectChain({ whereResult: [] }));
+
+      const result = await getCompileRunDetail(validPack.runId);
+
+      expect(result?.knowledgeSignals).toHaveLength(1);
+      expect(result?.knowledgeSignals[0]?.section).toBe("guardrails");
+      expect(result?.knowledgeSignals[0]?.title).toBe("Guardrail Rule");
+    });
   });
 
   describe("getCompileFreshnessMarkers", () => {

@@ -77,6 +77,23 @@ export async function updateCompileRunSnapshot(runId: string, pack: ContextPack)
     .where(eq(contextCompileRuns.id, runId));
 }
 
+export async function updateCompileRunFailure(params: {
+  runId: string;
+  degradedReasons: string[];
+  durationMs: number;
+  pack: ContextPack;
+}): Promise<void> {
+  await db
+    .update(contextCompileRuns)
+    .set({
+      status: "failed",
+      degradedReasons: params.degradedReasons,
+      durationMs: params.durationMs,
+      packSnapshot: params.pack as unknown as Record<string, unknown>,
+    })
+    .where(eq(contextCompileRuns.id, params.runId));
+}
+
 export async function insertContextPackItems(
   runId: string,
   items: Array<{
@@ -486,7 +503,7 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
     {
       knowledgeId: string;
       itemKind: "rule" | "procedure";
-      section: "rules" | "procedures";
+      section: "rules" | "procedures" | "guardrails";
       score: number;
       rankingReason: string;
     }
@@ -497,7 +514,12 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
     selectedKnowledgeRowsMap.set(row.itemId, {
       knowledgeId: row.itemId,
       itemKind: row.itemKind,
-      section: row.section === "procedures" ? "procedures" : "rules",
+      section:
+        row.section === "guardrails"
+          ? "guardrails"
+          : row.section === "procedures"
+            ? "procedures"
+            : "rules",
       score: row.score,
       rankingReason: row.rankingReason,
     });
@@ -505,7 +527,11 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
   const selectedKnowledgeRows = [...selectedKnowledgeRowsMap.values()];
 
   const packTitleById = new Map<string, string>();
-  for (const item of [...(packSnapshot?.rules ?? []), ...(packSnapshot?.procedures ?? [])]) {
+  for (const item of [
+    ...(packSnapshot?.rules ?? []),
+    ...(packSnapshot?.procedures ?? []),
+    ...(packSnapshot?.guardrails ?? []),
+  ]) {
     if (item.itemKind !== "rule" && item.itemKind !== "procedure") continue;
     packTitleById.set(item.itemId, item.title);
   }

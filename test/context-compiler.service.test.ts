@@ -6,6 +6,7 @@ import {
   insertCompileRun,
   insertContextCompileCandidateTraces,
   insertContextPackItems,
+  updateCompileRunFailure,
   updateCompileRunSnapshot,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
@@ -54,6 +55,7 @@ describe("Context Compiler Service", () => {
     vi.mocked(insertCompileRun).mockResolvedValue("550e8400-e29b-41d4-a716-446655440000");
     vi.mocked(insertContextPackItems).mockResolvedValue();
     vi.mocked(insertContextCompileCandidateTraces).mockResolvedValue();
+    vi.mocked(updateCompileRunFailure).mockResolvedValue();
     vi.mocked(updateCompileRunSnapshot).mockResolvedValue();
     vi.mocked(recordCompileRunKnowledgeUsageSignals).mockResolvedValue({
       savedCount: 0,
@@ -675,6 +677,58 @@ describe("Context Compiler Service", () => {
     const { pack } = await compileContextPack({ goal: "failed status test" });
     expect(pack.status).toBe("failed");
     expect(pack.diagnostics.retrievalStats.suggestedNextCalls).toContain("doctor");
+  });
+
+  test("marks persisted run as failed when pack item persistence fails", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [
+        {
+          id: "k1",
+          type: "rule",
+          status: "active",
+          title: "Rule 1",
+          body: "Body 1",
+          score: 0.9,
+          sourceRefs: [],
+          hasSourceLinks: false,
+        },
+      ],
+      degradedReasons: [],
+      stats: {} as any,
+    } as any);
+    vi.mocked(insertContextPackItems).mockRejectedValueOnce(
+      new Error("context_pack_items constraint failed"),
+    );
+
+    await expect(compileContextPack({ goal: "pack persist failure" })).rejects.toThrow(
+      "context_pack_items constraint failed",
+    );
+
+    expect(updateCompileRunFailure).toHaveBeenCalledWith(
+      expect.objectContaining({
+        runId: "550e8400-e29b-41d4-a716-446655440000",
+        degradedReasons: expect.arrayContaining(["CONTEXT_PACK_PERSIST_FAILED"]),
+        pack: expect.objectContaining({
+          status: "failed",
+          diagnostics: expect.objectContaining({
+            retrievalStats: expect.objectContaining({
+              responseComposer: expect.objectContaining({
+                outputMarkdown: "No Content",
+              }),
+            }),
+          }),
+        }),
+      }),
+    );
+    expect(recordAuditLogSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "CONTEXT_COMPILE_RUN",
+        payload: expect.objectContaining({
+          status: "failed",
+          degradedReasons: expect.arrayContaining(["CONTEXT_PACK_PERSIST_FAILED"]),
+        }),
+      }),
+    );
   });
 
   test("recommends next calls based on degraded reasons", async () => {
