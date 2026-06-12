@@ -26,6 +26,15 @@ vi.mock("../src/modules/context-compiler/context-compiler.repository.js", () => 
   listRecentCompileRuns: vi.fn(() => []),
 }));
 
+function flattenSqlChunks(value: unknown): string {
+  if (!value || typeof value !== "object") return String(value ?? "");
+  const record = value as { queryChunks?: unknown[]; value?: unknown };
+  if (Array.isArray(record.value)) return record.value.join("");
+  if ("value" in record && typeof record.value !== "object") return String(record.value);
+  if (Array.isArray(record.queryChunks)) return record.queryChunks.map(flattenSqlChunks).join("");
+  return String(value);
+}
+
 describe("Doctor Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
@@ -483,7 +492,7 @@ describe("Doctor Service", () => {
           ],
         })
         .mockResolvedValueOnce({ rows: [{ count: 2 }] }) // unknown tags count
-        .mockResolvedValueOnce({ rows: [{ count: 3 }] }) // negative without origin count
+        .mockResolvedValueOnce({ rows: [{ count: 3 }] }) // negative without provenance count
         .mockResolvedValueOnce({ rows: [{ count: 1 }] }) // negative as positive count
         .mockResolvedValueOnce({ rows: [{ count: 0 }] }), // audit_logs check count
     };
@@ -493,5 +502,11 @@ describe("Doctor Service", () => {
     expect(report.reasons).toContain("KNOWLEDGE_UNKNOWN_INTENT_TAGS");
     expect(report.reasons).toContain("KNOWLEDGE_NEGATIVE_WITHOUT_ORIGIN");
     expect(report.reasons).toContain("KNOWLEDGE_NEGATIVE_AS_POSITIVE");
+
+    const executedSql = mockDb.execute.mock.calls
+      .map(([query]) => flattenSqlChunks(query))
+      .join("\n");
+    expect(executedSql).toContain("knowledge_origin_links");
+    expect(executedSql).toContain("knowledge_source_links");
   });
 });
