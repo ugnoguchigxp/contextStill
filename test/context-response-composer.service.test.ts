@@ -371,6 +371,82 @@ describe("context response composer", () => {
     expect(chatRequest?.maxTokens).toBeGreaterThan(markdownTargetTokens);
   });
 
+  test("treats negative guardrails as negative evidence in composer SystemContext", async () => {
+    groupedConfig.agenticCompile.enabled = true;
+    mockProvider.chat
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          headings: {
+            focus: "判断フォーカス",
+            steps: "判断手順",
+            verification: "確認観点",
+            avoid: "避ける条件",
+          },
+          includeAvoidSection: true,
+          ruleQueryHints: [],
+          procedureQueryHints: [],
+          exclusionHints: [],
+          responseStyle: "narrative",
+          styleReason: "negative guardrail applies",
+          styleConfidence: 0.9,
+          candidateSufficiency: "enough",
+        }),
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          markdown: "## 判断フォーカス\n- migration verification を先に確認してから進める。",
+          usedKnowledge: [
+            {
+              id: "g1",
+              confidence: 0.91,
+              evidence: "negative guardrail applies to the migration decision",
+              outputSection: "避ける条件",
+              reason: "negative_evidence",
+            },
+          ],
+        }),
+      });
+
+    const result = await composeContextResponse({
+      input: {
+        goal: "migration verification の実行判断をする",
+      },
+      retrievalMode: "task_context",
+      rules: [],
+      procedures: [],
+      guardrails: [
+        {
+          id: "knowledge:g1",
+          itemKind: "rule",
+          itemId: "g1",
+          section: "guardrails",
+          title: "Do not skip migration verification",
+          content: "Do not proceed unless migration verification has been run.",
+          score: 0.94,
+          rankingReason: "ranked",
+          sourceRefs: [],
+        },
+      ],
+    });
+
+    expect(result.agenticUsed).toBe(true);
+    expect(result.usedKnowledge).toEqual([
+      expect.objectContaining({
+        id: "g1",
+        reason: "negative_evidence",
+      }),
+    ]);
+    const composeRequest = mockProvider.chat.mock.calls[1]?.[0];
+    const systemPrompt = composeRequest?.messages?.[0]?.content ?? "";
+    const userPrompt = composeRequest?.messages?.[1]?.content ?? "";
+    expect(systemPrompt).toContain(
+      "`negative guardrails` は参考情報ではなく、実行可否・修正条件・確認条件を制約する negative evidence として扱う。",
+    );
+    expect(systemPrompt).toContain("実行を後押しする根拠として使わず");
+    expect(userPrompt).toContain("negative guardrails:");
+    expect(userPrompt).toContain("Do not skip migration verification");
+  });
+
   test("falls back to plain markdown text when LLM outputs non-JSON content", async () => {
     groupedConfig.agenticCompile.enabled = true;
 

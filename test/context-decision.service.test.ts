@@ -281,6 +281,92 @@ describe("context-decision.service", () => {
     expect(result.decision).toBe("escalate");
   });
 
+  test("passes high-scoring negative knowledge from any coverage role as risk context to the LLM", async () => {
+    const negativeKnowledge = createDummyKnowledge({
+      id: "kb-negative",
+      polarity: "negative",
+      title: "Do not skip migration verification",
+      body: "Do not proceed unless migration verification has been run.",
+      score: 0.96,
+      confidence: 95,
+      importance: 90,
+      applicabilityScore: 35,
+    });
+    const supportKnowledge = createDummyKnowledge({
+      id: "kb-support",
+      title: "Use existing migration procedure",
+      body: "Use the existing migration procedure when changing schema code.",
+      score: 0.9,
+    });
+    mockSearchKnowledge.mockImplementation(async (params: any) => {
+      const q = params.query.toLowerCase();
+      if (q.includes("counterexample") || q.includes("failure condition")) {
+        return [negativeKnowledge];
+      }
+      if (q.includes("safe to execute") || q.includes("proceed")) {
+        return [supportKnowledge];
+      }
+      return [];
+    });
+
+    const chat = vi
+      .fn()
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          decision: "reject",
+          confidence: 84,
+          mandate: "Do not proceed before migration verification.",
+          selectedAction: null,
+          rejectedActions: ["execute"],
+          reasoningSummary:
+            "Knowledge Assessment agrees that the negative verification constraint applies.",
+          evidenceInterpretation: [
+            {
+              title: "Do not skip migration verification",
+              classification: "prohibition_or_constraint",
+              appliesToProposedAction: true,
+              effectOnDecision: "weighs against execute",
+            },
+          ],
+        }),
+      })
+      .mockResolvedValueOnce({
+        content: "判断は reject です。migration verification を先に確認してください。",
+      });
+    mockGetAgenticLlmProviders.mockResolvedValue([{ isConfigured: () => true, chat }]);
+
+    const result = await decideContext({
+      decisionPoint: "decide whether to continue migration change",
+      retrievalHints: {
+        technologies: ["typescript"],
+        changeTypes: ["migration"],
+        domains: ["database"],
+      },
+      metadata: {},
+    });
+
+    expect(result.decision).toBe("reject");
+    expect(mockInsertContextDecisionEvidenceRows).toHaveBeenCalledWith(
+      "decision-run-id-123",
+      expect.arrayContaining([
+        expect.objectContaining({
+          knowledgeId: "kb-negative",
+          role: "risk_warning",
+          summary: expect.stringContaining("Do not skip migration verification"),
+        }),
+      ]),
+    );
+    const firstPrompt = chat.mock.calls[0]?.[0]?.messages?.[1]?.content as string;
+    const firstSystemPrompt = chat.mock.calls[0]?.[0]?.messages?.[0]?.content as string;
+    expect(firstSystemPrompt).toContain(
+      "Knowledge with role=risk_warning or polarity=negative is negative evidence, not reference-only context.",
+    );
+    expect(firstSystemPrompt).toContain("it must weigh against execute");
+    expect(firstPrompt).toContain("Risk Knowledge:");
+    expect(firstPrompt).toContain("Do not skip migration verification");
+    expect(firstPrompt).toContain("Do not proceed unless migration verification has been run.");
+  });
+
   test("decideContext returns deterministic judgment when Agentic Compile Routing is disabled", async () => {
     mockResolveAgenticCompileRouting.mockReturnValueOnce({
       enabled: false,

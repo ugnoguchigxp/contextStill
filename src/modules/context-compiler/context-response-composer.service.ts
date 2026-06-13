@@ -18,6 +18,7 @@ type ComposeInput = {
   retrievalMode: RetrievalMode;
   rules: ContextPackItem[];
   procedures: ContextPackItem[];
+  guardrails?: ContextPackItem[];
 };
 
 export type ComposeUsedKnowledge = {
@@ -271,7 +272,8 @@ function routeModelForProvider(
 
 function buildFallbackCompose(params: ComposeInput, plan: ComposePlan): FallbackComposeResult {
   const { headings } = plan;
-  const allItems = [...params.rules, ...params.procedures];
+  const guardrails = params.guardrails ?? [];
+  const allItems = [...params.rules, ...params.procedures, ...guardrails];
   if (allItems.length === 0) return { markdown: "No Content", usedKnowledge: [] };
   const usedKnowledgeIds = new Set<string>();
   const trackUsed = (item: ContextPackItem) => {
@@ -326,14 +328,18 @@ function buildFallbackCompose(params: ComposeInput, plan: ComposePlan): Fallback
     }
   }
 
-  const avoidCandidates = params.procedures
+  const avoidCandidates = [...guardrails, ...params.procedures]
     .flatMap((item) => extractSectionLines(item.content, "Avoid"))
     .map((line) => normalizeLine(line))
     .filter(Boolean)
     .slice(0, 2);
   const avoidLines: string[] = [];
-  if (plan.includeAvoidSection || avoidCandidates.length > 0) {
+  if (plan.includeAvoidSection || avoidCandidates.length > 0 || guardrails.length > 0) {
     avoidLines.push("", `## ${headings.avoid}`, "");
+    for (const guardrail of guardrails.slice(0, 3)) {
+      avoidLines.push(`- ${guardrail.title}: ${firstSentence(guardrail.content, 140)}`);
+      trackUsed(guardrail);
+    }
     if (avoidCandidates.length > 0) {
       for (const item of avoidCandidates) {
         avoidLines.push(`- ${item}`);
@@ -406,6 +412,8 @@ function buildComposerSystemPrompt(maxTokens: number, plan: ComposePlan): string
     headingRule,
     styleRule,
     "- `Rules` や `Procedures` の見出しは使わない。",
+    "- `negative guardrails` は参考情報ではなく、実行可否・修正条件・確認条件を制約する negative evidence として扱う。",
+    "- negative guardrails が現在の goal に適用される場合、実行を後押しする根拠として使わず、避けること・先に確認すること・修正してから進めることとして本文に反映する。",
     "- 入力knowledgeに無い事実を追加しない。",
     `- markdown フィールドの本文は ${normalizedMaxTokens} トークン以内を目標に収める。`,
     `- ${normalizedMaxTokens} トークンを埋める必要はない。goal達成に必要な最小限だけ書く。`,
@@ -448,6 +456,9 @@ function selectPromptKnowledgeCandidates(
   };
   const rankedRules = [...params.rules].sort((a, b) => scoreItem(b) - scoreItem(a));
   const rankedProcedures = [...params.procedures].sort((a, b) => scoreItem(b) - scoreItem(a));
+  const rankedGuardrails = [...(params.guardrails ?? [])].sort(
+    (a, b) => scoreItem(b) - scoreItem(a),
+  );
   const selected: ContextPackItem[] = [];
   const pushUnique = (item: ContextPackItem) => {
     if (selected.some((picked) => picked.itemId === item.itemId)) return;
@@ -455,7 +466,8 @@ function selectPromptKnowledgeCandidates(
   };
   for (const item of rankedRules.slice(0, 4)) pushUnique(item);
   for (const item of rankedProcedures.slice(0, 4)) pushUnique(item);
-  for (const item of [...rankedRules, ...rankedProcedures]) {
+  for (const item of rankedGuardrails.slice(0, 4)) pushUnique(item);
+  for (const item of [...rankedRules, ...rankedProcedures, ...rankedGuardrails]) {
     if (selected.length >= 8) break;
     pushUnique(item);
   }
@@ -465,6 +477,7 @@ function selectPromptKnowledgeCandidates(
 function buildPlanUserPrompt(params: ComposeInput): string {
   const topRules = params.rules.slice(0, 4).map((item) => item.title);
   const topProcedures = params.procedures.slice(0, 4).map((item) => item.title);
+  const topGuardrails = (params.guardrails ?? []).slice(0, 4).map((item) => item.title);
   const lines: string[] = [
     `goal: ${normalizeLine(params.input.goal)}`,
     `retrievalMode: ${params.retrievalMode}`,
@@ -480,9 +493,13 @@ function buildPlanUserPrompt(params: ComposeInput): string {
   }
   lines.push(`ruleCandidates: ${params.rules.length}`);
   lines.push(`procedureCandidates: ${params.procedures.length}`);
+  lines.push(`guardrailCandidates: ${params.guardrails?.length ?? 0}`);
   lines.push(`topRuleTitles: ${topRules.length > 0 ? topRules.join(" | ") : "(none)"}`);
   lines.push(
     `topProcedureTitles: ${topProcedures.length > 0 ? topProcedures.join(" | ") : "(none)"}`,
+  );
+  lines.push(
+    `topGuardrailTitles: ${topGuardrails.length > 0 ? topGuardrails.join(" | ") : "(none)"}`,
   );
   lines.push("", "output requirements:");
   lines.push("- JSON only");
@@ -507,6 +524,15 @@ function buildComposerUserPrompt(params: ComposeInput, plan: ComposePlan): strin
   }
   if (params.input.domains?.length) {
     lines.push(`domains: ${params.input.domains.join(", ")}`);
+  }
+  const guardrails = params.guardrails ?? [];
+  if (guardrails.length > 0) {
+    lines.push("", "negative guardrails:");
+    for (const item of guardrails.slice(0, 4)) {
+      lines.push(`- id: ${item.itemId}`);
+      lines.push(`  title: ${item.title}`);
+      lines.push(`  summary: ${firstSentence(item.content, 180)}`);
+    }
   }
   lines.push("", "knowledge candidates:");
   for (const item of items) {
@@ -749,7 +775,7 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
   const plannerSystemPrompt = buildPlanSystemPrompt();
   const plannerUserPrompt = buildPlanUserPrompt(params);
   const selectableKnowledgeIds = new Set(
-    [...params.rules, ...params.procedures]
+    [...params.rules, ...params.procedures, ...(params.guardrails ?? [])]
       .map((item) => item.itemId.trim())
       .filter((itemId) => itemId.length > 0),
   );

@@ -554,6 +554,25 @@ function toStageRankMap(
   return map;
 }
 
+function mergeCompileRetrievalTraceEntries(
+  entries: KnowledgeRetrievalTraceEntry[],
+): KnowledgeRetrievalTraceEntry[] {
+  const bestById = new Map<string, number>();
+  for (const entry of entries) {
+    const current = bestById.get(entry.id);
+    if (typeof current !== "number" || entry.score > current) {
+      bestById.set(entry.id, entry.score);
+    }
+  }
+  return [...bestById.entries()]
+    .sort((left, right) => right[1] - left[1])
+    .map(([id, score], index) => ({
+      id,
+      score,
+      rank: index + 1,
+    }));
+}
+
 function resolveCommunityKeyFromMetadata(metadata: unknown): string | null {
   const record = asRecord(metadata);
   const direct =
@@ -1135,7 +1154,20 @@ export async function compileContextPack(
     finalKnowledge,
     duplicateSuppressedById: duplicateSuppression.suppressedById,
     selectedPackItems,
-    retrievalTrace: positiveKnowledge.trace ?? null,
+    retrievalTrace: {
+      text: mergeCompileRetrievalTraceEntries([
+        ...(positiveKnowledge.trace?.text ?? []),
+        ...(negativeKnowledge.trace?.text ?? []),
+      ]),
+      vector: mergeCompileRetrievalTraceEntries([
+        ...(positiveKnowledge.trace?.vector ?? []),
+        ...(negativeKnowledge.trace?.vector ?? []),
+      ]),
+      merged: mergeCompileRetrievalTraceEntries([
+        ...(positiveKnowledge.trace?.merged ?? []),
+        ...(negativeKnowledge.trace?.merged ?? []),
+      ]),
+    },
     agenticUsed: agenticResult.agenticUsed,
   });
   const composedResponse = await composeContextResponse({
@@ -1143,6 +1175,7 @@ export async function compileContextPack(
     retrievalMode,
     rules: budgetedRules.items,
     procedures: budgetedProcedures.items,
+    guardrails: budgetedGuardrails.items,
   });
   if (composedResponse.error) {
     pushUnique(degradedReasons, "CONTEXT_RESPONSE_COMPOSE_FAILED");

@@ -628,6 +628,94 @@ describe("Context Compiler Service", () => {
     expect(pack.diagnostics.degradedReasons).toContain("NO_RELEVANT_CONTEXT");
   });
 
+  test("passes high-scoring negative knowledge to guardrails and response composer", async () => {
+    vi.mocked(retrieveKnowledge)
+      .mockResolvedValueOnce({
+        items: [],
+        degradedReasons: [],
+        trace: { text: [], vector: [], merged: [] },
+        stats: {
+          textHitCount: 0,
+          vectorHitCount: 0,
+          mergedCount: 0,
+          textFailed: false,
+          vectorFailed: false,
+          embeddingStatus: "generated",
+          scopedSearch: false,
+          repoScopeFallbackUsed: false,
+          queryText: "goal",
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: "k-negative",
+            type: "rule",
+            status: "active",
+            polarity: "negative",
+            title: "Do not skip migration verification",
+            body: "Do not proceed unless migration verification has been run.",
+            score: 0.94,
+            confidence: 92,
+            importance: 88,
+            dynamicScore: 80,
+            decayFactor: 1,
+            applicabilityScore: 35,
+            sourceRefs: [],
+            hasSourceLinks: false,
+          },
+        ],
+        degradedReasons: [],
+        trace: {
+          text: [{ id: "k-negative", rank: 1, score: 0.94 }],
+          vector: [],
+          merged: [{ id: "k-negative", rank: 1, score: 0.94 }],
+        },
+        stats: {
+          textHitCount: 1,
+          vectorHitCount: 0,
+          mergedCount: 1,
+          textFailed: false,
+          vectorFailed: false,
+          embeddingStatus: "generated",
+          scopedSearch: false,
+          repoScopeFallbackUsed: false,
+          queryText: "goal",
+        },
+      } as any);
+
+    const { pack } = await compileContextPack({ goal: "migration verification decision" });
+
+    expect(retrieveKnowledge).toHaveBeenCalledWith(
+      expect.anything(),
+      expect.objectContaining({ polarities: ["negative"] }),
+    );
+    expect(pack.guardrails).toEqual([
+      expect.objectContaining({
+        itemId: "k-negative",
+        section: "guardrails",
+      }),
+    ]);
+    expect(composeContextResponse).toHaveBeenCalledWith(
+      expect.objectContaining({
+        guardrails: expect.arrayContaining([
+          expect.objectContaining({
+            itemId: "k-negative",
+            title: "Do not skip migration verification",
+          }),
+        ]),
+      }),
+    );
+    const traceRows = vi.mocked(insertContextCompileCandidateTraces).mock.calls[0]?.[1] ?? [];
+    expect(traceRows).toContainEqual(
+      expect.objectContaining({
+        itemId: "k-negative",
+        textScore: 0.94,
+        selected: true,
+      }),
+    );
+  });
+
   test("records compile usage signals error handling and records audit log", async () => {
     vi.mocked(retrieveKnowledge).mockResolvedValue({
       items: [
