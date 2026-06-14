@@ -36,11 +36,6 @@ ALTER TABLE "vibe_memories" ADD COLUMN "confidence" text;--> statement-breakpoin
 ALTER TABLE "vibe_memories" ADD COLUMN "evidence_status" text;--> statement-breakpoint
 ALTER TABLE "vibe_memories" ADD COLUMN "actor_id" text;--> statement-breakpoint
 ALTER TABLE "vibe_memories" ADD COLUMN "ttl_at" timestamp;--> statement-breakpoint
-ALTER TABLE "context_compile_evals" ADD COLUMN "relevance" integer;--> statement-breakpoint
-ALTER TABLE "context_compile_evals" ADD COLUMN "actionability" integer;--> statement-breakpoint
-ALTER TABLE "context_compile_evals" ADD COLUMN "coverage" integer;--> statement-breakpoint
-ALTER TABLE "context_compile_evals" ADD COLUMN "noise" integer;--> statement-breakpoint
-ALTER TABLE "context_compile_evals" ADD COLUMN "specificity" integer;--> statement-breakpoint
 ALTER TABLE "vibe_memory_marks" ADD CONSTRAINT "vibe_memory_marks_goal_id_vibe_goals_id_fk" FOREIGN KEY ("goal_id") REFERENCES "public"."vibe_goals"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 ALTER TABLE "vibe_memory_marks" ADD CONSTRAINT "vibe_memory_marks_target_memory_id_vibe_memories_id_fk" FOREIGN KEY ("target_memory_id") REFERENCES "public"."vibe_memories"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "vibe_memory_marks_goal_id_idx" ON "vibe_memory_marks" USING btree ("goal_id");--> statement-breakpoint
@@ -50,9 +45,4 @@ ALTER TABLE "vibe_memories" ADD CONSTRAINT "vibe_memories_goal_id_vibe_goals_id_
 ALTER TABLE "vibe_memories" ADD CONSTRAINT "vibe_memories_parent_id_vibe_memories_id_fk" FOREIGN KEY ("parent_id") REFERENCES "public"."vibe_memories"("id") ON DELETE cascade ON UPDATE no action;--> statement-breakpoint
 CREATE INDEX "vibe_memories_goal_id_idx" ON "vibe_memories" USING btree ("goal_id");--> statement-breakpoint
 CREATE INDEX "vibe_memories_parent_id_idx" ON "vibe_memories" USING btree ("parent_id");--> statement-breakpoint
-CREATE INDEX "vibe_memories_intent_idx" ON "vibe_memories" USING btree ("intent");--> statement-breakpoint
-ALTER TABLE "context_compile_evals" ADD CONSTRAINT "context_compile_evals_relevance_range_check" CHECK ("context_compile_evals"."relevance" is null or ("context_compile_evals"."relevance" >= 0 and "context_compile_evals"."relevance" <= 100));--> statement-breakpoint
-ALTER TABLE "context_compile_evals" ADD CONSTRAINT "context_compile_evals_actionability_range_check" CHECK ("context_compile_evals"."actionability" is null or ("context_compile_evals"."actionability" >= 0 and "context_compile_evals"."actionability" <= 100));--> statement-breakpoint
-ALTER TABLE "context_compile_evals" ADD CONSTRAINT "context_compile_evals_coverage_range_check" CHECK ("context_compile_evals"."coverage" is null or ("context_compile_evals"."coverage" >= 0 and "context_compile_evals"."coverage" <= 100));--> statement-breakpoint
-ALTER TABLE "context_compile_evals" ADD CONSTRAINT "context_compile_evals_noise_range_check" CHECK ("context_compile_evals"."noise" is null or ("context_compile_evals"."noise" >= 0 and "context_compile_evals"."noise" <= 100));--> statement-breakpoint
-ALTER TABLE "context_compile_evals" ADD CONSTRAINT "context_compile_evals_specificity_range_check" CHECK ("context_compile_evals"."specificity" is null or ("context_compile_evals"."specificity" >= 0 and "context_compile_evals"."specificity" <= 100));
+CREATE INDEX "vibe_memories_intent_idx" ON "vibe_memories" USING btree ("intent");

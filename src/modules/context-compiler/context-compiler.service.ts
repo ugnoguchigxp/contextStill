@@ -371,6 +371,15 @@ function buildInputFacets(params: {
   };
 }
 
+function filterBenignNegativeKnowledgeReasons(reasons: string[]): string[] {
+  const benignReasons = new Set([
+    "NO_ACTIVE_KNOWLEDGE_MATCH",
+    "KNOWLEDGE_REPO_SCOPE_FALLBACK",
+    "KNOWLEDGE_APPLIES_TO_FALLBACK",
+  ]);
+  return reasons.filter((reason) => !benignReasons.has(reason));
+}
+
 async function updateCompileRunSnapshotSafe(runId: string, pack: ContextPack): Promise<boolean> {
   try {
     await updateCompileRunSnapshot(runId, pack);
@@ -858,11 +867,12 @@ export async function compileContextPack(
 }> {
   const compileStartedAt = Date.now();
   const input = compileInputSchema.parse(rawInput);
-  const retrievalMode = deriveRetrievalModeFromChangeTypes(input.changeTypes);
+  const retrievalMode =
+    input.retrievalMode ?? deriveRetrievalModeFromChangeTypes(input.changeTypes);
   const workspaceRepoPath = normalizeRepoPath(process.cwd()) ?? process.cwd();
   const workspaceRepoKey =
     normalizeRepoKey(workspaceRepoPath) ?? normalizeRepoKey(process.cwd()) ?? null;
-  const tokenBudget = groupedConfig.compile.defaultTokenBudget;
+  const tokenBudget = input.tokenBudget ?? groupedConfig.compile.defaultTokenBudget;
   const candidateTraceLimit = groupedConfig.compile.candidateTraceLimit;
 
   const normalizedApplicability = await normalizeKnowledgeApplicability({
@@ -905,9 +915,16 @@ export async function compileContextPack(
       repoPath: workspaceRepoPath,
       input: {
         goal: input.goal,
+        ...(input.intent ? { intent: input.intent } : {}),
+        ...(input.retrievalMode ? { retrievalMode: input.retrievalMode } : {}),
         ...(input.changeTypes ? { changeTypes: input.changeTypes } : {}),
         ...(input.technologies ? { technologies: input.technologies } : {}),
         ...(input.domains ? { domains: input.domains } : {}),
+        ...(input.files ? { files: input.files } : {}),
+        ...(input.repoPath ? { repoPath: input.repoPath } : {}),
+        ...(input.repoKey ? { repoKey: input.repoKey } : {}),
+        ...(input.includeDraft !== undefined ? { includeDraft: input.includeDraft } : {}),
+        ...(input.tokenBudget ? { tokenBudget: input.tokenBudget } : {}),
       },
       retrievalMode,
       status: "degraded",
@@ -1016,7 +1033,7 @@ export async function compileContextPack(
 
   const degradedReasons = [
     ...positiveKnowledge.degradedReasons,
-    ...negativeKnowledge.degradedReasons,
+    ...filterBenignNegativeKnowledgeReasons(negativeKnowledge.degradedReasons),
     ...sourceContext.degradedReasons,
   ];
 
@@ -1237,9 +1254,16 @@ export async function compileContextPack(
     repoPath: workspaceRepoPath,
     input: {
       goal: input.goal,
+      ...(input.intent ? { intent: input.intent } : {}),
+      ...(input.retrievalMode ? { retrievalMode: input.retrievalMode } : {}),
       ...(input.changeTypes ? { changeTypes: input.changeTypes } : {}),
       ...(input.technologies ? { technologies: input.technologies } : {}),
       ...(input.domains ? { domains: input.domains } : {}),
+      ...(input.files ? { files: input.files } : {}),
+      ...(input.repoPath ? { repoPath: input.repoPath } : {}),
+      ...(input.repoKey ? { repoKey: input.repoKey } : {}),
+      ...(input.includeDraft !== undefined ? { includeDraft: input.includeDraft } : {}),
+      ...(input.tokenBudget ? { tokenBudget: input.tokenBudget } : {}),
     },
     retrievalMode,
     status,
@@ -1402,7 +1426,7 @@ export async function compileContextPack(
     agenticAcceptedKnowledgeIds,
   });
 
-  void recordCompileRunKnowledgeUsageSignalsSafe({
+  await recordCompileRunKnowledgeUsageSignalsSafe({
     runId,
     selectedKnowledgeIds,
     selectedRankMap,

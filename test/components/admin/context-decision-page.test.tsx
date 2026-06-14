@@ -128,8 +128,38 @@ const mockDetail = {
         },
         reason: "Matches previous executions",
       },
+      reliabilityGate: {
+        status: "constrained",
+        originalDecision: "execute",
+        finalDecision: "revise_and_execute",
+        confidenceCap: 68,
+        appliedRules: [
+          {
+            key: "weak_coverage_requires_revision",
+            severity: "warning",
+            message: "Knowledge coverage is weak.",
+          },
+        ],
+        riskEvidence: {
+          count: 1,
+          forcedDisplay: true,
+          titles: ["Check risk before build"],
+        },
+        badFeedback: {
+          count: 1,
+          strongCount: 1,
+          averageConfidence: 80,
+          maxConfidence: 80,
+        },
+        evidenceCoverage: {
+          assessmentStatus: "weak_coverage",
+          supportEvidenceCount: 1,
+          riskEvidenceCount: 1,
+          knowledgeCoverage: 48,
+        },
+      },
     },
-    guardrails: { riskEvidenceCount: 0 },
+    guardrails: { riskEvidenceCount: 1 },
     unsupportedAlternatives: [],
     metadata: {},
   },
@@ -142,6 +172,17 @@ const mockDetail = {
       weightAtDecision: 90,
       summary: "Rule: Always build on green",
       sourceRefs: ["green.md"],
+      metadata: { status: "active", type: "rule" },
+      createdAt: "2026-06-10T12:00:00.000Z",
+    },
+    {
+      id: "ev-2",
+      decisionRunId: "run-1",
+      knowledgeId: "kb-risk",
+      role: "risk_warning",
+      weightAtDecision: 88,
+      summary: "Check risk before build: Run verification before build.",
+      sourceRefs: ["risk.md"],
       metadata: { status: "active", type: "rule" },
       createdAt: "2026-06-10T12:00:00.000Z",
     },
@@ -264,6 +305,10 @@ describe("ContextDecisionPage", () => {
     expect(screen.getByText("Knowledge Prior")).toBeInTheDocument();
     expect(screen.getByText("Outcome Predictor")).toBeInTheDocument();
     expect(screen.getByText("Knowledge Assessment")).toBeInTheDocument();
+    expect(screen.getByText("Reliability Gate")).toBeInTheDocument();
+    expect(screen.getByText("weak_coverage_requires_revision")).toBeInTheDocument();
+    expect(screen.getAllByText("Risk Evidence").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Check risk before build").length).toBeGreaterThan(0);
 
     // フィードバックの送信
     const goodButton = screen.getByText("Good");

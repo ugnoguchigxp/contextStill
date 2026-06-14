@@ -1,6 +1,10 @@
 import { spawnSync } from "node:child_process";
 import { afterAll, beforeAll, beforeEach, describe, expect, test } from "vitest";
 import { upsertKnowledgeFromSource } from "../src/modules/knowledge/knowledge.repository.js";
+import {
+  getRuntimeSettingsSnapshot,
+  saveRuntimeSettings,
+} from "../src/modules/settings/settings.service.js";
 import { upsertSourceDocument } from "../src/modules/sources/source.repository.js";
 import {
   closeIntegrationDb,
@@ -26,8 +30,17 @@ function parsePackJson(output: string): Record<string, unknown> {
 }
 
 describeDb("cli compile e2e", () => {
+  let originalRuntimeSettings: ReturnType<typeof getRuntimeSettingsSnapshot> | null = null;
+
   beforeAll(async () => {
     await ensureDbIntegrationReady();
+    originalRuntimeSettings = structuredClone(getRuntimeSettingsSnapshot());
+    const settings = structuredClone(originalRuntimeSettings);
+    settings.taskRouting.agenticCompile.enabled = false;
+    await saveRuntimeSettings({
+      settings,
+      updatedBy: "integration-test",
+    });
   });
 
   beforeEach(async () => {
@@ -35,6 +48,12 @@ describeDb("cli compile e2e", () => {
   });
 
   afterAll(async () => {
+    if (originalRuntimeSettings) {
+      await saveRuntimeSettings({
+        settings: originalRuntimeSettings,
+        updatedBy: "integration-test-restore",
+      });
+    }
     await closeIntegrationDb();
   });
 
@@ -56,7 +75,7 @@ describeDb("cli compile e2e", () => {
 
     const run = spawnSync(
       "bun",
-      ["run", "src/cli/compile.ts", "--goal", "cli compile goal", "--intent", "edit", "--json"],
+      ["run", "src/cli/compile.ts", "--goal", "cli compile goal", "--json"],
       {
         cwd: process.cwd(),
         env: {
@@ -79,14 +98,19 @@ describeDb("cli compile e2e", () => {
     expect(typeof parsed.diagnostics).toBe("object");
   });
 
-  test("compile accepts includeDraft/files/tokenBudget flags", async () => {
+  test("compile accepts change type, technology, and domain flags", async () => {
     await upsertKnowledgeFromSource({
-      sourceUri: "file:///cli/draft-proc.md",
+      sourceUri: "file:///cli/procedure.md",
       type: "procedure",
-      status: "draft",
+      status: "active",
       scope: "repo",
-      title: "CLI Draft Procedure",
+      title: "CLI Procedure",
       body: "draft-mode command sequence",
+      appliesTo: {
+        changeTypes: ["procedure"],
+        technologies: ["typescript"],
+        domains: ["context-compiler"],
+      },
     });
 
     const run = spawnSync(
@@ -96,14 +120,12 @@ describeDb("cli compile e2e", () => {
         "src/cli/compile.ts",
         "--goal",
         "draft-mode command sequence",
-        "--retrieval-mode",
-        "procedure_context",
-        "--include-draft",
-        "true",
-        "--file",
-        "src/modules/context-compiler/context-compiler.service.ts",
-        "--token-budget",
-        "640",
+        "--change-types",
+        "procedure",
+        "--technologies",
+        "typescript",
+        "--domains",
+        "context-compiler",
         "--json",
       ],
       {
@@ -119,18 +141,27 @@ describeDb("cli compile e2e", () => {
     expect(run.status).toBe(0);
     const parsed = parsePackJson(run.stdout) as {
       procedures?: Array<{ title?: string }>;
-      codeContext?: Array<{ itemKind?: string; content?: string }>;
-      diagnostics?: { retrievalStats?: { tokenBudget?: number } };
+      retrievalMode?: string;
+      diagnostics?: {
+        inputFacets?: {
+          requested?: {
+            changeTypes?: string[];
+            technologies?: string[];
+            domains?: string[];
+          };
+          matched?: {
+            changeTypes?: string[];
+            technologies?: string[];
+            domains?: string[];
+          };
+        };
+      };
     };
 
-    expect(parsed.procedures?.some((item) => item.title === "CLI Draft Procedure")).toBe(true);
-    expect(
-      parsed.codeContext?.some(
-        (item) =>
-          item.itemKind === "file_hint" &&
-          item.content === "src/modules/context-compiler/context-compiler.service.ts",
-      ),
-    ).toBe(true);
-    expect(parsed.diagnostics?.retrievalStats?.tokenBudget).toBe(640);
+    expect(parsed.retrievalMode).toBe("procedure_context");
+    expect(parsed.procedures?.some((item) => item.title === "CLI Procedure")).toBe(true);
+    expect(parsed.diagnostics?.inputFacets?.requested?.changeTypes).toContain("procedure");
+    expect(parsed.diagnostics?.inputFacets?.requested?.technologies).toContain("typescript");
+    expect(parsed.diagnostics?.inputFacets?.requested?.domains).toContain("context-compiler");
   });
 });

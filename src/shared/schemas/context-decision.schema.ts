@@ -201,6 +201,35 @@ export type ContextDecisionKnowledgePrior = {
   cautions: string[];
 };
 
+export type ContextDecisionReliabilityGate = {
+  status: "passed" | "constrained";
+  originalDecision: ContextDecisionValue;
+  finalDecision: ContextDecisionValue;
+  confidenceCap: number | null;
+  appliedRules: Array<{
+    key: string;
+    severity: "info" | "warning" | "blocking";
+    message: string;
+  }>;
+  riskEvidence: {
+    count: number;
+    forcedDisplay: boolean;
+    titles: string[];
+  };
+  badFeedback: {
+    count: number;
+    strongCount: number;
+    averageConfidence: number;
+    maxConfidence: number;
+  };
+  evidenceCoverage: {
+    assessmentStatus: ContextDecisionKnowledgeAssessment["status"];
+    supportEvidenceCount: number;
+    riskEvidenceCount: number;
+    knowledgeCoverage: number;
+  };
+};
+
 export type ContextDecisionConfidenceTrace = {
   supportScore: number;
   counterScore: number;
@@ -217,6 +246,7 @@ export type ContextDecisionConfidenceTrace = {
   candidateTraces?: ContextDecisionCandidateTrace[];
   mlSignal?: ContextDecisionMlSignal;
   llmJudgmentStatus?: "completed" | "fallback" | "repaired";
+  reliabilityGate?: ContextDecisionReliabilityGate;
 };
 
 export type ContextDecisionEvidence = {

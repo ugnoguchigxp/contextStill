@@ -144,9 +144,7 @@ function hasRecentProgress(runs: DistillationRuns): boolean {
   );
 }
 
-async function loadDomainDistillationRuns(
-  targetKind: SourceKind,
-): Promise<DistillationRunsRow> {
+async function loadDomainDistillationRuns(targetKind: SourceKind): Promise<DistillationRunsRow> {
   const db = getDb();
   const sourceKind = targetKind;
   const result = await db.execute(sql`
@@ -246,9 +244,7 @@ async function loadDomainDistillationRuns(
   return result.rows[0] as DistillationRunsRow;
 }
 
-async function loadDomainDistillationJobs(
-  targetKind: SourceKind,
-): Promise<DistillationJobs> {
+async function loadDomainDistillationJobs(targetKind: SourceKind): Promise<DistillationJobs> {
   const db = getDb();
   const sourceKind = targetKind;
   const result = await db.execute(sql`
@@ -522,10 +518,7 @@ function nextActionsForDistillation(
   if (runs.totalRuns > 0 && !runs.lastOkRunAt) {
     nextActions.push(`${config.label} の成功 run がありません。失敗原因を調査して再実行する`);
   }
-  if (
-    runs.lastOkRunAgeMinutes !== null &&
-    runs.lastOkRunAgeMinutes > freshnessThresholdMinutes
-  ) {
+  if (runs.lastOkRunAgeMinutes !== null && runs.lastOkRunAgeMinutes > freshnessThresholdMinutes) {
     nextActions.push(
       `${config.label} の最新成功 run が古いです。直近の skipped/failed 理由を確認する`,
     );

@@ -4,6 +4,10 @@ import { groupedConfig } from "../src/config.js";
 import { getDb } from "../src/db/index.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
 import { upsertKnowledgeFromSource } from "../src/modules/knowledge/knowledge.repository.js";
+import {
+  getRuntimeSettingsSnapshot,
+  saveRuntimeSettings,
+} from "../src/modules/settings/settings.service.js";
 import { upsertSourceDocument } from "../src/modules/sources/source.repository.js";
 import {
   closeIntegrationDb,
@@ -16,9 +20,17 @@ const describeDb = isDbIntegrationEnabled() ? describe : describe.skip;
 
 describeDb("context compiler integration", () => {
   const originalAgenticCompileEnabled = groupedConfig.agenticCompile.enabled;
+  let originalRuntimeSettings: ReturnType<typeof getRuntimeSettingsSnapshot> | null = null;
 
   beforeAll(async () => {
     await ensureDbIntegrationReady();
+    originalRuntimeSettings = structuredClone(getRuntimeSettingsSnapshot());
+    const settings = structuredClone(originalRuntimeSettings);
+    settings.taskRouting.agenticCompile.enabled = false;
+    await saveRuntimeSettings({
+      settings,
+      updatedBy: "integration-test",
+    });
   });
 
   beforeEach(async () => {
@@ -28,18 +40,35 @@ describeDb("context compiler integration", () => {
 
   afterAll(async () => {
     groupedConfig.agenticCompile.enabled = originalAgenticCompileEnabled;
+    if (originalRuntimeSettings) {
+      await saveRuntimeSettings({
+        settings: originalRuntimeSettings,
+        updatedBy: "integration-test-restore",
+      });
+    }
     await closeIntegrationDb();
   });
 
   test("applies section token budget and keeps source refs on selected items", async () => {
+    const fixtureTerms = [
+      "Alpha rollout checklist",
+      "Bravo migration checklist",
+      "Charlie observability checklist",
+      "Delta fallback checklist",
+      "Echo documentation checklist",
+      "Foxtrot release checklist",
+    ];
     for (let i = 0; i < 6; i += 1) {
       await upsertKnowledgeFromSource({
         sourceUri: `file:///knowledge/rule-${i}.md`,
         type: "rule",
         status: "active",
         scope: "repo",
-        title: `Budget Rule ${i}`,
-        body: `budget scenario integration source linkage repeated content ${"x".repeat(400)}`,
+        title: fixtureTerms[i] ?? `Budget fixture ${i}`,
+        body: [
+          `budget scenario integration source linkage ${(fixtureTerms[i] ?? "").toLowerCase()}`,
+          `unique operational detail ${(fixtureTerms[i] ?? "").toLowerCase()} ${"x".repeat(360)}`,
+        ].join(" "),
       });
     }
 

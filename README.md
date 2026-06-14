@@ -220,10 +220,16 @@ e2e/          Playwright end-to-end tests
 
 ## Development
 
-Run the main verification gate before opening a pull request:
+Run the daily fast verification gate before opening a pull request:
 
 ```bash
 bun run verify
+```
+
+Run the full release gate before tagging or cutting a release:
+
+```bash
+bun run verify:full
 ```
 
 Useful focused commands:
@@ -233,9 +239,10 @@ bun run typecheck
 bun run test:unit
 bun run build:web
 bun run verify:mcp
+bun run verify:queue:smoke
 ```
 
-Integration tests are destructive and must use a dedicated test database whose name includes `test`.
+`bun run verify` is intentionally limited to typecheck, lint, format check, unit tests, and web build. Integration, MCP, and queue smoke checks are separate gates. Integration tests and queue smoke are destructive and must use a dedicated test database whose name includes `test`.
 
 ## Contributing
 

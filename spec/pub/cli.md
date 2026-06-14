@@ -84,8 +84,11 @@ Run commands from the repository root.
 | `bun run format:check` | Biome format check |
 | `bun run test:unit` | Unit tests |
 | `bun run test:integration` | Destructive integration tests against a test DB |
-| `bun run verify` | Main quality gate |
-| `bun run verify:mcp` | MCP-specific verification |
+| `bun run verify` | Daily fast quality gate without DB/MCP/queue dependencies |
+| `bun run verify:fast` | Alias for the daily fast quality gate |
+| `bun run verify:mcp` | MCP-specific verification against a test DB |
+| `bun run verify:queue:smoke` | Queue operational smoke against a test DB |
+| `bun run verify:full` | Release/full gate: fast verify, integration, MCP, and queue smoke |
 
 ## Examples
 

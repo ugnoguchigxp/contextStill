@@ -203,10 +203,16 @@ compile evaluation と candidate 登録を促す任意の Git hooks:
 
 ## 開発
 
-Pull request 前の基本 gate:
+Pull request 前の日常 fast gate:
 
 ```bash
 bun run verify
+```
+
+tag / release 前の full gate:
+
+```bash
+bun run verify:full
 ```
 
 よく使う確認:
@@ -216,9 +222,10 @@ bun run typecheck
 bun run test:unit
 bun run build:web
 bun run verify:mcp
+bun run verify:queue:smoke
 ```
 
-Integration test は破壊的です。必ず名前に `test` を含む専用 DB を使ってください。
+`bun run verify` は typecheck、lint、format check、unit test、web build に限定した fast gate です。Integration、MCP、queue smoke は別 gate です。Integration test と queue smoke は破壊的です。必ず名前に `test` を含む専用 DB を使ってください。
 
 ## コントリビュート
 

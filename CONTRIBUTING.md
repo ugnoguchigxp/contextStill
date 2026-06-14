@@ -23,10 +23,16 @@ bun run db:migrate
 
 ## Verification
 
-Run before opening a pull request:
+Run the daily fast gate before opening a pull request:
 
 ```bash
 bun run verify
+```
+
+Run the full release gate before tagging or cutting a release:
+
+```bash
+bun run verify:full
 ```
 
 For MCP changes:
@@ -35,7 +41,13 @@ For MCP changes:
 bun run verify:mcp
 ```
 
-Integration tests are destructive. Use only a dedicated test database whose name includes `test`.
+For queue operational changes:
+
+```bash
+bun run verify:queue:smoke
+```
+
+`bun run verify` is intentionally limited to typecheck, lint, format check, unit tests, and web build. Integration tests and queue smoke are destructive. Use only a dedicated test database whose name includes `test`.
 
 ## Pull Request Checklist
 

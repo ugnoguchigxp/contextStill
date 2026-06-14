@@ -28,6 +28,7 @@ import type {
   ContextDecisionMlSignal,
   ContextDecisionRequest,
   ContextDecisionResult,
+  ContextDecisionReliabilityGate,
   ContextDecisionRunDetail,
   ContextDecisionRunSummary,
 } from "../repositories/context-decision.repository";
@@ -273,6 +274,129 @@ function asKnowledgePrior(value: unknown): ContextDecisionKnowledgePrior | null 
     signals: toStringArray(value.signals),
     cautions: toStringArray(value.cautions),
   };
+}
+
+function reliabilityRuleSeverity(
+  value: unknown,
+): ContextDecisionReliabilityGate["appliedRules"][number]["severity"] {
+  return value === "blocking" || value === "warning" || value === "info" ? value : "info";
+}
+
+function asReliabilityGate(value: unknown): ContextDecisionReliabilityGate | null {
+  if (!isRecord(value)) return null;
+  if (value.status !== "passed" && value.status !== "constrained") return null;
+  const riskEvidence = isRecord(value.riskEvidence) ? value.riskEvidence : {};
+  const badFeedback = isRecord(value.badFeedback) ? value.badFeedback : {};
+  const evidenceCoverage = isRecord(value.evidenceCoverage) ? value.evidenceCoverage : {};
+  const appliedRules = Array.isArray(value.appliedRules)
+    ? value.appliedRules
+        .filter((item): item is Record<string, unknown> => isRecord(item))
+        .map((item) => ({
+          key: typeof item.key === "string" ? item.key : "unknown",
+          severity: reliabilityRuleSeverity(item.severity),
+          message: typeof item.message === "string" ? item.message : "-",
+        }))
+    : [];
+  const toNumber = (record: Record<string, unknown>, key: string) => {
+    const raw = record[key];
+    return typeof raw === "number" && Number.isFinite(raw) ? Math.round(raw) : 0;
+  };
+  return {
+    status: value.status,
+    originalDecision:
+      typeof value.originalDecision === "string"
+        ? (value.originalDecision as ContextDecisionReliabilityGate["originalDecision"])
+        : "execute",
+    finalDecision:
+      typeof value.finalDecision === "string"
+        ? (value.finalDecision as ContextDecisionReliabilityGate["finalDecision"])
+        : "execute",
+    confidenceCap:
+      typeof value.confidenceCap === "number" && Number.isFinite(value.confidenceCap)
+        ? Math.round(value.confidenceCap)
+        : null,
+    appliedRules,
+    riskEvidence: {
+      count: toNumber(riskEvidence, "count"),
+      forcedDisplay: riskEvidence.forcedDisplay === true,
+      titles: Array.isArray(riskEvidence.titles)
+        ? riskEvidence.titles.filter((item): item is string => typeof item === "string")
+        : [],
+    },
+    badFeedback: {
+      count: toNumber(badFeedback, "count"),
+      strongCount: toNumber(badFeedback, "strongCount"),
+      averageConfidence: toNumber(badFeedback, "averageConfidence"),
+      maxConfidence: toNumber(badFeedback, "maxConfidence"),
+    },
+    evidenceCoverage: {
+      assessmentStatus:
+        typeof evidenceCoverage.assessmentStatus === "string"
+          ? (evidenceCoverage.assessmentStatus as ContextDecisionReliabilityGate["evidenceCoverage"]["assessmentStatus"])
+          : "failed",
+      supportEvidenceCount: toNumber(evidenceCoverage, "supportEvidenceCount"),
+      riskEvidenceCount: toNumber(evidenceCoverage, "riskEvidenceCount"),
+      knowledgeCoverage: toNumber(evidenceCoverage, "knowledgeCoverage"),
+    },
+  };
+}
+
+function ReliabilityGatePanel({ trace }: { trace: Record<string, unknown> }) {
+  const gate = asReliabilityGate(trace.reliabilityGate);
+  if (!gate) {
+    return (
+      <article className="compile-pack-item">
+        <div className="compile-pack-item-header">
+          <strong>Reliability Gate</strong>
+          <Badge variant="outline">not recorded</Badge>
+        </div>
+        <p className="compile-state-text">
+          This older decision does not include reliability gate trace data.
+        </p>
+      </article>
+    );
+  }
+
+  return (
+    <article className="compile-pack-item">
+      <div className="compile-pack-item-header">
+        <strong>Reliability Gate</strong>
+        <div className="compile-pack-item-meta">
+          <Badge variant={gate.status === "constrained" ? "destructive" : "secondary"}>
+            {gate.status}
+          </Badge>
+          {gate.confidenceCap !== null ? (
+            <Badge variant="outline">cap {gate.confidenceCap}%</Badge>
+          ) : null}
+        </div>
+      </div>
+      <div className="compile-metric-grid" style={{ marginTop: 8 }}>
+        <Metric label="Original" value={gate.originalDecision} />
+        <Metric label="Final" value={gate.finalDecision} />
+        <Metric label="Coverage" value={`${gate.evidenceCoverage.knowledgeCoverage}%`} />
+        <Metric label="Strong Bad Feedback" value={gate.badFeedback.strongCount} />
+      </div>
+      {gate.appliedRules.length > 0 ? (
+        <div className="compile-pack-items" style={{ marginTop: 10 }}>
+          {gate.appliedRules.map((rule) => (
+            <div key={rule.key} className="compile-pack-item" style={{ padding: "10px 12px" }}>
+              <div className="compile-pack-item-header">
+                <strong>{rule.key}</strong>
+                <Badge variant={rule.severity === "blocking" ? "destructive" : "outline"}>
+                  {rule.severity}
+                </Badge>
+              </div>
+              <p className="compile-state-text">{rule.message}</p>
+            </div>
+          ))}
+        </div>
+      ) : (
+        <p className="compile-state-text" style={{ marginTop: 10 }}>
+          No reliability constraints were applied.
+        </p>
+      )}
+    </article>
+  );
 }
 
 function mlConfidenceLabel(value: number | undefined): string {
@@ -657,6 +781,7 @@ function DecisionDetailPane({
   const selectedEvidence = (detail?.evidence ?? []).filter(
     (item) => item.role === "selected_support" || item.role === "user_preference",
   );
+  const riskEvidence = (detail?.evidence ?? []).filter((item) => item.role === "risk_warning");
   const supportCoverage = (detail?.coverage ?? []).filter((trace) => trace.queryRole === "support");
   const totalHits = (detail?.coverage ?? []).reduce((sum, trace) => sum + trace.hitCount, 0);
 
@@ -747,6 +872,29 @@ function DecisionDetailPane({
           </div>
         </section>
 
+        {riskEvidence.length > 0 ? (
+          <section className="compile-pack-section">
+            <div className="compile-pack-section-header">
+              <h3>Risk Evidence</h3>
+              <Badge variant="destructive">{riskEvidence.length}</Badge>
+            </div>
+            <div className="compile-pack-items">
+              {riskEvidence.slice(0, 4).map((item) => {
+                const summary = splitEvidenceSummary(item.summary);
+                return (
+                  <article key={item.id} className="compile-pack-item">
+                    <div className="compile-pack-item-header">
+                      <strong>{summary.title}</strong>
+                      <Badge variant="destructive">{item.weightAtDecision}% confidence</Badge>
+                    </div>
+                    <p className="compile-pack-item-content">{summary.body}</p>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+
         <section className="compile-pack-section">
           <div className="compile-pack-section-header">
             <h3>Ranking Trace</h3>
@@ -794,6 +942,7 @@ function DecisionDetailPane({
                 </p>
               </article>
               <KnowledgeAssessmentPanel trace={detail.run.confidenceTrace} />
+              <ReliabilityGatePanel trace={detail.run.confidenceTrace} />
               <KnowledgePriorPanel
                 trace={detail.run.confidenceTrace}
                 traceKey="knowledgePrior"

@@ -668,8 +668,11 @@ export async function retrieveKnowledge(
       : profile.limit;
   const statuses = resolveKnowledgeSearchStatuses({
     retrievalMode: options.retrievalMode,
-    includeDraft: false,
+    includeDraft: input.includeDraft === true,
   });
+  const repoPath = normalizeRepoPath(input.repoPath);
+  const repoKey = (input.repoKey?.trim() || normalizeRepoKey(input.repoPath))?.toLowerCase();
+  const scopedSearch = Boolean(repoPath || repoKey);
   const retrievalInput: CompileInput = {
     ...input,
     technologies: options.facetFilters?.technologies ?? input.technologies,
@@ -694,11 +697,13 @@ export async function retrieveKnowledge(
       limit,
       statuses,
       status: "active",
-      includeDraft: false,
+      includeDraft: input.includeDraft === true,
       types: profile.types,
       polarities: options.polarities,
       intentTags: options.intentTags,
-      scopedSearch: false,
+      repoPath,
+      repoKey,
+      scopedSearch,
       generateEmbeddingIfMissing: true,
       noMatchReason: "NO_ACTIVE_KNOWLEDGE_MATCH",
       repoScopeFallbackReason: "KNOWLEDGE_REPO_SCOPE_FALLBACK",
@@ -729,11 +734,13 @@ export async function retrieveKnowledge(
       limit,
       statuses,
       status: "active",
-      includeDraft: false,
+      includeDraft: input.includeDraft === true,
       types: profile.types,
       polarities: options.polarities,
       intentTags: options.intentTags,
-      scopedSearch: false,
+      repoPath,
+      repoKey,
+      scopedSearch,
       generateEmbeddingIfMissing: true,
       noMatchReason: "NO_ACTIVE_KNOWLEDGE_MATCH",
       repoScopeFallbackReason: "KNOWLEDGE_REPO_SCOPE_FALLBACK",
@@ -793,7 +800,7 @@ export async function retrieveKnowledge(
         roundResults.find(
           (result) => result.stats.queryEmbedding && result.stats.queryEmbedding.length > 0,
         )?.stats.queryEmbedding ?? undefined,
-      scopedSearch: false,
+      scopedSearch,
       repoScopeFallbackUsed: roundResults.some((result) => result.stats.repoScopeFallbackUsed),
       queryText: buildRetrievalQueryText(retrievalInput),
       searchedQueries,

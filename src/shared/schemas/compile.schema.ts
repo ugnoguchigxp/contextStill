@@ -11,9 +11,17 @@ export const retrievalModeSchema = z.enum([
 
 export const compileInputSchema = z.object({
   goal: z.string().trim().min(1),
+  intent: z.string().trim().min(1).optional(),
+  retrievalMode: retrievalModeSchema.optional(),
   changeTypes: z.array(z.string().trim().min(1)).optional(),
   technologies: z.array(z.string().trim().min(1)).optional(),
   domains: z.array(z.string().trim().min(1)).optional(),
+  files: z.array(z.string().trim().min(1)).optional(),
+  repoPath: z.string().trim().min(1).optional(),
+  repoKey: z.string().trim().min(1).optional(),
+  includeDraft: z.boolean().optional(),
+  tokenBudget: z.number().int().positive().optional(),
+  queryEmbedding: z.array(z.number()).optional(),
 });
 
 export type CompileInput = z.infer<typeof compileInputSchema>;

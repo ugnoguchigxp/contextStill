@@ -210,7 +210,7 @@ describeDb("api route integration", () => {
       detail: { run: { humanFeedback: string | null }; effects: unknown[] } | null;
     };
     expect(feedbackJson.detail?.run.humanFeedback).toBe("good");
-    expect(feedbackJson.detail?.effects.length).toBeGreaterThan(0);
+    expect(feedbackJson.detail?.effects).toEqual([]);
   }, 15000);
 
   test("POST /api/vibe-memory persists memory and GET /api/vibe-memory lists it", async () => {

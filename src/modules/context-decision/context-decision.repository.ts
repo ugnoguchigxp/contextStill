@@ -197,9 +197,24 @@ export async function insertContextDecisionCoverageRows(
 }
 
 export async function getRelatedDecisionBadSignalCount(knowledgeIds: string[]): Promise<number> {
-  if (knowledgeIds.length === 0) return 0;
+  return (await getRelatedDecisionBadSignalSummary(knowledgeIds)).count;
+}
+
+export async function getRelatedDecisionBadSignalSummary(knowledgeIds: string[]): Promise<{
+  count: number;
+  strongCount: number;
+  averageConfidence: number;
+  maxConfidence: number;
+}> {
+  if (knowledgeIds.length === 0) {
+    return { count: 0, strongCount: 0, averageConfidence: 0, maxConfidence: 0 };
+  }
   const result = await db.execute(sql`
-    select count(*)::int as count
+    select
+      count(*)::int as count,
+      count(*) filter (where confidence >= 70)::int as strong_count,
+      coalesce(round(avg(confidence)), 0)::int as average_confidence,
+      coalesce(max(confidence), 0)::int as max_confidence
     from context_decision_feedback_effects
     where status = 'applied'
       and effect = 'penalize'
@@ -208,8 +223,20 @@ export async function getRelatedDecisionBadSignalCount(knowledgeIds: string[]): 
         sql`, `,
       )})
   `);
-  const row = result.rows[0] as { count?: number | string } | undefined;
-  return Number(row?.count ?? 0);
+  const row = result.rows[0] as
+    | {
+        count?: number | string;
+        strong_count?: number | string;
+        average_confidence?: number | string;
+        max_confidence?: number | string;
+      }
+    | undefined;
+  return {
+    count: Number(row?.count ?? 0),
+    strongCount: Number(row?.strong_count ?? 0),
+    averageConfidence: Number(row?.average_confidence ?? 0),
+    maxConfidence: Number(row?.max_confidence ?? 0),
+  };
 }
 
 function mapRunSummary(

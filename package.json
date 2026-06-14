@@ -75,10 +75,13 @@
     "test:e2e": "playwright test",
     "test:unit": "bunx vitest run --exclude \"test/*.integration.test.ts\" --exclude \"test/*.e2e.test.ts\"",
     "test:unit:api": "bunx vitest run test/api.routes.test.ts",
-    "test:integration": "DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} bun run db:migrate && DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} CONTEXT_STILL_RUN_DB_TESTS=1 bun test --timeout=30000 --max-concurrency=1 test/*.integration.test.ts test/*.e2e.test.ts test/mcp.contract.test.ts",
+    "test:integration": "DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} bun run db:migrate && DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} CONTEXT_STILL_RUN_DB_TESTS=1 bun test --timeout=30000 --max-concurrency=1 test/*.integration.test.ts test/*.e2e.test.ts",
     "test:all": "bun run test:unit && bun run test:integration",
     "verify": "bun scripts/verify.mjs",
+    "verify:fast": "bun run verify",
     "verify:mcp": "DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} bun run db:migrate && DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} bun run test:mcp:contract && DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} bun run mcp:smoke && DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} bun run doctor",
+    "verify:queue:smoke": "DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} bun run db:migrate && DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} CONTEXT_STILL_RUN_DB_TESTS=1 bun test --timeout=30000 --max-concurrency=1 ./test/queue-smoke.operational.ts",
+    "verify:full": "bun run verify && bun run test:integration && bun run verify:mcp && bun run verify:queue:smoke",
     "test:mcp:contract": "DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} CONTEXT_STILL_RUN_DB_TESTS=1 bun test --timeout=30000 --max-concurrency=1 test/mcp.contract.test.ts"
   },
   "dependencies": {

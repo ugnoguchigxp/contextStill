@@ -4,7 +4,7 @@ import type { KnowledgeSearchResult } from "../src/modules/knowledge/knowledge.r
 
 // モック定義
 const mockSearchKnowledge = vi.fn();
-const mockGetRelatedDecisionBadSignalCount = vi.fn();
+const mockGetRelatedDecisionBadSignalSummary = vi.fn();
 const mockListContextDecisionMlTrainingRows = vi.fn();
 const mockInsertContextDecisionRun = vi.fn();
 const mockInsertContextDecisionEvidenceRows = vi.fn();
@@ -15,8 +15,8 @@ vi.mock("../src/modules/knowledge/knowledge.repository.js", () => ({
 }));
 
 vi.mock("../src/modules/context-decision/context-decision.repository.js", () => ({
-  getRelatedDecisionBadSignalCount: (...args: any[]) =>
-    mockGetRelatedDecisionBadSignalCount(...args),
+  getRelatedDecisionBadSignalSummary: (...args: any[]) =>
+    mockGetRelatedDecisionBadSignalSummary(...args),
   listContextDecisionMlTrainingRows: (...args: any[]) =>
     mockListContextDecisionMlTrainingRows(...args),
   insertContextDecisionRun: (...args: any[]) => mockInsertContextDecisionRun(...args),
@@ -78,7 +78,12 @@ describe("context-decision.service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     // デフォルトのモック設定
-    mockGetRelatedDecisionBadSignalCount.mockResolvedValue(0);
+    mockGetRelatedDecisionBadSignalSummary.mockResolvedValue({
+      count: 0,
+      strongCount: 0,
+      averageConfidence: 0,
+      maxConfidence: 0,
+    });
     mockListContextDecisionMlTrainingRows.mockResolvedValue([]);
     mockInsertContextDecisionRun.mockResolvedValue("decision-run-id-123");
     mockResolveAgenticCompileRouting.mockReturnValue({
@@ -90,7 +95,7 @@ describe("context-decision.service", () => {
     });
   });
 
-  test("decideContext returns execute decision when LLM responds successfully", async () => {
+  test("decideContext constrains direct execute when coverage is weak", async () => {
     // クエリに応じたナレッジ返却。supportのみヒットさせる。
     mockSearchKnowledge.mockImplementation(async (params: any) => {
       const q = params.query.toLowerCase();
@@ -126,7 +131,7 @@ describe("context-decision.service", () => {
         })
         .mockResolvedValueOnce({
           // composeAgentMessage 用のレスポンス
-          content: "決定は execute です。ダミールールに合致しています。",
+          content: "決定は revise_and_execute です。追加確認してから進めます。",
         }),
     };
     mockGetAgenticLlmProviders.mockResolvedValue([mockLlmProvider]);
@@ -143,11 +148,24 @@ describe("context-decision.service", () => {
 
     const result = await decideContext(input);
 
-    expect(result.decision).toBe("execute");
-    // LLM の confidence ではなく、決定論的にクランプされた scored.trace.finalConfidence (71) が返る
-    expect(result.confidence).toBe(71);
-    expect(result.agentMessage).toContain("決定は execute です");
-    expect(mockInsertContextDecisionRun).toHaveBeenCalled();
+    expect(result.decision).toBe("revise_and_execute");
+    expect(result.confidence).toBe(68);
+    expect(result.agentMessage).toContain("決定は revise_and_execute です");
+    const answerPrompt = mockLlmProvider.chat.mock.calls[1]?.[0]?.messages?.[1]?.content as string;
+    expect(answerPrompt).toContain("Reliability Gate trace:");
+    expect(answerPrompt).toContain("weak_coverage_requires_revision");
+    expect(mockInsertContextDecisionRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: "revise_and_execute",
+        confidenceTrace: expect.objectContaining({
+          reliabilityGate: expect.objectContaining({
+            status: "constrained",
+            originalDecision: "execute",
+            finalDecision: "revise_and_execute",
+          }),
+        }),
+      }),
+    );
     expect(mockInsertContextDecisionEvidenceRows).toHaveBeenCalled();
     expect(mockInsertContextDecisionCoverageRows).toHaveBeenCalled();
   });

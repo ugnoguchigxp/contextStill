@@ -76,7 +76,7 @@ a {
   font-family: "Sora", sans-serif;
   font-size: 1.35rem;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
 }
 
 .chip {
@@ -108,7 +108,7 @@ h1 {
   font-family: "Sora", "Hiragino Sans", "Yu Gothic UI", "Yu Gothic", sans-serif;
   font-size: clamp(2.35rem, 4.8vw, 4.5rem);
   line-height: 1.02;
-  letter-spacing: -0.03em;
+  letter-spacing: 0;
   text-wrap: balance;
 }
 
@@ -333,7 +333,22 @@ h1 span {
   margin: 0 0 18px;
   font-family: "Sora", sans-serif;
   font-size: clamp(1.65rem, 2.8vw, 2.35rem);
-  letter-spacing: -0.02em;
+  letter-spacing: 0;
+}
+
+.section-heading {
+  max-width: 780px;
+  margin-bottom: 22px;
+}
+
+.section-heading h2 {
+  margin-bottom: 10px;
+}
+
+.section-heading p:not(.eyebrow) {
+  margin: 0;
+  color: var(--ink-soft);
+  font-size: 1rem;
 }
 
 .cards {
@@ -402,6 +417,10 @@ h1 span {
   gap: 14px;
 }
 
+.compare-three {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
 .compare-box {
   border: 1px solid #ddcfbc;
   border-radius: 16px;
@@ -419,6 +438,31 @@ h1 span {
   font-family: "Sora", sans-serif;
 }
 
+.compare-box dl {
+  display: grid;
+  gap: 10px;
+  margin: 0;
+}
+
+.compare-box dl div {
+  border-top: 1px solid rgba(216, 203, 185, 0.72);
+  padding-top: 9px;
+}
+
+.compare-box dt {
+  margin: 0 0 2px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.68rem;
+  color: #657d87;
+  text-transform: uppercase;
+}
+
+.compare-box dd {
+  margin: 0;
+  color: #304b57;
+  font-size: 0.9rem;
+}
+
 .compare-box ul {
   margin: 0;
   padding-left: 18px;
@@ -427,6 +471,101 @@ h1 span {
 .compare-box li {
   margin-bottom: 6px;
   color: #425d69;
+}
+
+.section-before-after {
+  border-top: 1px solid rgba(214, 201, 183, 0.72);
+  background: rgba(255, 255, 255, 0.24);
+}
+
+.before-after {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 14px;
+}
+
+.state-panel {
+  border: 1px solid #ddcfbc;
+  border-radius: 18px;
+  background: #fffdf9;
+  padding: 20px;
+}
+
+.state-panel.after {
+  border-color: rgba(15, 128, 120, 0.34);
+  background: linear-gradient(160deg, #f3fbf9, #fffaf4);
+}
+
+.state-panel > span {
+  display: inline-block;
+  margin-bottom: 8px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  color: #5c7380;
+  text-transform: uppercase;
+}
+
+.state-panel h3 {
+  margin: 0 0 10px;
+  font-size: 1.1rem;
+}
+
+.state-panel ul {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.state-panel li {
+  margin-bottom: 8px;
+  color: #425d69;
+}
+
+.demo-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+
+.demo-step {
+  border: 1px solid #d9ccba;
+  border-radius: 16px;
+  background: rgba(255, 255, 255, 0.84);
+  padding: 17px;
+}
+
+.demo-step > span {
+  display: inline-block;
+  margin-bottom: 7px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.72rem;
+  color: #4f6f7c;
+}
+
+.demo-step h3 {
+  margin: 0 0 8px;
+  font-size: 1rem;
+}
+
+.demo-step p {
+  margin: 0 0 12px;
+  color: #425d69;
+  font-size: 0.9rem;
+}
+
+.demo-step pre {
+  margin: 0;
+  overflow: auto;
+  border: 1px solid rgba(36, 58, 68, 0.12);
+  border-radius: 12px;
+  background: #17262f;
+  color: #eef9f7;
+  padding: 12px;
+}
+
+.demo-step code {
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75rem;
+  line-height: 1.55;
 }
 
 .cta {
@@ -452,6 +591,11 @@ h1 span {
   margin: 0 auto 16px;
   max-width: 66ch;
   color: #496371;
+}
+
+.cta-actions {
+  justify-content: center;
+  margin-bottom: 0;
 }
 
 .footer {
@@ -492,6 +636,11 @@ h1 span {
 
   .flow {
     grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  .compare-three,
+  .demo-grid {
+    grid-template-columns: 1fr;
   }
 }
 
@@ -540,7 +689,8 @@ h1 span {
   }
 
   .flow,
-  .compare {
+  .compare,
+  .before-after {
     grid-template-columns: 1fr;
   }
 }

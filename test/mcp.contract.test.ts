@@ -137,6 +137,7 @@ describeDb("mcp contract", () => {
       "context_decision_feedback",
       "search_knowledge",
       "register_candidates",
+      "register_review_corrections",
       "search_memory",
       "fetch_memory",
       "doctor",
