@@ -26,7 +26,6 @@ import {
   Globe,
   Home,
   Plus,
-  RotateCcw,
   Search,
   ThumbsDown,
   ThumbsUp,
@@ -80,7 +79,7 @@ const qualityScore = (item: Pick<KnowledgeItem, "importance" | "confidence">): n
 const staleDecayThreshold = 0.5;
 const highValueThreshold = 60;
 const displayFilterOptions = [
-  { value: "all", label: "All" },
+  { value: "all", label: "Status" },
   { value: "draft", label: "Draft" },
   { value: "active", label: "Active" },
   { value: "deprecated", label: "Deprecated" },
@@ -684,7 +683,7 @@ export function KnowledgePage() {
         cell: ({ row }) => {
           const item = row.original;
           return (
-            <div className="flex items-center gap-2">
+            <div className="flex flex-wrap items-center gap-1.5">
               <Badge
                 variant={
                   item.status === "active"
@@ -702,7 +701,7 @@ export function KnowledgePage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-6 px-2 text-[10px] gap-1 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200"
+                  className="h-6 shrink-0 px-2 text-[10px] gap-1 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200"
                   onClick={() => quickStatusUpdate.mutate({ id: item.id, status: "active" })}
                   disabled={quickStatusUpdate.isPending}
                   title="Promote to Active"
@@ -716,7 +715,7 @@ export function KnowledgePage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-6 px-2 text-[10px] gap-1 border-orange-700 text-orange-700 bg-transparent hover:bg-orange-700 hover:text-white hover:border-orange-800"
+                  className="h-6 shrink-0 px-2 text-[10px] gap-1 border-orange-700 text-orange-700 bg-transparent hover:bg-orange-700 hover:text-white hover:border-orange-800"
                   onClick={() => quickStatusUpdate.mutate({ id: item.id, status: "deprecated" })}
                   disabled={quickStatusUpdate.isPending}
                   title="Deprecate"
@@ -730,13 +729,13 @@ export function KnowledgePage() {
                 <Button
                   variant="outline"
                   size="sm"
-                  className="h-6 px-2 text-[10px] gap-1 hover:bg-blue-50 hover:text-blue-600 hover:border-blue-200"
+                  className="h-6 shrink-0 px-2 text-[10px] gap-1 hover:bg-emerald-50 hover:text-emerald-600 hover:border-emerald-200"
                   onClick={() => quickStatusUpdate.mutate({ id: item.id, status: "active" })}
                   disabled={quickStatusUpdate.isPending}
                   title="Restore to Active"
                 >
-                  <RotateCcw size={12} />
-                  Restore
+                  <Check size={12} />
+                  Active
                 </Button>
               )}
             </div>
@@ -902,33 +901,36 @@ export function KnowledgePage() {
   return (
     <div className="knowledge-full-layout">
       <section className="knowledge-header">
-        <div className="flex items-center gap-4 flex-1 min-w-[280px]">
-          <form className="flex w-full max-w-xl items-center gap-2" onSubmit={submitSearch}>
+        <div className="knowledge-search-block">
+          <form className="knowledge-search-form" onSubmit={submitSearch}>
             <Input
               type="search"
               placeholder="Knowledgeを検索..."
-              className="h-9 flex-1"
+              className="h-9 min-w-[180px] flex-[1_1_16rem]"
               value={searchInputValue}
               onChange={(e) => setSearchInputValue(e.target.value)}
             />
             <Input
               type="text"
               placeholder="Tags (e.g. guardrail)"
-              className="h-9 w-[180px]"
+              className="h-9 min-w-[150px] flex-[0_1_13rem]"
               value={intentTagsSearchInput}
               onChange={(e) => setIntentTagsSearchInput(e.target.value)}
             />
-            <Button type="submit" size="sm" className="h-9 gap-1.5 whitespace-nowrap">
-              <Search size={15} />
-              Search
+            <Button type="submit" size="icon" title="Search" aria-label="Search">
+              <Search size={16} aria-hidden="true" />
+              <span className="sr-only">Search</span>
             </Button>
           </form>
         </div>
-        <div className="flex items-center gap-3">
+        <div className="knowledge-toolbar">
           <AdminFilterChipSelect
             label="Filter"
             value={displayFilter}
-            className="w-[150px]"
+            aria-label="Status filter"
+            containerClassName="knowledge-filter-select"
+            labelClassName="sr-only"
+            className="w-[112px]"
             onChange={(event) => {
               const nextFilter =
                 displayFilterOptions.find((option) => option.value === event.target.value)?.value ??
@@ -948,7 +950,10 @@ export function KnowledgePage() {
           <AdminFilterChipSelect
             label="Polarity"
             value={polarityFilter}
-            className="w-[120px]"
+            aria-label="Polarity filter"
+            containerClassName="knowledge-filter-select"
+            labelClassName="sr-only"
+            className="w-[112px]"
             onChange={(event) => {
               const nextPolarity = event.target.value as any;
               setPolarityFilter(nextPolarity);
@@ -956,7 +961,7 @@ export function KnowledgePage() {
               resetToFirstPage();
             }}
           >
-            <option value="all">All Polarities</option>
+            <option value="all">Polarity</option>
             <option value="positive">Positive</option>
             <option value="negative">Negative</option>
             <option value="neutral">Neutral</option>
@@ -965,14 +970,17 @@ export function KnowledgePage() {
           <AdminFilterChipSelect
             label="Quality"
             value={minQuality}
-            className="w-[74px]"
+            aria-label="Quality filter"
+            containerClassName="knowledge-filter-select"
+            labelClassName="sr-only"
+            className="w-[82px]"
             onChange={(event) => {
               setMinQuality(Number(event.target.value));
               setBulkSelection(null);
               resetToFirstPage();
             }}
           >
-            <option value="0">All</option>
+            <option value="0">Quality</option>
             <option value="30">30+</option>
             <option value="50">50+</option>
             <option value="70">70+</option>
@@ -980,7 +988,7 @@ export function KnowledgePage() {
             <option value="90">90+</option>
           </AdminFilterChipSelect>
 
-          <div className="flex items-center gap-2 rounded-lg border border-slate-700 bg-slate-900/40 px-3 py-1">
+          <div className="knowledge-selection-actions">
             <span className="whitespace-nowrap text-[10px] font-bold uppercase text-slate-300">
               Selected {selectedTotalCount} / Visible {visibleSelectedCount}
             </span>
@@ -1034,9 +1042,9 @@ export function KnowledgePage() {
             </Button>
           </div>
 
-          <Button onClick={openCreate} className="gap-2">
-            <Plus size={18} />
-            Create New
+          <Button onClick={openCreate} size="icon" title="Create New" aria-label="Create New">
+            <Plus size={18} aria-hidden="true" />
+            <span className="sr-only">Create New</span>
           </Button>
         </div>
       </section>

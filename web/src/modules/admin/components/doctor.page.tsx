@@ -476,7 +476,7 @@ function AiServiceToolsDomain({ data }: { data: DoctorAiServiceToolsDomain }) {
 function PipelineAutomationDomain({ data }: { data: DoctorPipelineAutomationDomain }) {
   const pipelineSignals = getDomainSignals(getDoctorReasonDetails(data), "pipeline");
   const pipelineNextActions = getDomainNextActions(data, "pipeline");
-  const totalDistillationRuns =
+  const totalFinishedTargets =
     data.vibeDistillation.runs.totalRuns + data.sourceDistillation.runs.totalRuns;
   const staleTrackedJobs =
     data.vibeDistillation.queueHealth.staleRunning +
@@ -519,10 +519,10 @@ function PipelineAutomationDomain({ data }: { data: DoctorPipelineAutomationDoma
           </div>
           <div className="flex flex-col">
             <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
-              Distill Runs
+              Finished Targets
             </span>
             <strong className="text-slate-800 text-2xl font-extrabold mt-1 leading-none">
-              {formatNumber(totalDistillationRuns)}
+              {formatNumber(totalFinishedTargets)}
             </strong>
           </div>
           <div className="flex flex-col">

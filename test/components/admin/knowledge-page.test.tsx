@@ -180,6 +180,58 @@ describe("KnowledgePage", () => {
     });
   });
 
+  it("shows Active action for deprecated knowledge and restores it", () => {
+    vi.mocked(useQuery).mockReturnValue({
+      data: {
+        items: [
+          ...mockKnowledgeItems,
+          {
+            id: "kn-3",
+            type: "rule",
+            status: "deprecated",
+            scope: "repo",
+            title: "Deprecated Rule Title",
+            body: "This rule was deprecated but can be restored.",
+            confidence: 50,
+            importance: 55,
+            dynamicScore: 42,
+            decayFactor: 0.4,
+            compileSelectCount: 0,
+            explicitUpvoteCount: 0,
+            explicitDownvoteCount: 1,
+            appliesTo: { general: false, technologies: ["typescript"] },
+            metadata: {},
+            sourceRefs: [],
+            sourceVibeMemoryIds: [],
+            lastCompiledAt: null,
+            lastVerifiedAt: null,
+            createdAt: "2026-05-19T08:00:00.000Z",
+            updatedAt: "2026-05-19T08:00:00.000Z",
+          },
+        ],
+        total: 7,
+        totalPages: 1,
+      },
+      isLoading: false,
+      isError: false,
+    } as any);
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <KnowledgePage />
+      </QueryClientProvider>,
+    );
+
+    const restoreBtn = screen.getByTitle("Restore to Active");
+    expect(restoreBtn).toHaveTextContent("Active");
+
+    fireEvent.click(restoreBtn);
+    expect(mockMutate).toHaveBeenCalledWith({
+      id: "kn-3",
+      status: "active",
+    });
+  });
+
   it("handles item deprecation from the edit modal with confirm dialog", () => {
     const confirmSpy = vi.spyOn(window, "confirm");
     render(

@@ -410,7 +410,7 @@ describe("DoctorPage", () => {
     expect(screen.getByText("Local LLM: Gemma")).toBeInTheDocument();
     expect(screen.queryByText("OpenAI")).not.toBeInTheDocument();
     expect(screen.queryByText("Bedrock")).not.toBeInTheDocument();
-    expect(screen.getByText("Distill Runs")).toBeInTheDocument();
+    expect(screen.getByText("Finished Targets")).toBeInTheDocument();
     expect(screen.getByText("Stale Running")).toBeInTheDocument();
     expect(screen.queryByText("Queue Pending")).not.toBeInTheDocument();
     expect(screen.queryByText("Queue Running")).not.toBeInTheDocument();

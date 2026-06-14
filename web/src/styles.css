@@ -1102,12 +1102,59 @@
 }
 
 .knowledge-header {
-  padding: 1.25rem 2rem;
+  padding: 1rem 1.5rem;
   display: flex;
   justify-content: space-between;
   align-items: center;
+  gap: 0.75rem;
+  flex-wrap: nowrap;
   border-bottom: 1px solid var(--border);
   background: var(--background);
+  overflow-x: auto;
+  overflow-y: hidden;
+}
+
+.knowledge-search-block {
+  flex: 1 1 auto;
+  min-width: 26rem;
+}
+
+.knowledge-search-form {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  width: 100%;
+  max-width: 48rem;
+  min-width: 0;
+}
+
+.knowledge-toolbar {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 0.5rem;
+  flex-wrap: nowrap;
+  min-width: 0;
+}
+
+.knowledge-filter-select {
+  flex-shrink: 0;
+  gap: 0;
+  padding-left: 0.75rem;
+  padding-right: 0.5rem;
+}
+
+.knowledge-selection-actions {
+  align-items: center;
+  background: rgba(15, 23, 42, 0.4);
+  border: 1px solid #334155;
+  border-radius: 0.5rem;
+  display: flex;
+  flex-shrink: 0;
+  gap: 0.35rem;
+  padding: 0.25rem 0.45rem;
+  white-space: nowrap;
 }
 
 .heading-left h1 {
