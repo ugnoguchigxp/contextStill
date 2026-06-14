@@ -1,5 +1,5 @@
 import { Badge } from "@/components/ui/badge";
-import { formatNumber } from "@/lib/admin-formatters";
+import { formatNumber, formatPercent } from "@/lib/admin-formatters";
 import { cn } from "@/lib/utils";
 import { HeartPulse } from "lucide-react";
 import React, { useState, useEffect } from "react";
@@ -9,6 +9,20 @@ import { SystemHealthCharts } from "../overview-charts";
 function formatScore(value: number | null | undefined): string {
   if (typeof value !== "number" || !Number.isFinite(value)) return "-";
   return value.toFixed(1);
+}
+
+function formatProductMetricValue(
+  metric: OverviewSystemQualityDomain["productValueStats"]["metrics"][number],
+): string {
+  if (typeof metric.rate === "number") return formatPercent(metric.rate);
+  return formatNumber(metric.count);
+}
+
+function formatProductMetricEvidence(
+  metric: OverviewSystemQualityDomain["productValueStats"]["metrics"][number],
+): string {
+  if (metric.denominator <= 0) return `${formatNumber(metric.count)} signals`;
+  return `${formatNumber(metric.count)} / ${formatNumber(metric.denominator)}`;
 }
 
 function formatCountdown(cooldownUntil: string | null, nowMs: number): string {
@@ -43,6 +57,7 @@ export function SystemQualityDomain({ dashboard }: SystemQualityDomainProps) {
   }, []);
 
   const compileEvalStats = dashboard.compileEvalStats;
+  const productValueStats = dashboard.productValueStats;
 
   return (
     <section className="overview-domain-section accent-cyan">
@@ -98,6 +113,38 @@ export function SystemQualityDomain({ dashboard }: SystemQualityDomainProps) {
             <strong className="text-slate-800 text-2xl font-extrabold mt-1 leading-none">
               {formatNumber(compileEvalStats.evaluatedRunCount)}
             </strong>
+          </div>
+        </div>
+
+        <div className="flex flex-col gap-2.5 border-b border-slate-100/60 pb-3 mb-1">
+          <div className="flex items-center justify-between gap-3">
+            <span className="text-slate-500 text-[12px] font-semibold uppercase">
+              Product Value Evidence
+            </span>
+            <span className="text-[12px] text-slate-400 font-medium">
+              {productValueStats.windowLabel}
+            </span>
+          </div>
+          <div className="grid grid-cols-2 xl:grid-cols-5 gap-2">
+            {productValueStats.metrics.map((metric) => (
+              <div
+                key={metric.metric}
+                className="rounded-md border border-cyan-500/10 bg-cyan-50/30 px-2.5 py-2 min-w-0"
+              >
+                <span className="block text-[11.5px] text-slate-500 font-semibold truncate">
+                  {metric.label}
+                </span>
+                <strong className="block text-slate-800 text-[20px] leading-tight font-extrabold mt-1">
+                  {formatProductMetricValue(metric)}
+                </strong>
+                <span className="block text-[11.5px] text-slate-500 mt-1">
+                  {formatProductMetricEvidence(metric)}
+                </span>
+                <span className="block text-[11px] text-slate-400 leading-snug mt-0.5">
+                  {metric.evidenceLabel}
+                </span>
+              </div>
+            ))}
           </div>
         </div>
 

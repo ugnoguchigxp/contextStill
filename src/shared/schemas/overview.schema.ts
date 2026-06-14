@@ -225,6 +225,40 @@ export const overviewCompileEvalStatsSchema = z.object({
   metrics: z.array(overviewCompileEvalMetricSchema),
 });
 
+export const overviewProductValueMetricSchema = z.object({
+  metric: z.enum([
+    "compile_adoption_rate",
+    "compile_reuse_rate",
+    "decision_success_rate",
+    "bad_feedback_rate",
+    "prevented_rework_signals",
+  ]),
+  label: z.string().min(1),
+  rate: z.number().min(0).max(1).nullable(),
+  count: z.number().int().nonnegative(),
+  denominator: z.number().int().nonnegative(),
+  evidenceLabel: z.string().min(1),
+});
+
+export const overviewProductValueStatsSchema = z.object({
+  windowLabel: z.string().min(1),
+  metrics: z.array(overviewProductValueMetricSchema),
+  evidence: z.object({
+    compileRunCount: z.number().int().nonnegative(),
+    evaluatedCompileRunCount: z.number().int().nonnegative(),
+    compileEvaluationCount: z.number().int().nonnegative(),
+    acceptedCompileEvaluationCount: z.number().int().nonnegative(),
+    reusedCompileRunCount: z.number().int().nonnegative(),
+    decisionRunCount: z.number().int().nonnegative(),
+    decisionFeedbackCount: z.number().int().nonnegative(),
+    knownDecisionFeedbackCount: z.number().int().nonnegative(),
+    successfulDecisionFeedbackCount: z.number().int().nonnegative(),
+    badDecisionFeedbackCount: z.number().int().nonnegative(),
+    preventedReworkSignalCount: z.number().int().nonnegative(),
+    appliedFeedbackEffectCount: z.number().int().nonnegative(),
+  }),
+});
+
 export const overviewDashboardSchema = z.object({
   checkedAt: overviewCheckedAtSchema,
   kpis: overviewDashboardKpisSchema,
@@ -232,6 +266,7 @@ export const overviewDashboardSchema = z.object({
   llmUsage: overviewDashboardLlmUsageSchema,
   searchApiStatus: overviewDashboardSearchApiStatusSchema,
   compileEvalStats: overviewCompileEvalStatsSchema,
+  productValueStats: overviewProductValueStatsSchema,
   landscape: overviewLandscapeSummarySchema,
 });
 
@@ -293,6 +328,7 @@ export const overviewSystemQualityDomainSchema = z.object({
   }),
   compileRunHealth: doctorReportSchema.shape.runs,
   compileEvalStats: overviewCompileEvalStatsSchema,
+  productValueStats: overviewProductValueStatsSchema,
   charts: overviewDashboardChartsSchema.pick({
     compileRunsByDay: true,
   }),

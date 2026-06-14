@@ -16,6 +16,7 @@ import {
   overviewKnowledgeAssetsDomainSchema,
   overviewLandscapeHealthDomainSchema,
   overviewLlmResourcesDomainSchema,
+  overviewProductValueStatsSchema,
   overviewSystemQualityDomainSchema,
 } from "../../../src/shared/schemas/overview.schema.js";
 import { buildGraphSnapshot } from "../graph/graph.repository.js";
@@ -64,6 +65,86 @@ function buildCompileEvalStats(row: Record<string, unknown>) {
         average: toNullableNumber(row.specificity_avg),
       },
     ],
+  });
+}
+
+function rate(numerator: number, denominator: number): number | null {
+  if (denominator <= 0) return null;
+  return Number((numerator / denominator).toFixed(3));
+}
+
+function buildProductValueStats(row: Record<string, unknown>) {
+  const compileRunCount = toNumber(row.compile_run_count);
+  const evaluatedCompileRunCount = toNumber(row.evaluated_compile_run_count);
+  const compileEvaluationCount = toNumber(row.compile_evaluation_count);
+  const acceptedCompileEvaluationCount = toNumber(row.accepted_compile_evaluation_count);
+  const reusedCompileRunCount = toNumber(row.reused_compile_run_count);
+  const decisionRunCount = toNumber(row.decision_run_count);
+  const decisionFeedbackCount = toNumber(row.decision_feedback_count);
+  const knownDecisionFeedbackCount = toNumber(row.known_decision_feedback_count);
+  const successfulDecisionFeedbackCount = toNumber(row.successful_decision_feedback_count);
+  const badDecisionFeedbackCount = toNumber(row.bad_decision_feedback_count);
+  const preventedReworkSignalCount = toNumber(row.prevented_rework_signal_count);
+  const appliedFeedbackEffectCount = toNumber(row.applied_feedback_effect_count);
+
+  return overviewProductValueStatsSchema.parse({
+    windowLabel: "All time",
+    metrics: [
+      {
+        metric: "compile_adoption_rate",
+        label: "Compile adoption",
+        rate: rate(acceptedCompileEvaluationCount, compileEvaluationCount),
+        count: acceptedCompileEvaluationCount,
+        denominator: compileEvaluationCount,
+        evidenceLabel: "useful/partial compile_eval outcomes",
+      },
+      {
+        metric: "compile_reuse_rate",
+        label: "Compile reuse",
+        rate: rate(reusedCompileRunCount, compileRunCount),
+        count: reusedCompileRunCount,
+        denominator: compileRunCount,
+        evidenceLabel: "compile runs with pack items or selected traces",
+      },
+      {
+        metric: "decision_success_rate",
+        label: "Decision success",
+        rate: rate(successfulDecisionFeedbackCount, knownDecisionFeedbackCount),
+        count: successfulDecisionFeedbackCount,
+        denominator: knownDecisionFeedbackCount,
+        evidenceLabel: "human good plus system success feedback",
+      },
+      {
+        metric: "bad_feedback_rate",
+        label: "Bad feedback",
+        rate: rate(badDecisionFeedbackCount, knownDecisionFeedbackCount),
+        count: badDecisionFeedbackCount,
+        denominator: knownDecisionFeedbackCount,
+        evidenceLabel: "human bad plus failed/regression/override/discard feedback",
+      },
+      {
+        metric: "prevented_rework_signals",
+        label: "Rework avoided",
+        rate: null,
+        count: preventedReworkSignalCount,
+        denominator: decisionRunCount,
+        evidenceLabel: "revise/rollback/discard/reject decisions plus applied feedback effects",
+      },
+    ],
+    evidence: {
+      compileRunCount,
+      evaluatedCompileRunCount,
+      compileEvaluationCount,
+      acceptedCompileEvaluationCount,
+      reusedCompileRunCount,
+      decisionRunCount,
+      decisionFeedbackCount,
+      knownDecisionFeedbackCount,
+      successfulDecisionFeedbackCount,
+      badDecisionFeedbackCount,
+      preventedReworkSignalCount,
+      appliedFeedbackEffectCount,
+    },
   });
 }
 
@@ -292,6 +373,7 @@ export async function fetchOverviewSystemQualityDomainForApi(): Promise<Overview
     searchProviderStateResult,
     compileRunHealthResult,
     compileEvalStatsResult,
+    productValueStatsResult,
   ] = await Promise.all([
     db.execute(sql`
       select
@@ -354,6 +436,52 @@ export async function fetchOverviewSystemQualityDomainForApi(): Promise<Overview
         round(avg(specificity)::numeric, 1)::float as specificity_avg
       from context_compile_evals
     `),
+    db.execute(sql`
+      with compile_run_reuse as (
+        select
+          r.id,
+          (count(distinct cpi.item_id) filter (where cpi.item_id is not null))::int
+            as pack_item_count,
+          (count(distinct cct.item_id) filter (where cct.selected))::int as selected_trace_count
+        from context_compile_runs r
+        left join context_pack_items cpi on cpi.run_id = r.id
+        left join context_compile_candidate_traces cct on cct.run_id = r.id
+        group by r.id
+      )
+      select
+        (select count(*)::int from context_compile_runs) as compile_run_count,
+        (select count(distinct run_id)::int from context_compile_evals) as evaluated_compile_run_count,
+        (select count(*)::int from context_compile_evals) as compile_evaluation_count,
+        (select count(*)::int
+         from context_compile_evals
+         where outcome in ('useful', 'partial')) as accepted_compile_evaluation_count,
+        (select count(*)::int
+         from compile_run_reuse
+         where pack_item_count > 0 or selected_trace_count > 0) as reused_compile_run_count,
+        (select count(*)::int from context_decision_runs) as decision_run_count,
+        ((select count(*)::int from context_decision_human_feedback) +
+          (select count(*)::int from context_decision_feedback)) as decision_feedback_count,
+        ((select count(*)::int from context_decision_human_feedback) +
+          (select count(*)::int from context_decision_feedback where outcome <> 'still_unknown'))
+          as known_decision_feedback_count,
+        ((select count(*)::int from context_decision_human_feedback where value = 'good') +
+          (select count(*)::int from context_decision_feedback where outcome = 'success'))
+          as successful_decision_feedback_count,
+        ((select count(*)::int from context_decision_human_feedback where value = 'bad') +
+          (select count(*)::int
+           from context_decision_feedback
+           where outcome in ('failed', 'discarded_pr', 'user_overrode', 'regression_found')))
+          as bad_decision_feedback_count,
+        ((select count(*)::int
+          from context_decision_runs
+          where status = 'completed'
+            and decision in ('revise_and_execute', 'rollback', 'discard', 'reject')) +
+          (select count(distinct decision_run_id)::int
+           from context_decision_feedback_effects
+           where status = 'applied')) as prevented_rework_signal_count,
+        (select count(*)::int from context_decision_feedback_effects where status = 'applied')
+          as applied_feedback_effect_count
+    `),
   ]);
 
   const compileSummaryRow = (compileSummaryResult.rows[0] ?? {}) as Record<string, unknown>;
@@ -362,6 +490,7 @@ export async function fetchOverviewSystemQualityDomainForApi(): Promise<Overview
     unknown
   >;
   const compileEvalStatsRow = (compileEvalStatsResult.rows[0] ?? {}) as Record<string, unknown>;
+  const productValueStatsRow = (productValueStatsResult.rows[0] ?? {}) as Record<string, unknown>;
 
   const domain: OverviewSystemQualityDomain = {
     checkedAt: checkedAt(),
@@ -373,6 +502,7 @@ export async function fetchOverviewSystemQualityDomainForApi(): Promise<Overview
     },
     compileRunHealth: compileRunHealthResult.runs,
     compileEvalStats: buildCompileEvalStats(compileEvalStatsRow),
+    productValueStats: buildProductValueStats(productValueStatsRow),
     charts: {
       compileRunsByDay: (compileRunsByDayResult.rows as Array<Record<string, unknown>>).map(
         (row) => ({
@@ -625,6 +755,7 @@ export async function fetchOverviewDashboardForApi(): Promise<OverviewDashboard>
     llmUsage: llmResources.llmUsage,
     searchApiStatus: systemQuality.searchApiStatus,
     compileEvalStats: systemQuality.compileEvalStats,
+    productValueStats: systemQuality.productValueStats,
     landscape: landscapeHealth.landscape,
   };
 

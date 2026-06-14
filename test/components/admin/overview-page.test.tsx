@@ -179,6 +179,65 @@ const defaultOverviewData = {
       { metric: "specificity", label: "Specificity", average: 83.5 },
     ],
   },
+  productValueStats: {
+    windowLabel: "All time",
+    metrics: [
+      {
+        metric: "compile_adoption_rate",
+        label: "Compile adoption",
+        rate: 0.667,
+        count: 2,
+        denominator: 3,
+        evidenceLabel: "useful/partial compile_eval outcomes",
+      },
+      {
+        metric: "compile_reuse_rate",
+        label: "Compile reuse",
+        rate: 0.8,
+        count: 8,
+        denominator: 10,
+        evidenceLabel: "compile runs with pack items or selected traces",
+      },
+      {
+        metric: "decision_success_rate",
+        label: "Decision success",
+        rate: 0.833,
+        count: 5,
+        denominator: 6,
+        evidenceLabel: "human good plus system success feedback",
+      },
+      {
+        metric: "bad_feedback_rate",
+        label: "Bad feedback",
+        rate: 0.167,
+        count: 1,
+        denominator: 6,
+        evidenceLabel: "human bad plus failed/regression/override/discard feedback",
+      },
+      {
+        metric: "prevented_rework_signals",
+        label: "Rework avoided",
+        rate: null,
+        count: 3,
+        denominator: 10,
+        evidenceLabel: "revise/rollback/discard/reject decisions plus applied feedback effects",
+      },
+    ],
+    evidence: {
+      compileRunCount: 10,
+      evaluatedCompileRunCount: 2,
+      compileEvaluationCount: 3,
+      acceptedCompileEvaluationCount: 2,
+      reusedCompileRunCount: 8,
+      decisionRunCount: 10,
+      decisionFeedbackCount: 7,
+      knownDecisionFeedbackCount: 6,
+      successfulDecisionFeedbackCount: 5,
+      badDecisionFeedbackCount: 1,
+      preventedReworkSignalCount: 3,
+      appliedFeedbackEffectCount: 1,
+    },
+  },
   landscape: {
     status: "ok",
     windowDays: 30,
@@ -290,6 +349,7 @@ describe("OverviewPage", () => {
         kpis: JSON.parse(JSON.stringify(defaultOverviewData.kpis)),
         compileRunHealth: JSON.parse(JSON.stringify(defaultDoctorData.runs)),
         compileEvalStats: JSON.parse(JSON.stringify(defaultOverviewData.compileEvalStats)),
+        productValueStats: JSON.parse(JSON.stringify(defaultOverviewData.productValueStats)),
         charts: JSON.parse(JSON.stringify(defaultOverviewData.charts)),
         searchApiStatus: JSON.parse(JSON.stringify(defaultOverviewData.searchApiStatus)),
       },
@@ -317,6 +377,14 @@ describe("OverviewPage", () => {
     expect(screen.getByText("Feedback Count")).toBeInTheDocument();
     expect(screen.getByText("Evaluated Runs")).toBeInTheDocument();
     expect(screen.getAllByText("84.3").length).toBeGreaterThan(0);
+    expect(screen.getByText("Product Value Evidence")).toBeInTheDocument();
+    expect(screen.getByText("Compile adoption")).toBeInTheDocument();
+    expect(screen.getByText("Compile reuse")).toBeInTheDocument();
+    expect(screen.getByText("Decision success")).toBeInTheDocument();
+    expect(screen.getByText("Bad feedback")).toBeInTheDocument();
+    expect(screen.getByText("Rework avoided")).toBeInTheDocument();
+    expect(screen.getByText("66.7%")).toBeInTheDocument();
+    expect(screen.getByText("3 / 10")).toBeInTheDocument();
     expect(screen.getByText("Eval Stats:")).toBeInTheDocument();
     expect(screen.getByText("Window:")).toBeInTheDocument();
     expect(screen.getAllByText("All time").length).toBeGreaterThan(0);
