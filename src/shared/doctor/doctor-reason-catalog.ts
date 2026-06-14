@@ -410,6 +410,22 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     action:
       "必要になったタイミングで queue supervisor または `bun run queue:finding:once` を実行してください。",
   },
+  VIBE_DISTILLATION_FAILED_BACKLOG_HIGH: {
+    label: "Vibe distillation 失敗backlogが多い",
+    severity: "warning",
+    area: "Distillation",
+    description: "v2 queue tables 上で Vibe 由来の failed job が整理閾値を超えています。",
+    impact: "現役queue滞留ではありませんが、再処理または失敗原因の棚卸しが必要です。",
+    action: "Queue 管理画面または SQL で failed job の理由を分類し、再実行対象を選別してください。",
+  },
+  VIBE_DISTILLATION_FAILED_BACKLOG_CRITICAL: {
+    label: "Vibe distillation 失敗backlogが上限超過",
+    severity: "warning",
+    area: "Distillation",
+    description: "v2 queue tables 上で Vibe 由来の failed job が上限閾値を超えています。",
+    impact: "現役queue滞留ではありませんが、失敗整理が遅れると再処理対象の判断が困難になります。",
+    action: "失敗理由ごとに再実行、保留、破棄を分けて backlog を圧縮してください。",
+  },
   VIBE_DISTILLATION_QUEUE_STALE_RUNNING: {
     label: "Vibe distillation に stale running job",
     severity: "critical",
@@ -458,6 +474,30 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     description: "wiki/source 由来の distillation が成功していません。",
     impact: "source から knowledge への更新が進みません。",
     action: "`bun run queue:finding:once` で処理経路を確認してください。",
+  },
+  SOURCE_DISTILLATION_STALE: {
+    label: "Source distillation 成功実行が古い",
+    severity: "info",
+    area: "Distillation",
+    description: "Source distillation の最新成功 run が source freshness threshold を超過しています。",
+    impact: "source/wiki 由来の知識更新が期待より遅れている可能性があります。",
+    action: "v2 queue の active backlog と最新 finalize 成功時刻を確認してください。",
+  },
+  SOURCE_DISTILLATION_FAILED_BACKLOG_HIGH: {
+    label: "Source distillation 失敗backlogが多い",
+    severity: "warning",
+    area: "Distillation",
+    description: "v2 queue tables 上で Source 由来の failed job が整理閾値を超えています。",
+    impact: "現役queue滞留ではありませんが、再処理または失敗原因の棚卸しが必要です。",
+    action: "Queue 管理画面または SQL で failed job の理由を分類し、再実行対象を選別してください。",
+  },
+  SOURCE_DISTILLATION_FAILED_BACKLOG_CRITICAL: {
+    label: "Source distillation 失敗backlogが上限超過",
+    severity: "warning",
+    area: "Distillation",
+    description: "v2 queue tables 上で Source 由来の failed job が上限閾値を超えています。",
+    impact: "現役queue滞留ではありませんが、失敗整理が遅れると再処理対象の判断が困難になります。",
+    action: "失敗理由ごとに再実行、保留、破棄を分けて backlog を圧縮してください。",
   },
 
   SOURCE_DISTILLATION_QUEUE_STALE_RUNNING: {

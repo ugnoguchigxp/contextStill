@@ -1,12 +1,9 @@
-import { and, eq, inArray, sql } from "drizzle-orm";
+import { sql } from "drizzle-orm";
 import { readFileLockState } from "../../../cli/file-lock.js";
 import { groupedConfig } from "../../../config.js";
 import { APP_CONSTANTS } from "../../../constants.js";
 import { getDb } from "../../../db/index.js";
-import { distillationTargetStates } from "../../../db/schema.js";
 import type { DoctorDistillationHealth } from "../../../shared/schemas/doctor.schema.js";
-import { isManualPauseTarget } from "../../distillationTarget/manual-pause.js";
-import { priorityGroupFromRowLike } from "../../distillationTarget/priority-group.js";
 import { isPipelineLockLikelyBlocking } from "../distillation-lock.util.js";
 import { minutesSince, normalizeReasonCounts } from "../doctor.utils.js";
 import { inspectLaunchAgent } from "../launch-agent.util.js";
@@ -19,6 +16,7 @@ type DistillationHealthReport = DoctorDistillationHealth;
 type DistillationRuns = DistillationHealthReport["runs"];
 type DistillationJobs = DistillationHealthReport["jobs"];
 type DistillationQueueHealth = DistillationHealthReport["queueHealth"];
+type SourceKind = "wiki_file" | "vibe_memory";
 
 export type DistillationRunInspectorConfig = {
   label: string;
@@ -40,22 +38,6 @@ type DistillationRunsRow =
       skipped_run_reasons?: unknown;
       outcome_kind_counts?: unknown;
     }
-  | undefined;
-
-type QueueHealthRow =
-  | Pick<
-      typeof distillationTargetStates.$inferSelect,
-      | "status"
-      | "targetKind"
-      | "createdAt"
-      | "lockedAt"
-      | "heartbeatAt"
-      | "updatedAt"
-      | "nextRetryAt"
-      | "lastError"
-      | "priorityGroup"
-      | "metadata"
-    >
   | undefined;
 
 type DistillationQueueBlockers = NonNullable<DistillationQueueHealth["blockers"]>;
@@ -121,21 +103,22 @@ function emptyQueueHealth(): DistillationQueueHealth {
 }
 
 function toIsoString(value: Date | string | null | undefined): string | null {
-  if (value instanceof Date) return value.toISOString();
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return null;
+    const rebuiltUtc = new Date(
+      Date.UTC(
+        value.getFullYear(),
+        value.getMonth(),
+        value.getDate(),
+        value.getHours(),
+        value.getMinutes(),
+        value.getSeconds(),
+        value.getMilliseconds(),
+      ),
+    );
+    return Number.isNaN(rebuiltUtc.getTime()) ? null : rebuiltUtc.toISOString();
+  }
   return value ? new Date(value).toISOString() : null;
-}
-
-function timestampMs(value: unknown): number | null {
-  if (value instanceof Date) return value.getTime();
-  if (typeof value !== "string" || !value.trim()) return null;
-  const parsed = new Date(value).getTime();
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function minTimestamp(current: number | null, candidate: number | null): number | null {
-  if (candidate === null) return current;
-  if (current === null) return candidate;
-  return Math.min(current, candidate);
 }
 
 function applyRunRow(runs: DistillationRuns, row: DistillationRunsRow) {
@@ -162,34 +145,60 @@ function hasRecentProgress(runs: DistillationRuns): boolean {
 }
 
 async function loadDomainDistillationRuns(
-  targetKind: "wiki_file" | "vibe_memory",
+  targetKind: SourceKind,
 ): Promise<DistillationRunsRow> {
   const db = getDb();
+  const sourceKind = targetKind;
   const result = await db.execute(sql`
-    with latest as (
+    with finding as (
       select
+        id,
         status,
         last_outcome_kind,
         coalesce(completed_at, updated_at) as ended_at
-      from distillation_target_states
-      where distillation_version = ${APP_CONSTANTS.distillationTargetVersion}
-        and target_kind = ${targetKind}
+      from finding_candidate_queue
+      where source_kind = ${sourceKind}
         and status in ('completed', 'skipped', 'failed')
+    ),
+    covering as (
+      select
+        ceq.status,
+        ceq.last_outcome_kind,
+        coalesce(ceq.completed_at, ceq.updated_at) as ended_at
+      from covering_evidence_queue ceq
+      join found_candidates fc on fc.id = ceq.found_candidate_id
+      join finding_candidate_queue fq on fq.id = fc.finding_job_id
+      where fq.source_kind = ${sourceKind}
+        and ceq.status in ('failed', 'skipped')
+    ),
+    finalizing as (
+      select
+        fdq.status,
+        fdq.last_outcome_kind,
+        coalesce(fdq.completed_at, fdq.updated_at) as ended_at
+      from finalize_distille_queue fdq
+      join evidence_coverage_results ecr on ecr.id = fdq.evidence_result_id
+      join found_candidates fc on fc.id = ecr.found_candidate_id
+      join finding_candidate_queue fq on fq.id = fc.finding_job_id
+      where fq.source_kind = ${sourceKind}
+        and fdq.status in ('completed', 'skipped', 'failed')
+    ),
+    latest as (
+      select status, last_outcome_kind, ended_at from finding where status in ('skipped', 'failed')
+      union all
+      select status, last_outcome_kind, ended_at from covering
+      union all
+      select status, last_outcome_kind, ended_at from finalizing
     ),
     normalized as (
       select
         status,
         case
-          when status = 'completed' and coalesce(last_outcome_kind, '') like 'knowledge_finalized%'
+          when status = 'completed'
             then 'knowledge_created'
-          when status = 'completed' then coalesce(last_outcome_kind, 'knowledge_created')
-          when status = 'failed' and coalesce(last_outcome_kind, '') = 'finalize_failed'
-            then 'processing_error'
           when status = 'failed' then coalesce(last_outcome_kind, 'processing_error')
-          when status = 'skipped' and coalesce(last_outcome_kind, '') in ('no_candidate', 'missing_source')
+          when status = 'skipped' and coalesce(last_outcome_kind, '') = ''
             then 'no_candidate'
-          when status = 'skipped' and coalesce(last_outcome_kind, '') = 'all_rejected'
-            then 'candidate_rejected'
           when status = 'skipped' then coalesce(last_outcome_kind, 'candidate_rejected')
           else status
         end as reason,
@@ -238,10 +247,29 @@ async function loadDomainDistillationRuns(
 }
 
 async function loadDomainDistillationJobs(
-  targetKind: "wiki_file" | "vibe_memory",
+  targetKind: SourceKind,
 ): Promise<DistillationJobs> {
   const db = getDb();
+  const sourceKind = targetKind;
   const result = await db.execute(sql`
+    with jobs as (
+      select status, last_error, updated_at
+      from finding_candidate_queue
+      where source_kind = ${sourceKind}
+      union all
+      select ceq.status, ceq.last_error, ceq.updated_at
+      from covering_evidence_queue ceq
+      join found_candidates fc on fc.id = ceq.found_candidate_id
+      join finding_candidate_queue fq on fq.id = fc.finding_job_id
+      where fq.source_kind = ${sourceKind}
+      union all
+      select fdq.status, fdq.last_error, fdq.updated_at
+      from finalize_distille_queue fdq
+      join evidence_coverage_results ecr on ecr.id = fdq.evidence_result_id
+      join found_candidates fc on fc.id = ecr.found_candidate_id
+      join finding_candidate_queue fq on fq.id = fc.finding_job_id
+      where fq.source_kind = ${sourceKind}
+    )
     select
       count(*) filter (where status = 'pending')::int as queued,
       count(*) filter (where status = 'running')::int as running,
@@ -249,9 +277,7 @@ async function loadDomainDistillationJobs(
       count(*) filter (where status = 'failed')::int as failed,
       max(updated_at) filter (where status = 'paused') as last_paused_at,
       (array_agg(last_error order by updated_at desc) filter (where last_error is not null))[1] as last_error
-    from distillation_target_states
-    where distillation_version = ${APP_CONSTANTS.distillationTargetVersion}
-      and target_kind = ${targetKind}
+    from jobs
   `);
   const row = (result.rows[0] ?? {}) as Record<string, unknown>;
   return {
@@ -279,157 +305,163 @@ function emptyQueueBlockers(): DistillationQueueBlockers {
   };
 }
 
-function accumulateBlocker(
-  blockers: DistillationQueueBlockers,
-  blockerGroup: "knowledge_candidate" | "wiki",
-  status: string,
-  row: QueueHealthRow,
-  nowMs: number,
-  staleAtMs: number,
-): void {
-  if (!row) return;
-  const isKnowledge = blockerGroup === "knowledge_candidate";
-  const runningMs =
-    timestampMs(row.heartbeatAt) ?? timestampMs(row.lockedAt) ?? timestampMs(row.updatedAt);
-  const staleRunning = (runningMs ?? Number.NEGATIVE_INFINITY) <= staleAtMs;
-  const manualPaused = status === "paused" && isManualPauseTarget(row);
-  const nextRetryMs = timestampMs(row.nextRetryAt);
-  const retryablePaused =
-    status === "paused" && !manualPaused && (nextRetryMs === null || nextRetryMs <= nowMs);
-
-  if (status === "pending") {
-    if (isKnowledge) blockers.pendingKnowledgeCandidates += 1;
-    else blockers.pendingWiki += 1;
-  } else if (status === "running") {
-    if (isKnowledge) {
-      blockers.runningKnowledgeCandidates += 1;
-      if (staleRunning) blockers.staleRunningKnowledgeCandidates += 1;
-    } else {
-      blockers.runningWiki += 1;
-      if (staleRunning) blockers.staleRunningWiki += 1;
-    }
-  } else if (retryablePaused) {
-    if (isKnowledge) blockers.retryableKnowledgeCandidates += 1;
-    else blockers.retryableWiki += 1;
-  } else if (manualPaused) {
-    if (isKnowledge) blockers.manualPausedKnowledgeCandidates += 1;
-    else blockers.manualPausedWiki += 1;
-  }
-}
-
 async function loadDomainQueueHealth(
-  targetKind: "wiki_file" | "vibe_memory",
+  targetKind: SourceKind,
 ): Promise<Omit<DistillationQueueHealth, "lock">> {
   const db = getDb();
-  const nowMs = Date.now();
-  const staleAtMs = nowMs - APP_CONSTANTS.distillationTargetStaleSeconds * 1000;
-  const rows = await db
-    .select({
-      status: distillationTargetStates.status,
-      targetKind: distillationTargetStates.targetKind,
-      priorityGroup: distillationTargetStates.priorityGroup,
-      createdAt: distillationTargetStates.createdAt,
-      lockedAt: distillationTargetStates.lockedAt,
-      heartbeatAt: distillationTargetStates.heartbeatAt,
-      updatedAt: distillationTargetStates.updatedAt,
-      nextRetryAt: distillationTargetStates.nextRetryAt,
-      lastError: distillationTargetStates.lastError,
-      metadata: distillationTargetStates.metadata,
-    })
-    .from(distillationTargetStates)
-    .where(
-      and(
-        eq(distillationTargetStates.distillationVersion, APP_CONSTANTS.distillationTargetVersion),
-        eq(distillationTargetStates.targetKind, targetKind),
-      ),
-    );
-  let queued = 0;
-  let running = 0;
-  let retryablePaused = 0;
-  let staleRunning = 0;
-  let blockedByHigherPriority = false;
-  let blockers = emptyQueueBlockers();
-  let oldestQueuedMs: number | null = null;
-  let oldestRunningMs: number | null = null;
-
-  for (const row of rows) {
-    if (!row) continue;
-    const status = typeof row.status === "string" ? row.status : "";
-    const createdMs = timestampMs(row.createdAt);
-    const nextRetryMs = timestampMs(row.nextRetryAt);
-    const manualPaused = status === "paused" && isManualPauseTarget(row);
-    if (status === "pending") {
-      queued += 1;
-      oldestQueuedMs = minTimestamp(oldestQueuedMs, createdMs);
-    } else if (
-      status === "paused" &&
-      !manualPaused &&
-      (nextRetryMs === null || nextRetryMs <= nowMs)
-    ) {
-      retryablePaused += 1;
-      oldestQueuedMs = minTimestamp(oldestQueuedMs, createdMs);
-    } else if (status === "running") {
-      running += 1;
-      const runningMs =
-        timestampMs(row.heartbeatAt) ?? timestampMs(row.lockedAt) ?? timestampMs(row.updatedAt);
-      oldestRunningMs = minTimestamp(oldestRunningMs, runningMs);
-      if ((runningMs ?? Number.NEGATIVE_INFINITY) <= staleAtMs) {
-        staleRunning += 1;
-      }
-    }
-  }
-
+  const sourceKind = targetKind;
+  const staleSeconds = APP_CONSTANTS.distillationTargetStaleSeconds;
   const higherPriorityKinds =
     targetKind === "vibe_memory"
-      ? (["knowledge_candidate", "web_ingest", "wiki"] as const)
+      ? ["knowledge_candidate", "web_ingest", "wiki_file"]
       : targetKind === "wiki_file"
-        ? (["knowledge_candidate", "web_ingest"] as const)
-        : ([] as const);
-
-  if (higherPriorityKinds.length > 0) {
-    const extraBlockers = await db
-      .select({
-        status: distillationTargetStates.status,
-        targetKind: distillationTargetStates.targetKind,
-        priorityGroup: distillationTargetStates.priorityGroup,
-        createdAt: distillationTargetStates.createdAt,
-        heartbeatAt: distillationTargetStates.heartbeatAt,
-        lockedAt: distillationTargetStates.lockedAt,
-        updatedAt: distillationTargetStates.updatedAt,
-        nextRetryAt: distillationTargetStates.nextRetryAt,
-        lastError: distillationTargetStates.lastError,
-        metadata: distillationTargetStates.metadata,
-      })
-      .from(distillationTargetStates)
-      .where(
-        and(
-          eq(distillationTargetStates.distillationVersion, APP_CONSTANTS.distillationTargetVersion),
-          inArray(distillationTargetStates.priorityGroup, [...higherPriorityKinds]),
-        ),
-      );
-
-    blockers = emptyQueueBlockers();
-    for (const row of extraBlockers) {
-      if (!row) continue;
-      const blockerGroup = priorityGroupFromRowLike(row);
-      const normalizedBlockerGroup = blockerGroup === "web_ingest" ? "wiki" : blockerGroup;
-      if (normalizedBlockerGroup !== "knowledge_candidate" && normalizedBlockerGroup !== "wiki") {
-        continue;
-      }
-      accumulateBlocker(blockers, normalizedBlockerGroup, row.status ?? "", row, nowMs, staleAtMs);
-    }
-    blockedByHigherPriority =
-      blockers.pendingKnowledgeCandidates +
-        blockers.runningKnowledgeCandidates +
-        blockers.retryableKnowledgeCandidates +
-        blockers.pendingWiki +
-        blockers.runningWiki +
-        blockers.retryableWiki >
-      0;
-  }
-
-  const oldestQueuedAt = oldestQueuedMs === null ? null : new Date(oldestQueuedMs).toISOString();
-  const oldestRunningAt = oldestRunningMs === null ? null : new Date(oldestRunningMs).toISOString();
+        ? ["knowledge_candidate", "web_ingest"]
+        : [];
+  const higherPriorityKindSql = sql.join(
+    higherPriorityKinds.map((kind) => sql`${kind}`),
+    sql`, `,
+  );
+  const result = await db.execute(sql`
+    with jobs as (
+      select
+        fq.source_kind,
+        fq.status,
+        fq.created_at,
+        fq.locked_at,
+        fq.heartbeat_at,
+        fq.updated_at,
+        fq.next_run_at
+      from finding_candidate_queue fq
+      union all
+      select
+        fq.source_kind,
+        ceq.status,
+        ceq.created_at,
+        ceq.locked_at,
+        ceq.heartbeat_at,
+        ceq.updated_at,
+        ceq.next_run_at
+      from covering_evidence_queue ceq
+      join found_candidates fc on fc.id = ceq.found_candidate_id
+      join finding_candidate_queue fq on fq.id = fc.finding_job_id
+      union all
+      select
+        fq.source_kind,
+        fdq.status,
+        fdq.created_at,
+        fdq.locked_at,
+        fdq.heartbeat_at,
+        fdq.updated_at,
+        null::timestamp as next_run_at
+      from finalize_distille_queue fdq
+      join evidence_coverage_results ecr on ecr.id = fdq.evidence_result_id
+      join found_candidates fc on fc.id = ecr.found_candidate_id
+      join finding_candidate_queue fq on fq.id = fc.finding_job_id
+    ),
+    target_jobs as (
+      select *
+      from jobs
+      where source_kind = ${sourceKind}
+    ),
+    higher_jobs as (
+      select *
+      from jobs
+      where source_kind in (${higherPriorityKindSql})
+    ),
+    target_summary as (
+      select
+        count(*) filter (where status = 'pending')::int as queued,
+        count(*) filter (where status = 'running')::int as running,
+        count(*) filter (
+          where status = 'paused'
+            and (next_run_at is null or next_run_at <= now())
+        )::int as retryable_paused,
+        count(*) filter (
+          where status = 'running'
+            and coalesce(heartbeat_at, locked_at, updated_at) < now() - make_interval(secs => ${staleSeconds})
+        )::int as stale_running,
+        to_char(
+          min(created_at) filter (
+            where status = 'pending'
+               or (status = 'paused' and (next_run_at is null or next_run_at <= now()))
+          ),
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+        ) as oldest_queued_at,
+        to_char(
+          min(coalesce(heartbeat_at, locked_at, updated_at)) filter (where status = 'running'),
+          'YYYY-MM-DD"T"HH24:MI:SS.MS"Z"'
+        ) as oldest_running_at
+      from target_jobs
+    ),
+    higher_summary as (
+      select
+        count(*) filter (where source_kind = 'knowledge_candidate' and status = 'pending')::int
+          as pending_knowledge_candidates,
+        count(*) filter (where source_kind = 'knowledge_candidate' and status = 'running')::int
+          as running_knowledge_candidates,
+        count(*) filter (
+          where source_kind = 'knowledge_candidate'
+            and status = 'running'
+            and coalesce(heartbeat_at, locked_at, updated_at) < now() - make_interval(secs => ${staleSeconds})
+        )::int as stale_running_knowledge_candidates,
+        count(*) filter (
+          where source_kind = 'knowledge_candidate'
+            and status = 'paused'
+            and (next_run_at is null or next_run_at <= now())
+        )::int as retryable_knowledge_candidates,
+        count(*) filter (
+          where source_kind in ('wiki_file', 'web_ingest')
+            and status = 'pending'
+        )::int as pending_wiki,
+        count(*) filter (
+          where source_kind in ('wiki_file', 'web_ingest')
+            and status = 'running'
+        )::int as running_wiki,
+        count(*) filter (
+          where source_kind in ('wiki_file', 'web_ingest')
+            and status = 'running'
+            and coalesce(heartbeat_at, locked_at, updated_at) < now() - make_interval(secs => ${staleSeconds})
+        )::int as stale_running_wiki,
+        count(*) filter (
+          where source_kind in ('wiki_file', 'web_ingest')
+            and status = 'paused'
+            and (next_run_at is null or next_run_at <= now())
+        )::int as retryable_wiki
+      from higher_jobs
+    )
+    select
+      target_summary.*,
+      higher_summary.*
+    from target_summary
+    cross join higher_summary
+  `);
+  const row = (result.rows[0] ?? {}) as Record<string, unknown>;
+  const queued = Number(row.queued ?? 0);
+  const running = Number(row.running ?? 0);
+  const retryablePaused = Number(row.retryable_paused ?? 0);
+  const staleRunning = Number(row.stale_running ?? 0);
+  const blockers: DistillationQueueBlockers = {
+    pendingKnowledgeCandidates: Number(row.pending_knowledge_candidates ?? 0),
+    runningKnowledgeCandidates: Number(row.running_knowledge_candidates ?? 0),
+    staleRunningKnowledgeCandidates: Number(row.stale_running_knowledge_candidates ?? 0),
+    retryableKnowledgeCandidates: Number(row.retryable_knowledge_candidates ?? 0),
+    manualPausedKnowledgeCandidates: 0,
+    pendingWiki: Number(row.pending_wiki ?? 0),
+    runningWiki: Number(row.running_wiki ?? 0),
+    staleRunningWiki: Number(row.stale_running_wiki ?? 0),
+    retryableWiki: Number(row.retryable_wiki ?? 0),
+    manualPausedWiki: 0,
+  };
+  const blockedByHigherPriority =
+    blockers.pendingKnowledgeCandidates +
+      blockers.runningKnowledgeCandidates +
+      blockers.retryableKnowledgeCandidates +
+      blockers.pendingWiki +
+      blockers.runningWiki +
+      blockers.retryableWiki >
+    0;
+  const oldestQueuedAt = toIsoString(row.oldest_queued_at as Date | string | null | undefined);
+  const oldestRunningAt = toIsoString(row.oldest_running_at as Date | string | null | undefined);
   return {
     queued,
     running,
@@ -467,8 +499,10 @@ function nextActionsForDistillation(
   queueHealth: DistillationQueueHealth,
 ): string[] {
   const nextActions: string[] = [];
-  const repairDryRunCommand = "bun run queue:migrate:dry-run";
+  const inspectCommand = "bun run doctor";
   const repairApplyCommand = "bun run queue:finding:once";
+  const freshnessThresholdMinutes =
+    config.targetKind === "wiki_file" ? 72 * 60 : groupedConfig.doctor.freshnessThresholdMinutes;
   const lockLikelyBlocking = isPipelineLockLikelyBlocking({
     staleByCreatedAge: queueHealth.lock.staleByCreatedAge,
     launchAgentLoaded: launchAgent.loaded,
@@ -490,10 +524,15 @@ function nextActionsForDistillation(
   }
   if (
     runs.lastOkRunAgeMinutes !== null &&
-    runs.lastOkRunAgeMinutes > groupedConfig.doctor.freshnessThresholdMinutes
+    runs.lastOkRunAgeMinutes > freshnessThresholdMinutes
   ) {
     nextActions.push(
       `${config.label} の最新成功 run が古いです。直近の skipped/failed 理由を確認する`,
+    );
+  }
+  if (jobs.failed >= 50) {
+    nextActions.push(
+      `${config.label} は failed backlog が ${jobs.failed} 件あります。現役queue滞留とは分けて失敗理由を棚卸しする`,
     );
   }
   if (
@@ -516,12 +555,12 @@ function nextActionsForDistillation(
   }
   if (queueHealth.staleRunning > 0) {
     nextActions.push(
-      `${config.label} は stale running job があります。${repairDryRunCommand} で対象を確認し、必要なら ${repairApplyCommand} を実行する`,
+      `${config.label} は stale running job があります。${inspectCommand} と Queue 管理画面で対象を確認し、必要なら ${repairApplyCommand} を実行する`,
     );
   }
   if (lockLikelyBlocking) {
     nextActions.push(
-      `${config.label} の pipeline lock が古いです。${repairDryRunCommand} で lock 判定を確認する`,
+      `${config.label} の pipeline lock が古いです。${inspectCommand} で lock 判定を確認する`,
     );
   }
   if (
@@ -533,13 +572,13 @@ function nextActionsForDistillation(
     !hasRecentProgress(runs)
   ) {
     nextActions.push(
-      `${config.label} のqueueが進んでいません。${repairDryRunCommand} で queue 状態を確認し、LaunchAgent と ${config.logPath} を確認する`,
+      `${config.label} のqueueが進んでいません。Queue 管理画面で v2 queue 状態を確認し、LaunchAgent と ${config.logPath} を確認する`,
     );
   }
   if (queueHealth.blockedByHigherPriority && queueHealth.blockers) {
     const blockerSummary = `candidate pending=${queueHealth.blockers.pendingKnowledgeCandidates}, running=${queueHealth.blockers.runningKnowledgeCandidates}, retryable=${queueHealth.blockers.retryableKnowledgeCandidates}; wiki pending=${queueHealth.blockers.pendingWiki}, running=${queueHealth.blockers.runningWiki}, retryable=${queueHealth.blockers.retryableWiki}`;
     nextActions.push(
-      `${config.label} は上位priorityにより待機中です（${blockerSummary}）。${repairDryRunCommand} で再確認する`,
+      `${config.label} は上位priorityにより待機中です（${blockerSummary}）。Queue 管理画面で v2 queue を再確認する`,
     );
   }
   return nextActions;

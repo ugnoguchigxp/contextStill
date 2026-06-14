@@ -43,6 +43,11 @@ const impactRules: Partial<Record<string, ImpactRule>> = {
   HITL_DRAFT_REVIEW_STALE: { normal: "maintenance", strict: "degraded" },
   KNOWLEDGE_DECAY_STALE_HIGH: { normal: "maintenance", strict: "degraded" },
   VIBE_DISTILLATION_STALE: { normal: "maintenance" },
+  VIBE_DISTILLATION_FAILED_BACKLOG_HIGH: { normal: "maintenance" },
+  VIBE_DISTILLATION_FAILED_BACKLOG_CRITICAL: { normal: "maintenance", strict: "degraded" },
+  SOURCE_DISTILLATION_STALE: { normal: "maintenance" },
+  SOURCE_DISTILLATION_FAILED_BACKLOG_HIGH: { normal: "maintenance" },
+  SOURCE_DISTILLATION_FAILED_BACKLOG_CRITICAL: { normal: "maintenance", strict: "degraded" },
   NO_COMPILE_RUN_HISTORY: { normal: "maintenance" },
   RUN_HEALTH_SKIPPED_TABLE_MISSING: { normal: "maintenance" },
 };
@@ -55,7 +60,12 @@ const environmentScopeRules: Partial<Record<string, DoctorReasonEnvironmentScope
   ANTIGRAVITY_LOGS_SYNC_WARNINGS: "configured_only",
   VIBE_DISTILLATION_NEVER_RAN: "configured_only",
   VIBE_DISTILLATION_STALE: "configured_only",
+  VIBE_DISTILLATION_FAILED_BACKLOG_HIGH: "configured_only",
+  VIBE_DISTILLATION_FAILED_BACKLOG_CRITICAL: "configured_only",
   SOURCE_DISTILLATION_NEVER_RAN: "configured_only",
+  SOURCE_DISTILLATION_STALE: "configured_only",
+  SOURCE_DISTILLATION_FAILED_BACKLOG_HIGH: "configured_only",
+  SOURCE_DISTILLATION_FAILED_BACKLOG_CRITICAL: "configured_only",
 
   DEGRADED_RATE_HIGH: "non_empty_db",
   USABLE_PACK_RATE_LOW: "non_empty_db",
@@ -67,32 +77,32 @@ const environmentScopeRules: Partial<Record<string, DoctorReasonEnvironmentScope
 const commandHints: Partial<Record<string, DoctorReasonCommands>> = {
   VIBE_DISTILLATION_QUEUE_STALE_RUNNING: {
     inspect: "bun run doctor",
-    repairDryRun: "bun run queue:migrate:dry-run",
+    repairDryRun: null,
     repairApply: "bun run queue:finding:once",
   },
   VIBE_DISTILLATION_PIPELINE_LOCK_STALE: {
     inspect: "bun run doctor",
-    repairDryRun: "bun run queue:migrate:dry-run",
+    repairDryRun: null,
     repairApply: "bun run queue:finding:once",
   },
   VIBE_DISTILLATION_QUEUE_STOPPED: {
     inspect: "bun run doctor",
-    repairDryRun: "bun run queue:migrate:dry-run",
+    repairDryRun: null,
     repairApply: null,
   },
   SOURCE_DISTILLATION_QUEUE_STALE_RUNNING: {
     inspect: "bun run doctor",
-    repairDryRun: "bun run queue:migrate:dry-run",
+    repairDryRun: null,
     repairApply: "bun run queue:finding:once",
   },
   SOURCE_DISTILLATION_PIPELINE_LOCK_STALE: {
     inspect: "bun run doctor",
-    repairDryRun: "bun run queue:migrate:dry-run",
+    repairDryRun: null,
     repairApply: "bun run queue:finding:once",
   },
   SOURCE_DISTILLATION_QUEUE_STOPPED: {
     inspect: "bun run doctor",
-    repairDryRun: "bun run queue:migrate:dry-run",
+    repairDryRun: null,
     repairApply: null,
   },
 };

@@ -87,6 +87,10 @@ function createEmptyDistillationHealth(label: string): DoctorReport["vibeDistill
   };
 }
 
+const sourceDistillationFreshnessThresholdMinutes = 72 * 60;
+const failedBacklogWarningCount = 50;
+const failedBacklogCriticalCount = 200;
+
 export function createEmptyRuns(options: ResolvedDoctorOptions): DoctorReport["runs"] {
   return {
     windowSize: options.windowSize,
@@ -181,11 +185,19 @@ function appendDistillationReasons(
   if (!distillation.runs.lastRunAt) {
     reasons.push(`${prefix}_NEVER_RAN`);
   } else if (
-    prefix !== "SOURCE_DISTILLATION" &&
     typeof ageMinutes === "number" &&
-    ageMinutes > options.freshnessThresholdMinutes
+    ageMinutes >
+      (prefix === "SOURCE_DISTILLATION"
+        ? sourceDistillationFreshnessThresholdMinutes
+        : options.freshnessThresholdMinutes)
   ) {
     reasons.push(`${prefix}_STALE`);
+  }
+  if (distillation.jobs.failed >= failedBacklogWarningCount) {
+    reasons.push(`${prefix}_FAILED_BACKLOG_HIGH`);
+  }
+  if (distillation.jobs.failed >= failedBacklogCriticalCount) {
+    reasons.push(`${prefix}_FAILED_BACKLOG_CRITICAL`);
   }
   if (distillation.queueHealth.staleRunning > 0) {
     reasons.push(`${prefix}_QUEUE_STALE_RUNNING`);
@@ -419,7 +431,12 @@ function evidenceForReason(
       running: context.vibeDistillation.queueHealth.running,
       retryablePaused: context.vibeDistillation.queueHealth.retryablePaused,
       staleRunning: context.vibeDistillation.queueHealth.staleRunning,
+      failed: context.vibeDistillation.jobs.failed,
       blockedByHigherPriority: context.vibeDistillation.queueHealth.blockedByHigherPriority,
+      freshnessAgeMinutes:
+        context.vibeDistillation.runs.lastOkRunAgeMinutes ??
+        context.vibeDistillation.runs.lastRunAgeMinutes,
+      freshnessThresholdMinutes: context.options.freshnessThresholdMinutes,
       lock: context.vibeDistillation.queueHealth.lock,
     };
   }
@@ -429,7 +446,12 @@ function evidenceForReason(
       running: context.sourceDistillation.queueHealth.running,
       retryablePaused: context.sourceDistillation.queueHealth.retryablePaused,
       staleRunning: context.sourceDistillation.queueHealth.staleRunning,
+      failed: context.sourceDistillation.jobs.failed,
       blockedByHigherPriority: context.sourceDistillation.queueHealth.blockedByHigherPriority,
+      freshnessAgeMinutes:
+        context.sourceDistillation.runs.lastOkRunAgeMinutes ??
+        context.sourceDistillation.runs.lastRunAgeMinutes,
+      freshnessThresholdMinutes: sourceDistillationFreshnessThresholdMinutes,
       lock: context.sourceDistillation.queueHealth.lock,
     };
   }

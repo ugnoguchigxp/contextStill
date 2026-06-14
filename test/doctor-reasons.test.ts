@@ -34,12 +34,11 @@ function collectKnownReasonCodes(): string[] {
     "QUEUE_STALE_RUNNING",
     "PIPELINE_LOCK_STALE",
     "QUEUE_STOPPED",
+    "FAILED_BACKLOG_HIGH",
+    "FAILED_BACKLOG_CRITICAL",
   ];
   for (const prefix of distillationPrefixes) {
     for (const suffix of distillationSuffixes) {
-      if (prefix === "SOURCE_DISTILLATION" && suffix === "STALE") {
-        continue;
-      }
       codes.add(`${prefix}_${suffix}`);
     }
   }
