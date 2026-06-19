@@ -64,7 +64,7 @@ function usage(): string {
     "Usage: bun run scripts/duckduckgo-smoke.ts [options]",
     "",
     "Options:",
-    "  --query <text>          Search query. Default: memory router context compile",
+    "  --query <text>          Search query. Default: contextStill context compile",
     "  --endpoint <name>       html, lite, or both. Default: both",
     "  --profile <name>        current, browser, none, or all. Default: current",
     "  --timeout-ms <number>   Request timeout per HTTP hop. Default: 15000",
@@ -98,7 +98,7 @@ function parseProfile(value: string): HeaderProfileName[] {
 
 function parseArgs(args: string[]): CliOptions {
   const options: CliOptions = {
-    query: "memory router context compile",
+    query: "contextStill context compile",
     endpoints: ["html", "lite"],
     profiles: ["current"],
     timeoutMs: 15_000,

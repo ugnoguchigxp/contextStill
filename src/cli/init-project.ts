@@ -300,7 +300,7 @@ async function seedGlobalPreset(
   const knowledgeIds: string[] = [];
 
   for (const entry of entries) {
-    const sourceUri = `preset://memory-router/${presetName}/${entry.id}`;
+    const sourceUri = `preset://context-still/${presetName}/${entry.id}`;
     const knowledgeId = await upsertKnowledgeFromSource({
       sourceUri,
       type: entry.type,

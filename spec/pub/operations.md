@@ -102,6 +102,25 @@ Defaults:
 
 Override with `BACKUP_DIR`, `CONTAINER_NAME`, `DB_USER`, `DB_NAME`, or `DB_PASSWORD`.
 
+## Knowledge Import/Export Trial
+
+Run a PostgreSQL roundtrip rehearsal against a separate target database:
+
+```bash
+RUN_FULL_BACKUP=1 bun run knowledge:roundtrip:trial
+```
+
+The trial exports from `SOURCE_DATABASE_URL`, creates and migrates `TARGET_DATABASE_NAME`, runs import dry-run, applies `--mode insert-only`, verifies duplicate import rollback, writes a report under `exports/`, and drops the target DB by default.
+
+Useful overrides:
+
+- `SOURCE_DATABASE_URL`: source database. Defaults to `postgres://postgres:postgres@localhost:7889/context_still`.
+- `TARGET_DATABASE_NAME`: temporary target database. Defaults to `context_still_import_roundtrip`.
+- `TARGET_DATABASE_URL`: full target URL. Defaults to the local 7889 PostgreSQL with `TARGET_DATABASE_NAME`.
+- `KEEP_TARGET_DB=1`: keep the target DB after the trial for manual inspection.
+- `ALLOW_DROP_TARGET=1`: if the target DB already exists, drop and recreate it.
+- `RUN_FULL_BACKUP=1`: run `./scripts/backup-db.sh` before export.
+
 ## Troubleshooting
 
 | Symptom | First checks |

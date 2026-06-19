@@ -36,6 +36,7 @@
       "drizzle/meta/**",
       "docs/assets/**",
       "docs/assets/css/style.css",
+      "exports/**",
       "github-pages/.preview/**",
       "github-pages/docs/**",
       "github-pages/reports/**",

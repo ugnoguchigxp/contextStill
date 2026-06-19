@@ -16,3 +16,4 @@ scratch/
 logs/
 artifacts/*.png
 artifacts/*.PNG
+exports/
