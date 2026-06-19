@@ -22,6 +22,7 @@ describe("db session", () => {
     const session = getDefaultDbSession();
     expect(session.mode).toBe("read");
     expect(session.db).toBe(db);
+    expect(session.backend).toBe("postgres");
   });
 
   test("withDbSession passes a read session", async () => {
