@@ -85,7 +85,7 @@ bun run queue:merge-activation-finalize:once
 
 ## First Review Loop
 
-1. Open the admin UI at http://localhost:5173.
+1. Open the admin UI at http://localhost:39171.
 2. Check **Doctor** for DB, embedding, provider, sync, and queue status.
 3. Use **Sources** to import or edit source pages.
 4. Use **Queue** to inspect distillation target state.

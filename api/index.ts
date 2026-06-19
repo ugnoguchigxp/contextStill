@@ -1,8 +1,9 @@
 import { serve } from "@hono/node-server";
 import { closeDbPool } from "../src/db/client.js";
+import { standaloneApiPort } from "../src/dev-server.config.js";
 import app from "./app.js";
 
-const port = Number(process.env.PORT ?? 3000);
+const port = Number(process.env.PORT ?? standaloneApiPort);
 
 const server = serve(
   {

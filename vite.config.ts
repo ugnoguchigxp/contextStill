@@ -3,6 +3,7 @@ import devServer from "@hono/vite-dev-server";
 import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vite";
+import { adminDevServerPort } from "./src/dev-server.config.js";
 
 export default defineConfig({
   plugins: [
@@ -23,7 +24,8 @@ export default defineConfig({
     },
   },
   server: {
-    port: 5173,
+    port: adminDevServerPort,
+    strictPort: true,
   },
   optimizeDeps: {
     include: ["dayjs", "@braintree/sanitize-url"],

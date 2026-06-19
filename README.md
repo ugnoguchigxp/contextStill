@@ -115,7 +115,7 @@ Start the local admin UI and API:
 bun run dev
 ```
 
-- UI: http://localhost:5173
+- UI: http://localhost:39171
 - API: same origin under `/api/*`
 
 Start only the MCP server:
