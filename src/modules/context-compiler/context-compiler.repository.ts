@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { getDefaultDbSession } from "../../db/session.js";
 import {
   contextCompileCandidateTraces,
@@ -39,6 +40,14 @@ import {
 
 const db = getDefaultDbSession().db;
 
+function isSqliteBackend(): boolean {
+  return resolveDatabaseBackendConfig().kind === "sqlite";
+}
+
+async function sqliteRepository() {
+  return import("./context-compiler.repository.sqlite.js");
+}
+
 export async function insertCompileRun(params: {
   goal: string;
   intent: string;
@@ -52,6 +61,10 @@ export async function insertCompileRun(params: {
   durationMs: number;
   source?: CompileRunSource;
 }): Promise<string> {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.insertCompileRunSqlite(params);
+  }
   const [inserted] = await db
     .insert(contextCompileRuns)
     .values({
@@ -73,6 +86,10 @@ export async function insertCompileRun(params: {
 }
 
 export async function updateCompileRunSnapshot(runId: string, pack: ContextPack): Promise<void> {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.updateCompileRunSnapshotSqlite(runId, pack);
+  }
   await db
     .update(contextCompileRuns)
     .set({ packSnapshot: pack as unknown as Record<string, unknown> })
@@ -85,6 +102,10 @@ export async function updateCompileRunFailure(params: {
   durationMs: number;
   pack: ContextPack;
 }): Promise<void> {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.updateCompileRunFailureSqlite(params);
+  }
   await db
     .update(contextCompileRuns)
     .set({
@@ -108,6 +129,10 @@ export async function insertContextPackItems(
   }>,
 ): Promise<void> {
   if (items.length === 0) return;
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.insertContextPackItemsSqlite(runId, items);
+  }
 
   await db.insert(contextPackItems).values(
     items.map((item) => ({
@@ -145,6 +170,10 @@ export async function insertContextCompileCandidateTraces(
   }>,
 ): Promise<void> {
   if (items.length === 0) return;
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.insertContextCompileCandidateTracesSqlite(runId, items);
+  }
 
   await db.insert(contextCompileCandidateTraces).values(
     items.map((item) => ({
@@ -209,6 +238,10 @@ function normalizeKnowledgeStatus(value: string): "active" | "draft" | "deprecat
 }
 
 export async function listRecentCompileRuns(limit = 20): Promise<CompileRunSummary[]> {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.listRecentCompileRunsSqlite(limit);
+  }
   const normalizedLimit = Math.min(100, Math.max(1, Math.floor(limit)));
   const rows = await db
     .select({
@@ -248,6 +281,10 @@ export async function listRecentCompileRuns(limit = 20): Promise<CompileRunSumma
 }
 
 export async function getCompileRunSnapshot(runId: string): Promise<CompileRunSnapshot | null> {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.getCompileRunSnapshotSqlite(runId);
+  }
   const [run] = await db
     .select({
       id: contextCompileRuns.id,
@@ -309,6 +346,10 @@ export async function getLatestCompileRunForSession(params: {
   sessionId: string;
   createdBefore?: Date;
 }): Promise<{ id: string; createdAt: Date } | null> {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.getLatestCompileRunForSessionSqlite(params);
+  }
   const [row] = await db
     .select({
       id: contextCompileRuns.id,
@@ -339,6 +380,10 @@ export async function getCompileRunById(runId: string): Promise<{
   createdAt: Date;
   outputMarkdown: string | null;
 } | null> {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.getCompileRunByIdSqlite(runId);
+  }
   const [row] = await db
     .select({
       id: contextCompileRuns.id,
@@ -368,6 +413,10 @@ export async function listCompileRunOutputsByIds(runIds: string[]): Promise<
     }
   >
 > {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.listCompileRunOutputsByIdsSqlite(runIds);
+  }
   const normalizedIds = [...new Set(runIds.map((item) => item.trim()).filter(Boolean))];
   if (normalizedIds.length === 0) return new Map();
   const rows = await db
@@ -945,6 +994,10 @@ export async function getCompileFreshnessMarkers(params?: {
   repoPath?: string;
   repoKey?: string;
 }): Promise<CompileFreshnessMarkers> {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.getCompileFreshnessMarkersSqlite();
+  }
   const repoPath = params?.repoPath?.trim() ? params.repoPath.trim() : undefined;
   const repoKey = params?.repoKey?.trim() ? params.repoKey.trim().toLowerCase() : undefined;
 

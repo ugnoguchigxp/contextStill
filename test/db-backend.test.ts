@@ -40,10 +40,11 @@ describe("database backend config", () => {
     const config = resolveDatabaseBackendConfig({
       databaseUrl: "postgres://postgres:postgres@localhost/context_still",
       backend: "sqlite",
+      sqlitePath: "/tmp/context-still-core.sqlite",
     });
 
     expect(config.kind).toBe("sqlite");
-    expect(config.sqlitePath).toBe(null);
+    expect(config.sqlitePath).toBe("/tmp/context-still-core.sqlite");
   });
 });
 

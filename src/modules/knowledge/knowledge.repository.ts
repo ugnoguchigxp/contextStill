@@ -1,4 +1,5 @@
 import { type SQL, and, desc, eq, ilike, inArray, or, sql } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import { knowledgeItems, knowledgeSourceLinks, sourceFragments, sources } from "../../db/schema.js";
 import { normalizeKnowledgeScore } from "../../lib/score-scale.js";
@@ -169,6 +170,11 @@ export async function searchKnowledge(
   input: KnowledgeSearchQueryInput,
   options: KnowledgeSearchOptions = {},
 ): Promise<KnowledgeSearchResult[]> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const { searchKnowledgeSqlite } = await import("./knowledge.repository.sqlite.js");
+    return searchKnowledgeSqlite(input, options);
+  }
+
   const conditions: SQL[] = [];
 
   if (options.types && options.types.length > 0) {
@@ -288,6 +294,11 @@ export async function searchKnowledge(
 export async function upsertKnowledgeFromSource(
   params: UpsertKnowledgeFromSourceParams,
 ): Promise<string> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const { upsertKnowledgeFromSourceSqlite } = await import("./knowledge.repository.sqlite.js");
+    return upsertKnowledgeFromSourceSqlite(params);
+  }
+
   const existing = await db.query.knowledgeItems.findFirst({
     where: sql`${knowledgeItems.metadata} ->> 'sourceUri' = ${params.sourceUri}`,
   });
@@ -398,6 +409,11 @@ export async function vectorSearchKnowledge(
   statuses: KnowledgeStatus[] = ["active"],
   options: KnowledgeSearchOptions = {},
 ): Promise<KnowledgeSearchResult[]> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const { vectorSearchKnowledgeSqlite } = await import("./knowledge.repository.sqlite.js");
+    return vectorSearchKnowledgeSqlite(embedding, limit, statuses, options);
+  }
+
   const applicabilityQuery = buildApplicabilityQuery(
     {
       includeGeneral: options.includeGeneral ?? true,

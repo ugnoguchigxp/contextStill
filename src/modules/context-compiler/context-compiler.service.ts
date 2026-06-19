@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { groupedConfig } from "../../config.js";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { mcpResourceUri } from "../../project-identity.js";
 import type { CompileRunSource } from "../../shared/schemas/compile-run.schema.js";
 import {
@@ -423,6 +424,7 @@ async function recordCompileRunKnowledgeUsageSignalsSafe(params: {
   }>;
   actor: "agent" | "system";
 }): Promise<void> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") return;
   const selectedSet = new Set(params.selectedKnowledgeIds.map((id) => id.trim()).filter(Boolean));
   if (selectedSet.size === 0) return;
   const agenticAcceptedSet = new Set(

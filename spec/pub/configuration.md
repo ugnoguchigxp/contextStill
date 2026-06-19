@@ -7,6 +7,8 @@ Configuration is environment-variable based. See `.env.example` for the authorit
 | Variable | Default | Purpose |
 |---|---|---|
 | `DATABASE_URL` | `postgres://postgres:postgres@localhost:7889/context_still` | PostgreSQL connection |
+| `CONTEXT_STILL_DB_BACKEND` | inferred from `DATABASE_URL` | Set `sqlite` to use the local SQLite backend for the primary knowledge/search/context_compile path |
+| `CONTEXT_STILL_SQLITE_CORE_PATH` | `./data/context-still-core.sqlite` | SQLite core database path used when `CONTEXT_STILL_DB_BACKEND=sqlite` |
 | `CONTEXT_STILL_DB_POOL_MAX` | `3` | Per-process PostgreSQL pool max. Keep Hono/MCP/queue totals below DB `max_connections` |
 | `CONTEXT_STILL_DB_POOL_IDLE_TIMEOUT_MS` | `10000` | Milliseconds before idle DB pool clients are released |
 | `CONTEXT_STILL_DB_POOL_CONNECTION_TIMEOUT_MS` | `5000` | Milliseconds to wait for a DB connection before failing |
@@ -59,6 +61,8 @@ Runtime task routing can also be edited from the admin Settings page. Each route
 
 ## Local-First Notes
 
+- To run the current local-first SQLite path, set `CONTEXT_STILL_DB_BACKEND=sqlite` and optionally `CONTEXT_STILL_SQLITE_CORE_PATH=./data/context-still-core.sqlite` before starting the MCP/API process.
+- SQLite mode currently covers the primary `register_candidates`, `search_knowledge`, source search, and `context_compile` run/snapshot path. PostgreSQL remains the advanced backend for legacy queue/distillation/admin surfaces while the remaining stores are migrated.
 - Use local LLM and local embedding services to keep distillation local.
 - Omit external search API keys if you do not want distillation to call external search providers.
 - The wiki/source root is local filesystem content and is managed as its own Git repository when possible.

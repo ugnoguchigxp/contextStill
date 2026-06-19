@@ -14,6 +14,7 @@ test-results/
 backup/
 scratch/
 logs/
+data/
 artifacts/*.png
 artifacts/*.PNG
 exports/

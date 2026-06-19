@@ -1,4 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import { contextPackItems, knowledgeItems, knowledgeUsageEvents } from "../../db/schema.js";
 import { recordAuditLogSafe } from "../audit/audit-log.service.js";
@@ -257,6 +258,7 @@ export async function recalculateKnowledgeDynamicScores(knowledgeIds: string[]):
 }
 
 export async function recalculateKnowledgeDynamicScoresSafe(knowledgeIds: string[]): Promise<void> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") return;
   try {
     await recalculateKnowledgeDynamicScores(knowledgeIds);
   } catch (error) {
@@ -274,6 +276,7 @@ export async function recalculateKnowledgeDynamicScoresSafe(knowledgeIds: string
 export async function recordKnowledgeCompileSelectionSafe(
   input: RecordKnowledgeCompileSelectionInput,
 ): Promise<void> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") return;
   try {
     await recordKnowledgeCompileSelection(input);
   } catch (error) {

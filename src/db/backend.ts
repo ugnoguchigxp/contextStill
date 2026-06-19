@@ -1,3 +1,4 @@
+import path from "node:path";
 import { readProjectEnv } from "../project-identity.js";
 
 export type DatabaseBackendKind = "postgres" | "sqlite";
@@ -7,6 +8,8 @@ export type DatabaseBackendConfig = {
   url: string;
   sqlitePath: string | null;
 };
+
+const defaultSqliteCorePath = path.resolve(process.cwd(), "data", "context-still-core.sqlite");
 
 function normalizeBackendKind(value: string | undefined): DatabaseBackendKind | null {
   const normalized = value?.trim().toLowerCase();
@@ -33,8 +36,11 @@ function sqlitePathFromUrl(url: string): string | null {
 export function resolveDatabaseBackendConfig(input?: {
   databaseUrl?: string;
   backend?: string;
+  sqlitePath?: string;
 }): DatabaseBackendConfig {
   const url = input?.databaseUrl ?? process.env.DATABASE_URL ?? "";
+  const configuredSqlitePath =
+    input?.sqlitePath ?? readProjectEnv("SQLITE_CORE_PATH") ?? readProjectEnv("DB_SQLITE_PATH");
   const requestedBackend =
     normalizeBackendKind(input?.backend) ??
     normalizeBackendKind(readProjectEnv("DB_BACKEND")) ??
@@ -46,6 +52,7 @@ export function resolveDatabaseBackendConfig(input?: {
   return {
     kind,
     url,
-    sqlitePath: kind === "sqlite" ? sqlitePath : null,
+    sqlitePath:
+      kind === "sqlite" ? (configuredSqlitePath ?? sqlitePath ?? defaultSqliteCorePath) : null,
   };
 }

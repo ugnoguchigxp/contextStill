@@ -1,4 +1,5 @@
 import { type SQL, and, desc, eq, ilike, inArray, notInArray, or, sql } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import { sourceFragments, sources } from "../../db/schema.js";
 import { redactSecretRecord, redactSecrets } from "../../shared/utils/secret-redaction.js";
@@ -146,6 +147,11 @@ async function replaceSourceFragments(params: {
 }
 
 export async function upsertSourceDocument(params: UpsertSourceParams): Promise<string> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const { upsertSourceDocumentSqlite } = await import("./source.repository.sqlite.js");
+    return upsertSourceDocumentSqlite(params);
+  }
+
   const actor = params.actor ?? "system";
   const redactedUri = redactSecrets(params.uri);
   const redactedTitle = params.title ? redactSecrets(params.title) : params.title;
@@ -222,6 +228,11 @@ export async function deleteStaleSourcesForRoot(params: {
   rootPath: string;
   keepUris: string[];
 }): Promise<number> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const { deleteStaleSourcesForRootSqlite } = await import("./source.repository.sqlite.js");
+    return deleteStaleSourcesForRootSqlite(params);
+  }
+
   const normalizedRootPath = normalizeRepoPath(params.rootPath) ?? params.rootPath;
   const normalizedKeepUris = [...new Set(params.keepUris.map((uri) => uri.trim()).filter(Boolean))];
   const fileUriKeepUris = normalizedKeepUris.map(
@@ -257,6 +268,11 @@ export async function vectorSearchSourceContent(
   sourceKinds?: SourceKind[],
   options?: SourceSearchOptions,
 ): Promise<SourceSearchResult[]> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const { vectorSearchSourceContentSqlite } = await import("./source.repository.sqlite.js");
+    return vectorSearchSourceContentSqlite(embedding, limit, sourceKinds, options);
+  }
+
   const embeddingStr = JSON.stringify(embedding);
   const similarity = sql<number>`1 - (${sourceFragments.embedding} <=> ${embeddingStr}::vector)`;
   const conditions: SQL[] = [sql`${sourceFragments.embedding} IS NOT NULL`];
@@ -293,6 +309,11 @@ export async function searchSourceContent(
   sourceKinds?: SourceKind[],
   options?: SourceSearchOptions,
 ): Promise<SourceSearchResult[]> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const { searchSourceContentSqlite } = await import("./source.repository.sqlite.js");
+    return searchSourceContentSqlite(query, limit, sourceKinds, options);
+  }
+
   const trimmedQuery = query.trim();
   if (!trimmedQuery) return [];
 

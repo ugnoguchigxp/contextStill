@@ -1,4 +1,5 @@
 import { and, asc, desc, eq, lt, sql } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import { auditLogs } from "../../db/schema.js";
 import { redactSecretRecord } from "../../shared/utils/secret-redaction.js";
@@ -139,6 +140,7 @@ function normalizePagination(input: AuditLogListInput): { page: number; limit: n
 }
 
 export async function recordAuditLog(input: RecordAuditLogInput): Promise<void> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") return;
   const eventType = normalizeText(input.eventType);
   if (!eventType) return;
   await db.insert(auditLogs).values({
@@ -150,6 +152,7 @@ export async function recordAuditLog(input: RecordAuditLogInput): Promise<void> 
 }
 
 export async function recordAuditLogSafe(input: RecordAuditLogInput): Promise<void> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") return;
   if (auditLogDisabledReason) return;
   try {
     await recordAuditLog(input);
@@ -171,6 +174,10 @@ export async function recordAuditLogSafe(input: RecordAuditLogInput): Promise<vo
 }
 
 export async function listAuditLogs(input: AuditLogListInput = {}): Promise<AuditLogListResult> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const { page, limit } = normalizePagination(input);
+    return { items: [], total: 0, page, limit, availableEventTypes: [] };
+  }
   const { page, limit } = normalizePagination(input);
   const eventType = normalizeText(input.eventType);
   const actor = normalizeText(input.actor);
@@ -223,6 +230,19 @@ export async function cleanupExpiredAuditLogs(input?: {
   retentionDays?: number;
   trigger?: string;
 }): Promise<CleanupAuditLogsResult> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const retentionDays = Math.max(
+      1,
+      Math.floor(input?.retentionDays ?? DEFAULT_AUDIT_LOG_RETENTION_DAYS),
+    );
+    const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);
+    return {
+      retentionDays,
+      trigger: normalizeText(input?.trigger) ?? "unknown",
+      cutoffIso: cutoff.toISOString(),
+      deletedCount: 0,
+    };
+  }
   const retentionDays = Math.max(
     1,
     Math.floor(input?.retentionDays ?? DEFAULT_AUDIT_LOG_RETENTION_DAYS),

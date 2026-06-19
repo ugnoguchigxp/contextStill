@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { z } from "zod";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import {
   coveringEvidenceQueue,
@@ -15,6 +16,7 @@ import { resolveKnowledgeCandidatePriorityGroup } from "../distillationTarget/pr
 import { DEFAULT_DISTILLATION_TARGET_VERSION } from "../distillationTarget/repository.js";
 import { parseStorageCandidatesFromLlmOutput } from "../findCandidate/parser.js";
 import type { CandidateKnowledgeType } from "../findCandidate/repository.js";
+import { upsertKnowledgeFromSource } from "../knowledge/knowledge.repository.js";
 import { appendQueueEvent } from "../queue/core/events.js";
 
 export type RegisterCandidateInput = z.input<typeof registerCandidateInputSchema>;
@@ -142,6 +144,47 @@ export async function registerCandidate(
   const candidateId = randomUUID();
   const sourceUri = `agent://candidate/${candidateId}`;
   const now = new Date();
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const knowledgeId = await upsertKnowledgeFromSource({
+      sourceUri,
+      type: normalized.type,
+      status: "active",
+      scope: parsed.general ? "global" : "repo",
+      polarity: "positive",
+      intentTags: [],
+      title: normalized.title,
+      body: normalized.body,
+      confidence: parsed.confidence ?? 70,
+      importance: parsed.importance ?? 70,
+      metadata: {
+        ...(parsed.metadata ?? {}),
+        source: "mcp_register_candidate",
+        registeredAt: now.toISOString(),
+        sqliteDirectRegistration: true,
+        candidateId,
+      },
+      appliesTo: {
+        ...(parsed.appliesTo ?? {}),
+        ...(parsed.general !== undefined ? { general: parsed.general } : {}),
+        ...(parsed.technologies ? { technologies: parsed.technologies } : {}),
+        ...(parsed.changeTypes ? { changeTypes: parsed.changeTypes } : {}),
+        ...(parsed.domains ? { domains: parsed.domains } : {}),
+        ...(parsed.repoPath ? { repoPath: parsed.repoPath } : {}),
+        ...(parsed.repoKey ? { repoKey: parsed.repoKey } : {}),
+      },
+    });
+    return {
+      targetStateId: knowledgeId,
+      findCandidateResultId: candidateId,
+      sourceUri,
+      status: "candidate_registered",
+      title: normalized.title,
+      type: normalized.type,
+      warnings: normalized.warnings,
+      next: "distillation_pipeline",
+    };
+  }
+
   const targetMetadata = {
     ...(parsed.metadata ?? {}),
     source: "mcp_register_candidate",

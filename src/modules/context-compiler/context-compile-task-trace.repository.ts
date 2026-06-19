@@ -1,8 +1,13 @@
 import { and, desc, eq, ne } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { getDefaultDbSession } from "../../db/session.js";
 import { contextCompileTaskTraces } from "../../db/schema.js";
 
 const db = getDefaultDbSession().db;
+
+function isSqliteBackend(): boolean {
+  return resolveDatabaseBackendConfig().kind === "sqlite";
+}
 
 export type ContextCompileTaskTraceEmbeddingStatus =
   | "facets_only"
@@ -106,6 +111,10 @@ export async function upsertContextCompileTaskTrace(input: {
   embedding: number[] | null;
   goalHash: string;
 }): Promise<void> {
+  if (isSqliteBackend()) {
+    const sqlite = await import("./context-compiler.repository.sqlite.js");
+    return sqlite.upsertContextCompileTaskTraceSqlite(input);
+  }
   const now = new Date();
   await db
     .insert(contextCompileTaskTraces)
@@ -149,6 +158,10 @@ export async function upsertContextCompileTaskTrace(input: {
 export async function findContextCompileTaskTraceByRunId(
   runId: string,
 ): Promise<ContextCompileTaskTrace | null> {
+  if (isSqliteBackend()) {
+    const sqlite = await import("./context-compiler.repository.sqlite.js");
+    return sqlite.findContextCompileTaskTraceByRunIdSqlite(runId);
+  }
   const [row] = await db
     .select({
       runId: contextCompileTaskTraces.runId,
@@ -178,6 +191,10 @@ export async function listRecentContextCompileTaskTraces(input: {
   limit: number;
   excludeRunId?: string;
 }): Promise<ContextCompileTaskTrace[]> {
+  if (isSqliteBackend()) {
+    const sqlite = await import("./context-compiler.repository.sqlite.js");
+    return sqlite.listRecentContextCompileTaskTracesSqlite(input);
+  }
   const limit = Math.max(1, Math.min(400, Math.trunc(input.limit)));
   const where = input.excludeRunId
     ? and(ne(contextCompileTaskTraces.runId, input.excludeRunId))

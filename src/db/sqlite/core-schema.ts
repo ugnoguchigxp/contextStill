@@ -184,5 +184,89 @@ CREATE TABLE IF NOT EXISTS source_fragments_vec_fallback (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (source_fragment_id) REFERENCES source_fragments(id) ON DELETE CASCADE
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS context_compile_runs (
+  id TEXT PRIMARY KEY,
+  goal TEXT NOT NULL,
+  intent TEXT NOT NULL,
+  session_id TEXT,
+  repo_path TEXT,
+  input TEXT NOT NULL DEFAULT '{}',
+  retrieval_mode TEXT NOT NULL,
+  status TEXT NOT NULL,
+  degraded_reasons TEXT NOT NULL DEFAULT '[]',
+  token_budget INTEGER NOT NULL DEFAULT 0,
+  duration_ms INTEGER NOT NULL DEFAULT 0,
+  source TEXT NOT NULL DEFAULT 'unknown',
+  pack_snapshot TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS context_compile_runs_created_at_idx
+  ON context_compile_runs(created_at);
+CREATE INDEX IF NOT EXISTS context_compile_runs_session_created_idx
+  ON context_compile_runs(session_id, created_at);
+
+CREATE TABLE IF NOT EXISTS context_pack_items (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  item_kind TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  section TEXT NOT NULL,
+  score REAL NOT NULL DEFAULT 0,
+  ranking_reason TEXT NOT NULL DEFAULT '',
+  source_refs TEXT NOT NULL DEFAULT '[]',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (run_id) REFERENCES context_compile_runs(id) ON DELETE CASCADE
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS context_pack_items_run_idx
+  ON context_pack_items(run_id);
+
+CREATE TABLE IF NOT EXISTS context_compile_candidate_traces (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  run_id TEXT NOT NULL,
+  item_kind TEXT NOT NULL,
+  item_id TEXT NOT NULL,
+  text_rank INTEGER,
+  text_score REAL,
+  vector_rank INTEGER,
+  vector_score REAL,
+  merged_rank INTEGER,
+  merged_score REAL,
+  final_rank INTEGER,
+  final_score REAL,
+  selected INTEGER NOT NULL DEFAULT 0,
+  suppressed INTEGER NOT NULL DEFAULT 0,
+  suppression_reason TEXT,
+  agentic_decision TEXT NOT NULL DEFAULT 'not_evaluated',
+  ranking_reason TEXT,
+  community_key TEXT,
+  evidence TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (run_id) REFERENCES context_compile_runs(id) ON DELETE CASCADE
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS context_compile_candidate_traces_run_idx
+  ON context_compile_candidate_traces(run_id);
+
+CREATE TABLE IF NOT EXISTS context_compile_task_traces (
+  run_id TEXT PRIMARY KEY,
+  retrieval_mode TEXT NOT NULL,
+  repo_path TEXT,
+  repo_key TEXT,
+  technologies TEXT NOT NULL DEFAULT '[]',
+  change_types TEXT NOT NULL DEFAULT '[]',
+  domains TEXT NOT NULL DEFAULT '[]',
+  embedding_status TEXT NOT NULL DEFAULT 'facets_only',
+  embedding_provider TEXT,
+  embedding_model TEXT,
+  embedding_dimensions INTEGER,
+  embedding TEXT,
+  goal_hash TEXT NOT NULL,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (run_id) REFERENCES context_compile_runs(id) ON DELETE CASCADE
+) STRICT;
 `;
 }
