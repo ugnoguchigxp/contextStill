@@ -268,5 +268,63 @@ CREATE TABLE IF NOT EXISTS context_compile_task_traces (
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   FOREIGN KEY (run_id) REFERENCES context_compile_runs(id) ON DELETE CASCADE
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS context_compile_evals (
+  id TEXT PRIMARY KEY,
+  run_id TEXT NOT NULL,
+  session_id TEXT,
+  score INTEGER NOT NULL,
+  outcome TEXT NOT NULL,
+  title TEXT,
+  body TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'mcp',
+  metadata TEXT NOT NULL DEFAULT '{}',
+  relevance INTEGER,
+  actionability INTEGER,
+  coverage INTEGER,
+  clarity INTEGER,
+  specificity INTEGER,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (run_id) REFERENCES context_compile_runs(id) ON DELETE CASCADE
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS context_compile_evals_run_created_at_idx
+  ON context_compile_evals(run_id, created_at);
+CREATE INDEX IF NOT EXISTS context_compile_evals_session_created_at_idx
+  ON context_compile_evals(session_id, created_at);
+CREATE INDEX IF NOT EXISTS context_compile_evals_outcome_created_at_idx
+  ON context_compile_evals(outcome, created_at);
+
+CREATE TABLE IF NOT EXISTS settings (
+  id TEXT PRIMARY KEY,
+  namespace TEXT NOT NULL,
+  key TEXT NOT NULL,
+  value TEXT NOT NULL DEFAULT '{}',
+  value_kind TEXT NOT NULL DEFAULT 'json',
+  secret_ref TEXT,
+  is_secret INTEGER NOT NULL DEFAULT 0,
+  description TEXT,
+  schema_version INTEGER NOT NULL DEFAULT 1,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_by TEXT,
+  UNIQUE(namespace, key)
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS settings_namespace_idx ON settings(namespace);
+CREATE INDEX IF NOT EXISTS settings_key_idx ON settings(key);
+
+CREATE TABLE IF NOT EXISTS audit_logs (
+  id TEXT PRIMARY KEY,
+  event_type TEXT NOT NULL,
+  actor TEXT NOT NULL,
+  payload TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS audit_logs_event_type_idx ON audit_logs(event_type);
+CREATE INDEX IF NOT EXISTS audit_logs_actor_idx ON audit_logs(actor);
+CREATE INDEX IF NOT EXISTS audit_logs_created_at_idx ON audit_logs(created_at);
 `;
 }

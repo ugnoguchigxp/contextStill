@@ -62,7 +62,7 @@ Runtime task routing can also be edited from the admin Settings page. Each route
 ## Local-First Notes
 
 - To run the current local-first SQLite path, set `CONTEXT_STILL_DB_BACKEND=sqlite` and optionally `CONTEXT_STILL_SQLITE_CORE_PATH=./data/context-still-core.sqlite` before starting the MCP/API process.
-- SQLite mode currently covers the primary `register_candidates`, `search_knowledge`, source search, and `context_compile` run/snapshot path. PostgreSQL remains the advanced backend for legacy queue/distillation/admin surfaces while the remaining stores are migrated.
+- SQLite mode currently covers the primary `register_candidates`, `search_knowledge`, source search, `context_compile` run/snapshot path, runtime settings, audit logs, and `compile_eval`. PostgreSQL remains the advanced backend for legacy queue/distillation/admin surfaces while the remaining stores are migrated.
 - Use local LLM and local embedding services to keep distillation local.
 - Omit external search API keys if you do not want distillation to call external search providers.
 - The wiki/source root is local filesystem content and is managed as its own Git repository when possible.

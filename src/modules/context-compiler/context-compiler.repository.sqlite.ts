@@ -3,6 +3,7 @@ import { getRuntimeSqliteCoreDatabase } from "../../db/sqlite/runtime.js";
 import type { ContextPack } from "../../shared/schemas/context-pack.schema.js";
 import { contextPackSchema } from "../../shared/schemas/context-pack.schema.js";
 import { asRecord } from "../../shared/utils/normalize.js";
+import { getCompileEvalSummaryByRunId } from "./context-compile-eval.repository.js";
 import type { ContextCompileTaskTrace } from "./context-compile-task-trace.repository.js";
 import type {
   CompileFreshnessMarkers,
@@ -46,14 +47,6 @@ type SqlitePackItemRow = {
   created_at: string;
 };
 
-const emptyEvalSummary = {
-  count: 0,
-  latestAvg: null,
-  averageAvg: null,
-  latestOutcome: null,
-  latestEvaluatedAt: null,
-} as const;
-
 function json(value: unknown): string {
   return JSON.stringify(value ?? null);
 }
@@ -72,7 +65,7 @@ function parsePackSnapshot(value: string | null): ContextPack | null {
   return parsed.success ? parsed.data : null;
 }
 
-function mapRunSummary(row: SqliteRunRow): CompileRunSummary {
+async function mapRunSummary(row: SqliteRunRow): Promise<CompileRunSummary> {
   const signals = extractCompileRunSignals(parseJson(row.pack_snapshot));
   return {
     id: row.id,
@@ -82,7 +75,7 @@ function mapRunSummary(row: SqliteRunRow): CompileRunSummary {
     degradedReasons: normalizeStringArray(parseJson(row.degraded_reasons)),
     durationMs: normalizeDuration(row.duration_ms),
     source: normalizeCompileRunSource(row.source),
-    evalSummary: { ...emptyEvalSummary },
+    evalSummary: await getCompileEvalSummaryByRunId(row.id),
     selectedItemCount: signals.selectedItemCount,
     outputMarkdownKind: signals.outputMarkdownKind,
     createdAt: normalizeDate(row.created_at),
@@ -291,7 +284,7 @@ export async function listRecentCompileRunsSqlite(limit = 20): Promise<CompileRu
       "SELECT * FROM context_compile_runs ORDER BY created_at DESC, id DESC LIMIT ?",
     )
     .all(Math.min(100, Math.max(1, Math.floor(limit))));
-  return rows.map(mapRunSummary);
+  return Promise.all(rows.map(mapRunSummary));
 }
 
 export async function getCompileRunSnapshotSqlite(
@@ -311,7 +304,7 @@ export async function getCompileRunSnapshotSqlite(
     )
     .all(runId);
   return {
-    run: mapRunSummary(run),
+    run: await mapRunSummary(run),
     items: itemRows.map(mapPackItem),
   };
 }

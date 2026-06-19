@@ -1,8 +1,17 @@
 import { and, desc, eq, isNotNull, sql } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { getDefaultDbSession } from "../../db/session.js";
 import { contextCompileEvals, contextCompileRuns } from "../../db/schema.js";
 
 const db = getDefaultDbSession().db;
+
+function isSqliteBackend(): boolean {
+  return resolveDatabaseBackendConfig().kind === "sqlite";
+}
+
+async function sqliteRepository() {
+  return import("./context-compile-eval.repository.sqlite.js");
+}
 
 export type CompileEvalRecord = {
   id: string;
@@ -65,6 +74,10 @@ export async function insertCompileEval(params: {
   clarity: number;
   specificity: number;
 }): Promise<CompileEvalRecord> {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.insertCompileEvalSqlite(params);
+  }
   const [row] = await db
     .insert(contextCompileEvals)
     .values({
@@ -104,6 +117,10 @@ export async function insertCompileEval(params: {
 }
 
 export async function getCompileEvalSummaryByRunId(runId: string): Promise<CompileEvalSummary> {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.getCompileEvalSummaryByRunIdSqlite(runId);
+  }
   const aggRows = asRows<{ count: number; averageAvg: number | null }>(
     await db
       .select({
@@ -146,6 +163,10 @@ export async function getCompileEvalSummaryByRunId(runId: string): Promise<Compi
 }
 
 export async function listCompileEvalsByRunId(runId: string): Promise<CompileEvalRecord[]> {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.listCompileEvalsByRunIdSqlite(runId);
+  }
   const rows = asRows<
     typeof contextCompileEvals.$inferSelect & {
       outcome: unknown;
@@ -183,6 +204,10 @@ export async function findRunIdForCompileEval(params: {
   runId: string;
   resolvedFrom: "latest_session_run";
 } | null> {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.findRunIdForCompileEvalSqlite(params);
+  }
   const [runRow] = await db
     .select({ id: contextCompileRuns.id })
     .from(contextCompileRuns)
@@ -201,6 +226,10 @@ export async function findRunIdForCompileEval(params: {
 export async function getCompileRunSessionId(
   runId: string,
 ): Promise<{ id: string; sessionId: string | null } | null> {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.getCompileRunSessionIdSqlite(runId);
+  }
   const [row] = await db
     .select({ id: contextCompileRuns.id, sessionId: contextCompileRuns.sessionId })
     .from(contextCompileRuns)

@@ -1,4 +1,5 @@
 import { and, asc, eq } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/client.js";
 import { settings } from "../../db/schema.js";
 
@@ -58,6 +59,10 @@ function mapRow(row: {
 }
 
 export async function findSettingsRow(namespace: string, key: string): Promise<SettingsRow | null> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const sqlite = await import("./settings.repository.sqlite.js");
+    return sqlite.findSettingsRowSqlite(namespace, key);
+  }
   const [row] = await db
     .select({
       id: settings.id,
@@ -80,6 +85,10 @@ export async function findSettingsRow(namespace: string, key: string): Promise<S
 }
 
 export async function listSettingsRows(namespace?: string): Promise<SettingsRow[]> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const sqlite = await import("./settings.repository.sqlite.js");
+    return sqlite.listSettingsRowsSqlite(namespace);
+  }
   const rows = await db
     .select({
       id: settings.id,
@@ -112,6 +121,10 @@ export async function upsertSettingsRow(input: {
   schemaVersion: number;
   updatedBy?: string | null;
 }): Promise<SettingsRow> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const sqlite = await import("./settings.repository.sqlite.js");
+    return sqlite.upsertSettingsRowSqlite(input);
+  }
   const now = new Date();
   const inserted = await db
     .insert(settings)
@@ -162,5 +175,9 @@ export async function upsertSettingsRow(input: {
 }
 
 export async function deleteSettingsRow(namespace: string, key: string): Promise<void> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const sqlite = await import("./settings.repository.sqlite.js");
+    return sqlite.deleteSettingsRowSqlite(namespace, key);
+  }
   await db.delete(settings).where(and(eq(settings.namespace, namespace), eq(settings.key, key)));
 }
