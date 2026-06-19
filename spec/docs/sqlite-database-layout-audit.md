@@ -3,6 +3,7 @@
 > 状態: design audit
 > 関連コンセプト: [Local-First SQLite And Tauri Concept](local-first-sqlite-tauri-concept.md)
 > 関連計画: [Portable Knowledge Import/Export Draft Plan](portable-knowledge-import-export-plan.md)
+> 移行範囲分類: [pgvector to SQLite Migration Scope](pgvector-to-sqlite-migration-scope.md)
 
 ## 目的
 
