@@ -1,7 +1,10 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import type { Database as NativeBunSqliteDatabase } from "bun:sqlite";
+import { drizzle } from "drizzle-orm/bun-sqlite";
 import { groupedConfig } from "../../config.js";
 import { createSqliteCoreSchemaSql } from "./core-schema.js";
+import * as schema from "./schema.js";
 
 type BunSqliteDatabase = {
   filename: string;
@@ -25,9 +28,14 @@ export type SqliteVectorCapability = {
 
 export type SqliteCoreDatabase = {
   db: BunSqliteDatabase;
+  orm: ReturnType<typeof createSqliteDrizzle>;
   path: string;
   vector: SqliteVectorCapability;
 };
+
+function createSqliteDrizzle(db: BunSqliteDatabase) {
+  return drizzle(db as unknown as NativeBunSqliteDatabase, { schema });
+}
 
 export async function openSqliteCoreDatabase(input: {
   path: string;
@@ -53,7 +61,7 @@ export async function openSqliteCoreDatabase(input: {
     createVecVirtualTables(db, input.vectorDimension ?? groupedConfig.embedding.dimension);
   }
 
-  return { db, path: input.path, vector };
+  return { db, orm: createSqliteDrizzle(db), path: input.path, vector };
 }
 
 function disabledVectorCapability(): SqliteVectorCapability {

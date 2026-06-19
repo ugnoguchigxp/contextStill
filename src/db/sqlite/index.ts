@@ -1,6 +1,7 @@
 export { openSqliteCoreDatabase, type SqliteCoreDatabase } from "./client.js";
 export { createSqliteCoreSchemaSql } from "./core-schema.js";
 export { SqliteCoreRepository } from "./core-repository.js";
+export * from "./schema.js";
 export type {
   SqliteKnowledgeItemInput,
   SqliteKnowledgeVectorHit,

@@ -1,5 +1,16 @@
 import { createHash } from "node:crypto";
+import { eq } from "drizzle-orm";
 import type { SqliteCoreDatabase } from "./client.js";
+import {
+  sqliteCoreVectorMetadata,
+  sqliteKnowledgeItems,
+  sqliteKnowledgeItemsVecFallback,
+  sqliteKnowledgeItemsVecMap,
+  sqliteSourceFragments,
+  sqliteSourceFragmentsVecFallback,
+  sqliteSourceFragmentsVecMap,
+  sqliteSources,
+} from "./schema.js";
 
 export type SqliteKnowledgeItemInput = {
   id: string;
@@ -59,14 +70,6 @@ export type SqliteSourceVectorHit = {
   score: number;
 };
 
-function json(value: unknown): string {
-  return JSON.stringify(value ?? {});
-}
-
-function jsonArray(value: unknown[] | undefined): string {
-  return JSON.stringify(Array.isArray(value) ? value : []);
-}
-
 function nowIso(): string {
   return new Date().toISOString();
 }
@@ -107,42 +110,43 @@ export class SqliteCoreRepository {
 
   upsertKnowledgeItem(input: SqliteKnowledgeItemInput): void {
     const updatedAt = input.updatedAt ?? nowIso();
-    this.database.db
-      .query(`
-INSERT INTO knowledge_items (
-  id, type, status, scope, polarity, intent_tags, title, body, applies_to,
-  confidence, importance, metadata, created_at, updated_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-  type = excluded.type,
-  status = excluded.status,
-  scope = excluded.scope,
-  polarity = excluded.polarity,
-  intent_tags = excluded.intent_tags,
-  title = excluded.title,
-  body = excluded.body,
-  applies_to = excluded.applies_to,
-  confidence = excluded.confidence,
-  importance = excluded.importance,
-  metadata = excluded.metadata,
-  updated_at = excluded.updated_at;
-`)
-      .run(
-        input.id,
-        input.type,
-        input.status,
-        input.scope ?? "repo",
-        input.polarity ?? "positive",
-        jsonArray(input.intentTags),
-        input.title,
-        input.body,
-        json(input.appliesTo),
-        input.confidence ?? 70,
-        input.importance ?? 70,
-        json(input.metadata),
-        input.createdAt ?? updatedAt,
-        updatedAt,
-      );
+    const values = {
+      id: input.id,
+      type: input.type,
+      status: input.status,
+      scope: input.scope ?? "repo",
+      polarity: input.polarity ?? "positive",
+      intentTags: Array.isArray(input.intentTags) ? input.intentTags : [],
+      title: input.title,
+      body: input.body,
+      appliesTo: input.appliesTo ?? {},
+      confidence: input.confidence ?? 70,
+      importance: input.importance ?? 70,
+      metadata: input.metadata ?? {},
+      createdAt: input.createdAt ?? updatedAt,
+      updatedAt,
+    };
+    this.database.orm
+      .insert(sqliteKnowledgeItems)
+      .values(values)
+      .onConflictDoUpdate({
+        target: sqliteKnowledgeItems.id,
+        set: {
+          type: values.type,
+          status: values.status,
+          scope: values.scope,
+          polarity: values.polarity,
+          intentTags: values.intentTags,
+          title: values.title,
+          body: values.body,
+          appliesTo: values.appliesTo,
+          confidence: values.confidence,
+          importance: values.importance,
+          metadata: values.metadata,
+          updatedAt: values.updatedAt,
+        },
+      })
+      .run();
 
     this.refreshKnowledgeItemFts(input.id);
 
@@ -152,56 +156,61 @@ ON CONFLICT(id) DO UPDATE SET
 
   upsertSource(input: SqliteSourceInput): void {
     const updatedAt = input.updatedAt ?? nowIso();
-    this.database.db
-      .query(`
-INSERT INTO sources (
-  id, source_kind, uri, title, body, metadata, created_at, updated_at, last_indexed_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-  source_kind = excluded.source_kind,
-  uri = excluded.uri,
-  title = excluded.title,
-  body = excluded.body,
-  metadata = excluded.metadata,
-  updated_at = excluded.updated_at,
-  last_indexed_at = excluded.last_indexed_at;
-`)
-      .run(
-        input.id,
-        input.sourceKind,
-        input.uri,
-        input.title ?? null,
-        input.body,
-        json(input.metadata),
-        input.createdAt ?? updatedAt,
-        updatedAt,
-        input.lastIndexedAt ?? null,
-      );
+    const values = {
+      id: input.id,
+      sourceKind: input.sourceKind,
+      uri: input.uri,
+      title: input.title ?? null,
+      body: input.body,
+      metadata: input.metadata ?? {},
+      createdAt: input.createdAt ?? updatedAt,
+      updatedAt,
+      lastIndexedAt: input.lastIndexedAt ?? null,
+    };
+    this.database.orm
+      .insert(sqliteSources)
+      .values(values)
+      .onConflictDoUpdate({
+        target: sqliteSources.id,
+        set: {
+          sourceKind: values.sourceKind,
+          uri: values.uri,
+          title: values.title,
+          body: values.body,
+          metadata: values.metadata,
+          updatedAt: values.updatedAt,
+          lastIndexedAt: values.lastIndexedAt,
+        },
+      })
+      .run();
     this.refreshSourceFts(input.id);
   }
 
   upsertSourceFragment(input: SqliteSourceFragmentInput): void {
     const createdAt = input.createdAt ?? nowIso();
-    this.database.db
-      .query(`
-INSERT INTO source_fragments (id, source_id, locator, heading, content, metadata, created_at)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT(id) DO UPDATE SET
-  source_id = excluded.source_id,
-  locator = excluded.locator,
-  heading = excluded.heading,
-  content = excluded.content,
-  metadata = excluded.metadata;
-`)
-      .run(
-        input.id,
-        input.sourceId,
-        input.locator,
-        input.heading ?? null,
-        input.content,
-        json(input.metadata),
-        createdAt,
-      );
+    const values = {
+      id: input.id,
+      sourceId: input.sourceId,
+      locator: input.locator,
+      heading: input.heading ?? null,
+      content: input.content,
+      metadata: input.metadata ?? {},
+      createdAt,
+    };
+    this.database.orm
+      .insert(sqliteSourceFragments)
+      .values(values)
+      .onConflictDoUpdate({
+        target: sqliteSourceFragments.id,
+        set: {
+          sourceId: values.sourceId,
+          locator: values.locator,
+          heading: values.heading,
+          content: values.content,
+          metadata: values.metadata,
+        },
+      })
+      .run();
     this.refreshSourceFragmentFts(input.id);
 
     const vector = normalizeVector(input.embedding);
@@ -216,10 +225,10 @@ ON CONFLICT(id) DO UPDATE SET
     const tx = this.database.db.query("BEGIN IMMEDIATE;");
     tx.run();
     try {
-      this.database.db.query("DELETE FROM knowledge_items_vec_fallback;").run();
+      this.database.orm.delete(sqliteKnowledgeItemsVecFallback).run();
       if (this.database.vector.available) {
         this.database.db.query("DELETE FROM knowledge_items_vec;").run();
-        this.database.db.query("DELETE FROM knowledge_items_vec_map;").run();
+        this.database.orm.delete(sqliteKnowledgeItemsVecMap).run();
       }
       for (const row of rows) {
         const vector = normalizeVector(row.embedding);
@@ -244,10 +253,10 @@ ON CONFLICT(id) DO UPDATE SET
     let dimension = 0;
     this.database.db.query("BEGIN IMMEDIATE;").run();
     try {
-      this.database.db.query("DELETE FROM source_fragments_vec_fallback;").run();
+      this.database.orm.delete(sqliteSourceFragmentsVecFallback).run();
       if (this.database.vector.available) {
         this.database.db.query("DELETE FROM source_fragments_vec;").run();
-        this.database.db.query("DELETE FROM source_fragments_vec_map;").run();
+        this.database.orm.delete(sqliteSourceFragmentsVecMap).run();
       }
       for (const row of rows) {
         const vector = normalizeVector(row.embedding);
@@ -347,18 +356,26 @@ JOIN sources s ON s.id = f.source_id;
   }
 
   private upsertKnowledgeVector(knowledgeId: string, embedding: number[], hash: string): void {
-    this.database.db
-      .query(`
-INSERT INTO knowledge_items_vec_fallback (
-  knowledge_id, embedding_json, embedding_dimension, content_hash, updated_at
-) VALUES (?, ?, ?, ?, ?)
-ON CONFLICT(knowledge_id) DO UPDATE SET
-  embedding_json = excluded.embedding_json,
-  embedding_dimension = excluded.embedding_dimension,
-  content_hash = excluded.content_hash,
-  updated_at = excluded.updated_at;
-`)
-      .run(knowledgeId, JSON.stringify(embedding), embedding.length, hash, nowIso());
+    const values = {
+      knowledgeId,
+      embeddingJson: JSON.stringify(embedding),
+      embeddingDimension: embedding.length,
+      contentHash: hash,
+      updatedAt: nowIso(),
+    };
+    this.database.orm
+      .insert(sqliteKnowledgeItemsVecFallback)
+      .values(values)
+      .onConflictDoUpdate({
+        target: sqliteKnowledgeItemsVecFallback.knowledgeId,
+        set: {
+          embeddingJson: values.embeddingJson,
+          embeddingDimension: values.embeddingDimension,
+          contentHash: values.contentHash,
+          updatedAt: values.updatedAt,
+        },
+      })
+      .run();
     if (this.database.vector.available) {
       this.upsertKnowledgeVectorIndex(knowledgeId, embedding);
     }
@@ -369,57 +386,65 @@ ON CONFLICT(knowledge_id) DO UPDATE SET
     embedding: number[],
     hash: string,
   ): void {
-    this.database.db
-      .query(`
-INSERT INTO source_fragments_vec_fallback (
-  source_fragment_id, embedding_json, embedding_dimension, content_hash, updated_at
-) VALUES (?, ?, ?, ?, ?)
-ON CONFLICT(source_fragment_id) DO UPDATE SET
-  embedding_json = excluded.embedding_json,
-  embedding_dimension = excluded.embedding_dimension,
-  content_hash = excluded.content_hash,
-  updated_at = excluded.updated_at;
-`)
-      .run(sourceFragmentId, JSON.stringify(embedding), embedding.length, hash, nowIso());
+    const values = {
+      sourceFragmentId,
+      embeddingJson: JSON.stringify(embedding),
+      embeddingDimension: embedding.length,
+      contentHash: hash,
+      updatedAt: nowIso(),
+    };
+    this.database.orm
+      .insert(sqliteSourceFragmentsVecFallback)
+      .values(values)
+      .onConflictDoUpdate({
+        target: sqliteSourceFragmentsVecFallback.sourceFragmentId,
+        set: {
+          embeddingJson: values.embeddingJson,
+          embeddingDimension: values.embeddingDimension,
+          contentHash: values.contentHash,
+          updatedAt: values.updatedAt,
+        },
+      })
+      .run();
     if (this.database.vector.available) {
       this.upsertSourceFragmentVectorIndex(sourceFragmentId, embedding);
     }
   }
 
   private upsertKnowledgeVectorIndex(knowledgeId: string, embedding: number[]): void {
-    this.database.db
-      .query(
-        "INSERT INTO knowledge_items_vec_map(knowledge_id) VALUES (?) ON CONFLICT(knowledge_id) DO NOTHING;",
-      )
-      .run(knowledgeId);
-    const row = this.database.db
-      .query<{ vec_rowid: number }, [string]>(
-        "SELECT vec_rowid FROM knowledge_items_vec_map WHERE knowledge_id = ?;",
-      )
-      .get(knowledgeId);
+    this.database.orm
+      .insert(sqliteKnowledgeItemsVecMap)
+      .values({ knowledgeId })
+      .onConflictDoNothing({ target: sqliteKnowledgeItemsVecMap.knowledgeId })
+      .run();
+    const row = this.database.orm
+      .select({ vecRowid: sqliteKnowledgeItemsVecMap.vecRowid })
+      .from(sqliteKnowledgeItemsVecMap)
+      .where(eq(sqliteKnowledgeItemsVecMap.knowledgeId, knowledgeId))
+      .get();
     if (!row) return;
-    this.database.db.query("DELETE FROM knowledge_items_vec WHERE rowid = ?;").run(row.vec_rowid);
+    this.database.db.query("DELETE FROM knowledge_items_vec WHERE rowid = ?;").run(row.vecRowid);
     this.database.db
       .query("INSERT INTO knowledge_items_vec(rowid, embedding) VALUES (?, ?);")
-      .run(row.vec_rowid, vectorJson(embedding));
+      .run(row.vecRowid, vectorJson(embedding));
   }
 
   private upsertSourceFragmentVectorIndex(sourceFragmentId: string, embedding: number[]): void {
-    this.database.db
-      .query(
-        "INSERT INTO source_fragments_vec_map(source_fragment_id) VALUES (?) ON CONFLICT(source_fragment_id) DO NOTHING;",
-      )
-      .run(sourceFragmentId);
-    const row = this.database.db
-      .query<{ vec_rowid: number }, [string]>(
-        "SELECT vec_rowid FROM source_fragments_vec_map WHERE source_fragment_id = ?;",
-      )
-      .get(sourceFragmentId);
+    this.database.orm
+      .insert(sqliteSourceFragmentsVecMap)
+      .values({ sourceFragmentId })
+      .onConflictDoNothing({ target: sqliteSourceFragmentsVecMap.sourceFragmentId })
+      .run();
+    const row = this.database.orm
+      .select({ vecRowid: sqliteSourceFragmentsVecMap.vecRowid })
+      .from(sqliteSourceFragmentsVecMap)
+      .where(eq(sqliteSourceFragmentsVecMap.sourceFragmentId, sourceFragmentId))
+      .get();
     if (!row) return;
-    this.database.db.query("DELETE FROM source_fragments_vec WHERE rowid = ?;").run(row.vec_rowid);
+    this.database.db.query("DELETE FROM source_fragments_vec WHERE rowid = ?;").run(row.vecRowid);
     this.database.db
       .query("INSERT INTO source_fragments_vec(rowid, embedding) VALUES (?, ?);")
-      .run(row.vec_rowid, vectorJson(embedding));
+      .run(row.vecRowid, vectorJson(embedding));
   }
 
   private vectorSearchKnowledgeWithSqliteVec(
@@ -535,16 +560,25 @@ ORDER BY v.distance;
   }
 
   private updateVectorMetadata(name: string, rowCount: number, dimension: number): void {
-    this.database.db
-      .query(`
-INSERT INTO core_vector_metadata (name, dimension, rebuilt_at, row_count, uses_sqlite_vec)
-VALUES (?, ?, ?, ?, ?)
-ON CONFLICT(name) DO UPDATE SET
-  dimension = excluded.dimension,
-  rebuilt_at = excluded.rebuilt_at,
-  row_count = excluded.row_count,
-  uses_sqlite_vec = excluded.uses_sqlite_vec;
-`)
-      .run(name, dimension, nowIso(), rowCount, this.database.vector.available ? 1 : 0);
+    const values = {
+      name,
+      dimension,
+      rebuiltAt: nowIso(),
+      rowCount,
+      usesSqliteVec: this.database.vector.available,
+    };
+    this.database.orm
+      .insert(sqliteCoreVectorMetadata)
+      .values(values)
+      .onConflictDoUpdate({
+        target: sqliteCoreVectorMetadata.name,
+        set: {
+          dimension: values.dimension,
+          rebuiltAt: values.rebuiltAt,
+          rowCount: values.rowCount,
+          usesSqliteVec: values.usesSqliteVec,
+        },
+      })
+      .run();
   }
 }

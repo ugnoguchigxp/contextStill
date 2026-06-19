@@ -2,7 +2,11 @@ import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { openSqliteCoreDatabase, SqliteCoreRepository } from "../src/db/sqlite/index.js";
+import {
+  openSqliteCoreDatabase,
+  sqliteKnowledgeItems,
+  SqliteCoreRepository,
+} from "../src/db/sqlite/index.js";
 
 let tempDir = "";
 
@@ -54,6 +58,15 @@ describe("sqlite core repository", () => {
         content: "SQLite vector content",
         embedding: [1, 0, 0],
       });
+
+      const drizzleRows = sqlite.orm
+        .select({
+          id: sqliteKnowledgeItems.id,
+          title: sqliteKnowledgeItems.title,
+        })
+        .from(sqliteKnowledgeItems)
+        .all();
+      expect(drizzleRows).toContainEqual({ id: "k1", title: "Prefer SQLite" });
 
       const knowledgeHits = repo.vectorSearchKnowledge([1, 0, 0], 2);
       expect(knowledgeHits.map((hit) => hit.id)).toEqual(["k1", "k2"]);
