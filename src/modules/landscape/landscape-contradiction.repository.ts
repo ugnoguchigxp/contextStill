@@ -1,4 +1,5 @@
 import { and, desc, eq, gte, inArray, sql } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import { contextCompileRuns, contextPackItems, knowledgeItems } from "../../db/schema.js";
 
@@ -20,6 +21,10 @@ function finite(value: unknown): number {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
+function isSqliteBackend(): boolean {
+  return resolveDatabaseBackendConfig().kind === "sqlite";
+}
+
 export function contradictionPairKey(leftKnowledgeId: string, rightKnowledgeId: string): string {
   return leftKnowledgeId < rightKnowledgeId
     ? `${leftKnowledgeId}::${rightKnowledgeId}`
@@ -27,6 +32,8 @@ export function contradictionPairKey(leftKnowledgeId: string, rightKnowledgeId: 
 }
 
 export async function loadContradictionKnowledgeRows(limit: number) {
+  if (isSqliteBackend()) return [];
+
   const rows = await db
     .select({
       id: knowledgeItems.id,
@@ -66,6 +73,8 @@ export async function loadRecentSelectionCountByKnowledgeId(params: {
   knowledgeIds: string[];
   windowDays: number;
 }): Promise<Map<string, number>> {
+  if (isSqliteBackend()) return new Map();
+
   const knowledgeIds = [...new Set(params.knowledgeIds.filter((id) => id.trim().length > 0))];
   if (knowledgeIds.length === 0) return new Map();
 
@@ -95,6 +104,8 @@ export async function loadSemanticNeighborPairs(params: {
   maxPairs: number;
   topKPerKnowledge: number;
 }): Promise<Map<string, number>> {
+  if (isSqliteBackend()) return new Map();
+
   const knowledgeIds = [...new Set(params.knowledgeIds.filter((id) => id.trim().length > 0))];
   if (knowledgeIds.length < 2) return new Map();
 

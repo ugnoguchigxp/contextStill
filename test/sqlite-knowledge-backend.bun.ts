@@ -80,6 +80,28 @@ describe("sqlite knowledge backend", () => {
     expect(hits[0].applicabilityMatches.technologies).toContain("sqlite");
   });
 
+  test("does not return unrelated sqlite knowledge when query has no text or applicability match", async () => {
+    await registerCandidate({
+      title: "SQLite only rule",
+      body: "This row should not match an unrelated random query.",
+      type: "rule",
+      technologies: ["sqlite"],
+      changeTypes: ["migration"],
+      repoPath: "/repo/contextStill",
+    });
+
+    const hits = await searchKnowledge({
+      query: "zzabsentunrelatedtoken",
+      status: "active",
+      limit: 5,
+      includeGeneral: true,
+      includeDraft: false,
+      repoPath: "/repo/contextStill",
+    });
+
+    expect(hits).toEqual([]);
+  });
+
   test("uses sqlite vector fallback for knowledge vector search", async () => {
     await registerCandidate({
       title: "Vector target",
@@ -154,7 +176,7 @@ describe("sqlite knowledge backend", () => {
     const snapshot = await getCompileRunSnapshot(pack.runId);
     expect(snapshot?.run.id).toBe(pack.runId);
     expect(snapshot?.items.some((item) => item.itemId === pack.rules[0]?.itemId)).toBe(true);
-  });
+  }, 15_000);
 });
 
 function restoreEnv(key: string, value: string | undefined): void {

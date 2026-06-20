@@ -9,6 +9,7 @@ import * as schema from "./schema.js";
 type BunSqliteDatabase = {
   filename: string;
   exec(sql: string): void;
+  serialize(name?: string): Buffer;
   query<T = unknown, P extends unknown[] = unknown[]>(
     sql: string,
   ): {

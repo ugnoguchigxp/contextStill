@@ -1,9 +1,15 @@
 import { sql } from "drizzle-orm";
 import { groupedConfig } from "../../../config.js";
+import { resolveDatabaseBackendConfig } from "../../../db/backend.js";
 import { db } from "../../../db/index.js";
 import { isQueuePaused } from "./control.js";
 import type { DistillationQueueName } from "./types.js";
 import { queueTableNameByQueue } from "./types.js";
+
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../../db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
 
 export async function claimNextQueueJob(params: {
   queueName: DistillationQueueName;
@@ -13,6 +19,91 @@ export async function claimNextQueueJob(params: {
     return null;
   }
   const tableName = queueTableNameByQueue[params.queueName];
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const sqlite = await getSqliteCoreDatabase();
+    const staleSeconds = Math.max(
+      30,
+      Math.min(120, Math.floor(groupedConfig.distillation.lockTtlSeconds)),
+    );
+    const staleCutoff = new Date(Date.now() - staleSeconds * 1000).toISOString();
+    sqlite.db.query("BEGIN IMMEDIATE").run();
+    try {
+      sqlite.db
+        .query(
+          `
+          update ${tableName}
+          set
+            status = 'paused',
+            ${params.queueName === "finalizeDistille" ? "" : "next_run_at = CURRENT_TIMESTAMP,"}
+            locked_by = null,
+            locked_at = null,
+            heartbeat_at = null,
+            last_error = coalesce(last_error, 'stale_running_recovered'),
+            last_outcome_kind = 'stale_recovered',
+            updated_at = CURRENT_TIMESTAMP
+          where status = 'running'
+            and coalesce(heartbeat_at, locked_at, updated_at) < ?
+        `,
+        )
+        .run(staleCutoff);
+      const running = sqlite.db
+        .query<{ id: string }, []>(`select id from ${tableName} where status = 'running' limit 1`)
+        .get();
+      if (running) {
+        sqlite.db.query("COMMIT").run();
+        return null;
+      }
+      const picked =
+        params.queueName === "finalizeDistille"
+          ? sqlite.db
+              .query<{ id: string }, []>(
+                `
+                select id
+                from ${tableName}
+                where status in ('pending', 'paused')
+                order by priority desc, created_at asc, id asc
+                limit 1
+              `,
+              )
+              .get()
+          : sqlite.db
+              .query<{ id: string }, []>(
+                `
+                select id
+                from ${tableName}
+                where status in ('pending', 'paused')
+                  and (next_run_at is null or next_run_at <= CURRENT_TIMESTAMP)
+                order by priority desc, created_at asc, id asc
+                limit 1
+              `,
+              )
+              .get();
+      if (!picked?.id) {
+        sqlite.db.query("COMMIT").run();
+        return null;
+      }
+      sqlite.db
+        .query(
+          `
+          update ${tableName}
+          set
+            status = 'running',
+            locked_by = ?,
+            locked_at = CURRENT_TIMESTAMP,
+            heartbeat_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+          where id = ?
+        `,
+        )
+        .run(params.workerId, picked.id);
+      sqlite.db.query("COMMIT").run();
+      return { id: picked.id };
+    } catch (error) {
+      sqlite.db.query("ROLLBACK").run();
+      throw error;
+    }
+  }
+
   const staleSeconds = Math.max(
     30,
     Math.min(120, Math.floor(groupedConfig.distillation.lockTtlSeconds)),

@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { getRuntimeSqliteCoreDatabase } from "../../db/sqlite/runtime.js";
 import type { CompileEvalRecord, CompileEvalSummary } from "./context-compile-eval.repository.js";
 
 type SqliteCompileEvalRow = {
@@ -20,6 +19,11 @@ type SqliteCompileEvalRow = {
   created_at: string;
   updated_at: string;
 };
+
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
 
 function normalizeOutcome(value: unknown): CompileEvalRecord["outcome"] {
   if (value === "useful" || value === "partial" || value === "misleading" || value === "unused") {
@@ -73,7 +77,7 @@ export async function insertCompileEvalSqlite(params: {
   clarity: number;
   specificity: number;
 }): Promise<CompileEvalRecord> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const id = randomUUID();
   const now = new Date().toISOString();
   sqlite.db
@@ -113,7 +117,7 @@ export async function insertCompileEvalSqlite(params: {
 export async function getCompileEvalSummaryByRunIdSqlite(
   runId: string,
 ): Promise<CompileEvalSummary> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const agg = sqlite.db
     .query<{ count: number; average_avg: number | null }, [string]>(
       "SELECT count(*) AS count, round(avg(score), 1) AS average_avg FROM context_compile_evals WHERE run_id = ?",
@@ -138,7 +142,7 @@ export async function getCompileEvalSummaryByRunIdSqlite(
 }
 
 export async function listCompileEvalsByRunIdSqlite(runId: string): Promise<CompileEvalRecord[]> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const rows = sqlite.db
     .query<SqliteCompileEvalRow, [string]>(
       `SELECT * FROM context_compile_evals
@@ -152,7 +156,7 @@ export async function listCompileEvalsByRunIdSqlite(runId: string): Promise<Comp
 export async function findRunIdForCompileEvalSqlite(params: {
   sessionId: string;
 }): Promise<{ runId: string; resolvedFrom: "latest_session_run" } | null> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const row = sqlite.db
     .query<{ id: string }, [string]>(
       `SELECT id FROM context_compile_runs
@@ -167,7 +171,7 @@ export async function findRunIdForCompileEvalSqlite(params: {
 export async function getCompileRunSessionIdSqlite(
   runId: string,
 ): Promise<{ id: string; sessionId: string | null } | null> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const row = sqlite.db
     .query<{ id: string; session_id: string | null }, [string]>(
       "SELECT id, session_id FROM context_compile_runs WHERE id = ? LIMIT 1",

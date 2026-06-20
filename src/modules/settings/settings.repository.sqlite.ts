@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { getRuntimeSqliteCoreDatabase } from "../../db/sqlite/runtime.js";
 import type { SettingsRow } from "./settings.repository.js";
 
 type SqliteSettingsRow = {
@@ -16,6 +15,11 @@ type SqliteSettingsRow = {
   updated_at: string;
   updated_by: string | null;
 };
+
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -57,7 +61,7 @@ export async function findSettingsRowSqlite(
   namespace: string,
   key: string,
 ): Promise<SettingsRow | null> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const row = sqlite.db
     .query<SqliteSettingsRow, [string, string]>(
       "SELECT * FROM settings WHERE namespace = ? AND key = ? LIMIT 1",
@@ -67,7 +71,7 @@ export async function findSettingsRowSqlite(
 }
 
 export async function listSettingsRowsSqlite(namespace?: string): Promise<SettingsRow[]> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const rows = namespace
     ? sqlite.db
         .query<SqliteSettingsRow, [string]>(
@@ -91,7 +95,7 @@ export async function upsertSettingsRowSqlite(input: {
   schemaVersion: number;
   updatedBy?: string | null;
 }): Promise<SettingsRow> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const now = new Date().toISOString();
   const id = randomUUID();
   sqlite.db
@@ -130,6 +134,6 @@ export async function upsertSettingsRowSqlite(input: {
 }
 
 export async function deleteSettingsRowSqlite(namespace: string, key: string): Promise<void> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   sqlite.db.query("DELETE FROM settings WHERE namespace = ? AND key = ?").run(namespace, key);
 }

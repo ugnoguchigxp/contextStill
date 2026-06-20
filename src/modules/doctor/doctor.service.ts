@@ -1,4 +1,5 @@
 import { groupedConfig } from "../../config.js";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import {
   type DoctorAiServiceToolsDomain,
   type DoctorCoreInfrastructureDomain,
@@ -27,7 +28,6 @@ import {
   createReasonResolutionContext,
   resolveReasonDetails,
 } from "./doctor-reason-resolution.js";
-import { requiredTables } from "./doctor.constants.js";
 import type { DoctorOptions, ResolvedDoctorOptions } from "./doctor.types.js";
 import { nowIso } from "./doctor.utils.js";
 import { inspectAgentLogSync } from "./inspectors/agent-log-sync.inspector.js";
@@ -137,6 +137,19 @@ function createUnavailableContextDecisionReport(): DoctorReport["contextDecision
   };
 }
 
+function hasTable(database: DatabaseInspection, tableName: string): boolean {
+  return database.existingTables.includes(tableName);
+}
+
+function canQueryOperationalTables(): boolean {
+  return resolveDatabaseBackendConfig().kind === "postgres";
+}
+
+function canQueryAgentLogSyncTables(): boolean {
+  const backend = resolveDatabaseBackendConfig().kind;
+  return backend === "postgres" || backend === "sqlite";
+}
+
 export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorReport> {
   await ensureRuntimeSettingsLoaded();
   const options = resolveDoctorOptions(rawOptions);
@@ -188,7 +201,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
       embedding,
       agenticLlm,
       tables: {
-        expected: [...requiredTables],
+        expected: database.expectedTables,
         existing: database.existingTables,
         missing: database.missingTables,
       },
@@ -219,24 +232,26 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
     windowSize: options.windowSize,
     freshnessThresholdMinutes: options.freshnessThresholdMinutes,
     degradedRateThreshold: options.degradedRateThreshold,
-    compileRunsTableAvailable: !database.missingTables.includes("context_compile_runs"),
+    compileRunsTableAvailable: hasTable(database, "context_compile_runs"),
   });
   reasons.push(...compile.reasons);
   const contextDecision = await inspectContextDecision({
-    tableAvailable: !database.missingTables.includes("context_decision_runs"),
+    tableAvailable: hasTable(database, "context_decision_runs"),
   });
   reasons.push(...contextDecision.reasons);
+  const canQueryOperationalDb = canQueryOperationalTables();
+  const canQueryAgentLogSyncDb = canQueryAgentLogSyncTables();
 
   const [agentLogSync, vibeDistillation, sourceDistillation] = await Promise.all([
     inspectAgentLogSync({
-      canQueryDb: true,
-      syncStatesTableAvailable: !database.missingTables.includes("sync_states"),
+      canQueryDb: canQueryAgentLogSyncDb,
+      syncStatesTableAvailable: hasTable(database, "sync_states"),
     }),
     inspectVibeDistillation({
-      canQueryDb: true,
+      canQueryDb: canQueryOperationalDb,
     }),
     inspectSourceDistillation({
-      canQueryDb: true,
+      canQueryDb: canQueryOperationalDb,
     }),
   ]);
 
@@ -267,7 +282,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
     embedding,
     agenticLlm,
     tables: {
-      expected: [...requiredTables],
+      expected: database.expectedTables,
       existing: database.existingTables,
       missing: database.missingTables,
     },
@@ -324,7 +339,7 @@ export async function runDoctorCoreInfrastructure(
     },
     embedding,
     tables: {
-      expected: [...requiredTables],
+      expected: database.expectedTables,
       existing: database.existingTables,
       missing: database.missingTables,
     },
@@ -393,23 +408,25 @@ export async function runDoctorPipelineAutomation(
       }),
     ]);
   } else {
+    const canQueryOperationalDb = canQueryOperationalTables();
+    const canQueryAgentLogSyncDb = canQueryAgentLogSyncTables();
     const [compile, inspectedAgentLogSync, inspectedVibeDistillation, inspectedSourceDistillation] =
       await Promise.all([
         inspectCompileRuns({
           windowSize: options.windowSize,
           freshnessThresholdMinutes: options.freshnessThresholdMinutes,
           degradedRateThreshold: options.degradedRateThreshold,
-          compileRunsTableAvailable: !database.missingTables.includes("context_compile_runs"),
+          compileRunsTableAvailable: hasTable(database, "context_compile_runs"),
         }),
         inspectAgentLogSync({
-          canQueryDb: true,
-          syncStatesTableAvailable: !database.missingTables.includes("sync_states"),
+          canQueryDb: canQueryAgentLogSyncDb,
+          syncStatesTableAvailable: hasTable(database, "sync_states"),
         }),
         inspectVibeDistillation({
-          canQueryDb: true,
+          canQueryDb: canQueryOperationalDb,
         }),
         inspectSourceDistillation({
-          canQueryDb: true,
+          canQueryDb: canQueryOperationalDb,
         }),
       ]);
     runs = compile.runs;

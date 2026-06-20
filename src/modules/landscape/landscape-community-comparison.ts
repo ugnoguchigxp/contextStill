@@ -1,4 +1,5 @@
 import { sql } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import { knowledgeItems } from "../../db/schema.js";
 import { buildCommunityAssignments } from "../graph/community-builder.js";
@@ -31,6 +32,10 @@ type SemanticEdge = {
 };
 
 const SEMANTIC_REACHABLE_DEAD_ZONE_MIN_JACCARD = 0.12;
+
+function isSqliteBackend(): boolean {
+  return resolveDatabaseBackendConfig().kind === "sqlite";
+}
 
 function knowledgeNodeId(id: string): string {
   return `knowledge:${id}`;
@@ -145,6 +150,8 @@ export async function buildSemanticCommunityAssignments(params: {
   minSimilarity: number;
   semanticTopK: number;
 }): Promise<Map<string, SemanticAssignment>> {
+  if (isSqliteBackend()) return new Map();
+
   const knowledgeIds = [...new Set(params.knowledgeIds.filter((id) => id.trim().length > 0))];
   const nodes = await loadSemanticNodes(knowledgeIds);
   if (nodes.length === 0) return new Map();
@@ -199,6 +206,24 @@ export async function buildLandscapeCommunityComparison(params: {
   minSimilarity: number;
   semanticTopK: number;
 }): Promise<LandscapeCommunityComparisonSummary> {
+  if (isSqliteBackend()) {
+    const universeKnowledgeIds = [...new Set(params.knowledgeIds.filter(Boolean))];
+    return {
+      universeKnowledgeCount: universeKnowledgeIds.length,
+      comparedKnowledgeCount: 0,
+      missingRelationAssignmentCount: universeKnowledgeIds.filter(
+        (knowledgeId) => !params.relationAssignmentsByKnowledgeId.has(knowledgeId),
+      ).length,
+      missingSemanticAssignmentCount: universeKnowledgeIds.length,
+      alignedCount: 0,
+      semanticSplitCount: 0,
+      semanticMergeCount: 0,
+      relationOrphanCount: 0,
+      semanticReachableDeadZoneCount: 0,
+      communities: [],
+    };
+  }
+
   const universeKnowledgeIds = [...new Set(params.knowledgeIds.filter(Boolean))];
   const semanticAssignmentsByKnowledgeId = await buildSemanticCommunityAssignments({
     knowledgeIds: universeKnowledgeIds,

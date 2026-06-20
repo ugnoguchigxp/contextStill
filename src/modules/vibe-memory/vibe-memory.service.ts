@@ -1,4 +1,5 @@
 import { db } from "../../db/client.js";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { agentDiffEntries, vibeMemories } from "../../db/schema.js";
 import {
   type RecordVibeMemoryInput,
@@ -15,6 +16,11 @@ import {
   insertVibeMemory,
   searchVibeMemories,
 } from "./vibe-memory.repository.js";
+
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
 
 export type RecordedVibeMemory = {
   memory: typeof vibeMemories.$inferSelect;
@@ -46,6 +52,112 @@ export async function recordVibeMemoryWithDiffEntries(
   const content =
     redactSecrets(stripAgentDiffContentFromText(redactedContent)) ||
     (normalizedEntries.length > 0 ? "Agent diff recorded." : redactedContent.trim());
+
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const sqlite = await getSqliteCoreDatabase();
+    const now = new Date().toISOString();
+    const memoryId = crypto.randomUUID();
+    sqlite.db.query("BEGIN IMMEDIATE").run();
+    try {
+      sqlite.db
+        .query(
+          `
+          insert into vibe_memories (
+            id, session_id, content, memory_type, metadata, created_at
+          ) values (?, ?, ?, ?, ?, ?)
+        `,
+        )
+        .run(
+          memoryId,
+          parsed.sessionId,
+          content,
+          parsed.memoryType,
+          JSON.stringify(redactSecretRecord(parsed.metadata)),
+          now,
+        );
+      sqlite.db
+        .query("insert into vibe_memories_fts(rowid, id, content) values (?, ?, ?)")
+        .run(
+          sqlite.db.query<{ rowid: number }, []>("select last_insert_rowid() as rowid").get()
+            ?.rowid ?? 0,
+          memoryId,
+          content,
+        );
+
+      const diffEntries = normalizedEntries.map((entry) => {
+        const id = crypto.randomUUID();
+        sqlite.db
+          .query(
+            `
+            insert into agent_diff_entries (
+              id, vibe_memory_id, file_path, diff_hunk, change_type, language,
+              symbol_name, symbol_kind, signature, start_line, end_line,
+              metadata, created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          )
+          .run(
+            id,
+            memoryId,
+            entry.filePath,
+            entry.diffHunk,
+            entry.changeType ?? null,
+            entry.language ?? null,
+            entry.symbolName ?? null,
+            entry.symbolKind ?? null,
+            entry.signature ?? null,
+            entry.startLine ?? null,
+            entry.endLine ?? null,
+            JSON.stringify(redactSecretRecord(entry.metadata)),
+            now,
+            now,
+          );
+        return {
+          id,
+          vibeMemoryId: memoryId,
+          filePath: entry.filePath,
+          diffHunk: entry.diffHunk,
+          changeType: entry.changeType ?? null,
+          language: entry.language ?? null,
+          symbolName: entry.symbolName ?? null,
+          symbolKind: entry.symbolKind ?? null,
+          signature: entry.signature ?? null,
+          startLine: entry.startLine ?? null,
+          endLine: entry.endLine ?? null,
+          metadata: redactSecretRecord(entry.metadata),
+          createdAt: new Date(now),
+          updatedAt: new Date(now),
+        };
+      });
+      sqlite.db.query("COMMIT").run();
+      return {
+        memory: {
+          id: memoryId,
+          sessionId: parsed.sessionId,
+          content,
+          memoryType: parsed.memoryType,
+          dedupeKey: null,
+          embedding: null,
+          metadata: redactSecretRecord(parsed.metadata),
+          createdAt: new Date(now),
+          goalId: null,
+          parentId: null,
+          subject: null,
+          intent: null,
+          wants: [],
+          refs: [],
+          confidence: null,
+          evidenceStatus: null,
+          actorId: null,
+          ttlAt: null,
+        },
+        diffEntries,
+      } as RecordedVibeMemory;
+    } catch (error) {
+      sqlite.db.query("ROLLBACK").run();
+      throw error;
+    }
+  }
 
   return db.transaction(async (tx) => {
     const [memory] = await tx

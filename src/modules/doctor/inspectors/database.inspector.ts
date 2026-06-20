@@ -1,8 +1,9 @@
 import { sql } from "drizzle-orm";
 import { groupedConfig } from "../../../config.js";
+import { resolveDatabaseBackendConfig } from "../../../db/backend.js";
 import { getDb } from "../../../db/index.js";
 import type { DoctorReport } from "../../../shared/schemas/doctor.schema.js";
-import { requiredTableSqlList, requiredTables } from "../doctor.constants.js";
+import { requiredTableSqlList, requiredTables, sqliteRequiredTables } from "../doctor.constants.js";
 
 type DatabaseInspectorOptions = {
   freshnessThresholdMinutes: number;
@@ -33,6 +34,7 @@ export type DatabaseInspection = {
   db: DoctorReport["db"];
   reachable: boolean;
   vectorInstalled: boolean;
+  expectedTables: string[];
   existingTables: string[];
   missingTables: string[];
   staleKnowledgeCount: number;
@@ -61,11 +63,354 @@ function createDefaultKnowledgeLifecycle(
   };
 }
 
+const knownIntentTags = new Set([
+  "guidance",
+  "guardrail",
+  "prohibition",
+  "warning",
+  "failure_pattern",
+  "review_finding",
+  "regression",
+  "test_gap",
+  "verification",
+  "preference",
+  "boundary_violation",
+  "architecture_risk",
+  "security_risk",
+  "performance_risk",
+]);
+
+function percentile(values: number[], quantile: number): number | null {
+  if (values.length === 0) return null;
+  const sorted = [...values].sort((a, b) => a - b);
+  const clamped = Math.min(1, Math.max(0, quantile));
+  const position = (sorted.length - 1) * clamped;
+  const lower = Math.floor(position);
+  const upper = Math.ceil(position);
+  if (lower === upper) return sorted[lower] ?? null;
+  const lowerValue = sorted[lower] ?? 0;
+  const upperValue = sorted[upper] ?? lowerValue;
+  return lowerValue + (upperValue - lowerValue) * (position - lower);
+}
+
+function parseJsonArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function parseJsonObject(value: unknown): Record<string, unknown> {
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  if (typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function ageDaysFromIso(value: string | null): number {
+  if (!value) return 0;
+  const timestamp = new Date(value).getTime();
+  if (Number.isNaN(timestamp)) return 0;
+  return Math.max(0, (Date.now() - timestamp) / 86_400_000);
+}
+
+async function inspectSqliteDatabase({
+  freshnessThresholdMinutes,
+  staleDecayFactor,
+  zeroUseWarningMinActiveCount,
+}: DatabaseInspectorOptions): Promise<DatabaseInspection> {
+  const startedAt = Date.now();
+  const expectedTables = [...sqliteRequiredTables];
+
+  try {
+    const { getRuntimeSqliteCoreDatabase } = await import("../../../db/sqlite/runtime.js");
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    sqlite.db.query("select 1 as ok").get();
+    const placeholders = expectedTables.map(() => "?").join(", ");
+    const existingTables = sqlite.db
+      .query<{ name: string }, string[]>(
+        `select name from sqlite_schema where type in ('table', 'view') and name in (${placeholders})`,
+      )
+      .all(...expectedTables)
+      .map((row) => row.name);
+    const missingTables = expectedTables.filter((tableName) => !existingTables.includes(tableName));
+    const reasons: string[] = [];
+    if (missingTables.length > 0) {
+      reasons.push("MISSING_REQUIRED_TABLES");
+    }
+    if (!sqlite.vector.available) {
+      reasons.push("SQLITE_VECTOR_EXTENSION_UNAVAILABLE");
+    }
+
+    let staleKnowledgeCount = 0;
+    const hitl: DoctorReport["hitl"] = {
+      draftCount: 0,
+      oldestDraftAt: null,
+      oldestDraftAgeMinutes: null,
+      backlogThresholdCount: hitlBacklogThresholdCount,
+      backlogThresholdAgeMinutes: hitlBacklogThresholdAgeMinutes,
+    };
+    const knowledgeLifecycle = createDefaultKnowledgeLifecycle({
+      staleDecayFactor,
+      zeroUseWarningMinActiveCount,
+    });
+
+    if (existingTables.includes("knowledge_items")) {
+      try {
+        const staleRow = sqlite.db
+          .query<{ count: number }, []>(
+            "select count(*) as count from knowledge_items where status = 'deprecated'",
+          )
+          .get();
+        staleKnowledgeCount = Number(staleRow?.count ?? 0);
+      } catch {
+        reasons.push("STALE_KNOWLEDGE_COUNT_QUERY_FAILED");
+      }
+
+      try {
+        const draftRow = (sqlite.db
+          .query<{ draft_count: number; oldest_draft_at: string | null }, []>(`
+            select
+              sum(case when status = 'draft' then 1 else 0 end) as draft_count,
+              min(case when status = 'draft' then updated_at end) as oldest_draft_at
+            from knowledge_items
+          `)
+          .get() ?? {
+          draft_count: 0,
+          oldest_draft_at: null,
+        }) as { draft_count: number; oldest_draft_at: string | null };
+        hitl.draftCount = Number(draftRow.draft_count ?? 0);
+        hitl.oldestDraftAt = toIso(draftRow.oldest_draft_at);
+        hitl.oldestDraftAgeMinutes = ageMinutesFromIso(hitl.oldestDraftAt);
+        if (hitl.draftCount > hitl.backlogThresholdCount) {
+          reasons.push("HITL_DRAFT_BACKLOG_HIGH");
+        }
+        if (
+          hitl.oldestDraftAgeMinutes !== null &&
+          hitl.oldestDraftAgeMinutes > hitl.backlogThresholdAgeMinutes
+        ) {
+          reasons.push("HITL_DRAFT_REVIEW_STALE");
+        }
+      } catch {
+        reasons.push("HITL_BACKLOG_QUERY_FAILED");
+      }
+
+      try {
+        const activeRows = sqlite.db
+          .query<
+            {
+              type: string;
+              scope: string;
+              compile_select_count: number;
+              dynamic_score: number;
+              last_compiled_at: string | null;
+              freshness_base: string | null;
+            },
+            []
+          >(`
+            select
+              type,
+              scope,
+              compile_select_count,
+              dynamic_score,
+              last_compiled_at,
+              coalesce(last_verified_at, updated_at) as freshness_base
+            from knowledge_items
+            where status = 'active'
+          `)
+          .all();
+        const dynamicScores = activeRows
+          .map((row) => Number(row.dynamic_score))
+          .filter((value) => Number.isFinite(value));
+        const decayFactors = activeRows.map((row) => {
+          const perDay = row.type === "procedure" ? 0.004 : 0.001;
+          const scopeMultiplier = row.scope === "global" ? 0.5 : 1.0;
+          return Math.exp(-(perDay * scopeMultiplier * ageDaysFromIso(toIso(row.freshness_base))));
+        });
+        knowledgeLifecycle.activeCount = activeRows.length;
+        knowledgeLifecycle.zeroUseActiveCount = activeRows.filter(
+          (row) => Number(row.compile_select_count ?? 0) === 0,
+        ).length;
+        knowledgeLifecycle.staleByDecayCount = decayFactors.filter(
+          (value) => value < staleDecayFactor,
+        ).length;
+        knowledgeLifecycle.staleProcedureCount = activeRows.filter(
+          (row, index) => row.type === "procedure" && (decayFactors[index] ?? 1) < staleDecayFactor,
+        ).length;
+        knowledgeLifecycle.dynamicScoreAvg =
+          dynamicScores.length > 0
+            ? dynamicScores.reduce((sum, value) => sum + value, 0) / dynamicScores.length
+            : null;
+        knowledgeLifecycle.dynamicScoreP95 = percentile(dynamicScores, 0.95);
+        knowledgeLifecycle.lastCompiledAt =
+          activeRows
+            .map((row) => toIso(row.last_compiled_at))
+            .filter((value): value is string => Boolean(value))
+            .sort()
+            .at(-1) ?? null;
+        knowledgeLifecycle.lastCompiledAgeMinutes = ageMinutesFromIso(
+          knowledgeLifecycle.lastCompiledAt,
+        );
+
+        if (
+          knowledgeLifecycle.activeCount >= zeroUseWarningMinActiveCount &&
+          knowledgeLifecycle.zeroUseActiveCount / Math.max(1, knowledgeLifecycle.activeCount) >= 0.7
+        ) {
+          reasons.push("KNOWLEDGE_ZERO_USE_HIGH");
+        }
+        if (knowledgeLifecycle.staleByDecayCount >= 10) {
+          reasons.push("KNOWLEDGE_DECAY_STALE_HIGH");
+        }
+      } catch {
+        reasons.push("KNOWLEDGE_VALUE_QUERY_FAILED");
+      }
+
+      try {
+        const rows = sqlite.db
+          .query<
+            {
+              id: string;
+              intent_tags: string;
+              polarity: string;
+              type: string;
+              metadata: string;
+              origin_links: number;
+              source_links: number;
+            },
+            []
+          >(`
+            select
+              ki.id,
+              ki.intent_tags,
+              ki.polarity,
+              ki.type,
+              ki.metadata,
+              (select count(*) from knowledge_origin_links kol where kol.knowledge_id = ki.id)
+                as origin_links,
+              (select count(*) from knowledge_source_links ksl where ksl.knowledge_id = ki.id)
+                as source_links
+            from knowledge_items ki
+          `)
+          .all();
+        if (
+          rows.some((row) =>
+            parseJsonArray(row.intent_tags).some(
+              (tag) => typeof tag === "string" && !knownIntentTags.has(tag),
+            ),
+          )
+        ) {
+          reasons.push("KNOWLEDGE_UNKNOWN_INTENT_TAGS");
+        }
+        if (
+          rows.some((row) => {
+            const metadata = parseJsonObject(row.metadata);
+            return (
+              row.polarity === "negative" &&
+              Number(row.origin_links) === 0 &&
+              Number(row.source_links) === 0 &&
+              typeof metadata.sourceDocumentUri !== "string"
+            );
+          })
+        ) {
+          reasons.push("KNOWLEDGE_NEGATIVE_WITHOUT_ORIGIN");
+        }
+        if (rows.some((row) => row.polarity === "negative" && row.type === "procedure")) {
+          reasons.push("KNOWLEDGE_NEGATIVE_AS_POSITIVE");
+        }
+      } catch {
+        // 非ブロッキング
+      }
+    }
+
+    if (existingTables.includes("audit_logs")) {
+      try {
+        const row = sqlite.db
+          .query<{ count: number }, [string]>(
+            "select count(*) as count from audit_logs where event_type = 'KNOWLEDGE_VALUE_UPDATE_FAILED' and created_at >= ?",
+          )
+          .get(new Date(Date.now() - freshnessThresholdMinutes * 60_000).toISOString());
+        const recentFailureCount = Number(row?.count ?? 0);
+        if (recentFailureCount > 0 && !reasons.includes("KNOWLEDGE_VALUE_UPDATE_FAILED")) {
+          reasons.push("KNOWLEDGE_VALUE_UPDATE_FAILED");
+        }
+      } catch {
+        if (!reasons.includes("KNOWLEDGE_VALUE_QUERY_FAILED")) {
+          reasons.push("KNOWLEDGE_VALUE_QUERY_FAILED");
+        }
+      }
+    }
+
+    return {
+      db: {
+        reachable: true,
+        durationMs: Date.now() - startedAt,
+      },
+      reachable: true,
+      vectorInstalled: sqlite.vector.available,
+      expectedTables,
+      existingTables,
+      missingTables,
+      staleKnowledgeCount,
+      staleSourceCount: 0,
+      hitl,
+      knowledgeLifecycle,
+      reasons,
+    };
+  } catch (error) {
+    return {
+      db: {
+        reachable: false,
+        durationMs: Date.now() - startedAt,
+        error: error instanceof Error ? error.message : String(error),
+      },
+      reachable: false,
+      vectorInstalled: false,
+      expectedTables,
+      existingTables: [],
+      missingTables: expectedTables,
+      staleKnowledgeCount: 0,
+      staleSourceCount: 0,
+      hitl: {
+        draftCount: 0,
+        oldestDraftAt: null,
+        oldestDraftAgeMinutes: null,
+        backlogThresholdCount: hitlBacklogThresholdCount,
+        backlogThresholdAgeMinutes: hitlBacklogThresholdAgeMinutes,
+      },
+      knowledgeLifecycle: createDefaultKnowledgeLifecycle({
+        staleDecayFactor,
+        zeroUseWarningMinActiveCount,
+      }),
+      reasons: ["DB_UNREACHABLE"],
+    };
+  }
+}
+
 export async function inspectDatabase({
   freshnessThresholdMinutes,
   staleDecayFactor,
   zeroUseWarningMinActiveCount,
 }: DatabaseInspectorOptions): Promise<DatabaseInspection> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    return inspectSqliteDatabase({
+      freshnessThresholdMinutes,
+      staleDecayFactor,
+      zeroUseWarningMinActiveCount,
+    });
+  }
+
   const db = getDb();
   const startedAt = Date.now();
 
@@ -80,6 +425,7 @@ export async function inspectDatabase({
       },
       reachable: false,
       vectorInstalled: false,
+      expectedTables: [...requiredTables],
       existingTables: [],
       missingTables: [...requiredTables],
       staleKnowledgeCount: 0,
@@ -337,6 +683,7 @@ export async function inspectDatabase({
     },
     reachable: true,
     vectorInstalled,
+    expectedTables: [...requiredTables],
     existingTables,
     missingTables,
     staleKnowledgeCount,

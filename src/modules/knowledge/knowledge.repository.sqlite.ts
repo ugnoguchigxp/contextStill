@@ -1,5 +1,4 @@
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { getRuntimeSqliteCoreDatabase } from "../../db/sqlite/runtime.js";
 import {
   sqliteKnowledgeItems,
   sqliteKnowledgeSourceLinks,
@@ -24,6 +23,11 @@ import {
   finiteOrZero,
   hasApplicabilityQuery,
 } from "./knowledge.repository.shared.js";
+
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
 
 type SqliteKnowledgeSearchRow = typeof sqliteKnowledgeItems.$inferSelect & {
   score: number;
@@ -135,7 +139,7 @@ function matchesApplicability(
 
 async function listKnowledgeSourceRefs(knowledgeIds: string[]): Promise<Map<string, string[]>> {
   if (knowledgeIds.length === 0) return new Map();
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const rows = sqlite.orm
     .select({
       knowledgeId: sqliteKnowledgeSourceLinks.knowledgeId,
@@ -221,7 +225,7 @@ export async function searchKnowledgeSqlite(
   input: KnowledgeSearchQueryInput,
   options: KnowledgeSearchOptions = {},
 ): Promise<KnowledgeSearchResult[]> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const statuses = input.statuses && input.statuses.length > 0 ? input.statuses : [input.status];
   const types = options.types && options.types.length > 0 ? options.types : input.types;
   const polarities = options.polarities ?? input.polarities;
@@ -245,7 +249,12 @@ export async function searchKnowledgeSqlite(
   const query = input.query.trim();
   const rows = candidates
     .map((row) => ({ ...row, score: textScore(row, query) }))
-    .filter((row) => row.score > 0 || matchesApplicability(row, applicabilityQuery))
+    .filter(
+      (row) =>
+        row.score > 0 ||
+        (hasApplicabilityQuery(applicabilityQuery) &&
+          matchesApplicability(row, applicabilityQuery)),
+    )
     .filter((row) => matchesIntentTags(row, options.intentTags ?? input.intentTags))
     .filter((row) =>
       matchesRepoScope(row, { ...options, repoPath: options.repoPath ?? input.repoPath }),
@@ -266,7 +275,7 @@ export async function searchKnowledgeSqlite(
 export async function upsertKnowledgeFromSourceSqlite(
   params: UpsertKnowledgeFromSourceParams,
 ): Promise<string> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const repo = new SqliteCoreRepository(sqlite);
   const scoped = buildKnowledgeScopeMetadata(params.sourceUri, params.metadata, params.appliesTo);
   const existing = sqlite.orm
@@ -301,7 +310,7 @@ export async function vectorSearchKnowledgeSqlite(
   statuses: KnowledgeStatus[] = ["active"],
   options: KnowledgeSearchOptions = {},
 ): Promise<KnowledgeSearchResult[]> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const repo = new SqliteCoreRepository(sqlite);
   const hits = repo.vectorSearchKnowledge(embedding, Math.max(limit * 4, 20));
   if (hits.length === 0) return [];

@@ -3,16 +3,19 @@ import { resolveDatabaseBackendConfig } from "../src/db/backend.js";
 
 const originalDatabaseUrl = process.env.DATABASE_URL;
 const originalBackend = process.env.CONTEXT_STILL_DB_BACKEND;
+const originalSqlitePath = process.env.CONTEXT_STILL_SQLITE_CORE_PATH;
 
 afterEach(() => {
   restoreEnv("DATABASE_URL", originalDatabaseUrl);
   restoreEnv("CONTEXT_STILL_DB_BACKEND", originalBackend);
+  restoreEnv("CONTEXT_STILL_SQLITE_CORE_PATH", originalSqlitePath);
 });
 
 describe("database backend config", () => {
   beforeEach(() => {
     clearEnv("DATABASE_URL");
     clearEnv("CONTEXT_STILL_DB_BACKEND");
+    clearEnv("CONTEXT_STILL_SQLITE_CORE_PATH");
   });
 
   test("defaults postgres for postgres URLs", () => {
@@ -45,6 +48,16 @@ describe("database backend config", () => {
 
     expect(config.kind).toBe("sqlite");
     expect(config.sqlitePath).toBe("/tmp/context-still-core.sqlite");
+  });
+
+  test("honors sqlite core path env when sqlite backend is selected", () => {
+    process.env.CONTEXT_STILL_DB_BACKEND = "sqlite";
+    process.env.CONTEXT_STILL_SQLITE_CORE_PATH = "/tmp/context-still-env.sqlite";
+
+    const config = resolveDatabaseBackendConfig();
+
+    expect(config.kind).toBe("sqlite");
+    expect(config.sqlitePath).toBe("/tmp/context-still-env.sqlite");
   });
 });
 

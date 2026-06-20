@@ -1,6 +1,6 @@
 import { readProjectEnv } from "../../project-identity.js";
 
-export const requiredTables = [
+export const postgresRequiredTables = [
   "audit_logs",
   "knowledge_items",
   "sources",
@@ -30,6 +30,67 @@ export const requiredTables = [
   "sync_states",
   "settings",
 ] as const;
+
+export const sqliteRequiredTables = [
+  "audit_logs",
+  "knowledge_items",
+  "knowledge_items_fts",
+  "knowledge_tag_definitions",
+  "knowledge_community_labels",
+  "knowledge_quality_adjustments",
+  "knowledge_origin_links",
+  "knowledge_usage_events",
+  "knowledge_review_queue",
+  "sources",
+  "sources_fts",
+  "source_fragments",
+  "source_fragments_fts",
+  "knowledge_source_links",
+  "core_vector_metadata",
+  "knowledge_items_vec_map",
+  "knowledge_items_vec_fallback",
+  "source_fragments_vec_map",
+  "source_fragments_vec_fallback",
+  "context_compile_runs",
+  "context_pack_items",
+  "context_compile_candidate_traces",
+  "context_compile_task_traces",
+  "context_compile_evals",
+  "llm_usage_logs",
+  "vibe_goals",
+  "vibe_migration_runs",
+  "vibe_memories",
+  "vibe_memories_fts",
+  "agent_diff_entries",
+  "agent_diff_entries_fts",
+  "vibe_memory_marks",
+  "sync_states",
+  "context_decision_runs",
+  "context_decision_evidence",
+  "context_decision_coverage_traces",
+  "context_decision_human_feedback",
+  "context_decision_feedback",
+  "context_decision_feedback_effects",
+  "distillation_target_states",
+  "distillation_evidence_cache",
+  "find_candidate_results",
+  "cover_evidence_results",
+  "finding_candidate_queue",
+  "found_candidates",
+  "covering_evidence_queue",
+  "evidence_coverage_results",
+  "landscape_review_items",
+  "landscape_review_item_candidate_links",
+  "dead_zone_merge_review_queue",
+  "finalize_distille_queue",
+  "merge_activation_finalize_queue",
+  "distillation_queue_events",
+  "distillation_queue_migration_map",
+  "landscape_snapshots",
+  "settings",
+] as const;
+
+export const requiredTables = postgresRequiredTables;
 
 export const requiredTableSqlList = requiredTables.map((tableName) => `'${tableName}'`).join(", ");
 

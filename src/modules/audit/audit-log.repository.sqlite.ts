@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { getRuntimeSqliteCoreDatabase } from "../../db/sqlite/runtime.js";
 import { redactSecretRecord } from "../../shared/utils/secret-redaction.js";
 import type {
   AuditActor,
@@ -16,6 +15,11 @@ type SqliteAuditLogRow = {
   payload: string;
   created_at: string;
 };
+
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
 
 function normalizeText(value: string | undefined): string | undefined {
   const normalized = value?.trim();
@@ -62,7 +66,7 @@ export async function recordAuditLogSqlite(input: {
 }): Promise<void> {
   const eventType = normalizeText(input.eventType);
   if (!eventType) return;
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   sqlite.db
     .query(
       `INSERT INTO audit_logs (id, event_type, actor, payload, created_at)
@@ -80,7 +84,7 @@ export async function recordAuditLogSqlite(input: {
 export async function listAuditLogsSqlite(
   input: AuditLogListInput = {},
 ): Promise<AuditLogListResult> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const { page, limit } = normalizePagination(input);
   const eventType = normalizeText(input.eventType);
   const actor = normalizeText(input.actor);
@@ -124,7 +128,7 @@ export async function cleanupExpiredAuditLogsSqlite(input?: {
   retentionDays?: number;
   trigger?: string;
 }): Promise<CleanupAuditLogsResult> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const retentionDays = Math.max(1, Math.floor(input?.retentionDays ?? 7));
   const trigger = normalizeText(input?.trigger) ?? "unknown";
   const cutoff = new Date(Date.now() - retentionDays * 24 * 60 * 60 * 1000);

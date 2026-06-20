@@ -70,6 +70,27 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     impact: "vector 機能の可用性を正確に判断できません。",
     action: "DB 権限と接続状態を確認してください。",
   },
+  SQLITE_VECTOR_EXTENSION_UNAVAILABLE: {
+    label: "sqlite-vec が利用不能",
+    severity: "info",
+    area: "Runtime",
+    description: "SQLite backend で sqlite-vec extension を読み込めませんでした。",
+    impact:
+      "fallback vector store または text search 経路で継続しますが、検索品質や速度が変わる可能性があります。",
+    action:
+      "sqlite-vec の loadable extension path と Bun SQLite の extension loading 可否を確認してください。",
+  },
+  SQLITE_PENDING_MIGRATION_DOMAINS: {
+    label: "SQLite 未移行 domain が残っている",
+    severity: "info",
+    area: "Runtime",
+    description:
+      "SQLite backend の required tables に未移行 domain が残っている場合に使う互換理由です。",
+    impact:
+      "現行実装では通常は常時出しません。出た場合は SQLite schema/doctor required tables の不一致を疑ってください。",
+    action:
+      "sqlite:migrate-from-postgres の dry-run と doctor の missingTables を確認してください。",
+  },
   EMBEDDING_PROVIDER_UNAVAILABLE: {
     label: "Embedding provider が利用不能",
     severity: "warning",

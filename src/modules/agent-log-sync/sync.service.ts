@@ -1,6 +1,7 @@
 import { eq, like } from "drizzle-orm";
 import { groupedConfig } from "../../config.js";
 import { APP_CONSTANTS } from "../../constants.js";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/client.js";
 import {
   agentDiffEntries,
@@ -89,6 +90,11 @@ const sources: AgentLogSource[] = [
   { id: "claude_logs", label: "Claude", ingest: ingestClaudeLogs },
 ];
 
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
+
 function shouldDeleteLegacyAntigravityVibeMemories(): boolean {
   return readProjectEnv("DELETE_LEGACY_ANTIGRAVITY_VIBE_MEMORIES") === "1";
 }
@@ -109,6 +115,333 @@ export {
   isNonDistillableAgentTaskLogMessage,
   shouldDeleteLegacyAntigravityVibeMemories,
 };
+
+type SqliteSyncStateRow = {
+  id: string;
+  last_synced_at: string;
+  cursor: string;
+  metadata: string;
+  updated_at: string;
+};
+
+function parseRecord(value: string | null | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function parseDate(value: string | null | undefined): Date | undefined {
+  if (!value) return undefined;
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? undefined : date;
+}
+
+async function syncAllAgentLogsSqlite(params: {
+  summary: AgentLogSyncSummary;
+  enabledBySourceId: Record<string, boolean>;
+}): Promise<AgentLogSyncSummary> {
+  const sqlite = await getSqliteCoreDatabase();
+
+  for (const source of sources) {
+    const state = sqlite.db
+      .query<SqliteSyncStateRow, [string]>("select * from sync_states where id = ?")
+      .get(source.id);
+    const enabled = params.enabledBySourceId[source.id] ?? true;
+    if (!enabled) {
+      params.summary.sources.push({
+        id: source.id,
+        label: source.label,
+        ok: true,
+        skipped: true,
+        checkedFiles: 0,
+        messages: 0,
+        insertedMemories: 0,
+        insertedDiffs: 0,
+        warnings: [],
+        errors: [],
+        lastSyncedAt: state?.last_synced_at ? new Date(state.last_synced_at).toISOString() : null,
+      });
+      continue;
+    }
+
+    const stateMetadata = parseRecord(state?.metadata);
+    const isFirst20Sync =
+      source.id === "antigravity_logs" && (!state || stateMetadata.formatVersion !== "2.0");
+    const since = isFirst20Sync ? undefined : parseDate(state?.last_synced_at);
+    const cursor = isFirst20Sync ? {} : normalizeIngestCursor(parseRecord(state?.cursor));
+    const ingestResult = await source.ingest(since, cursor);
+    if (!ingestResult.ok) {
+      params.summary.ok = false;
+      params.summary.sources.push({
+        id: source.id,
+        label: source.label,
+        ok: false,
+        skipped: Boolean(ingestResult.skipped),
+        checkedFiles: ingestResult.checkedFiles,
+        messages: 0,
+        insertedMemories: 0,
+        insertedDiffs: 0,
+        warnings: ingestResult.warnings,
+        errors: ingestResult.errors,
+        lastSyncedAt: since?.toISOString() ?? null,
+      });
+      continue;
+    }
+
+    const messages = filterDistillableAgentLogMessages(ingestResult.messages);
+    const checkpointDate = getCheckpointDate(ingestResult.maxObservedMtimeMs, since);
+    const sourceMetadata = redactSecretRecord({
+      checkedFiles: ingestResult.checkedFiles,
+      warnings: ingestResult.warnings,
+      skipped: Boolean(ingestResult.skipped),
+      messageCount: messages.length,
+      syncedAt: new Date().toISOString(),
+      formatVersion: "2.0",
+    });
+
+    if (ingestResult.skipped) {
+      params.summary.sources.push({
+        id: source.id,
+        label: source.label,
+        ok: true,
+        skipped: true,
+        checkedFiles: ingestResult.checkedFiles,
+        messages: 0,
+        insertedMemories: 0,
+        insertedDiffs: 0,
+        warnings: ingestResult.warnings,
+        errors: [],
+        lastSyncedAt: since?.toISOString() ?? null,
+      });
+      continue;
+    }
+
+    const messagesBySession = new Map<string, ChatMessage[]>();
+    for (const message of messages) {
+      const memorySessionId = buildMemorySessionId(source.id, message);
+      const bucket = messagesBySession.get(memorySessionId);
+      if (bucket) bucket.push(message);
+      else messagesBySession.set(memorySessionId, [message]);
+    }
+
+    let insertedMemories = 0;
+    let insertedDiffs = 0;
+    const enqueuedFindingJobs: Array<{ id: string; sourceKey: string }> = [];
+
+    sqlite.db.query("BEGIN IMMEDIATE").run();
+    try {
+      if (isFirst20Sync && shouldDeleteLegacyAntigravityVibeMemories()) {
+        sqlite.db
+          .query("delete from vibe_memories where session_id like 'antigravity_logs:%'")
+          .run();
+      }
+
+      for (const [memorySessionId, sessionMessages] of messagesBySession.entries()) {
+        const chunks = chunkMessages(sessionMessages);
+        for (const [chunkIndex, chunk] of chunks.entries()) {
+          const rawContent = buildTranscript(chunk);
+          const readableContent = buildReadableTranscript(chunk);
+          const diff = extractUnifiedDiffsFromText(rawContent);
+          const toolCallDiffs = extractAgentDiffsFromToolCalls(chunk);
+          const diffEntries = normalizeAgentDiffEntries({ diff, agentDiffs: toolCallDiffs });
+          const hiddenToolCallCount = chunk.filter((message) => isToolCallMessage(message)).length;
+          if (!readableContent.trim() && diffEntries.length === 0 && hiddenToolCallCount === 0) {
+            continue;
+          }
+          const content =
+            readableContent.trim() ||
+            (diffEntries.length > 0 ? "Agent diff recorded." : "Tool usage recorded.");
+          if (isBelowMinDistillableChars(readableContent)) continue;
+          const redactedContent = redactSecrets(content);
+          const dedupeKey = buildDedupeKey({ sourceId: source.id, memorySessionId, chunkIndex });
+          const memoryMetadata = redactSecretRecord({
+            ...mergeMessageMetadata(source, chunk),
+            chunkIndex,
+            dedupeKey,
+            hiddenToolCallCount,
+            agentDiffCount: diffEntries.length,
+          });
+          if (isExcludedAgentLogMetadata(memoryMetadata)) continue;
+
+          const existing = sqlite.db
+            .query<{ id: string }, [string, string]>(
+              "select id from vibe_memories where session_id = ? and dedupe_key = ? limit 1",
+            )
+            .get(memorySessionId, dedupeKey);
+          if (existing) continue;
+
+          const memoryId = crypto.randomUUID();
+          const now = new Date().toISOString();
+          sqlite.db
+            .query(
+              `
+              insert into vibe_memories (
+                id, session_id, content, memory_type, dedupe_key, metadata, created_at
+              ) values (?, ?, ?, ?, ?, ?, ?)
+            `,
+            )
+            .run(
+              memoryId,
+              memorySessionId,
+              redactedContent,
+              "chat",
+              dedupeKey,
+              JSON.stringify(memoryMetadata),
+              now,
+            );
+          insertedMemories += 1;
+
+          const findingJobId = crypto.randomUUID();
+          sqlite.db
+            .query(
+              `
+              insert into finding_candidate_queue (
+                id, input_kind, source_kind, source_key, source_uri,
+                distillation_version, payload, metadata, priority, status, created_at, updated_at
+              ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            `,
+            )
+            .run(
+              findingJobId,
+              "source_target",
+              "vibe_memory",
+              memoryId,
+              `vibe_memory:${memoryId}`,
+              APP_CONSTANTS.distillationTargetVersion,
+              JSON.stringify({
+                sourceType: "agent_log_sync",
+                sourceId: source.id,
+                memorySessionId,
+                chunkIndex,
+                dedupeKey,
+              }),
+              JSON.stringify({
+                sourceType: "agent_log_sync",
+                sourceId: source.id,
+                memorySessionId,
+                chunkIndex,
+                dedupeKey,
+                sessionTitle:
+                  typeof memoryMetadata.sessionTitle === "string"
+                    ? memoryMetadata.sessionTitle
+                    : undefined,
+                projectName:
+                  typeof memoryMetadata.projectName === "string"
+                    ? memoryMetadata.projectName
+                    : undefined,
+              }),
+              50,
+              "pending",
+              now,
+              now,
+            );
+          enqueuedFindingJobs.push({ id: findingJobId, sourceKey: memoryId });
+
+          for (const entry of diffEntries) {
+            sqlite.db
+              .query(
+                `
+                insert into agent_diff_entries (
+                  id, vibe_memory_id, file_path, diff_hunk, change_type, language,
+                  symbol_name, symbol_kind, signature, start_line, end_line,
+                  metadata, created_at, updated_at
+                ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              `,
+              )
+              .run(
+                crypto.randomUUID(),
+                memoryId,
+                entry.filePath,
+                redactSecrets(entry.diffHunk),
+                entry.changeType ?? null,
+                entry.language ?? null,
+                entry.symbolName ?? null,
+                entry.symbolKind ?? null,
+                entry.signature ?? null,
+                entry.startLine ?? null,
+                entry.endLine ?? null,
+                JSON.stringify(
+                  redactSecretRecord({
+                    ...entry.metadata,
+                    extractedFrom: "agent_log_sync",
+                    dedupeKey,
+                    sourceId: source.id,
+                  }),
+                ),
+                now,
+                now,
+              );
+            insertedDiffs += 1;
+          }
+        }
+      }
+
+      const now = new Date().toISOString();
+      sqlite.db
+        .query(
+          `
+          insert into sync_states (id, last_synced_at, cursor, metadata, created_at, updated_at)
+          values (?, ?, ?, ?, ?, ?)
+          on conflict(id) do update set
+            last_synced_at = excluded.last_synced_at,
+            cursor = excluded.cursor,
+            metadata = excluded.metadata,
+            updated_at = excluded.updated_at
+        `,
+        )
+        .run(
+          source.id,
+          checkpointDate.toISOString(),
+          JSON.stringify(ingestResult.cursor),
+          JSON.stringify(sourceMetadata),
+          now,
+          now,
+        );
+      sqlite.db.query("COMMIT").run();
+    } catch (error) {
+      sqlite.db.query("ROLLBACK").run();
+      throw error;
+    }
+
+    params.summary.imported += insertedMemories;
+    params.summary.insertedDiffs += insertedDiffs;
+    for (const job of enqueuedFindingJobs) {
+      await appendQueueEvent({
+        queueName: "findingCandidate",
+        queueJobId: job.id,
+        eventType: "enqueued",
+        message: "finding candidate enqueued from agent log sync",
+        metadata: {
+          sourceKind: "vibe_memory",
+          sourceKey: job.sourceKey,
+          inputKind: "source_target",
+        },
+      });
+    }
+    params.summary.sources.push({
+      id: source.id,
+      label: source.label,
+      ok: true,
+      skipped: false,
+      checkedFiles: ingestResult.checkedFiles,
+      messages: messages.length,
+      insertedMemories,
+      insertedDiffs,
+      warnings: ingestResult.warnings,
+      errors: [],
+      lastSyncedAt: checkpointDate.toISOString(),
+    });
+  }
+
+  params.summary.finishedAt = new Date().toISOString();
+  return params.summary;
+}
 
 export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
   const startedAt = new Date();
@@ -136,6 +469,19 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
       antigravity_logs: settings.advanced.antigravityLogSyncEnabled,
       claude_logs: settings.advanced.claudeLogSyncEnabled,
     };
+    if (resolveDatabaseBackendConfig().kind === "sqlite") {
+      const sqliteSummary = await syncAllAgentLogsSqlite({ summary, enabledBySourceId });
+      const cleanup = await cleanupExpiredAuditLogsSafe({ trigger: "sync" });
+      await recordAuditLogSafe({
+        eventType: auditEventTypes.syncRunFinished,
+        actor: "system",
+        payload: {
+          ...sqliteSummary,
+          cleanup: cleanup ?? null,
+        },
+      });
+      return sqliteSummary;
+    }
 
     for (const source of sources) {
       const [state] = await db.select().from(syncStates).where(eq(syncStates.id, source.id));

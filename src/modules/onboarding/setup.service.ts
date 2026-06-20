@@ -8,6 +8,7 @@ import {
 import { type SetupCommandResult, runSetupCommand } from "../../cli/onboarding/command-runner.js";
 import { ensureEnvFile, parseEnvValues } from "../../cli/onboarding/env-file.js";
 import { buildMcpConfigSnippet } from "../../cli/onboarding/mcp-config.js";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { readProjectEnvFrom } from "../../project-identity.js";
 import { type SupportedLocale, resolveLocale } from "../../shared/locales/locale.js";
 
@@ -46,6 +47,7 @@ export type SetupLocaleText = {
   nextRunMcpRegister: string;
   nextRunStartDb: string;
   nextFixDatabaseUrl: string;
+  nextSetSqlitePath: string;
   nextFixMigrate: string;
 };
 
@@ -59,6 +61,8 @@ export const setupLocaleText: Record<SupportedLocale, SetupLocaleText> = {
     nextRunMcpRegister: "必要なら bun run mcp:register -- --client <client> --dry-run を実行する",
     nextRunStartDb: "DB が未起動なら bun run setup -- --start-db を実行する",
     nextFixDatabaseUrl: ".env の DATABASE_URL を設定して再実行する",
+    nextSetSqlitePath:
+      "SQLite backend を使う場合は CONTEXT_STILL_SQLITE_CORE_PATH を必要に応じて設定する",
     nextFixMigrate: "db:migrate が失敗しているため、DB 接続と migration エラーを修正して再実行する",
   },
   en: {
@@ -70,6 +74,8 @@ export const setupLocaleText: Record<SupportedLocale, SetupLocaleText> = {
     nextRunMcpRegister: "If needed, run bun run mcp:register -- --client <client> --dry-run",
     nextRunStartDb: "If DB is not running, execute bun run setup -- --start-db",
     nextFixDatabaseUrl: "Set DATABASE_URL in .env and run setup again",
+    nextSetSqlitePath:
+      "When using the SQLite backend, set CONTEXT_STILL_SQLITE_CORE_PATH if you need a custom local database path",
     nextFixMigrate: "db:migrate failed. Fix DB connectivity/migration errors and retry",
   },
 };
@@ -145,14 +151,22 @@ export async function buildSetupSummary(options: SetupOptions): Promise<SetupSum
   const envContent = await readFile(envPath, "utf8");
   const envValues = parseEnvValues(envContent);
   const commandEnv = { ...process.env, ...envValues };
+  const databaseBackend = resolveDatabaseBackendConfig({
+    databaseUrl: commandEnv.DATABASE_URL,
+    backend: commandEnv.CONTEXT_STILL_DB_BACKEND,
+    sqlitePath: commandEnv.CONTEXT_STILL_SQLITE_CORE_PATH,
+  }).kind;
+  const isSqliteBackend = databaseBackend === "sqlite";
 
   const checks = await runSetupChecks({
     cwd,
     env: commandEnv,
     envValues,
-    requireDockerCompose: options.startDb,
+    requireDockerCompose: options.startDb && !isSqliteBackend,
   });
-  const dockerComposeRunner = await detectDockerComposeRunner(cwd, commandEnv);
+  const dockerComposeRunner = isSqliteBackend
+    ? null
+    : await detectDockerComposeRunner(cwd, commandEnv);
   checks.unshift({
     name: "env-file",
     ok: true,
@@ -168,7 +182,11 @@ export async function buildSetupSummary(options: SetupOptions): Promise<SetupSum
       cwd,
       env: commandEnv,
       dryRun: options.dryRun,
-      skipReason: dockerComposeRunner ? undefined : "docker compose is not available",
+      skipReason: isSqliteBackend
+        ? "SQLite backend does not require Docker"
+        : dockerComposeRunner
+          ? undefined
+          : "docker compose is not available",
     }),
   );
 
@@ -180,9 +198,11 @@ export async function buildSetupSummary(options: SetupOptions): Promise<SetupSum
       env: commandEnv,
       dryRun: options.dryRun,
       skipReason: options.startDb
-        ? dockerComposeRunner
-          ? undefined
-          : "docker compose is not available"
+        ? isSqliteBackend
+          ? "SQLite backend does not require Docker"
+          : dockerComposeRunner
+            ? undefined
+            : "docker compose is not available"
         : "--start-db is not set",
     }),
   );
@@ -231,8 +251,14 @@ export async function buildSetupSummary(options: SetupOptions): Promise<SetupSum
 
   const nextActions: string[] = [];
   if (options.dryRun) nextActions.push(localeText.nextRunApply);
-  if (!envValues.DATABASE_URL?.trim()) nextActions.push(localeText.nextFixDatabaseUrl);
-  if (!options.startDb) nextActions.push(localeText.nextRunStartDb);
+  if (isSqliteBackend) {
+    if (!commandEnv.CONTEXT_STILL_SQLITE_CORE_PATH?.trim()) {
+      nextActions.push(localeText.nextSetSqlitePath);
+    }
+  } else {
+    if (!envValues.DATABASE_URL?.trim()) nextActions.push(localeText.nextFixDatabaseUrl);
+    if (!options.startDb) nextActions.push(localeText.nextRunStartDb);
+  }
   if (migrateResult.status === "failed") nextActions.push(localeText.nextFixMigrate);
   nextActions.push(localeText.nextRunDoctor);
   nextActions.push(localeText.nextRunMcpRegister);

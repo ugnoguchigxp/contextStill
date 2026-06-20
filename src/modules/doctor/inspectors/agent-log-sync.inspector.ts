@@ -1,5 +1,6 @@
 import { inArray } from "drizzle-orm";
 import { groupedConfig } from "../../../config.js";
+import { resolveDatabaseBackendConfig } from "../../../db/backend.js";
 import { getDb } from "../../../db/index.js";
 import { syncStates } from "../../../db/schema.js";
 import type { DoctorReport } from "../../../shared/schemas/doctor.schema.js";
@@ -11,6 +12,11 @@ import {
   minutesSince,
 } from "../doctor.utils.js";
 import { inspectLaunchAgent, pathExists } from "../launch-agent.util.js";
+
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../../db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
 
 type AgentLogSyncInspectorOptions = {
   canQueryDb: boolean;
@@ -32,10 +38,37 @@ export async function inspectAgentLogSync({
 
   if (canQueryDb && syncStatesTableAvailable) {
     try {
-      const rows = await getDb()
-        .select()
-        .from(syncStates)
-        .where(inArray(syncStates.id, ["codex_logs", "antigravity_logs"]));
+      const rows =
+        resolveDatabaseBackendConfig().kind === "sqlite"
+          ? (await getSqliteCoreDatabase()).db
+              .query<
+                {
+                  id: string;
+                  last_synced_at: string;
+                  cursor: string;
+                  metadata: string;
+                  updated_at: string;
+                },
+                []
+              >(
+                `
+                select id, last_synced_at, cursor, metadata, updated_at
+                from sync_states
+                where id in ('codex_logs', 'antigravity_logs')
+              `,
+              )
+              .all()
+              .map((row) => ({
+                id: row.id,
+                lastSyncedAt: new Date(row.last_synced_at),
+                cursor: safeJson(row.cursor),
+                metadata: safeJson(row.metadata),
+                updatedAt: new Date(row.updated_at),
+              }))
+          : await getDb()
+              .select()
+              .from(syncStates)
+              .where(inArray(syncStates.id, ["codex_logs", "antigravity_logs"]));
       for (const row of rows) {
         const lastSyncedAt = row.lastSyncedAt?.toISOString() ?? null;
         const lastCheckedAt =
@@ -90,4 +123,15 @@ export async function inspectAgentLogSync({
     launchAgent,
     nextActions,
   };
+}
+
+function safeJson(value: string): Record<string, unknown> {
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
 }

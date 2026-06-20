@@ -1,5 +1,4 @@
 import { randomUUID } from "node:crypto";
-import { getRuntimeSqliteCoreDatabase } from "../../db/sqlite/runtime.js";
 import type { ContextPack } from "../../shared/schemas/context-pack.schema.js";
 import { contextPackSchema } from "../../shared/schemas/context-pack.schema.js";
 import { asRecord } from "../../shared/utils/normalize.js";
@@ -46,6 +45,11 @@ type SqlitePackItemRow = {
   source_refs: string;
   created_at: string;
 };
+
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
 
 function json(value: unknown): string {
   return JSON.stringify(value ?? null);
@@ -115,7 +119,7 @@ export async function insertCompileRunSqlite(params: {
   durationMs: number;
   source?: string;
 }): Promise<string> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const id = randomUUID();
   sqlite.db
     .query(
@@ -146,7 +150,7 @@ export async function updateCompileRunSnapshotSqlite(
   runId: string,
   pack: ContextPack,
 ): Promise<void> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   sqlite.db
     .query("UPDATE context_compile_runs SET pack_snapshot = ? WHERE id = ?")
     .run(json(pack), runId);
@@ -158,7 +162,7 @@ export async function updateCompileRunFailureSqlite(params: {
   durationMs: number;
   pack: ContextPack;
 }): Promise<void> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   sqlite.db
     .query(
       `UPDATE context_compile_runs
@@ -185,7 +189,7 @@ export async function insertContextPackItemsSqlite(
   }>,
 ): Promise<void> {
   if (items.length === 0) return;
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const stmt = sqlite.db.query(
     `INSERT INTO context_pack_items (
       run_id, item_kind, item_id, section, score, ranking_reason, source_refs, created_at
@@ -236,7 +240,7 @@ export async function insertContextCompileCandidateTracesSqlite(
   }>,
 ): Promise<void> {
   if (items.length === 0) return;
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const stmt = sqlite.db.query(
     `INSERT INTO context_compile_candidate_traces (
       run_id, item_kind, item_id, text_rank, text_score, vector_rank, vector_score,
@@ -278,7 +282,7 @@ export async function insertContextCompileCandidateTracesSqlite(
 }
 
 export async function listRecentCompileRunsSqlite(limit = 20): Promise<CompileRunSummary[]> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const rows = sqlite.db
     .query<SqliteRunRow, [number]>(
       "SELECT * FROM context_compile_runs ORDER BY created_at DESC, id DESC LIMIT ?",
@@ -290,7 +294,7 @@ export async function listRecentCompileRunsSqlite(limit = 20): Promise<CompileRu
 export async function getCompileRunSnapshotSqlite(
   runId: string,
 ): Promise<CompileRunSnapshot | null> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const run = sqlite.db
     .query<SqliteRunRow, [string]>("SELECT * FROM context_compile_runs WHERE id = ? LIMIT 1")
     .get(runId);
@@ -313,7 +317,7 @@ export async function getLatestCompileRunForSessionSqlite(params: {
   sessionId: string;
   createdBefore?: Date;
 }): Promise<{ id: string; createdAt: Date } | null> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const row = params.createdBefore
     ? sqlite.db
         .query<{ id: string; created_at: string }, [string, string]>(
@@ -338,7 +342,7 @@ export async function getCompileRunByIdSqlite(runId: string): Promise<{
   createdAt: Date;
   outputMarkdown: string | null;
 } | null> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const row = sqlite.db
     .query<SqliteRunRow, [string]>("SELECT * FROM context_compile_runs WHERE id = ? LIMIT 1")
     .get(runId);
@@ -356,7 +360,7 @@ export async function listCompileRunOutputsByIdsSqlite(
 ): Promise<Map<string, { createdAt: Date; goal: string; outputMarkdown: string | null }>> {
   const normalizedIds = [...new Set(runIds.map((item) => item.trim()).filter(Boolean))];
   if (normalizedIds.length === 0) return new Map();
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const placeholders = normalizedIds.map(() => "?").join(", ");
   const rows = sqlite.db
     .query<SqliteRunRow, string[]>(
@@ -376,7 +380,7 @@ export async function listCompileRunOutputsByIdsSqlite(
 }
 
 export async function getCompileFreshnessMarkersSqlite(): Promise<CompileFreshnessMarkers> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const knowledgeRow: {
     active_updated_at?: string | null;
     draft_updated_at?: string | null;
@@ -424,7 +428,7 @@ export async function upsertContextCompileTaskTraceSqlite(input: {
   embedding: number[] | null;
   goalHash: string;
 }): Promise<void> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const now = new Date().toISOString();
   sqlite.db
     .query(
@@ -515,7 +519,7 @@ function mapTaskTraceRow(row: SqliteTaskTraceRow): ContextCompileTaskTrace {
 export async function findContextCompileTaskTraceByRunIdSqlite(
   runId: string,
 ): Promise<ContextCompileTaskTrace | null> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const row = sqlite.db
     .query<SqliteTaskTraceRow, [string]>(
       "SELECT * FROM context_compile_task_traces WHERE run_id = ? LIMIT 1",
@@ -528,7 +532,7 @@ export async function listRecentContextCompileTaskTracesSqlite(input: {
   limit: number;
   excludeRunId?: string;
 }): Promise<ContextCompileTaskTrace[]> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const limit = Math.max(1, Math.min(400, Math.trunc(input.limit)));
   const rows = input.excludeRunId
     ? sqlite.db

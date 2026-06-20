@@ -1,4 +1,5 @@
 import { and, desc, eq, ilike, or, sql } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/client.js";
 import { agentDiffEntries, vibeMemories } from "../../db/schema.js";
 import { redactSecretRecord, redactSecrets } from "../../shared/utils/secret-redaction.js";
@@ -12,6 +13,11 @@ export type VibeMemorySeed = {
 };
 
 export async function insertVibeMemory(seed: VibeMemorySeed) {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const sqlite = await import("./vibe-memory.repository.sqlite.js");
+    return sqlite.insertVibeMemorySqlite(seed);
+  }
+
   const [inserted] = await db
     .insert(vibeMemories)
     .values({
@@ -30,6 +36,11 @@ export async function searchVibeMemories(params: {
   limit: number;
   sessionId?: string;
 }) {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const sqlite = await import("./vibe-memory.repository.sqlite.js");
+    return sqlite.searchVibeMemoriesSqlite(params);
+  }
+
   const query = params.query.trim();
   if (!query) {
     return [];

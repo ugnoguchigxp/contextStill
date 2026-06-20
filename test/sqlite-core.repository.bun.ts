@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, rm, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
@@ -117,5 +117,111 @@ describe("sqlite core repository", () => {
     } finally {
       repo.close();
     }
+  });
+
+  test("backs up sqlite core database through the maintenance cli", async () => {
+    const sourcePath = path.join(tempDir, "context-still-core.sqlite");
+    const backupPath = path.join(tempDir, "backup", "context-still-core-backup.sqlite");
+    const sqlite = await openSqliteCoreDatabase({
+      path: sourcePath,
+      vectorDimension: 3,
+      loadVectorExtension: false,
+    });
+    const repo = new SqliteCoreRepository(sqlite);
+    try {
+      repo.upsertKnowledgeItem({
+        id: "backup-k1",
+        type: "rule",
+        status: "active",
+        title: "Backup row",
+        body: "This row should survive backup.",
+      });
+    } finally {
+      repo.close();
+    }
+
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, "run", "src/cli/sqlite-backup.ts", "--output", backupPath, "--json"],
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        CONTEXT_STILL_DB_BACKEND: "sqlite",
+        CONTEXT_STILL_SQLITE_CORE_PATH: sourcePath,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(result.exitCode).toBe(0);
+    const metadata = JSON.parse(Buffer.from(result.stdout).toString()) as { bytes: number };
+    expect(metadata.bytes).toBeGreaterThan(0);
+    await expect(stat(backupPath)).resolves.toBeTruthy();
+
+    const backup = await openSqliteCoreDatabase({
+      path: backupPath,
+      vectorDimension: 3,
+      loadVectorExtension: false,
+    });
+    try {
+      const row = backup.db
+        .query<{ title: string }>("SELECT title FROM knowledge_items WHERE id = ?;")
+        .get("backup-k1");
+      expect(row?.title).toBe("Backup row");
+    } finally {
+      backup.db.close();
+    }
+  });
+
+  test("rebuilds sqlite vectors through the maintenance cli", async () => {
+    const sourcePath = path.join(tempDir, "context-still-core.sqlite");
+    const sqlite = await openSqliteCoreDatabase({
+      path: sourcePath,
+      vectorDimension: 3,
+      loadVectorExtension: false,
+    });
+    const repo = new SqliteCoreRepository(sqlite);
+    try {
+      repo.upsertKnowledgeItem({
+        id: "rebuild-k1",
+        type: "rule",
+        status: "active",
+        title: "Rebuild row",
+        body: "This row has a vector.",
+        embedding: [1, 0, 0],
+      });
+      repo.upsertSource({
+        id: "rebuild-s1",
+        sourceKind: "wiki",
+        uri: "file:///rebuild.md",
+        body: "Rebuild source",
+      });
+      repo.upsertSourceFragment({
+        id: "rebuild-sf1",
+        sourceId: "rebuild-s1",
+        locator: "L1",
+        content: "This fragment has a vector.",
+        embedding: [0, 1, 0],
+      });
+    } finally {
+      repo.close();
+    }
+
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, "run", "src/cli/sqlite-rebuild-vectors.ts", "--json"],
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        CONTEXT_STILL_DB_BACKEND: "sqlite",
+        CONTEXT_STILL_SQLITE_CORE_PATH: sourcePath,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    expect(result.exitCode).toBe(0);
+    const metadata = JSON.parse(Buffer.from(result.stdout).toString()) as {
+      knowledgeVectorCount: number;
+      sourceFragmentVectorCount: number;
+    };
+    expect(metadata.knowledgeVectorCount).toBe(1);
+    expect(metadata.sourceFragmentVectorCount).toBe(1);
   });
 });

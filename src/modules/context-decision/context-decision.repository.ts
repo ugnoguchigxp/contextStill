@@ -1,4 +1,5 @@
 import { and, desc, eq, ilike, lt, or, sql } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import {
   contextDecisionCoverageTraces,
@@ -33,6 +34,14 @@ function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function useSqlite(): boolean {
+  return resolveDatabaseBackendConfig().kind === "sqlite";
+}
+
+async function sqliteRepository() {
+  return import("./context-decision.repository.sqlite.js");
 }
 
 function asStringArray(value: unknown): string[] {
@@ -106,6 +115,11 @@ export async function insertContextDecisionRun(params: {
   unsupportedAlternatives: Array<Record<string, unknown>>;
   status: "completed" | "degraded" | "failed";
 }): Promise<string> {
+  if (useSqlite()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.insertContextDecisionRunSqlite(params);
+  }
+
   const [inserted] = await db
     .insert(contextDecisionRuns)
     .values({
@@ -150,6 +164,11 @@ export async function insertContextDecisionEvidenceRows(
     metadata: Record<string, unknown>;
   }>,
 ): Promise<void> {
+  if (useSqlite()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.insertContextDecisionEvidenceRowsSqlite(decisionRunId, items);
+  }
+
   if (items.length === 0) return;
   await db.insert(contextDecisionEvidence).values(
     items.map((item) => ({
@@ -180,6 +199,11 @@ export async function insertContextDecisionCoverageRows(
     reason: string;
   }>,
 ): Promise<void> {
+  if (useSqlite()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.insertContextDecisionCoverageRowsSqlite(decisionRunId, items);
+  }
+
   if (items.length === 0) return;
   await db.insert(contextDecisionCoverageTraces).values(
     items.map((item) => ({
@@ -206,6 +230,11 @@ export async function getRelatedDecisionBadSignalSummary(knowledgeIds: string[])
   averageConfidence: number;
   maxConfidence: number;
 }> {
+  if (useSqlite()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.getRelatedDecisionBadSignalSummarySqlite(knowledgeIds);
+  }
+
   if (knowledgeIds.length === 0) {
     return { count: 0, strongCount: 0, averageConfidence: 0, maxConfidence: 0 };
   }
@@ -262,6 +291,11 @@ function mapRunSummary(
 export async function listContextDecisionRuns(
   query: ContextDecisionListQuery,
 ): Promise<ContextDecisionRunSummary[]> {
+  if (useSqlite()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.listContextDecisionRunsSqlite(query);
+  }
+
   const conditions = [];
   if (query.decision) conditions.push(eq(contextDecisionRuns.decision, query.decision));
   if (query.status) conditions.push(eq(contextDecisionRuns.status, query.status));
@@ -324,6 +358,11 @@ export async function listContextDecisionRuns(
 export async function getContextDecisionDetail(
   decisionId: string,
 ): Promise<ContextDecisionRunDetail | null> {
+  if (useSqlite()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.getContextDecisionDetailSqlite(decisionId);
+  }
+
   const [row] = await db
     .select()
     .from(contextDecisionRuns)
@@ -463,6 +502,11 @@ export async function saveHumanDecisionFeedback(params: {
   value: ContextDecisionHumanFeedbackValue;
   affectedKnowledgeIds: string[];
 }): Promise<ContextDecisionHumanFeedback> {
+  if (useSqlite()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.saveHumanDecisionFeedbackSqlite(params);
+  }
+
   const [feedback] = await db
     .insert(contextDecisionHumanFeedback)
     .values({
@@ -516,6 +560,11 @@ export async function insertDecisionSystemFeedback(params: {
   suggestedAdjustment: Record<string, unknown>;
   metadata: Record<string, unknown>;
 }): Promise<ContextDecisionFeedback> {
+  if (useSqlite()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.insertDecisionSystemFeedbackSqlite(params);
+  }
+
   const [feedback] = await db
     .insert(contextDecisionFeedback)
     .values({
@@ -545,6 +594,11 @@ export async function insertDecisionFeedbackEffects(params: {
     metadata?: Record<string, unknown>;
   }>;
 }): Promise<ContextDecisionFeedbackEffect[]> {
+  if (useSqlite()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.insertDecisionFeedbackEffectsSqlite(params);
+  }
+
   if (params.effects.length === 0) return [];
   const rows = await db
     .insert(contextDecisionFeedbackEffects)
@@ -568,6 +622,11 @@ export async function insertDecisionFeedbackEffects(params: {
 }
 
 export async function listSelectedSupportKnowledgeIds(decisionId: string): Promise<string[]> {
+  if (useSqlite()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.listSelectedSupportKnowledgeIdsSqlite(decisionId);
+  }
+
   const rows = await db
     .select({ knowledgeId: contextDecisionEvidence.knowledgeId })
     .from(contextDecisionEvidence)
@@ -584,6 +643,11 @@ export async function listContextDecisionPrScanCandidates(params: {
   since?: Date;
   limit?: number;
 }): Promise<Array<{ id: string; metadata: Record<string, unknown>; createdAt: string }>> {
+  if (useSqlite()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.listContextDecisionPrScanCandidatesSqlite(params);
+  }
+
   const conditions = [sql`${contextDecisionRuns.metadata} ?| array['prUrl','prNumber','branch']`];
   if (params.since) conditions.push(sql`${contextDecisionRuns.createdAt} >= ${params.since}`);
   const rows = await db
@@ -604,6 +668,11 @@ export async function listContextDecisionPrScanCandidates(params: {
 }
 
 export async function hasDiscardedPrFeedback(decisionId: string): Promise<boolean> {
+  if (useSqlite()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.hasDiscardedPrFeedbackSqlite(decisionId);
+  }
+
   const rows = await db
     .select({ id: contextDecisionFeedback.id })
     .from(contextDecisionFeedback)
@@ -644,6 +713,11 @@ export async function listContextDecisionMlTrainingRows(params: {
   limit: number;
   minCreatedAt?: Date;
 }): Promise<ContextDecisionMlTrainingRow[]> {
+  if (useSqlite()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.listContextDecisionMlTrainingRowsSqlite(params);
+  }
+
   const conditions = [];
   if (params.minCreatedAt) {
     conditions.push(sql`${contextDecisionRuns.createdAt} >= ${params.minCreatedAt}`);
@@ -690,6 +764,11 @@ export async function listContextDecisionMlTrainingRows(params: {
 }
 
 export async function getContextDecisionMetrics(): Promise<ContextDecisionMetrics> {
+  if (useSqlite()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.getContextDecisionMetricsSqlite();
+  }
+
   const result = await db.execute(sql`
     select
       (select count(*)::int from context_decision_runs) as total_decisions,

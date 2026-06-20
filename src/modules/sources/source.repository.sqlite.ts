@@ -1,6 +1,5 @@
 import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray } from "drizzle-orm";
-import { getRuntimeSqliteCoreDatabase } from "../../db/sqlite/runtime.js";
 import { sqliteSourceFragments, sqliteSources } from "../../db/sqlite/schema.js";
 import { SqliteCoreRepository } from "../../db/sqlite/core-repository.js";
 import { redactSecretRecord, redactSecrets } from "../../shared/utils/secret-redaction.js";
@@ -9,6 +8,11 @@ import { embedOne } from "../embedding/embedding.service.js";
 import type { SourceKind, SourceSearchOptions, SourceSearchResult } from "./source.repository.js";
 
 type SourceRow = typeof sqliteSources.$inferSelect;
+
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
 
 function nowIso(): string {
   return new Date().toISOString();
@@ -121,7 +125,7 @@ export async function upsertSourceDocumentSqlite(params: {
   body: string;
   metadata?: Record<string, unknown>;
 }): Promise<string> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const repo = new SqliteCoreRepository(sqlite);
   const redactedUri = redactSecrets(params.uri);
   const redactedTitle = params.title ? redactSecrets(params.title) : params.title;
@@ -165,7 +169,7 @@ export async function deleteStaleSourcesForRootSqlite(params: {
   rootPath: string;
   keepUris: string[];
 }): Promise<number> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const normalizedRootPath = normalizeRepoPath(params.rootPath) ?? params.rootPath;
   const keepSet = new Set([
     ...params.keepUris.map((uri) => uri.trim()).filter(Boolean),
@@ -193,7 +197,7 @@ export async function searchSourceContentSqlite(
 ): Promise<SourceSearchResult[]> {
   const trimmedQuery = query.trim();
   if (!trimmedQuery) return [];
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const rows = sqlite.orm
     .select({
       fragment: sqliteSourceFragments,
@@ -263,7 +267,7 @@ export async function vectorSearchSourceContentSqlite(
   sourceKinds?: SourceKind[],
   options?: SourceSearchOptions,
 ): Promise<SourceSearchResult[]> {
-  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const sqlite = await getSqliteCoreDatabase();
   const repo = new SqliteCoreRepository(sqlite);
   const sourceRows = sqlite.orm.select().from(sqliteSources).all();
   const sourceById = new Map(sourceRows.map((row) => [row.id, row]));

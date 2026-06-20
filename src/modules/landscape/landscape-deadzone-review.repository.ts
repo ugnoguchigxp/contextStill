@@ -1,4 +1,5 @@
 import { and, eq, inArray, sql } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import {
   knowledgeItems,
@@ -56,6 +57,10 @@ export type DeadZoneReviewDecisionRecordInput = {
 function asNumber(value: unknown, fallback = 0): number {
   const num = Number(value);
   return Number.isFinite(num) ? num : fallback;
+}
+
+function isSqliteBackend(): boolean {
+  return resolveDatabaseBackendConfig().kind === "sqlite";
 }
 
 function asInt(value: unknown, fallback = 0): number {
@@ -118,6 +123,8 @@ function mapKnowledgeRow(row: {
 export async function listDeadZoneKnowledgeRows(
   knowledgeIds: string[],
 ): Promise<DeadZoneKnowledgeRow[]> {
+  if (isSqliteBackend()) return [];
+
   const ids = [...new Set(knowledgeIds)].filter(Boolean);
   if (ids.length === 0) return [];
 
@@ -149,6 +156,8 @@ export async function listDeadZoneKnowledgeRows(
 export async function listDeadZoneKnowledgeEvidenceRows(
   knowledgeIds: string[],
 ): Promise<DeadZoneKnowledgeEvidenceRow[]> {
+  if (isSqliteBackend()) return [];
+
   const ids = [...new Set(knowledgeIds)].filter(Boolean);
   if (ids.length === 0) return [];
 
@@ -193,6 +202,8 @@ export async function listSimilarKnowledgeRows(params: {
   topK: number;
   status: "current" | "active" | "draft" | "deprecated" | "all";
 }): Promise<DeadZoneSimilarKnowledgeRow[]> {
+  if (isSqliteBackend()) return [];
+
   const ids = [...new Set(params.knowledgeIds)].filter(Boolean);
   if (ids.length === 0) return [];
   const idsSql = sql.join(
@@ -313,6 +324,8 @@ export async function listSimilarKnowledgeRows(params: {
 export async function listDeadZoneReviewItemLinks(
   knowledgeIds: string[],
 ): Promise<DeadZoneReviewItemLinkRow[]> {
+  if (isSqliteBackend()) return [];
+
   const ids = [...new Set(knowledgeIds)].filter(Boolean);
   if (ids.length === 0) return [];
   const rows = await db
@@ -363,6 +376,15 @@ function deadZoneDecisionIdempotencyKey(input: DeadZoneReviewDecisionRecordInput
 export async function recordDeadZoneReviewDecision(
   input: DeadZoneReviewDecisionRecordInput,
 ): Promise<string> {
+  if (isSqliteBackend()) {
+    return [
+      "sqlite-unsupported-dead-zone-review",
+      input.deadZoneKnowledgeId,
+      input.canonicalKnowledgeId ?? "none",
+      input.action,
+    ].join(":");
+  }
+
   const now = new Date();
   const payload = deadZoneDecisionPayload(input, now);
   const note = input.note?.trim() ? input.note.trim() : input.message;

@@ -10,6 +10,14 @@ import {
 } from "../src/modules/audit/audit-log.service.js";
 import { recordCompileEval } from "../src/modules/context-compiler/context-compile-eval.service.js";
 import {
+  getContextDecisionDetail,
+  getContextDecisionMetrics,
+  insertContextDecisionCoverageRows,
+  insertContextDecisionEvidenceRows,
+  insertContextDecisionRun,
+  saveHumanDecisionFeedback,
+} from "../src/modules/context-decision/context-decision.repository.js";
+import {
   getCompileEvalSummaryByRunId,
   listCompileEvalsByRunId,
 } from "../src/modules/context-compiler/context-compile-eval.repository.js";
@@ -17,12 +25,19 @@ import {
   insertCompileRun,
   listRecentCompileRuns,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
+import { inspectDatabase } from "../src/modules/doctor/inspectors/database.inspector.js";
 import {
   deleteSettingsRow,
   findSettingsRow,
   listSettingsRows,
   upsertSettingsRow,
 } from "../src/modules/settings/settings.repository.js";
+import { readVibeMemoryByTokenWindow } from "../src/modules/memoryReader/reader.service.js";
+import { runQueueWorkerOnce } from "../src/modules/queue/core/worker.js";
+import {
+  recordVibeMemoryWithDiffEntries,
+  retrieveVibeMemoryContext,
+} from "../src/modules/vibe-memory/vibe-memory.service.js";
 
 let tempDir = "";
 const originalBackend = process.env.CONTEXT_STILL_DB_BACKEND;
@@ -146,6 +161,133 @@ describe("sqlite runtime support repositories", () => {
       "explicit eval",
     ]);
     expect((await listRecentCompileRuns(1))[0]?.evalSummary.count).toBe(2);
+  });
+
+  test("inspects sqlite core database without requiring postgres-only tables", async () => {
+    const inspection = await inspectDatabase({
+      freshnessThresholdMinutes: 720,
+      staleDecayFactor: 0.5,
+      zeroUseWarningMinActiveCount: 10,
+    });
+
+    expect(inspection.reachable).toBe(true);
+    expect(inspection.expectedTables).toContain("knowledge_items");
+    expect(inspection.expectedTables).toContain("context_compile_runs");
+    expect(inspection.expectedTables).toContain("finding_candidate_queue");
+    expect(inspection.expectedTables).toContain("vibe_memories");
+    expect(inspection.expectedTables).toContain("context_decision_runs");
+    expect(inspection.missingTables).not.toContain("finding_candidate_queue");
+    expect(inspection.reasons).not.toContain("SQLITE_PENDING_MIGRATION_DOMAINS");
+  });
+
+  test("persists vibe memories and diff entries in sqlite", async () => {
+    const recorded = await recordVibeMemoryWithDiffEntries({
+      sessionId: "sqlite-vibe-session",
+      content: "SQLite ingest memory about queue migration.",
+      memoryType: "chat",
+      diff: "diff --git a/src/sqlite.ts b/src/sqlite.ts\n+queue migration marker",
+      agentDiffs: [
+        {
+          filePath: "src/sqlite.ts",
+          diffHunk: "+sqlite memory marker",
+          changeType: "modify",
+          language: "typescript",
+          symbolName: "sqliteMemory",
+        },
+      ],
+      metadata: { apiKey: "secret-value" },
+    });
+
+    expect(recorded.memory.id).toBeTruthy();
+    expect(recorded.diffEntries.length).toBeGreaterThan(0);
+
+    const memories = await retrieveVibeMemoryContext({
+      query: "queue migration marker",
+      sessionId: "sqlite-vibe-session",
+      limit: 5,
+    });
+    expect(memories.map((memory: { id: string }) => memory.id)).toContain(recorded.memory.id);
+    expect(JSON.stringify(memories)).not.toContain("secret-value");
+
+    const read = await readVibeMemoryByTokenWindow({
+      vibeMemoryId: recorded.memory.id,
+      readTokens: 200,
+      mode: "original",
+    });
+    expect(read.content).toContain("SQLite ingest memory");
+    expect(read.content).toContain("sqlite memory marker");
+  });
+
+  test("persists context decision runs, evidence, and feedback in sqlite", async () => {
+    const decisionId = await insertContextDecisionRun({
+      input: {
+        decisionPoint: "Should SQLite context decision run?",
+        sessionId: "sqlite-decision-session",
+        retrievalHints: { technologies: ["sqlite"], changeTypes: ["migration"], domains: [] },
+        metadata: { branch: "sqlite-test" },
+      },
+      decision: "execute",
+      selectedAction: "implement sqlite branch",
+      rejectedActions: ["wait"],
+      mandate: "Implement the SQLite branch.",
+      agentMessage: "Proceed with SQLite context decision.",
+      confidence: 82,
+      confidenceTrace: { evidence: 1 },
+      guardrails: { commit: false },
+      unsupportedAlternatives: [],
+      status: "completed",
+    });
+    await insertContextDecisionEvidenceRows(decisionId, [
+      {
+        knowledgeId: null,
+        role: "selected_support",
+        weightAtDecision: 80,
+        dynamicScoreAtDecision: null,
+        applicabilityScore: 70,
+        temporalRelevance: null,
+        summary: "SQLite evidence",
+        sourceRefs: ["sqlite://evidence"],
+        metadata: { ok: true },
+      },
+    ]);
+    await insertContextDecisionCoverageRows(decisionId, [
+      {
+        query: "sqlite migration",
+        queryRole: "support",
+        scope: { repo: "contextStill" },
+        hitCount: 1,
+        maxSimilarity: null,
+        selectedKnowledgeIds: [],
+        rejectedKnowledgeIds: [],
+        reason: "covered",
+      },
+    ]);
+    await saveHumanDecisionFeedback({
+      decisionId,
+      value: "good",
+      affectedKnowledgeIds: [],
+    });
+
+    const detail = await getContextDecisionDetail(decisionId);
+    expect(detail?.run.decision).toBe("execute");
+    expect(detail?.evidence[0]?.summary).toBe("SQLite evidence");
+    expect(detail?.coverage[0]?.query).toBe("sqlite migration");
+    expect(detail?.run.humanFeedback).toBe("good");
+
+    const metrics = await getContextDecisionMetrics();
+    expect(metrics.totalDecisions).toBe(1);
+    expect(metrics.goodFeedbackCount).toBe(1);
+  });
+
+  test("returns idle queue worker result from empty sqlite queues", async () => {
+    const result = await runQueueWorkerOnce({
+      queueName: "findingCandidate",
+      workerId: "sqlite-worker",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.idle).toBe(true);
+    expect(result.message).toBe("no runnable job");
   });
 });
 

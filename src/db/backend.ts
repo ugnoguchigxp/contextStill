@@ -40,7 +40,11 @@ export function resolveDatabaseBackendConfig(input?: {
 }): DatabaseBackendConfig {
   const url = input?.databaseUrl ?? process.env.DATABASE_URL ?? "";
   const configuredSqlitePath =
-    input?.sqlitePath ?? readProjectEnv("SQLITE_CORE_PATH") ?? readProjectEnv("DB_SQLITE_PATH");
+    input?.sqlitePath ??
+    readProjectEnv("SQLITE_CORE_PATH") ??
+    process.env.CONTEXT_STILL_SQLITE_CORE_PATH ??
+    process.env.MEMORY_ROUTER_SQLITE_CORE_PATH ??
+    readProjectEnv("DB_SQLITE_PATH");
   const requestedBackend =
     normalizeBackendKind(input?.backend) ??
     normalizeBackendKind(readProjectEnv("DB_BACKEND")) ??

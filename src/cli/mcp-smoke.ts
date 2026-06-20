@@ -1,7 +1,10 @@
+import { rm } from "node:fs/promises";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js";
 import { eq } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../db/backend.js";
 import { closeDbPool, getDb } from "../db/index.js";
+import { getRuntimeSqliteCoreDatabase } from "../db/sqlite/runtime.js";
 import { knowledgeItems, sources } from "../db/schema.js";
 import { normalizeRepoKey, normalizeRepoPath } from "../modules/context-compiler/query-context.js";
 import { upsertKnowledgeFromSource } from "../modules/knowledge/knowledge.repository.js";
@@ -108,8 +111,42 @@ function findInvalidTopLevelSchemaKeys(inputSchema: unknown): string[] {
   return invalidKeys;
 }
 
+async function cleanupSmokeRows(input: {
+  sourceId: string | null;
+  knowledgeId: string | null;
+}): Promise<void> {
+  if (!input.sourceId && !input.knowledgeId) return;
+
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    if (input.knowledgeId) {
+      sqlite.db.query("delete from knowledge_items where id = ?").run(input.knowledgeId);
+    }
+    if (input.sourceId) {
+      sqlite.db.query("delete from sources where id = ?").run(input.sourceId);
+    }
+    if (process.env.CONTEXT_STILL_SMOKE_CLEANUP_SQLITE === "1") {
+      sqlite.db.close();
+      await Promise.all([
+        rm(sqlite.path, { force: true }),
+        rm(`${sqlite.path}-wal`, { force: true }),
+        rm(`${sqlite.path}-shm`, { force: true }),
+      ]);
+    }
+    return;
+  }
+
+  if (input.knowledgeId) {
+    await getDb().delete(knowledgeItems).where(eq(knowledgeItems.id, input.knowledgeId));
+  }
+  if (input.sourceId) {
+    await getDb().delete(sources).where(eq(sources.id, input.sourceId));
+  }
+}
+
 async function main(): Promise<void> {
   const token = `mcp-smoke-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+  const noHitGoal = `zzabsent${Date.now()}${Math.random().toString(36).slice(2, 12)}`;
   const requiredPrimaryTools = resolveRequiredPrimaryTools();
   const repoPath = normalizeRepoPath(process.cwd()) ?? process.cwd();
   const repoKey = normalizeRepoKey(process.cwd()) ?? repoPath.toLowerCase();
@@ -205,7 +242,7 @@ async function main(): Promise<void> {
     const noHit = await client.callTool({
       name: "context_compile",
       arguments: {
-        goal: `${token}-no-hit`,
+        goal: noHitGoal,
       },
     });
     const noHitText = extractTextContent(noHit);
@@ -217,7 +254,7 @@ async function main(): Promise<void> {
     );
     const noHitRun = (noHitSnapshot.run ?? {}) as Record<string, unknown>;
     const noHitReasons = Array.isArray(noHitRun.degradedReasons) ? noHitRun.degradedReasons : [];
-    if (noHitRun.goal !== `${token}-no-hit`) {
+    if (noHitRun.goal !== noHitGoal) {
       throw new Error("context_compile no-hit snapshot check failed.");
     }
     if (!noHitReasons.includes("NO_ACTIVE_KNOWLEDGE_MATCH")) {
@@ -287,12 +324,7 @@ async function main(): Promise<void> {
   } finally {
     await client.close().catch(() => undefined);
     await transport.close().catch(() => undefined);
-    if (knowledgeId) {
-      await getDb().delete(knowledgeItems).where(eq(knowledgeItems.id, knowledgeId));
-    }
-    if (sourceId) {
-      await getDb().delete(sources).where(eq(sources.id, sourceId));
-    }
+    await cleanupSmokeRows({ sourceId, knowledgeId });
     await closeDbPool();
   }
 }
