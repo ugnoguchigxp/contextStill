@@ -14,10 +14,15 @@ import {
   vibeMemories,
 } from "../../../db/schema.js";
 import { asRecord } from "../../../shared/utils/normalize.js";
-import { runCoverEvidence } from "../../coverEvidence/domain.js";
+import { type CoverEvidenceRunInput, runCoverEvidence } from "../../coverEvidence/domain.js";
 import type { CoverEvidenceResult } from "../../coverEvidence/types.js";
-import { runFinalizeDistille } from "../../finalizeDistille/domain.js";
+import { type FinalizeDistilleInput, runFinalizeDistille } from "../../finalizeDistille/domain.js";
 import { type FindCandidateResult, runFindCandidate } from "../../findCandidate/domain.js";
+import {
+  applicabilityFromCoverCandidate,
+  applicabilityToCoverCandidateFields,
+  normalizeApplicability,
+} from "../../knowledge/applicability.js";
 import { processDeadZoneMergeReviewJob } from "../../landscape/deadzone-merge-review-queue.service.js";
 import { processMergeActivationFinalizeJob } from "../../landscape/merge-activation-finalize.worker.js";
 import { researchWebSourceToMarkdown } from "../../sources/web/source-research.service.js";
@@ -48,6 +53,17 @@ type ProvidedCandidatePayload = {
   sourceSummary?: string;
   origin?: Record<string, unknown>;
 };
+
+type QueueWorkerTestHooks = {
+  runCoverEvidence?: (input: CoverEvidenceRunInput) => ReturnType<typeof runCoverEvidence>;
+  runFinalizeDistille?: (input: FinalizeDistilleInput) => ReturnType<typeof runFinalizeDistille>;
+};
+
+let queueWorkerTestHooks: QueueWorkerTestHooks = {};
+
+export function setQueueWorkerTestHooksForTests(hooks: QueueWorkerTestHooks): void {
+  queueWorkerTestHooks = hooks;
+}
 
 const retryableCoverStatuses = new Set<CoverEvidenceResult["status"]>([
   "reprocess_requested",
@@ -426,22 +442,6 @@ function mappedEvidenceStatus(
   return status === "reprocess_requested" ? "provider_failed" : status;
 }
 
-function appliesToFromCoverCandidate(
-  candidate: CoverEvidenceResult["candidate"],
-): Record<string, unknown> {
-  if (!candidate) return {};
-  return {
-    ...(candidate.applicabilityGeneral !== undefined
-      ? { general: candidate.applicabilityGeneral }
-      : {}),
-    ...(candidate.technologies?.length ? { technologies: candidate.technologies } : {}),
-    ...(candidate.changeTypes?.length ? { changeTypes: candidate.changeTypes } : {}),
-    ...(candidate.domains?.length ? { domains: candidate.domains } : {}),
-    ...(candidate.repoPath ? { repoPath: candidate.repoPath } : {}),
-    ...(candidate.repoKey ? { repoKey: candidate.repoKey } : {}),
-  };
-}
-
 function priorityForSourceKind(sourceKind: FindingSourceKind): number {
   switch (sourceKind) {
     case "knowledge_candidate":
@@ -470,6 +470,28 @@ function asFindingSourceKind(value: unknown): FindingSourceKind | null {
     : null;
 }
 
+function metadataApplicabilityForOrigin(params: {
+  origin: Record<string, unknown>;
+  metadata: Record<string, unknown>;
+}): Record<string, unknown> {
+  const result: Record<string, unknown> = {};
+  const metadataAppliesTo = normalizeApplicability(params.metadata);
+  const originHasAppliesTo = Boolean(params.origin.appliesTo ?? params.origin.applicability);
+
+  if (!originHasAppliesTo && metadataAppliesTo) {
+    result.appliesTo = metadataAppliesTo;
+  }
+  const coverFields = applicabilityToCoverCandidateFields(metadataAppliesTo);
+  const canonicalFields = metadataAppliesTo ?? {};
+  for (const [key, value] of Object.entries({ ...canonicalFields, ...coverFields })) {
+    if (params.origin[key] === undefined && value !== undefined) {
+      result[key] = value;
+    }
+  }
+
+  return result;
+}
+
 function coverEvidenceOrigin(params: {
   candidate: typeof foundCandidates.$inferSelect;
   findingJob: typeof findingCandidateQueue.$inferSelect;
@@ -486,6 +508,7 @@ function coverEvidenceOrigin(params: {
 
   return {
     ...origin,
+    ...metadataApplicabilityForOrigin({ origin, metadata }),
     sourceKind:
       asFindingSourceKind(origin.sourceKind) ??
       asFindingSourceKind(metadata.sourceKind) ??
@@ -850,6 +873,7 @@ async function runSourceTargetFindCandidate(params: {
       sourceUri,
     },
     callerMode: "cli_text",
+    writeEpisode: sourceKind === "vibe_memory",
     signal: params.signal,
   });
 }
@@ -1071,7 +1095,7 @@ async function processCoveringJob(
   const coverTargetKind = asFindingSourceKind(origin.sourceKind) ?? sourceKind;
   const queuePayload = asRecord(job.payload);
   const forceRefreshEvidence = queuePayload.forceRefreshEvidence === true;
-  const cover = await runCoverEvidence({
+  const cover = await (queueWorkerTestHooks.runCoverEvidence ?? runCoverEvidence)({
     id: candidate.id,
     candidate: {
       id: candidate.id,
@@ -1143,7 +1167,7 @@ async function processCoveringJob(
             cover.result.candidate?.body ?? candidate.content,
             cover.result.candidate?.importance ?? null,
             cover.result.candidate?.confidence ?? null,
-            JSON.stringify(appliesToFromCoverCandidate(cover.result.candidate)),
+            JSON.stringify(applicabilityFromCoverCandidate(cover.result.candidate)),
             JSON.stringify(cover.result.references),
             JSON.stringify(cover.result.duplicateRefs),
             JSON.stringify(cover.result.toolEvents),
@@ -1176,7 +1200,7 @@ async function processCoveringJob(
             cover.result.candidate?.body ?? candidate.content,
             cover.result.candidate?.importance ?? null,
             cover.result.candidate?.confidence ?? null,
-            JSON.stringify(appliesToFromCoverCandidate(cover.result.candidate)),
+            JSON.stringify(applicabilityFromCoverCandidate(cover.result.candidate)),
             JSON.stringify(cover.result.references),
             JSON.stringify(cover.result.duplicateRefs),
             JSON.stringify(cover.result.toolEvents),
@@ -1201,7 +1225,7 @@ async function processCoveringJob(
           body: cover.result.candidate?.body ?? candidate.content,
           importance: cover.result.candidate?.importance ?? null,
           confidence: cover.result.candidate?.confidence ?? null,
-          appliesTo: appliesToFromCoverCandidate(cover.result.candidate),
+          appliesTo: applicabilityFromCoverCandidate(cover.result.candidate),
           references: cover.result.references,
           duplicateRefs: cover.result.duplicateRefs,
           toolEvents: cover.result.toolEvents,
@@ -1221,7 +1245,7 @@ async function processCoveringJob(
             body: cover.result.candidate?.body ?? candidate.content,
             importance: cover.result.candidate?.importance ?? null,
             confidence: cover.result.candidate?.confidence ?? null,
-            appliesTo: appliesToFromCoverCandidate(cover.result.candidate),
+            appliesTo: applicabilityFromCoverCandidate(cover.result.candidate),
             references: cover.result.references,
             duplicateRefs: cover.result.duplicateRefs,
             toolEvents: cover.result.toolEvents,
@@ -1371,22 +1395,13 @@ async function processFinalizeJob(jobId: string, signal?: AbortSignal): Promise<
     message: "finalize claimed",
   });
 
-  const appliesTo = asRecord(evidence.appliesTo);
+  const appliesTo = normalizeApplicability(evidence.appliesTo);
   const candidateTypeRaw =
     evidence.type === "rule" || evidence.type === "procedure"
       ? evidence.type
       : candidate.type === "rule" || candidate.type === "procedure"
         ? candidate.type
         : null;
-  const technologies = Array.isArray(appliesTo.technologies)
-    ? appliesTo.technologies.filter((entry): entry is string => typeof entry === "string")
-    : undefined;
-  const changeTypes = Array.isArray(appliesTo.changeTypes)
-    ? appliesTo.changeTypes.filter((entry): entry is string => typeof entry === "string")
-    : undefined;
-  const domains = Array.isArray(appliesTo.domains)
-    ? appliesTo.domains.filter((entry): entry is string => typeof entry === "string")
-    : undefined;
   const queueCoverResult: CoverEvidenceResult = {
     schemaVersion: 1,
     status:
@@ -1417,14 +1432,7 @@ async function processFinalizeJob(jobId: string, signal?: AbortSignal): Promise<
             body: evidence.body,
             importance: Number(evidence.importance ?? 70),
             confidence: Number(evidence.confidence ?? 70),
-            ...(typeof appliesTo.general === "boolean"
-              ? { applicabilityGeneral: appliesTo.general }
-              : {}),
-            ...(technologies?.length ? { technologies } : {}),
-            ...(changeTypes?.length ? { changeTypes } : {}),
-            ...(domains?.length ? { domains } : {}),
-            ...(typeof appliesTo.repoPath === "string" ? { repoPath: appliesTo.repoPath } : {}),
-            ...(typeof appliesTo.repoKey === "string" ? { repoKey: appliesTo.repoKey } : {}),
+            ...applicabilityToCoverCandidateFields(appliesTo),
           }
         : null,
     references: asArray<CoverEvidenceResult["references"][number]>(evidence.references),
@@ -1432,7 +1440,7 @@ async function processFinalizeJob(jobId: string, signal?: AbortSignal): Promise<
     toolEvents: asArray<CoverEvidenceResult["toolEvents"][number]>(evidence.toolEvents),
     reason: typeof evidence.reason === "string" ? evidence.reason : null,
   };
-  const finalized = await runFinalizeDistille({
+  const finalized = await (queueWorkerTestHooks.runFinalizeDistille ?? runFinalizeDistille)({
     coverEvidenceResultId: evidence.id,
     resultOverride: queueCoverResult,
     candidateContext: {

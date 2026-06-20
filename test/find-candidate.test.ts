@@ -30,6 +30,8 @@ const mocks = vi.hoisted(() => ({
     }),
   ),
   insertFindCandidateResult: vi.fn(),
+  createEpisodeCard: vi.fn(),
+  getEpisodeCardBySource: vi.fn(),
   recordAuditLogSafe: vi.fn(),
 }));
 
@@ -53,6 +55,11 @@ vi.mock("../src/modules/distillation/distillation-runtime.service.js", () => ({
 
 vi.mock("../src/modules/findCandidate/repository.js", () => ({
   insertFindCandidateResult: mocks.insertFindCandidateResult,
+}));
+
+vi.mock("../src/modules/episodic-memory/episode-card.repository.js", () => ({
+  createEpisodeCard: mocks.createEpisodeCard,
+  getEpisodeCardBySource: mocks.getEpisodeCardBySource,
 }));
 
 vi.mock("../src/modules/audit/audit-log.service.js", () => ({
@@ -123,6 +130,8 @@ describe("runFindCandidate", () => {
       };
     });
     mocks.insertFindCandidateResult.mockResolvedValue({ id: "candidate-1" });
+    mocks.getEpisodeCardBySource.mockResolvedValue(null);
+    mocks.createEpisodeCard.mockResolvedValue({ id: "episode-1" });
   });
 
   test("provides only the target reader tool and records reads through the executor", async () => {
@@ -476,6 +485,157 @@ describe("runFindCandidate", () => {
     );
     expect(result.readRanges).toEqual([{ from: 0, toExclusive: 24 }]);
     expect(result.insertedIds).toEqual(["candidate-1"]);
+    expect(result.episodeId).toBe("episode-1");
+    expect(mocks.getEpisodeCardBySource).toHaveBeenCalledWith({
+      sourceKind: "vibe_memory",
+      sourceKey: "memory-1",
+    });
+    expect(mocks.createEpisodeCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceKind: "vibe_memory",
+        sourceKey: "memory-1",
+        status: "active",
+        refs: [
+          expect.objectContaining({
+            refKind: "vibe_memory",
+            refValue: "memory-1",
+          }),
+        ],
+        metadata: expect.objectContaining({
+          source: "findCandidate_vibe_memory",
+          insertedFindCandidateResultIds: ["candidate-1"],
+        }),
+      }),
+    );
+  });
+
+  test("does not write a vibe memory episode for cli_text unless requested", async () => {
+    mocks.getDistillationTargetStateById.mockResolvedValue({
+      id: "target-vibe",
+      targetKind: "vibe_memory",
+      targetKey: "memory-1",
+    });
+    mocks.readVibeMemoryByTokenWindow.mockResolvedValue({
+      content: "ASSISTANT: task completed with no durable candidate.",
+      totalTokens: 12,
+      from: 0,
+      toExclusive: 12,
+      returnedTokens: 12,
+    });
+    mocks.runDistillationCompletion.mockResolvedValue({
+      content: "[]",
+      toolEvents: [],
+      messages: [],
+    });
+
+    const result = await runFindCandidate({
+      targetStateId: "target-vibe",
+      callerMode: "cli_text",
+      provider: "local-llm",
+    });
+
+    expect(result.episodeId).toBeUndefined();
+    expect(mocks.createEpisodeCard).not.toHaveBeenCalled();
+  });
+
+  test("writes a vibe memory episode for cli_text when requested", async () => {
+    mocks.getDistillationTargetStateById.mockResolvedValue({
+      id: "target-vibe",
+      targetKind: "vibe_memory",
+      targetKey: "memory-1",
+    });
+    mocks.readVibeMemoryByTokenWindow.mockResolvedValue({
+      content: "ASSISTANT: inspect logs and DB before changing queue code.",
+      totalTokens: 12,
+      from: 0,
+      toExclusive: 12,
+      returnedTokens: 12,
+    });
+    mocks.runDistillationCompletion.mockResolvedValue({
+      content: "[]",
+      toolEvents: [],
+      messages: [],
+    });
+
+    const result = await runFindCandidate({
+      targetStateId: "target-vibe",
+      callerMode: "cli_text",
+      provider: "local-llm",
+      writeEpisode: true,
+    });
+
+    expect(result.episodeId).toBe("episode-1");
+    expect(mocks.createEpisodeCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceKind: "vibe_memory",
+        sourceKey: "memory-1",
+        outcomeKind: "unknown",
+      }),
+    );
+  });
+
+  test("reuses an existing vibe memory episode instead of duplicating it", async () => {
+    mocks.getDistillationTargetStateById.mockResolvedValue({
+      id: "target-vibe",
+      targetKind: "vibe_memory",
+      targetKey: "memory-1",
+    });
+    mocks.getEpisodeCardBySource.mockResolvedValue({ id: "episode-existing" });
+    mocks.readVibeMemoryByTokenWindow.mockResolvedValue({
+      content: "ASSISTANT: existing task episode should be reused.",
+      totalTokens: 12,
+      from: 0,
+      toExclusive: 12,
+      returnedTokens: 12,
+    });
+    mocks.runDistillationCompletion.mockResolvedValue({
+      content: "[]",
+      toolEvents: [],
+      messages: [],
+    });
+
+    const result = await runFindCandidate({
+      targetStateId: "target-vibe",
+      callerMode: "storage",
+      provider: "local-llm",
+    });
+
+    expect(result.episodeId).toBe("episode-existing");
+    expect(mocks.createEpisodeCard).not.toHaveBeenCalled();
+  });
+
+  test("reuses a concurrently created vibe memory episode after create conflict", async () => {
+    mocks.getDistillationTargetStateById.mockResolvedValue({
+      id: "target-vibe",
+      targetKind: "vibe_memory",
+      targetKey: "memory-1",
+    });
+    mocks.getEpisodeCardBySource
+      .mockResolvedValueOnce(null)
+      .mockResolvedValueOnce({ id: "episode-concurrent" });
+    mocks.createEpisodeCard.mockRejectedValueOnce(new Error("duplicate key value"));
+    mocks.readVibeMemoryByTokenWindow.mockResolvedValue({
+      content: "ASSISTANT: concurrent task episode should be reused after insert race.",
+      totalTokens: 12,
+      from: 0,
+      toExclusive: 12,
+      returnedTokens: 12,
+    });
+    mocks.runDistillationCompletion.mockResolvedValue({
+      content: "[]",
+      toolEvents: [],
+      messages: [],
+    });
+
+    const result = await runFindCandidate({
+      targetStateId: "target-vibe",
+      callerMode: "storage",
+      provider: "local-llm",
+    });
+
+    expect(result.episodeId).toBe("episode-concurrent");
+    expect(mocks.createEpisodeCard).toHaveBeenCalledTimes(1);
+    expect(mocks.getEpisodeCardBySource).toHaveBeenCalledTimes(2);
   });
 
   test("allows additional vibe memory reads after the deterministic first read", async () => {

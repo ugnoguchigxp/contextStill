@@ -1,7 +1,12 @@
+import { type KnowledgeApplicability, normalizeApplicability } from "../knowledge/applicability.js";
+
+export type NegativeEvidenceAppliesTo = KnowledgeApplicability;
+
 export type NegativeEvidenceResult = {
   status: "ready" | "insufficient" | "false_positive" | "not_reusable";
   polarity: "negative" | "neutral";
   intentTags: string[];
+  appliesTo?: NegativeEvidenceAppliesTo;
   distilled: {
     failure: string;
     impact?: string;
@@ -14,6 +19,21 @@ export type NegativeEvidenceResult = {
   originRefs: string[];
 };
 
+function asStringArray(value: unknown): string[] {
+  if (Array.isArray(value))
+    return value
+      .map(String)
+      .map((item) => item.trim())
+      .filter(Boolean);
+  if (typeof value === "string") {
+    return value
+      .split(",")
+      .map((item) => item.trim())
+      .filter(Boolean);
+  }
+  return [];
+}
+
 export function parseNegativeEvidenceResult(text: string): NegativeEvidenceResult {
   const cleanText = text
     .replace(/```json/g, "")
@@ -24,10 +44,12 @@ export function parseNegativeEvidenceResult(text: string): NegativeEvidenceResul
     if (!parsed.status || !parsed.polarity || !parsed.distilled || !parsed.distilled.failure) {
       throw new Error("Missing required fields in parsed JSON");
     }
+    const appliesTo = normalizeApplicability(parsed.appliesTo ?? parsed.applicability);
     return {
       status: parsed.status,
       polarity: parsed.polarity,
-      intentTags: Array.isArray(parsed.intentTags) ? parsed.intentTags.map(String) : [],
+      intentTags: asStringArray(parsed.intentTags),
+      ...(appliesTo ? { appliesTo } : {}),
       distilled: {
         failure: String(parsed.distilled.failure),
         impact: parsed.distilled.impact ? String(parsed.distilled.impact) : undefined,
@@ -40,8 +62,8 @@ export function parseNegativeEvidenceResult(text: string): NegativeEvidenceResul
           ? String(parsed.distilled.decisionSignal)
           : undefined,
       },
-      evidence: Array.isArray(parsed.evidence) ? parsed.evidence.map(String) : [],
-      originRefs: Array.isArray(parsed.originRefs) ? parsed.originRefs.map(String) : [],
+      evidence: asStringArray(parsed.evidence),
+      originRefs: asStringArray(parsed.originRefs),
     };
   } catch (error) {
     throw new Error(

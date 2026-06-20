@@ -14,6 +14,10 @@ import {
 } from "../distillation/procedure-quality.js";
 import { embedOne } from "../embedding/embedding.service.js";
 import { getFindCandidateResultById } from "../findCandidate/repository.js";
+import {
+  applicabilityFromCoverCandidate,
+  missingRequiredApplicabilityFacets,
+} from "../knowledge/applicability.js";
 import { upsertKnowledgeFromSource } from "../knowledge/knowledge.repository.js";
 import {
   getLandscapeReviewLinkForFinalize,
@@ -23,20 +27,20 @@ import {
   markLandscapeReviewLinkReviewRequiredForCandidate,
   markLandscapeReviewLinkReviewRequiredForFoundCandidate,
 } from "../landscape/landscape-review-candidate.service.js";
+import {
+  type FinalizeCandidateContext,
+  type FinalizeSummary,
+  buildFinalizeSummary,
+  prepareFinalizeCandidate,
+  restructureProcedureCandidate,
+} from "./anonymization.service.js";
 import { findSourceFragmentByReference, selectKnowledgeByFinalizeSourceUri } from "./repository.js";
 import { linkKnowledgeToSourceFragment } from "./source-link.repository.js";
 
 export type FinalizeDistilleInput = {
   coverEvidenceResultId: string;
   resultOverride?: CoverEvidenceResult;
-  candidateContext?: {
-    foundCandidateId: string;
-    targetStateId?: string | null;
-    findCandidateResultId?: string | null;
-    targetKind: "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest";
-    targetKey: string;
-    sourceUri: string;
-  };
+  candidateContext?: FinalizeCandidateContext;
   write?: boolean;
   signal?: AbortSignal;
 };
@@ -49,6 +53,7 @@ export type FinalizeDistilleResult = {
   sourceReferenceCount: number;
   sourceLinkCount: number;
   reason: string | null;
+  finalizeSummary: FinalizeSummary;
 };
 
 const FINALIZE_SOURCE_PREFIX = "cover-evidence-result://";
@@ -87,11 +92,12 @@ function throwIfAborted(signal: AbortSignal | undefined): void {
 async function linkResolvableSourceReferences(params: {
   knowledgeId: string;
   references: CoverEvidenceReference[];
+  metadataReferences?: CoverEvidenceReference[];
   confidence: number;
   coverEvidenceResultId: string;
 }): Promise<number> {
   let linked = 0;
-  for (const reference of params.references) {
+  for (const [index, reference] of params.references.entries()) {
     if (!sourceLinkCandidate(reference)) continue;
     const fragment = await findSourceFragmentByReference({
       uri: reference.uri,
@@ -105,7 +111,11 @@ async function linkResolvableSourceReferences(params: {
       metadata: {
         source: "finalizeDistille",
         coverEvidenceResultId: params.coverEvidenceResultId,
-        reference,
+        reference: params.metadataReferences?.[index] ?? {
+          ...reference,
+          uri: "the source document",
+          locator: reference.locator ? "the source locator" : undefined,
+        },
       },
     });
     linked += 1;
@@ -117,6 +127,10 @@ function rejectedResult(
   coverEvidenceResultId: string,
   result: CoverEvidenceResult | null,
   reason: string,
+  finalizeSummary = buildFinalizeSummary({
+    decision: "rejected",
+    reason,
+  }),
 ): FinalizeDistilleResult {
   return {
     coverEvidenceResultId,
@@ -126,40 +140,8 @@ function rejectedResult(
     sourceReferenceCount: result?.references.length ?? 0,
     sourceLinkCount: 0,
     reason,
+    finalizeSummary,
   };
-}
-
-function appliesToFromCandidate(
-  candidate: CoverEvidenceResult["candidate"],
-): Record<string, unknown> {
-  if (!candidate) return {};
-  return {
-    ...(candidate.applicabilityGeneral !== undefined
-      ? { general: candidate.applicabilityGeneral }
-      : {}),
-    ...(candidate.technologies && candidate.technologies.length > 0
-      ? { technologies: candidate.technologies }
-      : {}),
-    ...(candidate.changeTypes && candidate.changeTypes.length > 0
-      ? { changeTypes: candidate.changeTypes }
-      : {}),
-    ...(candidate.domains && candidate.domains.length > 0 ? { domains: candidate.domains } : {}),
-    ...(candidate.repoPath ? { repoPath: candidate.repoPath } : {}),
-    ...(candidate.repoKey ? { repoKey: candidate.repoKey } : {}),
-  };
-}
-
-function hasFacet(values: string[] | undefined): boolean {
-  return Boolean(values?.some((value) => value.trim().length > 0));
-}
-
-function missingApplicabilityFacets(candidate: CoverEvidenceResult["candidate"]): string[] {
-  if (!candidate) return ["technologies", "changeTypes", "domains"];
-  const missing: string[] = [];
-  if (!hasFacet(candidate.technologies)) missing.push("technologies");
-  if (!hasFacet(candidate.changeTypes)) missing.push("changeTypes");
-  if (!hasFacet(candidate.domains)) missing.push("domains");
-  return missing;
 }
 
 async function getLandscapeLinkForContext(params: {
@@ -239,6 +221,14 @@ export async function runFinalizeDistille(
   }
 
   let candidate = result.candidate;
+  const restructured = restructureProcedureCandidate(candidate);
+  const finalizeToolEvents = restructured
+    ? [...result.toolEvents, restructured.event]
+    : result.toolEvents;
+  if (restructured) {
+    candidate = restructured.candidate;
+  }
+
   let demotionReason: string | null = null;
   if (candidate.type === "rule") {
     const validation = validateCandidateQualityForStorage(candidate);
@@ -264,7 +254,7 @@ export async function runFinalizeDistille(
     }
   }
 
-  const missingFacets = missingApplicabilityFacets(candidate);
+  const missingFacets = missingRequiredApplicabilityFacets(candidate);
   if (missingFacets.length > 0) {
     return rejectedResult(coverEvidenceResultId, result, "applies_to_categories_required");
   }
@@ -308,6 +298,33 @@ export async function runFinalizeDistille(
 
   const sourceUri = finalizeSourceUri(coverEvidenceResultId);
   const finalizedAt = new Date().toISOString();
+  const prepared = prepareFinalizeCandidate({
+    candidate,
+    context: candidateContext,
+    references: result.references,
+    duplicateRefs: result.duplicateRefs,
+    toolEvents: finalizeToolEvents,
+  });
+  candidate = prepared.candidate;
+  const postAnonymizationValidation = validateCandidateQualityForStorage(candidate);
+  if (postAnonymizationValidation.action === "reject") {
+    return rejectedResult(
+      coverEvidenceResultId,
+      result,
+      postAnonymizationValidation.reason,
+      buildFinalizeSummary({
+        decision: "rejected",
+        reason: postAnonymizationValidation.reason,
+        anonymization: prepared.anonymization,
+        qualityGates: ["importance", "candidate_quality", "applicability", "anonymization"],
+      }),
+    );
+  }
+  const finalizeSummary = buildFinalizeSummary({
+    decision: input.write ? "stored" : "dry_run",
+    anonymization: prepared.anonymization,
+    qualityGates: ["importance", "candidate_quality", "applicability", "embedding"],
+  });
   const metadata = {
     sourceUri,
     coverEvidenceResultId,
@@ -315,13 +332,13 @@ export async function runFinalizeDistille(
     foundCandidateId: candidateContext.foundCandidateId || null,
     targetStateId: candidateContext.targetStateId ?? null,
     targetKind: candidateContext.targetKind,
-    targetKey: candidateContext.targetKey,
-    sourceDocumentUri: candidateContext.sourceUri,
-    references: result.references,
-    duplicateRefs: result.duplicateRefs,
+    targetKey: "the source target",
+    sourceDocumentUri: "the source document",
+    references: prepared.references,
+    duplicateRefs: prepared.duplicateRefs,
     toolEvents: demotionReason
       ? [
-          ...result.toolEvents,
+          ...prepared.toolEvents,
           {
             name: "procedure_demoted_to_rule",
             ok: true,
@@ -331,7 +348,17 @@ export async function runFinalizeDistille(
             },
           },
         ]
-      : result.toolEvents,
+      : prepared.toolEvents,
+    finalizeSummary,
+    anonymization: prepared.anonymization,
+    origin: {
+      coverEvidenceResultId,
+      findCandidateResultId: candidateContext.findCandidateResultId ?? null,
+      foundCandidateId: candidateContext.foundCandidateId || null,
+      targetStateId: candidateContext.targetStateId ?? null,
+      targetKind: candidateContext.targetKind,
+      rawOriginStored: false,
+    },
     finalizedBy: "finalizeDistille",
     finalizedAt,
   };
@@ -345,6 +372,7 @@ export async function runFinalizeDistille(
       sourceReferenceCount,
       sourceLinkCount: 0,
       reason: null,
+      finalizeSummary,
     };
   }
 
@@ -355,7 +383,8 @@ export async function runFinalizeDistille(
       coverEvidenceResultId,
       targetStateId: candidateContext.targetStateId ?? null,
       targetKind: candidateContext.targetKind,
-      targetKey: candidateContext.targetKey,
+      targetKey: "the source target",
+      sourceDocumentUri: "the source document",
     },
   });
   if (demotionReason) {
@@ -366,7 +395,8 @@ export async function runFinalizeDistille(
         coverEvidenceResultId,
         targetStateId: candidateContext.targetStateId ?? null,
         targetKind: candidateContext.targetKind,
-        targetKey: candidateContext.targetKey,
+        targetKey: "the source target",
+        sourceDocumentUri: "the source document",
         reason: demotionReason,
         source: "finalizeDistille",
       },
@@ -378,6 +408,7 @@ export async function runFinalizeDistille(
     const sourceLinkCount = await linkResolvableSourceReferences({
       knowledgeId: existing.id,
       references: result.references,
+      metadataReferences: prepared.references,
       confidence: unitConfidence(candidate.confidence),
       coverEvidenceResultId,
     });
@@ -407,6 +438,7 @@ export async function runFinalizeDistille(
       sourceReferenceCount,
       sourceLinkCount,
       reason: null,
+      finalizeSummary,
     };
   }
 
@@ -457,7 +489,7 @@ export async function runFinalizeDistille(
     body: candidate.body,
     confidence: candidate.confidence,
     importance: candidate.importance,
-    appliesTo: appliesToFromCandidate(candidate),
+    appliesTo: applicabilityFromCoverCandidate(candidate),
     metadata,
     embedding,
   });
@@ -466,6 +498,7 @@ export async function runFinalizeDistille(
   const sourceLinkCount = await linkResolvableSourceReferences({
     knowledgeId,
     references: result.references,
+    metadataReferences: prepared.references,
     confidence: unitConfidence(candidate.confidence),
     coverEvidenceResultId,
   });
@@ -497,6 +530,7 @@ export async function runFinalizeDistille(
     sourceReferenceCount,
     sourceLinkCount,
     reason: null,
+    finalizeSummary,
   };
 }
 
@@ -536,7 +570,7 @@ export async function runFinalizeDistilleSmoke(
     receivedInput: input,
     nextContracts: [
       "write=true stores draft knowledge through upsertKnowledgeFromSource",
-      "source references are preserved in knowledge metadata",
+      "source references are abstracted in knowledge metadata",
       "resolvable source fragments are linked through knowledge_source_links",
     ],
   };

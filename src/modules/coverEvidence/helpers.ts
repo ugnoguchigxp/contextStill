@@ -7,6 +7,10 @@ import {
 } from "../distillation/procedure-quality.js";
 import { buildProcedureSystemContext } from "../distillation/procedure-system-context.js";
 import type { CandidateKnowledgeType } from "../findCandidate/repository.js";
+import {
+  applicabilityToCoverCandidateFields,
+  normalizeApplicability,
+} from "../knowledge/applicability.js";
 import { referencesFromMcpToolEvents } from "./mcp-evidence.service.js";
 import type {
   CoverEvidenceCandidate,
@@ -23,6 +27,8 @@ export type CoverEvidenceSourceContext = {
   targetKey: string;
   sourceUri: string;
   readRanges: Array<{ from: number; toExclusive: number }>;
+  assessmentSource?: "primary" | "source_summary";
+  hasPrimaryEvidence?: boolean;
   sourceSummary?: string;
 };
 
@@ -70,6 +76,8 @@ export function applicabilityInstructions(): string[] {
 export function sourceContextForPrompts(params: {
   row: CoverEvidenceCandidateInput;
   readRanges: Array<{ from: number; toExclusive: number }>;
+  assessmentSource?: "primary" | "source_summary";
+  hasPrimaryEvidence?: boolean;
 }): CoverEvidenceSourceContext {
   const originRecord =
     params.row.origin && typeof params.row.origin === "object" && !Array.isArray(params.row.origin)
@@ -84,6 +92,10 @@ export function sourceContextForPrompts(params: {
     targetKey: params.row.targetKey,
     sourceUri: params.row.sourceUri,
     readRanges: params.readRanges,
+    ...(params.assessmentSource ? { assessmentSource: params.assessmentSource } : {}),
+    ...(params.hasPrimaryEvidence !== undefined
+      ? { hasPrimaryEvidence: params.hasPrimaryEvidence }
+      : {}),
     ...(sourceSummary ? { sourceSummary } : {}),
   };
 }
@@ -114,60 +126,18 @@ function scoreHint(value: unknown): number | undefined {
   return Math.max(0, Math.min(100, Math.round(normalized)));
 }
 
-function booleanHint(value: unknown): boolean | undefined {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true") return true;
-    if (normalized === "false") return false;
-  }
-  return undefined;
-}
-
-function stringHint(value: unknown): string | undefined {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
-}
-
-function stringArrayHint(value: unknown): string[] | undefined {
-  const values = Array.isArray(value)
-    ? value
-        .filter((item): item is string => typeof item === "string")
-        .map((item) => item.trim())
-        .filter(Boolean)
-    : typeof value === "string" && value.trim()
-      ? value
-          .split(",")
-          .map((part) => part.trim())
-          .filter(Boolean)
-      : [];
-  return values.length > 0 ? [...new Set(values)] : undefined;
-}
-
 export function candidateOriginHintsFromOrigin(origin: unknown): CandidateOriginHints {
   const record = asRecord(origin);
-  const appliesTo = asRecord(record.appliesTo ?? record.applicability);
   const type = candidateTypeFromOrigin(origin);
   const importance = scoreHint(record.importance);
   const confidence = scoreHint(record.confidence);
-  const applicabilityGeneral = booleanHint(
-    record.applicabilityGeneral ?? record.general ?? appliesTo.general,
-  );
-  const technologies = stringArrayHint(record.technologies ?? appliesTo.technologies);
-  const changeTypes = stringArrayHint(record.changeTypes ?? appliesTo.changeTypes);
-  const domains = stringArrayHint(record.domains ?? appliesTo.domains);
-  const repoPath = stringHint(record.repoPath ?? appliesTo.repoPath);
-  const repoKey = stringHint(record.repoKey ?? appliesTo.repoKey);
+  const applicability = applicabilityToCoverCandidateFields(normalizeApplicability(origin));
 
   return {
     ...(type ? { type } : {}),
     ...(importance !== undefined ? { importance } : {}),
     ...(confidence !== undefined ? { confidence } : {}),
-    ...(applicabilityGeneral !== undefined ? { applicabilityGeneral } : {}),
-    ...(technologies ? { technologies } : {}),
-    ...(changeTypes ? { changeTypes } : {}),
-    ...(domains ? { domains } : {}),
-    ...(repoPath ? { repoPath } : {}),
-    ...(repoKey ? { repoKey } : {}),
+    ...applicability,
   };
 }
 

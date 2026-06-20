@@ -11,8 +11,11 @@ const mocks = vi.hoisted(() => ({
   findSourceFragmentByReference: vi.fn(),
   selectKnowledgeByFinalizeSourceUri: vi.fn(),
   getLandscapeReviewLinkForFinalize: vi.fn(),
+  getLandscapeReviewLinkForFinalizeByFoundCandidate: vi.fn(),
   markLandscapeReviewLinkFinalizedForCandidate: vi.fn(),
+  markLandscapeReviewLinkFinalizedForFoundCandidate: vi.fn(),
   markLandscapeReviewLinkReviewRequiredForCandidate: vi.fn(),
+  markLandscapeReviewLinkReviewRequiredForFoundCandidate: vi.fn(),
   recordAuditLogSafe: vi.fn(),
 }));
 
@@ -44,9 +47,15 @@ vi.mock("../src/modules/finalizeDistille/repository.js", () => ({
 
 vi.mock("../src/modules/landscape/landscape-review-candidate.service.js", () => ({
   getLandscapeReviewLinkForFinalize: mocks.getLandscapeReviewLinkForFinalize,
+  getLandscapeReviewLinkForFinalizeByFoundCandidate:
+    mocks.getLandscapeReviewLinkForFinalizeByFoundCandidate,
   markLandscapeReviewLinkFinalizedForCandidate: mocks.markLandscapeReviewLinkFinalizedForCandidate,
+  markLandscapeReviewLinkFinalizedForFoundCandidate:
+    mocks.markLandscapeReviewLinkFinalizedForFoundCandidate,
   markLandscapeReviewLinkReviewRequiredForCandidate:
     mocks.markLandscapeReviewLinkReviewRequiredForCandidate,
+  markLandscapeReviewLinkReviewRequiredForFoundCandidate:
+    mocks.markLandscapeReviewLinkReviewRequiredForFoundCandidate,
 }));
 
 vi.mock("../src/modules/audit/audit-log.service.js", () => ({
@@ -119,8 +128,11 @@ describe("runFinalizeDistille", () => {
     mocks.findSourceFragmentByReference.mockResolvedValue(null);
     mocks.selectKnowledgeByFinalizeSourceUri.mockResolvedValue(null);
     mocks.getLandscapeReviewLinkForFinalize.mockResolvedValue(null);
+    mocks.getLandscapeReviewLinkForFinalizeByFoundCandidate.mockResolvedValue(null);
     mocks.markLandscapeReviewLinkFinalizedForCandidate.mockResolvedValue(null);
+    mocks.markLandscapeReviewLinkFinalizedForFoundCandidate.mockResolvedValue(null);
     mocks.markLandscapeReviewLinkReviewRequiredForCandidate.mockResolvedValue(null);
+    mocks.markLandscapeReviewLinkReviewRequiredForFoundCandidate.mockResolvedValue(null);
   });
 
   test("stores draft knowledge with cover evidence metadata", async () => {
@@ -156,10 +168,100 @@ describe("runFinalizeDistille", () => {
           coverEvidenceResultId: "find-1",
           findCandidateResultId: "find-1",
           targetStateId: "target-1",
-          sourceDocumentUri: "/wiki/pages/finalize.md",
+          sourceDocumentUri: "the source document",
           references: expect.any(Array),
+          finalizeSummary: expect.objectContaining({
+            decision: "stored",
+          }),
+          origin: expect.objectContaining({
+            rawOriginStored: false,
+            targetKind: "wiki_file",
+          }),
         }),
       }),
+    );
+  });
+
+  test("anonymizes project-local identifiers before storing draft knowledge", async () => {
+    mocks.coverEvidenceResultFromRow.mockReturnValue({
+      ...readyResult(),
+      candidate: {
+        ...readyResult().candidate,
+        title: "Keep AcmePayments details private",
+        body: "AcmePayments must not store /Users/dev/Code/AcmePayments/src/billing.ts or http://localhost:3000/admin in reusable knowledge.",
+        repoPath: "/Users/dev/Code/AcmePayments",
+        repoKey: "AcmePayments",
+      },
+      references: [
+        {
+          kind: "source",
+          uri: "/Users/dev/Code/AcmePayments/docs/finalize.md",
+          locator: "AcmePayments:10-20",
+          note: "AcmePayments source",
+          evidenceRole: "supports_candidate",
+        },
+      ],
+    });
+    mocks.getFindCandidateResultById.mockResolvedValue({
+      id: "find-1",
+      targetStateId: "target-1",
+      candidateIndex: 0,
+      title: "Keep AcmePayments details private",
+      content:
+        "AcmePayments must not store /Users/dev/Code/AcmePayments/src/billing.ts or http://localhost:3000/admin in reusable knowledge.",
+      origin: { readRanges: [{ from: 0, toExclusive: 120 }] },
+      status: "selected",
+      createdAt: new Date(),
+      updatedAt: new Date(),
+      targetKind: "wiki_file",
+      targetKey: "/Users/dev/Code/AcmePayments/docs/finalize.md",
+      sourceUri: "/Users/dev/Code/AcmePayments/docs/finalize.md",
+    });
+
+    const result = await runFinalizeDistille({ coverEvidenceResultId: "find-1", write: true });
+
+    expect(result.status).toBe("stored");
+    expect(mocks.embedOne).toHaveBeenCalledWith(
+      expect.not.stringContaining("AcmePayments"),
+      "passage",
+    );
+    expect(mocks.upsertKnowledgeFromSource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Keep the project details private",
+        body: expect.stringContaining("the workspace path"),
+        appliesTo: {
+          technologies: ["typescript"],
+          changeTypes: ["implementation"],
+          domains: ["distillation"],
+        },
+        metadata: expect.objectContaining({
+          sourceDocumentUri: "the source document",
+          references: [
+            expect.objectContaining({
+              uri: "the source document",
+              locator: "the source locator",
+              note: "the project source",
+            }),
+          ],
+          anonymization: expect.objectContaining({
+            applied: true,
+            replacementKinds: expect.arrayContaining([
+              "absolute_path",
+              "project_identifier",
+              "internal_url",
+              "repo_scope",
+            ]),
+          }),
+          origin: expect.objectContaining({
+            rawOriginStored: false,
+            targetKind: "wiki_file",
+          }),
+        }),
+      }),
+    );
+    expect(JSON.stringify(mocks.recordAuditLogSafe.mock.calls)).not.toContain("AcmePayments");
+    expect(JSON.stringify(mocks.recordAuditLogSafe.mock.calls)).not.toContain(
+      "/Users/dev/Code/AcmePayments",
     );
   });
 
@@ -182,6 +284,11 @@ describe("runFinalizeDistille", () => {
           metadata: {
             polarity: "negative",
             intentTags: ["failure_pattern", "guardrail"],
+            appliesTo: {
+              technologies: ["typescript"],
+              changeTypes: ["diagnosis"],
+              domains: ["queue"],
+            },
           },
         },
       ],
@@ -196,6 +303,11 @@ describe("runFinalizeDistille", () => {
         polarity: "negative",
         intentTags: ["failure_pattern", "guardrail"],
         title: "Do not trust stale queue status alone",
+        appliesTo: {
+          technologies: ["typescript"],
+          changeTypes: ["diagnosis"],
+          domains: ["queue"],
+        },
       }),
     );
   });
@@ -317,6 +429,45 @@ describe("runFinalizeDistille", () => {
     expect(mocks.upsertKnowledgeFromSource).not.toHaveBeenCalled();
   });
 
+  test("restructures supported procedure bodies before storing", async () => {
+    mocks.coverEvidenceResultFromRow.mockReturnValue({
+      ...readyResult(),
+      candidate: {
+        type: "procedure",
+        title: "Finalize draft knowledge safely",
+        body: [
+          "- Read the candidate summary.",
+          "- Store the draft after source links are checked.",
+          "Verification: Check that the stored draft has source links.",
+          "Avoid storing raw project paths.",
+        ].join("\n"),
+        importance: 90,
+        confidence: 88,
+        technologies: ["typescript"],
+        changeTypes: ["implementation"],
+        domains: ["distillation"],
+      },
+    });
+
+    const result = await runFinalizeDistille({ coverEvidenceResultId: "find-1", write: true });
+
+    expect(result.status).toBe("stored");
+    expect(mocks.upsertKnowledgeFromSource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "procedure",
+        body: expect.stringContaining("Use when:"),
+        metadata: expect.objectContaining({
+          toolEvents: expect.arrayContaining([
+            expect.objectContaining({
+              name: "procedure_restructured_for_finalize",
+              ok: true,
+            }),
+          ]),
+        }),
+      }),
+    );
+  });
+
   test("does not store draft when embedding fails", async () => {
     mocks.embedOne.mockRejectedValue(new Error("embedding provider crashed"));
 
@@ -393,6 +544,12 @@ describe("runFinalizeDistille", () => {
         knowledgeId: "knowledge-1",
         sourceFragmentId: "fragment-1",
         confidence: 0.84,
+        metadata: expect.objectContaining({
+          reference: expect.objectContaining({
+            uri: "the source document",
+            locator: "the source locator",
+          }),
+        }),
       }),
     );
   });

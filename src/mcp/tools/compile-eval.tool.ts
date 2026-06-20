@@ -5,7 +5,7 @@ import type { ToolEntry } from "../registry.js";
 export const compileEvalTool: ToolEntry = {
   name: "compile_eval",
   description:
-    "Record post-task evaluation for a context_compile run. Stores score, outcome, and rationale.",
+    "Evaluate returned context from a context_compile run. Do not call this tool when context_compile returned No Content.",
   inputSchema: {
     type: "object",
     properties: {

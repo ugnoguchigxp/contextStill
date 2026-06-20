@@ -357,6 +357,9 @@ export async function runCoverEvidence(
           reason: "source_read_failed",
         });
         sourceRead = {
+          primaryContent: null,
+          assessmentContent: "",
+          assessmentSource: "primary",
           content: "",
           valueAssessmentContent: "",
           references: [],
@@ -365,13 +368,35 @@ export async function runCoverEvidence(
       }
 
       if (result === undefined) {
-        const support = evaluateSourceSupport({
-          title: row.title,
-          body: row.content,
-          sourceContent: sourceRead.content,
-        });
+        const hasPrimaryEvidence = sourceRead.primaryContent !== null;
+        const support = hasPrimaryEvidence
+          ? evaluateSourceSupport({
+              title: row.title,
+              body: row.content,
+              sourceContent: sourceRead.primaryContent ?? "",
+            })
+          : ({
+              ok: true,
+              confidence: 55,
+              overlapRatio: 0,
+              matchedTokenCount: 0,
+              checkedTokenCount: 0,
+            } satisfies SourceSupportResult);
         const sourceSupportDiagnostics: CoverEvidenceToolEvent[] = [];
-        if (!support.ok && !shouldVerifySourceSupportWithLlm(support, sourceRead.content)) {
+        if (!hasPrimaryEvidence) {
+          sourceSupportDiagnostics.push({
+            name: "source_summary_context",
+            ok: true,
+            metadata: {
+              assessmentSource: sourceRead.assessmentSource,
+              strictSourceSupportSkipped: true,
+            },
+          });
+        }
+        if (
+          !support.ok &&
+          !shouldVerifySourceSupportWithLlm(support, sourceRead.primaryContent ?? "")
+        ) {
           result = makeResult({
             status: "insufficient",
             stage: "source_support",
@@ -387,6 +412,8 @@ export async function runCoverEvidence(
           const sourceContext = sourceContextForPrompts({
             row,
             readRanges: sourceRead.readRanges,
+            assessmentSource: sourceRead.assessmentSource,
+            hasPrimaryEvidence,
           });
           const originHints = candidateOriginHintsFromOrigin(row.origin);
           const candidate = baseCandidate({
@@ -413,7 +440,7 @@ export async function runCoverEvidence(
               id,
               candidate,
               sourceReferences: sourceRead.references,
-              sourceContentExcerpt: sourceRead.valueAssessmentContent,
+              sourceContentExcerpt: sourceRead.assessmentContent,
               sourceContext,
               candidateTypeHint: originHints.type,
               provider: externalEvidenceProvider,

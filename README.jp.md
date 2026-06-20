@@ -136,7 +136,7 @@ MCP client には次のように登録します。
 }
 ```
 
-接続後は、project session 開始時に `initial_instructions` を一度だけ呼びます。作業前に `context_compile`、ユーザーへ質問する前や PR 作成前に自律継続できる余地がある場合は `context_decision`、作業後に `compile_eval` を使います。
+接続後は、project session 開始時に `initial_instructions` を一度だけ呼びます。作業前に `context_compile`、ユーザーへ質問する前や PR 作成前に自律継続できる余地がある場合は `context_decision`、`No Content` 以外の作業後に `compile_eval` を使います。
 
 ## よく使うワークフロー
 

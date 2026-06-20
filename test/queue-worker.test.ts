@@ -1,5 +1,11 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { coveringEvidenceQueue, findingCandidateQueue, foundCandidates } from "../src/db/schema.js";
+import {
+  coveringEvidenceQueue,
+  evidenceCoverageResults,
+  finalizeDistilleQueue,
+  findingCandidateQueue,
+  foundCandidates,
+} from "../src/db/schema.js";
 import {
   enqueueFindingJob,
   findFindingJob,
@@ -379,6 +385,155 @@ describe("runQueueWorkerOnce", () => {
           origin: expect.objectContaining({
             sourceSummary: "Summarized source evidence from finding.",
             readRanges: [{ from: 120, toExclusive: 240 }],
+          }),
+        }),
+      }),
+    );
+  });
+
+  test("preserves negative knowledge appliesTo through covering persistence and finalize enqueue", async () => {
+    mocks.selectRows = [
+      [
+        {
+          id: "cover-job-1",
+          foundCandidateId: "candidate-1",
+          distillationVersion: "v-test",
+          attemptCount: 0,
+          maxAttempts: 2,
+          priority: 50,
+          providerPolicy: "default",
+          payload: {},
+        },
+      ],
+      [
+        {
+          id: "candidate-1",
+          title: "Do not trust stale queue status alone",
+          content:
+            "Failure: Stale queue status was treated as current truth without checking recent events.",
+          origin: {
+            polarity: "negative",
+            intentTags: ["failure_pattern"],
+          },
+          type: "rule",
+          findingJobId: "finding-job-1",
+          metadata: {
+            sourceKind: "knowledge_candidate",
+            sourceKey: "review:finding-1",
+            sourceUri: "review:finding-1",
+            appliesTo: {
+              technologies: ["typescript"],
+              changeTypes: ["diagnosis"],
+              domains: ["queue"],
+            },
+          },
+        },
+      ],
+      [
+        {
+          id: "finding-job-1",
+          sourceKind: "knowledge_candidate",
+          sourceKey: "review:finding-1",
+          sourceUri: "review:finding-1",
+        },
+      ],
+    ];
+    mocks.runCoverEvidence.mockResolvedValue({
+      result: {
+        status: "knowledge_ready",
+        stage: "final",
+        candidate: {
+          type: "rule",
+          title: "Do not trust stale queue status alone",
+          body: "Failure: Stale queue status was treated as current truth.",
+          importance: 80,
+          confidence: 90,
+          technologies: ["typescript"],
+          changeTypes: ["diagnosis"],
+          domains: ["queue"],
+        },
+        references: [
+          {
+            kind: "source",
+            uri: "review:finding-1",
+            note: "Stale queue status was treated as current truth",
+            evidenceRole: "supports_candidate",
+          },
+        ],
+        duplicateRefs: [],
+        toolEvents: [
+          {
+            name: "negative_coverage",
+            ok: true,
+            metadata: {
+              polarity: "negative",
+              intentTags: ["failure_pattern", "guardrail"],
+              appliesTo: {
+                technologies: ["typescript"],
+                changeTypes: ["diagnosis"],
+                domains: ["queue"],
+              },
+            },
+          },
+        ],
+        reason: null,
+      },
+    });
+
+    const result = await runQueueWorkerOnce({
+      queueName: "coveringEvidence",
+      workerId: "worker-1",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(mocks.runCoverEvidence).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidate: expect.objectContaining({
+          targetKind: "knowledge_candidate",
+          origin: expect.objectContaining({
+            polarity: "negative",
+            appliesTo: {
+              technologies: ["typescript"],
+              changeTypes: ["diagnosis"],
+              domains: ["queue"],
+            },
+          }),
+        }),
+      }),
+    );
+    expect(mocks.insertCalls).toContainEqual(
+      expect.objectContaining({
+        table: evidenceCoverageResults,
+        values: expect.objectContaining({
+          foundCandidateId: "candidate-1",
+          status: "knowledge_ready",
+          appliesTo: {
+            technologies: ["typescript"],
+            changeTypes: ["diagnosis"],
+            domains: ["queue"],
+          },
+          toolEvents: expect.arrayContaining([
+            expect.objectContaining({
+              name: "negative_coverage",
+              metadata: expect.objectContaining({
+                polarity: "negative",
+                intentTags: ["failure_pattern", "guardrail"],
+              }),
+            }),
+          ]),
+        }),
+      }),
+    );
+    expect(mocks.insertCalls).toContainEqual(
+      expect.objectContaining({
+        table: finalizeDistilleQueue,
+        values: expect.objectContaining({
+          evidenceResultId: "evidence-1",
+          status: "pending",
+          priority: 90,
+          metadata: expect.objectContaining({
+            sourceQueue: "coveringEvidence",
+            sourceQueueJobId: "cover-job-1",
           }),
         }),
       }),

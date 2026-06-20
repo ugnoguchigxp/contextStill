@@ -45,7 +45,7 @@ export type CoverEvidenceReference = {
   locator?: string;
   title?: string;
   note: string;
-  evidenceRole: "supports_candidate" | "dedupe_match" | "external_verification";
+  evidenceRole: "supports_candidate" | "source_summary" | "dedupe_match" | "external_verification";
 };
 
 export type CoverEvidenceDuplicateRef = {

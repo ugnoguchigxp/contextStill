@@ -29,6 +29,9 @@ describe("readSourceEvidenceForCandidate", () => {
     } satisfies CoverEvidenceCandidateInput);
 
     expect(result.content).toContain("Use when:");
+    expect(result.primaryContent).toContain("Use when:");
+    expect(result.assessmentContent).toContain("Use when:");
+    expect(result.assessmentSource).toBe("primary");
     expect(result.references).toEqual([
       expect.objectContaining({
         uri: "agent://candidate/candidate-1",
@@ -38,31 +41,53 @@ describe("readSourceEvidenceForCandidate", () => {
     ]);
   });
 
-  test("uses candidate content when a vibe memory source is unavailable", async () => {
+  test("does not use candidate content when a vibe memory source is unavailable", async () => {
+    mocks.readVibeMemoryByTokenWindow.mockRejectedValue(new Error("vibe memory not found"));
+
+    await expect(
+      readSourceEvidenceForCandidate({
+        id: "find-1",
+        targetStateId: "target-1",
+        title: "Candidate",
+        content: "Use web evidence to validate this candidate when the source memory is gone.",
+        origin: { readRanges: [{ from: 0, toExclusive: 80 }] },
+        status: "selected",
+        targetKind: "vibe_memory",
+        targetKey: "missing-memory",
+        sourceUri: "vibe_memory:missing-memory",
+      } satisfies CoverEvidenceCandidateInput),
+    ).rejects.toThrow("vibe memory not found");
+  });
+
+  test("uses source summary fallback as non-primary evidence when original source is unavailable", async () => {
     mocks.readVibeMemoryByTokenWindow.mockRejectedValue(new Error("vibe memory not found"));
 
     const result = await readSourceEvidenceForCandidate({
       id: "find-1",
       targetStateId: "target-1",
       title: "Candidate",
-      content: "Use web evidence to validate this candidate when the source memory is gone.",
-      origin: { readRanges: [{ from: 0, toExclusive: 80 }] },
+      content: "Run focused tests before finalize when source references need checking.",
+      origin: {
+        sourceSummary:
+          "The source says focused tests should run before finalize and source references should be checked.",
+        readRanges: [{ from: 0, toExclusive: 80 }],
+      },
       status: "selected",
       targetKind: "vibe_memory",
       targetKey: "missing-memory",
       sourceUri: "vibe_memory:missing-memory",
     } satisfies CoverEvidenceCandidateInput);
 
-    expect(result.content).toBe(
-      "Use web evidence to validate this candidate when the source memory is gone.",
-    );
-    expect(result.valueAssessmentContent).toBe(result.content);
+    expect(result.primaryContent).toBeNull();
+    expect(result.content).toBe("");
+    expect(result.assessmentContent).toContain("focused tests");
+    expect(result.valueAssessmentContent).toBe(result.assessmentContent);
+    expect(result.assessmentSource).toBe("source_summary");
     expect(result.references).toEqual([
       expect.objectContaining({
         uri: "vibe_memory:missing-memory",
-        locator: "candidate:content",
-        note: "candidate content fallback because source memory is unavailable",
-        evidenceRole: "supports_candidate",
+        locator: "sourceSummary",
+        evidenceRole: "source_summary",
       }),
     ]);
   });

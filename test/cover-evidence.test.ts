@@ -928,9 +928,29 @@ describe("runCoverEvidence", () => {
       }),
     );
     expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(3);
+    expect(result.result.references).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          evidenceRole: "source_summary",
+          locator: "sourceSummary",
+        }),
+      ]),
+    );
+    expect(result.result.toolEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "source_summary_context",
+          ok: true,
+        }),
+      ]),
+    );
+    const request = mocks.runDistillationCompletion.mock.calls[2]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(request.messages[1]?.content).toContain("source summary:");
   });
 
-  test("uses candidate content fallback so missing vibe memory candidates can be web verified", async () => {
+  test("does not use candidate content as source evidence when vibe memory is unavailable", async () => {
     mocks.getFindCandidateResultById.mockResolvedValue(
       candidateRow({
         targetKind: "vibe_memory",
@@ -947,17 +967,15 @@ describe("runCoverEvidence", () => {
 
     const result = await runCoverEvidence({ id: "find-1" });
 
-    expect(result.result.status).toBe("knowledge_ready");
+    expect(result.result.status).toBe("tool_failed");
+    expect(result.result.stage).toBe("source_support");
+    expect(result.result.reason).toBe("source_read_failed");
     expect(mocks.readVibeMemoryByTokenWindow).toHaveBeenCalledWith(
       expect.objectContaining({
         vibeMemoryId: "missing-memory",
       }),
     );
-    expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(3);
-    const request = mocks.runDistillationCompletion.mock.calls[2]?.[0] as {
-      messages: Array<{ role: string; content: string }>;
-    };
-    expect(request.messages[1]?.content).toContain("Run smoke tests before finalizing");
+    expect(mocks.runDistillationCompletion).not.toHaveBeenCalled();
   });
 
   test("preserves register_candidate origin hints through value assessment", async () => {

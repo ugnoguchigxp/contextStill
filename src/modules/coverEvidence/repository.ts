@@ -1,7 +1,11 @@
 import { asc, eq } from "drizzle-orm";
 import { db } from "../../db/index.js";
 import { coverEvidenceResults, findCandidateResults } from "../../db/schema.js";
-import { asRecord, asStringArray } from "../../shared/utils/normalize.js";
+import {
+  applicabilityFromCoverCandidate,
+  applicabilityToCoverCandidateFields,
+  normalizeApplicability,
+} from "../knowledge/applicability.js";
 import type { CoverEvidenceResult } from "./types.js";
 
 export type CoverEvidenceResultRow = typeof coverEvidenceResults.$inferSelect;
@@ -10,49 +14,6 @@ export type SaveCoverEvidenceResultInput = {
   id: string;
   result: CoverEvidenceResult;
 };
-
-function appliesToFromCandidate(
-  candidate: CoverEvidenceResult["candidate"],
-): Record<string, unknown> {
-  if (!candidate) return {};
-  return {
-    ...(candidate.applicabilityGeneral !== undefined
-      ? { general: candidate.applicabilityGeneral }
-      : {}),
-    ...(candidate.technologies && candidate.technologies.length > 0
-      ? { technologies: candidate.technologies }
-      : {}),
-    ...(candidate.changeTypes && candidate.changeTypes.length > 0
-      ? { changeTypes: candidate.changeTypes }
-      : {}),
-    ...(candidate.domains && candidate.domains.length > 0 ? { domains: candidate.domains } : {}),
-    ...(candidate.repoPath ? { repoPath: candidate.repoPath } : {}),
-    ...(candidate.repoKey ? { repoKey: candidate.repoKey } : {}),
-  };
-}
-
-function candidateApplicabilityFromAppliesTo(
-  appliesTo: Record<string, unknown>,
-): Pick<
-  NonNullable<CoverEvidenceResult["candidate"]>,
-  "applicabilityGeneral" | "technologies" | "changeTypes" | "domains" | "repoPath" | "repoKey"
-> {
-  const technologies = asStringArray(appliesTo.technologies);
-  const changeTypes = asStringArray(appliesTo.changeTypes);
-  const domains = asStringArray(appliesTo.domains);
-  return {
-    ...(typeof appliesTo.general === "boolean" ? { applicabilityGeneral: appliesTo.general } : {}),
-    ...(technologies.length > 0 ? { technologies } : {}),
-    ...(changeTypes.length > 0 ? { changeTypes } : {}),
-    ...(domains.length > 0 ? { domains } : {}),
-    ...(typeof appliesTo.repoPath === "string" && appliesTo.repoPath.trim()
-      ? { repoPath: appliesTo.repoPath.trim() }
-      : {}),
-    ...(typeof appliesTo.repoKey === "string" && appliesTo.repoKey.trim()
-      ? { repoKey: appliesTo.repoKey.trim() }
-      : {}),
-  };
-}
 
 export async function selectCoverEvidenceResultById(
   id: string,
@@ -106,7 +67,7 @@ export async function saveCoverEvidenceResult(
     body: result.candidate?.body ?? null,
     importance: result.candidate?.importance ?? null,
     confidence: result.candidate?.confidence ?? null,
-    appliesTo: appliesToFromCandidate(result.candidate),
+    appliesTo: applicabilityFromCoverCandidate(result.candidate),
     references: result.references,
     duplicateRefs: result.duplicateRefs,
     toolEvents: result.toolEvents,
@@ -131,7 +92,7 @@ export async function saveCoverEvidenceResult(
 
 export function coverEvidenceResultFromRow(row: CoverEvidenceResultRow): CoverEvidenceResult {
   const type: "rule" | "procedure" = row.type === "procedure" ? "procedure" : "rule";
-  const appliesTo = asRecord(row.appliesTo);
+  const appliesTo = normalizeApplicability(row.appliesTo);
   const candidate =
     row.type && row.title && row.body && row.importance !== null && row.confidence !== null
       ? {
@@ -140,7 +101,7 @@ export function coverEvidenceResultFromRow(row: CoverEvidenceResultRow): CoverEv
           body: row.body,
           importance: Math.round(row.importance),
           confidence: Math.round(row.confidence),
-          ...candidateApplicabilityFromAppliesTo(appliesTo),
+          ...applicabilityToCoverCandidateFields(appliesTo),
         }
       : null;
 

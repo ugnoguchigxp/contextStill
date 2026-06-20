@@ -47,7 +47,10 @@ import {
 import { recordCompileRunKnowledgeFeedback } from "../src/modules/knowledge/knowledge-feedback.service.js";
 import { readVibeMemoryByTokenWindow } from "../src/modules/memoryReader/reader.service.js";
 import { retryQueueJob } from "../src/modules/queue/core/state.js";
-import { runQueueWorkerOnce } from "../src/modules/queue/core/worker.js";
+import {
+  runQueueWorkerOnce,
+  setQueueWorkerTestHooksForTests,
+} from "../src/modules/queue/core/worker.js";
 import {
   deleteSettingsRow,
   findSettingsRow,
@@ -73,6 +76,7 @@ describe("sqlite runtime support repositories", () => {
   });
 
   afterEach(async () => {
+    setQueueWorkerTestHooksForTests({});
     restoreEnv("CONTEXT_STILL_DB_BACKEND", originalBackend);
     restoreEnv("CONTEXT_STILL_SQLITE_CORE_PATH", originalSqlitePath);
     restoreEnv("DATABASE_URL", originalDatabaseUrl);
@@ -694,6 +698,278 @@ describe("sqlite runtime support repositories", () => {
       stage: "source_support",
       producer_job_id: "covering-insufficient",
     });
+  });
+
+  test("processes negative finding to cover to finalize through sqlite worker persistence", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const now = new Date("2026-06-20T00:00:00.000Z").toISOString();
+    const appliesTo = {
+      technologies: ["sqlite"],
+      changeTypes: ["testing"],
+      domains: ["knowledge"],
+    };
+
+    sqlite.db
+      .query(
+        `
+        insert into finding_candidate_queue (
+          id, input_kind, source_kind, source_key, source_uri, distillation_version,
+          status, priority, attempt_count, provider_policy, payload, metadata, created_at, updated_at
+        ) values (?, 'provided_candidate', 'knowledge_candidate', ?, ?, 'v-test',
+          'completed', 90, 1, 'default', '{}', ?, ?, ?)
+      `,
+      )
+      .run(
+        "finding-negative-e2e",
+        "review://negative-e2e",
+        "review://negative-e2e",
+        JSON.stringify({ sourceKind: "knowledge_candidate", appliesTo }),
+        now,
+        now,
+      );
+    sqlite.db
+      .query(
+        `
+        insert into found_candidates (
+          id, finding_job_id, candidate_index, type, title, content,
+          source_summary, origin, metadata, created_at, updated_at
+        ) values (?, ?, 0, 'rule', ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "candidate-negative-e2e",
+        "finding-negative-e2e",
+        "SQLite negative review correction",
+        "Failure: The worker can drop negative evidence before finalize. Fix: keep appliesTo and polarity across cover/finalize.",
+        "Negative evidence says SQLite cover/finalize must preserve polarity and applicability.",
+        JSON.stringify({
+          sourceKind: "knowledge_candidate",
+          sourceKey: "review://negative-e2e",
+          sourceUri: "review://negative-e2e",
+          sourceSummary:
+            "Negative evidence says SQLite cover/finalize must preserve polarity and applicability.",
+          appliesTo,
+        }),
+        JSON.stringify({ sourceKind: "knowledge_candidate", appliesTo }),
+        now,
+        now,
+      );
+    sqlite.db
+      .query(
+        `
+        insert into covering_evidence_queue (
+          id, found_candidate_id, distillation_version, status, priority, attempt_count,
+          max_attempts, provider_policy, payload, metadata, created_at, updated_at
+        ) values (?, ?, 'v-test', 'pending', 80, 0, 2, 'default', '{}', '{}', ?, ?)
+      `,
+      )
+      .run("covering-negative-e2e", "candidate-negative-e2e", now, now);
+
+    setQueueWorkerTestHooksForTests({
+      runCoverEvidence: async (input) => {
+        expect(input.id).toBe("candidate-negative-e2e");
+        expect(input.candidate?.id).toBe("candidate-negative-e2e");
+        return {
+          id: input.id,
+          result: {
+            schemaVersion: 1,
+            status: "knowledge_ready",
+            stage: "final",
+            candidate: {
+              type: "rule",
+              title: "Preserve negative evidence through SQLite finalize",
+              body: "Failure: SQLite queue processing can lose negative review evidence before finalize.\nFix: preserve polarity, intent tags, and applicability from cover to finalize.\nVerification: Run the SQLite runtime queue integration test.",
+              importance: 85,
+              confidence: 88,
+              technologies: ["sqlite"],
+              changeTypes: ["testing"],
+              domains: ["knowledge"],
+            },
+            references: [
+              {
+                kind: "source",
+                uri: "review://negative-e2e",
+                locator: "candidate:content",
+                note: "negative review correction",
+                evidenceRole: "supports_candidate",
+              },
+            ],
+            duplicateRefs: [],
+            toolEvents: [
+              {
+                name: "negative_coverage",
+                ok: true,
+                metadata: {
+                  polarity: "negative",
+                  intentTags: ["review-correction"],
+                },
+              },
+            ],
+            reason: null,
+          },
+        };
+      },
+      runFinalizeDistille: async (input) => {
+        const candidate = input.resultOverride?.candidate;
+        const negativeEvent = input.resultOverride?.toolEvents.find(
+          (event) => event.name === "negative_coverage" && event.ok,
+        );
+        const negativeMetadata =
+          negativeEvent?.metadata &&
+          typeof negativeEvent.metadata === "object" &&
+          !Array.isArray(negativeEvent.metadata)
+            ? negativeEvent.metadata
+            : {};
+        const polarity = negativeMetadata.polarity;
+        const intentTags = Array.isArray(negativeMetadata.intentTags)
+          ? negativeMetadata.intentTags
+          : [];
+        expect(input.coverEvidenceResultId).toBeTruthy();
+        expect(candidate?.technologies).toEqual(["sqlite"]);
+        expect(candidate?.changeTypes).toEqual(["testing"]);
+        expect(candidate?.domains).toEqual(["knowledge"]);
+        expect(polarity).toBe("negative");
+        expect(intentTags).toEqual(["review-correction"]);
+        sqlite.db
+          .query(
+            `
+            insert into knowledge_items (
+              id, type, status, scope, polarity, intent_tags, title, body, applies_to,
+              confidence, importance, metadata, created_at, updated_at
+            ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          )
+          .run(
+            "knowledge-negative-e2e",
+            candidate?.type ?? "rule",
+            "draft",
+            "repo",
+            String(polarity),
+            JSON.stringify(intentTags),
+            candidate?.title ?? "Negative SQLite knowledge",
+            candidate?.body ?? "Negative SQLite knowledge body",
+            JSON.stringify(appliesTo),
+            candidate?.confidence ?? 80,
+            candidate?.importance ?? 80,
+            JSON.stringify({
+              coverEvidenceResultId: input.coverEvidenceResultId,
+              references: input.resultOverride?.references ?? [],
+            }),
+            now,
+            now,
+          );
+        return {
+          coverEvidenceResultId: input.coverEvidenceResultId,
+          knowledgeId: "knowledge-negative-e2e",
+          status: "stored",
+          embeddingStatus: "stored",
+          sourceReferenceCount: input.resultOverride?.references.length ?? 0,
+          sourceLinkCount: 0,
+          reason: null,
+          finalizeSummary: {
+            decision: "stored",
+            reason: "sqlite runtime test stored deterministic negative knowledge",
+            anonymization: {
+              applied: false,
+              version: 1,
+              replacementKinds: [],
+              replacementCounts: {},
+              removedApplicabilityScopes: [],
+            },
+            qualityGates: ["applicability", "sqlite-runtime"],
+            llmAssist: { enabled: false, applied: false },
+          },
+        };
+      },
+    });
+
+    const coverResult = await runQueueWorkerOnce({
+      queueName: "coveringEvidence",
+      workerId: "sqlite-negative-cover-worker",
+    });
+    expect(coverResult).toMatchObject({
+      ok: true,
+      idle: false,
+      claimedJobId: "covering-negative-e2e",
+      completedJobId: "covering-negative-e2e",
+    });
+
+    const evidence = sqlite.db
+      .query<
+        {
+          id: string;
+          status: string;
+          stage: string;
+          applies_to: string;
+          tool_events: string;
+        },
+        []
+      >(
+        `
+        select id, status, stage, applies_to, tool_events
+        from evidence_coverage_results
+        where found_candidate_id = 'candidate-negative-e2e'
+          and producer_queue = 'coveringEvidence'
+      `,
+      )
+      .get();
+    expect(evidence?.status).toBe("knowledge_ready");
+    expect(JSON.parse(evidence?.applies_to ?? "{}")).toEqual(appliesTo);
+    expect(JSON.stringify(JSON.parse(evidence?.tool_events ?? "[]"))).toContain(
+      "negative_coverage",
+    );
+
+    expect(evidence?.id).toBeTruthy();
+    const finalizeJob = sqlite.db
+      .query<{ id: string; status: string; evidence_result_id: string }, [string]>(
+        `
+        select id, status, evidence_result_id
+        from finalize_distille_queue
+        where evidence_result_id = ?
+      `,
+      )
+      .get(evidence?.id ?? "");
+    expect(finalizeJob?.status).toBe("pending");
+
+    const finalizeResult = await runQueueWorkerOnce({
+      queueName: "finalizeDistille",
+      workerId: "sqlite-negative-finalize-worker",
+    });
+    expect(finalizeResult).toMatchObject({
+      ok: true,
+      idle: false,
+      claimedJobId: finalizeJob?.id,
+      completedJobId: finalizeJob?.id,
+    });
+
+    expect(finalizeJob?.id).toBeTruthy();
+    const finalized = sqlite.db
+      .query<{ status: string; knowledge_id: string; last_outcome_kind: string }, [string]>(
+        `
+        select status, knowledge_id, last_outcome_kind
+        from finalize_distille_queue
+        where id = ?
+      `,
+      )
+      .get(finalizeJob?.id ?? "");
+    expect(finalized).toEqual({
+      status: "completed",
+      knowledge_id: "knowledge-negative-e2e",
+      last_outcome_kind: "stored",
+    });
+
+    const knowledge = sqlite.db
+      .query<{ polarity: string; intent_tags: string; applies_to: string }, []>(
+        `
+        select polarity, intent_tags, applies_to
+        from knowledge_items
+        where id = 'knowledge-negative-e2e'
+      `,
+      )
+      .get();
+    expect(knowledge?.polarity).toBe("negative");
+    expect(JSON.parse(knowledge?.intent_tags ?? "[]")).toEqual(["review-correction"]);
+    expect(JSON.parse(knowledge?.applies_to ?? "{}")).toEqual(appliesTo);
   });
 
   test("serves candidate list from sqlite when postgres is unreachable", async () => {

@@ -34,9 +34,9 @@ append_hook_log() {
 if [ "$MODE" = "pre-commit" ]; then
   append_hook_log "pre-commit reminder emitted"
   echo "[context-still] pre-commit reminder"
-  echo "  if this task used context_compile, compile_eval is required before final completion report"
+  echo "  if this task used context_compile and it returned content, compile_eval is required before final completion report"
   echo "  if this task followed context_decision, record context_decision_feedback when outcome is known"
-  echo "  ask user first: Fill compile_eval now? (Yes/No)"
+  echo "  if compile_eval is needed, ask user first: Fill compile_eval now? (Yes/No)"
   exit 0
 fi
 
@@ -137,16 +137,16 @@ Evidence:
 
 再利用可能なレッスンが存在しない場合は、登録すべき候補がない旨を報告してください。
 
-【重要】\`context_compile\` を利用したコーディング作業が完了した後は、必ず MCP ツール \`compile_eval\` を実行し、以下を保存してください：
+【重要】\`context_compile\` を利用したコーディング作業が完了した後は、\`No Content\` 以外の runId について MCP ツール \`compile_eval\` を実行し、以下を保存してください：
 - 5つの詳細評価指標: \`relevance\`, \`actionability\`, \`coverage\`, \`clarity\`, \`specificity\` (すべて 0〜100 の数値)
 - 評価結果 (\`useful\` / \`partial\` / \`misleading\` / \`unused\`)
 - 評価コメントである \`body\` (※極力、日本語を用いて具体的かつ詳細に記述することが強く推奨されます)
-- 同一セッション内に複数の \`context_compile\` 実行がある場合は、直近の tool 実行結果や作業ログで runId を確認し、すべての runId に対して個別に評価を保存してください（\`runId\` を明示的に渡してください）
-- 完了前に、まずユーザーへ確認してください: 「今から compile_eval を入力しますか？ (Yes/No)」 Yes なら直ちに実行します。
+- 同一セッション内に複数の \`context_compile\` 実行がある場合は、直近の tool 実行結果や作業ログで runId を確認し、\`No Content\` 以外の runId に対して個別に評価を保存してください（\`runId\` を明示的に渡してください）
+- \`No Content\` 以外の評価対象がある場合、完了前にまずユーザーへ確認してください: 「今から compile_eval を入力しますか？ (Yes/No)」 Yes なら直ちに実行します。
 - 完了報告の前に、以下の件数を自己申告してください：
   - このタスクでの \`context_compile\` の実行回数
   - このタスクでの \`compile_eval\` の実行回数
-  - 評価回数が不足している場合は、先に不足分の \`compile_eval\` を追加実行してから完了報告を行ってください
+  - \`No Content\` 以外の runId で評価回数が不足している場合は、先に不足分の \`compile_eval\` を追加実行してから完了報告を行ってください
 
 【重要】\`context_decision\` を利用した判断に従って作業した場合は、作業結果が分かった時点で MCP ツール \`context_decision_feedback\` を保存してください。pre-commit 時点で検証結果が分かっている場合は、そのタイミングで記録してください：
 - 成功した場合: \`source\` は \`system\` または \`ai\`、\`outcome\` は \`success\`

@@ -1,23 +1,24 @@
-import { db } from "../../db/index.js";
-import { getFindCandidateResultById } from "../findCandidate/repository.js";
-import {
-  saveCoverEvidenceResult,
-  selectCoverEvidenceResultById,
-} from "../coverEvidence/repository.js";
-import { parseNegativeEvidenceResult } from "./parser.js";
-import { buildNegativeEvidencePrompt } from "./prompts.js";
-import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
+import { resolveCoverEvidenceRouteByPolicy } from "../coverEvidence/provider-policy.js";
+import { saveCoverEvidenceResult } from "../coverEvidence/repository.js";
 import type { CoverEvidenceResult } from "../coverEvidence/types.js";
 import {
   type DistillationChatClient,
   createDefaultChatClient,
   resolveRouteModelForProvider,
 } from "../distillation/distillation-runtime.service.js";
+import { getFindCandidateResultById } from "../findCandidate/repository.js";
 import {
   ensureRuntimeSettingsLoaded,
   resolveCoverEvidenceRoutes,
 } from "../settings/settings.service.js";
-import { resolveCoverEvidenceRouteByPolicy } from "../coverEvidence/provider-policy.js";
+import {
+  applicabilityToCoverCandidateFields,
+  hasRequiredApplicabilityFacets,
+  mergeApplicability,
+  normalizeApplicability,
+} from "../knowledge/applicability.js";
+import { parseNegativeEvidenceResult } from "./parser.js";
+import { buildNegativeEvidencePrompt } from "./prompts.js";
 
 export async function runCoverNegativeEvidence(params: {
   id: string;
@@ -74,22 +75,36 @@ export async function runCoverNegativeEvidence(params: {
   });
 
   const parsed = parseNegativeEvidenceResult(response.content ?? "");
+  const appliesTo = mergeApplicability(
+    normalizeApplicability(row),
+    normalizeApplicability(row.metadata),
+    normalizeApplicability(row.origin),
+    parsed.appliesTo,
+  );
 
-  // Map to CoverEvidenceResult format to keep compatibility with existing pipeline
-  const mappedStatus = parsed.status === "ready" ? "knowledge_ready" : parsed.status;
+  // Map to CoverEvidenceResult format to keep compatibility with existing pipeline.
+  const missingRequiredApplicability =
+    parsed.status === "ready" && !hasRequiredApplicabilityFacets(appliesTo);
+  const mappedStatus =
+    parsed.status === "ready" && !missingRequiredApplicability
+      ? "knowledge_ready"
+      : missingRequiredApplicability
+        ? "insufficient"
+        : parsed.status;
 
   const result: CoverEvidenceResult = {
     schemaVersion: 1,
     status: mappedStatus as any,
     stage: "final",
     candidate:
-      parsed.status === "ready"
+      parsed.status === "ready" && !missingRequiredApplicability
         ? {
             type: "rule",
             title: row.title,
             body: `Failure: ${parsed.distilled.failure}\n${parsed.distilled.impact ? `Impact: ${parsed.distilled.impact}\n` : ""}${parsed.distilled.trigger ? `Trigger: ${parsed.distilled.trigger}\n` : ""}${parsed.distilled.fix ? `Fix: ${parsed.distilled.fix}\n` : ""}${parsed.distilled.verification ? `Verification: ${parsed.distilled.verification}\n` : ""}${parsed.distilled.decisionSignal ? `Decision signal: ${parsed.distilled.decisionSignal}\n` : ""}`,
             confidence: 90,
             importance: 80,
+            ...applicabilityToCoverCandidateFields(appliesTo),
           }
         : null,
     references: parsed.evidence.map((e) => ({
@@ -106,12 +121,17 @@ export async function runCoverNegativeEvidence(params: {
         metadata: {
           polarity: parsed.polarity,
           intentTags: parsed.intentTags,
+          ...(appliesTo ? { appliesTo } : {}),
           originRefs: parsed.originRefs,
           distilled: parsed.distilled,
         },
       },
     ],
-    reason: parsed.status !== "ready" ? parsed.status : null,
+    reason: missingRequiredApplicability
+      ? "applies_to_categories_required"
+      : parsed.status !== "ready"
+        ? parsed.status
+        : null,
   };
 
   if (params.write) {

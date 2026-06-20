@@ -5,6 +5,9 @@ import type { CoverEvidenceReference } from "./types.js";
 import type { CoverEvidenceCandidateInput } from "./types.js";
 
 export type CoverEvidenceSourceRead = {
+  primaryContent: string | null;
+  assessmentContent: string;
+  assessmentSource: "primary" | "source_summary";
   content: string;
   valueAssessmentContent: string;
   references: CoverEvidenceReference[];
@@ -78,7 +81,10 @@ function sourceSummaryFallback(params: {
   readRanges?: Array<{ from: number; toExclusive: number }>;
 }): CoverEvidenceSourceRead {
   return {
-    content: params.sourceSummary,
+    primaryContent: null,
+    assessmentContent: params.sourceSummary,
+    assessmentSource: "source_summary",
+    content: "",
     valueAssessmentContent: params.sourceSummary,
     references: [
       {
@@ -86,7 +92,7 @@ function sourceSummaryFallback(params: {
         uri: params.row.sourceUri,
         locator: "sourceSummary",
         note: "candidate source summary fallback",
-        evidenceRole: "supports_candidate",
+        evidenceRole: "source_summary",
       },
     ],
     readRanges:
@@ -96,37 +102,15 @@ function sourceSummaryFallback(params: {
   };
 }
 
-function candidateContentFallback(params: {
-  row: CoverEvidenceCandidateInput;
-  readRanges?: Array<{ from: number; toExclusive: number }>;
-}): CoverEvidenceSourceRead | null {
-  const content = params.row.content.trim();
-  if (!content) return null;
-  return {
-    content,
-    valueAssessmentContent: content,
-    references: [
-      {
-        kind: "source",
-        uri: params.row.sourceUri,
-        locator: "candidate:content",
-        note: "candidate content fallback because source memory is unavailable",
-        evidenceRole: "supports_candidate",
-      },
-    ],
-    readRanges:
-      params.readRanges && params.readRanges.length > 0
-        ? params.readRanges
-        : [{ from: 0, toExclusive: content.length }],
-  };
-}
-
 export async function readSourceEvidenceForCandidate(
   row: CoverEvidenceCandidateInput,
 ): Promise<CoverEvidenceSourceRead> {
   const valueAssessmentContent = sourceSummaryFromOrigin(row.origin);
   if (row.targetKind === "knowledge_candidate") {
     return {
+      primaryContent: row.content,
+      assessmentContent: valueAssessmentContent ?? row.content,
+      assessmentSource: valueAssessmentContent ? "source_summary" : "primary",
       content: row.content,
       valueAssessmentContent: valueAssessmentContent ?? row.content,
       references: [
@@ -182,10 +166,6 @@ export async function readSourceEvidenceForCandidate(
         readRanges: ranges,
       });
     }
-    if (row.targetKind === "vibe_memory") {
-      const fallback = candidateContentFallback({ row, readRanges: ranges });
-      if (fallback) return fallback;
-    }
     throw error;
   }
 
@@ -198,6 +178,9 @@ export async function readSourceEvidenceForCandidate(
     });
   }
   return {
+    primaryContent: content,
+    assessmentContent: valueAssessmentContent ?? content,
+    assessmentSource: valueAssessmentContent ? "source_summary" : "primary",
     content,
     valueAssessmentContent: valueAssessmentContent ?? content,
     references,

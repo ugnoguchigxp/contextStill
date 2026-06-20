@@ -1,5 +1,10 @@
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
 import {
+  applicabilityToCoverCandidateFields,
+  mergeApplicability,
+  normalizeApplicability,
+} from "../knowledge/applicability.js";
+import {
   type CoverEvidenceCandidate,
   type CoverEvidenceDuplicateRef,
   type CoverEvidenceReference,
@@ -41,52 +46,6 @@ function asOptionalString(value: unknown): string | undefined {
   return text ? text : undefined;
 }
 
-function asStringArray(value: unknown): string[] {
-  if (Array.isArray(value)) {
-    return value
-      .filter((item): item is string => typeof item === "string")
-      .map((item) => item.trim())
-      .filter(Boolean);
-  }
-  if (typeof value === "string" && value.trim()) {
-    const trimmed = value.trim();
-    if (/^(?:n\/a|na|null|none|-|なし|\[\])$/i.test(trimmed)) {
-      return [];
-    }
-    if (trimmed.startsWith("[") && trimmed.endsWith("]")) {
-      try {
-        const parsed = JSON.parse(trimmed);
-        if (Array.isArray(parsed)) {
-          return parsed
-            .filter((item): item is string => typeof item === "string")
-            .map((item) => item.trim())
-            .filter(Boolean);
-        }
-      } catch {
-        // Local LLM sometimes emits bracketed labels like [AuthError].
-      }
-    }
-    const normalized =
-      trimmed.startsWith("[") && trimmed.endsWith("]") ? trimmed.slice(1, -1) : trimmed;
-    return normalized
-      .split(/[,、，]/)
-      .map((part) => part.trim())
-      .filter((part) => !/^(?:n\/a|na|null|none|-|なし|\[\])$/i.test(part))
-      .filter(Boolean);
-  }
-  return [];
-}
-
-function asOptionalBoolean(value: unknown): boolean | undefined {
-  if (typeof value === "boolean") return value;
-  if (typeof value === "string") {
-    const normalized = value.trim().toLowerCase();
-    if (normalized === "true") return true;
-    if (normalized === "false") return false;
-  }
-  return undefined;
-}
-
 function asOptionalReason(value: unknown): string | null {
   const text = asOptionalString(value)?.replace(/\s+/g, " ").trim();
   return text ? text.slice(0, MAX_REASON_LENGTH) : null;
@@ -113,65 +72,9 @@ function parseApplicability(
   CoverEvidenceCandidate,
   "applicabilityGeneral" | "technologies" | "changeTypes" | "domains" | "repoPath" | "repoKey"
 > {
-  const nested = asRecord(
-    recordValue(record, [
-      "appliesTo",
-      "applies_to",
-      "APPLIES_TO",
-      "applicability",
-      "APPLICABILITY",
-    ]),
+  return applicabilityToCoverCandidateFields(
+    mergeApplicability(normalizeApplicability(defaults), normalizeApplicability(record)),
   );
-  const technologies = asStringArray(
-    recordValue(record, ["technologies", "TECHNOLOGIES"]) ?? nested.technologies,
-  );
-  const changeTypes = asStringArray(
-    recordValue(record, ["changeTypes", "change_types", "CHANGE_TYPES", "CHANGETYPES"]) ??
-      nested.changeTypes,
-  );
-  const domains = asStringArray(
-    recordValue(record, ["domains", "domain", "DOMAINS", "DOMAIN"]) ?? nested.domains,
-  );
-  const general = asOptionalBoolean(
-    recordValue(record, [
-      "applicabilityGeneral",
-      "applicability_general",
-      "APPLICABILITY_GENERAL",
-      "general",
-      "GENERAL",
-    ]) ?? nested.general,
-  );
-  const repoPath = asOptionalString(
-    recordValue(record, ["repoPath", "repo_path", "REPO_PATH"]) ?? nested.repoPath,
-  );
-  const repoKey = asOptionalString(
-    recordValue(record, ["repoKey", "repo_key", "REPO_KEY"]) ?? nested.repoKey,
-  );
-
-  return {
-    ...(general !== undefined
-      ? { applicabilityGeneral: general }
-      : defaults.applicabilityGeneral !== undefined
-        ? { applicabilityGeneral: defaults.applicabilityGeneral }
-        : {}),
-    ...(technologies.length > 0
-      ? { technologies }
-      : defaults.technologies && defaults.technologies.length > 0
-        ? { technologies: defaults.technologies }
-        : {}),
-    ...(changeTypes.length > 0
-      ? { changeTypes }
-      : defaults.changeTypes && defaults.changeTypes.length > 0
-        ? { changeTypes: defaults.changeTypes }
-        : {}),
-    ...(domains.length > 0
-      ? { domains }
-      : defaults.domains && defaults.domains.length > 0
-        ? { domains: defaults.domains }
-        : {}),
-    ...(repoPath ? { repoPath } : defaults.repoPath ? { repoPath: defaults.repoPath } : {}),
-    ...(repoKey ? { repoKey } : defaults.repoKey ? { repoKey: defaults.repoKey } : {}),
-  };
 }
 
 function candidateRecordFromResult(record: Record<string, unknown>): Record<string, unknown> {
@@ -276,6 +179,7 @@ function parseReference(value: unknown): CoverEvidenceReference | null {
     !uri ||
     !note ||
     (evidenceRole !== "supports_candidate" &&
+      evidenceRole !== "source_summary" &&
       evidenceRole !== "dedupe_match" &&
       evidenceRole !== "external_verification")
   ) {

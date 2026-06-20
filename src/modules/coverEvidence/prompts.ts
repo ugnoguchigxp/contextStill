@@ -34,12 +34,18 @@ function compactSourceContext(context: CoverEvidenceSourceContext): {
   targetKind: CoverEvidenceSourceContext["targetKind"];
   sourceUri: string;
   readRanges: CoverEvidenceSourceContext["readRanges"];
+  assessmentSource?: CoverEvidenceSourceContext["assessmentSource"];
+  hasPrimaryEvidence?: boolean;
   sourceSummary?: string;
 } {
   return {
     targetKind: context.targetKind,
     sourceUri: context.sourceUri,
     readRanges: context.readRanges,
+    ...(context.assessmentSource ? { assessmentSource: context.assessmentSource } : {}),
+    ...(context.hasPrimaryEvidence !== undefined
+      ? { hasPrimaryEvidence: context.hasPrimaryEvidence }
+      : {}),
     ...(context.sourceSummary ? { sourceSummary: context.sourceSummary } : {}),
   };
 }
@@ -153,7 +159,9 @@ export function externalEvidenceFinalUserPrompt(params: {
     JSON.stringify(params.sourceReferences, null, 2),
     "system/source metadata:",
     JSON.stringify(params.sourceContext, null, 2),
-    "source evidence:",
+    params.sourceContext.assessmentSource === "source_summary"
+      ? "source summary:"
+      : "source evidence:",
     compactSourceEvidence(params.sourceEvidence),
     `search query: ${params.searchQuery}`,
     "fetch_content evidence:",
@@ -215,7 +223,9 @@ export function valueAssessmentUserPrompt(params: {
     compactJson(compactReferences(params.sourceReferences)),
     "system/source metadata:",
     compactJson(compactSourceContext(params.sourceContext)),
-    "source evidence summary/excerpt:",
+    params.sourceContext.assessmentSource === "source_summary"
+      ? "source summary:"
+      : "source evidence excerpt:",
     compactSourceEvidence(params.sourceContentExcerpt),
   ].join("\n\n");
 }
