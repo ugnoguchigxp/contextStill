@@ -1,6 +1,7 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
 import { runCoverEvidence } from "../src/modules/coverEvidence/domain.js";
 import { parseCoverEvidenceResult } from "../src/modules/coverEvidence/parser.js";
+import { estimateTextTokens } from "../src/modules/llm/token-estimator.js";
 
 const mocks = vi.hoisted(() => ({
   getFindCandidateResultById: vi.fn(),
@@ -591,12 +592,11 @@ describe("runCoverEvidence", () => {
       }),
       expect.objectContaining({ id: "find-1" }),
     );
-    expect(mocks.executeDistillationToolCall).toHaveBeenNthCalledWith(
-      2,
+    expect(mocks.executeDistillationToolCall).toHaveBeenCalledWith(
       expect.objectContaining({
         function: expect.objectContaining({
           name: "fetch_content",
-          arguments: JSON.stringify({ url: "1" }),
+          arguments: JSON.stringify({ url: "https://example.com/docs" }),
         }),
       }),
       expect.objectContaining({ id: "find-1" }),
@@ -618,6 +618,119 @@ describe("runCoverEvidence", () => {
       "source evidence と fetch_content evidence",
     );
     expect(finalRequest.messages[0]?.content).toContain("汎用的に使える知識として体裁");
+  });
+
+  test("fetches multiple web sources and passes roughly 15k tokens of web evidence", async () => {
+    mocks.runDistillationCompletion.mockReset();
+    mocks.runDistillationCompletion
+      .mockResolvedValueOnce(completion("| coverEvidence | testing |"))
+      .mockResolvedValueOnce(completion("1,2,3,4,5,6,7,8"))
+      .mockResolvedValueOnce(completion(defaultExternalFinalOutput()));
+    mocks.executeDistillationToolCall.mockImplementation(async (toolCall) => {
+      const args = JSON.parse(toolCall.function.arguments) as { query?: string; url?: string };
+      if (toolCall.function.name === "search_web") {
+        return {
+          callId: toolCall.id,
+          name: "search_web",
+          ok: true,
+          content: JSON.stringify({
+            query: args.query,
+            results: Array.from({ length: 8 }, (_, index) => ({
+              title: `Example docs ${index + 1}`,
+              url: `https://example.com/docs/${index + 1}`,
+              snippet: `Fetched docs for coverEvidence testing ${index + 1}.`,
+            })),
+          }),
+          metadata: { query: args.query, resultCount: 8, provider: "test" },
+        };
+      }
+      const url = args.url ?? "https://example.com/docs/unknown";
+      return {
+        callId: toolCall.id,
+        name: "fetch_content",
+        ok: true,
+        content: JSON.stringify({
+          url,
+          text: `Primary source ${url}. ${"Detailed external evidence. ".repeat(900)}`,
+        }),
+        metadata: { url, finalUrl: url },
+      };
+    });
+
+    const result = await runCoverEvidence({ id: "find-1", forceRefreshEvidence: true });
+
+    expect(result.result.status).toBe("knowledge_ready");
+    const fetchCalls = mocks.executeDistillationToolCall.mock.calls.filter(
+      (call) => call[0]?.function?.name === "fetch_content",
+    );
+    expect(fetchCalls).toHaveLength(8);
+    expect(fetchCalls.map((call) => JSON.parse(call[0].function.arguments).url)).toContain(
+      "https://example.com/docs/8",
+    );
+    const finalRequest = mocks.runDistillationCompletion.mock.calls[2]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    const webEvidence =
+      finalRequest.messages[1]?.content.split("fetch_content evidence:\n")[1] ?? "";
+    expect(webEvidence.length).toBeGreaterThan(12_000);
+    expect(estimateTextTokens(webEvidence)).toBeLessThanOrEqual(15_000);
+    expect(finalRequest.messages[0]?.content).toContain("最大約 15000 token");
+  });
+
+  test("expands sparse fetch selection with top search results", async () => {
+    mocks.runDistillationCompletion.mockReset();
+    mocks.runDistillationCompletion
+      .mockResolvedValueOnce(completion("| coverEvidence | testing |"))
+      .mockResolvedValueOnce(completion("1"))
+      .mockResolvedValueOnce(completion(defaultExternalFinalOutput()));
+    mocks.executeDistillationToolCall.mockImplementation(async (toolCall) => {
+      const args = JSON.parse(toolCall.function.arguments) as { query?: string; url?: string };
+      if (toolCall.function.name === "search_web") {
+        return {
+          callId: toolCall.id,
+          name: "search_web",
+          ok: true,
+          content: JSON.stringify({
+            query: args.query,
+            results: Array.from({ length: 4 }, (_, index) => ({
+              title: `Example docs ${index + 1}`,
+              url: `https://example.com/expand/${index + 1}`,
+              snippet: `Fetched docs for expansion ${index + 1}.`,
+            })),
+          }),
+          metadata: { query: args.query, resultCount: 4, provider: "test" },
+        };
+      }
+      const url = args.url ?? "https://example.com/expand/unknown";
+      return {
+        callId: toolCall.id,
+        name: "fetch_content",
+        ok: true,
+        content: JSON.stringify({ url, text: `Primary source ${url}.` }),
+        metadata: { url, finalUrl: url },
+      };
+    });
+
+    const result = await runCoverEvidence({ id: "find-1", forceRefreshEvidence: true });
+
+    expect(result.result.status).toBe("knowledge_ready");
+    const fetchUrls = mocks.executeDistillationToolCall.mock.calls
+      .filter((call) => call[0]?.function?.name === "fetch_content")
+      .map((call) => JSON.parse(call[0].function.arguments).url);
+    expect(fetchUrls).toEqual([
+      "https://example.com/expand/1",
+      "https://example.com/expand/2",
+      "https://example.com/expand/3",
+      "https://example.com/expand/4",
+    ]);
+    expect(result.result.toolEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "fetch_selection",
+          metadata: expect.objectContaining({ expandedSelection: "1,2,3,4" }),
+        }),
+      ]),
+    );
   });
 
   test("refines missing applicability facets before accepting external evidence", async () => {
@@ -809,11 +922,15 @@ describe("runCoverEvidence", () => {
           metadata: expect.objectContaining({
             reason: "external_parse_failed",
             contentPreview: expect.stringContaining("cannot produce JSON"),
-            toolEventCount: 4,
+            toolEventCount: expect.any(Number),
           }),
         }),
       ]),
     );
+    const parseFailure = result.result.toolEvents.find(
+      (event) => event.name === "parse_cover_evidence_result",
+    );
+    expect(Number(parseFailure?.metadata?.toolEventCount ?? 0)).toBeGreaterThanOrEqual(4);
   });
 
   test("classifies LLM timeout with prior tool events as provider failure", async () => {

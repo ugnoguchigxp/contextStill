@@ -380,7 +380,7 @@ describe("Admin Repository sources/settings", () => {
           search: {
             providerOrder: ["brave", "exa", "duckduckgo"],
             maxProviderAttempts: 2,
-            resultCount: 3,
+            resultCount: 8,
             timeoutMs: 10000,
             rateLimitCooldownSeconds: 3600,
             providers: {
@@ -402,8 +402,8 @@ describe("Admin Repository sources/settings", () => {
             findCandidateTimeoutMs: 600000,
             findCandidateMaxToolCalls: 8,
             coverEvidenceTimeoutMs: 600000,
-            coverEvidenceSearchMaxCalls: 1,
-            coverEvidenceFetchMaxCalls: 3,
+            coverEvidenceSearchMaxCalls: 3,
+            coverEvidenceFetchMaxCalls: 8,
             toolTimeoutMs: 10000,
             toolResultMaxChars: 12000,
             failureRetryDelaySeconds: 90,

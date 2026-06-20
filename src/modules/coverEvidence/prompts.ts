@@ -91,12 +91,12 @@ export function externalEvidenceSearchQueryUserPrompt(params: {
   ].join("\n\n");
 }
 
-export function externalEvidenceFetchSelectionSystemPrompt(): string {
+export function externalEvidenceFetchSelectionSystemPrompt(maxFetchCount = 3): string {
   return [
     "search_web の結果から、fetch_content で読む候補番号だけを選んでください。",
     "出力は番号だけです。",
     "形式: `2,3,4`",
-    "1から3件まで選んでください。",
+    `1から${maxFetchCount}件まで選んでください。`,
     "説明、URL、JSON、ラベルは返さないでください。",
   ].join("\n");
 }
@@ -115,10 +115,11 @@ export function externalEvidenceFetchSelectionUserPrompt(params: {
   ].join("\n\n");
 }
 
-export function externalEvidenceFinalSystemPrompt(): string {
+export function externalEvidenceFinalSystemPrompt(webEvidenceTokenBudget = 15_000): string {
   return [
     "source evidence と fetch_content evidence から、coverEvidence の最終判定を返してください。",
     "source evidence は候補の直接根拠です。fetch_content evidence は公開Webの補助根拠です。",
+    `fetch_content evidence は最大約 ${webEvidenceTokenBudget} token まで渡されます。複数ソースの本文を比較して、不足情報を補ってください。`,
     "内部実装、repo運用、coding agent 作業手順は公開Webだけでは直接検証できない場合があります。その場合、source evidence が十分なら knowledge_ready にしてください。",
     "knowledge_ready のタイトルと本文は、汎用的に使える知識として体裁を整えてください。",
     "search snippet は根拠にしないでください。",

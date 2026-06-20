@@ -196,10 +196,27 @@ function commonCandidateRules(): string[] {
   ];
 }
 
+function reusableKnowledgeSignals(): string[] {
+  return [
+    "候補化してよい signal:",
+    "- ユーザーが明示した継続的な好み、作業境界、禁止事項、優先順位",
+    "- 失敗原因、修正方法、検証方法が source から読み取れる再利用可能なトラブルシュート",
+    "- 特定の repo/module/tool で繰り返し使える調査順序、コマンド順序、復旧手順",
+    "- diff や tool output から確認できる実装上の不変条件、API 契約、設定上の注意",
+    "- レビューで見つかった再発しやすい落とし穴と、それを避けるための具体的な判断基準",
+    "候補化しないもの:",
+    "- 単なる進捗報告、作業中の感想、未検証の仮説、1回限りの成功/失敗",
+    "- source に根拠がない一般論、source content をそのまま要約しただけの文書断片",
+    "- tool 名、JSON schema、system/user prompt の文言そのもの",
+    "会話ログでも、上の signal が source に含まれる場合は [] にせず候補化してください。",
+  ];
+}
+
 function wikiSystemPrompt(): string {
   return [
     "あなたの仕事は文章 content だけを見て、有用な知識候補を選ぶことです。",
     "候補選出以外のことはしないでください。",
+    ...reusableKnowledgeSignals(),
     ...commonCandidateRules(),
   ].join("\n");
 }
@@ -211,7 +228,9 @@ function vibeMemorySystemPrompt(): string {
     "vibe memory は作業ログなので、永続的なルール、再利用できる手順、レビュー観点、復旧手順、リポジトリ固有の運用知だけを候補にしてください。",
     "単なる一回限りの実行結果、途中経過、感想、明らかに古い仮説、未確認の推測は候補にしないでください。",
     "agent diff がある場合は、diff から読み取れる実装上の不変条件や手順だけを候補にしてください。",
+    "ただし、会話が進捗報告中心でも、最終的に原因・修正・検証・ユーザーの継続的な preference が確認できる場合は候補化してください。",
     "追加情報が必要な場合だけ memory_reader tool を使って次の token window を読んでください。",
+    ...reusableKnowledgeSignals(),
     ...commonCandidateRules(),
   ].join("\n");
 }
@@ -240,18 +259,20 @@ function vibeMemoryInitialUserPrompt(): string {
 function vibeMemoryAfterInitialReadPrompt(): string {
   return [
     "上の memory_reader tool result を評価してください。",
+    "原因・修正・検証・ユーザーの継続的 preference・repo 固有の運用手順が含まれる場合は、進捗会話をそのまま捨てずに再利用可能な candidate にしてください。",
     "追加の window が必要なら memory_reader を呼び出してください。",
     "十分なら、候補 JSON だけを返してください。",
-    "候補がなければ [] を返してください。",
+    "明確な再利用可能 signal がない場合だけ [] を返してください。",
   ].join("\n");
 }
 
 function readerAfterInitialReadPrompt(toolName: string): string {
   return [
     `上の ${toolName} tool result を source content として評価してください。`,
+    "原因・修正・検証・ユーザーの継続的 preference・repo 固有の運用手順が含まれる場合は、再利用可能な candidate にしてください。",
     "追加の window が必要なら reader tool を呼び出してください。",
     "十分なら、候補 JSON だけを返してください。",
-    "候補がなければ [] を返してください。",
+    "明確な再利用可能 signal がない場合だけ [] を返してください。",
   ].join("\n");
 }
 

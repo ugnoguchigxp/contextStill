@@ -144,6 +144,10 @@ describe("runFindCandidate", () => {
             content: expect.stringContaining("Use when: / Workflow: / Verification: / Avoid:"),
           }),
           expect.objectContaining({
+            role: "system",
+            content: expect.stringContaining("失敗原因、修正方法、検証方法"),
+          }),
+          expect.objectContaining({
             role: "user",
             content: expect.stringContaining("まず tool で本文を読んでください"),
           }),
@@ -402,13 +406,17 @@ describe("runFindCandidate", () => {
             content: expect.stringContaining("vibe memory の content"),
           }),
           expect.objectContaining({
+            role: "system",
+            content: expect.stringContaining("会話が進捗報告中心でも"),
+          }),
+          expect.objectContaining({
             role: "tool",
             name: "memory_reader",
             content: expect.stringContaining("launchd"),
           }),
           expect.objectContaining({
             role: "user",
-            content: expect.stringContaining("上の memory_reader tool result"),
+            content: expect.stringContaining("明確な再利用可能 signal がない場合だけ []"),
           }),
         ]),
       }),

@@ -1,4 +1,5 @@
 import { groupedConfig } from "../../config.js";
+import { estimateTextTokens } from "../llm/token-estimator.js";
 import {
   type DistillationChatClient,
   type DistillationProviderSetting,
@@ -618,7 +619,17 @@ export async function runValueAssessment(params: {
 }
 
 const MAX_SEARCH_RESULT_PROMPT_CHARS = 6_000;
-const MAX_FETCH_EVIDENCE_PROMPT_CHARS = 12_000;
+const WEB_EVIDENCE_PROMPT_TOKEN_BUDGET = 15_000;
+const MAX_COVER_EVIDENCE_SEARCH_CALLS = 16;
+const MAX_COVER_EVIDENCE_FETCH_CALLS = 16;
+
+type ExternalSearchResultEntry = {
+  index: number;
+  query: string;
+  title: string;
+  url: string;
+  snippet: string;
+};
 
 function compactWhitespace(value: string): string {
   return value.replace(/\s+/g, " ").trim();
@@ -707,9 +718,109 @@ function parseSearchResultsForPrompt(content: string): string {
   return content.slice(0, MAX_SEARCH_RESULT_PROMPT_CHARS);
 }
 
+function parseSearchResultEntries(
+  content: string,
+  query: string,
+): Array<Omit<ExternalSearchResultEntry, "index">> {
+  try {
+    const parsed = JSON.parse(content) as {
+      results?: Array<{ title?: unknown; url?: unknown; snippet?: unknown }>;
+    };
+    const results = Array.isArray(parsed.results) ? parsed.results : [];
+    return results.flatMap((result): Array<Omit<ExternalSearchResultEntry, "index">> => {
+      const url = typeof result.url === "string" ? result.url.trim() : "";
+      if (!url) return [];
+      const title = typeof result.title === "string" ? compactWhitespace(result.title) : "-";
+      const snippet = typeof result.snippet === "string" ? compactWhitespace(result.snippet) : "";
+      return [{ query, title, url, snippet }];
+    });
+  } catch {
+    return [];
+  }
+}
+
+function dedupeSearchResultEntries(
+  entries: Array<Omit<ExternalSearchResultEntry, "index">>,
+): ExternalSearchResultEntry[] {
+  const seen = new Set<string>();
+  const deduped: ExternalSearchResultEntry[] = [];
+  for (const entry of entries) {
+    const key = entry.url.replace(/#.*$/, "").replace(/\/+$/, "").toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    deduped.push({ ...entry, index: deduped.length + 1 });
+  }
+  return deduped;
+}
+
+function formatSearchEntriesForPrompt(entries: ExternalSearchResultEntry[]): string {
+  const lines = entries.flatMap((entry) =>
+    [
+      `${entry.index}. ${entry.title}`,
+      `   ${entry.url}`,
+      `   query: ${entry.query}`,
+      entry.snippet ? `   ${entry.snippet}` : "",
+    ].filter(Boolean),
+  );
+  return lines.join("\n").slice(0, MAX_SEARCH_RESULT_PROMPT_CHARS);
+}
+
+function configuredCoverEvidenceSearchCalls(): number {
+  return Math.max(
+    1,
+    Math.min(
+      MAX_COVER_EVIDENCE_SEARCH_CALLS,
+      Math.floor(groupedConfig.distillationTools.coverEvidenceSearchMaxCalls),
+    ),
+  );
+}
+
+function configuredCoverEvidenceFetchCalls(): number {
+  return Math.max(
+    1,
+    Math.min(
+      MAX_COVER_EVIDENCE_FETCH_CALLS,
+      Math.floor(groupedConfig.distillationTools.coverEvidenceFetchMaxCalls),
+    ),
+  );
+}
+
+function addSearchQuery(queries: string[], rawQuery: string): void {
+  try {
+    const query = buildCoverEvidenceSearchQuery(rawQuery).query;
+    if (query && !queries.includes(query)) queries.push(query);
+  } catch {
+    // Ignore empty or unsearchable variants.
+  }
+}
+
+function buildExternalSearchQueries(params: {
+  candidate: CoverEvidenceCandidate;
+  searchQuery: { query: string; terms: string[] };
+  maxSearchCalls: number;
+}): string[] {
+  const queries: string[] = [];
+  addSearchQuery(queries, params.searchQuery.query);
+  addSearchQuery(queries, params.candidate.title);
+  addSearchQuery(
+    queries,
+    [
+      params.candidate.title,
+      ...(params.candidate.technologies ?? []),
+      ...(params.candidate.domains ?? []),
+    ].join(" "),
+  );
+  for (const term of params.searchQuery.terms) {
+    addSearchQuery(queries, `${params.candidate.title} ${term}`);
+  }
+  addSearchQuery(queries, `${params.candidate.title} ${params.candidate.body.slice(0, 180)}`);
+  return queries.slice(0, params.maxSearchCalls);
+}
+
 function parseFetchSelectionOutput(
   output: string,
   maxIndex: number,
+  maxSelections = 3,
 ): {
   selection: string;
   rawOutput: string;
@@ -723,25 +834,16 @@ function parseFetchSelectionOutput(
     if (!Number.isInteger(index) || index < 1 || index > maxIndex || seen.has(index)) continue;
     seen.add(index);
     indexes.push(index);
-    if (indexes.length >= 3) break;
+    if (indexes.length >= maxSelections) break;
   }
   if (indexes.length > 0) {
     return { selection: indexes.join(","), rawOutput, usedFallback: false };
   }
   const fallback = Array.from(
-    { length: Math.min(3, Math.max(1, maxIndex)) },
+    { length: Math.min(maxSelections, Math.max(1, maxIndex)) },
     (_, index) => index + 1,
   );
   return { selection: fallback.join(","), rawOutput, usedFallback: true };
-}
-
-function searchResultCount(content: string): number {
-  try {
-    const parsed = JSON.parse(content) as { results?: unknown };
-    return Array.isArray(parsed.results) ? parsed.results.length : 0;
-  } catch {
-    return 0;
-  }
 }
 
 function isUnexpectedNoToolsToolCall(error: unknown): boolean {
@@ -777,6 +879,81 @@ async function executeExternalEvidenceTool(params: {
 }): Promise<DistillationToolResult> {
   const executor = params.toolExecutor ?? executeDistillationToolCall;
   return executor(params.toolCall, params.auditContext);
+}
+
+function parseSelectionIndexes(value: string): number[] {
+  const seen = new Set<number>();
+  for (const token of value.split(",")) {
+    const parsed = Number.parseInt(token.trim(), 10);
+    if (Number.isInteger(parsed) && parsed > 0) seen.add(parsed);
+  }
+  return [...seen];
+}
+
+function expandFetchSelectionIndexes(params: {
+  selection: string;
+  maxIndex: number;
+  maxFetchCalls: number;
+}): number[] {
+  const selected = parseSelectionIndexes(params.selection).filter(
+    (index) => index >= 1 && index <= params.maxIndex,
+  );
+  const expanded = [...selected];
+  for (let index = 1; index <= params.maxIndex && expanded.length < params.maxFetchCalls; index++) {
+    if (!expanded.includes(index)) expanded.push(index);
+  }
+  return expanded.slice(0, params.maxFetchCalls);
+}
+
+function fetchResultUrl(result: DistillationToolResult): string | undefined {
+  if (typeof result.metadata?.finalUrl === "string") return result.metadata.finalUrl;
+  if (typeof result.metadata?.url === "string") return result.metadata.url;
+  return undefined;
+}
+
+function combineFetchResults(results: DistillationToolResult[]): DistillationToolResult {
+  return {
+    callId: "",
+    name: "fetch_content",
+    ok: results.some((result) => result.ok),
+    content: JSON.stringify(
+      {
+        selected: results.map((result, index) => ({
+          index: index + 1,
+          ok: result.ok,
+          url: fetchResultUrl(result),
+          ...(result.ok ? { content: result.content } : { error: result.error ?? result.content }),
+        })),
+        instruction:
+          "Use fetched primary source content from all successful sources to produce the final coverEvidence result.",
+      },
+      null,
+      2,
+    ),
+    metadata: {
+      selectedCount: results.length,
+      selectedUrls: results.map(fetchResultUrl).filter((url): url is string => Boolean(url)),
+      okCount: results.filter((result) => result.ok).length,
+    },
+  };
+}
+
+function truncateToEstimatedTokens(value: string, tokenBudget: number): string {
+  if (estimateTextTokens(value) <= tokenBudget) return value;
+  let low = 0;
+  let high = value.length;
+  let best = "";
+  while (low <= high) {
+    const mid = Math.floor((low + high) / 2);
+    const candidate = `${value.slice(0, mid)}\n...[truncated to web evidence budget]`;
+    if (estimateTextTokens(candidate) <= tokenBudget) {
+      best = candidate;
+      low = mid + 1;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return best;
 }
 
 export async function runExternalEvidence(params: {
@@ -847,15 +1024,33 @@ export async function runExternalEvidence(params: {
         usedFallback: searchQuery.usedFallback,
       },
     };
-    const searchResult = await executeExternalEvidenceTool({
-      toolExecutor: params.toolExecutor,
-      toolCall: makeToolCall("search_web", { query: searchQuery.query }),
-      auditContext,
+    const searchQueries = buildExternalSearchQueries({
+      candidate: params.candidate,
+      searchQuery,
+      maxSearchCalls: configuredCoverEvidenceSearchCalls(),
     });
-    const externalToolResults: DistillationToolResult[] = [searchQueryEvent, searchResult];
+    const searchResults: DistillationToolResult[] = [];
+    const searchEntries: Array<Omit<ExternalSearchResultEntry, "index">> = [];
+    for (const query of searchQueries) {
+      const searchResult = await executeExternalEvidenceTool({
+        toolExecutor: params.toolExecutor,
+        toolCall: makeToolCall("search_web", { query }),
+        auditContext,
+      });
+      searchResults.push(searchResult);
+      if (searchResult.ok) {
+        searchEntries.push(...parseSearchResultEntries(searchResult.content, query));
+      }
+    }
+    searchQueryEvent.metadata = {
+      ...searchQueryEvent.metadata,
+      searchQueries,
+      searchCallCount: searchResults.length,
+    };
+    const externalToolResults: DistillationToolResult[] = [searchQueryEvent, ...searchResults];
     completedExternalToolResults = externalToolResults;
 
-    if (!searchResult.ok) {
+    if (searchResults.length === 0 || searchResults.every((result) => !result.ok)) {
       const toolEvents = toolEventsForResult(externalToolResults);
       return makeResult({
         status: "tool_failed",
@@ -867,7 +1062,8 @@ export async function runExternalEvidence(params: {
       });
     }
 
-    const maxSearchIndex = searchResultCount(searchResult.content);
+    const selectedSearchEntries = dedupeSearchResultEntries(searchEntries);
+    const maxSearchIndex = selectedSearchEntries.length;
     if (maxSearchIndex === 0) {
       const toolEvents = toolEventsForResult(externalToolResults);
       return makeResult({
@@ -885,13 +1081,20 @@ export async function runExternalEvidence(params: {
         model: params.model,
         maxTokens: 128,
         messages: [
-          { role: "system", content: externalEvidenceFetchSelectionSystemPrompt() },
+          {
+            role: "system",
+            content: externalEvidenceFetchSelectionSystemPrompt(
+              configuredCoverEvidenceFetchCalls(),
+            ),
+          },
           {
             role: "user",
             content: externalEvidenceFetchSelectionUserPrompt({
               candidate: params.candidate,
-              searchQuery: searchQuery.query,
-              searchResults: parseSearchResultsForPrompt(searchResult.content),
+              searchQuery: searchQueries.join(" | "),
+              searchResults:
+                formatSearchEntriesForPrompt(selectedSearchEntries) ||
+                parseSearchResultsForPrompt(searchResults[0]?.content ?? ""),
             }),
           },
         ],
@@ -914,7 +1117,12 @@ export async function runExternalEvidence(params: {
         signal: params.signal,
       },
     );
-    const selection = parseFetchSelectionOutput(selectionCompletion.content, maxSearchIndex);
+    const maxFetchCalls = configuredCoverEvidenceFetchCalls();
+    const selection = parseFetchSelectionOutput(
+      selectionCompletion.content,
+      maxSearchIndex,
+      maxFetchCalls,
+    );
     const selectionEvent: DistillationToolResult = {
       callId: "",
       name: "fetch_selection",
@@ -926,12 +1134,28 @@ export async function runExternalEvidence(params: {
         usedFallback: selection.usedFallback,
       },
     };
-    const fetchResult = await executeExternalEvidenceTool({
-      toolExecutor: params.toolExecutor,
-      toolCall: makeToolCall("fetch_content", { url: selection.selection }),
-      auditContext,
+    const fetchResults: DistillationToolResult[] = [];
+    const fetchIndexes = expandFetchSelectionIndexes({
+      selection: selection.selection,
+      maxIndex: maxSearchIndex,
+      maxFetchCalls,
     });
-    externalToolResults.push(selectionEvent, fetchResult);
+    selectionEvent.metadata = {
+      ...selectionEvent.metadata,
+      expandedSelection: fetchIndexes.join(","),
+    };
+    for (const index of fetchIndexes) {
+      const entry = selectedSearchEntries[index - 1];
+      if (!entry) continue;
+      const fetchResult = await executeExternalEvidenceTool({
+        toolExecutor: params.toolExecutor,
+        toolCall: makeToolCall("fetch_content", { url: entry.url }),
+        auditContext,
+      });
+      fetchResults.push(fetchResult);
+    }
+    const fetchResult = combineFetchResults(fetchResults);
+    externalToolResults.push(selectionEvent, ...fetchResults);
 
     if (!fetchResult.ok) {
       const toolEvents = toolEventsForResult(externalToolResults);
@@ -952,7 +1176,10 @@ export async function runExternalEvidence(params: {
           model: params.model,
           maxTokens: Math.max(2048, groupedConfig.vibeDistillation.maxOutputTokens),
           messages: [
-            { role: "system", content: externalEvidenceFinalSystemPrompt() },
+            {
+              role: "system",
+              content: externalEvidenceFinalSystemPrompt(WEB_EVIDENCE_PROMPT_TOKEN_BUDGET),
+            },
             {
               role: "user",
               content: externalEvidenceFinalUserPrompt({
@@ -960,8 +1187,11 @@ export async function runExternalEvidence(params: {
                 sourceReferences: params.sourceReferences,
                 sourceContext: params.sourceContext,
                 sourceEvidence: params.sourceContentExcerpt,
-                searchQuery: searchQuery.query,
-                fetchedEvidence: fetchResult.content.slice(0, MAX_FETCH_EVIDENCE_PROMPT_CHARS),
+                searchQuery: searchQueries.join(" | "),
+                fetchedEvidence: truncateToEstimatedTokens(
+                  fetchResult.content,
+                  WEB_EVIDENCE_PROMPT_TOKEN_BUDGET,
+                ),
               }),
             },
           ],
