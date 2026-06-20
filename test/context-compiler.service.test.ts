@@ -364,7 +364,9 @@ describe("Context Compiler Service", () => {
     expect(reasonBuckets.maintenanceWarnings).toContain("CONTEXT_RESPONSE_COMPOSE_FAILED");
   });
 
-  test("records compile usage signals from composed response", async () => {
+  test("records compile usage signals from composed response on sqlite backend", async () => {
+    const previousBackend = process.env.CONTEXT_STILL_DB_BACKEND;
+    process.env.CONTEXT_STILL_DB_BACKEND = "sqlite";
     vi.mocked(retrieveKnowledge).mockResolvedValue({
       items: [
         {
@@ -422,20 +424,28 @@ describe("Context Compiler Service", () => {
       },
     } as any);
 
-    await compileContextPack({ goal: "usage signal capture" });
+    try {
+      await compileContextPack({ goal: "usage signal capture" });
 
-    expect(insertContextCompileCandidateTraces).toHaveBeenCalled();
-    await vi.waitFor(() => {
-      expect(recordCompileRunKnowledgeUsageSignals).toHaveBeenCalledWith(
-        expect.objectContaining({
-          runId: "550e8400-e29b-41d4-a716-446655440000",
-          items: expect.arrayContaining([
-            expect.objectContaining({ knowledgeId: "k1", verdict: "used" }),
-            expect.objectContaining({ knowledgeId: "k4", verdict: "not_used" }),
-          ]),
-        }),
-      );
-    });
+      expect(insertContextCompileCandidateTraces).toHaveBeenCalled();
+      await vi.waitFor(() => {
+        expect(recordCompileRunKnowledgeUsageSignals).toHaveBeenCalledWith(
+          expect.objectContaining({
+            runId: "550e8400-e29b-41d4-a716-446655440000",
+            items: expect.arrayContaining([
+              expect.objectContaining({ knowledgeId: "k1", verdict: "used" }),
+              expect.objectContaining({ knowledgeId: "k4", verdict: "not_used" }),
+            ]),
+          }),
+        );
+      });
+    } finally {
+      if (previousBackend === undefined) {
+        Reflect.deleteProperty(process.env, "CONTEXT_STILL_DB_BACKEND");
+      } else {
+        process.env.CONTEXT_STILL_DB_BACKEND = previousBackend;
+      }
+    }
   });
 
   test("suppresses near-duplicate candidates before selection and records suppression trace", async () => {

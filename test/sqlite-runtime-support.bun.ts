@@ -29,9 +29,12 @@ import {
   listCompileEvalsByRunId,
 } from "../src/modules/context-compiler/context-compile-eval.repository.js";
 import {
+  getCompileRunDetail,
+  getCompileRunRankingTrace,
   insertCompileRun,
   listRecentCompileRuns,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
+import { recordCompileRunKnowledgeFeedback } from "../src/modules/knowledge/knowledge-feedback.service.js";
 import {
   fetchOverviewDashboardForApi,
   fetchOverviewDomainForApi,
@@ -125,7 +128,7 @@ describe("sqlite runtime support repositories", () => {
       sessionId: "sqlite-session",
       repoPath: "/repo/contextStill",
       input: { goal: "sqlite compile eval" },
-      retrievalMode: "implementation_context",
+      retrievalMode: "task_context",
       status: "ok",
       degradedReasons: [],
       tokenBudget: 1000,
@@ -174,6 +177,119 @@ describe("sqlite runtime support repositories", () => {
       "explicit eval",
     ]);
     expect((await listRecentCompileRuns(1))[0]?.evalSummary.count).toBe(2);
+  });
+
+  test("persists compile run knowledge feedback and reflects it in sqlite run detail", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const now = new Date("2026-06-20T00:00:00.000Z").toISOString();
+    const knowledgeId = "550e8400-e29b-41d4-a716-446655440001";
+
+    sqlite.db
+      .query(
+        `
+        insert into knowledge_items (
+          id, type, status, scope, polarity, intent_tags, title, body, applies_to,
+          confidence, importance, metadata, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        knowledgeId,
+        "rule",
+        "active",
+        "repo",
+        "positive",
+        "[]",
+        "SQLite feedback rule",
+        "Use when SQLite feedback needs to be reflected.",
+        "{}",
+        80,
+        80,
+        "{}",
+        now,
+        now,
+      );
+
+    const runId = await insertCompileRun({
+      goal: "sqlite feedback detail",
+      intent: "implementation",
+      input: { goal: "sqlite feedback detail" },
+      retrievalMode: "task_context",
+      status: "ok",
+      degradedReasons: [],
+      tokenBudget: 1000,
+      durationMs: 12,
+      source: "ui",
+    });
+
+    const pack = {
+      runId,
+      goal: "sqlite feedback detail",
+      retrievalMode: "task_context",
+      status: "ok",
+      minimalTasks: [],
+      rules: [
+        {
+          id: "rule-1",
+          itemKind: "rule",
+          itemId: knowledgeId,
+          section: "rules",
+          title: "SQLite feedback rule",
+          content: "Use when SQLite feedback needs to be reflected.",
+          score: 0.9,
+          rankingReason: "selected",
+          sourceRefs: [],
+        },
+      ],
+      procedures: [],
+      guardrails: [],
+      warnings: [],
+      sourceRefs: [],
+      diagnostics: {
+        degradedReasons: [],
+        retrievalStats: {},
+      },
+    };
+
+    sqlite.db
+      .query("update context_compile_runs set pack_snapshot = ? where id = ?")
+      .run(JSON.stringify(pack), runId);
+    sqlite.db
+      .query(
+        `
+        insert into context_pack_items (
+          run_id, item_kind, item_id, section, score, ranking_reason, source_refs, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(runId, "rule", knowledgeId, "rules", 0.9, "selected", "[]", now);
+    sqlite.db
+      .query(
+        `
+        insert into context_compile_candidate_traces (
+          run_id, item_kind, item_id, final_rank, final_score, selected, agentic_decision,
+          ranking_reason, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(runId, "rule", knowledgeId, 1, 0.9, 1, "accepted", "selected", now);
+
+    const result = await recordCompileRunKnowledgeFeedback({
+      runId,
+      actor: "user",
+      items: [{ knowledgeId, verdict: "used" }],
+    });
+    expect(result.savedCount).toBe(1);
+
+    const detail = await getCompileRunDetail(runId);
+    expect(detail?.knowledgeFeedback).toHaveLength(1);
+    expect(detail?.knowledgeSignals[0]?.effectiveVerdict).toBe("used");
+    expect(detail?.knowledgeSignals[0]?.effectiveActor).toBe("user");
+
+    const trace = await getCompileRunRankingTrace(runId);
+    expect(trace?.items[0]?.feedback.verdict).toBe("used");
+    expect(trace?.feedbackSummary.used).toBe(1);
+    expect(trace?.feedbackSummary.noSignal).toBe(0);
   });
 
   test("inspects sqlite core database without requiring postgres-only tables", async () => {

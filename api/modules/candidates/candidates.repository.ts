@@ -368,7 +368,8 @@ function buildLandscapeWarning(row: CandidateSqlRow): CandidateListItem["landsca
   const linkStatus = toLandscapeLinkStatus(row.landscape_link_status);
   const reason = normalizeText(row.landscape_review_item_reason);
   const hasPromotionGateReason = reason === "promotion_gate_review";
-  const hasReviewRequiredStatus = linkStatus === "review_required";
+  const hasReviewRequiredStatus =
+    linkStatus === "draft_created" || linkStatus === "review_required";
   if (!hasPromotionGateReason && !hasReviewRequiredStatus) return null;
   return {
     source: "landscape_review_item",
@@ -550,6 +551,8 @@ function buildFilters(params: CandidateListQuery, includeOutcome: boolean): SQL 
     conditions.push(
       sql`(
         target_key ilike ${pattern}
+        or source_uri ilike ${pattern}
+        or finalize_source_uri ilike ${pattern}
         or original_title ilike ${pattern}
         or original_body ilike ${pattern}
         or coalesce(cover_title, '') ilike ${pattern}
@@ -811,6 +814,8 @@ function matchesCandidateFilters(
 
   return [
     row.target_key,
+    row.source_uri,
+    row.finalize_source_uri,
     row.original_title,
     row.original_body,
     row.cover_title,

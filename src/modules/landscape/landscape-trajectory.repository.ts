@@ -111,17 +111,15 @@ export async function loadLandscapeTrajectory(params: {
         limit 1
       `,
       )
-      .get(params.runId) as
-      | {
-          id: string;
-          goal: string;
-          retrieval_mode: string;
-          status: string;
-          source: string;
-          created_at: string;
-          pack_snapshot: string | null;
-        }
-      | null;
+      .get(params.runId) as {
+      id: string;
+      goal: string;
+      retrieval_mode: string;
+      status: string;
+      source: string;
+      created_at: string;
+      pack_snapshot: string | null;
+    } | null;
 
     if (!runRow) return null;
 
@@ -239,7 +237,8 @@ export async function loadLandscapeTrajectory(params: {
           selected: Number(row.selected ?? 0) === 1,
           suppressed: Number(row.suppressed ?? 0) === 1,
           suppressionReason: row.suppression_reason ? String(row.suppression_reason) : null,
-          agenticDecision: row.agentic_decision as LandscapeTrajectoryCandidateRow["agenticDecision"],
+          agenticDecision:
+            row.agentic_decision as LandscapeTrajectoryCandidateRow["agenticDecision"],
           rankingReason: row.ranking_reason ? String(row.ranking_reason) : null,
           communityKey: row.community_key ? String(row.community_key) : null,
           evidence: parseJsonValue(row.evidence, {}) as Record<string, unknown>,

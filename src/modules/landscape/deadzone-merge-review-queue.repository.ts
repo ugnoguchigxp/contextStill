@@ -118,7 +118,7 @@ export async function upsertDeadZoneMergeReviewJob(params: {
     const sqlite = await getSqliteCoreDatabase();
     const now = new Date().toISOString();
     const existing = sqlite.db
-      .query(`select * from dead_zone_merge_review_queue where idempotency_key = ? limit 1`)
+      .query("select * from dead_zone_merge_review_queue where idempotency_key = ? limit 1")
       .get(params.idempotencyKey) as Record<string, unknown> | null;
 
     const id = existing?.id ? String(existing.id) : crypto.randomUUID();
@@ -162,7 +162,7 @@ export async function upsertDeadZoneMergeReviewJob(params: {
     }
 
     const row = sqlite.db
-      .query(`select * from dead_zone_merge_review_queue where id = ? limit 1`)
+      .query("select * from dead_zone_merge_review_queue where id = ? limit 1")
       .get(id) as Record<string, unknown> | null;
     if (!row) throw new Error("failed to enqueue dead-zone merge review job");
     return mapDeadZoneMergeReviewJob(mapSqliteQueueRow(row));
@@ -198,7 +198,7 @@ export async function getDeadZoneMergeReviewQueueRow(id: string): Promise<QueueR
   if (isSqliteBackend()) {
     const sqlite = await getSqliteCoreDatabase();
     const row = sqlite.db
-      .query(`select * from dead_zone_merge_review_queue where id = ? limit 1`)
+      .query("select * from dead_zone_merge_review_queue where id = ? limit 1")
       .get(id) as Record<string, unknown> | null;
     return row ? mapSqliteQueueRow(row) : null;
   }
@@ -284,7 +284,9 @@ export async function listLatestDeadZoneMergeReviewJobsByDeadZoneIds(
     const sqlite = await getSqliteCoreDatabase();
     const placeholders = uniqueIds.map(() => "?").join(", ");
     const rows = sqlite.db
-      .query(`select * from dead_zone_merge_review_queue where dead_zone_knowledge_id in (${placeholders})`)
+      .query(
+        `select * from dead_zone_merge_review_queue where dead_zone_knowledge_id in (${placeholders})`,
+      )
       .all(...uniqueIds) as Record<string, unknown>[];
     const jobs = rows.map(mapSqliteQueueRow);
     jobs.sort((left, right) => right.updatedAt.getTime() - left.updatedAt.getTime());
@@ -335,7 +337,14 @@ export async function markDeadZoneMergeReviewJobCompleted(params: {
         where id = ?
       `,
       )
-      .run((row?.attemptCount ?? 0) + 1, JSON.stringify(params.result), params.outcome, now, now, params.id);
+      .run(
+        (row?.attemptCount ?? 0) + 1,
+        JSON.stringify(params.result),
+        params.outcome,
+        now,
+        now,
+        params.id,
+      );
     return;
   }
 

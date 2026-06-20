@@ -110,7 +110,7 @@ export async function insertLandscapeReviewItemsIdempotent(
 
     for (const candidate of candidates) {
       const current = sqlite.db
-        .query(`select * from landscape_review_items where idempotency_key = ? limit 1`)
+        .query("select * from landscape_review_items where idempotency_key = ? limit 1")
         .get(candidate.idempotencyKey) as Record<string, unknown> | null;
       if (current) {
         existing.push(mapSqliteReviewItemRow(current));
@@ -149,7 +149,7 @@ export async function insertLandscapeReviewItemsIdempotent(
           now,
         );
       const row = sqlite.db
-        .query(`select * from landscape_review_items where id = ? limit 1`)
+        .query("select * from landscape_review_items where id = ? limit 1")
         .get(id) as Record<string, unknown> | null;
       if (row) inserted.push(mapSqliteReviewItemRow(row));
     }
@@ -304,7 +304,9 @@ export async function countLandscapeReviewItemRows(
     }
 
     const row = sqlite.db
-      .query(`select count(*) as count from landscape_review_items where ${conditions.join(" and ")}`)
+      .query(
+        `select count(*) as count from landscape_review_items where ${conditions.join(" and ")}`,
+      )
       .get(...values) as { count?: number } | null;
     return Number(row?.count ?? 0);
   }
@@ -348,7 +350,7 @@ export async function findLandscapeReviewItemRowById(
   if (isSqliteBackend()) {
     const sqlite = await getSqliteCoreDatabase();
     const row = sqlite.db
-      .query(`select * from landscape_review_items where id = ? limit 1`)
+      .query("select * from landscape_review_items where id = ? limit 1")
       .get(id) as Record<string, unknown> | null;
     return row ? mapSqliteReviewItemRow(row) : null;
   }
@@ -371,7 +373,7 @@ export async function updateLandscapeReviewItemRow(input: {
   if (isSqliteBackend()) {
     const sqlite = await getSqliteCoreDatabase();
     const current = sqlite.db
-      .query(`select * from landscape_review_items where id = ? limit 1`)
+      .query("select * from landscape_review_items where id = ? limit 1")
       .get(input.id) as Record<string, unknown> | null;
     if (!current) return null;
 
@@ -397,7 +399,7 @@ export async function updateLandscapeReviewItemRow(input: {
         input.id,
       );
     const row = sqlite.db
-      .query(`select * from landscape_review_items where id = ? limit 1`)
+      .query("select * from landscape_review_items where id = ? limit 1")
       .get(input.id) as Record<string, unknown> | null;
     return row ? mapSqliteReviewItemRow(row) : null;
   }

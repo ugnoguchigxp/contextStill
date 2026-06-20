@@ -13,8 +13,8 @@ import {
   ensureRuntimeSettingsLoaded,
   getRuntimeSettingsSnapshot,
 } from "../settings/settings.service.js";
-import { DeadZoneMergeReviewQueueError } from "./deadzone-merge-review-queue.service.js";
 import { getDeadZoneMergeReviewQueueRow } from "./deadzone-merge-review-queue.repository.js";
+import { DeadZoneMergeReviewQueueError } from "./deadzone-merge-review-queue.service.js";
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -86,16 +86,14 @@ export async function createMergeActivationFinalizeJob(
           limit 1
         `,
         )
-        .get(id) as
-        | {
-            id: string;
-            title: string;
-            body: string;
-            status: string;
-            applies_to: string;
-            metadata: string;
-          }
-        | null;
+        .get(id) as {
+        id: string;
+        title: string;
+        body: string;
+        status: string;
+        applies_to: string;
+        metadata: string;
+      } | null;
       return row
         ? {
             id: row.id,
@@ -177,17 +175,15 @@ export async function createMergeActivationFinalizeJob(
     const sqlite = await getSqliteCoreDatabase();
     const idempotencyKey = `merge-activation-finalize:${reviewJob.id}`;
     const existing = sqlite.db
-      .query(`select * from merge_activation_finalize_queue where idempotency_key = ? limit 1`)
-      .get(idempotencyKey) as
-      | {
-          id: string;
-          status: string;
-          merge_review_job_id: string;
-          dead_zone_knowledge_id: string;
-          canonical_knowledge_id: string;
-          review_item_id: string | null;
-        }
-      | null;
+      .query("select * from merge_activation_finalize_queue where idempotency_key = ? limit 1")
+      .get(idempotencyKey) as {
+      id: string;
+      status: string;
+      merge_review_job_id: string;
+      dead_zone_knowledge_id: string;
+      canonical_knowledge_id: string;
+      review_item_id: string | null;
+    } | null;
     const payload = {
       sourceQueue: "deadZoneMergeReview",
       sourceQueueJobId: reviewJob.id,
@@ -196,7 +192,9 @@ export async function createMergeActivationFinalizeJob(
     const jobId = existing?.id ?? crypto.randomUUID();
     if (existing) {
       sqlite.db
-        .query(`update merge_activation_finalize_queue set payload = ?, updated_at = ? where id = ?`)
+        .query(
+          "update merge_activation_finalize_queue set payload = ?, updated_at = ? where id = ?",
+        )
         .run(JSON.stringify(payload), nowIso, jobId);
     } else {
       sqlite.db

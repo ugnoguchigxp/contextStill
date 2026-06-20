@@ -75,7 +75,30 @@ function parseJsonRecord(value: unknown): Record<string, unknown> {
   }
 }
 
-function sqliteFindingJobRow(row: Record<string, unknown>): typeof findingCandidateQueue.$inferSelect {
+function parseJsonArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== "string") return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function sqliteDate(value: unknown): Date | null {
+  if (!value) return null;
+  const date = new Date(String(value));
+  return Number.isNaN(date.getTime()) ? null : date;
+}
+
+function sqliteRequiredDate(value: unknown): Date {
+  return sqliteDate(value) ?? new Date(0);
+}
+
+function sqliteFindingJobRow(
+  row: Record<string, unknown>,
+): typeof findingCandidateQueue.$inferSelect {
   return {
     id: String(row.id),
     inputKind: String(row.input_kind),
@@ -98,6 +121,282 @@ function sqliteFindingJobRow(row: Record<string, unknown>): typeof findingCandid
     updatedAt: new Date(String(row.updated_at)),
     completedAt: row.completed_at ? new Date(String(row.completed_at)) : null,
   };
+}
+
+function sqliteFoundCandidateRow(
+  row: Record<string, unknown>,
+): typeof foundCandidates.$inferSelect {
+  return {
+    id: String(row.id),
+    findingJobId: String(row.finding_job_id),
+    candidateIndex: Number(row.candidate_index ?? 0),
+    type: row.type ? String(row.type) : null,
+    title: String(row.title),
+    content: String(row.content),
+    sourceSummary: row.source_summary ? String(row.source_summary) : null,
+    origin: parseJsonRecord(row.origin),
+    metadata: parseJsonRecord(row.metadata),
+    createdAt: sqliteRequiredDate(row.created_at),
+    updatedAt: sqliteRequiredDate(row.updated_at),
+  };
+}
+
+function sqliteCoveringJobRow(
+  row: Record<string, unknown>,
+): typeof coveringEvidenceQueue.$inferSelect {
+  return {
+    id: String(row.id),
+    foundCandidateId: String(row.found_candidate_id),
+    distillationVersion: String(row.distillation_version),
+    status: String(row.status),
+    priority: Number(row.priority ?? 0),
+    attemptCount: Number(row.attempt_count ?? 0),
+    maxAttempts: Number(row.max_attempts ?? 2),
+    providerPolicy: row.provider_policy ? String(row.provider_policy) : "default",
+    nextRunAt: sqliteDate(row.next_run_at),
+    lockedBy: row.locked_by ? String(row.locked_by) : null,
+    lockedAt: sqliteDate(row.locked_at),
+    heartbeatAt: sqliteDate(row.heartbeat_at),
+    lastError: row.last_error ? String(row.last_error) : null,
+    lastOutcomeKind: row.last_outcome_kind ? String(row.last_outcome_kind) : null,
+    payload: parseJsonRecord(row.payload),
+    metadata: parseJsonRecord(row.metadata),
+    createdAt: sqliteRequiredDate(row.created_at),
+    updatedAt: sqliteRequiredDate(row.updated_at),
+    completedAt: sqliteDate(row.completed_at),
+  };
+}
+
+function sqliteEvidenceCoverageRow(
+  row: Record<string, unknown>,
+): typeof evidenceCoverageResults.$inferSelect {
+  return {
+    id: String(row.id),
+    foundCandidateId: String(row.found_candidate_id),
+    producerQueue: String(row.producer_queue),
+    producerJobId: String(row.producer_job_id),
+    distillationVersion: String(row.distillation_version),
+    status: String(row.status),
+    stage: String(row.stage),
+    type: row.type ? String(row.type) : null,
+    title: row.title ? String(row.title) : null,
+    body: row.body ? String(row.body) : null,
+    importance:
+      row.importance === null || row.importance === undefined ? null : Number(row.importance),
+    confidence:
+      row.confidence === null || row.confidence === undefined ? null : Number(row.confidence),
+    appliesTo: parseJsonRecord(row.applies_to),
+    references: parseJsonArray(row.references),
+    duplicateRefs: parseJsonArray(row.duplicate_refs),
+    toolEvents: parseJsonArray(row.tool_events),
+    reason: row.reason ? String(row.reason) : null,
+    metadata: parseJsonRecord(row.metadata),
+    createdAt: sqliteRequiredDate(row.created_at),
+    updatedAt: sqliteRequiredDate(row.updated_at),
+  };
+}
+
+function sqliteFinalizeJobRow(
+  row: Record<string, unknown>,
+): typeof finalizeDistilleQueue.$inferSelect {
+  return {
+    id: String(row.id),
+    evidenceResultId: String(row.evidence_result_id),
+    distillationVersion: String(row.distillation_version),
+    status: String(row.status),
+    priority: Number(row.priority ?? 0),
+    attemptCount: Number(row.attempt_count ?? 0),
+    providerPolicy: row.provider_policy ? String(row.provider_policy) : "default",
+    lockedBy: row.locked_by ? String(row.locked_by) : null,
+    lockedAt: sqliteDate(row.locked_at),
+    heartbeatAt: sqliteDate(row.heartbeat_at),
+    lastError: row.last_error ? String(row.last_error) : null,
+    lastOutcomeKind: row.last_outcome_kind ? String(row.last_outcome_kind) : null,
+    knowledgeId: row.knowledge_id ? String(row.knowledge_id) : null,
+    metadata: parseJsonRecord(row.metadata),
+    createdAt: sqliteRequiredDate(row.created_at),
+    updatedAt: sqliteRequiredDate(row.updated_at),
+    completedAt: sqliteDate(row.completed_at),
+  };
+}
+
+async function sqliteGetRow(
+  tableName: string,
+  id: string,
+): Promise<Record<string, unknown> | null> {
+  const sqlite = await getSqliteCoreDatabase();
+  return sqlite.db.query(`select * from ${tableName} where id = ? limit 1`).get(id) as Record<
+    string,
+    unknown
+  > | null;
+}
+
+async function getFindingJobById(
+  jobId: string,
+): Promise<typeof findingCandidateQueue.$inferSelect | null> {
+  if (isSqliteBackend()) {
+    const row = await sqliteGetRow("finding_candidate_queue", jobId);
+    return row ? sqliteFindingJobRow(row) : null;
+  }
+  const [job] = await db
+    .select()
+    .from(findingCandidateQueue)
+    .where(eq(findingCandidateQueue.id, jobId))
+    .limit(1);
+  return job ?? null;
+}
+
+async function getFoundCandidateById(
+  candidateId: string,
+): Promise<typeof foundCandidates.$inferSelect | null> {
+  if (isSqliteBackend()) {
+    const row = await sqliteGetRow("found_candidates", candidateId);
+    return row ? sqliteFoundCandidateRow(row) : null;
+  }
+  const [candidate] = await db
+    .select()
+    .from(foundCandidates)
+    .where(eq(foundCandidates.id, candidateId))
+    .limit(1);
+  return candidate ?? null;
+}
+
+async function getCoveringJobById(
+  jobId: string,
+): Promise<typeof coveringEvidenceQueue.$inferSelect | null> {
+  if (isSqliteBackend()) {
+    const row = await sqliteGetRow("covering_evidence_queue", jobId);
+    return row ? sqliteCoveringJobRow(row) : null;
+  }
+  const [job] = await db
+    .select()
+    .from(coveringEvidenceQueue)
+    .where(eq(coveringEvidenceQueue.id, jobId))
+    .limit(1);
+  return job ?? null;
+}
+
+async function getEvidenceCoverageById(
+  evidenceId: string,
+): Promise<typeof evidenceCoverageResults.$inferSelect | null> {
+  if (isSqliteBackend()) {
+    const row = await sqliteGetRow("evidence_coverage_results", evidenceId);
+    return row ? sqliteEvidenceCoverageRow(row) : null;
+  }
+  const [evidence] = await db
+    .select()
+    .from(evidenceCoverageResults)
+    .where(eq(evidenceCoverageResults.id, evidenceId))
+    .limit(1);
+  return evidence ?? null;
+}
+
+async function getFinalizeJobById(
+  jobId: string,
+): Promise<typeof finalizeDistilleQueue.$inferSelect | null> {
+  if (isSqliteBackend()) {
+    const row = await sqliteGetRow("finalize_distille_queue", jobId);
+    return row ? sqliteFinalizeJobRow(row) : null;
+  }
+  const [job] = await db
+    .select()
+    .from(finalizeDistilleQueue)
+    .where(eq(finalizeDistilleQueue.id, jobId))
+    .limit(1);
+  return job ?? null;
+}
+
+async function markMergeActivationFinalizeFailed(params: {
+  jobId: string;
+  attemptCount: number;
+  error: string;
+}): Promise<void> {
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    sqlite.db
+      .query(
+        `
+        update merge_activation_finalize_queue
+        set status = 'failed',
+            attempt_count = ?,
+            locked_by = null,
+            locked_at = null,
+            heartbeat_at = null,
+            last_error = ?,
+            last_outcome_kind = 'failed',
+            updated_at = ?
+        where id = ?
+      `,
+      )
+      .run(params.attemptCount, params.error, new Date().toISOString(), params.jobId);
+    return;
+  }
+  await db
+    .update(mergeActivationFinalizeQueue)
+    .set({
+      status: "failed",
+      attemptCount: params.attemptCount,
+      lockedBy: null,
+      lockedAt: null,
+      heartbeatAt: null,
+      lastError: params.error,
+      lastOutcomeKind: "failed",
+      updatedAt: new Date(),
+    })
+    .where(eq(mergeActivationFinalizeQueue.id, params.jobId));
+}
+
+async function getMergeActivationFinalizeAttemptCount(jobId: string): Promise<number> {
+  if (isSqliteBackend()) {
+    const row = await sqliteGetRow("merge_activation_finalize_queue", jobId);
+    return Number(row?.attempt_count ?? 0);
+  }
+  const [current] = await db
+    .select()
+    .from(mergeActivationFinalizeQueue)
+    .where(eq(mergeActivationFinalizeQueue.id, jobId))
+    .limit(1);
+  return current?.attemptCount ?? 0;
+}
+
+async function markFinalizeFailed(params: {
+  jobId: string;
+  attemptCount: number;
+  error: string;
+}): Promise<void> {
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    sqlite.db
+      .query(
+        `
+        update finalize_distille_queue
+        set status = 'failed',
+            attempt_count = ?,
+            locked_by = null,
+            locked_at = null,
+            heartbeat_at = null,
+            last_error = ?,
+            last_outcome_kind = 'failed',
+            updated_at = ?
+        where id = ?
+      `,
+      )
+      .run(params.attemptCount, params.error, new Date().toISOString(), params.jobId);
+    return;
+  }
+  await db
+    .update(finalizeDistilleQueue)
+    .set({
+      status: "failed",
+      attemptCount: params.attemptCount,
+      lockedBy: null,
+      lockedAt: null,
+      heartbeatAt: null,
+      lastError: params.error,
+      lastOutcomeKind: "failed",
+      updatedAt: new Date(),
+    })
+    .where(eq(finalizeDistilleQueue.id, params.jobId));
 }
 
 function mappedEvidenceStatus(
@@ -240,6 +539,33 @@ async function markFindingCompleted(params: {
   status: "completed" | "skipped";
   outcome: string;
 }): Promise<void> {
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    sqlite.db
+      .query(
+        `
+        update finding_candidate_queue
+        set status = ?,
+            completed_at = ?,
+            locked_by = null,
+            locked_at = null,
+            heartbeat_at = null,
+            last_error = null,
+            last_outcome_kind = ?,
+            updated_at = ?
+        where id = ?
+      `,
+      )
+      .run(
+        params.status,
+        new Date().toISOString(),
+        params.outcome,
+        new Date().toISOString(),
+        params.jobId,
+      );
+    return;
+  }
+
   await db
     .update(findingCandidateQueue)
     .set({
@@ -256,6 +582,33 @@ async function markFindingCompleted(params: {
 }
 
 async function markFindingFailed(params: { jobId: string; error: string }): Promise<void> {
+  if (isSqliteBackend()) {
+    const current = await getFindingJobById(params.jobId);
+    const sqlite = await getSqliteCoreDatabase();
+    sqlite.db
+      .query(
+        `
+        update finding_candidate_queue
+        set status = 'failed',
+            attempt_count = ?,
+            locked_by = null,
+            locked_at = null,
+            heartbeat_at = null,
+            last_error = ?,
+            last_outcome_kind = 'failed',
+            updated_at = ?
+        where id = ?
+      `,
+      )
+      .run(
+        (current?.attemptCount ?? 0) + 1,
+        params.error.slice(0, 2000),
+        new Date().toISOString(),
+        params.jobId,
+      );
+    return;
+  }
+
   const [current] = await db
     .select({ attemptCount: findingCandidateQueue.attemptCount })
     .from(findingCandidateQueue)
@@ -282,6 +635,34 @@ async function enqueueCoveringJob(params: {
   providerPolicy?: "default" | "cloud_api";
   priority?: number;
 }): Promise<void> {
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const existing = sqlite.db
+      .query("select id from covering_evidence_queue where found_candidate_id = ? limit 1")
+      .get(params.foundCandidateId) as { id?: string } | null;
+    if (existing?.id) return;
+    const now = new Date().toISOString();
+    sqlite.db
+      .query(
+        `
+        insert into covering_evidence_queue (
+          id, found_candidate_id, distillation_version, status, priority,
+          provider_policy, payload, metadata, created_at, updated_at
+        ) values (?, ?, ?, 'pending', ?, ?, '{}', '{}', ?, ?)
+      `,
+      )
+      .run(
+        crypto.randomUUID(),
+        params.foundCandidateId,
+        params.distillationVersion,
+        params.priority ?? 50,
+        params.providerPolicy ?? "default",
+        now,
+        now,
+      );
+    return;
+  }
+
   await db
     .insert(coveringEvidenceQueue)
     .values({
@@ -301,7 +682,7 @@ async function vibeMemorySourceExists(sourceKey: string): Promise<boolean> {
   if (isSqliteBackend()) {
     const sqlite = await getSqliteCoreDatabase();
     const row = sqlite.db
-      .query(`select id from vibe_memories where id = ? limit 1`)
+      .query("select id from vibe_memories where id = ? limit 1")
       .get(sourceKey) as { id?: string } | null;
     return Boolean(row);
   }
@@ -324,6 +705,73 @@ async function upsertFoundCandidateRow(params: {
   origin?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 }): Promise<string> {
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const now = new Date().toISOString();
+    const existing = sqlite.db
+      .query(
+        `
+        select id
+        from found_candidates
+        where finding_job_id = ?
+          and candidate_index = ?
+        limit 1
+      `,
+      )
+      .get(params.findingJobId, params.candidateIndex) as { id?: string } | null;
+    const id = existing?.id ?? crypto.randomUUID();
+    if (existing?.id) {
+      sqlite.db
+        .query(
+          `
+          update found_candidates
+          set type = ?,
+              title = ?,
+              content = ?,
+              source_summary = ?,
+              origin = ?,
+              metadata = ?,
+              updated_at = ?
+          where id = ?
+        `,
+        )
+        .run(
+          params.type ?? null,
+          params.title,
+          params.content,
+          params.sourceSummary ?? null,
+          JSON.stringify(params.origin ?? {}),
+          JSON.stringify(params.metadata ?? {}),
+          now,
+          id,
+        );
+      return id;
+    }
+    sqlite.db
+      .query(
+        `
+        insert into found_candidates (
+          id, finding_job_id, candidate_index, type, title, content,
+          source_summary, origin, metadata, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        id,
+        params.findingJobId,
+        params.candidateIndex,
+        params.type ?? null,
+        params.title,
+        params.content,
+        params.sourceSummary ?? null,
+        JSON.stringify(params.origin ?? {}),
+        JSON.stringify(params.metadata ?? {}),
+        now,
+        now,
+      );
+    return id;
+  }
+
   const [row] = await db
     .insert(foundCandidates)
     .values({
@@ -388,11 +836,7 @@ async function runSourceTargetFindCandidate(params: {
 }
 
 async function processFindingCandidate(jobId: string, signal?: AbortSignal): Promise<void> {
-  const [job] = await db
-    .select()
-    .from(findingCandidateQueue)
-    .where(eq(findingCandidateQueue.id, jobId))
-    .limit(1);
+  const job = await getFindingJobById(jobId);
   if (!job) throw new Error(`finding queue job not found: ${jobId}`);
 
   await appendQueueEvent({
@@ -520,6 +964,39 @@ async function markCoveringCompleted(params: {
   outcome: string;
   lastError?: string | null;
 }): Promise<void> {
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const now = new Date().toISOString();
+    sqlite.db
+      .query(
+        `
+        update covering_evidence_queue
+        set status = ?,
+            attempt_count = coalesce(?, attempt_count),
+            next_run_at = ?,
+            completed_at = ?,
+            locked_by = null,
+            locked_at = null,
+            heartbeat_at = null,
+            last_error = ?,
+            last_outcome_kind = ?,
+            updated_at = ?
+        where id = ?
+      `,
+      )
+      .run(
+        params.status,
+        params.attemptCount ?? null,
+        params.nextRunAt ? params.nextRunAt.toISOString() : null,
+        params.status === "completed" || params.status === "skipped" ? now : null,
+        params.lastError ?? null,
+        params.outcome,
+        now,
+        params.jobId,
+      );
+    return;
+  }
+
   await db
     .update(coveringEvidenceQueue)
     .set({
@@ -538,18 +1015,10 @@ async function markCoveringCompleted(params: {
 }
 
 async function processCoveringJob(jobId: string, signal?: AbortSignal): Promise<void> {
-  const [job] = await db
-    .select()
-    .from(coveringEvidenceQueue)
-    .where(eq(coveringEvidenceQueue.id, jobId))
-    .limit(1);
+  const job = await getCoveringJobById(jobId);
   if (!job) throw new Error(`coveringEvidence job not found: ${jobId}`);
 
-  const [candidate] = await db
-    .select()
-    .from(foundCandidates)
-    .where(eq(foundCandidates.id, job.foundCandidateId))
-    .limit(1);
+  const candidate = await getFoundCandidateById(job.foundCandidateId);
   if (!candidate) throw new Error(`found candidate not found: ${job.foundCandidateId}`);
 
   await appendQueueEvent({
@@ -559,11 +1028,7 @@ async function processCoveringJob(jobId: string, signal?: AbortSignal): Promise<
     message: "covering evidence claimed",
   });
 
-  const [findingJob] = await db
-    .select()
-    .from(findingCandidateQueue)
-    .where(eq(findingCandidateQueue.id, candidate.findingJobId))
-    .limit(1);
+  const findingJob = await getFindingJobById(candidate.findingJobId);
   if (!findingJob) throw new Error(`finding job not found: ${candidate.findingJobId}`);
 
   const sourceKind =
@@ -600,33 +1065,106 @@ async function processCoveringJob(jobId: string, signal?: AbortSignal): Promise<
 
   let evidenceResultId: string | null = null;
   if (mappedStatus) {
-    const [saved] = await db
-      .insert(evidenceCoverageResults)
-      .values({
-        foundCandidateId: candidate.id,
-        producerQueue: "coveringEvidence",
-        producerJobId: job.id,
-        distillationVersion: job.distillationVersion,
-        status: mappedStatus,
-        stage: cover.result.stage,
-        type: cover.result.candidate?.type ?? candidate.type ?? null,
-        title: cover.result.candidate?.title ?? candidate.title,
-        body: cover.result.candidate?.body ?? candidate.content,
-        importance: cover.result.candidate?.importance ?? null,
-        confidence: cover.result.candidate?.confidence ?? null,
-        appliesTo: appliesToFromCoverCandidate(cover.result.candidate),
-        references: cover.result.references,
-        duplicateRefs: cover.result.duplicateRefs,
-        toolEvents: cover.result.toolEvents,
-        reason: cover.result.reason,
-        metadata: {
-          queueVersion: "v2",
-        },
-        updatedAt: new Date(),
-      })
-      .onConflictDoUpdate({
-        target: [evidenceCoverageResults.foundCandidateId, evidenceCoverageResults.producerQueue],
-        set: {
+    if (isSqliteBackend()) {
+      const sqlite = await getSqliteCoreDatabase();
+      const now = new Date().toISOString();
+      const existing = sqlite.db
+        .query(
+          `
+          select id
+          from evidence_coverage_results
+          where found_candidate_id = ?
+            and producer_queue = 'coveringEvidence'
+          limit 1
+        `,
+        )
+        .get(candidate.id) as { id?: string } | null;
+      evidenceResultId = existing?.id ?? crypto.randomUUID();
+      if (existing?.id) {
+        sqlite.db
+          .query(
+            `
+            update evidence_coverage_results
+            set producer_job_id = ?,
+                distillation_version = ?,
+                status = ?,
+                stage = ?,
+                type = ?,
+                title = ?,
+                body = ?,
+                importance = ?,
+                confidence = ?,
+                applies_to = ?,
+                "references" = ?,
+                duplicate_refs = ?,
+                tool_events = ?,
+                reason = ?,
+                metadata = ?,
+                updated_at = ?
+            where id = ?
+          `,
+          )
+          .run(
+            job.id,
+            job.distillationVersion,
+            mappedStatus,
+            cover.result.stage,
+            cover.result.candidate?.type ?? candidate.type ?? null,
+            cover.result.candidate?.title ?? candidate.title,
+            cover.result.candidate?.body ?? candidate.content,
+            cover.result.candidate?.importance ?? null,
+            cover.result.candidate?.confidence ?? null,
+            JSON.stringify(appliesToFromCoverCandidate(cover.result.candidate)),
+            JSON.stringify(cover.result.references),
+            JSON.stringify(cover.result.duplicateRefs),
+            JSON.stringify(cover.result.toolEvents),
+            cover.result.reason ?? null,
+            JSON.stringify({ queueVersion: "v2" }),
+            now,
+            evidenceResultId,
+          );
+      } else {
+        sqlite.db
+          .query(
+            `
+            insert into evidence_coverage_results (
+              id, found_candidate_id, producer_queue, producer_job_id,
+              distillation_version, status, stage, type, title, body,
+              importance, confidence, applies_to, "references", duplicate_refs,
+              tool_events, reason, metadata, created_at, updated_at
+            ) values (?, ?, 'coveringEvidence', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          `,
+          )
+          .run(
+            evidenceResultId,
+            candidate.id,
+            job.id,
+            job.distillationVersion,
+            mappedStatus,
+            cover.result.stage,
+            cover.result.candidate?.type ?? candidate.type ?? null,
+            cover.result.candidate?.title ?? candidate.title,
+            cover.result.candidate?.body ?? candidate.content,
+            cover.result.candidate?.importance ?? null,
+            cover.result.candidate?.confidence ?? null,
+            JSON.stringify(appliesToFromCoverCandidate(cover.result.candidate)),
+            JSON.stringify(cover.result.references),
+            JSON.stringify(cover.result.duplicateRefs),
+            JSON.stringify(cover.result.toolEvents),
+            cover.result.reason ?? null,
+            JSON.stringify({ queueVersion: "v2" }),
+            now,
+            now,
+          );
+      }
+    } else {
+      const [saved] = await db
+        .insert(evidenceCoverageResults)
+        .values({
+          foundCandidateId: candidate.id,
+          producerQueue: "coveringEvidence",
+          producerJobId: job.id,
+          distillationVersion: job.distillationVersion,
           status: mappedStatus,
           stage: cover.result.stage,
           type: cover.result.candidate?.type ?? candidate.type ?? null,
@@ -643,41 +1181,96 @@ async function processCoveringJob(jobId: string, signal?: AbortSignal): Promise<
             queueVersion: "v2",
           },
           updatedAt: new Date(),
-        },
-      })
-      .returning({ id: evidenceCoverageResults.id });
-    evidenceResultId = saved?.id ?? null;
+        })
+        .onConflictDoUpdate({
+          target: [evidenceCoverageResults.foundCandidateId, evidenceCoverageResults.producerQueue],
+          set: {
+            status: mappedStatus,
+            stage: cover.result.stage,
+            type: cover.result.candidate?.type ?? candidate.type ?? null,
+            title: cover.result.candidate?.title ?? candidate.title,
+            body: cover.result.candidate?.body ?? candidate.content,
+            importance: cover.result.candidate?.importance ?? null,
+            confidence: cover.result.candidate?.confidence ?? null,
+            appliesTo: appliesToFromCoverCandidate(cover.result.candidate),
+            references: cover.result.references,
+            duplicateRefs: cover.result.duplicateRefs,
+            toolEvents: cover.result.toolEvents,
+            reason: cover.result.reason,
+            metadata: {
+              queueVersion: "v2",
+            },
+            updatedAt: new Date(),
+          },
+        })
+        .returning({ id: evidenceCoverageResults.id });
+      evidenceResultId = saved?.id ?? null;
+    }
   }
 
   const nextAttemptCount = job.attemptCount + 1;
   const exhausted = nextAttemptCount >= job.maxAttempts;
 
   if (cover.result.status === "knowledge_ready" && evidenceResultId) {
-    await db
-      .insert(finalizeDistilleQueue)
-      .values({
-        evidenceResultId,
-        distillationVersion: job.distillationVersion,
-        status: "pending",
-        priority: priorityForSourceKind(
-          (candidate.metadata as Record<string, unknown> | null)?.sourceKind === "web_ingest"
-            ? "web_ingest"
-            : (candidate.metadata as Record<string, unknown> | null)?.sourceKind === "wiki_file"
-              ? "wiki_file"
-              : (candidate.metadata as Record<string, unknown> | null)?.sourceKind ===
-                  "knowledge_candidate"
-                ? "knowledge_candidate"
-                : "vibe_memory",
-        ),
-        providerPolicy: job.providerPolicy,
-        metadata: {
-          queueVersion: "v2",
-          sourceQueue: "coveringEvidence",
-          sourceQueueJobId: job.id,
-        },
-        updatedAt: new Date(),
-      })
-      .onConflictDoNothing({ target: finalizeDistilleQueue.evidenceResultId });
+    const finalizePriority = priorityForSourceKind(
+      (candidate.metadata as Record<string, unknown> | null)?.sourceKind === "web_ingest"
+        ? "web_ingest"
+        : (candidate.metadata as Record<string, unknown> | null)?.sourceKind === "wiki_file"
+          ? "wiki_file"
+          : (candidate.metadata as Record<string, unknown> | null)?.sourceKind ===
+              "knowledge_candidate"
+            ? "knowledge_candidate"
+            : "vibe_memory",
+    );
+    if (isSqliteBackend()) {
+      const sqlite = await getSqliteCoreDatabase();
+      const existing = sqlite.db
+        .query("select id from finalize_distille_queue where evidence_result_id = ? limit 1")
+        .get(evidenceResultId) as { id?: string } | null;
+      if (!existing?.id) {
+        const now = new Date().toISOString();
+        sqlite.db
+          .query(
+            `
+            insert into finalize_distille_queue (
+              id, evidence_result_id, distillation_version, status, priority,
+              provider_policy, metadata, created_at, updated_at
+            ) values (?, ?, ?, 'pending', ?, ?, ?, ?, ?)
+          `,
+          )
+          .run(
+            crypto.randomUUID(),
+            evidenceResultId,
+            job.distillationVersion,
+            finalizePriority,
+            job.providerPolicy,
+            JSON.stringify({
+              queueVersion: "v2",
+              sourceQueue: "coveringEvidence",
+              sourceQueueJobId: job.id,
+            }),
+            now,
+            now,
+          );
+      }
+    } else {
+      await db
+        .insert(finalizeDistilleQueue)
+        .values({
+          evidenceResultId,
+          distillationVersion: job.distillationVersion,
+          status: "pending",
+          priority: finalizePriority,
+          providerPolicy: job.providerPolicy,
+          metadata: {
+            queueVersion: "v2",
+            sourceQueue: "coveringEvidence",
+            sourceQueueJobId: job.id,
+          },
+          updatedAt: new Date(),
+        })
+        .onConflictDoNothing({ target: finalizeDistilleQueue.evidenceResultId });
+    }
   }
 
   if (retryableCoverStatuses.has(cover.result.status)) {
@@ -731,30 +1324,14 @@ function asArray<T>(value: unknown): T[] {
 }
 
 async function processFinalizeJob(jobId: string, signal?: AbortSignal): Promise<void> {
-  const [job] = await db
-    .select()
-    .from(finalizeDistilleQueue)
-    .where(eq(finalizeDistilleQueue.id, jobId))
-    .limit(1);
+  const job = await getFinalizeJobById(jobId);
   if (!job) throw new Error(`finalize job not found: ${jobId}`);
 
-  const [evidence] = await db
-    .select()
-    .from(evidenceCoverageResults)
-    .where(eq(evidenceCoverageResults.id, job.evidenceResultId))
-    .limit(1);
+  const evidence = await getEvidenceCoverageById(job.evidenceResultId);
   if (!evidence) throw new Error(`evidence result not found: ${job.evidenceResultId}`);
-  const [candidate] = await db
-    .select()
-    .from(foundCandidates)
-    .where(eq(foundCandidates.id, evidence.foundCandidateId))
-    .limit(1);
+  const candidate = await getFoundCandidateById(evidence.foundCandidateId);
   if (!candidate) throw new Error(`found candidate not found: ${evidence.foundCandidateId}`);
-  const [findingJob] = await db
-    .select()
-    .from(findingCandidateQueue)
-    .where(eq(findingCandidateQueue.id, candidate.findingJobId))
-    .limit(1);
+  const findingJob = await getFindingJobById(candidate.findingJobId);
   if (!findingJob) throw new Error(`finding job not found: ${candidate.findingJobId}`);
 
   await appendQueueEvent({
@@ -846,21 +1423,53 @@ async function processFinalizeJob(jobId: string, signal?: AbortSignal): Promise<
       : finalized.status === "rejected"
         ? "skipped"
         : "failed";
-  await db
-    .update(finalizeDistilleQueue)
-    .set({
-      status,
-      attemptCount: job.attemptCount + 1,
-      knowledgeId: finalized.knowledgeId,
-      completedAt: status === "completed" || status === "skipped" ? new Date() : null,
-      lockedBy: null,
-      lockedAt: null,
-      heartbeatAt: null,
-      lastError: finalized.reason,
-      lastOutcomeKind: finalized.status,
-      updatedAt: new Date(),
-    })
-    .where(eq(finalizeDistilleQueue.id, job.id));
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const now = new Date().toISOString();
+    sqlite.db
+      .query(
+        `
+        update finalize_distille_queue
+        set status = ?,
+            attempt_count = ?,
+            knowledge_id = ?,
+            completed_at = ?,
+            locked_by = null,
+            locked_at = null,
+            heartbeat_at = null,
+            last_error = ?,
+            last_outcome_kind = ?,
+            updated_at = ?
+        where id = ?
+      `,
+      )
+      .run(
+        status,
+        job.attemptCount + 1,
+        finalized.knowledgeId,
+        status === "completed" || status === "skipped" ? now : null,
+        finalized.reason,
+        finalized.status,
+        now,
+        job.id,
+      );
+  } else {
+    await db
+      .update(finalizeDistilleQueue)
+      .set({
+        status,
+        attemptCount: job.attemptCount + 1,
+        knowledgeId: finalized.knowledgeId,
+        completedAt: status === "completed" || status === "skipped" ? new Date() : null,
+        lockedBy: null,
+        lockedAt: null,
+        heartbeatAt: null,
+        lastError: finalized.reason,
+        lastOutcomeKind: finalized.status,
+        updatedAt: new Date(),
+      })
+      .where(eq(finalizeDistilleQueue.id, job.id));
+  }
 
   await appendQueueEvent({
     queueName: "finalizeDistille",
@@ -882,14 +1491,34 @@ async function runWithHeartbeat<T>(params: {
   const tableName = queueTableNameByQueue[params.queueName];
   const heartbeatMs = 30_000;
   const timer = setInterval(() => {
-    void db.execute(sql`
-      update ${sql.raw(tableName)}
-      set
-        heartbeat_at = now(),
-        updated_at = now()
-      where id = ${params.jobId}
-        and status = 'running'
-    `);
+    if (isSqliteBackend()) {
+      void getSqliteCoreDatabase()
+        .then((sqlite) => {
+          sqlite.db
+            .query(
+              `
+              update ${tableName}
+              set heartbeat_at = CURRENT_TIMESTAMP,
+                  updated_at = CURRENT_TIMESTAMP
+              where id = ?
+                and status = 'running'
+            `,
+            )
+            .run(params.jobId);
+        })
+        .catch(() => {
+          // Heartbeat failure should not mask the active worker result.
+        });
+    } else {
+      void db.execute(sql`
+        update ${sql.raw(tableName)}
+        set
+          heartbeat_at = now(),
+          updated_at = now()
+        where id = ${params.jobId}
+          and status = 'running'
+      `);
+    }
   }, heartbeatMs);
   try {
     return await params.run();
@@ -1133,11 +1762,7 @@ export async function runQueueWorkerOnce(params: {
         error: message,
       });
     } else if (params.queueName === "coveringEvidence") {
-      const [current] = await db
-        .select()
-        .from(coveringEvidenceQueue)
-        .where(eq(coveringEvidenceQueue.id, claimed.id))
-        .limit(1);
+      const current = await getCoveringJobById(claimed.id);
       const currentAttempt = current?.attemptCount ?? 0;
       await markCoveringCompleted({
         jobId: claimed.id,
@@ -1149,45 +1774,20 @@ export async function runQueueWorkerOnce(params: {
     } else if (params.queueName === "deadZoneMergeReview") {
       // The merge-review service records job failure details so it can classify parse/provider failures.
     } else if (params.queueName === "mergeActivationFinalize") {
-      const [current] = await db
-        .select()
-        .from(mergeActivationFinalizeQueue)
-        .where(eq(mergeActivationFinalizeQueue.id, claimed.id))
-        .limit(1);
-      const currentAttempt = current?.attemptCount ?? 0;
-      await db
-        .update(mergeActivationFinalizeQueue)
-        .set({
-          status: "failed",
-          attemptCount: currentAttempt + 1,
-          lockedBy: null,
-          lockedAt: null,
-          heartbeatAt: null,
-          lastError: message,
-          lastOutcomeKind: "failed",
-          updatedAt: new Date(),
-        })
-        .where(eq(mergeActivationFinalizeQueue.id, claimed.id));
+      const currentAttempt = await getMergeActivationFinalizeAttemptCount(claimed.id);
+      await markMergeActivationFinalizeFailed({
+        jobId: claimed.id,
+        attemptCount: currentAttempt + 1,
+        error: message,
+      });
     } else {
-      const [current] = await db
-        .select()
-        .from(finalizeDistilleQueue)
-        .where(eq(finalizeDistilleQueue.id, claimed.id))
-        .limit(1);
+      const current = await getFinalizeJobById(claimed.id);
       const currentAttempt = current?.attemptCount ?? 0;
-      await db
-        .update(finalizeDistilleQueue)
-        .set({
-          status: "failed",
-          attemptCount: currentAttempt + 1,
-          lockedBy: null,
-          lockedAt: null,
-          heartbeatAt: null,
-          lastError: message,
-          lastOutcomeKind: "failed",
-          updatedAt: new Date(),
-        })
-        .where(eq(finalizeDistilleQueue.id, claimed.id));
+      await markFinalizeFailed({
+        jobId: claimed.id,
+        attemptCount: currentAttempt + 1,
+        error: message,
+      });
     }
     await appendQueueEvent({
       queueName: params.queueName,
@@ -1240,12 +1840,10 @@ export async function enqueueFindingJob(params: {
         limit 1
       `,
       )
-      .get(
-        params.inputKind,
-        params.sourceKind,
-        params.sourceKey,
-        distillationVersion,
-      ) as Record<string, unknown> | null;
+      .get(params.inputKind, params.sourceKind, params.sourceKey, distillationVersion) as Record<
+      string,
+      unknown
+    > | null;
 
     const id = existing?.id ? String(existing.id) : crypto.randomUUID();
     if (existing) {
@@ -1301,7 +1899,7 @@ export async function enqueueFindingJob(params: {
     }
 
     const row = sqlite.db
-      .query(`select * from finding_candidate_queue where id = ? limit 1`)
+      .query("select * from finding_candidate_queue where id = ? limit 1")
       .get(id) as Record<string, unknown> | null;
     if (!row) throw new Error("failed to enqueue finding candidate job");
     const normalized = sqliteFindingJobRow(row);
@@ -1391,12 +1989,10 @@ export async function findFindingJob(params: {
         limit 1
       `,
       )
-      .get(
-        params.inputKind,
-        params.sourceKind,
-        params.sourceKey,
-        distillationVersion,
-      ) as Record<string, unknown> | null;
+      .get(params.inputKind, params.sourceKind, params.sourceKey, distillationVersion) as Record<
+      string,
+      unknown
+    > | null;
     return row ? sqliteFindingJobRow(row) : null;
   }
 

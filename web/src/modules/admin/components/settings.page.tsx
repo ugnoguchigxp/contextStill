@@ -46,6 +46,7 @@ type SettingsTabPath =
   | "advanced";
 
 type SecretDraftState = Partial<Record<RuntimeSecretKey, { value: string; clear: boolean }>>;
+type ProviderEndpointKind = "openai" | "azure-openai" | "bedrock" | "local-llm";
 
 function azureOpenAiSecretKey(index: number): RuntimeSecretKey {
   return index === 0 ? "azureOpenAiApiKey" : (`azureOpenAiApiKey${index + 1}` as RuntimeSecretKey);
@@ -76,8 +77,6 @@ const runtimeProviders: RuntimeProviderName[] = [
   "local-llm",
   "codex",
 ];
-const runtimeProviderOptions: RuntimeProviderSetting[] = [...runtimeProviders, "auto"];
-const agenticProviders: RuntimeProviderName[] = [...runtimeProviders];
 const runtimeSearchProviders: RuntimeSearchProvider[] = ["brave", "exa", "duckduckgo"];
 const distillationPriorityTargetKinds = [
   "knowledge_candidate",
@@ -105,37 +104,6 @@ function millisecondsToSeconds(value: number): number {
 function parseSecondsToMillisecondsInput(value: string, fallbackMs: number): number {
   const parsed = Number.parseFloat(value);
   return Number.isFinite(parsed) ? Math.round(parsed * 1000) : fallbackMs;
-}
-
-type FallbackSelectValue = RuntimeProviderName | "";
-
-function normalizeFallbackProviders(
-  values: Array<FallbackSelectValue | undefined>,
-): RuntimeProviderName[] {
-  const deduped = new Set<RuntimeProviderName>();
-  for (const value of values) {
-    if (!value) continue;
-    deduped.add(value);
-    if (deduped.size >= 2) break;
-  }
-  return [...deduped];
-}
-
-function toFallbackSlots(
-  fallback: RuntimeProviderName[],
-): [FallbackSelectValue, FallbackSelectValue] {
-  const normalized = normalizeFallbackProviders(fallback);
-  return [normalized[0] ?? "", normalized[1] ?? ""];
-}
-
-function patchFallbackSlot(
-  fallback: RuntimeProviderName[],
-  slotIndex: 0 | 1,
-  value: FallbackSelectValue,
-): RuntimeProviderName[] {
-  const nextSlots = toFallbackSlots(fallback);
-  nextSlots[slotIndex] = value;
-  return normalizeFallbackProviders(nextSlots);
 }
 
 function normalizeAzureDeploymentSlots(values: number[] | undefined): number[] {
@@ -189,6 +157,15 @@ type AzureOpenAiRouteOption = {
   apiBaseUrl: string;
 };
 
+type RouteEndpointOption = {
+  value: string;
+  label: string;
+  provider: RuntimeProviderName;
+  model?: string;
+  localLlmModel?: string;
+  azureDeploymentSlots?: number[];
+};
+
 function azureRouteOptionLabel(
   deployment: RuntimeSettingsEditable["providers"]["azure-openai"]["deployments"][number],
   index: number,
@@ -232,6 +209,65 @@ function selectedAzureRouteOption(
 ): AzureOpenAiRouteOption | undefined {
   const selected = normalizeSelectedAzureRouteValue(settings, slots);
   return azureOpenAiRouteOptions(settings).find((option) => option.value === selected);
+}
+
+function routeEndpointOptions(settings: RuntimeSettingsEditable): RouteEndpointOption[] {
+  const options: RouteEndpointOption[] = [];
+  if (
+    settings.providers.openai.enabled &&
+    settings.providers.openai.apiBaseUrl.trim() &&
+    settings.providers.openai.model.trim()
+  ) {
+    options.push({
+      value: "openai",
+      label: `OpenAI / ${settings.providers.openai.model.trim()} / ${settings.providers.openai.apiBaseUrl.trim()}`,
+      provider: "openai",
+      model: settings.providers.openai.model.trim(),
+    });
+  }
+  if (settings.providers["azure-openai"].enabled) {
+    for (const option of azureOpenAiRouteOptions(settings)) {
+      options.push({
+        value: `azure-openai:${option.value}`,
+        label: option.label,
+        provider: "azure-openai",
+        model: option.model,
+        azureDeploymentSlots: [option.slot],
+      });
+    }
+  }
+  if (
+    settings.providers.bedrock.enabled &&
+    settings.providers.bedrock.region.trim() &&
+    settings.providers.bedrock.model.trim()
+  ) {
+    options.push({
+      value: "bedrock",
+      label: `AWS Bedrock / ${settings.providers.bedrock.model.trim()} / ${settings.providers.bedrock.region.trim()}`,
+      provider: "bedrock",
+      model: settings.providers.bedrock.model.trim(),
+    });
+  }
+  if (settings.providers["local-llm"].enabled) {
+    for (const option of localLlmRouteModelOptions(settings)) {
+      options.push({
+        value: `local-llm:${option.value}`,
+        label: option.label,
+        provider: "local-llm",
+        model: option.value,
+        localLlmModel: option.value,
+      });
+    }
+  }
+  if (settings.providers.codex.enabled && settings.providers.codex.model.trim()) {
+    options.push({
+      value: "codex",
+      label: `Codex / ${settings.providers.codex.model.trim()}`,
+      provider: "codex",
+      model: settings.providers.codex.model.trim(),
+    });
+  }
+  return options;
 }
 
 function localLlmRouteTargetValue(
@@ -340,41 +376,103 @@ function normalizeSelectedLocalLlmRouteValue(
   return options.find((option) => option.model === value.trim())?.value ?? options[0]?.value ?? "";
 }
 
-function providerNameOptionLabel(provider: RuntimeProviderSetting): string {
-  return provider;
-}
-
-function localLlmRouteValueLabel(
+function routeEndpointOptionFor(
   settings: RuntimeSettingsEditable,
-  value: string | undefined,
-): string {
-  const normalized = normalizeSelectedLocalLlmRouteValue(settings, value);
-  return (
-    localLlmRouteModelOptions(settings).find((option) => option.value === normalized)?.label ??
-    value ??
-    "not configured"
-  );
-}
-
-function routeTargetSummary(
-  settings: RuntimeSettingsEditable,
+  provider: RuntimeProviderName,
   route: RuntimeSettingsRoute,
-  provider: RuntimeProviderName | RuntimeProviderSetting,
   primary: boolean,
-): string {
-  if (provider === "auto") return "auto provider order";
+): RouteEndpointOption | undefined {
+  const options = routeEndpointOptions(settings);
   if (provider === "local-llm") {
-    return `local-llm / ${localLlmRouteValueLabel(
+    const selected = normalizeSelectedLocalLlmRouteValue(
       settings,
-      primary ? route.model : route.localLlmModel,
-    )}`;
+      primary && route.provider === "local-llm" ? route.model : route.localLlmModel,
+    );
+    return options.find((option) => option.value === `local-llm:${selected}`);
   }
   if (provider === "azure-openai") {
-    const selected = selectedAzureRouteOption(settings, route.azureDeploymentSlots);
-    return `azure-openai / ${selected?.label ?? route.model ?? "not configured"}`;
+    const selected = normalizeSelectedAzureRouteValue(settings, route.azureDeploymentSlots);
+    return options.find((option) => option.value === `azure-openai:${selected}`);
   }
-  const model = primary ? route.model : resolveConfiguredRouteModel(settings, provider);
-  return `${provider}${model ? ` / ${model}` : ""}`;
+  return options.find((option) => option.provider === provider);
+}
+
+function primaryRouteEndpointValue(
+  settings: RuntimeSettingsEditable,
+  route: RuntimeSettingsRoute,
+): string {
+  if (route.provider === "auto") return "";
+  return routeEndpointOptionFor(settings, route.provider, route, true)?.value ?? "";
+}
+
+function fallbackRouteEndpointValue(
+  settings: RuntimeSettingsEditable,
+  route: RuntimeSettingsRoute,
+  index: number,
+): string {
+  const provider = route.fallback[index];
+  if (!provider) return "";
+  return routeEndpointOptionFor(settings, provider, route, false)?.value ?? "";
+}
+
+function routeWithPrimaryEndpoint(
+  settings: RuntimeSettingsEditable,
+  route: RuntimeSettingsRoute,
+  option: RouteEndpointOption,
+): RuntimeSettingsRoute {
+  const fallback = route.fallback.filter((provider) => provider !== option.provider);
+  return {
+    ...route,
+    provider: option.provider,
+    model: option.model ?? resolveConfiguredRouteModel(settings, option.provider),
+    localLlmModel:
+      option.provider === "local-llm"
+        ? option.localLlmModel
+        : fallback.includes("local-llm")
+          ? (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings))
+          : undefined,
+    fallback,
+    azureDeploymentSlots:
+      option.provider === "azure-openai"
+        ? option.azureDeploymentSlots
+        : fallback.includes("azure-openai")
+          ? (route.azureDeploymentSlots ??
+            azureDeploymentSlotsFromValue(normalizeSelectedAzureRouteValue(settings, undefined)))
+          : undefined,
+  };
+}
+
+function routeWithFallbackEndpoint(
+  settings: RuntimeSettingsEditable,
+  route: RuntimeSettingsRoute,
+  index: 0 | 1,
+  option: RouteEndpointOption | undefined,
+): RuntimeSettingsRoute {
+  const nextFallback = route.fallback.filter((provider) => provider !== route.fallback[index]);
+  if (option && option.provider !== route.provider && !nextFallback.includes(option.provider)) {
+    nextFallback.splice(index, 0, option.provider);
+  }
+  const fallback = nextFallback.slice(0, 2);
+  return {
+    ...route,
+    fallback,
+    localLlmModel:
+      route.provider === "local-llm"
+        ? route.model
+        : option?.provider === "local-llm"
+          ? option.localLlmModel
+          : fallback.includes("local-llm")
+            ? (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings))
+            : undefined,
+    azureDeploymentSlots:
+      route.provider === "azure-openai"
+        ? route.azureDeploymentSlots
+        : option?.provider === "azure-openai"
+          ? option.azureDeploymentSlots
+          : fallback.includes("azure-openai")
+            ? route.azureDeploymentSlots
+            : undefined,
+  };
 }
 
 function resolveActiveSettingsTab(pathname: string): SettingsTabId {
@@ -732,37 +830,41 @@ function RouteEditor({
   settings,
   route,
   onChange,
-  providerOptions = runtimeProviderOptions,
 }: {
   label: string;
   description: string;
   settings: RuntimeSettingsEditable;
   route: RuntimeSettingsRoute;
   onChange: (next: RuntimeSettingsRoute) => void;
-  providerOptions?: RuntimeProviderSetting[];
 }) {
-  const fallbackSlots = toFallbackSlots(route.fallback);
-  const localModelOptions = localLlmRouteModelOptions(settings);
-  const azureModelOptions = azureOpenAiRouteOptions(settings);
-  const usesLocalLlm = route.provider === "local-llm" || route.fallback.includes("local-llm");
-  const usesAzureOpenAi =
-    route.provider === "azure-openai" || route.fallback.includes("azure-openai");
-  const selectedLocalLlmModel =
-    route.provider === "local-llm"
-      ? normalizeSelectedLocalLlmRouteValue(settings, route.model)
-      : normalizeSelectedLocalLlmRouteValue(
-          settings,
-          route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings),
-        );
-  const selectedAzureDeployment = normalizeSelectedAzureRouteValue(
-    settings,
-    route.azureDeploymentSlots,
-  );
+  const endpointOptions = routeEndpointOptions(settings);
+  const endpointOptionByValue = new Map(endpointOptions.map((option) => [option.value, option]));
+  const primaryValue = primaryRouteEndpointValue(settings, route);
+  const selectedFallbackValues = [
+    fallbackRouteEndpointValue(settings, route, 0),
+    fallbackRouteEndpointValue(settings, route, 1),
+  ];
+  const fallbackOptionsFor = (index: 0 | 1): RouteEndpointOption[] => {
+    const currentValue = selectedFallbackValues[index];
+    const blockedProviders = new Set<RuntimeProviderName>([
+      ...(route.provider === "auto" ? [] : [route.provider]),
+      ...selectedFallbackValues
+        .filter((value, valueIndex) => value && valueIndex !== index)
+        .map((value) => endpointOptionByValue.get(value)?.provider)
+        .filter((provider): provider is RuntimeProviderName => Boolean(provider)),
+    ]);
+    return endpointOptions.filter(
+      (option) => option.value === currentValue || !blockedProviders.has(option.provider),
+    );
+  };
   const routeChain = [
-    { label: "Primary", value: routeTargetSummary(settings, route, route.provider, true) },
-    ...route.fallback.map((provider, index) => ({
+    {
+      label: "Primary",
+      value: endpointOptionByValue.get(primaryValue)?.label ?? "not configured",
+    },
+    ...selectedFallbackValues.filter(Boolean).map((value, index) => ({
       label: `Fallback ${index + 1}`,
-      value: routeTargetSummary(settings, route, provider, false),
+      value: endpointOptionByValue.get(value)?.label ?? "not configured",
     })),
   ];
 
@@ -774,189 +876,79 @@ function RouteEditor({
       </div>
       <div className="settings-route-fields settings-route-fields-routing">
         <label className="settings-field">
-          <span>Provider</span>
+          <span>Primary Endpoint</span>
           <Select
-            value={route.provider}
+            value={primaryValue}
             onChange={(event) => {
-              const provider = event.target.value as RuntimeProviderSetting;
-              const azureOption = selectedAzureRouteOption(settings, route.azureDeploymentSlots);
-              onChange({
-                ...route,
-                provider,
-                model:
-                  provider === "azure-openai"
-                    ? (azureOption?.model ?? resolveConfiguredRouteModel(settings, provider))
-                    : resolveConfiguredRouteModel(settings, provider),
-                localLlmModel:
-                  provider === "local-llm" || route.fallback.includes("local-llm")
-                    ? (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings))
-                    : undefined,
-                azureDeploymentSlots:
-                  provider === "azure-openai" || route.fallback.includes("azure-openai")
-                    ? (route.azureDeploymentSlots ??
-                      azureDeploymentSlotsFromValue(
-                        normalizeSelectedAzureRouteValue(settings, route.azureDeploymentSlots),
-                      ))
-                    : undefined,
-              });
+              const option = endpointOptionByValue.get(event.target.value);
+              if (option) onChange(routeWithPrimaryEndpoint(settings, route, option));
             }}
+            disabled={endpointOptions.length === 0}
           >
-            {providerOptions.map((provider) => (
-              <option key={provider} value={provider}>
-                {providerNameOptionLabel(provider)}
-              </option>
-            ))}
-          </Select>
-        </label>
-        {usesLocalLlm ? (
-          <label className="settings-field">
-            <span>Local LLM API</span>
-            <Select
-              value={selectedLocalLlmModel}
-              onChange={(event) =>
-                onChange({
-                  ...route,
-                  ...(route.provider === "local-llm"
-                    ? {
-                        model:
-                          event.target.value ||
-                          resolveConfiguredRouteModel(settings, route.provider),
-                        localLlmModel:
-                          event.target.value || resolveConfiguredLocalLlmModel(settings),
-                      }
-                    : {
-                        localLlmModel:
-                          event.target.value || resolveConfiguredLocalLlmModel(settings),
-                      }),
-                })
-              }
-            >
-              {localModelOptions.length === 0 ? (
-                <option value="">not configured</option>
-              ) : (
-                localModelOptions.map((option) => (
+            {endpointOptions.length === 0 ? (
+              <option value="">No configured endpoints</option>
+            ) : (
+              <>
+                {primaryValue ? null : (
+                  <option value="" disabled>
+                    not configured
+                  </option>
+                )}
+                {endpointOptions.map((option) => (
                   <option key={option.value} value={option.value}>
                     {option.label}
                   </option>
-                ))
-              )}
-            </Select>
-          </label>
-        ) : null}
-        {route.fallback.includes("local-llm") && route.provider !== "local-llm" ? (
-          <span className="settings-field-hint">
-            Local LLM fallback uses the selected Local LLM API/model.
-          </span>
-        ) : null}
+                ))}
+              </>
+            )}
+          </Select>
+        </label>
         <label className="settings-field">
-          <span>Fallback 1</span>
+          <span>Fallback 1 Endpoint</span>
           <Select
-            value={fallbackSlots[0]}
+            value={selectedFallbackValues[0]}
             onChange={(event) => {
-              const fallback = patchFallbackSlot(
-                route.fallback,
-                0,
-                event.target.value as FallbackSelectValue,
+              onChange(
+                routeWithFallbackEndpoint(
+                  settings,
+                  route,
+                  0,
+                  endpointOptionByValue.get(event.target.value),
+                ),
               );
-              const azureOption = selectedAzureRouteOption(settings, route.azureDeploymentSlots);
-              onChange({
-                ...route,
-                fallback,
-                localLlmModel:
-                  route.provider === "local-llm" || fallback.includes("local-llm")
-                    ? (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings))
-                    : undefined,
-                azureDeploymentSlots:
-                  route.provider === "azure-openai" || fallback.includes("azure-openai")
-                    ? (route.azureDeploymentSlots ??
-                      azureDeploymentSlotsFromValue(
-                        normalizeSelectedAzureRouteValue(settings, route.azureDeploymentSlots),
-                      ))
-                    : undefined,
-                model:
-                  route.provider === "azure-openai" && azureOption
-                    ? azureOption.model
-                    : route.model,
-              });
             }}
           >
             <option value="">none</option>
-            {runtimeProviders.map((provider) => (
-              <option key={provider} value={provider}>
-                {providerNameOptionLabel(provider)}
+            {fallbackOptionsFor(0).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
               </option>
             ))}
           </Select>
         </label>
         <label className="settings-field">
-          <span>Fallback 2</span>
+          <span>Fallback 2 Endpoint</span>
           <Select
-            value={fallbackSlots[1]}
+            value={selectedFallbackValues[1]}
             onChange={(event) => {
-              const fallback = patchFallbackSlot(
-                route.fallback,
-                1,
-                event.target.value as FallbackSelectValue,
+              onChange(
+                routeWithFallbackEndpoint(
+                  settings,
+                  route,
+                  1,
+                  endpointOptionByValue.get(event.target.value),
+                ),
               );
-              const azureOption = selectedAzureRouteOption(settings, route.azureDeploymentSlots);
-              onChange({
-                ...route,
-                fallback,
-                localLlmModel:
-                  route.provider === "local-llm" || fallback.includes("local-llm")
-                    ? (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings))
-                    : undefined,
-                azureDeploymentSlots:
-                  route.provider === "azure-openai" || fallback.includes("azure-openai")
-                    ? (route.azureDeploymentSlots ??
-                      azureDeploymentSlotsFromValue(
-                        normalizeSelectedAzureRouteValue(settings, route.azureDeploymentSlots),
-                      ))
-                    : undefined,
-                model:
-                  route.provider === "azure-openai" && azureOption
-                    ? azureOption.model
-                    : route.model,
-              });
             }}
           >
             <option value="">none</option>
-            {runtimeProviders.map((provider) => (
-              <option key={provider} value={provider}>
-                {providerNameOptionLabel(provider)}
+            {fallbackOptionsFor(1).map((option) => (
+              <option key={option.value} value={option.value}>
+                {option.label}
               </option>
             ))}
           </Select>
         </label>
-        {usesAzureOpenAi ? (
-          <label className="settings-field">
-            <span>Azure OpenAI API</span>
-            <Select
-              value={selectedAzureDeployment}
-              onChange={(event) => {
-                const option = azureModelOptions.find((item) => item.value === event.target.value);
-                onChange({
-                  ...route,
-                  azureDeploymentSlots: azureDeploymentSlotsFromValue(event.target.value),
-                  model:
-                    route.provider === "azure-openai"
-                      ? (option?.model ?? route.model)
-                      : route.model,
-                });
-              }}
-            >
-              {azureModelOptions.length === 0 ? (
-                <option value="">not configured</option>
-              ) : (
-                azureModelOptions.map((option) => (
-                  <option key={option.value} value={option.value}>
-                    {option.label}
-                  </option>
-                ))
-              )}
-            </Select>
-          </label>
-        ) : null}
       </div>
       <div className="settings-route-chain" aria-label={`${label} effective route`}>
         {routeChain.map((item) => (
@@ -1447,6 +1439,105 @@ export function SettingsPage() {
         };
       });
 
+    const endpointKindOptions = () => (
+      <>
+        <option value="openai">OpenAI</option>
+        <option value="azure-openai">Azure OpenAI</option>
+        <option value="bedrock">AWS Bedrock</option>
+        <option value="local-llm">Local LLM</option>
+      </>
+    );
+
+    const addLocalEndpoint = (
+      current: RuntimeSettingsEditable,
+      input: { name: string; apiBaseUrl?: string; apiPath?: string; model?: string },
+    ): RuntimeSettingsEditable["providers"]["local-llm"] =>
+      syncLocalLlmProviderForDraft(current.providers["local-llm"], [
+        ...current.providers["local-llm"].models,
+        {
+          name: input.name,
+          apiBaseUrl: input.apiBaseUrl ?? "",
+          apiPath:
+            input.apiPath || current.providers["local-llm"].apiPath || "/v1/chat/completions",
+          model: input.model ?? "",
+        },
+      ]);
+
+    const addAzureEndpoint = (
+      current: RuntimeSettingsEditable,
+      input: { name: string; apiBaseUrl?: string; model?: string },
+    ): RuntimeSettingsEditable["providers"]["azure-openai"] =>
+      syncAzureOpenAiProviderForDraft(current.providers["azure-openai"], [
+        ...current.providers["azure-openai"].deployments,
+        {
+          name: input.name,
+          apiBaseUrl: input.apiBaseUrl ?? "",
+          apiPath: current.providers["azure-openai"].apiPath || "/openai/deployments",
+          apiVersion: current.providers["azure-openai"].apiVersion || "2025-04-01-preview",
+          model: input.model ?? "",
+        },
+      ]);
+
+    const convertOpenAiEndpointTo = (kind: ProviderEndpointKind) => {
+      if (kind === "openai") return;
+      patchDraft((current) => {
+        const source = current.providers.openai;
+        const providers = {
+          ...current.providers,
+          openai: { ...source, enabled: false },
+        };
+        if (kind === "local-llm") {
+          providers["local-llm"] = addLocalEndpoint(current, {
+            name: "OpenAI",
+            apiBaseUrl: source.apiBaseUrl,
+            model: source.model,
+          });
+        } else if (kind === "azure-openai") {
+          providers["azure-openai"] = addAzureEndpoint(current, {
+            name: "OpenAI",
+            apiBaseUrl: source.apiBaseUrl,
+            model: source.model,
+          });
+        } else if (kind === "bedrock") {
+          providers.bedrock = {
+            ...current.providers.bedrock,
+            enabled: true,
+            model: source.model || current.providers.bedrock.model,
+          };
+        }
+        return { ...current, providers };
+      });
+    };
+
+    const convertBedrockEndpointTo = (kind: ProviderEndpointKind) => {
+      if (kind === "bedrock") return;
+      patchDraft((current) => {
+        const source = current.providers.bedrock;
+        const providers = {
+          ...current.providers,
+          bedrock: { ...source, enabled: false },
+        };
+        if (kind === "local-llm") {
+          providers["local-llm"] = addLocalEndpoint(current, {
+            name: "AWS Bedrock",
+            model: source.model,
+          });
+        } else if (kind === "azure-openai") {
+          providers["azure-openai"] = addAzureEndpoint(current, {
+            name: "AWS Bedrock",
+            model: source.model,
+          });
+        } else if (kind === "openai") {
+          providers.openai = {
+            ...current.providers.openai,
+            enabled: true,
+            model: source.model || current.providers.openai.model,
+          };
+        }
+        return { ...current, providers };
+      });
+    };
+
     const addEndpoint = () =>
       patchDraft((current) => {
         const models = current.providers["local-llm"].models;
@@ -1468,62 +1559,86 @@ export function SettingsPage() {
         };
       });
 
-    const convertAzureEndpointToLocal = (index: number) =>
+    const convertAzureEndpointTo = (index: number, kind: ProviderEndpointKind) =>
       patchDraft((current) => {
         const deployment = current.providers["azure-openai"].deployments[index];
-        if (!deployment) return current;
+        if (!deployment || kind === "azure-openai") return current;
+        const nextAzureDeployments = current.providers["azure-openai"].deployments.filter(
+          (_deployment, deploymentIndex) => deploymentIndex !== index,
+        );
+        const providers = {
+          ...current.providers,
+          "azure-openai": syncAzureOpenAiProviderForDraft(
+            current.providers["azure-openai"],
+            nextAzureDeployments,
+          ),
+        };
+        if (kind === "local-llm") {
+          providers["local-llm"] = addLocalEndpoint(current, {
+            name:
+              deployment.name || `Local LLM ${current.providers["local-llm"].models.length + 1}`,
+            apiBaseUrl: deployment.apiBaseUrl,
+            model: deployment.model,
+          });
+        } else if (kind === "openai") {
+          providers.openai = {
+            ...current.providers.openai,
+            enabled: true,
+            apiBaseUrl: deployment.apiBaseUrl || current.providers.openai.apiBaseUrl,
+            model: deployment.model || current.providers.openai.model,
+          };
+        } else if (kind === "bedrock") {
+          providers.bedrock = {
+            ...current.providers.bedrock,
+            enabled: true,
+            model: deployment.model || current.providers.bedrock.model,
+          };
+        }
         return {
           ...current,
-          providers: {
-            ...current.providers,
-            "azure-openai": syncAzureOpenAiProviderForDraft(
-              current.providers["azure-openai"],
-              current.providers["azure-openai"].deployments.filter(
-                (_deployment, deploymentIndex) => deploymentIndex !== index,
-              ),
-            ),
-            "local-llm": syncLocalLlmProviderForDraft(current.providers["local-llm"], [
-              ...current.providers["local-llm"].models,
-              {
-                name:
-                  deployment.name ||
-                  `Local LLM ${current.providers["local-llm"].models.length + 1}`,
-                apiBaseUrl: deployment.apiBaseUrl,
-                apiPath: current.providers["local-llm"].apiPath || "/v1/chat/completions",
-                model: deployment.model,
-              },
-            ]),
-          },
+          providers,
         };
       });
 
-    const convertLocalEndpointToAzure = (index: number) =>
+    const convertLocalEndpointTo = (index: number, kind: ProviderEndpointKind) =>
       patchDraft((current) => {
         const model = current.providers["local-llm"].models[index];
-        if (!model) return current;
+        if (!model || kind === "local-llm") return current;
+        const nextLocalModels = current.providers["local-llm"].models.filter(
+          (_model, modelIndex) => modelIndex !== index,
+        );
+        const providers = {
+          ...current.providers,
+          "local-llm": syncLocalLlmProviderForDraft(
+            current.providers["local-llm"],
+            nextLocalModels,
+          ),
+        };
+        if (kind === "azure-openai") {
+          providers["azure-openai"] = addAzureEndpoint(current, {
+            name:
+              model.name ||
+              `Deployment ${current.providers["azure-openai"].deployments.length + 1}`,
+            apiBaseUrl: model.apiBaseUrl,
+            model: model.model,
+          });
+        } else if (kind === "openai") {
+          providers.openai = {
+            ...current.providers.openai,
+            enabled: true,
+            apiBaseUrl: model.apiBaseUrl || current.providers.openai.apiBaseUrl,
+            model: model.model || current.providers.openai.model,
+          };
+        } else if (kind === "bedrock") {
+          providers.bedrock = {
+            ...current.providers.bedrock,
+            enabled: true,
+            model: model.model || current.providers.bedrock.model,
+          };
+        }
         return {
           ...current,
-          providers: {
-            ...current.providers,
-            "local-llm": syncLocalLlmProviderForDraft(
-              current.providers["local-llm"],
-              current.providers["local-llm"].models.filter(
-                (_model, modelIndex) => modelIndex !== index,
-              ),
-            ),
-            "azure-openai": syncAzureOpenAiProviderForDraft(current.providers["azure-openai"], [
-              ...current.providers["azure-openai"].deployments,
-              {
-                name:
-                  model.name ||
-                  `Deployment ${current.providers["azure-openai"].deployments.length + 1}`,
-                apiBaseUrl: model.apiBaseUrl,
-                apiPath: current.providers["azure-openai"].apiPath || "/openai/deployments",
-                apiVersion: current.providers["azure-openai"].apiVersion || "2025-04-01-preview",
-                model: model.model,
-              },
-            ]),
-          },
+          providers,
         };
       });
 
@@ -1545,94 +1660,114 @@ export function SettingsPage() {
         </div>
 
         <div className="settings-provider-endpoint-list">
-          <div className="settings-provider-endpoint-card">
-            <div className="settings-provider-endpoint-top">
-              <div className="settings-provider-endpoint-title">
-                <strong>OpenAI</strong>
-                <span>OpenAI</span>
+          {draft.providers.openai.enabled ? (
+            <div className="settings-provider-endpoint-card">
+              <div className="settings-provider-endpoint-top">
+                <div className="settings-provider-endpoint-title">
+                  <strong>OpenAI</strong>
+                  <span>OpenAI</span>
+                </div>
+                <div className="settings-provider-actions">
+                  <label className="settings-check">
+                    <Checkbox
+                      checked={draft.providers.openai.enabled}
+                      onChange={(event) =>
+                        patchDraft((current) => ({
+                          ...current,
+                          providers: {
+                            ...current.providers,
+                            openai: { ...current.providers.openai, enabled: event.target.checked },
+                          },
+                        }))
+                      }
+                    />
+                    Enabled
+                  </label>
+                  <ProviderHealthBadge health={providerHealth.openai} />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => providerTestMutation.mutate("openai")}
+                    disabled={providerTestMutation.isPending}
+                  >
+                    <Stethoscope size={14} />
+                    Health
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      patchDraft((current) => ({
+                        ...current,
+                        providers: {
+                          ...current.providers,
+                          openai: { ...current.providers.openai, enabled: false },
+                        },
+                      }))
+                    }
+                  >
+                    <Trash2 size={14} />
+                    Delete
+                  </Button>
+                </div>
               </div>
-              <div className="settings-provider-actions">
-                <label className="settings-check">
-                  <Checkbox
-                    checked={draft.providers.openai.enabled}
+              <div className="settings-provider-endpoint-fields">
+                <label className="settings-field">
+                  <span>Kind</span>
+                  <Select
+                    value="openai"
+                    onChange={(event) =>
+                      convertOpenAiEndpointTo(event.target.value as ProviderEndpointKind)
+                    }
+                  >
+                    {endpointKindOptions()}
+                  </Select>
+                </label>
+                <label className="settings-field">
+                  <span>Endpoint</span>
+                  <Input
+                    value={draft.providers.openai.apiBaseUrl}
                     onChange={(event) =>
                       patchDraft((current) => ({
                         ...current,
                         providers: {
                           ...current.providers,
-                          openai: { ...current.providers.openai, enabled: event.target.checked },
+                          openai: {
+                            ...current.providers.openai,
+                            apiBaseUrl: event.target.value,
+                          },
                         },
                       }))
                     }
                   />
-                  Enabled
                 </label>
-                <ProviderHealthBadge health={providerHealth.openai} />
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => providerTestMutation.mutate("openai")}
-                  disabled={providerTestMutation.isPending}
-                >
-                  <Stethoscope size={14} />
-                  Health
-                </Button>
-              </div>
-            </div>
-            <div className="settings-provider-endpoint-fields">
-              <label className="settings-field">
-                <span>Name</span>
-                <Input value="OpenAI" readOnly />
-              </label>
-              <label className="settings-field">
-                <span>Kind</span>
-                <Select value="openai" disabled>
-                  <option value="openai">OpenAI</option>
-                </Select>
-              </label>
-              <label className="settings-field">
-                <span>Endpoint</span>
-                <Input
-                  value={draft.providers.openai.apiBaseUrl}
-                  onChange={(event) =>
-                    patchDraft((current) => ({
-                      ...current,
-                      providers: {
-                        ...current.providers,
-                        openai: {
-                          ...current.providers.openai,
-                          apiBaseUrl: event.target.value,
+                <label className="settings-field">
+                  <span>Models</span>
+                  <Input
+                    value={draft.providers.openai.model}
+                    onChange={(event) =>
+                      patchDraft((current) => ({
+                        ...current,
+                        providers: {
+                          ...current.providers,
+                          openai: { ...current.providers.openai, model: event.target.value },
                         },
-                      },
-                    }))
-                  }
-                />
-              </label>
-              <label className="settings-field">
-                <span>Models</span>
-                <Input
-                  value={draft.providers.openai.model}
-                  onChange={(event) =>
-                    patchDraft((current) => ({
-                      ...current,
-                      providers: {
-                        ...current.providers,
-                        openai: { ...current.providers.openai, model: event.target.value },
-                      },
-                    }))
-                  }
-                />
-              </label>
+                      }))
+                    }
+                  />
+                </label>
+              </div>
+              {sourceView
+                ? renderSecretEditor(
+                    "openaiApiKey",
+                    "API Key",
+                    sourceView.providers.openai.apiKeySecret,
+                  )
+                : null}
             </div>
-            {sourceView
-              ? renderSecretEditor(
-                  "openaiApiKey",
-                  "API Key",
-                  sourceView.providers.openai.apiKeySecret,
-                )
-              : null}
-          </div>
+          ) : null}
 
           {draft.providers["azure-openai"].deployments.map((deployment, index) => {
             const secretKey = azureOpenAiSecretKey(index);
@@ -1718,11 +1853,10 @@ export function SettingsPage() {
                     <Select
                       value="azure-openai"
                       onChange={(event) => {
-                        if (event.target.value === "local-llm") convertAzureEndpointToLocal(index);
+                        convertAzureEndpointTo(index, event.target.value as ProviderEndpointKind);
                       }}
                     >
-                      <option value="azure-openai">Azure OpenAI</option>
-                      <option value="local-llm">Local LLM</option>
+                      {endpointKindOptions()}
                     </Select>
                   </label>
                   <label className="settings-field">
@@ -1858,12 +1992,10 @@ export function SettingsPage() {
                     <Select
                       value="local-llm"
                       onChange={(event) => {
-                        if (event.target.value === "azure-openai")
-                          convertLocalEndpointToAzure(index);
+                        convertLocalEndpointTo(index, event.target.value as ProviderEndpointKind);
                       }}
                     >
-                      <option value="azure-openai">Azure OpenAI</option>
-                      <option value="local-llm">Local LLM</option>
+                      {endpointKindOptions()}
                     </Select>
                   </label>
                   <label className="settings-field">
@@ -1905,116 +2037,139 @@ export function SettingsPage() {
             );
           })}
 
-          <div className="settings-provider-endpoint-card">
-            <div className="settings-provider-endpoint-top">
-              <div className="settings-provider-endpoint-title">
-                <strong>AWS Bedrock</strong>
-                <span>AWS Bedrock</span>
+          {draft.providers.bedrock.enabled ? (
+            <div className="settings-provider-endpoint-card">
+              <div className="settings-provider-endpoint-top">
+                <div className="settings-provider-endpoint-title">
+                  <strong>AWS Bedrock</strong>
+                  <span>AWS Bedrock</span>
+                </div>
+                <div className="settings-provider-actions">
+                  <label className="settings-check">
+                    <Checkbox
+                      checked={draft.providers.bedrock.enabled}
+                      onChange={(event) =>
+                        patchDraft((current) => ({
+                          ...current,
+                          providers: {
+                            ...current.providers,
+                            bedrock: {
+                              ...current.providers.bedrock,
+                              enabled: event.target.checked,
+                            },
+                          },
+                        }))
+                      }
+                    />
+                    Enabled
+                  </label>
+                  <ProviderHealthBadge health={providerHealth.bedrock} />
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() => providerTestMutation.mutate("bedrock")}
+                    disabled={providerTestMutation.isPending}
+                  >
+                    <Stethoscope size={14} />
+                    Health
+                  </Button>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="outline"
+                    onClick={() =>
+                      patchDraft((current) => ({
+                        ...current,
+                        providers: {
+                          ...current.providers,
+                          bedrock: { ...current.providers.bedrock, enabled: false },
+                        },
+                      }))
+                    }
+                  >
+                    <Trash2 size={14} />
+                    Delete
+                  </Button>
+                </div>
               </div>
-              <div className="settings-provider-actions">
-                <label className="settings-check">
-                  <Checkbox
-                    checked={draft.providers.bedrock.enabled}
+              <div className="settings-provider-endpoint-fields">
+                <label className="settings-field">
+                  <span>Kind</span>
+                  <Select
+                    value="bedrock"
+                    onChange={(event) =>
+                      convertBedrockEndpointTo(event.target.value as ProviderEndpointKind)
+                    }
+                  >
+                    {endpointKindOptions()}
+                  </Select>
+                </label>
+                <label className="settings-field">
+                  <span>Region</span>
+                  <Input
+                    value={draft.providers.bedrock.region}
                     onChange={(event) =>
                       patchDraft((current) => ({
                         ...current,
                         providers: {
                           ...current.providers,
-                          bedrock: { ...current.providers.bedrock, enabled: event.target.checked },
+                          bedrock: { ...current.providers.bedrock, region: event.target.value },
                         },
                       }))
                     }
                   />
-                  Enabled
                 </label>
-                <ProviderHealthBadge health={providerHealth.bedrock} />
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  onClick={() => providerTestMutation.mutate("bedrock")}
-                  disabled={providerTestMutation.isPending}
-                >
-                  <Stethoscope size={14} />
-                  Health
-                </Button>
+                <label className="settings-field">
+                  <span>Profile</span>
+                  <Input
+                    value={draft.providers.bedrock.profile}
+                    onChange={(event) =>
+                      patchDraft((current) => ({
+                        ...current,
+                        providers: {
+                          ...current.providers,
+                          bedrock: { ...current.providers.bedrock, profile: event.target.value },
+                        },
+                      }))
+                    }
+                  />
+                </label>
+                <label className="settings-field">
+                  <span>Models</span>
+                  <Input
+                    value={draft.providers.bedrock.model}
+                    onChange={(event) =>
+                      patchDraft((current) => ({
+                        ...current,
+                        providers: {
+                          ...current.providers,
+                          bedrock: { ...current.providers.bedrock, model: event.target.value },
+                        },
+                      }))
+                    }
+                  />
+                </label>
               </div>
-            </div>
-            <div className="settings-provider-endpoint-fields">
-              <label className="settings-field">
-                <span>Name</span>
-                <Input value="AWS Bedrock" readOnly />
-              </label>
-              <label className="settings-field">
-                <span>Kind</span>
-                <Select value="bedrock" disabled>
-                  <option value="bedrock">AWS Bedrock</option>
-                </Select>
-              </label>
-              <label className="settings-field">
-                <span>Region</span>
-                <Input
-                  value={draft.providers.bedrock.region}
-                  onChange={(event) =>
-                    patchDraft((current) => ({
-                      ...current,
-                      providers: {
-                        ...current.providers,
-                        bedrock: { ...current.providers.bedrock, region: event.target.value },
-                      },
-                    }))
-                  }
-                />
-              </label>
-              <label className="settings-field">
-                <span>Profile</span>
-                <Input
-                  value={draft.providers.bedrock.profile}
-                  onChange={(event) =>
-                    patchDraft((current) => ({
-                      ...current,
-                      providers: {
-                        ...current.providers,
-                        bedrock: { ...current.providers.bedrock, profile: event.target.value },
-                      },
-                    }))
-                  }
-                />
-              </label>
-              <label className="settings-field">
-                <span>Models</span>
-                <Input
-                  value={draft.providers.bedrock.model}
-                  onChange={(event) =>
-                    patchDraft((current) => ({
-                      ...current,
-                      providers: {
-                        ...current.providers,
-                        bedrock: { ...current.providers.bedrock, model: event.target.value },
-                      },
-                    }))
-                  }
-                />
-              </label>
-            </div>
-            {sourceView ? (
-              <div className="settings-secret-row">
-                <div className="settings-secret-meta">
-                  <strong>Credential Status</strong>
-                  <div className="settings-secret-status">
-                    <SecretStatusBadge status={sourceView.providers.bedrock.credentialSecret} />
-                    <span>
-                      {sourceView.providers.bedrock.credentialSecret.maskedValue ?? "unset"}
-                    </span>
-                    <span>
-                      updated{" "}
-                      {formatDateTime(sourceView.providers.bedrock.credentialSecret.updatedAt)}
-                    </span>
+              {sourceView ? (
+                <div className="settings-secret-row">
+                  <div className="settings-secret-meta">
+                    <strong>Credential Status</strong>
+                    <div className="settings-secret-status">
+                      <SecretStatusBadge status={sourceView.providers.bedrock.credentialSecret} />
+                      <span>
+                        {sourceView.providers.bedrock.credentialSecret.maskedValue ?? "unset"}
+                      </span>
+                      <span>
+                        updated{" "}
+                        {formatDateTime(sourceView.providers.bedrock.credentialSecret.updatedAt)}
+                      </span>
+                    </div>
                   </div>
                 </div>
-              </div>
-            ) : null}
-          </div>
+              ) : null}
+            </div>
+          ) : null}
 
           <div className="settings-provider-endpoint-card">
             <div className="settings-provider-endpoint-top">
@@ -2284,8 +2439,8 @@ export function SettingsPage() {
                 <CardHeader>
                   <CardTitle>Task Routing</CardTitle>
                   <p className="settings-task-routing-intro">
-                    Assign provider/model and task-specific runtime limits per pipeline step. Model
-                    options follow the selected LLM Provider settings.
+                    Assign configured endpoints and task-specific runtime limits per pipeline step.
+                    Endpoint options are derived from Provider Endpoints.
                   </p>
                 </CardHeader>
                 <CardContent className="settings-routes">
@@ -2294,8 +2449,8 @@ export function SettingsPage() {
                       <div>
                         <h3>Route Matrix</h3>
                         <p>
-                          Primary and fallback order for each task. Local LLM rows show the selected
-                          local target from Provider Registry.
+                          Primary and fallback endpoint order for each task. Only endpoints that can
+                          be routed by the current settings are selectable.
                         </p>
                       </div>
                     </div>
@@ -2386,7 +2541,6 @@ export function SettingsPage() {
                       label="agenticCompile"
                       description="Compile helper route used by context compile and related runtime paths."
                       settings={draft}
-                      providerOptions={agenticProviders}
                       route={{
                         provider: draft.taskRouting.agenticCompile.provider,
                         model: draft.taskRouting.agenticCompile.model,

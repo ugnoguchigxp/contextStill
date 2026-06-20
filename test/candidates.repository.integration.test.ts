@@ -6,6 +6,8 @@ import {
   distillationTargetStates,
   findCandidateResults,
   knowledgeItems,
+  landscapeReviewItemCandidateLinks,
+  landscapeReviewItems,
 } from "../src/db/schema.js";
 import {
   closeIntegrationDb,
@@ -453,6 +455,77 @@ describeDb("candidates repository integration", () => {
     expect(rejectedOnly.stats.retryable).toBe(0);
     expect(rejectedOnly.stats.retainedFailure).toBe(1);
     expect(rejectedOnly.stats.total).toBe(2);
+  });
+
+  test("searches landscape source URIs and warns on unapproved review links", async () => {
+    await db.insert(distillationTargetStates).values({
+      id: "50000000-0000-0000-0000-000000000001",
+      targetKind: "knowledge_candidate",
+      targetKey: "landscape-review-item:review-1:used_baseline_lost:hash",
+      sourceUri:
+        "landscape://review-item/50000000-0000-0000-0000-000000000101/candidate/landscape-review-item%3Areview-1",
+      distillationVersion: "v1",
+      status: "completed",
+      phase: "covering_evidence",
+      priorityGroup: "knowledge_candidate",
+      sortKey: "landscape-review",
+    });
+
+    await db.insert(landscapeReviewItems).values({
+      id: "50000000-0000-0000-0000-000000000101",
+      source: "replay_compare",
+      reason: "used_baseline_lost",
+      status: "pending",
+      proposedAction: "refine_applies_to",
+      priority: 80,
+      confidence: "high",
+      idempotencyKey: "landscape-review-item-test",
+      evidence: ["baseline lost after recompile"],
+    });
+
+    await db.insert(findCandidateResults).values({
+      id: "50000000-0000-0000-0000-000000000201",
+      targetStateId: "50000000-0000-0000-0000-000000000001",
+      candidateIndex: 0,
+      title: "Landscape Review Procedure: used_baseline_lost",
+      content: "Use when:\n- Review landscape candidate.\n\nWorkflow:\n1. Inspect evidence.",
+      origin: {
+        source: "landscape_review_item",
+        reviewItemId: "50000000-0000-0000-0000-000000000101",
+        reason: "used_baseline_lost",
+      },
+      status: "selected",
+    });
+
+    await db.insert(landscapeReviewItemCandidateLinks).values({
+      id: "50000000-0000-0000-0000-000000000301",
+      reviewItemId: "50000000-0000-0000-0000-000000000101",
+      targetStateId: "50000000-0000-0000-0000-000000000001",
+      findCandidateResultId: "50000000-0000-0000-0000-000000000201",
+      candidateKey: "landscape-review-item:review-1:used_baseline_lost:hash",
+      status: "draft_created",
+    });
+
+    const result = await listCandidateItems({
+      page: 1,
+      limit: 50,
+      targetKind: "knowledge_candidate",
+      outcome: "all",
+      hasKnowledge: "all",
+      query: "landscape://review-item",
+    });
+
+    expect(result.total).toBe(1);
+    expect(result.items[0]?.id).toBe("50000000-0000-0000-0000-000000000201");
+    expect(result.items[0]?.landscapeWarning).toMatchObject({
+      source: "landscape_review_item",
+      linkId: "50000000-0000-0000-0000-000000000301",
+      reviewItemId: "50000000-0000-0000-0000-000000000101",
+      reason: "used_baseline_lost",
+      linkStatus: "draft_created",
+      requiresManualApproval: true,
+      warningReason: "review_required",
+    });
   });
 
   test("only cover-evidence paused targets count as retryable outcomes", async () => {

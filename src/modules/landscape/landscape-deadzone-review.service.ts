@@ -49,9 +49,9 @@ function isSqliteBackend(): boolean {
   return resolveDatabaseBackendConfig().kind === "sqlite";
 }
 
-async function loadKnowledgeTitleStatusRows(ids: string[]): Promise<
-  Array<{ id: string; title: string; status: string }>
-> {
+async function loadKnowledgeTitleStatusRows(
+  ids: string[],
+): Promise<Array<{ id: string; title: string; status: string }>> {
   const uniqueIds = [...new Set(ids)].filter(Boolean);
   if (uniqueIds.length === 0) return [];
   if (isSqliteBackend()) {
@@ -73,9 +73,9 @@ async function loadKnowledgeTitleStatusRows(ids: string[]): Promise<
     .where(inArray(knowledgeItems.id, uniqueIds));
 }
 
-async function loadKnowledgeMaintenanceRows(ids: string[]): Promise<
-  Array<{ id: string; title: string; body: string; status: string }>
-> {
+async function loadKnowledgeMaintenanceRows(
+  ids: string[],
+): Promise<Array<{ id: string; title: string; body: string; status: string }>> {
   const uniqueIds = [...new Set(ids)].filter(Boolean);
   if (uniqueIds.length === 0) return [];
   if (isSqliteBackend()) {

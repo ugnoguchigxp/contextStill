@@ -104,7 +104,9 @@ function mapSqliteReviewItemCandidateSourceRow(
   } as LandscapeReviewItemCandidateSourceRow;
 }
 
-function mapSqliteCandidateLinkRow(row: Record<string, unknown>): LandscapeReviewItemCandidateLinkRow {
+function mapSqliteCandidateLinkRow(
+  row: Record<string, unknown>,
+): LandscapeReviewItemCandidateLinkRow {
   return {
     id: String(row.id),
     reviewItemId: String(row.review_item_id),
@@ -145,14 +147,9 @@ async function updateSqliteCandidateLinkStatusIfCurrent(params: {
         and status = ?
     `,
     )
-    .run(
-      params.nextStatus,
-      new Date().toISOString(),
-      params.existing.id,
-      params.currentStatus,
-    );
+    .run(params.nextStatus, new Date().toISOString(), params.existing.id, params.currentStatus);
   const row = sqlite.db
-    .query(`select * from landscape_review_item_candidate_links where id = ? limit 1`)
+    .query("select * from landscape_review_item_candidate_links where id = ? limit 1")
     .get(params.existing.id) as Record<string, unknown> | null;
   return row ? mapSqliteCandidateLinkRow(row) : params.existing;
 }
@@ -166,9 +163,7 @@ export async function listLandscapeReviewItemsForCandidateDraft(input: {
     const sqlite = await getSqliteCoreDatabase();
     const params: unknown[] = [input.status];
     const idFilter =
-      input.ids && input.ids.length > 0
-        ? `and id in (${input.ids.map(() => "?").join(", ")})`
-        : "";
+      input.ids && input.ids.length > 0 ? `and id in (${input.ids.map(() => "?").join(", ")})` : "";
     if (input.ids && input.ids.length > 0) params.push(...input.ids);
     const rows = sqlite.db
       .query(
@@ -286,9 +281,7 @@ export async function upsertLandscapeReviewItemCandidateDraft(params: {
         limit 1
       `,
       )
-      .get(params.draft.targetKey, DEFAULT_DISTILLATION_TARGET_VERSION) as
-      | { id: string }
-      | null;
+      .get(params.draft.targetKey, DEFAULT_DISTILLATION_TARGET_VERSION) as { id: string } | null;
     const targetStateId = targetExisting?.id ?? crypto.randomUUID();
     if (targetExisting) {
       sqlite.db
@@ -404,11 +397,11 @@ export async function upsertLandscapeReviewItemCandidateDraft(params: {
       lastCandidateCreatedAt: nowIso,
     };
     sqlite.db
-      .query(`update landscape_review_items set payload = ?, updated_at = ? where id = ?`)
+      .query("update landscape_review_items set payload = ?, updated_at = ? where id = ?")
       .run(JSON.stringify(payloadPatch), nowIso, params.reviewItem.id);
 
     const link = sqlite.db
-      .query(`select * from landscape_review_item_candidate_links where id = ? limit 1`)
+      .query("select * from landscape_review_item_candidate_links where id = ? limit 1")
       .get(linkId) as Record<string, unknown> | null;
     if (!link) throw new Error("failed to create landscape review candidate link");
     return {
@@ -599,7 +592,9 @@ export async function findLandscapeReviewCandidateLinkByFindCandidateResultId(
   if (isSqliteBackend()) {
     const sqlite = await getSqliteCoreDatabase();
     const link = sqlite.db
-      .query(`select * from landscape_review_item_candidate_links where find_candidate_result_id = ? limit 1`)
+      .query(
+        "select * from landscape_review_item_candidate_links where find_candidate_result_id = ? limit 1",
+      )
       .get(findCandidateResultId) as Record<string, unknown> | null;
     return link ? mapSqliteCandidateLinkRow(link) : null;
   }
@@ -618,7 +613,9 @@ export async function findLandscapeReviewCandidateLinkByFoundCandidateId(
   if (isSqliteBackend()) {
     const sqlite = await getSqliteCoreDatabase();
     const link = sqlite.db
-      .query(`select * from landscape_review_item_candidate_links where found_candidate_id = ? limit 1`)
+      .query(
+        "select * from landscape_review_item_candidate_links where found_candidate_id = ? limit 1",
+      )
       .get(foundCandidateId) as Record<string, unknown> | null;
     return link ? mapSqliteCandidateLinkRow(link) : null;
   }
@@ -689,7 +686,7 @@ export async function updateLandscapeReviewCandidateLinkStatus(params: {
         params.linkId,
       );
     const updated = sqlite.db
-      .query(`select * from landscape_review_item_candidate_links where id = ? limit 1`)
+      .query("select * from landscape_review_item_candidate_links where id = ? limit 1")
       .get(params.linkId) as Record<string, unknown> | null;
     if (!updated) {
       throw new LandscapeReviewCandidateLinkError(400, "failed to update candidate link status");

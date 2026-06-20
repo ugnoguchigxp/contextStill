@@ -424,7 +424,6 @@ async function recordCompileRunKnowledgeUsageSignalsSafe(params: {
   }>;
   actor: "agent" | "system";
 }): Promise<void> {
-  if (resolveDatabaseBackendConfig().kind === "sqlite") return;
   const selectedSet = new Set(params.selectedKnowledgeIds.map((id) => id.trim()).filter(Boolean));
   if (selectedSet.size === 0) return;
   const agenticAcceptedSet = new Set(

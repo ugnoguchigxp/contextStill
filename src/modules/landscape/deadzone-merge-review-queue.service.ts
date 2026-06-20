@@ -362,19 +362,19 @@ export async function applyDeadZoneMergeReviewJob(
         row.id,
       );
   } else {
-  await db
-    .update(deadZoneMergeReviewQueue)
-    .set({
-      lastOutcomeKind: "applied",
-      metadata: {
-        ...asRecord(row.metadata),
-        appliedAt: new Date().toISOString(),
-        appliedCanonicalKnowledgeId: canonical.id,
-        deprecatedKnowledgeId: deadZone.id,
-      },
-      updatedAt: new Date(),
-    })
-    .where(eq(deadZoneMergeReviewQueue.id, row.id));
+    await db
+      .update(deadZoneMergeReviewQueue)
+      .set({
+        lastOutcomeKind: "applied",
+        metadata: {
+          ...asRecord(row.metadata),
+          appliedAt: new Date().toISOString(),
+          appliedCanonicalKnowledgeId: canonical.id,
+          deprecatedKnowledgeId: deadZone.id,
+        },
+        updatedAt: new Date(),
+      })
+      .where(eq(deadZoneMergeReviewQueue.id, row.id));
   }
   await recordDeadZoneReviewDecision({
     reviewItemId: row.reviewItemId,
