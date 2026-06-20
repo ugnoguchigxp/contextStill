@@ -295,6 +295,19 @@ export type DoctorReport = {
   skippedChecks?: DoctorReasonDetail[];
   db: { reachable: boolean; durationMs: number; error?: string };
   vector: { installed: boolean };
+  desktopReadiness?: {
+    backendCategory: "sqlite-local" | "postgres-server" | "compat-legacy";
+    modeLabel: string;
+    status: "Ready" | "Needs setup" | "Optional improvement" | "Advanced server backend only";
+    defaultBackendReady: boolean;
+    items: Array<{
+      id: string;
+      label: string;
+      state: "Ready" | "Needs setup" | "Optional improvement" | "Advanced server backend only";
+      scope: "default" | "optional" | "advanced";
+      action: string;
+    }>;
+  };
   embedding?: {
     configured: boolean;
     provider: string;
@@ -548,7 +561,10 @@ export type DoctorDomainBase = Pick<
 >;
 
 export type DoctorCoreInfrastructureDomain = DoctorDomainBase &
-  Pick<DoctorReport, "db" | "vector" | "embedding" | "tables" | "hitl" | "knowledgeLifecycle">;
+  Pick<
+    DoctorReport,
+    "db" | "vector" | "desktopReadiness" | "embedding" | "tables" | "hitl" | "knowledgeLifecycle"
+  >;
 
 export type DoctorAiServiceToolsDomain = DoctorDomainBase &
   Pick<DoctorReport, "agenticLlm" | "mcp">;

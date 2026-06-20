@@ -2,13 +2,66 @@
 
 ## Health Checks
 
-Run:
+Desktop/local diagnostics:
 
 ```bash
-bun run doctor
+CONTEXT_STILL_DB_BACKEND=sqlite bun run doctor
 ```
 
-Doctor checks database reachability, pgvector, embedding, LLM providers, expected tables, compile run health, context decision readiness, agent log sync, queue automation, and distillation freshness.
+Doctor reports:
+
+- desktop readiness summary
+- SQLite DB reachability and required tables
+- optional embedding and LLM availability
+- MCP tool surface
+- compile and decision health
+- agent log sync
+- queue automation and distillation freshness
+
+PostgreSQL / pgvector diagnostics are advanced server backend checks. They should not appear as missing default desktop infrastructure when SQLite is selected.
+
+## Desktop Doctor States
+
+Doctor uses user-action language for desktop readiness:
+
+| State | Meaning |
+|---|---|
+| `Ready` | The item is usable for the selected path |
+| `Needs setup` | The default desktop path needs user action before it can work |
+| `Optional improvement` | The app can run, but quality or automation can improve |
+| `Advanced server backend only` | The item applies only when the server backend is selected |
+
+Expected desktop behavior:
+
+- SQLite DB missing or migration needed: `Needs setup`
+- embedding unavailable: `Optional improvement`
+- MCP not registered: `Optional improvement`
+- PostgreSQL / pgvector not present in SQLite mode: `Advanced server backend only`, not a default remediation
+
+## Backups
+
+SQLite backup is the default desktop backup path:
+
+```bash
+CONTEXT_STILL_DB_BACKEND=sqlite bun run sqlite:backup
+```
+
+It writes a consistent `VACUUM INTO` snapshot after `PRAGMA integrity_check`.
+
+Inputs:
+
+- source: `CONTEXT_STILL_SQLITE_CORE_PATH`, `SQLITE_CORE_PATH`, `DB_SQLITE_PATH`, or the default `data/context-still-core.sqlite`
+- output: `backup/<sqlite-name>-<timestamp>.sqlite` by default
+
+Override output:
+
+```bash
+CONTEXT_STILL_DB_BACKEND=sqlite bun run sqlite:backup -- --output backup/context-still.sqlite
+```
+
+Restore SQLite backups by stopping writers, replacing the configured SQLite DB file with the backup file, and restarting the app. If copying over a live WAL-mode database manually, remove stale sidecar files (`.sqlite-wal` / `.sqlite-shm`) with the old database after writers are stopped.
+
+The legacy `./scripts/backup-db.sh` script follows the configured backend. In SQLite mode it delegates to the same SQLite backup behavior; in PostgreSQL mode it keeps the Docker/pg_dump flow.
 
 ## Agent Log Sync
 
@@ -48,7 +101,7 @@ bun run automation:queue-supervisor -- load
 bun run automation:queue-supervisor -- status
 ```
 
-Queue logs are written under `logs/`.
+Queue logs are written under `logs/`. Queue/distillation surfaces are still an area where backend support must be explicit; keep server-only assumptions out of the default desktop path.
 
 ## Candidate Registration Hooks
 
@@ -87,34 +140,17 @@ bun run decision:pr-discard-scan -- --apply
 
 The scan writes `discarded_pr` system feedback only for strongly linked PRs confirmed as closed. If `gh` is unavailable or the PR state is ambiguous, it skips writes and reports a degraded scan.
 
-## Backups
+## Advanced Server Backend Operations
+
+Use this path only when explicitly operating PostgreSQL / pgvector compatibility or future server-style deployments:
 
 ```bash
-./scripts/backup-db.sh
+docker compose up -d
+bun run db:migrate
+bun run verify:postgres
 ```
 
-The script follows the configured database backend.
-
-For SQLite (`CONTEXT_STILL_DB_BACKEND=sqlite`, `DATABASE_URL=sqlite`, `DATABASE_URL=sqlite://...`,
-`DATABASE_URL=file:...`, or a SQLite path without a PostgreSQL `DATABASE_URL`), it writes a
-consistent `VACUUM INTO` snapshot after `PRAGMA integrity_check`:
-
-- source: `CONTEXT_STILL_SQLITE_CORE_PATH`, `SQLITE_CORE_PATH`, `DB_SQLITE_PATH`, or the default `data/context-still-core.sqlite`
-- output: `backup/sqlite_backup_<timestamp>.sqlite`
-
-Override SQLite output with `SQLITE_BACKUP_FILE` or `OUTPUT_FILE`:
-
-```bash
-CONTEXT_STILL_DB_BACKEND=sqlite SQLITE_BACKUP_FILE=backup/context-still.sqlite ./scripts/backup-db.sh
-```
-
-Restore SQLite backups by stopping writers, replacing the configured SQLite DB file with the backup
-file, and restarting the app. If copying over a live WAL-mode database manually, remove stale
-sidecar files (`.sqlite-wal` / `.sqlite-shm`) with the old database after writers are stopped.
-
-For PostgreSQL, the script keeps the legacy Docker/pg_dump flow.
-
-PostgreSQL defaults:
+PostgreSQL backup defaults for `./scripts/backup-db.sh`:
 
 - container: `context-still-db`
 - legacy fallback container: `memory-router-db`
@@ -123,9 +159,18 @@ PostgreSQL defaults:
 
 Override with `BACKUP_DIR`, `CONTAINER_NAME`, `DB_USER`, `DB_NAME`, or `DB_PASSWORD`.
 
+Server backend constraints:
+
+- keep compatibility tests explicit
+- avoid N+1 query patterns before remote DB use
+- account for remote DB latency
+- do not present server-only requirements as desktop onboarding failures
+- document backup/restore separately from SQLite
+- treat multi-user/auth as not yet productized
+
 ## Knowledge Import/Export Trial
 
-Run a PostgreSQL roundtrip rehearsal against a separate target database:
+Run a PostgreSQL roundtrip rehearsal against a separate target database only when testing the advanced server backend:
 
 ```bash
 RUN_FULL_BACKUP=1 bun run knowledge:roundtrip:trial
@@ -142,11 +187,38 @@ Useful overrides:
 - `ALLOW_DROP_TARGET=1`: if the target DB already exists, drop and recreate it.
 - `RUN_FULL_BACKUP=1`: run `./scripts/backup-db.sh` before export.
 
+## Verification Gates
+
+General development:
+
+```bash
+bun run verify
+```
+
+SQLite local backend:
+
+```bash
+bun run verify:sqlite
+```
+
+Desktop readiness preflight:
+
+```bash
+bun run verify:desktop-readiness
+```
+
+Docs link validation:
+
+```bash
+bun run docs:check-links
+```
+
 ## Troubleshooting
 
 | Symptom | First checks |
 |---|---|
 | `context_compile` returns `No Content` | Run `doctor`, check active knowledge count, source import state, and tags |
+| Desktop doctor says `Needs setup` | Check SQLite backend selection, SQLite path, and missing required tables |
 | Queue not moving | Check `bun run automation:queue-supervisor -- status`, `logs/queue-supervisor.log`, and queue stats |
 | Agent logs stale | Run `bun run automation:agent-log-sync -- run-once` and inspect `logs/agent-log-sync.log` |
 | Decision output is degraded | Inspect the Decision detail evidence/coverage tabs, then broaden `retrievalHints` or add missing Knowledge |

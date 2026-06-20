@@ -127,7 +127,7 @@ export async function getCompileEvalSummaryByRunIdSqlite(
     .query<Pick<SqliteCompileEvalRow, "score" | "outcome" | "created_at">, [string]>(
       `SELECT score, outcome, created_at FROM context_compile_evals
        WHERE run_id = ?
-       ORDER BY created_at DESC, id DESC
+       ORDER BY created_at DESC, _rowid_ DESC
        LIMIT 1`,
     )
     .get(runId);
@@ -147,7 +147,7 @@ export async function listCompileEvalsByRunIdSqlite(runId: string): Promise<Comp
     .query<SqliteCompileEvalRow, [string]>(
       `SELECT * FROM context_compile_evals
        WHERE run_id = ?
-       ORDER BY created_at DESC, id DESC`,
+       ORDER BY created_at DESC, _rowid_ DESC`,
     )
     .all(runId);
   return rows.map(mapRow);
@@ -161,7 +161,7 @@ export async function findRunIdForCompileEvalSqlite(params: {
     .query<{ id: string }, [string]>(
       `SELECT id FROM context_compile_runs
        WHERE session_id = ?
-       ORDER BY created_at DESC, id DESC
+       ORDER BY created_at DESC, _rowid_ DESC
        LIMIT 1`,
     )
     .get(params.sessionId);

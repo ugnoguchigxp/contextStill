@@ -1,11 +1,23 @@
 # Getting Started
 
+## Default Path
+
+The default path is desktop/local:
+
+- SQLite local backend
+- local admin/control-plane runtime
+- MCP registration as an optional user action
+- local-only minimal usage before LLM-assisted modes
+
+The Tauri shell is the desktop packaging target. Until that shell exists, use the local Bun/admin runtime as the development baseline for the same product path.
+
 ## Requirements
 
 - Bun 1.3+
-- Docker for PostgreSQL + pgvector
-- Optional local LLM endpoint for distillation
+- Optional local LLM endpoint for assisted review/distillation
 - Optional embedding daemon or CLI embedding service
+
+Docker is only needed for the advanced server backend.
 
 ## Install
 
@@ -15,80 +27,89 @@ cd contextStill
 bun install
 ```
 
-## Interactive Startup
-
-The startup command validates configuration, prepares the database, checks provider health, runs a smoke compile, and prints the next actions.
-
-```bash
-bun run startup
-```
-
-It runs in dry-run mode by default. Apply after reviewing the plan:
-
-```bash
-bun run startup -- --apply
-```
-
-## Manual Startup
-
-```bash
-docker compose up -d
-cp .env.example .env
-bun run db:migrate
-bun run init:project -- --json
-```
+## Desktop Quick Start
 
 Run diagnostics:
 
 ```bash
-bun run doctor
+CONTEXT_STILL_DB_BACKEND=sqlite bun run doctor
 ```
 
 Run a first compile:
 
 ```bash
-bun run compile --goal "understand this repository's development workflow" \
+CONTEXT_STILL_DB_BACKEND=sqlite bun run compile --goal "understand this repository's development workflow" \
   --change-types docs,plan \
   --domains onboarding,workflow \
   --json
 ```
 
-## Start Services
-
-Admin UI + API:
+Start the admin UI + API:
 
 ```bash
-bun run dev
+CONTEXT_STILL_DB_BACKEND=sqlite bun run dev
 ```
 
-MCP server:
+- UI: http://localhost:39171
+- API: same origin under `/api/*`
+
+The interactive `startup` command currently follows the advanced server setup path. Use the explicit SQLite commands above for desktop/local development.
+
+## Product Modes
+
+| Mode | What works | Setup |
+|---|---|---|
+| `minimal` | SQLite storage, local sources, manual/MCP candidates, search, compile, eval | Bun + SQLite backend |
+| `cloud-review` | Cloud LLM assisted distillation/review/decision support | Provider credentials and route settings |
+| `local-llm` | Local LLM and embedding assisted distillation/search | Local endpoint and/or embedding service |
+
+Minimal mode should not require external LLMs, external search APIs, or MCP registration.
+
+## MCP Integration
+
+Start the MCP server:
 
 ```bash
-bun run start:mcp
+CONTEXT_STILL_DB_BACKEND=sqlite bun run start:mcp
 ```
 
-One-time agent log sync:
+Register it in an MCP client only when you want agent integration:
 
-```bash
-bun run sync:agent-logs
+```json
+{
+  "mcpServers": {
+    "context-still": {
+      "command": "bun",
+      "args": ["run", "start:mcp"],
+      "cwd": "/path/to/contextStill",
+      "env": {
+        "CONTEXT_STILL_DB_BACKEND": "sqlite"
+      }
+    }
+  }
+}
 ```
 
-One queue cycle:
-
-```bash
-bun run queue:finding:once
-bun run queue:covering:once
-bun run queue:merge-review:once
-bun run queue:finalize:once
-bun run queue:merge-activation-finalize:once
-```
+After connection, call `initial_instructions` once per project session, `context_compile` before task work, `context_decision` before a blocking question/PR decision when autonomous progress may still be possible, and `compile_eval` after the task.
 
 ## First Review Loop
 
 1. Open the admin UI at http://localhost:39171.
-2. Check **Doctor** for DB, embedding, provider, sync, and queue status.
+2. Check **Doctor** for desktop readiness, DB state, optional embedding/LLM state, sync, and queue status.
 3. Use **Sources** to import or edit source pages.
-4. Use **Queue** to inspect distillation target state.
-5. Use **Knowledge** to review draft knowledge and promote useful items.
-6. Use **Decision** to inspect Knowledge-backed autonomous decisions, evidence, coverage traces, and Good/Bad feedback.
-7. Use MCP `context_compile` for task context, `context_decision` as a pre-question gate before a blocking user question or PR decision, and `compile_eval` after the task. Stop the target action when `context_decision` returns `reject`.
+4. Use **Knowledge** to review draft knowledge and promote useful items.
+5. Use **Decision** to inspect Knowledge-backed autonomous decisions, evidence, coverage traces, and feedback.
+6. Use MCP tools when you want the agent workflow connected to the local knowledge base.
+
+## Advanced Server Backend
+
+Use the server backend only when explicitly testing or operating PostgreSQL / pgvector compatibility:
+
+```bash
+docker compose up -d
+cp .env.example .env
+bun run db:migrate
+bun run verify:postgres
+```
+
+This path is advanced and opt-in. It is not required for desktop onboarding.

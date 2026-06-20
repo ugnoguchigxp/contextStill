@@ -98,6 +98,27 @@ const doctorReasonSummarySchema = z.object({
   skipped: z.number().int().nonnegative(),
 });
 
+const desktopReadinessStateSchema = z.enum([
+  "Ready",
+  "Needs setup",
+  "Optional improvement",
+  "Advanced server backend only",
+]);
+const desktopReadinessItemSchema = z.object({
+  id: z.string().min(1),
+  label: z.string().min(1),
+  state: desktopReadinessStateSchema,
+  scope: z.enum(["default", "optional", "advanced"]),
+  action: z.string().min(1),
+});
+const desktopReadinessSchema = z.object({
+  backendCategory: z.enum(["sqlite-local", "postgres-server", "compat-legacy"]),
+  modeLabel: z.string().min(1),
+  status: desktopReadinessStateSchema,
+  defaultBackendReady: z.boolean(),
+  items: z.array(desktopReadinessItemSchema),
+});
+
 export const doctorDistillationHealthSchema = z.object({
   launchAgent: launchAgentSchema,
   runs: z.object({
@@ -153,6 +174,7 @@ export const doctorReportSchema = z.object({
   vector: z.object({
     installed: z.boolean(),
   }),
+  desktopReadiness: desktopReadinessSchema.optional(),
   embedding: z.object({
     configured: z.boolean(),
     provider: z.string(),
@@ -296,6 +318,7 @@ const doctorDomainBaseSchema = doctorReportSchema.pick({
 export const doctorCoreInfrastructureDomainSchema = doctorDomainBaseSchema.extend({
   db: doctorReportSchema.shape.db,
   vector: doctorReportSchema.shape.vector,
+  desktopReadiness: doctorReportSchema.shape.desktopReadiness,
   embedding: doctorReportSchema.shape.embedding,
   tables: doctorReportSchema.shape.tables,
   hitl: doctorReportSchema.shape.hitl,

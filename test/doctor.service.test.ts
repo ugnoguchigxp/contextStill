@@ -42,6 +42,7 @@ describe("Doctor Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     process.env.MEMORY_ROUTER_MCP_V2 = "1";
+    process.env.CONTEXT_STILL_DB_BACKEND = "postgres";
     vi.mocked(embeddingHealth).mockResolvedValue({
       configured: true,
       provider: "daemon",
@@ -101,6 +102,38 @@ describe("Doctor Service", () => {
     const report = await runDoctor();
     expect(report.status).toBe("failed");
     expect(report.reasons).toContain("DB_UNREACHABLE");
+  });
+
+  test("marks advanced server readiness as setup-needed when PostgreSQL is unreachable", async () => {
+    process.env.CONTEXT_STILL_DB_BACKEND = "postgres";
+    const mockDb = {
+      execute: vi.fn().mockRejectedValue(new Error("Connection refused")),
+    };
+    vi.mocked(getDb).mockReturnValue(mockDb as any);
+    vi.mocked(fs.access).mockResolvedValue(undefined);
+
+    const report = await runDoctor();
+
+    expect(report.desktopReadiness).toEqual(
+      expect.objectContaining({
+        backendCategory: "postgres-server",
+        status: "Needs setup",
+        defaultBackendReady: false,
+      }),
+    );
+    expect(report.desktopReadiness?.items).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "postgres-server-backend",
+          state: "Needs setup",
+          scope: "advanced",
+        }),
+        expect.objectContaining({
+          id: "sqlite-local-db",
+          state: "Advanced server backend only",
+        }),
+      ]),
+    );
   });
 
   test("detects missing primary MCP tools", async () => {

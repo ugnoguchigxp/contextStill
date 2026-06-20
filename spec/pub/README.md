@@ -4,12 +4,12 @@ This directory contains public-facing documentation for context-still.
 
 | Document | Purpose |
 |---|---|
-| [Getting Started](getting-started.md) | Install, configure, run the first compile, and inspect decisions |
-| [Architecture Overview](architecture.md) | Core concepts and runtime components |
+| [Getting Started](getting-started.md) | Desktop quick start, MCP integration, first compile, and advanced server entrypoint |
+| [Architecture Overview](architecture.md) | Product modes, backend boundaries, support matrix, and runtime components |
 | [MCP Tools](mcp-tools.md) | MCP workflow and tool contract |
 | [CLI Reference](cli.md) | Command inventory and examples |
 | [REST API Reference](api.md) | HTTP API endpoint inventory |
-| [Configuration](configuration.md) | Environment variables and local service configuration |
-| [Operations](operations.md) | Automation, queue workers, diagnostics, and backups |
+| [Configuration](configuration.md) | Desktop defaults, product modes, and advanced configuration |
+| [Operations](operations.md) | Desktop doctor, backups, automation, verification gates, and server backend operations |
 
 Internal implementation plans and design notes are intentionally kept in `../docs/`.

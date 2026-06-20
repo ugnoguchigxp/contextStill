@@ -328,6 +328,28 @@ const coreInfrastructureDomain = {
   reasons: ["KNOWLEDGE_ZERO_USE_HIGH"],
   db: baseReport.db,
   vector: baseReport.vector,
+  desktopReadiness: {
+    backendCategory: "sqlite-local",
+    modeLabel: "Desktop local",
+    status: "Ready",
+    defaultBackendReady: true,
+    items: [
+      {
+        id: "sqlite-local-db",
+        label: "SQLite local database",
+        state: "Ready",
+        scope: "default",
+        action: "SQLite backend is selected and required local tables are present.",
+      },
+      {
+        id: "desktop-safe-defaults",
+        label: "Desktop-safe defaults",
+        state: "Ready",
+        scope: "default",
+        action: "Default runtime path does not require Docker or PostgreSQL.",
+      },
+    ],
+  },
   embedding: baseReport.embedding,
   tables: baseReport.tables,
   hitl: baseReport.hitl,
@@ -400,6 +422,8 @@ describe("DoctorPage", () => {
     expect(screen.getByText("Doctor")).toBeInTheDocument();
     expect(screen.getAllByText("degraded").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Core Infrastructure")).toBeInTheDocument();
+    expect(screen.getByText("Desktop Readiness")).toBeInTheDocument();
+    expect(screen.getByText("SQLite local database")).toBeInTheDocument();
     expect(screen.queryByText("pgvector")).not.toBeInTheDocument();
     expect(screen.queryByText("Installed")).not.toBeInTheDocument();
     expect(screen.getByText("AI & Service Tools")).toBeInTheDocument();

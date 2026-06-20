@@ -214,7 +214,8 @@ Input: none.
 Output includes:
 
 - DB and expected table status.
-- pgvector status.
+- Desktop readiness summary for the selected backend.
+- SQLite vector or advanced server vector status.
 - Embedding provider status.
 - LLM provider health.
 - Agent log sync state.
@@ -229,7 +230,7 @@ Use when task context is unexpectedly empty, stale, degraded, or when automation
 | Condition                                            | Recommended response                                                           |
 | ---------------------------------------------------- | ------------------------------------------------------------------------------ |
 | `context_compile` returns `No Content`               | Run `doctor`, inspect docs/code, and continue with direct repository evidence. |
-| `doctor` reports DB failure                          | Check `DATABASE_URL`, Docker containers, and migrations.                       |
+| `doctor` reports DB failure                          | Check the selected backend, SQLite path or server `DATABASE_URL`, and migrations. |
 | Search tools return no matches                       | Broaden query/tags, inspect source imports, and check knowledge status.        |
 | Candidate registration succeeds but no draft appears | Check queue status and distillation logs.                                      |
 

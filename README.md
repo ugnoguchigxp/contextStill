@@ -1,6 +1,6 @@
 <p align="center">
   <strong>context-still</strong><br/>
-  <em>Local-first adaptive knowledge compiler for coding agents</em>
+  <em>Local-first knowledge control plane for coding agents</em>
 </p>
 
 <p align="center">
@@ -9,10 +9,10 @@
 
 <p align="center">
   <a href="#table-of-contents">Contents</a> ·
-  <a href="#installation">Installation</a> ·
-  <a href="#quick-start">Quick Start</a> ·
+  <a href="#desktop-quick-start">Desktop Quick Start</a> ·
+  <a href="#mcp-integration">MCP Integration</a> ·
   <a href="#documentation">Docs</a> ·
-  <a href="#contributing">Contributing</a> ·
+  <a href="#development">Development</a> ·
   <a href="README.jp.md">日本語</a>
 </p>
 
@@ -20,7 +20,14 @@
 
 ## What is context-still?
 
-context-still is a local-first adaptive knowledge compiler for coding agents. It turns working evidence from wiki/docs, web pages, agent logs, and explicit candidate notes into reusable `rule` / `procedure` knowledge, then compiles task-specific context packs through MCP, CLI, API, and an admin UI.
+context-still is a local-first control plane for coding-agent memory. It turns source docs, web research, agent logs, and explicit candidate notes into reusable `rule` / `procedure` knowledge, then compiles task-specific context packs through MCP, CLI, API, and an admin UI.
+
+The default product path is desktop/local:
+
+- storage: SQLite in a local app data path
+- UI: local admin/control-plane experience, with Tauri packaging as the desktop target
+- MCP: optional agent integration enabled by the user
+- model usage: minimal local usage first, with local LLM and cloud-assisted modes as optional upgrades
 
 It is designed for teams and individuals who want an auditable loop:
 
@@ -31,20 +38,22 @@ collect evidence -> distill knowledge -> compile task context -> evaluate useful
 Core capabilities:
 
 - Evidence-backed knowledge distillation with source links and candidate review.
-- MCP tools for `initial_instructions`, `context_compile`, `compile_eval`, `context_decision`, knowledge search, memory search, and candidate registration.
-- Local PostgreSQL/pgvector storage with a React admin UI.
+- MCP tools for `initial_instructions`, `context_compile`, `compile_eval`, `context_decision`, knowledge search, memory search, episode search, and candidate registration.
+- SQLite local storage for the primary knowledge/search/context compile path.
 - Agent log sync for Codex, Antigravity, and Claude logs.
 - Queue-based distillation workers and health diagnostics.
 - Knowledge Landscape diagnostics for graph, replay, review items, and approval-gated candidates.
-- Decision history that persists autonomous execute/escalate decisions, Knowledge evidence, coverage traces, and Good/Bad or system feedback.
+- Decision history that persists autonomous execute/escalate decisions, Knowledge evidence, coverage traces, and feedback.
 
-context-still is local-first infrastructure, not a hosted SaaS. You run the database, API, MCP server, automation workers, and admin UI in your environment.
+context-still is local-first software, not a hosted SaaS. You control the database, sources, settings, API/admin runtime, automation workers, and MCP registration.
 
 ## Table of Contents
 
 - [What is context-still?](#what-is-context-still)
-- [Installation](#installation)
-- [Quick Start](#quick-start)
+- [Desktop Quick Start](#desktop-quick-start)
+- [Product Modes](#product-modes)
+- [MCP Integration](#mcp-integration)
+- [Advanced Server Backend](#advanced-server-backend)
 - [Common Workflows](#common-workflows)
 - [Documentation](#documentation)
 - [Project Structure](#project-structure)
@@ -52,14 +61,11 @@ context-still is local-first infrastructure, not a hosted SaaS. You run the data
 - [Contributing](#contributing)
 - [License](#license)
 
-## Installation
+## Desktop Quick Start
 
-Prerequisites:
+Current prerequisite:
 
 - [Bun](https://bun.sh/) 1.3+
-- [Docker](https://www.docker.com/) for PostgreSQL + pgvector
-- Optional local LLM endpoint for distillation
-- Optional embedding daemon or CLI embedding service
 
 Clone and install dependencies:
 
@@ -69,41 +75,16 @@ cd contextStill
 bun install
 ```
 
-The recommended setup path is the interactive startup command. It validates Docker, database migrations, LLM and embedding configuration, smoke compile behavior, and doctor diagnostics.
-
-```bash
-bun run startup
-```
-
-The startup command runs in dry-run mode by default. Apply the generated plan after reviewing it:
-
-```bash
-bun run startup -- --apply
-```
-
-Manual setup is available when you want to control each step:
-
-```bash
-docker compose up -d
-cp .env.example .env
-bun run db:migrate
-bun run init:project -- --json
-```
-
-Configuration is environment-variable based. Start from [`.env.example`](.env.example), and see [Configuration](spec/pub/configuration.md) for the public configuration guide.
-
-## Quick Start
-
 Run a first health check:
 
 ```bash
-bun run doctor
+CONTEXT_STILL_DB_BACKEND=sqlite bun run doctor
 ```
 
 Compile context for a task:
 
 ```bash
-bun run compile --goal "understand this repository's development workflow" \
+CONTEXT_STILL_DB_BACKEND=sqlite bun run compile --goal "understand this repository's development workflow" \
   --change-types docs,plan \
   --domains onboarding,workflow \
   --json
@@ -112,16 +93,32 @@ bun run compile --goal "understand this repository's development workflow" \
 Start the local admin UI and API:
 
 ```bash
-bun run dev
+CONTEXT_STILL_DB_BACKEND=sqlite bun run dev
 ```
 
 - UI: http://localhost:39171
 - API: same origin under `/api/*`
 
+The future Tauri shell should use the same SQLite-first defaults, desktop data paths, and doctor states. Until packaging exists, the local web/admin runtime is the development baseline for the desktop product path.
+
+The interactive `startup` command currently follows the advanced server setup path. Use the explicit SQLite commands above for desktop/local development.
+
+## Product Modes
+
+| Mode | Purpose | Required setup |
+|---|---|---|
+| `minimal` | SQLite + local sources + manual/MCP candidates + context compile | Bun and local SQLite path |
+| `cloud-review` | Cloud LLM assisted distillation, review, and decision support | Provider credentials and route settings |
+| `local-llm` | Local LLM / local embedding assisted distillation | Local OpenAI-compatible endpoint and/or embedding service |
+
+Minimal mode should remain useful without external LLMs, external search APIs, or MCP client registration.
+
+## MCP Integration
+
 Start only the MCP server:
 
 ```bash
-bun run start:mcp
+CONTEXT_STILL_DB_BACKEND=sqlite bun run start:mcp
 ```
 
 For an MCP client, use:
@@ -132,13 +129,33 @@ For an MCP client, use:
     "context-still": {
       "command": "bun",
       "args": ["run", "start:mcp"],
-      "cwd": "/path/to/contextStill"
+      "cwd": "/path/to/contextStill",
+      "env": {
+        "CONTEXT_STILL_DB_BACKEND": "sqlite"
+      }
     }
   }
 }
 ```
 
 After connecting the MCP server, call `initial_instructions` once at the start of a project session. Use `context_compile` before task work, `context_decision` before asking the user or creating a PR when autonomous progress may still be possible, and `compile_eval` after task work.
+
+MCP is an agent integration surface. It is not a hidden requirement for opening the local app or inspecting existing knowledge.
+
+## Advanced Server Backend
+
+The PostgreSQL / pgvector backend is preserved for advanced server-style deployments and compatibility work. It is not required for the default desktop/local path.
+
+Use it when you are explicitly testing or operating the server backend:
+
+```bash
+docker compose up -d
+cp .env.example .env
+bun run db:migrate
+bun run verify:postgres
+```
+
+Server backend constraints are documented in [Architecture Overview](spec/pub/architecture.md) and [Operations](spec/pub/operations.md). Treat this path as opt-in until server productization, auth, multi-user operation, and remote DB latency assumptions are settled.
 
 ## Common Workflows
 
@@ -193,13 +210,13 @@ Public user and operator documentation lives under `spec/pub/`.
 | Document | Purpose |
 |---|---|
 | [Documentation Index](spec/pub/README.md) | Public documentation map |
-| [Getting Started](spec/pub/getting-started.md) | Installation, startup, and first compile |
-| [Architecture Overview](spec/pub/architecture.md) | Main concepts and runtime components |
+| [Getting Started](spec/pub/getting-started.md) | Desktop quick start, MCP integration, and first compile |
+| [Architecture Overview](spec/pub/architecture.md) | Product modes, backend boundaries, and runtime components |
 | [MCP Tools](spec/pub/mcp-tools.md) | Detailed MCP tool contract and workflow |
 | [CLI Reference](spec/pub/cli.md) | Supported commands and examples |
 | [REST API Reference](spec/pub/api.md) | HTTP API endpoint inventory |
-| [Configuration](spec/pub/configuration.md) | Environment variables and local services |
-| [Operations](spec/pub/operations.md) | Automation, queue workers, backups, and diagnostics |
+| [Configuration](spec/pub/configuration.md) | Desktop defaults and advanced configuration |
+| [Operations](spec/pub/operations.md) | Doctor, backups, automation, and server backend operations |
 
 Internal implementation plans and design notes live under `spec/docs/`.
 
@@ -209,8 +226,8 @@ Internal implementation plans and design notes live under `spec/docs/`.
 src/          TypeScript runtime, CLI, MCP server, domain modules
 api/          Hono REST API
 web/          React admin UI
-drizzle/      Database migrations
-scripts/      Automation and maintenance scripts
+drizzle/      Server backend migrations
+scripts/      Verification, automation, and maintenance scripts
 github-pages/ Landing page source and generated Pages artifact
 spec/pub/     Public documentation
 spec/docs/    Internal implementation and design documents
@@ -226,6 +243,12 @@ Run the daily fast verification gate before opening a pull request:
 bun run verify
 ```
 
+Run the desktop/local readiness gate before starting packaging or Tauri shell work:
+
+```bash
+bun run verify:desktop-readiness
+```
+
 Run the full release gate before tagging or cutting a release:
 
 ```bash
@@ -238,11 +261,12 @@ Useful focused commands:
 bun run typecheck
 bun run test:unit
 bun run build:web
+bun run verify:sqlite
 bun run verify:mcp
 bun run verify:queue:smoke
 ```
 
-`bun run verify` is intentionally limited to typecheck, lint, format check, unit tests, and web build. Integration, MCP, and queue smoke checks are separate gates. Integration tests and queue smoke are destructive and must use a dedicated test database whose name includes `test`.
+`bun run verify` is intentionally limited to typecheck, lint, format check, unit tests, and web build. Integration, MCP, server backend, and queue smoke checks are separate gates. Integration tests and queue smoke are destructive and must use a dedicated test database whose name includes `test`.
 
 ## Contributing
 

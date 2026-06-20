@@ -6,8 +6,8 @@ Run commands from the repository root.
 
 | Command | Description |
 |---|---|
-| `bun run startup` | Interactive dry-run startup and health plan |
-| `bun run startup -- --apply` | Apply startup changes after review |
+| `bun run startup` | Interactive dry-run startup and health plan for the advanced server setup path |
+| `bun run startup -- --apply` | Apply advanced server startup changes after review |
 | `bun run init:project -- --json` | Initialize project state and print next actions |
 | `bun run doctor` | Full health report |
 | `bun run db:migrate` | Apply database migrations |
@@ -86,6 +86,8 @@ Run commands from the repository root.
 | `bun run test:integration` | Destructive integration tests against a test DB |
 | `bun run verify` | Daily fast quality gate without DB/MCP/queue dependencies |
 | `bun run verify:fast` | Alias for the daily fast quality gate |
+| `bun run verify:sqlite` | SQLite local backend verification |
+| `bun run verify:desktop-readiness` | Desktop/local readiness preflight |
 | `bun run verify:mcp` | MCP-specific verification against a test DB |
 | `bun run verify:queue:smoke` | Queue operational smoke against a test DB |
 | `bun run verify:full` | Release/full gate: fast verify, integration, MCP, and queue smoke |

@@ -150,6 +150,123 @@ function canQueryAgentLogSyncTables(): boolean {
   return backend === "postgres" || backend === "sqlite";
 }
 
+function buildDesktopReadiness(input: {
+  database: DatabaseInspection;
+  embedding: DoctorReport["embedding"];
+  mcp?: DoctorReport["mcp"];
+  agenticLlm?: { reachable: boolean };
+  includeIntegrationChecks?: boolean;
+}): DoctorReport["desktopReadiness"] {
+  const backend = resolveDatabaseBackendConfig().kind;
+  const isSqlite = backend === "sqlite";
+  const isPostgres = backend === "postgres";
+  const defaultBackendReady =
+    isSqlite && input.database.reachable && input.database.missingTables.length === 0;
+  const embeddingReady =
+    !input.embedding.configured || input.embedding.daemon.reachable || input.embedding.cli.usable;
+  const mcpReady = Boolean(input.mcp && input.mcp.missingPrimaryTools.length === 0);
+  const llmReady =
+    !input.agenticLlm || !groupedConfig.agenticCompile.enabled || input.agenticLlm.reachable;
+
+  const items: NonNullable<DoctorReport["desktopReadiness"]>["items"] = [
+    {
+      id: "sqlite-local-db",
+      label: "SQLite local database",
+      state: isSqlite
+        ? defaultBackendReady
+          ? "Ready"
+          : "Needs setup"
+        : "Advanced server backend only",
+      scope: isSqlite ? "default" : "advanced",
+      action: defaultBackendReady
+        ? "SQLite backend is selected and required local tables are present."
+        : isSqlite
+          ? "Set CONTEXT_STILL_DB_BACKEND=sqlite and run the SQLite migration/bootstrap path."
+          : "SQLite local database checks are skipped because the advanced server backend is selected.",
+    },
+    {
+      id: "desktop-safe-defaults",
+      label: "Desktop-safe defaults",
+      state: isSqlite ? "Ready" : "Advanced server backend only",
+      scope: isSqlite ? "default" : "advanced",
+      action: isSqlite
+        ? "Default runtime path does not require Docker or PostgreSQL."
+        : "The selected backend is the opt-in server path, not the desktop default.",
+    },
+    {
+      id: "embedding",
+      label: "Embedding assistance",
+      state: embeddingReady ? "Ready" : "Optional improvement",
+      scope: "optional",
+      action: embeddingReady
+        ? "Embedding is available or intentionally not required for minimal desktop usage."
+        : "Start the embedding daemon or configure the CLI embedding fallback when semantic search quality matters.",
+    },
+    {
+      id: "postgres-server-backend",
+      label: "PostgreSQL / pgvector backend",
+      state: isPostgres
+        ? input.database.reachable
+          ? "Ready"
+          : "Needs setup"
+        : "Advanced server backend only",
+      scope: "advanced",
+      action: isPostgres
+        ? "Server backend is selected; PostgreSQL and pgvector diagnostics apply to this advanced path."
+        : "No PostgreSQL or pgvector remediation is required for the default desktop path.",
+    },
+  ];
+
+  if (input.includeIntegrationChecks) {
+    items.splice(
+      3,
+      0,
+      {
+        id: "mcp-tool-surface",
+        label: "MCP tool surface",
+        state: mcpReady ? "Ready" : "Optional improvement",
+        scope: "optional",
+        action: mcpReady
+          ? "MCP tools are exposed; client registration remains an explicit user action."
+          : "Expose the missing MCP tools before registering the server in an agent client.",
+      },
+      {
+        id: "llm-assist",
+        label: "LLM-assisted review",
+        state: llmReady ? "Ready" : "Optional improvement",
+        scope: "optional",
+        action: llmReady
+          ? "Minimal desktop usage is not blocked by cloud or local LLM setup."
+          : "Configure a local or cloud LLM route before using assisted distillation/review modes.",
+      },
+    );
+  }
+
+  const hasDefaultSetupGap = items.some(
+    (item) => item.scope === "default" && item.state === "Needs setup",
+  );
+  const hasOptionalGap = items.some((item) => item.state === "Optional improvement");
+  const hasAdvancedSetupGap = items.some(
+    (item) => item.scope === "advanced" && item.state === "Needs setup",
+  );
+
+  return {
+    backendCategory: isSqlite ? "sqlite-local" : "postgres-server",
+    modeLabel: isSqlite ? "Desktop local" : "Advanced server backend",
+    status: isPostgres
+      ? hasAdvancedSetupGap
+        ? "Needs setup"
+        : "Advanced server backend only"
+      : hasDefaultSetupGap
+        ? "Needs setup"
+        : hasOptionalGap
+          ? "Optional improvement"
+          : "Ready",
+    defaultBackendReady,
+    items,
+  };
+}
+
 export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorReport> {
   await ensureRuntimeSettingsLoaded();
   const options = resolveDoctorOptions(rawOptions);
@@ -198,6 +315,13 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
       skippedChecks: reasonResolution.skippedChecks,
       db: database.db,
       vector: { installed: database.vectorInstalled },
+      desktopReadiness: buildDesktopReadiness({
+        database,
+        embedding,
+        mcp,
+        agenticLlm,
+        includeIntegrationChecks: true,
+      }),
       embedding,
       agenticLlm,
       tables: {
@@ -267,6 +391,13 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
   });
 
   const mcpReport = buildMcpReport(mcp, database);
+  const desktopReadiness = buildDesktopReadiness({
+    database,
+    embedding,
+    mcp: mcpReport,
+    agenticLlm,
+    includeIntegrationChecks: true,
+  });
 
   return doctorReportSchema.parse({
     status: reasonResolution.status,
@@ -279,6 +410,7 @@ export async function runDoctor(rawOptions?: DoctorOptions): Promise<DoctorRepor
     vector: {
       installed: database.vectorInstalled,
     },
+    desktopReadiness,
     embedding,
     agenticLlm,
     tables: {
@@ -337,6 +469,7 @@ export async function runDoctorCoreInfrastructure(
     vector: {
       installed: database.vectorInstalled,
     },
+    desktopReadiness: buildDesktopReadiness({ database, embedding }),
     embedding,
     tables: {
       expected: database.expectedTables,

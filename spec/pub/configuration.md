@@ -1,19 +1,33 @@
 # Configuration
 
-Configuration is environment-variable based. See `.env.example` for the authoritative list of supported variables and defaults.
+The desktop/local path should work with SQLite defaults and without a mandatory `.env` file. Environment variables remain the development and advanced-configuration surface.
 
-## Essential
+## Desktop Defaults
 
-| Variable | Default | Purpose |
+| Setting | Default | Purpose |
 |---|---|---|
-| `DATABASE_URL` | `postgres://postgres:postgres@localhost:7889/context_still` | PostgreSQL connection |
-| `CONTEXT_STILL_DB_BACKEND` | inferred from `DATABASE_URL` | Set `sqlite` to use the local SQLite backend for the primary knowledge/search/context_compile path |
-| `CONTEXT_STILL_SQLITE_CORE_PATH` | `./data/context-still-core.sqlite` | SQLite core database path used when `CONTEXT_STILL_DB_BACKEND=sqlite` |
-| `CONTEXT_STILL_DB_POOL_MAX` | `3` | Per-process PostgreSQL pool max. Keep Hono/MCP/queue totals below DB `max_connections` |
-| `CONTEXT_STILL_DB_POOL_IDLE_TIMEOUT_MS` | `10000` | Milliseconds before idle DB pool clients are released |
-| `CONTEXT_STILL_DB_POOL_CONNECTION_TIMEOUT_MS` | `5000` | Milliseconds to wait for a DB connection before failing |
-| `CONTEXT_STILL_SOURCE_CONTENT_ROOT` | `./wiki` | Local wiki/source repository |
+| `CONTEXT_STILL_DB_BACKEND` | `sqlite` for the desktop product path | Selects the local SQLite backend |
+| `CONTEXT_STILL_SQLITE_CORE_PATH` | `./data/context-still-core.sqlite` in development | SQLite core database path |
+| `CONTEXT_STILL_SOURCE_CONTENT_ROOT` | `./wiki` | Local source/wiki root |
 | `CONTEXT_STILL_ADMIN_API_KEY` | empty | Optional admin API key |
+
+For the current Bun/admin development runtime, pass the backend explicitly:
+
+```bash
+CONTEXT_STILL_DB_BACKEND=sqlite bun run dev
+```
+
+Future Tauri packaging should resolve SQLite DB, logs, backups, runtime settings, and MCP registration metadata from app data paths instead of requiring terminal setup.
+
+## Product Modes
+
+| Mode | Variables usually touched |
+|---|---|
+| `minimal` | `CONTEXT_STILL_DB_BACKEND`, optional `CONTEXT_STILL_SQLITE_CORE_PATH`, optional source root |
+| `cloud-review` | LLM provider credentials and route settings |
+| `local-llm` | local LLM endpoint/model and embedding settings |
+
+Minimal mode should still support source import, manual candidate registration, search, compile, and eval when no external model is configured.
 
 ## LLM Providers
 
@@ -26,7 +40,7 @@ Configuration is environment-variable based. See `.env.example` for the authorit
 | `CONTEXT_STILL_AZURE_OPENAI_*` | Azure OpenAI endpoint, deployment, and key settings |
 | `CONTEXT_STILL_BEDROCK_*` | AWS Bedrock region/model settings |
 
-Runtime task routing can also be edited from the admin Settings page. Each route stores a primary provider/model plus fallback providers. When `local-llm` is used as either the primary provider or a fallback provider, the route can carry a `localLlmModel` value so the fallback uses a configured local LLM API/model instead of silently falling back to the global default.
+Runtime task routing can also be edited from the admin Settings page. Each route stores a primary provider/model plus fallback providers. When `local-llm` is used as either the primary provider or a fallback provider, the route can carry a `localLlmModel` value.
 
 ## Search Providers
 
@@ -36,6 +50,8 @@ Runtime task routing can also be edited from the admin Settings page. Each route
 | `BRAVE_SEARCH_API_KEY` | Brave Search API key |
 | `CONTEXT_STILL_EXA_API_KEY` / `EXA_API_KEY` | Exa API key |
 
+Omit external search API keys when you do not want distillation to call external search providers.
+
 ## Embedding
 
 | Variable | Default | Purpose |
@@ -44,6 +60,8 @@ Runtime task routing can also be edited from the admin Settings page. Each route
 | `CONTEXT_STILL_EMBEDDING_DAEMON_URL` | `http://127.0.0.1:44512` | Embedding daemon URL |
 | `CONTEXT_STILL_EMBEDDING_DIMENSION` | `384` | Vector dimension |
 | `CONTEXT_STILL_LOCAL_LLM_EMBEDDING_*` | varies | CLI embedding fallback settings |
+
+Embedding improves semantic search and distillation quality, but it should not block minimal desktop usage.
 
 ## Agent Log Sync
 
@@ -59,11 +77,20 @@ Runtime task routing can also be edited from the admin Settings page. Each route
 | `CONTEXT_STILL_AGENT_LOG_INITIAL_LOOKBACK_HOURS` | Initial import lookback window |
 | `CONTEXT_STILL_AGENT_LOG_MIN_DISTILLABLE_CHARS` | Minimum agent-log chunk size to save for distillation; default `2000` |
 
-## Local-First Notes
+## Advanced Server Backend
 
-- To run the current local-first SQLite path, set `CONTEXT_STILL_DB_BACKEND=sqlite` and optionally `CONTEXT_STILL_SQLITE_CORE_PATH=./data/context-still-core.sqlite` before starting the MCP/API process.
-- SQLite mode currently covers the primary `register_candidates`, `search_knowledge`, source search, `context_compile` run/snapshot path, runtime settings, audit logs, and `compile_eval`. PostgreSQL remains the advanced backend for legacy queue/distillation/admin surfaces while the remaining stores are migrated.
-- Use local LLM and local embedding services to keep distillation local.
-- Omit external search API keys if you do not want distillation to call external search providers.
-- The wiki/source root is local filesystem content and is managed as its own Git repository when possible.
+| Variable | Default | Purpose |
+|---|---|---|
+| `DATABASE_URL` | `postgres://postgres:postgres@localhost:7889/context_still` | PostgreSQL connection for the server backend |
+| `CONTEXT_STILL_DB_BACKEND` | inferred from `DATABASE_URL` unless set | Set `postgres` to select the server backend explicitly |
+| `CONTEXT_STILL_DB_POOL_MAX` | `3` | Per-process PostgreSQL pool max |
+| `CONTEXT_STILL_DB_POOL_IDLE_TIMEOUT_MS` | `10000` | Milliseconds before idle DB pool clients are released |
+| `CONTEXT_STILL_DB_POOL_CONNECTION_TIMEOUT_MS` | `5000` | Milliseconds to wait for a DB connection before failing |
+
+PostgreSQL / pgvector remains an advanced backend for compatibility and future server-style deployments. It is not required for default desktop onboarding.
+
+## Backend Support Notes
+
+- SQLite mode covers primary `register_candidates`, `search_knowledge`, source search, `context_compile` run/snapshot path, runtime settings, audit logs, `compile_eval`, and several landscape/overview paths.
+- PostgreSQL remains available for advanced queue/distillation/admin compatibility while remaining stores are migrated.
 - Integration tests truncate data and must target a dedicated test database.

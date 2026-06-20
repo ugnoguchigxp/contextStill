@@ -238,6 +238,7 @@ function latestCheckedAt(reports: DoctorDomainReport[]): string | undefined {
 function CoreInfrastructureDomain({ data }: { data: DoctorCoreInfrastructureDomain }) {
   const infraSignals = getDomainSignals(getDoctorReasonDetails(data), "infrastructure");
   const missingTables = data.tables?.missing.length ?? 0;
+  const desktopReadiness = data.desktopReadiness;
 
   return (
     <DomainShell
@@ -272,6 +273,22 @@ function CoreInfrastructureDomain({ data }: { data: DoctorCoreInfrastructureDoma
         </div>
 
         <div className="flex flex-col gap-2.5 pb-2 text-[13px] text-slate-500 font-medium">
+          {desktopReadiness && (
+            <div className="flex items-center justify-between">
+              <span>Desktop Readiness</span>
+              <strong
+                className={
+                  desktopReadiness.status === "Ready"
+                    ? "text-emerald-600"
+                    : desktopReadiness.status === "Needs setup"
+                      ? "text-red-600"
+                      : "text-amber-600"
+                }
+              >
+                {desktopReadiness.status}
+              </strong>
+            </div>
+          )}
           <div className="flex items-center justify-between">
             <span>Required Tables</span>
             <strong className={missingTables > 0 ? "text-red-600" : "text-slate-700"}>
@@ -293,6 +310,19 @@ function CoreInfrastructureDomain({ data }: { data: DoctorCoreInfrastructureDoma
             </strong>
           </div>
         </div>
+
+        {desktopReadiness && (
+          <div className="flex flex-col gap-1.5 border-t border-slate-100 pt-3 text-[12px]">
+            {desktopReadiness.items.slice(0, 4).map((item) => (
+              <div key={item.id} className="flex items-center justify-between gap-3">
+                <span className="min-w-0 truncate text-slate-500" title={item.label}>
+                  {item.label}
+                </span>
+                <strong className="shrink-0 text-slate-700">{item.state}</strong>
+              </div>
+            ))}
+          </div>
+        )}
 
         <SlimDoctorReasonList reasons={infraSignals} />
       </div>
