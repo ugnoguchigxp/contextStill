@@ -93,7 +93,28 @@ The scan writes `discarded_pr` system feedback only for strongly linked PRs conf
 ./scripts/backup-db.sh
 ```
 
-Defaults:
+The script follows the configured database backend.
+
+For SQLite (`CONTEXT_STILL_DB_BACKEND=sqlite`, `DATABASE_URL=sqlite`, `DATABASE_URL=sqlite://...`,
+`DATABASE_URL=file:...`, or a SQLite path without a PostgreSQL `DATABASE_URL`), it writes a
+consistent `VACUUM INTO` snapshot after `PRAGMA integrity_check`:
+
+- source: `CONTEXT_STILL_SQLITE_CORE_PATH`, `SQLITE_CORE_PATH`, `DB_SQLITE_PATH`, or the default `data/context-still-core.sqlite`
+- output: `backup/sqlite_backup_<timestamp>.sqlite`
+
+Override SQLite output with `SQLITE_BACKUP_FILE` or `OUTPUT_FILE`:
+
+```bash
+CONTEXT_STILL_DB_BACKEND=sqlite SQLITE_BACKUP_FILE=backup/context-still.sqlite ./scripts/backup-db.sh
+```
+
+Restore SQLite backups by stopping writers, replacing the configured SQLite DB file with the backup
+file, and restarting the app. If copying over a live WAL-mode database manually, remove stale
+sidecar files (`.sqlite-wal` / `.sqlite-shm`) with the old database after writers are stopped.
+
+For PostgreSQL, the script keeps the legacy Docker/pg_dump flow.
+
+PostgreSQL defaults:
 
 - container: `context-still-db`
 - legacy fallback container: `memory-router-db`

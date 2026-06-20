@@ -24,8 +24,6 @@ export type AzureOpenAiDeploymentAuditLabel = {
 };
 
 const azureOpenAiDeploymentCooldowns = new Map<string, number>();
-let azureOpenAiNextDeploymentIndex = 0;
-const AZURE_OPENAI_SLOT_COUNT = 3;
 
 function normalizeDeployment(
   deployment: Partial<AzureOpenAiRuntimeDeployment>,
@@ -40,7 +38,7 @@ function normalizeDeployment(
 }
 
 function slotCandidate(index: number): Partial<AzureOpenAiRuntimeDeployment> | null {
-  if (!Number.isInteger(index) || index < 0 || index >= AZURE_OPENAI_SLOT_COUNT) return null;
+  if (!Number.isInteger(index) || index < 0) return null;
   const deployment = groupedConfig.azureOpenAi.deployments?.[index];
   if (deployment) return deployment;
   if (index === 0) {
@@ -52,13 +50,7 @@ function slotCandidate(index: number): Partial<AzureOpenAiRuntimeDeployment> | n
       model: groupedConfig.azureOpenAi.model,
     };
   }
-  return {
-    apiKey: "",
-    apiBaseUrl: "",
-    apiPath: groupedConfig.azureOpenAi.apiPath,
-    apiVersion: groupedConfig.azureOpenAi.apiVersion,
-    model: "",
-  };
+  return null;
 }
 
 export function azureOpenAiDeploymentKey(deployment: AzureOpenAiRuntimeDeployment): string {
@@ -94,10 +86,7 @@ function isDeploymentCoolingDown(deployment: AzureOpenAiRuntimeDeployment): bool
 function rotateDeployments(
   deployments: AzureOpenAiRuntimeDeployment[],
 ): AzureOpenAiRuntimeDeployment[] {
-  if (deployments.length <= 1) return deployments;
-  const start = azureOpenAiNextDeploymentIndex % deployments.length;
-  azureOpenAiNextDeploymentIndex = (start + 1) % deployments.length;
-  return [...deployments.slice(start), ...deployments.slice(0, start)];
+  return deployments;
 }
 
 function deploymentsAfterPinned(
@@ -137,7 +126,6 @@ export function configuredAzureOpenAiDeployments(): AzureOpenAiRuntimeDeployment
     if (seen.has(key)) continue;
     seen.add(key);
     deployments.push(deployment);
-    if (deployments.length >= 3) break;
   }
   return deployments;
 }
@@ -149,7 +137,7 @@ function normalizeRequestedSlotIndexes(selectedSlots: number[] | undefined): num
   for (const raw of selectedSlots) {
     if (!Number.isInteger(raw)) continue;
     const slot = raw;
-    if (slot < 1 || slot > AZURE_OPENAI_SLOT_COUNT) continue;
+    if (slot < 1) continue;
     const index = slot - 1;
     if (seen.has(index)) continue;
     seen.add(index);
@@ -206,7 +194,8 @@ export function azureOpenAiDeploymentSlot(index: number): AzureOpenAiRuntimeDepl
 }
 
 export function configuredAzureOpenAiDeploymentSlots(): AzureOpenAiRuntimeDeploymentSlot[] {
-  return [0, 1, 2]
+  const deploymentCount = Math.max(1, groupedConfig.azureOpenAi.deployments?.length ?? 0);
+  return Array.from({ length: deploymentCount }, (_value, index) => index)
     .map((index) => azureOpenAiDeploymentSlot(index))
     .filter((slot): slot is AzureOpenAiRuntimeDeploymentSlot => Boolean(slot?.configured));
 }
@@ -241,14 +230,7 @@ export function markAzureOpenAiDeploymentRateLimited(
 }
 
 export function markAzureOpenAiDeploymentSucceeded(deployment: AzureOpenAiRuntimeDeployment): void {
-  const deployments = configuredAzureOpenAiDeployments();
-  if (deployments.length <= 1) return;
-  const succeededKey = azureOpenAiDeploymentKey(deployment);
-  const succeededIndex = deployments.findIndex(
-    (candidate) => azureOpenAiDeploymentKey(candidate) === succeededKey,
-  );
-  if (succeededIndex < 0) return;
-  azureOpenAiNextDeploymentIndex = (succeededIndex + 1) % deployments.length;
+  azureOpenAiDeploymentCooldowns.delete(azureOpenAiDeploymentKey(deployment));
 }
 
 export function azureOpenAiCooldownError(): Error {
@@ -262,7 +244,6 @@ export function azureOpenAiCooldownError(): Error {
 
 export function resetAzureOpenAiDeploymentPoolForTests(): void {
   azureOpenAiDeploymentCooldowns.clear();
-  azureOpenAiNextDeploymentIndex = 0;
 }
 
 export function buildAzureOpenAiChatUrl(deployment: AzureOpenAiRuntimeDeployment): string {

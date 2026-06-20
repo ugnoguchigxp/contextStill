@@ -1,5 +1,7 @@
 import { type SQL, and, sql } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../../src/db/backend.js";
 import { db } from "../../../src/db/index.js";
+import type { SqliteCoreDatabase } from "../../../src/db/sqlite/index.js";
 import {
   type CandidateDiffSummary,
   type CandidateListItem,
@@ -78,6 +80,15 @@ type CandidateSqlRow = {
   outcome: CandidateOutcome;
 };
 
+async function getSqliteCoreDatabase(): Promise<SqliteCoreDatabase> {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../../src/db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
+
+function isSqliteBackend(): boolean {
+  return resolveDatabaseBackendConfig().kind === "sqlite";
+}
+
 const CANDIDATE_CTE = sql`
 with candidate_base as (
   select
@@ -97,15 +108,15 @@ with candidate_base as (
     t.last_outcome_kind as target_outcome_kind,
     t.last_error as target_last_error,
     t.updated_at as target_updated_at,
-    c.status as cover_status,
-    c.stage as cover_stage,
-    c.type as cover_type,
-    c.title as cover_title,
-    c.body as cover_body,
-    c.importance as cover_importance,
-    c.confidence as cover_confidence,
-    c.reason as cover_reason,
-    c.updated_at as cover_updated_at,
+    coalesce(c.status, ecr.status) as cover_status,
+    coalesce(c.stage, ecr.stage) as cover_stage,
+    coalesce(c.type, ecr.type) as cover_type,
+    coalesce(c.title, ecr.title) as cover_title,
+    coalesce(c.body, ecr.body) as cover_body,
+    coalesce(c.importance, ecr.importance) as cover_importance,
+    coalesce(c.confidence, ecr.confidence) as cover_confidence,
+    coalesce(c.reason, ecr.reason) as cover_reason,
+    coalesce(c.updated_at, ecr.updated_at) as cover_updated_at,
     f.origin ->> 'source' as candidate_origin_source,
     l.id::text as landscape_link_id,
     coalesce(l.review_item_id::text, f.origin ->> 'reviewItemId') as landscape_review_item_id,
@@ -113,20 +124,28 @@ with candidate_base as (
     coalesce(ri.evidence, f.origin -> 'evidence', '[]'::jsonb) as landscape_review_item_evidence,
     l.status as landscape_link_status,
     case
-      when c.id is null then 0
-      else jsonb_array_length(coalesce(c.references, '[]'::jsonb))
+      when c.id is null and ecr.id is null then 0
+      else jsonb_array_length(coalesce(c.references, ecr.references, '[]'::jsonb))
     end::int as cover_references_count,
     case
-      when c.id is null then 0
-      else jsonb_array_length(coalesce(c.duplicate_refs, '[]'::jsonb))
+      when c.id is null and ecr.id is null then 0
+      else jsonb_array_length(coalesce(c.duplicate_refs, ecr.duplicate_refs, '[]'::jsonb))
     end::int as cover_duplicate_refs_count,
     case
-      when c.id is null then 0
-      else jsonb_array_length(coalesce(c.tool_events, '[]'::jsonb))
+      when c.id is null and ecr.id is null then 0
+      else jsonb_array_length(coalesce(c.tool_events, ecr.tool_events, '[]'::jsonb))
     end::int as cover_tool_events_count
   from find_candidate_results f
   inner join distillation_target_states t on t.id = f.target_state_id
   left join cover_evidence_results c on c.id = f.id
+  left join finding_candidate_queue fq
+    on fq.source_kind = t.target_kind
+    and fq.source_key = t.target_key
+    and fq.distillation_version = t.distillation_version
+  left join found_candidates fc
+    on fc.finding_job_id = fq.id
+    and fc.candidate_index = f.candidate_index
+  left join evidence_coverage_results ecr on ecr.found_candidate_id = fc.id
   left join landscape_review_item_candidate_links l on l.find_candidate_result_id = f.id
   left join landscape_review_items ri on ri.id = l.review_item_id
 ),
@@ -237,6 +256,13 @@ function normalizeText(value: string | null | undefined): string {
 }
 
 function normalizeStringArray(value: unknown): string[] {
+  if (typeof value === "string") {
+    try {
+      return normalizeStringArray(JSON.parse(value) as unknown);
+    } catch {
+      return [];
+    }
+  }
   if (!Array.isArray(value)) return [];
   const deduped = new Set<string>();
   for (const entry of value) {
@@ -493,9 +519,15 @@ function buildFilters(params: CandidateListQuery, includeOutcome: boolean): SQL 
   const conditions: SQL[] = [];
   const query = params.query?.trim();
   const targetStateId = params.targetStateId?.trim();
+  const shouldIncludeStored =
+    params.includeStored === true || params.outcome === "stored" || params.hasKnowledge === "yes";
 
   if (params.targetKind && params.targetKind !== "all") {
     conditions.push(sql`target_kind = ${params.targetKind}`);
+  }
+
+  if (!shouldIncludeStored) {
+    conditions.push(sql`outcome <> 'stored'`);
   }
 
   if (params.hasKnowledge === "yes") {
@@ -550,7 +582,356 @@ function buildOrderBy(params: Pick<CandidateListQuery, "sortBy" | "sortDir">): S
   return sql`${selected} ${direction}, latest_updated_at desc, candidate_index asc, id asc`;
 }
 
+const SQLITE_CANDIDATE_QUERY = `
+with candidate_base as (
+  select
+    f.id as id,
+    f.target_state_id as target_state_id,
+    f.candidate_index,
+    f.title as original_title,
+    f.content as original_body,
+    f.status as original_status,
+    f.created_at as original_created_at,
+    f.updated_at as original_updated_at,
+    t.target_kind,
+    t.target_key,
+    t.source_uri,
+    t.status as target_status,
+    t.phase as target_phase,
+    t.last_outcome_kind as target_outcome_kind,
+    t.last_error as target_last_error,
+    t.updated_at as target_updated_at,
+    coalesce(c.status, ecr.status) as cover_status,
+    coalesce(c.stage, ecr.stage) as cover_stage,
+    coalesce(c.type, ecr.type) as cover_type,
+    coalesce(c.title, ecr.title) as cover_title,
+    coalesce(c.body, ecr.body) as cover_body,
+    coalesce(c.importance, ecr.importance) as cover_importance,
+    coalesce(c.confidence, ecr.confidence) as cover_confidence,
+    coalesce(c.reason, ecr.reason) as cover_reason,
+    coalesce(c.updated_at, ecr.updated_at) as cover_updated_at,
+    json_extract(f.origin, '$.source') as candidate_origin_source,
+    l.id as landscape_link_id,
+    coalesce(l.review_item_id, json_extract(f.origin, '$.reviewItemId')) as landscape_review_item_id,
+    coalesce(ri.reason, json_extract(f.origin, '$.reason')) as landscape_review_item_reason,
+    coalesce(ri.evidence, json_extract(f.origin, '$.evidence'), '[]') as landscape_review_item_evidence,
+    l.status as landscape_link_status,
+    case
+      when c.id is null and ecr.id is null then 0
+      else coalesce(json_array_length(coalesce(c."references", ecr."references", '[]')), 0)
+    end as cover_references_count,
+    case
+      when c.id is null and ecr.id is null then 0
+      else coalesce(json_array_length(coalesce(c.duplicate_refs, ecr.duplicate_refs, '[]')), 0)
+    end as cover_duplicate_refs_count,
+    case
+      when c.id is null and ecr.id is null then 0
+      else coalesce(json_array_length(coalesce(c.tool_events, ecr.tool_events, '[]')), 0)
+    end as cover_tool_events_count
+  from find_candidate_results f
+  inner join distillation_target_states t on t.id = f.target_state_id
+  left join cover_evidence_results c on c.id = f.id
+  left join finding_candidate_queue fq
+    on fq.source_kind = t.target_kind
+    and fq.source_key = t.target_key
+    and fq.distillation_version = t.distillation_version
+  left join found_candidates fc
+    on fc.finding_job_id = fq.id
+    and fc.candidate_index = f.candidate_index
+  left join evidence_coverage_results ecr on ecr.found_candidate_id = fc.id
+  left join landscape_review_item_candidate_links l on l.find_candidate_result_id = f.id
+  left join landscape_review_items ri on ri.id = l.review_item_id
+),
+candidate_with_outcome as (
+  select
+    cb.*,
+    'cover-evidence-result://' || cb.id as finalize_source_uri,
+    null as knowledge_id,
+    null as knowledge_type,
+    null as knowledge_status,
+    null as knowledge_scope,
+    null as knowledge_title,
+    null as knowledge_body,
+    null as knowledge_importance,
+    null as knowledge_confidence,
+    null as knowledge_updated_at,
+    'candidate_only' as outcome,
+    max(
+      cb.original_updated_at,
+      coalesce(cb.cover_updated_at, cb.original_updated_at),
+      coalesce(cb.target_updated_at, cb.original_updated_at)
+    ) as latest_updated_at
+  from candidate_base cb
+)
+select *
+from candidate_with_outcome
+`;
+
+type SqliteKnowledgeCandidateRow = {
+  id: string;
+  type: string;
+  status: string;
+  scope: string;
+  title: string;
+  body: string;
+  importance: number | string | null;
+  confidence: number | string | null;
+  updated_at: string;
+  metadata: string;
+};
+
+function parseJsonRecord(value: string | null | undefined): Record<string, unknown> {
+  if (!value) return {};
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+      ? (parsed as Record<string, unknown>)
+      : {};
+  } catch {
+    return {};
+  }
+}
+
+function recomputeCandidateOutcome(row: CandidateSqlRow): CandidateOutcome {
+  if (row.knowledge_id !== null) return "stored";
+  if (row.cover_status === "knowledge_ready") return "ready_not_finalized";
+  if (
+    row.cover_status === "duplicate" ||
+    row.cover_status === "near_duplicate" ||
+    row.cover_status === "insufficient"
+  ) {
+    return "rejected";
+  }
+  if (
+    row.cover_status === "reprocess_requested" ||
+    row.cover_status === "tool_failed" ||
+    row.cover_status === "provider_failed" ||
+    row.cover_status === "parse_failed"
+  ) {
+    if (
+      row.target_status === "pending" ||
+      row.target_status === "running" ||
+      (row.target_status === "paused" &&
+        (row.target_outcome_kind === "cover_evidence_retryable" ||
+          row.target_outcome_kind === "cover_evidence_checkpoint"))
+    ) {
+      return "retryable";
+    }
+    return "retained_failure";
+  }
+  if (
+    row.cover_status === null &&
+    (row.target_status === "pending" || row.target_status === "running")
+  ) {
+    return "target_pending";
+  }
+  return "candidate_only";
+}
+
+function applyKnowledgeToCandidateRows(
+  rows: CandidateSqlRow[],
+  knowledgeRows: SqliteKnowledgeCandidateRow[],
+): CandidateSqlRow[] {
+  const byCandidateId = new Map<string, SqliteKnowledgeCandidateRow>();
+  const bySourceUri = new Map<string, SqliteKnowledgeCandidateRow>();
+  for (const knowledge of knowledgeRows) {
+    const metadata = parseJsonRecord(knowledge.metadata);
+    const coverEvidenceResultId =
+      typeof metadata.coverEvidenceResultId === "string" ? metadata.coverEvidenceResultId : null;
+    const sourceUri = typeof metadata.sourceUri === "string" ? metadata.sourceUri : null;
+    if (coverEvidenceResultId && !byCandidateId.has(coverEvidenceResultId)) {
+      byCandidateId.set(coverEvidenceResultId, knowledge);
+    }
+    if (sourceUri && !bySourceUri.has(sourceUri)) {
+      bySourceUri.set(sourceUri, knowledge);
+    }
+  }
+
+  return rows.map((row) => {
+    const knowledge = byCandidateId.get(row.id) ?? bySourceUri.get(row.finalize_source_uri);
+    const next: CandidateSqlRow = knowledge
+      ? {
+          ...row,
+          knowledge_id: knowledge.id,
+          knowledge_type: knowledge.type,
+          knowledge_status: knowledge.status,
+          knowledge_scope: knowledge.scope,
+          knowledge_title: knowledge.title,
+          knowledge_body: knowledge.body,
+          knowledge_importance: knowledge.importance,
+          knowledge_confidence: knowledge.confidence,
+          knowledge_updated_at: knowledge.updated_at,
+        }
+      : row;
+    next.outcome = recomputeCandidateOutcome(next);
+    if (
+      next.knowledge_updated_at !== null &&
+      Date.parse(toIso(next.knowledge_updated_at)) > Date.parse(toIso(next.latest_updated_at))
+    ) {
+      next.latest_updated_at = next.knowledge_updated_at;
+    }
+    return next;
+  });
+}
+
+function matchesCandidateFilters(
+  row: CandidateSqlRow,
+  params: CandidateListQuery,
+  includeOutcome: boolean,
+): boolean {
+  const query = params.query?.trim().toLowerCase();
+  const targetStateId = params.targetStateId?.trim();
+  const shouldIncludeStored =
+    params.includeStored === true || params.outcome === "stored" || params.hasKnowledge === "yes";
+
+  if (params.targetKind && params.targetKind !== "all" && row.target_kind !== params.targetKind) {
+    return false;
+  }
+  if (!shouldIncludeStored && row.outcome === "stored") {
+    return false;
+  }
+  if (params.hasKnowledge === "yes" && row.knowledge_id === null) {
+    return false;
+  }
+  if (params.hasKnowledge === "no" && row.knowledge_id !== null) {
+    return false;
+  }
+  if (
+    includeOutcome &&
+    params.outcome &&
+    params.outcome !== "all" &&
+    row.outcome !== params.outcome
+  ) {
+    return false;
+  }
+  if (targetStateId && row.target_state_id !== targetStateId) {
+    return false;
+  }
+  if (!query) return true;
+
+  return [
+    row.target_key,
+    row.original_title,
+    row.original_body,
+    row.cover_title,
+    row.cover_body,
+    row.knowledge_title,
+    row.knowledge_body,
+  ].some((value) => normalizeText(value).toLowerCase().includes(query));
+}
+
+function candidateQualityScore(row: CandidateSqlRow): number {
+  return (
+    toNumber(row.cover_importance ?? row.knowledge_importance, 0) * 0.6 +
+    toNumber(row.cover_confidence ?? row.knowledge_confidence, 0) * 0.4
+  );
+}
+
+function compareCandidateRows(
+  params: Pick<CandidateListQuery, "sortBy" | "sortDir">,
+  left: CandidateSqlRow,
+  right: CandidateSqlRow,
+): number {
+  const direction = params.sortDir === "asc" ? 1 : -1;
+  const sortBy = params.sortBy ?? "latestUpdatedAt";
+  const stringValue = (row: CandidateSqlRow): string => {
+    if (sortBy === "targetKey") return normalizeText(row.target_key).toLowerCase();
+    if (sortBy === "candidateTitle") return normalizeText(row.original_title).toLowerCase();
+    if (sortBy === "coverageStatus") return normalizeText(row.cover_status);
+    if (sortBy === "knowledgeStatus") return normalizeText(row.knowledge_status);
+    if (sortBy === "outcome") return normalizeText(row.outcome);
+    return toIso(row.latest_updated_at);
+  };
+  const numberValue = (row: CandidateSqlRow): number => {
+    if (sortBy === "qualityScore") return candidateQualityScore(row);
+    return Date.parse(toIso(row.latest_updated_at));
+  };
+
+  let primary = 0;
+  if (sortBy === "qualityScore" || sortBy === "latestUpdatedAt") {
+    primary =
+      numberValue(left) === numberValue(right)
+        ? 0
+        : numberValue(left) > numberValue(right)
+          ? 1
+          : -1;
+  } else {
+    primary = stringValue(left).localeCompare(stringValue(right));
+  }
+  if (primary !== 0) return primary * direction;
+
+  const updatedTie =
+    Date.parse(toIso(right.latest_updated_at)) - Date.parse(toIso(left.latest_updated_at));
+  if (updatedTie !== 0) return updatedTie;
+  const indexTie = toNumber(left.candidate_index) - toNumber(right.candidate_index);
+  if (indexTie !== 0) return indexTie;
+  return left.id.localeCompare(right.id);
+}
+
+async function listCandidateItemsSqlite(params: CandidateListQuery): Promise<CandidateListResult> {
+  const sqlite = await getSqliteCoreDatabase();
+  const candidateRows = sqlite.db.query<CandidateSqlRow, []>(SQLITE_CANDIDATE_QUERY).all();
+  const knowledgeRows = sqlite.db
+    .query<SqliteKnowledgeCandidateRow, []>(
+      `
+      select
+        id,
+        type,
+        status,
+        scope,
+        title,
+        body,
+        importance,
+        confidence,
+        updated_at,
+        metadata
+      from knowledge_items
+      where json_extract(metadata, '$.coverEvidenceResultId') is not null
+        or json_extract(metadata, '$.sourceUri') like 'cover-evidence-result://%'
+      order by updated_at desc
+    `,
+    )
+    .all();
+  const rows = applyKnowledgeToCandidateRows(candidateRows, knowledgeRows);
+  const listRows = rows
+    .filter((row) => matchesCandidateFilters(row, params, true))
+    .sort((left, right) => compareCandidateRows(params, left, right));
+  const statsRows = rows.filter((row) => matchesCandidateFilters(row, params, false));
+  const offset = Math.max(0, params.page - 1) * params.limit;
+  const pageRows = listRows.slice(offset, offset + params.limit);
+
+  const stats: CandidateListStats = {
+    total: statsRows.length,
+    stored: 0,
+    readyNotFinalized: 0,
+    rejected: 0,
+    retryable: 0,
+    retainedFailure: 0,
+    targetPending: 0,
+    candidateOnly: 0,
+  };
+  for (const row of statsRows) {
+    if (row.outcome === "stored") stats.stored += 1;
+    if (row.outcome === "ready_not_finalized") stats.readyNotFinalized += 1;
+    if (row.outcome === "rejected") stats.rejected += 1;
+    if (row.outcome === "retryable") stats.retryable += 1;
+    if (row.outcome === "retained_failure") stats.retainedFailure += 1;
+    if (row.outcome === "target_pending") stats.targetPending += 1;
+    if (row.outcome === "candidate_only") stats.candidateOnly += 1;
+  }
+
+  return {
+    items: pageRows.map(mapRowToItem),
+    total: listRows.length,
+    stats,
+  };
+}
+
 export async function listCandidateItems(params: CandidateListQuery): Promise<CandidateListResult> {
+  if (isSqliteBackend()) {
+    return listCandidateItemsSqlite(params);
+  }
+
   const offset = Math.max(0, params.page - 1) * params.limit;
   const listWhere = buildFilters(params, true);
   const statsWhere = buildFilters(params, false);

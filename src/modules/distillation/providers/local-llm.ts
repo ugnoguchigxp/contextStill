@@ -21,27 +21,30 @@ export async function callLocalLlmChat(
     request.timeoutMs ?? groupedConfig.distillation.timeoutMs,
     async (signal) => {
       const config = resolveLocalLlmModelConfig(request.model);
-      const response = await fetch(buildLocalLlmChatCompletionsUrl(config.apiBaseUrl), {
-        method: "POST",
-        headers: localLlmHeaders(),
-        body: JSON.stringify({
-          model: config.model,
-          messages: request.messages,
-          stream: false,
-          temperature: 0,
-          max_tokens: request.maxTokens,
-          priority: "low",
-          ...(request.tools && request.tools.length > 0
-            ? {
-                tools: request.tools,
-                tool_choice: request.toolChoice ?? "auto",
-              }
-            : {
-                tool_choice: request.toolChoice ?? "none",
-              }),
-        }),
-        signal,
-      });
+      const response = await fetch(
+        buildLocalLlmChatCompletionsUrl(config.apiBaseUrl, config.apiPath),
+        {
+          method: "POST",
+          headers: localLlmHeaders(),
+          body: JSON.stringify({
+            model: config.model,
+            messages: request.messages,
+            stream: false,
+            temperature: 0,
+            max_tokens: request.maxTokens,
+            priority: "low",
+            ...(request.tools && request.tools.length > 0
+              ? {
+                  tools: request.tools,
+                  tool_choice: request.toolChoice ?? "auto",
+                }
+              : {
+                  tool_choice: request.toolChoice ?? "none",
+                }),
+          }),
+          signal,
+        },
+      );
 
       if (!response.ok) {
         const body = await response.text().catch(() => "");

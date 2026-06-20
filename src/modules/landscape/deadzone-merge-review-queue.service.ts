@@ -1,6 +1,7 @@
 import { createHash } from "node:crypto";
 import { eq, inArray } from "drizzle-orm";
 import { updateKnowledgeItem } from "../../../api/modules/knowledge/knowledge.repository.js";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import { deadZoneMergeReviewQueue, knowledgeItems } from "../../db/schema.js";
 import {
@@ -61,9 +62,64 @@ function isActiveKnowledge(row: KnowledgeSnapshotRow | undefined): row is Knowle
   return Boolean(row && row.status === "active");
 }
 
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
+
+function isSqliteBackend(): boolean {
+  return resolveDatabaseBackendConfig().kind === "sqlite";
+}
+
+function parseJsonRecord(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
 async function loadKnowledgeRows(ids: string[]): Promise<Map<string, KnowledgeSnapshotRow>> {
   const uniqueIds = [...new Set(ids)].filter(Boolean);
   if (uniqueIds.length === 0) return new Map();
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const placeholders = uniqueIds.map(() => "?").join(", ");
+    const rows = sqlite.db
+      .query(
+        `
+        select id, title, body, type, status, applies_to
+        from knowledge_items
+        where id in (${placeholders})
+      `,
+      )
+      .all(...uniqueIds) as Array<{
+      id: string;
+      title: string;
+      body: string;
+      type: string;
+      status: string;
+      applies_to: string;
+    }>;
+    return new Map(
+      rows.map((row) => [
+        row.id,
+        {
+          id: row.id,
+          title: row.title,
+          body: row.body,
+          type: row.type,
+          status: row.status,
+          appliesTo: parseJsonRecord(row.applies_to),
+        },
+      ]),
+    );
+  }
+
   const rows = await db
     .select({
       id: knowledgeItems.id,
@@ -282,6 +338,30 @@ export async function applyDeadZoneMergeReviewJob(
     },
   });
   await updateKnowledgeItem(deadZone.id, { status: "deprecated" });
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    sqlite.db
+      .query(
+        `
+        update dead_zone_merge_review_queue
+        set last_outcome_kind = ?,
+            metadata = ?,
+            updated_at = ?
+        where id = ?
+      `,
+      )
+      .run(
+        "applied",
+        JSON.stringify({
+          ...asRecord(row.metadata),
+          appliedAt: new Date().toISOString(),
+          appliedCanonicalKnowledgeId: canonical.id,
+          deprecatedKnowledgeId: deadZone.id,
+        }),
+        new Date().toISOString(),
+        row.id,
+      );
+  } else {
   await db
     .update(deadZoneMergeReviewQueue)
     .set({
@@ -295,6 +375,7 @@ export async function applyDeadZoneMergeReviewJob(
       updatedAt: new Date(),
     })
     .where(eq(deadZoneMergeReviewQueue.id, row.id));
+  }
   await recordDeadZoneReviewDecision({
     reviewItemId: row.reviewItemId,
     deadZoneKnowledgeId: deadZone.id,

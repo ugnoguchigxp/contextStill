@@ -50,6 +50,28 @@ describe("database backend config", () => {
     expect(config.sqlitePath).toBe("/tmp/context-still-core.sqlite");
   });
 
+  test("infers sqlite from sqlite sentinel database URL", () => {
+    process.env.DATABASE_URL = "sqlite";
+
+    const config = resolveDatabaseBackendConfig();
+
+    expect(config.kind).toBe("sqlite");
+    expect(config.sqlitePath).toMatch(/data\/context-still-core\.sqlite$/);
+  });
+
+  test("does not override a postgres URL just because a sqlite path is configured", () => {
+    process.env.DATABASE_URL = "postgres://postgres:postgres@localhost/context_still";
+    process.env.CONTEXT_STILL_SQLITE_CORE_PATH = "/tmp/context-still-core.sqlite";
+
+    const config = resolveDatabaseBackendConfig();
+
+    expect(config).toEqual({
+      kind: "postgres",
+      url: "postgres://postgres:postgres@localhost/context_still",
+      sqlitePath: null,
+    });
+  });
+
   test("honors sqlite core path env when sqlite backend is selected", () => {
     process.env.CONTEXT_STILL_DB_BACKEND = "sqlite";
     process.env.CONTEXT_STILL_SQLITE_CORE_PATH = "/tmp/context-still-env.sqlite";

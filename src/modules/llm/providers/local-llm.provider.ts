@@ -33,6 +33,7 @@ type LocalLlmProviderOptions = {
   timeoutMs?: number;
   modelConfig?: {
     apiBaseUrl: string;
+    apiPath?: string;
     model: string;
   };
 };
@@ -41,6 +42,7 @@ function resolveProviderConfig(providerOptions: LocalLlmProviderOptions, model?:
   if (!model?.trim() && providerOptions.modelConfig) {
     return {
       apiBaseUrl: providerOptions.modelConfig.apiBaseUrl.replace(/\/+$/, ""),
+      apiPath: providerOptions.modelConfig.apiPath?.trim() || "/v1/chat/completions",
       model: providerOptions.modelConfig.model,
     };
   }
@@ -101,21 +103,24 @@ export function createLocalLlmProvider(options: LocalLlmProviderOptions = {}): L
       const timer = setTimeout(() => controller.abort(), timeoutMs);
       try {
         const config = resolveProviderConfig(options, request.model);
-        const response = await fetch(buildLocalLlmChatCompletionsUrl(config.apiBaseUrl), {
-          method: "POST",
-          headers: headers(),
-          body: JSON.stringify({
-            model: config.model,
-            messages: request.messages,
-            stream: false,
-            temperature: request.temperature ?? 0,
-            max_tokens: request.maxTokens,
-            ...(request.responseFormat === "json"
-              ? { response_format: { type: "json_object" as const } }
-              : {}),
-          }),
-          signal: controller.signal,
-        });
+        const response = await fetch(
+          buildLocalLlmChatCompletionsUrl(config.apiBaseUrl, config.apiPath),
+          {
+            method: "POST",
+            headers: headers(),
+            body: JSON.stringify({
+              model: config.model,
+              messages: request.messages,
+              stream: false,
+              temperature: request.temperature ?? 0,
+              max_tokens: request.maxTokens,
+              ...(request.responseFormat === "json"
+                ? { response_format: { type: "json_object" as const } }
+                : {}),
+            }),
+            signal: controller.signal,
+          },
+        );
 
         if (!response.ok) {
           const body = await response.text().catch(() => "");

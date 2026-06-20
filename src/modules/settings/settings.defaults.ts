@@ -72,16 +72,13 @@ const distillationPriorityTargetKindSet = new Set<DistillationPriorityTargetKind
   distillationPriorityTargetKindValues,
 );
 
-const AZURE_OPENAI_MAX_DEPLOYMENTS = 3;
-const LOCAL_LLM_MAX_MODELS = 10;
-
 function normalizeAzureDeploymentSlots(values: unknown): number[] | undefined {
   if (!Array.isArray(values)) return undefined;
   const deduped = new Set<number>();
   for (const value of values) {
     const numeric = typeof value === "number" ? value : Number(value);
     if (!Number.isInteger(numeric)) continue;
-    if (numeric < 1 || numeric > AZURE_OPENAI_MAX_DEPLOYMENTS) continue;
+    if (numeric < 1) continue;
     deduped.add(numeric);
   }
   const normalized = [...deduped];
@@ -131,32 +128,9 @@ function normalizeAzureDeployments(
   provider: RuntimeSettingsEditable["providers"]["azure-openai"],
 ): RuntimeSettingsEditable["providers"]["azure-openai"]["deployments"] {
   const rawDeployments = Array.isArray(provider.deployments) ? provider.deployments : [];
-  const source =
-    rawDeployments.length > 0
-      ? rawDeployments
-      : [
-          {
-            name: "Primary",
-            apiBaseUrl: provider.apiBaseUrl,
-            apiPath: provider.apiPath,
-            apiVersion: provider.apiVersion,
-            model: provider.model,
-          },
-        ];
-  const deployments = source
-    .slice(0, AZURE_OPENAI_MAX_DEPLOYMENTS)
-    .map((value, index) => normalizeAzureDeployment(asRecord(value), index, provider));
-  return deployments.length > 0
-    ? deployments
-    : [
-        {
-          name: "Primary",
-          apiBaseUrl: provider.apiBaseUrl,
-          apiPath: provider.apiPath,
-          apiVersion: provider.apiVersion,
-          model: provider.model,
-        },
-      ];
+  return rawDeployments
+    .map((value, index) => normalizeAzureDeployment(asRecord(value), index, provider))
+    .filter((item) => item.apiBaseUrl.trim() && item.model.trim());
 }
 
 function syncAzureOpenAiProvider(
@@ -190,6 +164,10 @@ function normalizeLocalLlmModel(
       : index === 0
         ? fallback.apiBaseUrl
         : "";
+  const apiPath =
+    typeof value.apiPath === "string" && value.apiPath.trim()
+      ? value.apiPath.trim()
+      : fallback.apiPath || "/v1/chat/completions";
   const model =
     typeof value.model === "string" && value.model.trim()
       ? value.model.trim()
@@ -199,6 +177,7 @@ function normalizeLocalLlmModel(
   return {
     name: name || localLlmModelName(index),
     apiBaseUrl,
+    apiPath,
     model,
   };
 }
@@ -207,29 +186,10 @@ function normalizeLocalLlmModels(
   provider: RuntimeSettingsEditable["providers"]["local-llm"],
 ): RuntimeSettingsEditable["providers"]["local-llm"]["models"] {
   const rawModels = Array.isArray(provider.models) ? provider.models : [];
-  const source =
-    rawModels.length > 0
-      ? rawModels
-      : [
-          {
-            name: "Primary",
-            apiBaseUrl: provider.apiBaseUrl,
-            model: provider.model,
-          },
-        ];
-  const models = source
-    .slice(0, LOCAL_LLM_MAX_MODELS)
+  const models = rawModels
     .map((value, index) => normalizeLocalLlmModel(asRecord(value), index, provider))
-    .filter((item, index) => index === 0 || (item.apiBaseUrl.trim() && item.model.trim()));
-  return models.length > 0
-    ? models
-    : [
-        {
-          name: "Primary",
-          apiBaseUrl: provider.apiBaseUrl,
-          model: provider.model,
-        },
-      ];
+    .filter((item) => item.apiBaseUrl.trim() && item.model.trim());
+  return models;
 }
 
 function syncLocalLlmProvider(
@@ -240,6 +200,7 @@ function syncLocalLlmProvider(
   return {
     ...provider,
     apiBaseUrl: primary?.apiBaseUrl ?? provider.apiBaseUrl,
+    apiPath: primary?.apiPath ?? provider.apiPath,
     model: primary?.model ?? provider.model,
     models,
   };
@@ -310,7 +271,7 @@ export const bootstrap: BootstrapConfig = {
               "",
           }))
           .filter((deployment) => deployment.apiBaseUrl || deployment.model),
-      ].slice(0, AZURE_OPENAI_MAX_DEPLOYMENTS),
+      ],
     },
     bedrock: {
       enabled: Boolean(groupedConfig.bedrock.region.trim() && groupedConfig.bedrock.model.trim()),
@@ -323,11 +284,13 @@ export const bootstrap: BootstrapConfig = {
         groupedConfig.localLlm.apiBaseUrl.trim() && groupedConfig.localLlm.model.trim(),
       ),
       apiBaseUrl: groupedConfig.localLlm.apiBaseUrl,
+      apiPath: groupedConfig.localLlm.apiPath,
       model: groupedConfig.localLlm.model,
       models: [
         {
           name: "Primary",
           apiBaseUrl: groupedConfig.localLlm.apiBaseUrl,
+          apiPath: groupedConfig.localLlm.apiPath,
           model: groupedConfig.localLlm.model,
         },
       ],
@@ -601,21 +564,87 @@ function resolveConfiguredRouteModel(
   }
 }
 
+function localLlmRouteTargetValue(model: {
+  apiBaseUrl: string;
+  apiPath?: string;
+  model: string;
+}): string {
+  return JSON.stringify({
+    apiBaseUrl: model.apiBaseUrl.trim().replace(/\/+$/, ""),
+    apiPath: model.apiPath?.trim() || "/v1/chat/completions",
+    model: model.model.trim(),
+  });
+}
+
+function parseLocalLlmRouteTarget(
+  value: string | undefined,
+): { apiBaseUrl: string; apiPath?: string; model: string } | null {
+  if (!value?.trim()) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<{
+      apiBaseUrl: string;
+      apiPath: string;
+      model: string;
+    }>;
+    if (typeof parsed.apiBaseUrl === "string" && typeof parsed.model === "string") {
+      const apiBaseUrl = parsed.apiBaseUrl.trim().replace(/\/+$/, "");
+      const apiPath =
+        typeof parsed.apiPath === "string" && parsed.apiPath.trim()
+          ? parsed.apiPath.trim()
+          : undefined;
+      const model = parsed.model.trim();
+      if (apiBaseUrl && model) return { apiBaseUrl, apiPath, model };
+    }
+  } catch {
+    // Plain model names are the legacy route value.
+  }
+  return null;
+}
+
+function resolveConfiguredLocalLlmRouteTarget(
+  settings: RuntimeSettingsEditable,
+  value: string | undefined,
+): { routeValue: string; model: string } | undefined {
+  const configuredModels = settings.providers["local-llm"].models
+    .map((model) => ({
+      apiBaseUrl: model.apiBaseUrl.trim().replace(/\/+$/, ""),
+      apiPath: model.apiPath.trim() || "/v1/chat/completions",
+      model: model.model.trim(),
+    }))
+    .filter((model) => model.apiBaseUrl && model.model);
+  if (configuredModels.length === 0) return undefined;
+
+  const target = parseLocalLlmRouteTarget(value);
+  const matched = target
+    ? configuredModels.find(
+        (model) =>
+          model.apiBaseUrl === target.apiBaseUrl &&
+          (!target.apiPath || model.apiPath === target.apiPath) &&
+          model.model === target.model,
+      )
+    : configuredModels.find((model) => model.model === value?.trim());
+  const selected = matched ?? configuredModels[0];
+  const duplicateModelCount = configuredModels.filter(
+    (model) => model.model === selected.model,
+  ).length;
+  return {
+    routeValue: duplicateModelCount > 1 ? localLlmRouteTargetValue(selected) : selected.model,
+    model: selected.model,
+  };
+}
+
 function sanitizeRoute(
   settings: RuntimeSettingsEditable,
   route: RuntimeSettingsRoute,
 ): RuntimeSettingsRoute {
-  const configuredLocalLlmModel =
-    settings.providers["local-llm"].models
-      .map((item) => item.model.trim())
-      .find(
-        (configuredModel) => configuredModel && configuredModel === route.localLlmModel?.trim(),
-      ) ?? undefined;
+  const configuredLocalLlmTarget = resolveConfiguredLocalLlmRouteTarget(
+    settings,
+    route.localLlmModel,
+  );
   const model =
     route.provider === "local-llm"
-      ? (settings.providers["local-llm"].models
-          .map((item) => item.model.trim())
-          .find((configuredModel) => configuredModel && configuredModel === route.model?.trim()) ??
+      ? (resolveConfiguredLocalLlmRouteTarget(settings, route.model)?.routeValue ??
+        configuredLocalLlmTarget?.routeValue ??
         resolveConfiguredRouteModel(settings, route.provider))
       : resolveConfiguredRouteModel(settings, route.provider);
   return {
@@ -623,10 +652,10 @@ function sanitizeRoute(
     model,
     localLlmModel:
       route.provider === "local-llm" || route.fallback.includes("local-llm")
-        ? (configuredLocalLlmModel ??
+        ? (configuredLocalLlmTarget?.routeValue ??
           (route.provider === "local-llm"
             ? model
-            : resolveConfiguredRouteModel(settings, "local-llm")))
+            : resolveConfiguredLocalLlmRouteTarget(settings, undefined)?.routeValue))
         : undefined,
     fallback: normalizeProviderList(route.fallback),
     azureDeploymentSlots: normalizeAzureDeploymentSlots(route.azureDeploymentSlots),
@@ -824,16 +853,14 @@ function mergeRuntimeSettings(
   merged.taskRouting.agenticCompile.localLlmModel =
     merged.taskRouting.agenticCompile.provider === "local-llm" ||
     merged.taskRouting.agenticCompile.fallback.includes("local-llm")
-      ? (merged.providers["local-llm"].models
-          .map((item) => item.model.trim())
-          .find(
-            (configuredModel) =>
-              configuredModel &&
-              configuredModel === merged.taskRouting.agenticCompile.localLlmModel?.trim(),
-          ) ??
+      ? (resolveConfiguredLocalLlmRouteTarget(
+          merged,
+          merged.taskRouting.agenticCompile.localLlmModel,
+        )?.routeValue ??
         (merged.taskRouting.agenticCompile.provider === "local-llm"
-          ? merged.taskRouting.agenticCompile.model
-          : resolveConfiguredRouteModel(merged, "local-llm")))
+          ? resolveConfiguredLocalLlmRouteTarget(merged, merged.taskRouting.agenticCompile.model)
+              ?.routeValue
+          : resolveConfiguredLocalLlmRouteTarget(merged, undefined)?.routeValue))
       : undefined;
   merged.taskRouting.agenticCompile.azureDeploymentSlots = normalizeAzureDeploymentSlots(
     merged.taskRouting.agenticCompile.azureDeploymentSlots,

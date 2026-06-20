@@ -105,8 +105,16 @@ describe("settings runtime cache", () => {
     settings.providers["local-llm"] = {
       enabled: false,
       apiBaseUrl: "http://127.0.0.1:44448",
+      apiPath: "/v1/chat/completions",
       model: "gemma-test",
-      models: [{ name: "Primary", apiBaseUrl: "http://127.0.0.1:44448", model: "gemma-test" }],
+      models: [
+        {
+          name: "Primary",
+          apiBaseUrl: "http://127.0.0.1:44448",
+          apiPath: "/v1/chat/completions",
+          model: "gemma-test",
+        },
+      ],
     };
 
     applyRuntimeSettingsToProcess(settings, {
@@ -178,11 +186,27 @@ describe("settings runtime cache", () => {
     settings.providers["local-llm"] = {
       enabled: true,
       apiBaseUrl: "http://127.0.0.1:44448",
+      apiPath: "/v1/chat/completions",
       model: "local-primary",
       models: [
-        { name: "Primary", apiBaseUrl: "http://127.0.0.1:44448", model: "local-primary" },
-        { name: "Coder", apiBaseUrl: "http://127.0.0.1:44449", model: "local-coder" },
-        { name: "Reasoner", apiBaseUrl: "http://127.0.0.1:44450", model: "local-reasoner" },
+        {
+          name: "Primary",
+          apiBaseUrl: "http://127.0.0.1:44448",
+          apiPath: "/v1/chat/completions",
+          model: "local-primary",
+        },
+        {
+          name: "Coder",
+          apiBaseUrl: "http://127.0.0.1:44449",
+          apiPath: "/v1/chat/completions",
+          model: "local-coder",
+        },
+        {
+          name: "Reasoner",
+          apiBaseUrl: "http://127.0.0.1:44450",
+          apiPath: "/v1/chat/completions",
+          model: "local-reasoner",
+        },
       ],
     };
 
@@ -194,9 +218,24 @@ describe("settings runtime cache", () => {
     expect(groupedConfig.localLlm.apiBaseUrl).toBe("http://127.0.0.1:44448");
     expect(groupedConfig.localLlm.model).toBe("local-primary");
     expect(groupedConfig.localLlm.models).toEqual([
-      { name: "Primary", apiBaseUrl: "http://127.0.0.1:44448", model: "local-primary" },
-      { name: "Coder", apiBaseUrl: "http://127.0.0.1:44449", model: "local-coder" },
-      { name: "Reasoner", apiBaseUrl: "http://127.0.0.1:44450", model: "local-reasoner" },
+      {
+        name: "Primary",
+        apiBaseUrl: "http://127.0.0.1:44448",
+        apiPath: "/v1/chat/completions",
+        model: "local-primary",
+      },
+      {
+        name: "Coder",
+        apiBaseUrl: "http://127.0.0.1:44449",
+        apiPath: "/v1/chat/completions",
+        model: "local-coder",
+      },
+      {
+        name: "Reasoner",
+        apiBaseUrl: "http://127.0.0.1:44450",
+        apiPath: "/v1/chat/completions",
+        model: "local-reasoner",
+      },
     ]);
   });
 

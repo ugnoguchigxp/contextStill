@@ -248,7 +248,7 @@ function CoreInfrastructureDomain({ data }: { data: DoctorCoreInfrastructureDoma
       badge={`DB check: ${formatDurationMs(data.db.durationMs)}`}
     >
       <div className="flex flex-col justify-between h-full py-1 gap-4">
-        <div className="grid grid-cols-3 gap-2 border-b border-slate-100 pb-3 mb-1 text-center md:text-left">
+        <div className="grid grid-cols-2 gap-2 border-b border-slate-100 pb-3 mb-1 text-center md:text-left">
           <div className="flex flex-col">
             <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
               DB Status
@@ -267,18 +267,6 @@ function CoreInfrastructureDomain({ data }: { data: DoctorCoreInfrastructureDoma
             </span>
             <strong className="text-slate-800 text-2xl font-extrabold mt-1 leading-none">
               {formatDurationMs(data.db.durationMs)}
-            </strong>
-          </div>
-          <div className="flex flex-col">
-            <span className="text-[12px] text-slate-400 font-semibold tracking-wide uppercase">
-              pgvector
-            </span>
-            <strong
-              className={`text-2xl font-extrabold mt-1 leading-none ${
-                data.vector.installed ? "text-emerald-600" : "text-amber-600"
-              }`}
-            >
-              {data.vector.installed ? "Installed" : "Missing"}
             </strong>
           </div>
         </div>

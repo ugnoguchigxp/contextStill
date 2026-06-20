@@ -27,7 +27,7 @@ const providerNameSchema = z.enum([
   "local-llm",
   "codex",
 ] as const);
-const azureOpenAiDeploymentSchema = z.coerce.number().int().min(1).max(3);
+const azureOpenAiDeploymentSchema = z.coerce.number().int().min(1);
 const localLlmModelTestSchema = z.object({
   model: z.string().trim().min(1),
 });

@@ -1,4 +1,5 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import { contextCompileRuns, contextPackItems, knowledgeUsageEvents } from "../../db/schema.js";
 import type {
@@ -50,14 +51,36 @@ export type LandscapeReplayCorpusRows = {
 };
 
 function asRecord(value: unknown): Record<string, unknown> {
+  if (typeof value === "string") {
+    try {
+      const parsed = JSON.parse(value);
+      return asRecord(parsed);
+    } catch {
+      return {};
+    }
+  }
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
 }
 
+function parseJsonValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
 function asNumber(value: unknown, fallback = 0): number {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+}
+
+function asDate(value: unknown): Date {
+  const parsed = new Date(String(value ?? ""));
+  return Number.isFinite(parsed.getTime()) ? parsed : new Date(0);
 }
 
 function normalizeRunStatus(value: string): LandscapeRunStatus {
@@ -80,6 +103,10 @@ export async function loadLandscapeReplayCorpus(params: {
   limit: number;
   runStatus: LandscapeRunStatusFilter;
 }): Promise<LandscapeReplayCorpusRows> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    return loadLandscapeReplayCorpusSqlite(params);
+  }
+
   const conditions = [
     sql`${contextCompileRuns.createdAt} >= now() - (${params.windowDays} * interval '1 day')`,
   ];
@@ -178,6 +205,158 @@ export async function loadLandscapeReplayCorpus(params: {
       metadata: asRecord(event.metadata),
       createdAt: event.createdAt,
       updatedAt: event.updatedAt,
+    })),
+  };
+}
+
+async function loadLandscapeReplayCorpusSqlite(params: {
+  windowDays: number;
+  limit: number;
+  runStatus: LandscapeRunStatusFilter;
+}): Promise<LandscapeReplayCorpusRows> {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
+  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const since = new Date(Date.now() - params.windowDays * 24 * 60 * 60 * 1000).toISOString();
+  const statusClause = params.runStatus === "all" ? "" : "and status = ?";
+  const runParams =
+    params.runStatus === "all" ? [since, params.limit] : [since, params.runStatus, params.limit];
+  const runs = sqlite.db
+    .query<
+      {
+        id: string;
+        goal: string;
+        intent: string;
+        repo_path: string | null;
+        input: string;
+        retrieval_mode: string;
+        status: string;
+        degraded_reasons: string;
+        source: string;
+        pack_snapshot: string | null;
+        created_at: string;
+      },
+      unknown[]
+    >(
+      `
+        select
+          id,
+          goal,
+          intent,
+          repo_path,
+          input,
+          retrieval_mode,
+          status,
+          degraded_reasons,
+          source,
+          pack_snapshot,
+          created_at
+        from context_compile_runs
+        where datetime(created_at) >= datetime(?)
+          ${statusClause}
+        order by datetime(created_at) desc
+        limit ?
+      `,
+    )
+    .all(...runParams);
+
+  const runIds = runs.map((run) => run.id);
+  if (runIds.length === 0) {
+    return { runs: [], packItems: [], usageEvents: [] };
+  }
+
+  const placeholders = runIds.map(() => "?").join(",");
+  const packItems = sqlite.db
+    .query<
+      {
+        run_id: string;
+        item_kind: string;
+        item_id: string;
+        score: number;
+        ranking_reason: string;
+        source_refs: string;
+        created_at: string;
+      },
+      unknown[]
+    >(
+      `
+        select
+          run_id,
+          item_kind,
+          item_id,
+          score,
+          ranking_reason,
+          source_refs,
+          created_at
+        from context_pack_items
+        where run_id in (${placeholders})
+          and item_kind in ('rule', 'procedure')
+        order by score desc, datetime(created_at) desc
+      `,
+    )
+    .all(...runIds);
+  const usageEvents = sqlite.db
+    .query<
+      {
+        run_id: string;
+        knowledge_id: string;
+        verdict: string;
+        actor: string;
+        reason: string | null;
+        metadata: string;
+        created_at: string;
+        updated_at: string;
+      },
+      unknown[]
+    >(
+      `
+        select
+          run_id,
+          knowledge_id,
+          verdict,
+          actor,
+          reason,
+          metadata,
+          created_at,
+          updated_at
+        from knowledge_usage_events
+        where run_id in (${placeholders})
+        order by datetime(updated_at) desc, datetime(created_at) desc
+      `,
+    )
+    .all(...runIds);
+
+  return {
+    runs: runs.map((run) => ({
+      id: run.id,
+      goal: run.goal,
+      intent: run.intent,
+      repoPath: run.repo_path,
+      input: asRecord(run.input),
+      retrievalMode: run.retrieval_mode,
+      status: normalizeRunStatus(run.status),
+      degradedReasons: parseJsonValue(run.degraded_reasons),
+      source: run.source,
+      packSnapshot: parseJsonValue(run.pack_snapshot),
+      createdAt: asDate(run.created_at),
+    })),
+    packItems: packItems.map((item) => ({
+      runId: item.run_id,
+      itemKind: item.item_kind,
+      itemId: item.item_id,
+      score: asNumber(item.score, 0),
+      rankingReason: item.ranking_reason,
+      sourceRefs: parseJsonValue(item.source_refs),
+      createdAt: asDate(item.created_at),
+    })),
+    usageEvents: usageEvents.map((event) => ({
+      runId: event.run_id,
+      knowledgeId: event.knowledge_id,
+      verdict: normalizeVerdict(event.verdict),
+      actor: normalizeActor(event.actor),
+      reason: event.reason,
+      metadata: asRecord(event.metadata),
+      createdAt: asDate(event.created_at),
+      updatedAt: asDate(event.updated_at),
     })),
   };
 }

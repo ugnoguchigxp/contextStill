@@ -30,7 +30,7 @@ const contextDecisionSystemFeedbackWriteSchema = z.object({
       "regression_found",
       "still_unknown",
     ])
-    .optional(),
+    .default("still_unknown"),
   reason: z.string().optional(),
   metadata: z.record(z.unknown()).default({}),
 });

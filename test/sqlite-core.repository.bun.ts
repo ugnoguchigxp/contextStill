@@ -171,6 +171,26 @@ describe("sqlite core repository", () => {
     }
   });
 
+  test("sqlite backup fails when the source database path does not exist", () => {
+    const missingSourcePath = path.join(tempDir, "missing.sqlite");
+    const backupPath = path.join(tempDir, "backup", "missing-backup.sqlite");
+
+    const result = Bun.spawnSync({
+      cmd: [process.execPath, "run", "src/cli/sqlite-backup.ts", "--output", backupPath, "--json"],
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        CONTEXT_STILL_DB_BACKEND: "sqlite",
+        CONTEXT_STILL_SQLITE_CORE_PATH: missingSourcePath,
+      },
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+
+    expect(result.exitCode).not.toBe(0);
+    expect(Buffer.from(result.stderr).toString()).toContain("SQLite source database not found");
+  });
+
   test("rebuilds sqlite vectors through the maintenance cli", async () => {
     const sourcePath = path.join(tempDir, "context-still-core.sqlite");
     const sqlite = await openSqliteCoreDatabase({

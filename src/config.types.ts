@@ -35,11 +35,13 @@ export type GroupedConfig = {
     embeddingPython: string;
     embeddingModelDir: string;
     apiBaseUrl: string;
+    apiPath: string;
     apiKey: string;
     model: string;
     models: Array<{
       name: string;
       apiBaseUrl: string;
+      apiPath: string;
       model: string;
     }>;
   };

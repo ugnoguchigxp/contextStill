@@ -1,26 +1,10 @@
-import { Badge } from "@/components/ui/badge";
 import type { CandidateListItem, CandidateOutcome } from "../repositories/admin.repository";
 
-export const outcomeOptions: Array<"all" | CandidateOutcome> = [
-  "all",
-  "stored",
-  "ready_not_finalized",
-  "rejected",
-  "retryable",
-  "retained_failure",
-  "candidate_only",
-  "target_pending",
-];
-
+export const compactBadgeClass =
+  "text-[10px] whitespace-normal break-words [overflow-wrap:anywhere]";
 export const tableHeadClass = "px-3 whitespace-normal break-words [overflow-wrap:anywhere]";
 export const tableCellClass =
   "px-3 py-3 align-top whitespace-normal break-words [overflow-wrap:anywhere]";
-export const compactBadgeClass =
-  "text-[10px] whitespace-normal break-words [overflow-wrap:anywhere]";
-
-export function toPercent(value: number): string {
-  return `${Math.round(value * 100)}%`;
-}
 
 export function coverageBadge(status: string): "success" | "warning" | "destructive" | "secondary" {
   if (status === "knowledge_ready") return "success";
@@ -48,10 +32,28 @@ export function outcomeBadge(
   return "secondary";
 }
 
-export function diffSignals(item: CandidateListItem): string[] {
-  const summary =
-    item.diff.originalToKnowledge?.summary ?? item.diff.originalToCover?.summary ?? [];
-  return summary.slice(0, 3);
+export function outcomeLabel(outcome: CandidateOutcome): string {
+  const labels: Record<CandidateOutcome, string> = {
+    stored: "Stored",
+    ready_not_finalized: "Ready to store",
+    rejected: "Rejected",
+    retryable: "Retryable",
+    retained_failure: "Failed",
+    candidate_only: "Uncovered",
+    target_pending: "Pending",
+  };
+  return labels[outcome];
+}
+
+export function nextCandidateAction(item: CandidateListItem): string {
+  if (item.landscapeWarning) return "Review landscape warning";
+  if (item.outcome === "ready_not_finalized") return "Finalize into knowledge";
+  if (item.outcome === "retryable") return "Wait for queued retry";
+  if (item.outcome === "retained_failure") return "Inspect failure reason";
+  if (item.outcome === "rejected") return "Review rejection";
+  if (item.outcome === "target_pending") return "Wait for pipeline";
+  if (item.outcome === "candidate_only") return "Run evidence coverage";
+  return "Open knowledge item";
 }
 
 export function textPreview(value: string, max = 120): string {
@@ -80,12 +82,11 @@ export function landscapeWarningSummary(item: CandidateListItem): string | null 
 export function CandidateColumnGroup() {
   return (
     <colgroup>
+      <col className="w-[30%]" />
       <col className="w-[18%]" />
-      <col className="w-[25%]" />
       <col className="w-[14%]" />
+      <col className="w-[16%]" />
       <col className="w-[14%]" />
-      <col className="w-[8%]" />
-      <col className="w-[13%]" />
       <col className="w-[8%]" />
     </colgroup>
   );
@@ -120,22 +121,6 @@ export function CandidateDetailPane({
       <div className="text-[11px] text-muted-foreground break-words [overflow-wrap:anywhere]">
         type: {type ?? "-"} | importance: {importance ?? "-"} | confidence: {confidence ?? "-"}
       </div>
-    </div>
-  );
-}
-
-export function LandscapeWarningBadge({
-  warning,
-}: { warning: CandidateListItem["landscapeWarning"] }) {
-  if (!warning) return null;
-  return (
-    <div className="space-y-1 pt-1">
-      <Badge variant="warning" className={compactBadgeClass}>
-        Landscape warning
-      </Badge>
-      <p className="text-[11px] text-amber-700 dark:text-amber-300 break-words [overflow-wrap:anywhere]">
-        {warning.reason}
-      </p>
     </div>
   );
 }

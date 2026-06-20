@@ -46,10 +46,6 @@ import {
 import { vibeMemoryRouter } from "../api/modules/vibe-memory/vibe-memory.routes.js";
 import { groupedConfig } from "../src/config.js";
 import {
-  CoverEvidenceReprocessError,
-  requestCoverEvidenceReprocess,
-} from "../src/modules/coverEvidence/reprocess-candidate.service.js";
-import {
   recordVibeMemoryWithDiffEntries,
   retrieveVibeMemoryContext,
 } from "../src/modules/vibe-memory/vibe-memory.service.js";
@@ -187,21 +183,6 @@ vi.mock("../src/modules/vibe-memory/vibe-memory.service.js", () => ({
   retrieveVibeMemoryContext: vi.fn(),
 }));
 
-vi.mock("../src/modules/coverEvidence/reprocess-candidate.service.js", () => ({
-  CoverEvidenceReprocessError: class CoverEvidenceReprocessError extends Error {
-    statusCode: 404 | 409;
-    reason: string;
-
-    constructor(statusCode: 404 | 409, reason: string) {
-      super(reason);
-      this.name = "CoverEvidenceReprocessError";
-      this.statusCode = statusCode;
-      this.reason = reason;
-    }
-  },
-  requestCoverEvidenceReprocess: vi.fn(),
-}));
-
 const buildApp = () => {
   const app = new Hono();
   app.route("/api/audit-logs", auditLogsRouter);
@@ -337,15 +318,6 @@ describe("API route contract tests", () => {
       diffEntries: [],
     });
     vi.mocked(retrieveVibeMemoryContext).mockResolvedValue([]);
-    vi.mocked(requestCoverEvidenceReprocess).mockResolvedValue({
-      findCandidateResultId: "candidate-1",
-      coverEvidenceResultId: "candidate-1",
-      targetStateId: "target-1",
-      status: "queued",
-      mode: "cloud_api",
-      previousStatus: "insufficient",
-      previousReason: "rule_body_not_actionable",
-    });
   });
 
   test("GET /api/vibe-memory/context rejects removed Goal Room query params", async () => {
@@ -591,72 +563,13 @@ describe("API route contract tests", () => {
       expect.objectContaining({
         page: 1,
         limit: 1,
+        targetKind: "knowledge_candidate",
         outcome: "stored",
+        includeStored: false,
         sortBy: "candidateTitle",
         sortDir: "asc",
       }),
     );
-  });
-
-  test("POST /api/candidates/:id/premium-reprocess queues candidate", async () => {
-    const app = buildApp();
-    const response = await app.request("/api/candidates/candidate-1/premium-reprocess", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: JSON.stringify({}),
-    });
-    const json = (await response.json()) as {
-      result: {
-        status: string;
-        mode: string;
-      };
-    };
-
-    expect(response.status).toBe(200);
-    expect(json.result).toMatchObject({
-      status: "queued",
-      mode: "cloud_api",
-    });
-    expect(requestCoverEvidenceReprocess).toHaveBeenCalledWith({
-      findCandidateResultId: "candidate-1",
-      mode: "cloud_api",
-      forceRefreshEvidence: true,
-      actor: "user",
-    });
-  });
-
-  test("POST /api/candidates/:id/premium-reprocess maps domain reason errors", async () => {
-    vi.mocked(requestCoverEvidenceReprocess).mockRejectedValueOnce(
-      new CoverEvidenceReprocessError(409, "target_running"),
-    );
-    const app = buildApp();
-    const response = await app.request("/api/candidates/candidate-1/premium-reprocess", {
-      method: "POST",
-    });
-
-    expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toMatchObject({
-      reason: "target_running",
-    });
-  });
-
-  test("POST /api/candidates/:id/premium-reprocess rejects malformed request body", async () => {
-    const app = buildApp();
-    const response = await app.request("/api/candidates/candidate-1/premium-reprocess", {
-      method: "POST",
-      headers: {
-        "content-type": "application/json",
-      },
-      body: "{",
-    });
-
-    expect(response.status).toBe(400);
-    await expect(response.json()).resolves.toMatchObject({
-      reason: "invalid_request_body",
-    });
-    expect(requestCoverEvidenceReprocess).not.toHaveBeenCalled();
   });
 
   test("POST /api/context/compile returns 400 for invalid request body", async () => {

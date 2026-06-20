@@ -313,6 +313,7 @@ describeDb("candidates repository integration", () => {
       targetKind: "all",
       outcome: "all",
       hasKnowledge: "all",
+      includeStored: true,
     });
 
     expect(result.total).toBe(8);
@@ -346,12 +347,25 @@ describeDb("candidates repository integration", () => {
     const sourceUriOnly = byId.get("10000000-0000-0000-0000-000000000007");
     expect(sourceUriOnly?.knowledge?.id).toBe("20000000-0000-0000-0000-000000000071");
 
+    const defaultQueue = await listCandidateItems({
+      page: 1,
+      limit: 50,
+      targetKind: "all",
+      outcome: "all",
+      hasKnowledge: "all",
+    });
+
+    expect(defaultQueue.total).toBe(6);
+    expect(defaultQueue.items.some((item) => item.outcome === "stored")).toBe(false);
+    expect(defaultQueue.stats.stored).toBe(0);
+
     const sortedByCandidateTitle = await listCandidateItems({
       page: 1,
       limit: 3,
       targetKind: "all",
       outcome: "all",
       hasKnowledge: "all",
+      includeStored: true,
       sortBy: "candidateTitle",
       sortDir: "asc",
     });

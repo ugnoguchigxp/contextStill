@@ -240,7 +240,7 @@ describe("azure openai provider", () => {
     );
   });
 
-  test("callAzureOpenAiChat round-robins Azure deployments across fresh tasks", async () => {
+  test("callAzureOpenAiChat keeps Azure deployment order across fresh tasks", async () => {
     groupedConfig.azureOpenAi.deployments = [
       {
         apiKey: "test-api-key",
@@ -281,7 +281,7 @@ describe("azure openai provider", () => {
       "https://test-endpoint.openai.azure.com/openai/deployments/gpt-4/chat/completions?api-version=2023-05-15",
     );
     expect(spy.mock.calls[1]?.[0]).toBe(
-      "https://second.openai.azure.com/openai/deployments/gpt-4b/chat/completions?api-version=2023-05-15",
+      "https://test-endpoint.openai.azure.com/openai/deployments/gpt-4/chat/completions?api-version=2023-05-15",
     );
   });
 
@@ -430,7 +430,7 @@ describe("azure openai provider", () => {
     );
   });
 
-  test("callAzureOpenAiChat advances round-robin after a failover success", async () => {
+  test("callAzureOpenAiChat keeps the failover deployment while the first endpoint is cooling down", async () => {
     groupedConfig.azureOpenAi.deployments = [
       {
         apiKey: "test-api-key",
@@ -486,7 +486,7 @@ describe("azure openai provider", () => {
       "https://second.openai.azure.com/openai/deployments/gpt-4b/chat/completions?api-version=2023-05-15",
     );
     expect(spy.mock.calls[2]?.[0]).toBe(
-      "https://third.openai.azure.com/openai/deployments/gpt-4c/chat/completions?api-version=2023-05-15",
+      "https://second.openai.azure.com/openai/deployments/gpt-4b/chat/completions?api-version=2023-05-15",
     );
   });
 

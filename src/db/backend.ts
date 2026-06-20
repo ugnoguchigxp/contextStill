@@ -22,6 +22,7 @@ function normalizeBackendKind(value: string | undefined): DatabaseBackendKind | 
 }
 
 function sqlitePathFromUrl(url: string): string | null {
+  if (normalizeBackendKind(url) === "sqlite") return defaultSqliteCorePath;
   if (url.startsWith("sqlite://")) return url.slice("sqlite://".length);
   if (url.startsWith("file:")) {
     try {
@@ -33,24 +34,31 @@ function sqlitePathFromUrl(url: string): string | null {
   return null;
 }
 
+function configuredSqliteCorePath(inputPath?: string): string | undefined {
+  return (
+    inputPath ??
+    process.env.CONTEXT_STILL_SQLITE_CORE_PATH ??
+    process.env.MEMORY_ROUTER_SQLITE_CORE_PATH ??
+    readProjectEnv("SQLITE_CORE_PATH") ??
+    readProjectEnv("DB_SQLITE_PATH")
+  );
+}
+
 export function resolveDatabaseBackendConfig(input?: {
   databaseUrl?: string;
   backend?: string;
   sqlitePath?: string;
 }): DatabaseBackendConfig {
   const url = input?.databaseUrl ?? process.env.DATABASE_URL ?? "";
-  const configuredSqlitePath =
-    input?.sqlitePath ??
-    readProjectEnv("SQLITE_CORE_PATH") ??
-    process.env.CONTEXT_STILL_SQLITE_CORE_PATH ??
-    process.env.MEMORY_ROUTER_SQLITE_CORE_PATH ??
-    readProjectEnv("DB_SQLITE_PATH");
+  const configuredSqlitePath = configuredSqliteCorePath(input?.sqlitePath);
   const requestedBackend =
     normalizeBackendKind(input?.backend) ??
-    normalizeBackendKind(readProjectEnv("DB_BACKEND")) ??
-    normalizeBackendKind(process.env.CONTEXT_STILL_DB_BACKEND);
+    normalizeBackendKind(process.env.CONTEXT_STILL_DB_BACKEND) ??
+    normalizeBackendKind(readProjectEnv("DB_BACKEND"));
   const sqlitePath = sqlitePathFromUrl(url);
-  const inferredKind: DatabaseBackendKind = sqlitePath ? "sqlite" : "postgres";
+  const hasExplicitSqlitePath = Boolean(configuredSqlitePath);
+  const inferredKind: DatabaseBackendKind =
+    sqlitePath || (!url && hasExplicitSqlitePath) ? "sqlite" : "postgres";
   const kind = requestedBackend ?? inferredKind;
 
   return {

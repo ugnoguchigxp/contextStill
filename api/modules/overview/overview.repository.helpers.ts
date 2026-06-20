@@ -10,10 +10,10 @@ import type {
   OverviewSystemQualityDomain,
 } from "../../../src/shared/schemas/overview.schema.js";
 
-const LANDSCAPE_OVERVIEW_WINDOW_DAYS = 30;
-const LANDSCAPE_OVERVIEW_LIMIT = 1000;
-const LANDSCAPE_OVERVIEW_REPLAY_LIMIT = 20;
-const LANDSCAPE_OVERVIEW_CURRENT_LIMIT = 12;
+export const LANDSCAPE_OVERVIEW_WINDOW_DAYS = 30;
+export const LANDSCAPE_OVERVIEW_LIMIT = 1000;
+export const LANDSCAPE_OVERVIEW_REPLAY_LIMIT = 20;
+export const LANDSCAPE_OVERVIEW_CURRENT_LIMIT = 12;
 const KNOWLEDGE_STATUS_ORDER = ["active", "draft", "deprecated"] as const;
 type SearchRateLimitInput = Parameters<typeof deriveSearchProviderCooldownUntil>[0];
 

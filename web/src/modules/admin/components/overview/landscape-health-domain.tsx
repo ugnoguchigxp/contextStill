@@ -75,6 +75,7 @@ export function LandscapeHealthDomain({ dashboard }: LandscapeHealthDomainProps)
     landscape.replay.retainedItemCount +
     landscape.replay.missingFromCurrentItemCount +
     landscape.replay.newlyRetrievedItemCount;
+  const hasReplayData = landscape.replay.comparedRunCount > 0;
   const gateReviewRequired = landscape.replay.promotionGateMode === "review_required";
 
   return (
@@ -105,9 +106,11 @@ export function LandscapeHealthDomain({ dashboard }: LandscapeHealthDomainProps)
               : "border-emerald-500/20 text-emerald-700 bg-emerald-50/50",
           )}
         >
-          {gateReviewRequired
-            ? "Gate: review required"
-            : `Replay stable: ${formatPercent(landscape.replay.averageOverlapRate)}`}
+          {hasReplayData
+            ? gateReviewRequired
+              ? "Gate: review required"
+              : `Replay stable: ${formatPercent(landscape.replay.averageOverlapRate)}`
+            : "Graph health live"}
         </Badge>
       </div>
 
@@ -148,7 +151,7 @@ export function LandscapeHealthDomain({ dashboard }: LandscapeHealthDomainProps)
                     : "text-slate-800",
               )}
             >
-              {formatPercent(landscape.replay.averageOverlapRate)}
+              {hasReplayData ? formatPercent(landscape.replay.averageOverlapRate) : "n/a"}
             </strong>
           </div>
         </div>
@@ -218,14 +221,14 @@ export function LandscapeHealthDomain({ dashboard }: LandscapeHealthDomainProps)
             <div className="flex items-center gap-0.5">
               <span>Churn:</span>
               <strong className="text-slate-700">
-                {formatNumber(landscape.replay.highChurnRunCount)}
+                {hasReplayData ? formatNumber(landscape.replay.highChurnRunCount) : "n/a"}
               </strong>
             </div>
             <div className="text-slate-200">|</div>
             <div className="flex items-center gap-0.5">
               <span>No match:</span>
               <strong className="text-slate-700">
-                {formatNumber(landscape.replay.currentNoMatchRunCount)}
+                {hasReplayData ? formatNumber(landscape.replay.currentNoMatchRunCount) : "n/a"}
               </strong>
             </div>
           </div>
@@ -271,34 +274,48 @@ export function LandscapeHealthDomain({ dashboard }: LandscapeHealthDomainProps)
             <div className="flex justify-between items-baseline text-[12.5px]">
               <span className="font-semibold text-slate-600">Replay Stability</span>
               <span className="font-semibold text-slate-700">
-                retained {formatNumber(landscape.replay.retainedItemCount)}
+                {hasReplayData
+                  ? `retained ${formatNumber(landscape.replay.retainedItemCount)}`
+                  : "no replay cache"}
               </span>
             </div>
             <div className="w-full h-2 bg-slate-100 rounded-full overflow-hidden flex">
               <div
                 className="h-full bg-emerald-500"
-                style={{ width: percentWidth(landscape.replay.retainedItemCount, replayTotal) }}
+                style={{
+                  width: hasReplayData
+                    ? percentWidth(landscape.replay.retainedItemCount, replayTotal)
+                    : "0%",
+                }}
                 title={`Retained: ${landscape.replay.retainedItemCount}`}
               />
               <div
                 className="h-full bg-amber-400"
                 style={{
-                  width: percentWidth(landscape.replay.missingFromCurrentItemCount, replayTotal),
+                  width: hasReplayData
+                    ? percentWidth(landscape.replay.missingFromCurrentItemCount, replayTotal)
+                    : "0%",
                 }}
                 title={`Missing: ${landscape.replay.missingFromCurrentItemCount}`}
               />
               <div
                 className="h-full bg-sky-300"
                 style={{
-                  width: percentWidth(landscape.replay.newlyRetrievedItemCount, replayTotal),
+                  width: hasReplayData
+                    ? percentWidth(landscape.replay.newlyRetrievedItemCount, replayTotal)
+                    : "0%",
                 }}
                 title={`New: ${landscape.replay.newlyRetrievedItemCount}`}
               />
+              {!hasReplayData ? <div className="h-full w-full bg-slate-300" /> : null}
             </div>
             <div className="flex items-center justify-between gap-3 text-[11.5px] text-slate-400">
               <span>
-                missing {formatNumber(landscape.replay.missingFromCurrentItemCount)} / new{" "}
-                {formatNumber(landscape.replay.newlyRetrievedItemCount)}
+                {hasReplayData
+                  ? `missing ${formatNumber(landscape.replay.missingFromCurrentItemCount)} / new ${formatNumber(
+                      landscape.replay.newlyRetrievedItemCount,
+                    )}`
+                  : "replay comparison has not been cached"}
               </span>
               <a href="/graph" className="font-semibold text-emerald-700 hover:text-emerald-800">
                 Open Graph Landscape

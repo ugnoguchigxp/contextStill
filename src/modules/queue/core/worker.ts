@@ -2,6 +2,7 @@ import { and, eq } from "drizzle-orm";
 import { sql } from "drizzle-orm";
 import { groupedConfig } from "../../../config.js";
 import { APP_CONSTANTS } from "../../../constants.js";
+import { resolveDatabaseBackendConfig } from "../../../db/backend.js";
 import { db } from "../../../db/index.js";
 import {
   coveringEvidenceQueue,
@@ -52,6 +53,52 @@ const retryableCoverStatuses = new Set<CoverEvidenceResult["status"]>([
   "provider_failed",
   "parse_failed",
 ]);
+
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../../db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
+
+function isSqliteBackend(): boolean {
+  return resolveDatabaseBackendConfig().kind === "sqlite";
+}
+
+function parseJsonRecord(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function sqliteFindingJobRow(row: Record<string, unknown>): typeof findingCandidateQueue.$inferSelect {
+  return {
+    id: String(row.id),
+    inputKind: String(row.input_kind),
+    sourceKind: String(row.source_kind),
+    sourceKey: String(row.source_key),
+    sourceUri: String(row.source_uri),
+    distillationVersion: String(row.distillation_version),
+    payload: parseJsonRecord(row.payload),
+    status: String(row.status),
+    priority: Number(row.priority ?? 0),
+    attemptCount: Number(row.attempt_count ?? 0),
+    nextRunAt: row.next_run_at ? new Date(String(row.next_run_at)) : null,
+    lockedBy: row.locked_by ? String(row.locked_by) : null,
+    lockedAt: row.locked_at ? new Date(String(row.locked_at)) : null,
+    heartbeatAt: row.heartbeat_at ? new Date(String(row.heartbeat_at)) : null,
+    lastError: row.last_error ? String(row.last_error) : null,
+    lastOutcomeKind: row.last_outcome_kind ? String(row.last_outcome_kind) : null,
+    metadata: parseJsonRecord(row.metadata),
+    createdAt: new Date(String(row.created_at)),
+    updatedAt: new Date(String(row.updated_at)),
+    completedAt: row.completed_at ? new Date(String(row.completed_at)) : null,
+  };
+}
 
 function mappedEvidenceStatus(
   status: CoverEvidenceResult["status"],
@@ -251,6 +298,14 @@ async function enqueueCoveringJob(params: {
 }
 
 async function vibeMemorySourceExists(sourceKey: string): Promise<boolean> {
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const row = sqlite.db
+      .query(`select id from vibe_memories where id = ? limit 1`)
+      .get(sourceKey) as { id?: string } | null;
+    return Boolean(row);
+  }
+
   const [row] = await db
     .select({ id: vibeMemories.id })
     .from(vibeMemories)
@@ -1170,6 +1225,100 @@ export async function enqueueFindingJob(params: {
 
   const distillationVersion = params.distillationVersion ?? APP_CONSTANTS.distillationTargetVersion;
   const priority = params.priority ?? priorityForSourceKind(params.sourceKind);
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const now = new Date().toISOString();
+    const existing = sqlite.db
+      .query(
+        `
+        select *
+        from finding_candidate_queue
+        where input_kind = ?
+          and source_kind = ?
+          and source_key = ?
+          and distillation_version = ?
+        limit 1
+      `,
+      )
+      .get(
+        params.inputKind,
+        params.sourceKind,
+        params.sourceKey,
+        distillationVersion,
+      ) as Record<string, unknown> | null;
+
+    const id = existing?.id ? String(existing.id) : crypto.randomUUID();
+    if (existing) {
+      sqlite.db
+        .query(
+          `
+          update finding_candidate_queue
+          set source_uri = ?,
+              payload = ?,
+              metadata = ?,
+              priority = ?,
+              next_run_at = null,
+              completed_at = null,
+              status = 'pending',
+              locked_by = null,
+              locked_at = null,
+              heartbeat_at = null,
+              updated_at = ?
+          where id = ?
+        `,
+        )
+        .run(
+          params.sourceUri,
+          JSON.stringify(params.payload ?? {}),
+          JSON.stringify(params.metadata ?? {}),
+          priority,
+          now,
+          id,
+        );
+    } else {
+      sqlite.db
+        .query(
+          `
+          insert into finding_candidate_queue (
+            id, input_kind, source_kind, source_key, source_uri, distillation_version,
+            payload, metadata, priority, status, created_at, updated_at
+          ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+        `,
+        )
+        .run(
+          id,
+          params.inputKind,
+          params.sourceKind,
+          params.sourceKey,
+          params.sourceUri,
+          distillationVersion,
+          JSON.stringify(params.payload ?? {}),
+          JSON.stringify(params.metadata ?? {}),
+          priority,
+          now,
+          now,
+        );
+    }
+
+    const row = sqlite.db
+      .query(`select * from finding_candidate_queue where id = ? limit 1`)
+      .get(id) as Record<string, unknown> | null;
+    if (!row) throw new Error("failed to enqueue finding candidate job");
+    const normalized = sqliteFindingJobRow(row);
+    await appendQueueEvent({
+      queueName: "findingCandidate",
+      queueJobId: normalized.id,
+      eventType: "enqueued",
+      message: "finding candidate enqueued",
+      metadata: {
+        sourceKind: normalized.sourceKind,
+        sourceKey: normalized.sourceKey,
+        inputKind: normalized.inputKind,
+      },
+    });
+    return normalized;
+  }
+
   const [row] = await db
     .insert(findingCandidateQueue)
     .values({
@@ -1228,6 +1377,29 @@ export async function findFindingJob(params: {
   distillationVersion?: string;
 }): Promise<typeof findingCandidateQueue.$inferSelect | null> {
   const distillationVersion = params.distillationVersion ?? APP_CONSTANTS.distillationTargetVersion;
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const row = sqlite.db
+      .query(
+        `
+        select *
+        from finding_candidate_queue
+        where input_kind = ?
+          and source_kind = ?
+          and source_key = ?
+          and distillation_version = ?
+        limit 1
+      `,
+      )
+      .get(
+        params.inputKind,
+        params.sourceKind,
+        params.sourceKey,
+        distillationVersion,
+      ) as Record<string, unknown> | null;
+    return row ? sqliteFindingJobRow(row) : null;
+  }
+
   const [row] = await db
     .select()
     .from(findingCandidateQueue)

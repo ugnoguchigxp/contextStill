@@ -47,15 +47,21 @@ async function loadRuntimeSettingsInternal(): Promise<void> {
 
   const settings = parseDocumentValue(documentRow);
   const secretRowMap = buildSecretMap(secretRows);
-  const resolvedSecrets = {
-    openaiApiKey: resolveSecretValue("openaiApiKey", secretRowMap.openaiApiKey),
-    azureOpenAiApiKey: resolveSecretValue("azureOpenAiApiKey", secretRowMap.azureOpenAiApiKey),
-    azureOpenAiApiKey2: resolveSecretValue("azureOpenAiApiKey2", secretRowMap.azureOpenAiApiKey2),
-    azureOpenAiApiKey3: resolveSecretValue("azureOpenAiApiKey3", secretRowMap.azureOpenAiApiKey3),
-    localLlmApiKey: resolveSecretValue("localLlmApiKey", secretRowMap.localLlmApiKey),
-    braveApiKey: resolveSecretValue("braveApiKey", secretRowMap.braveApiKey),
-    exaApiKey: resolveSecretValue("exaApiKey", secretRowMap.exaApiKey),
-  };
+  const resolvedSecrets: Partial<Record<RuntimeSecretKey, ReturnType<typeof resolveSecretValue>>> =
+    {
+      openaiApiKey: resolveSecretValue("openaiApiKey", secretRowMap.openaiApiKey),
+      azureOpenAiApiKey: resolveSecretValue("azureOpenAiApiKey", secretRowMap.azureOpenAiApiKey),
+      azureOpenAiApiKey2: resolveSecretValue("azureOpenAiApiKey2", secretRowMap.azureOpenAiApiKey2),
+      azureOpenAiApiKey3: resolveSecretValue("azureOpenAiApiKey3", secretRowMap.azureOpenAiApiKey3),
+      localLlmApiKey: resolveSecretValue("localLlmApiKey", secretRowMap.localLlmApiKey),
+      braveApiKey: resolveSecretValue("braveApiKey", secretRowMap.braveApiKey),
+      exaApiKey: resolveSecretValue("exaApiKey", secretRowMap.exaApiKey),
+    };
+  for (const [index] of settings.providers["azure-openai"].deployments.entries()) {
+    const key =
+      index === 0 ? "azureOpenAiApiKey" : (`azureOpenAiApiKey${index + 1}` as RuntimeSecretKey);
+    resolvedSecrets[key] = resolveSecretValue(key, secretRowMap[key]);
+  }
 
   const secretStatuses = {
     openaiApiKey: {
@@ -70,18 +76,16 @@ async function loadRuntimeSettingsInternal(): Promise<void> {
       maskedValue: maskSecret(resolvedSecrets.azureOpenAiApiKey?.value),
       updatedAt: resolvedSecrets.azureOpenAiApiKey?.updatedAt ?? null,
     },
-    azureOpenAiApiKey2: {
-      configured: Boolean(resolvedSecrets.azureOpenAiApiKey2?.value),
-      source: resolvedSecrets.azureOpenAiApiKey2?.source ?? "none",
-      maskedValue: maskSecret(resolvedSecrets.azureOpenAiApiKey2?.value),
-      updatedAt: resolvedSecrets.azureOpenAiApiKey2?.updatedAt ?? null,
-    },
-    azureOpenAiApiKey3: {
-      configured: Boolean(resolvedSecrets.azureOpenAiApiKey3?.value),
-      source: resolvedSecrets.azureOpenAiApiKey3?.source ?? "none",
-      maskedValue: maskSecret(resolvedSecrets.azureOpenAiApiKey3?.value),
-      updatedAt: resolvedSecrets.azureOpenAiApiKey3?.updatedAt ?? null,
-    },
+    azureOpenAiApiKeys: settings.providers["azure-openai"].deployments.map((_deployment, index) => {
+      const key =
+        index === 0 ? "azureOpenAiApiKey" : (`azureOpenAiApiKey${index + 1}` as RuntimeSecretKey);
+      return {
+        configured: Boolean(resolvedSecrets[key]?.value),
+        source: resolvedSecrets[key]?.source ?? "none",
+        maskedValue: maskSecret(resolvedSecrets[key]?.value),
+        updatedAt: resolvedSecrets[key]?.updatedAt ?? null,
+      };
+    }),
     localLlmApiKey: {
       configured: Boolean(resolvedSecrets.localLlmApiKey?.value),
       source: resolvedSecrets.localLlmApiKey?.source ?? "none",
@@ -184,7 +188,9 @@ export async function reloadRuntimeSettingsCache(): Promise<void> {
 }
 
 function normalizeSecretKey(value: string): RuntimeSecretKey | null {
-  return secretRowKeys.includes(value as RuntimeSecretKey) ? (value as RuntimeSecretKey) : null;
+  if (secretRowKeys.includes(value as RuntimeSecretKey)) return value as RuntimeSecretKey;
+  if (/^azureOpenAiApiKey[1-9]\d*$/.test(value)) return value as RuntimeSecretKey;
+  return null;
 }
 
 export async function saveRuntimeSettings(

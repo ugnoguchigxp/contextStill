@@ -1,10 +1,13 @@
 import { sql } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../../src/db/backend.js";
 import { db } from "../../../src/db/index.js";
+import type { SqliteCoreDatabase } from "../../../src/db/sqlite/index.js";
 import { resolveCoverEvidenceRouteByPolicy } from "../../../src/modules/coverEvidence/provider-policy.js";
 import {
   type DistillationProviderSetting,
   resolveDistillationModel,
 } from "../../../src/modules/distillation/distillation-runtime.service.js";
+import { resolveLocalLlmModelConfig } from "../../../src/modules/llm/providers/local-llm-config.js";
 import {
   appendQueueEvent,
   getQueueControlStates,
@@ -96,6 +99,15 @@ type QueueListRow = {
   source_kind: string | null;
   provider_policy: string | null;
 };
+
+async function getSqliteCoreDatabase(): Promise<SqliteCoreDatabase> {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../../src/db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
+
+function isSqliteBackend(): boolean {
+  return resolveDatabaseBackendConfig().kind === "sqlite";
+}
 
 function emptyCounters(): Record<DistillationQueueStatus, number> {
   return {
@@ -201,7 +213,9 @@ function normalizeProviderPolicy(value: string | null): "default" | "cloud_api" 
 
 function resolveRouteModel(provider: string, configuredModel: string | undefined): string | null {
   const model = configuredModel?.trim();
-  if (model) return model;
+  if (model) {
+    return provider === "local-llm" ? resolveLocalLlmModelConfig(model).model : model;
+  }
   try {
     return resolveDistillationModel(provider as DistillationProviderSetting);
   } catch {
@@ -312,6 +326,494 @@ function buildDynamicOrderBy(
     : sql`${sortColumn} desc, q.updated_at desc`;
 }
 
+function buildSqliteOrderBy(
+  queueName: DistillationQueueName,
+  sortBy: string | null | undefined,
+  sortDir: "asc" | "desc" | undefined,
+): string {
+  const allowedFields = ["status", "priority", "subjectTitle", "attemptCount", "updatedAt"];
+  const field = sortBy && allowedFields.includes(sortBy) ? sortBy : null;
+  const dir = sortDir === "asc" ? "asc" : "desc";
+
+  if (!field) {
+    return `
+      case
+        when q.status = 'running' then 0
+        when q.status = 'pending' then 1
+        when q.status = 'paused' then 2
+        when q.status = 'failed' then 3
+        else 4
+      end,
+      q.priority desc,
+      q.updated_at desc
+    `;
+  }
+
+  let sortColumn = "q.updated_at";
+  switch (field) {
+    case "status":
+      sortColumn = "q.status";
+      break;
+    case "priority":
+      sortColumn = "q.priority";
+      break;
+    case "attemptCount":
+      sortColumn = "q.attempt_count";
+      break;
+    case "updatedAt":
+      sortColumn = "q.updated_at";
+      break;
+    case "subjectTitle":
+      if (queueName === "findingCandidate") {
+        sortColumn = "q.source_key";
+      } else if (queueName === "coveringEvidence") {
+        sortColumn = "c.title";
+      } else if (queueName === "deadZoneMergeReview") {
+        sortColumn = "dz.title";
+      } else if (queueName === "mergeActivationFinalize") {
+        sortColumn = "canonical.title";
+      } else {
+        sortColumn = "q.subject_title";
+      }
+      break;
+  }
+
+  return `${sortColumn} ${dir}, q.updated_at desc`;
+}
+
+function sqliteStatusPatternValues(
+  statusFilter: DistillationQueueStatus | null,
+  pattern: string | null,
+  patternCount: number,
+): unknown[] {
+  return [
+    statusFilter,
+    statusFilter,
+    pattern,
+    ...Array.from({ length: patternCount }, () => pattern),
+  ];
+}
+
+async function querySqliteQueueRows(
+  sqlite: SqliteCoreDatabase,
+  queueName: DistillationQueueName,
+  params: {
+    limit: number;
+    offset: number;
+    query?: string;
+    status?: DistillationQueueStatus | "all";
+    sortBy?: string;
+    sortDir?: "asc" | "desc";
+  },
+): Promise<QueueListRow[]> {
+  const pattern = params.query?.trim() ? `%${params.query.trim().toLowerCase()}%` : null;
+  const statusFilter = params.status && params.status !== "all" ? params.status : null;
+  const orderBy = buildSqliteOrderBy(queueName, params.sortBy, params.sortDir);
+
+  if (queueName === "findingCandidate") {
+    return sqlite.db
+      .query<QueueListRow, unknown[]>(
+        `
+        select
+          q.id,
+          q.status,
+          q.priority,
+          q.attempt_count,
+          q.source_key as subject_title,
+          q.source_kind || ' | ' || coalesce(q.source_uri, '') as subject_detail,
+          null as provider,
+          null as model,
+          q.last_error,
+          q.last_outcome_kind,
+          q.locked_by,
+          q.locked_at,
+          q.heartbeat_at,
+          q.created_at,
+          q.updated_at,
+          q.completed_at,
+          q.next_run_at,
+          'input=' || q.input_kind as metadata_summary,
+          q.source_kind,
+          null as provider_policy
+        from finding_candidate_queue q
+        where (? is null or q.status = ?)
+          and (
+            ? is null
+            or lower(q.source_key) like ?
+            or lower(coalesce(q.source_uri, '')) like ?
+          )
+        order by ${orderBy}
+        limit ?
+        offset ?
+      `,
+      )
+      .all(...sqliteStatusPatternValues(statusFilter, pattern, 2), params.limit, params.offset);
+  }
+
+  if (queueName === "coveringEvidence") {
+    return sqlite.db
+      .query<QueueListRow, unknown[]>(
+        `
+        select
+          q.id,
+          q.status,
+          q.priority,
+          q.attempt_count,
+          c.title as subject_title,
+          'candidate=' || q.found_candidate_id || ' | policy=' || coalesce(q.provider_policy, '') as subject_detail,
+          q.provider_policy as provider,
+          null as model,
+          q.last_error,
+          q.last_outcome_kind,
+          q.locked_by,
+          q.locked_at,
+          q.heartbeat_at,
+          q.created_at,
+          q.updated_at,
+          q.completed_at,
+          q.next_run_at,
+          null as metadata_summary,
+          null as source_kind,
+          q.provider_policy
+        from covering_evidence_queue q
+        left join found_candidates c on c.id = q.found_candidate_id
+        where (? is null or q.status = ?)
+          and (
+            ? is null
+            or lower(coalesce(c.title, '')) like ?
+            or lower(coalesce(q.found_candidate_id, '')) like ?
+          )
+        order by ${orderBy}
+        limit ?
+        offset ?
+      `,
+      )
+      .all(...sqliteStatusPatternValues(statusFilter, pattern, 2), params.limit, params.offset);
+  }
+
+  if (queueName === "deadZoneMergeReview") {
+    return sqlite.db
+      .query<QueueListRow, unknown[]>(
+        `
+        select
+          q.id,
+          q.status,
+          q.priority,
+          q.attempt_count,
+          dz.title as subject_title,
+          'canonical=' || coalesce(q.canonical_knowledge_id, '-') ||
+            ' | review=' || coalesce(q.review_item_id, '-') as subject_detail,
+          q.provider,
+          q.model,
+          q.last_error,
+          q.last_outcome_kind,
+          q.locked_by,
+          q.locked_at,
+          q.heartbeat_at,
+          q.created_at,
+          q.updated_at,
+          q.completed_at,
+          q.next_run_at,
+          coalesce(json_extract(q.result, '$.decision'), q.last_outcome_kind) as metadata_summary,
+          null as source_kind,
+          null as provider_policy
+        from dead_zone_merge_review_queue q
+        left join knowledge_items dz on dz.id = q.dead_zone_knowledge_id
+        where (? is null or q.status = ?)
+          and (
+            ? is null
+            or lower(coalesce(dz.title, '')) like ?
+            or lower(coalesce(q.dead_zone_knowledge_id, '')) like ?
+            or lower(coalesce(q.canonical_knowledge_id, '')) like ?
+          )
+        order by ${orderBy}
+        limit ?
+        offset ?
+      `,
+      )
+      .all(...sqliteStatusPatternValues(statusFilter, pattern, 3), params.limit, params.offset);
+  }
+
+  if (queueName === "mergeActivationFinalize") {
+    return sqlite.db
+      .query<QueueListRow, unknown[]>(
+        `
+        select
+          'mergeActivationFinalize' as queue_name,
+          'finalizeDistille' as visible_queue_name,
+          'merge_activation_finalize' as job_type,
+          'merge_activation_finalize_queue' as backend_kind,
+          q.id,
+          q.status,
+          q.priority,
+          q.attempt_count,
+          canonical.title as subject_title,
+          'deadZone=' || coalesce(q.dead_zone_knowledge_id, '') ||
+            ' | canonical=' || coalesce(q.canonical_knowledge_id, '') ||
+            ' | mergeReview=' || coalesce(q.merge_review_job_id, '') as subject_detail,
+          q.provider,
+          q.model,
+          q.last_error,
+          q.last_outcome_kind,
+          q.locked_by,
+          q.locked_at,
+          q.heartbeat_at,
+          q.created_at,
+          q.updated_at,
+          q.completed_at,
+          q.next_run_at,
+          coalesce(json_extract(q.activation_result, '$.outcome'), q.last_outcome_kind) as metadata_summary,
+          null as source_kind,
+          null as provider_policy
+        from merge_activation_finalize_queue q
+        left join knowledge_items canonical on canonical.id = q.canonical_knowledge_id
+        where (? is null or q.status = ?)
+          and (
+            ? is null
+            or lower(coalesce(canonical.title, '')) like ?
+            or lower(coalesce(q.dead_zone_knowledge_id, '')) like ?
+            or lower(coalesce(q.canonical_knowledge_id, '')) like ?
+            or lower(coalesce(q.merge_review_job_id, '')) like ?
+          )
+        order by ${orderBy}
+        limit ?
+        offset ?
+      `,
+      )
+      .all(...sqliteStatusPatternValues(statusFilter, pattern, 4), params.limit, params.offset);
+  }
+
+  return sqlite.db
+    .query<QueueListRow, unknown[]>(
+      `
+      select
+        q.queue_name,
+        q.visible_queue_name,
+        q.job_type,
+        q.backend_kind,
+        q.id,
+        q.status,
+        q.priority,
+        q.attempt_count,
+        q.subject_title,
+        q.subject_detail,
+        q.provider_policy as provider,
+        q.model,
+        q.last_error,
+        q.last_outcome_kind,
+        q.locked_by,
+        q.locked_at,
+        q.heartbeat_at,
+        q.created_at,
+        q.updated_at,
+        q.completed_at,
+        q.next_run_at,
+        q.metadata_summary,
+        q.source_kind,
+        q.provider_policy
+      from (
+        select
+          'finalizeDistille' as queue_name,
+          'finalizeDistille' as visible_queue_name,
+          'candidate_finalize' as job_type,
+          'finalize_distille_queue' as backend_kind,
+          q.id,
+          q.status,
+          q.priority,
+          q.attempt_count,
+          coalesce(e.title, c.title) as subject_title,
+          'evidence=' || coalesce(q.evidence_result_id, '') ||
+            ' | knowledge=' || coalesce(q.knowledge_id, '-') as subject_detail,
+          q.provider_policy,
+          null as model,
+          q.last_error,
+          q.last_outcome_kind,
+          q.locked_by,
+          q.locked_at,
+          q.heartbeat_at,
+          q.created_at,
+          q.updated_at,
+          q.completed_at,
+          null as next_run_at,
+          null as metadata_summary,
+          null as source_kind
+        from finalize_distille_queue q
+        left join evidence_coverage_results e on e.id = q.evidence_result_id
+        left join found_candidates c on c.id = e.found_candidate_id
+        union all
+        select
+          'mergeActivationFinalize' as queue_name,
+          'finalizeDistille' as visible_queue_name,
+          'merge_activation_finalize' as job_type,
+          'merge_activation_finalize_queue' as backend_kind,
+          q.id,
+          q.status,
+          q.priority,
+          q.attempt_count,
+          canonical.title as subject_title,
+          'deadZone=' || coalesce(q.dead_zone_knowledge_id, '') ||
+            ' | canonical=' || coalesce(q.canonical_knowledge_id, '') ||
+            ' | mergeReview=' || coalesce(q.merge_review_job_id, '') as subject_detail,
+          q.provider as provider_policy,
+          q.model,
+          q.last_error,
+          q.last_outcome_kind,
+          q.locked_by,
+          q.locked_at,
+          q.heartbeat_at,
+          q.created_at,
+          q.updated_at,
+          q.completed_at,
+          q.next_run_at,
+          coalesce(json_extract(q.activation_result, '$.outcome'), q.last_outcome_kind) as metadata_summary,
+          null as source_kind
+        from merge_activation_finalize_queue q
+        left join knowledge_items canonical on canonical.id = q.canonical_knowledge_id
+      ) q
+      where (? is null or q.status = ?)
+        and (
+          ? is null
+          or lower(coalesce(q.subject_title, '')) like ?
+          or lower(coalesce(q.subject_detail, '')) like ?
+        )
+      order by ${orderBy}
+      limit ?
+      offset ?
+    `,
+    )
+    .all(...sqliteStatusPatternValues(statusFilter, pattern, 2), params.limit, params.offset);
+}
+
+function sqliteCountFromRow(row: { count: number } | null): number {
+  return Number(row?.count ?? 0);
+}
+
+function countSqliteQueueRows(
+  sqlite: SqliteCoreDatabase,
+  queueName: DistillationQueueName,
+  params: { query?: string; status?: DistillationQueueStatus | "all" },
+): number {
+  const pattern = params.query?.trim() ? `%${params.query.trim().toLowerCase()}%` : null;
+  const statusFilter = params.status && params.status !== "all" ? params.status : null;
+
+  if (queueName === "findingCandidate") {
+    return sqliteCountFromRow(
+      sqlite.db
+        .query<{ count: number }, unknown[]>(
+          `
+          select count(*) as count
+          from finding_candidate_queue q
+          where (? is null or q.status = ?)
+            and (
+              ? is null
+              or lower(q.source_key) like ?
+              or lower(coalesce(q.source_uri, '')) like ?
+            )
+        `,
+        )
+        .get(...sqliteStatusPatternValues(statusFilter, pattern, 2)),
+    );
+  }
+
+  if (queueName === "coveringEvidence") {
+    return sqliteCountFromRow(
+      sqlite.db
+        .query<{ count: number }, unknown[]>(
+          `
+          select count(*) as count
+          from covering_evidence_queue q
+          left join found_candidates c on c.id = q.found_candidate_id
+          where (? is null or q.status = ?)
+            and (
+              ? is null
+              or lower(coalesce(c.title, '')) like ?
+              or lower(coalesce(q.found_candidate_id, '')) like ?
+            )
+        `,
+        )
+        .get(...sqliteStatusPatternValues(statusFilter, pattern, 2)),
+    );
+  }
+
+  if (queueName === "deadZoneMergeReview") {
+    return sqliteCountFromRow(
+      sqlite.db
+        .query<{ count: number }, unknown[]>(
+          `
+          select count(*) as count
+          from dead_zone_merge_review_queue q
+          left join knowledge_items dz on dz.id = q.dead_zone_knowledge_id
+          where (? is null or q.status = ?)
+            and (
+              ? is null
+              or lower(coalesce(dz.title, '')) like ?
+              or lower(coalesce(q.dead_zone_knowledge_id, '')) like ?
+              or lower(coalesce(q.canonical_knowledge_id, '')) like ?
+            )
+        `,
+        )
+        .get(...sqliteStatusPatternValues(statusFilter, pattern, 3)),
+    );
+  }
+
+  if (queueName === "mergeActivationFinalize") {
+    return sqliteCountFromRow(
+      sqlite.db
+        .query<{ count: number }, unknown[]>(
+          `
+          select count(*) as count
+          from merge_activation_finalize_queue q
+          left join knowledge_items canonical on canonical.id = q.canonical_knowledge_id
+          where (? is null or q.status = ?)
+            and (
+              ? is null
+              or lower(coalesce(canonical.title, '')) like ?
+              or lower(coalesce(q.dead_zone_knowledge_id, '')) like ?
+              or lower(coalesce(q.canonical_knowledge_id, '')) like ?
+              or lower(coalesce(q.merge_review_job_id, '')) like ?
+            )
+        `,
+        )
+        .get(...sqliteStatusPatternValues(statusFilter, pattern, 4)),
+    );
+  }
+
+  return sqliteCountFromRow(
+    sqlite.db
+      .query<{ count: number }, unknown[]>(
+        `
+        select count(*) as count
+        from (
+          select
+            q.status,
+            coalesce(e.title, c.title) as subject_title,
+            'evidence=' || coalesce(q.evidence_result_id, '') ||
+              ' | knowledge=' || coalesce(q.knowledge_id, '-') as subject_detail
+          from finalize_distille_queue q
+          left join evidence_coverage_results e on e.id = q.evidence_result_id
+          left join found_candidates c on c.id = e.found_candidate_id
+          union all
+          select
+            q.status,
+            canonical.title as subject_title,
+            'deadZone=' || coalesce(q.dead_zone_knowledge_id, '') ||
+              ' | canonical=' || coalesce(q.canonical_knowledge_id, '') ||
+              ' | mergeReview=' || coalesce(q.merge_review_job_id, '') as subject_detail
+          from merge_activation_finalize_queue q
+          left join knowledge_items canonical on canonical.id = q.canonical_knowledge_id
+        ) q
+        where (? is null or q.status = ?)
+          and (
+            ? is null
+            or lower(coalesce(q.subject_title, '')) like ?
+            or lower(coalesce(q.subject_detail, '')) like ?
+          )
+      `,
+      )
+      .get(...sqliteStatusPatternValues(statusFilter, pattern, 2)),
+  );
+}
+
 async function queryQueueRows(
   queueName: DistillationQueueName,
   params: {
@@ -323,6 +825,10 @@ async function queryQueueRows(
     sortDir?: "asc" | "desc";
   },
 ): Promise<QueueListRow[]> {
+  if (isSqliteBackend()) {
+    return querySqliteQueueRows(await getSqliteCoreDatabase(), queueName, params);
+  }
+
   const pattern = params.query?.trim() ? `%${params.query.trim()}%` : null;
   const statusFilter = params.status && params.status !== "all" ? params.status : null;
   const { sortBy, sortDir } = params;
@@ -605,6 +1111,10 @@ async function countQueueRows(
   queueName: DistillationQueueName,
   params: { query?: string; status?: DistillationQueueStatus | "all" },
 ): Promise<number> {
+  if (isSqliteBackend()) {
+    return countSqliteQueueRows(await getSqliteCoreDatabase(), queueName, params);
+  }
+
   const pattern = params.query?.trim() ? `%${params.query.trim()}%` : null;
   const statusFilter = params.status && params.status !== "all" ? params.status : null;
   const tableName = queueTableNameByQueue[queueName];
@@ -671,6 +1181,52 @@ async function countQueueRows(
 }
 
 async function queueStatsFor(queueName: DistillationQueueName) {
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const tableName = queueTableNameByQueue[queueName];
+    const fromSql =
+      queueName === "finalizeDistille"
+        ? `(
+            select status, created_at, last_outcome_kind from finalize_distille_queue
+            union all
+            select status, created_at, last_outcome_kind from merge_activation_finalize_queue
+          )`
+        : tableName;
+    const rows = sqlite.db
+      .query<QueueStatsAggregateRow, []>(
+        `
+        select
+          status,
+          count(*) as count,
+          min(case when status = 'pending' then created_at end) as oldest_pending_at,
+          sum(
+            case
+              when status = 'failed'
+                and (
+                  coalesce(last_outcome_kind, '') = 'provider_failed'
+                  or coalesce(last_outcome_kind, '') like '%provider_timeout%'
+                  or coalesce(last_outcome_kind, '') like '%provider_failed%'
+                )
+              then 1
+              else 0
+            end
+          ) as offline_count,
+          sum(
+            case
+              when status = 'completed'
+                and coalesce(last_outcome_kind, '') = 'insufficient'
+              then 1
+              else 0
+            end
+          ) as non_registered_count
+        from ${fromSql}
+        group by status
+      `,
+      )
+      .all();
+    return normalizeQueueStatsRows(queueName, rows);
+  }
+
   const tableName = queueTableNameByQueue[queueName];
   const fromSql =
     queueName === "finalizeDistille"
@@ -701,6 +1257,13 @@ async function queueStatsFor(queueName: DistillationQueueName) {
     group by status
   `);
   const rows = result.rows as unknown as QueueStatsAggregateRow[];
+  return normalizeQueueStatsRows(queueName, rows);
+}
+
+function normalizeQueueStatsRows(
+  queueName: DistillationQueueName,
+  rows: QueueStatsAggregateRow[],
+): QueueStatsByQueue[DistillationQueueName] {
   const counters = emptyCounters();
   let oldestPendingAt: string | null = null;
   let offline = 0;

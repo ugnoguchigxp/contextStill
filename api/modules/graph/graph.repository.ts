@@ -1,5 +1,10 @@
 import { and, desc, eq, inArray, sql } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../../src/db/backend.js";
 import { db } from "../../../src/db/index.js";
+import {
+  sqliteKnowledgeCommunityLabels,
+  sqliteKnowledgeItems,
+} from "../../../src/db/sqlite/schema.js";
 import {
   knowledgeCommunityLabels,
   knowledgeItems,
@@ -154,6 +159,15 @@ const COMMUNITY_STALE_DECAY_THRESHOLD = 0.82;
 const COMMUNITY_STALE_RATIO_THRESHOLD = 0.5;
 const COMMUNITY_THIN_EVIDENCE_DENSITY_THRESHOLD = 0.6;
 
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../../src/db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
+
+function isSqliteBackend(): boolean {
+  return resolveDatabaseBackendConfig().kind === "sqlite";
+}
+
 function resolveStatusFilter(status: GraphStatusFilter | undefined): string[] | undefined {
   switch (status ?? "current") {
     case "current":
@@ -181,6 +195,16 @@ function finiteOrFallback(value: unknown, fallback: number): number {
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
+  if (typeof value === "string" && value.trim()) {
+    try {
+      const parsed = JSON.parse(value);
+      return parsed && typeof parsed === "object" && !Array.isArray(parsed)
+        ? (parsed as Record<string, unknown>)
+        : {};
+    } catch {
+      return {};
+    }
+  }
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
@@ -295,6 +319,29 @@ function isDistilledKnowledgeMetadata(metadata: Record<string, unknown>): boolea
 
 async function buildSessionProjectLookup(sessionIds: string[]): Promise<Map<string, string>> {
   if (sessionIds.length === 0) return new Map();
+
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const placeholders = sessionIds.map(() => "?").join(", ");
+    const rows = sqlite.db
+      .query<{ session_id: string; metadata: string }, string[]>(
+        `select session_id, metadata
+         from vibe_memories
+         where session_id in (${placeholders})
+         order by created_at desc`,
+      )
+      .all(...sessionIds);
+    const projectBySession = new Map<string, string>();
+    for (const row of rows) {
+      if (projectBySession.has(row.session_id)) continue;
+      const metadata = asRecord(row.metadata);
+      const projectRoot = valueAsString(metadata.projectRoot);
+      const normalized = normalizeRepoKey(projectRoot) ?? normalizeGroupKey(projectRoot);
+      if (!normalized) continue;
+      projectBySession.set(row.session_id, normalized);
+    }
+    return projectBySession;
+  }
 
   const rows = await db
     .select({
@@ -593,6 +640,32 @@ async function listCommunityLabelsByKeys(
 ): Promise<Map<string, CommunityLabelRecord>> {
   const keys = [...new Set(communityKeys.filter((key) => key.trim().length > 0))];
   if (keys.length === 0) return new Map();
+
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const placeholders = keys.map(() => "?").join(", ");
+    const rows = sqlite.db
+      .query<
+        { community_key: string; label: string; note: string | null; updated_at: string },
+        string[]
+      >(
+        `select community_key, label, note, updated_at
+         from knowledge_community_labels
+         where community_key in (${placeholders})`,
+      )
+      .all(...keys);
+    const result = new Map<string, CommunityLabelRecord>();
+    for (const row of rows) {
+      result.set(row.community_key, {
+        communityKey: row.community_key,
+        label: row.label,
+        note: row.note,
+        updatedAt: new Date(row.updated_at),
+      });
+    }
+    return result;
+  }
+
   let rows: Array<{
     communityKey: string;
     label: string;
@@ -776,6 +849,353 @@ function collectCommunityHealthCounts(communities: GraphCommunitySummary[]): {
   return { deadCommunityCount, staleCommunityCount, thinEvidenceCommunityCount };
 }
 
+async function buildSqliteGraphSnapshot(params: GraphSnapshotParams): Promise<{
+  nodes: GraphNode[];
+  edges: GraphEdge[];
+  communities: GraphCommunitySummary[];
+  supernodes: GraphSupernode[];
+  superedges: GraphSuperedge[];
+  stats: {
+    visibleKnowledgeCount: number;
+    totalKnowledgeCount: number;
+    embeddedKnowledgeCount: number;
+    semanticEdgeCount: number;
+    sessionEdgeCount: number;
+    projectEdgeCount: number;
+    sourceEdgeCount: number;
+    sourceNodeCount: number;
+    evidenceEdgeCount: number;
+    evidenceLinkedKnowledgeCount: number;
+    evidenceUnlinkedKnowledgeCount: number;
+    truncatedSourceNodeCount: number;
+    relationEdgeCount: number;
+    sourceRefCount: number;
+    communityCount: number;
+    largestCommunitySize: number;
+    orphanNodeCount: number;
+    deadCommunityCount: number;
+    staleCommunityCount: number;
+    thinEvidenceCommunityCount: number;
+  };
+}> {
+  const sqlite = await getSqliteCoreDatabase();
+  const statuses = resolveStatusFilter(params.status);
+  const view = params.view ?? "relation";
+  const sourceNodeLimit = Math.max(1, Math.min(2000, Math.trunc(params.sourceNodeLimit ?? 800)));
+  const relationAxes: GraphRelationAxis[] = params.relationAxes?.length
+    ? params.relationAxes
+    : ["session", "project", "source"];
+  const maxContextEdgesPerNode = Math.max(
+    1,
+    Math.min(10, Math.trunc(params.maxContextEdgesPerNode ?? 3)),
+  );
+  const allRows = sqlite.orm.select().from(sqliteKnowledgeItems).all();
+  const filteredRows = statuses ? allRows.filter((row) => statuses.includes(row.status)) : allRows;
+  const sortedRows = [...filteredRows]
+    .sort(
+      (left, right) =>
+        normalizeKnowledgeScore(right.importance, 50) -
+          normalizeKnowledgeScore(left.importance, 50) ||
+        Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+    )
+    .slice(0, Math.max(1, params.limit));
+  const embeddedRows = sqlite.db
+    .query<{ knowledge_id: string }, []>("select knowledge_id from knowledge_items_vec_fallback")
+    .all();
+  const embeddedKnowledgeIds = new Set(embeddedRows.map((row) => row.knowledge_id));
+  const nodes: GraphNode[] = sortedRows.map((row) => ({
+    id: knowledgeNodeId(row.id),
+    label: row.title,
+    kind: "knowledge",
+    group: row.type,
+    weight: Math.max(0.2, toUnitKnowledgeScore(row.importance, 50)),
+    status: row.status,
+    embedded: embeddedKnowledgeIds.has(row.id),
+  }));
+
+  const compileSelectCountByNodeId = new Map<string, number>();
+  const decayFactorByNodeId = new Map<string, number>();
+  const distilledByNodeId = new Map<string, boolean>();
+  const relationNodeContexts: RelationNodeContext[] = [];
+  for (const row of sortedRows) {
+    const nodeId = knowledgeNodeId(row.id);
+    const appliesTo = asRecord(row.appliesTo);
+    const metadata = asRecord(row.metadata);
+    compileSelectCountByNodeId.set(
+      nodeId,
+      Math.max(0, Math.trunc(finiteOrFallback(row.compileSelectCount, 0))),
+    );
+    distilledByNodeId.set(nodeId, isDistilledKnowledgeMetadata(metadata));
+    decayFactorByNodeId.set(
+      nodeId,
+      computeDecayFactor({
+        type: normalizeKnowledgeType(row.type),
+        scope: normalizeKnowledgeScope(row.scope),
+        lastVerifiedAt: row.lastVerifiedAt ? new Date(row.lastVerifiedAt) : null,
+        updatedAt: new Date(row.updatedAt),
+      }),
+    );
+    relationNodeContexts.push({
+      id: row.id,
+      importance: normalizeKnowledgeScore(row.importance, 70),
+      sessionKey: extractSessionKey(metadata),
+      projectKey: pickProjectKey(appliesTo, metadata),
+      sourceDocIds: sourceDocIdsFromMetadata(metadata),
+    });
+  }
+
+  const nodeRawIds = sortedRows.map((row) => row.id);
+  const nodeRawIdSet = new Set(nodeRawIds);
+  const sourceDocIdsByKnowledge = new Map<string, string[]>();
+  for (const node of relationNodeContexts) {
+    if (node.sourceDocIds && node.sourceDocIds.length > 0) {
+      sourceDocIdsByKnowledge.set(node.id, [...node.sourceDocIds]);
+    }
+  }
+
+  if (view !== "semantic" && nodeRawIds.length > 0) {
+    const placeholders = nodeRawIds.map(() => "?").join(", ");
+    const sourceLinks = sqlite.db
+      .query<{ knowledge_id: string; source_id: string }, string[]>(
+        `select ksl.knowledge_id, sf.source_id
+         from knowledge_source_links ksl
+         inner join source_fragments sf on sf.id = ksl.source_fragment_id
+         where ksl.knowledge_id in (${placeholders})`,
+      )
+      .all(...nodeRawIds);
+    for (const row of sourceLinks) {
+      const existing = sourceDocIdsByKnowledge.get(row.knowledge_id) ?? [];
+      if (!existing.includes(row.source_id)) existing.push(row.source_id);
+      sourceDocIdsByKnowledge.set(row.knowledge_id, existing);
+    }
+  }
+
+  const enrichedRelationContexts = relationNodeContexts.map((node) => ({
+    ...node,
+    sourceDocIds: sourceDocIdsByKnowledge.get(node.id),
+  }));
+
+  const sourceRefCountByNodeId = new Map<string, number>();
+  for (const nodeRawId of nodeRawIds) {
+    sourceRefCountByNodeId.set(
+      knowledgeNodeId(nodeRawId),
+      sourceDocIdsByKnowledge.get(nodeRawId)?.length ?? 0,
+    );
+  }
+
+  const relationResult =
+    view === "semantic" || view === "evidence"
+      ? {
+          edges: [],
+          sessionEdgeCount: 0,
+          projectEdgeCount: 0,
+          sourceEdgeCount: 0,
+        }
+      : await buildRelationEdges({
+          nodes: enrichedRelationContexts.filter((node) => nodeRawIdSet.has(node.id)),
+          axes: relationAxes,
+          maxEdges: params.limit * 2,
+          maxContextEdgesPerNode,
+        });
+
+  const semanticEdges: GraphEdge[] = [];
+
+  const evidenceRows =
+    view === "evidence" && nodeRawIds.length > 0
+      ? sqlite.db
+          .query<EvidenceLinkRow, string[]>(
+            `select
+               ksl.knowledge_id as knowledge_id,
+               s.id as source_id,
+               s.source_kind as source_kind,
+               s.uri as source_uri,
+               s.title as source_title,
+               count(*) as link_count
+             from knowledge_source_links ksl
+             inner join source_fragments sf on sf.id = ksl.source_fragment_id
+             inner join sources s on s.id = sf.source_id
+             where ksl.knowledge_id in (${nodeRawIds.map(() => "?").join(", ")})
+             group by ksl.knowledge_id, s.id, s.source_kind, s.uri, s.title`,
+          )
+          .all(...nodeRawIds)
+      : [];
+
+  const evidenceLinkedKnowledgeIdSet = new Set<string>();
+  const sourceInfoById = new Map<
+    string,
+    {
+      sourceKind: string;
+      sourceUri: string;
+      sourceTitle: string | null;
+      linkedKnowledgeIds: Set<string>;
+    }
+  >();
+  for (const row of evidenceRows) {
+    evidenceLinkedKnowledgeIdSet.add(row.knowledge_id);
+    const sourceInfo = sourceInfoById.get(row.source_id) ?? {
+      sourceKind: row.source_kind,
+      sourceUri: row.source_uri,
+      sourceTitle: row.source_title,
+      linkedKnowledgeIds: new Set<string>(),
+    };
+    sourceInfo.linkedKnowledgeIds.add(row.knowledge_id);
+    sourceInfoById.set(row.source_id, sourceInfo);
+  }
+
+  const sourceOrder = [...sourceInfoById.entries()]
+    .map(([sourceId, info]) => ({ sourceId, linkedKnowledgeCount: info.linkedKnowledgeIds.size }))
+    .sort(
+      (a, b) =>
+        b.linkedKnowledgeCount - a.linkedKnowledgeCount || a.sourceId.localeCompare(b.sourceId),
+    );
+  const visibleSourceIds = new Set(
+    sourceOrder.slice(0, sourceNodeLimit).map((entry) => entry.sourceId),
+  );
+  const truncatedSourceNodeCount = Math.max(0, sourceInfoById.size - visibleSourceIds.size);
+  const sourceNodes: GraphNode[] =
+    view === "evidence"
+      ? sourceOrder
+          .filter((entry) => visibleSourceIds.has(entry.sourceId))
+          .reduce<GraphNode[]>((acc, entry) => {
+            const sourceInfo = sourceInfoById.get(entry.sourceId);
+            if (!sourceInfo) return acc;
+            acc.push({
+              id: sourceNodeId(entry.sourceId),
+              label: sourceInfo.sourceTitle?.trim() || sourceInfo.sourceUri,
+              kind: "source",
+              group: "source",
+              weight: Math.max(
+                0.3,
+                Math.min(2.2, 0.42 + Math.log2(entry.linkedKnowledgeCount + 1) * 0.25),
+              ),
+              status: "active",
+              embedded: true,
+              sourceId: entry.sourceId,
+              sourceKind: sourceInfo.sourceKind,
+              sourceUri: sourceInfo.sourceUri,
+              sourceTitle: sourceInfo.sourceTitle,
+              linkedKnowledgeCount: entry.linkedKnowledgeCount,
+            });
+            return acc;
+          }, [])
+      : [];
+
+  const evidenceEdges: GraphEdge[] =
+    view === "evidence"
+      ? evidenceRows
+          .filter((row) => visibleSourceIds.has(row.source_id))
+          .map((row) => {
+            const linkCount = Math.max(1, Math.trunc(finiteOrFallback(row.link_count, 1)));
+            return {
+              id: `evidence:${row.knowledge_id}:${row.source_id}`,
+              source: knowledgeNodeId(row.knowledge_id),
+              target: sourceNodeId(row.source_id),
+              relationType: "linked_source",
+              edgeKind: "evidence",
+              relationAxis: "evidence",
+              derived: false,
+              weight: Math.min(1, 0.35 + Math.log2(linkCount + 1) * 0.2),
+            };
+          })
+      : [];
+
+  const relationEdges = relationResult.edges;
+  const edges =
+    view === "semantic" ? semanticEdges : view === "evidence" ? evidenceEdges : relationEdges;
+  const community =
+    view === "community"
+      ? buildCommunityAssignments({
+          nodes,
+          edges: relationEdges,
+          minEdgeWeight: COMMUNITY_MIN_EDGE_WEIGHT,
+        })
+      : {
+          assignments: new Map<string, CommunityAssignment>(),
+          components: [] as CommunityComponent[],
+          communityCount: 0,
+          largestCommunitySize: 0,
+          orphanNodeCount: 0,
+        };
+  const labelsByKey =
+    view === "community" && community.components.length > 0
+      ? await listCommunityLabelsByKeys(
+          community.components.map((component) => component.communityKey),
+        )
+      : new Map<string, CommunityLabelRecord>();
+  const communities =
+    view === "community"
+      ? buildCommunitySummaries({
+          components: community.components,
+          nodes,
+          labelsByKey,
+          sourceRefCountByNodeId,
+          compileSelectCountByNodeId,
+          decayFactorByNodeId,
+          distilledByNodeId,
+        })
+      : [];
+  const summariesById = new Map(communities.map((summary) => [summary.communityId, summary]));
+  const graphKnowledgeNodes =
+    view === "community"
+      ? buildCommunityNodesWithLabels({
+          nodes,
+          assignments: community.assignments,
+          summariesById,
+        })
+      : nodes;
+  const nodesWithCommunity =
+    view === "evidence" ? [...graphKnowledgeNodes, ...sourceNodes] : graphKnowledgeNodes;
+  const supernodes = view === "community" ? buildSupernodes(communities) : [];
+  const superedges =
+    view === "community"
+      ? buildSuperedges({ edges: relationEdges, assignmentByNodeId: community.assignments })
+      : [];
+  const relationSourceRefCount = [...sourceDocIdsByKnowledge.values()].reduce(
+    (sum, refs) => sum + refs.length,
+    0,
+  );
+  const relationEdgeCount =
+    relationResult.sessionEdgeCount +
+    relationResult.projectEdgeCount +
+    relationResult.sourceEdgeCount;
+  const healthCounts = collectCommunityHealthCounts(communities);
+  const filteredEmbeddedKnowledgeCount = filteredRows.filter((row) =>
+    embeddedKnowledgeIds.has(row.id),
+  ).length;
+  const visibleLinkedKnowledgeCount = new Set(sourceDocIdsByKnowledge.keys()).size;
+
+  return {
+    nodes: nodesWithCommunity,
+    edges,
+    communities,
+    supernodes,
+    superedges,
+    stats: {
+      visibleKnowledgeCount: nodes.length,
+      totalKnowledgeCount: filteredRows.length,
+      embeddedKnowledgeCount: filteredEmbeddedKnowledgeCount,
+      semanticEdgeCount: semanticEdges.length,
+      sessionEdgeCount: relationResult.sessionEdgeCount,
+      projectEdgeCount: relationResult.projectEdgeCount,
+      sourceEdgeCount: relationResult.sourceEdgeCount,
+      sourceNodeCount: sourceNodes.length,
+      evidenceEdgeCount: evidenceEdges.length,
+      evidenceLinkedKnowledgeCount:
+        view === "evidence" ? evidenceLinkedKnowledgeIdSet.size : visibleLinkedKnowledgeCount,
+      evidenceUnlinkedKnowledgeCount: Math.max(0, nodes.length - visibleLinkedKnowledgeCount),
+      truncatedSourceNodeCount,
+      relationEdgeCount,
+      sourceRefCount: relationSourceRefCount,
+      communityCount: community.communityCount,
+      largestCommunitySize: community.largestCommunitySize,
+      orphanNodeCount: community.orphanNodeCount,
+      deadCommunityCount: healthCounts.deadCommunityCount,
+      staleCommunityCount: healthCounts.staleCommunityCount,
+      thinEvidenceCommunityCount: healthCounts.thinEvidenceCommunityCount,
+    },
+  };
+}
+
 export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
   nodes: GraphNode[];
   edges: GraphEdge[];
@@ -805,6 +1225,10 @@ export async function buildGraphSnapshot(params: GraphSnapshotParams): Promise<{
     thinEvidenceCommunityCount: number;
   };
 }> {
+  if (isSqliteBackend()) {
+    return buildSqliteGraphSnapshot(params);
+  }
+
   const statuses = resolveStatusFilter(params.status);
   const filters = statuses ? [inArray(knowledgeItems.status, statuses)] : [];
   const where = filters.length > 0 ? and(...filters) : undefined;
@@ -1226,6 +1650,34 @@ export async function upsertGraphCommunityLabel(input: {
   const noteValue =
     typeof input.note === "string" && input.note.trim().length > 0 ? input.note.trim() : null;
   const now = new Date();
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const updatedAt = now.toISOString();
+    sqlite.orm
+      .insert(sqliteKnowledgeCommunityLabels)
+      .values({
+        communityKey,
+        label,
+        note: noteValue,
+        updatedAt,
+      })
+      .onConflictDoUpdate({
+        target: sqliteKnowledgeCommunityLabels.communityKey,
+        set: {
+          label,
+          note: noteValue,
+          updatedAt,
+        },
+      })
+      .run();
+    return {
+      communityKey,
+      label,
+      note: noteValue,
+      updatedAt: now,
+    };
+  }
+
   await db
     .insert(knowledgeCommunityLabels)
     .values({
@@ -1275,6 +1727,38 @@ export async function upsertGraphCommunityLabel(input: {
  * knowledge: prefix を取り除いた生 ID を受け取る。
  */
 export async function fetchGraphNodeDetail(rawId: string): Promise<GraphNodeDetail | null> {
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const row = sqlite.orm
+      .select({
+        id: sqliteKnowledgeItems.id,
+        title: sqliteKnowledgeItems.title,
+        body: sqliteKnowledgeItems.body,
+        type: sqliteKnowledgeItems.type,
+        status: sqliteKnowledgeItems.status,
+        confidence: sqliteKnowledgeItems.confidence,
+        importance: sqliteKnowledgeItems.importance,
+      })
+      .from(sqliteKnowledgeItems)
+      .where(eq(sqliteKnowledgeItems.id, rawId))
+      .limit(1)
+      .get();
+    if (!row) return null;
+    return {
+      id: knowledgeNodeId(row.id),
+      label: row.title,
+      kind: "knowledge" as const,
+      group: row.type,
+      detail: `${row.type} / ${row.status}`,
+      weight: Math.max(0.2, toUnitKnowledgeScore(row.importance, 50)),
+      status: row.status,
+      confidence: normalizeKnowledgeScore(row.confidence, 70),
+      importance: normalizeKnowledgeScore(row.importance, 70),
+      bodyPreview: preview(row.body),
+      embedded: false,
+    };
+  }
+
   const row = await db.query.knowledgeItems.findFirst({
     where: (t, { eq }) => eq(t.id, rawId),
     columns: {

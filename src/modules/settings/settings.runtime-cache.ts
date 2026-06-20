@@ -32,6 +32,10 @@ export function maskSecret(value: string | undefined): string | null {
   return `${trimmed.slice(0, 2)}${"*".repeat(Math.max(4, trimmed.length - 4))}${trimmed.slice(-2)}`;
 }
 
+function emptyRuntimeSecretStatus(): RuntimeSecretStatus {
+  return { configured: false, source: "none", maskedValue: null, updatedAt: null };
+}
+
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
@@ -52,15 +56,21 @@ function getSecretStringFromRow(row: SettingsRow | undefined): string | undefine
 function azureOpenAiSecretKey(index: number): RuntimeSecretKey {
   if (index === 1) return "azureOpenAiApiKey2";
   if (index === 2) return "azureOpenAiApiKey3";
+  if (index > 2) return `azureOpenAiApiKey${index + 1}`;
   return "azureOpenAiApiKey";
 }
 
 export function buildSecretMap(
   rows: SettingsRow[],
-): Record<RuntimeSecretKey, SettingsRow | undefined> {
-  const result = Object.create(null) as Record<RuntimeSecretKey, SettingsRow | undefined>;
+): Partial<Record<RuntimeSecretKey, SettingsRow | undefined>> {
+  const result = Object.create(null) as Partial<Record<RuntimeSecretKey, SettingsRow | undefined>>;
   for (const key of secretRowKeys) {
     result[key] = rows.find((row) => row.key === key);
+  }
+  for (const row of rows) {
+    if (/^azureOpenAiApiKey[1-9]\d*$/.test(row.key)) {
+      result[row.key as RuntimeSecretKey] = row;
+    }
   }
   return result;
 }
@@ -104,7 +114,7 @@ export function resolveBedrockCredentialStatus(
 
 export function applyRuntimeSettingsToProcess(
   settings: RuntimeSettingsEditable,
-  secrets: Record<RuntimeSecretKey, SecretValueEntry | null>,
+  secrets: Partial<Record<RuntimeSecretKey, SecretValueEntry | null>>,
 ): void {
   const openAiEnabled = settings.providers.openai.enabled;
   const azureOpenAiEnabled = settings.providers["azure-openai"].enabled;
@@ -112,7 +122,7 @@ export function applyRuntimeSettingsToProcess(
   const localLlmEnabled = settings.providers["local-llm"].enabled;
 
   const azureDeployments = azureOpenAiEnabled
-    ? settings.providers["azure-openai"].deployments.slice(0, 3).map((deployment, index) => ({
+    ? settings.providers["azure-openai"].deployments.map((deployment, index) => ({
         apiKey: secrets[azureOpenAiSecretKey(index)]?.value ?? "",
         apiBaseUrl: deployment.apiBaseUrl.replace(/\/+$/, ""),
         apiPath: deployment.apiPath,
@@ -146,19 +156,21 @@ export function applyRuntimeSettingsToProcess(
   groupedConfig.bedrock.model = bedrockEnabled ? settings.providers.bedrock.model : "";
   const localLlmModels = localLlmEnabled
     ? settings.providers["local-llm"].models
-        .slice(0, 10)
         .map((model) => ({
           name: model.name,
           apiBaseUrl: model.apiBaseUrl.replace(/\/+$/, ""),
+          apiPath: model.apiPath.trim() || "/v1/chat/completions",
           model: model.model,
         }))
         .filter((model) => model.apiBaseUrl.trim() && model.model.trim())
     : [];
   const primaryLocalLlm = localLlmModels[0] ?? {
     apiBaseUrl: settings.providers["local-llm"].apiBaseUrl.replace(/\/+$/, ""),
+    apiPath: settings.providers["local-llm"].apiPath.trim() || "/v1/chat/completions",
     model: localLlmEnabled ? settings.providers["local-llm"].model : "",
   };
   groupedConfig.localLlm.apiBaseUrl = primaryLocalLlm.apiBaseUrl;
+  groupedConfig.localLlm.apiPath = primaryLocalLlm.apiPath;
   groupedConfig.localLlm.model = primaryLocalLlm.model;
   groupedConfig.localLlm.models = localLlmModels;
   groupedConfig.localLlm.apiKey = localLlmEnabled ? (secrets.localLlmApiKey?.value ?? "") : "";
@@ -251,8 +263,7 @@ export function buildRuntimeSettingsView(
   secretStatuses: {
     openaiApiKey: RuntimeSecretStatus;
     azureOpenAiApiKey: RuntimeSecretStatus;
-    azureOpenAiApiKey2: RuntimeSecretStatus;
-    azureOpenAiApiKey3: RuntimeSecretStatus;
+    azureOpenAiApiKeys?: RuntimeSecretStatus[];
     localLlmApiKey: RuntimeSecretStatus;
     braveApiKey: RuntimeSecretStatus;
     exaApiKey: RuntimeSecretStatus;
@@ -267,11 +278,11 @@ export function buildRuntimeSettingsView(
       "azure-openai": {
         ...settings.providers["azure-openai"],
         apiKeySecret: secretStatuses.azureOpenAiApiKey,
-        apiKeySecrets: [
-          secretStatuses.azureOpenAiApiKey,
-          secretStatuses.azureOpenAiApiKey2,
-          secretStatuses.azureOpenAiApiKey3,
-        ],
+        apiKeySecrets:
+          secretStatuses.azureOpenAiApiKeys ??
+          settings.providers["azure-openai"].deployments.map((_, index) =>
+            index === 0 ? secretStatuses.azureOpenAiApiKey : emptyRuntimeSecretStatus(),
+          ),
       },
       bedrock: {
         ...settings.providers.bedrock,
@@ -350,6 +361,20 @@ export function defaultCache(): RuntimeSettingsCache {
       maskedValue: maskSecret(bootstrap.secrets.azureOpenAiApiKey3),
       updatedAt: null,
     } satisfies RuntimeSecretStatus,
+    azureOpenAiApiKeys: bootstrap.providers["azure-openai"].deployments.map(
+      (_deployment, index) => {
+        const value =
+          index === 0
+            ? bootstrap.secrets.azureOpenAiApiKey
+            : bootstrap.secrets[`azureOpenAiApiKey${index + 1}` as RuntimeSecretKey];
+        return {
+          configured: Boolean(value),
+          source: value ? "env" : "none",
+          maskedValue: maskSecret(value),
+          updatedAt: null,
+        } satisfies RuntimeSecretStatus;
+      },
+    ),
     localLlmApiKey: {
       configured: Boolean(bootstrap.secrets.localLlmApiKey),
       source: bootstrap.secrets.localLlmApiKey ? "env" : "none",

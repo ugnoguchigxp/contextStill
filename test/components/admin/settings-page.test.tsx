@@ -116,16 +116,19 @@ function buildSettingsView(): RuntimeSettingsView {
       "local-llm": {
         enabled: true,
         apiBaseUrl: "http://127.0.0.1:44448",
+        apiPath: "/v1/chat/completions",
         model: "gemma-4-e4b-it",
         models: [
           {
             name: "Primary",
             apiBaseUrl: "http://127.0.0.1:44448",
+            apiPath: "/v1/chat/completions",
             model: "gemma-4-e4b-it",
           },
           {
             name: "Qwen",
             apiBaseUrl: "http://127.0.0.1:44449",
+            apiPath: "/v1/chat/completions",
             model: "qwen-3.6-14b-it",
           },
         ],
@@ -284,6 +287,42 @@ function renderPage() {
   );
 }
 
+function getRouteRow(label: string): HTMLElement {
+  const row = screen
+    .getAllByText(label)
+    .map((element) => element.closest(".settings-route-row"))
+    .find((element): element is HTMLElement => element instanceof HTMLElement);
+  if (!row) throw new Error(`Route row not found: ${label}`);
+  return row;
+}
+
+function getLocalLlmEditRow(label: string): HTMLElement {
+  const row = screen
+    .getAllByText(label)
+    .map((element) => element.closest(".settings-local-llm-model"))
+    .find((element): element is HTMLElement => element instanceof HTMLElement);
+  if (!row) throw new Error(`Local LLM edit row not found: ${label}`);
+  return row;
+}
+
+function getEndpointCardByValue(value: string): HTMLElement {
+  const row = screen
+    .getAllByDisplayValue(value)
+    .map((element) => element.closest(".settings-provider-endpoint-card"))
+    .find((element): element is HTMLElement => element instanceof HTMLElement);
+  if (!row) throw new Error(`Provider endpoint card not found: ${value}`);
+  return row;
+}
+
+function getEndpointField(card: HTMLElement, label: string): HTMLInputElement | HTMLSelectElement {
+  const field = within(card).getByText(label).closest("label");
+  const control = field?.querySelector("input, select");
+  if (!(control instanceof HTMLInputElement || control instanceof HTMLSelectElement)) {
+    throw new Error(`Provider endpoint field not found: ${label}`);
+  }
+  return control;
+}
+
 describe("SettingsPage", () => {
   beforeEach(() => {
     routerState.pathname = "/setting/llmprovider";
@@ -343,8 +382,9 @@ describe("SettingsPage", () => {
     renderPage();
 
     expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
-    expect(screen.getByText("Find Candidate")).toBeInTheDocument();
-    expect(screen.getByText("Cover Evidence")).toBeInTheDocument();
+    expect(screen.getByText("Route Matrix")).toBeInTheDocument();
+    expect(getRouteRow("findCandidate")).toBeInTheDocument();
+    expect(getRouteRow("coverEvidence")).toBeInTheDocument();
     expect(screen.getByText("Shared Distillation Runtime")).toBeInTheDocument();
     expect(screen.getByLabelText("Find Candidate LLM Timeout (seconds)")).toHaveValue(600);
     expect(screen.getByLabelText("Find Candidate Tool Calls")).toBeInTheDocument();
@@ -393,9 +433,7 @@ describe("SettingsPage", () => {
 
     expect(screen.queryByText("findCandidate.source")).not.toBeInTheDocument();
     expect(screen.queryByText("findCandidate.vibe")).not.toBeInTheDocument();
-    const sourceRow = screen.getByText("findCandidate").closest(".settings-route-row");
-    expect(sourceRow).not.toBeNull();
-    const rowScope = within(sourceRow as HTMLElement);
+    const rowScope = within(getRouteRow("findCandidate"));
 
     fireEvent.change(rowScope.getByLabelText("Provider"), { target: { value: "azure-openai" } });
     fireEvent.change(rowScope.getByLabelText("Fallback 1"), { target: { value: "local-llm" } });
@@ -434,12 +472,14 @@ describe("SettingsPage", () => {
       model: "gpt-5-4-mini",
       localLlmModel: "qwen-3.6-14b-it",
       fallback: ["local-llm"],
+      azureDeploymentSlots: [1],
     });
     expect(payload.settings.taskRouting.findCandidate.vibe).toEqual({
       provider: "azure-openai",
       model: "gpt-5-4-mini",
       localLlmModel: "qwen-3.6-14b-it",
       fallback: ["local-llm"],
+      azureDeploymentSlots: [1],
     });
     expect(payload.settings.taskRouting.findCandidate.throttling.rateLimitCooldownSeconds).toBe(
       120,
@@ -461,9 +501,7 @@ describe("SettingsPage", () => {
     expect(screen.queryByText("coverEvidence.externalEvidence")).not.toBeInTheDocument();
     expect(screen.queryByText("coverEvidence.mcpEvidence")).not.toBeInTheDocument();
 
-    const coverEvidenceRow = screen.getByText("coverEvidence").closest(".settings-route-row");
-    expect(coverEvidenceRow).not.toBeNull();
-    const rowScope = within(coverEvidenceRow as HTMLElement);
+    const rowScope = within(getRouteRow("coverEvidence"));
     fireEvent.change(rowScope.getByLabelText("Provider"), { target: { value: "azure-openai" } });
     fireEvent.change(rowScope.getByLabelText("Fallback 1"), { target: { value: "local-llm" } });
 
@@ -476,6 +514,7 @@ describe("SettingsPage", () => {
       model: "gpt-5-4-mini",
       localLlmModel: "gemma-4-e4b-it",
       fallback: ["local-llm"],
+      azureDeploymentSlots: [1],
     };
     expect(payload.settings.taskRouting.coverEvidence.sourceSupport).toEqual(route);
     expect(payload.settings.taskRouting.coverEvidence.externalEvidence).toEqual(route);
@@ -487,9 +526,7 @@ describe("SettingsPage", () => {
     renderPage();
     expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
 
-    const agenticRow = screen.getByText("agenticCompile").closest(".settings-route-row");
-    expect(agenticRow).not.toBeNull();
-    const rowScope = within(agenticRow as HTMLElement);
+    const rowScope = within(getRouteRow("agenticCompile"));
     expect(rowScope.getByLabelText("Local LLM API")).toBeInTheDocument();
     fireEvent.change(rowScope.getByLabelText("Local LLM API"), {
       target: { value: "qwen-3.6-14b-it" },
@@ -507,13 +544,56 @@ describe("SettingsPage", () => {
     });
   });
 
+  it("saves an endpoint-qualified Local LLM fallback target when model names repeat", async () => {
+    const settings = buildSettingsView();
+    settings.providers["local-llm"].models = [
+      {
+        name: "Primary",
+        apiBaseUrl: "http://127.0.0.1:44448",
+        apiPath: "/v1/chat/completions",
+        model: "shared-local-model",
+      },
+      {
+        name: "Fallback API",
+        apiBaseUrl: "http://127.0.0.1:44449",
+        apiPath: "/v1/chat/completions",
+        model: "shared-local-model",
+      },
+    ];
+    repositoryMocks.fetchRuntimeSettings.mockResolvedValue({
+      ...buildSnapshot(),
+      settings,
+      effective: settings,
+    });
+    routerState.pathname = "/setting/taskrouting";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
+
+    const rowScope = within(getRouteRow("findCandidate"));
+
+    fireEvent.change(rowScope.getByLabelText("Fallback 1"), { target: { value: "local-llm" } });
+    const localLlmSelect = rowScope.getByLabelText("Local LLM API");
+    const endpointTarget = JSON.stringify({
+      apiBaseUrl: "http://127.0.0.1:44449",
+      apiPath: "/v1/chat/completions",
+      model: "shared-local-model",
+    });
+    fireEvent.change(localLlmSelect, { target: { value: endpointTarget } });
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    expect(payload.settings.taskRouting.findCandidate.source.localLlmModel).toBe(endpointTarget);
+  });
+
   it("calls provider health test for selected provider card", async () => {
     routerState.pathname = "/setting/llmprovider";
     renderPage();
-    expect(await screen.findByRole("heading", { name: "OpenAI" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Provider Endpoints" })).toBeInTheDocument();
 
-    const testButtons = screen.getAllByRole("button", { name: "Test" });
-    fireEvent.click(testButtons[0]);
+    fireEvent.click(
+      within(getEndpointCardByValue("OpenAI")).getByRole("button", { name: "Health" }),
+    );
 
     await waitFor(() => expect(repositoryMocks.testRuntimeProvider).toHaveBeenCalledTimes(1));
     expect(repositoryMocks.testRuntimeProvider).toHaveBeenCalledWith("openai");
@@ -522,9 +602,15 @@ describe("SettingsPage", () => {
   it("calls Azure OpenAI deployment health test for selected deployment", async () => {
     routerState.pathname = "/setting/llmprovider";
     renderPage();
-    expect(await screen.findByRole("heading", { name: "Azure OpenAI" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Provider Endpoints" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Test 2" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Endpoint" }));
+    fireEvent.change(within(getEndpointCardByValue("Local LLM 3")).getByLabelText("Kind"), {
+      target: { value: "azure-openai" },
+    });
+    fireEvent.click(
+      within(getEndpointCardByValue("Local LLM 3")).getByRole("button", { name: "Health" }),
+    );
 
     await waitFor(() => expect(repositoryMocks.testAzureOpenAiDeployment).toHaveBeenCalledTimes(1));
     expect(repositoryMocks.testAzureOpenAiDeployment).toHaveBeenCalledWith(1);
@@ -533,22 +619,26 @@ describe("SettingsPage", () => {
   it("calls Local LLM model health test for an added model", async () => {
     routerState.pathname = "/setting/llmprovider";
     renderPage();
-    expect(await screen.findByText("Qwen")).toBeInTheDocument();
+    await waitFor(() => expect(screen.getAllByText("Qwen").length).toBeGreaterThan(0));
 
-    const qwenRow = screen.getByText("Qwen").closest(".settings-local-llm-model");
-    expect(qwenRow).not.toBeNull();
-    fireEvent.click(within(qwenRow as HTMLElement).getByRole("button", { name: "Test" }));
+    fireEvent.click(within(getLocalLlmEditRow("Qwen")).getByRole("button", { name: "Health" }));
 
     await waitFor(() => expect(repositoryMocks.testLocalLlmModel).toHaveBeenCalledTimes(1));
-    expect(repositoryMocks.testLocalLlmModel).toHaveBeenCalledWith("qwen-3.6-14b-it");
+    expect(repositoryMocks.testLocalLlmModel).toHaveBeenCalledWith(
+      JSON.stringify({
+        apiBaseUrl: "http://127.0.0.1:44449",
+        apiPath: "/v1/chat/completions",
+        model: "qwen-3.6-14b-it",
+      }),
+    );
   });
 
   it("saves only complete added Local LLM model rows", async () => {
     routerState.pathname = "/setting/llmprovider";
     renderPage();
-    expect(await screen.findByRole("heading", { name: "Local LLM" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Provider Endpoints" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add Local LLM" }));
+    fireEvent.click(screen.getByRole("button", { name: "Add Endpoint" }));
     const addedRows = screen.getAllByText("Local LLM 3");
     expect(addedRows.length).toBeGreaterThan(0);
 
@@ -560,11 +650,13 @@ describe("SettingsPage", () => {
       {
         name: "Primary",
         apiBaseUrl: "http://127.0.0.1:44448",
+        apiPath: "/v1/chat/completions",
         model: "gemma-4-e4b-it",
       },
       {
         name: "Qwen",
         apiBaseUrl: "http://127.0.0.1:44449",
+        apiPath: "/v1/chat/completions",
         model: "qwen-3.6-14b-it",
       },
     ]);
@@ -573,17 +665,18 @@ describe("SettingsPage", () => {
   it("includes a filled added Local LLM model row in the save payload", async () => {
     routerState.pathname = "/setting/llmprovider";
     renderPage();
-    expect(await screen.findByRole("heading", { name: "Local LLM" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Provider Endpoints" })).toBeInTheDocument();
 
-    fireEvent.click(screen.getByRole("button", { name: "Add Local LLM" }));
-    const row = screen.getByText("Local LLM 3").closest(".settings-local-llm-model");
-    expect(row).not.toBeNull();
-    const rowScope = within(row as HTMLElement);
-    fireEvent.change(rowScope.getByLabelText("Name"), { target: { value: "Reasoner" } });
-    fireEvent.change(rowScope.getByLabelText("API Base URL"), {
+    fireEvent.click(screen.getByRole("button", { name: "Add Endpoint" }));
+    const row = getLocalLlmEditRow("Local LLM 3");
+    fireEvent.change(getEndpointField(row, "Name"), { target: { value: "Reasoner" } });
+    fireEvent.change(getEndpointField(row, "Endpoint"), {
       target: { value: "http://127.0.0.1:44450" },
     });
-    fireEvent.change(rowScope.getByLabelText("Model"), {
+    fireEvent.change(getEndpointField(row, "API Path"), {
+      target: { value: "/openai/v1/chat/completions" },
+    });
+    fireEvent.change(getEndpointField(row, "Models"), {
       target: { value: "local-reasoner" },
     });
 
@@ -594,8 +687,33 @@ describe("SettingsPage", () => {
     expect(payload.settings.providers["local-llm"].models).toContainEqual({
       name: "Reasoner",
       apiBaseUrl: "http://127.0.0.1:44450",
+      apiPath: "/openai/v1/chat/completions",
       model: "local-reasoner",
     });
+  });
+
+  it("deletes Local LLM and Azure OpenAI endpoints from the save payload", async () => {
+    routerState.pathname = "/setting/llmprovider";
+    renderPage();
+    expect(await screen.findByRole("heading", { name: "Provider Endpoints" })).toBeInTheDocument();
+
+    fireEvent.click(within(getLocalLlmEditRow("Qwen")).getByRole("button", { name: "Delete" }));
+    fireEvent.click(
+      within(getEndpointCardByValue("Primary")).getByRole("button", { name: "Delete" }),
+    );
+    fireEvent.click(screen.getByRole("button", { name: "Save Settings" }));
+
+    await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
+    const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
+    expect(payload.settings.providers["local-llm"].models).toEqual([
+      {
+        name: "Primary",
+        apiBaseUrl: "http://127.0.0.1:44448",
+        apiPath: "/v1/chat/completions",
+        model: "gemma-4-e4b-it",
+      },
+    ]);
+    expect(payload.settings.providers["azure-openai"].deployments).toEqual([]);
   });
 
   it("shows added Local LLM models in Task Routing and Agentic Compile model choices", async () => {
@@ -603,39 +721,41 @@ describe("SettingsPage", () => {
     renderPage();
     expect(await screen.findByRole("heading", { name: "Task Routing" })).toBeInTheDocument();
 
-    const webResearchRow = screen.getByText("webSourceResearch").closest(".settings-route-row");
-    expect(webResearchRow).not.toBeNull();
     expect(
-      within(webResearchRow as HTMLElement).getByRole("option", {
+      within(getRouteRow("webSourceResearch")).getByRole("option", {
         name: /qwen-3\.6-14b-it/,
       }),
     ).toBeInTheDocument();
 
-    const agenticProvider = screen.getAllByLabelText("Provider").at(-1);
-    expect(agenticProvider).toBeDefined();
-    fireEvent.change(agenticProvider as HTMLElement, { target: { value: "local-llm" } });
+    const agenticRow = getRouteRow("agenticCompile");
+    fireEvent.change(within(agenticRow).getByLabelText("Provider"), {
+      target: { value: "local-llm" },
+    });
 
-    const agenticRow = screen.getByText("agenticCompile").closest(".settings-route-row");
-    expect(agenticRow).not.toBeNull();
     expect(
-      within(agenticRow as HTMLElement).getByRole("option", {
+      within(agenticRow).getByRole("option", {
         name: /qwen-3\.6-14b-it/,
       }),
     ).toBeInTheDocument();
   });
 
-  it("saves up to three Azure OpenAI deployments and separate API keys", async () => {
+  it("saves added Azure OpenAI deployments and separate legacy API keys", async () => {
     routerState.pathname = "/setting/llmprovider";
     renderPage();
-    expect(await screen.findByRole("heading", { name: "Azure OpenAI" })).toBeInTheDocument();
+    expect(await screen.findByRole("heading", { name: "Provider Endpoints" })).toBeInTheDocument();
 
-    fireEvent.change(screen.getByLabelText("Deployment 2 Endpoint"), {
+    fireEvent.click(screen.getByRole("button", { name: "Add Endpoint" }));
+    fireEvent.change(within(getEndpointCardByValue("Local LLM 3")).getByLabelText("Kind"), {
+      target: { value: "azure-openai" },
+    });
+    const row = getEndpointCardByValue("Local LLM 3");
+    fireEvent.change(getEndpointField(row, "Endpoint"), {
       target: { value: "https://second.openai.azure.com" },
     });
-    fireEvent.change(screen.getByLabelText("Deployment 2 Model"), {
+    fireEvent.change(getEndpointField(row, "Models"), {
       target: { value: "gpt-5-4-mini-secondary" },
     });
-    fireEvent.change(screen.getByLabelText("API Key 2 value"), {
+    fireEvent.change(within(row).getByLabelText("API Key 2 value"), {
       target: { value: "second-secret" },
     });
 
@@ -643,7 +763,7 @@ describe("SettingsPage", () => {
 
     await waitFor(() => expect(repositoryMocks.updateRuntimeSettings).toHaveBeenCalledTimes(1));
     const payload = repositoryMocks.updateRuntimeSettings.mock.calls[0]?.[0];
-    expect(payload.settings.providers["azure-openai"].deployments).toHaveLength(3);
+    expect(payload.settings.providers["azure-openai"].deployments).toHaveLength(2);
     expect(payload.settings.providers["azure-openai"].deployments[1]).toMatchObject({
       apiBaseUrl: "https://second.openai.azure.com",
       model: "gpt-5-4-mini-secondary",

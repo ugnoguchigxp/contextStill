@@ -4,7 +4,6 @@ import { fireEvent, render, screen, waitFor } from "@testing-library/react";
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { CandidatesPage } from "../../../web/src/modules/admin/components/candidates.page";
-import { requestCandidatePremiumReprocess } from "../../../web/src/modules/admin/repositories/admin.repository";
 
 // 外部APIおよびreact-query、react-routerのモック
 vi.mock("@tanstack/react-query", async () => {
@@ -25,7 +24,6 @@ vi.mock("@tanstack/react-router", () => ({
 
 vi.mock("../../../web/src/modules/admin/repositories/admin.repository", () => ({
   fetchCandidateItems: vi.fn(),
-  requestCandidatePremiumReprocess: vi.fn(),
 }));
 
 const queryClient = new QueryClient();
@@ -33,65 +31,9 @@ const queryClient = new QueryClient();
 // リッチなモックデータ
 const mockCandidateItems = [
   {
-    id: "cand-1",
-    targetKind: "wiki_file",
-    targetKey: "docs/architecture.md",
-    outcome: "stored",
-    candidateIndex: 0,
-    original: {
-      title:
-        "Architecture Guideline Candidate Very Long Title That Exceeds One Hundred And Twenty Characters To Trigger The Slicing Logic in Text Preview Function.",
-      body: "Maintain strict decoupling between domain and repository interfaces. This is a very long body text designed to exceed one hundred and eighty characters for testing the textPreview truncation behavior.",
-    },
-    cover: {
-      status: "knowledge_ready",
-      stage: "evidence_check",
-      reason: "Matched with existing guidelines but adds details.",
-      importance: 80,
-      confidence: 90,
-      title:
-        "Decoupling Domain and Repository Very Long Title Designed to Test Truncation inside Covered Candidate Details section.",
-      body: "Keep interfaces separate to allow switching implementations. This detailed implementation detail should help verify that our Covered Candidate component can handle longer body descriptions beautifully without messing up the UI flow.",
-      type: "rule",
-      referencesCount: 2,
-      duplicateRefsCount: 0,
-      toolEventsCount: 1,
-    },
-    knowledge: {
-      id: "kn-arch-1",
-      status: "active",
-      title:
-        "Decoupled Architecture Rule Very Long Title Intended to Trigger Truncation in Final Knowledge Details section.",
-      body: "Ensure domain modules do not import repository classes directly. This ensures we can easily decouple dependencies and improve high-level testability across our typescript backend modules.",
-      importance: 85,
-      confidence: 95,
-      type: "rule",
-    },
-    diff: {
-      originalToKnowledge: {
-        bodySimilarity: 0.85,
-        summary: ["Added specificity", "Cleaned syntax"],
-      },
-    },
-    landscapeWarning: {
-      source: "landscape_review_item",
-      linkId: "link-1",
-      reviewItemId: "review-item-1",
-      reason: "promotion_gate_review",
-      evidence: ["promotion gate review required"],
-      linkStatus: "review_required",
-      requiresManualApproval: true,
-      warningReason: "promotion_gate_review",
-    },
-    latestUpdatedAt: "2026-05-21T08:00:00.000Z",
-    targetStateId: "state-123",
-    sourceUri: "file:///docs/architecture.md",
-    finalizeSourceUri: "file:///docs/architecture.md",
-  },
-  {
     id: "cand-2",
-    targetKind: "vibe_memory",
-    targetKey: "mem-vibe-abc",
+    targetKind: "knowledge_candidate",
+    targetKey: "candidate-vibe-abc",
     outcome: "ready_not_finalized",
     candidateIndex: 1,
     original: {
@@ -106,21 +48,30 @@ const mockCandidateItems = [
         summary: ["Low overlap"],
       },
     },
-    landscapeWarning: null,
+    landscapeWarning: {
+      source: "landscape_review_item",
+      linkId: "link-1",
+      reviewItemId: "review-item-1",
+      reason: "promotion_gate_review",
+      evidence: ["promotion gate review required"],
+      linkStatus: "review_required",
+      requiresManualApproval: true,
+      warningReason: "promotion_gate_review",
+    },
     latestUpdatedAt: "invalid-date-format",
     targetStateId: "state-456",
-    sourceUri: "file:///mem-vibe-abc",
+    sourceUri: "agent://candidate/candidate-vibe-abc",
     finalizeSourceUri: "",
   },
   {
     id: "cand-3",
-    targetKind: "wiki_file",
-    targetKey: "docs/rejected-candidate.md",
+    targetKind: "knowledge_candidate",
+    targetKey: "candidate-rejected",
     outcome: "rejected",
     candidateIndex: 2,
     original: {
       title: "Rejected Candidate",
-      body: "Candidate that should be eligible for premium reprocess.",
+      body: "Candidate that needs rejection review.",
     },
     cover: {
       status: "insufficient",
@@ -142,14 +93,14 @@ const mockCandidateItems = [
     landscapeWarning: null,
     latestUpdatedAt: "2026-05-20T08:00:00.000Z",
     targetStateId: "state-789",
-    sourceUri: "file:///docs/rejected-candidate.md",
+    sourceUri: "agent://candidate/candidate-rejected",
     finalizeSourceUri: "cover-evidence-result://cand-3",
   },
 ];
 
 const mockStats = {
-  total: 3,
-  stored: 1,
+  total: 2,
+  stored: 0,
   readyNotFinalized: 1,
   rejected: 1,
   retryable: 0,
@@ -164,17 +115,6 @@ describe("CandidatesPage", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockRefetch.mockResolvedValue({} as any);
-    vi.mocked(requestCandidatePremiumReprocess).mockResolvedValue({
-      result: {
-        findCandidateResultId: "cand-3",
-        coverEvidenceResultId: "cand-3",
-        targetStateId: "state-789",
-        status: "queued",
-        mode: "cloud_api",
-        previousStatus: "insufficient",
-        previousReason: "rule_body_not_actionable",
-      },
-    });
     window.history.replaceState({}, "", "/candidates");
 
     vi.mocked(useQuery).mockReturnValue({
@@ -198,24 +138,21 @@ describe("CandidatesPage", () => {
     );
 
     // 検索窓とセレクトボックスの存在確認
-    expect(
-      screen.getByPlaceholderText("Search target / candidate / knowledge"),
-    ).toBeInTheDocument();
+    expect(screen.getByPlaceholderText("Search source / candidate / evidence")).toBeInTheDocument();
 
     // アイテムデータの描画確認
-    expect(screen.getByText(/Architecture Guideline Candidate/)).toBeInTheDocument();
-    expect(screen.getByText("Vibe Memory Guideline Candidate")).toBeInTheDocument();
-    expect(screen.getByText("docs/architecture.md")).toBeInTheDocument();
-    expect(screen.getByText("mem-vibe-abc")).toBeInTheDocument();
+    expect(screen.getAllByText("Vibe Memory Guideline Candidate").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("Rejected Candidate").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getAllByText("candidate-vibe-abc").length).toBeGreaterThanOrEqual(1);
 
     // Coverage & Outcome バッジの検証
-    expect(screen.getByText("knowledge_ready")).toBeInTheDocument();
-    expect(screen.getAllByText("ready_not_finalized").length).toBeGreaterThanOrEqual(1);
-    expect(screen.getByText("Landscape warning")).toBeInTheDocument();
-    expect(screen.getByText("promotion gate review required")).toBeInTheDocument();
+    expect(screen.getByText("no cover result")).toBeInTheDocument();
+    expect(screen.getAllByText("Ready to store").length).toBeGreaterThanOrEqual(1);
+    expect(screen.getByText("warning")).toBeInTheDocument();
 
     // Stats フッターの検証
-    expect(screen.getByText(/total 3 \| stored 1 \| ready 1 \| rejected 1/)).toBeInTheDocument();
+    expect(screen.getByText(/active 2 \| ready 1 \| failed 0 \| rejected 1/)).toBeInTheDocument();
+    expect(screen.queryByText("Premium再評価")).not.toBeInTheDocument();
   });
 
   it("reads targetStateId from query and shows active filter", () => {
@@ -243,20 +180,16 @@ describe("CandidatesPage", () => {
     );
 
     // 1. 検索テキストの変更
-    const searchInput = screen.getByPlaceholderText("Search target / candidate / knowledge");
+    const searchInput = screen.getByPlaceholderText("Search source / candidate / evidence");
     fireEvent.change(searchInput, { target: { value: "architecture" } });
 
     // 2. target-kind セレクトボックスの変更
     const targetKindSelect = screen.getByLabelText("target-kind");
+    expect(targetKindSelect).toHaveValue("knowledge_candidate");
     fireEvent.change(targetKindSelect, { target: { value: "wiki_file" } });
 
-    // 3. outcome セレクトボックスの変更
-    const outcomeSelect = screen.getByLabelText("outcome");
-    fireEvent.change(outcomeSelect, { target: { value: "stored" } });
-
-    // 4. has-knowledge セレクトボックスの変更
-    const hasKnowledgeSelect = screen.getByLabelText("has-knowledge");
-    fireEvent.change(hasKnowledgeSelect, { target: { value: "yes" } });
+    // 3. 作業レーンの変更
+    fireEvent.click(screen.getByRole("button", { name: /Failed/ }));
 
     // useQuery が正しく更新されたパラメータで動くためのトリガー確認
     expect(useQuery).toHaveBeenCalled();
@@ -336,27 +269,26 @@ describe("CandidatesPage", () => {
     expect(screen.getByText("No candidates found.")).toBeInTheDocument();
   });
 
-  it("expands detail accordion pane on row click", () => {
+  it("opens candidate details in a drawer from a table row", () => {
     render(
       <QueryClientProvider client={queryClient}>
         <CandidatesPage />
       </QueryClientProvider>,
     );
 
-    // 一番目の行をクリックしてアコーディオンを展開
-    const rowTitle = screen.getByText(/Architecture Guideline Candidate/);
-    fireEvent.click(rowTitle);
+    expect(screen.queryByLabelText("Candidate details")).not.toBeInTheDocument();
 
-    // アコーディオン内の詳細テキストの確認
+    fireEvent.click(screen.getByText("Rejected Candidate"));
+
+    expect(screen.getByLabelText("Candidate details")).toBeInTheDocument();
     expect(screen.getByText("Original Candidate")).toBeInTheDocument();
     expect(screen.getByText("Covered Candidate")).toBeInTheDocument();
-    expect(screen.getByText("Final Knowledge")).toBeInTheDocument();
-    expect(screen.getByText(/targetStateId: state-123/)).toBeInTheDocument();
-    expect(screen.getByText(/references: 2/)).toBeInTheDocument();
+    expect(screen.queryByText("Final Knowledge")).not.toBeInTheDocument();
+    expect(screen.getByText(/targetStateId: state-789/)).toBeInTheDocument();
+    expect(screen.getByText(/references: 0/)).toBeInTheDocument();
 
-    // もう一度クリックして閉じる
-    fireEvent.click(rowTitle);
-    expect(screen.queryByText("Original Candidate")).not.toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: "Close" }));
+    expect(screen.queryByLabelText("Candidate details")).not.toBeInTheDocument();
   });
 
   it("handles page transitions (pagination) and refresh clicks correctly", () => {
@@ -384,19 +316,25 @@ describe("CandidatesPage", () => {
     expect(mockRefetch).toHaveBeenCalled();
   });
 
-  it("requests premium reprocess from expanded rejected candidate row", async () => {
+  it("passes work queue view changes to the candidates query", async () => {
     render(
       <QueryClientProvider client={queryClient}>
         <CandidatesPage />
       </QueryClientProvider>,
     );
 
-    fireEvent.click(screen.getByText("Rejected Candidate"));
-    const premiumButton = screen.getByRole("button", { name: "Premium再評価" });
-    fireEvent.click(premiumButton);
+    const rejectedViewButton = screen.getAllByRole("button", { name: /Rejected/ })[0];
+    expect(rejectedViewButton).toBeDefined();
+    fireEvent.click(rejectedViewButton as HTMLElement);
 
     await waitFor(() => {
-      expect(requestCandidatePremiumReprocess).toHaveBeenCalledWith("cand-3");
+      const latestCall = vi.mocked(useQuery).mock.calls.at(-1)?.[0] as
+        | { queryKey?: unknown[] }
+        | undefined;
+      const latestQueryState = latestCall?.queryKey?.[1] as Record<string, unknown> | undefined;
+      expect(latestQueryState).toMatchObject({
+        outcome: "rejected",
+      });
     });
   });
 });

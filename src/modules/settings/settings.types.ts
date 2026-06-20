@@ -19,8 +19,7 @@ export type RuntimeProviderSetting = (typeof runtimeProviderSettingNames)[number
 export type RuntimeSecretKey =
   | "openaiApiKey"
   | "azureOpenAiApiKey"
-  | "azureOpenAiApiKey2"
-  | "azureOpenAiApiKey3"
+  | `azureOpenAiApiKey${number}`
   | "localLlmApiKey"
   | "braveApiKey"
   | "exaApiKey";
@@ -75,6 +74,7 @@ export type AzureOpenAiDeploymentSettings = {
 export type LocalLlmModelSettings = {
   name: string;
   apiBaseUrl: string;
+  apiPath: string;
   model: string;
 };
 
@@ -116,6 +116,7 @@ export type RuntimeSettingsEditable = {
     "local-llm": {
       enabled: boolean;
       apiBaseUrl: string;
+      apiPath: string;
       model: string;
       models: LocalLlmModelSettings[];
     };
@@ -246,8 +247,9 @@ const azureOpenAiDeploymentSchema = z.object({
 
 const localLlmModelSchema = z.object({
   name: z.string().trim().max(80).default(""),
-  apiBaseUrl: z.string().trim().url(),
-  model: z.string().trim().min(1),
+  apiBaseUrl: z.string().trim().url().or(z.literal("")),
+  apiPath: z.string().trim().min(1).default("/v1/chat/completions"),
+  model: z.string().trim().min(1).or(z.literal("")),
 });
 
 const runtimeRouteSchema = z.object({
@@ -255,7 +257,7 @@ const runtimeRouteSchema = z.object({
   model: z.string().trim().min(1).optional(),
   localLlmModel: z.string().trim().min(1).optional(),
   fallback: z.array(runtimeProviderSchema).max(8).default([]),
-  azureDeploymentSlots: z.array(z.number().int().min(1).max(3)).max(3).optional(),
+  azureDeploymentSlots: z.array(z.number().int().min(1)).optional(),
 });
 
 export const runtimeSettingsEditableSchema = z.object({
@@ -276,7 +278,7 @@ export const runtimeSettingsEditableSchema = z.object({
       apiPath: z.string().trim().min(1),
       apiVersion: z.string().trim().min(1),
       model: z.string().trim().min(1).or(z.literal("")),
-      deployments: z.array(azureOpenAiDeploymentSchema).max(3).default([]),
+      deployments: z.array(azureOpenAiDeploymentSchema).default([]),
     }),
     bedrock: z.object({
       enabled: z.boolean().default(false),
@@ -286,9 +288,10 @@ export const runtimeSettingsEditableSchema = z.object({
     }),
     "local-llm": z.object({
       enabled: z.boolean().default(true),
-      apiBaseUrl: z.string().trim().url(),
-      model: z.string().trim().min(1),
-      models: z.array(localLlmModelSchema).max(10).default([]),
+      apiBaseUrl: z.string().trim().url().or(z.literal("")),
+      apiPath: z.string().trim().min(1).default("/v1/chat/completions"),
+      model: z.string().trim().min(1).or(z.literal("")),
+      models: z.array(localLlmModelSchema).default([]),
     }),
     codex: z.object({
       enabled: z.boolean().default(false),
@@ -325,7 +328,7 @@ export const runtimeSettingsEditableSchema = z.object({
       model: z.string().trim().min(1),
       localLlmModel: z.string().trim().min(1).optional(),
       fallback: z.array(runtimeProviderSchema).max(8).default([]),
-      azureDeploymentSlots: z.array(z.number().int().min(1).max(3)).max(3).optional(),
+      azureDeploymentSlots: z.array(z.number().int().min(1)).optional(),
       timeoutMs: z.number().int().min(1000).max(3_600_000),
       maxTokens: z.number().int().min(128).max(16_384),
     }),

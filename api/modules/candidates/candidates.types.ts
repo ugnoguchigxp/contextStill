@@ -30,6 +30,7 @@ export type CandidateListQuery = {
   targetKind?: "all" | "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest";
   outcome?: "all" | CandidateOutcome;
   hasKnowledge?: "all" | "yes" | "no";
+  includeStored?: boolean;
   targetStateId?: string;
   sortBy?: CandidateListSortBy;
   sortDir?: CandidateListSortDir;

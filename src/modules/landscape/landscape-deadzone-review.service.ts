@@ -1,6 +1,7 @@
 import { inArray } from "drizzle-orm";
 import { buildGraphSnapshot } from "../../../api/modules/graph/graph.repository.js";
 import { updateKnowledgeItem } from "../../../api/modules/knowledge/knowledge.repository.js";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import { knowledgeItems } from "../../db/schema.js";
 import {
@@ -38,6 +39,64 @@ import {
 } from "./landscape-deadzone-review.scoring.js";
 import { buildLandscapeSnapshot } from "./landscape.service.js";
 import type { LandscapeCommunity } from "./landscape.types.js";
+
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
+
+function isSqliteBackend(): boolean {
+  return resolveDatabaseBackendConfig().kind === "sqlite";
+}
+
+async function loadKnowledgeTitleStatusRows(ids: string[]): Promise<
+  Array<{ id: string; title: string; status: string }>
+> {
+  const uniqueIds = [...new Set(ids)].filter(Boolean);
+  if (uniqueIds.length === 0) return [];
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const placeholders = uniqueIds.map(() => "?").join(", ");
+    return sqlite.db
+      .query<{ id: string; title: string; status: string }, string[]>(
+        `select id, title, status from knowledge_items where id in (${placeholders})`,
+      )
+      .all(...uniqueIds);
+  }
+  return db
+    .select({
+      id: knowledgeItems.id,
+      title: knowledgeItems.title,
+      status: knowledgeItems.status,
+    })
+    .from(knowledgeItems)
+    .where(inArray(knowledgeItems.id, uniqueIds));
+}
+
+async function loadKnowledgeMaintenanceRows(ids: string[]): Promise<
+  Array<{ id: string; title: string; body: string; status: string }>
+> {
+  const uniqueIds = [...new Set(ids)].filter(Boolean);
+  if (uniqueIds.length === 0) return [];
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const placeholders = uniqueIds.map(() => "?").join(", ");
+    return sqlite.db
+      .query<{ id: string; title: string; body: string; status: string }, string[]>(
+        `select id, title, body, status from knowledge_items where id in (${placeholders})`,
+      )
+      .all(...uniqueIds);
+  }
+  return db
+    .select({
+      id: knowledgeItems.id,
+      title: knowledgeItems.title,
+      body: knowledgeItems.body,
+      status: knowledgeItems.status,
+    })
+    .from(knowledgeItems)
+    .where(inArray(knowledgeItems.id, uniqueIds));
+}
 
 function preview(value: string, max = 220): string {
   const normalized = value.replace(/\s+/g, " ").trim();
@@ -624,14 +683,7 @@ export async function applyDeadZoneKnowledgeReviewAction(
   const ids = [
     ...new Set([deadZoneId, input.canonicalKnowledgeId].filter((id): id is string => Boolean(id))),
   ];
-  const rows = await db
-    .select({
-      id: knowledgeItems.id,
-      title: knowledgeItems.title,
-      status: knowledgeItems.status,
-    })
-    .from(knowledgeItems)
-    .where(inArray(knowledgeItems.id, ids));
+  const rows = await loadKnowledgeTitleStatusRows(ids);
   const rowById = new Map(rows.map((row) => [row.id, row]));
   const deadZone = rowById.get(deadZoneId);
   if (!deadZone) throw new DeadZoneKnowledgeMaintenanceError(404, "deadZone knowledge not found");
@@ -738,15 +790,7 @@ export async function maintainDeadZoneKnowledge(
       [input.deadZoneKnowledgeId, similarKnowledgeId].filter((id): id is string => Boolean(id)),
     ),
   ];
-  const rows = await db
-    .select({
-      id: knowledgeItems.id,
-      title: knowledgeItems.title,
-      body: knowledgeItems.body,
-      status: knowledgeItems.status,
-    })
-    .from(knowledgeItems)
-    .where(inArray(knowledgeItems.id, ids));
+  const rows = await loadKnowledgeMaintenanceRows(ids);
   const rowById = new Map(rows.map((row) => [row.id, row]));
   const deadZone = rowById.get(input.deadZoneKnowledgeId);
   if (!deadZone) throw new DeadZoneKnowledgeMaintenanceError(404, "deadZone knowledge not found");

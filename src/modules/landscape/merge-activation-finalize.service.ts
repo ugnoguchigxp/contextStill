@@ -1,5 +1,6 @@
 import { createHash } from "node:crypto";
 import { eq } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import {
   deadZoneMergeReviewQueue,
@@ -13,6 +14,7 @@ import {
   getRuntimeSettingsSnapshot,
 } from "../settings/settings.service.js";
 import { DeadZoneMergeReviewQueueError } from "./deadzone-merge-review-queue.service.js";
+import { getDeadZoneMergeReviewQueueRow } from "./deadzone-merge-review-queue.repository.js";
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -22,6 +24,27 @@ function asRecord(value: unknown): Record<string, unknown> {
 
 function hashBody(value: string): string {
   return createHash("sha256").update(value).digest("hex");
+}
+
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
+
+function isSqliteBackend(): boolean {
+  return resolveDatabaseBackendConfig().kind === "sqlite";
+}
+
+function parseJsonRecord(value: unknown): Record<string, unknown> {
+  if (!value) return {};
+  if (typeof value === "object" && !Array.isArray(value)) return value as Record<string, unknown>;
+  if (typeof value !== "string") return {};
+  try {
+    const parsed = JSON.parse(value);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
 }
 
 export type MergeActivationFinalizeJobCreateResult = {
@@ -37,11 +60,7 @@ export type MergeActivationFinalizeJobCreateResult = {
 export async function createMergeActivationFinalizeJob(
   mergeReviewJobId: string,
 ): Promise<MergeActivationFinalizeJobCreateResult> {
-  const [reviewJob] = await db
-    .select()
-    .from(deadZoneMergeReviewQueue)
-    .where(eq(deadZoneMergeReviewQueue.id, mergeReviewJobId))
-    .limit(1);
+  const reviewJob = await getDeadZoneMergeReviewQueueRow(mergeReviewJobId);
   if (!reviewJob) throw new DeadZoneMergeReviewQueueError("merge review job not found", 404);
   if (reviewJob.status !== "completed") {
     throw new DeadZoneMergeReviewQueueError("merge review job is not completed");
@@ -55,30 +74,58 @@ export async function createMergeActivationFinalizeJob(
     throw new DeadZoneMergeReviewQueueError("merge review did not recommend finalization");
   }
 
-  const rows = await db
-    .select({
-      id: knowledgeItems.id,
-      title: knowledgeItems.title,
-      body: knowledgeItems.body,
-      status: knowledgeItems.status,
-      appliesTo: knowledgeItems.appliesTo,
-      metadata: knowledgeItems.metadata,
-    })
-    .from(knowledgeItems)
-    .where(eq(knowledgeItems.id, reviewJob.deadZoneKnowledgeId));
-  const [deadZone] = rows;
-  const [canonical] = await db
-    .select({
-      id: knowledgeItems.id,
-      title: knowledgeItems.title,
-      body: knowledgeItems.body,
-      status: knowledgeItems.status,
-      appliesTo: knowledgeItems.appliesTo,
-      metadata: knowledgeItems.metadata,
-    })
-    .from(knowledgeItems)
-    .where(eq(knowledgeItems.id, reviewJob.canonicalKnowledgeId))
-    .limit(1);
+  const selectKnowledge = async (id: string) => {
+    if (isSqliteBackend()) {
+      const sqlite = await getSqliteCoreDatabase();
+      const row = sqlite.db
+        .query(
+          `
+          select id, title, body, status, applies_to, metadata
+          from knowledge_items
+          where id = ?
+          limit 1
+        `,
+        )
+        .get(id) as
+        | {
+            id: string;
+            title: string;
+            body: string;
+            status: string;
+            applies_to: string;
+            metadata: string;
+          }
+        | null;
+      return row
+        ? {
+            id: row.id,
+            title: row.title,
+            body: row.body,
+            status: row.status,
+            appliesTo: parseJsonRecord(row.applies_to),
+            metadata: parseJsonRecord(row.metadata),
+          }
+        : null;
+    }
+    const [row] = await db
+      .select({
+        id: knowledgeItems.id,
+        title: knowledgeItems.title,
+        body: knowledgeItems.body,
+        status: knowledgeItems.status,
+        appliesTo: knowledgeItems.appliesTo,
+        metadata: knowledgeItems.metadata,
+      })
+      .from(knowledgeItems)
+      .where(eq(knowledgeItems.id, id))
+      .limit(1);
+    return row ?? null;
+  };
+
+  const [deadZone, canonical] = await Promise.all([
+    selectKnowledge(reviewJob.deadZoneKnowledgeId),
+    selectKnowledge(reviewJob.canonicalKnowledgeId),
+  ]);
 
   if (!deadZone || !canonical) {
     throw new DeadZoneMergeReviewQueueError("knowledge row missing", 404);
@@ -125,6 +172,87 @@ export async function createMergeActivationFinalizeJob(
       appliesToRefineCandidates: [],
     },
   };
+
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const idempotencyKey = `merge-activation-finalize:${reviewJob.id}`;
+    const existing = sqlite.db
+      .query(`select * from merge_activation_finalize_queue where idempotency_key = ? limit 1`)
+      .get(idempotencyKey) as
+      | {
+          id: string;
+          status: string;
+          merge_review_job_id: string;
+          dead_zone_knowledge_id: string;
+          canonical_knowledge_id: string;
+          review_item_id: string | null;
+        }
+      | null;
+    const payload = {
+      sourceQueue: "deadZoneMergeReview",
+      sourceQueueJobId: reviewJob.id,
+      requestedAt: nowIso,
+    };
+    const jobId = existing?.id ?? crypto.randomUUID();
+    if (existing) {
+      sqlite.db
+        .query(`update merge_activation_finalize_queue set payload = ?, updated_at = ? where id = ?`)
+        .run(JSON.stringify(payload), nowIso, jobId);
+    } else {
+      sqlite.db
+        .query(
+          `
+          insert into merge_activation_finalize_queue (
+            id, merge_review_job_id, dead_zone_knowledge_id, canonical_knowledge_id,
+            review_item_id, idempotency_key, status, priority, provider, model,
+            input_snapshot, payload, metadata, created_at, updated_at
+          ) values (?, ?, ?, ?, ?, ?, 'pending', ?, ?, ?, ?, ?, ?, ?, ?)
+        `,
+        )
+        .run(
+          jobId,
+          reviewJob.id,
+          deadZone.id,
+          canonical.id,
+          reviewJob.reviewItemId,
+          idempotencyKey,
+          reviewJob.priority,
+          route.provider === "auto" ? "local-llm" : route.provider,
+          route.model ?? null,
+          JSON.stringify(inputSnapshot),
+          JSON.stringify(payload),
+          JSON.stringify({
+            queueVersion: "v1",
+            visibleQueueName: "finalizeDistille",
+            jobType: "merge_activation_finalize",
+          }),
+          nowIso,
+          nowIso,
+        );
+    }
+    const job = {
+      id: jobId,
+      status: existing?.status ?? "pending",
+      mergeReviewJobId: reviewJob.id,
+      deadZoneKnowledgeId: deadZone.id,
+      canonicalKnowledgeId: canonical.id,
+      reviewItemId: reviewJob.reviewItemId,
+    };
+    await appendQueueEvent({
+      queueName: "mergeActivationFinalize",
+      queueJobId: job.id,
+      eventType: "enqueued",
+      message: "merge activation finalize enqueued",
+      metadata: {
+        visibleQueueName: "finalizeDistille",
+        mergeReviewJobId: reviewJob.id,
+      },
+    });
+    return {
+      ...job,
+      jobType: "merge_activation_finalize",
+    };
+  }
 
   const [job] = await db
     .insert(mergeActivationFinalizeQueue)

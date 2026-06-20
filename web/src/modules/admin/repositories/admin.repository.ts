@@ -2024,21 +2024,10 @@ export type CandidateListRequest = {
   targetKind?: "all" | "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest";
   outcome?: "all" | CandidateOutcome;
   hasKnowledge?: "all" | "yes" | "no";
+  includeStored?: boolean;
   targetStateId?: string;
   sortBy?: CandidateListSortBy;
   sortDir?: CandidateListSortDir;
-};
-
-export type CandidatePremiumReprocessResponse = {
-  result: {
-    findCandidateResultId: string;
-    coverEvidenceResultId: string;
-    targetStateId: string;
-    status: "queued" | "already_queued";
-    mode: "cloud_api";
-    previousStatus: string;
-    previousReason: string | null;
-  };
 };
 
 export type RuntimeProviderName = "openai" | "azure-openai" | "bedrock" | "local-llm" | "codex";
@@ -2047,8 +2036,7 @@ export type RuntimeSearchProvider = "brave" | "exa" | "duckduckgo";
 export type RuntimeSecretKey =
   | "openaiApiKey"
   | "azureOpenAiApiKey"
-  | "azureOpenAiApiKey2"
-  | "azureOpenAiApiKey3"
+  | `azureOpenAiApiKey${number}`
   | "localLlmApiKey"
   | "braveApiKey"
   | "exaApiKey";
@@ -2092,6 +2080,7 @@ export type AzureOpenAiDeploymentSettings = {
 export type LocalLlmModelSettings = {
   name: string;
   apiBaseUrl: string;
+  apiPath: string;
   model: string;
 };
 
@@ -2130,6 +2119,7 @@ export type RuntimeSettingsEditable = {
     "local-llm": {
       enabled: boolean;
       apiBaseUrl: string;
+      apiPath: string;
       model: string;
       models: LocalLlmModelSettings[];
     };
@@ -3141,20 +3131,11 @@ export async function fetchCandidateItems(
   if (input.hasKnowledge && input.hasKnowledge !== "all") {
     query.set("hasKnowledge", input.hasKnowledge);
   }
+  if (input.includeStored) query.set("includeStored", "true");
   if (input.targetStateId?.trim()) query.set("targetStateId", input.targetStateId.trim());
   if (input.sortBy) query.set("sortBy", input.sortBy);
   if (input.sortDir) query.set("sortDir", input.sortDir);
   return getJson<CandidateListResponse>(`/api/candidates?${query.toString()}`);
-}
-
-export async function requestCandidatePremiumReprocess(
-  id: string,
-): Promise<CandidatePremiumReprocessResponse> {
-  return requestJson<CandidatePremiumReprocessResponse>(
-    `/api/candidates/${encodeURIComponent(id)}/premium-reprocess`,
-    "POST",
-    { mode: "cloud_api", forceRefreshEvidence: true },
-  );
 }
 
 export async function fetchRuntimeSettings(): Promise<RuntimeSettingsSnapshotResponse> {

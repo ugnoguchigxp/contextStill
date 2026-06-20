@@ -802,11 +802,13 @@ describe("Distillation Runtime Service", () => {
       {
         name: "Primary",
         apiBaseUrl: "http://127.0.0.1:44448",
+        apiPath: "/v1/chat/completions",
         model: "gemma-4-e4b-it",
       },
       {
         name: "Qwen",
         apiBaseUrl: "http://127.0.0.1:44449",
+        apiPath: "/v1/chat/completions",
         model: "qwen-3.6-14b-it",
       },
     ];

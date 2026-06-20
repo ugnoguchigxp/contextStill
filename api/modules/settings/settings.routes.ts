@@ -17,7 +17,7 @@ const providerParamSchema = z.object({
   provider: z.enum(["openai", "azure-openai", "bedrock", "local-llm", "codex"] as const),
 });
 const azureOpenAiDeploymentParamSchema = z.object({
-  deployment: z.coerce.number().int().min(1).max(3),
+  deployment: z.coerce.number().int().min(1),
 });
 const localLlmModelTestBodySchema = z.object({
   model: z.string().trim().min(1),

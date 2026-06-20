@@ -1,7 +1,9 @@
 import { sql } from "drizzle-orm";
 import { groupedConfig } from "../../../src/config.js";
+import { resolveDatabaseBackendConfig } from "../../../src/db/backend.js";
 import { getDb } from "../../../src/db/index.js";
 import { inspectCompileRuns } from "../../../src/modules/doctor/inspectors/compile.inspector.js";
+import { buildLandscapeReplayComparison } from "../../../src/modules/landscape/landscape-replay-comparison.service.js";
 import { resolveCostRate } from "../../../src/modules/llm/llm-cost-config.js";
 import { ensureRuntimeSettingsLoaded } from "../../../src/modules/settings/settings.service.js";
 import {
@@ -19,10 +21,13 @@ import {
   overviewProductValueStatsSchema,
   overviewSystemQualityDomainSchema,
 } from "../../../src/shared/schemas/overview.schema.js";
-import { buildGraphSnapshot } from "../graph/graph.repository.js";
+import { buildGraphSnapshot, type GraphCommunitySummary } from "../graph/graph.repository.js";
 import {
   DASHBOARD_TIMEZONE,
+  LANDSCAPE_OVERVIEW_CURRENT_LIMIT,
   LLM_KPI_DAY_RANGE,
+  LANDSCAPE_OVERVIEW_REPLAY_LIMIT,
+  LANDSCAPE_OVERVIEW_WINDOW_DAYS,
   OVERVIEW_DAY_RANGE,
   buildCommunitySourceCoverage,
   buildKnowledgeStatusTypeChart,
@@ -43,6 +48,56 @@ type OverviewDomainPayload =
   | OverviewLlmResourcesDomain;
 
 export { normalizeSearchApiStatus } from "./overview.repository.helpers.js";
+
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../../src/db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
+
+function isSqliteBackend(): boolean {
+  return resolveDatabaseBackendConfig().kind === "sqlite";
+}
+
+function emptyDaySeries(days = OVERVIEW_DAY_RANGE) {
+  return Array.from({ length: days }, (_, index) => {
+    const date = new Date();
+    date.setUTCDate(date.getUTCDate() - (days - 1 - index));
+    return date.toISOString().slice(0, 10);
+  });
+}
+
+function parseJsonValue(value: unknown): unknown {
+  if (typeof value !== "string") return value;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return value;
+  }
+}
+
+function sqliteGet<T extends Record<string, unknown>>(
+  sqlite: Awaited<ReturnType<typeof getSqliteCoreDatabase>>,
+  query: string,
+  ...params: unknown[]
+): T {
+  return sqlite.db.query<T, unknown[]>(query).get(...params) ?? ({} as T);
+}
+
+function sqliteAll<T extends Record<string, unknown>>(
+  sqlite: Awaited<ReturnType<typeof getSqliteCoreDatabase>>,
+  query: string,
+  ...params: unknown[]
+): T[] {
+  return sqlite.db.query<T, unknown[]>(query).all(...params);
+}
+
+function dailyRows<T extends Record<string, unknown>>(
+  rows: T[],
+  defaults: (day: string) => T,
+): T[] {
+  const byDay = new Map(rows.map((row) => [String(row.day ?? ""), row]));
+  return emptyDaySeries().map((day) => byDay.get(day) ?? defaults(day));
+}
 
 function buildCompileEvalStats(row: Record<string, unknown>) {
   return overviewCompileEvalStatsSchema.parse({
@@ -145,6 +200,676 @@ function buildProductValueStats(row: Record<string, unknown>) {
       preventedReworkSignalCount,
       appliedFeedbackEffectCount,
     },
+  });
+}
+
+async function fetchOverviewKnowledgeAssetsDomainForSqlite(): Promise<OverviewKnowledgeAssetsDomain> {
+  await ensureRuntimeSettingsLoaded();
+  const sqlite = await getSqliteCoreDatabase();
+
+  const knowledgeSummaryRow = sqliteGet<Record<string, unknown>>(
+    sqlite,
+    `
+      with source_linked as (
+        select distinct knowledge_id from knowledge_source_links
+      ),
+      origin_linked as (
+        select distinct knowledge_id from knowledge_origin_links
+      ),
+      provenance_traceable as (
+        select knowledge_id from source_linked
+        union
+        select knowledge_id from origin_linked
+      )
+      select
+        count(*) as knowledge_total,
+        sum(case when status = 'active' then 1 else 0 end) as active_knowledge,
+        sum(case when status = 'draft' then 1 else 0 end) as draft_knowledge,
+        sum(case when status = 'deprecated' then 1 else 0 end) as deprecated_knowledge,
+        sum(case when type = 'rule' then 1 else 0 end) as rules,
+        sum(case when type = 'procedure' then 1 else 0 end) as procedures,
+        (select count(*) from knowledge_items_vec_fallback) as embedded_knowledge,
+        sum(case when status = 'active' and compile_select_count = 0 then 1 else 0 end)
+          as zero_use_active_knowledge,
+        coalesce((select count(*) from source_linked), 0) as source_evidence_linked_knowledge,
+        coalesce((select count(*) from origin_linked), 0) as origin_linked_knowledge,
+        coalesce((select count(*) from provenance_traceable), 0)
+          as provenance_traceable_knowledge
+      from knowledge_items
+    `,
+  );
+  const sourceSummaryRow = sqliteGet<Record<string, unknown>>(
+    sqlite,
+    `
+      select
+        (select count(*) from sources) as indexed_sources,
+        (select count(*) from source_fragments) as source_fragments,
+        (select count(*) from knowledge_source_links) as source_links
+    `,
+  );
+  const vibeSummaryRow = sqliteGet<Record<string, unknown>>(
+    sqlite,
+    `
+      select
+        count(distinct vm.id) as vibe_records,
+        count(distinct vm.session_id) as vibe_sessions,
+        count(distinct case when ade.id is not null then vm.id end) as vibe_records_with_diffs,
+        count(ade.id) as agent_diff_entries
+      from vibe_memories vm
+      left join agent_diff_entries ade on ade.vibe_memory_id = vm.id
+    `,
+  );
+  const knowledgeByStatusTypeRows = sqliteAll<Record<string, unknown>>(
+    sqlite,
+    `
+      select status, type, count(*) as item_count
+      from knowledge_items
+      where status in ('active', 'draft', 'deprecated')
+        and type in ('rule', 'procedure')
+      group by status, type
+    `,
+  );
+  const dynamicScoreBucketRow = sqliteGet<Record<string, unknown>>(
+    sqlite,
+    `
+      select
+        sum(case when dynamic_score = 0 then 1 else 0 end) as bucket_0,
+        sum(case when dynamic_score > 0 and dynamic_score <= 1 then 1 else 0 end) as bucket_0_1,
+        sum(case when dynamic_score > 1 and dynamic_score <= 5 then 1 else 0 end) as bucket_1_5,
+        sum(case when dynamic_score > 5 and dynamic_score <= 10 then 1 else 0 end) as bucket_5_10,
+        sum(case when dynamic_score > 10 and dynamic_score <= 15 then 1 else 0 end) as bucket_10_15,
+        sum(case when dynamic_score > 15 and dynamic_score <= 20 then 1 else 0 end) as bucket_15_20,
+        sum(case when dynamic_score > 20 and dynamic_score <= 25 then 1 else 0 end) as bucket_20_25,
+        sum(case when dynamic_score > 25 and dynamic_score <= 30 then 1 else 0 end) as bucket_25_30,
+        sum(case when dynamic_score > 30 and dynamic_score <= 35 then 1 else 0 end) as bucket_30_35,
+        sum(case when dynamic_score > 35 then 1 else 0 end) as bucket_35_plus
+      from knowledge_items
+      where status = 'active'
+    `,
+  );
+  const vibeRecordsByDayRows = dailyRows(
+    sqliteAll<Record<string, unknown>>(
+      sqlite,
+      `
+        select date(created_at) as day, count(*) as records
+        from vibe_memories
+        where date(created_at) >= date('now', ?)
+        group by date(created_at)
+        order by day asc
+      `,
+      `-${OVERVIEW_DAY_RANGE - 1} days`,
+    ),
+    (day) => ({ day, records: 0 }),
+  );
+  const originKindRows = sqliteAll<{ origin_kind: string; count: number }>(
+    sqlite,
+    `
+      select origin_kind, count(distinct knowledge_id) as count
+      from knowledge_origin_links
+      group by origin_kind
+    `,
+  );
+
+  const knowledgeTotal = toNumber(knowledgeSummaryRow.knowledge_total);
+  const sourceEvidenceLinkedKnowledge = toNumber(
+    knowledgeSummaryRow.source_evidence_linked_knowledge,
+  );
+  const originLinkedKnowledge = toNumber(knowledgeSummaryRow.origin_linked_knowledge);
+  const provenanceTraceableKnowledge = toNumber(knowledgeSummaryRow.provenance_traceable_knowledge);
+  const originLinksByKind: Record<string, number> = {
+    vibe_memory: 0,
+    agent_candidate: 0,
+    landscape_review_item: 0,
+  };
+  for (const row of originKindRows) originLinksByKind[row.origin_kind] = toNumber(row.count);
+
+  const communityGraph = await buildGraphSnapshot({
+    limit: Math.max(1, knowledgeTotal),
+    status: "all",
+    view: "community",
+    relationAxes: ["session", "project", "source"],
+  });
+  const communitySourceCoverage = buildCommunitySourceCoverage(communityGraph.communities);
+
+  return overviewKnowledgeAssetsDomainSchema.parse({
+    checkedAt: checkedAt(),
+    kpis: {
+      knowledgeTotal,
+      activeKnowledge: toNumber(knowledgeSummaryRow.active_knowledge),
+      draftKnowledge: toNumber(knowledgeSummaryRow.draft_knowledge),
+      deprecatedKnowledge: toNumber(knowledgeSummaryRow.deprecated_knowledge),
+      rules: toNumber(knowledgeSummaryRow.rules),
+      procedures: toNumber(knowledgeSummaryRow.procedures),
+      embeddedKnowledge: toNumber(knowledgeSummaryRow.embedded_knowledge),
+      zeroUseActiveKnowledge: toNumber(knowledgeSummaryRow.zero_use_active_knowledge),
+      wikiPages: await countWikiPages(),
+      indexedSources: toNumber(sourceSummaryRow.indexed_sources),
+      sourceFragments: toNumber(sourceSummaryRow.source_fragments),
+      sourceLinks: toNumber(sourceSummaryRow.source_links),
+      linkedKnowledge: sourceEvidenceLinkedKnowledge,
+      unlinkedKnowledge: Math.max(0, knowledgeTotal - sourceEvidenceLinkedKnowledge),
+      sourceEvidenceLinkedKnowledge,
+      sourceEvidenceUnlinkedKnowledge: Math.max(0, knowledgeTotal - sourceEvidenceLinkedKnowledge),
+      originLinkedKnowledge,
+      originUnlinkedKnowledge: Math.max(0, knowledgeTotal - originLinkedKnowledge),
+      provenanceTraceableKnowledge,
+      provenanceUntraceableKnowledge: Math.max(0, knowledgeTotal - provenanceTraceableKnowledge),
+      originLinksByKind,
+      ...communitySourceCoverage,
+      vibeRecords: toNumber(vibeSummaryRow.vibe_records),
+      vibeSessions: toNumber(vibeSummaryRow.vibe_sessions),
+      vibeRecordsWithDiffs: toNumber(vibeSummaryRow.vibe_records_with_diffs),
+      agentDiffEntries: toNumber(vibeSummaryRow.agent_diff_entries),
+      graphNodes: communityGraph.stats.visibleKnowledgeCount,
+      graphEdges: communityGraph.stats.relationEdgeCount,
+      graphEmbedded: communityGraph.stats.embeddedKnowledgeCount,
+      graphSessionEdges: communityGraph.stats.sessionEdgeCount,
+      graphProjectEdges: communityGraph.stats.projectEdgeCount,
+      graphSourceEdges: communityGraph.stats.sourceEdgeCount,
+    },
+    charts: {
+      knowledgeByStatusType: buildKnowledgeStatusTypeChart(knowledgeByStatusTypeRows),
+      dynamicScoreBuckets: [
+        { bucket: "0", count: toNumber(dynamicScoreBucketRow.bucket_0) },
+        { bucket: "0-1", count: toNumber(dynamicScoreBucketRow.bucket_0_1) },
+        { bucket: "1-5", count: toNumber(dynamicScoreBucketRow.bucket_1_5) },
+        { bucket: "5-10", count: toNumber(dynamicScoreBucketRow.bucket_5_10) },
+        { bucket: "10-15", count: toNumber(dynamicScoreBucketRow.bucket_10_15) },
+        { bucket: "15-20", count: toNumber(dynamicScoreBucketRow.bucket_15_20) },
+        { bucket: "20-25", count: toNumber(dynamicScoreBucketRow.bucket_20_25) },
+        { bucket: "25-30", count: toNumber(dynamicScoreBucketRow.bucket_25_30) },
+        { bucket: "30-35", count: toNumber(dynamicScoreBucketRow.bucket_30_35) },
+        { bucket: "35+", count: toNumber(dynamicScoreBucketRow.bucket_35_plus) },
+      ],
+      vibeRecordsByDay: vibeRecordsByDayRows.map((row) => ({
+        day: String(row.day ?? ""),
+        records: toNumber(row.records),
+      })),
+      sourceCoverage: [
+        { label: "linked", count: sourceEvidenceLinkedKnowledge },
+        { label: "unlinked", count: Math.max(0, knowledgeTotal - sourceEvidenceLinkedKnowledge) },
+      ],
+      communitySourceCoverage: [
+        { label: "covered", count: communitySourceCoverage.sourceCoveredCommunities },
+        { label: "thin", count: communitySourceCoverage.sourceThinCommunities },
+        { label: "no-source", count: communitySourceCoverage.sourceMissingCommunities },
+      ],
+    },
+  });
+}
+
+async function fetchOverviewSystemQualityDomainForSqlite(): Promise<OverviewSystemQualityDomain> {
+  await ensureRuntimeSettingsLoaded();
+  const sqlite = await getSqliteCoreDatabase();
+  const compileSummaryRow = sqliteGet<Record<string, unknown>>(
+    sqlite,
+    `
+      select
+        count(*) as compile_runs,
+        sum(case when status = 'ok' then 1 else 0 end) as compile_ok_runs,
+        sum(case when status = 'degraded' then 1 else 0 end) as compile_degraded_runs,
+        sum(case when status = 'failed' then 1 else 0 end) as compile_failed_runs
+      from context_compile_runs
+    `,
+  );
+  const compileRunsByDayRows = dailyRows(
+    sqliteAll<Record<string, unknown>>(
+      sqlite,
+      `
+        select
+          date(created_at) as day,
+          sum(case when status = 'ok' then 1 else 0 end) as ok,
+          sum(case when status = 'degraded' then 1 else 0 end) as degraded,
+          sum(case when status = 'failed' then 1 else 0 end) as failed,
+          avg(duration_ms) as avg_duration_ms
+        from context_compile_runs
+        where date(created_at) >= date('now', ?)
+        group by date(created_at)
+        order by day asc
+      `,
+      `-${OVERVIEW_DAY_RANGE - 1} days`,
+    ),
+    (day) => ({ day, ok: 0, degraded: 0, failed: 0, avg_duration_ms: null }),
+  );
+  const searchProviderStateRow = sqliteGet<{ metadata?: string }>(
+    sqlite,
+    "select metadata from sync_states where id = 'distillation_search_providers' limit 1",
+  );
+  const compileRunHealthResult = await inspectCompileRuns({
+    windowSize: 20,
+    freshnessThresholdMinutes: groupedConfig.doctor.freshnessThresholdMinutes,
+    degradedRateThreshold: groupedConfig.doctor.degradedRateThreshold,
+    compileRunsTableAvailable: true,
+  });
+  const compileEvalStatsRow = sqliteGet<Record<string, unknown>>(
+    sqlite,
+    `
+      select
+        count(distinct run_id) as evaluated_run_count,
+        count(*) as evaluation_count,
+        round(avg(score), 1) as average_avg,
+        round(avg(relevance), 1) as relevance_avg,
+        round(avg(actionability), 1) as actionability_avg,
+        round(avg(coverage), 1) as coverage_avg,
+        round(avg(clarity), 1) as clarity_avg,
+        round(avg(specificity), 1) as specificity_avg
+      from context_compile_evals
+    `,
+  );
+  const productValueStatsRow = sqliteGet<Record<string, unknown>>(
+    sqlite,
+    `
+      with compile_run_reuse as (
+        select
+          r.id,
+          count(distinct case when cpi.item_id is not null then cpi.item_id end)
+            as pack_item_count,
+          count(distinct case when cct.selected = 1 then cct.item_id end)
+            as selected_trace_count
+        from context_compile_runs r
+        left join context_pack_items cpi on cpi.run_id = r.id
+        left join context_compile_candidate_traces cct on cct.run_id = r.id
+        group by r.id
+      )
+      select
+        (select count(*) from context_compile_runs) as compile_run_count,
+        (select count(distinct run_id) from context_compile_evals) as evaluated_compile_run_count,
+        (select count(*) from context_compile_evals) as compile_evaluation_count,
+        (select count(*) from context_compile_evals where outcome in ('useful', 'partial'))
+          as accepted_compile_evaluation_count,
+        (select count(*) from compile_run_reuse where pack_item_count > 0 or selected_trace_count > 0)
+          as reused_compile_run_count,
+        (select count(*) from context_decision_runs) as decision_run_count,
+        ((select count(*) from context_decision_human_feedback) +
+          (select count(*) from context_decision_feedback)) as decision_feedback_count,
+        ((select count(*) from context_decision_human_feedback) +
+          (select count(*) from context_decision_feedback where outcome <> 'still_unknown'))
+          as known_decision_feedback_count,
+        ((select count(*) from context_decision_human_feedback where value = 'good') +
+          (select count(*) from context_decision_feedback where outcome = 'success'))
+          as successful_decision_feedback_count,
+        ((select count(*) from context_decision_human_feedback where value = 'bad') +
+          (select count(*) from context_decision_feedback
+           where outcome in ('failed', 'discarded_pr', 'user_overrode', 'regression_found')))
+          as bad_decision_feedback_count,
+        ((select count(*) from context_decision_runs
+          where status = 'completed'
+            and decision in ('revise_and_execute', 'rollback', 'discard', 'reject')) +
+          (select count(distinct decision_run_id) from context_decision_feedback_effects
+           where status = 'applied')) as prevented_rework_signal_count,
+        (select count(*) from context_decision_feedback_effects where status = 'applied')
+          as applied_feedback_effect_count
+    `,
+  );
+
+  return overviewSystemQualityDomainSchema.parse({
+    checkedAt: checkedAt(),
+    kpis: {
+      compileRuns: toNumber(compileSummaryRow.compile_runs),
+      compileOkRuns: toNumber(compileSummaryRow.compile_ok_runs),
+      compileDegradedRuns: toNumber(compileSummaryRow.compile_degraded_runs),
+      compileFailedRuns: toNumber(compileSummaryRow.compile_failed_runs),
+    },
+    compileRunHealth: compileRunHealthResult.runs,
+    compileEvalStats: buildCompileEvalStats(compileEvalStatsRow),
+    productValueStats: buildProductValueStats(productValueStatsRow),
+    charts: {
+      compileRunsByDay: compileRunsByDayRows.map((row) => ({
+        day: String(row.day ?? ""),
+        ok: toNumber(row.ok),
+        degraded: toNumber(row.degraded),
+        failed: toNumber(row.failed),
+        avgDurationMs: toNullableNumber(row.avg_duration_ms),
+      })),
+    },
+    searchApiStatus: normalizeSearchApiStatus(parseJsonValue(searchProviderStateRow.metadata)),
+  });
+}
+
+async function fetchOverviewLlmResourcesDomainForSqlite(): Promise<OverviewLlmResourcesDomain> {
+  await ensureRuntimeSettingsLoaded();
+  const sqlite = await getSqliteCoreDatabase();
+  const windowModifier = `-${LLM_KPI_DAY_RANGE - 1} days`;
+  const overviewWindowModifier = `-${OVERVIEW_DAY_RANGE - 1} days`;
+  const llmUsageKpiRow = sqliteGet<Record<string, unknown>>(
+    sqlite,
+    `
+      select
+        count(*) as total_calls_30d,
+        sum(case when usage_mode = 'measured' then 1 else 0 end) as measured_calls_30d,
+        sum(case when usage_mode = 'estimated' then 1 else 0 end) as estimated_calls_30d,
+        coalesce(sum(case when provider = 'local-llm' then prompt_tokens + completion_tokens else 0 end), 0)
+          as local_tokens_total_30d,
+        coalesce(sum(case when provider = 'local-llm' then prompt_tokens else 0 end), 0)
+          as local_prompt_tokens_30d,
+        coalesce(sum(case when provider = 'local-llm' then completion_tokens else 0 end), 0)
+          as local_completion_tokens_30d,
+        coalesce(sum(case when provider <> 'local-llm' then prompt_tokens + completion_tokens else 0 end), 0)
+          as cloud_tokens_total_30d,
+        coalesce(sum(case when provider <> 'local-llm' then prompt_tokens else 0 end), 0)
+          as cloud_prompt_tokens_30d,
+        coalesce(sum(case when provider <> 'local-llm' then completion_tokens else 0 end), 0)
+          as cloud_completion_tokens_30d,
+        coalesce(sum(case when usage_mode = 'measured' then prompt_tokens + completion_tokens else 0 end), 0)
+          as measured_tokens_total_30d,
+        coalesce(sum(case when usage_mode = 'estimated' then prompt_tokens + completion_tokens else 0 end), 0)
+          as estimated_tokens_total_30d,
+        coalesce(sum(reasoning_tokens), 0) as reasoning_tokens_total_30d,
+        coalesce(sum(case when provider <> 'local-llm' then cost_jpy else 0 end), 0)
+          as cloud_cost_jpy_total_30d
+      from llm_usage_logs
+      where date(created_at, '+9 hours') >= date('now', '+9 hours', ?)
+    `,
+    windowModifier,
+  );
+  const cloudModelRow = sqliteGet<{ model?: string }>(
+    sqlite,
+    `
+      select model
+      from llm_usage_logs
+      where provider <> 'local-llm'
+        and date(created_at, '+9 hours') >= date('now', '+9 hours', ?)
+      group by model
+      order by count(*) desc, model asc
+      limit 1
+    `,
+    windowModifier,
+  );
+  const llmUsageByDayRows = dailyRows(
+    sqliteAll<Record<string, unknown>>(
+      sqlite,
+      `
+        select
+          date(created_at, '+9 hours') as day,
+          coalesce(sum(case when provider = 'local-llm' then prompt_tokens else 0 end), 0)
+            as local_prompt_tokens,
+          coalesce(sum(case when provider = 'local-llm' then completion_tokens else 0 end), 0)
+            as local_completion_tokens,
+          coalesce(sum(case when provider = 'local-llm' then reasoning_tokens else 0 end), 0)
+            as local_reasoning_tokens,
+          coalesce(sum(case when provider <> 'local-llm' then prompt_tokens else 0 end), 0)
+            as cloud_prompt_tokens,
+          coalesce(sum(case when provider <> 'local-llm' then completion_tokens else 0 end), 0)
+            as cloud_completion_tokens,
+          coalesce(sum(case when provider <> 'local-llm' then reasoning_tokens else 0 end), 0)
+            as cloud_reasoning_tokens,
+          coalesce(sum(prompt_tokens + completion_tokens), 0) as total_tokens,
+          coalesce(sum(case when usage_mode = 'measured' then prompt_tokens + completion_tokens else 0 end), 0)
+            as measured_tokens,
+          coalesce(sum(case when usage_mode = 'estimated' then prompt_tokens + completion_tokens else 0 end), 0)
+            as estimated_tokens,
+          sum(case when usage_mode = 'measured' then 1 else 0 end) as measured_calls,
+          sum(case when usage_mode = 'estimated' then 1 else 0 end) as estimated_calls,
+          coalesce(sum(case when provider <> 'local-llm' then cost_jpy else 0 end), 0) as cost_jpy
+        from llm_usage_logs
+        where date(created_at, '+9 hours') >= date('now', '+9 hours', ?)
+        group by date(created_at, '+9 hours')
+        order by day asc
+      `,
+      overviewWindowModifier,
+    ),
+    (day) => ({
+      day,
+      local_prompt_tokens: 0,
+      local_completion_tokens: 0,
+      local_reasoning_tokens: 0,
+      cloud_prompt_tokens: 0,
+      cloud_completion_tokens: 0,
+      cloud_reasoning_tokens: 0,
+      total_tokens: 0,
+      measured_tokens: 0,
+      estimated_tokens: 0,
+      measured_calls: 0,
+      estimated_calls: 0,
+      cost_jpy: 0,
+    }),
+  );
+  const llmUsageBySourceRows = sqliteAll<Record<string, unknown>>(
+    sqlite,
+    `
+      select
+        source,
+        count(*) as calls,
+        sum(case when usage_mode = 'measured' then 1 else 0 end) as measured_calls,
+        sum(case when usage_mode = 'estimated' then 1 else 0 end) as estimated_calls,
+        coalesce(sum(prompt_tokens), 0) as prompt_tokens,
+        coalesce(sum(completion_tokens), 0) as completion_tokens,
+        coalesce(sum(prompt_tokens + completion_tokens), 0) as total_tokens
+      from llm_usage_logs
+      where date(created_at, '+9 hours') >= date('now', '+9 hours', ?)
+      group by source
+      order by calls desc, source asc
+    `,
+    windowModifier,
+  );
+  const llmUsageTotalCalls = toNumber(llmUsageKpiRow.total_calls_30d);
+  const llmUsageMeasuredCalls = toNumber(llmUsageKpiRow.measured_calls_30d);
+  const cloudModel =
+    stringValue(cloudModelRow.model) ??
+    stringValue(groupedConfig.azureOpenAi.model) ??
+    "default-cloud";
+  const cloudCostRate = resolveCostRate(cloudModel);
+
+  return overviewLlmResourcesDomainSchema.parse({
+    checkedAt: checkedAt(),
+    llmUsage: {
+      kpis: {
+        totalCalls30d: llmUsageTotalCalls,
+        measuredCalls30d: llmUsageMeasuredCalls,
+        estimatedCalls30d: toNumber(llmUsageKpiRow.estimated_calls_30d),
+        localTokensTotal30d: toNumber(llmUsageKpiRow.local_tokens_total_30d),
+        localPromptTokens30d: toNumber(llmUsageKpiRow.local_prompt_tokens_30d),
+        localCompletionTokens30d: toNumber(llmUsageKpiRow.local_completion_tokens_30d),
+        cloudTokensTotal30d: toNumber(llmUsageKpiRow.cloud_tokens_total_30d),
+        cloudPromptTokens30d: toNumber(llmUsageKpiRow.cloud_prompt_tokens_30d),
+        cloudCompletionTokens30d: toNumber(llmUsageKpiRow.cloud_completion_tokens_30d),
+        measuredTokensTotal30d: toNumber(llmUsageKpiRow.measured_tokens_total_30d),
+        estimatedTokensTotal30d: toNumber(llmUsageKpiRow.estimated_tokens_total_30d),
+        measuredCoveragePercent30d:
+          llmUsageTotalCalls > 0
+            ? Number(((llmUsageMeasuredCalls / llmUsageTotalCalls) * 100).toFixed(1))
+            : 0,
+        reasoningTokensTotal30d: toNumber(llmUsageKpiRow.reasoning_tokens_total_30d),
+        cloudCostJpyTotal30d: toNumber(llmUsageKpiRow.cloud_cost_jpy_total_30d),
+        cloudModel,
+        cloudInputCostJpyPerMTokens: cloudCostRate.inputJpyPerM,
+        cloudOutputCostJpyPerMTokens: cloudCostRate.outputJpyPerM,
+      },
+      daily: llmUsageByDayRows.map((row) => ({
+        day: String(row.day ?? ""),
+        localPromptTokens: toNumber(row.local_prompt_tokens),
+        localCompletionTokens: toNumber(row.local_completion_tokens),
+        localReasoningTokens: toNumber(row.local_reasoning_tokens),
+        cloudPromptTokens: toNumber(row.cloud_prompt_tokens),
+        cloudCompletionTokens: toNumber(row.cloud_completion_tokens),
+        cloudReasoningTokens: toNumber(row.cloud_reasoning_tokens),
+        totalTokens: toNumber(row.total_tokens),
+        measuredTokens: toNumber(row.measured_tokens),
+        estimatedTokens: toNumber(row.estimated_tokens),
+        measuredCalls: toNumber(row.measured_calls),
+        estimatedCalls: toNumber(row.estimated_calls),
+        costJpy: toNumber(row.cost_jpy),
+      })),
+      bySource: llmUsageBySourceRows.map((row) => ({
+        source: String(row.source ?? "unknown"),
+        calls: toNumber(row.calls),
+        measuredCalls: toNumber(row.measured_calls),
+        estimatedCalls: toNumber(row.estimated_calls),
+        promptTokens: toNumber(row.prompt_tokens),
+        completionTokens: toNumber(row.completion_tokens),
+        totalTokens: toNumber(row.total_tokens),
+      })),
+    },
+  });
+}
+
+function landscapeSummaryFromSnapshots(
+  snapshotPayload: unknown,
+  replayPayload: unknown,
+): OverviewLandscapeHealthDomain["landscape"] | null {
+  const snapshot = snapshotPayload as {
+    stats?: Record<string, unknown>;
+    risks?: unknown[];
+  };
+  const replay = replayPayload as {
+    generatedAt?: unknown;
+    comparedRunCount?: unknown;
+    averageOverlapRate?: unknown;
+    retainedItemCount?: unknown;
+    missingFromCurrentItemCount?: unknown;
+    newlyRetrievedItemCount?: unknown;
+    usedBaselineLostItemCount?: unknown;
+    currentNoMatchRunCount?: unknown;
+    scoreTuning?: Record<string, unknown>;
+    promotionGateSummary?: Record<string, unknown>;
+  };
+  if (!snapshot?.stats || !replay) return null;
+  return {
+    status: "ok",
+    windowDays: 30,
+    generatedAt: stringValue(replay.generatedAt) ?? checkedAt(),
+    snapshot: {
+      totalCommunities: toNumber(snapshot.stats.totalCommunities),
+      strongAttractorCount: toNumber(snapshot.stats.strongAttractorCount),
+      usefulAttractorCount: toNumber(snapshot.stats.usefulAttractorCount),
+      negativeCandidateCount: toNumber(snapshot.stats.negativeCandidateCount),
+      overSelectedNotUsedCount: toNumber(snapshot.stats.overSelectedNotUsedCount),
+      deadZoneReachabilityCount: toNumber(snapshot.stats.deadZoneReachabilityCount),
+      deadZoneStaleCount: toNumber(snapshot.stats.deadZoneStaleCount),
+      feedbackInsufficientCount: toNumber(snapshot.stats.insufficientFeedbackCommunities),
+      topRiskCount: Array.isArray(snapshot.risks) ? snapshot.risks.length : 0,
+    },
+    replay: {
+      comparedRunCount: toNumber(replay.comparedRunCount),
+      averageOverlapRate: toNumber(replay.averageOverlapRate),
+      retainedItemCount: toNumber(replay.retainedItemCount),
+      missingFromCurrentItemCount: toNumber(replay.missingFromCurrentItemCount),
+      newlyRetrievedItemCount: toNumber(replay.newlyRetrievedItemCount),
+      usedBaselineLostItemCount: toNumber(replay.usedBaselineLostItemCount),
+      highChurnRunCount: toNumber(replay.scoreTuning?.highChurnRunCount),
+      currentNoMatchRunCount: toNumber(replay.currentNoMatchRunCount),
+      promotionGateMode:
+        replay.promotionGateSummary?.gateMode === "review_required" ? "review_required" : "normal",
+    },
+  };
+}
+
+async function buildReplaySummaryFromCurrentRetrieval(): Promise<
+  Extract<OverviewLandscapeHealthDomain["landscape"], { status: "ok" }>["replay"]
+> {
+  const replay = await buildLandscapeReplayComparison({
+    windowDays: LANDSCAPE_OVERVIEW_WINDOW_DAYS,
+    limit: LANDSCAPE_OVERVIEW_REPLAY_LIMIT,
+    runStatus: "all",
+    currentLimit: LANDSCAPE_OVERVIEW_CURRENT_LIMIT,
+    includeRuns: false,
+  });
+
+  return {
+    comparedRunCount: replay.comparedRunCount,
+    averageOverlapRate: replay.averageOverlapRate,
+    retainedItemCount: replay.retainedItemCount,
+    missingFromCurrentItemCount: replay.missingFromCurrentItemCount,
+    newlyRetrievedItemCount: replay.newlyRetrievedItemCount,
+    usedBaselineLostItemCount: replay.usedBaselineLostItemCount,
+    highChurnRunCount: replay.scoreTuning.highChurnRunCount,
+    currentNoMatchRunCount: replay.currentNoMatchRunCount,
+    promotionGateMode: replay.promotionGateSummary.gateMode,
+  };
+}
+
+async function buildLandscapeSummaryFromGraphHealth(): Promise<
+  OverviewLandscapeHealthDomain["landscape"] | null
+> {
+  const graph = await buildGraphSnapshot({
+    limit: 1000,
+    status: "active",
+    view: "community",
+    relationAxes: ["session", "project", "source"],
+    communityDisplay: "detail",
+  });
+  const communities: GraphCommunitySummary[] = graph.communities;
+  if (communities.length === 0) return null;
+
+  const strongAttractorCount = communities.filter(
+    (community) =>
+      community.compileSelectCount >= 3 &&
+      !community.health.dead &&
+      !community.health.stale &&
+      !community.health.thinEvidence,
+  ).length;
+  const usefulAttractorCount = communities.filter(
+    (community) =>
+      community.compileSelectCount > 0 &&
+      community.compileSelectCount < 3 &&
+      !community.health.dead &&
+      !community.health.stale,
+  ).length;
+  const deadZoneReachabilityCount = communities.filter((community) => community.health.dead).length;
+  const deadZoneStaleCount = communities.filter((community) => community.health.stale).length;
+  const feedbackInsufficientCount = communities.filter(
+    (community) => community.health.thinEvidence,
+  ).length;
+  const replay = await buildReplaySummaryFromCurrentRetrieval();
+
+  return {
+    status: "ok",
+    windowDays: 30,
+    generatedAt: checkedAt(),
+    snapshot: {
+      totalCommunities: communities.length,
+      strongAttractorCount,
+      usefulAttractorCount,
+      negativeCandidateCount: 0,
+      overSelectedNotUsedCount: 0,
+      deadZoneReachabilityCount,
+      deadZoneStaleCount,
+      feedbackInsufficientCount,
+      topRiskCount: deadZoneReachabilityCount + deadZoneStaleCount + feedbackInsufficientCount,
+    },
+    replay,
+  };
+}
+
+async function fetchOverviewLandscapeHealthDomainForSqlite(): Promise<OverviewLandscapeHealthDomain> {
+  await ensureRuntimeSettingsLoaded();
+  const sqlite = await getSqliteCoreDatabase();
+  const snapshotRow = sqliteGet<{ payload?: string }>(
+    sqlite,
+    `
+      select payload
+      from landscape_snapshots
+      where snapshot_type = 'landscape_snapshot'
+        and status = 'ready'
+      order by generated_at desc, updated_at desc
+      limit 1
+    `,
+  );
+  const replayRow = sqliteGet<{ payload?: string }>(
+    sqlite,
+    `
+      select payload
+      from landscape_snapshots
+      where snapshot_type = 'landscape_replay_comparison'
+        and status = 'ready'
+      order by generated_at desc, updated_at desc
+      limit 1
+    `,
+  );
+  const landscape = landscapeSummaryFromSnapshots(
+    parseJsonValue(snapshotRow.payload),
+    parseJsonValue(replayRow.payload),
+  ) ??
+    (await buildLandscapeSummaryFromGraphHealth()) ?? {
+      status: "unavailable" as const,
+      windowDays: 30,
+      error:
+        "SQLite landscape summary has no ready landscape snapshot cache or graph health data yet.",
+    };
+
+  return overviewLandscapeHealthDomainSchema.parse({
+    checkedAt: checkedAt(),
+    landscape,
   });
 }
 
@@ -723,6 +1448,13 @@ export async function fetchOverviewLandscapeHealthDomainForApi(): Promise<Overvi
 export async function fetchOverviewDomainForApi(
   domain: OverviewDomainName,
 ): Promise<OverviewDomainPayload> {
+  if (isSqliteBackend()) {
+    if (domain === "knowledge-assets") return fetchOverviewKnowledgeAssetsDomainForSqlite();
+    if (domain === "landscape-health") return fetchOverviewLandscapeHealthDomainForSqlite();
+    if (domain === "system-quality") return fetchOverviewSystemQualityDomainForSqlite();
+    return fetchOverviewLlmResourcesDomainForSqlite();
+  }
+
   if (domain === "knowledge-assets") return fetchOverviewKnowledgeAssetsDomainForApi();
   if (domain === "landscape-health") return fetchOverviewLandscapeHealthDomainForApi();
   if (domain === "system-quality") return fetchOverviewSystemQualityDomainForApi();
@@ -730,6 +1462,37 @@ export async function fetchOverviewDomainForApi(
 }
 
 export async function fetchOverviewDashboardForApi(): Promise<OverviewDashboard> {
+  if (isSqliteBackend()) {
+    const [knowledgeAssets, landscapeHealth, systemQuality, llmResources] = await Promise.all([
+      fetchOverviewKnowledgeAssetsDomainForSqlite(),
+      fetchOverviewLandscapeHealthDomainForSqlite(),
+      fetchOverviewSystemQualityDomainForSqlite(),
+      fetchOverviewLlmResourcesDomainForSqlite(),
+    ]);
+
+    return overviewDashboardSchema.parse({
+      checkedAt: latestCheckedAt([
+        knowledgeAssets.checkedAt,
+        landscapeHealth.checkedAt,
+        systemQuality.checkedAt,
+        llmResources.checkedAt,
+      ]),
+      kpis: {
+        ...knowledgeAssets.kpis,
+        ...systemQuality.kpis,
+      },
+      charts: {
+        ...knowledgeAssets.charts,
+        ...systemQuality.charts,
+      },
+      llmUsage: llmResources.llmUsage,
+      searchApiStatus: systemQuality.searchApiStatus,
+      compileEvalStats: systemQuality.compileEvalStats,
+      productValueStats: systemQuality.productValueStats,
+      landscape: landscapeHealth.landscape,
+    });
+  }
+
   const [knowledgeAssets, landscapeHealth, systemQuality, llmResources] = await Promise.all([
     fetchOverviewKnowledgeAssetsDomainForApi(),
     fetchOverviewLandscapeHealthDomainForApi(),

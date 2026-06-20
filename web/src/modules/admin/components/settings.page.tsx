@@ -16,7 +16,6 @@ import { Link, useRouterState } from "@tanstack/react-router";
 import { ArrowDown, ArrowUp, Plus, RotateCcw, Save, Stethoscope, Trash2 } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import {
-  type CodexAuthTokenInfo,
   type RuntimeProviderHealth,
   type RuntimeProviderName,
   type RuntimeProviderSetting,
@@ -46,13 +45,11 @@ type SettingsTabPath =
   | "embedding"
   | "advanced";
 
-type SecretDraftState = Record<RuntimeSecretKey, { value: string; clear: boolean }>;
+type SecretDraftState = Partial<Record<RuntimeSecretKey, { value: string; clear: boolean }>>;
 
-const azureOpenAiSecretKeys: RuntimeSecretKey[] = [
-  "azureOpenAiApiKey",
-  "azureOpenAiApiKey2",
-  "azureOpenAiApiKey3",
-];
+function azureOpenAiSecretKey(index: number): RuntimeSecretKey {
+  return index === 0 ? "azureOpenAiApiKey" : (`azureOpenAiApiKey${index + 1}` as RuntimeSecretKey);
+}
 
 function emptyRuntimeSecretStatus(): RuntimeSecretStatus {
   return {
@@ -141,32 +138,14 @@ function patchFallbackSlot(
   return normalizeFallbackProviders(nextSlots);
 }
 
-const azureDeploymentSlotOptions = [1, 2, 3] as const;
-const localLlmMaxModels = 10;
-
 function normalizeAzureDeploymentSlots(values: number[] | undefined): number[] {
   if (!values || values.length === 0) return [];
   const deduped = new Set<number>();
   for (const value of values) {
-    if (!Number.isInteger(value) || value < 1 || value > 3) continue;
+    if (!Number.isInteger(value) || value < 1) continue;
     deduped.add(value);
   }
   return [...deduped];
-}
-
-function patchAzureDeploymentSlot(
-  values: number[] | undefined,
-  slot: number,
-  enabled: boolean,
-): number[] | undefined {
-  const current = new Set(normalizeAzureDeploymentSlots(values));
-  if (enabled) {
-    current.add(slot);
-  } else {
-    current.delete(slot);
-  }
-  const next = [...current].sort((left, right) => left - right);
-  return next.length > 0 ? next : undefined;
 }
 
 function getConfiguredModelByProvider(
@@ -194,35 +173,208 @@ function resolveConfiguredRouteModel(
   return model ? model : undefined;
 }
 
-function localLlmRouteModelOptions(settings: RuntimeSettingsEditable): string[] {
-  return [
-    ...new Set(
-      settings.providers["local-llm"].models
-        .map((item) => item.model.trim())
-        .filter((item): item is string => Boolean(item)),
-    ),
-  ];
+type LocalLlmRouteOption = {
+  value: string;
+  label: string;
+  model: string;
+  apiBaseUrl: string;
+  apiPath: string;
+};
+
+type AzureOpenAiRouteOption = {
+  value: string;
+  label: string;
+  slot: number;
+  model: string;
+  apiBaseUrl: string;
+};
+
+function azureRouteOptionLabel(
+  deployment: RuntimeSettingsEditable["providers"]["azure-openai"]["deployments"][number],
+  index: number,
+): string {
+  const name = deployment.name.trim() || `Deployment ${index + 1}`;
+  const model = deployment.model.trim();
+  const endpoint = deployment.apiBaseUrl.trim();
+  return [name, model && model !== name ? model : "", endpoint].filter(Boolean).join(" / ");
 }
 
-function localLlmModelOptionLabel(
+function azureOpenAiRouteOptions(settings: RuntimeSettingsEditable): AzureOpenAiRouteOption[] {
+  return settings.providers["azure-openai"].deployments
+    .map((deployment, index) => ({
+      value: String(index + 1),
+      label: azureRouteOptionLabel(deployment, index),
+      slot: index + 1,
+      model: deployment.model.trim(),
+      apiBaseUrl: deployment.apiBaseUrl.trim().replace(/\/+$/, ""),
+    }))
+    .filter((option) => option.model && option.apiBaseUrl);
+}
+
+function normalizeSelectedAzureRouteValue(
+  settings: RuntimeSettingsEditable,
+  slots: number[] | undefined,
+): string {
+  const options = azureOpenAiRouteOptions(settings);
+  const firstSlot = normalizeAzureDeploymentSlots(slots)[0];
+  if (firstSlot && options.some((option) => option.slot === firstSlot)) return String(firstSlot);
+  return options[0]?.value ?? "";
+}
+
+function azureDeploymentSlotsFromValue(value: string): number[] | undefined {
+  const slot = Number(value);
+  return Number.isInteger(slot) && slot > 0 ? [slot] : undefined;
+}
+
+function selectedAzureRouteOption(
+  settings: RuntimeSettingsEditable,
+  slots: number[] | undefined,
+): AzureOpenAiRouteOption | undefined {
+  const selected = normalizeSelectedAzureRouteValue(settings, slots);
+  return azureOpenAiRouteOptions(settings).find((option) => option.value === selected);
+}
+
+function localLlmRouteTargetValue(
   model: RuntimeSettingsEditable["providers"]["local-llm"]["models"][number],
+): string {
+  return JSON.stringify({
+    apiBaseUrl: model.apiBaseUrl.trim().replace(/\/+$/, ""),
+    apiPath: model.apiPath.trim() || "/v1/chat/completions",
+    model: model.model.trim(),
+  });
+}
+
+function parseLocalLlmRouteTarget(
+  value: string | undefined,
+): { apiBaseUrl: string; apiPath?: string; model: string } | null {
+  if (!value?.trim()) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<{
+      apiBaseUrl: string;
+      apiPath: string;
+      model: string;
+    }>;
+    if (typeof parsed.apiBaseUrl === "string" && typeof parsed.model === "string") {
+      const apiBaseUrl = parsed.apiBaseUrl.trim().replace(/\/+$/, "");
+      const apiPath =
+        typeof parsed.apiPath === "string" && parsed.apiPath.trim()
+          ? parsed.apiPath.trim()
+          : undefined;
+      const model = parsed.model.trim();
+      if (apiBaseUrl && model) return { apiBaseUrl, apiPath, model };
+    }
+  } catch {
+    // Legacy route values are plain model names.
+  }
+  return null;
+}
+
+function localLlmRouteOptionLabel(
+  model: RuntimeSettingsEditable["providers"]["local-llm"]["models"][number],
+  duplicateModelName = false,
 ): string {
   const name = model.name.trim();
   const modelName = model.model.trim();
   const endpoint = model.apiBaseUrl.trim();
-  return [name || modelName, modelName && name !== modelName ? modelName : "", endpoint]
+  return [
+    name || modelName,
+    modelName && name !== modelName ? modelName : "",
+    duplicateModelName || endpoint ? endpoint : "",
+  ]
     .filter(Boolean)
     .join(" / ");
 }
 
+function localLlmRouteModelOptions(settings: RuntimeSettingsEditable): LocalLlmRouteOption[] {
+  const models = settings.providers["local-llm"].models
+    .filter((item) => item.model.trim())
+    .map((item) => ({
+      ...item,
+      apiBaseUrl: item.apiBaseUrl.trim().replace(/\/+$/, ""),
+      apiPath: item.apiPath.trim() || "/v1/chat/completions",
+      model: item.model.trim(),
+    }));
+  const modelCounts = new Map<string, number>();
+  for (const model of models) {
+    modelCounts.set(model.model, (modelCounts.get(model.model) ?? 0) + 1);
+  }
+  return models.map((model) => {
+    const duplicateModelName = (modelCounts.get(model.model) ?? 0) > 1;
+    return {
+      value: duplicateModelName ? localLlmRouteTargetValue(model) : model.model,
+      label: localLlmRouteOptionLabel(model, duplicateModelName),
+      model: model.model,
+      apiBaseUrl: model.apiBaseUrl,
+      apiPath: model.apiPath,
+    };
+  });
+}
+
 function resolveConfiguredLocalLlmModel(settings: RuntimeSettingsEditable): string | undefined {
   return (
-    localLlmRouteModelOptions(settings)[0] ?? resolveConfiguredRouteModel(settings, "local-llm")
+    localLlmRouteModelOptions(settings)[0]?.value ??
+    resolveConfiguredRouteModel(settings, "local-llm")
   );
+}
+
+function normalizeSelectedLocalLlmRouteValue(
+  settings: RuntimeSettingsEditable,
+  value: string | undefined,
+): string {
+  const options = localLlmRouteModelOptions(settings);
+  if (!value?.trim()) return options[0]?.value ?? "";
+  if (options.some((option) => option.value === value)) return value;
+  const target = parseLocalLlmRouteTarget(value);
+  if (target) {
+    return (
+      options.find(
+        (option) =>
+          option.apiBaseUrl === target.apiBaseUrl &&
+          (!target.apiPath || option.apiPath === target.apiPath) &&
+          option.model === target.model,
+      )?.value ??
+      options[0]?.value ??
+      ""
+    );
+  }
+  return options.find((option) => option.model === value.trim())?.value ?? options[0]?.value ?? "";
 }
 
 function providerNameOptionLabel(provider: RuntimeProviderSetting): string {
   return provider;
+}
+
+function localLlmRouteValueLabel(
+  settings: RuntimeSettingsEditable,
+  value: string | undefined,
+): string {
+  const normalized = normalizeSelectedLocalLlmRouteValue(settings, value);
+  return (
+    localLlmRouteModelOptions(settings).find((option) => option.value === normalized)?.label ??
+    value ??
+    "not configured"
+  );
+}
+
+function routeTargetSummary(
+  settings: RuntimeSettingsEditable,
+  route: RuntimeSettingsRoute,
+  provider: RuntimeProviderName | RuntimeProviderSetting,
+  primary: boolean,
+): string {
+  if (provider === "auto") return "auto provider order";
+  if (provider === "local-llm") {
+    return `local-llm / ${localLlmRouteValueLabel(
+      settings,
+      primary ? route.model : route.localLlmModel,
+    )}`;
+  }
+  if (provider === "azure-openai") {
+    const selected = selectedAzureRouteOption(settings, route.azureDeploymentSlots);
+    return `azure-openai / ${selected?.label ?? route.model ?? "not configured"}`;
+  }
+  const model = primary ? route.model : resolveConfiguredRouteModel(settings, provider);
+  return `${provider}${model ? ` / ${model}` : ""}`;
 }
 
 function resolveActiveSettingsTab(pathname: string): SettingsTabId {
@@ -260,16 +412,13 @@ function normalizeAzureDeploymentsForForm(
           model: provider.model,
         },
       ];
-  return [0, 1, 2].map((index) => {
-    const deployment = deployments[index];
-    return {
-      name: deployment?.name || (index === 0 ? "Primary" : `Deployment ${index + 1}`),
-      apiBaseUrl: deployment?.apiBaseUrl ?? (index === 0 ? provider.apiBaseUrl : ""),
-      apiPath: deployment?.apiPath || provider.apiPath || "/openai/deployments",
-      apiVersion: deployment?.apiVersion || provider.apiVersion || "2025-04-01-preview",
-      model: deployment?.model ?? (index === 0 ? provider.model : ""),
-    };
-  });
+  return deployments.map((deployment, index) => ({
+    name: deployment?.name || (index === 0 ? "Primary" : `Deployment ${index + 1}`),
+    apiBaseUrl: deployment?.apiBaseUrl ?? (index === 0 ? provider.apiBaseUrl : ""),
+    apiPath: deployment?.apiPath || provider.apiPath || "/openai/deployments",
+    apiVersion: deployment?.apiVersion || provider.apiVersion || "2025-04-01-preview",
+    model: deployment?.model ?? (index === 0 ? provider.model : ""),
+  }));
 }
 
 function syncAzureOpenAiProviderForDraft(
@@ -296,12 +445,14 @@ function normalizeLocalLlmModelsForForm(
         {
           name: "Primary",
           apiBaseUrl: provider.apiBaseUrl,
+          apiPath: provider.apiPath || "/v1/chat/completions",
           model: provider.model,
         },
       ];
-  return models.slice(0, localLlmMaxModels).map((model, index) => ({
+  return models.map((model, index) => ({
     name: model.name || (index === 0 ? "Primary" : `Local LLM ${index + 1}`),
     apiBaseUrl: model.apiBaseUrl ?? (index === 0 ? provider.apiBaseUrl : ""),
+    apiPath: model.apiPath || provider.apiPath || "/v1/chat/completions",
     model: model.model ?? (index === 0 ? provider.model : ""),
   }));
 }
@@ -310,11 +461,12 @@ function syncLocalLlmProviderForDraft(
   provider: RuntimeSettingsEditable["providers"]["local-llm"],
   models: RuntimeSettingsEditable["providers"]["local-llm"]["models"],
 ): RuntimeSettingsEditable["providers"]["local-llm"] {
-  const nextModels = models.slice(0, localLlmMaxModels);
+  const nextModels = models;
   const primary = nextModels[0];
   return {
     ...provider,
     apiBaseUrl: primary?.apiBaseUrl ?? provider.apiBaseUrl,
+    apiPath: primary?.apiPath ?? provider.apiPath,
     model: primary?.model ?? provider.model,
     models: nextModels,
   };
@@ -323,26 +475,14 @@ function syncLocalLlmProviderForDraft(
 function normalizeLocalLlmModelsForSave(
   provider: RuntimeSettingsEditable["providers"]["local-llm"],
 ): RuntimeSettingsEditable["providers"]["local-llm"]["models"] {
-  const primary = provider.models[0] ?? {
-    name: "Primary",
-    apiBaseUrl: provider.apiBaseUrl,
-    model: provider.model,
-  };
-  const models = [
-    {
-      name: primary.name?.trim() || "Primary",
-      apiBaseUrl: primary.apiBaseUrl.trim(),
-      model: primary.model.trim(),
-    },
-    ...provider.models.slice(1).map((model, index) => ({
-      name: model.name.trim() || `Local LLM ${index + 2}`,
+  return provider.models
+    .map((model, index) => ({
+      name: model.name.trim() || (index === 0 ? "Primary" : `Local LLM ${index + 1}`),
       apiBaseUrl: model.apiBaseUrl.trim(),
+      apiPath: model.apiPath.trim() || "/v1/chat/completions",
       model: model.model.trim(),
-    })),
-  ];
-  return models
-    .slice(0, localLlmMaxModels)
-    .filter((model, index) => index === 0 || (model.apiBaseUrl && model.model));
+    }))
+    .filter((model) => model.apiBaseUrl && model.model);
 }
 
 function prepareSettingsForSave(settings: RuntimeSettingsEditable): RuntimeSettingsEditable {
@@ -362,6 +502,7 @@ function buildSecretPayload(
   const result: Partial<Record<RuntimeSecretKey, { value?: string; clear?: boolean }>> = {};
   for (const key of Object.keys(secretDrafts) as RuntimeSecretKey[]) {
     const item = secretDrafts[key];
+    if (!item) continue;
     const value = item.value.trim();
     if (item.clear) {
       result[key] = { clear: true };
@@ -404,6 +545,7 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
       "local-llm": {
         enabled: view.providers["local-llm"].enabled,
         apiBaseUrl: view.providers["local-llm"].apiBaseUrl,
+        apiPath: view.providers["local-llm"].apiPath,
         model: view.providers["local-llm"].model,
         models: normalizeLocalLlmModelsForForm(view.providers["local-llm"]),
       },
@@ -590,21 +732,39 @@ function RouteEditor({
   settings,
   route,
   onChange,
+  providerOptions = runtimeProviderOptions,
 }: {
   label: string;
   description: string;
   settings: RuntimeSettingsEditable;
   route: RuntimeSettingsRoute;
   onChange: (next: RuntimeSettingsRoute) => void;
+  providerOptions?: RuntimeProviderSetting[];
 }) {
   const fallbackSlots = toFallbackSlots(route.fallback);
-  const azureSlots = normalizeAzureDeploymentSlots(route.azureDeploymentSlots);
   const localModelOptions = localLlmRouteModelOptions(settings);
+  const azureModelOptions = azureOpenAiRouteOptions(settings);
   const usesLocalLlm = route.provider === "local-llm" || route.fallback.includes("local-llm");
+  const usesAzureOpenAi =
+    route.provider === "azure-openai" || route.fallback.includes("azure-openai");
   const selectedLocalLlmModel =
     route.provider === "local-llm"
-      ? (route.model ?? "")
-      : (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings) ?? "");
+      ? normalizeSelectedLocalLlmRouteValue(settings, route.model)
+      : normalizeSelectedLocalLlmRouteValue(
+          settings,
+          route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings),
+        );
+  const selectedAzureDeployment = normalizeSelectedAzureRouteValue(
+    settings,
+    route.azureDeploymentSlots,
+  );
+  const routeChain = [
+    { label: "Primary", value: routeTargetSummary(settings, route, route.provider, true) },
+    ...route.fallback.map((provider, index) => ({
+      label: `Fallback ${index + 1}`,
+      value: routeTargetSummary(settings, route, provider, false),
+    })),
+  ];
 
   return (
     <div className="settings-route-row">
@@ -619,18 +779,29 @@ function RouteEditor({
             value={route.provider}
             onChange={(event) => {
               const provider = event.target.value as RuntimeProviderSetting;
+              const azureOption = selectedAzureRouteOption(settings, route.azureDeploymentSlots);
               onChange({
                 ...route,
                 provider,
-                model: resolveConfiguredRouteModel(settings, provider),
+                model:
+                  provider === "azure-openai"
+                    ? (azureOption?.model ?? resolveConfiguredRouteModel(settings, provider))
+                    : resolveConfiguredRouteModel(settings, provider),
                 localLlmModel:
                   provider === "local-llm" || route.fallback.includes("local-llm")
                     ? (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings))
                     : undefined,
+                azureDeploymentSlots:
+                  provider === "azure-openai" || route.fallback.includes("azure-openai")
+                    ? (route.azureDeploymentSlots ??
+                      azureDeploymentSlotsFromValue(
+                        normalizeSelectedAzureRouteValue(settings, route.azureDeploymentSlots),
+                      ))
+                    : undefined,
               });
             }}
           >
-            {runtimeProviderOptions.map((provider) => (
+            {providerOptions.map((provider) => (
               <option key={provider} value={provider}>
                 {providerNameOptionLabel(provider)}
               </option>
@@ -663,13 +834,11 @@ function RouteEditor({
               {localModelOptions.length === 0 ? (
                 <option value="">not configured</option>
               ) : (
-                settings.providers["local-llm"].models
-                  .filter((model) => model.model.trim())
-                  .map((model) => (
-                    <option key={model.model} value={model.model}>
-                      {localLlmModelOptionLabel(model)}
-                    </option>
-                  ))
+                localModelOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))
               )}
             </Select>
           </label>
@@ -689,6 +858,7 @@ function RouteEditor({
                 0,
                 event.target.value as FallbackSelectValue,
               );
+              const azureOption = selectedAzureRouteOption(settings, route.azureDeploymentSlots);
               onChange({
                 ...route,
                 fallback,
@@ -696,6 +866,17 @@ function RouteEditor({
                   route.provider === "local-llm" || fallback.includes("local-llm")
                     ? (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings))
                     : undefined,
+                azureDeploymentSlots:
+                  route.provider === "azure-openai" || fallback.includes("azure-openai")
+                    ? (route.azureDeploymentSlots ??
+                      azureDeploymentSlotsFromValue(
+                        normalizeSelectedAzureRouteValue(settings, route.azureDeploymentSlots),
+                      ))
+                    : undefined,
+                model:
+                  route.provider === "azure-openai" && azureOption
+                    ? azureOption.model
+                    : route.model,
               });
             }}
           >
@@ -717,6 +898,7 @@ function RouteEditor({
                 1,
                 event.target.value as FallbackSelectValue,
               );
+              const azureOption = selectedAzureRouteOption(settings, route.azureDeploymentSlots);
               onChange({
                 ...route,
                 fallback,
@@ -724,6 +906,17 @@ function RouteEditor({
                   route.provider === "local-llm" || fallback.includes("local-llm")
                     ? (route.localLlmModel ?? resolveConfiguredLocalLlmModel(settings))
                     : undefined,
+                azureDeploymentSlots:
+                  route.provider === "azure-openai" || fallback.includes("azure-openai")
+                    ? (route.azureDeploymentSlots ??
+                      azureDeploymentSlotsFromValue(
+                        normalizeSelectedAzureRouteValue(settings, route.azureDeploymentSlots),
+                      ))
+                    : undefined,
+                model:
+                  route.provider === "azure-openai" && azureOption
+                    ? azureOption.model
+                    : route.model,
               });
             }}
           >
@@ -735,30 +928,43 @@ function RouteEditor({
             ))}
           </Select>
         </label>
-        <div className="settings-field">
-          <span>Azure Slots</span>
-          <div className="flex flex-wrap items-center gap-3 py-2">
-            {azureDeploymentSlotOptions.map((slot) => (
-              <label key={slot} className="settings-check">
-                <Checkbox
-                  checked={azureSlots.includes(slot)}
-                  onChange={(event) =>
-                    onChange({
-                      ...route,
-                      azureDeploymentSlots: patchAzureDeploymentSlot(
-                        route.azureDeploymentSlots,
-                        slot,
-                        event.target.checked,
-                      ),
-                    })
-                  }
-                />
-                #{slot}
-              </label>
-            ))}
-          </div>
-          <span className="text-xs text-muted-foreground">empty = all configured deployments</span>
-        </div>
+        {usesAzureOpenAi ? (
+          <label className="settings-field">
+            <span>Azure OpenAI API</span>
+            <Select
+              value={selectedAzureDeployment}
+              onChange={(event) => {
+                const option = azureModelOptions.find((item) => item.value === event.target.value);
+                onChange({
+                  ...route,
+                  azureDeploymentSlots: azureDeploymentSlotsFromValue(event.target.value),
+                  model:
+                    route.provider === "azure-openai"
+                      ? (option?.model ?? route.model)
+                      : route.model,
+                });
+              }}
+            >
+              {azureModelOptions.length === 0 ? (
+                <option value="">not configured</option>
+              ) : (
+                azureModelOptions.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))
+              )}
+            </Select>
+          </label>
+        ) : null}
+      </div>
+      <div className="settings-route-chain" aria-label={`${label} effective route`}>
+        {routeChain.map((item) => (
+          <span key={`${item.label}:${item.value}`} className="settings-route-chain-item">
+            <strong>{item.label}</strong>
+            {item.value}
+          </span>
+        ))}
       </div>
     </div>
   );
@@ -767,59 +973,6 @@ function RouteEditor({
 // ---------------------------------------------------------------------------
 // Codex Auth sub-components
 // ---------------------------------------------------------------------------
-
-function CodexTokenInfoPanel({ tokenInfo }: { tokenInfo: CodexAuthTokenInfo }) {
-  const expiresDate = tokenInfo.expiresAt ? new Date(tokenInfo.expiresAt) : null;
-  const formattedExpiry = expiresDate
-    ? expiresDate.toLocaleString(undefined, {
-        year: "numeric",
-        month: "short",
-        day: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-      })
-    : null;
-
-  return (
-    <div
-      className={`rounded-md border p-3 text-sm ${
-        tokenInfo.isExpired
-          ? "border-destructive/50 bg-destructive/5"
-          : "border-success/40 bg-success/5"
-      }`}
-    >
-      <div className="mb-1 flex items-center gap-2 font-semibold">
-        <span>{tokenInfo.isExpired ? "⚠️" : "✅"}</span>
-        <span>
-          {tokenInfo.isExpired
-            ? "Token Expired — Re-login Required"
-            : "Authenticated via ChatGPT OAuth"}
-        </span>
-      </div>
-      <div className="space-y-1 text-xs text-muted-foreground">
-        {tokenInfo.email && (
-          <div className="flex gap-2">
-            <span className="w-24 shrink-0">Account</span>
-            <span className="font-medium text-foreground">{tokenInfo.email}</span>
-          </div>
-        )}
-        <div className="flex gap-2">
-          <span className="w-24 shrink-0">Auth Mode</span>
-          <span className="font-mono">{tokenInfo.authMode}</span>
-        </div>
-        {formattedExpiry && (
-          <div className="flex gap-2">
-            <span className="w-24 shrink-0">Token Expiry</span>
-            <span className={tokenInfo.isExpired ? "text-destructive font-medium" : ""}>
-              {formattedExpiry}
-              {tokenInfo.isExpired ? " (expired)" : ""}
-            </span>
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
 
 function CodexActionGuide({
   recommendedAction,
@@ -1003,7 +1156,7 @@ export function SettingsPage() {
     () =>
       (Object.keys(secretDrafts) as RuntimeSecretKey[]).some((key) => {
         const item = secretDrafts[key];
-        return item.clear || item.value.trim().length > 0;
+        return Boolean(item?.clear || item?.value.trim().length);
       }),
     [secretDrafts],
   );
@@ -1157,7 +1310,7 @@ export function SettingsPage() {
   const markSecretReplace = (key: RuntimeSecretKey): void => {
     setSecretDrafts((current) => ({
       ...current,
-      [key]: { ...current[key], clear: false },
+      [key]: { value: current[key]?.value ?? "", clear: false },
     }));
   };
 
@@ -1165,37 +1318,45 @@ export function SettingsPage() {
     key: RuntimeSecretKey,
     label: string,
     status: RuntimeSecretStatus,
-  ) => (
-    <div className="settings-secret-row">
-      <div className="settings-secret-meta">
-        <strong>{label}</strong>
-        <div className="settings-secret-status">
-          <SecretStatusBadge status={status} />
-          <span>{status.maskedValue ?? "not configured"}</span>
-          <span>updated {formatDateTime(status.updatedAt)}</span>
+  ) => {
+    const draftSecret = secretDrafts[key] ?? { value: "", clear: false };
+    return (
+      <div className="settings-secret-row">
+        <div className="settings-secret-meta">
+          <strong>{label}</strong>
+          <div className="settings-secret-status">
+            <SecretStatusBadge status={status} />
+            <span>{status.maskedValue ?? "not configured"}</span>
+            <span>updated {formatDateTime(status.updatedAt)}</span>
+          </div>
+        </div>
+        <div className="settings-secret-inputs">
+          <Input
+            type="password"
+            aria-label={`${label} value`}
+            value={draftSecret.value}
+            placeholder="new value"
+            onChange={(event) => setSecretValue(key, event.target.value)}
+          />
+          <Button type="button" size="sm" variant="outline" onClick={() => markSecretReplace(key)}>
+            <Save size={14} />
+            Replace
+          </Button>
+          <Button
+            type="button"
+            size="sm"
+            variant="destructive"
+            onClick={() => markSecretClear(key)}
+          >
+            <Trash2 size={14} />
+            Clear
+          </Button>
+          {draftSecret.clear ? <Badge variant="destructive">pending clear</Badge> : null}
+          {draftSecret.value.trim() ? <Badge variant="warning">pending replace</Badge> : null}
         </div>
       </div>
-      <div className="settings-secret-inputs">
-        <Input
-          type="password"
-          aria-label={`${label} value`}
-          value={secretDrafts[key].value}
-          placeholder="new value"
-          onChange={(event) => setSecretValue(key, event.target.value)}
-        />
-        <Button type="button" size="sm" variant="outline" onClick={() => markSecretReplace(key)}>
-          <Save size={14} />
-          Replace
-        </Button>
-        <Button type="button" size="sm" variant="destructive" onClick={() => markSecretClear(key)}>
-          <Trash2 size={14} />
-          Clear
-        </Button>
-        {secretDrafts[key].clear ? <Badge variant="destructive">pending clear</Badge> : null}
-        {secretDrafts[key].value.trim() ? <Badge variant="warning">pending replace</Badge> : null}
-      </div>
-    </div>
-  );
+    );
+  };
 
   const moveSearchProvider = (provider: RuntimeSearchProvider, direction: -1 | 1): void => {
     patchDraft((current) => {
@@ -1243,22 +1404,707 @@ export function SettingsPage() {
     });
   };
 
-  const providerTitle = (provider: RuntimeProviderName): string => {
-    switch (provider) {
-      case "openai":
-        return "OpenAI";
-      case "azure-openai":
-        return "Azure OpenAI";
-      case "bedrock":
-        return "AWS Bedrock";
-      case "local-llm":
-        return "Local LLM";
-      case "codex":
-        return "Codex Auth";
-    }
-  };
-
   const settingsStatus: "ok" | "failed" = settingsQuery.isError || saveError ? "failed" : "ok";
+
+  const renderProviderEndpointsPanel = () => {
+    if (!draft) return null;
+
+    const updateAzureDeployment = (
+      index: number,
+      patch: Partial<RuntimeSettingsEditable["providers"]["azure-openai"]["deployments"][number]>,
+    ) =>
+      patchDraft((current) => {
+        const deployments = current.providers["azure-openai"].deployments.map(
+          (deployment, itemIndex) =>
+            itemIndex === index ? { ...deployment, ...patch } : deployment,
+        );
+        return {
+          ...current,
+          providers: {
+            ...current.providers,
+            "azure-openai": syncAzureOpenAiProviderForDraft(
+              current.providers["azure-openai"],
+              deployments,
+            ),
+          },
+        };
+      });
+
+    const updateLocalLlmModel = (
+      index: number,
+      patch: Partial<RuntimeSettingsEditable["providers"]["local-llm"]["models"][number]>,
+    ) =>
+      patchDraft((current) => {
+        const models = current.providers["local-llm"].models.map((model, itemIndex) =>
+          itemIndex === index ? { ...model, ...patch } : model,
+        );
+        return {
+          ...current,
+          providers: {
+            ...current.providers,
+            "local-llm": syncLocalLlmProviderForDraft(current.providers["local-llm"], models),
+          },
+        };
+      });
+
+    const addEndpoint = () =>
+      patchDraft((current) => {
+        const models = current.providers["local-llm"].models;
+        const nextIndex = models.length;
+        return {
+          ...current,
+          providers: {
+            ...current.providers,
+            "local-llm": syncLocalLlmProviderForDraft(current.providers["local-llm"], [
+              ...models,
+              {
+                name: `Local LLM ${nextIndex + 1}`,
+                apiBaseUrl: "",
+                apiPath: current.providers["local-llm"].apiPath || "/v1/chat/completions",
+                model: "",
+              },
+            ]),
+          },
+        };
+      });
+
+    const convertAzureEndpointToLocal = (index: number) =>
+      patchDraft((current) => {
+        const deployment = current.providers["azure-openai"].deployments[index];
+        if (!deployment) return current;
+        return {
+          ...current,
+          providers: {
+            ...current.providers,
+            "azure-openai": syncAzureOpenAiProviderForDraft(
+              current.providers["azure-openai"],
+              current.providers["azure-openai"].deployments.filter(
+                (_deployment, deploymentIndex) => deploymentIndex !== index,
+              ),
+            ),
+            "local-llm": syncLocalLlmProviderForDraft(current.providers["local-llm"], [
+              ...current.providers["local-llm"].models,
+              {
+                name:
+                  deployment.name ||
+                  `Local LLM ${current.providers["local-llm"].models.length + 1}`,
+                apiBaseUrl: deployment.apiBaseUrl,
+                apiPath: current.providers["local-llm"].apiPath || "/v1/chat/completions",
+                model: deployment.model,
+              },
+            ]),
+          },
+        };
+      });
+
+    const convertLocalEndpointToAzure = (index: number) =>
+      patchDraft((current) => {
+        const model = current.providers["local-llm"].models[index];
+        if (!model) return current;
+        return {
+          ...current,
+          providers: {
+            ...current.providers,
+            "local-llm": syncLocalLlmProviderForDraft(
+              current.providers["local-llm"],
+              current.providers["local-llm"].models.filter(
+                (_model, modelIndex) => modelIndex !== index,
+              ),
+            ),
+            "azure-openai": syncAzureOpenAiProviderForDraft(current.providers["azure-openai"], [
+              ...current.providers["azure-openai"].deployments,
+              {
+                name:
+                  model.name ||
+                  `Deployment ${current.providers["azure-openai"].deployments.length + 1}`,
+                apiBaseUrl: model.apiBaseUrl,
+                apiPath: current.providers["azure-openai"].apiPath || "/openai/deployments",
+                apiVersion: current.providers["azure-openai"].apiVersion || "2025-04-01-preview",
+                model: model.model,
+              },
+            ]),
+          },
+        };
+      });
+
+    return (
+      <section className="settings-provider-endpoints">
+        <div className="settings-provider-endpoints-header">
+          <div>
+            <h2>Provider Endpoints</h2>
+            <p>
+              LLM provider endpoints and credentials. Task Routing selects from these endpoints.
+            </p>
+          </div>
+          <div className="settings-provider-endpoints-actions">
+            <Button type="button" size="sm" variant="outline" onClick={addEndpoint}>
+              <Plus size={14} />
+              Add Endpoint
+            </Button>
+          </div>
+        </div>
+
+        <div className="settings-provider-endpoint-list">
+          <div className="settings-provider-endpoint-card">
+            <div className="settings-provider-endpoint-top">
+              <div className="settings-provider-endpoint-title">
+                <strong>OpenAI</strong>
+                <span>OpenAI</span>
+              </div>
+              <div className="settings-provider-actions">
+                <label className="settings-check">
+                  <Checkbox
+                    checked={draft.providers.openai.enabled}
+                    onChange={(event) =>
+                      patchDraft((current) => ({
+                        ...current,
+                        providers: {
+                          ...current.providers,
+                          openai: { ...current.providers.openai, enabled: event.target.checked },
+                        },
+                      }))
+                    }
+                  />
+                  Enabled
+                </label>
+                <ProviderHealthBadge health={providerHealth.openai} />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => providerTestMutation.mutate("openai")}
+                  disabled={providerTestMutation.isPending}
+                >
+                  <Stethoscope size={14} />
+                  Health
+                </Button>
+              </div>
+            </div>
+            <div className="settings-provider-endpoint-fields">
+              <label className="settings-field">
+                <span>Name</span>
+                <Input value="OpenAI" readOnly />
+              </label>
+              <label className="settings-field">
+                <span>Kind</span>
+                <Select value="openai" disabled>
+                  <option value="openai">OpenAI</option>
+                </Select>
+              </label>
+              <label className="settings-field">
+                <span>Endpoint</span>
+                <Input
+                  value={draft.providers.openai.apiBaseUrl}
+                  onChange={(event) =>
+                    patchDraft((current) => ({
+                      ...current,
+                      providers: {
+                        ...current.providers,
+                        openai: {
+                          ...current.providers.openai,
+                          apiBaseUrl: event.target.value,
+                        },
+                      },
+                    }))
+                  }
+                />
+              </label>
+              <label className="settings-field">
+                <span>Models</span>
+                <Input
+                  value={draft.providers.openai.model}
+                  onChange={(event) =>
+                    patchDraft((current) => ({
+                      ...current,
+                      providers: {
+                        ...current.providers,
+                        openai: { ...current.providers.openai, model: event.target.value },
+                      },
+                    }))
+                  }
+                />
+              </label>
+            </div>
+            {sourceView
+              ? renderSecretEditor(
+                  "openaiApiKey",
+                  "API Key",
+                  sourceView.providers.openai.apiKeySecret,
+                )
+              : null}
+          </div>
+
+          {draft.providers["azure-openai"].deployments.map((deployment, index) => {
+            const secretKey = azureOpenAiSecretKey(index);
+            const secretStatus =
+              secretKey && sourceView
+                ? (sourceView.providers["azure-openai"].apiKeySecrets[index] ??
+                  emptyRuntimeSecretStatus())
+                : null;
+            return (
+              // biome-ignore lint/suspicious/noArrayIndexKey: Endpoint rows are controlled inputs; value-derived keys remount rows while editing.
+              <div key={`azure-openai:${index}`} className="settings-provider-endpoint-card">
+                <div className="settings-provider-endpoint-top">
+                  <div className="settings-provider-endpoint-title">
+                    <strong>{deployment.name || `Deployment ${index + 1}`}</strong>
+                    <span>Azure OpenAI</span>
+                  </div>
+                  <div className="settings-provider-actions">
+                    <label className="settings-check">
+                      <Checkbox
+                        checked={draft.providers["azure-openai"].enabled}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            providers: {
+                              ...current.providers,
+                              "azure-openai": {
+                                ...current.providers["azure-openai"],
+                                enabled: event.target.checked,
+                              },
+                            },
+                          }))
+                        }
+                      />
+                      Enabled
+                    </label>
+                    <ProviderHealthBadge health={azureDeploymentHealth[index]} />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => azureDeploymentTestMutation.mutate(index)}
+                      disabled={azureDeploymentTestMutation.isPending}
+                    >
+                      <Stethoscope size={14} />
+                      Health
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        patchDraft((current) => ({
+                          ...current,
+                          providers: {
+                            ...current.providers,
+                            "azure-openai": syncAzureOpenAiProviderForDraft(
+                              current.providers["azure-openai"],
+                              current.providers["azure-openai"].deployments.filter(
+                                (_deployment, deploymentIndex) => deploymentIndex !== index,
+                              ),
+                            ),
+                          },
+                        }))
+                      }
+                    >
+                      <Trash2 size={14} />
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+                <div className="settings-provider-endpoint-fields">
+                  <label className="settings-field">
+                    <span>Name</span>
+                    <Input
+                      value={deployment.name}
+                      onChange={(event) =>
+                        updateAzureDeployment(index, { name: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>Kind</span>
+                    <Select
+                      value="azure-openai"
+                      onChange={(event) => {
+                        if (event.target.value === "local-llm") convertAzureEndpointToLocal(index);
+                      }}
+                    >
+                      <option value="azure-openai">Azure OpenAI</option>
+                      <option value="local-llm">Local LLM</option>
+                    </Select>
+                  </label>
+                  <label className="settings-field">
+                    <span>Endpoint</span>
+                    <Input
+                      value={deployment.apiBaseUrl}
+                      onChange={(event) =>
+                        updateAzureDeployment(index, { apiBaseUrl: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>API Version</span>
+                    <Input
+                      value={deployment.apiVersion}
+                      onChange={(event) =>
+                        updateAzureDeployment(index, { apiVersion: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>API Path</span>
+                    <Input
+                      value={deployment.apiPath}
+                      onChange={(event) =>
+                        updateAzureDeployment(index, { apiPath: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>Models</span>
+                    <Input
+                      value={deployment.model}
+                      onChange={(event) =>
+                        updateAzureDeployment(index, { model: event.target.value })
+                      }
+                    />
+                  </label>
+                </div>
+                {secretKey && secretStatus ? (
+                  renderSecretEditor(secretKey, `API Key ${index + 1}`, secretStatus)
+                ) : (
+                  <div className="settings-secret-row">
+                    <div className="settings-secret-meta">
+                      <strong>API Key</strong>
+                      <div className="settings-secret-status">
+                        <span>uses primary Azure OpenAI API key</span>
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {draft.providers["local-llm"].models.map((model, index) => {
+            const routeValue = localLlmRouteTargetValue(model);
+            return (
+              <div
+                // biome-ignore lint/suspicious/noArrayIndexKey: Endpoint rows are controlled inputs; value-derived keys remount rows while editing.
+                key={`local-llm:${index}`}
+                className="settings-provider-endpoint-card settings-local-llm-model"
+              >
+                <div className="settings-provider-endpoint-top">
+                  <div className="settings-provider-endpoint-title">
+                    <strong>{model.name || `Local LLM ${index + 1}`}</strong>
+                    <span>Local LLM</span>
+                  </div>
+                  <div className="settings-provider-actions">
+                    <label className="settings-check">
+                      <Checkbox
+                        checked={draft.providers["local-llm"].enabled}
+                        onChange={(event) =>
+                          patchDraft((current) => ({
+                            ...current,
+                            providers: {
+                              ...current.providers,
+                              "local-llm": {
+                                ...current.providers["local-llm"],
+                                enabled: event.target.checked,
+                              },
+                            },
+                          }))
+                        }
+                      />
+                      Enabled
+                    </label>
+                    <ProviderHealthBadge health={localLlmModelHealth[routeValue]} />
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() => localLlmModelTestMutation.mutate(routeValue)}
+                      disabled={!model.model.trim() || localLlmModelTestMutation.isPending}
+                    >
+                      <Stethoscope size={14} />
+                      Health
+                    </Button>
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="outline"
+                      onClick={() =>
+                        patchDraft((current) => ({
+                          ...current,
+                          providers: {
+                            ...current.providers,
+                            "local-llm": syncLocalLlmProviderForDraft(
+                              current.providers["local-llm"],
+                              current.providers["local-llm"].models.filter(
+                                (_model, modelIndex) => modelIndex !== index,
+                              ),
+                            ),
+                          },
+                        }))
+                      }
+                    >
+                      <Trash2 size={14} />
+                      Delete
+                    </Button>
+                  </div>
+                </div>
+                <div className="settings-provider-endpoint-fields">
+                  <label className="settings-field">
+                    <span>Name</span>
+                    <Input
+                      value={model.name}
+                      onChange={(event) => updateLocalLlmModel(index, { name: event.target.value })}
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>Kind</span>
+                    <Select
+                      value="local-llm"
+                      onChange={(event) => {
+                        if (event.target.value === "azure-openai")
+                          convertLocalEndpointToAzure(index);
+                      }}
+                    >
+                      <option value="azure-openai">Azure OpenAI</option>
+                      <option value="local-llm">Local LLM</option>
+                    </Select>
+                  </label>
+                  <label className="settings-field">
+                    <span>Endpoint</span>
+                    <Input
+                      value={model.apiBaseUrl}
+                      onChange={(event) =>
+                        updateLocalLlmModel(index, { apiBaseUrl: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>API Path</span>
+                    <Input
+                      value={model.apiPath}
+                      onChange={(event) =>
+                        updateLocalLlmModel(index, { apiPath: event.target.value })
+                      }
+                    />
+                  </label>
+                  <label className="settings-field">
+                    <span>Models</span>
+                    <Input
+                      value={model.model}
+                      onChange={(event) =>
+                        updateLocalLlmModel(index, { model: event.target.value })
+                      }
+                    />
+                  </label>
+                </div>
+                {index === 0 && sourceView
+                  ? renderSecretEditor(
+                      "localLlmApiKey",
+                      "API Key",
+                      sourceView.providers["local-llm"].apiKeySecret,
+                    )
+                  : null}
+              </div>
+            );
+          })}
+
+          <div className="settings-provider-endpoint-card">
+            <div className="settings-provider-endpoint-top">
+              <div className="settings-provider-endpoint-title">
+                <strong>AWS Bedrock</strong>
+                <span>AWS Bedrock</span>
+              </div>
+              <div className="settings-provider-actions">
+                <label className="settings-check">
+                  <Checkbox
+                    checked={draft.providers.bedrock.enabled}
+                    onChange={(event) =>
+                      patchDraft((current) => ({
+                        ...current,
+                        providers: {
+                          ...current.providers,
+                          bedrock: { ...current.providers.bedrock, enabled: event.target.checked },
+                        },
+                      }))
+                    }
+                  />
+                  Enabled
+                </label>
+                <ProviderHealthBadge health={providerHealth.bedrock} />
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  onClick={() => providerTestMutation.mutate("bedrock")}
+                  disabled={providerTestMutation.isPending}
+                >
+                  <Stethoscope size={14} />
+                  Health
+                </Button>
+              </div>
+            </div>
+            <div className="settings-provider-endpoint-fields">
+              <label className="settings-field">
+                <span>Name</span>
+                <Input value="AWS Bedrock" readOnly />
+              </label>
+              <label className="settings-field">
+                <span>Kind</span>
+                <Select value="bedrock" disabled>
+                  <option value="bedrock">AWS Bedrock</option>
+                </Select>
+              </label>
+              <label className="settings-field">
+                <span>Region</span>
+                <Input
+                  value={draft.providers.bedrock.region}
+                  onChange={(event) =>
+                    patchDraft((current) => ({
+                      ...current,
+                      providers: {
+                        ...current.providers,
+                        bedrock: { ...current.providers.bedrock, region: event.target.value },
+                      },
+                    }))
+                  }
+                />
+              </label>
+              <label className="settings-field">
+                <span>Profile</span>
+                <Input
+                  value={draft.providers.bedrock.profile}
+                  onChange={(event) =>
+                    patchDraft((current) => ({
+                      ...current,
+                      providers: {
+                        ...current.providers,
+                        bedrock: { ...current.providers.bedrock, profile: event.target.value },
+                      },
+                    }))
+                  }
+                />
+              </label>
+              <label className="settings-field">
+                <span>Models</span>
+                <Input
+                  value={draft.providers.bedrock.model}
+                  onChange={(event) =>
+                    patchDraft((current) => ({
+                      ...current,
+                      providers: {
+                        ...current.providers,
+                        bedrock: { ...current.providers.bedrock, model: event.target.value },
+                      },
+                    }))
+                  }
+                />
+              </label>
+            </div>
+            {sourceView ? (
+              <div className="settings-secret-row">
+                <div className="settings-secret-meta">
+                  <strong>Credential Status</strong>
+                  <div className="settings-secret-status">
+                    <SecretStatusBadge status={sourceView.providers.bedrock.credentialSecret} />
+                    <span>
+                      {sourceView.providers.bedrock.credentialSecret.maskedValue ?? "unset"}
+                    </span>
+                    <span>
+                      updated{" "}
+                      {formatDateTime(sourceView.providers.bedrock.credentialSecret.updatedAt)}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="settings-provider-endpoint-card">
+            <div className="settings-provider-endpoint-top">
+              <div className="settings-provider-endpoint-title">
+                <strong>Codex Auth</strong>
+                <span>Codex SDK</span>
+              </div>
+              <div className="settings-provider-actions">
+                <label className="settings-check">
+                  <Checkbox
+                    checked={draft.providers.codex?.enabled ?? false}
+                    onChange={(event) =>
+                      patchDraft((current) => ({
+                        ...current,
+                        providers: {
+                          ...current.providers,
+                          codex: { ...current.providers.codex, enabled: event.target.checked },
+                        },
+                      }))
+                    }
+                  />
+                  Enabled
+                </label>
+                {codexAuthQuery.isLoading ? <Badge variant="outline">Checking...</Badge> : null}
+                {codexAuthQuery.data ? (
+                  <Badge
+                    variant={
+                      codexAuthQuery.data.recommendedAction === "ready"
+                        ? "success"
+                        : codexAuthQuery.data.tokenInfo?.isExpired
+                          ? "destructive"
+                          : "warning"
+                    }
+                  >
+                    {codexAuthQuery.data.recommendedAction === "ready"
+                      ? "Logged in"
+                      : codexAuthQuery.data.tokenInfo?.isExpired
+                        ? "Token expired"
+                        : "Login required"}
+                  </Badge>
+                ) : null}
+              </div>
+            </div>
+            <div className="settings-provider-endpoint-fields">
+              <label className="settings-field">
+                <span>Name</span>
+                <Input value="Codex Auth" readOnly />
+              </label>
+              <label className="settings-field">
+                <span>Kind</span>
+                <Select value="codex" disabled>
+                  <option value="codex">Codex SDK</option>
+                </Select>
+              </label>
+              <label className="settings-field">
+                <span>Models</span>
+                <Select
+                  value={draft.providers.codex?.model ?? "codex-sdk-agent"}
+                  onChange={(event) =>
+                    patchDraft((current) => ({
+                      ...current,
+                      providers: {
+                        ...current.providers,
+                        codex: { ...current.providers.codex, model: event.target.value },
+                      },
+                    }))
+                  }
+                >
+                  <option value="codex-sdk-agent">codex-sdk-agent</option>
+                  <option value="gpt-5.5">gpt-5.5</option>
+                  <option value="gpt-5.4-mini">gpt-5.4-mini</option>
+                  <option value="gpt-5.2-codex">gpt-5.2-codex</option>
+                </Select>
+              </label>
+            </div>
+            {codexAuthQuery.data ? (
+              <CodexActionGuide
+                recommendedAction={codexAuthQuery.data.recommendedAction}
+                isExpired={codexAuthQuery.data.tokenInfo?.isExpired ?? false}
+                loginCommand={loginCommand}
+                onGetCommand={() => getLoginCommandMutation.mutate()}
+                isPending={getLoginCommandMutation.isPending}
+                onRefresh={() => void codexAuthQuery.refetch()}
+              />
+            ) : null}
+          </div>
+        </div>
+      </section>
+    );
+  };
 
   return (
     <div className="flex h-full flex-col overflow-hidden bg-background">
@@ -1431,761 +2277,7 @@ export function SettingsPage() {
               </section>
             ) : null}
 
-            {activeTab === "providers" ? (
-              <section className="settings-provider-grid">
-                {/* === Azure OpenAI (left) | OpenAI + Codex (right) === */}
-                <div className="settings-openai-group">
-                  {/* Left: Azure OpenAI */}
-                  <Card className="settings-openai-group__azure">
-                    <CardHeader className="settings-provider-header">
-                      <CardTitle>Azure OpenAI</CardTitle>
-                    </CardHeader>
-                    <CardContent className="settings-card-grid">
-                      <label className="settings-check">
-                        <Checkbox
-                          checked={draft.providers["azure-openai"].enabled}
-                          onChange={(event) =>
-                            patchDraft((current) => ({
-                              ...current,
-                              providers: {
-                                ...current.providers,
-                                "azure-openai": {
-                                  ...current.providers["azure-openai"],
-                                  enabled: event.target.checked,
-                                },
-                              },
-                            }))
-                          }
-                        />
-                        enabled
-                      </label>
-                      {draft.providers["azure-openai"].deployments.map((deployment, index) => {
-                        const secretKey = azureOpenAiSecretKeys[index] ?? "azureOpenAiApiKey";
-                        const secretStatus =
-                          sourceView?.providers["azure-openai"].apiKeySecrets[index] ??
-                          (sourceView ? emptyRuntimeSecretStatus() : null);
-                        return (
-                          <div key={secretKey} className="settings-provider-deployment">
-                            <div className="settings-deployment-header">
-                              <div className="settings-secret-meta">
-                                <strong>Deployment {index + 1}</strong>
-                              </div>
-                            </div>
-                            <label className="settings-field">
-                              <span>Deployment {index + 1} Name</span>
-                              <Input
-                                value={deployment.name}
-                                onChange={(event) =>
-                                  patchDraft((current) => {
-                                    const deployments = current.providers[
-                                      "azure-openai"
-                                    ].deployments.map((item, itemIndex) =>
-                                      itemIndex === index
-                                        ? { ...item, name: event.target.value }
-                                        : item,
-                                    );
-                                    return {
-                                      ...current,
-                                      providers: {
-                                        ...current.providers,
-                                        "azure-openai": syncAzureOpenAiProviderForDraft(
-                                          current.providers["azure-openai"],
-                                          deployments,
-                                        ),
-                                      },
-                                    };
-                                  })
-                                }
-                              />
-                            </label>
-                            <label className="settings-field">
-                              <span>Deployment {index + 1} Endpoint</span>
-                              <Input
-                                value={deployment.apiBaseUrl}
-                                onChange={(event) =>
-                                  patchDraft((current) => {
-                                    const deployments = current.providers[
-                                      "azure-openai"
-                                    ].deployments.map((item, itemIndex) =>
-                                      itemIndex === index
-                                        ? { ...item, apiBaseUrl: event.target.value }
-                                        : item,
-                                    );
-                                    return {
-                                      ...current,
-                                      providers: {
-                                        ...current.providers,
-                                        "azure-openai": syncAzureOpenAiProviderForDraft(
-                                          current.providers["azure-openai"],
-                                          deployments,
-                                        ),
-                                      },
-                                    };
-                                  })
-                                }
-                              />
-                            </label>
-                            <label className="settings-field">
-                              <span>Deployment {index + 1} API Path</span>
-                              <Input
-                                value={deployment.apiPath}
-                                onChange={(event) =>
-                                  patchDraft((current) => {
-                                    const deployments = current.providers[
-                                      "azure-openai"
-                                    ].deployments.map((item, itemIndex) =>
-                                      itemIndex === index
-                                        ? { ...item, apiPath: event.target.value }
-                                        : item,
-                                    );
-                                    return {
-                                      ...current,
-                                      providers: {
-                                        ...current.providers,
-                                        "azure-openai": syncAzureOpenAiProviderForDraft(
-                                          current.providers["azure-openai"],
-                                          deployments,
-                                        ),
-                                      },
-                                    };
-                                  })
-                                }
-                              />
-                            </label>
-                            <label className="settings-field">
-                              <span>Deployment {index + 1} API Version</span>
-                              <Input
-                                value={deployment.apiVersion}
-                                onChange={(event) =>
-                                  patchDraft((current) => {
-                                    const deployments = current.providers[
-                                      "azure-openai"
-                                    ].deployments.map((item, itemIndex) =>
-                                      itemIndex === index
-                                        ? { ...item, apiVersion: event.target.value }
-                                        : item,
-                                    );
-                                    return {
-                                      ...current,
-                                      providers: {
-                                        ...current.providers,
-                                        "azure-openai": syncAzureOpenAiProviderForDraft(
-                                          current.providers["azure-openai"],
-                                          deployments,
-                                        ),
-                                      },
-                                    };
-                                  })
-                                }
-                              />
-                            </label>
-                            <label className="settings-field">
-                              <span>Deployment {index + 1} Model</span>
-                              <Input
-                                value={deployment.model}
-                                onChange={(event) =>
-                                  patchDraft((current) => {
-                                    const deployments = current.providers[
-                                      "azure-openai"
-                                    ].deployments.map((item, itemIndex) =>
-                                      itemIndex === index
-                                        ? { ...item, model: event.target.value }
-                                        : item,
-                                    );
-                                    return {
-                                      ...current,
-                                      providers: {
-                                        ...current.providers,
-                                        "azure-openai": syncAzureOpenAiProviderForDraft(
-                                          current.providers["azure-openai"],
-                                          deployments,
-                                        ),
-                                      },
-                                    };
-                                  })
-                                }
-                              />
-                            </label>
-                            {secretStatus
-                              ? renderSecretEditor(secretKey, `API Key ${index + 1}`, secretStatus)
-                              : null}
-                            <div className="settings-deployment-health">
-                              <ProviderHealthBadge health={azureDeploymentHealth[index]} />
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={() => azureDeploymentTestMutation.mutate(index)}
-                                disabled={azureDeploymentTestMutation.isPending}
-                              >
-                                <Stethoscope size={14} />
-                                Test {index + 1}
-                              </Button>
-                            </div>
-                          </div>
-                        );
-                      })}
-                    </CardContent>
-                  </Card>
-
-                  {/* Right: OpenAI (top) + Codex (bottom) */}
-                  <div className="settings-openai-group__stack">
-                    <Card>
-                      <CardHeader className="settings-provider-header">
-                        <CardTitle>OpenAI</CardTitle>
-                        <div className="settings-provider-actions">
-                          <ProviderHealthBadge health={providerHealth.openai} />
-                          <Button
-                            type="button"
-                            size="sm"
-                            variant="outline"
-                            onClick={() => providerTestMutation.mutate("openai")}
-                            disabled={providerTestMutation.isPending}
-                          >
-                            <Stethoscope size={14} />
-                            Test
-                          </Button>
-                        </div>
-                      </CardHeader>
-                      <CardContent className="settings-card-grid">
-                        <label className="settings-check">
-                          <Checkbox
-                            checked={draft.providers.openai.enabled}
-                            onChange={(event) =>
-                              patchDraft((current) => ({
-                                ...current,
-                                providers: {
-                                  ...current.providers,
-                                  openai: {
-                                    ...current.providers.openai,
-                                    enabled: event.target.checked,
-                                  },
-                                },
-                              }))
-                            }
-                          />
-                          enabled
-                        </label>
-                        <label className="settings-field">
-                          <span>API Base URL</span>
-                          <Input
-                            value={draft.providers.openai.apiBaseUrl}
-                            onChange={(event) =>
-                              patchDraft((current) => ({
-                                ...current,
-                                providers: {
-                                  ...current.providers,
-                                  openai: {
-                                    ...current.providers.openai,
-                                    apiBaseUrl: event.target.value,
-                                  },
-                                },
-                              }))
-                            }
-                          />
-                        </label>
-                        <label className="settings-field">
-                          <span>Model</span>
-                          <Input
-                            value={draft.providers.openai.model}
-                            onChange={(event) =>
-                              patchDraft((current) => ({
-                                ...current,
-                                providers: {
-                                  ...current.providers,
-                                  openai: {
-                                    ...current.providers.openai,
-                                    model: event.target.value,
-                                  },
-                                },
-                              }))
-                            }
-                          />
-                        </label>
-                        {sourceView
-                          ? renderSecretEditor(
-                              "openaiApiKey",
-                              "API Key",
-                              sourceView.providers.openai.apiKeySecret,
-                            )
-                          : null}
-                      </CardContent>
-                    </Card>
-
-                    <Card>
-                      <CardHeader className="settings-provider-header">
-                        <CardTitle>Codex</CardTitle>
-                        <div className="settings-provider-actions">
-                          {codexAuthQuery.isLoading ? (
-                            <Badge variant="outline">Checking...</Badge>
-                          ) : codexAuthQuery.data ? (
-                            <Badge
-                              variant={
-                                codexAuthQuery.data.recommendedAction === "ready"
-                                  ? "success"
-                                  : codexAuthQuery.data.tokenInfo?.isExpired
-                                    ? "destructive"
-                                    : "warning"
-                              }
-                            >
-                              {codexAuthQuery.data.recommendedAction === "ready"
-                                ? "✓ Logged in"
-                                : codexAuthQuery.data.tokenInfo?.isExpired
-                                  ? "Token Expired"
-                                  : "Login Required"}
-                            </Badge>
-                          ) : null}
-                        </div>
-                      </CardHeader>
-                      <CardContent className="settings-card-grid">
-                        <label className="settings-check">
-                          <Checkbox
-                            checked={draft.providers.codex?.enabled ?? false}
-                            onChange={(event) =>
-                              patchDraft((current) => ({
-                                ...current,
-                                providers: {
-                                  ...current.providers,
-                                  codex: {
-                                    ...current.providers.codex,
-                                    enabled: event.target.checked,
-                                  },
-                                },
-                              }))
-                            }
-                          />
-                          enabled
-                        </label>
-                        <label className="settings-field">
-                          <span>Model</span>
-                          <Select
-                            value={draft.providers.codex?.model ?? "codex-sdk-agent"}
-                            onChange={(event) =>
-                              patchDraft((current) => ({
-                                ...current,
-                                providers: {
-                                  ...current.providers,
-                                  codex: {
-                                    ...current.providers.codex,
-                                    model: event.target.value,
-                                  },
-                                },
-                              }))
-                            }
-                          >
-                            <option value="codex-sdk-agent">codex-sdk-agent (Default Agent)</option>
-                            <option value="gpt-5.5">gpt-5.5 (Next-Gen Reasoner)</option>
-                            <option value="gpt-5.4-mini">gpt-5.4-mini (Efficient Assistant)</option>
-                            <option value="gpt-5.2-codex">gpt-5.2-codex (Specialized Codex)</option>
-                          </Select>
-                        </label>
-                        {codexAuthQuery.data && (
-                          <div className="settings-codex-status-details space-y-2 text-sm text-foreground">
-                            {codexAuthQuery.data.tokenInfo && (
-                              <CodexTokenInfoPanel tokenInfo={codexAuthQuery.data.tokenInfo} />
-                            )}
-                            <details className="text-xs text-muted-foreground">
-                              <summary className="cursor-pointer select-none py-1 font-medium">
-                                System Details
-                              </summary>
-                              <div className="mt-2 space-y-1">
-                                <div className="flex justify-between border-b pb-1">
-                                  <span>Codex Home</span>
-                                  <span className="font-mono">{codexAuthQuery.data.codexHome}</span>
-                                </div>
-                                <div className="flex justify-between border-b pb-1">
-                                  <span>CLI (codex) Available</span>
-                                  <span>
-                                    {codexAuthQuery.data.cliAvailable ? "✅ Yes" : "❌ No"}
-                                  </span>
-                                </div>
-                                <div className="flex justify-between border-b pb-1">
-                                  <span>~/.codex/auth.json</span>
-                                  <span>
-                                    {codexAuthQuery.data.authJsonExists
-                                      ? "✅ Exists"
-                                      : "❌ Not found"}
-                                  </span>
-                                </div>
-                                <div className="flex justify-between">
-                                  <span>CODEX_ACCESS_TOKEN env</span>
-                                  <span>
-                                    {codexAuthQuery.data.accessTokenConfigured
-                                      ? "✅ Set"
-                                      : "— Not set"}
-                                  </span>
-                                </div>
-                              </div>
-                            </details>
-                            <CodexActionGuide
-                              recommendedAction={codexAuthQuery.data.recommendedAction}
-                              isExpired={codexAuthQuery.data.tokenInfo?.isExpired ?? false}
-                              loginCommand={loginCommand}
-                              onGetCommand={() => getLoginCommandMutation.mutate()}
-                              isPending={getLoginCommandMutation.isPending}
-                              onRefresh={() => void codexAuthQuery.refetch()}
-                            />
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  </div>
-                </div>
-
-                <Card>
-                  <CardHeader className="settings-provider-header">
-                    <CardTitle>AWS Bedrock</CardTitle>
-                    <div className="settings-provider-actions">
-                      <ProviderHealthBadge health={providerHealth.bedrock} />
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => providerTestMutation.mutate("bedrock")}
-                        disabled={providerTestMutation.isPending}
-                      >
-                        <Stethoscope size={14} />
-                        Test
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="settings-card-grid">
-                    <label className="settings-check">
-                      <Checkbox
-                        checked={draft.providers.bedrock.enabled}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              bedrock: {
-                                ...current.providers.bedrock,
-                                enabled: event.target.checked,
-                              },
-                            },
-                          }))
-                        }
-                      />
-                      enabled
-                    </label>
-                    <label className="settings-field">
-                      <span>Region</span>
-                      <Input
-                        value={draft.providers.bedrock.region}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              bedrock: {
-                                ...current.providers.bedrock,
-                                region: event.target.value,
-                              },
-                            },
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="settings-field">
-                      <span>Profile</span>
-                      <Input
-                        value={draft.providers.bedrock.profile}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              bedrock: {
-                                ...current.providers.bedrock,
-                                profile: event.target.value,
-                              },
-                            },
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="settings-field">
-                      <span>Model</span>
-                      <Input
-                        value={draft.providers.bedrock.model}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              bedrock: {
-                                ...current.providers.bedrock,
-                                model: event.target.value,
-                              },
-                            },
-                          }))
-                        }
-                      />
-                    </label>
-                    {sourceView ? (
-                      <div className="settings-secret-row">
-                        <div className="settings-secret-meta">
-                          <strong>Credential Status</strong>
-                          <div className="settings-secret-status">
-                            <SecretStatusBadge
-                              status={sourceView.providers.bedrock.credentialSecret}
-                            />
-                            <span>
-                              {sourceView.providers.bedrock.credentialSecret.maskedValue ?? "unset"}
-                            </span>
-                            <span>
-                              updated{" "}
-                              {formatDateTime(
-                                sourceView.providers.bedrock.credentialSecret.updatedAt,
-                              )}
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                    ) : null}
-                  </CardContent>
-                </Card>
-
-                <Card>
-                  <CardHeader className="settings-provider-header">
-                    <CardTitle>Local LLM</CardTitle>
-                    <div className="settings-provider-actions">
-                      <ProviderHealthBadge health={providerHealth["local-llm"]} />
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() => providerTestMutation.mutate("local-llm")}
-                        disabled={providerTestMutation.isPending}
-                      >
-                        <Stethoscope size={14} />
-                        Test
-                      </Button>
-                    </div>
-                  </CardHeader>
-                  <CardContent className="settings-card-grid">
-                    <label className="settings-check">
-                      <Checkbox
-                        checked={draft.providers["local-llm"].enabled}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              "local-llm": {
-                                ...current.providers["local-llm"],
-                                enabled: event.target.checked,
-                              },
-                            },
-                          }))
-                        }
-                      />
-                      enabled
-                    </label>
-                    <label className="settings-field">
-                      <span>API Base URL</span>
-                      <Input
-                        value={draft.providers["local-llm"].apiBaseUrl}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              "local-llm": syncLocalLlmProviderForDraft(
-                                current.providers["local-llm"],
-                                current.providers["local-llm"].models.map((item, index) =>
-                                  index === 0 ? { ...item, apiBaseUrl: event.target.value } : item,
-                                ),
-                              ),
-                            },
-                          }))
-                        }
-                      />
-                    </label>
-                    <label className="settings-field">
-                      <span>Model</span>
-                      <Input
-                        value={draft.providers["local-llm"].model}
-                        onChange={(event) =>
-                          patchDraft((current) => ({
-                            ...current,
-                            providers: {
-                              ...current.providers,
-                              "local-llm": syncLocalLlmProviderForDraft(
-                                current.providers["local-llm"],
-                                current.providers["local-llm"].models.map((item, index) =>
-                                  index === 0 ? { ...item, model: event.target.value } : item,
-                                ),
-                              ),
-                            },
-                          }))
-                        }
-                      />
-                    </label>
-                    {draft.providers["local-llm"].models.slice(1).map((model, modelIndex) => {
-                      const index = modelIndex + 1;
-                      return (
-                        <div key={index} className="settings-local-llm-model">
-                          <div className="settings-local-llm-model-header">
-                            <strong>{model.name || `Local LLM ${index + 1}`}</strong>
-                            <div className="settings-provider-actions">
-                              <ProviderHealthBadge health={localLlmModelHealth[model.model]} />
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                onClick={() => localLlmModelTestMutation.mutate(model.model)}
-                                disabled={
-                                  !model.model.trim() || localLlmModelTestMutation.isPending
-                                }
-                              >
-                                <Stethoscope size={14} />
-                                Test
-                              </Button>
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="ghost"
-                                onClick={() =>
-                                  patchDraft((current) => ({
-                                    ...current,
-                                    providers: {
-                                      ...current.providers,
-                                      "local-llm": syncLocalLlmProviderForDraft(
-                                        current.providers["local-llm"],
-                                        current.providers["local-llm"].models.filter(
-                                          (_item, itemIndex) => itemIndex !== index,
-                                        ),
-                                      ),
-                                    },
-                                  }))
-                                }
-                              >
-                                <Trash2 size={14} />
-                              </Button>
-                            </div>
-                          </div>
-                          <label className="settings-field">
-                            <span>Name</span>
-                            <Input
-                              value={model.name}
-                              onChange={(event) =>
-                                patchDraft((current) => ({
-                                  ...current,
-                                  providers: {
-                                    ...current.providers,
-                                    "local-llm": syncLocalLlmProviderForDraft(
-                                      current.providers["local-llm"],
-                                      current.providers["local-llm"].models.map(
-                                        (item, itemIndex) =>
-                                          itemIndex === index
-                                            ? { ...item, name: event.target.value }
-                                            : item,
-                                      ),
-                                    ),
-                                  },
-                                }))
-                              }
-                            />
-                          </label>
-                          <label className="settings-field">
-                            <span>API Base URL</span>
-                            <Input
-                              value={model.apiBaseUrl}
-                              onChange={(event) =>
-                                patchDraft((current) => ({
-                                  ...current,
-                                  providers: {
-                                    ...current.providers,
-                                    "local-llm": syncLocalLlmProviderForDraft(
-                                      current.providers["local-llm"],
-                                      current.providers["local-llm"].models.map(
-                                        (item, itemIndex) =>
-                                          itemIndex === index
-                                            ? { ...item, apiBaseUrl: event.target.value }
-                                            : item,
-                                      ),
-                                    ),
-                                  },
-                                }))
-                              }
-                            />
-                          </label>
-                          <label className="settings-field">
-                            <span>Model</span>
-                            <Input
-                              value={model.model}
-                              onChange={(event) =>
-                                patchDraft((current) => ({
-                                  ...current,
-                                  providers: {
-                                    ...current.providers,
-                                    "local-llm": syncLocalLlmProviderForDraft(
-                                      current.providers["local-llm"],
-                                      current.providers["local-llm"].models.map(
-                                        (item, itemIndex) =>
-                                          itemIndex === index
-                                            ? { ...item, model: event.target.value }
-                                            : item,
-                                      ),
-                                    ),
-                                  },
-                                }))
-                              }
-                            />
-                          </label>
-                        </div>
-                      );
-                    })}
-                    <div className="settings-local-llm-add">
-                      <Button
-                        type="button"
-                        size="sm"
-                        variant="outline"
-                        onClick={() =>
-                          patchDraft((current) => {
-                            const models = current.providers["local-llm"].models;
-                            if (models.length >= localLlmMaxModels) return current;
-                            const nextIndex = models.length;
-                            return {
-                              ...current,
-                              providers: {
-                                ...current.providers,
-                                "local-llm": syncLocalLlmProviderForDraft(
-                                  current.providers["local-llm"],
-                                  [
-                                    ...models,
-                                    {
-                                      name: `Local LLM ${nextIndex + 1}`,
-                                      apiBaseUrl: "",
-                                      model: "",
-                                    },
-                                  ],
-                                ),
-                              },
-                            };
-                          })
-                        }
-                        disabled={draft.providers["local-llm"].models.length >= localLlmMaxModels}
-                      >
-                        <Plus size={14} />
-                        Add Local LLM
-                      </Button>
-                      <span className="text-xs text-muted-foreground">
-                        {draft.providers["local-llm"].models.length}/{localLlmMaxModels}
-                      </span>
-                    </div>
-                    {sourceView
-                      ? renderSecretEditor(
-                          "localLlmApiKey",
-                          "API Key",
-                          sourceView.providers["local-llm"].apiKeySecret,
-                        )
-                      : null}
-                  </CardContent>
-                </Card>
-              </section>
-            ) : null}
+            {activeTab === "providers" ? renderProviderEndpointsPanel() : null}
 
             {activeTab === "taskRouting" ? (
               <Card>
@@ -2197,17 +2289,19 @@ export function SettingsPage() {
                   </p>
                 </CardHeader>
                 <CardContent className="settings-routes">
-                  <section className="settings-route-section">
-                    <div className="settings-route-section-header">
-                      <h3>Find Candidate</h3>
-                      <p>
-                        Pick the single route used to extract candidate knowledge from sources and
-                        vibe memory.
-                      </p>
+                  <section className="settings-route-matrix">
+                    <div className="settings-route-matrix-header">
+                      <div>
+                        <h3>Route Matrix</h3>
+                        <p>
+                          Primary and fallback order for each task. Local LLM rows show the selected
+                          local target from Provider Registry.
+                        </p>
+                      </div>
                     </div>
                     <RouteEditor
                       label="findCandidate"
-                      description="Process candidate extraction with one provider/model route."
+                      description="Candidate extraction from source and vibe-memory targets."
                       settings={draft}
                       route={draft.taskRouting.findCandidate.source}
                       onChange={(next) =>
@@ -2224,6 +2318,109 @@ export function SettingsPage() {
                         }))
                       }
                     />
+                    <RouteEditor
+                      label="webSourceResearch"
+                      description="URL fetch and web-source markdown generation."
+                      settings={draft}
+                      route={draft.taskRouting.webSourceResearch}
+                      onChange={(next) =>
+                        patchDraft((current) => ({
+                          ...current,
+                          taskRouting: {
+                            ...current.taskRouting,
+                            webSourceResearch: next,
+                          },
+                        }))
+                      }
+                    />
+                    <RouteEditor
+                      label="coverEvidence"
+                      description="Shared route for source support, external evidence, and MCP evidence."
+                      settings={draft}
+                      route={draft.taskRouting.coverEvidence.externalEvidence}
+                      onChange={(next) =>
+                        patchDraft((current) => ({
+                          ...current,
+                          taskRouting: {
+                            ...current.taskRouting,
+                            coverEvidence: {
+                              sourceSupport: next,
+                              externalEvidence: next,
+                              mcpEvidence: next,
+                            },
+                          },
+                        }))
+                      }
+                    />
+                    <RouteEditor
+                      label="deadZoneMergeReview"
+                      description="Queued DeadZone merge verification and cleanup."
+                      settings={draft}
+                      route={draft.taskRouting.deadZoneMergeReview}
+                      onChange={(next) =>
+                        patchDraft((current) => ({
+                          ...current,
+                          taskRouting: {
+                            ...current.taskRouting,
+                            deadZoneMergeReview: next,
+                          },
+                        }))
+                      }
+                    />
+                    <RouteEditor
+                      label="finalizeDistille"
+                      description="Final candidate-to-knowledge generation."
+                      settings={draft}
+                      route={draft.taskRouting.finalizeDistille}
+                      onChange={(next) =>
+                        patchDraft((current) => ({
+                          ...current,
+                          taskRouting: {
+                            ...current.taskRouting,
+                            finalizeDistille: next,
+                          },
+                        }))
+                      }
+                    />
+                    <RouteEditor
+                      label="agenticCompile"
+                      description="Compile helper route used by context compile and related runtime paths."
+                      settings={draft}
+                      providerOptions={agenticProviders}
+                      route={{
+                        provider: draft.taskRouting.agenticCompile.provider,
+                        model: draft.taskRouting.agenticCompile.model,
+                        localLlmModel: draft.taskRouting.agenticCompile.localLlmModel,
+                        fallback: draft.taskRouting.agenticCompile.fallback,
+                        azureDeploymentSlots: draft.taskRouting.agenticCompile.azureDeploymentSlots,
+                      }}
+                      onChange={(next) =>
+                        patchDraft((current) => ({
+                          ...current,
+                          taskRouting: {
+                            ...current.taskRouting,
+                            agenticCompile: {
+                              ...current.taskRouting.agenticCompile,
+                              provider: next.provider as RuntimeProviderName,
+                              model:
+                                next.model ??
+                                resolveConfiguredRouteModel(current, next.provider) ??
+                                current.taskRouting.agenticCompile.model,
+                              localLlmModel: next.localLlmModel,
+                              fallback: next.fallback,
+                              azureDeploymentSlots: next.azureDeploymentSlots,
+                            },
+                          },
+                        }))
+                      }
+                    />
+                  </section>
+
+                  <section className="settings-route-section">
+                    <div className="settings-route-section-header">
+                      <h3>Find Candidate Runtime</h3>
+                      <p>Candidate extraction timeouts, tool budget, and queue cadence.</p>
+                    </div>
                     <div className="settings-route-row">
                       <div className="settings-route-header">
                         <div className="settings-route-label">findCandidate.runtime</div>
@@ -2530,53 +2727,9 @@ export function SettingsPage() {
 
                   <section className="settings-route-section">
                     <div className="settings-route-section-header">
-                      <h3>Web Source Research</h3>
-                      <p>URL ingest 時に fetch して調査 Markdown を作るルート設定です。</p>
+                      <h3>Cover Evidence Runtime</h3>
+                      <p>Covering Evidence queue cadence, LLM timeout, and tool-call limits.</p>
                     </div>
-                    <RouteEditor
-                      label="webSourceResearch"
-                      description="Fetch URL content and generate websource markdown."
-                      settings={draft}
-                      route={draft.taskRouting.webSourceResearch}
-                      onChange={(next) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          taskRouting: {
-                            ...current.taskRouting,
-                            webSourceResearch: next,
-                          },
-                        }))
-                      }
-                    />
-                  </section>
-
-                  <section className="settings-route-section">
-                    <div className="settings-route-section-header">
-                      <h3>Cover Evidence</h3>
-                      <p>
-                        Choose the single route used by source checks, external evidence, and
-                        optional MCP evidence while processing the Covering Evidence queue.
-                      </p>
-                    </div>
-                    <RouteEditor
-                      label="coverEvidence"
-                      description="Process the Covering Evidence queue with one provider/model route."
-                      settings={draft}
-                      route={draft.taskRouting.coverEvidence.externalEvidence}
-                      onChange={(next) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          taskRouting: {
-                            ...current.taskRouting,
-                            coverEvidence: {
-                              sourceSupport: next,
-                              externalEvidence: next,
-                              mcpEvidence: next,
-                            },
-                          },
-                        }))
-                      }
-                    />
                     <div className="settings-route-row">
                       <div className="settings-route-header">
                         <div className="settings-route-label">coverEvidence.runtime</div>
@@ -2703,50 +2856,6 @@ export function SettingsPage() {
 
                   <section className="settings-route-section">
                     <div className="settings-route-section-header">
-                      <h3>DeadZone Merge Review</h3>
-                      <p>Set model routing for queued DeadZone merge verification and cleanup.</p>
-                    </div>
-                    <RouteEditor
-                      label="deadZoneMergeReview"
-                      description="Review and rewrite canonical knowledge before applying DeadZone merges."
-                      settings={draft}
-                      route={draft.taskRouting.deadZoneMergeReview}
-                      onChange={(next) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          taskRouting: {
-                            ...current.taskRouting,
-                            deadZoneMergeReview: next,
-                          },
-                        }))
-                      }
-                    />
-                  </section>
-
-                  <section className="settings-route-section">
-                    <div className="settings-route-section-header">
-                      <h3>Finalize Distille</h3>
-                      <p>Set model routing for generating final candidate-to-knowledge output.</p>
-                    </div>
-                    <RouteEditor
-                      label="finalizeDistille"
-                      description="Produce the final distillation payload from reviewed candidates."
-                      settings={draft}
-                      route={draft.taskRouting.finalizeDistille}
-                      onChange={(next) =>
-                        patchDraft((current) => ({
-                          ...current,
-                          taskRouting: {
-                            ...current.taskRouting,
-                            finalizeDistille: next,
-                          },
-                        }))
-                      }
-                    />
-                  </section>
-
-                  <section className="settings-route-section">
-                    <div className="settings-route-section-header">
                       <h3>Agentic Compile</h3>
                       <p>
                         Configure the compile helper route used by context compile and related
@@ -2755,7 +2864,7 @@ export function SettingsPage() {
                     </div>
                     <div className="settings-route-row">
                       <div className="settings-route-header">
-                        <div className="settings-route-label">agenticCompile</div>
+                        <div className="settings-route-label">agenticCompile.runtime</div>
                         <p className="settings-route-description">
                           Orchestrates compile-time reasoning. Enable/disable and set timeout/token
                           limits here.
@@ -2780,206 +2889,6 @@ export function SettingsPage() {
                           />
                           enabled
                         </label>
-                        <label className="settings-field">
-                          <span>Provider</span>
-                          <Select
-                            value={draft.taskRouting.agenticCompile.provider}
-                            onChange={(event) => {
-                              const provider = event.target.value as RuntimeProviderName;
-                              patchDraft((current) => ({
-                                ...current,
-                                taskRouting: {
-                                  ...current.taskRouting,
-                                  agenticCompile: {
-                                    ...current.taskRouting.agenticCompile,
-                                    provider,
-                                    model:
-                                      resolveConfiguredRouteModel(current, provider) ??
-                                      current.taskRouting.agenticCompile.model,
-                                    localLlmModel:
-                                      provider === "local-llm" ||
-                                      current.taskRouting.agenticCompile.fallback.includes(
-                                        "local-llm",
-                                      )
-                                        ? (current.taskRouting.agenticCompile.localLlmModel ??
-                                          resolveConfiguredLocalLlmModel(current))
-                                        : undefined,
-                                  },
-                                },
-                              }));
-                            }}
-                          >
-                            {agenticProviders.map((provider) => (
-                              <option key={provider} value={provider}>
-                                {providerNameOptionLabel(provider)}
-                              </option>
-                            ))}
-                          </Select>
-                        </label>
-                        {draft.taskRouting.agenticCompile.provider === "local-llm" ||
-                        draft.taskRouting.agenticCompile.fallback.includes("local-llm") ? (
-                          <label className="settings-field">
-                            <span>Local LLM API</span>
-                            <Select
-                              value={
-                                draft.taskRouting.agenticCompile.provider === "local-llm"
-                                  ? draft.taskRouting.agenticCompile.model
-                                  : (draft.taskRouting.agenticCompile.localLlmModel ??
-                                    resolveConfiguredLocalLlmModel(draft) ??
-                                    "")
-                              }
-                              onChange={(event) =>
-                                patchDraft((current) => ({
-                                  ...current,
-                                  taskRouting: {
-                                    ...current.taskRouting,
-                                    agenticCompile: {
-                                      ...current.taskRouting.agenticCompile,
-                                      ...(current.taskRouting.agenticCompile.provider ===
-                                      "local-llm"
-                                        ? {
-                                            model:
-                                              event.target.value ||
-                                              resolveConfiguredRouteModel(current, "local-llm") ||
-                                              current.taskRouting.agenticCompile.model,
-                                            localLlmModel:
-                                              event.target.value ||
-                                              resolveConfiguredLocalLlmModel(current),
-                                          }
-                                        : {
-                                            localLlmModel:
-                                              event.target.value ||
-                                              resolveConfiguredLocalLlmModel(current),
-                                          }),
-                                    },
-                                  },
-                                }))
-                              }
-                            >
-                              {localLlmRouteModelOptions(draft).length === 0 ? (
-                                <option value="">not configured</option>
-                              ) : (
-                                draft.providers["local-llm"].models
-                                  .filter((model) => model.model.trim())
-                                  .map((model) => (
-                                    <option key={model.model} value={model.model}>
-                                      {localLlmModelOptionLabel(model)}
-                                    </option>
-                                  ))
-                              )}
-                            </Select>
-                          </label>
-                        ) : null}
-                        <label className="settings-field">
-                          <span>Fallback 1</span>
-                          <Select
-                            value={toFallbackSlots(draft.taskRouting.agenticCompile.fallback)[0]}
-                            onChange={(event) =>
-                              patchDraft((current) => {
-                                const fallback = patchFallbackSlot(
-                                  current.taskRouting.agenticCompile.fallback,
-                                  0,
-                                  event.target.value as FallbackSelectValue,
-                                );
-                                return {
-                                  ...current,
-                                  taskRouting: {
-                                    ...current.taskRouting,
-                                    agenticCompile: {
-                                      ...current.taskRouting.agenticCompile,
-                                      fallback,
-                                      localLlmModel:
-                                        current.taskRouting.agenticCompile.provider ===
-                                          "local-llm" || fallback.includes("local-llm")
-                                          ? (current.taskRouting.agenticCompile.localLlmModel ??
-                                            resolveConfiguredLocalLlmModel(current))
-                                          : undefined,
-                                    },
-                                  },
-                                };
-                              })
-                            }
-                          >
-                            <option value="">none</option>
-                            {runtimeProviders.map((provider) => (
-                              <option key={provider} value={provider}>
-                                {providerNameOptionLabel(provider)}
-                              </option>
-                            ))}
-                          </Select>
-                        </label>
-                        <label className="settings-field">
-                          <span>Fallback 2</span>
-                          <Select
-                            value={toFallbackSlots(draft.taskRouting.agenticCompile.fallback)[1]}
-                            onChange={(event) =>
-                              patchDraft((current) => {
-                                const fallback = patchFallbackSlot(
-                                  current.taskRouting.agenticCompile.fallback,
-                                  1,
-                                  event.target.value as FallbackSelectValue,
-                                );
-                                return {
-                                  ...current,
-                                  taskRouting: {
-                                    ...current.taskRouting,
-                                    agenticCompile: {
-                                      ...current.taskRouting.agenticCompile,
-                                      fallback,
-                                      localLlmModel:
-                                        current.taskRouting.agenticCompile.provider ===
-                                          "local-llm" || fallback.includes("local-llm")
-                                          ? (current.taskRouting.agenticCompile.localLlmModel ??
-                                            resolveConfiguredLocalLlmModel(current))
-                                          : undefined,
-                                    },
-                                  },
-                                };
-                              })
-                            }
-                          >
-                            <option value="">none</option>
-                            {runtimeProviders.map((provider) => (
-                              <option key={provider} value={provider}>
-                                {providerNameOptionLabel(provider)}
-                              </option>
-                            ))}
-                          </Select>
-                        </label>
-                        <div className="settings-field">
-                          <span>Azure Slots</span>
-                          <div className="flex flex-wrap items-center gap-3 py-2">
-                            {azureDeploymentSlotOptions.map((slot) => (
-                              <label key={slot} className="settings-check">
-                                <Checkbox
-                                  checked={normalizeAzureDeploymentSlots(
-                                    draft.taskRouting.agenticCompile.azureDeploymentSlots,
-                                  ).includes(slot)}
-                                  onChange={(event) =>
-                                    patchDraft((current) => ({
-                                      ...current,
-                                      taskRouting: {
-                                        ...current.taskRouting,
-                                        agenticCompile: {
-                                          ...current.taskRouting.agenticCompile,
-                                          azureDeploymentSlots: patchAzureDeploymentSlot(
-                                            current.taskRouting.agenticCompile.azureDeploymentSlots,
-                                            slot,
-                                            event.target.checked,
-                                          ),
-                                        },
-                                      },
-                                    }))
-                                  }
-                                />
-                                #{slot}
-                              </label>
-                            ))}
-                          </div>
-                          <span className="text-xs text-muted-foreground">
-                            empty = all configured deployments
-                          </span>
-                        </div>
                         <label className="settings-field">
                           <span>Timeout (seconds)</span>
                           <Input

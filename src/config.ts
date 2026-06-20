@@ -166,6 +166,7 @@ export const groupedConfig: GroupedConfig = {
       /\/+$/,
       "",
     ),
+    apiPath: readProjectEnv("LOCAL_LLM_API_PATH") || "/v1/chat/completions",
     apiKey: readProjectEnv("LOCAL_LLM_API_KEY") || process.env.LOCAL_LLM_ACCESS_TOKEN || "",
     model: readProjectEnv("LOCAL_LLM_MODEL") || "gemma-4-e4b-it",
     models: [
@@ -175,6 +176,7 @@ export const groupedConfig: GroupedConfig = {
           /\/+$/,
           "",
         ),
+        apiPath: readProjectEnv("LOCAL_LLM_API_PATH") || "/v1/chat/completions",
         model: readProjectEnv("LOCAL_LLM_MODEL") || "gemma-4-e4b-it",
       },
     ],

@@ -1,5 +1,12 @@
+import { randomUUID } from "node:crypto";
 import { asc, eq, inArray } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
+import {
+  sqliteKnowledgeSourceLinks,
+  sqliteSourceFragments,
+  sqliteSources,
+} from "../../db/sqlite/schema.js";
 import { knowledgeSourceLinks, sourceFragments, sources } from "../../db/schema.js";
 import { linkKnowledgeToSourceFragment } from "../finalizeDistille/source-link.repository.js";
 
@@ -29,6 +36,11 @@ type ResolvedSourceFragment = {
   resolvedLocator?: string;
   resolution: "exact" | "fallback_full" | "fallback_first";
 };
+
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
 
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
@@ -218,6 +230,68 @@ async function resolveSourceFragmentForReference(
   };
 }
 
+async function resolveSourceFragmentForReferenceSqlite(
+  ref: SourceReferenceCandidate,
+): Promise<ResolvedSourceFragment | null> {
+  const uriCandidates = equivalentUris(ref.uri);
+  if (uriCandidates.length === 0) return null;
+
+  const sqlite = await getSqliteCoreDatabase();
+  const sourceRows = sqlite.orm
+    .select({
+      sourceId: sqliteSources.id,
+      sourceUri: sqliteSources.uri,
+    })
+    .from(sqliteSources)
+    .where(inArray(sqliteSources.uri, uriCandidates))
+    .all();
+  if (sourceRows.length === 0) return null;
+
+  const sourceIdByUri = new Map(sourceRows.map((row) => [row.sourceUri, row.sourceId] as const));
+  const sourceId = uriCandidates.map((candidate) => sourceIdByUri.get(candidate)).find(Boolean);
+  if (!sourceId) return null;
+
+  const fragments = sqlite.orm
+    .select({
+      sourceFragmentId: sqliteSourceFragments.id,
+      locator: sqliteSourceFragments.locator,
+    })
+    .from(sqliteSourceFragments)
+    .where(eq(sqliteSourceFragments.sourceId, sourceId))
+    .orderBy(asc(sqliteSourceFragments.createdAt))
+    .all();
+  if (fragments.length === 0) return null;
+
+  const requestedLocator = ref.locator?.trim();
+  if (requestedLocator) {
+    const exact = fragments.find((fragment) => fragment.locator === requestedLocator);
+    if (exact) {
+      return {
+        sourceFragmentId: exact.sourceFragmentId,
+        resolvedLocator: requestedLocator,
+        resolution: "exact",
+      };
+    }
+  }
+
+  const full = fragments.find((fragment) => fragment.locator === "full");
+  if (full) {
+    return {
+      sourceFragmentId: full.sourceFragmentId,
+      resolvedLocator: "full",
+      resolution: "fallback_full",
+    };
+  }
+
+  const [firstFragment] = fragments;
+  if (!firstFragment) return null;
+  return {
+    sourceFragmentId: firstFragment.sourceFragmentId,
+    resolvedLocator: firstFragment.locator,
+    resolution: "fallback_first",
+  };
+}
+
 export async function linkKnowledgeFromMetadata(
   params: LinkKnowledgeFromMetadataParams,
 ): Promise<LinkKnowledgeFromMetadataResult> {
@@ -230,6 +304,66 @@ export async function linkKnowledgeFromMetadata(
       insertedLinkCount: 0,
       skippedExistingLinkCount: 0,
       unresolvedReferenceCount: 0,
+    };
+  }
+
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const sqlite = await getSqliteCoreDatabase();
+    const existingRows = sqlite.orm
+      .select({
+        sourceFragmentId: sqliteKnowledgeSourceLinks.sourceFragmentId,
+      })
+      .from(sqliteKnowledgeSourceLinks)
+      .where(eq(sqliteKnowledgeSourceLinks.knowledgeId, params.knowledgeId))
+      .all();
+    const existingFragments = new Set(existingRows.map((row) => row.sourceFragmentId));
+    const plannedPairs = new Set<string>();
+
+    let resolvedReferenceCount = 0;
+    let insertedLinkCount = 0;
+    let skippedExistingLinkCount = 0;
+
+    for (const ref of refs) {
+      const resolved = await resolveSourceFragmentForReferenceSqlite(ref);
+      if (!resolved) continue;
+
+      resolvedReferenceCount += 1;
+      const pairKey = `${params.knowledgeId}::${resolved.sourceFragmentId}`;
+      if (plannedPairs.has(pairKey) || existingFragments.has(resolved.sourceFragmentId)) {
+        skippedExistingLinkCount += 1;
+        continue;
+      }
+
+      sqlite.orm
+        .insert(sqliteKnowledgeSourceLinks)
+        .values({
+          id: randomUUID(),
+          knowledgeId: params.knowledgeId,
+          sourceFragmentId: resolved.sourceFragmentId,
+          linkType: "derived_from",
+          confidence: normalizeLinkConfidence(params.confidence),
+          metadata: {
+            source: params.linkMetadataSource,
+            origin: ref.origin,
+            uri: ref.uri,
+            requestedLocator: ref.locator ?? null,
+            resolvedLocator: resolved.resolvedLocator ?? null,
+            resolution: resolved.resolution,
+          },
+          createdAt: new Date().toISOString(),
+        })
+        .run();
+      plannedPairs.add(pairKey);
+      existingFragments.add(resolved.sourceFragmentId);
+      insertedLinkCount += 1;
+    }
+
+    return {
+      candidateReferenceCount: refs.length,
+      resolvedReferenceCount,
+      insertedLinkCount,
+      skippedExistingLinkCount,
+      unresolvedReferenceCount: Math.max(0, refs.length - resolvedReferenceCount),
     };
   }
 

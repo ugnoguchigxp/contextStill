@@ -400,6 +400,8 @@ describe("DoctorPage", () => {
     expect(screen.getByText("Doctor")).toBeInTheDocument();
     expect(screen.getAllByText("degraded").length).toBeGreaterThanOrEqual(1);
     expect(screen.getByText("Core Infrastructure")).toBeInTheDocument();
+    expect(screen.queryByText("pgvector")).not.toBeInTheDocument();
+    expect(screen.queryByText("Installed")).not.toBeInTheDocument();
     expect(screen.getByText("AI & Service Tools")).toBeInTheDocument();
     expect(screen.getByText("Pipeline & Automation")).toBeInTheDocument();
     expect(screen.getByText(/システム緊急警告/)).toBeInTheDocument();

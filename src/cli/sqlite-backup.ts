@@ -59,11 +59,24 @@ async function main(): Promise<void> {
     throw new Error("SQLite backend path could not be resolved");
   }
 
+  const source = path.resolve(config.sqlitePath);
   const output = path.resolve(options.output ?? defaultOutputPath(config.sqlitePath));
+  if (output === source) {
+    throw new Error("SQLite backup output must be different from the source database path");
+  }
+
+  const sourceStat = await stat(source).catch((error: NodeJS.ErrnoException) => {
+    if (error.code === "ENOENT") return null;
+    throw error;
+  });
+  if (!sourceStat?.isFile()) {
+    throw new Error(`SQLite source database not found: ${source}`);
+  }
+
   await mkdir(path.dirname(output), { recursive: true });
 
   const sqlite = await openSqliteCoreDatabase({
-    path: config.sqlitePath,
+    path: source,
     loadVectorExtension: false,
   });
   try {
@@ -75,7 +88,7 @@ async function main(): Promise<void> {
     sqlite.db.exec(`VACUUM INTO ${sqliteStringLiteral(output)};`);
     const outputStat = await stat(output);
     const result = {
-      source: config.sqlitePath,
+      source,
       output,
       bytes: outputStat.size,
       host: os.hostname(),

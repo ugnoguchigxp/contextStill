@@ -3,10 +3,9 @@ import { Button } from "@/components/ui/button";
 import { Card, CardHeader } from "@/components/ui/card";
 import { Input } from "@/components/ui/input";
 import { Select } from "@/components/ui/select";
-import { TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table";
 import { formatDateTime as tzFormatDateTime, useTimezone } from "@/lib/timezone";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Link } from "@tanstack/react-router";
+import { useQuery } from "@tanstack/react-query";
 import {
   type ColumnDef,
   type SortingState,
@@ -14,14 +13,14 @@ import {
   getCoreRowModel,
   useReactTable,
 } from "@tanstack/react-table";
-import { AlertTriangle, CloudCog, RefreshCw, Search } from "lucide-react";
-import { Fragment, useCallback, useMemo, useState } from "react";
+import { AlertTriangle, RefreshCw, Search } from "lucide-react";
+import { useCallback, useMemo, useState } from "react";
 import {
   type CandidateListItem,
-  type CandidateListSortBy,
+  type CandidateListStats,
   type CandidateOutcome,
+  type CandidateListSortBy,
   fetchCandidateItems,
-  requestCandidatePremiumReprocess,
 } from "../repositories/admin.repository";
 import { AdminPaginationFooter } from "./admin-pagination-footer";
 import { AdminSortableTableHead } from "./admin-sortable-table-head";
@@ -30,20 +29,40 @@ import {
   CandidateDetailPane,
   compactBadgeClass,
   coverageBadge,
-  diffSignals,
   initialTargetStateIdFromLocation,
   landscapeWarningSummary,
+  nextCandidateAction,
   outcomeBadge,
-  outcomeOptions,
+  outcomeLabel,
   tableCellClass,
   tableHeadClass,
   textPreview,
-  toPercent,
 } from "./candidates.page.shared";
+
+const candidateViewOptions: Array<{
+  value: "all" | CandidateOutcome;
+  label: string;
+  count: (stats: CandidateListStats | undefined) => number;
+}> = [
+  { value: "all", label: "All active", count: (stats) => stats?.total ?? 0 },
+  {
+    value: "ready_not_finalized",
+    label: "Ready to store",
+    count: (stats) => stats?.readyNotFinalized ?? 0,
+  },
+  {
+    value: "retained_failure",
+    label: "Failed",
+    count: (stats) => stats?.retainedFailure ?? 0,
+  },
+  { value: "rejected", label: "Rejected", count: (stats) => stats?.rejected ?? 0 },
+  { value: "retryable", label: "Retryable", count: (stats) => stats?.retryable ?? 0 },
+  { value: "target_pending", label: "Pending", count: (stats) => stats?.targetPending ?? 0 },
+  { value: "candidate_only", label: "Uncovered", count: (stats) => stats?.candidateOnly ?? 0 },
+];
 
 export function CandidatesPage() {
   const tz = useTimezone();
-  const queryClient = useQueryClient();
   const formatDate = useCallback(
     (value: string | Date | null | undefined): string => {
       return tzFormatDateTime(value, tz);
@@ -56,13 +75,13 @@ export function CandidatesPage() {
   const [queryText, setQueryText] = useState("");
   const [targetKind, setTargetKind] = useState<
     "all" | "wiki_file" | "vibe_memory" | "knowledge_candidate" | "web_ingest"
-  >("all");
+  >("knowledge_candidate");
   const [targetStateIdFilter, setTargetStateIdFilter] = useState(initialTargetStateIdFromLocation);
   const [outcome, setOutcome] = useState<"all" | CandidateOutcome>("all");
-  const [hasKnowledge, setHasKnowledge] = useState<"all" | "yes" | "no">("all");
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const resetToFirstPage = useCallback(() => {
     setPagination((current) => (current.pageIndex === 0 ? current : { ...current, pageIndex: 0 }));
+    setSelectedId(null);
   }, []);
   const serverSort = sorting[0] ?? { id: "latestUpdatedAt", desc: true };
 
@@ -76,7 +95,6 @@ export function CandidatesPage() {
         targetKind,
         targetStateIdFilter,
         outcome,
-        hasKnowledge,
         sortBy: serverSort.id,
         sortDir: serverSort.desc ? "desc" : "asc",
       },
@@ -89,39 +107,11 @@ export function CandidatesPage() {
         targetKind,
         targetStateId: targetStateIdFilter || undefined,
         outcome,
-        hasKnowledge,
         sortBy: serverSort.id as CandidateListSortBy,
         sortDir: serverSort.desc ? "desc" : "asc",
       }),
     refetchInterval: 5000,
   });
-
-  const premiumReprocessMutation = useMutation({
-    mutationFn: (candidateId: string) => requestCandidatePremiumReprocess(candidateId),
-    onSuccess: async () => {
-      await queryClient.invalidateQueries({ queryKey: ["candidates"] });
-    },
-  });
-
-  const canPremiumReprocess = useCallback((item: CandidateListItem): boolean => {
-    if (item.knowledge) return false;
-    const outcomeAllowed =
-      item.outcome === "rejected" ||
-      item.outcome === "retryable" ||
-      item.outcome === "retained_failure";
-    if (!outcomeAllowed) return false;
-    const coverStatus = item.cover?.status;
-    return (
-      coverStatus === "insufficient" ||
-      coverStatus === "provider_failed" ||
-      coverStatus === "tool_failed" ||
-      coverStatus === "parse_failed" ||
-      coverStatus === "reprocess_requested"
-    );
-  }, []);
-
-  const premiumReprocessError =
-    premiumReprocessMutation.error instanceof Error ? premiumReprocessMutation.error.message : null;
 
   const items = candidatesQuery.data?.items ?? [];
   const stats = candidatesQuery.data?.stats;
@@ -133,44 +123,10 @@ export function CandidatesPage() {
   const hasNext = totalPages > 0 && currentPage < totalPages;
   const pageStart = total === 0 ? 0 : pagination.pageIndex * pagination.pageSize + 1;
   const pageEnd = Math.min(pagination.pageIndex * pagination.pageSize + items.length, total);
+  const drawerItem = selectedId ? items.find((item) => item.id === selectedId) : null;
 
   const columns = useMemo<ColumnDef<CandidateListItem>[]>(
     () => [
-      {
-        id: "targetKey",
-        accessorFn: (item) => item.targetKey,
-        header: "Target",
-        cell: ({ row }) => {
-          const item = row.original;
-          return (
-            <div className="min-w-0 space-y-1">
-              <div className="flex min-w-0 flex-wrap items-center gap-1">
-                <Badge variant="outline" className={compactBadgeClass}>
-                  {item.targetKind}
-                </Badge>
-                <Badge variant={outcomeBadge(item.outcome)} className={compactBadgeClass}>
-                  {item.outcome}
-                </Badge>
-              </div>
-              <p className="text-xs font-medium break-words [overflow-wrap:anywhere]">
-                {item.targetKey}
-              </p>
-              <p className="text-[11px] text-muted-foreground">idx: {item.candidateIndex}</p>
-              {item.landscapeWarning ? (
-                <div className="space-y-1 pt-1">
-                  <Badge variant="warning" className={compactBadgeClass}>
-                    <AlertTriangle size={11} className="mr-1" />
-                    Landscape warning
-                  </Badge>
-                  <p className="text-[11px] text-amber-700 dark:text-amber-300 break-words [overflow-wrap:anywhere]">
-                    {landscapeWarningSummary(item) ?? "manual approval required"}
-                  </p>
-                </div>
-              ) : null}
-            </div>
-          );
-        },
-      },
       {
         id: "candidateTitle",
         accessorFn: (item) => item.original.title,
@@ -178,21 +134,66 @@ export function CandidatesPage() {
         cell: ({ row }) => {
           const item = row.original;
           return (
-            <>
+            <div className="min-w-0 space-y-1">
+              <div className="flex min-w-0 flex-wrap items-center gap-1">
+                <Badge variant={outcomeBadge(item.outcome)} className={compactBadgeClass}>
+                  {outcomeLabel(item.outcome)}
+                </Badge>
+                {item.landscapeWarning ? (
+                  <Badge variant="warning" className={compactBadgeClass}>
+                    <AlertTriangle size={11} className="mr-1" />
+                    warning
+                  </Badge>
+                ) : null}
+              </div>
               <p className="text-xs font-semibold break-words [overflow-wrap:anywhere]">
                 {item.original.title}
               </p>
               <p className="text-[11px] text-muted-foreground break-words [overflow-wrap:anywhere]">
-                {textPreview(item.original.body, 100)}
+                {textPreview(item.original.body, 120)}
               </p>
-            </>
+            </div>
+          );
+        },
+      },
+      {
+        id: "targetKey",
+        accessorFn: (item) => item.targetKey,
+        header: "Source",
+        cell: ({ row }) => {
+          const item = row.original;
+          return (
+            <div className="min-w-0 space-y-1">
+              <Badge variant="outline" className={compactBadgeClass}>
+                {item.targetKind}
+              </Badge>
+              <p className="text-xs font-medium break-words [overflow-wrap:anywhere]">
+                {item.targetKey}
+              </p>
+            </div>
+          );
+        },
+      },
+      {
+        id: "outcome",
+        accessorFn: (item) => item.outcome,
+        header: "State",
+        cell: ({ row }) => {
+          const item = row.original;
+          return (
+            <div className="min-w-0 space-y-1 text-[11px] text-muted-foreground">
+              <p className="font-medium text-foreground">{outcomeLabel(item.outcome)}</p>
+              <p className="break-words [overflow-wrap:anywhere]">
+                {item.targetStatus} / {item.targetPhase}
+              </p>
+            </div>
           );
         },
       },
       {
         id: "coverageStatus",
         accessorFn: (item) => item.cover?.status ?? "",
-        header: "Coverage",
+        header: "Evidence",
         cell: ({ row }) => {
           const item = row.original;
           return item.cover ? (
@@ -200,9 +201,8 @@ export function CandidatesPage() {
               <Badge variant={coverageBadge(item.cover.status)} className={compactBadgeClass}>
                 {item.cover.status}
               </Badge>
-              <p className="text-[11px] text-muted-foreground">stage: {item.cover.stage}</p>
               <p className="text-[11px] text-muted-foreground break-words [overflow-wrap:anywhere]">
-                {item.cover.reason ?? "-"}
+                {textPreview(item.cover.reason ?? item.cover.stage, 80)}
               </p>
             </div>
           ) : (
@@ -211,70 +211,14 @@ export function CandidatesPage() {
         },
       },
       {
-        id: "knowledgeStatus",
-        accessorFn: (item) => item.knowledge?.status ?? "",
-        header: "Knowledge",
-        cell: ({ row }) => {
-          const item = row.original;
-          return item.knowledge ? (
-            <div className="min-w-0 space-y-1">
-              <Badge variant="success" className={compactBadgeClass}>
-                {item.knowledge.status}
-              </Badge>
-              <Link
-                to="/knowledge"
-                className="block text-[11px] text-blue-600 hover:underline break-words [overflow-wrap:anywhere]"
-                onClick={(event) => event.stopPropagation()}
-              >
-                {item.knowledge.id}
-              </Link>
-            </div>
-          ) : (
-            <span className="text-[11px] text-muted-foreground">not stored</span>
-          );
-        },
-      },
-      {
-        id: "qualityScore",
-        accessorFn: (item) =>
-          (item.cover?.importance ?? item.knowledge?.importance ?? 0) * 0.6 +
-          (item.cover?.confidence ?? item.knowledge?.confidence ?? 0) * 0.4,
-        header: "Quality",
-        cell: ({ row }) => {
-          const item = row.original;
-          return (
-            <>
-              <p className="text-[11px] text-muted-foreground">
-                I: {item.cover?.importance ?? item.knowledge?.importance ?? "-"}
-              </p>
-              <p className="text-[11px] text-muted-foreground">
-                C: {item.cover?.confidence ?? item.knowledge?.confidence ?? "-"}
-              </p>
-            </>
-          );
-        },
-      },
-      {
-        id: "diff",
-        header: "Diff",
+        id: "nextAction",
+        header: "Next action",
         enableSorting: false,
-        cell: ({ row }) => {
-          const item = row.original;
-          return (
-            <div className="flex min-w-0 flex-wrap gap-1">
-              {diffSignals(item).map((label) => (
-                <Badge key={`${item.id}-${label}`} variant="outline" className={compactBadgeClass}>
-                  {label}
-                </Badge>
-              ))}
-              {item.diff.originalToKnowledge ? (
-                <Badge variant="secondary" className={compactBadgeClass}>
-                  sim {toPercent(item.diff.originalToKnowledge.bodySimilarity)}
-                </Badge>
-              ) : null}
-            </div>
-          );
-        },
+        cell: ({ row }) => (
+          <span className="text-[11px] font-medium text-muted-foreground break-words [overflow-wrap:anywhere]">
+            {nextCandidateAction(row.original)}
+          </span>
+        ),
       },
       {
         id: "latestUpdatedAt",
@@ -314,11 +258,11 @@ export function CandidatesPage() {
     <div className="flex h-[calc(100vh-64px)] flex-col overflow-hidden bg-background">
       <Card className="flex flex-1 flex-col overflow-hidden rounded-none border-0 shadow-none gap-0 py-0">
         <CardHeader className="border-b bg-muted/20 px-4 py-2">
-          <div className="grid grid-cols-1 items-center gap-2 md:grid-cols-[minmax(0,2fr)_repeat(3,minmax(0,1fr))_auto]">
+          <div className="grid grid-cols-1 items-center gap-2 md:grid-cols-[minmax(0,2fr)_minmax(0,1fr)_auto]">
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-muted-foreground" />
               <Input
-                placeholder="Search target / candidate / knowledge"
+                placeholder="Search source / candidate / evidence"
                 value={queryText}
                 className="h-9 pl-9"
                 onChange={(event) => {
@@ -342,37 +286,11 @@ export function CandidatesPage() {
                 resetToFirstPage();
               }}
             >
+              <option value="knowledge_candidate">knowledge_candidate</option>
               <option value="all">all target kinds</option>
               <option value="wiki_file">wiki_file</option>
               <option value="web_ingest">web_ingest</option>
               <option value="vibe_memory">vibe_memory</option>
-              <option value="knowledge_candidate">knowledge_candidate</option>
-            </Select>
-            <Select
-              aria-label="outcome"
-              value={outcome}
-              onChange={(event) => {
-                setOutcome(event.target.value as "all" | CandidateOutcome);
-                resetToFirstPage();
-              }}
-            >
-              {outcomeOptions.map((option) => (
-                <option key={option} value={option}>
-                  {option}
-                </option>
-              ))}
-            </Select>
-            <Select
-              aria-label="has-knowledge"
-              value={hasKnowledge}
-              onChange={(event) => {
-                setHasKnowledge(event.target.value as "all" | "yes" | "no");
-                resetToFirstPage();
-              }}
-            >
-              <option value="all">all knowledge states</option>
-              <option value="yes">knowledge yes</option>
-              <option value="no">knowledge no</option>
             </Select>
             <Button
               variant="outline"
@@ -384,6 +302,26 @@ export function CandidatesPage() {
               <RefreshCw size={14} className={candidatesQuery.isFetching ? "animate-spin" : ""} />
               Refresh
             </Button>
+          </div>
+          <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2">
+            {candidateViewOptions.map((option) => (
+              <Button
+                key={option.value}
+                type="button"
+                size="sm"
+                variant={outcome === option.value ? "default" : "outline"}
+                className="h-7 px-2 text-[11px]"
+                onClick={() => {
+                  setOutcome(option.value);
+                  resetToFirstPage();
+                }}
+              >
+                <span>{option.label}</span>
+                <span className="rounded bg-muted px-1.5 py-0.5 text-[10px] text-muted-foreground">
+                  {option.count(stats)}
+                </span>
+              </Button>
+            ))}
           </div>
           {targetStateIdFilter ? (
             <div className="mt-2 flex flex-wrap items-center gap-2">
@@ -406,170 +344,67 @@ export function CandidatesPage() {
           ) : null}
         </CardHeader>
 
-        <div className="min-w-0 flex flex-1 flex-col overflow-hidden">
-          <div className="shrink-0 border-b bg-background/95 shadow-sm">
-            <table className="w-full table-fixed caption-bottom text-sm">
-              <CandidateColumnGroup />
-              <TableHeader>
-                {table.getHeaderGroups().map((headerGroup) => (
-                  <TableRow key={headerGroup.id}>
-                    {headerGroup.headers.map((header) => (
-                      <AdminSortableTableHead
-                        key={header.id}
-                        header={header}
-                        className={tableHeadClass}
-                      />
-                    ))}
-                  </TableRow>
-                ))}
-              </TableHeader>
-            </table>
-          </div>
-          <div className="min-h-0 flex-1 overflow-auto">
-            <table className="w-full table-fixed caption-bottom text-sm">
-              <CandidateColumnGroup />
-              <TableBody>
-                {candidatesQuery.isLoading ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={columns.length}
-                      className="h-24 text-center text-sm text-muted-foreground"
-                    >
-                      Loading candidates...
-                    </TableCell>
-                  </TableRow>
-                ) : null}
-                {!candidatesQuery.isLoading && candidatesQuery.isError ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={columns.length}
-                      className="h-24 text-center text-sm text-destructive"
-                    >
-                      Failed to load candidates.
-                    </TableCell>
-                  </TableRow>
-                ) : null}
-                {!candidatesQuery.isLoading &&
-                !candidatesQuery.isError &&
-                table.getRowModel().rows.length === 0 ? (
-                  <TableRow>
-                    <TableCell
-                      colSpan={columns.length}
-                      className="h-24 text-center text-sm text-muted-foreground"
-                    >
-                      No candidates found.
-                    </TableCell>
-                  </TableRow>
-                ) : null}
-                {table.getRowModel().rows.map((row) => {
-                  const item = row.original;
-                  return (
-                    <Fragment key={item.id}>
-                      <TableRow
-                        className="cursor-pointer hover:bg-muted/30"
-                        onClick={() => setExpandedId(expandedId === item.id ? null : item.id)}
-                      >
-                        {row.getVisibleCells().map((cell) => (
-                          <TableCell key={cell.id} className={tableCellClass}>
-                            {flexRender(cell.column.columnDef.cell, cell.getContext())}
-                          </TableCell>
+        <div className="min-h-0 flex flex-1 flex-col overflow-hidden">
+          {candidatesQuery.isLoading ? (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              Loading candidates...
+            </div>
+          ) : null}
+          {!candidatesQuery.isLoading && candidatesQuery.isError ? (
+            <div className="flex h-full items-center justify-center text-sm text-destructive">
+              Failed to load candidates.
+            </div>
+          ) : null}
+          {!candidatesQuery.isLoading && !candidatesQuery.isError && items.length === 0 ? (
+            <div className="flex h-full items-center justify-center text-sm text-muted-foreground">
+              No candidates found.
+            </div>
+          ) : null}
+          {!candidatesQuery.isLoading && !candidatesQuery.isError && items.length > 0 ? (
+            <>
+              <div className="shrink-0 border-b bg-background/95 shadow-sm">
+                <table className="w-full table-fixed caption-bottom text-sm">
+                  <CandidateColumnGroup />
+                  <TableHeader>
+                    {table.getHeaderGroups().map((headerGroup) => (
+                      <TableRow key={headerGroup.id}>
+                        {headerGroup.headers.map((header) => (
+                          <AdminSortableTableHead
+                            key={header.id}
+                            header={header}
+                            className={tableHeadClass}
+                          />
                         ))}
                       </TableRow>
-                      {expandedId === item.id ? (
-                        <TableRow className="bg-muted/20">
-                          <TableCell
-                            colSpan={columns.length}
-                            className="px-3 py-4 whitespace-normal break-words [overflow-wrap:anywhere]"
-                          >
-                            <div className="mb-3 flex flex-wrap items-center gap-2">
-                              <Button
-                                type="button"
-                                size="sm"
-                                variant="outline"
-                                disabled={
-                                  !canPremiumReprocess(item) || premiumReprocessMutation.isPending
-                                }
-                                onClick={(event) => {
-                                  event.stopPropagation();
-                                  premiumReprocessMutation.mutate(item.id);
-                                }}
-                              >
-                                <CloudCog size={14} />
-                                Premium再評価
-                              </Button>
-                              {item.cover?.status === "reprocess_requested" ? (
-                                <span className="text-[11px] text-muted-foreground">
-                                  再評価キュー済み
-                                </span>
-                              ) : null}
-                              {premiumReprocessError ? (
-                                <span className="text-[11px] text-destructive">
-                                  {premiumReprocessError}
-                                </span>
-                              ) : null}
-                            </div>
-                            <div className="grid min-w-0 gap-3 lg:grid-cols-3">
-                              <CandidateDetailPane
-                                sectionTitle="Original Candidate"
-                                candidateTitle={item.original.title}
-                                candidateBody={item.original.body}
-                                type={null}
-                              />
-                              <CandidateDetailPane
-                                sectionTitle="Covered Candidate"
-                                candidateTitle={item.cover?.title ?? null}
-                                candidateBody={item.cover?.body ?? null}
-                                type={item.cover?.type ?? null}
-                                importance={item.cover?.importance ?? null}
-                                confidence={item.cover?.confidence ?? null}
-                              />
-                              <CandidateDetailPane
-                                sectionTitle="Final Knowledge"
-                                candidateTitle={item.knowledge?.title ?? null}
-                                candidateBody={item.knowledge?.body ?? null}
-                                type={item.knowledge?.type ?? null}
-                                importance={item.knowledge?.importance ?? null}
-                                confidence={item.knowledge?.confidence ?? null}
-                              />
-                            </div>
-                            <div className="mt-3 grid gap-2 text-[11px] text-muted-foreground lg:grid-cols-2">
-                              <div className="min-w-0 rounded-lg border bg-background px-3 py-2 break-words [overflow-wrap:anywhere]">
-                                <p>targetStateId: {item.targetStateId}</p>
-                                <p>findCandidateResultId: {item.id}</p>
-                                <p>coverEvidenceResultId: {item.id}</p>
-                                <p>knowledgeId: {item.knowledge?.id ?? "-"}</p>
-                                {item.landscapeWarning ? (
-                                  <>
-                                    <p>landscapeWarning: yes</p>
-                                    <p>
-                                      warningReason:{" "}
-                                      {landscapeWarningSummary(item) ??
-                                        item.landscapeWarning.warningReason}
-                                    </p>
-                                    <p>reviewItemId: {item.landscapeWarning.reviewItemId ?? "-"}</p>
-                                    <p>linkStatus: {item.landscapeWarning.linkStatus ?? "-"}</p>
-                                  </>
-                                ) : (
-                                  <p>landscapeWarning: no</p>
-                                )}
-                              </div>
-                              <div className="min-w-0 rounded-lg border bg-background px-3 py-2 break-words [overflow-wrap:anywhere]">
-                                <p>sourceUri: {item.sourceUri}</p>
-                                <p>finalizeSourceUri: {item.finalizeSourceUri}</p>
-                                <p>references: {item.cover?.referencesCount ?? 0}</p>
-                                <p>duplicateRefs: {item.cover?.duplicateRefsCount ?? 0}</p>
-                                <p>toolEvents: {item.cover?.toolEventsCount ?? 0}</p>
-                              </div>
-                            </div>
-                          </TableCell>
+                    ))}
+                  </TableHeader>
+                </table>
+              </div>
+              <div className="min-h-0 flex-1 overflow-auto">
+                <table className="w-full table-fixed caption-bottom text-sm">
+                  <CandidateColumnGroup />
+                  <TableBody>
+                    {table.getRowModel().rows.map((row) => {
+                      const item = row.original;
+                      return (
+                        <TableRow
+                          key={item.id}
+                          className="cursor-pointer hover:bg-muted/30"
+                          onClick={() => setSelectedId(item.id)}
+                        >
+                          {row.getVisibleCells().map((cell) => (
+                            <TableCell key={cell.id} className={tableCellClass}>
+                              {flexRender(cell.column.columnDef.cell, cell.getContext())}
+                            </TableCell>
+                          ))}
                         </TableRow>
-                      ) : null}
-                    </Fragment>
-                  );
-                })}
-              </TableBody>
-            </table>
-          </div>
+                      );
+                    })}
+                  </TableBody>
+                </table>
+              </div>
+            </>
+          ) : null}
         </div>
 
         <AdminPaginationFooter
@@ -578,16 +413,162 @@ export function CandidatesPage() {
           totalPages={totalPages}
           canPreviousPage={hasPrev}
           canNextPage={hasNext}
-          onPreviousPage={() => table.previousPage()}
-          onNextPage={() => table.nextPage()}
-          onPageSelect={(pageNumber) => table.setPageIndex(pageNumber - 1)}
+          onPreviousPage={() => {
+            table.previousPage();
+            setSelectedId(null);
+          }}
+          onNextPage={() => {
+            table.nextPage();
+            setSelectedId(null);
+          }}
+          onPageSelect={(pageNumber) => {
+            table.setPageIndex(pageNumber - 1);
+            setSelectedId(null);
+          }}
           summaryItems={[
             `Showing ${pageStart} to ${pageEnd} of ${total} candidates | Page ${currentPage} / ${displayTotalPages}`,
-            `total ${stats?.total ?? 0} | stored ${stats?.stored ?? 0} | ready ${stats?.readyNotFinalized ?? 0} | rejected ${stats?.rejected ?? 0} | retryable ${stats?.retryable ?? 0} | pending ${stats?.targetPending ?? 0}`,
+            `active ${stats?.total ?? 0} | ready ${stats?.readyNotFinalized ?? 0} | failed ${stats?.retainedFailure ?? 0} | rejected ${stats?.rejected ?? 0} | retryable ${stats?.retryable ?? 0} | pending ${stats?.targetPending ?? 0}`,
             `retained failures ${stats?.retainedFailure ?? 0}`,
           ]}
         />
+        {drawerItem ? (
+          <CandidateDrawer
+            item={drawerItem}
+            formatDate={formatDate}
+            onClose={() => setSelectedId(null)}
+          />
+        ) : null}
       </Card>
+    </div>
+  );
+}
+
+function CandidateDrawer({
+  item,
+  formatDate,
+  onClose,
+}: {
+  item: CandidateListItem;
+  formatDate: (value: string | Date | null | undefined) => string;
+  onClose: () => void;
+}) {
+  return (
+    <div className="fixed inset-0 z-50 flex justify-end bg-black/25" role="presentation">
+      <button
+        type="button"
+        aria-label="Close candidate details backdrop"
+        className="absolute inset-0 cursor-default"
+        onClick={onClose}
+      />
+      <aside
+        aria-label="Candidate details"
+        className="relative z-10 h-full w-full max-w-3xl overflow-auto border-l bg-background p-4 shadow-xl"
+      >
+        <div className="mb-4 flex items-start justify-between gap-3">
+          <div>
+            <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Candidate details
+            </p>
+            <h2 className="mt-1 text-lg font-semibold break-words [overflow-wrap:anywhere]">
+              {item.original.title}
+            </h2>
+          </div>
+          <Button type="button" size="sm" variant="outline" onClick={onClose}>
+            Close
+          </Button>
+        </div>
+
+        <div className="grid gap-4">
+          <div className="rounded-md border bg-background p-4">
+            <div className="mb-3 flex min-w-0 flex-wrap items-center gap-2">
+              <Badge variant={outcomeBadge(item.outcome)}>{outcomeLabel(item.outcome)}</Badge>
+              <Badge variant="outline">{item.targetKind}</Badge>
+              {item.cover ? (
+                <Badge variant={coverageBadge(item.cover.status)}>{item.cover.status}</Badge>
+              ) : (
+                <Badge variant="secondary">no cover result</Badge>
+              )}
+            </div>
+            <h2 className="text-lg font-semibold break-words [overflow-wrap:anywhere]">
+              {item.original.title}
+            </h2>
+            <p className="mt-2 text-sm text-muted-foreground break-words [overflow-wrap:anywhere]">
+              {item.original.body}
+            </p>
+          </div>
+
+          <div className="grid gap-3 lg:grid-cols-[minmax(0,0.55fr)_minmax(0,0.45fr)]">
+            <div className="rounded-md border bg-background p-4">
+              <p className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Next action
+              </p>
+              <p className="mt-2 text-sm font-semibold">{nextCandidateAction(item)}</p>
+              <p className="mt-2 text-xs text-muted-foreground break-words [overflow-wrap:anywhere]">
+                {item.cover?.reason ?? item.targetLastError ?? "No blocking reason recorded."}
+              </p>
+            </div>
+            <div className="rounded-md border bg-background p-4 text-xs text-muted-foreground">
+              <p className="font-semibold uppercase tracking-wide">Source</p>
+              <p className="mt-2 break-words [overflow-wrap:anywhere]">{item.targetKey}</p>
+              <p className="mt-2">updated: {formatDate(item.latestUpdatedAt)}</p>
+              <p>
+                pipeline: {item.targetStatus} / {item.targetPhase}
+              </p>
+            </div>
+          </div>
+
+          {item.landscapeWarning ? (
+            <div className="rounded-md border border-amber-300 bg-amber-50 p-4 text-amber-900 dark:border-amber-800 dark:bg-amber-950/40 dark:text-amber-100">
+              <div className="flex items-center gap-2 text-sm font-semibold">
+                <AlertTriangle size={16} />
+                Landscape warning
+              </div>
+              <p className="mt-2 text-xs break-words [overflow-wrap:anywhere]">
+                {landscapeWarningSummary(item) ?? "manual approval required"}
+              </p>
+            </div>
+          ) : null}
+
+          <div className="grid min-w-0 gap-3 lg:grid-cols-2">
+            <CandidateDetailPane
+              sectionTitle="Original Candidate"
+              candidateTitle={item.original.title}
+              candidateBody={item.original.body}
+              type={null}
+            />
+            <CandidateDetailPane
+              sectionTitle="Covered Candidate"
+              candidateTitle={item.cover?.title ?? null}
+              candidateBody={item.cover?.body ?? null}
+              type={item.cover?.type ?? null}
+              importance={item.cover?.importance ?? null}
+              confidence={item.cover?.confidence ?? null}
+            />
+          </div>
+
+          <details className="rounded-md border bg-background p-4 text-xs text-muted-foreground">
+            <summary className="cursor-pointer font-semibold uppercase tracking-wide">
+              Debug metadata
+            </summary>
+            <div className="mt-3 grid gap-2 lg:grid-cols-2">
+              <div className="min-w-0 break-words [overflow-wrap:anywhere]">
+                <p>targetStateId: {item.targetStateId}</p>
+                <p>findCandidateResultId: {item.id}</p>
+                <p>coverEvidenceResultId: {item.id}</p>
+                <p>knowledgeId: {item.knowledge?.id ?? "-"}</p>
+                <p>candidateIndex: {item.candidateIndex}</p>
+              </div>
+              <div className="min-w-0 break-words [overflow-wrap:anywhere]">
+                <p>sourceUri: {item.sourceUri}</p>
+                <p>finalizeSourceUri: {item.finalizeSourceUri}</p>
+                <p>references: {item.cover?.referencesCount ?? 0}</p>
+                <p>duplicateRefs: {item.cover?.duplicateRefsCount ?? 0}</p>
+                <p>toolEvents: {item.cover?.toolEventsCount ?? 0}</p>
+              </div>
+            </div>
+          </details>
+        </div>
+      </aside>
     </div>
   );
 }

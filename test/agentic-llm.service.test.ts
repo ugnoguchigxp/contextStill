@@ -165,6 +165,7 @@ describe("agentic-llm service tests", () => {
       {
         name: "Primary",
         apiBaseUrl: "http://127.0.0.1:44448",
+        apiPath: "/v1/chat/completions",
         model: "gemma-4-e4b-it",
       },
     ];
@@ -224,6 +225,7 @@ describe("agentic-llm service tests", () => {
       timeoutMs: 2000,
       modelConfig: {
         apiBaseUrl: "http://127.0.0.1:44448",
+        apiPath: "/v1/chat/completions",
         model: "gemma-4-e4b-it",
       },
     });
@@ -267,8 +269,18 @@ describe("agentic-llm service tests", () => {
 
   test("checkLlmProviderHealthMatrix reports each configured local LLM model", async () => {
     groupedConfig.localLlm.models = [
-      { name: "Qwen", apiBaseUrl: "http://127.0.0.1:11434", model: "qwen3" },
-      { name: "Gemma", apiBaseUrl: "http://127.0.0.1:11435", model: "gemma4" },
+      {
+        name: "Qwen",
+        apiBaseUrl: "http://127.0.0.1:11434",
+        apiPath: "/v1/chat/completions",
+        model: "qwen3",
+      },
+      {
+        name: "Gemma",
+        apiBaseUrl: "http://127.0.0.1:11435",
+        apiPath: "/v1/chat/completions",
+        model: "gemma4",
+      },
     ];
     vi.mocked(createOpenAiProvider).mockReturnValue(mockProvider("openai", false, false) as any);
     vi.mocked(createAzureOpenAiProvider).mockReturnValue(
@@ -293,11 +305,19 @@ describe("agentic-llm service tests", () => {
     expect(health.find((item) => item.id === "local-llm:2")?.selected).toBe(true);
     expect(createLocalLlmProvider).toHaveBeenCalledWith({
       timeoutMs: 2000,
-      modelConfig: { apiBaseUrl: "http://127.0.0.1:11434", model: "qwen3" },
+      modelConfig: {
+        apiBaseUrl: "http://127.0.0.1:11434",
+        apiPath: "/v1/chat/completions",
+        model: "qwen3",
+      },
     });
     expect(createLocalLlmProvider).toHaveBeenCalledWith({
       timeoutMs: 2000,
-      modelConfig: { apiBaseUrl: "http://127.0.0.1:11435", model: "gemma4" },
+      modelConfig: {
+        apiBaseUrl: "http://127.0.0.1:11435",
+        apiPath: "/v1/chat/completions",
+        model: "gemma4",
+      },
     });
   });
 

@@ -442,6 +442,10 @@ export async function listCompileRunOutputsByIds(runIds: string[]): Promise<
 }
 
 export async function getCompileRunDetail(runId: string): Promise<CompileRunDetail | null> {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.getCompileRunDetailSqlite(runId);
+  }
   const [run] = await db
     .select({
       id: contextCompileRuns.id,
@@ -746,6 +750,10 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
 export async function getCompileRunRankingTrace(
   runId: string,
 ): Promise<CompileRunRankingTrace | null> {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.getCompileRunRankingTraceSqlite(runId);
+  }
   const [run] = await db
     .select({
       id: contextCompileRuns.id,

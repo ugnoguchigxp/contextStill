@@ -1,8 +1,17 @@
 import { randomUUID } from "node:crypto";
+import {
+  type CompileRunDetail,
+  type CompileRunRankingTrace,
+  compileRunDetailSchema,
+  compileRunRankingTraceSchema,
+} from "../../shared/schemas/compile-run.schema.js";
 import type { ContextPack } from "../../shared/schemas/context-pack.schema.js";
 import { contextPackSchema } from "../../shared/schemas/context-pack.schema.js";
-import { asRecord } from "../../shared/utils/normalize.js";
-import { getCompileEvalSummaryByRunId } from "./context-compile-eval.repository.js";
+import { asRecord, asStringArray, normalizeNullableString } from "../../shared/utils/normalize.js";
+import {
+  getCompileEvalSummaryByRunId,
+  listCompileEvalsByRunId,
+} from "./context-compile-eval.repository.js";
 import type { ContextCompileTaskTrace } from "./context-compile-task-trace.repository.js";
 import type {
   CompileFreshnessMarkers,
@@ -15,6 +24,8 @@ import {
   normalizeCompileRunSource,
   normalizeDate,
   normalizeDuration,
+  normalizeFeedbackActor,
+  normalizeKnowledgeVerdict,
   normalizeRunStatus,
   normalizeStringArray,
 } from "./context-compiler.repository.utils.js";
@@ -43,6 +54,44 @@ type SqlitePackItemRow = {
   score: number;
   ranking_reason: string;
   source_refs: string;
+  created_at: string;
+};
+
+type SqliteCandidateTraceRow = {
+  item_kind: string;
+  item_id: string;
+  text_rank: number | null;
+  text_score: number | null;
+  vector_rank: number | null;
+  vector_score: number | null;
+  merged_rank: number | null;
+  merged_score: number | null;
+  final_rank: number | null;
+  final_score: number | null;
+  selected: number;
+  suppressed: number;
+  suppression_reason: string | null;
+  agentic_decision: string;
+  ranking_reason: string | null;
+  community_key: string | null;
+};
+
+type SqliteKnowledgeTraceRow = {
+  id: string;
+  title: string;
+  status: string;
+  applies_to?: string;
+};
+
+type SqliteKnowledgeUsageEventRow = {
+  id?: string;
+  run_id?: string;
+  knowledge_id: string;
+  verdict: string;
+  actor: string;
+  reason: string | null;
+  metadata?: string;
+  updated_at: string | null;
   created_at: string;
 };
 
@@ -104,6 +153,13 @@ function mapPackItem(row: SqlitePackItemRow) {
     rankingReason: row.ranking_reason,
     sourceRefs: normalizeStringArray(parseJson(row.source_refs)),
   };
+}
+
+function normalizeKnowledgeStatus(value: string): "active" | "draft" | "deprecated" {
+  if (value === "active" || value === "draft" || value === "deprecated") {
+    return value;
+  }
+  return "active";
 }
 
 export async function insertCompileRunSqlite(params: {
@@ -411,6 +467,490 @@ export async function getCompileFreshnessMarkersSqlite(): Promise<CompileFreshne
     knowledgeDraftUpdatedAt: normalizeIsoString(knowledgeRow.draft_updated_at),
     sourceCorpusUpdatedAt: normalizeIsoString(sourceRow.source_updated_at),
   };
+}
+
+export async function getCompileRunDetailSqlite(runId: string): Promise<CompileRunDetail | null> {
+  const sqlite = await getSqliteCoreDatabase();
+  const run = sqlite.db
+    .query<SqliteRunRow, [string]>("SELECT * FROM context_compile_runs WHERE id = ? LIMIT 1")
+    .get(runId);
+  if (!run) return null;
+
+  const itemRows = sqlite.db
+    .query<SqlitePackItemRow, [string]>(
+      `SELECT item_kind, item_id, section, score, ranking_reason, source_refs, created_at
+       FROM context_pack_items
+       WHERE run_id = ?
+       ORDER BY score DESC, created_at DESC`,
+    )
+    .all(runId);
+
+  const feedbackRows = sqlite.db
+    .query<SqliteKnowledgeUsageEventRow, [string]>(
+      `SELECT id, run_id, knowledge_id, verdict, actor, reason, metadata, created_at, updated_at
+       FROM knowledge_usage_events
+       WHERE run_id = ?
+       ORDER BY updated_at DESC, created_at DESC`,
+    )
+    .all(runId);
+  const evalRows = await listCompileEvalsByRunId(runId);
+
+  const packSnapshot = parsePackSnapshot(run.pack_snapshot);
+  if (packSnapshot && packSnapshot.runId === run.id) {
+    const allItemIds = [
+      ...(packSnapshot.rules ?? []).map((item) => item.itemId),
+      ...(packSnapshot.procedures ?? []).map((item) => item.itemId),
+    ].filter(Boolean);
+
+    const knowledgeRows =
+      allItemIds.length > 0
+        ? sqlite.db
+            .query<SqliteKnowledgeTraceRow, string[]>(
+              `SELECT id, title, status, applies_to
+               FROM knowledge_items
+               WHERE id IN (${allItemIds.map(() => "?").join(", ")})`,
+            )
+            .all(...allItemIds)
+        : [];
+
+    const appliesToByItemId = new Map<
+      string,
+      { changeTypes: string[]; technologies: string[]; domains: string[] }
+    >();
+    for (const row of knowledgeRows) {
+      const appliesTo = asRecord(parseJson(row.applies_to));
+      appliesToByItemId.set(row.id, {
+        changeTypes: asStringArray(appliesTo.changeTypes),
+        technologies: asStringArray(appliesTo.technologies),
+        domains: asStringArray(appliesTo.domains),
+      });
+    }
+
+    for (const item of packSnapshot.rules) {
+      const applies = appliesToByItemId.get(item.itemId);
+      item.changeTypes = item.changeTypes?.length ? item.changeTypes : (applies?.changeTypes ?? []);
+      item.technologies = item.technologies?.length
+        ? item.technologies
+        : (applies?.technologies ?? []);
+      item.domains = item.domains?.length ? item.domains : (applies?.domains ?? []);
+    }
+
+    for (const item of packSnapshot.procedures) {
+      const applies = appliesToByItemId.get(item.itemId);
+      item.changeTypes = item.changeTypes?.length ? item.changeTypes : (applies?.changeTypes ?? []);
+      item.technologies = item.technologies?.length
+        ? item.technologies
+        : (applies?.technologies ?? []);
+      item.domains = item.domains?.length ? item.domains : (applies?.domains ?? []);
+    }
+  }
+
+  const outputMarkdown = extractOutputMarkdown(packSnapshot);
+
+  const selectedKnowledgeRowsMap = new Map<
+    string,
+    {
+      knowledgeId: string;
+      itemKind: "rule" | "procedure";
+      section: "rules" | "procedures" | "guardrails";
+      score: number;
+      rankingReason: string;
+    }
+  >();
+  for (const row of itemRows) {
+    if (row.item_kind !== "rule" && row.item_kind !== "procedure") continue;
+    if (selectedKnowledgeRowsMap.has(row.item_id)) continue;
+    selectedKnowledgeRowsMap.set(row.item_id, {
+      knowledgeId: row.item_id,
+      itemKind: row.item_kind,
+      section:
+        row.section === "guardrails"
+          ? "guardrails"
+          : row.section === "procedures"
+            ? "procedures"
+            : "rules",
+      score: row.score,
+      rankingReason: row.ranking_reason,
+    });
+  }
+  const selectedKnowledgeRows = [...selectedKnowledgeRowsMap.values()];
+
+  const packTitleById = new Map<string, string>();
+  for (const item of [
+    ...(packSnapshot?.rules ?? []),
+    ...(packSnapshot?.procedures ?? []),
+    ...(packSnapshot?.guardrails ?? []),
+  ]) {
+    if (item.itemKind !== "rule" && item.itemKind !== "procedure") continue;
+    packTitleById.set(item.itemId, item.title);
+  }
+
+  const latestFeedbackByKnowledgeId = new Map<
+    string,
+    {
+      verdict: "used" | "not_used" | "off_topic" | "wrong";
+      actor: "agent" | "user" | "system";
+      reason: string | null;
+      metadata: Record<string, unknown>;
+      updatedAt: string | null;
+    }
+  >();
+  for (const row of feedbackRows) {
+    if (latestFeedbackByKnowledgeId.has(row.knowledge_id)) continue;
+    latestFeedbackByKnowledgeId.set(row.knowledge_id, {
+      verdict: normalizeKnowledgeVerdict(row.verdict),
+      actor: normalizeFeedbackActor(row.actor),
+      reason: normalizeNullableString(row.reason),
+      metadata: asRecord(parseJson(row.metadata)),
+      updatedAt: row.updated_at ? normalizeDate(row.updated_at).toISOString() : null,
+    });
+  }
+
+  const detail = {
+    run: {
+      id: run.id,
+      goal: run.goal,
+      retrievalMode: run.retrieval_mode,
+      status: normalizeRunStatus(run.status),
+      degradedReasons: normalizeStringArray(parseJson(run.degraded_reasons)),
+      durationMs: normalizeDuration(run.duration_ms),
+      source: normalizeCompileRunSource(run.source),
+      evalSummary: await getCompileEvalSummaryByRunId(run.id),
+      createdAt: normalizeDate(run.created_at).toISOString(),
+      tokenBudget: normalizeDuration(run.token_budget),
+      input: asRecord(parseJson(run.input)),
+    },
+    pack: packSnapshot,
+    outputMarkdown,
+    selectedItems: itemRows.map((row) => ({
+      itemKind: row.item_kind,
+      itemId: row.item_id,
+      section: row.section,
+      score: row.score,
+      rankingReason: row.ranking_reason,
+      sourceRefs: normalizeStringArray(parseJson(row.source_refs)),
+    })),
+    knowledgeFeedback: feedbackRows.map((row) => ({
+      id: row.id ?? "",
+      runId: row.run_id ?? runId,
+      knowledgeId: row.knowledge_id,
+      verdict: normalizeKnowledgeVerdict(row.verdict),
+      actor: normalizeFeedbackActor(row.actor),
+      reason: normalizeNullableString(row.reason),
+      createdAt: normalizeDate(row.created_at).toISOString(),
+      updatedAt: normalizeDate(row.updated_at).toISOString(),
+    })),
+    knowledgeSignals: selectedKnowledgeRows.map((row) => {
+      const latestFeedback = latestFeedbackByKnowledgeId.get(row.knowledgeId);
+      const metadata = asRecord(latestFeedback?.metadata);
+      const autoVerdict = normalizeKnowledgeVerdict(metadata.autoVerdict);
+      const autoVerdictPresent = metadata.autoVerdict
+        ? ["used", "not_used", "off_topic", "wrong"].includes(String(metadata.autoVerdict))
+        : false;
+      const autoActor = normalizeFeedbackActor(metadata.autoActor);
+      const autoActorPresent = metadata.autoActor
+        ? ["agent", "user", "system"].includes(String(metadata.autoActor))
+        : false;
+
+      if (!latestFeedback) {
+        return {
+          knowledgeId: row.knowledgeId,
+          rawId: row.knowledgeId,
+          itemKind: row.itemKind,
+          section: row.section,
+          title: packTitleById.get(row.knowledgeId) ?? `Knowledge ${row.knowledgeId.slice(0, 8)}`,
+          score: row.score,
+          rankingReason: row.rankingReason,
+          autoVerdict: null,
+          autoActor: null,
+          autoReason: null,
+          effectiveVerdict: null,
+          effectiveActor: null,
+          effectiveReason: null,
+          hasUserOverride: false,
+          updatedAt: null,
+        };
+      }
+
+      const effectiveVerdict = latestFeedback.verdict;
+      const effectiveActor = latestFeedback.actor;
+      const effectiveReason = latestFeedback.reason;
+
+      if (effectiveActor === "user") {
+        const resolvedAutoVerdict = autoVerdictPresent ? autoVerdict : null;
+        const resolvedAutoActor = autoActorPresent ? autoActor : null;
+        const resolvedAutoReason = normalizeNullableString(metadata.autoReason);
+        const hasUserOverride =
+          resolvedAutoVerdict !== null && resolvedAutoVerdict !== effectiveVerdict;
+        return {
+          knowledgeId: row.knowledgeId,
+          rawId: row.knowledgeId,
+          itemKind: row.itemKind,
+          section: row.section,
+          title: packTitleById.get(row.knowledgeId) ?? `Knowledge ${row.knowledgeId.slice(0, 8)}`,
+          score: row.score,
+          rankingReason: row.rankingReason,
+          autoVerdict: resolvedAutoVerdict,
+          autoActor: resolvedAutoActor,
+          autoReason: resolvedAutoReason,
+          effectiveVerdict,
+          effectiveActor,
+          effectiveReason,
+          hasUserOverride,
+          updatedAt: latestFeedback.updatedAt,
+        };
+      }
+
+      return {
+        knowledgeId: row.knowledgeId,
+        rawId: row.knowledgeId,
+        itemKind: row.itemKind,
+        section: row.section,
+        title: packTitleById.get(row.knowledgeId) ?? `Knowledge ${row.knowledgeId.slice(0, 8)}`,
+        score: row.score,
+        rankingReason: row.rankingReason,
+        autoVerdict: effectiveVerdict,
+        autoActor: effectiveActor,
+        autoReason: effectiveReason,
+        effectiveVerdict,
+        effectiveActor,
+        effectiveReason,
+        hasUserOverride: false,
+        updatedAt: latestFeedback.updatedAt,
+      };
+    }),
+    evaluations: evalRows.map((row) => ({
+      id: row.id,
+      runId: row.runId,
+      sessionId: row.sessionId,
+      avg: row.avg,
+      outcome: row.outcome,
+      title: row.title,
+      body: row.body,
+      source: row.source,
+      relevance: row.relevance,
+      actionability: row.actionability,
+      coverage: row.coverage,
+      clarity: row.clarity,
+      specificity: row.specificity,
+      createdAt: row.createdAt.toISOString(),
+      updatedAt: row.updatedAt.toISOString(),
+    })),
+    snapshotAvailable: packSnapshot !== null,
+  };
+
+  return compileRunDetailSchema.parse(detail);
+}
+
+export async function getCompileRunRankingTraceSqlite(
+  runId: string,
+): Promise<CompileRunRankingTrace | null> {
+  const sqlite = await getSqliteCoreDatabase();
+  const run = sqlite.db
+    .query<SqliteRunRow, [string]>("SELECT * FROM context_compile_runs WHERE id = ? LIMIT 1")
+    .get(runId);
+  if (!run) return null;
+
+  const traceRows = sqlite.db
+    .query<SqliteCandidateTraceRow, [string]>(
+      `SELECT
+        item_kind, item_id, text_rank, text_score, vector_rank, vector_score,
+        merged_rank, merged_score, final_rank, final_score, selected, suppressed,
+        suppression_reason, agentic_decision, ranking_reason, community_key
+       FROM context_compile_candidate_traces
+       WHERE run_id = ?`,
+    )
+    .all(runId);
+
+  const knowledgeIds = [...new Set(traceRows.map((row) => row.item_id).filter(Boolean))];
+  const knowledgeRows =
+    knowledgeIds.length > 0
+      ? sqlite.db
+          .query<SqliteKnowledgeTraceRow, string[]>(
+            `SELECT id, title, status
+             FROM knowledge_items
+             WHERE id IN (${knowledgeIds.map(() => "?").join(", ")})`,
+          )
+          .all(...knowledgeIds)
+      : [];
+  const knowledgeById = new Map(
+    knowledgeRows.map((row) => [row.id, { title: row.title, status: row.status }]),
+  );
+
+  const packRows = sqlite.db
+    .query<SqlitePackItemRow, [string]>(
+      `SELECT item_kind, item_id, section, score, ranking_reason, source_refs, created_at
+       FROM context_pack_items
+       WHERE run_id = ?
+       ORDER BY created_at ASC, id ASC`,
+    )
+    .all(runId);
+  const packByKey = new Map(
+    packRows.map((row) => [
+      `${row.item_kind}:${row.item_id}`,
+      { sourceRefs: normalizeStringArray(parseJson(row.source_refs)) },
+    ]),
+  );
+
+  const packPositionByKey = new Map<string, number>();
+  const parsedPack = parsePackSnapshot(run.pack_snapshot);
+  if (parsedPack) {
+    parsedPack.rules.forEach((item, index) => {
+      packPositionByKey.set(`rule:${item.itemId}`, index + 1);
+    });
+    parsedPack.procedures.forEach((item, index) => {
+      packPositionByKey.set(`procedure:${item.itemId}`, index + 1);
+    });
+  } else {
+    for (const [index, row] of packRows.entries()) {
+      if (row.item_kind !== "rule" && row.item_kind !== "procedure") continue;
+      packPositionByKey.set(`${row.item_kind}:${row.item_id}`, index + 1);
+    }
+  }
+
+  const feedbackRows = sqlite.db
+    .query<SqliteKnowledgeUsageEventRow, [string]>(
+      `SELECT knowledge_id, verdict, actor, reason, updated_at, created_at
+       FROM knowledge_usage_events
+       WHERE run_id = ?
+       ORDER BY updated_at DESC, created_at DESC`,
+    )
+    .all(runId);
+  const latestFeedbackByKnowledgeId = new Map<
+    string,
+    {
+      verdict: "used" | "not_used" | "off_topic" | "wrong";
+      actor: "agent" | "user" | "system";
+      reason: string | null;
+      updatedAt: string;
+    }
+  >();
+  for (const row of feedbackRows) {
+    if (latestFeedbackByKnowledgeId.has(row.knowledge_id)) continue;
+    const verdict = normalizeKnowledgeVerdict(row.verdict);
+    const actor = normalizeFeedbackActor(row.actor);
+    if (!verdict || !actor) continue;
+    latestFeedbackByKnowledgeId.set(row.knowledge_id, {
+      verdict,
+      actor,
+      reason: normalizeNullableString(row.reason),
+      updatedAt: normalizeDate(row.updated_at ?? row.created_at).toISOString(),
+    });
+  }
+
+  const evalSummary = await getCompileEvalSummaryByRunId(run.id);
+  const items = traceRows
+    .filter((row) => row.item_kind === "rule" || row.item_kind === "procedure")
+    .map((row) => {
+      const key = `${row.item_kind}:${row.item_id}`;
+      const knowledge = knowledgeById.get(row.item_id);
+      const feedback = latestFeedbackByKnowledgeId.get(row.item_id);
+      const agenticDecision =
+        row.agentic_decision === "accepted" ||
+        row.agentic_decision === "rejected" ||
+        row.agentic_decision === "skipped"
+          ? row.agentic_decision
+          : "not_evaluated";
+      return {
+        itemKind: row.item_kind,
+        itemId: row.item_id,
+        title: knowledge?.title ?? `Knowledge ${row.item_id.slice(0, 8)}`,
+        status: normalizeKnowledgeStatus(knowledge?.status ?? "active"),
+        textRank: row.text_rank,
+        textScore: row.text_score,
+        vectorRank: row.vector_rank,
+        vectorScore: row.vector_score,
+        mergedRank: row.merged_rank,
+        mergedScore: row.merged_score,
+        finalRank: row.final_rank,
+        finalScore: row.final_score,
+        selected: row.selected === 1,
+        packed: packByKey.has(key),
+        packPosition: packPositionByKey.get(key) ?? null,
+        suppressed: row.suppressed === 1,
+        suppressionReason: normalizeNullableString(row.suppression_reason),
+        agenticDecision,
+        rankingReason: normalizeNullableString(row.ranking_reason),
+        communityKey: normalizeNullableString(row.community_key),
+        feedback: {
+          verdict: feedback?.verdict ?? null,
+          actor: feedback?.actor ?? null,
+          reason: feedback?.reason ?? null,
+          updatedAt: feedback?.updatedAt ?? null,
+        },
+        sourceRefs: packByKey.get(key)?.sourceRefs ?? [],
+      };
+    });
+  const sortedItems = [...items].sort((left, right) => {
+    const leftSelected = left.selected ? 0 : 1;
+    const rightSelected = right.selected ? 0 : 1;
+    if (leftSelected !== rightSelected) return leftSelected - rightSelected;
+
+    const leftPack = left.packPosition ?? Number.MAX_SAFE_INTEGER;
+    const rightPack = right.packPosition ?? Number.MAX_SAFE_INTEGER;
+    if (leftPack !== rightPack) return leftPack - rightPack;
+
+    const leftFinal = left.finalRank ?? Number.MAX_SAFE_INTEGER;
+    const rightFinal = right.finalRank ?? Number.MAX_SAFE_INTEGER;
+    if (leftFinal !== rightFinal) return leftFinal - rightFinal;
+
+    const leftMerged = left.mergedRank ?? Number.MAX_SAFE_INTEGER;
+    const rightMerged = right.mergedRank ?? Number.MAX_SAFE_INTEGER;
+    if (leftMerged !== rightMerged) return leftMerged - rightMerged;
+
+    const leftText = left.textRank ?? Number.MAX_SAFE_INTEGER;
+    const rightText = right.textRank ?? Number.MAX_SAFE_INTEGER;
+    if (leftText !== rightText) return leftText - rightText;
+
+    const leftVector = left.vectorRank ?? Number.MAX_SAFE_INTEGER;
+    const rightVector = right.vectorRank ?? Number.MAX_SAFE_INTEGER;
+    if (leftVector !== rightVector) return leftVector - rightVector;
+
+    return left.itemId.localeCompare(right.itemId);
+  });
+
+  const feedbackSummary = {
+    used: 0,
+    notUsed: 0,
+    offTopic: 0,
+    wrong: 0,
+    noSignal: 0,
+  };
+  for (const item of sortedItems) {
+    if (item.feedback.verdict === "used") feedbackSummary.used += 1;
+    else if (item.feedback.verdict === "not_used") feedbackSummary.notUsed += 1;
+    else if (item.feedback.verdict === "off_topic") feedbackSummary.offTopic += 1;
+    else if (item.feedback.verdict === "wrong") feedbackSummary.wrong += 1;
+    else feedbackSummary.noSignal += 1;
+  }
+
+  return compileRunRankingTraceSchema.parse({
+    run: {
+      id: run.id,
+      goal: run.goal,
+      repoPath: normalizeNullableString(run.repo_path),
+      retrievalMode: run.retrieval_mode,
+      status: normalizeRunStatus(run.status),
+      input: asRecord(parseJson(run.input)),
+      createdAt: normalizeDate(run.created_at).toISOString(),
+    },
+    evalSummary: {
+      count: evalSummary.count,
+      latestAvg: evalSummary.latestAvg,
+      latestOutcome: evalSummary.latestOutcome,
+    },
+    feedbackSummary,
+    funnel: {
+      textHitCount: sortedItems.filter((item) => item.textRank !== null).length,
+      vectorHitCount: sortedItems.filter((item) => item.vectorRank !== null).length,
+      mergedCount: sortedItems.filter((item) => item.mergedRank !== null).length,
+      finalCount: sortedItems.filter((item) => item.finalRank !== null).length,
+      packedCount: sortedItems.filter((item) => item.packed).length,
+      selectedCount: sortedItems.filter((item) => item.selected).length,
+      suppressedCount: sortedItems.filter((item) => item.suppressed).length,
+    },
+    items: sortedItems,
+  });
 }
 
 export async function upsertContextCompileTaskTraceSqlite(input: {

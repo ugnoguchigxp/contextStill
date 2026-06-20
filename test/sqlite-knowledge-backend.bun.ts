@@ -19,6 +19,17 @@ import {
   getRuntimeSettingsSnapshot,
 } from "../src/modules/settings/settings.service.js";
 import { upsertSourceDocument } from "../src/modules/sources/source.repository.js";
+import {
+  bulkUpdateKnowledgeStatus,
+  createKnowledgeItem,
+  deleteKnowledgeItem,
+  recordKnowledgeFeedback,
+  updateKnowledgeItem,
+} from "../api/modules/knowledge/knowledge.repository.js";
+import {
+  fetchGraphNodeDetail,
+  upsertGraphCommunityLabel,
+} from "../api/modules/graph/graph.repository.js";
 
 let tempDir = "";
 const originalBackend = process.env.CONTEXT_STILL_DB_BACKEND;
@@ -136,6 +147,81 @@ describe("sqlite knowledge backend", () => {
 
     const hits = await vectorSearchKnowledge([1, 0, 0], 2);
     expect(hits.map((hit) => hit.title)).toEqual(["Vector target", "Vector other"]);
+  });
+
+  test("knowledge API repository writes use sqlite backend", async () => {
+    const created = await createKnowledgeItem({
+      type: "rule",
+      status: "draft",
+      scope: "repo",
+      polarity: "positive",
+      intentTags: ["sqlite-api"],
+      title: "SQLite API draft",
+      body: "Knowledge API writes should not require PostgreSQL.",
+      confidence: 82,
+      importance: 84,
+      technologies: ["sqlite"],
+      changeTypes: ["backend"],
+      metadata: { sourceUri: "agent://sqlite-api/draft" },
+    });
+
+    const updated = await updateKnowledgeItem(created.id, {
+      status: "active",
+      body: "Knowledge API activation should stay on SQLite.",
+    });
+    expect(updated?.id).toBe(created.id);
+
+    const feedback = await recordKnowledgeFeedback({
+      id: created.id,
+      direction: "up",
+      reason: "verified",
+    });
+    expect(feedback).toMatchObject({
+      id: created.id,
+      direction: "up",
+      explicitUpvoteCount: 1,
+    });
+    expect(feedback?.lastVerifiedAt).toBeInstanceOf(Date);
+
+    const second = await createKnowledgeItem({
+      type: "procedure",
+      status: "draft",
+      scope: "repo",
+      title: "SQLite API bulk target",
+      body: "Bulk status updates should use SQLite selection rows.",
+      confidence: 70,
+      importance: 70,
+      metadata: {},
+    });
+    const bulk = await bulkUpdateKnowledgeStatus({
+      ids: [second.id],
+      status: "active",
+    });
+    expect(bulk.updatedIds).toEqual([second.id]);
+
+    const label = await upsertGraphCommunityLabel({
+      communityKey: "a".repeat(64),
+      label: "SQLite community",
+      note: "stored locally",
+    });
+    expect(label).toMatchObject({
+      communityKey: "a".repeat(64),
+      label: "SQLite community",
+      note: "stored locally",
+    });
+
+    const detail = await fetchGraphNodeDetail(second.id);
+    expect(detail).toMatchObject({
+      id: `knowledge:${second.id}`,
+      label: "SQLite API bulk target",
+      kind: "knowledge",
+      status: "active",
+    });
+
+    const deleted = await deleteKnowledgeItem(created.id);
+    expect(deleted?.id).toBe(created.id);
+    const missingFeedback = await recordKnowledgeFeedback({ id: created.id, direction: "down" });
+    expect(missingFeedback).toBeNull();
   });
 
   test("compiles context and stores run snapshots in sqlite", async () => {

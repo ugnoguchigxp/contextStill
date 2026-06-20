@@ -407,6 +407,7 @@ describe("agentic-refine.service", () => {
         {
           name: "Qwen",
           apiBaseUrl: "http://127.0.0.1:44449",
+          apiPath: "/v1/chat/completions",
           model: "qwen-3.6-14b-it",
         },
       ];
@@ -448,6 +449,7 @@ describe("agentic-refine.service", () => {
         {
           name: "Qwen",
           apiBaseUrl: "http://127.0.0.1:44449",
+          apiPath: "/v1/chat/completions",
           model: "qwen-3.6-14b-it",
         },
       ];

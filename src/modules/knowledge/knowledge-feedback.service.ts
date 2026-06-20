@@ -1,4 +1,6 @@
+import { randomUUID } from "node:crypto";
 import { and, eq, inArray } from "drizzle-orm";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import {
   contextCompileRuns,
@@ -186,9 +188,220 @@ async function dismissPendingQueueByEvent(params: {
   return rows.length;
 }
 
+async function recordCompileRunKnowledgeFeedbackSqlite(
+  input: RecordCompileRunKnowledgeFeedbackInput,
+): Promise<CompileRunKnowledgeFeedbackResult> {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
+  const sqlite = await getRuntimeSqliteCoreDatabase();
+  const run = sqlite.db
+    .query<{ id: string }, [string]>("SELECT id FROM context_compile_runs WHERE id = ? LIMIT 1")
+    .get(input.runId);
+  if (!run) {
+    throw new CompileRunKnowledgeFeedbackError(404, "Compile run not found.");
+  }
+
+  const actor: FeedbackActor = input.actor ?? "user";
+  const seenKnowledgeIds = new Set<string>();
+  const normalizedItems = input.items.map((item) => {
+    const knowledgeId = item.knowledgeId.trim();
+    if (seenKnowledgeIds.has(knowledgeId)) {
+      throw new CompileRunKnowledgeFeedbackError(
+        400,
+        `Duplicate knowledgeId in request: ${knowledgeId}`,
+      );
+    }
+    seenKnowledgeIds.add(knowledgeId);
+    return {
+      knowledgeId,
+      verdict: item.verdict,
+      reason: normalizeReason(item.reason),
+      metadata: normalizeMetadata(item.metadata),
+    };
+  });
+
+  const selectableRows = sqlite.db
+    .query<{ item_id: string }, [string]>(
+      `SELECT item_id
+       FROM context_pack_items
+       WHERE run_id = ? AND item_kind IN ('rule', 'procedure')`,
+    )
+    .all(input.runId);
+  const selectableKnowledgeIds = new Set(
+    selectableRows.map((row) => row.item_id.trim()).filter((itemId) => itemId.length > 0),
+  );
+  const invalidKnowledgeIds = normalizedItems
+    .map((item) => item.knowledgeId)
+    .filter((knowledgeId) => !selectableKnowledgeIds.has(knowledgeId));
+  if (invalidKnowledgeIds.length > 0) {
+    throw new CompileRunKnowledgeFeedbackError(
+      400,
+      `Knowledge IDs are not in selected items for this run: ${invalidKnowledgeIds.join(", ")}`,
+    );
+  }
+
+  const existingFeedbackMap = new Map<string, ExistingFeedbackEvent>();
+  if (normalizedItems.length > 0) {
+    const knowledgeIds = normalizedItems.map((item) => item.knowledgeId);
+    const rows = sqlite.db
+      .query<
+        {
+          id: string;
+          knowledge_id: string;
+          verdict: string;
+          actor: string;
+          reason: string | null;
+          metadata: string;
+          updated_at: string;
+        },
+        string[]
+      >(
+        `SELECT id, knowledge_id, verdict, actor, reason, metadata, updated_at
+         FROM knowledge_usage_events
+         WHERE run_id = ? AND knowledge_id IN (${knowledgeIds.map(() => "?").join(", ")})`,
+      )
+      .all(input.runId, ...knowledgeIds);
+    for (const row of rows) {
+      if (!isKnowledgeUsageVerdict(row.verdict)) continue;
+      if (row.actor !== "agent" && row.actor !== "user" && row.actor !== "system") continue;
+      let metadata: FeedbackMetadata = {};
+      try {
+        metadata = normalizeMetadata(JSON.parse(row.metadata));
+      } catch {
+        metadata = {};
+      }
+      existingFeedbackMap.set(row.knowledge_id, {
+        id: row.id,
+        knowledgeId: row.knowledge_id,
+        verdict: row.verdict,
+        actor: row.actor,
+        reason: typeof row.reason === "string" ? row.reason : null,
+        metadata,
+        updatedAt: new Date(row.updated_at),
+      });
+    }
+  }
+
+  let savedCount = 0;
+  let updatedCount = 0;
+  let queueCreatedCount = 0;
+  let queueDismissedCount = 0;
+  const affectedKnowledgeIds = new Set<string>();
+  const now = new Date();
+  const nowIso = now.toISOString();
+
+  sqlite.db.query("BEGIN IMMEDIATE").run();
+  try {
+    for (const item of normalizedItems) {
+      const existing = existingFeedbackMap.get(item.knowledgeId);
+      let eventId: string;
+      let previousVerdict: KnowledgeUsageVerdict | null = null;
+      let nextMetadata = item.metadata;
+
+      if (existing) {
+        eventId = existing.id;
+        previousVerdict = existing.verdict;
+        if (actor === "user" && existing.actor !== "user") {
+          nextMetadata = {
+            ...existing.metadata,
+            ...item.metadata,
+            autoVerdict: existing.verdict,
+            autoActor: existing.actor,
+            autoReason: existing.reason,
+            autoUpdatedAt: existing.updatedAt.toISOString(),
+          };
+        } else if (Object.keys(nextMetadata).length === 0) {
+          nextMetadata = existing.metadata;
+        }
+        const hasChanged = existing.verdict !== item.verdict || existing.reason !== item.reason;
+        if (hasChanged) {
+          sqlite.db
+            .query(
+              `UPDATE knowledge_usage_events
+               SET verdict = ?, actor = ?, reason = ?, metadata = ?, updated_at = ?
+               WHERE id = ?`,
+            )
+            .run(item.verdict, actor, item.reason, JSON.stringify(nextMetadata), nowIso, eventId);
+          savedCount += 1;
+          updatedCount += 1;
+        }
+      } else {
+        eventId = randomUUID();
+        sqlite.db
+          .query(
+            `INSERT INTO knowledge_usage_events (
+              id, run_id, knowledge_id, verdict, actor, reason, metadata, created_at, updated_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          )
+          .run(
+            eventId,
+            input.runId,
+            item.knowledgeId,
+            item.verdict,
+            actor,
+            item.reason,
+            JSON.stringify(nextMetadata),
+            nowIso,
+            nowIso,
+          );
+        savedCount += 1;
+      }
+
+      if (item.verdict === "wrong") {
+        const unresolved = sqlite.db
+          .query<{ id: string }, [string]>(
+            `SELECT id FROM knowledge_review_queue
+             WHERE knowledge_id = ? AND status IN ('pending', 'reviewing')
+             LIMIT 1`,
+          )
+          .get(item.knowledgeId);
+        if (!unresolved) {
+          sqlite.db
+            .query(
+              `INSERT INTO knowledge_review_queue (
+                id, knowledge_id, trigger_event_id, trigger_verdict, status,
+                proposed_action, created_at, updated_at
+              ) VALUES (?, ?, ?, ?, 'pending', 'demote_to_draft_candidate', ?, ?)`,
+            )
+            .run(randomUUID(), item.knowledgeId, eventId, "wrong", nowIso, nowIso);
+          queueCreatedCount += 1;
+        }
+      } else if (previousVerdict === "wrong") {
+        const result = sqlite.db
+          .query(
+            `UPDATE knowledge_review_queue
+             SET status = 'dismissed', updated_at = ?
+             WHERE trigger_event_id = ? AND status = 'pending'`,
+          )
+          .run(nowIso, eventId);
+        queueDismissedCount += result.changes;
+      }
+
+      affectedKnowledgeIds.add(item.knowledgeId);
+    }
+    sqlite.db.query("COMMIT").run();
+  } catch (error) {
+    sqlite.db.query("ROLLBACK").run();
+    throw error;
+  }
+
+  const affectedIds = [...affectedKnowledgeIds];
+  await recalculateKnowledgeDynamicScoresSafe(affectedIds);
+
+  return {
+    savedCount,
+    updatedCount,
+    queueCreatedCount,
+    queueDismissedCount,
+    affectedKnowledgeIds: affectedIds,
+  };
+}
+
 export async function recordCompileRunKnowledgeFeedback(
   input: RecordCompileRunKnowledgeFeedbackInput,
 ): Promise<CompileRunKnowledgeFeedbackResult> {
+  if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    return recordCompileRunKnowledgeFeedbackSqlite(input);
+  }
   await assertCompileRunExists(input.runId);
   const actor: FeedbackActor = input.actor ?? "user";
 

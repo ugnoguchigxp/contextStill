@@ -216,9 +216,9 @@ export async function checkLlmProviderHealthMatrix(
     });
   }
 
-  const localLlmModels = (groupedConfig.localLlm.models ?? [])
-    .filter((model) => model.apiBaseUrl.trim() && model.model.trim())
-    .slice(0, 10);
+  const localLlmModels = (groupedConfig.localLlm.models ?? []).filter(
+    (model) => model.apiBaseUrl.trim() && model.model.trim(),
+  );
   if (localLlmModels.length > 0) {
     for (const [index, model] of localLlmModels.entries()) {
       entries.push({
@@ -229,6 +229,7 @@ export async function checkLlmProviderHealthMatrix(
           timeoutMs,
           modelConfig: {
             apiBaseUrl: model.apiBaseUrl,
+            apiPath: model.apiPath,
             model: model.model,
           },
         }),

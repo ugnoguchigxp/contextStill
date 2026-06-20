@@ -1,3 +1,5 @@
+import { randomUUID } from "node:crypto";
+import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/index.js";
 import { llmUsageLogs } from "../../db/schema.js";
 import { calculateCost } from "./llm-cost-config.js";
@@ -73,6 +75,40 @@ export function measureLlmUsage(params: LlmUsageLogInput): LlmUsageLogRow | null
 
 async function insertLlmUsageLog(row: LlmUsageLogRow): Promise<void> {
   try {
+    if (resolveDatabaseBackendConfig().kind === "sqlite") {
+      const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
+      const sqlite = await getRuntimeSqliteCoreDatabase();
+      sqlite.db
+        .query(
+          `INSERT INTO llm_usage_logs (
+            id,
+            provider,
+            model,
+            prompt_tokens,
+            completion_tokens,
+            total_tokens,
+            reasoning_tokens,
+            cost_jpy,
+            usage_mode,
+            source,
+            created_at
+          ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        )
+        .run(
+          row.id ?? randomUUID(),
+          row.provider,
+          row.model,
+          row.promptTokens,
+          row.completionTokens,
+          row.totalTokens,
+          row.reasoningTokens ?? 0,
+          row.costJpy ?? 0,
+          row.usageMode ?? "estimated",
+          row.source ?? "unknown",
+          new Date().toISOString(),
+        );
+      return;
+    }
     await db.insert(llmUsageLogs).values(row);
   } catch (error) {
     console.error("[LlmUsageLogger] Failed to write usage log to DB:", error);

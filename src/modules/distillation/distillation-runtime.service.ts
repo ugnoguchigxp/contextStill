@@ -3,6 +3,7 @@ import { groupedConfig } from "../../config.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import { recordLlmUsage } from "../llm/llm-usage-logger.js";
 import { createCodexProvider } from "../llm/providers/codex.provider.js";
+import { resolveLocalLlmModelConfig } from "../llm/providers/local-llm-config.js";
 import { ensureRuntimeSettingsLoaded } from "../settings/settings.service.js";
 import {
   type DistillationToolCall,
@@ -425,12 +426,14 @@ export function createDefaultChatClient(
           : provider === "local-llm" && localLlmModel?.trim()
             ? localLlmModel.trim()
             : defaultModelForProvider(provider);
+      const recordedModel =
+        provider === "local-llm" ? resolveLocalLlmModelConfig(model).model : model;
 
       try {
         const response = await callByProvider[provider]({ ...request, model });
         recordLlmUsage({
           provider,
-          model,
+          model: recordedModel,
           usage: response.usage,
           promptMessages: request.messages,
           promptMetadata: {
@@ -450,12 +453,16 @@ export function createDefaultChatClient(
             providerOrder,
             attemptedProviders,
             selectedProvider: provider,
+            selectedProviderDetails:
+              provider === "local-llm"
+                ? { model: recordedModel, routeTarget: model }
+                : provider === "azure-openai"
+                  ? response.providerMetadata
+                  : undefined,
             fallbackUsed:
               attemptedProviders.length > 1 ||
               (primaryProvider !== undefined && provider !== primaryProvider),
             providerErrorKinds,
-            selectedProviderDetails:
-              provider === "azure-openai" ? response.providerMetadata : undefined,
           },
         };
       } catch (error) {
