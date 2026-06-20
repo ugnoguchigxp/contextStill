@@ -115,6 +115,104 @@ export type AgentDiffEntry = {
   updatedAt: string;
 };
 
+export type EpisodeCardStatus = "draft" | "active" | "deprecated";
+export type EpisodeOutcomeKind = "success" | "failure" | "mixed" | "unknown";
+export type EpisodeEvidenceStatus = "verified" | "partial" | "unverified";
+export type EpisodeSourceKind =
+  | "vibe_memory"
+  | "compile_run"
+  | "decision_run"
+  | "audit_log"
+  | "manual";
+export type EpisodeRefKind =
+  | "vibe_memory"
+  | "agent_diff"
+  | "compile_run"
+  | "decision_run"
+  | "audit_log"
+  | "file"
+  | "commit";
+
+export type EpisodeRefInput = {
+  refKind: EpisodeRefKind;
+  refValue: string;
+  locator?: string | null;
+  queryHint?: string | null;
+  metadata?: Record<string, unknown>;
+};
+
+export type EpisodeRef = EpisodeRefInput & {
+  id: string;
+  episodeCardId: string;
+  createdAt: string;
+};
+
+export type EpisodeCard = {
+  id: string;
+  title: string;
+  situation: string;
+  observations: string;
+  action: string;
+  outcome: string;
+  lesson: string;
+  applicability: Record<string, unknown>;
+  antiApplicability: Record<string, unknown>;
+  domains: string[];
+  technologies: string[];
+  changeTypes: string[];
+  tools: string[];
+  repoPath?: string | null;
+  repoKey?: string | null;
+  sourceKind: EpisodeSourceKind;
+  sourceKey: string;
+  outcomeKind: EpisodeOutcomeKind;
+  confidence: number;
+  evidenceStatus: EpisodeEvidenceStatus;
+  status: EpisodeCardStatus;
+  staleAt?: string | null;
+  metadata: Record<string, unknown>;
+  createdAt: string;
+  updatedAt: string;
+  score?: number;
+  refs: EpisodeRef[];
+};
+
+export type EpisodeCardCreateInput = {
+  title: string;
+  situation: string;
+  observations?: string;
+  action?: string;
+  outcome?: string;
+  lesson?: string;
+  applicability?: Record<string, unknown>;
+  antiApplicability?: Record<string, unknown>;
+  domains?: string[];
+  technologies?: string[];
+  changeTypes?: string[];
+  tools?: string[];
+  repoPath?: string | null;
+  repoKey?: string | null;
+  sourceKind: EpisodeSourceKind;
+  sourceKey: string;
+  outcomeKind?: EpisodeOutcomeKind;
+  confidence?: number;
+  evidenceStatus?: EpisodeEvidenceStatus;
+  status?: EpisodeCardStatus;
+  metadata?: Record<string, unknown>;
+  refs?: EpisodeRefInput[];
+};
+
+export type EpisodeListRequest = {
+  query?: string;
+  status?: EpisodeCardStatus;
+  includeDraft?: boolean;
+  limit?: number;
+  technologies?: string[];
+  changeTypes?: string[];
+  domains?: string[];
+  tools?: string[];
+};
+
 export type KnowledgeWriteInput = {
   type: KnowledgeType;
   status: string;
@@ -2578,6 +2676,30 @@ export async function fetchAgentDiffEntries(
   if (params?.vibeMemoryIds?.length) query.set("vibeMemoryIds", params.vibeMemoryIds.join(","));
   const json = await getJson<{ entries: AgentDiffEntry[] }>(`/api/agent-diffs?${query}`);
   return json.entries;
+}
+
+export async function fetchEpisodes(input: EpisodeListRequest = {}): Promise<EpisodeCard[]> {
+  const query = new URLSearchParams();
+  query.set("limit", String(input.limit ?? 50));
+  if (input.query?.trim()) query.set("q", input.query.trim());
+  if (input.status) query.set("status", input.status);
+  if (input.includeDraft) query.set("includeDraft", "true");
+  if (input.technologies?.length) query.set("technologies", input.technologies.join(","));
+  if (input.changeTypes?.length) query.set("changeTypes", input.changeTypes.join(","));
+  if (input.domains?.length) query.set("domains", input.domains.join(","));
+  if (input.tools?.length) query.set("tools", input.tools.join(","));
+  const json = await getJson<{ items: EpisodeCard[] }>(`/api/episodes?${query}`);
+  return json.items;
+}
+
+export async function fetchEpisode(id: string): Promise<EpisodeCard> {
+  const json = await getJson<{ episode: EpisodeCard }>(`/api/episodes/${encodeURIComponent(id)}`);
+  return json.episode;
+}
+
+export async function createEpisode(input: EpisodeCardCreateInput): Promise<EpisodeCard> {
+  const json = await requestJson<{ episode: EpisodeCard }>("/api/episodes", "POST", input);
+  return json.episode;
 }
 
 export async function fetchDoctorReport(): Promise<DoctorReport> {

@@ -5,6 +5,7 @@ import type { DecisionEvidenceCandidate } from "./context-decision.scoring.js";
 function roleLabel(role: string): string {
   if (role === "selected_support") return "support";
   if (role === "user_preference") return "preference";
+  if (role === "counter_evidence") return "counter";
   if (role === "risk_warning") return "risk";
   if (role === "rejected_alternative") return "alternative";
   return role;
@@ -41,6 +42,7 @@ export function buildContextDecisionKnowledgePrior(params: {
     (item) => item.role === "selected_support" || item.role === "user_preference",
   );
   const riskEvidence = params.evidence.filter((item) => item.role === "risk_warning");
+  const counterEvidence = params.evidence.filter((item) => item.role === "counter_evidence");
   const alternativeEvidence = params.evidence.filter(
     (item) => item.role === "rejected_alternative",
   );
@@ -51,10 +53,11 @@ export function buildContextDecisionKnowledgePrior(params: {
       4,
     ),
   ].slice(0, 8);
-  const cautions = [...topTitles(riskEvidence, 3), ...topTitles(alternativeEvidence, 2)].slice(
-    0,
-    5,
-  );
+  const cautions = [
+    ...topTitles(counterEvidence, 3),
+    ...topTitles(riskEvidence, 3),
+    ...topTitles(alternativeEvidence, 2),
+  ].slice(0, 5);
   const status: ContextDecisionKnowledgePrior["status"] =
     selectedEvidence.length > 0
       ? "available"

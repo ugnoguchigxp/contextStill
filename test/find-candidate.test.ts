@@ -148,6 +148,10 @@ describe("runFindCandidate", () => {
             content: expect.stringContaining("失敗原因、修正方法、検証方法"),
           }),
           expect.objectContaining({
+            role: "system",
+            content: expect.stringContaining("negative の rule 候補として出す"),
+          }),
+          expect.objectContaining({
             role: "user",
             content: expect.stringContaining("まず tool で本文を読んでください"),
           }),
@@ -173,8 +177,52 @@ describe("runFindCandidate", () => {
       expect.objectContaining({
         candidate: expect.objectContaining({
           type: "procedure",
+          polarity: "positive",
           sourceSummary:
             "The source says to run smoke tests before finalizing implementation changes.",
+        }),
+      }),
+    );
+  });
+
+  test("normalizes negative procedure candidates to rules before storage", async () => {
+    mocks.runDistillationCompletion.mockImplementation(async (_request, options) => {
+      await options.toolExecutor({
+        id: "tool-1",
+        function: {
+          name: "read_file",
+          arguments: JSON.stringify({ fromToken: 0, readTokens: 20 }),
+        },
+      });
+      return {
+        content: JSON.stringify({
+          candidates: [
+            {
+              type: "procedure",
+              polarity: "negative",
+              title: "Do not skip queue event checks",
+              content: "Skipping queue event checks can hide stale worker state.",
+              sourceSummary: "The source describes a stale worker diagnosis failure.",
+            },
+          ],
+        }),
+        toolEvents: [],
+        messages: [],
+      };
+    });
+
+    await runFindCandidate({
+      targetStateId: "target-1",
+      callerMode: "storage",
+      provider: "local-llm",
+    });
+
+    expect(mocks.insertFindCandidateResult).toHaveBeenCalledWith(
+      expect.objectContaining({
+        candidate: expect.objectContaining({
+          type: "rule",
+          originalType: "procedure",
+          polarity: "negative",
         }),
       }),
     );
@@ -502,6 +550,7 @@ describe("parseStorageCandidatesFromLlmOutput", () => {
         candidates: [
           {
             type: "procedure",
+            polarity: "positive",
             title: "Run focused verify before finalizing",
             content: "Run the focused test, inspect the returned evidence, then finalize.",
             sourceSummary:
@@ -514,10 +563,41 @@ describe("parseStorageCandidatesFromLlmOutput", () => {
     expect(candidates).toEqual([
       {
         type: "procedure",
+        polarity: "positive",
         title: "Run focused verify before finalizing",
         content: "Run the focused test, inspect the returned evidence, then finalize.",
         sourceSummary:
           "The source describes running a focused test, inspecting evidence, and finalizing.",
+      },
+    ]);
+  });
+
+  test("keeps negative polarity hints when the LLM provides them", () => {
+    const candidates = parseStorageCandidatesFromLlmOutput(
+      JSON.stringify({
+        candidates: [
+          {
+            type: "rule",
+            polarity: "negative",
+            title: "Do not trust stale queue status alone",
+            content:
+              "Queue diagnosis must not treat an old status row as current truth without checking recent events.",
+            sourceSummary:
+              "The source describes a queue diagnosis mistake caused by relying on stale status.",
+          },
+        ],
+      }),
+    );
+
+    expect(candidates).toEqual([
+      {
+        type: "rule",
+        polarity: "negative",
+        title: "Do not trust stale queue status alone",
+        content:
+          "Queue diagnosis must not treat an old status row as current truth without checking recent events.",
+        sourceSummary:
+          "The source describes a queue diagnosis mistake caused by relying on stale status.",
       },
     ]);
   });
@@ -558,6 +638,7 @@ describe("parseStorageCandidatesFromLlmOutput", () => {
     const candidates = parseStorageCandidatesFromLlmOutput(
       [
         "TYPE: procedure",
+        "POLARITY: negative",
         "TITLE: Verify pipeline before finalize",
         "CONTENT:",
         "1. Run typecheck.",
@@ -570,6 +651,7 @@ describe("parseStorageCandidatesFromLlmOutput", () => {
     expect(candidates).toEqual([
       {
         type: "procedure",
+        polarity: "negative",
         title: "Verify pipeline before finalize",
         content:
           "1. Run typecheck.\n2. Run focused tests.\n3. Confirm evidence payload before finalize.",

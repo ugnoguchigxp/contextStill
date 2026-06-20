@@ -1,6 +1,7 @@
 import { describe, expect, test } from "vitest";
 import { compileInputSchema } from "../src/shared/schemas/compile.schema.ts";
 import { doctorReportSchema } from "../src/shared/schemas/doctor.schema.ts";
+import { episodeCardCreateSchema } from "../src/shared/schemas/episode-card.schema.ts";
 import {
   knowledgeSearchInputSchema,
   registerCandidateInputSchema,
@@ -24,6 +25,24 @@ import {
 } from "./fixtures/schema-fixtures.ts";
 
 describe("Shared Schemas", () => {
+  test("episodeCardCreateSchema parses refs and defaults", () => {
+    const parsed = episodeCardCreateSchema.parse({
+      title: "SQLite compile failure recovery",
+      situation: "SQLite compile failed after a schema change.",
+      sourceKind: "compile_run",
+      sourceKey: "550e8400-e29b-41d4-a716-446655440000",
+      refs: [
+        {
+          refKind: "compile_run",
+          refValue: "550e8400-e29b-41d4-a716-446655440000",
+        },
+      ],
+    });
+    expect(parsed.status).toBe("active");
+    expect(parsed.outcomeKind).toBe("unknown");
+    expect(parsed.refs[0]?.refKind).toBe("compile_run");
+  });
+
   test("knowledgeSearchInputSchema parses valid input", () => {
     const input = { query: "test", limit: 10 };
     expect(knowledgeSearchInputSchema.parse(input)).toEqual(expect.objectContaining(input));

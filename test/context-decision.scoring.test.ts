@@ -114,4 +114,58 @@ describe("context decision scoring", () => {
     expect(withRisk.trace.counterScore).toBe(0);
     expect(withRisk.confidence).toBe(withoutRisk.confidence);
   });
+
+  test("compile used signals boost stable support and wrong signals weaken support", () => {
+    const stable = scoreContextDecision({
+      input: baseInput,
+      evidence: [
+        {
+          knowledge: knowledge(),
+          role: "selected_support",
+          signals: {
+            compile: {
+              compileSelectCount: 4,
+              recentSelectedCount: 3,
+              usedCount: 3,
+              notUsedCount: 0,
+              offTopicCount: 0,
+              wrongCount: 0,
+              suppressedCount: 0,
+              rejectedByAgenticCount: 0,
+              misleadingEvalCount: 0,
+            },
+          },
+        },
+      ],
+      coverage: [{ queryRole: "support", hitCount: 1 }],
+      relatedBadSignalCount: 0,
+    });
+    const wrong = scoreContextDecision({
+      input: baseInput,
+      evidence: [
+        {
+          knowledge: knowledge(),
+          role: "selected_support",
+          signals: {
+            compile: {
+              compileSelectCount: 4,
+              recentSelectedCount: 3,
+              usedCount: 0,
+              notUsedCount: 0,
+              offTopicCount: 0,
+              wrongCount: 2,
+              suppressedCount: 0,
+              rejectedByAgenticCount: 0,
+              misleadingEvalCount: 0,
+            },
+          },
+        },
+      ],
+      coverage: [{ queryRole: "support", hitCount: 1 }],
+      relatedBadSignalCount: 0,
+    });
+
+    expect(stable.trace.supportScore).toBeGreaterThan(wrong.trace.supportScore);
+    expect(stable.confidence).toBeGreaterThan(wrong.confidence);
+  });
 });

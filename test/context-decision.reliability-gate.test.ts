@@ -165,4 +165,77 @@ describe("context decision reliability gate", () => {
     expect(result.gate.status).toBe("passed");
     expect(result.gate.badFeedback.count).toBe(1);
   });
+
+  test("compile wrong signal blocks execute even when LLM selects execute", () => {
+    const result = applyContextDecisionReliabilityGate({
+      judgment: judgment("execute"),
+      knowledgeAssessment: assessment(),
+      evidence: [
+        {
+          knowledge: knowledge({ title: "Wrong compile support" }),
+          role: "selected_support",
+          signals: {
+            compile: {
+              compileSelectCount: 3,
+              recentSelectedCount: 3,
+              usedCount: 0,
+              notUsedCount: 0,
+              offTopicCount: 0,
+              wrongCount: 1,
+              suppressedCount: 0,
+              rejectedByAgenticCount: 0,
+              misleadingEvalCount: 0,
+            },
+          },
+        },
+      ],
+      relatedBadSignalSummary: noBadFeedback,
+    });
+
+    expect(result.judgment.decision).toBe("reject");
+    expect(result.gate.appliedRules.map((item) => item.key)).toContain(
+      "compile_wrong_blocks_execute",
+    );
+  });
+
+  test("negative attractor blocks execute and thin community caps confidence", () => {
+    const result = applyContextDecisionReliabilityGate({
+      judgment: judgment("execute"),
+      knowledgeAssessment: assessment(),
+      evidence: [
+        {
+          knowledge: knowledge({ title: "Negative attractor support" }),
+          role: "selected_support",
+          signals: {
+            community: {
+              communityKey: "community-a",
+              communityLabel: "Community A",
+              communityRank: 1,
+              sourceRefDensity: 0.1,
+              compileSelectCount: 5,
+              health: { dead: false, stale: false, thinEvidence: true },
+            },
+            landscape: {
+              classification: "negative_attractor_candidate",
+              confidence: "high",
+              attractorScore: 30,
+              negativeScore: 92,
+              reachabilityRiskScore: 10,
+              usedRate: 0.1,
+              notUsedRate: 0.2,
+              offTopicRate: 0.4,
+              wrongRate: 0.3,
+              flags: ["wrong_review_required"],
+            },
+          },
+        },
+      ],
+      relatedBadSignalSummary: noBadFeedback,
+    });
+
+    const ruleKeys = result.gate.appliedRules.map((item) => item.key);
+    expect(result.judgment.decision).toBe("reject");
+    expect(ruleKeys).toContain("negative_attractor_blocks_execute");
+    expect(ruleKeys).toContain("thin_community_caps_confidence");
+  });
 });

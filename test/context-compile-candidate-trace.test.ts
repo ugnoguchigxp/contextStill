@@ -8,6 +8,7 @@ import {
   updateCompileRunSnapshot,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
+import { searchEpisodes } from "../src/modules/episodic-memory/episode-card.service.js";
 import { recordCompileRunKnowledgeUsageSignals } from "../src/modules/knowledge/knowledge-feedback.service.js";
 import { recordKnowledgeCompileSelectionSafe } from "../src/modules/knowledge/knowledge-value.service.js";
 import { retrieveKnowledge } from "../src/modules/knowledge/knowledge.service.js";
@@ -19,6 +20,7 @@ const { agenticRefineMock } = vi.hoisted(() => ({
 
 vi.mock("../src/modules/knowledge/knowledge.service.js");
 vi.mock("../src/modules/sources/source-retrieval.service.js");
+vi.mock("../src/modules/episodic-memory/episode-card.service.js");
 vi.mock("../src/modules/context-compiler/context-compiler.repository.js");
 vi.mock("../src/modules/knowledge/knowledge-feedback.service.js");
 vi.mock("../src/modules/knowledge/knowledge-value.service.js");
@@ -67,6 +69,7 @@ describe("context compile candidate trace", () => {
     });
     vi.mocked(recordKnowledgeCompileSelectionSafe).mockResolvedValue();
     vi.mocked(recordAuditLogSafe).mockResolvedValue(undefined);
+    vi.mocked(searchEpisodes).mockResolvedValue([]);
 
     vi.mocked(retrieveKnowledge).mockResolvedValue({
       items: [
@@ -234,8 +237,18 @@ describe("context compile candidate trace", () => {
       expect.objectContaining({
         itemId: "k4",
         selected: true,
+        finalScore: expect.any(Number),
+        evidence: expect.objectContaining({
+          rankingScore: expect.objectContaining({
+            rawScore: 0.65,
+            weightedScore: expect.any(Number),
+            confidenceBoost: expect.any(Number),
+            importanceBoost: expect.any(Number),
+          }),
+        }),
       }),
     );
+    expect(rows[0].finalScore).toBeGreaterThan(0.65);
 
     const retrievalStats = pack.diagnostics.retrievalStats as Record<string, unknown>;
     expect(retrievalStats.candidateTraceSavedCount).toBe(1);

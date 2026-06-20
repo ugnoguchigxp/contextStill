@@ -371,6 +371,59 @@ export async function insertContextDecisionRunSqlite(params: {
   return id;
 }
 
+export async function markContextDecisionRunFailedSqlite(
+  decisionRunId: string,
+  params: {
+    reason: string;
+    stage: string;
+    mandate: string;
+    agentMessage: string;
+  },
+): Promise<void> {
+  const sqlite = await getSqliteCoreDatabase();
+  const current = sqlite.db
+    .query<{ confidence_trace: string }, [string]>(
+      "select confidence_trace from context_decision_runs where id = ?",
+    )
+    .get(decisionRunId);
+  const confidenceTrace = {
+    ...asRecord(current?.confidence_trace),
+    postRunPersistenceFailure: {
+      stage: params.stage,
+      reason: params.reason,
+      recordedAt: nowIso(),
+    },
+  };
+  sqlite.db
+    .query(
+      `
+      update context_decision_runs
+      set decision = ?,
+          selected_action = ?,
+          rejected_actions = ?,
+          mandate = ?,
+          agent_message = ?,
+          confidence = ?,
+          confidence_trace = ?,
+          status = ?,
+          updated_at = ?
+      where id = ?
+    `,
+    )
+    .run(
+      "escalate",
+      null,
+      jsonArray(["execute"]),
+      params.mandate,
+      params.agentMessage,
+      0,
+      json(confidenceTrace),
+      "failed",
+      nowIso(),
+      decisionRunId,
+    );
+}
+
 export async function insertContextDecisionEvidenceRowsSqlite(
   decisionRunId: string,
   items: Array<{
@@ -663,8 +716,8 @@ export async function saveHumanDecisionFeedbackSqlite(params: {
           effect,
           amount,
           params.value === "good"
-            ? "Human Good feedback for selected decision support."
-            : "Human Bad feedback for selected decision support.",
+            ? "Human Good feedback for decision-driving evidence."
+            : "Human Bad feedback for decision-driving evidence.",
           80,
           "applied",
           now,
@@ -799,6 +852,28 @@ export async function listSelectedSupportKnowledgeIdsSqlite(decisionId: string):
     .all(decisionId)
     .map((row) => row.knowledge_id)
     .filter((id): id is string => Boolean(id));
+}
+
+export async function listContextDecisionKnowledgeIdsByRolesSqlite(
+  decisionId: string,
+  roles: ContextDecisionEvidenceRole[],
+): Promise<string[]> {
+  if (roles.length === 0) return [];
+  const sqlite = await getSqliteCoreDatabase();
+  const placeholders = roles.map(() => "?").join(", ");
+  const rows = sqlite.db
+    .query<{ knowledge_id: string | null }, string[]>(
+      `
+      select knowledge_id
+      from context_decision_evidence
+      where decision_run_id = ?
+        and role in (${placeholders})
+    `,
+    )
+    .all(decisionId, ...roles);
+  return Array.from(
+    new Set(rows.map((row) => row.knowledge_id).filter((id): id is string => Boolean(id))),
+  );
 }
 
 export async function listContextDecisionPrScanCandidatesSqlite(params: {

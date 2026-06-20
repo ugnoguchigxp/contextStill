@@ -930,6 +930,36 @@ describe("runCoverEvidence", () => {
     expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(3);
   });
 
+  test("uses candidate content fallback so missing vibe memory candidates can be web verified", async () => {
+    mocks.getFindCandidateResultById.mockResolvedValue(
+      candidateRow({
+        targetKind: "vibe_memory",
+        targetKey: "missing-memory",
+        sourceUri: "vibe_memory:missing-memory",
+        content:
+          "Run smoke tests before finalizing coverEvidence so source references and evidence status stay verifiable.",
+        origin: {
+          readRanges: [{ from: 0, toExclusive: 80 }],
+        },
+      }),
+    );
+    mocks.readVibeMemoryByTokenWindow.mockRejectedValue(new Error("vibe memory not found"));
+
+    const result = await runCoverEvidence({ id: "find-1" });
+
+    expect(result.result.status).toBe("knowledge_ready");
+    expect(mocks.readVibeMemoryByTokenWindow).toHaveBeenCalledWith(
+      expect.objectContaining({
+        vibeMemoryId: "missing-memory",
+      }),
+    );
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(3);
+    const request = mocks.runDistillationCompletion.mock.calls[2]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(request.messages[1]?.content).toContain("Run smoke tests before finalizing");
+  });
+
   test("preserves register_candidate origin hints through value assessment", async () => {
     const body = skillLikeProcedureBody();
     mocks.getFindCandidateResultById.mockResolvedValue(

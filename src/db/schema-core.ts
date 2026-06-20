@@ -13,7 +13,18 @@ import {
   vector,
 } from "drizzle-orm/pg-core";
 import { groupedConfig } from "../config.js";
-import { auditLogActorValues, settingValueKindValues } from "./schema.constants.js";
+import {
+  auditLogActorValues,
+  episodeCardStatusValues,
+  episodeEvidenceStatusValues,
+  episodeOutcomeKindValues,
+  episodeRefKindValues,
+  episodeRetrievalRunKindValues,
+  episodeRetrievalUsedForValues,
+  episodeRetrievalVerdictValues,
+  episodeSourceKindValues,
+  settingValueKindValues,
+} from "./schema.constants.js";
 import { toSqlList } from "./schema.utils.js";
 
 export const vibeMigrationRuns = pgTable("vibe_migration_runs", {
@@ -185,6 +196,166 @@ export const auditLogs = pgTable(
     actorCheck: check(
       "audit_logs_actor_check",
       sql`${table.actor} IN (${sql.raw(toSqlList(auditLogActorValues))})`,
+    ),
+  }),
+);
+
+export const episodeCards = pgTable(
+  "episode_cards",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    title: text("title").notNull(),
+    situation: text("situation").notNull(),
+    observations: text("observations").notNull().default(""),
+    action: text("action").notNull().default(""),
+    outcome: text("outcome").notNull().default(""),
+    lesson: text("lesson").notNull().default(""),
+    applicability: jsonb("applicability").default({}).notNull(),
+    antiApplicability: jsonb("anti_applicability").default({}).notNull(),
+    domains: jsonb("domains").default([]).notNull(),
+    technologies: jsonb("technologies").default([]).notNull(),
+    changeTypes: jsonb("change_types").default([]).notNull(),
+    tools: jsonb("tools").default([]).notNull(),
+    repoPath: text("repo_path"),
+    repoKey: text("repo_key"),
+    sourceKind: text("source_kind").notNull(),
+    sourceKey: text("source_key").notNull(),
+    outcomeKind: text("outcome_kind").notNull().default("unknown"),
+    confidence: integer("confidence").default(50).notNull(),
+    evidenceStatus: text("evidence_status").notNull().default("unverified"),
+    status: text("status").notNull().default("active"),
+    staleAt: timestamp("stale_at"),
+    embedding: vector("embedding", { dimensions: groupedConfig.embedding.dimension }),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    statusIdx: index("episode_cards_status_idx").on(table.status),
+    sourceUniqueIdx: uniqueIndex("episode_cards_source_unique_idx").on(
+      table.sourceKind,
+      table.sourceKey,
+    ),
+    repoKeyIdx: index("episode_cards_repo_key_idx").on(table.repoKey),
+    repoPathIdx: index("episode_cards_repo_path_idx").on(table.repoPath),
+    outcomeKindIdx: index("episode_cards_outcome_kind_idx").on(table.outcomeKind),
+    evidenceStatusIdx: index("episode_cards_evidence_status_idx").on(table.evidenceStatus),
+    createdAtIdx: index("episode_cards_created_at_idx").on(table.createdAt),
+    textFtsIdx: index("episode_cards_text_fts_idx").using(
+      "gin",
+      sql`to_tsvector('simple', coalesce(${table.title}, '') || ' ' || coalesce(${table.situation}, '') || ' ' || coalesce(${table.observations}, '') || ' ' || coalesce(${table.action}, '') || ' ' || coalesce(${table.outcome}, '') || ' ' || coalesce(${table.lesson}, ''))`,
+    ),
+    embeddingHnswIdx: index("episode_cards_embedding_hnsw_idx").using(
+      "hnsw",
+      table.embedding.op("vector_cosine_ops"),
+    ),
+    statusCheck: check(
+      "episode_cards_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(episodeCardStatusValues))})`,
+    ),
+    outcomeKindCheck: check(
+      "episode_cards_outcome_kind_check",
+      sql`${table.outcomeKind} IN (${sql.raw(toSqlList(episodeOutcomeKindValues))})`,
+    ),
+    evidenceStatusCheck: check(
+      "episode_cards_evidence_status_check",
+      sql`${table.evidenceStatus} IN (${sql.raw(toSqlList(episodeEvidenceStatusValues))})`,
+    ),
+    sourceKindCheck: check(
+      "episode_cards_source_kind_check",
+      sql`${table.sourceKind} IN (${sql.raw(toSqlList(episodeSourceKindValues))})`,
+    ),
+    confidenceRangeCheck: check(
+      "episode_cards_confidence_range_check",
+      sql`${table.confidence} >= 0 and ${table.confidence} <= 100`,
+    ),
+    applicabilityObjectCheck: check(
+      "episode_cards_applicability_object_check",
+      sql`jsonb_typeof(${table.applicability}) = 'object'`,
+    ),
+    antiApplicabilityObjectCheck: check(
+      "episode_cards_anti_applicability_object_check",
+      sql`jsonb_typeof(${table.antiApplicability}) = 'object'`,
+    ),
+    domainsArrayCheck: check(
+      "episode_cards_domains_array_check",
+      sql`jsonb_typeof(${table.domains}) = 'array'`,
+    ),
+    technologiesArrayCheck: check(
+      "episode_cards_technologies_array_check",
+      sql`jsonb_typeof(${table.technologies}) = 'array'`,
+    ),
+    changeTypesArrayCheck: check(
+      "episode_cards_change_types_array_check",
+      sql`jsonb_typeof(${table.changeTypes}) = 'array'`,
+    ),
+    toolsArrayCheck: check(
+      "episode_cards_tools_array_check",
+      sql`jsonb_typeof(${table.tools}) = 'array'`,
+    ),
+  }),
+);
+
+export const episodeRefs = pgTable(
+  "episode_refs",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    episodeCardId: uuid("episode_card_id")
+      .references(() => episodeCards.id, { onDelete: "cascade" })
+      .notNull(),
+    refKind: text("ref_kind").notNull(),
+    refValue: text("ref_value").notNull(),
+    locator: text("locator"),
+    queryHint: text("query_hint"),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    episodeCardIdIdx: index("episode_refs_episode_card_id_idx").on(table.episodeCardId),
+    refKindValueIdx: index("episode_refs_kind_value_idx").on(table.refKind, table.refValue),
+    refKindCheck: check(
+      "episode_refs_ref_kind_check",
+      sql`${table.refKind} IN (${sql.raw(toSqlList(episodeRefKindValues))})`,
+    ),
+  }),
+);
+
+export const episodeRetrievalFeedback = pgTable(
+  "episode_retrieval_feedback",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    episodeCardId: uuid("episode_card_id")
+      .references(() => episodeCards.id, { onDelete: "cascade" })
+      .notNull(),
+    runKind: text("run_kind").notNull(),
+    runId: text("run_id").notNull(),
+    usedFor: text("used_for").notNull(),
+    verdict: text("verdict").notNull(),
+    reason: text("reason"),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+  },
+  (table) => ({
+    episodeRunIdx: index("episode_retrieval_feedback_episode_run_idx").on(
+      table.episodeCardId,
+      table.runKind,
+      table.runId,
+    ),
+    verdictCreatedAtIdx: index("episode_retrieval_feedback_verdict_created_at_idx").on(
+      table.verdict,
+      table.createdAt,
+    ),
+    runKindCheck: check(
+      "episode_retrieval_feedback_run_kind_check",
+      sql`${table.runKind} IN (${sql.raw(toSqlList(episodeRetrievalRunKindValues))})`,
+    ),
+    usedForCheck: check(
+      "episode_retrieval_feedback_used_for_check",
+      sql`${table.usedFor} IN (${sql.raw(toSqlList(episodeRetrievalUsedForValues))})`,
+    ),
+    verdictCheck: check(
+      "episode_retrieval_feedback_verdict_check",
+      sql`${table.verdict} IN (${sql.raw(toSqlList(episodeRetrievalVerdictValues))})`,
     ),
   }),
 );

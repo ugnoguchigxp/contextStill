@@ -111,6 +111,57 @@ describeDb("registerCandidate", () => {
     expect(knowledgeRows).toEqual([]);
   });
 
+  test("preserves negative polarity and intent tags through provided candidate rows", async () => {
+    const result = await registerCandidate({
+      title: "Do not trust stale queue status alone",
+      body: "Stale queue status alone is not enough evidence for diagnosis.",
+      type: "procedure",
+      polarity: "negative",
+      intentTags: ["failure_pattern", "guardrail"],
+      metadata: {},
+    });
+
+    const db = getDb();
+    const [candidate] = await db
+      .select()
+      .from(findCandidateResults)
+      .where(eq(findCandidateResults.id, result.findCandidateResultId));
+    const [findingJob] = await db
+      .select()
+      .from(findingCandidateQueue)
+      .where(eq(findingCandidateQueue.id, result.findingJobId as string));
+    const [foundCandidate] = await db
+      .select()
+      .from(foundCandidates)
+      .where(eq(foundCandidates.findingJobId, findingJob.id));
+
+    expect(result.type).toBe("rule");
+    expect(candidate.origin).toMatchObject({
+      candidateType: "rule",
+      originalCandidateType: "procedure",
+      polarity: "negative",
+      intentTags: ["failure_pattern", "guardrail"],
+    });
+    expect(findingJob.payload).toMatchObject({
+      type: "rule",
+      polarity: "negative",
+      intentTags: ["failure_pattern", "guardrail"],
+    });
+    expect(foundCandidate).toMatchObject({
+      type: "rule",
+      title: "Do not trust stale queue status alone",
+    });
+    expect(foundCandidate.origin).toMatchObject({
+      originalCandidateType: "procedure",
+      polarity: "negative",
+      intentTags: ["failure_pattern", "guardrail"],
+    });
+    expect(foundCandidate.metadata).toMatchObject({
+      polarity: "negative",
+      intentTags: ["failure_pattern", "guardrail"],
+    });
+  });
+
   test("sets wiki priority when metadata indicates wiki parent", async () => {
     const result = await registerCandidate({
       title: "Keep wiki priority",

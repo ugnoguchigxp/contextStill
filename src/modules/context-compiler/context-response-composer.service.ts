@@ -34,6 +34,10 @@ export type ComposeResult = {
   agenticUsed: boolean;
   usedKnowledge: ComposeUsedKnowledge[];
   error?: string;
+  noContentReason?:
+    | "fallback_no_candidates"
+    | "agentic_no_content"
+    | "agentic_goal_alignment_failed";
 };
 
 type HeadingConfig = {
@@ -732,7 +736,12 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
   const defaultPlan = defaultComposePlan(params.retrievalMode);
   const defaultFallback = buildFallbackCompose(params, defaultPlan);
   if (defaultFallback.markdown === "No Content") {
-    return { markdown: "No Content", agenticUsed: false, usedKnowledge: [] };
+    return {
+      markdown: "No Content",
+      agenticUsed: false,
+      usedKnowledge: [],
+      noContentReason: "fallback_no_candidates",
+    };
   }
 
   await ensureRuntimeSettingsLoaded();
@@ -856,7 +865,12 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
         };
       }
       if (parsed.markdown === "No Content") {
-        return { markdown: "No Content", agenticUsed: true, usedKnowledge: [] };
+        return {
+          markdown: "No Content",
+          agenticUsed: true,
+          usedKnowledge: [],
+          noContentReason: "agentic_no_content",
+        };
       }
       if (effectivePlan.responseStyle === "skill" && !validateSkillMarkdown(parsed.markdown)) {
         if (allowFallback) {
@@ -871,7 +885,12 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
         };
       }
       if (!looksGoalAligned(parsed.markdown, params.input.goal)) {
-        return { markdown: "No Content", agenticUsed: true, usedKnowledge: [] };
+        return {
+          markdown: "No Content",
+          agenticUsed: true,
+          usedKnowledge: [],
+          noContentReason: "agentic_goal_alignment_failed",
+        };
       }
       return {
         markdown: parsed.markdown,

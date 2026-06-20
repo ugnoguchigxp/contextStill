@@ -314,6 +314,10 @@ mermaid.initialize({ startOnLoad: false });
 
 export function SourcesPage() {
   const queryClient = useQueryClient();
+  const initialSearchText = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("q") ?? "";
+  }, []);
 
   const [mode, setMode] = useState<"view" | "edit">("edit");
   const [isCreating, setIsCreating] = useState(false);
@@ -321,7 +325,7 @@ export function SourcesPage() {
   const [selectedFolderPath, setSelectedFolderPath] = useState<string | null>(null);
   const [expandedFolders, setExpandedFolders] = useState<Set<string>>(() => new Set());
   const [dragOverFolder, setDragOverFolder] = useState<string | null>(null);
-  const [searchText, setSearchText] = useState("");
+  const [searchText, setSearchText] = useState(initialSearchText);
   const [statusText, setStatusText] = useState("");
   const [isPreviewOpen, setIsPreviewOpen] = useState(false);
   const [webSingleUrlInput, setWebSingleUrlInput] = useState("");

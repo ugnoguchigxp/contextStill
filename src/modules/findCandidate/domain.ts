@@ -20,6 +20,7 @@ import {
 } from "../settings/settings.service.js";
 import { parseStorageCandidatesFromLlmOutput } from "./parser.js";
 import {
+  type CandidateKnowledgeType,
   type CandidateOrigin,
   type CandidateRecord,
   insertFindCandidateResult,
@@ -176,6 +177,10 @@ function commonCandidateRules(): string[] {
     "- 文書全体をそのまま1候補にしない",
     "- 複数の有用知識がある場合は候補を分割して複数出す",
     "- type は必ず rule または procedure にする",
+    "- polarity は必ず positive または negative のどちらかにする",
+    "- positive は「行うべき・有効だった・採用しやすい知識」、negative は「避けるべき・失敗した・採用すると危険な知識」として使う",
+    "- 失敗事例、レビュー指摘、禁止事項、誤った実装方針、再発防止の判断基準は、内容が再利用可能なら negative の rule 候補として出す",
+    "- negative 候補は procedure にせず、原則 rule として「何を避けるか / どの条件で危険か / どう確認するか」を書く",
     "- rule は持続的な制約・方針・不変条件・意思決定",
     "- procedure は順序付き作業、コマンドフロー、検証/復旧/レビューの再利用可能な手順",
     "- 単独の判断、制約、使うべき API/コマンド、避けるべき実装方針は procedure ではなく rule",
@@ -189,10 +194,10 @@ function commonCandidateRules(): string[] {
     "- 候補件数は内容に応じて決める。件数合わせはしない",
     "最終出力は JSON のみで返してください。",
     "候補がある場合は単体オブジェクトまたは配列のどちらでも構いません。",
-    '{"type":"rule|procedure","title":"...","content":"...","sourceSummary":"..."}',
-    '[{"type":"rule|procedure","title":"...","content":"...","sourceSummary":"..."}]',
+    '{"type":"rule|procedure","polarity":"positive|negative","title":"...","content":"...","sourceSummary":"..."}',
+    '[{"type":"rule|procedure","polarity":"positive|negative","title":"...","content":"...","sourceSummary":"..."}]',
     "候補がない場合は [] を返してください。",
-    "type/title/content/sourceSummary 以外の field は省略してください。",
+    "type/polarity/title/content/sourceSummary 以外の field は省略してください。",
   ];
 }
 
@@ -305,6 +310,19 @@ function buildInitialUserMessages(targetKind: FindCandidateTargetKind): Distilla
   ];
 }
 
+function normalizeCandidateForPipeline(candidate: CandidateRecord): CandidateRecord {
+  const polarity = candidate.polarity === "negative" ? "negative" : "positive";
+  const originalType = candidate.type;
+  const type: CandidateKnowledgeType =
+    polarity === "negative" && originalType === "procedure" ? "rule" : (originalType ?? "rule");
+  return {
+    ...candidate,
+    type,
+    polarity,
+    ...(originalType && originalType !== type ? { originalType } : {}),
+  };
+}
+
 function buildInitialVibeMemoryToolCall(input: FindCandidateInput): DistillationToolCall {
   const mode = input.memoryReaderMode ?? "compressed";
   return {
@@ -342,6 +360,7 @@ export function formatCliTextCandidates(candidates: CandidateRecord[]): string {
     .map((candidate) =>
       [
         ...(candidate.type ? [`TYPE: ${candidate.type}`] : []),
+        ...(candidate.polarity ? [`POLARITY: ${candidate.polarity}`] : []),
         `TITLE: ${candidate.title}`,
         `CONTENT:\n${candidate.content}`,
         ...(candidate.sourceSummary ? [`SOURCE_SUMMARY:\n${candidate.sourceSummary}`] : []),
@@ -593,7 +612,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
           "その後に候補のみを返してください。",
         ],
         blankResponseReminder: [
-          '空の応答です。[] または {"type":"rule|procedure","title":"...","content":"..."} を返してください。',
+          '空の応答です。[] または {"type":"rule|procedure","polarity":"positive|negative","title":"...","content":"..."} を返してください。',
         ],
         signal: input.signal,
       },
@@ -603,7 +622,9 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
       throw new Error("findCandidate reader tool was not used");
     }
     llmOutput = completion.content.trim();
-    candidates = parseStorageCandidatesFromLlmOutput(llmOutput);
+    const parsedCandidates = parseStorageCandidatesFromLlmOutput(llmOutput);
+    const missingPolarityCount = parsedCandidates.filter((candidate) => !candidate.polarity).length;
+    candidates = parsedCandidates.map(normalizeCandidateForPipeline);
 
     await recordReaderUsed();
 
@@ -615,6 +636,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
           targetStateId: target.id,
           candidateCount: candidates.length,
           readCount: readLog.length,
+          missingPolarityCount,
         },
       });
 
@@ -653,6 +675,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         targetStateId: target.id,
         candidateCount: candidates.length,
         insertedCount: insertedIds.length,
+        missingPolarityCount,
       },
     });
 

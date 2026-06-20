@@ -1,5 +1,9 @@
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
-import type { CandidateKnowledgeType, CandidateRecord } from "./repository.js";
+import type {
+  CandidateKnowledgePolarity,
+  CandidateKnowledgeType,
+  CandidateRecord,
+} from "./repository.js";
 
 const MAX_SOURCE_SUMMARY_CHARS = 1000;
 
@@ -7,6 +11,15 @@ function toCandidateType(value: unknown): CandidateKnowledgeType | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim().toLowerCase();
   if (normalized === "rule" || normalized === "procedure") return normalized;
+  return undefined;
+}
+
+function toCandidatePolarity(value: unknown): CandidateKnowledgePolarity | undefined {
+  if (typeof value !== "string") return undefined;
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "positive" || normalized === "negative" || normalized === "neutral") {
+    return normalized;
+  }
   return undefined;
 }
 
@@ -21,6 +34,7 @@ function toCandidateRecord(value: unknown): CandidateRecord | null {
   const record = value as {
     type?: unknown;
     candidateType?: unknown;
+    polarity?: unknown;
     title?: unknown;
     name?: unknown;
     content?: unknown;
@@ -32,6 +46,7 @@ function toCandidateRecord(value: unknown): CandidateRecord | null {
     evidenceSummary?: unknown;
   };
   const type = toCandidateType(record.type ?? record.candidateType);
+  const polarity = toCandidatePolarity(record.polarity);
   const title =
     typeof record.title === "string"
       ? record.title.trim()
@@ -57,6 +72,7 @@ function toCandidateRecord(value: unknown): CandidateRecord | null {
   );
   return {
     ...(type ? { type } : {}),
+    ...(polarity ? { polarity } : {}),
     title: normalizedTitle,
     content: normalizedContent,
     ...(sourceSummary ? { sourceSummary } : {}),
@@ -93,7 +109,7 @@ function parsePlainTextCandidates(llmOutput: string): CandidateRecord[] {
       const fields: Record<string, string[]> = {};
       let currentField: string | null = null;
       for (const line of block.split(/\r?\n/)) {
-        const match = line.match(/^(TYPE|TITLE|CONTENT|SOURCE_SUMMARY):\s*(.*)$/i);
+        const match = line.match(/^(TYPE|POLARITY|TITLE|CONTENT|SOURCE_SUMMARY):\s*(.*)$/i);
         if (match) {
           currentField = match[1].toUpperCase();
           fields[currentField] = [match[2] ?? ""];
@@ -107,9 +123,11 @@ function parsePlainTextCandidates(llmOutput: string): CandidateRecord[] {
       const content = fields.CONTENT?.join("\n").trim() ?? "";
       const sourceSummary = normalizeSourceSummary(fields.SOURCE_SUMMARY?.join("\n"));
       const type = toCandidateType(fields.TYPE?.join("\n"));
+      const polarity = toCandidatePolarity(fields.POLARITY?.join("\n"));
       if (!title || !content) return null;
       return {
         ...(type ? { type } : {}),
+        ...(polarity ? { polarity } : {}),
         title,
         content,
         ...(sourceSummary ? { sourceSummary } : {}),

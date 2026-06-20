@@ -194,6 +194,42 @@ export async function retryQueueJob(params: {
   reason?: string;
 }): Promise<QueueStateRow | null> {
   if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    if (params.queueName === "coveringEvidence") {
+      return updateSqliteQueueState({
+        queueName: params.queueName,
+        setSql: `
+          status = 'pending',
+          attempt_count = 0,
+          next_run_at = null,
+          completed_at = null,
+          locked_by = null,
+          locked_at = null,
+          heartbeat_at = null,
+          last_error = ?,
+          provider_policy = case
+            when ? = 'cloud_api' then 'cloud_api'
+            else coalesce(provider_policy, 'default')
+          end,
+          payload = json_set(
+            coalesce(nullif(payload, ''), '{}'),
+            '$.forceRefreshEvidence', json(?),
+            '$.retryMode', ?,
+            '$.retryReason', ?,
+            '$.retryRequestedAt', CURRENT_TIMESTAMP
+          ),
+          updated_at = CURRENT_TIMESTAMP
+        `,
+        whereSql: "id = ? and status <> 'running'",
+        values: [
+          params.reason ?? null,
+          params.mode,
+          params.forceRefreshEvidence ? "true" : "false",
+          params.mode,
+          params.reason ?? null,
+          params.id,
+        ],
+      });
+    }
     return updateSqliteQueueState({
       queueName: params.queueName,
       setSql: `

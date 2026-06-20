@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { coveringEvidenceQueue, findingCandidateQueue } from "../src/db/schema.js";
+import { coveringEvidenceQueue, findingCandidateQueue, foundCandidates } from "../src/db/schema.js";
 import {
   enqueueFindingJob,
   findFindingJob,
@@ -242,6 +242,73 @@ describe("runQueueWorkerOnce", () => {
     );
   });
 
+  test("schedules covering retryable failures with backoff before max attempts", async () => {
+    mocks.selectRows = [
+      [
+        {
+          id: "cover-job-1",
+          foundCandidateId: "candidate-1",
+          distillationVersion: "v-test",
+          attemptCount: 0,
+          maxAttempts: 2,
+          priority: 50,
+          providerPolicy: "default",
+          payload: {},
+        },
+      ],
+      [
+        {
+          id: "candidate-1",
+          title: "Candidate title",
+          content: "Candidate body",
+          origin: {},
+          type: "rule",
+          findingJobId: "finding-job-1",
+          metadata: {},
+        },
+      ],
+      [
+        {
+          id: "finding-job-1",
+          sourceKind: "wiki_file",
+          sourceKey: "docs/example.md",
+          sourceUri: "file:///docs/example.md",
+        },
+      ],
+    ];
+    mocks.runCoverEvidence.mockResolvedValue({
+      result: {
+        status: "provider_failed",
+        stage: "final",
+        candidate: null,
+        references: [],
+        duplicateRefs: [],
+        toolEvents: [],
+        reason: "provider temporarily unavailable",
+      },
+    });
+
+    const before = Date.now();
+    const result = await runQueueWorkerOnce({
+      queueName: "coveringEvidence",
+      workerId: "worker-1",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.completedJobId).toBeUndefined();
+    const update = mocks.updateCalls.find((call) => call.table === coveringEvidenceQueue);
+    expect(update?.values).toEqual(
+      expect.objectContaining({
+        status: "pending",
+        attemptCount: 1,
+        lastOutcomeKind: "provider_failed",
+        lastError: "provider temporarily unavailable",
+      }),
+    );
+    expect(update?.values.nextRunAt).toBeInstanceOf(Date);
+    expect((update?.values.nextRunAt as Date).getTime()).toBeGreaterThanOrEqual(before + 29_000);
+  });
+
   test("passes found candidate source summary and metadata read ranges into covering evidence", async () => {
     mocks.selectRows = [
       [
@@ -480,6 +547,73 @@ describe("runQueueWorkerOnce", () => {
         queueJobId: "finding-job-1",
         eventType: "retried",
         message: "job kept waiting because worker dependency is unavailable",
+      }),
+    );
+  });
+
+  test("stores negative finding candidates with polarity for downstream covering", async () => {
+    mocks.claimNextQueueJob.mockResolvedValue({ id: "finding-job-1" });
+    mocks.selectRows = [
+      [
+        {
+          id: "finding-job-1",
+          inputKind: "source_target",
+          sourceKind: "wiki_file",
+          sourceKey: "docs/incident.md",
+          sourceUri: "wiki_file:docs/incident.md",
+          distillationVersion: "v-test",
+          payload: {},
+          priority: 50,
+        },
+      ],
+    ];
+    mocks.runFindCandidate.mockResolvedValue({
+      targetStateId: null,
+      targetKind: "wiki_file",
+      targetKey: "docs/incident.md",
+      callerMode: "cli_text",
+      candidates: [
+        {
+          type: "rule",
+          polarity: "negative",
+          title: "Do not trust stale queue status alone",
+          content:
+            "Queue diagnosis must not treat an old status row as current truth without checking recent events.",
+          sourceSummary: "The source describes stale queue status causing a bad diagnosis.",
+        },
+      ],
+      readRanges: [{ from: 0, toExclusive: 80 }],
+    });
+
+    const result = await runQueueWorkerOnce({
+      queueName: "findingCandidate",
+      workerId: "worker-1",
+    });
+
+    expect(result.ok).toBe(true);
+    expect(mocks.runFindCandidate).toHaveBeenCalledWith(
+      expect.objectContaining({
+        sourceInput: expect.objectContaining({
+          targetKind: "wiki_file",
+          targetKey: "docs/incident.md",
+        }),
+      }),
+    );
+    expect(mocks.insertCalls).toContainEqual(
+      expect.objectContaining({
+        table: foundCandidates,
+        values: expect.objectContaining({
+          title: "Do not trust stale queue status alone",
+          origin: expect.objectContaining({
+            polarity: "negative",
+            sourceKind: "wiki_file",
+            sourceKey: "docs/incident.md",
+          }),
+          metadata: expect.objectContaining({
+            polarity: "negative",
+            readRanges: [{ from: 0, toExclusive: 80 }],
+          }),
+        }),
       }),
     );
   });

@@ -12,9 +12,12 @@ export type FindCandidateResultRow = FindCandidateBaseRow & {
 };
 
 export type CandidateKnowledgeType = "rule" | "procedure";
+export type CandidateKnowledgePolarity = "positive" | "negative" | "neutral";
 
 export type CandidateRecord = {
   type?: CandidateKnowledgeType;
+  originalType?: CandidateKnowledgeType;
+  polarity?: CandidateKnowledgePolarity;
   title: string;
   content: string;
   sourceSummary?: string;
@@ -22,6 +25,7 @@ export type CandidateRecord = {
 
 export type CandidateOrigin = {
   candidateType?: CandidateKnowledgeType;
+  polarity?: CandidateKnowledgePolarity;
   sourceSummary?: string;
   readRanges: Array<{
     from: number;
@@ -117,6 +121,10 @@ export async function insertFindCandidateResult(params: {
       origin: {
         ...params.origin,
         ...(params.candidate.type ? { candidateType: params.candidate.type } : {}),
+        ...(params.candidate.originalType
+          ? { originalCandidateType: params.candidate.originalType }
+          : {}),
+        ...(params.candidate.polarity ? { polarity: params.candidate.polarity } : {}),
         ...(sourceSummary ? { sourceSummary } : {}),
       },
       status: "selected",

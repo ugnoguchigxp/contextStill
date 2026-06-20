@@ -14,9 +14,14 @@ import {
   type ContextPackItem,
   contextPackSchema,
 } from "../../shared/schemas/context-pack.schema.js";
+import type {
+  EpisodeCard,
+  EpisodeCardSearchInput,
+} from "../../shared/schemas/episode-card.schema.js";
 import type { KnowledgeItem, KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
 import { asRecord, asStringArray, normalizeFacetArray } from "../../shared/utils/normalize.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
+import { searchEpisodes } from "../episodic-memory/episode-card.service.js";
 import { normalizeKnowledgeApplicability } from "../knowledge/applicability.service.js";
 import { recordCompileRunKnowledgeUsageSignals } from "../knowledge/knowledge-feedback.service.js";
 import { recordKnowledgeCompileSelectionSafe } from "../knowledge/knowledge-value.service.js";
@@ -46,7 +51,7 @@ import {
 } from "./duplicate-suppression.service.js";
 import { renderContextPackMarkdown } from "./pack-renderer.js";
 import { normalizeRepoKey, normalizeRepoPath } from "./query-context.js";
-import { type Rankable, rankAndDedupe } from "./ranking.service.js";
+import { explainRankableScore, type Rankable, rankAndDedupe } from "./ranking.service.js";
 import { applySectionTokenBudget, estimateTokens } from "./token-budget.js";
 
 const CONTEXT_COMPILE_SECTION_RATIOS = {
@@ -58,6 +63,7 @@ const CONTEXT_COMPILE_SECTION_RATIOS = {
 const CONTEXT_COMPILE_LIMITS = {
   vectorOnlyScoreFloor: 0.52,
   normalRankingLimit: 15,
+  episodePrecedentLimit: 2,
 } as const;
 
 const maintenanceReasonSet = new Set([
@@ -101,6 +107,23 @@ type CandidateTraceDraftRow = {
   rankingReason: string | null;
   communityKey: string | null;
   evidence: Record<string, unknown>;
+};
+
+type CompileEmbeddingStatus = "facets_only" | "embedding_available" | "embedding_unavailable";
+
+type RetrievalEmbeddingStats = {
+  embeddingStatus?: "provided" | "generated" | "unavailable" | "disabled";
+  embeddingProvider?: string;
+  embeddingModel?: string;
+  embeddingDimensions?: number;
+  queryEmbedding?: number[];
+};
+
+type CompileEmbeddingTraceDiagnostics = {
+  overallStatus: CompileEmbeddingStatus;
+  knowledgePositive: Record<string, unknown>;
+  knowledgeNegative: Record<string, unknown>;
+  sources: Record<string, unknown>;
 };
 
 function scoreSourceOverlap(text: string, candidateText: string): number {
@@ -235,6 +258,140 @@ function toKnowledgePackItem(item: {
   };
 }
 
+type EpisodePrecedentRetrievalResult = {
+  items: EpisodeCard[];
+  stats: {
+    hitCount: number;
+    selectedCount: number;
+    searchFailed: boolean;
+    error?: string;
+  };
+};
+
+function buildEpisodeRefValue(ref: EpisodeCard["refs"][number]): string {
+  const value = ref.refValue.trim();
+  const locator = ref.locator?.trim();
+  if (!value) return "";
+  if (locator) return `${value}#${locator}`;
+  return `${ref.refKind}:${value}`;
+}
+
+function episodeSourceRefs(episode: EpisodeCard): string[] {
+  return [
+    mcpResourceUri(`episodes/${episode.id}`),
+    ...episode.refs.map(buildEpisodeRefValue).filter(Boolean),
+  ].slice(0, 5);
+}
+
+function normalizeEpisodeScore(episode: EpisodeCard, index: number): number {
+  const searchScore = Math.max(0, Number(episode.score ?? 0));
+  const confidenceScore = Math.min(1, Math.max(0, episode.confidence / 100));
+  const evidenceBoost =
+    episode.evidenceStatus === "verified" ? 0.12 : episode.evidenceStatus === "partial" ? 0.06 : 0;
+  return Math.min(
+    0.75,
+    0.35 + Math.min(0.18, searchScore / 100) + confidenceScore * 0.1 + evidenceBoost - index * 0.03,
+  );
+}
+
+function compactEpisodeText(value: string, maxLength = 220): string {
+  const normalized = value.replace(/\s+/g, " ").trim();
+  if (normalized.length <= maxLength) return normalized;
+  return `${normalized.slice(0, Math.max(1, maxLength - 3)).trim()}...`;
+}
+
+function episodeToPackItem(episode: EpisodeCard, index: number): ContextPackItem {
+  const sourceRefs = episodeSourceRefs(episode);
+  const refHint =
+    sourceRefs.length > 1
+      ? `Source refs: ${sourceRefs.slice(1, 4).join(" | ")}`
+      : "Source refs: EpisodeCard only; verify against raw evidence when possible.";
+  const content = [
+    "Use when: A similar past task may inform the current compile context; treat this as precedent, not primary evidence.",
+    "Workflow:",
+    `1. Situation: ${compactEpisodeText(episode.situation)}`,
+    `2. Prior action: ${compactEpisodeText(episode.action || episode.observations || "No action recorded.")}`,
+    `3. Outcome: ${compactEpisodeText(episode.outcome || "No outcome recorded.")}`,
+    `4. Lesson: ${compactEpisodeText(episode.lesson || "No lesson recorded.")}`,
+    "Verification:",
+    `- ${refHint}`,
+    "- Confirm the precedent still applies before using it to guide implementation.",
+    "Avoid:",
+    "- Do not treat EpisodeCard precedent as a decision source or as verified source material by itself.",
+  ].join("\n");
+  return {
+    id: `episode_card:${episode.id}`,
+    itemKind: "episode_card",
+    itemId: episode.id,
+    section: "procedures",
+    title: `Past episode: ${episode.title}`,
+    content,
+    score: normalizeEpisodeScore(episode, index),
+    rankingReason: `supplemental EpisodeCard precedent (${episode.evidenceStatus}, ${episode.outcomeKind})`,
+    sourceRefs,
+    changeTypes: episode.changeTypes,
+    technologies: episode.technologies,
+    domains: episode.domains,
+  };
+}
+
+async function retrieveEpisodePrecedents(params: {
+  input: CompileInput;
+  repoPath: string;
+  repoKey: string | null;
+  technologies: string[];
+  changeTypes: string[];
+  domains: string[];
+}): Promise<EpisodePrecedentRetrievalResult> {
+  try {
+    const baseSearch: EpisodeCardSearchInput = {
+      query: params.input.goal,
+      technologies:
+        params.technologies.length > 0 ? params.technologies : params.input.technologies,
+      changeTypes: params.changeTypes.length > 0 ? params.changeTypes : params.input.changeTypes,
+      domains: params.domains.length > 0 ? params.domains : params.input.domains,
+      evidenceStatuses: ["verified", "partial"],
+      status: "active",
+      limit: 5,
+    };
+    const scopedRepoKey = params.input.repoKey ?? params.repoKey ?? undefined;
+    const scopedRepoPath = scopedRepoKey ? undefined : params.input.repoPath;
+    const scopedItems =
+      scopedRepoKey || scopedRepoPath
+        ? await searchEpisodes({
+            ...baseSearch,
+            repoKey: scopedRepoKey,
+            repoPath: scopedRepoPath,
+          })
+        : [];
+    const scopedIds = new Set(scopedItems.map((item) => item.id));
+    const globalItems =
+      scopedItems.length < CONTEXT_COMPILE_LIMITS.episodePrecedentLimit
+        ? (await searchEpisodes(baseSearch)).filter((item) => !scopedIds.has(item.id))
+        : [];
+    const items = [...scopedItems, ...globalItems];
+    const selected = items.slice(0, CONTEXT_COMPILE_LIMITS.episodePrecedentLimit);
+    return {
+      items: selected,
+      stats: {
+        hitCount: items.length,
+        selectedCount: selected.length,
+        searchFailed: false,
+      },
+    };
+  } catch (error) {
+    return {
+      items: [],
+      stats: {
+        hitCount: 0,
+        selectedCount: 0,
+        searchFailed: true,
+        error: error instanceof Error ? error.message : String(error),
+      },
+    };
+  }
+}
+
 type KnowledgeRankable = Rankable & {
   type: KnowledgeItem["type"];
   status: KnowledgeStatus;
@@ -316,6 +473,78 @@ function classifyCompileReasons(params: {
     hardFailureReasons,
     maintenanceWarnings,
   };
+}
+
+function normalizeCompileEmbeddingStatus(stats: RetrievalEmbeddingStats): CompileEmbeddingStatus {
+  if (stats.embeddingStatus === "provided" || stats.embeddingStatus === "generated") {
+    return "embedding_available";
+  }
+  if (stats.embeddingStatus === "unavailable") return "embedding_unavailable";
+  return "facets_only";
+}
+
+function embeddingTraceEntry(stats: RetrievalEmbeddingStats): Record<string, unknown> {
+  return {
+    embeddingStatus: stats.embeddingStatus ?? "disabled",
+    compileStatus: normalizeCompileEmbeddingStatus(stats),
+    embeddingProvider: stats.embeddingProvider ?? null,
+    embeddingModel: stats.embeddingModel ?? null,
+    embeddingDimensions: stats.embeddingDimensions ?? null,
+    hasQueryEmbedding: Boolean(stats.queryEmbedding && stats.queryEmbedding.length > 0),
+  };
+}
+
+function buildEmbeddingTraceDiagnostics(params: {
+  positiveKnowledge: RetrievalEmbeddingStats;
+  negativeKnowledge: RetrievalEmbeddingStats;
+  sources: RetrievalEmbeddingStats;
+}): CompileEmbeddingTraceDiagnostics {
+  const statuses = [
+    normalizeCompileEmbeddingStatus(params.positiveKnowledge),
+    normalizeCompileEmbeddingStatus(params.negativeKnowledge),
+    normalizeCompileEmbeddingStatus(params.sources),
+  ];
+  const overallStatus = statuses.includes("embedding_unavailable")
+    ? "embedding_unavailable"
+    : statuses.includes("embedding_available")
+      ? "embedding_available"
+      : "facets_only";
+  return {
+    overallStatus,
+    knowledgePositive: embeddingTraceEntry(params.positiveKnowledge),
+    knowledgeNegative: embeddingTraceEntry(params.negativeKnowledge),
+    sources: embeddingTraceEntry(params.sources),
+  };
+}
+
+function firstAvailableKnowledgeEmbedding(
+  ...stats: RetrievalEmbeddingStats[]
+): RetrievalEmbeddingStats {
+  return (
+    stats.find((item) => item.queryEmbedding && item.queryEmbedding.length > 0) ??
+    stats.find(
+      (item) => item.embeddingProvider || item.embeddingModel || item.embeddingDimensions,
+    ) ??
+    stats[0] ??
+    {}
+  );
+}
+
+function resolveKnowledgeTaskTraceEmbeddingStatus(params: {
+  selected: RetrievalEmbeddingStats;
+  positiveKnowledge: RetrievalEmbeddingStats;
+  negativeKnowledge: RetrievalEmbeddingStats;
+}): CompileEmbeddingStatus {
+  if (params.selected.queryEmbedding && params.selected.queryEmbedding.length > 0) {
+    return "embedding_available";
+  }
+  if (
+    params.positiveKnowledge.embeddingStatus === "unavailable" ||
+    params.negativeKnowledge.embeddingStatus === "unavailable"
+  ) {
+    return "embedding_unavailable";
+  }
+  return normalizeCompileEmbeddingStatus(params.selected);
 }
 
 function goalContainsDesignDocumentReference(goal: string): boolean {
@@ -668,15 +897,20 @@ function buildCandidateTraceRows(params: {
   const finalRanks = new Map<string, { rank: number; score: number }>();
   for (const [index, item] of params.finalKnowledge.entries()) {
     if (finalRanks.has(item.id)) continue;
+    const scoreExplanation = explainRankableScore(item);
     finalRanks.set(item.id, {
       rank: index + 1,
-      score: item.score,
+      score: scoreExplanation.weightedScore,
     });
   }
 
   const filteredIds = new Set(params.filteredKnowledge.map((item) => item.id));
   const finalIds = new Set(params.finalKnowledge.map((item) => item.id));
   const rankedIds = new Set(params.rankedKnowledgeBeforeIntervention.map((item) => item.id));
+  const rankableById = new Map<string, KnowledgeRankable>();
+  for (const item of params.rankedKnowledgeBeforeIntervention) rankableById.set(item.id, item);
+  for (const item of params.filteredKnowledge) rankableById.set(item.id, item);
+  for (const item of params.finalKnowledge) rankableById.set(item.id, item);
   const selectedItemById = new Map(
     params.selectedPackItems.map((item) => [item.itemId, item.rankingReason] as const),
   );
@@ -700,10 +934,11 @@ function buildCandidateTraceRows(params: {
     const final = finalRanks.get(itemId);
     const selected = selectedItemById.has(itemId);
     const duplicateSuppression = params.duplicateSuppressedById.get(itemId);
+    const rankable = rankableById.get(itemId);
 
     let suppressionReason: string | null = null;
     if (duplicateSuppression) {
-      suppressionReason = "near_duplicate_representative";
+      suppressionReason = "near_duplicate_suppressed";
     } else if (!filteredIds.has(itemId) && rankedIds.has(itemId)) {
       suppressionReason = "low_confidence_vector_only";
     } else if (filteredIds.has(itemId) && !finalIds.has(itemId) && params.agenticUsed) {
@@ -738,12 +973,22 @@ function buildCandidateTraceRows(params: {
       rankingReason:
         selectedItemById.get(itemId) ??
         (duplicateSuppression
-          ? `near_duplicate_representative:${duplicateSuppression.representativeId}`
+          ? `near_duplicate_suppressed:${duplicateSuppression.representativeId}`
           : suppressionReason),
       communityKey: resolveCommunityKeyFromMetadata(knowledge.metadata),
       evidence: {
         status: knowledge.status,
         candidateEvidence: knowledge.candidateEvidence ?? null,
+        rankingScore: rankable
+          ? explainRankableScore(rankable)
+          : explainRankableScore({
+              id: knowledge.id,
+              title: "",
+              content: "",
+              score: knowledge.score,
+              status: knowledge.status,
+              stale: knowledge.status === "deprecated",
+            }),
         duplicateSuppression: duplicateSuppression
           ? {
               representativeId: duplicateSuppression.representativeId,
@@ -965,6 +1210,7 @@ export async function compileContextPack(
         retrievalStats: {
           knowledge: { skipped: true, reason: "goal_design_document_reference" },
           sources: { skipped: true, reason: "goal_design_document_reference" },
+          episodes: { skipped: true, reason: "goal_design_document_reference" },
           tokenBudget,
           compileDurationMs,
           candidateTraceSavedCount: 0,
@@ -1010,27 +1256,36 @@ export async function compileContextPack(
     return { pack: packWithMarkdown, markdown };
   }
 
-  const [positiveKnowledge, negativeKnowledge, sourceContext] = await Promise.all([
-    retrieveKnowledge(input, {
-      retrievalMode,
-      polarities: ["positive"],
-      facetFilters: {
+  const [positiveKnowledge, negativeKnowledge, sourceContext, episodePrecedents] =
+    await Promise.all([
+      retrieveKnowledge(input, {
+        retrievalMode,
+        polarities: ["positive"],
+        facetFilters: {
+          technologies: matchedTechnologies,
+          changeTypes: matchedChangeTypes,
+          domains: matchedDomains,
+        },
+      }),
+      retrieveKnowledge(input, {
+        retrievalMode,
+        polarities: ["negative"],
+        facetFilters: {
+          technologies: matchedTechnologies,
+          changeTypes: matchedChangeTypes,
+          domains: matchedDomains,
+        },
+      }),
+      retrieveSources(input, { retrievalMode }),
+      retrieveEpisodePrecedents({
+        input,
+        repoPath: workspaceRepoPath,
+        repoKey: workspaceRepoKey,
         technologies: matchedTechnologies,
         changeTypes: matchedChangeTypes,
         domains: matchedDomains,
-      },
-    }),
-    retrieveKnowledge(input, {
-      retrievalMode,
-      polarities: ["negative"],
-      facetFilters: {
-        technologies: matchedTechnologies,
-        changeTypes: matchedChangeTypes,
-        domains: matchedDomains,
-      },
-    }),
-    retrieveSources(input, { retrievalMode }),
-  ]);
+      }),
+    ]);
 
   const degradedReasons = [
     ...positiveKnowledge.degradedReasons,
@@ -1075,7 +1330,11 @@ export async function compileContextPack(
   if (knowledgeFilterResult.suppressedCount > 0) {
     pushUnique(degradedReasons, "LOW_CONFIDENCE_VECTOR_ONLY_SUPPRESSED");
   }
-  if (rankedKnowledge.length > 0 && compressedKnowledge.length === 0) {
+  if (
+    rankedKnowledge.length > 0 &&
+    compressedKnowledge.length === 0 &&
+    episodePrecedents.items.length === 0
+  ) {
     pushUnique(degradedReasons, "NO_RELEVANT_CONTEXT");
   }
 
@@ -1110,11 +1369,11 @@ export async function compileContextPack(
   const finalKnowledge = agenticResult.items
     .map((item) => refinedKnowledgeMap.get(item.id))
     .filter((k): k is KnowledgeRankable => k !== undefined);
-  if (finalKnowledge.length === 0) {
+  if (finalKnowledge.length === 0 && episodePrecedents.items.length === 0) {
     pushUnique(degradedReasons, "NO_RELEVANT_CONTEXT");
   }
 
-  const packItems = finalKnowledge.map((item) => {
+  const knowledgePackItems = finalKnowledge.map((item) => {
     const sourceRefs = selectSourceRefsForKnowledge(
       { title: item.title, content: item.content },
       sourceContext.items,
@@ -1131,6 +1390,8 @@ export async function compileContextPack(
       polarity: item.polarity,
     });
   });
+  const episodePackItems = episodePrecedents.items.map(episodeToPackItem);
+  const packItems = [...knowledgePackItems, ...episodePackItems];
 
   const budgetedRules = applySectionTokenBudget(
     packItems.filter((item) => item.section === "rules"),
@@ -1154,8 +1415,8 @@ export async function compileContextPack(
     ...budgetedProcedures.items,
     ...budgetedGuardrails.items,
   ];
-  const selectedKnowledgeCount = selectedPackItems.length;
-  if (selectedKnowledgeCount === 0) {
+  const selectedPackItemCount = selectedPackItems.length;
+  if (selectedPackItemCount === 0) {
     pushUnique(degradedReasons, "NO_RELEVANT_CONTEXT");
   }
   const candidateTraceRows = buildCandidateTraceRows({
@@ -1202,7 +1463,7 @@ export async function compileContextPack(
       pushUnique(degradedReasons, "CONTEXT_RESPONSE_COMPOSER_SKIPPED_RATE_LIMIT");
     }
   }
-  if (composedResponse.markdown === "No Content" && selectedKnowledgeCount > 0) {
+  if (composedResponse.markdown === "No Content" && selectedPackItemCount > 0) {
     pushUnique(degradedReasons, "COMPOSED_CONTEXT_NO_ALIGNMENT");
   }
   const forceNoContentDueToRateLimit =
@@ -1217,9 +1478,14 @@ export async function compileContextPack(
       ...sourceContext.items.map((item) => formatSourceRef(item.sourceUri, item.locator)),
     ]),
   ];
+  const embeddingTrace = buildEmbeddingTraceDiagnostics({
+    positiveKnowledge: positiveKnowledge.stats,
+    negativeKnowledge: negativeKnowledge.stats,
+    sources: sourceContext.stats,
+  });
   const reasonBuckets = classifyCompileReasons({
     reasons: degradedReasons,
-    selectedKnowledgeCount,
+    selectedKnowledgeCount: selectedPackItemCount,
   });
   const status =
     reasonBuckets.hardFailureReasons.length >= 2
@@ -1273,13 +1539,15 @@ export async function compileContextPack(
     durationMs: compileDurationMs,
     source: options?.source ?? "unknown",
   });
-  const taskTraceEmbeddingStatus =
-    positiveKnowledge.stats.embeddingStatus === "provided" ||
-    positiveKnowledge.stats.embeddingStatus === "generated"
-      ? "embedding_available"
-      : positiveKnowledge.stats.embeddingStatus === "unavailable"
-        ? "embedding_unavailable"
-        : "facets_only";
+  const taskTraceEmbeddingStats = firstAvailableKnowledgeEmbedding(
+    positiveKnowledge.stats,
+    negativeKnowledge.stats,
+  );
+  const taskTraceEmbeddingStatus = resolveKnowledgeTaskTraceEmbeddingStatus({
+    selected: taskTraceEmbeddingStats,
+    positiveKnowledge: positiveKnowledge.stats,
+    negativeKnowledge: negativeKnowledge.stats,
+  });
   await persistCompileTaskTraceSafe({
     runId,
     retrievalMode,
@@ -1290,10 +1558,10 @@ export async function compileContextPack(
     domains: matchedDomains,
     goal: input.goal,
     embeddingStatus: taskTraceEmbeddingStatus,
-    embeddingProvider: positiveKnowledge.stats.embeddingProvider ?? null,
-    embeddingModel: positiveKnowledge.stats.embeddingModel ?? null,
-    embeddingDimensions: positiveKnowledge.stats.embeddingDimensions ?? null,
-    embedding: positiveKnowledge.stats.queryEmbedding ?? null,
+    embeddingProvider: taskTraceEmbeddingStats.embeddingProvider ?? null,
+    embeddingModel: taskTraceEmbeddingStats.embeddingModel ?? null,
+    embeddingDimensions: taskTraceEmbeddingStats.embeddingDimensions ?? null,
+    embedding: taskTraceEmbeddingStats.queryEmbedding ?? null,
   });
   const selectedKnowledgeIds = [
     ...new Set(
@@ -1312,9 +1580,13 @@ export async function compileContextPack(
     ? [...new Set(finalKnowledge.map((item) => item.id))]
     : [];
 
-  let candidateTracePersistResult: Awaited<ReturnType<typeof persistCandidateTraceRows>>;
+  let candidateTracePersistResult: Awaited<ReturnType<typeof persistCandidateTraceRows>> = {
+    savedCount: 0,
+    truncated: false,
+    skippedReason: "not_attempted",
+  };
   try {
-    [candidateTracePersistResult] = await Promise.all([
+    const [candidateTraceSettled, packItemsSettled] = await Promise.allSettled([
       persistCandidateTraceRows({
         runId,
         rows: candidateTraceRows,
@@ -1332,6 +1604,31 @@ export async function compileContextPack(
         })),
       ),
     ]);
+    if (candidateTraceSettled.status === "fulfilled") {
+      candidateTracePersistResult = candidateTraceSettled.value;
+    } else {
+      candidateTracePersistResult = {
+        savedCount: 0,
+        truncated: false,
+        skippedReason: "save_failed",
+      };
+      await recordAuditLogSafe({
+        eventType: "CONTEXT_COMPILE_CANDIDATE_TRACE_SAVE_FAILED",
+        actor: "system",
+        payload: {
+          runId,
+          traceLimit: candidateTraceLimit,
+          candidateCount: candidateTraceRows.length,
+          error:
+            candidateTraceSettled.reason instanceof Error
+              ? candidateTraceSettled.reason.message
+              : String(candidateTraceSettled.reason),
+        },
+      });
+    }
+    if (packItemsSettled.status === "rejected") {
+      throw packItemsSettled.reason;
+    }
   } catch (error) {
     const failureReasons = [...new Set([...degradedReasons, "CONTEXT_PACK_PERSIST_FAILED"])];
     const failedDurationMs = Math.max(0, Date.now() - compileStartedAt);
@@ -1361,17 +1658,26 @@ export async function compileContextPack(
             mergedCount: positiveKnowledge.stats.mergedCount + negativeKnowledge.stats.mergedCount,
           },
           sources: sourceContext.stats,
+          episodes: episodePrecedents.stats,
+          embeddingTrace,
           tokenBudget,
           compileDurationMs: failedDurationMs,
-          candidateTraceSavedCount: 0,
-          candidateTraceTruncated: false,
+          candidateTraceSavedCount: candidateTracePersistResult.savedCount,
+          candidateTraceTruncated: candidateTracePersistResult.truncated,
           candidateTraceLimit,
-          candidateTraceSkippedReason: "context_pack_persist_failed",
+          candidateTraceSkippedReason: candidateTracePersistResult.skippedReason,
+          persistenceState: {
+            contextPackItemsSaved: false,
+            candidateTraceSavedCount: candidateTracePersistResult.savedCount,
+            candidateTraceTruncated: candidateTracePersistResult.truncated,
+            candidateTraceSkippedReason: candidateTracePersistResult.skippedReason,
+          },
           duplicateSuppressedCount: duplicateSuppression.suppressedById.size,
           duplicateSuppressedGroupCount: duplicateSuppression.groups.length,
           landscapeIntervention: landscapeIntervention.diagnostics,
           agenticUsed: agenticResult.agenticUsed,
           agenticReasoning: agenticResult.reasoning,
+          agenticSelectionReason: agenticResult.selectionReason ?? null,
           reasonBuckets: {
             blocking: [
               ...new Set([...reasonBuckets.blockingReasons, "CONTEXT_PACK_PERSIST_FAILED"]),
@@ -1384,6 +1690,9 @@ export async function compileContextPack(
           responseComposer: {
             used: composedResponse.agenticUsed,
             markdownKind: composedResponse.markdown === "No Content" ? "no-content" : "narrative",
+            ...(composedResponse.noContentReason
+              ? { noContentReason: composedResponse.noContentReason }
+              : {}),
             ...(composedResponse.error ? { error: composedResponse.error } : {}),
           },
           persistError: error instanceof Error ? error.message : String(error),
@@ -1463,17 +1772,26 @@ export async function compileContextPack(
           mergedCount: positiveKnowledge.stats.mergedCount + negativeKnowledge.stats.mergedCount,
         },
         sources: sourceContext.stats,
+        episodes: episodePrecedents.stats,
+        embeddingTrace,
         tokenBudget,
         compileDurationMs,
         candidateTraceSavedCount: candidateTracePersistResult.savedCount,
         candidateTraceTruncated: candidateTracePersistResult.truncated,
         candidateTraceLimit,
         candidateTraceSkippedReason: candidateTracePersistResult.skippedReason,
+        persistenceState: {
+          contextPackItemsSaved: true,
+          candidateTraceSavedCount: candidateTracePersistResult.savedCount,
+          candidateTraceTruncated: candidateTracePersistResult.truncated,
+          candidateTraceSkippedReason: candidateTracePersistResult.skippedReason,
+        },
         duplicateSuppressedCount: duplicateSuppression.suppressedById.size,
         duplicateSuppressedGroupCount: duplicateSuppression.groups.length,
         landscapeIntervention: landscapeIntervention.diagnostics,
         agenticUsed: agenticResult.agenticUsed,
         agenticReasoning: agenticResult.reasoning,
+        agenticSelectionReason: agenticResult.selectionReason ?? null,
         reasonBuckets: {
           blocking: reasonBuckets.blockingReasons,
           maintenanceWarnings: reasonBuckets.maintenanceWarnings,
@@ -1482,6 +1800,9 @@ export async function compileContextPack(
         responseComposer: {
           used: composedResponse.agenticUsed,
           markdownKind: composedResponse.markdown === "No Content" ? "no-content" : "narrative",
+          ...(composedResponse.noContentReason
+            ? { noContentReason: composedResponse.noContentReason }
+            : {}),
           ...(composedResponse.error ? { error: composedResponse.error } : {}),
         },
         suggestedNextCalls: [...new Set(suggestedNextCalls)],

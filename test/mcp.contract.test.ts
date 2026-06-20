@@ -142,6 +142,9 @@ describeDb("mcp contract", () => {
       "register_review_corrections",
       "search_memory",
       "fetch_memory",
+      "register_episode",
+      "search_episodes",
+      "fetch_episode",
       "doctor",
     ]);
   });

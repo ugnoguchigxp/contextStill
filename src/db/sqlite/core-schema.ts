@@ -362,6 +362,89 @@ CREATE INDEX IF NOT EXISTS audit_logs_event_type_idx ON audit_logs(event_type);
 CREATE INDEX IF NOT EXISTS audit_logs_actor_idx ON audit_logs(actor);
 CREATE INDEX IF NOT EXISTS audit_logs_created_at_idx ON audit_logs(created_at);
 
+CREATE TABLE IF NOT EXISTS episode_cards (
+  id TEXT PRIMARY KEY,
+  title TEXT NOT NULL,
+  situation TEXT NOT NULL,
+  observations TEXT NOT NULL DEFAULT '',
+  action TEXT NOT NULL DEFAULT '',
+  outcome TEXT NOT NULL DEFAULT '',
+  lesson TEXT NOT NULL DEFAULT '',
+  applicability TEXT NOT NULL DEFAULT '{}',
+  anti_applicability TEXT NOT NULL DEFAULT '{}',
+  domains TEXT NOT NULL DEFAULT '[]',
+  technologies TEXT NOT NULL DEFAULT '[]',
+  change_types TEXT NOT NULL DEFAULT '[]',
+  tools TEXT NOT NULL DEFAULT '[]',
+  repo_path TEXT,
+  repo_key TEXT,
+  source_kind TEXT NOT NULL,
+  source_key TEXT NOT NULL,
+  outcome_kind TEXT NOT NULL DEFAULT 'unknown',
+  confidence INTEGER NOT NULL DEFAULT 50,
+  evidence_status TEXT NOT NULL DEFAULT 'unverified',
+  status TEXT NOT NULL DEFAULT 'active',
+  stale_at TEXT,
+  embedding TEXT,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS episode_cards_source_unique_idx
+  ON episode_cards(source_kind, source_key);
+CREATE INDEX IF NOT EXISTS episode_cards_status_idx ON episode_cards(status);
+CREATE INDEX IF NOT EXISTS episode_cards_repo_key_idx ON episode_cards(repo_key);
+CREATE INDEX IF NOT EXISTS episode_cards_repo_path_idx ON episode_cards(repo_path);
+CREATE INDEX IF NOT EXISTS episode_cards_outcome_kind_idx ON episode_cards(outcome_kind);
+CREATE INDEX IF NOT EXISTS episode_cards_evidence_status_idx ON episode_cards(evidence_status);
+CREATE INDEX IF NOT EXISTS episode_cards_created_at_idx ON episode_cards(created_at);
+
+CREATE VIRTUAL TABLE IF NOT EXISTS episode_cards_fts USING fts5(
+  id UNINDEXED,
+  title,
+  situation,
+  observations,
+  action,
+  outcome,
+  lesson
+);
+
+CREATE TABLE IF NOT EXISTS episode_refs (
+  id TEXT PRIMARY KEY,
+  episode_card_id TEXT NOT NULL,
+  ref_kind TEXT NOT NULL,
+  ref_value TEXT NOT NULL,
+  locator TEXT,
+  query_hint TEXT,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (episode_card_id) REFERENCES episode_cards(id) ON DELETE CASCADE
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS episode_refs_episode_card_id_idx
+  ON episode_refs(episode_card_id);
+CREATE INDEX IF NOT EXISTS episode_refs_kind_value_idx
+  ON episode_refs(ref_kind, ref_value);
+
+CREATE TABLE IF NOT EXISTS episode_retrieval_feedback (
+  id TEXT PRIMARY KEY,
+  episode_card_id TEXT NOT NULL,
+  run_kind TEXT NOT NULL,
+  run_id TEXT NOT NULL,
+  used_for TEXT NOT NULL,
+  verdict TEXT NOT NULL,
+  reason TEXT,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  FOREIGN KEY (episode_card_id) REFERENCES episode_cards(id) ON DELETE CASCADE
+) STRICT;
+
+CREATE INDEX IF NOT EXISTS episode_retrieval_feedback_episode_run_idx
+  ON episode_retrieval_feedback(episode_card_id, run_kind, run_id);
+CREATE INDEX IF NOT EXISTS episode_retrieval_feedback_verdict_created_at_idx
+  ON episode_retrieval_feedback(verdict, created_at);
+
 CREATE TABLE IF NOT EXISTS llm_usage_logs (
   id TEXT PRIMARY KEY,
   provider TEXT NOT NULL,
@@ -768,6 +851,73 @@ CREATE TABLE IF NOT EXISTS evidence_coverage_results (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) STRICT;
+
+DROP INDEX IF EXISTS covering_evidence_queue_found_candidate_unique_idx;
+DROP INDEX IF EXISTS evidence_coverage_results_found_candidate_producer_unique_idx;
+
+CREATE INDEX IF NOT EXISTS covering_evidence_queue_found_candidate_idx
+  ON covering_evidence_queue(found_candidate_id)
+  WHERE found_candidate_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS covering_evidence_queue_status_priority_created_at_idx
+  ON covering_evidence_queue(status, priority, created_at);
+CREATE INDEX IF NOT EXISTS evidence_coverage_results_found_candidate_producer_idx
+  ON evidence_coverage_results(found_candidate_id, producer_queue);
+CREATE INDEX IF NOT EXISTS evidence_coverage_results_status_idx
+  ON evidence_coverage_results(status);
+
+CREATE TRIGGER IF NOT EXISTS covering_evidence_queue_found_candidate_no_duplicate_insert
+BEFORE INSERT ON covering_evidence_queue
+WHEN NEW.found_candidate_id IS NOT NULL
+  AND EXISTS (
+    SELECT 1
+    FROM covering_evidence_queue
+    WHERE found_candidate_id = NEW.found_candidate_id
+    LIMIT 1
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'duplicate covering_evidence_queue found_candidate_id');
+END;
+
+CREATE TRIGGER IF NOT EXISTS covering_evidence_queue_found_candidate_no_duplicate_update
+BEFORE UPDATE OF found_candidate_id ON covering_evidence_queue
+WHEN NEW.found_candidate_id IS NOT NULL
+  AND EXISTS (
+    SELECT 1
+    FROM covering_evidence_queue
+    WHERE found_candidate_id = NEW.found_candidate_id
+      AND id <> NEW.id
+    LIMIT 1
+  )
+BEGIN
+  SELECT RAISE(ABORT, 'duplicate covering_evidence_queue found_candidate_id');
+END;
+
+CREATE TRIGGER IF NOT EXISTS evidence_coverage_results_producer_no_duplicate_insert
+BEFORE INSERT ON evidence_coverage_results
+WHEN EXISTS (
+  SELECT 1
+  FROM evidence_coverage_results
+  WHERE found_candidate_id = NEW.found_candidate_id
+    AND producer_queue = NEW.producer_queue
+  LIMIT 1
+)
+BEGIN
+  SELECT RAISE(ABORT, 'duplicate evidence_coverage_results producer');
+END;
+
+CREATE TRIGGER IF NOT EXISTS evidence_coverage_results_producer_no_duplicate_update
+BEFORE UPDATE OF found_candidate_id, producer_queue ON evidence_coverage_results
+WHEN EXISTS (
+  SELECT 1
+  FROM evidence_coverage_results
+  WHERE found_candidate_id = NEW.found_candidate_id
+    AND producer_queue = NEW.producer_queue
+    AND id <> NEW.id
+  LIMIT 1
+)
+BEGIN
+  SELECT RAISE(ABORT, 'duplicate evidence_coverage_results producer');
+END;
 
 CREATE TABLE IF NOT EXISTS landscape_review_items (
   id TEXT PRIMARY KEY,

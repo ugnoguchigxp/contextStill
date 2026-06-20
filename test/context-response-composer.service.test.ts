@@ -40,6 +40,7 @@ describe("context response composer", () => {
     expect(result.markdown).toBe("No Content");
     expect(result.agenticUsed).toBe(false);
     expect(result.usedKnowledge).toEqual([]);
+    expect(result.noContentReason).toBe("fallback_no_candidates");
   });
 
   test("builds natural-language implementation context when knowledge exists", async () => {
@@ -584,6 +585,7 @@ describe("context response composer", () => {
 
     expect(result.markdown).toBe("No Content");
     expect(result.agenticUsed).toBe(true);
+    expect(result.noContentReason).toBe("agentic_goal_alignment_failed");
   });
 
   test("falls back to local template when all LLM providers throw error", async () => {

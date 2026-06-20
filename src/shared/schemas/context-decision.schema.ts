@@ -11,6 +11,7 @@ export const contextDecisionValueSchema = z.enum([
 export const contextDecisionStatusSchema = z.enum(["completed", "degraded", "failed"]);
 export const contextDecisionEvidenceRoleSchema = z.enum([
   "selected_support",
+  "counter_evidence",
   "rejected_alternative",
   "user_preference",
   "risk_warning",
@@ -156,6 +157,15 @@ export type ContextDecisionKnowledgeAssessment = {
   outOfDistributionScore: number;
   retrievalMethods: Array<"vector" | "keyword" | "hybrid">;
   reason: string;
+  signalSummary?: {
+    status: "complete" | "partial" | "failed";
+    compileWrongCount: number;
+    compileOffTopicCount: number;
+    negativeAttractorCount: number;
+    strongAttractorCount: number;
+    cappedCommunityCount: number;
+    reason: string;
+  };
   meaningfulMetrics?: Array<{
     key:
       | "knowledgeCoverage"
@@ -240,6 +250,17 @@ export type ContextDecisionConfidenceTrace = {
   historicalFeedbackScore: number;
   finalConfidence: number;
   forcedRules: string[];
+  signalStatus?: {
+    status: "complete" | "partial" | "failed";
+    evidenceCount: number;
+    compileSignalCount: number;
+    communitySignalCount: number;
+    landscapeSignalCount: number;
+    reason: string;
+  };
+  compileSignals?: Record<string, unknown>;
+  communitySignals?: Record<string, unknown>;
+  landscapeSignals?: Record<string, unknown>;
   knowledgeAssessment?: ContextDecisionKnowledgeAssessment;
   knowledgePrior?: ContextDecisionKnowledgePrior;
   outcomePredictor?: ContextDecisionMlSignal;

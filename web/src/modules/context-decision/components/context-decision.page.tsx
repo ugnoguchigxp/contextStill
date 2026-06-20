@@ -140,7 +140,13 @@ function metadataString(metadata: Record<string, unknown>, key: string): string 
   return typeof value === "string" && value.trim() ? value : null;
 }
 
+function metadataNumber(metadata: Record<string, unknown>, key: string): number | null {
+  const value = metadata[key];
+  return typeof value === "number" && Number.isFinite(value) ? Math.round(value) : null;
+}
+
 function evidenceUsageLabel(role: ContextDecisionEvidence["role"]): string {
+  if (role === "counter_evidence") return "counter";
   if (role === "rejected_alternative") return "not used";
   if (role === "missing_counter_evidence") return "not found";
   return "used";
@@ -158,6 +164,71 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 function traceString(trace: Record<string, unknown>, key: string): string | null {
   const value = trace[key];
   return typeof value === "string" && value.trim() ? value : null;
+}
+
+function traceRecord(trace: Record<string, unknown>, key: string): Record<string, unknown> | null {
+  const value = trace[key];
+  return isRecord(value) ? value : null;
+}
+
+function signalVariant(
+  label: string,
+): "default" | "secondary" | "destructive" | "outline" | null | undefined {
+  if (
+    label.includes("wrong") ||
+    label.includes("off-topic") ||
+    label.includes("negative") ||
+    label.includes("dead")
+  ) {
+    return "destructive";
+  }
+  if (label.includes("strong") || label.includes("useful") || label.includes("used")) {
+    return "secondary";
+  }
+  return "outline";
+}
+
+function evidenceSignalLabels(item: ContextDecisionEvidence): string[] {
+  const signals = isRecord(item.metadata.signals) ? item.metadata.signals : {};
+  const compile = isRecord(signals.compile) ? signals.compile : {};
+  const landscape = isRecord(signals.landscape) ? signals.landscape : {};
+  const community = isRecord(signals.community) ? signals.community : {};
+  const health = isRecord(community.health) ? community.health : {};
+  const labels: string[] = [];
+  const wrongCount = metadataNumber(compile, "wrongCount");
+  const offTopicCount = metadataNumber(compile, "offTopicCount");
+  const usedCount = metadataNumber(compile, "usedCount");
+  const notUsedCount = metadataNumber(compile, "notUsedCount");
+  const suppressedCount = metadataNumber(compile, "suppressedCount");
+  const classification = metadataString(landscape, "classification");
+  const communityLabel = metadataString(community, "communityLabel");
+
+  if (wrongCount && wrongCount > 0) labels.push(`compile wrong ${wrongCount}`);
+  if (offTopicCount && offTopicCount > 0) labels.push(`compile off-topic ${offTopicCount}`);
+  if (usedCount && usedCount > 0) labels.push(`compile used ${usedCount}`);
+  if (notUsedCount && notUsedCount > 0) labels.push(`compile not-used ${notUsedCount}`);
+  if (suppressedCount && suppressedCount > 0) labels.push(`suppressed ${suppressedCount}`);
+  if (classification) labels.push(`landscape ${classification}`);
+  if (communityLabel) labels.push(`community ${communityLabel}`);
+  if (health.dead === true) labels.push("dead community");
+  if (health.stale === true) labels.push("stale community");
+  if (health.thinEvidence === true) labels.push("thin evidence");
+
+  return labels.slice(0, 6);
+}
+
+function feedbackEffectTitle(effect: ContextDecisionRunDetail["effects"][number]): string {
+  if (effect.effect === "penalize") return "Bad feedback penalty";
+  if (effect.effect === "boost") return "Good feedback boost";
+  return "Feedback note";
+}
+
+function feedbackEffectVariant(
+  effect: ContextDecisionRunDetail["effects"][number],
+): "default" | "secondary" | "destructive" | "outline" | null | undefined {
+  if (effect.effect === "penalize") return "destructive";
+  if (effect.effect === "boost") return "secondary";
+  return "outline";
 }
 
 function asMlSignal(value: unknown): ContextDecisionMlSignal | null {
@@ -506,6 +577,50 @@ function KnowledgeAssessmentPanel({ trace }: { trace: Record<string, unknown> })
   );
 }
 
+function DecisionSignalSummaryPanel({ trace }: { trace: Record<string, unknown> }) {
+  const signalStatus = traceRecord(trace, "signalStatus");
+  const compileSignals = traceRecord(trace, "compileSignals");
+  const communitySignals = traceRecord(trace, "communitySignals");
+  const landscapeSignals = traceRecord(trace, "landscapeSignals");
+  if (!signalStatus && !compileSignals && !communitySignals && !landscapeSignals) {
+    return (
+      <article className="compile-pack-item">
+        <div className="compile-pack-item-header">
+          <strong>Decision Signals</strong>
+          <Badge variant="outline">not recorded</Badge>
+        </div>
+        <p className="compile-state-text">No persisted decision signals were recorded.</p>
+      </article>
+    );
+  }
+
+  return (
+    <article className="compile-pack-item">
+      <div className="compile-pack-item-header">
+        <strong>Decision Signals</strong>
+        <Badge variant={signalStatus?.status === "failed" ? "destructive" : "secondary"}>
+          {typeof signalStatus?.status === "string" ? signalStatus.status : "recorded"}
+        </Badge>
+      </div>
+      <div className="compile-metric-grid">
+        <Metric label="Evidence" value={metadataNumber(signalStatus ?? {}, "evidenceCount")} />
+        <Metric label="Compile" value={metadataNumber(signalStatus ?? {}, "compileSignalCount")} />
+        <Metric
+          label="Community"
+          value={metadataNumber(signalStatus ?? {}, "communitySignalCount")}
+        />
+        <Metric
+          label="Landscape"
+          value={metadataNumber(signalStatus ?? {}, "landscapeSignalCount")}
+        />
+      </div>
+      {typeof signalStatus?.reason === "string" ? (
+        <p className="compile-state-text">{signalStatus.reason}</p>
+      ) : null}
+    </article>
+  );
+}
+
 function OutcomePredictorPanel({ trace }: { trace: Record<string, unknown> }) {
   const mlSignal = asMlSignal(trace.outcomePredictor ?? trace.mlSignal);
   const judgmentStatus = traceString(trace, "llmJudgmentStatus");
@@ -781,6 +896,9 @@ function DecisionDetailPane({
   const selectedEvidence = (detail?.evidence ?? []).filter(
     (item) => item.role === "selected_support" || item.role === "user_preference",
   );
+  const counterEvidence = (detail?.evidence ?? []).filter(
+    (item) => item.role === "counter_evidence",
+  );
   const riskEvidence = (detail?.evidence ?? []).filter((item) => item.role === "risk_warning");
   const supportCoverage = (detail?.coverage ?? []).filter((trace) => trace.queryRole === "support");
   const totalHits = (detail?.coverage ?? []).reduce((sum, trace) => sum + trace.hitCount, 0);
@@ -895,6 +1013,29 @@ function DecisionDetailPane({
           </section>
         ) : null}
 
+        {counterEvidence.length > 0 ? (
+          <section className="compile-pack-section">
+            <div className="compile-pack-section-header">
+              <h3>Counter Evidence</h3>
+              <Badge variant="secondary">{counterEvidence.length}</Badge>
+            </div>
+            <div className="compile-pack-items">
+              {counterEvidence.slice(0, 4).map((item) => {
+                const summary = splitEvidenceSummary(item.summary);
+                return (
+                  <article key={item.id} className="compile-pack-item">
+                    <div className="compile-pack-item-header">
+                      <strong>{summary.title}</strong>
+                      <Badge variant="secondary">{item.weightAtDecision}% confidence</Badge>
+                    </div>
+                    <p className="compile-pack-item-content">{summary.body}</p>
+                  </article>
+                );
+              })}
+            </div>
+          </section>
+        ) : null}
+
         <section className="compile-pack-section">
           <div className="compile-pack-section-header">
             <h3>Ranking Trace</h3>
@@ -942,6 +1083,7 @@ function DecisionDetailPane({
                 </p>
               </article>
               <KnowledgeAssessmentPanel trace={detail.run.confidenceTrace} />
+              <DecisionSignalSummaryPanel trace={detail.run.confidenceTrace} />
               <ReliabilityGatePanel trace={detail.run.confidenceTrace} />
               <KnowledgePriorPanel
                 trace={detail.run.confidenceTrace}
@@ -998,23 +1140,45 @@ function DecisionDetailPane({
 
           {detail.effects.length > 0 ? (
             <div className="compile-pack-items">
-              {detail.effects.map((effect) => (
-                <article key={effect.id} className="compile-pack-item">
-                  <div className="compile-pack-item-header">
-                    <strong>
-                      {effect.effect} {effect.amount}
-                    </strong>
-                    <div className="compile-pack-item-meta">
-                      <span>{effect.status}</span>
-                      <span>{effect.confidence}% confidence</span>
+              <div className="compile-pack-section-header">
+                <h3>Feedback Effects</h3>
+                <Badge variant="outline">{detail.effects.length}</Badge>
+              </div>
+              {detail.effects.map((effect) => {
+                const affectedEvidence = detail.evidence.find(
+                  (item) => item.knowledgeId === effect.knowledgeId,
+                );
+                const affectedSummary = affectedEvidence
+                  ? splitEvidenceSummary(affectedEvidence.summary)
+                  : null;
+                return (
+                  <article key={effect.id} className="compile-pack-item">
+                    <div className="compile-pack-item-header">
+                      <strong>{feedbackEffectTitle(effect)}</strong>
+                      <div className="compile-pack-item-meta">
+                        <Badge variant={feedbackEffectVariant(effect)}>
+                          {effect.amount > 0 ? `+${effect.amount}` : effect.amount}
+                        </Badge>
+                        <Badge variant="outline">{effect.status}</Badge>
+                        <span>{effect.confidence}% confidence</span>
+                      </div>
                     </div>
-                  </div>
-                  <p>{effect.reason}</p>
-                  {effect.knowledgeId ? (
-                    <code className="compile-pack-item-id">{effect.knowledgeId}</code>
-                  ) : null}
-                </article>
-              ))}
+                    {affectedSummary ? (
+                      <>
+                        <p className="compile-pack-item-content">{affectedSummary.title}</p>
+                        <div className="compile-pack-item-meta">
+                          {affectedEvidence ? (
+                            <Badge variant="outline">{affectedEvidence.role}</Badge>
+                          ) : null}
+                          <span>{effect.reason}</span>
+                        </div>
+                      </>
+                    ) : (
+                      <p className="compile-state-text">{effect.reason}</p>
+                    )}
+                  </article>
+                );
+              })}
             </div>
           ) : null}
         </section>
@@ -1042,6 +1206,7 @@ function DecisionDetailPane({
                       const relatedEffect = detail.effects.find(
                         (effect) => effect.knowledgeId === item.knowledgeId,
                       );
+                      const signalLabels = evidenceSignalLabels(item);
                       return (
                         <article
                           key={item.id}
@@ -1071,6 +1236,11 @@ function DecisionDetailPane({
                               ) : relatedEffect?.effect === "boost" ? (
                                 <Badge variant="secondary">positive signal</Badge>
                               ) : null}
+                              {signalLabels.map((label) => (
+                                <Badge key={`${item.id}:${label}`} variant={signalVariant(label)}>
+                                  {label}
+                                </Badge>
+                              ))}
                               <Badge variant="outline">{item.weightAtDecision}% confidence</Badge>
                             </div>
                           </div>
@@ -1174,8 +1344,12 @@ function filterRuns(
 }
 
 export function ContextDecisionPage() {
-  const [mode, setMode] = useState<PageMode>("new");
-  const [selectedRunId, setSelectedRunId] = useState<string | null>(null);
+  const initialRunIdFromQuery = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("runId");
+  }, []);
+  const [mode, setMode] = useState<PageMode>(initialRunIdFromQuery ? "detail" : "new");
+  const [selectedRunId, setSelectedRunId] = useState<string | null>(initialRunIdFromQuery);
   const [statusFilter, setStatusFilter] = useState<DecisionStatusFilter>("all");
   const [feedbackFilter, setFeedbackFilter] = useState<DecisionFeedbackFilter>("all");
   const runsQuery = useContextDecisionRuns(50);
@@ -1190,10 +1364,14 @@ export function ContextDecisionPage() {
     if (!selectedRunId && filteredRuns[0]) {
       setSelectedRunId(filteredRuns[0].id);
     }
-    if (selectedRunId && !filteredRuns.some((run) => run.id === selectedRunId)) {
+    if (
+      selectedRunId &&
+      selectedRunId !== initialRunIdFromQuery &&
+      !filteredRuns.some((run) => run.id === selectedRunId)
+    ) {
       setSelectedRunId(filteredRuns[0]?.id ?? null);
     }
-  }, [filteredRuns, mode, selectedRunId]);
+  }, [filteredRuns, initialRunIdFromQuery, mode, selectedRunId]);
 
   const createDecision = useCreateContextDecisionMutation();
   const detailQuery = useContextDecisionDetail(mode === "detail" ? selectedRunId : null);

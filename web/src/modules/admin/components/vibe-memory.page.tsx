@@ -8,7 +8,7 @@ import {
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { MarkdownEditor } from "markdown-wysiwyg-editor";
 import mermaid from "mermaid";
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   type AgentDiffEntry,
   type VibeMemory,
@@ -51,6 +51,14 @@ export function VibeMemoryPage() {
     if (typeof window === "undefined") return null;
     return new URLSearchParams(window.location.search).get("sessionId");
   }, []);
+  const memoryIdFromQuery = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("memoryId");
+  }, []);
+  const agentDiffIdFromQuery = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("agentDiffId");
+  }, []);
   const [selectedSessionId, setSelectedSessionId] = useState<string | null>(null);
 
   const memories = useQuery({
@@ -59,6 +67,14 @@ export function VibeMemoryPage() {
   });
 
   const visibleMemories = memories.data?.filter((memory) => memory.memoryType !== "capsule") ?? [];
+
+  const linkedDiffEntry = useQuery({
+    queryKey: ["agent-diffs", "linked", agentDiffIdFromQuery],
+    queryFn: () => fetchAgentDiffEntries(1, { id: agentDiffIdFromQuery ?? "" }),
+    enabled: Boolean(agentDiffIdFromQuery),
+  });
+
+  const linkedMemoryId = memoryIdFromQuery ?? linkedDiffEntry.data?.[0]?.vibeMemoryId ?? null;
 
   const sessionMap =
     visibleMemories.reduce(
@@ -74,8 +90,10 @@ export function VibeMemoryPage() {
     .map(([id, items]) => buildSessionSummary(id, items, tz))
     .sort((a, b) => b.lastCreatedAt.getTime() - a.lastCreatedAt.getTime());
 
-  // Default to the latest session
-  const activeSessionId = selectedSessionId ?? sessionIdFromQuery ?? sessions[0]?.id;
+  const linkedSessionId =
+    linkedMemoryId && visibleMemories.find((memory) => memory.id === linkedMemoryId)?.sessionId;
+  const activeSessionId =
+    selectedSessionId ?? sessionIdFromQuery ?? linkedSessionId ?? sessions[0]?.id;
   const activeSession = sessions.find((session) => session.id === activeSessionId);
   const activeMemories = activeSessionId
     ? (sessionMap[activeSessionId] || []).sort(
@@ -84,6 +102,13 @@ export function VibeMemoryPage() {
     : [];
 
   const activeMemoryIds = activeMemories.map((memory) => memory.id);
+
+  useEffect(() => {
+    if (!linkedMemoryId || activeMemories.length === 0) return;
+    document.getElementById(`vibe-memory-${linkedMemoryId}`)?.scrollIntoView?.({
+      block: "center",
+    });
+  }, [activeMemories.length, linkedMemoryId]);
 
   const diffEntries = useQuery({
     queryKey: ["agent-diffs", "vibe-memory", activeMemoryIds],
@@ -164,7 +189,11 @@ export function VibeMemoryPage() {
                 const memoryDiffs = diffsByMemoryId.get(m.id) ?? [];
 
                 return (
-                  <div key={m.id} className={`vibe-card vibe-type-${m.memoryType}`}>
+                  <div
+                    key={m.id}
+                    id={`vibe-memory-${m.id}`}
+                    className={`vibe-card vibe-type-${m.memoryType}`}
+                  >
                     <div className="vibe-card-header">
                       <Badge variant="secondary" className="type-badge">
                         {m.memoryType}

@@ -35,6 +35,7 @@ import {
   insertContextDecisionRun,
   listContextDecisionMlTrainingRows,
   listContextDecisionRuns,
+  markContextDecisionRunFailed,
 } from "./context-decision.repository.js";
 import { applyContextDecisionReliabilityGate } from "./context-decision.reliability-gate.js";
 import {
@@ -43,6 +44,12 @@ import {
   resolveContextDecisionOutcome,
   scoreContextDecision,
 } from "./context-decision.scoring.js";
+import {
+  buildDecisionSignalAssessmentSummary,
+  signalTracePayload,
+  summarizeDecisionSignals,
+} from "./context-decision.signals.js";
+import { loadDecisionSignalBundles } from "./context-decision.signals.repository.js";
 
 type ContextDecisionLlmJudgment = {
   decision: ContextDecisionValue;
@@ -53,11 +60,20 @@ type ContextDecisionLlmJudgment = {
   reasoningSummary: string;
 };
 
-type SelectionRole = "support" | "user_preference" | "risk" | "alternative";
+type SelectionRole = "support" | "counter_evidence" | "user_preference" | "risk" | "alternative";
 
 type UniqueRoleSelection = {
   selectedByRole: Record<SelectionRole, KnowledgeSearchResult[]>;
   suppressedByRole: Record<SelectionRole, string[]>;
+};
+
+const EVIDENCE_ROLE_PRECEDENCE: Record<ContextDecisionEvidenceRole, number> = {
+  counter_evidence: 6,
+  risk_warning: 5,
+  user_preference: 4,
+  rejected_alternative: 3,
+  selected_support: 2,
+  missing_counter_evidence: 1,
 };
 
 function uniqueById(items: KnowledgeSearchResult[]): KnowledgeSearchResult[] {
@@ -130,6 +146,19 @@ function dedupeEvidenceByKnowledgeId(
   return unique;
 }
 
+function normalizeEvidenceCandidateRoles(
+  items: DecisionEvidenceCandidate[],
+): DecisionEvidenceCandidate[] {
+  const byKnowledgeId = new Map<string, DecisionEvidenceCandidate>();
+  for (const item of items) {
+    const current = byKnowledgeId.get(item.knowledge.id);
+    if (!current || EVIDENCE_ROLE_PRECEDENCE[item.role] > EVIDENCE_ROLE_PRECEDENCE[current.role]) {
+      byKnowledgeId.set(item.knowledge.id, item);
+    }
+  }
+  return Array.from(byKnowledgeId.values());
+}
+
 function buildKnowledgeBriefs(items: DecisionEvidenceCandidate[], limit: number): string[] {
   return dedupeEvidenceByKnowledgeId(items)
     .slice(0, limit)
@@ -150,18 +179,21 @@ function buildKnowledgeBriefs(items: DecisionEvidenceCandidate[], limit: number)
 
 function selectUniqueKnowledgeByRole(params: {
   support: KnowledgeSearchResult[];
+  counterEvidence: KnowledgeSearchResult[];
   userPreference: KnowledgeSearchResult[];
   risk: KnowledgeSearchResult[];
   alternative: KnowledgeSearchResult[];
 }): UniqueRoleSelection {
   const selectedByRole: UniqueRoleSelection["selectedByRole"] = {
     support: uniqueById(params.support),
+    counter_evidence: uniqueById(params.counterEvidence),
     user_preference: uniqueById(params.userPreference),
     risk: uniqueById(params.risk),
     alternative: uniqueById(params.alternative),
   };
   const suppressedByRole: UniqueRoleSelection["suppressedByRole"] = {
     support: [],
+    counter_evidence: [],
     user_preference: [],
     risk: [],
     alternative: [],
@@ -222,7 +254,9 @@ function fallbackAgentMessage(params: {
   });
   const riskItems = dedupeEvidenceByKnowledgeId(
     params.evidence.filter(
-      (item) => item.role === "risk_warning" && !basisKnowledgeIds.has(item.knowledge.id),
+      (item) =>
+        (item.role === "risk_warning" || item.role === "counter_evidence") &&
+        !basisKnowledgeIds.has(item.knowledge.id),
     ),
   )
     .slice(0, 2)
@@ -433,6 +467,10 @@ async function structuredLlmJudgment(params: {
     params.evidence.filter((item) => item.role === "risk_warning"),
     2,
   );
+  const counterBriefs = buildKnowledgeBriefs(
+    params.evidence.filter((item) => item.role === "counter_evidence"),
+    3,
+  );
   const systemPrompt = [
     "You are ContextStill structured decision judge.",
     "Return exactly one JSON object and no markdown.",
@@ -443,6 +481,7 @@ async function structuredLlmJudgment(params: {
     "The Outcome Predictor is advisory and may be ignored.",
     "Classify each Knowledge excerpt by meaning before using it: execution_support, prohibition_or_constraint, risk_warning, verification_requirement, or unrelated.",
     "Knowledge with role=risk_warning or polarity=negative is negative evidence, not reference-only context.",
+    "Knowledge with role=counter_evidence is first-class contradictory evidence and must be weighed explicitly.",
     "When negative evidence applies to the proposed action, it must weigh against execute and toward reject, revise_and_execute, rollback, discard, or escalate.",
     "A prohibition_or_constraint excerpt is not support for executing the proposed action, even when it appears in a support list.",
     "Do not rely on exact wording such as Never or Do not; classify by whether the excerpt permits, forbids, constrains, or verifies the proposed action.",
@@ -503,6 +542,9 @@ async function structuredLlmJudgment(params: {
     "",
     "Support/preference Knowledge:",
     supportBriefs.length > 0 ? supportBriefs.join("\n\n") : "none",
+    "",
+    "Counter Evidence Knowledge:",
+    counterBriefs.length > 0 ? counterBriefs.join("\n\n") : "none",
     "",
     "Risk Knowledge:",
     riskBriefs.length > 0 ? riskBriefs.join("\n\n") : "none",
@@ -633,7 +675,9 @@ async function composeAgentMessage(params: {
   );
   const basisKnowledgeIds = new Set(basisEvidence.map((item) => item.knowledge.id));
   const riskEvidence = params.evidence.filter(
-    (item) => item.role === "risk_warning" && !basisKnowledgeIds.has(item.knowledge.id),
+    (item) =>
+      (item.role === "risk_warning" || item.role === "counter_evidence") &&
+      !basisKnowledgeIds.has(item.knowledge.id),
   );
   const basisKnowledgeBriefs = buildKnowledgeBriefs(basisEvidence, 5);
   const riskKnowledgeBriefs = buildKnowledgeBriefs(riskEvidence, 2);
@@ -667,6 +711,7 @@ async function composeAgentMessage(params: {
     "Explain why the decision matches prior tendencies, best-practice rules, or procedure guidance found in Knowledge.",
     "Classify Knowledge excerpts by meaning before citing them: execution support, prohibition/constraint, risk warning, verification requirement, or unrelated.",
     "Knowledge with role=risk_warning or polarity=negative is negative evidence, not reference-only context.",
+    "Knowledge with role=counter_evidence is first-class contradictory evidence.",
     "When negative evidence applies, describe it as a reason to reject, revise, roll back, discard, or escalate rather than as a neutral caution.",
     "If the Reliability Gate constrained the decision, treat that final decision as authoritative and explain the gate reason in plain language.",
     "Do not present prohibition or constraint Knowledge as the reason an execute decision is safe; mention it only as a caution or reason to reject/revise.",
@@ -694,7 +739,7 @@ async function composeAgentMessage(params: {
     "Selected support/preference Knowledge excerpts for reasoning:",
     basisKnowledgeBriefs.length > 0 ? basisKnowledgeBriefs.join("\n\n") : "none",
     "",
-    "Selected risk Knowledge excerpts to mention only as cautions:",
+    "Selected counter/risk Knowledge excerpts to mention when they affect the final decision:",
     riskKnowledgeBriefs.length > 0 ? riskKnowledgeBriefs.join("\n\n") : "none",
     "",
     "Answer requirements:",
@@ -731,6 +776,9 @@ function determineEvidenceRole(
   knowledge: KnowledgeSearchResult,
   defaultRole: ContextDecisionEvidenceRole,
 ): ContextDecisionEvidenceRole {
+  if (defaultRole !== "selected_support") {
+    return defaultRole;
+  }
   const tags = knowledge.intentTags || [];
   if (tags.includes("preference") || tags.includes("user_preference")) {
     return "user_preference";
@@ -738,311 +786,531 @@ function determineEvidenceRole(
   if (knowledge.polarity === "negative") {
     return "risk_warning";
   }
-  if (knowledge.polarity === "positive") {
-    return "selected_support";
-  }
-  return defaultRole;
+  return "selected_support";
 }
 
-export async function decideContext(input: unknown): Promise<ContextDecisionResult> {
-  const parsed = contextDecisionInputSchema.parse(input);
-  const coverageQueries = buildDecisionCoverageQueries(parsed);
-  const coverageResults = await Promise.all(
-    coverageQueries.map(async (query) => {
-      const hits = await searchKnowledge(
-        {
-          query: query.query,
-          status: "active",
-          limit: 6,
-          includeDraft: false,
-          includeGeneral: true,
-        },
-        {
-          includeGeneral: true,
-          technologies: parsed.retrievalHints.technologies,
-          changeTypes: parsed.retrievalHints.changeTypes,
-          domains: parsed.retrievalHints.domains,
-        },
-      );
-      return { ...query, hits: uniqueById(hits).filter(isRelevantDecisionKnowledge) };
-    }),
+function evidenceRolesForQueryRole(queryRole: string): ContextDecisionEvidenceRole[] {
+  if (queryRole === "support") return ["selected_support"];
+  if (queryRole === "counter_evidence") return ["counter_evidence"];
+  if (queryRole === "user_preference") return ["user_preference"];
+  if (queryRole === "risk") return ["risk_warning"];
+  if (queryRole === "alternative") return ["rejected_alternative"];
+  return [];
+}
+
+function containsProceedClaim(message: string): boolean {
+  const normalized = message.toLowerCase();
+  return (
+    normalized.includes("proceed") ||
+    normalized.includes("execute") ||
+    normalized.includes("continue autonomously") ||
+    normalized.includes("can continue") ||
+    message.includes("進めます") ||
+    message.includes("実行します") ||
+    message.includes("続行できます") ||
+    message.includes("自律的に次へ進め")
   );
+}
 
-  const supportHits = coverageResults.find((item) => item.queryRole === "support")?.hits ?? [];
-  const preferenceHits =
-    coverageResults.find((item) => item.queryRole === "user_preference")?.hits ?? [];
-  const riskHits = coverageResults.find((item) => item.queryRole === "risk")?.hits ?? [];
-  const counterHits =
-    coverageResults.find((item) => item.queryRole === "counter_evidence")?.hits ?? [];
-  const alternativeHits =
-    coverageResults.find((item) => item.queryRole === "alternative")?.hits ?? [];
-  const negativeHits = coverageResults
-    .flatMap((item) => item.hits)
-    .filter(isNegativeKnowledge)
-    .sort((left, right) => (Number(right.score) || 0) - (Number(left.score) || 0));
-
-  const roleSelection = selectUniqueKnowledgeByRole({
-    support: supportHits.filter((item) => !isNegativeKnowledge(item)).slice(0, 4),
-    userPreference: preferenceHits.filter(isUserPreferenceKnowledge).slice(0, 2),
-    risk: uniqueById([...riskHits, ...negativeHits]).slice(0, 4),
-    alternative: alternativeHits.slice(0, 2),
-  });
-  const selectedSupport = roleSelection.selectedByRole.support;
-  const selectedPreference = roleSelection.selectedByRole.user_preference;
-  const selectedRisk = roleSelection.selectedByRole.risk;
-  const selectedAlternatives = roleSelection.selectedByRole.alternative;
-  const evidenceCandidates: DecisionEvidenceCandidate[] = [
-    ...selectedSupport.map((knowledge) => ({
-      knowledge,
-      role: determineEvidenceRole(knowledge, "selected_support"),
-    })),
-    ...selectedPreference.map((knowledge) => ({
-      knowledge,
-      role: determineEvidenceRole(knowledge, "user_preference"),
-    })),
-    ...selectedRisk.map((knowledge) => ({
-      knowledge,
-      role: determineEvidenceRole(knowledge, "risk_warning"),
-    })),
-    ...selectedAlternatives.map((knowledge) => ({
-      knowledge,
-      role: determineEvidenceRole(knowledge, "rejected_alternative"),
-    })),
-  ];
-
-  const relatedBadSignalSummary = await getRelatedDecisionBadSignalSummary(
-    selectedSupport.map((item) => item.id),
-  );
-  const relatedBadSignalCount = relatedBadSignalSummary.count;
-  const scored = scoreContextDecision({
-    input: parsed,
-    evidence: evidenceCandidates,
-    coverage: coverageResults.map((item) => ({
-      queryRole: item.queryRole,
-      hitCount: item.hits.length,
-    })),
-    relatedBadSignalCount,
-  });
-  const selectedEvidenceIds = new Set(evidenceCandidates.map((item) => item.knowledge.id));
-  const selectedIdsByRole = new Map(
-    coverageResults.map((item) => [
-      item.queryRole,
-      item.hits
-        .map((knowledge) => knowledge.id)
-        .filter((knowledgeId) => selectedEvidenceIds.has(knowledgeId)),
-    ]),
-  );
-  const assessmentCoverage = coverageResults.map((item) => ({
-    queryRole: item.queryRole,
-    hits: item.hits,
-    selectedKnowledgeIds: selectedIdsByRole.get(item.queryRole) ?? [],
-    duplicateSuppressedKnowledgeIds:
-      item.queryRole === "support"
-        ? roleSelection.suppressedByRole.support
-        : item.queryRole === "user_preference"
-          ? roleSelection.suppressedByRole.user_preference
-          : item.queryRole === "risk"
-            ? roleSelection.suppressedByRole.risk
-            : item.queryRole === "alternative"
-              ? roleSelection.suppressedByRole.alternative
-              : [],
-  }));
-  const candidateTraces = buildContextDecisionCandidateTraces(assessmentCoverage);
-  const knowledgeAssessment = assessContextDecisionKnowledge({
-    evidence: evidenceCandidates,
-    coverage: assessmentCoverage,
-    candidateTraces,
-    relatedBadSignalCount,
-  });
-  const knowledgePrior = buildContextDecisionKnowledgePrior({
-    evidence: evidenceCandidates,
-    candidateTraces,
-  });
-
-  const selectedAction = null;
-  const deterministic = deterministicJudgment({
-    selectedAction,
-    confidence: scored.confidence,
-  });
-  const mlFeatures = buildContextDecisionMlFeatures({
-    input: parsed,
-    evidence: evidenceCandidates,
-    coverage: coverageResults.map((item) => ({
-      queryRole: item.queryRole,
-      hitCount: item.hits.length,
-    })),
-    trace: scored.trace,
-    relatedBadSignalCount,
-  });
-  const trainingRows = await listContextDecisionMlTrainingRows({ limit: 500 });
-  const outcomePredictor = await buildContextDecisionMlSignal({
-    currentFeatures: mlFeatures,
-    trainingRows,
-  });
-  const llmJudgment = await structuredLlmJudgment({
-    input: parsed,
-    deterministic,
-    trace: scored.trace,
-    knowledgeAssessment,
-    knowledgePrior,
-    outcomePredictor,
-    evidence: evidenceCandidates,
-    supportHits: supportHits.length,
-    preferenceHits: preferenceHits.length,
-    counterHits: counterHits.length,
-    riskHits: riskHits.length,
-  });
-  const reliabilityResult = applyContextDecisionReliabilityGate({
-    judgment: llmJudgment.judgment,
-    knowledgeAssessment,
-    evidence: evidenceCandidates,
-    relatedBadSignalSummary,
-  });
-  const confidenceTrace: ContextDecisionConfidenceTrace = {
-    ...scored.trace,
-    finalConfidence: reliabilityResult.judgment.confidence,
-    knowledgeAssessment,
-    knowledgePrior,
-    outcomePredictor,
-    mlSignal: outcomePredictor,
-    candidateTraces: capCandidateTraces(candidateTraces),
-    llmJudgmentStatus: llmJudgment.status,
-    reliabilityGate: reliabilityResult.gate,
-  };
-  const decision = reliabilityResult.judgment.decision;
-  const mandate = reliabilityResult.judgment.mandate;
-  const finalSelectedAction = reliabilityResult.judgment.selectedAction;
-  const rejectedActions = reliabilityResult.judgment.rejectedActions;
-  const unsupportedAlternatives: Array<Record<string, unknown>> = [];
-  const guardrails = buildGuardrails(parsed, selectedRisk);
-  const finalStatus =
-    scored.status === "degraded" || reliabilityResult.gate.status === "constrained"
-      ? "degraded"
-      : "completed";
-  const agentMessage = await composeAgentMessage({
-    input: parsed,
-    decision,
-    mandate,
-    confidence: reliabilityResult.judgment.confidence,
-    status: finalStatus,
-    supportHits: supportHits.length,
-    preferenceHits: preferenceHits.length,
-    counterHits: counterHits.length,
-    riskHits: riskHits.length,
-    selectedSupportCount: selectedSupport.length,
-    evidence: evidenceCandidates,
-    reliabilityGate: reliabilityResult.gate,
-  });
-
-  const decisionId = await insertContextDecisionRun({
-    input: parsed,
-    decision,
-    selectedAction: finalSelectedAction,
-    rejectedActions,
-    mandate,
-    agentMessage,
-    confidence: reliabilityResult.judgment.confidence,
-    confidenceTrace,
-    guardrails,
-    unsupportedAlternatives,
-    status: finalStatus,
-  });
-
-  await insertContextDecisionEvidenceRows(
-    decisionId,
-    evidenceCandidates.map(({ knowledge, role }) => {
-      const candidateTrace = bestCandidateTrace(candidateTraces, knowledge.id);
-      return {
-        knowledgeId: knowledge.id,
-        role,
-        weightAtDecision: evidenceWeightAtDecision(knowledge),
-        dynamicScoreAtDecision: Math.round(knowledge.dynamicScore),
-        applicabilityScore: Math.round(knowledge.applicabilityScore),
-        temporalRelevance: knowledge.lastVerifiedAt ? 85 : 55,
-        summary: summarizeKnowledge(knowledge),
-        sourceRefs: knowledge.sourceRefs,
-        metadata: {
-          title: knowledge.title,
-          type: knowledge.type,
-          status: knowledge.status,
-          score: knowledge.score,
-          retrievalMethod: candidateTrace?.retrievalMethod ?? "keyword",
-          vectorStatus: candidateTrace?.vectorStatus ?? "unavailable",
-          vectorSimilarity: candidateTrace?.vectorSimilarity ?? null,
-          keywordScore: candidateTrace?.keywordScore ?? knowledgeScorePercent(knowledge),
-          facetScore: candidateTrace?.facetScore ?? Math.round(knowledge.applicabilityScore),
-          sourceQualityScore: candidateTrace?.sourceQualityScore ?? null,
-          candidateScore: candidateTrace?.finalCandidateScore ?? null,
-          selectionReason: candidateTrace?.selectionReason ?? "selected evidence candidate",
-          confidence: knowledge.confidence,
-          importance: knowledge.importance,
-        },
-      };
-    }),
-  );
-
+function validatedAgentMessage(params: {
+  decision: ContextDecisionValue;
+  message: string;
+  fallback: string;
+}): string {
   if (
-    counterHits.length === 0 &&
-    coverageResults.some((item) => item.queryRole === "counter_evidence")
+    params.decision === "reject" ||
+    params.decision === "rollback" ||
+    params.decision === "discard" ||
+    params.decision === "escalate"
   ) {
-    await insertContextDecisionEvidenceRows(decisionId, [
-      {
-        knowledgeId: null,
-        role: "missing_counter_evidence",
-        weightAtDecision: 0,
-        dynamicScoreAtDecision: null,
-        applicabilityScore: null,
-        temporalRelevance: null,
-        summary:
-          "No counter-evidence was found in the v1 multi-query coverage trace. This is recorded as weak context only, not positive proof.",
-        sourceRefs: [],
-        metadata: { neutral: true, retrievalMethod: "keyword", vectorStatus: "unavailable" },
-      },
-    ]);
+    return containsProceedClaim(params.message) ? params.fallback : params.message;
   }
+  return params.message;
+}
 
-  await insertContextDecisionCoverageRows(
-    decisionId,
-    coverageResults.map((item) => {
-      const selectedKnowledgeIds = selectedIdsByRole.get(item.queryRole) ?? [];
-      return {
-        query: item.query,
-        queryRole: item.queryRole,
-        scope: {
-          knowledgeStatus: "active",
-          retrievalMethods: ["keyword", "facet", "hybrid"],
-          vectorStatus: "unavailable",
-          normalizedKeywords: item.normalizedKeywords,
-          retrievalInput: item.retrievalInput,
-        },
-        hitCount: item.hits.length,
-        maxSimilarity: maxSimilarity(item.hits),
-        selectedKnowledgeIds,
-        rejectedKnowledgeIds: item.hits
-          .map((knowledge) => knowledge.id)
-          .filter((id) => !selectedKnowledgeIds.includes(id)),
-        reason: item.reason,
-      };
-    }),
-  );
-
+async function persistFailedDecision(params: {
+  input: ContextDecisionInput;
+  queryCount: number;
+  error: unknown;
+}): Promise<ContextDecisionResult> {
+  const reason = failureReason(params.error);
+  const confidenceTrace: ContextDecisionConfidenceTrace = {
+    supportScore: 0,
+    counterScore: 0,
+    preferenceScore: 0,
+    riskSignalScore: 0,
+    coverageScore: 0,
+    verificationScore: 0,
+    historicalFeedbackScore: 0,
+    finalConfidence: 0,
+    forcedRules: ["retrieval_or_decision_failure_escalate"],
+    signalStatus: {
+      status: "failed",
+      evidenceCount: 0,
+      compileSignalCount: 0,
+      communitySignalCount: 0,
+      landscapeSignalCount: 0,
+      reason,
+    },
+    llmJudgmentStatus: "fallback",
+  };
+  const agentMessage = `判断は escalate です。Decision 実行中に検索または signal 取得が失敗したため、自律実行せずユーザー確認に進むべき状態です。失敗理由: ${reason}`;
+  const decisionId = await insertContextDecisionRun({
+    input: params.input,
+    decision: "escalate",
+    selectedAction: null,
+    rejectedActions: ["execute"],
+    mandate: "Escalate because context_decision could not retrieve auditable evidence.",
+    agentMessage,
+    confidence: 0,
+    confidenceTrace,
+    guardrails: buildGuardrails(params.input, []),
+    unsupportedAlternatives: [],
+    status: "failed",
+  });
   return {
     decisionId,
-    decision,
-    mandate,
-    confidence: reliabilityResult.judgment.confidence,
+    decision: "escalate",
+    mandate: "Escalate because context_decision could not retrieve auditable evidence.",
+    confidence: 0,
     agentMessage,
     feedbackHandle: {
       decisionId,
       tool: "context_decision_feedback",
     },
     coverageSummary: {
-      queryCount: coverageResults.length,
-      supportHits: supportHits.length,
-      counterEvidenceHits: counterHits.length,
-      degraded: finalStatus !== "completed",
+      queryCount: params.queryCount,
+      supportHits: 0,
+      counterEvidenceHits: 0,
+      degraded: true,
     },
   };
+}
+
+function failureReason(error: unknown): string {
+  return error instanceof Error ? error.message : "context decision failed";
+}
+
+function postRunPersistenceFailureResult(params: {
+  decisionId: string;
+  reason: string;
+  queryCount: number;
+  supportHits: number;
+  counterHits: number;
+}): ContextDecisionResult {
+  const agentMessage = `判断は escalate です。Decision run は作成されましたが、evidence または coverage の監査情報保存に失敗したため、自律実行せずユーザー確認に進むべき状態です。失敗理由: ${params.reason}`;
+  return {
+    decisionId: params.decisionId,
+    decision: "escalate",
+    mandate:
+      "Escalate because context_decision could not persist complete audit evidence for the decision.",
+    confidence: 0,
+    agentMessage,
+    feedbackHandle: {
+      decisionId: params.decisionId,
+      tool: "context_decision_feedback",
+    },
+    coverageSummary: {
+      queryCount: params.queryCount,
+      supportHits: params.supportHits,
+      counterEvidenceHits: params.counterHits,
+      degraded: true,
+    },
+  };
+}
+
+export async function decideContext(input: unknown): Promise<ContextDecisionResult> {
+  const parsed = contextDecisionInputSchema.parse(input);
+  const coverageQueries = buildDecisionCoverageQueries(parsed);
+  let coverageResults: Array<(typeof coverageQueries)[number] & { hits: KnowledgeSearchResult[] }>;
+  try {
+    coverageResults = await Promise.all(
+      coverageQueries.map(async (query) => {
+        const hits = await searchKnowledge(
+          {
+            query: query.query,
+            status: "active",
+            limit: 6,
+            includeDraft: false,
+            includeGeneral: true,
+          },
+          {
+            includeGeneral: true,
+            technologies: parsed.retrievalHints.technologies,
+            changeTypes: parsed.retrievalHints.changeTypes,
+            domains: parsed.retrievalHints.domains,
+          },
+        );
+        return { ...query, hits: uniqueById(hits).filter(isRelevantDecisionKnowledge) };
+      }),
+    );
+  } catch (error) {
+    return persistFailedDecision({
+      input: parsed,
+      queryCount: coverageQueries.length,
+      error,
+    });
+  }
+
+  try {
+    const supportHits = coverageResults.find((item) => item.queryRole === "support")?.hits ?? [];
+    const preferenceHits =
+      coverageResults.find((item) => item.queryRole === "user_preference")?.hits ?? [];
+    const riskHits = coverageResults.find((item) => item.queryRole === "risk")?.hits ?? [];
+    const counterHits =
+      coverageResults.find((item) => item.queryRole === "counter_evidence")?.hits ?? [];
+    const alternativeHits =
+      coverageResults.find((item) => item.queryRole === "alternative")?.hits ?? [];
+    const negativeHits = coverageResults
+      .flatMap((item) => item.hits)
+      .filter(isNegativeKnowledge)
+      .sort((left, right) => (Number(right.score) || 0) - (Number(left.score) || 0));
+
+    const roleSelection = selectUniqueKnowledgeByRole({
+      support: supportHits.filter((item) => !isNegativeKnowledge(item)).slice(0, 4),
+      counterEvidence: counterHits.filter((item) => !isNegativeKnowledge(item)).slice(0, 3),
+      userPreference: preferenceHits.filter(isUserPreferenceKnowledge).slice(0, 2),
+      risk: uniqueById([...riskHits, ...negativeHits]).slice(0, 4),
+      alternative: alternativeHits.slice(0, 2),
+    });
+    const selectedSupport = roleSelection.selectedByRole.support;
+    const selectedCounterEvidence = roleSelection.selectedByRole.counter_evidence;
+    const selectedPreference = roleSelection.selectedByRole.user_preference;
+    const selectedRisk = roleSelection.selectedByRole.risk;
+    const selectedAlternatives = roleSelection.selectedByRole.alternative;
+    const evidenceCandidates = normalizeEvidenceCandidateRoles([
+      ...selectedSupport.map((knowledge) => ({
+        knowledge,
+        role: determineEvidenceRole(knowledge, "selected_support"),
+      })),
+      ...selectedCounterEvidence.map((knowledge) => ({
+        knowledge,
+        role: "counter_evidence" as const,
+      })),
+      ...selectedPreference.map((knowledge) => ({
+        knowledge,
+        role: determineEvidenceRole(knowledge, "user_preference"),
+      })),
+      ...selectedRisk.map((knowledge) => ({
+        knowledge,
+        role: determineEvidenceRole(knowledge, "risk_warning"),
+      })),
+      ...selectedAlternatives.map((knowledge) => ({
+        knowledge,
+        role: determineEvidenceRole(knowledge, "rejected_alternative"),
+      })),
+    ]);
+    const effectiveSelectedSupport = evidenceCandidates
+      .filter((item) => item.role === "selected_support")
+      .map((item) => item.knowledge);
+    const effectiveSelectedRisk = evidenceCandidates
+      .filter((item) => item.role === "risk_warning")
+      .map((item) => item.knowledge);
+    const signalResult = await loadDecisionSignalBundles(
+      evidenceCandidates.map((item) => item.knowledge.id),
+    );
+    const evidenceWithSignals: DecisionEvidenceCandidate[] = evidenceCandidates.map((item) => ({
+      ...item,
+      signals: signalResult.bundles.get(item.knowledge.id),
+    }));
+
+    const relatedBadSignalSummary = await getRelatedDecisionBadSignalSummary(
+      effectiveSelectedSupport.map((item) => item.id),
+    );
+    const relatedBadSignalCount = relatedBadSignalSummary.count;
+    const scored = scoreContextDecision({
+      input: parsed,
+      evidence: evidenceWithSignals,
+      coverage: coverageResults.map((item) => ({
+        queryRole: item.queryRole,
+        hitCount: item.hits.length,
+      })),
+      relatedBadSignalCount,
+    });
+    const selectedIdsByRole = new Map(
+      coverageResults.map((item) => {
+        const evidenceRoles = new Set(evidenceRolesForQueryRole(item.queryRole));
+        const selectedForRole = new Set(
+          evidenceCandidates
+            .filter((candidate) => evidenceRoles.has(candidate.role))
+            .map((candidate) => candidate.knowledge.id),
+        );
+        return [
+          item.queryRole,
+          item.hits
+            .map((knowledge) => knowledge.id)
+            .filter((knowledgeId) => selectedForRole.has(knowledgeId)),
+        ];
+      }),
+    );
+    const assessmentCoverage = coverageResults.map((item) => ({
+      queryRole: item.queryRole,
+      hits: item.hits,
+      selectedKnowledgeIds: selectedIdsByRole.get(item.queryRole) ?? [],
+      duplicateSuppressedKnowledgeIds:
+        item.queryRole === "support"
+          ? roleSelection.suppressedByRole.support
+          : item.queryRole === "counter_evidence"
+            ? roleSelection.suppressedByRole.counter_evidence
+            : item.queryRole === "user_preference"
+              ? roleSelection.suppressedByRole.user_preference
+              : item.queryRole === "risk"
+                ? roleSelection.suppressedByRole.risk
+                : item.queryRole === "alternative"
+                  ? roleSelection.suppressedByRole.alternative
+                  : [],
+    }));
+    const candidateTraces = buildContextDecisionCandidateTraces(assessmentCoverage);
+    const knowledgeAssessment = assessContextDecisionKnowledge({
+      evidence: evidenceWithSignals,
+      coverage: assessmentCoverage,
+      candidateTraces,
+      relatedBadSignalCount,
+    });
+    knowledgeAssessment.signalSummary = buildDecisionSignalAssessmentSummary(signalResult);
+    const knowledgePrior = buildContextDecisionKnowledgePrior({
+      evidence: evidenceWithSignals,
+      candidateTraces,
+    });
+
+    const selectedAction = null;
+    const deterministic = deterministicJudgment({
+      selectedAction,
+      confidence: scored.confidence,
+    });
+    const mlFeatures = buildContextDecisionMlFeatures({
+      input: parsed,
+      evidence: evidenceWithSignals,
+      coverage: coverageResults.map((item) => ({
+        queryRole: item.queryRole,
+        hitCount: item.hits.length,
+      })),
+      trace: scored.trace,
+      relatedBadSignalCount,
+    });
+    const trainingRows = await listContextDecisionMlTrainingRows({ limit: 500 });
+    const outcomePredictor = await buildContextDecisionMlSignal({
+      currentFeatures: mlFeatures,
+      trainingRows,
+    });
+    const llmJudgment = await structuredLlmJudgment({
+      input: parsed,
+      deterministic,
+      trace: scored.trace,
+      knowledgeAssessment,
+      knowledgePrior,
+      outcomePredictor,
+      evidence: evidenceWithSignals,
+      supportHits: supportHits.length,
+      preferenceHits: preferenceHits.length,
+      counterHits: counterHits.length,
+      riskHits: riskHits.length,
+    });
+    const reliabilityResult = applyContextDecisionReliabilityGate({
+      judgment: llmJudgment.judgment,
+      knowledgeAssessment,
+      evidence: evidenceWithSignals,
+      relatedBadSignalSummary,
+      signalLoadStatus: signalResult.status,
+      signalLoadReason: signalResult.reason,
+    });
+    const signalTrace = signalTracePayload(signalResult);
+    const confidenceTrace: ContextDecisionConfidenceTrace = {
+      ...scored.trace,
+      finalConfidence: reliabilityResult.judgment.confidence,
+      signalStatus: summarizeDecisionSignals(signalResult),
+      compileSignals: signalTrace.compileSignals,
+      communitySignals: signalTrace.communitySignals,
+      landscapeSignals: signalTrace.landscapeSignals,
+      knowledgeAssessment,
+      knowledgePrior,
+      outcomePredictor,
+      mlSignal: outcomePredictor,
+      candidateTraces: capCandidateTraces(candidateTraces),
+      llmJudgmentStatus: llmJudgment.status,
+      reliabilityGate: reliabilityResult.gate,
+    };
+    const decision = reliabilityResult.judgment.decision;
+    const mandate = reliabilityResult.judgment.mandate;
+    const finalSelectedAction = reliabilityResult.judgment.selectedAction;
+    const rejectedActions = reliabilityResult.judgment.rejectedActions;
+    const unsupportedAlternatives: Array<Record<string, unknown>> = [];
+    const guardrails = buildGuardrails(parsed, effectiveSelectedRisk);
+    const finalStatus =
+      scored.status === "degraded" ||
+      reliabilityResult.gate.status === "constrained" ||
+      llmJudgment.status !== "completed" ||
+      signalResult.status !== "complete"
+        ? "degraded"
+        : "completed";
+    const rawAgentMessage = await composeAgentMessage({
+      input: parsed,
+      decision,
+      mandate,
+      confidence: reliabilityResult.judgment.confidence,
+      status: finalStatus,
+      supportHits: supportHits.length,
+      preferenceHits: preferenceHits.length,
+      counterHits: counterHits.length,
+      riskHits: riskHits.length,
+      selectedSupportCount: effectiveSelectedSupport.length,
+      evidence: evidenceWithSignals,
+      reliabilityGate: reliabilityResult.gate,
+    });
+    const agentMessage = validatedAgentMessage({
+      decision,
+      message: rawAgentMessage,
+      fallback: fallbackAgentMessage({
+        decision,
+        confidence: reliabilityResult.judgment.confidence,
+        supportHits: supportHits.length,
+        counterHits: counterHits.length,
+        riskHits: riskHits.length,
+        status: finalStatus,
+        evidence: evidenceWithSignals,
+        reliabilityGate: reliabilityResult.gate,
+      }),
+    });
+
+    const decisionId = await insertContextDecisionRun({
+      input: parsed,
+      decision,
+      selectedAction: finalSelectedAction,
+      rejectedActions,
+      mandate,
+      agentMessage,
+      confidence: reliabilityResult.judgment.confidence,
+      confidenceTrace,
+      guardrails,
+      unsupportedAlternatives,
+      status: finalStatus,
+    });
+
+    let persistenceStage = "context_decision_evidence";
+    try {
+      await insertContextDecisionEvidenceRows(
+        decisionId,
+        evidenceWithSignals.map(({ knowledge, role, signals }) => {
+          const candidateTrace = bestCandidateTrace(candidateTraces, knowledge.id);
+          return {
+            knowledgeId: knowledge.id,
+            role,
+            weightAtDecision: evidenceWeightAtDecision(knowledge, role, signals),
+            dynamicScoreAtDecision: Math.round(knowledge.dynamicScore),
+            applicabilityScore: Math.round(knowledge.applicabilityScore),
+            temporalRelevance: knowledge.lastVerifiedAt ? 85 : 55,
+            summary: summarizeKnowledge(knowledge),
+            sourceRefs: knowledge.sourceRefs,
+            metadata: {
+              title: knowledge.title,
+              type: knowledge.type,
+              status: knowledge.status,
+              score: knowledge.score,
+              retrievalMethod: candidateTrace?.retrievalMethod ?? "keyword",
+              vectorStatus: candidateTrace?.vectorStatus ?? "unavailable",
+              vectorSimilarity: candidateTrace?.vectorSimilarity ?? null,
+              keywordScore: candidateTrace?.keywordScore ?? knowledgeScorePercent(knowledge),
+              facetScore: candidateTrace?.facetScore ?? Math.round(knowledge.applicabilityScore),
+              sourceQualityScore: candidateTrace?.sourceQualityScore ?? null,
+              candidateScore: candidateTrace?.finalCandidateScore ?? null,
+              selectionReason: candidateTrace?.selectionReason ?? "selected evidence candidate",
+              confidence: knowledge.confidence,
+              importance: knowledge.importance,
+              signals: signals ?? {},
+            },
+          };
+        }),
+      );
+
+      if (
+        counterHits.length === 0 &&
+        coverageResults.some((item) => item.queryRole === "counter_evidence")
+      ) {
+        persistenceStage = "missing_counter_evidence";
+        await insertContextDecisionEvidenceRows(decisionId, [
+          {
+            knowledgeId: null,
+            role: "missing_counter_evidence",
+            weightAtDecision: 0,
+            dynamicScoreAtDecision: null,
+            applicabilityScore: null,
+            temporalRelevance: null,
+            summary:
+              "No counter-evidence was found in the v1 multi-query coverage trace. This is recorded as weak context only, not positive proof.",
+            sourceRefs: [],
+            metadata: { neutral: true, retrievalMethod: "keyword", vectorStatus: "unavailable" },
+          },
+        ]);
+      }
+
+      persistenceStage = "context_decision_coverage";
+      await insertContextDecisionCoverageRows(
+        decisionId,
+        coverageResults.map((item) => {
+          const selectedKnowledgeIds = selectedIdsByRole.get(item.queryRole) ?? [];
+          return {
+            query: item.query,
+            queryRole: item.queryRole,
+            scope: {
+              knowledgeStatus: "active",
+              retrievalMethods: ["keyword", "facet", "hybrid"],
+              vectorStatus: "unavailable",
+              normalizedKeywords: item.normalizedKeywords,
+              retrievalInput: item.retrievalInput,
+              signalStatus: signalResult.status,
+            },
+            hitCount: item.hits.length,
+            maxSimilarity: maxSimilarity(item.hits),
+            selectedKnowledgeIds,
+            rejectedKnowledgeIds: item.hits
+              .map((knowledge) => knowledge.id)
+              .filter((id) => !selectedKnowledgeIds.includes(id)),
+            reason: item.reason,
+          };
+        }),
+      );
+    } catch (error) {
+      const reason = failureReason(error);
+      const failureResult = postRunPersistenceFailureResult({
+        decisionId,
+        reason,
+        queryCount: coverageResults.length,
+        supportHits: supportHits.length,
+        counterHits: counterHits.length,
+      });
+      await markContextDecisionRunFailed(decisionId, {
+        reason,
+        stage: persistenceStage,
+        mandate: failureResult.mandate,
+        agentMessage: failureResult.agentMessage,
+      }).catch(() => undefined);
+      return failureResult;
+    }
+
+    return {
+      decisionId,
+      decision,
+      mandate,
+      confidence: reliabilityResult.judgment.confidence,
+      agentMessage,
+      feedbackHandle: {
+        decisionId,
+        tool: "context_decision_feedback",
+      },
+      coverageSummary: {
+        queryCount: coverageResults.length,
+        supportHits: supportHits.length,
+        counterEvidenceHits: counterHits.length,
+        degraded: finalStatus !== "completed",
+      },
+    };
+  } catch (error) {
+    return persistFailedDecision({
+      input: parsed,
+      queryCount: coverageQueries.length,
+      error,
+    });
+  }
 }
 
 export { getContextDecisionDetail, listContextDecisionRuns };

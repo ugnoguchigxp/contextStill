@@ -1,0 +1,203 @@
+import { z } from "zod";
+import {
+  fetchEpisode,
+  registerEpisode,
+  searchEpisodes,
+} from "../../modules/episodic-memory/episode-card.service.js";
+import { episodeCardCreateSchema } from "../../shared/schemas/episode-card.schema.js";
+
+const registerEpisodeArgsSchema = episodeCardCreateSchema;
+
+const searchEpisodesArgsSchema = z.object({
+  query: z.string().trim().optional(),
+  status: z.enum(["draft", "active", "deprecated"]).optional(),
+  statuses: z.array(z.enum(["draft", "active", "deprecated"])).optional(),
+  domains: z.array(z.string()).optional(),
+  technologies: z.array(z.string()).optional(),
+  changeTypes: z.array(z.string()).optional(),
+  tools: z.array(z.string()).optional(),
+  repoPath: z.string().trim().optional(),
+  repoKey: z.string().trim().optional(),
+  outcomeKinds: z.array(z.enum(["success", "failure", "mixed", "unknown"])).optional(),
+  evidenceStatuses: z.array(z.enum(["verified", "partial", "unverified"])).optional(),
+  limit: z.number().int().positive().max(100).optional(),
+  includeDraft: z.boolean().optional(),
+});
+
+const fetchEpisodeArgsSchema = z.object({
+  id: z.string().min(1),
+});
+
+export const registerEpisodeTool = {
+  name: "register_episode",
+  description:
+    "Register an EpisodeCard, a compact past-work precedent with refs back to raw evidence.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      title: { type: "string" },
+      situation: { type: "string" },
+      observations: { type: "string" },
+      action: { type: "string" },
+      outcome: { type: "string" },
+      lesson: { type: "string" },
+      applicability: { type: "object" },
+      antiApplicability: { type: "object" },
+      domains: { type: "array", items: { type: "string" } },
+      technologies: { type: "array", items: { type: "string" } },
+      changeTypes: { type: "array", items: { type: "string" } },
+      tools: { type: "array", items: { type: "string" } },
+      repoPath: { type: "string" },
+      repoKey: { type: "string" },
+      sourceKind: {
+        type: "string",
+        enum: ["vibe_memory", "compile_run", "decision_run", "audit_log", "manual"],
+      },
+      sourceKey: { type: "string" },
+      outcomeKind: { type: "string", enum: ["success", "failure", "mixed", "unknown"] },
+      confidence: { type: "number", minimum: 0, maximum: 100 },
+      evidenceStatus: { type: "string", enum: ["verified", "partial", "unverified"] },
+      status: { type: "string", enum: ["draft", "active", "deprecated"] },
+      staleAt: { type: "string" },
+      metadata: { type: "object" },
+      refs: {
+        type: "array",
+        items: {
+          type: "object",
+          properties: {
+            refKind: {
+              type: "string",
+              enum: [
+                "vibe_memory",
+                "agent_diff",
+                "compile_run",
+                "decision_run",
+                "audit_log",
+                "file",
+                "commit",
+              ],
+            },
+            refValue: { type: "string" },
+            locator: { type: "string" },
+            queryHint: { type: "string" },
+            metadata: { type: "object" },
+          },
+          required: ["refKind", "refValue"],
+        },
+      },
+    },
+    required: ["title", "situation", "sourceKind", "sourceKey"],
+  },
+  async handler(args: unknown) {
+    const parsed = registerEpisodeArgsSchema.parse(args ?? {});
+    const episode = await registerEpisode(parsed);
+    return {
+      content: [{ type: "text", text: JSON.stringify(episode, null, 2) }],
+    };
+  },
+};
+
+export const searchEpisodesTool = {
+  name: "search_episodes",
+  description: "Search EpisodeCards, compact past-work precedents with refs back to raw evidence.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      query: { type: "string", description: "Search text for title, situation, lesson, refs." },
+      status: {
+        type: "string",
+        enum: ["draft", "active", "deprecated"],
+        description: "Single status filter. Defaults to active.",
+      },
+      statuses: {
+        type: "array",
+        items: { type: "string", enum: ["draft", "active", "deprecated"] },
+        description: "Multiple status filters.",
+      },
+      domains: { type: "array", items: { type: "string" } },
+      technologies: { type: "array", items: { type: "string" } },
+      changeTypes: { type: "array", items: { type: "string" } },
+      tools: { type: "array", items: { type: "string" } },
+      repoPath: { type: "string" },
+      repoKey: { type: "string" },
+      outcomeKinds: {
+        type: "array",
+        items: { type: "string", enum: ["success", "failure", "mixed", "unknown"] },
+      },
+      evidenceStatuses: {
+        type: "array",
+        items: { type: "string", enum: ["verified", "partial", "unverified"] },
+      },
+      limit: { type: "number", default: 10, description: "Maximum results, up to 100." },
+      includeDraft: { type: "boolean", default: false },
+    },
+  },
+  async handler(args: unknown) {
+    const parsed = searchEpisodesArgsSchema.parse(args ?? {});
+    const items = await searchEpisodes(parsed);
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(
+            {
+              items: items.map((item) => ({
+                id: item.id,
+                title: item.title,
+                situation: item.situation,
+                outcome: item.outcome,
+                lesson: item.lesson,
+                outcomeKind: item.outcomeKind,
+                evidenceStatus: item.evidenceStatus,
+                confidence: item.confidence,
+                status: item.status,
+                score: item.score,
+                domains: item.domains,
+                technologies: item.technologies,
+                changeTypes: item.changeTypes,
+                repoPath: item.repoPath,
+                repoKey: item.repoKey,
+                refs: item.refs.map((ref) => ({
+                  refKind: ref.refKind,
+                  refValue: ref.refValue,
+                  locator: ref.locator,
+                  queryHint: ref.queryHint,
+                })),
+                createdAt: item.createdAt,
+              })),
+            },
+            null,
+            2,
+          ),
+        },
+      ],
+    };
+  },
+};
+
+export const fetchEpisodeTool = {
+  name: "fetch_episode",
+  description: "Fetch one EpisodeCard with refs for raw evidence drill down.",
+  inputSchema: {
+    type: "object",
+    properties: {
+      id: { type: "string", description: "EpisodeCard id." },
+    },
+    required: ["id"],
+  },
+  async handler(args: unknown) {
+    const parsed = fetchEpisodeArgsSchema.parse(args ?? {});
+    const episode = await fetchEpisode(parsed.id);
+    if (!episode) {
+      return { content: [{ type: "text", text: "Episode not found." }], isError: true };
+    }
+    return {
+      content: [
+        {
+          type: "text",
+          text: JSON.stringify(episode, null, 2),
+        },
+      ],
+    };
+  },
+};

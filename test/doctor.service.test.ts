@@ -60,6 +60,9 @@ describe("Doctor Service", () => {
       { name: "register_candidates" },
       { name: "search_memory" },
       { name: "fetch_memory" },
+      { name: "register_episode" },
+      { name: "search_episodes" },
+      { name: "fetch_episode" },
       { name: "doctor" },
     ] as any);
     vi.mocked(checkAgenticLlmHealth).mockResolvedValue({

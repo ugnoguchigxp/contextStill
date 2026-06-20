@@ -14,11 +14,45 @@ export const knowledgeTagStatusValues = ["active", "draft", "deprecated"] as con
 
 export const knowledgeOriginLinkKindValues = [
   "vibe_memory",
+  "episode_card",
   "agent_candidate",
   "landscape_review_item",
   "review_finding",
   "external_review_run",
   "review_correction",
+] as const;
+
+export const episodeCardStatusValues = ["draft", "active", "deprecated"] as const;
+export const episodeOutcomeKindValues = ["success", "failure", "mixed", "unknown"] as const;
+export const episodeEvidenceStatusValues = ["verified", "partial", "unverified"] as const;
+export const episodeSourceKindValues = [
+  "vibe_memory",
+  "compile_run",
+  "decision_run",
+  "audit_log",
+  "manual",
+] as const;
+export const episodeRefKindValues = [
+  "vibe_memory",
+  "agent_diff",
+  "compile_run",
+  "decision_run",
+  "audit_log",
+  "file",
+  "commit",
+] as const;
+export const episodeRetrievalRunKindValues = ["compile", "decision", "mcp", "api"] as const;
+export const episodeRetrievalUsedForValues = [
+  "compile",
+  "decision",
+  "search",
+  "drill_down",
+] as const;
+export const episodeRetrievalVerdictValues = [
+  "used",
+  "not_relevant",
+  "needs_raw_check",
+  "stale",
 ] as const;
 
 export const sourceKindValues = ["wiki"] as const;
@@ -231,6 +265,7 @@ export const contextDecisionKnowledgePolicyValues = ["optional", "required"] as 
 export const contextDecisionStatusValues = ["completed", "degraded", "failed"] as const;
 export const contextDecisionEvidenceRoleValues = [
   "selected_support",
+  "counter_evidence",
   "rejected_alternative",
   "user_preference",
   "risk_warning",

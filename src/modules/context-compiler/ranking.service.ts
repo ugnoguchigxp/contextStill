@@ -34,12 +34,26 @@ const RANKING_WEIGHTS = {
   stalePenalty: 0.4,
 } as const;
 
-function weightedScore(item: Rankable): number {
+export type RankableScoreExplanation = {
+  rawScore: number;
+  weightedScore: number;
+  importanceBoost: number;
+  confidenceBoost: number;
+  dynamicBoost: number;
+  sourceLinkBoost: number;
+  errorKeywordBoost: number;
+  errorFileBoost: number;
+  errorContextBoost: number;
+  applicabilityBoost: number;
+  decayPenalty: number;
+  deprecatedPenalty: number;
+  stalePenalty: number;
+};
+
+export function explainRankableScore(item: Rankable): RankableScoreExplanation {
   const decayFactor = Math.min(1, Math.max(0, Number(item.decayFactor ?? 1)));
-  const baseScore =
-    item.score +
-    toUnitKnowledgeScore(item.importance, 0) * RANKING_WEIGHTS.importance +
-    toUnitKnowledgeScore(item.confidence, 0) * RANKING_WEIGHTS.confidence;
+  const importanceBoost = toUnitKnowledgeScore(item.importance, 0) * RANKING_WEIGHTS.importance;
+  const confidenceBoost = toUnitKnowledgeScore(item.confidence, 0) * RANKING_WEIGHTS.confidence;
   const dynamicBoost = toUnitKnowledgeScore(item.dynamicScore, 0) * RANKING_WEIGHTS.dynamicBoost;
   const decayPenalty = (1 - decayFactor) * RANKING_WEIGHTS.decayPenalty;
   const sourceLinkBoost =
@@ -59,8 +73,10 @@ function weightedScore(item: Rankable): number {
   const applicabilityBoost = Math.max(0, Number(item.applicabilityScore ?? 0));
   const deprecatedPenalty = item.status === "deprecated" ? RANKING_WEIGHTS.deprecatedPenalty : 0;
   const stalePenalty = item.stale ? RANKING_WEIGHTS.stalePenalty : 0;
-  return (
-    baseScore +
+  const weightedScore =
+    item.score +
+    importanceBoost +
+    confidenceBoost +
     dynamicBoost +
     sourceLinkBoost +
     errorKeywordBoost +
@@ -69,8 +85,27 @@ function weightedScore(item: Rankable): number {
     errorContextBoost -
     decayPenalty -
     deprecatedPenalty -
-    stalePenalty
-  );
+    stalePenalty;
+
+  return {
+    rawScore: item.score,
+    weightedScore,
+    importanceBoost,
+    confidenceBoost,
+    dynamicBoost,
+    sourceLinkBoost,
+    errorKeywordBoost,
+    errorFileBoost,
+    errorContextBoost,
+    applicabilityBoost,
+    decayPenalty,
+    deprecatedPenalty,
+    stalePenalty,
+  };
+}
+
+function weightedScore(item: Rankable): number {
+  return explainRankableScore(item).weightedScore;
 }
 
 export function rankAndDedupe<T extends Rankable>(items: T[], limit: number): T[] {

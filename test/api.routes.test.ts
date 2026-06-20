@@ -8,6 +8,7 @@ import { auditLogsRouter } from "../api/modules/audit/audit.routes.js";
 import { listCandidateItems } from "../api/modules/candidates/candidates.repository.js";
 import { candidatesRouter } from "../api/modules/candidates/candidates.routes.js";
 import { contextCompilerRouter } from "../api/modules/context-compiler/context-compiler.routes.js";
+import { episodesRouter } from "../api/modules/episodes/episodes.routes.js";
 import {
   compilePackForApi,
   getRunDetailForApi,
@@ -45,6 +46,11 @@ import {
 } from "../api/modules/settings/settings.service.js";
 import { vibeMemoryRouter } from "../api/modules/vibe-memory/vibe-memory.routes.js";
 import { groupedConfig } from "../src/config.js";
+import {
+  fetchEpisode,
+  registerEpisode,
+  searchEpisodes,
+} from "../src/modules/episodic-memory/episode-card.service.js";
 import {
   recordVibeMemoryWithDiffEntries,
   retrieveVibeMemoryContext,
@@ -183,12 +189,19 @@ vi.mock("../src/modules/vibe-memory/vibe-memory.service.js", () => ({
   retrieveVibeMemoryContext: vi.fn(),
 }));
 
+vi.mock("../src/modules/episodic-memory/episode-card.service.js", () => ({
+  fetchEpisode: vi.fn(),
+  registerEpisode: vi.fn(),
+  searchEpisodes: vi.fn(),
+}));
+
 const buildApp = () => {
   const app = new Hono();
   app.route("/api/audit-logs", auditLogsRouter);
   app.route("/api/candidates", candidatesRouter);
   app.route("/api/context", contextCompilerRouter);
   app.route("/api/doctor", doctorRouter);
+  app.route("/api/episodes", episodesRouter);
   app.route("/api/knowledge", knowledgeRouter);
   app.route("/api/overview", overviewRouter);
   app.route("/api/settings", settingsRouter);
@@ -318,6 +331,130 @@ describe("API route contract tests", () => {
       diffEntries: [],
     });
     vi.mocked(retrieveVibeMemoryContext).mockResolvedValue([]);
+    vi.mocked(searchEpisodes).mockResolvedValue([]);
+    vi.mocked(fetchEpisode).mockResolvedValue(null);
+    vi.mocked(registerEpisode).mockResolvedValue({
+      id: "episode-created",
+      title: "Created episode",
+      situation: "A finding candidate needs an episode card",
+      observations: "",
+      action: "",
+      outcome: "",
+      lesson: "Keep registration separate from compile decision evaluation",
+      applicability: {},
+      antiApplicability: {},
+      domains: [],
+      technologies: ["typescript"],
+      changeTypes: [],
+      tools: [],
+      repoPath: null,
+      repoKey: null,
+      sourceKind: "manual",
+      sourceKey: "manual-source",
+      outcomeKind: "unknown",
+      confidence: 50,
+      evidenceStatus: "unverified",
+      status: "active",
+      staleAt: null,
+      metadata: {},
+      createdAt: new Date("2026-06-20T00:00:00.000Z"),
+      updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+      refs: [],
+    });
+  });
+
+  test("GET /api/episodes returns searched episode cards", async () => {
+    vi.mocked(searchEpisodes).mockResolvedValue([
+      {
+        id: "episode-1",
+        title: "Episode title",
+        situation: "Situation",
+        observations: "",
+        action: "",
+        outcome: "",
+        lesson: "Lesson",
+        applicability: {},
+        antiApplicability: {},
+        domains: ["episodic-memory"],
+        technologies: ["typescript"],
+        changeTypes: ["schema"],
+        tools: [],
+        repoPath: null,
+        repoKey: null,
+        sourceKind: "manual",
+        sourceKey: "source-1",
+        outcomeKind: "success",
+        confidence: 90,
+        evidenceStatus: "verified",
+        status: "active",
+        staleAt: null,
+        metadata: {},
+        createdAt: new Date("2026-06-20T00:00:00.000Z"),
+        updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+        refs: [],
+      },
+    ]);
+
+    const testApp = buildApp();
+    const response = await testApp.request(
+      "/api/episodes?q=Episode&technologies=typescript&changeTypes=schema",
+    );
+
+    expect(response.status).toBe(200);
+    const json = await response.json();
+    expect(json.items[0].id).toBe("episode-1");
+    expect(searchEpisodes).toHaveBeenCalledWith(
+      expect.objectContaining({
+        query: "Episode",
+        technologies: ["typescript"],
+        changeTypes: ["schema"],
+      }),
+    );
+  });
+
+  test("GET /api/episodes/:id returns not found for missing episode", async () => {
+    const testApp = buildApp();
+    const response = await testApp.request("/api/episodes/missing");
+    expect(response.status).toBe(404);
+  });
+
+  test("POST /api/episodes registers an episode card", async () => {
+    const testApp = buildApp();
+    const response = await testApp.request("/api/episodes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Created episode",
+        situation: "A finding candidate needs an episode card",
+        lesson: "Keep registration separate from compile decision evaluation",
+        sourceKind: "manual",
+        sourceKey: "manual-source",
+        technologies: ["typescript"],
+        refs: [
+          {
+            refKind: "vibe_memory",
+            refValue: "memory-1",
+            queryHint: "finding candidate",
+          },
+        ],
+      }),
+    });
+
+    expect(response.status).toBe(201);
+    await expect(response.json()).resolves.toEqual(
+      expect.objectContaining({
+        episode: expect.objectContaining({ id: "episode-created" }),
+      }),
+    );
+    expect(registerEpisode).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Created episode",
+        sourceKind: "manual",
+        sourceKey: "manual-source",
+        technologies: ["typescript"],
+        refs: [expect.objectContaining({ refKind: "vibe_memory", refValue: "memory-1" })],
+      }),
+    );
   });
 
   test("GET /api/vibe-memory/context rejects removed Goal Room query params", async () => {

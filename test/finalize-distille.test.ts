@@ -163,6 +163,43 @@ describe("runFinalizeDistille", () => {
     );
   });
 
+  test("stores negative knowledge polarity and intent tags from negative coverage", async () => {
+    mocks.coverEvidenceResultFromRow.mockReturnValue({
+      ...readyResult(),
+      candidate: {
+        ...readyResult().candidate,
+        type: "rule",
+        title: "Do not trust stale queue status alone",
+        body: "Failure: Stale queue status was treated as current truth.\nVerification: Check recent queue events.",
+        technologies: ["typescript"],
+        changeTypes: ["diagnosis"],
+        domains: ["queue"],
+      },
+      toolEvents: [
+        {
+          name: "negative_coverage",
+          ok: true,
+          metadata: {
+            polarity: "negative",
+            intentTags: ["failure_pattern", "guardrail"],
+          },
+        },
+      ],
+    });
+
+    const result = await runFinalizeDistille({ coverEvidenceResultId: "find-1", write: true });
+
+    expect(result.status).toBe("stored");
+    expect(mocks.upsertKnowledgeFromSource).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "rule",
+        polarity: "negative",
+        intentTags: ["failure_pattern", "guardrail"],
+        title: "Do not trust stale queue status alone",
+      }),
+    );
+  });
+
   test("rejects non-ready cover evidence without creating knowledge", async () => {
     mocks.coverEvidenceResultFromRow.mockReturnValue({
       ...readyResult(),

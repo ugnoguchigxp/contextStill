@@ -1,21 +1,35 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { resetRuntimeSqliteCoreDatabaseForTests } from "../src/db/sqlite/runtime.js";
-import { getRuntimeSqliteCoreDatabase } from "../src/db/sqlite/runtime.js";
+import { listCandidateItems } from "../api/modules/candidates/candidates.repository.js";
+import {
+  fetchOverviewDashboardForApi,
+  fetchOverviewDomainForApi,
+} from "../api/modules/overview/overview.repository.js";
 import {
   fetchActiveTasks,
   fetchQueueDashboardStats,
   listQueueItems,
 } from "../api/modules/queue/queue.repository.js";
-import { listCandidateItems } from "../api/modules/candidates/candidates.repository.js";
+import { resetRuntimeSqliteCoreDatabaseForTests } from "../src/db/sqlite/runtime.js";
+import { getRuntimeSqliteCoreDatabase } from "../src/db/sqlite/runtime.js";
 import {
-  recordAuditLog,
-  listAuditLogs,
   cleanupExpiredAuditLogs,
+  listAuditLogs,
+  recordAuditLog,
 } from "../src/modules/audit/audit-log.service.js";
+import {
+  getCompileEvalSummaryByRunId,
+  listCompileEvalsByRunId,
+} from "../src/modules/context-compiler/context-compile-eval.repository.js";
 import { recordCompileEval } from "../src/modules/context-compiler/context-compile-eval.service.js";
+import {
+  getCompileRunDetail,
+  getCompileRunRankingTrace,
+  insertCompileRun,
+  listRecentCompileRuns,
+} from "../src/modules/context-compiler/context-compiler.repository.js";
 import {
   getContextDecisionDetail,
   getContextDecisionMetrics,
@@ -24,30 +38,22 @@ import {
   insertContextDecisionRun,
   saveHumanDecisionFeedback,
 } from "../src/modules/context-decision/context-decision.repository.js";
-import {
-  getCompileEvalSummaryByRunId,
-  listCompileEvalsByRunId,
-} from "../src/modules/context-compiler/context-compile-eval.repository.js";
-import {
-  getCompileRunDetail,
-  getCompileRunRankingTrace,
-  insertCompileRun,
-  listRecentCompileRuns,
-} from "../src/modules/context-compiler/context-compiler.repository.js";
-import { recordCompileRunKnowledgeFeedback } from "../src/modules/knowledge/knowledge-feedback.service.js";
-import {
-  fetchOverviewDashboardForApi,
-  fetchOverviewDomainForApi,
-} from "../api/modules/overview/overview.repository.js";
 import { inspectDatabase } from "../src/modules/doctor/inspectors/database.inspector.js";
+import {
+  createEpisode,
+  fetchEpisode,
+  searchEpisodes,
+} from "../src/modules/episodic-memory/episode-card.service.js";
+import { recordCompileRunKnowledgeFeedback } from "../src/modules/knowledge/knowledge-feedback.service.js";
+import { readVibeMemoryByTokenWindow } from "../src/modules/memoryReader/reader.service.js";
+import { retryQueueJob } from "../src/modules/queue/core/state.js";
+import { runQueueWorkerOnce } from "../src/modules/queue/core/worker.js";
 import {
   deleteSettingsRow,
   findSettingsRow,
   listSettingsRows,
   upsertSettingsRow,
 } from "../src/modules/settings/settings.repository.js";
-import { readVibeMemoryByTokenWindow } from "../src/modules/memoryReader/reader.service.js";
-import { runQueueWorkerOnce } from "../src/modules/queue/core/worker.js";
 import {
   recordVibeMemoryWithDiffEntries,
   retrieveVibeMemoryContext,
@@ -94,6 +100,36 @@ describe("sqlite runtime support repositories", () => {
 
     await deleteSettingsRow("runtime", "sqlite-test");
     expect(await findSettingsRow("runtime", "sqlite-test")).toBeNull();
+  });
+
+  test("persists and searches episode cards in sqlite", async () => {
+    const episode = await createEpisode({
+      title: "SQLite episode recovery",
+      situation: "A SQLite migration failed while compiling context.",
+      action: "Ran the sqlite runtime support test and fixed schema bootstrap.",
+      outcome: "The runtime repository could read the new tables.",
+      lesson: "Add SQLite schema changes to core bootstrap before wiring MCP tools.",
+      sourceKind: "manual",
+      sourceKey: "sqlite-runtime-support-episode",
+      outcomeKind: "success",
+      evidenceStatus: "verified",
+      confidence: 90,
+      domains: ["episodic-memory"],
+      technologies: ["sqlite", "typescript"],
+      changeTypes: ["schema"],
+      refs: [{ refKind: "file", refValue: "src/db/sqlite/core-schema.ts" }],
+    });
+
+    expect(episode.refs[0]?.refKind).toBe("file");
+    expect((await fetchEpisode(episode.id))?.title).toBe("SQLite episode recovery");
+
+    const hits = await searchEpisodes({
+      query: "schema bootstrap",
+      technologies: ["sqlite"],
+      limit: 5,
+    });
+    expect(hits[0]?.id).toBe(episode.id);
+    expect(hits[0]?.score).toBeGreaterThan(0);
   });
 
   test("persists and cleans audit logs in sqlite", async () => {
@@ -417,6 +453,247 @@ describe("sqlite runtime support repositories", () => {
     expect(result.ok).toBe(true);
     expect(result.idle).toBe(true);
     expect(result.message).toBe("no runnable job");
+  });
+
+  test("persists covering retry options in sqlite", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const now = new Date("2026-06-20T00:00:00.000Z").toISOString();
+    sqlite.db
+      .query(
+        `
+        insert into covering_evidence_queue (
+          id, found_candidate_id, status, priority, attempt_count, provider_policy,
+          payload, completed_at, locked_by, locked_at, heartbeat_at, last_error,
+          created_at, updated_at
+        ) values (?, ?, 'failed', 50, 2, 'default', ?, ?, 'worker-old', ?, ?, 'old error', ?, ?)
+      `,
+      )
+      .run(
+        "covering-retry",
+        "candidate-retry",
+        JSON.stringify({ forceRefreshEvidence: false }),
+        now,
+        now,
+        now,
+        now,
+        now,
+      );
+
+    const result = await retryQueueJob({
+      queueName: "coveringEvidence",
+      id: "covering-retry",
+      mode: "cloud_api",
+      forceRefreshEvidence: true,
+      reason: "manual retry",
+    });
+
+    expect(result).toEqual({ id: "covering-retry", status: "pending" });
+    const row = sqlite.db
+      .query<
+        { status: string; attempt_count: number; provider_policy: string; payload: string },
+        []
+      >(
+        `
+        select status, attempt_count, provider_policy, payload
+        from covering_evidence_queue
+        where id = 'covering-retry'
+      `,
+      )
+      .get();
+    const payload = JSON.parse(row?.payload ?? "{}");
+    expect(row).toMatchObject({
+      status: "pending",
+      attempt_count: 0,
+      provider_policy: "cloud_api",
+    });
+    expect(payload.forceRefreshEvidence).toBe(true);
+    expect(payload.retryMode).toBe("cloud_api");
+    expect(payload.retryReason).toBe("manual retry");
+    expect(typeof payload.retryRequestedAt).toBe("string");
+  });
+
+  test("does not delete legacy duplicate covering rows during sqlite bootstrap", async () => {
+    resetRuntimeSqliteCoreDatabaseForTests();
+    const sqliteModule = await import("bun:sqlite");
+    const legacyDb = new sqliteModule.Database(process.env.CONTEXT_STILL_SQLITE_CORE_PATH, {
+      create: true,
+    });
+    legacyDb.exec(`
+      CREATE TABLE covering_evidence_queue (
+        id TEXT PRIMARY KEY,
+        found_candidate_id TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        priority INTEGER NOT NULL DEFAULT 0,
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      CREATE TABLE evidence_coverage_results (
+        id TEXT PRIMARY KEY,
+        found_candidate_id TEXT NOT NULL,
+        producer_queue TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'insufficient',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      );
+      INSERT INTO covering_evidence_queue (id, found_candidate_id, status, priority)
+      VALUES ('legacy-cover-1', 'legacy-candidate', 'completed', 10);
+      INSERT INTO covering_evidence_queue (id, found_candidate_id, status, priority)
+      VALUES ('legacy-cover-2', 'legacy-candidate', 'failed', 20);
+      INSERT INTO evidence_coverage_results (id, found_candidate_id, producer_queue, status)
+      VALUES ('legacy-evidence-1', 'legacy-candidate', 'coveringEvidence', 'insufficient');
+      INSERT INTO evidence_coverage_results (id, found_candidate_id, producer_queue, status)
+      VALUES ('legacy-evidence-2', 'legacy-candidate', 'coveringEvidence', 'provider_failed');
+    `);
+    legacyDb.close();
+
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+
+    const coveringCount = sqlite.db
+      .query<{ count: number }, []>(
+        "select count(*) as count from covering_evidence_queue where found_candidate_id = 'legacy-candidate'",
+      )
+      .get();
+    const evidenceCount = sqlite.db
+      .query<{ count: number }, []>(
+        "select count(*) as count from evidence_coverage_results where found_candidate_id = 'legacy-candidate' and producer_queue = 'coveringEvidence'",
+      )
+      .get();
+    expect(coveringCount?.count).toBe(2);
+    expect(evidenceCount?.count).toBe(2);
+  });
+
+  test("enforces sqlite covering queue and evidence result uniqueness", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    sqlite.db
+      .query(
+        `
+        insert into covering_evidence_queue (
+          id, found_candidate_id, status, priority, attempt_count, provider_policy
+        ) values (?, ?, 'pending', 50, 0, 'default')
+      `,
+      )
+      .run("covering-unique-1", "candidate-unique");
+
+    expect(() => {
+      sqlite.db
+        .query(
+          `
+          insert into covering_evidence_queue (
+            id, found_candidate_id, status, priority, attempt_count, provider_policy
+          ) values (?, ?, 'pending', 50, 0, 'default')
+        `,
+        )
+        .run("covering-unique-2", "candidate-unique");
+    }).toThrow();
+
+    sqlite.db
+      .query(
+        `
+        insert into evidence_coverage_results (
+          id, found_candidate_id, producer_queue, producer_job_id, distillation_version,
+          status, stage
+        ) values (?, ?, 'coveringEvidence', ?, 'v1', 'insufficient', 'source_support')
+      `,
+      )
+      .run("evidence-unique-1", "candidate-unique", "covering-unique-1");
+
+    expect(() => {
+      sqlite.db
+        .query(
+          `
+          insert into evidence_coverage_results (
+            id, found_candidate_id, producer_queue, producer_job_id, distillation_version,
+            status, stage
+          ) values (?, ?, 'coveringEvidence', ?, 'v1', 'insufficient', 'source_support')
+        `,
+        )
+        .run("evidence-unique-2", "candidate-unique", "covering-unique-1");
+    }).toThrow();
+  });
+
+  test("processes insufficient covering jobs through sqlite worker persistence", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const now = new Date("2026-06-20T00:00:00.000Z").toISOString();
+    sqlite.db
+      .query(
+        `
+        insert into finding_candidate_queue (
+          id, input_kind, source_kind, source_key, source_uri, distillation_version,
+          status, priority, attempt_count, provider_policy, payload, metadata, created_at, updated_at
+        ) values (?, 'provided_candidate', 'knowledge_candidate', ?, ?, 'v-test',
+          'completed', 80, 1, 'default', '{}', '{}', ?, ?)
+      `,
+      )
+      .run("finding-covering-insufficient", "candidate://short", "candidate://short", now, now);
+    sqlite.db
+      .query(
+        `
+        insert into found_candidates (
+          id, finding_job_id, candidate_index, type, title, content, origin, metadata,
+          created_at, updated_at
+        ) values (?, ?, 0, 'rule', ?, ?, '{}', '{}', ?, ?)
+      `,
+      )
+      .run(
+        "candidate-covering-insufficient",
+        "finding-covering-insufficient",
+        "Tiny candidate",
+        "Too short",
+        now,
+        now,
+      );
+    sqlite.db
+      .query(
+        `
+        insert into covering_evidence_queue (
+          id, found_candidate_id, distillation_version, status, priority, attempt_count,
+          max_attempts, provider_policy, payload, metadata, created_at, updated_at
+        ) values (?, ?, 'v-test', 'pending', 70, 0, 2, 'default', '{}', '{}', ?, ?)
+      `,
+      )
+      .run("covering-insufficient", "candidate-covering-insufficient", now, now);
+
+    const result = await runQueueWorkerOnce({
+      queueName: "coveringEvidence",
+      workerId: "sqlite-covering-worker",
+    });
+
+    expect(result).toMatchObject({
+      ok: true,
+      idle: false,
+      claimedJobId: "covering-insufficient",
+      completedJobId: "covering-insufficient",
+    });
+    const job = sqlite.db
+      .query<{ status: string; attempt_count: number; last_outcome_kind: string }, []>(
+        `
+        select status, attempt_count, last_outcome_kind
+        from covering_evidence_queue
+        where id = 'covering-insufficient'
+      `,
+      )
+      .get();
+    expect(job).toEqual({
+      status: "completed",
+      attempt_count: 1,
+      last_outcome_kind: "insufficient",
+    });
+
+    const evidence = sqlite.db
+      .query<{ status: string; stage: string; producer_job_id: string }, []>(
+        `
+        select status, stage, producer_job_id
+        from evidence_coverage_results
+        where found_candidate_id = 'candidate-covering-insufficient'
+          and producer_queue = 'coveringEvidence'
+      `,
+      )
+      .get();
+    expect(evidence).toEqual({
+      status: "insufficient",
+      stage: "source_support",
+      producer_job_id: "covering-insufficient",
+    });
   });
 
   test("serves candidate list from sqlite when postgres is unreachable", async () => {

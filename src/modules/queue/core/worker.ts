@@ -43,6 +43,8 @@ type ProvidedCandidatePayload = {
   title: string;
   body: string;
   type?: "rule" | "procedure";
+  polarity?: "positive" | "negative";
+  intentTags?: string[];
   sourceSummary?: string;
   origin?: Record<string, unknown>;
 };
@@ -53,6 +55,11 @@ const retryableCoverStatuses = new Set<CoverEvidenceResult["status"]>([
   "provider_failed",
   "parse_failed",
 ]);
+
+function coveringRetryBackoffMs(attemptCount: number): number {
+  const retryIndex = Math.max(0, attemptCount - 1);
+  return Math.min(5 * 60_000, 30_000 * 2 ** retryIndex);
+}
 
 async function getSqliteCoreDatabase() {
   const { getRuntimeSqliteCoreDatabase } = await import("../../../db/sqlite/runtime.js");
@@ -84,6 +91,13 @@ function parseJsonArray(value: unknown): unknown[] {
   } catch {
     return [];
   }
+}
+
+function parseStringArray(value: unknown): string[] {
+  return parseJsonArray(value)
+    .filter((item): item is string => typeof item === "string")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function sqliteDate(value: unknown): Date | null {
@@ -523,12 +537,17 @@ function parseProvidedCandidatePayload(value: unknown): ProvidedCandidatePayload
   const body = asNonEmptyString(record.body);
   if (!title || !body) return null;
   const typeRaw = asNonEmptyString(record.type);
+  const polarityRaw = asNonEmptyString(record.polarity);
+  const intentTags = parseStringArray(record.intentTags);
   const sourceSummary = asNonEmptyString(record.sourceSummary) ?? undefined;
   const origin = asRecord(record.origin);
   return {
     title,
     body,
     type: typeRaw === "procedure" ? "procedure" : typeRaw === "rule" ? "rule" : undefined,
+    polarity:
+      polarityRaw === "negative" ? "negative" : polarityRaw === "positive" ? "positive" : undefined,
+    ...(intentTags.length > 0 ? { intentTags } : {}),
     sourceSummary,
     origin,
   };
@@ -862,11 +881,15 @@ async function processFindingCandidate(jobId: string, signal?: AbortSignal): Pro
         ...(payload.origin ?? {}),
         queueVersion: "v2",
         providedCandidate: true,
+        ...(payload.polarity ? { polarity: payload.polarity } : {}),
+        ...(payload.intentTags?.length ? { intentTags: payload.intentTags } : {}),
       },
       metadata: {
         sourceKind: job.sourceKind,
         sourceKey: job.sourceKey,
         sourceUri: job.sourceUri,
+        ...(payload.polarity ? { polarity: payload.polarity } : {}),
+        ...(payload.intentTags?.length ? { intentTags: payload.intentTags } : {}),
       },
     });
     await enqueueCoveringJob({
@@ -907,12 +930,15 @@ async function processFindingCandidate(jobId: string, signal?: AbortSignal): Pro
         sourceKind: job.sourceKind,
         sourceKey: job.sourceKey,
         sourceUri: job.sourceUri,
+        ...(candidate.originalType ? { originalCandidateType: candidate.originalType } : {}),
+        ...(candidate.polarity ? { polarity: candidate.polarity } : {}),
       },
       metadata: {
         sourceKind: job.sourceKind,
         sourceKey: job.sourceKey,
         sourceUri: job.sourceUri,
         readRanges: findResult.readRanges,
+        ...(candidate.polarity ? { polarity: candidate.polarity } : {}),
       },
     });
     foundCandidateIds.push(foundCandidateId);
@@ -958,7 +984,7 @@ async function processFindingCandidate(jobId: string, signal?: AbortSignal): Pro
 
 async function markCoveringCompleted(params: {
   jobId: string;
-  status: "completed" | "failed" | "paused" | "skipped";
+  status: "pending" | "completed" | "failed" | "paused" | "skipped";
   attemptCount?: number;
   nextRunAt?: Date | null;
   outcome: string;
@@ -1014,7 +1040,10 @@ async function markCoveringCompleted(params: {
     .where(eq(coveringEvidenceQueue.id, params.jobId));
 }
 
-async function processCoveringJob(jobId: string, signal?: AbortSignal): Promise<void> {
+async function processCoveringJob(
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<{ terminal: boolean }> {
   const job = await getCoveringJobById(jobId);
   if (!job) throw new Error(`coveringEvidence job not found: ${jobId}`);
 
@@ -1282,17 +1311,17 @@ async function processCoveringJob(jobId: string, signal?: AbortSignal): Promise<
         outcome: cover.result.status,
         lastError: cover.result.reason ?? cover.result.status,
       });
-      return;
+      return { terminal: true };
     }
     await markCoveringCompleted({
       jobId: job.id,
-      status: "paused",
+      status: "pending",
       attemptCount: nextAttemptCount,
-      nextRunAt: new Date(Date.now()),
+      nextRunAt: new Date(Date.now() + coveringRetryBackoffMs(nextAttemptCount)),
       outcome: cover.result.status,
       lastError: cover.result.reason ?? cover.result.status,
     });
-    return;
+    return { terminal: false };
   }
 
   await markCoveringCompleted({
@@ -1308,6 +1337,7 @@ async function processCoveringJob(jobId: string, signal?: AbortSignal): Promise<
     outcome: cover.result.status,
     lastError: cover.result.reason ?? null,
   });
+  return { terminal: true };
 }
 
 function queueTargetKindFromSourceKind(
@@ -1625,6 +1655,7 @@ export async function runQueueWorkerOnce(params: {
       pauseController.abort("queue_lane_paused");
     }
 
+    let completedJobId: string | undefined = claimed.id;
     try {
       await runWithHeartbeat({
         queueName: params.queueName,
@@ -1637,11 +1668,12 @@ export async function runQueueWorkerOnce(params: {
               run: (signal) => processFindingCandidate(claimed.id, signal),
             });
           } else if (params.queueName === "coveringEvidence") {
-            await runWithTimeout({
+            const coverResult = await runWithTimeout({
               timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
               signal: pauseController.signal,
               run: (signal) => processCoveringJob(claimed.id, signal),
             });
+            completedJobId = coverResult.terminal ? claimed.id : undefined;
           } else if (params.queueName === "deadZoneMergeReview") {
             await runWithTimeout({
               timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
@@ -1673,7 +1705,7 @@ export async function runQueueWorkerOnce(params: {
       worker: params.workerId,
       idle: false,
       claimedJobId: claimed.id,
-      completedJobId: claimed.id,
+      ...(completedJobId ? { completedJobId } : {}),
       message: "processed job",
     };
   } catch (error) {

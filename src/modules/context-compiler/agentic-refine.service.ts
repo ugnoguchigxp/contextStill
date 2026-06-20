@@ -28,6 +28,7 @@ export type AgenticRefineResult = {
   agenticUsed: boolean;
   reasoning?: string;
   error?: string;
+  selectionReason?: "selected" | "empty_selection" | "no_valid_selected_ids";
 };
 
 type AgenticLlmOutput = {
@@ -264,12 +265,13 @@ export async function agenticRefine(
 
       const selected = selectCandidates(candidates, parsed.selectedIds);
       if (selected.length === 0) {
+        const selectionReason =
+          parsed.selectedIds.length === 0 ? "empty_selection" : "no_valid_selected_ids";
         return {
-          items: candidates,
-          agenticUsed: false,
-          reasoning: parsed.reasoning
-            ? `Fallback to all candidates: ${parsed.reasoning}`
-            : undefined,
+          items: [],
+          agenticUsed: true,
+          reasoning: parsed.reasoning,
+          selectionReason,
         };
       }
 
@@ -277,6 +279,7 @@ export async function agenticRefine(
         items: selected,
         agenticUsed: true,
         reasoning: parsed.reasoning,
+        selectionReason: "selected",
       };
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);

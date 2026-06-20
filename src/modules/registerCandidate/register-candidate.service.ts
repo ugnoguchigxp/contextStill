@@ -16,7 +16,10 @@ import { resolveKnowledgeCandidatePriorityGroup } from "../distillationTarget/pr
 import { DEFAULT_DISTILLATION_TARGET_VERSION } from "../distillationTarget/repository.js";
 import { embedOne } from "../embedding/embedding.service.js";
 import { parseStorageCandidatesFromLlmOutput } from "../findCandidate/parser.js";
-import type { CandidateKnowledgeType } from "../findCandidate/repository.js";
+import type {
+  CandidateKnowledgePolarity,
+  CandidateKnowledgeType,
+} from "../findCandidate/repository.js";
 import { upsertKnowledgeFromSource } from "../knowledge/knowledge.repository.js";
 import { appendQueueEvent } from "../queue/core/events.js";
 
@@ -90,6 +93,9 @@ function normalizeInput(input: RegisterCandidateInput): {
   title: string;
   body: string;
   type: CandidateKnowledgeType;
+  originalType?: CandidateKnowledgeType;
+  polarity: CandidateKnowledgePolarity;
+  intentTags: string[];
   warnings: RegisterCandidateWarning[];
 } {
   const warnings: RegisterCandidateWarning[] = [];
@@ -104,22 +110,42 @@ function normalizeInput(input: RegisterCandidateInput): {
 
   const body = input.body ?? parsedCandidate?.content ?? input.text ?? "";
   const title = input.title ?? parsedCandidate?.title ?? inferTitleFromText(body);
-  const type = input.type ?? parsedCandidate?.type ?? "rule";
+  const originalType = input.type ?? parsedCandidate?.type ?? "rule";
+  const rawPolarity = input.polarity ?? parsedCandidate?.polarity ?? "positive";
+  const polarity: CandidateKnowledgePolarity = rawPolarity === "negative" ? "negative" : "positive";
+  const type = polarity === "negative" && originalType === "procedure" ? "rule" : originalType;
+  const intentTags = input.intentTags ?? [];
   if (type === "procedure" && !hasSkillLikeProcedureBody(body)) {
     warnings.push("procedure_candidate_missing_skill_like_sections");
   }
 
-  return { title, body, type, warnings };
+  return {
+    title,
+    body,
+    type,
+    ...(originalType !== type ? { originalType } : {}),
+    polarity,
+    intentTags,
+    warnings,
+  };
 }
 
 function compactOrigin(
   input: RegisterCandidateInput,
-  normalized: { type: CandidateKnowledgeType },
+  normalized: {
+    type: CandidateKnowledgeType;
+    originalType?: CandidateKnowledgeType;
+    polarity: CandidateKnowledgePolarity;
+    intentTags: string[];
+  },
 ) {
   return {
     source: "mcp_register_candidate",
     registeredAt: new Date().toISOString(),
     candidateType: normalized.type,
+    ...(normalized.originalType ? { originalCandidateType: normalized.originalType } : {}),
+    polarity: normalized.polarity,
+    ...(normalized.intentTags.length > 0 ? { intentTags: normalized.intentTags } : {}),
     ...(input.confidence !== undefined ? { confidence: input.confidence } : {}),
     ...(input.importance !== undefined ? { importance: input.importance } : {}),
     ...(input.appliesTo ? { appliesTo: input.appliesTo } : {}),
@@ -152,8 +178,8 @@ export async function registerCandidate(
       type: normalized.type,
       status: "active",
       scope: parsed.general ? "global" : "repo",
-      polarity: "positive",
-      intentTags: [],
+      polarity: normalized.polarity,
+      intentTags: normalized.intentTags,
       title: normalized.title,
       body: normalized.body,
       confidence: parsed.confidence ?? 70,
@@ -164,6 +190,8 @@ export async function registerCandidate(
         registeredAt: now.toISOString(),
         sqliteDirectRegistration: true,
         candidateId,
+        polarity: normalized.polarity,
+        ...(normalized.intentTags.length > 0 ? { intentTags: normalized.intentTags } : {}),
       },
       embedding,
       appliesTo: {
@@ -192,6 +220,8 @@ export async function registerCandidate(
     ...(parsed.metadata ?? {}),
     source: "mcp_register_candidate",
     registeredAt: now.toISOString(),
+    polarity: normalized.polarity,
+    ...(normalized.intentTags.length > 0 ? { intentTags: normalized.intentTags } : {}),
   } satisfies Record<string, unknown>;
   const priorityGroup = resolveKnowledgeCandidatePriorityGroup({
     sourceUri,
@@ -236,10 +266,12 @@ export async function registerCandidate(
       title: normalized.title,
       body: normalized.body,
       type: normalized.type,
+      polarity: normalized.polarity,
       sourceSummary: undefined,
       origin: compactOrigin(parsed, normalized),
       legacyTargetStateId: target.id,
       legacyFindCandidateResultId: candidate.id,
+      ...(normalized.intentTags.length > 0 ? { intentTags: normalized.intentTags } : {}),
     };
 
     const metadata = {
@@ -247,6 +279,8 @@ export async function registerCandidate(
       registeredAt: now.toISOString(),
       legacyTargetStateId: target.id,
       legacyFindCandidateResultId: candidate.id,
+      polarity: normalized.polarity,
+      ...(normalized.intentTags.length > 0 ? { intentTags: normalized.intentTags } : {}),
     };
 
     const [findingJob] = await tx
@@ -292,6 +326,8 @@ export async function registerCandidate(
       sourceKind: "knowledge_candidate",
       sourceKey: candidateId,
       sourceUri,
+      polarity: normalized.polarity,
+      ...(normalized.intentTags.length > 0 ? { intentTags: normalized.intentTags } : {}),
     };
 
     const [foundCandidate] = await tx

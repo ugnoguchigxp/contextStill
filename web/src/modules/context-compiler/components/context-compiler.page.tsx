@@ -1121,8 +1121,12 @@ function RunDetailPane({
 }
 
 export function ContextCompilerPage() {
-  const [mode, setMode] = useState<PageMode>("new");
-  const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const initialRunIdFromQuery = useMemo(() => {
+    if (typeof window === "undefined") return null;
+    return new URLSearchParams(window.location.search).get("runId");
+  }, []);
+  const [mode, setMode] = useState<PageMode>(initialRunIdFromQuery ? "detail" : "new");
+  const [activeRunId, setActiveRunId] = useState<string | null>(initialRunIdFromQuery);
   const [sourceFilter, setSourceFilter] = useState<SourceFilter>("all");
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const compile = useCompilePack();

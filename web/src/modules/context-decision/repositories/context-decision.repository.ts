@@ -146,6 +146,7 @@ export type ContextDecisionEvidence = {
   knowledgeId: string | null;
   role:
     | "selected_support"
+    | "counter_evidence"
     | "rejected_alternative"
     | "user_preference"
     | "risk_warning"

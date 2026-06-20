@@ -1,5 +1,6 @@
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Table, TableBody, TableCell, TableHeader, TableRow } from "@/components/ui/table";
 import { useQuery } from "@tanstack/react-query";
 import {
@@ -49,10 +50,15 @@ function eventTypeOptions(eventTypes: string[]): ReactNode[] {
 }
 
 export function AuditLogsPage() {
+  const initialQueryText = useMemo(() => {
+    if (typeof window === "undefined") return "";
+    return new URLSearchParams(window.location.search).get("q") ?? "";
+  }, []);
   const [page, setPage] = useState(1);
   const [limit] = useState(100);
   const [eventTypeFilter, setEventTypeFilter] = useState("all");
   const [actorFilter, setActorFilter] = useState<AuditLogActor | "all">("all");
+  const [queryText, setQueryText] = useState(initialQueryText);
   const [selectedLog, setSelectedLog] = useState<AuditLogItem | null>(null);
   const [sorting, setSorting] = useState<SortingState>([]);
 
@@ -67,7 +73,14 @@ export function AuditLogsPage() {
       }),
   });
 
-  const items = auditQuery.data?.items ?? [];
+  const queryNeedle = queryText.trim().toLowerCase();
+  const items = (auditQuery.data?.items ?? []).filter((item) => {
+    if (!queryNeedle) return true;
+    return [item.id, item.eventType, item.actor, JSON.stringify(item.payload)]
+      .join("\n")
+      .toLowerCase()
+      .includes(queryNeedle);
+  });
 
   const columns = useMemo<ColumnDef<AuditLogItem>[]>(
     () => [
@@ -140,6 +153,15 @@ export function AuditLogsPage() {
           </div>
         </div>
         <div className="flex flex-wrap items-center justify-end gap-3">
+          <Input
+            className="h-8 w-[220px]"
+            value={queryText}
+            onChange={(event) => {
+              setQueryText(event.target.value);
+              setPage(1);
+            }}
+            placeholder="Search payload"
+          />
           <AdminFilterChipSelect
             label="Event Type"
             aria-label="Event Type"

@@ -3,6 +3,7 @@ import type { ToolEntry } from "../registry.js";
 import { compileEvalTool } from "./compile-eval.tool.js";
 import { contextCompileTool } from "./context-compile.tool.js";
 import { contextDecisionFeedbackTool, contextDecisionTool } from "./context-decision.tool.js";
+import { fetchEpisodeTool, registerEpisodeTool, searchEpisodesTool } from "./episode.tool.js";
 import {
   listKnowledgeTool,
   registerCandidatesTool,
@@ -50,8 +51,11 @@ const v2ToolEntries: ToolEntry[] = [
   searchKnowledgeTool,
   registerCandidatesTool,
   registerReviewCorrectionsTool,
+  registerEpisodeTool,
   searchMemoryTool,
   fetchMemoryTool,
+  searchEpisodesTool,
+  fetchEpisodeTool,
   doctorTool,
 ];
 

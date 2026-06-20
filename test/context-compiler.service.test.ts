@@ -1,6 +1,7 @@
 import { afterAll, beforeEach, describe, expect, test, vi } from "vitest";
 import { groupedConfig } from "../src/config.js";
 import { recordAuditLogSafe } from "../src/modules/audit/audit-log.service.js";
+import { upsertContextCompileTaskTrace } from "../src/modules/context-compiler/context-compile-task-trace.repository.js";
 import { agenticRefine } from "../src/modules/context-compiler/agentic-refine.service.js";
 import {
   insertCompileRun,
@@ -11,6 +12,7 @@ import {
 } from "../src/modules/context-compiler/context-compiler.repository.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
 import { composeContextResponse } from "../src/modules/context-compiler/context-response-composer.service.js";
+import { searchEpisodes } from "../src/modules/episodic-memory/episode-card.service.js";
 import { recordCompileRunKnowledgeUsageSignals } from "../src/modules/knowledge/knowledge-feedback.service.js";
 import { recordKnowledgeCompileSelectionSafe } from "../src/modules/knowledge/knowledge-value.service.js";
 import { retrieveKnowledge } from "../src/modules/knowledge/knowledge.service.js";
@@ -18,10 +20,12 @@ import { retrieveSources } from "../src/modules/sources/source-retrieval.service
 
 vi.mock("../src/modules/knowledge/knowledge.service.js");
 vi.mock("../src/modules/sources/source-retrieval.service.js");
+vi.mock("../src/modules/episodic-memory/episode-card.service.js");
 vi.mock("../src/modules/context-compiler/context-compiler.repository.js");
 vi.mock("../src/modules/knowledge/knowledge-feedback.service.js");
 vi.mock("../src/modules/knowledge/knowledge-value.service.js");
 vi.mock("../src/modules/audit/audit-log.service.js");
+vi.mock("../src/modules/context-compiler/context-compile-task-trace.repository.js");
 vi.mock("../src/modules/context-compiler/pack-renderer.js", () => ({
   renderContextPackMarkdown: vi.fn(() => "# Pack Content"),
 }));
@@ -50,6 +54,7 @@ describe("Context Compiler Service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
     vi.mocked(recordAuditLogSafe).mockResolvedValue(undefined);
+    vi.mocked(upsertContextCompileTaskTrace).mockResolvedValue(undefined);
     groupedConfig.agenticCompile.enabled = false;
     groupedConfig.compile.defaultTokenBudget = 240;
     vi.mocked(insertCompileRun).mockResolvedValue("550e8400-e29b-41d4-a716-446655440000");
@@ -94,6 +99,7 @@ describe("Context Compiler Service", () => {
         queryText: "goal",
       },
     } as any);
+    vi.mocked(searchEpisodes).mockResolvedValue([]);
   });
 
   afterAll(() => {
@@ -209,6 +215,79 @@ describe("Context Compiler Service", () => {
     expect(pack.status).toBe("degraded");
   });
 
+  test("adds EpisodeCard precedents to compile procedures without recording them as knowledge", async () => {
+    vi.mocked(searchEpisodes).mockResolvedValue([
+      {
+        id: "episode-1",
+        title: "SQLite migration recovery",
+        situation: "SQLite bootstrap missed a new table.",
+        observations: "Runtime tests failed before MCP smoke could run.",
+        action: "Added the table to SQLite core schema and reran runtime support tests.",
+        outcome: "The compile path could reuse the schema precedent.",
+        lesson: "Keep Postgres, SQLite, and smoke checks aligned for schema features.",
+        applicability: {},
+        antiApplicability: {},
+        domains: ["episodic-memory"],
+        technologies: ["sqlite", "typescript"],
+        changeTypes: ["schema"],
+        tools: [],
+        repoPath: null,
+        repoKey: null,
+        sourceKind: "manual",
+        sourceKey: "episode-1",
+        outcomeKind: "success",
+        confidence: 92,
+        evidenceStatus: "verified",
+        status: "active",
+        staleAt: null,
+        metadata: {},
+        createdAt: new Date("2026-06-20T00:00:00.000Z"),
+        updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+        score: 11,
+        refs: [
+          {
+            id: "ref-1",
+            episodeCardId: "episode-1",
+            refKind: "file",
+            refValue: "src/db/sqlite/core-schema.ts",
+            locator: "episode_cards",
+            queryHint: null,
+            metadata: {},
+            createdAt: new Date("2026-06-20T00:00:00.000Z"),
+          },
+        ],
+      },
+    ]);
+
+    const { pack } = await compileContextPack({
+      goal: "wire sqlite schema precedent into compile",
+      technologies: ["sqlite"],
+      changeTypes: ["schema"],
+    });
+
+    expect(pack.status).toBe("ok");
+    expect(pack.procedures).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          itemKind: "episode_card",
+          itemId: "episode-1",
+          title: "Past episode: SQLite migration recovery",
+          sourceRefs: expect.arrayContaining([
+            "context-still://episodes/episode-1",
+            "src/db/sqlite/core-schema.ts#episode_cards",
+          ]),
+        }),
+      ]),
+    );
+    expect(pack.diagnostics.degradedReasons).not.toContain("NO_RELEVANT_CONTEXT");
+    expect(pack.diagnostics.retrievalStats.episodes).toEqual(
+      expect.objectContaining({ hitCount: 1, selectedCount: 1, searchFailed: false }),
+    );
+    expect(recordKnowledgeCompileSelectionSafe).toHaveBeenCalledWith(
+      expect.objectContaining({ selectedKnowledgeIds: [] }),
+    );
+  });
+
   test("keeps source-only misses non-blocking when knowledge context is usable", async () => {
     vi.mocked(retrieveKnowledge).mockResolvedValue({
       items: [
@@ -260,6 +339,98 @@ describe("Context Compiler Service", () => {
     expect(pack.diagnostics.degradedReasons).toContain("NO_SOURCE_MATCH");
     expect(reasonBuckets.blocking).not.toContain("NO_SOURCE_MATCH");
     expect(reasonBuckets.maintenanceWarnings).toContain("NO_SOURCE_MATCH");
+  });
+
+  test("records split embedding trace diagnostics across knowledge and sources", async () => {
+    vi.mocked(retrieveKnowledge)
+      .mockResolvedValueOnce({
+        items: [
+          {
+            id: "k-positive",
+            type: "rule",
+            status: "active",
+            title: "Positive rule",
+            body: "Use relevant positive compile context.",
+            score: 0.9,
+            sourceRefs: [],
+            hasSourceLinks: false,
+          },
+        ],
+        degradedReasons: [],
+        stats: {
+          textHitCount: 1,
+          vectorHitCount: 1,
+          mergedCount: 1,
+          textFailed: false,
+          vectorFailed: false,
+          embeddingStatus: "generated",
+          embeddingProvider: "local",
+          embeddingModel: "test-embed",
+          embeddingDimensions: 3,
+          queryEmbedding: [0.1, 0.2, 0.3],
+          scopedSearch: false,
+          repoScopeFallbackUsed: false,
+          queryText: "goal",
+        },
+      } as any)
+      .mockResolvedValueOnce({
+        items: [],
+        degradedReasons: ["QUERY_EMBEDDING_UNAVAILABLE"],
+        stats: {
+          textHitCount: 0,
+          vectorHitCount: 0,
+          mergedCount: 0,
+          textFailed: false,
+          vectorFailed: false,
+          embeddingStatus: "unavailable",
+          scopedSearch: false,
+          repoScopeFallbackUsed: false,
+          queryText: "goal",
+        },
+      } as any);
+    vi.mocked(retrieveSources).mockResolvedValue({
+      items: [],
+      degradedReasons: ["SOURCE_QUERY_EMBEDDING_UNAVAILABLE"],
+      stats: {
+        hitCount: 0,
+        textHitCount: 0,
+        vectorHitCount: 0,
+        searchFailed: false,
+        embeddingStatus: "unavailable",
+        scopedSearch: false,
+        repoScopeFallbackUsed: false,
+        queryText: "goal",
+      },
+    } as any);
+
+    const { pack } = await compileContextPack({ goal: "embedding trace diagnostics" });
+    expect(pack.diagnostics.retrievalStats.embeddingTrace).toEqual(
+      expect.objectContaining({
+        overallStatus: "embedding_unavailable",
+        knowledgePositive: expect.objectContaining({
+          compileStatus: "embedding_available",
+          embeddingProvider: "local",
+          embeddingModel: "test-embed",
+          embeddingDimensions: 3,
+          hasQueryEmbedding: true,
+        }),
+        knowledgeNegative: expect.objectContaining({
+          compileStatus: "embedding_unavailable",
+        }),
+        sources: expect.objectContaining({
+          compileStatus: "embedding_unavailable",
+        }),
+      }),
+    );
+    expect(upsertContextCompileTaskTrace).toHaveBeenCalledWith(
+      expect.objectContaining({
+        embeddingStatus: "embedding_available",
+        embeddingProvider: "local",
+        embeddingModel: "test-embed",
+        embeddingDimensions: 3,
+        embedding: [0.1, 0.2, 0.3],
+      }),
+    );
   });
 
   test("keeps agentic refine failures non-blocking when ranked knowledge is usable", async () => {
@@ -314,6 +485,56 @@ describe("Context Compiler Service", () => {
     expect(pack.diagnostics.degradedReasons).toContain("AGENTIC_REFINE_FAILED");
     expect(reasonBuckets.blocking).not.toContain("AGENTIC_REFINE_FAILED");
     expect(reasonBuckets.maintenanceWarnings).toContain("AGENTIC_REFINE_FAILED");
+  });
+
+  test("respects agentic empty selection and degrades as no relevant context", async () => {
+    vi.mocked(retrieveKnowledge).mockResolvedValue({
+      items: [
+        {
+          id: "k1",
+          type: "rule",
+          status: "active",
+          title: "Unrelated rule",
+          body: "This candidate is not relevant to the compile goal.",
+          score: 0.9,
+          sourceRefs: [],
+          hasSourceLinks: false,
+        },
+      ],
+      degradedReasons: [],
+      stats: {
+        textHitCount: 1,
+        vectorHitCount: 0,
+        mergedCount: 1,
+        textFailed: false,
+        vectorFailed: false,
+        embeddingStatus: "generated",
+        scopedSearch: false,
+        repoScopeFallbackUsed: false,
+        queryText: "goal",
+      },
+    } as any);
+    vi.mocked(agenticRefine).mockResolvedValueOnce({
+      items: [],
+      agenticUsed: true,
+      reasoning: "該当なし",
+      selectionReason: "empty_selection",
+    });
+
+    const { pack } = await compileContextPack({ goal: "agentic empty selection" });
+    expect(pack.status).toBe("degraded");
+    expect(pack.rules).toEqual([]);
+    expect(pack.diagnostics.degradedReasons).toContain("NO_RELEVANT_CONTEXT");
+    expect(pack.diagnostics.retrievalStats).toEqual(
+      expect.objectContaining({
+        agenticUsed: true,
+        agenticReasoning: "該当なし",
+        agenticSelectionReason: "empty_selection",
+      }),
+    );
+    expect(recordKnowledgeCompileSelectionSafe).toHaveBeenCalledWith(
+      expect.objectContaining({ selectedKnowledgeIds: [] }),
+    );
   });
 
   test("keeps response composer failures non-blocking when pack items are usable", async () => {
@@ -513,8 +734,8 @@ describe("Context Compiler Service", () => {
     expect(suppressedRow).toEqual(
       expect.objectContaining({
         suppressed: true,
-        suppressionReason: "near_duplicate_representative",
-        rankingReason: "near_duplicate_representative:k-high",
+        suppressionReason: "near_duplicate_suppressed",
+        rankingReason: "near_duplicate_suppressed:k-high",
       }),
     );
     expect(suppressedRow?.evidence).toEqual(
@@ -810,6 +1031,13 @@ describe("Context Compiler Service", () => {
           status: "failed",
           diagnostics: expect.objectContaining({
             retrievalStats: expect.objectContaining({
+              candidateTraceSavedCount: 1,
+              candidateTraceSkippedReason: null,
+              persistenceState: expect.objectContaining({
+                contextPackItemsSaved: false,
+                candidateTraceSavedCount: 1,
+                candidateTraceSkippedReason: null,
+              }),
               responseComposer: expect.objectContaining({
                 outputMarkdown: "No Content",
               }),

@@ -2,7 +2,8 @@
 
 > 状態: concept draft
 > 作成日: 2026-06-20
-> 関連: [Local-First SQLite And Tauri Concept](local-first-sqlite-tauri-concept.md)
+> 実装進捗更新: 2026-06-20
+> 関連: [Episodic Memory Context View 実装計画](episodic-memory-context-view-implementation-plan.md), [Local-First SQLite And Tauri Concept](local-first-sqlite-tauri-concept.md)
 
 ## 目的
 
@@ -232,6 +233,46 @@ Headroom の CCR 的な考え方と同じく、通常 context は圧縮 view を
 
 圧縮 CONTEXT は唯一の真実ではない。常に Ref 経由で検証可能である必要がある。
 
+## Episode 記録の保持
+
+Episode 記録は、単なる一時 context ではなく永続化対象として保持する。
+
+保持対象:
+
+- `EpisodeCard`: 通常の `compile` / `decision` が読む compressed view
+- `EpisodeRef`: 元証拠へ戻る stable reference
+- `EpisodeRetrievalFeedback`: Episode が実際に使えたか、古いか、raw 確認が必要だったかの feedback
+
+保存先:
+
+- PostgreSQL / SQLite の `episode_cards`
+- `episode_refs`
+- `episode_retrieval_feedback`
+
+保持する最小フィールド:
+
+- `title`, `situation`, `observations`, `action`, `outcome`, `lesson`
+- `applicability`, `anti_applicability`
+- `domains`, `technologies`, `change_types`, `tools`
+- `repo_path`, `repo_key`
+- `source_kind`, `source_key`
+- `outcome_kind`, `confidence`, `evidence_status`, `status`
+- `refs`
+
+作成タイミング:
+
+- `context_compile` / `context_decision` の成功・失敗から再利用可能な判断材料が残ったとき
+- queue worker や doctor などの運用で、原因・対処・検証が明確な incident が残ったとき
+- human / AI review correction が、次回の判断に使える negative or cautionary episode になるとき
+
+保持ルール:
+
+- EpisodeCard は source of truth ではないため、必ず 1 件以上の `EpisodeRef` を持つことを目標にする
+- Ref がない Episode は `evidence_status=unverified` とし、強い decision 根拠にしない
+- raw log / audit log は retention policy に従ってよいが、EpisodeCard と Ref は長期検索対象として保持する
+- 古い runtime 状態に依存する Episode は削除せず、`stale_at` または `status=deprecated` で検索時に弱める
+- negative episode は「避ける条件」と「再確認すべき証拠」を `anti_applicability` と `refs` に分けて保持する
+
 ## 有効になる条件
 
 EpisodeCard は次の条件を満たすほど有効になる。
@@ -326,7 +367,64 @@ context-still は MCP-first の外部 capability として扱う。
 - Headroom をそのまま runtime dependency として導入すること
 - 既存 agent 側に context-still 専用依存を追加すること
 
+## 実装進捗 2026-06-20
+
+この文書は concept draft のままだが、最小縦 slice は実装済みである。現状は「EpisodeCard を保存・検索でき、`context_compile` が補助的な過去事例として利用できる」段階まで進んでいる。
+
+完了済み:
+
+- PostgreSQL / SQLite に `episode_cards`、`episode_refs`、`episode_retrieval_feedback` の保存先を追加した。
+- shared schema と repository / service を追加し、PostgreSQL / SQLite の両 backend で `create` / `fetch` / `search` を使える。
+- REST API として `GET /api/episodes`、`GET /api/episodes/:id` を追加した。
+- MCP v2 に `register_episode`、`search_episodes`、`fetch_episode` を追加した。
+- `context_compile` が EpisodeCard を検索し、最大 2 件を `itemKind=episode_card` の補助 procedure として pack に入れる。
+- EpisodeCard は `sourceRefs` と `diagnostics.retrievalStats.episodes` に記録される。
+- EpisodeCard は knowledge usage signal には混ぜず、既存 Knowledge の dynamic score を汚さない。
+- compile run から EpisodeCard を作る backfill CLI を追加した。
+  - dry-run: `bun run backfill:episodes:compile -- --run-id <compileRunId>`
+  - write: `bun run backfill:episodes:compile -- --run-id <compileRunId> --write`
+- doctor / MCP smoke / contract test の required tool と required table を更新した。
+
+現時点の検証済み gate:
+
+- `bun run typecheck`
+- `bunx vitest run test/episode-card.service.test.ts test/context-compiler.service.test.ts test/mcp.tools.test.ts test/doctor.service.test.ts test/mcp.contract.test.ts`
+- `bun test ./test/sqlite-runtime-support.bun.ts`
+- `git diff --check`
+- `bun run verify`
+
+未完了:
+
+- `context_decision` への統合は未実装。過去事例を判断根拠として過信しないため、compile での有用性とデータ品質を見てから着手する。
+- `episode_retrieval_feedback` への実使用 feedback 保存は未実装。table はあるが、compile で使われた / 無関係だった / raw 確認が必要だった、という signal はまだ記録していない。
+- Vibe Memory、audit log、decision run、review correction からの EpisodeCard 自動生成 / backfill は未実装。現状の backfill は compile run 起点のみ。
+- 複数 Episode から Rule / Procedure 候補へ昇格する distillation は未実装。
+- Admin UI は未実装。MVP では不要として扱っている。
+- vector lane は未実装。現状は text / facet / in-memory scoring 中心で、embedding を使う retrieval は後続。
+
+再開ポイント:
+
+1. まず `register_episode` または `backfill:episodes:compile -- --run-id <id> --write` で実データを数件投入する。
+2. `context_compile` を実行し、`pack.procedures` の `itemKind=episode_card` と `diagnostics.retrievalStats.episodes` を確認する。
+3. 次の実装単位は `episode_retrieval_feedback` の保存である。compile が選んだ EpisodeCard に対して `run_kind=compile`、`used_for=compile`、`verdict=used|not_relevant|needs_raw_check|stale` を記録する。
+4. feedback が取れたら、ranking に evidenceStatus / confidence / feedback / staleAt を反映する。
+5. decision 統合はその後に着手する。最初から evidence role に混ぜず、`precedent` / `background` として別扱いにする。
+
+再開時に最初に見るファイル:
+
+- `src/shared/schemas/episode-card.schema.ts`
+- `src/modules/episodic-memory/episode-card.service.ts`
+- `src/modules/episodic-memory/episode-card.repository.ts`
+- `src/modules/episodic-memory/episode-card.repository.sqlite.ts`
+- `src/modules/context-compiler/context-compiler.service.ts`
+- `src/mcp/tools/episode.tool.ts`
+- `src/cli/backfill-episodes-from-compile.ts`
+- `test/episode-card.service.test.ts`
+- `test/context-compiler.service.test.ts`
+
 ## 将来の実装 slice
+
+具体的な schema、MCP/API surface、compile / decision integration、検証 gate は [Episodic Memory Context View 実装計画](episodic-memory-context-view-implementation-plan.md) で扱う。この section は概念上の粗い slice として残す。
 
 ### Slice 0: Concept And Evaluation Fixtures
 

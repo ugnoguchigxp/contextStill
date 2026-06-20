@@ -1,4 +1,5 @@
 import {
+  type ContextDecisionEvidenceRole,
   type ContextDecisionFeedbackInput,
   type ContextDecisionHumanFeedbackValue,
   contextDecisionFeedbackInputSchema,
@@ -7,6 +8,7 @@ import {
   getContextDecisionDetail,
   insertDecisionFeedbackEffects,
   insertDecisionSystemFeedback,
+  listContextDecisionKnowledgeIdsByRoles,
   listSelectedSupportKnowledgeIds,
   saveHumanDecisionFeedback,
 } from "./context-decision.repository.js";
@@ -33,10 +35,10 @@ function buildSystemFeedbackEffects(params: {
         knowledgeId: null,
         effect: "neutral" as const,
         amount: 0,
-        reason: `System feedback outcome: ${params.outcome}; no selected support knowledge was attached.`,
+        reason: `System feedback outcome: ${params.outcome}; no decision-driving knowledge was attached.`,
         confidence: 55,
         status: "skipped" as const,
-        metadata: { source: params.source, reason: "no_selected_support_knowledge" },
+        metadata: { source: params.source, reason: "no_decision_driving_knowledge" },
       },
     ];
   }
@@ -51,6 +53,51 @@ function buildSystemFeedbackEffects(params: {
   }));
 }
 
+function supportRoles(): ContextDecisionEvidenceRole[] {
+  return ["selected_support", "user_preference"];
+}
+
+function cautionRoles(): ContextDecisionEvidenceRole[] {
+  return ["risk_warning", "counter_evidence"];
+}
+
+function feedbackTargetRoles(params: {
+  decision: string;
+  value?: ContextDecisionHumanFeedbackValue;
+  outcome?: string;
+}): ContextDecisionEvidenceRole[] {
+  const negativeOutcome =
+    params.outcome === "discarded_pr" ||
+    params.outcome === "failed" ||
+    params.outcome === "regression_found" ||
+    params.outcome === "user_overrode";
+  if (params.decision === "execute") return supportRoles();
+  if (params.decision === "revise_and_execute") {
+    return params.value === "bad" || negativeOutcome ? supportRoles() : cautionRoles();
+  }
+  if (
+    params.decision === "reject" ||
+    params.decision === "rollback" ||
+    params.decision === "discard"
+  ) {
+    return cautionRoles();
+  }
+  if (params.decision === "escalate") {
+    return params.value === "bad" || negativeOutcome ? supportRoles() : cautionRoles();
+  }
+  return supportRoles();
+}
+
+async function listFeedbackTargetKnowledgeIds(params: {
+  decisionId: string;
+  roles: ContextDecisionEvidenceRole[];
+}): Promise<string[]> {
+  if (params.roles.length === 1 && params.roles[0] === "selected_support") {
+    return listSelectedSupportKnowledgeIds(params.decisionId);
+  }
+  return listContextDecisionKnowledgeIdsByRoles(params.decisionId, params.roles);
+}
+
 export async function recordContextDecisionFeedback(input: ContextDecisionFeedbackInput) {
   const parsed = contextDecisionFeedbackInputSchema.parse(input);
   const detail = await getContextDecisionDetail(parsed.decisionId);
@@ -60,7 +107,11 @@ export async function recordContextDecisionFeedback(input: ContextDecisionFeedba
 
   if (parsed.source === "human") {
     const value = parsed.value as ContextDecisionHumanFeedbackValue;
-    const affectedKnowledgeIds = await listSelectedSupportKnowledgeIds(parsed.decisionId);
+    const targetRoles = feedbackTargetRoles({ decision: detail.run.decision, value });
+    const affectedKnowledgeIds = await listFeedbackTargetKnowledgeIds({
+      decisionId: parsed.decisionId,
+      roles: targetRoles,
+    });
     return {
       humanFeedback: await saveHumanDecisionFeedback({
         decisionId: parsed.decisionId,
@@ -70,7 +121,14 @@ export async function recordContextDecisionFeedback(input: ContextDecisionFeedba
     };
   }
 
-  const affectedKnowledgeIds = await listSelectedSupportKnowledgeIds(parsed.decisionId);
+  const targetRoles = feedbackTargetRoles({
+    decision: detail.run.decision,
+    outcome: parsed.outcome ?? "still_unknown",
+  });
+  const affectedKnowledgeIds = await listFeedbackTargetKnowledgeIds({
+    decisionId: parsed.decisionId,
+    roles: targetRoles,
+  });
   const feedback = await insertDecisionSystemFeedback({
     decisionId: parsed.decisionId,
     source: parsed.source,

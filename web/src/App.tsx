@@ -88,6 +88,15 @@ const vibeMemoryRoute = createRoute({
   ),
 });
 
+const episodesRoute = createRoute({
+  getParentRoute: () => rootRoute,
+  path: "/episodes",
+  component: lazyRouteComponent(
+    () => import("./modules/admin/components/episodes.page"),
+    "EpisodesPage",
+  ),
+});
+
 const graphRoute = createRoute({
   getParentRoute: () => rootRoute,
   path: "/graph",
@@ -195,6 +204,7 @@ const routeTree = rootRoute.addChildren([
   landscapeRoute,
   graphRoute,
   vibeMemoryRoute,
+  episodesRoute,
   sourcesRoute,
   auditRoute,
   doctorRoute,

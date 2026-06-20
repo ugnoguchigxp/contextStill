@@ -96,6 +96,31 @@ function sourceSummaryFallback(params: {
   };
 }
 
+function candidateContentFallback(params: {
+  row: CoverEvidenceCandidateInput;
+  readRanges?: Array<{ from: number; toExclusive: number }>;
+}): CoverEvidenceSourceRead | null {
+  const content = params.row.content.trim();
+  if (!content) return null;
+  return {
+    content,
+    valueAssessmentContent: content,
+    references: [
+      {
+        kind: "source",
+        uri: params.row.sourceUri,
+        locator: "candidate:content",
+        note: "candidate content fallback because source memory is unavailable",
+        evidenceRole: "supports_candidate",
+      },
+    ],
+    readRanges:
+      params.readRanges && params.readRanges.length > 0
+        ? params.readRanges
+        : [{ from: 0, toExclusive: content.length }],
+  };
+}
+
 export async function readSourceEvidenceForCandidate(
   row: CoverEvidenceCandidateInput,
 ): Promise<CoverEvidenceSourceRead> {
@@ -156,6 +181,10 @@ export async function readSourceEvidenceForCandidate(
         sourceSummary: valueAssessmentContent,
         readRanges: ranges,
       });
+    }
+    if (row.targetKind === "vibe_memory") {
+      const fallback = candidateContentFallback({ row, readRanges: ranges });
+      if (fallback) return fallback;
     }
     throw error;
   }

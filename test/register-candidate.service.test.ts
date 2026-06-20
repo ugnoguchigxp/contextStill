@@ -249,6 +249,68 @@ Do not run on production database.
     expect(mockInsert).toHaveBeenCalledTimes(5);
   });
 
+  test("propagates negative polarity and intent tags into provided candidate queue records", async () => {
+    const targetChain = makeChain([{ id: "target-1" }]);
+    const candidateChain = makeChain([{ id: "candidate-1" }]);
+    const findingChain = makeChain([{ id: "finding-1" }]);
+    const foundChain = makeChain([{ id: "found-1" }]);
+    const coveringChain = makeChain([{ id: "covering-1" }]);
+    mockInsert
+      .mockReturnValueOnce(targetChain)
+      .mockReturnValueOnce(candidateChain)
+      .mockReturnValueOnce(findingChain)
+      .mockReturnValueOnce(foundChain)
+      .mockReturnValueOnce(coveringChain);
+
+    const result = await registerCandidate({
+      title: "Do not trust stale queue status alone",
+      body: "Stale queue status alone is not enough evidence for diagnosis.",
+      type: "procedure",
+      polarity: "negative",
+      intentTags: ["failure_pattern", "guardrail"],
+      metadata: {},
+    });
+
+    expect(result.type).toBe("rule");
+    expect(candidateChain.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        origin: expect.objectContaining({
+          candidateType: "rule",
+          originalCandidateType: "procedure",
+          polarity: "negative",
+          intentTags: ["failure_pattern", "guardrail"],
+        }),
+      }),
+    );
+    expect(findingChain.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        payload: expect.objectContaining({
+          type: "rule",
+          polarity: "negative",
+          intentTags: ["failure_pattern", "guardrail"],
+          origin: expect.objectContaining({ polarity: "negative" }),
+        }),
+        metadata: expect.objectContaining({
+          polarity: "negative",
+          intentTags: ["failure_pattern", "guardrail"],
+        }),
+      }),
+    );
+    expect(foundChain.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        type: "rule",
+        origin: expect.objectContaining({
+          originalCandidateType: "procedure",
+          polarity: "negative",
+        }),
+        metadata: expect.objectContaining({
+          polarity: "negative",
+          intentTags: ["failure_pattern", "guardrail"],
+        }),
+      }),
+    );
+  });
+
   test("assigns wiki priority when metadata indicates wiki parent", async () => {
     const targetChain = makeChain([{ id: "target-1" }]);
     const candidateChain = makeChain([{ id: "candidate-1" }]);

@@ -81,6 +81,9 @@ const migrationTables: MigrationTableSpec[] = [
   { table: "vibe_goals" },
   { table: "vibe_memories" },
   { table: "agent_diff_entries" },
+  { table: "episode_cards", transformedColumns: ["embedding"] },
+  { table: "episode_refs" },
+  { table: "episode_retrieval_feedback" },
   { table: "vibe_memory_marks" },
   { table: "vibe_migration_runs" },
   { table: "sync_states" },
@@ -276,6 +279,14 @@ function refreshFts(sqlite: SqliteCoreDatabase): void {
       `insert into agent_diff_entries_fts(rowid, id, vibe_memory_id, file_path, diff_hunk, symbol_name, symbol_kind, signature)
        select rowid, id, vibe_memory_id, file_path, diff_hunk, symbol_name, symbol_kind, signature
        from agent_diff_entries`,
+    )
+    .run();
+  sqlite.db.query("delete from episode_cards_fts").run();
+  sqlite.db
+    .query(
+      `insert into episode_cards_fts(rowid, id, title, situation, observations, action, outcome, lesson)
+       select rowid, id, title, situation, observations, action, outcome, lesson
+       from episode_cards`,
     )
     .run();
 }

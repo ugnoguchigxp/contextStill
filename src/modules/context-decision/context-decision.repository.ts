@@ -150,6 +150,43 @@ export async function insertContextDecisionRun(params: {
   return inserted.id;
 }
 
+export async function markContextDecisionRunFailed(
+  decisionRunId: string,
+  params: {
+    reason: string;
+    stage: string;
+    mandate: string;
+    agentMessage: string;
+  },
+): Promise<void> {
+  if (useSqlite()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.markContextDecisionRunFailedSqlite(decisionRunId, params);
+  }
+
+  const failurePatch = JSON.stringify({
+    postRunPersistenceFailure: {
+      stage: params.stage,
+      reason: params.reason,
+      recordedAt: new Date().toISOString(),
+    },
+  });
+  await db
+    .update(contextDecisionRuns)
+    .set({
+      decision: "escalate",
+      selectedAction: null,
+      rejectedActions: ["execute"],
+      mandate: params.mandate,
+      agentMessage: params.agentMessage,
+      confidence: 0,
+      confidenceTrace: sql`${contextDecisionRuns.confidenceTrace} || ${failurePatch}::jsonb`,
+      status: "failed",
+      updatedAt: new Date(),
+    })
+    .where(eq(contextDecisionRuns.id, decisionRunId));
+}
+
 export async function insertContextDecisionEvidenceRows(
   decisionRunId: string,
   items: Array<{
@@ -538,8 +575,8 @@ export async function saveHumanDecisionFeedback(params: {
         amount,
         reason:
           params.value === "good"
-            ? "Human Good feedback for selected decision support."
-            : "Human Bad feedback for selected decision support.",
+            ? "Human Good feedback for decision-driving evidence."
+            : "Human Bad feedback for decision-driving evidence.",
         confidence: 80,
         status: "applied",
         appliedAt: new Date(),
@@ -637,6 +674,33 @@ export async function listSelectedSupportKnowledgeIds(decisionId: string): Promi
       ),
     );
   return rows.map((row) => row.knowledgeId).filter((id): id is string => Boolean(id));
+}
+
+export async function listContextDecisionKnowledgeIdsByRoles(
+  decisionId: string,
+  roles: ContextDecisionEvidenceRole[],
+): Promise<string[]> {
+  if (roles.length === 0) return [];
+  if (useSqlite()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.listContextDecisionKnowledgeIdsByRolesSqlite(decisionId, roles);
+  }
+
+  const rows = await db
+    .select({ knowledgeId: contextDecisionEvidence.knowledgeId })
+    .from(contextDecisionEvidence)
+    .where(
+      and(
+        eq(contextDecisionEvidence.decisionRunId, decisionId),
+        sql`${contextDecisionEvidence.role} in (${sql.join(
+          roles.map((role) => sql`${role}`),
+          sql`, `,
+        )})`,
+      ),
+    );
+  return Array.from(
+    new Set(rows.map((row) => row.knowledgeId).filter((id): id is string => Boolean(id))),
+  );
 }
 
 export async function listContextDecisionPrScanCandidates(params: {

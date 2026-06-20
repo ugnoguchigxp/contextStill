@@ -83,6 +83,31 @@ const mockDetail = {
       coverageScore: 85,
       verificationScore: 70,
       historicalFeedbackScore: 50,
+      signalStatus: {
+        status: "complete",
+        evidenceCount: 3,
+        compileSignalCount: 2,
+        communitySignalCount: 1,
+        landscapeSignalCount: 1,
+        reason: "signals loaded",
+      },
+      compileSignals: {
+        "kb-1": {
+          usedCount: 2,
+          wrongCount: 0,
+          offTopicCount: 0,
+        },
+      },
+      communitySignals: {
+        "kb-counter": {
+          communityLabel: "Decision Review",
+        },
+      },
+      landscapeSignals: {
+        "kb-counter": {
+          classification: "over_selected_not_used",
+        },
+      },
       knowledgePrior: {
         status: "available",
         source: "retrieval_prior_v1",
@@ -172,7 +197,17 @@ const mockDetail = {
       weightAtDecision: 90,
       summary: "Rule: Always build on green",
       sourceRefs: ["green.md"],
-      metadata: { status: "active", type: "rule" },
+      metadata: {
+        status: "active",
+        type: "rule",
+        signals: {
+          compile: {
+            usedCount: 2,
+            wrongCount: 0,
+            offTopicCount: 0,
+          },
+        },
+      },
       createdAt: "2026-06-10T12:00:00.000Z",
     },
     {
@@ -184,6 +219,29 @@ const mockDetail = {
       summary: "Check risk before build: Run verification before build.",
       sourceRefs: ["risk.md"],
       metadata: { status: "active", type: "rule" },
+      createdAt: "2026-06-10T12:00:00.000Z",
+    },
+    {
+      id: "ev-3",
+      decisionRunId: "run-1",
+      knowledgeId: "kb-counter",
+      role: "counter_evidence",
+      weightAtDecision: 77,
+      summary: "Counter build case: Similar builds needed scope revision.",
+      sourceRefs: ["counter.md"],
+      metadata: {
+        status: "active",
+        type: "rule",
+        signals: {
+          community: {
+            communityLabel: "Decision Review",
+            health: { thinEvidence: true },
+          },
+          landscape: {
+            classification: "over_selected_not_used",
+          },
+        },
+      },
       createdAt: "2026-06-10T12:00:00.000Z",
     },
   ],
@@ -201,7 +259,18 @@ const mockDetail = {
     },
   ],
   feedback: [],
-  effects: [],
+  effects: [
+    {
+      id: "effect-1",
+      knowledgeId: "kb-1",
+      effect: "penalize",
+      amount: -6,
+      reason: "Human Bad feedback for decision-driving evidence.",
+      confidence: 80,
+      status: "applied",
+      createdAt: "2026-06-10T12:00:00.000Z",
+    },
+  ],
 };
 
 describe("ContextDecisionPage", () => {
@@ -305,10 +374,22 @@ describe("ContextDecisionPage", () => {
     expect(screen.getByText("Knowledge Prior")).toBeInTheDocument();
     expect(screen.getByText("Outcome Predictor")).toBeInTheDocument();
     expect(screen.getByText("Knowledge Assessment")).toBeInTheDocument();
+    expect(screen.getByText("Decision Signals")).toBeInTheDocument();
+    expect(screen.getByText("signals loaded")).toBeInTheDocument();
     expect(screen.getByText("Reliability Gate")).toBeInTheDocument();
     expect(screen.getByText("weak_coverage_requires_revision")).toBeInTheDocument();
     expect(screen.getAllByText("Risk Evidence").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Check risk before build").length).toBeGreaterThan(0);
+    expect(screen.getByText("Counter Evidence")).toBeInTheDocument();
+    expect(screen.getAllByText("Counter build case").length).toBeGreaterThan(0);
+    expect(screen.getByText("compile used 2")).toBeInTheDocument();
+    expect(screen.getByText("landscape over_selected_not_used")).toBeInTheDocument();
+    expect(screen.getByText("community Decision Review")).toBeInTheDocument();
+    expect(screen.getByText("thin evidence")).toBeInTheDocument();
+    expect(screen.getByText("Feedback Effects")).toBeInTheDocument();
+    expect(screen.getByText("Bad feedback penalty")).toBeInTheDocument();
+    expect(screen.getByText("-6")).toBeInTheDocument();
+    expect(screen.getAllByText("selected_support").length).toBeGreaterThan(0);
 
     // フィードバックの送信
     const goodButton = screen.getByText("Good");

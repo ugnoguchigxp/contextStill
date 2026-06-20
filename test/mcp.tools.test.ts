@@ -21,6 +21,7 @@ vi.mock("../src/modules/knowledge/knowledge.service.js");
 vi.mock("../src/modules/context-compiler/context-compiler.service.js");
 vi.mock("../src/modules/context-compiler/context-compile-eval.service.js");
 vi.mock("../src/modules/doctor/doctor.service.js");
+vi.mock("../src/modules/episodic-memory/episode-card.service.js");
 vi.mock("../src/modules/registerCandidate/register-candidate.service.js");
 vi.mock("../src/modules/registerCandidate/register-review-corrections.service.js");
 vi.mock("../src/modules/settings/settings.service.js");
@@ -44,6 +45,11 @@ import {
   updateKnowledgeTool,
 } from "../src/mcp/tools/knowledge.tool.js";
 import {
+  fetchEpisodeTool,
+  registerEpisodeTool,
+  searchEpisodesTool,
+} from "../src/mcp/tools/episode.tool.js";
+import {
   memoryFetchTool as fetchMemoryLegacyTool,
   fetchMemoryTool as fetchMemoryPrimaryTool,
   memorySearchTool as searchMemoryLegacyTool,
@@ -53,6 +59,11 @@ import { doctorTool, initialInstructionsTool } from "../src/mcp/tools/system.too
 import { recordCompileEval } from "../src/modules/context-compiler/context-compile-eval.service.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
 import { runDoctor } from "../src/modules/doctor/doctor.service.js";
+import {
+  fetchEpisode,
+  registerEpisode,
+  searchEpisodes,
+} from "../src/modules/episodic-memory/episode-card.service.js";
 import { searchKnowledgeCandidates } from "../src/modules/knowledge/knowledge.service.js";
 import { registerCandidate } from "../src/modules/registerCandidate/register-candidate.service.js";
 import { registerCandidatesBulk } from "../src/modules/registerCandidate/register-candidate.service.js";
@@ -117,6 +128,161 @@ describe("MCP Tools Handlers", () => {
       const response = await searchMemoryLegacyTool.handler({ query: "test query" });
       const payload = JSON.parse(response.content[0].text);
       expect(payload.items[0].id).toBe("1");
+    });
+  });
+
+  describe("search_episodes", () => {
+    test("calls searchEpisodes and returns compact JSON", async () => {
+      vi.mocked(searchEpisodes).mockResolvedValue([
+        {
+          id: "episode-1",
+          title: "Episode title",
+          situation: "Situation",
+          observations: "",
+          action: "",
+          outcome: "Outcome",
+          lesson: "Lesson",
+          applicability: {},
+          antiApplicability: {},
+          domains: ["episodic-memory"],
+          technologies: ["typescript"],
+          changeTypes: ["schema"],
+          tools: [],
+          repoPath: null,
+          repoKey: null,
+          sourceKind: "manual",
+          sourceKey: "source-1",
+          outcomeKind: "success",
+          confidence: 88,
+          evidenceStatus: "verified",
+          status: "active",
+          staleAt: null,
+          metadata: {},
+          createdAt: new Date("2026-06-20T00:00:00.000Z"),
+          updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+          score: 12,
+          refs: [
+            {
+              id: "ref-1",
+              episodeCardId: "episode-1",
+              refKind: "file",
+              refValue: "src/db/schema-core.ts",
+              locator: null,
+              queryHint: null,
+              metadata: {},
+              createdAt: new Date("2026-06-20T00:00:00.000Z"),
+            },
+          ],
+        },
+      ]);
+
+      const response = await searchEpisodesTool.handler({
+        query: "episode",
+        technologies: ["typescript"],
+      });
+      const payload = JSON.parse(response.content[0].text);
+
+      expect(searchEpisodes).toHaveBeenCalledWith({
+        query: "episode",
+        technologies: ["typescript"],
+      });
+      expect(payload.items[0].id).toBe("episode-1");
+      expect(payload.items[0].refs[0].refKind).toBe("file");
+    });
+  });
+
+  describe("register_episode", () => {
+    test("calls registerEpisode and returns the created episode", async () => {
+      vi.mocked(registerEpisode).mockResolvedValue({
+        id: "episode-registered",
+        title: "Registered episode",
+        situation: "A useful compile precedent was found.",
+        observations: "",
+        action: "",
+        outcome: "",
+        lesson: "",
+        applicability: {},
+        antiApplicability: {},
+        domains: [],
+        technologies: ["typescript"],
+        changeTypes: ["feature"],
+        tools: [],
+        repoPath: null,
+        repoKey: null,
+        sourceKind: "manual",
+        sourceKey: "manual-episode-1",
+        outcomeKind: "unknown",
+        confidence: 50,
+        evidenceStatus: "unverified",
+        status: "active",
+        staleAt: null,
+        metadata: {},
+        createdAt: new Date("2026-06-20T00:00:00.000Z"),
+        updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+        refs: [],
+      });
+
+      const response = await registerEpisodeTool.handler({
+        title: "Registered episode",
+        situation: "A useful compile precedent was found.",
+        sourceKind: "manual",
+        sourceKey: "manual-episode-1",
+        technologies: ["typescript"],
+        changeTypes: ["feature"],
+      });
+      const payload = JSON.parse(response.content[0].text);
+
+      expect(registerEpisode).toHaveBeenCalledWith(
+        expect.objectContaining({
+          title: "Registered episode",
+          sourceKind: "manual",
+          sourceKey: "manual-episode-1",
+        }),
+      );
+      expect(payload.id).toBe("episode-registered");
+    });
+  });
+
+  describe("fetch_episode", () => {
+    test("returns an episode by id", async () => {
+      vi.mocked(fetchEpisode).mockResolvedValue({
+        id: "episode-1",
+        title: "Episode title",
+        situation: "Situation",
+        observations: "",
+        action: "",
+        outcome: "",
+        lesson: "",
+        applicability: {},
+        antiApplicability: {},
+        domains: [],
+        technologies: [],
+        changeTypes: [],
+        tools: [],
+        repoPath: null,
+        repoKey: null,
+        sourceKind: "manual",
+        sourceKey: "source-1",
+        outcomeKind: "unknown",
+        confidence: 50,
+        evidenceStatus: "unverified",
+        status: "active",
+        staleAt: null,
+        metadata: {},
+        createdAt: new Date("2026-06-20T00:00:00.000Z"),
+        updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+        refs: [],
+      });
+
+      const response = await fetchEpisodeTool.handler({ id: "episode-1" });
+      const payload = JSON.parse(response.content[0].text);
+      expect(payload.id).toBe("episode-1");
+    });
+
+    test("returns an error when missing", async () => {
+      vi.mocked(fetchEpisode).mockResolvedValue(null);
+      const response = await fetchEpisodeTool.handler({ id: "missing" });
+      expect(response.isError).toBe(true);
     });
   });
 

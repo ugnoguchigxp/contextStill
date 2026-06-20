@@ -200,3 +200,89 @@ export const sqliteSourceFragmentsVecFallback = sqliteTable("source_fragments_ve
   contentHash: text("content_hash").notNull(),
   updatedAt: text("updated_at").notNull(),
 });
+
+export const sqliteEpisodeCards = sqliteTable(
+  "episode_cards",
+  {
+    id: text("id").primaryKey(),
+    title: text("title").notNull(),
+    situation: text("situation").notNull(),
+    observations: text("observations").notNull().default(""),
+    action: text("action").notNull().default(""),
+    outcome: text("outcome").notNull().default(""),
+    lesson: text("lesson").notNull().default(""),
+    applicability: text("applicability", { mode: "json" }).$type<unknown>().notNull(),
+    antiApplicability: text("anti_applicability", { mode: "json" }).$type<unknown>().notNull(),
+    domains: text("domains", { mode: "json" }).$type<unknown[]>().notNull(),
+    technologies: text("technologies", { mode: "json" }).$type<unknown[]>().notNull(),
+    changeTypes: text("change_types", { mode: "json" }).$type<unknown[]>().notNull(),
+    tools: text("tools", { mode: "json" }).$type<unknown[]>().notNull(),
+    repoPath: text("repo_path"),
+    repoKey: text("repo_key"),
+    sourceKind: text("source_kind").notNull(),
+    sourceKey: text("source_key").notNull(),
+    outcomeKind: text("outcome_kind").notNull().default("unknown"),
+    confidence: integer("confidence").notNull().default(50),
+    evidenceStatus: text("evidence_status").notNull().default("unverified"),
+    status: text("status").notNull().default("active"),
+    staleAt: text("stale_at"),
+    embedding: text("embedding"),
+    metadata: text("metadata", { mode: "json" }).$type<unknown>().notNull(),
+    createdAt: text("created_at").notNull(),
+    updatedAt: text("updated_at").notNull(),
+  },
+  (table) => [
+    uniqueIndex("episode_cards_source_unique_idx").on(table.sourceKind, table.sourceKey),
+    index("episode_cards_status_idx").on(table.status),
+    index("episode_cards_repo_key_idx").on(table.repoKey),
+    index("episode_cards_repo_path_idx").on(table.repoPath),
+    index("episode_cards_outcome_kind_idx").on(table.outcomeKind),
+    index("episode_cards_evidence_status_idx").on(table.evidenceStatus),
+    index("episode_cards_created_at_idx").on(table.createdAt),
+  ],
+);
+
+export const sqliteEpisodeRefs = sqliteTable(
+  "episode_refs",
+  {
+    id: text("id").primaryKey(),
+    episodeCardId: text("episode_card_id")
+      .notNull()
+      .references(() => sqliteEpisodeCards.id, { onDelete: "cascade" }),
+    refKind: text("ref_kind").notNull(),
+    refValue: text("ref_value").notNull(),
+    locator: text("locator"),
+    queryHint: text("query_hint"),
+    metadata: text("metadata", { mode: "json" }).$type<unknown>().notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("episode_refs_episode_card_id_idx").on(table.episodeCardId),
+    index("episode_refs_kind_value_idx").on(table.refKind, table.refValue),
+  ],
+);
+
+export const sqliteEpisodeRetrievalFeedback = sqliteTable(
+  "episode_retrieval_feedback",
+  {
+    id: text("id").primaryKey(),
+    episodeCardId: text("episode_card_id")
+      .notNull()
+      .references(() => sqliteEpisodeCards.id, { onDelete: "cascade" }),
+    runKind: text("run_kind").notNull(),
+    runId: text("run_id").notNull(),
+    usedFor: text("used_for").notNull(),
+    verdict: text("verdict").notNull(),
+    reason: text("reason"),
+    metadata: text("metadata", { mode: "json" }).$type<unknown>().notNull(),
+    createdAt: text("created_at").notNull(),
+  },
+  (table) => [
+    index("episode_retrieval_feedback_episode_run_idx").on(
+      table.episodeCardId,
+      table.runKind,
+      table.runId,
+    ),
+    index("episode_retrieval_feedback_verdict_created_at_idx").on(table.verdict, table.createdAt),
+  ],
+);
