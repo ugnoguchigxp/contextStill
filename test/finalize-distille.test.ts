@@ -280,16 +280,14 @@ describe("runFinalizeDistille", () => {
     expect(mocks.upsertKnowledgeFromSource).not.toHaveBeenCalled();
   });
 
-  test("stores draft when embedding fails", async () => {
+  test("does not store draft when embedding fails", async () => {
     mocks.embedOne.mockRejectedValue(new Error("embedding provider crashed"));
 
-    const result = await runFinalizeDistille({ coverEvidenceResultId: "find-1", write: true });
+    await expect(
+      runFinalizeDistille({ coverEvidenceResultId: "find-1", write: true }),
+    ).rejects.toThrow("finalizeDistille requires knowledge embedding before storage");
 
-    expect(result.embeddingStatus).toBe("failed");
-    expect(result.knowledgeId).toBe("knowledge-1");
-    expect(mocks.upsertKnowledgeFromSource).toHaveBeenCalledWith(
-      expect.objectContaining({ embedding: undefined }),
-    );
+    expect(mocks.upsertKnowledgeFromSource).not.toHaveBeenCalled();
   });
 
   test("rejects landscape candidate until manual approval is granted", async () => {

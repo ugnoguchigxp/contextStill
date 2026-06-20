@@ -15,10 +15,28 @@ function runtimeRoute(
 
 describe("coverEvidence provider policy", () => {
   test("keeps only cloud providers from primary and fallback", () => {
-    const route = resolveCloudApiRuntimeRoute(runtimeRoute("local-llm", ["azure-openai"]));
+    const route = resolveCloudApiRuntimeRoute({
+      ...runtimeRoute("local-llm", ["azure-openai"]),
+      model: '{"apiBaseUrl":"http://local","model":"qwen"}',
+      localLlmModel: '{"apiBaseUrl":"http://local","model":"qwen"}',
+    });
     expect(route).toEqual({
       provider: "azure-openai",
       fallback: [],
+    });
+  });
+
+  test("preserves primary cloud route model when cloud provider is already primary", () => {
+    const route = resolveCloudApiRuntimeRoute({
+      ...runtimeRoute("azure-openai", ["openai"]),
+      model: "gpt-5-4-mini",
+      azureDeploymentSlots: [0],
+    });
+    expect(route).toEqual({
+      provider: "azure-openai",
+      model: "gpt-5-4-mini",
+      azureDeploymentSlots: [0],
+      fallback: ["openai"],
     });
   });
 

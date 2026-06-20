@@ -506,6 +506,7 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
     const allItemIds = [
       ...(packSnapshot.rules ?? []).map((item) => item.itemId),
       ...(packSnapshot.procedures ?? []).map((item) => item.itemId),
+      ...(packSnapshot.guardrails ?? []).map((item) => item.itemId),
     ].filter(Boolean);
 
     const knowledgeRows =
@@ -542,6 +543,15 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
     }
 
     for (const item of packSnapshot.procedures) {
+      const applies = appliesToByItemId.get(item.itemId);
+      item.changeTypes = item.changeTypes?.length ? item.changeTypes : (applies?.changeTypes ?? []);
+      item.technologies = item.technologies?.length
+        ? item.technologies
+        : (applies?.technologies ?? []);
+      item.domains = item.domains?.length ? item.domains : (applies?.domains ?? []);
+    }
+
+    for (const item of packSnapshot.guardrails) {
       const applies = appliesToByItemId.get(item.itemId);
       item.changeTypes = item.changeTypes?.length ? item.changeTypes : (applies?.changeTypes ?? []);
       item.technologies = item.technologies?.length
@@ -828,12 +838,16 @@ export async function getCompileRunRankingTrace(
   const packPositionByKey = new Map<string, number>();
   const parsedPack = contextPackSchema.safeParse(run.packSnapshot);
   if (parsedPack.success) {
-    parsedPack.data.rules.forEach((item, index) => {
-      packPositionByKey.set(`rule:${item.itemId}`, index + 1);
-    });
-    parsedPack.data.procedures.forEach((item, index) => {
-      packPositionByKey.set(`procedure:${item.itemId}`, index + 1);
-    });
+    let packPosition = 1;
+    for (const item of [
+      ...parsedPack.data.rules,
+      ...parsedPack.data.procedures,
+      ...parsedPack.data.guardrails,
+    ]) {
+      if (item.itemKind !== "rule" && item.itemKind !== "procedure") continue;
+      packPositionByKey.set(`${item.itemKind}:${item.itemId}`, packPosition);
+      packPosition += 1;
+    }
   } else {
     for (const [index, row] of packRows.entries()) {
       if (row.itemKind !== "rule" && row.itemKind !== "procedure") continue;

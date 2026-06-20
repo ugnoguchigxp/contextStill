@@ -17,6 +17,10 @@ const mocks = vi.hoisted(() => ({
   readVibeMemoryByTokenWindow: vi.fn(),
   runDistillationCompletion: vi.fn(),
   resolveDistillationModel: vi.fn(() => "test-model"),
+  resolveRouteModelForProvider: vi.fn(
+    (params: { routeModel?: string; localLlmModel?: string }) =>
+      params.localLlmModel ?? params.routeModel ?? "test-model",
+  ),
   ensureRuntimeSettingsLoaded: vi.fn(async () => {}),
   resolveFindCandidateRoute: vi.fn(
     (): RuntimeRouteMock => ({
@@ -44,6 +48,7 @@ vi.mock("../src/modules/memoryReader/reader.service.js", () => ({
 vi.mock("../src/modules/distillation/distillation-runtime.service.js", () => ({
   runDistillationCompletion: mocks.runDistillationCompletion,
   resolveDistillationModel: mocks.resolveDistillationModel,
+  resolveRouteModelForProvider: mocks.resolveRouteModelForProvider,
 }));
 
 vi.mock("../src/modules/findCandidate/repository.js", () => ({

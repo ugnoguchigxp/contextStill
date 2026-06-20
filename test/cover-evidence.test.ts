@@ -18,6 +18,10 @@ const mocks = vi.hoisted(() => ({
   saveCoverEvidenceResult: vi.fn(),
   coverEvidenceResultFromRow: vi.fn(),
   resolveDistillationModel: vi.fn(() => "test-model"),
+  resolveRouteModelForProvider: vi.fn(
+    (params: { routeModel?: string; localLlmModel?: string }) =>
+      params.localLlmModel ?? params.routeModel ?? "test-model",
+  ),
   runDistillationCompletion: vi.fn(),
   executeDistillationToolCall: vi.fn(),
 }));
@@ -68,6 +72,7 @@ vi.mock("../src/modules/coverEvidence/repository.js", () => ({
 
 vi.mock("../src/modules/distillation/distillation-runtime.service.js", () => ({
   resolveDistillationModel: mocks.resolveDistillationModel,
+  resolveRouteModelForProvider: mocks.resolveRouteModelForProvider,
   runDistillationCompletion: mocks.runDistillationCompletion,
   distillationToolEventsFromError: (error: unknown) =>
     error && typeof error === "object" && "distillationToolEvents" in error
@@ -753,6 +758,19 @@ describe("runCoverEvidence", () => {
         }),
       ]),
     );
+  });
+
+  test("uses resolved route model for all covering LLM calls", async () => {
+    mocks.resolveRouteModelForProvider.mockReturnValue("qwen-route-target");
+
+    await runCoverEvidence({ id: "find-1" });
+
+    expect(mocks.runDistillationCompletion).toHaveBeenCalled();
+    expect(
+      mocks.runDistillationCompletion.mock.calls.every(
+        (call) => call[0]?.model === "qwen-route-target",
+      ),
+    ).toBe(true);
   });
 
   test("disables fallback only when single-provider mode is requested", async () => {

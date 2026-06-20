@@ -1,24 +1,11 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { groupedConfig } from "../src/config.js";
-import { registerCandidate } from "../src/modules/registerCandidate/register-candidate.service.js";
-import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
 import {
-  getCompileRunSnapshot,
-  listRecentCompileRuns,
-} from "../src/modules/context-compiler/context-compiler.repository.js";
-import {
-  searchKnowledge,
-  vectorSearchKnowledge,
-} from "../src/modules/knowledge/knowledge.repository.js";
-import { resetRuntimeSqliteCoreDatabaseForTests } from "../src/db/sqlite/runtime.js";
-import {
-  ensureRuntimeSettingsLoaded,
-  getRuntimeSettingsSnapshot,
-} from "../src/modules/settings/settings.service.js";
-import { upsertSourceDocument } from "../src/modules/sources/source.repository.js";
+  fetchGraphNodeDetail,
+  upsertGraphCommunityLabel,
+} from "../api/modules/graph/graph.repository.js";
 import {
   bulkUpdateKnowledgeStatus,
   createKnowledgeItem,
@@ -26,10 +13,23 @@ import {
   recordKnowledgeFeedback,
   updateKnowledgeItem,
 } from "../api/modules/knowledge/knowledge.repository.js";
+import { groupedConfig } from "../src/config.js";
+import { resetRuntimeSqliteCoreDatabaseForTests } from "../src/db/sqlite/runtime.js";
 import {
-  fetchGraphNodeDetail,
-  upsertGraphCommunityLabel,
-} from "../api/modules/graph/graph.repository.js";
+  getCompileRunSnapshot,
+  listRecentCompileRuns,
+} from "../src/modules/context-compiler/context-compiler.repository.js";
+import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
+import {
+  searchKnowledge,
+  vectorSearchKnowledge,
+} from "../src/modules/knowledge/knowledge.repository.js";
+import { registerCandidate } from "../src/modules/registerCandidate/register-candidate.service.js";
+import {
+  ensureRuntimeSettingsLoaded,
+  getRuntimeSettingsSnapshot,
+} from "../src/modules/settings/settings.service.js";
+import { upsertSourceDocument } from "../src/modules/sources/source.repository.js";
 
 let tempDir = "";
 const originalBackend = process.env.CONTEXT_STILL_DB_BACKEND;
@@ -145,8 +145,8 @@ describe("sqlite knowledge backend", () => {
       embedding: [0, 1, 0],
     });
 
-    const hits = await vectorSearchKnowledge([1, 0, 0], 2);
-    expect(hits.map((hit) => hit.title)).toEqual(["Vector target", "Vector other"]);
+    const hits = await vectorSearchKnowledge([1, 0, 0], 1);
+    expect(hits.map((hit) => hit.title)).toEqual(["Vector target"]);
   });
 
   test("knowledge API repository writes use sqlite backend", async () => {

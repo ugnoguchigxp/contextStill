@@ -17,7 +17,7 @@ export const landscapeReviewCandidateLinkStatusSchema = z.enum([
 export const landscapeReviewCandidateCreateInputSchema = z.object({
   ids: z.array(z.string().trim().min(1)).min(1).optional(),
   status: landscapeReviewCandidateSelectionStatusSchema.default("pending"),
-  limit: z.coerce.number().int().min(1).max(200).default(20),
+  limit: z.coerce.number().int().min(1).max(500).default(20),
   dryRun: z.boolean().default(false),
 });
 

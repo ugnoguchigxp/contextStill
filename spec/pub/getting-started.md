@@ -91,4 +91,4 @@ bun run queue:merge-activation-finalize:once
 4. Use **Queue** to inspect distillation target state.
 5. Use **Knowledge** to review draft knowledge and promote useful items.
 6. Use **Decision** to inspect Knowledge-backed autonomous decisions, evidence, coverage traces, and Good/Bad feedback.
-7. Use MCP `context_compile` for task context, `context_decision` before a blocking user question or PR decision, and `compile_eval` after the task.
+7. Use MCP `context_compile` for task context, `context_decision` as a pre-question gate before a blocking user question or PR decision, and `compile_eval` after the task. Stop the target action when `context_decision` returns `reject`.

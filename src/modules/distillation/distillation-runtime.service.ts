@@ -17,6 +17,7 @@ import {
   type DistillationProviderSetting,
   defaultModelForProvider,
   isProviderConfigured,
+  resolveDistillationModel,
   resolveDistillationProviderOrder,
 } from "./llm-resolver.js";
 import { createAzureOpenAiChatClient } from "./providers/azure-openai.js";
@@ -74,6 +75,19 @@ type MessageSizeSummary = {
   toolChars: number;
   maxMessageChars: number;
 };
+
+export function resolveRouteModelForProvider(params: {
+  provider: DistillationProviderSetting;
+  routeModel?: string | null;
+  localLlmModel?: string | null;
+}): string {
+  const routeModel = params.routeModel?.trim() ?? "";
+  const localLlmModel = params.localLlmModel?.trim() ?? "";
+  if (params.provider === "local-llm") {
+    return localLlmModel || routeModel || resolveDistillationModel(params.provider);
+  }
+  return routeModel || resolveDistillationModel(params.provider);
+}
 
 export function distillationToolEventsFromError(error: unknown): DistillationToolResult[] {
   if (!error || typeof error !== "object") return [];
@@ -421,10 +435,10 @@ export function createDefaultChatClient(
 
       const requestModel = request.model.trim();
       const model =
-        requestModel && provider === requestModelOwner
-          ? requestModel
-          : provider === "local-llm" && localLlmModel?.trim()
-            ? localLlmModel.trim()
+        provider === "local-llm" && localLlmModel?.trim()
+          ? localLlmModel.trim()
+          : requestModel && provider === requestModelOwner
+            ? requestModel
             : defaultModelForProvider(provider);
       const recordedModel =
         provider === "local-llm" ? resolveLocalLlmModelConfig(model).model : model;

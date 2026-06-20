@@ -9,7 +9,7 @@ sources + web + agent logs + candidates
   -> staged distillation
   -> draft/active knowledge
   -> task-specific context_compile
-  -> context_decision at blocking judgment points
+  -> context_decision as the pre-question gate at blocking judgment points
   -> compile_eval + decision/usage feedback
   -> new candidates
 ```

@@ -1,4 +1,5 @@
 import { describe, expect, test } from "vitest";
+import { contextDecisionTool } from "../src/mcp/tools/context-decision.tool.js";
 import { scoreContextDecision } from "../src/modules/context-decision/context-decision.scoring.js";
 import type { KnowledgeSearchResult } from "../src/modules/knowledge/knowledge.repository.js";
 import { contextDecisionInputSchema } from "../src/shared/schemas/context-decision.schema.js";
@@ -35,6 +36,11 @@ function knowledge(): KnowledgeSearchResult {
 }
 
 describe("NightWorkers context_decision contract", () => {
+  test("tool description frames decision as a pre-question gate with reject stop semantics", () => {
+    expect(contextDecisionTool.description).toContain("pre-question gate");
+    expect(contextDecisionTool.description).toContain("Treat reject as a stop condition");
+  });
+
   test("blocker before user question maps through generic MCP metadata", () => {
     const parsed = contextDecisionInputSchema.parse({
       decisionPoint: "A blocker message would normally ask the user.",

@@ -1052,6 +1052,16 @@ function RunDetailPane({
               deprecatePending={deprecatePending}
               deprecatedIds={deprecatedIds}
             />
+            <PackSection
+              title="Guardrails"
+              items={detail.pack.guardrails ?? []}
+              signals={knowledgeSignals}
+              onFeedback={applyKnowledgeFeedback}
+              onRequestDeprecate={setDeprecateTarget}
+              feedbackPending={feedbackPending}
+              deprecatePending={deprecatePending}
+              deprecatedIds={deprecatedIds}
+            />
             {feedbackMessage ? (
               <div style={{ padding: "0 8px 16px" }}>
                 <p className="compile-state-text">{feedbackMessage}</p>

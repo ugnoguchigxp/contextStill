@@ -180,16 +180,18 @@ describe("Knowledge Service", () => {
     expect(result.items[0].id).toBe("c1");
   });
 
-  test("registerKnowledgeFromMarkdown handles embedding failure", async () => {
+  test("registerKnowledgeFromMarkdown rejects embedding failure before storage", async () => {
     vi.mocked(embedding.embedOne).mockRejectedValue(new Error("Failed"));
     vi.mocked(repo.upsertKnowledgeFromSource).mockResolvedValue("no-embed-id");
 
-    const id = await registerKnowledgeFromMarkdown({
-      sourceUri: "test.md",
-      title: "Title",
-      body: "Body",
-    });
-    expect(id).toBe("no-embed-id");
+    await expect(
+      registerKnowledgeFromMarkdown({
+        sourceUri: "test.md",
+        title: "Title",
+        body: "Body",
+      }),
+    ).rejects.toThrow("Failed");
+    expect(repo.upsertKnowledgeFromSource).not.toHaveBeenCalled();
   });
 
   test("handles search failures gracefully", async () => {

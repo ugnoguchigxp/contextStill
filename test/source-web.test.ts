@@ -34,9 +34,11 @@ vi.mock("../src/modules/distillation/distillation-tools.service.js", () => ({
 // distillation runtime モック
 const mockRunDistillationCompletion = vi.fn();
 const mockResolveDistillationModel = vi.fn();
+const mockResolveRouteModelForProvider = vi.fn();
 vi.mock("../src/modules/distillation/distillation-runtime.service.js", () => ({
   runDistillationCompletion: (...args: any[]) => mockRunDistillationCompletion(...args),
   resolveDistillationModel: (...args: any[]) => mockResolveDistillationModel(...args),
+  resolveRouteModelForProvider: (...args: any[]) => mockResolveRouteModelForProvider(...args),
 }));
 
 // settings service モック
@@ -72,6 +74,10 @@ describe("source-web", () => {
       localLlmModel: undefined,
     });
     mockResolveDistillationModel.mockReturnValue("gpt-4");
+    mockResolveRouteModelForProvider.mockImplementation(
+      (params: { routeModel?: string; localLlmModel?: string }) =>
+        params.localLlmModel ?? params.routeModel ?? "gpt-4",
+    );
   });
 
   describe("source-queue.service", () => {

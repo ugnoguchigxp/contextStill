@@ -874,11 +874,7 @@ export async function registerKnowledgeFromMarkdown(params: {
 }): Promise<string> {
   let embedding = params.embedding;
   if (!embedding) {
-    try {
-      embedding = await embedOne(`${params.title}\n${params.body}`, "passage");
-    } catch {
-      embedding = undefined;
-    }
+    embedding = await embedOne(`${params.title}\n${params.body}`, "passage");
   }
   return upsertKnowledgeFromSource({
     sourceUri: params.sourceUri,

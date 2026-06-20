@@ -7,6 +7,7 @@
 | Document | 目的 |
 |---|---|
 | [Episodic Memory Context View Concept](episodic-memory-context-view-concept.md) | EpisodeCard、Ref、Audit log、hybrid retrieval を分離し、`context_compile` と `context_decision` で Episode 記憶を使うための concept |
+| [Decision Signal Integration 実装計画](decision-signal-integration-implementation-plan.md) | `context_decision` を 90 点以上の品質へ引き上げるため、compile、graph、community、landscape、attractor 指標を統合する実装計画 |
 | [Local-First SQLite And Tauri Concept](local-first-sqlite-tauri-concept.md) | SQLite/sqlite-vec、SQLite-managed queues、Knowledge import/export、Tauri control plane を default local-first baseline にする concept |
 | [Portable Knowledge Import/Export Draft Plan](portable-knowledge-import-export-plan.md) | portable Knowledge asset export/import の draft plan。実装前に Slice 0 で SQLite layout audit と整合させる |
 | [SQLite Database Layout Audit](sqlite-database-layout-audit.md) | local-first Tauri baseline 向けに、table responsibilities と proposed SQLite file layout を整理する audit |

@@ -9,6 +9,11 @@ import {
   sourceFragments,
 } from "../../db/schema.js";
 
+async function getSqliteCoreDatabase() {
+  const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
+  return getRuntimeSqliteCoreDatabase();
+}
+
 export type DeadZoneKnowledgeRow = {
   id: string;
   title: string;
@@ -68,9 +73,27 @@ function asInt(value: unknown, fallback = 0): number {
 }
 
 function asRecord(value: unknown): Record<string, unknown> {
+  if (typeof value === "string") {
+    try {
+      return asRecord(JSON.parse(value));
+    } catch {
+      return {};
+    }
+  }
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function asDate(value: unknown): Date | null {
+  if (value instanceof Date) return value;
+  if (typeof value !== "string" || !value.trim()) return null;
+  const parsed = new Date(value);
+  return Number.isNaN(parsed.getTime()) ? null : parsed;
+}
+
+function placeholders(values: unknown[]): string {
+  return values.map(() => "?").join(", ");
 }
 
 function normalizeType(value: string): "rule" | "procedure" {
@@ -123,10 +146,78 @@ function mapKnowledgeRow(row: {
 export async function listDeadZoneKnowledgeRows(
   knowledgeIds: string[],
 ): Promise<DeadZoneKnowledgeRow[]> {
-  if (isSqliteBackend()) return [];
-
   const ids = [...new Set(knowledgeIds)].filter(Boolean);
   if (ids.length === 0) return [];
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const rows = sqlite.db
+      .query<
+        {
+          id: string;
+          title: string;
+          body: string;
+          type: string;
+          status: string;
+          scope: string;
+          applies_to: string;
+          metadata: string;
+          confidence: number;
+          importance: number;
+          dynamic_score: number;
+          compile_select_count: number;
+          last_compiled_at: string | null;
+          last_verified_at: string | null;
+          updated_at: string;
+          embedded: number;
+        },
+        string[]
+      >(
+        `
+          select
+            k.id,
+            k.title,
+            k.body,
+            k.type,
+            k.status,
+            k.scope,
+            k.applies_to,
+            k.metadata,
+            k.confidence,
+            k.importance,
+            k.dynamic_score,
+            k.compile_select_count,
+            k.last_compiled_at,
+            k.last_verified_at,
+            k.updated_at,
+            case when vf.knowledge_id is null then 0 else 1 end as embedded
+          from knowledge_items k
+          left join knowledge_items_vec_fallback vf on vf.knowledge_id = k.id
+          where k.id in (${placeholders(ids)})
+        `,
+      )
+      .all(...ids);
+
+    return rows.map((row) =>
+      mapKnowledgeRow({
+        id: row.id,
+        title: row.title,
+        body: row.body,
+        type: row.type,
+        status: row.status,
+        scope: row.scope,
+        appliesTo: row.applies_to,
+        metadata: row.metadata,
+        confidence: row.confidence,
+        importance: row.importance,
+        dynamicScore: row.dynamic_score,
+        compileSelectCount: row.compile_select_count,
+        lastCompiledAt: asDate(row.last_compiled_at),
+        lastVerifiedAt: asDate(row.last_verified_at),
+        updatedAt: asDate(row.updated_at) ?? new Date(0),
+        embedded: row.embedded > 0,
+      }),
+    );
+  }
 
   const rows = await db
     .select({
@@ -156,10 +247,44 @@ export async function listDeadZoneKnowledgeRows(
 export async function listDeadZoneKnowledgeEvidenceRows(
   knowledgeIds: string[],
 ): Promise<DeadZoneKnowledgeEvidenceRow[]> {
-  if (isSqliteBackend()) return [];
-
   const ids = [...new Set(knowledgeIds)].filter(Boolean);
   if (ids.length === 0) return [];
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    const sourceRows = sqlite.db
+      .query<{ knowledge_id: string; source_ref_count: number }, string[]>(
+        `
+          select ksl.knowledge_id, count(distinct sf.source_id) as source_ref_count
+          from knowledge_source_links ksl
+          inner join source_fragments sf on sf.id = ksl.source_fragment_id
+          where ksl.knowledge_id in (${placeholders(ids)})
+          group by ksl.knowledge_id
+        `,
+      )
+      .all(...ids);
+    const originRows = sqlite.db
+      .query<{ knowledge_id: string; origin_ref_count: number }, string[]>(
+        `
+          select knowledge_id, count(*) as origin_ref_count
+          from knowledge_origin_links
+          where knowledge_id in (${placeholders(ids)})
+          group by knowledge_id
+        `,
+      )
+      .all(...ids);
+
+    const byId = new Map<string, DeadZoneKnowledgeEvidenceRow>();
+    for (const id of ids) byId.set(id, { knowledgeId: id, sourceRefCount: 0, originRefCount: 0 });
+    for (const row of sourceRows) {
+      const item = byId.get(row.knowledge_id);
+      if (item) item.sourceRefCount = asInt(row.source_ref_count, 0);
+    }
+    for (const row of originRows) {
+      const item = byId.get(row.knowledge_id);
+      if (item) item.originRefCount = asInt(row.origin_ref_count, 0);
+    }
+    return [...byId.values()];
+  }
 
   const [sourceRows, originRows] = await Promise.all([
     db
@@ -324,10 +449,24 @@ export async function listSimilarKnowledgeRows(params: {
 export async function listDeadZoneReviewItemLinks(
   knowledgeIds: string[],
 ): Promise<DeadZoneReviewItemLinkRow[]> {
-  if (isSqliteBackend()) return [];
-
   const ids = [...new Set(knowledgeIds)].filter(Boolean);
   if (ids.length === 0) return [];
+  if (isSqliteBackend()) {
+    const sqlite = await getSqliteCoreDatabase();
+    return sqlite.db
+      .query<{ knowledge_id: string; review_item_id: string }, string[]>(
+        `
+          select knowledge_id, id as review_item_id
+          from landscape_review_items
+          where knowledge_id in (${placeholders(ids)})
+            and reason in ('dead_zone_reachability_risk', 'dead_zone_stale', 'semantic_merge')
+            and status in ('pending', 'reviewing')
+            and knowledge_id is not null
+        `,
+      )
+      .all(...ids)
+      .map((row) => ({ knowledgeId: row.knowledge_id, reviewItemId: row.review_item_id }));
+  }
   const rows = await db
     .select({
       knowledgeId: landscapeReviewItems.knowledgeId,

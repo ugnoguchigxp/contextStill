@@ -48,6 +48,7 @@ export type CompilePack = {
   minimalTasks: string[];
   rules: CompilePackItem[];
   procedures: CompilePackItem[];
+  guardrails?: CompilePackItem[];
   warnings: string[];
   sourceRefs: string[];
   diagnostics: {

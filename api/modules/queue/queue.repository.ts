@@ -5,7 +5,7 @@ import type { SqliteCoreDatabase } from "../../../src/db/sqlite/index.js";
 import { resolveCoverEvidenceRouteByPolicy } from "../../../src/modules/coverEvidence/provider-policy.js";
 import {
   type DistillationProviderSetting,
-  resolveDistillationModel,
+  resolveRouteModelForProvider,
 } from "../../../src/modules/distillation/distillation-runtime.service.js";
 import { resolveLocalLlmModelConfig } from "../../../src/modules/llm/providers/local-llm-config.js";
 import {
@@ -211,13 +211,18 @@ function normalizeProviderPolicy(value: string | null): "default" | "cloud_api" 
   return value === "cloud_api" ? "cloud_api" : "default";
 }
 
-function resolveRouteModel(provider: string, configuredModel: string | undefined): string | null {
-  const model = configuredModel?.trim();
-  if (model) {
-    return provider === "local-llm" ? resolveLocalLlmModelConfig(model).model : model;
-  }
+function resolveRouteModel(
+  provider: string,
+  configuredModel: string | undefined,
+  localLlmModel?: string | undefined,
+): string | null {
   try {
-    return resolveDistillationModel(provider as DistillationProviderSetting);
+    const model = resolveRouteModelForProvider({
+      provider: provider as DistillationProviderSetting,
+      routeModel: configuredModel,
+      localLlmModel,
+    });
+    return provider === "local-llm" ? resolveLocalLlmModelConfig(model).model : model;
   } catch {
     return null;
   }
@@ -235,7 +240,7 @@ function resolveQueueRuntimeModel(
     const sourceKind = row.source_kind === "vibe_memory" ? "vibe_memory" : "wiki_file";
     const route = resolveFindCandidateRoute(sourceKind);
     const provider = route.provider;
-    return { provider, model: resolveRouteModel(provider, route.model) };
+    return { provider, model: resolveRouteModel(provider, route.model, route.localLlmModel) };
   }
 
   if (queueName === "coveringEvidence") {
@@ -248,7 +253,7 @@ function resolveQueueRuntimeModel(
         routeName: "externalEvidence",
       });
       const provider = route.provider;
-      return { provider, model: resolveRouteModel(provider, route.model) };
+      return { provider, model: resolveRouteModel(provider, route.model, route.localLlmModel) };
     } catch {
       const provider = row.provider ?? null;
       return { provider, model: provider ? resolveRouteModel(provider, undefined) : null };
@@ -258,13 +263,19 @@ function resolveQueueRuntimeModel(
   if (queueName === "deadZoneMergeReview") {
     const route = resolveDeadZoneMergeReviewRoute();
     const provider = row.provider?.trim() || route.provider;
-    return { provider, model: row.model?.trim() || resolveRouteModel(provider, route.model) };
+    return {
+      provider,
+      model: row.model?.trim() || resolveRouteModel(provider, route.model, route.localLlmModel),
+    };
   }
 
   const settings = getRuntimeSettingsSnapshot();
   const finalizeRoute = settings.taskRouting.finalizeDistille;
   const provider = finalizeRoute.provider;
-  return { provider, model: resolveRouteModel(provider, finalizeRoute.model) };
+  return {
+    provider,
+    model: resolveRouteModel(provider, finalizeRoute.model, finalizeRoute.localLlmModel),
+  };
 }
 
 function buildDynamicOrderBy(

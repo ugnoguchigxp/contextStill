@@ -7,7 +7,7 @@ import {
   type DistillationProviderSetting,
   type DistillationRuntimeToolDefinition,
   type DistillationToolExecutor,
-  resolveDistillationModel,
+  resolveRouteModelForProvider,
   runDistillationCompletion,
 } from "../distillation/distillation-runtime.service.js";
 import type { DistillationToolCall } from "../distillation/distillation-tools.service.js";
@@ -265,10 +265,14 @@ function routeMayUseCodex(params: {
 function modelForFindCandidateRoute(params: {
   routeProvider: DistillationProviderSetting;
   routeModel: string;
+  routeLocalLlmModel?: string;
   provider: DistillationProviderSetting;
 }): string {
-  const routeModel = params.routeProvider === params.provider ? params.routeModel.trim() : "";
-  return routeModel || resolveDistillationModel(params.provider);
+  return resolveRouteModelForProvider({
+    provider: params.provider,
+    routeModel: params.routeProvider === params.provider ? params.routeModel : undefined,
+    localLlmModel: params.routeProvider === params.provider ? params.routeLocalLlmModel : undefined,
+  });
 }
 
 function buildInitialUserMessages(targetKind: FindCandidateTargetKind): DistillationMessage[] {
@@ -362,6 +366,7 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
   const model = modelForFindCandidateRoute({
     routeProvider: defaultRoute.provider,
     routeModel: defaultRoute.model,
+    routeLocalLlmModel: defaultRoute.localLlmModel,
     provider,
   });
   const toolDefinition = buildToolDefinitionForTarget(target.targetKind);

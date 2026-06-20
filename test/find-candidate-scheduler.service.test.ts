@@ -44,6 +44,11 @@ vi.mock("../src/modules/distillation/llm-resolver.js", () => ({
   resolveDistillationModel: (...args: any[]) => mockResolveDistillationModel(...args),
 }));
 
+const mockResolveRouteModelForProvider = vi.fn();
+vi.mock("../src/modules/distillation/distillation-runtime.service.js", () => ({
+  resolveRouteModelForProvider: (...args: any[]) => mockResolveRouteModelForProvider(...args),
+}));
+
 // provider pressure モック
 const mockJitterMs = vi.fn();
 const mockReadProviderPressureState = vi.fn();
@@ -70,6 +75,10 @@ describe("find-candidate-scheduler.service", () => {
     mockResolveFindCandidateRoute.mockReturnValue({ provider: "openai" });
     mockResolveProviderForDistillation.mockReturnValue("openai");
     mockResolveDistillationModel.mockReturnValue("gpt-4");
+    mockResolveRouteModelForProvider.mockImplementation(
+      (params: { routeModel?: string; localLlmModel?: string }) =>
+        params.localLlmModel ?? params.routeModel ?? "gpt-4",
+    );
     mockJitterMs.mockReturnValue(50);
     groupedConfig.distillation.findCandidateBackgroundEnabled = true;
     groupedConfig.distillation.findCandidateNoWait = false;

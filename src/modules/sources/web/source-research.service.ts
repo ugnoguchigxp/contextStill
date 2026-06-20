@@ -3,7 +3,7 @@ import path from "node:path";
 import { groupedConfig } from "../../../config.js";
 import {
   type DistillationProviderSetting,
-  resolveDistillationModel,
+  resolveRouteModelForProvider,
   runDistillationCompletion,
 } from "../../distillation/distillation-runtime.service.js";
 import {
@@ -113,7 +113,11 @@ export async function researchWebSourceToMarkdown(params: {
   const fallbackOrder = params.provider ? [] : configuredRoute.fallback;
   const azureDeploymentSlots = params.provider ? undefined : configuredRoute.azureDeploymentSlots;
   const localLlmModel = params.provider ? undefined : configuredRoute.localLlmModel;
-  const model = resolveDistillationModel(provider);
+  const model = resolveRouteModelForProvider({
+    provider,
+    routeModel: params.provider ? undefined : configuredRoute.model,
+    localLlmModel,
+  });
 
   const completion = await runDistillationCompletion(
     {

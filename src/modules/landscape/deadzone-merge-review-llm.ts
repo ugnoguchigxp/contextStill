@@ -3,7 +3,10 @@ import {
   type DeadZoneMergeReviewResult,
   deadZoneMergeReviewResultSchema,
 } from "../../shared/schemas/landscape-deadzone-review.schema.js";
-import { runDistillationCompletion } from "../distillation/distillation-runtime.service.js";
+import {
+  resolveRouteModelForProvider,
+  runDistillationCompletion,
+} from "../distillation/distillation-runtime.service.js";
 import type { DistillationMessage } from "../distillation/types.js";
 import { resolveDeadZoneMergeReviewRoute } from "../settings/settings.service.js";
 
@@ -60,7 +63,12 @@ export async function runDeadZoneMergeReviewLlm(params: {
   signal?: AbortSignal;
 }): Promise<DeadZoneMergeReviewResult> {
   const route = resolveDeadZoneMergeReviewRoute();
-  const model = route.model?.trim() || groupedConfig.localLlm.model;
+  const providerSetting = route.provider === "auto" ? "local-llm" : route.provider;
+  const model = resolveRouteModelForProvider({
+    provider: providerSetting,
+    routeModel: route.model,
+    localLlmModel: route.localLlmModel,
+  });
   const messages: DistillationMessage[] = [
     {
       role: "system",
@@ -88,7 +96,7 @@ export async function runDeadZoneMergeReviewLlm(params: {
   const completion = await runDistillationCompletion(
     { model, messages, maxTokens: 4000 },
     {
-      providerSetting: route.provider === "auto" ? "local-llm" : route.provider,
+      providerSetting,
       fallbackOrder: route.fallback,
       azureDeploymentSlots: route.azureDeploymentSlots,
       localLlmModel: route.localLlmModel,

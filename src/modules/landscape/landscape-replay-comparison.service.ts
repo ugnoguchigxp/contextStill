@@ -33,7 +33,7 @@ import { runWithLandscapeSnapshotCache } from "./landscape-snapshot-cache.servic
 
 const HIGH_CHURN_REPLACEMENT_RATE = 0.5;
 const LOW_OVERLAP_RATE = 0.6;
-const MAX_REFINE_CANDIDATES = 50;
+const MAX_REFINE_CANDIDATES = 300;
 
 function buildRecompilePlan(params: {
   replayRunCount: number;

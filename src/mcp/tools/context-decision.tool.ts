@@ -5,7 +5,7 @@ import type { ToolEntry } from "../registry.js";
 export const contextDecisionTool: ToolEntry = {
   name: "context_decision",
   description:
-    "Use before asking the user when blocked, before PR creation, after failed tests/review, or when unfinished Todo/status remains. Returns a decision, not options. Escalate only when autonomous progress is not possible.",
+    "Use as a pre-question gate before asking the user when blocked, before PR creation, after failed tests/review, or when unfinished Todo/status remains. Returns a decision, not options. Treat reject as a stop condition. Escalate only when autonomous progress is not possible.",
   inputSchema: {
     type: "object",
     properties: {

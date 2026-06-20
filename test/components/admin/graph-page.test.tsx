@@ -382,7 +382,7 @@ describe("GraphPage", () => {
     expect(await screen.findByText(/enabled ttl=300s/i)).toBeInTheDocument();
     expect(fetchLandscapeReplayComparison).toHaveBeenCalledWith({
       windowDays: 30,
-      limit: 25,
+      limit: 300,
       runStatus: "all",
       currentLimit: 12,
       includeRuns: true,
@@ -393,7 +393,7 @@ describe("GraphPage", () => {
       reason: "all",
       proposedAction: "all",
       priorityMin: 0,
-      limit: 200,
+      limit: 300,
     });
     expect(await screen.findByText("Communities")).toBeInTheDocument();
     expect(screen.getByText("Largest")).toBeInTheDocument();
@@ -481,7 +481,7 @@ describe("GraphPage", () => {
     const [candidateInput] = vi.mocked(createLandscapeReviewCandidates).mock.calls[0] ?? [];
     expect(candidateInput).toEqual({
       status: "pending",
-      limit: 20,
+      limit: 300,
       dryRun: false,
     });
 
@@ -492,11 +492,14 @@ describe("GraphPage", () => {
     await waitFor(() => {
       expect(materializeLandscapeReviewItems).toHaveBeenCalled();
     });
-    const [materializeInput] = vi.mocked(materializeLandscapeReviewItems).mock.calls[0] ?? [];
+    const materializeInput = vi
+      .mocked(materializeLandscapeReviewItems)
+      .mock.calls.map(([input]) => input)
+      .find((input) => input?.dryRun === false);
     expect(materializeInput).toEqual({
       dryRun: false,
       windowDays: 30,
-      limit: 25,
+      limit: 300,
       runStatus: "all",
       currentLimit: 12,
       landscapeLimit: 1000,
@@ -513,7 +516,7 @@ describe("GraphPage", () => {
         "promotion_gate",
         "contradiction_detection",
       ],
-      materializeLimit: 50,
+      materializeLimit: 300,
     });
 
     expect(await screen.findByText("Draft linked")).toBeInTheDocument();
@@ -564,5 +567,109 @@ describe("GraphPage", () => {
         status: "dismissed",
       });
     });
+  });
+
+  it("shows live landscape review candidates when no persisted items exist", async () => {
+    vi.mocked(fetchGraphSnapshot).mockResolvedValue({
+      ...mockGraphData,
+      nodes: [
+        {
+          id: "knowledge:n1",
+          label: "Node 1",
+          kind: "knowledge",
+          group: "rule",
+          weight: 1,
+          status: "active",
+          embedded: true,
+          communityId: "community:1",
+          communityKey: "a".repeat(64),
+          communityLabel: "Core Reliability",
+          communityRank: 1,
+          communitySize: 2,
+        },
+      ],
+      communities: [
+        {
+          communityId: "community:1",
+          communityKey: "a".repeat(64),
+          communityLabel: "Core Reliability",
+          communityRank: 1,
+          size: 2,
+          typeCounts: { rule: 1, procedure: 1 },
+          statusCounts: { active: 1, draft: 1 },
+          embeddedCount: 1,
+          compileSelectCount: 0,
+          staleNodeCount: 0,
+          sourceRefCount: 1,
+          sourceRefDensity: 0.5,
+          health: { dead: false, stale: false, thinEvidence: false },
+        },
+      ],
+    });
+    vi.mocked(fetchLandscapeReviewItems).mockResolvedValue({ count: 0, items: [] });
+    vi.mocked(materializeLandscapeReviewItems).mockImplementation(async (input) => {
+      if (input.dryRun) {
+        return {
+          dryRun: true,
+          generatedAt: "2026-05-24T00:00:00.000Z",
+          candidateCount: 1,
+          insertedCount: 0,
+          existingCount: 0,
+          skippedCount: 0,
+          items: [],
+          candidates: [
+            {
+              source: "landscape_snapshot",
+              reason: "dead_zone_reachability_risk",
+              proposedAction: "repair_reachability",
+              priority: 70,
+              confidence: "high",
+              idempotencyKey: "landscape_snapshot:dead_zone_reachability_risk:community-42",
+              knowledgeId: null,
+              runId: null,
+              triggerEventId: null,
+              communityKey: "community-42",
+              communityLabel: "community:42",
+              suggestedAppliesTo: {},
+              evidence: ["active knowledge is not selected"],
+              payload: {},
+              note: null,
+            },
+          ],
+        };
+      }
+      return {
+        dryRun: false,
+        generatedAt: "2026-05-24T00:00:00.000Z",
+        candidateCount: 1,
+        insertedCount: 1,
+        existingCount: 0,
+        skippedCount: 0,
+        items: [],
+        candidates: [],
+      };
+    });
+
+    render(
+      <QueryClientProvider client={queryClient}>
+        <GraphPage />
+      </QueryClientProvider>,
+    );
+
+    await screen.findByText("Node 1");
+    const selects = screen.getAllByRole("combobox");
+    fireEvent.change(selects[1], { target: { value: "community" } });
+    const circles = await screen.findAllByRole("button", { name: /Select/i });
+    fireEvent.click(circles[0]);
+
+    await screen.findByText("Replay Review");
+    await waitFor(() => {
+      expect(materializeLandscapeReviewItems).toHaveBeenCalledWith(
+        expect.objectContaining({ dryRun: true }),
+      );
+    });
+    expect(await screen.findByText("Live preview")).toBeInTheDocument();
+    expect(await screen.findByText("Dead Zone Reachability")).toBeInTheDocument();
+    expect(await screen.findByText("community:42")).toBeInTheDocument();
   });
 });

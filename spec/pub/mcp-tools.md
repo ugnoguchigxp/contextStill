@@ -3,7 +3,7 @@
 context-still exposes a compact MCP surface for coding agents. The tools are designed around this repeatable workflow:
 
 ```text
-initial_instructions -> context_compile -> context_decision when a blocker-derived decision would stop progress -> work -> context_decision_feedback when the decision outcome is known -> compile_eval -> register_candidates
+initial_instructions -> context_compile -> context_decision as a pre-question gate when a blocker-derived decision would stop progress -> work or stop on reject -> context_decision_feedback when the decision outcome is known -> compile_eval -> register_candidates
 ```
 
 ## Tool Inventory
@@ -30,12 +30,13 @@ Deprecated hidden aliases remain for compatibility but are not listed:
 
 1. Call `initial_instructions` once when starting work in this project.
 2. Call `context_compile` with the actual task goal.
-3. Call `context_decision` before asking the user when a blocker-derived judgment is needed and autonomous progress might still be possible.
-4. Do the work and verify changes.
-5. Call `context_decision_feedback` after work based on a decision completes, including at pre-commit time when the outcome is known.
-6. Call `compile_eval` for the compile run used during the task.
-7. Call `register_candidates` for durable lessons discovered during the task.
-8. Call `doctor` if compile output is weak, stale, degraded, or failed.
+3. Call `context_decision` before asking the user when the next response would be a confirmation question and autonomous progress might still be possible.
+4. Do the work and verify changes, unless the decision is `reject`.
+5. If `context_decision` returns `reject`, stop the target action and report or wait for confirmation instead of continuing implementation, file changes, or PR creation.
+6. Call `context_decision_feedback` after work based on a decision completes, including at pre-commit time when the outcome is known.
+7. Call `compile_eval` for the compile run used during the task.
+8. Call `register_candidates` for durable lessons discovered during the task.
+9. Call `doctor` if compile output is weak, stale, degraded, or failed.
 
 ## Tool Contracts
 
@@ -116,7 +117,9 @@ Behavior:
 - Builds four Knowledge searches: support, counter-evidence, prior user preference, and risk/guardrail.
 - Persists the decision run, selected evidence, coverage traces, confidence trace, and metadata.
 - Returns one decision, not a menu of options.
+- Use it as a pre-question gate when the agent's next response would ask the user for confirmation but autonomous progress may still be possible.
 - Use it for decisions that would otherwise block progress, such as proceed vs revise, reject, rollback, discard, escalation, PR creation readiness, risky operations, or unfinished Todo/status handling.
+- Treat `reject` as a stop condition. Do not continue the rejected action; report the decision or wait for user confirmation instead.
 - In the current v1 implementation, `execute` is returned when Knowledge support clears the confidence threshold; otherwise it returns `escalate`.
 
 Output is compact and intended to stay under an 8k token response budget. It includes `decisionId`, decision, mandate, confidence, the LLM-written `agentMessage`, coverage summary, and feedback handle. Evidence bodies and source refs are not returned by the MCP tool; they remain persisted for audit and can be inspected from the Decision screen/detail API. The generated `agentMessage` may use short selected-Knowledge excerpts to explain the supporting prior tendency, best-practice rule, or procedure guidance.

@@ -410,23 +410,28 @@ export async function runFinalizeDistille(
     };
   }
 
-  let embedding: number[] | undefined;
-  let embeddingStatus: FinalizeDistilleResult["embeddingStatus"] = "stored";
+  let embedding: number[];
   try {
     throwIfAborted(input.signal);
     embedding = await embedOne(`${candidate.title}\n${candidate.body}`, "passage");
     throwIfAborted(input.signal);
   } catch (error) {
-    embeddingStatus = embeddingStatusFromError(error);
+    const embeddingStatus = embeddingStatusFromError(error);
     await recordAuditLogSafe({
       eventType: auditEventTypes.finalizeDistilleEmbeddingFailed,
       actor: "system",
       payload: {
         coverEvidenceResultId,
+        embeddingStatus,
         error: error instanceof Error ? error.message : String(error),
       },
     });
     throwIfAborted(input.signal);
+    throw new Error(
+      `finalizeDistille requires knowledge embedding before storage: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
   }
 
   throwIfAborted(input.signal);
@@ -471,7 +476,7 @@ export async function runFinalizeDistille(
     payload: {
       coverEvidenceResultId,
       knowledgeId,
-      embeddingStatus,
+      embeddingStatus: "stored",
       sourceReferenceCount,
       sourceLinkCount,
     },
@@ -488,7 +493,7 @@ export async function runFinalizeDistille(
     coverEvidenceResultId,
     knowledgeId,
     status: "stored",
-    embeddingStatus,
+    embeddingStatus: "stored",
     sourceReferenceCount,
     sourceLinkCount,
     reason: null,

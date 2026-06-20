@@ -24,8 +24,10 @@ vi.mock("../src/modules/settings/settings.service.js", () => ({
 
 // distillation runtime モック
 const mockRunDistillationCompletion = vi.fn();
+const mockResolveRouteModelForProvider = vi.fn();
 vi.mock("../src/modules/distillation/distillation-runtime.service.js", () => ({
   runDistillationCompletion: (...args: any[]) => mockRunDistillationCompletion(...args),
+  resolveRouteModelForProvider: (...args: any[]) => mockResolveRouteModelForProvider(...args),
 }));
 
 describe("deadzone-merge-review-llm", () => {
@@ -38,6 +40,10 @@ describe("deadzone-merge-review-llm", () => {
       azureDeploymentSlots: undefined,
       localLlmModel: undefined,
     });
+    mockResolveRouteModelForProvider.mockImplementation(
+      (params: { routeModel?: string; localLlmModel?: string }) =>
+        params.localLlmModel ?? params.routeModel ?? "local-model",
+    );
   });
 
   const dummyInputSnapshot = {

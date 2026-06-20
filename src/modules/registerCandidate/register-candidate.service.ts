@@ -14,6 +14,7 @@ import { registerCandidatesBulkInputSchema } from "../../shared/schemas/knowledg
 import { hasSkillLikeProcedureBody } from "../distillation/procedure-quality.js";
 import { resolveKnowledgeCandidatePriorityGroup } from "../distillationTarget/priority-group.js";
 import { DEFAULT_DISTILLATION_TARGET_VERSION } from "../distillationTarget/repository.js";
+import { embedOne } from "../embedding/embedding.service.js";
 import { parseStorageCandidatesFromLlmOutput } from "../findCandidate/parser.js";
 import type { CandidateKnowledgeType } from "../findCandidate/repository.js";
 import { upsertKnowledgeFromSource } from "../knowledge/knowledge.repository.js";
@@ -145,6 +146,7 @@ export async function registerCandidate(
   const sourceUri = `agent://candidate/${candidateId}`;
   const now = new Date();
   if (resolveDatabaseBackendConfig().kind === "sqlite") {
+    const embedding = await embedOne(`${normalized.title}\n${normalized.body}`, "passage");
     const knowledgeId = await upsertKnowledgeFromSource({
       sourceUri,
       type: normalized.type,
@@ -163,6 +165,7 @@ export async function registerCandidate(
         sqliteDirectRegistration: true,
         candidateId,
       },
+      embedding,
       appliesTo: {
         ...(parsed.appliesTo ?? {}),
         ...(parsed.general !== undefined ? { general: parsed.general } : {}),

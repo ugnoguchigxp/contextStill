@@ -62,6 +62,8 @@ describeDb("mcp contract", () => {
       type: "object",
       required: ["decisionPoint"],
     });
+    expect(contextDecisionTool.description).toContain("pre-question gate");
+    expect(contextDecisionTool.description).toContain("Treat reject as a stop condition");
     const properties = (contextDecisionTool.inputSchema as { properties?: Record<string, unknown> })
       .properties;
     expect(properties?.retrievalHints).toMatchObject({

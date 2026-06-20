@@ -4,7 +4,7 @@ import {
   type DistillationChatClient,
   type DistillationProviderSetting,
   type DistillationToolExecutor,
-  resolveDistillationModel,
+  resolveRouteModelForProvider,
 } from "../distillation/distillation-runtime.service.js";
 import type { DistillationProviderName } from "../distillation/llm-resolver.js";
 import { getFindCandidateResultById } from "../findCandidate/repository.js";
@@ -114,11 +114,16 @@ function resolveCoverEvidenceProviderRoute(params: {
   const routeFallback = [...params.route.fallback] as DistillationProviderName[];
   const fallbackOrder =
     fallbackMode === "single" ? [] : dedupeProviderFallbackOrder(routeFallback, provider);
+  const routeModelBelongsToProvider = params.route.provider === provider;
 
   return {
     provider,
     fallbackOrder,
-    model: resolveDistillationModel(provider),
+    model: resolveRouteModelForProvider({
+      provider,
+      routeModel: routeModelBelongsToProvider ? params.route.model : undefined,
+      localLlmModel: routeModelBelongsToProvider ? params.route.localLlmModel : undefined,
+    }),
     azureDeploymentSlots: params.route.azureDeploymentSlots
       ? [...params.route.azureDeploymentSlots]
       : undefined,

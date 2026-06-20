@@ -72,8 +72,22 @@ export function resolveCloudApiRuntimeRoute(
   if (!provider) {
     throw new CoverEvidenceProviderPolicyError({ routeName: options.routeName });
   }
+  const usesPrimaryRouteModel = provider === route.provider;
+  if (usesPrimaryRouteModel) {
+    return {
+      ...route,
+      provider,
+      fallback,
+    };
+  }
+  const {
+    model: _model,
+    localLlmModel: _localLlmModel,
+    azureDeploymentSlots: _slots,
+    ...rest
+  } = route;
   return {
-    ...route,
+    ...rest,
     provider,
     fallback,
   };

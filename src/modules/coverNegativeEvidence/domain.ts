@@ -10,8 +10,8 @@ import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.
 import type { CoverEvidenceResult } from "../coverEvidence/types.js";
 import {
   type DistillationChatClient,
-  resolveDistillationModel,
   createDefaultChatClient,
+  resolveRouteModelForProvider,
 } from "../distillation/distillation-runtime.service.js";
 import {
   ensureRuntimeSettingsLoaded,
@@ -43,14 +43,26 @@ export async function runCoverNegativeEvidence(params: {
     routeName: "mcpEvidence",
   });
   const provider = mcpEvidenceRuntimeRoute.provider;
-  const model = resolveDistillationModel(provider);
+  const model = resolveRouteModelForProvider({
+    provider,
+    routeModel: mcpEvidenceRuntimeRoute.model,
+    localLlmModel: mcpEvidenceRuntimeRoute.localLlmModel,
+  });
 
   const prompt = buildNegativeEvidencePrompt({
     title: row.title,
     content: row.content,
   });
 
-  const chat = params.chatClient ?? createDefaultChatClient(provider);
+  const chat =
+    params.chatClient ??
+    createDefaultChatClient(
+      provider,
+      "cover-negative-evidence",
+      mcpEvidenceRuntimeRoute.fallback,
+      mcpEvidenceRuntimeRoute.azureDeploymentSlots,
+      mcpEvidenceRuntimeRoute.localLlmModel,
+    );
   const response = await chat({
     messages: [
       { role: "system", content: "You are a professional software engineering assistant." },

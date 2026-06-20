@@ -20,6 +20,8 @@ import {
   type LandscapeContradictionOverlayItem,
   type LandscapeReplayComparisonRun,
   type LandscapeReviewItem,
+  type LandscapeReviewItemCandidate,
+  type LandscapeReviewItemSource,
   type LandscapeTrajectoryCandidate,
   createLandscapeReviewCandidates,
   fetchGraphNodeDetail,
@@ -67,6 +69,14 @@ const DETAIL_PANEL_GAP_PX = 16;
 const DETAIL_PANEL_DEFAULT_TOP_PX = 148;
 const MIN_GRAPH_SCALE = 0.1;
 const MAX_GRAPH_SCALE = 24;
+const reviewItemMaterializeSources: LandscapeReviewItemSource[] = [
+  "replay_compare",
+  "landscape_snapshot",
+  "semantic_relation_comparison",
+  "promotion_gate",
+  "contradiction_detection",
+];
+const liveReviewCandidateSources: LandscapeReviewItemSource[] = ["landscape_snapshot"];
 
 type PositionedNode = GraphNode & { x: number; y: number };
 type Viewport = { width: number; height: number };
@@ -538,6 +548,51 @@ function reviewItemWarningSummary(item: LandscapeReviewItem): string {
   return "manual review is required before promotion";
 }
 
+function reviewQueueIdentity(
+  item: Pick<
+    LandscapeReviewItem | LandscapeReviewItemCandidate,
+    "source" | "reason" | "runId" | "knowledgeId" | "communityKey"
+  >,
+): string {
+  return [
+    item.source,
+    item.reason,
+    item.runId ?? "",
+    item.knowledgeId ?? "",
+    item.communityKey ?? "",
+  ].join(":");
+}
+
+function suggestedAppliesToLabels(value: Record<string, unknown>): string[] {
+  const changeTypes = Array.isArray(value.changeTypes)
+    ? value.changeTypes.filter((item): item is string => typeof item === "string")
+    : [];
+  const technologies = Array.isArray(value.technologies)
+    ? value.technologies.filter((item): item is string => typeof item === "string")
+    : [];
+  const domains = Array.isArray(value.domains)
+    ? value.domains.filter((item): item is string => typeof item === "string")
+    : [];
+  const retrievalMode = typeof value.retrievalMode === "string" ? value.retrievalMode : null;
+  return [retrievalMode, ...changeTypes, ...technologies, ...domains].filter(
+    (item): item is string => Boolean(item),
+  );
+}
+
+function reviewItemReasonBadgeClass(reason: LandscapeReviewItem["reason"]): string {
+  if (reason === "baseline_wrong" || reason === "wrong_review_required") {
+    return "border-rose-300 text-rose-100";
+  }
+  if (
+    reason === "baseline_off_topic" ||
+    reason === "semantic_split" ||
+    reason === "semantic_merge"
+  ) {
+    return "border-amber-300 text-amber-100";
+  }
+  return "border-sky-300 text-sky-100";
+}
+
 function reviewConfidenceRank(value: LandscapeReviewItem["confidence"]): number {
   if (value === "high") return 3;
   if (value === "medium") return 2;
@@ -695,7 +750,7 @@ export function GraphPage() {
     queryFn: () =>
       fetchLandscapeReplayComparison({
         windowDays: 30,
-        limit: 25,
+        limit: 300,
         runStatus: "all",
         currentLimit: 12,
         includeRuns: true,
@@ -713,7 +768,45 @@ export function GraphPage() {
         reason: "all",
         proposedAction: "all",
         priorityMin: 0,
-        limit: 200,
+        limit: 300,
+      }),
+    enabled: viewMode === "community",
+    staleTime: 30_000,
+  });
+  const reviewItemsMaterializeInput = useMemo(
+    () => ({
+      dryRun: false,
+      windowDays: 30,
+      limit: 300,
+      runStatus: "all" as const,
+      currentLimit: 12,
+      landscapeLimit: 1000,
+      landscapeStatus: statusFilter,
+      relationAxes,
+      minSelectedCount: 3,
+      minFeedbackCount: 3,
+      minSimilarity: 0.72,
+      semanticTopK: 3,
+      sources: reviewItemMaterializeSources,
+      materializeLimit: 300,
+    }),
+    [relationAxes, statusFilter],
+  );
+  const liveReviewItemCandidates = useQuery({
+    queryKey: [
+      "graph-landscape-review-item-candidates",
+      "dry-run",
+      30,
+      300,
+      12,
+      statusFilter,
+      relationAxes.join(","),
+    ],
+    queryFn: () =>
+      materializeLandscapeReviewItems({
+        ...reviewItemsMaterializeInput,
+        dryRun: true,
+        sources: liveReviewCandidateSources,
       }),
     enabled: viewMode === "community",
     staleTime: 30_000,
@@ -837,7 +930,7 @@ export function GraphPage() {
     [landscapeReplay.data?.facetSummaries],
   );
   const replayReviewCandidateQueue = useMemo(
-    () => (landscapeReplayComparison.data?.appliesToRefineCandidates ?? []).slice(0, 6),
+    () => (landscapeReplayComparison.data?.appliesToRefineCandidates ?? []).slice(0, 300),
     [landscapeReplayComparison.data?.appliesToRefineCandidates],
   );
   const persistedPendingReviewItems = useMemo(
@@ -848,7 +941,7 @@ export function GraphPage() {
     () =>
       persistedPendingReviewItems
         .filter((item) => item.reason === "contradiction_review")
-        .slice(0, 6),
+        .slice(0, 300),
     [persistedPendingReviewItems],
   );
   const filteredContradictionPendingReviewItems = useMemo(() => {
@@ -862,10 +955,20 @@ export function GraphPage() {
     () =>
       persistedPendingReviewItems
         .filter((item) => item.reason !== "contradiction_review")
-        .slice(0, 6),
+        .slice(0, 300),
     [persistedPendingReviewItems],
   );
-  const persistedPendingReviewCount = landscapeReviewItems.data?.count ?? 0;
+  const livePendingReviewCandidates = useMemo(() => {
+    const persistedKeys = new Set(
+      persistedPendingReviewItems.map((item) => reviewQueueIdentity(item)),
+    );
+    return (liveReviewItemCandidates.data?.candidates ?? [])
+      .filter((candidate) => candidate.reason !== "contradiction_review")
+      .filter((candidate) => !persistedKeys.has(reviewQueueIdentity(candidate)))
+      .slice(0, 300);
+  }, [liveReviewItemCandidates.data?.candidates, persistedPendingReviewItems]);
+  const actionQueueDisplayCount =
+    nonContradictionPendingReviewItems.length + livePendingReviewCandidates.length;
   const riskyReplayRuns = useMemo(
     () =>
       (landscapeReplayComparison.data?.runs ?? [])
@@ -982,6 +1085,7 @@ export function GraphPage() {
     onSuccess: async () => {
       await Promise.all([
         queryClient.invalidateQueries({ queryKey: ["graph-landscape-review-items"] }),
+        queryClient.invalidateQueries({ queryKey: ["graph-landscape-review-item-candidates"] }),
         queryClient.invalidateQueries({ queryKey: ["graph-landscape-replay-compare"] }),
       ]);
     },
@@ -2025,7 +2129,7 @@ export function GraphPage() {
                             </div>
                             <div className="graph-detail-metric">
                               <span>Pending Items</span>
-                              <strong>{persistedPendingReviewCount}</strong>
+                              <strong>{actionQueueDisplayCount}</strong>
                             </div>
                           </div>
                           <div className="graph-community-summary-grid">
@@ -2081,7 +2185,7 @@ export function GraphPage() {
                           <div className="graph-review-section">
                             <div className="graph-review-section-header">
                               <span>Action Queue</span>
-                              <strong>{persistedPendingReviewCount}</strong>
+                              <strong>{actionQueueDisplayCount}</strong>
                             </div>
                             <div className="graph-review-actions">
                               <Button
@@ -2090,7 +2194,7 @@ export function GraphPage() {
                                 onClick={() =>
                                   createCandidateDrafts.mutate({
                                     status: "pending",
-                                    limit: 20,
+                                    limit: 300,
                                     dryRun: false,
                                   })
                                 }
@@ -2110,28 +2214,7 @@ export function GraphPage() {
                                 size="sm"
                                 className="h-7 px-2 text-[11px]"
                                 onClick={() =>
-                                  createReviewItems.mutate({
-                                    dryRun: false,
-                                    windowDays: 30,
-                                    limit: 25,
-                                    runStatus: "all",
-                                    currentLimit: 12,
-                                    landscapeLimit: 1000,
-                                    landscapeStatus: statusFilter,
-                                    relationAxes,
-                                    minSelectedCount: 3,
-                                    minFeedbackCount: 3,
-                                    minSimilarity: 0.72,
-                                    semanticTopK: 3,
-                                    sources: [
-                                      "replay_compare",
-                                      "landscape_snapshot",
-                                      "semantic_relation_comparison",
-                                      "promotion_gate",
-                                      "contradiction_detection",
-                                    ],
-                                    materializeLimit: 50,
-                                  })
+                                  createReviewItems.mutate(reviewItemsMaterializeInput)
                                 }
                                 disabled={createReviewItems.isPending}
                               >
@@ -2146,9 +2229,10 @@ export function GraphPage() {
                                 </span>
                               ) : null}
                             </div>
-                            {landscapeReviewItems.isLoading ? (
+                            {landscapeReviewItems.isLoading ||
+                            liveReviewItemCandidates.isLoading ? (
                               <div className="graph-detail-empty">Loading persisted items...</div>
-                            ) : nonContradictionPendingReviewItems.length > 0 ? (
+                            ) : actionQueueDisplayCount > 0 ? (
                               <div className="graph-review-list">
                                 {nonContradictionPendingReviewItems.map((item) => {
                                   const payload = item.payload as Record<string, unknown>;
@@ -2158,44 +2242,15 @@ export function GraphPage() {
                                       : "";
                                   const needsPromotionGateWarning =
                                     reviewItemNeedsPromotionGateWarning(item);
-                                  const suggestedAppliesTo = item.suggestedAppliesTo as {
-                                    retrievalMode?: string;
-                                    changeTypes?: unknown;
-                                    technologies?: unknown;
-                                    domains?: unknown;
-                                  };
-                                  const changeTypes = Array.isArray(suggestedAppliesTo.changeTypes)
-                                    ? suggestedAppliesTo.changeTypes.filter(
-                                        (value): value is string => typeof value === "string",
-                                      )
-                                    : [];
-                                  const technologies = Array.isArray(
-                                    suggestedAppliesTo.technologies,
-                                  )
-                                    ? suggestedAppliesTo.technologies.filter(
-                                        (value): value is string => typeof value === "string",
-                                      )
-                                    : [];
-                                  const domains = Array.isArray(suggestedAppliesTo.domains)
-                                    ? suggestedAppliesTo.domains.filter(
-                                        (value): value is string => typeof value === "string",
-                                      )
-                                    : [];
+                                  const appliesToLabels = suggestedAppliesToLabels(
+                                    item.suggestedAppliesTo,
+                                  );
                                   return (
                                     <div className="graph-review-row" key={item.id}>
                                       <div className="graph-review-row-head">
                                         <Badge
                                           variant="outline"
-                                          className={`h-5 text-[11px] ${
-                                            item.reason === "baseline_wrong" ||
-                                            item.reason === "wrong_review_required"
-                                              ? "border-rose-300 text-rose-100"
-                                              : item.reason === "baseline_off_topic" ||
-                                                  item.reason === "semantic_split" ||
-                                                  item.reason === "semantic_merge"
-                                                ? "border-amber-300 text-amber-100"
-                                                : "border-sky-300 text-sky-100"
-                                          }`}
+                                          className={`h-5 text-[11px] ${reviewItemReasonBadgeClass(item.reason)}`}
                                         >
                                           {reviewItemReasonLabel(item.reason)}
                                         </Badge>
@@ -2228,10 +2283,7 @@ export function GraphPage() {
                                       <small>
                                         {[
                                           reviewItemActionLabel(item.proposedAction),
-                                          suggestedAppliesTo.retrievalMode,
-                                          ...changeTypes,
-                                          ...technologies,
-                                          ...domains,
+                                          ...appliesToLabels,
                                         ]
                                           .filter(Boolean)
                                           .slice(0, 5)
@@ -2284,9 +2336,57 @@ export function GraphPage() {
                                     </div>
                                   );
                                 })}
+                                {livePendingReviewCandidates.map((candidate) => {
+                                  const appliesToLabels = suggestedAppliesToLabels(
+                                    candidate.suggestedAppliesTo,
+                                  );
+                                  return (
+                                    <div
+                                      className="graph-review-row"
+                                      key={candidate.idempotencyKey}
+                                    >
+                                      <div className="graph-review-row-head">
+                                        <Badge
+                                          variant="outline"
+                                          className={`h-5 text-[11px] ${reviewItemReasonBadgeClass(candidate.reason)}`}
+                                        >
+                                          {reviewItemReasonLabel(candidate.reason)}
+                                        </Badge>
+                                        <span>
+                                          p{candidate.priority} / {candidate.confidence}
+                                        </span>
+                                        <Badge
+                                          variant="outline"
+                                          className="h-5 border-slate-300 text-[11px] text-slate-100"
+                                        >
+                                          Live preview
+                                        </Badge>
+                                      </div>
+                                      <p>
+                                        {candidate.knowledgeId ??
+                                          candidate.communityLabel ??
+                                          candidate.runId ??
+                                          candidate.communityKey ??
+                                          candidate.idempotencyKey}
+                                      </p>
+                                      <small>
+                                        {[
+                                          reviewItemActionLabel(candidate.proposedAction),
+                                          ...appliesToLabels,
+                                        ]
+                                          .filter(Boolean)
+                                          .slice(0, 5)
+                                          .join(" / ") || "no facets"}
+                                      </small>
+                                      {candidate.evidence.length > 0 ? (
+                                        <small>{candidate.evidence.slice(0, 2).join(" / ")}</small>
+                                      ) : null}
+                                    </div>
+                                  );
+                                })}
                               </div>
                             ) : (
-                              <div className="graph-detail-empty">No persisted items</div>
+                              <div className="graph-detail-empty">No review candidates</div>
                             )}
                           </div>
                           <div className="graph-review-section">

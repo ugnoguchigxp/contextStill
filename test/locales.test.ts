@@ -37,10 +37,14 @@ describe("locale helpers", () => {
     }
 
     expect(ja).toContain("ブロッカー由来");
+    expect(ja).toContain("pre-question gate");
+    expect(ja).toContain("`reject` を返した場合");
     expect(ja).toContain("pre-commit");
     expect(ja).toContain("プロジェクト依存の記述を除いて");
     expect(ja).toContain("SKILL.md 相当");
     expect(en).toContain("blocker-derived");
+    expect(en).toContain("pre-question gate");
+    expect(en).toContain("returns `reject`");
     expect(en).toContain("pre-commit");
     expect(en).toContain("remove project-specific wording");
     expect(en).toContain("SKILL.md-like shape");

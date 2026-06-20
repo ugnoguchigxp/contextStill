@@ -13,6 +13,10 @@ const mocks = vi.hoisted(() => ({
   saveCoverEvidenceResult: vi.fn(),
   coverEvidenceResultFromRow: vi.fn(),
   resolveDistillationModel: vi.fn(() => "test-model"),
+  resolveRouteModelForProvider: vi.fn(
+    (params: { routeModel?: string; localLlmModel?: string }) =>
+      params.localLlmModel ?? params.routeModel ?? "test-model",
+  ),
   runDistillationCompletion: vi.fn(),
   executeDistillationToolCall: vi.fn(),
 }));
@@ -63,6 +67,7 @@ vi.mock("../src/modules/coverEvidence/repository.js", () => ({
 
 vi.mock("../src/modules/distillation/distillation-runtime.service.js", () => ({
   resolveDistillationModel: mocks.resolveDistillationModel,
+  resolveRouteModelForProvider: mocks.resolveRouteModelForProvider,
   runDistillationCompletion: mocks.runDistillationCompletion,
   distillationToolEventsFromError: (error: unknown) =>
     error && typeof error === "object" && "distillationToolEvents" in error

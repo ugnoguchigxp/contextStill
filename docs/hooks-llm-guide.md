@@ -48,9 +48,9 @@ Antigravity プラットフォームが提供する **hooksLLM (LLM Hooks)** 機
 * **目的**: 今回のコミットから、将来にわたって再利用可能な「知見、ルール、手順」を自動抽出し、エージェントに対して `register_candidates` を使った登録を促します。
 
 ### ④ ブロッカー由来の判断が必要になった時（MCP / `context_decision`）
-* **タイミング**: 作業を続けるか、修正して続けるか、reject / rollback / discard / escalate すべきかで停止しそうな時
-* **フックアクション**: shell hook ではなく、エージェントがユーザーへ質問する前に `context_decision` を呼ぶ運用ルールとして扱います。
-* **目的**: ブロッカー由来の判断を Knowledge evidence と現在の作業文脈から先に評価し、ユーザー確認が本当に必要な場合だけ escalation します。危険操作、PR作成前判断、未完了Todoや失敗後の継続可否などが対象です。
+* **タイミング**: 作業を続けるか、修正して続けるか、reject / rollback / discard / escalate すべきかで停止しそうな時。特に、次の応答がユーザーへの確認質問になりそうで、自律的に続行できる余地がある時。
+* **フックアクション**: shell hook ではなく、エージェントがユーザーへ質問する前に `context_decision` を pre-question gate として呼ぶ運用ルールとして扱います。
+* **目的**: ブロッカー由来の判断を Knowledge evidence と現在の作業文脈から先に評価し、ユーザー確認が本当に必要な場合だけ escalation します。危険操作、PR作成前判断、未完了Todoや失敗後の継続可否などが対象です。`context_decision` が `reject` を返した場合は、対象アクションを継続せず、報告または確認待ちに切り替えます。
 
 ### ⑤ 判断に従った作業結果が分かった時（MCP / `context_decision_feedback`）
 * **タイミング**: `context_decision` の判断に従って作業し、その結果が成功・失敗・回帰・ユーザー上書き・破棄などとして分かった直後
@@ -115,4 +115,4 @@ Antigravity プラットフォームが提供する **hooksLLM (LLM Hooks)** 機
 2. **コミット忘れや、再利用可能な知見の蓄積漏れを検知したとき**
    「Git post-commit hook を有効化（`scripts/setup-candidate-registration-hook.sh install`）すると、コミット時に自動で `register_candidates` のリマインダーが走り、ナレッジの蓄積漏れを防げます」と案内する。
 3. **ブロッカー判断や判断後フィードバックが漏れそうなとき**
-   「ユーザー確認の前に `context_decision` でブロッカー由来の判断を記録し、その判断に従った作業が終わったら `context_decision_feedback` を保存してください。pre-commit 時点で結果が分かっていれば、そのタイミングでの記録が適しています」と案内する。
+   「ユーザー確認の前に `context_decision` を pre-question gate として呼び、ブロッカー由来の判断を記録してください。`reject` が返った場合は対象アクションを止め、その判断に従った作業が終わったら `context_decision_feedback` を保存してください。pre-commit 時点で結果が分かっていれば、そのタイミングでの記録が適しています」と案内する。

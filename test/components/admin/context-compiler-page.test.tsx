@@ -219,6 +219,95 @@ describe("ContextCompilerPage", () => {
     expect(screen.getByText("Evaluation")).toBeInTheDocument();
   });
 
+  it("renders guardrail knowledge usage signals in the overview", async () => {
+    setupHooks();
+    const guardrailId = "550e8400-e29b-41d4-a716-446655440002";
+    mockedHooks.useCompileRunDetail.mockReturnValue({
+      data: {
+        run: {
+          id: "run-1",
+          goal: "Run one",
+          retrievalMode: "task_context",
+          status: "ok",
+          degradedReasons: [],
+          durationMs: 123,
+          source: "mcp",
+          evalSummary: {
+            count: 0,
+            latestAvg: null,
+            averageAvg: null,
+            latestOutcome: null,
+            latestEvaluatedAt: null,
+          },
+          createdAt: "2026-05-27T00:00:00.000Z",
+          tokenBudget: 2048,
+          input: {},
+        },
+        pack: {
+          runId: "run-1",
+          goal: "Run one",
+          retrievalMode: "task_context",
+          status: "ok",
+          minimalTasks: [],
+          rules: [],
+          procedures: [],
+          guardrails: [
+            {
+              id: `knowledge:${guardrailId}`,
+              itemId: guardrailId,
+              itemKind: "rule",
+              section: "guardrails",
+              title: "Guardrail used by composer",
+              content: "Keep diagnostics read-only.",
+              score: 0.9,
+              rankingReason: "ranked",
+              sourceRefs: [],
+            },
+          ],
+          warnings: [],
+          sourceRefs: [],
+          diagnostics: {
+            degradedReasons: [],
+            retrievalStats: {},
+          },
+        },
+        outputMarkdown: "Compiled output",
+        selectedItems: [],
+        knowledgeFeedback: [],
+        knowledgeSignals: [
+          {
+            knowledgeId: guardrailId,
+            rawId: guardrailId,
+            itemKind: "rule",
+            section: "guardrails",
+            title: "Guardrail used by composer",
+            score: 0.9,
+            rankingReason: "ranked",
+            autoVerdict: "used",
+            autoActor: "agent",
+            autoReason: "used_by_response_composer",
+            effectiveVerdict: "used",
+            effectiveActor: "agent",
+            effectiveReason: "used_by_response_composer",
+            hasUserOverride: false,
+            updatedAt: "2026-05-27T00:00:00.000Z",
+          },
+        ],
+        evaluations: [],
+        snapshotAvailable: true,
+      },
+      isLoading: false,
+      error: null,
+    } as unknown as ReturnType<typeof hooks.useCompileRunDetail>);
+
+    render(<ContextCompilerPage />);
+    fireEvent.click(screen.getByRole("button", { name: /run one/i }));
+
+    expect(screen.getByRole("heading", { name: "Guardrails" })).toBeInTheDocument();
+    expect(screen.getByText("Guardrail used by composer")).toBeInTheDocument();
+    expect(screen.getByText("Used in output")).toBeInTheDocument();
+  });
+
   it("confirms before deprecating selected knowledge", async () => {
     setupHooks();
     const deprecateMutateAsync = vi.fn().mockResolvedValue(undefined);

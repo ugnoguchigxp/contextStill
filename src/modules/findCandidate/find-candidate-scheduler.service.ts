@@ -5,9 +5,9 @@ import { contextCompileRuns, llmUsageLogs } from "../../db/schema.js";
 import {
   type DistillationProviderName,
   type DistillationProviderSetting,
-  resolveDistillationModel,
   resolveProviderForDistillation,
 } from "../distillation/llm-resolver.js";
+import { resolveRouteModelForProvider } from "../distillation/distillation-runtime.service.js";
 import {
   jitterMs,
   readProviderPressureState,
@@ -102,10 +102,14 @@ function resolveProviderAndModel(params: {
   targetKind: FindCandidateTargetKind;
   providerOverride?: DistillationProviderSetting;
 }): { provider: DistillationProviderName; model: string } {
-  const routeProvider =
-    params.providerOverride ?? resolveFindCandidateRoute(params.targetKind).provider;
+  const route = resolveFindCandidateRoute(params.targetKind);
+  const routeProvider = params.providerOverride ?? route.provider;
   const provider = resolveProviderForDistillation(routeProvider);
-  const model = resolveDistillationModel(routeProvider);
+  const model = resolveRouteModelForProvider({
+    provider: routeProvider,
+    routeModel: params.providerOverride ? undefined : route.model,
+    localLlmModel: params.providerOverride ? undefined : route.localLlmModel,
+  });
   return { provider, model };
 }
 

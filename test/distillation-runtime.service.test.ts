@@ -855,6 +855,59 @@ describe("Distillation Runtime Service", () => {
     );
   });
 
+  test("runDistillationCompletion uses configured Local LLM model for primary local provider", async () => {
+    groupedConfig.localLlm.apiKey = "local-key";
+    groupedConfig.localLlm.apiBaseUrl = "http://127.0.0.1:44448";
+    groupedConfig.localLlm.model = "gemma-4-e4b-it";
+    groupedConfig.localLlm.models = [
+      {
+        name: "Primary",
+        apiBaseUrl: "http://127.0.0.1:44448",
+        apiPath: "/v1/chat/completions",
+        model: "gemma-4-e4b-it",
+      },
+      {
+        name: "Qwen",
+        apiBaseUrl: "http://127.0.0.1:44449",
+        apiPath: "/v1/chat/completions",
+        model: "qwen-3.6-27b",
+      },
+    ];
+
+    const mockFetch = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        choices: [{ message: { content: '{"ok":true}' } }],
+      }),
+    });
+    vi.stubGlobal("fetch", mockFetch);
+
+    const result = await runDistillationCompletion(
+      {
+        model: "gemma-4-e4b-it",
+        messages: [{ role: "user", content: "primary local model" }],
+        maxTokens: 128,
+      },
+      {
+        providerSetting: "local-llm",
+        localLlmModel: "qwen-3.6-27b",
+        enableTools: false,
+      },
+    );
+
+    expect(result.content).toBe('{"ok":true}');
+    expect(String(mockFetch.mock.calls[0]?.[0])).toBe("http://127.0.0.1:44449/v1/chat/completions");
+    expect(JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body))).toMatchObject({
+      model: "qwen-3.6-27b",
+    });
+    expect(recordLlmUsage).toHaveBeenCalledWith(
+      expect.objectContaining({
+        provider: "local-llm",
+        model: "qwen-3.6-27b",
+      }),
+    );
+  });
+
   test("records provider route diagnostics on non-fallback provider failure", async () => {
     groupedConfig.openAi.apiKey = "openai-key";
     groupedConfig.openAi.apiBaseUrl = "https://api.openai.test/v1";

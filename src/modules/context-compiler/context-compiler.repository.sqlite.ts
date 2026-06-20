@@ -500,6 +500,7 @@ export async function getCompileRunDetailSqlite(runId: string): Promise<CompileR
     const allItemIds = [
       ...(packSnapshot.rules ?? []).map((item) => item.itemId),
       ...(packSnapshot.procedures ?? []).map((item) => item.itemId),
+      ...(packSnapshot.guardrails ?? []).map((item) => item.itemId),
     ].filter(Boolean);
 
     const knowledgeRows =
@@ -536,6 +537,15 @@ export async function getCompileRunDetailSqlite(runId: string): Promise<CompileR
     }
 
     for (const item of packSnapshot.procedures) {
+      const applies = appliesToByItemId.get(item.itemId);
+      item.changeTypes = item.changeTypes?.length ? item.changeTypes : (applies?.changeTypes ?? []);
+      item.technologies = item.technologies?.length
+        ? item.technologies
+        : (applies?.technologies ?? []);
+      item.domains = item.domains?.length ? item.domains : (applies?.domains ?? []);
+    }
+
+    for (const item of packSnapshot.guardrails) {
       const applies = appliesToByItemId.get(item.itemId);
       item.changeTypes = item.changeTypes?.length ? item.changeTypes : (applies?.changeTypes ?? []);
       item.technologies = item.technologies?.length
@@ -795,12 +805,12 @@ export async function getCompileRunRankingTraceSqlite(
   const packPositionByKey = new Map<string, number>();
   const parsedPack = parsePackSnapshot(run.pack_snapshot);
   if (parsedPack) {
-    parsedPack.rules.forEach((item, index) => {
-      packPositionByKey.set(`rule:${item.itemId}`, index + 1);
-    });
-    parsedPack.procedures.forEach((item, index) => {
-      packPositionByKey.set(`procedure:${item.itemId}`, index + 1);
-    });
+    let packPosition = 1;
+    for (const item of [...parsedPack.rules, ...parsedPack.procedures, ...parsedPack.guardrails]) {
+      if (item.itemKind !== "rule" && item.itemKind !== "procedure") continue;
+      packPositionByKey.set(`${item.itemKind}:${item.itemId}`, packPosition);
+      packPosition += 1;
+    }
   } else {
     for (const [index, row] of packRows.entries()) {
       if (row.item_kind !== "rule" && row.item_kind !== "procedure") continue;
