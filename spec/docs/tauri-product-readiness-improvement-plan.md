@@ -14,6 +14,7 @@ contextStill の当面の主線を SQLite / Tauri desktop app に固定し、Pos
 4. PostgreSQL / pgvector は削除ではなく advanced server backend として隔離する。
 5. README と public docs は、PostgreSQL-era の導線ではなく SQLite desktop 導線から始める。
 6. `.env` は development / advanced configuration の入口に下げ、desktop 起動の必須条件にしない。
+7. Hono API は admin UI facade として扱い、MCP / CLI / worker / automation / bootstrap は daemon 側の責務として分離する。
 
 ## Scope
 
@@ -49,6 +50,14 @@ SQLite backend は primary `register_candidates`、`search_knowledge`、source s
 
 `bun run startup`、`bun run doctor`、`bun run dev`、`bun run start:mcp` は開発者導線として有効だが、desktop app の初回起動体験としてはまだ粒度が低い。Tauri ではユーザーが terminal で Docker、`.env`、migration、MCP config を手動で触る前提を下げる必要がある。
 
+### Runtime Boundary
+
+現行コードでは、Hono は `/api/*` を提供する admin UI 向け HTTP facade として機能している。一方で MCP server、CLI command、queue supervisor、agent-log sync automation は Hono を経由せず、`src/modules/*` の service/repository を直接呼ぶ別入口として存在する。
+
+Tauri 化ではこの分離を強める。UI はナレッジメンテナンス、review、settings、diagnostics の操作面に寄せる。daemon は UI 停止後も残り、MCP、CLI、worker、automation、doctor、backup、bootstrap、process supervision を担う。Hono を daemon control API に拡張する場合は、admin UI facade とは別境界として扱う。
+
+daemon / CLI / MCP / worker / automation / bootstrap 境界を Rust 化する場合は、[Rust Daemon And CLI Boundary Migration Plan](rust-daemon-cli-boundary-migration-plan.md) に従い、TypeScript 実装を parity gate まで残したまま並走させる。
+
 ### Documentation Index
 
 `spec/docs/README.md` は過去の内部計画書リンクを含むが、現行 worktree には存在しないファイルが混ざっている。内部計画書の索引は、実在する文書と active plan に合わせて保守する必要がある。
@@ -61,6 +70,7 @@ The default product is a local desktop control plane for coding-agent memory.
 
 - storage: SQLite
 - UI: Tauri desktop shell around the admin/control-plane experience
+- runtime: long-lived daemon for MCP / CLI / worker / automation, with Hono kept as the admin UI facade
 - knowledge loop: sources / agent logs / candidates -> knowledge -> context compile -> evaluation -> new lessons
 - model usage: configurable; local-only and cloud-assisted modes both supported
 - MCP: optional agent integration, enabled by user action
@@ -134,6 +144,10 @@ Goal: The repo has a clear checklist for turning the current local web/admin/MCP
 
 Deliverables:
 
+- Define runtime lifecycle boundaries:
+  - daemon remains alive after the UI closes
+  - Hono admin API can start/stop with the UI unless promoted to daemon control API
+  - MCP / CLI / queue / automation remain daemon-side responsibilities
 - Define desktop data paths:
   - SQLite DB path
   - log path

@@ -26,9 +26,13 @@ vi.mock("../src/modules/registerCandidate/register-candidate.service.js");
 vi.mock("../src/modules/registerCandidate/register-review-corrections.service.js");
 vi.mock("../src/modules/settings/settings.service.js");
 vi.mock("../api/modules/knowledge/knowledge.repository.js");
+vi.mock("../src/modules/context-decision/context-decision.service.js");
+vi.mock("../src/modules/context-decision/context-decision.feedback.service.js");
+vi.mock("../src/modules/readFile/domain.js");
 vi.mock("../src/db/client.js", () => ({
   db: mockDb,
 }));
+
 
 import {
   listKnowledgeItems,
@@ -70,6 +74,14 @@ import { registerCandidatesBulk } from "../src/modules/registerCandidate/registe
 import { registerReviewCorrections } from "../src/modules/registerCandidate/register-review-corrections.service.js";
 import { reloadRuntimeSettingsCache } from "../src/modules/settings/settings.service.js";
 import { retrieveVibeMemoryContext } from "../src/modules/vibe-memory/vibe-memory.service.js";
+import {
+  contextDecisionTool,
+  contextDecisionFeedbackTool,
+} from "../src/mcp/tools/context-decision.tool.js";
+import { readFileTool } from "../src/mcp/tools/read-file.tool.js";
+import { decideContext } from "../src/modules/context-decision/context-decision.service.js";
+import { recordContextDecisionFeedback } from "../src/modules/context-decision/context-decision.feedback.service.js";
+import { readFileDomain } from "../src/modules/readFile/domain.js";
 
 describe("MCP Tools Handlers", () => {
   beforeEach(() => {
@@ -724,4 +736,110 @@ describe("MCP Tools Handlers", () => {
       expect(JSON.parse(response.content[0].text)).toEqual(mockReport);
     });
   });
+
+  describe("context_decision & context_decision_feedback", () => {
+    test("context_decision handler passes arguments to decideContext", async () => {
+      const mockResult = { decision: "proceed", decisionId: "d1" };
+      vi.mocked(decideContext).mockResolvedValue(mockResult as never);
+
+      const args = { decisionPoint: "test point", sessionId: "session-123" };
+      const response = await contextDecisionTool.handler(args);
+      expect(decideContext).toHaveBeenCalledWith(args);
+      expect(JSON.parse(response.content[0].text)).toEqual(mockResult);
+    });
+
+    test("context_decision handler works with undefined args", async () => {
+      vi.mocked(decideContext).mockResolvedValue({ decision: "proceed" } as never);
+      await contextDecisionTool.handler(undefined);
+      expect(decideContext).toHaveBeenCalledWith({});
+    });
+
+    test("context_decision_feedback handler passes arguments to recordContextDecisionFeedback", async () => {
+      const mockResult = { success: true };
+      vi.mocked(recordContextDecisionFeedback).mockResolvedValue(mockResult as never);
+
+      const args = { decisionId: "d1", source: "ai", value: "good", outcome: "success" };
+      const response = await contextDecisionFeedbackTool.handler(args);
+      expect(recordContextDecisionFeedback).toHaveBeenCalledWith(args);
+      expect(JSON.parse(response.content[0].text)).toEqual(mockResult);
+    });
+  });
+
+  describe("read_file tool", () => {
+    test("read_file handler parses and passes arguments to readFileDomain", async () => {
+      const mockResult = { content: "file content", tokens: 10 };
+      vi.mocked(readFileDomain).mockResolvedValue(mockResult as never);
+
+      const args = { path: "wiki/rule.md", fromToken: 0, readTokens: 100, minify: true };
+      const response = await readFileTool.handler(args);
+      expect(readFileDomain).toHaveBeenCalledWith(expect.objectContaining({
+        path: "wiki/rule.md",
+        fromToken: 0,
+        readTokens: 100,
+        minify: true,
+      }));
+      expect(JSON.parse(response.content[0].text)).toEqual(mockResult);
+    });
+  });
+
+  describe("context_compile session ID resolution", () => {
+    beforeEach(() => {
+      vi.mocked(compileContextPack).mockResolvedValue({
+        pack: { rules: [], procedures: [] },
+        markdown: "# Context",
+      } as unknown as never);
+    });
+
+    test("resolves sessionId from requestMeta fields", async () => {
+      // sessionId key
+      await contextCompileTool.handler({ goal: "g" }, { requestMeta: { sessionId: " s1 " } });
+      expect(compileContextPack).toHaveBeenLastCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ sessionId: "s1" })
+      );
+
+      // threadId key
+      await contextCompileTool.handler({ goal: "g" }, { requestMeta: { threadId: " t1 " } });
+      expect(compileContextPack).toHaveBeenLastCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ sessionId: "t1" })
+      );
+
+      // conversationId key
+      await contextCompileTool.handler({ goal: "g" }, { requestMeta: { conversationId: " c1 " } });
+      expect(compileContextPack).toHaveBeenLastCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ sessionId: "c1" })
+      );
+
+      // codexSessionId key
+      await contextCompileTool.handler({ goal: "g" }, { requestMeta: { codexSessionId: " cs1 " } });
+      expect(compileContextPack).toHaveBeenLastCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ sessionId: "cs1" })
+      );
+
+      // fallback order
+      await contextCompileTool.handler({ goal: "g" }, { requestMeta: { threadId: "t", conversationId: "c" } });
+      expect(compileContextPack).toHaveBeenLastCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ sessionId: "t" })
+      );
+
+      // non-string / empty fields fallback to undefined
+      await contextCompileTool.handler({ goal: "g" }, { requestMeta: { sessionId: 123, threadId: " " } });
+      expect(compileContextPack).toHaveBeenLastCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ sessionId: undefined })
+      );
+
+      // no requestMeta
+      await contextCompileTool.handler({ goal: "g" }, undefined);
+      expect(compileContextPack).toHaveBeenLastCalledWith(
+        expect.any(Object),
+        expect.objectContaining({ sessionId: undefined })
+      );
+    });
+  });
 });
+

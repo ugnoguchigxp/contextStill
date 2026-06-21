@@ -52,6 +52,7 @@ context-still is local-first software, not a hosted SaaS. You control the databa
 - [What is context-still?](#what-is-context-still)
 - [Desktop Quick Start](#desktop-quick-start)
 - [Product Modes](#product-modes)
+- [Runtime Boundary](#runtime-boundary)
 - [MCP Integration](#mcp-integration)
 - [Advanced Server Backend](#advanced-server-backend)
 - [Common Workflows](#common-workflows)
@@ -112,6 +113,18 @@ The interactive `startup` command currently follows the advanced server setup pa
 | `local-llm` | Local LLM / local embedding assisted distillation | Local OpenAI-compatible endpoint and/or embedding service |
 
 Minimal mode should remain useful without external LLMs, external search APIs, or MCP client registration.
+
+## Runtime Boundary
+
+context-still separates the long-lived runtime from the admin UI surface:
+
+| Surface | Default lifetime | Responsibility |
+|---|---|---|
+| Daemon / worker runtime | Runs independently of the UI | MCP server management, CLI commands, queue workers, agent-log sync, automation, doctor, backup, bootstrap, and process supervision |
+| Hono API | Runs when the admin UI needs HTTP access | Admin UI facade for knowledge, sources, graph, queue controls, settings, context runs, decision history, and dashboards |
+| Tauri / web UI | Opened on demand | Knowledge maintenance, review, settings, diagnostics, and operator actions |
+
+The Hono API should stay a UI-facing facade. Durable background work and external agent integration belong to the daemon/CLI/MCP side, so closing the UI does not imply stopping log sync, queue supervision, MCP availability, or scheduled maintenance. If a future desktop build splits control APIs from admin APIs, daemon control should remain on the long-lived daemon side while the admin API can follow the UI lifecycle.
 
 ## MCP Integration
 

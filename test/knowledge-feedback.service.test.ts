@@ -6,9 +6,22 @@ import {
 } from "../src/modules/knowledge/knowledge-feedback.service.js";
 import { recalculateKnowledgeDynamicScoresSafe } from "../src/modules/knowledge/knowledge-value.service.js";
 
+let mockBackendKind = "postgres";
 const mockSelect = vi.fn();
 const mockUpdate = vi.fn();
 const mockInsert = vi.fn();
+
+const mockSqliteGet = vi.fn();
+const mockSqliteAll = vi.fn();
+const mockSqliteRun = vi.fn();
+
+const mockQueryChain = {
+  get: (...args: any[]) => mockSqliteGet(...args),
+  all: (...args: any[]) => mockSqliteAll(...args),
+  run: (...args: any[]) => mockSqliteRun(...args),
+};
+
+const mockSqliteQuery = vi.fn().mockReturnValue(mockQueryChain);
 
 vi.mock("../src/db/index.js", () => ({
   db: {
@@ -16,6 +29,18 @@ vi.mock("../src/db/index.js", () => ({
     update: (...args: any[]) => mockUpdate(...args),
     insert: (...args: any[]) => mockInsert(...args),
   },
+}));
+
+vi.mock("../src/db/backend.js", () => ({
+  resolveDatabaseBackendConfig: () => ({ kind: mockBackendKind }),
+}));
+
+vi.mock("../src/db/sqlite/runtime.js", () => ({
+  getRuntimeSqliteCoreDatabase: () => Promise.resolve({
+    db: {
+      query: (...args: any[]) => mockSqliteQuery(...args),
+    },
+  }),
 }));
 
 vi.mock("../src/modules/knowledge/knowledge-value.service.js", () => ({
@@ -41,6 +66,7 @@ const makeChain = (result: any) => {
 describe("knowledge-feedback.service", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockBackendKind = "postgres";
   });
 
   test("throws CompileRunKnowledgeFeedbackError (404) if compile run does not exist", async () => {
@@ -282,5 +308,165 @@ describe("knowledge-feedback.service", () => {
     expect(result.savedCount).toBe(1);
     expect(result.queueCreatedCount).toBe(0);
     expect(result.queueDismissedCount).toBe(0);
+  });
+
+  describe("SQLite backend", () => {
+    beforeEach(() => {
+      mockBackendKind = "sqlite";
+    });
+
+    test("throws CompileRunKnowledgeFeedbackError (404) if compile run does not exist", async () => {
+      mockSqliteGet.mockReturnValueOnce(undefined);
+
+      await expect(
+        recordCompileRunKnowledgeFeedback({
+          runId: "non-existent-run",
+          items: [{ knowledgeId: "k1", verdict: "used" }],
+        }),
+      ).rejects.toThrow(new CompileRunKnowledgeFeedbackError(404, "Compile run not found."));
+    });
+
+    test("throws CompileRunKnowledgeFeedbackError (400) on duplicate knowledgeId in items", async () => {
+      mockSqliteGet.mockReturnValueOnce({ id: "run-1" });
+
+      await expect(
+        recordCompileRunKnowledgeFeedback({
+          runId: "run-1",
+          items: [
+            { knowledgeId: "k1", verdict: "used" },
+            { knowledgeId: "k1", verdict: "off_topic" },
+          ],
+        }),
+      ).rejects.toThrow(
+        new CompileRunKnowledgeFeedbackError(400, "Duplicate knowledgeId in request: k1"),
+      );
+    });
+
+    test("throws CompileRunKnowledgeFeedbackError (400) if knowledgeId is not selected for the compile run", async () => {
+      mockSqliteGet.mockReturnValueOnce({ id: "run-1" });
+      mockSqliteAll.mockReturnValueOnce([{ item_id: "k2" }, { item_id: "k3" }]);
+
+      await expect(
+        recordCompileRunKnowledgeFeedback({
+          runId: "run-1",
+          items: [{ knowledgeId: "k1", verdict: "used" }],
+        }),
+      ).rejects.toThrow(
+        new CompileRunKnowledgeFeedbackError(
+          400,
+          "Knowledge IDs are not in selected items for this run: k1",
+        ),
+      );
+    });
+
+    test("inserts new feedback successfully when no existing feedback exists", async () => {
+      mockSqliteGet.mockReturnValueOnce({ id: "run-1" });
+      mockSqliteAll.mockReturnValueOnce([{ item_id: "k1" }]);
+      mockSqliteAll.mockReturnValueOnce([]);
+
+      const result = await recordCompileRunKnowledgeFeedback({
+        runId: "run-1",
+        items: [{ knowledgeId: "k1", verdict: "used", reason: "helpful" }],
+        actor: "agent",
+      });
+
+      expect(result.savedCount).toBe(1);
+      expect(result.updatedCount).toBe(0);
+      expect(result.queueCreatedCount).toBe(0);
+      expect(result.queueDismissedCount).toBe(0);
+      expect(result.affectedKnowledgeIds).toContain("k1");
+      expect(mockSqliteRun).toHaveBeenCalled();
+    });
+
+    test("updates feedback successfully if feedback exists and has changed", async () => {
+      mockSqliteGet.mockReturnValueOnce({ id: "run-1" });
+      mockSqliteAll.mockReturnValueOnce([{ item_id: "k1" }]);
+      mockSqliteAll.mockReturnValueOnce([
+        {
+          id: "event-1",
+          knowledge_id: "k1",
+          verdict: "off_topic",
+          actor: "user",
+          reason: "old-reason",
+          metadata: "{}",
+          updated_at: new Date().toISOString(),
+        },
+      ]);
+
+      const result = await recordCompileRunKnowledgeFeedback({
+        runId: "run-1",
+        items: [{ knowledgeId: "k1", verdict: "used", reason: "now helpful" }],
+        actor: "user",
+      });
+
+      expect(result.savedCount).toBe(1);
+      expect(result.updatedCount).toBe(1);
+    });
+
+    test("does not update if existing feedback matches requested feedback", async () => {
+      mockSqliteGet.mockReturnValueOnce({ id: "run-1" });
+      mockSqliteAll.mockReturnValueOnce([{ item_id: "k1" }]);
+      mockSqliteAll.mockReturnValueOnce([
+        {
+          id: "event-1",
+          knowledge_id: "k1",
+          verdict: "used",
+          actor: "user",
+          reason: "helpful",
+          metadata: "{}",
+          updated_at: new Date().toISOString(),
+        },
+      ]);
+
+      const result = await recordCompileRunKnowledgeFeedback({
+        runId: "run-1",
+        items: [{ knowledgeId: "k1", verdict: "used", reason: "helpful" }],
+      });
+
+      expect(result.savedCount).toBe(0);
+      expect(result.updatedCount).toBe(0);
+    });
+
+    test("enqueues into wrong review queue when verdict is 'wrong' and queue doesn't have pending review", async () => {
+      mockSqliteGet.mockReturnValueOnce({ id: "run-1" });
+      mockSqliteAll.mockReturnValueOnce([{ item_id: "k1" }]);
+      mockSqliteAll.mockReturnValueOnce([]);
+      mockSqliteGet.mockReturnValueOnce(undefined);
+
+      const result = await recordCompileRunKnowledgeFeedback({
+        runId: "run-1",
+        items: [{ knowledgeId: "k1", verdict: "wrong", reason: "outdated info" }],
+      });
+
+      expect(result.savedCount).toBe(1);
+      expect(result.queueCreatedCount).toBe(1);
+    });
+
+    test("dismisses pending wrong review queue if previous verdict was 'wrong' and new verdict is different", async () => {
+      mockSqliteGet.mockReturnValueOnce({ id: "run-1" });
+      mockSqliteAll.mockReturnValueOnce([{ item_id: "k1" }]);
+      mockSqliteAll.mockReturnValueOnce([
+        {
+          id: "event-1",
+          knowledge_id: "k1",
+          verdict: "wrong",
+          actor: "user",
+          reason: "flawed",
+          metadata: "{}",
+          updated_at: new Date().toISOString(),
+        },
+      ]);
+
+      mockSqliteRun.mockReturnValue({ changes: 1 });
+
+      const result = await recordCompileRunKnowledgeFeedback({
+        runId: "run-1",
+        items: [{ knowledgeId: "k1", verdict: "used" }],
+      });
+
+      expect(result.savedCount).toBe(1);
+      expect(result.updatedCount).toBe(1);
+      expect(result.queueDismissedCount).toBe(1);
+    });
   });
 });

@@ -14,6 +14,18 @@ The default product path is a desktop/local control plane for coding-agent memor
 
 The admin UI, CLI, MCP server, and automation workers are local control-plane surfaces. They are not a hosted multi-tenant SaaS architecture.
 
+## Runtime Boundary
+
+The runtime boundary is deliberately split so that UI maintenance does not define the lifetime of background work.
+
+| Surface | Lifetime | Responsibility |
+|---|---|---|
+| Daemon / worker runtime | Long-lived; may continue after the UI closes | MCP server management, CLI command execution, queue supervision, agent-log sync, automation, doctor, backup, bootstrap, and process supervision |
+| Hono API | UI-facing HTTP surface; can follow the admin UI lifecycle unless promoted to a daemon control API | Admin UI facade for knowledge, sources, graph, queue controls, settings, context runs, decision history, and dashboards |
+| Tauri / web UI | On-demand operator surface | Knowledge maintenance, review, settings, diagnostics, and explicit operator actions |
+
+Hono should not become the owner of durable runtime behavior by accident. If a future desktop/server build needs a long-lived control API, it should be modeled as daemon control surface separately from the admin UI facade. MCP and CLI remain daemon-side entrypoints and should not depend on the admin UI being open.
+
 ## Core Loop
 
 ```text
@@ -32,7 +44,7 @@ sources + web + agent logs + candidates
 |---|---|---|
 | CLI | `src/cli/` | Operational commands for compile, sync, distillation, diagnostics, backups, and automation |
 | MCP server | `src/mcp/` | Optional agent-facing tool surface |
-| REST API | `api/` | Admin UI API and local automation surface |
+| REST API | `api/` | Hono admin UI API facade and dashboard/control HTTP surface |
 | Admin UI | `web/` | Review, graph, queue, compile, settings, and diagnostics UI |
 | SQLite backend | `src/db/sqlite/`, SQLite repositories | Default local backend for the desktop product path |
 | Server backend | `src/db/`, `drizzle/` | PostgreSQL schema, migrations, and compatibility tooling |
@@ -124,5 +136,5 @@ Server backend compatibility tests should stay explicit, but desktop users shoul
 
 - The admin UI is local control-plane software, not a hosted multi-tenant product.
 - Landscape diagnostics create reviewable artifacts; they do not directly mutate production ranking.
-- MCP tools are the primary agent integration surface. REST API endpoints are primarily for the admin UI and local automation.
+- MCP tools and CLI commands are daemon-side entrypoints. REST API endpoints are primarily for the admin UI facade and should not be required for background work to continue.
 - `.env` is a development/advanced configuration surface, not a required desktop onboarding step.

@@ -10,3 +10,4 @@
 | [Applicability And Evidence Boundary Refactor Plan](applicability-evidence-boundary-refactor-plan.md) | applicability 正規化の共通化、sourceSummary と primary evidence の型分離、negative SQLite runtime 統合テスト追加の段階的実装計画 |
 | [Tauri Product Readiness Improvement Plan](tauri-product-readiness-improvement-plan.md) | SQLite/Tauri を default product path にし、PostgreSQL/pgvector を advanced server backend として分離しながら README、配布容易性、プロダクト明瞭性を改善する計画 |
 | [Desktop Readiness And Doctor States](desktop-readiness-and-doctor-states.md) | Tauri shell 実装前に固定する desktop data path、first-run state、doctor 表示、desktop readiness smoke の設計メモ |
+| [Rust Daemon And CLI Boundary Migration Plan](rust-daemon-cli-boundary-migration-plan.md) | Hono を admin UI facade として維持しながら daemon / CLI / MCP / worker / automation / bootstrap 境界を Rust 化し、TypeScript 実装と完成まで両立させる移行計画 |

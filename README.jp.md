@@ -52,6 +52,7 @@ context-still は hosted SaaS ではありません。DB、source、settings、A
 - [context-still とは](#context-still-とは)
 - [デスクトップクイックスタート](#デスクトップクイックスタート)
 - [Product Modes](#product-modes)
+- [Runtime Boundary](#runtime-boundary)
 - [MCP Integration](#mcp-integration)
 - [Advanced Server Backend](#advanced-server-backend)
 - [よく使うワークフロー](#よく使うワークフロー)
@@ -111,6 +112,18 @@ CONTEXT_STILL_DB_BACKEND=sqlite bun run dev
 | `local-llm` | local LLM / local embedding assisted distillation | local OpenAI-compatible endpoint や embedding service |
 
 Minimal mode は、外部 LLM、外部 search API、MCP client registration がなくても使える状態を維持します。
+
+## Runtime Boundary
+
+context-still は、常駐 runtime と管理 UI surface を分けて扱います。
+
+| Surface | 既定の lifetime | 責務 |
+|---|---|---|
+| Daemon / worker runtime | UI とは独立して常駐 | MCP server 管理、CLI commands、queue workers、agent-log sync、automation、doctor、backup、bootstrap、process supervision |
+| Hono API | 管理 UI が HTTP access を必要とする時に起動 | knowledge、sources、graph、queue controls、settings、context runs、decision history、dashboards の admin UI facade |
+| Tauri / web UI | 必要時に開く | knowledge maintenance、review、settings、diagnostics、operator actions |
+
+Hono API は UI 向け facade に留めます。継続的な background work と外部 agent integration は daemon / CLI / MCP 側の責務なので、UI を閉じても log sync、queue supervision、MCP availability、scheduled maintenance が止まる前提にはしません。将来 desktop build で control API と admin API を分ける場合も、daemon control は常駐 daemon 側に残し、admin API は UI lifecycle に追従できる形にします。
 
 ## MCP Integration
 

@@ -12,6 +12,10 @@ import {
   processCodexJsonlDelta,
 } from "../src/modules/agent-log-sync/ingest.service.js";
 import {
+  decodeClaudeProjectPath,
+  buildClaudeIngestRoots,
+} from "../src/modules/agent-log-sync/ingest-roots.js";
+import {
   buildDedupeKey,
   buildReadableTranscript,
   chunkMessages,
@@ -499,5 +503,41 @@ diff --git a/src/a.ts b/src/a.ts
     const result = processCodexJsonlDelta("/tmp/rollout-abc.jsonl", line, 0);
     expect(result.messages).toHaveLength(1);
     expect(result.messages[0]?.content).toBe("trailing message");
+  });
+
+  test("decodeClaudeProjectPath decodes Claude project path structures", () => {
+    expect(decodeClaudeProjectPath("-a-b-c")).toEqual({
+      projectName: "c",
+      projectRoot: "/a/b/c",
+    });
+    expect(decodeClaudeProjectPath("x-y-z")).toEqual({
+      projectName: "z",
+      projectRoot: "/x/y/z",
+    });
+  });
+
+  test("buildClaudeIngestRoots resolves home-based projects and environment extensions", () => {
+    const roots = buildClaudeIngestRoots({
+      env: {
+        MEMORY_ROUTER_CLAUDE_LOG_DIRS: "D:\\claude\\projects-a,D:\\claude\\projects-b",
+      },
+      homeDir: "/Users/test",
+    });
+    expect(roots).toContain(path.join("/Users/test", ".claude", "projects"));
+    expect(roots).toContain("D:\\claude\\projects-a");
+    expect(roots).toContain("D:\\claude\\projects-b");
+  });
+
+  test("windowsCodexFallbackRoots returns empty array on non-windows platform", () => {
+    const roots = buildCodexIngestRoots({
+      platform: "darwin",
+      env: {
+        APPDATA: "C:\\Users\\test\\AppData\\Roaming",
+      },
+    });
+    // Should not contain windows folders since platform is darwin
+    expect(roots).not.toContain(
+      path.join("C:\\Users\\test\\AppData\\Roaming", "OpenAI", "Codex", "sessions"),
+    );
   });
 });

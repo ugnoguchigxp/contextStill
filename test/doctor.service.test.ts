@@ -10,6 +10,7 @@ import {
   checkAgenticLlmHealth,
   checkLlmProviderHealthMatrix,
 } from "../src/modules/llm/agentic-llm.service.js";
+import { resolveAgenticCompileRouting } from "../src/modules/settings/settings.service.js";
 
 vi.mock("../src/db/index.js", () => ({
   db: {
@@ -25,6 +26,13 @@ vi.mock("node:child_process");
 vi.mock("../src/mcp/tools/index.js");
 vi.mock("../src/modules/embedding/embedding.service.js");
 vi.mock("../src/modules/llm/agentic-llm.service.js");
+vi.mock("../src/modules/settings/settings.service.js", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("../src/modules/settings/settings.service.js")>();
+  return {
+    ...actual,
+    resolveAgenticCompileRouting: vi.fn(),
+  };
+});
 vi.mock("../src/modules/context-compiler/context-compiler.repository.js", () => ({
   listRecentCompileRuns: vi.fn(() => []),
 }));
@@ -43,6 +51,12 @@ describe("Doctor Service", () => {
     vi.clearAllMocks();
     process.env.MEMORY_ROUTER_MCP_V2 = "1";
     process.env.CONTEXT_STILL_DB_BACKEND = "postgres";
+    vi.mocked(resolveAgenticCompileRouting).mockReturnValue({
+      provider: "azure-openai",
+      localLlmModel: undefined,
+      fallback: [],
+      azureDeploymentSlots: undefined,
+    } as any);
     vi.mocked(embeddingHealth).mockResolvedValue({
       configured: true,
       provider: "daemon",
@@ -471,6 +485,12 @@ describe("Doctor Service", () => {
     vi.mocked(getDb).mockImplementation(() => {
       throw new Error("AI service-tools domain should not inspect the database");
     });
+    vi.mocked(resolveAgenticCompileRouting).mockReturnValue({
+      provider: "local-llm",
+      localLlmModel: "qwen3",
+      fallback: ["openai", "local-llm"],
+      azureDeploymentSlots: undefined,
+    } as any);
     vi.mocked(checkAgenticLlmHealth).mockResolvedValue({
       providerSetting: "openai",
       selectedProvider: "local-llm",
