@@ -73,6 +73,44 @@ describe("Shared Schemas", () => {
     expect(registerCandidateInputSchema.safeParse({ title: "T" }).success).toBe(false);
   });
 
+  test("registerCandidateInputSchema requires applicability for negative candidates", () => {
+    expect(
+      registerCandidateInputSchema.parse({
+        title: "Avoid stale queue assumptions",
+        polarity: "negative",
+        avoid: "Assuming queue count proves worker progress.",
+        prefer: "Check worker events and persisted queue state together.",
+        technologies: ["sqlite"],
+        changeTypes: ["diagnosis"],
+        domains: ["queue"],
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        polarity: "negative",
+        avoid: "Assuming queue count proves worker progress.",
+        prefer: "Check worker events and persisted queue state together.",
+        technologies: ["sqlite"],
+        changeTypes: ["diagnosis"],
+        domains: ["queue"],
+      }),
+    );
+    expect(
+      registerCandidateInputSchema.safeParse({
+        title: "Avoid stale queue assumptions",
+        polarity: "negative",
+        avoid: "Assuming queue count proves worker progress.",
+        prefer: "Check worker events and persisted queue state together.",
+      }).success,
+    ).toBe(false);
+    expect(
+      registerCandidateInputSchema.safeParse({
+        title: "T",
+        body: "B",
+        avoid: "A",
+      }).success,
+    ).toBe(false);
+  });
+
   test("registerCandidatesToolInputSchema requires strict wrapper", () => {
     expect(
       registerCandidatesToolInputSchema.parse({

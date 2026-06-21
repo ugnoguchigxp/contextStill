@@ -114,6 +114,8 @@ export const registerCandidateInputSchema = z
     title: z.string().trim().min(1).optional(),
     body: z.string().trim().min(1).optional(),
     text: z.string().trim().min(1).optional(),
+    avoid: z.string().trim().min(1).optional(),
+    prefer: z.string().trim().min(1).optional(),
     type: knowledgeTypeSchema.optional(),
     polarity: z.enum(["positive", "negative", "neutral"]).optional(),
     intentTags: z.array(z.string()).optional(),
@@ -129,12 +131,81 @@ export const registerCandidateInputSchema = z
     metadata: z.record(z.unknown()).default({}),
   })
   .superRefine((value, context) => {
-    if (value.body || value.text) return;
-    context.addIssue({
-      code: z.ZodIssueCode.custom,
-      path: ["body"],
-      message: "body or text is required",
-    });
+    const isNegative = value.polarity === "negative";
+    if (!isNegative) {
+      if (!value.body && !value.text) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["body"],
+          message: "body or text is required",
+        });
+      }
+      if (value.avoid !== undefined) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["avoid"],
+          message: "avoid is only supported when polarity is negative",
+        });
+      }
+      if (value.prefer !== undefined) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["prefer"],
+          message: "prefer is only supported when polarity is negative",
+        });
+      }
+      return;
+    }
+
+    if (!value.body && !value.text) {
+      if (!value.avoid) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["avoid"],
+          message: "avoid is required when negative candidate body or text is omitted",
+        });
+      }
+      if (!value.prefer) {
+        context.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["prefer"],
+          message: "prefer is required when negative candidate body or text is omitted",
+        });
+      }
+    }
+
+    if (value.avoid && value.prefer && value.avoid === value.prefer) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["prefer"],
+        message: "prefer must differ from avoid",
+      });
+    }
+
+    const technologies = value.technologies ?? value.appliesTo?.technologies;
+    const changeTypes = value.changeTypes ?? value.appliesTo?.changeTypes;
+    const domains = value.domains ?? value.appliesTo?.domains;
+    if (!technologies?.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["technologies"],
+        message: "technologies is required for negative candidates",
+      });
+    }
+    if (!changeTypes?.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["changeTypes"],
+        message: "changeTypes is required for negative candidates",
+      });
+    }
+    if (!domains?.length) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["domains"],
+        message: "domains is required for negative candidates",
+      });
+    }
   });
 
 export const registerCandidatesBulkInputSchema = z
@@ -202,48 +273,7 @@ export const updateKnowledgeInputSchema = z
     { message: "at least one update field is required" },
   );
 
-export const registerReviewCorrectionItemSchema = z.object({
-  title: z.string().trim().min(1),
-  finding: z.string().trim().min(1),
-  impact: z.string().trim().optional(),
-  trigger: z.string().trim().optional(),
-  fix: z.string().trim().optional(),
-  verification: z.string().trim().optional(),
-  decisionSignal: z.string().trim().optional(),
-  severity: z.enum(["low", "medium", "high", "critical"]).optional(),
-  status: z.enum(["accepted", "fixed", "deferred"]),
-  origin: z.object({
-    system: z.string().trim().min(1),
-    reviewFindingId: z.string().trim().min(1),
-    runId: z.string().trim().optional(),
-    taskId: z.string().trim().optional(),
-    sessionId: z.string().trim().optional(),
-    repositoryPath: z.string().trim().optional(),
-    artifactRefs: z.array(z.string().trim()).optional(),
-    fileRefs: z
-      .array(
-        z.object({
-          path: z.string().trim().min(1),
-          line: z.number().int().optional(),
-        }),
-      )
-      .optional(),
-  }),
-  confidence: optionalKnowledgeScoreSchema,
-  importance: optionalKnowledgeScoreSchema,
-  intentTags: z.array(z.string().trim()).optional(),
-  appliesTo: z.record(z.unknown()).optional(),
-});
-
-export const registerReviewCorrectionsInputSchema = z
-  .object({
-    items: z.array(registerReviewCorrectionItemSchema).min(1).max(10),
-  })
-  .strict();
-
 export type KnowledgeItem = z.infer<typeof knowledgeItemSchema>;
 export type KnowledgeApplicabilityInput = z.infer<typeof knowledgeApplicabilitySchema>;
 export type KnowledgeSearchInput = z.infer<typeof knowledgeSearchInputSchema>;
 export type KnowledgeStatus = z.infer<typeof knowledgeStatusSchema>;
-export type RegisterReviewCorrectionItem = z.infer<typeof registerReviewCorrectionItemSchema>;
-export type RegisterReviewCorrectionsInput = z.infer<typeof registerReviewCorrectionsInputSchema>;

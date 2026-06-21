@@ -7,7 +7,6 @@ import { fetchEpisodeTool, searchEpisodesTool } from "./episode.tool.js";
 import {
   listKnowledgeTool,
   registerCandidatesTool,
-  registerReviewCorrectionsTool,
   searchKnowledgeTool,
   updateKnowledgeTool,
 } from "./knowledge.tool.js";
@@ -33,7 +32,6 @@ const v1ToolEntries: ToolEntry[] = [
   contextDecisionFeedbackTool,
   searchKnowledgeTool,
   registerCandidatesTool,
-  registerReviewCorrectionsTool,
   listKnowledgeTool,
   updateKnowledgeTool,
   readFileTool,
@@ -50,7 +48,6 @@ const v2ToolEntries: ToolEntry[] = [
   contextDecisionFeedbackTool,
   searchKnowledgeTool,
   registerCandidatesTool,
-  registerReviewCorrectionsTool,
   searchMemoryTool,
   fetchMemoryTool,
   searchEpisodesTool,

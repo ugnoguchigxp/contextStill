@@ -13,13 +13,11 @@ import {
   registerCandidate,
   registerCandidatesBulk,
 } from "../../modules/registerCandidate/register-candidate.service.js";
-import { registerReviewCorrections } from "../../modules/registerCandidate/register-review-corrections.service.js";
 import {
   knowledgeSearchInputSchema,
   listKnowledgeInputSchema,
   registerCandidateInputSchema,
   registerCandidatesToolInputSchema,
-  registerReviewCorrectionsInputSchema,
   updateKnowledgeInputSchema,
 } from "../../shared/schemas/knowledge.schema.js";
 import type { ToolEntry } from "../registry.js";
@@ -150,7 +148,18 @@ export const registerCandidateTool: ToolEntry = {
         description:
           "Raw note or JSON-like text alternative to title/body. The server will normalize the first candidate into title/body.",
       },
+      avoid: {
+        type: "string",
+        description:
+          "For polarity=negative when body/text is omitted: decision, implementation, or operation to avoid.",
+      },
+      prefer: {
+        type: "string",
+        description:
+          "For polarity=negative when body/text is omitted: safer decision, implementation, or operation to prefer.",
+      },
       type: { type: "string", enum: ["rule", "procedure"] },
+      polarity: { type: "string", enum: ["positive", "negative", "neutral"] },
       confidence: { type: "number", minimum: 0, maximum: 100 },
       importance: { type: "number", minimum: 0, maximum: 100 },
       appliesTo: { type: "object" },
@@ -188,7 +197,10 @@ export const registerCandidatesTool: ToolEntry = {
             title: { type: "string" },
             body: { type: "string" },
             text: { type: "string" },
+            avoid: { type: "string" },
+            prefer: { type: "string" },
             type: { type: "string", enum: ["rule", "procedure"] },
+            polarity: { type: "string", enum: ["positive", "negative", "neutral"] },
             confidence: { type: "number", minimum: 0, maximum: 100 },
             importance: { type: "number", minimum: 0, maximum: 100 },
             appliesTo: { type: "object" },
@@ -382,76 +394,6 @@ export const updateKnowledgeTool: ToolEntry = {
           ),
         },
       ],
-    };
-  },
-};
-
-export const registerReviewCorrectionsTool: ToolEntry = {
-  name: "register_review_corrections",
-  description: "Bulk-register accepted or valid review corrections as negative candidates.",
-  inputSchema: {
-    type: "object",
-    additionalProperties: false,
-    properties: {
-      items: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            title: { type: "string", description: "Clear, concise title for this correction." },
-            finding: { type: "string", description: "Raw finding description." },
-            impact: { type: "string", description: "Optional impact description." },
-            trigger: { type: "string", description: "Optional trigger description." },
-            fix: { type: "string", description: "Optional fix description." },
-            verification: { type: "string", description: "Optional verification description." },
-            decisionSignal: {
-              type: "string",
-              description: "Optional decision signal description.",
-            },
-            severity: { type: "string", enum: ["low", "medium", "high", "critical"] },
-            status: { type: "string", enum: ["accepted", "fixed", "deferred"] },
-            origin: {
-              type: "object",
-              properties: {
-                system: { type: "string", description: "Originating system name." },
-                reviewFindingId: { type: "string", description: "Finding ID in that system." },
-                runId: { type: "string" },
-                taskId: { type: "string" },
-                sessionId: { type: "string" },
-                repositoryPath: { type: "string" },
-                artifactRefs: { type: "array", items: { type: "string" } },
-                fileRefs: {
-                  type: "array",
-                  items: {
-                    type: "object",
-                    properties: {
-                      path: { type: "string" },
-                      line: { type: "number" },
-                    },
-                    required: ["path"],
-                  },
-                },
-              },
-              required: ["system", "reviewFindingId"],
-            },
-            confidence: { type: "number", minimum: 0, maximum: 100 },
-            importance: { type: "number", minimum: 0, maximum: 100 },
-            intentTags: { type: "array", items: { type: "string" } },
-            appliesTo: { type: "object" },
-          },
-          required: ["title", "finding", "status", "origin"],
-        },
-        minItems: 1,
-        maxItems: 10,
-      },
-    },
-    required: ["items"],
-  },
-  handler: async (args) => {
-    const parsed = registerReviewCorrectionsInputSchema.parse(args ?? {});
-    const result = await registerReviewCorrections(parsed);
-    return {
-      content: [{ type: "text", text: JSON.stringify(result, null, 2) }],
     };
   },
 };

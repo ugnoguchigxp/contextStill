@@ -21,6 +21,7 @@ import { type FindCandidateResult, runFindCandidate } from "../../findCandidate/
 import {
   applicabilityFromCoverCandidate,
   applicabilityToCoverCandidateFields,
+  type KnowledgeApplicability,
   normalizeApplicability,
 } from "../../knowledge/applicability.js";
 import { processDeadZoneMergeReviewJob } from "../../landscape/deadzone-merge-review-queue.service.js";
@@ -50,6 +51,7 @@ type ProvidedCandidatePayload = {
   type?: "rule" | "procedure";
   polarity?: "positive" | "negative";
   intentTags?: string[];
+  applicability?: KnowledgeApplicability;
   sourceSummary?: string;
   origin?: Record<string, unknown>;
 };
@@ -562,6 +564,7 @@ function parseProvidedCandidatePayload(value: unknown): ProvidedCandidatePayload
   const typeRaw = asNonEmptyString(record.type);
   const polarityRaw = asNonEmptyString(record.polarity);
   const intentTags = parseStringArray(record.intentTags);
+  const applicability = normalizeApplicability(record) ?? {};
   const sourceSummary = asNonEmptyString(record.sourceSummary) ?? undefined;
   const origin = asRecord(record.origin);
   return {
@@ -571,6 +574,7 @@ function parseProvidedCandidatePayload(value: unknown): ProvidedCandidatePayload
     polarity:
       polarityRaw === "negative" ? "negative" : polarityRaw === "positive" ? "positive" : undefined,
     ...(intentTags.length > 0 ? { intentTags } : {}),
+    ...(Object.keys(applicability).length > 0 ? { applicability } : {}),
     sourceSummary,
     origin,
   };
@@ -908,6 +912,10 @@ async function processFindingCandidate(jobId: string, signal?: AbortSignal): Pro
         providedCandidate: true,
         ...(payload.polarity ? { polarity: payload.polarity } : {}),
         ...(payload.intentTags?.length ? { intentTags: payload.intentTags } : {}),
+        ...(payload.applicability ? { appliesTo: payload.applicability } : {}),
+        ...(payload.applicability
+          ? applicabilityToCoverCandidateFields(payload.applicability)
+          : {}),
       },
       metadata: {
         sourceKind: job.sourceKind,
@@ -915,6 +923,10 @@ async function processFindingCandidate(jobId: string, signal?: AbortSignal): Pro
         sourceUri: job.sourceUri,
         ...(payload.polarity ? { polarity: payload.polarity } : {}),
         ...(payload.intentTags?.length ? { intentTags: payload.intentTags } : {}),
+        ...(payload.applicability ? { appliesTo: payload.applicability } : {}),
+        ...(payload.applicability
+          ? applicabilityToCoverCandidateFields(payload.applicability)
+          : {}),
       },
     });
     await enqueueCoveringJob({

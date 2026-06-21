@@ -23,7 +23,6 @@ vi.mock("../src/modules/context-compiler/context-compile-eval.service.js");
 vi.mock("../src/modules/doctor/doctor.service.js");
 vi.mock("../src/modules/episodic-memory/episode-card.service.js");
 vi.mock("../src/modules/registerCandidate/register-candidate.service.js");
-vi.mock("../src/modules/registerCandidate/register-review-corrections.service.js");
 vi.mock("../src/modules/settings/settings.service.js");
 vi.mock("../api/modules/knowledge/knowledge.repository.js");
 vi.mock("../src/modules/context-decision/context-decision.service.js");
@@ -44,7 +43,6 @@ import {
   listKnowledgeTool,
   registerCandidateTool,
   registerCandidatesTool,
-  registerReviewCorrectionsTool,
   searchKnowledgeTool,
   updateKnowledgeTool,
 } from "../src/mcp/tools/knowledge.tool.js";
@@ -66,7 +64,6 @@ import {
 import { searchKnowledgeCandidates } from "../src/modules/knowledge/knowledge.service.js";
 import { registerCandidate } from "../src/modules/registerCandidate/register-candidate.service.js";
 import { registerCandidatesBulk } from "../src/modules/registerCandidate/register-candidate.service.js";
-import { registerReviewCorrections } from "../src/modules/registerCandidate/register-review-corrections.service.js";
 import { reloadRuntimeSettingsCache } from "../src/modules/settings/settings.service.js";
 import { retrieveVibeMemoryContext } from "../src/modules/vibe-memory/vibe-memory.service.js";
 import {
@@ -431,6 +428,43 @@ describe("MCP Tools Handlers", () => {
         }),
       ).rejects.toThrow("PROCEDURE_CANDIDATE_MISSING_SKILL_LIKE_SECTIONS");
     });
+
+    test("passes negative minimal input with applicability", async () => {
+      vi.mocked(registerCandidate).mockResolvedValue({
+        targetStateId: "target-id",
+        findCandidateResultId: "candidate-id",
+        sourceUri: "agent://candidate/candidate-id",
+        status: "candidate_registered",
+        title: "Avoid stale queue assumptions",
+        type: "rule",
+        warnings: [],
+        next: "distillation_pipeline",
+      });
+
+      await registerCandidateTool.handler({
+        title: "Avoid stale queue assumptions",
+        polarity: "negative",
+        avoid: "Assume queue count proves worker progress.",
+        prefer: "Check persisted queue state and worker events together.",
+        technologies: ["sqlite"],
+        changeTypes: ["diagnosis"],
+        domains: ["queue"],
+      });
+
+      expect(registerCandidate).toHaveBeenCalledWith(
+        {
+          title: "Avoid stale queue assumptions",
+          polarity: "negative",
+          avoid: "Assume queue count proves worker progress.",
+          prefer: "Check persisted queue state and worker events together.",
+          technologies: ["sqlite"],
+          changeTypes: ["diagnosis"],
+          domains: ["queue"],
+          metadata: {},
+        },
+        { strictProcedureSections: true },
+      );
+    });
   });
 
   describe("register_candidates", () => {
@@ -455,41 +489,6 @@ describe("MCP Tools Handlers", () => {
         ],
         { strictProcedureSections: true },
       );
-    });
-  });
-
-  describe("register_review_corrections", () => {
-    test("registers review corrections successfully", async () => {
-      vi.mocked(registerReviewCorrections).mockResolvedValue({
-        status: "success",
-        registeredCount: 1,
-        failedCount: 0,
-        duplicateCount: 0,
-        items: [],
-      } as never);
-
-      const response = await registerReviewCorrectionsTool.handler({
-        items: [
-          {
-            title: "T",
-            finding: "F",
-            status: "accepted",
-            origin: { system: "S", reviewFindingId: "1" },
-          },
-        ],
-      });
-      const data = JSON.parse(response.content[0].text);
-      expect(data.registeredCount).toBe(1);
-      expect(registerReviewCorrections).toHaveBeenCalledWith({
-        items: [
-          {
-            title: "T",
-            finding: "F",
-            status: "accepted",
-            origin: { system: "S", reviewFindingId: "1" },
-          },
-        ],
-      });
     });
   });
 

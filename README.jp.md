@@ -150,7 +150,7 @@ MCP client には次のように登録します。
 }
 ```
 
-接続後は、project session 開始時に `initial_instructions` を一度だけ呼びます。作業前に `context_compile`、ユーザーへ質問する前や PR 作成前に自律継続できる余地がある場合は `context_decision`、作業後に `compile_eval` を使います。
+接続後は、project session 開始時に `initial_instructions` を一度だけ呼びます。作業前に `context_compile`、ユーザーへ質問する前や PR 作成前に自律継続できる余地がある場合は `context_decision`、作業後に `compile_eval` を使います。永続化したい知見は `register_candidates` で登録し、negative guardrail は `polarity: "negative"` と明示的な `technologies` / `changeTypes` / `domains` を指定します。
 
 MCP は agent integration surface です。local app を開くことや既存 knowledge を確認することの隠れた必須条件ではありません。
 
@@ -167,7 +167,7 @@ bun run db:migrate
 bun run verify:postgres
 ```
 
-server backend の制約は [Architecture Overview](spec/pub/architecture.md) と [Operations](spec/pub/operations.md) に記載しています。server productization、auth、multi-user operation、remote DB latency assumptions が固まるまでは opt-in path として扱います。
+server backend の制約は [Architecture Overview](spec/docs/pub/architecture.md) と [Operations](spec/docs/pub/operations.md) に記載しています。server productization、auth、multi-user operation、remote DB latency assumptions が固まるまでは opt-in path として扱います。
 
 ## よく使うワークフロー
 
@@ -217,18 +217,18 @@ compile evaluation と candidate 登録を促す任意の Git hooks:
 
 ## ドキュメント
 
-公開向けドキュメントは `spec/pub/` にあります。
+公開向けドキュメントは `spec/docs/pub/` にあります。
 
 | Document | Purpose |
 |---|---|
-| [Documentation Index](spec/pub/README.md) | 公開ドキュメントの目次 |
-| [Getting Started](spec/pub/getting-started.md) | Desktop quick start、MCP integration、最初の compile |
-| [Architecture Overview](spec/pub/architecture.md) | product modes、backend boundaries、runtime components |
-| [MCP Tools](spec/pub/mcp-tools.md) | MCP tool contract と推奨 workflow |
-| [CLI Reference](spec/pub/cli.md) | コマンド一覧と例 |
-| [REST API Reference](spec/pub/api.md) | HTTP API endpoint inventory |
-| [Configuration](spec/pub/configuration.md) | desktop defaults と advanced configuration |
-| [Operations](spec/pub/operations.md) | doctor、backup、automation、server backend operations |
+| [Documentation Index](spec/docs/pub/README.md) | 公開ドキュメントの目次 |
+| [Getting Started](spec/docs/pub/getting-started.md) | Desktop quick start、MCP integration、最初の compile |
+| [Architecture Overview](spec/docs/pub/architecture.md) | product modes、backend boundaries、runtime components |
+| [MCP Tools](spec/docs/pub/mcp-tools.md) | MCP tool contract と推奨 workflow |
+| [CLI Reference](spec/docs/pub/cli.md) | コマンド一覧と例 |
+| [REST API Reference](spec/docs/pub/api.md) | HTTP API endpoint inventory |
+| [Configuration](spec/docs/pub/configuration.md) | desktop defaults と advanced configuration |
+| [Operations](spec/docs/pub/operations.md) | doctor、backup、automation、server backend operations |
 
 内部実装計画と設計メモは `spec/docs/` にあります。
 

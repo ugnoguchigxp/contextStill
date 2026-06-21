@@ -268,6 +268,9 @@ Do not run on production database.
       type: "procedure",
       polarity: "negative",
       intentTags: ["failure_pattern", "guardrail"],
+      technologies: ["sqlite"],
+      changeTypes: ["diagnosis"],
+      domains: ["queue"],
       metadata: {},
     });
 
@@ -279,6 +282,11 @@ Do not run on production database.
           originalCandidateType: "procedure",
           polarity: "negative",
           intentTags: ["failure_pattern", "guardrail"],
+          appliesTo: {
+            technologies: ["sqlite"],
+            changeTypes: ["diagnosis"],
+            domains: ["queue"],
+          },
         }),
       }),
     );
@@ -288,11 +296,21 @@ Do not run on production database.
           type: "rule",
           polarity: "negative",
           intentTags: ["failure_pattern", "guardrail"],
+          appliesTo: {
+            technologies: ["sqlite"],
+            changeTypes: ["diagnosis"],
+            domains: ["queue"],
+          },
           origin: expect.objectContaining({ polarity: "negative" }),
         }),
         metadata: expect.objectContaining({
           polarity: "negative",
           intentTags: ["failure_pattern", "guardrail"],
+          appliesTo: {
+            technologies: ["sqlite"],
+            changeTypes: ["diagnosis"],
+            domains: ["queue"],
+          },
         }),
       }),
     );
@@ -302,13 +320,61 @@ Do not run on production database.
         origin: expect.objectContaining({
           originalCandidateType: "procedure",
           polarity: "negative",
+          appliesTo: {
+            technologies: ["sqlite"],
+            changeTypes: ["diagnosis"],
+            domains: ["queue"],
+          },
         }),
         metadata: expect.objectContaining({
           polarity: "negative",
           intentTags: ["failure_pattern", "guardrail"],
+          appliesTo: {
+            technologies: ["sqlite"],
+            changeTypes: ["diagnosis"],
+            domains: ["queue"],
+          },
         }),
       }),
     );
+  });
+
+  test("generates negative body from avoid and prefer", async () => {
+    const targetChain = makeChain([{ id: "target-1" }]);
+    const candidateChain = makeChain([{ id: "candidate-1" }]);
+    mockInsert.mockReturnValueOnce(targetChain).mockReturnValueOnce(candidateChain);
+
+    const result = await registerCandidate({
+      title: "Avoid stale queue assumptions",
+      polarity: "negative",
+      avoid: "Assuming queue count proves worker progress.",
+      prefer: "Check worker events and persisted queue state together.",
+      technologies: ["sqlite"],
+      changeTypes: ["diagnosis"],
+      domains: ["queue"],
+      metadata: {},
+    });
+
+    expect(result.type).toBe("rule");
+    expect(candidateChain.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content:
+          "Avoid: Assuming queue count proves worker progress.\nPrefer: Check worker events and persisted queue state together.",
+      }),
+    );
+  });
+
+  test("rejects negative candidates without applicability", async () => {
+    await expect(
+      registerCandidate({
+        title: "Avoid stale queue assumptions",
+        polarity: "negative",
+        avoid: "Assuming queue count proves worker progress.",
+        prefer: "Check worker events and persisted queue state together.",
+        metadata: {},
+      }),
+    ).rejects.toThrow("technologies is required for negative candidates");
+    expect(mockInsert).not.toHaveBeenCalled();
   });
 
   test("assigns wiki priority when metadata indicates wiki parent", async () => {

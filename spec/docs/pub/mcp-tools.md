@@ -16,7 +16,7 @@ initial_instructions -> context_compile -> context_decision as a pre-question ga
 | `context_decision`          | Decide execute/revise/reject/rollback/discard/escalate from Knowledge evidence before asking the user |
 | `context_decision_feedback` | Record Good/Bad or system/AI outcome feedback for a decision                                          |
 | `search_knowledge`          | Inspect raw knowledge candidates and retrieval behavior                                               |
-| `register_candidates`       | Register multiple candidates in one call                                                              |
+| `register_candidates`       | Register positive or negative rule/procedure candidates in one call                                    |
 | `search_memory`             | Search past sessions and diffs                                                                        |
 | `fetch_memory`              | Fetch one memory item                                                                                 |
 | `doctor`                    | Diagnose DB, embedding, sync, queue, provider, decision, and compile health                           |
@@ -165,15 +165,57 @@ Output includes candidates, scores, status, scope, source refs, metadata, degrad
 
 ### `register_candidates`
 
-Purpose: Register multiple candidates.
+Purpose: Register multiple durable knowledge candidates. Use this for both ordinary positive lessons and negative guardrails/review corrections.
 
 Input:
 
-| Field   | Required | Description                                                              |
-| ------- | -------: | ------------------------------------------------------------------------ |
+| Field   | Required | Description                         |
+| ------- | -------: | ----------------------------------- |
 | `items` |      yes | Array of 1 to 10 candidate objects. |
 
+Candidate item fields:
+
+| Field          | Required                        | Description                                                                 |
+| -------------- | ------------------------------: | --------------------------------------------------------------------------- |
+| `title`        |                              no | Clear candidate title. If omitted, the server infers it from `body`/`text`. |
+| `body`         | conditional                     | Candidate body. Required unless `text` is provided, or negative `avoid`/`prefer` are provided. |
+| `text`         | conditional                     | Raw note or JSON-like candidate text alternative to `body`.                 |
+| `type`         |                              no | `rule` or `procedure`; negative candidates are normalized to `rule`.        |
+| `polarity`     |                              no | `positive`, `negative`, or `neutral`; omitted defaults to positive behavior. |
+| `avoid`        | negative without `body`/`text`  | Failure, decision, implementation, or operation to avoid.                   |
+| `prefer`       | negative without `body`/`text`  | Safer decision, implementation, or operation to prefer.                     |
+| `technologies` | negative                        | Non-empty applicability tags for concrete stacks, runtimes, languages, or libraries. |
+| `changeTypes`  | negative                        | Non-empty applicability tags for change categories such as `implementation`, `testing`, or `diagnosis`. |
+| `domains`      | negative                        | Non-empty applicability tags for product or engineering domains.            |
+| `appliesTo`    | no                              | Existing applicability object. For negative candidates it must include `technologies`, `changeTypes`, and `domains` if the top-level fields are omitted. |
+| `general`      | no                              | Set only when the candidate is intentionally cross-repository. Negative candidates still require `changeTypes` and `domains`. |
+| `intentTags`   | no                              | Optional retrieval/role tags such as `guardrail` or `failure_pattern`.      |
+| `metadata`     | no                              | Optional caller metadata such as source system or review finding ID.        |
+
 Behavior is best-effort. Inspect the result for per-item failures.
+
+Negative example:
+
+```json
+{
+  "items": [
+    {
+      "title": "Avoid trusting queue counts alone",
+      "polarity": "negative",
+      "avoid": "Assuming a pending count proves the worker is progressing.",
+      "prefer": "Check persisted queue rows, worker events, and runtime logs together.",
+      "technologies": ["sqlite"],
+      "changeTypes": ["diagnosis"],
+      "domains": ["queue"],
+      "intentTags": ["guardrail", "failure_pattern"],
+      "metadata": {
+        "source": "human-review",
+        "reviewFindingId": "queue-count-truth"
+      }
+    }
+  ]
+}
+```
 
 ### `search_memory`
 

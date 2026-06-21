@@ -118,6 +118,9 @@ describeDb("registerCandidate", () => {
       type: "procedure",
       polarity: "negative",
       intentTags: ["failure_pattern", "guardrail"],
+      technologies: ["sqlite"],
+      changeTypes: ["diagnosis"],
+      domains: ["queue"],
       metadata: {},
     });
 
@@ -141,11 +144,21 @@ describeDb("registerCandidate", () => {
       originalCandidateType: "procedure",
       polarity: "negative",
       intentTags: ["failure_pattern", "guardrail"],
+      appliesTo: {
+        technologies: ["sqlite"],
+        changeTypes: ["diagnosis"],
+        domains: ["queue"],
+      },
     });
     expect(findingJob.payload).toMatchObject({
       type: "rule",
       polarity: "negative",
       intentTags: ["failure_pattern", "guardrail"],
+      appliesTo: {
+        technologies: ["sqlite"],
+        changeTypes: ["diagnosis"],
+        domains: ["queue"],
+      },
     });
     expect(foundCandidate).toMatchObject({
       type: "rule",
@@ -155,10 +168,20 @@ describeDb("registerCandidate", () => {
       originalCandidateType: "procedure",
       polarity: "negative",
       intentTags: ["failure_pattern", "guardrail"],
+      appliesTo: {
+        technologies: ["sqlite"],
+        changeTypes: ["diagnosis"],
+        domains: ["queue"],
+      },
     });
     expect(foundCandidate.metadata).toMatchObject({
       polarity: "negative",
       intentTags: ["failure_pattern", "guardrail"],
+      appliesTo: {
+        technologies: ["sqlite"],
+        changeTypes: ["diagnosis"],
+        domains: ["queue"],
+      },
     });
   });
 

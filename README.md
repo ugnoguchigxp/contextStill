@@ -151,7 +151,7 @@ For an MCP client, use:
 }
 ```
 
-After connecting the MCP server, call `initial_instructions` once at the start of a project session. Use `context_compile` before task work, `context_decision` before asking the user or creating a PR when autonomous progress may still be possible, and `compile_eval` after task work.
+After connecting the MCP server, call `initial_instructions` once at the start of a project session. Use `context_compile` before task work, `context_decision` before asking the user or creating a PR when autonomous progress may still be possible, and `compile_eval` after task work. Register durable lessons with `register_candidates`; negative guardrails use `polarity: "negative"` plus explicit `technologies`, `changeTypes`, and `domains`.
 
 MCP is an agent integration surface. It is not a hidden requirement for opening the local app or inspecting existing knowledge.
 
@@ -168,7 +168,7 @@ bun run db:migrate
 bun run verify:postgres
 ```
 
-Server backend constraints are documented in [Architecture Overview](spec/pub/architecture.md) and [Operations](spec/pub/operations.md). Treat this path as opt-in until server productization, auth, multi-user operation, and remote DB latency assumptions are settled.
+Server backend constraints are documented in [Architecture Overview](spec/docs/pub/architecture.md) and [Operations](spec/docs/pub/operations.md). Treat this path as opt-in until server productization, auth, multi-user operation, and remote DB latency assumptions are settled.
 
 ## Common Workflows
 
@@ -218,18 +218,18 @@ Install optional Git hooks that remind agents to evaluate compile output and reg
 
 ## Documentation
 
-Public user and operator documentation lives under `spec/pub/`.
+Public user and operator documentation lives under `spec/docs/pub/`.
 
 | Document | Purpose |
 |---|---|
-| [Documentation Index](spec/pub/README.md) | Public documentation map |
-| [Getting Started](spec/pub/getting-started.md) | Desktop quick start, MCP integration, and first compile |
-| [Architecture Overview](spec/pub/architecture.md) | Product modes, backend boundaries, and runtime components |
-| [MCP Tools](spec/pub/mcp-tools.md) | Detailed MCP tool contract and workflow |
-| [CLI Reference](spec/pub/cli.md) | Supported commands and examples |
-| [REST API Reference](spec/pub/api.md) | HTTP API endpoint inventory |
-| [Configuration](spec/pub/configuration.md) | Desktop defaults and advanced configuration |
-| [Operations](spec/pub/operations.md) | Doctor, backups, automation, and server backend operations |
+| [Documentation Index](spec/docs/pub/README.md) | Public documentation map |
+| [Getting Started](spec/docs/pub/getting-started.md) | Desktop quick start, MCP integration, and first compile |
+| [Architecture Overview](spec/docs/pub/architecture.md) | Product modes, backend boundaries, and runtime components |
+| [MCP Tools](spec/docs/pub/mcp-tools.md) | Detailed MCP tool contract and workflow |
+| [CLI Reference](spec/docs/pub/cli.md) | Supported commands and examples |
+| [REST API Reference](spec/docs/pub/api.md) | HTTP API endpoint inventory |
+| [Configuration](spec/docs/pub/configuration.md) | Desktop defaults and advanced configuration |
+| [Operations](spec/docs/pub/operations.md) | Doctor, backups, automation, and server backend operations |
 
 Internal implementation plans and design notes live under `spec/docs/`.
 
@@ -242,7 +242,7 @@ web/          React admin UI
 drizzle/      Server backend migrations
 scripts/      Verification, automation, and maintenance scripts
 github-pages/ Landing page source and generated Pages artifact
-spec/pub/     Public documentation
+spec/docs/pub/ Public documentation
 spec/docs/    Internal implementation and design documents
 test/         Unit and integration tests
 e2e/          Playwright end-to-end tests
