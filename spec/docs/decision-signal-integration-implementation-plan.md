@@ -3,7 +3,7 @@
 > 状態: plan draft
 > 作成日: 2026-06-20
 > 最終更新: 2026-06-20
-> 関連: [Tauri Product Readiness Improvement Plan](tauri-product-readiness-improvement-plan.md), [Desktop Readiness And Doctor States](desktop-readiness-and-doctor-states.md)
+> 関連: [Desktop Readiness And Doctor States](desktop-readiness-and-doctor-states.md)
 
 ## 目的
 

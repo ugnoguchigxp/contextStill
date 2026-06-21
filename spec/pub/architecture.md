@@ -138,3 +138,4 @@ Server backend compatibility tests should stay explicit, but desktop users shoul
 - Landscape diagnostics create reviewable artifacts; they do not directly mutate production ranking.
 - MCP tools and CLI commands are daemon-side entrypoints. REST API endpoints are primarily for the admin UI facade and should not be required for background work to continue.
 - `.env` is a development/advanced configuration surface, not a required desktop onboarding step.
+- `context-stilld` is an in-progress Rust boundary host for paths, preflight, lifecycle status, and delegated process supervision. It does not replace TypeScript product logic yet; TypeScript commands remain the fallback/source of truth until each boundary passes its own smoke gate.

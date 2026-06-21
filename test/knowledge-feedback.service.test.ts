@@ -36,11 +36,12 @@ vi.mock("../src/db/backend.js", () => ({
 }));
 
 vi.mock("../src/db/sqlite/runtime.js", () => ({
-  getRuntimeSqliteCoreDatabase: () => Promise.resolve({
-    db: {
-      query: (...args: any[]) => mockSqliteQuery(...args),
-    },
-  }),
+  getRuntimeSqliteCoreDatabase: () =>
+    Promise.resolve({
+      db: {
+        query: (...args: any[]) => mockSqliteQuery(...args),
+      },
+    }),
 }));
 
 vi.mock("../src/modules/knowledge/knowledge-value.service.js", () => ({

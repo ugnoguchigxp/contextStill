@@ -1,12 +1,8 @@
 import { z } from "zod";
 import {
   fetchEpisode,
-  registerEpisode,
   searchEpisodes,
 } from "../../modules/episodic-memory/episode-card.service.js";
-import { episodeCardCreateSchema } from "../../shared/schemas/episode-card.schema.js";
-
-const registerEpisodeArgsSchema = episodeCardCreateSchema;
 
 const searchEpisodesArgsSchema = z.object({
   query: z.string().trim().optional(),
@@ -27,75 +23,6 @@ const searchEpisodesArgsSchema = z.object({
 const fetchEpisodeArgsSchema = z.object({
   id: z.string().min(1),
 });
-
-export const registerEpisodeTool = {
-  name: "register_episode",
-  description:
-    "Register an EpisodeCard, a compact past-work precedent with refs back to raw evidence.",
-  inputSchema: {
-    type: "object",
-    properties: {
-      title: { type: "string" },
-      situation: { type: "string" },
-      observations: { type: "string" },
-      action: { type: "string" },
-      outcome: { type: "string" },
-      lesson: { type: "string" },
-      applicability: { type: "object" },
-      antiApplicability: { type: "object" },
-      domains: { type: "array", items: { type: "string" } },
-      technologies: { type: "array", items: { type: "string" } },
-      changeTypes: { type: "array", items: { type: "string" } },
-      tools: { type: "array", items: { type: "string" } },
-      repoPath: { type: "string" },
-      repoKey: { type: "string" },
-      sourceKind: {
-        type: "string",
-        enum: ["vibe_memory", "compile_run", "decision_run", "audit_log", "manual"],
-      },
-      sourceKey: { type: "string" },
-      outcomeKind: { type: "string", enum: ["success", "failure", "mixed", "unknown"] },
-      confidence: { type: "number", minimum: 0, maximum: 100 },
-      evidenceStatus: { type: "string", enum: ["verified", "partial", "unverified"] },
-      status: { type: "string", enum: ["draft", "active", "deprecated"] },
-      staleAt: { type: "string" },
-      metadata: { type: "object" },
-      refs: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            refKind: {
-              type: "string",
-              enum: [
-                "vibe_memory",
-                "agent_diff",
-                "compile_run",
-                "decision_run",
-                "audit_log",
-                "file",
-                "commit",
-              ],
-            },
-            refValue: { type: "string" },
-            locator: { type: "string" },
-            queryHint: { type: "string" },
-            metadata: { type: "object" },
-          },
-          required: ["refKind", "refValue"],
-        },
-      },
-    },
-    required: ["title", "situation", "sourceKind", "sourceKey"],
-  },
-  async handler(args: unknown) {
-    const parsed = registerEpisodeArgsSchema.parse(args ?? {});
-    const episode = await registerEpisode(parsed);
-    return {
-      content: [{ type: "text", text: JSON.stringify(episode, null, 2) }],
-    };
-  },
-};
 
 export const searchEpisodesTool = {
   name: "search_episodes",

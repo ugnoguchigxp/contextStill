@@ -186,10 +186,13 @@ describe("episode-card.repository.sqlite", () => {
     expect(result?.title).toBe("Test Episode");
     expect(result?.refs).toHaveLength(1);
 
-    mockDb.query.mockImplementation(() => ({
-      get: vi.fn().mockReturnValue(null),
-      all: vi.fn().mockReturnValue([]),
-    }) as any);
+    mockDb.query.mockImplementation(
+      () =>
+        ({
+          get: vi.fn().mockReturnValue(null),
+          all: vi.fn().mockReturnValue([]),
+        }) as any,
+    );
 
     const nullResult = await getEpisodeCardSqlite("non-existent");
     expect(nullResult).toBeNull();
@@ -213,10 +216,13 @@ describe("episode-card.repository.sqlite", () => {
     expect(result).not.toBeNull();
     expect(result?.title).toBe("Test Episode");
 
-    mockDb.query.mockImplementation(() => ({
-      get: vi.fn().mockReturnValue(null),
-      all: vi.fn().mockReturnValue([]),
-    }) as any);
+    mockDb.query.mockImplementation(
+      () =>
+        ({
+          get: vi.fn().mockReturnValue(null),
+          all: vi.fn().mockReturnValue([]),
+        }) as any,
+    );
 
     const nullResult = await getEpisodeCardBySourceSqlite({
       sourceKind: "compile_run",

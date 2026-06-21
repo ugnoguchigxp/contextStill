@@ -15,6 +15,7 @@ const mocks = vi.hoisted(() => ({
   getDistillationTargetStateById: vi.fn(),
   readFileDomain: vi.fn(),
   readVibeMemoryByTokenWindow: vi.fn(),
+  getVibeMemoryDescriptor: vi.fn(),
   runDistillationCompletion: vi.fn(),
   resolveDistillationModel: vi.fn(() => "test-model"),
   resolveRouteModelForProvider: vi.fn(
@@ -45,6 +46,7 @@ vi.mock("../src/modules/readFile/domain.js", () => ({
 
 vi.mock("../src/modules/memoryReader/reader.service.js", () => ({
   readVibeMemoryByTokenWindow: mocks.readVibeMemoryByTokenWindow,
+  getVibeMemoryDescriptor: mocks.getVibeMemoryDescriptor,
 }));
 
 vi.mock("../src/modules/distillation/distillation-runtime.service.js", () => ({
@@ -132,6 +134,7 @@ describe("runFindCandidate", () => {
     mocks.insertFindCandidateResult.mockResolvedValue({ id: "candidate-1" });
     mocks.getEpisodeCardBySource.mockResolvedValue(null);
     mocks.createEpisodeCard.mockResolvedValue({ id: "episode-1" });
+    mocks.getVibeMemoryDescriptor.mockResolvedValue(null);
   });
 
   test("provides only the target reader tool and records reads through the executor", async () => {
@@ -416,6 +419,15 @@ describe("runFindCandidate", () => {
       id: "target-vibe",
       targetKind: "vibe_memory",
       targetKey: "memory-1",
+      sourceUri: "vibe_memory:memory-1",
+      metadata: { sessionTitle: "Rust daemon migration workbook" },
+    });
+    mocks.getVibeMemoryDescriptor.mockResolvedValue({
+      id: "memory-1",
+      sessionId: "session-1",
+      metadata: { title: "Lower priority memory title" },
+      subject: "Lower priority subject",
+      intent: null,
     });
     mocks.readVibeMemoryByTokenWindow.mockResolvedValue({
       content:
@@ -492,6 +504,11 @@ describe("runFindCandidate", () => {
     });
     expect(mocks.createEpisodeCard).toHaveBeenCalledWith(
       expect.objectContaining({
+        title: "Rust daemon migration workbook",
+        situation: expect.stringContaining("Title source: sessionTitle"),
+        observations: expect.stringContaining("Source excerpt:"),
+        action: expect.stringContaining("Reusable candidates:"),
+        outcome: expect.stringContaining("verify refs"),
         sourceKind: "vibe_memory",
         sourceKey: "memory-1",
         status: "active",
@@ -504,6 +521,9 @@ describe("runFindCandidate", () => {
         metadata: expect.objectContaining({
           source: "findCandidate_vibe_memory",
           insertedFindCandidateResultIds: ["candidate-1"],
+          displayTitle: "Rust daemon migration workbook",
+          displayTitleSource: "sessionTitle",
+          sessionId: "session-1",
         }),
       }),
     );
@@ -567,9 +587,53 @@ describe("runFindCandidate", () => {
     expect(result.episodeId).toBe("episode-1");
     expect(mocks.createEpisodeCard).toHaveBeenCalledWith(
       expect.objectContaining({
+        title: "Vibe memory episode",
+        action: "findCandidate found no reusable knowledge candidates from the read windows.",
         sourceKind: "vibe_memory",
         sourceKey: "memory-1",
         outcomeKind: "unknown",
+      }),
+    );
+  });
+
+  test("uses vibe memory title when no session title is available", async () => {
+    mocks.getDistillationTargetStateById.mockResolvedValue({
+      id: "target-vibe",
+      targetKind: "vibe_memory",
+      targetKey: "memory-1",
+    });
+    mocks.getVibeMemoryDescriptor.mockResolvedValue({
+      id: "memory-1",
+      sessionId: "session-1",
+      metadata: { title: "Queue recovery investigation" },
+      subject: null,
+      intent: null,
+    });
+    mocks.readVibeMemoryByTokenWindow.mockResolvedValue({
+      content: "ASSISTANT: inspect logs and DB before changing queue code.",
+      totalTokens: 12,
+      from: 0,
+      toExclusive: 12,
+      returnedTokens: 12,
+    });
+    mocks.runDistillationCompletion.mockResolvedValue({
+      content: "[]",
+      toolEvents: [],
+      messages: [],
+    });
+
+    await runFindCandidate({
+      targetStateId: "target-vibe",
+      callerMode: "storage",
+      provider: "local-llm",
+    });
+
+    expect(mocks.createEpisodeCard).toHaveBeenCalledWith(
+      expect.objectContaining({
+        title: "Queue recovery investigation",
+        metadata: expect.objectContaining({
+          displayTitleSource: "vibeMemoryTitle",
+        }),
       }),
     );
   });

@@ -46,7 +46,9 @@
       "logs/**",
       "playwright-report/**",
       "scratch/**",
+      "target/**",
       "test-results/**",
+      ".tmp/**",
       "src/db/seeds/knowledge-seed.json"
     ]
   }

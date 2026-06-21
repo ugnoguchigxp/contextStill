@@ -47,9 +47,12 @@ describe("settings.repository.sqlite", () => {
   };
 
   test("findSettingsRowSqlite returns mapped setting row or null", async () => {
-    mockDb.query.mockImplementation(() => ({
-      get: vi.fn().mockReturnValue(dummySettingsRow),
-    }) as any);
+    mockDb.query.mockImplementation(
+      () =>
+        ({
+          get: vi.fn().mockReturnValue(dummySettingsRow),
+        }) as any,
+    );
 
     const result = await findSettingsRowSqlite("test-ns", "test-key");
     expect(result).not.toBeNull();
@@ -57,18 +60,24 @@ describe("settings.repository.sqlite", () => {
     expect(result?.value).toEqual({ a: 1 });
     expect(result?.isSecret).toBe(false);
 
-    mockDb.query.mockImplementation(() => ({
-      get: vi.fn().mockReturnValue(null),
-    }) as any);
+    mockDb.query.mockImplementation(
+      () =>
+        ({
+          get: vi.fn().mockReturnValue(null),
+        }) as any,
+    );
 
     const nullResult = await findSettingsRowSqlite("test-ns", "test-key");
     expect(nullResult).toBeNull();
   });
 
   test("listSettingsRowsSqlite returns all settings or scoped settings", async () => {
-    mockDb.query.mockImplementation(() => ({
-      all: vi.fn().mockReturnValue([dummySettingsRow]),
-    }) as any);
+    mockDb.query.mockImplementation(
+      () =>
+        ({
+          all: vi.fn().mockReturnValue([dummySettingsRow]),
+        }) as any,
+    );
 
     // with namespace
     const results = await listSettingsRowsSqlite("test-ns");
@@ -81,10 +90,13 @@ describe("settings.repository.sqlite", () => {
   });
 
   test("upsertSettingsRowSqlite inserts/updates row", async () => {
-    mockDb.query.mockImplementation(() => ({
-      run: vi.fn().mockReturnValue({ changes: 1 }),
-      get: vi.fn().mockReturnValue(dummySettingsRow),
-    }) as any);
+    mockDb.query.mockImplementation(
+      () =>
+        ({
+          run: vi.fn().mockReturnValue({ changes: 1 }),
+          get: vi.fn().mockReturnValue(dummySettingsRow),
+        }) as any,
+    );
 
     const result = await upsertSettingsRowSqlite({
       namespace: "test-ns",
@@ -103,10 +115,13 @@ describe("settings.repository.sqlite", () => {
   });
 
   test("upsertSettingsRowSqlite throws error if select after upsert returns null", async () => {
-    mockDb.query.mockImplementation(() => ({
-      run: vi.fn(),
-      get: vi.fn().mockReturnValue(null), // select returns null
-    }) as any);
+    mockDb.query.mockImplementation(
+      () =>
+        ({
+          run: vi.fn(),
+          get: vi.fn().mockReturnValue(null), // select returns null
+        }) as any,
+    );
 
     await expect(
       upsertSettingsRowSqlite({
@@ -119,9 +134,12 @@ describe("settings.repository.sqlite", () => {
   });
 
   test("deleteSettingsRowSqlite deletes row", async () => {
-    mockDb.query.mockImplementation(() => ({
-      run: vi.fn(),
-    }) as any);
+    mockDb.query.mockImplementation(
+      () =>
+        ({
+          run: vi.fn(),
+        }) as any,
+    );
 
     await deleteSettingsRowSqlite("test-ns", "test-key");
     expect(mockDb.query).toHaveBeenCalledWith(expect.stringContaining("DELETE FROM settings"));

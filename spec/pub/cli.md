@@ -14,6 +14,23 @@ Run commands from the repository root.
 | `bun run db:seed` | Upsert seed knowledge |
 | `bun run db:seed:export` | Export knowledge seed data |
 
+## Rust Daemon Boundary Preview
+
+`context-stilld` is the Rust boundary host under migration. It is safe to use for path/status/preflight inspection and delegated lifecycle experiments, but it is not the default replacement for TypeScript commands yet.
+
+| Command | Description |
+|---|---|
+| `cargo run -q -p context-stilld -- paths --json` | Resolve app data, logs, run, backup, and SQLite paths |
+| `cargo run -q -p context-stilld -- status --json` | Report Rust-managed process state from pid/state files |
+| `cargo run -q -p context-stilld -- bootstrap preflight --json` | Read-only first-run readiness summary |
+| `cargo run -q -p context-stilld -- bootstrap init --json` | Explicitly create app data/logs/run/backup directories |
+| `cargo run -q -p context-stilld -- doctor summary --json` | Desktop-focused summary that delegates full detail to `bun run doctor` |
+| `cargo run -q -p context-stilld -- backup preflight --json` | Check SQLite path and active managed writers before TypeScript backup |
+| `cargo run -q -p context-stilld -- mcp start\|stop\|status` | Delegate MCP lifecycle to the existing TypeScript MCP process |
+| `cargo run -q -p context-stilld -- queue start\|stop\|status` | Delegate queue supervisor lifecycle without changing queue semantics |
+| `cargo run -q -p context-stilld -- agent-log-sync run\|stop\|status` | Delegate agent log sync lifecycle |
+| `cargo run -q -p context-stilld -- admin-api start\|stop\|status` | Start/stop Hono admin API for UI/operator sessions only |
+
 ## Compile and Knowledge
 
 | Command | Description |

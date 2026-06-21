@@ -279,6 +279,12 @@ describe("Context Compiler Service", () => {
         }),
       ]),
     );
+    expect(pack.sourceRefs).toEqual(
+      expect.arrayContaining([
+        "context-still://episodes/episode-1",
+        "src/db/sqlite/core-schema.ts#episode_cards",
+      ]),
+    );
     expect(pack.diagnostics.degradedReasons).not.toContain("NO_RELEVANT_CONTEXT");
     expect(pack.diagnostics.retrievalStats.episodes).toEqual(
       expect.objectContaining({ hitCount: 1, selectedCount: 1, searchFailed: false }),

@@ -63,6 +63,16 @@ Omit external search API keys when you do not want distillation to call external
 
 Embedding improves semantic search and distillation quality, but it should not block minimal desktop usage.
 
+## Rust Daemon Boundary
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `CONTEXT_STILL_APP_DATA_DIR` | OS-specific app data directory | Overrides the app data root used by `context-stilld` path, preflight, pid, log, and backup state |
+| `CONTEXT_STILL_SQLITE_CORE_PATH` | `appDataDir/context-still-core.sqlite` | Overrides the SQLite core database path reported by Rust preflight/backup checks |
+| `CONTEXT_STILL_PROJECT_ROOT` | current working directory | Project root used when Rust delegates TypeScript child processes |
+
+These variables are for development, packaging, and advanced runtime integration. They do not make Rust the default product runtime by themselves.
+
 ## Agent Log Sync
 
 | Variable | Purpose |

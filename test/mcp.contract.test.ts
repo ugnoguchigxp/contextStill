@@ -140,7 +140,6 @@ describeDb("mcp contract", () => {
       "search_knowledge",
       "register_candidates",
       "register_review_corrections",
-      "register_episode",
       "search_memory",
       "fetch_memory",
       "search_episodes",

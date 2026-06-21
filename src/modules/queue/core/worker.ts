@@ -871,6 +871,7 @@ async function runSourceTargetFindCandidate(params: {
       targetKind: sourceKind,
       targetKey,
       sourceUri,
+      metadata: params.findingJob.metadata as Record<string, unknown>,
     },
     callerMode: "cli_text",
     writeEpisode: sourceKind === "vibe_memory",

@@ -1,5 +1,9 @@
 import { describe, expect, it, vi } from "vitest";
-import { calculateBigramSimilarity, checkKnowledgeDuplicate, findSimilarKnowledge } from "../src/lib/knowledge-dedup.js";
+import {
+  calculateBigramSimilarity,
+  checkKnowledgeDuplicate,
+  findSimilarKnowledge,
+} from "../src/lib/knowledge-dedup.js";
 import * as embeddingService from "../src/modules/embedding/embedding.service.js";
 import * as knowledgeRepository from "../src/modules/knowledge/knowledge.repository.js";
 
@@ -180,11 +184,9 @@ describe("knowledge-dedup logic", () => {
         } as any,
       ]);
 
-      const result = await findSimilarKnowledge(
-        "Similar Title One",
-        "This is body one",
-        { minSimilarity: 0.5 }
-      );
+      const result = await findSimilarKnowledge("Similar Title One", "This is body one", {
+        minSimilarity: 0.5,
+      });
 
       expect(result.length).toBeGreaterThan(0);
       expect(result[0].id).toBe("candidate-1");

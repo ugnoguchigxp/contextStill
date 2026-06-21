@@ -128,7 +128,6 @@ export function getRequiredPrimaryMcpTools(): readonly string[] {
     "register_candidates",
     "search_memory",
     "fetch_memory",
-    "register_episode",
     "search_episodes",
     "fetch_episode",
     "doctor",

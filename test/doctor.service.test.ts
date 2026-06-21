@@ -27,7 +27,8 @@ vi.mock("../src/mcp/tools/index.js");
 vi.mock("../src/modules/embedding/embedding.service.js");
 vi.mock("../src/modules/llm/agentic-llm.service.js");
 vi.mock("../src/modules/settings/settings.service.js", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("../src/modules/settings/settings.service.js")>();
+  const actual =
+    await importOriginal<typeof import("../src/modules/settings/settings.service.js")>();
   return {
     ...actual,
     resolveAgenticCompileRouting: vi.fn(),
@@ -75,7 +76,6 @@ describe("Doctor Service", () => {
       { name: "register_candidates" },
       { name: "search_memory" },
       { name: "fetch_memory" },
-      { name: "register_episode" },
       { name: "search_episodes" },
       { name: "fetch_episode" },
       { name: "doctor" },

@@ -23,9 +23,24 @@ jobs:
       - name: Fast verify
         run: bun run verify:fast
 
+  rust-daemon:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+      - name: Install dependencies
+        run: bun install --frozen-lockfile
+      - name: Rust daemon boundary verify
+        run: bun run verify:rust-daemon
+
   integration:
     runs-on: ubuntu-latest
-    needs: verify
+    needs:
+      - verify
+      - rust-daemon
     if: github.event_name != 'schedule'
     services:
       postgres:
@@ -58,7 +73,9 @@ jobs:
 
   operational-smoke:
     runs-on: ubuntu-latest
-    needs: verify
+    needs:
+      - verify
+      - rust-daemon
     if: github.event_name == 'schedule' || github.event_name == 'workflow_dispatch'
     services:
       postgres:

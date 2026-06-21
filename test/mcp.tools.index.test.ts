@@ -22,16 +22,16 @@ describe("mcp/tools/index", () => {
     const callable = getCallableToolEntries();
 
     // Check that compile_eval exists in V2 exposed list
-    expect(exposed.map(t => t.name)).toContain("compile_eval");
-    expect(callable.map(t => t.name)).toContain("compile_eval");
-    expect(callable.map(t => t.name)).toContain("search_memory");
+    expect(exposed.map((t) => t.name)).toContain("compile_eval");
+    expect(callable.map((t) => t.name)).toContain("compile_eval");
+    expect(callable.map((t) => t.name)).toContain("search_memory");
   });
 
   test("uses V2 tools when environment is explicitly enabled", () => {
     for (const val of ["1", "true", "yes", "on", "  TRUE  "]) {
       vi.mocked(readProjectEnv).mockReturnValue(val);
       const exposed = getExposedToolEntries();
-      expect(exposed.map(t => t.name)).toContain("compile_eval");
+      expect(exposed.map((t) => t.name)).toContain("compile_eval");
     }
   });
 
@@ -42,9 +42,9 @@ describe("mcp/tools/index", () => {
       const callable = getCallableToolEntries();
 
       // Check compile_eval is NOT in V1 exposed list
-      expect(exposed.map(t => t.name)).not.toContain("compile_eval");
-      expect(callable.map(t => t.name)).not.toContain("compile_eval");
-      expect(exposed.map(t => t.name)).toContain("read_file");
+      expect(exposed.map((t) => t.name)).not.toContain("compile_eval");
+      expect(callable.map((t) => t.name)).not.toContain("compile_eval");
+      expect(exposed.map((t) => t.name)).toContain("read_file");
     }
   });
 });

@@ -33,13 +33,13 @@ vi.mock("../src/db/client.js", () => ({
   db: mockDb,
 }));
 
-
 import {
   listKnowledgeItems,
   updateKnowledgeItem,
 } from "../api/modules/knowledge/knowledge.repository.js";
 import { compileEvalTool } from "../src/mcp/tools/compile-eval.tool.js";
 import { contextCompileTool } from "../src/mcp/tools/context-compile.tool.js";
+import type { ToolHandlerContext } from "../src/mcp/registry.js";
 import {
   listKnowledgeTool,
   registerCandidateTool,
@@ -48,11 +48,7 @@ import {
   searchKnowledgeTool,
   updateKnowledgeTool,
 } from "../src/mcp/tools/knowledge.tool.js";
-import {
-  fetchEpisodeTool,
-  registerEpisodeTool,
-  searchEpisodesTool,
-} from "../src/mcp/tools/episode.tool.js";
+import { fetchEpisodeTool, searchEpisodesTool } from "../src/mcp/tools/episode.tool.js";
 import {
   memoryFetchTool as fetchMemoryLegacyTool,
   fetchMemoryTool as fetchMemoryPrimaryTool,
@@ -65,7 +61,6 @@ import { compileContextPack } from "../src/modules/context-compiler/context-comp
 import { runDoctor } from "../src/modules/doctor/doctor.service.js";
 import {
   fetchEpisode,
-  registerEpisode,
   searchEpisodes,
 } from "../src/modules/episodic-memory/episode-card.service.js";
 import { searchKnowledgeCandidates } from "../src/modules/knowledge/knowledge.service.js";
@@ -200,58 +195,6 @@ describe("MCP Tools Handlers", () => {
       });
       expect(payload.items[0].id).toBe("episode-1");
       expect(payload.items[0].refs[0].refKind).toBe("file");
-    });
-  });
-
-  describe("register_episode", () => {
-    test("calls registerEpisode and returns the created episode", async () => {
-      vi.mocked(registerEpisode).mockResolvedValue({
-        id: "episode-registered",
-        title: "Registered episode",
-        situation: "A useful compile precedent was found.",
-        observations: "",
-        action: "",
-        outcome: "",
-        lesson: "",
-        applicability: {},
-        antiApplicability: {},
-        domains: [],
-        technologies: ["typescript"],
-        changeTypes: ["feature"],
-        tools: [],
-        repoPath: null,
-        repoKey: null,
-        sourceKind: "manual",
-        sourceKey: "manual-episode-1",
-        outcomeKind: "unknown",
-        confidence: 50,
-        evidenceStatus: "unverified",
-        status: "active",
-        staleAt: null,
-        metadata: {},
-        createdAt: new Date("2026-06-20T00:00:00.000Z"),
-        updatedAt: new Date("2026-06-20T00:00:00.000Z"),
-        refs: [],
-      });
-
-      const response = await registerEpisodeTool.handler({
-        title: "Registered episode",
-        situation: "A useful compile precedent was found.",
-        sourceKind: "manual",
-        sourceKey: "manual-episode-1",
-        technologies: ["typescript"],
-        changeTypes: ["feature"],
-      });
-      const payload = JSON.parse(response.content[0].text);
-
-      expect(registerEpisode).toHaveBeenCalledWith(
-        expect.objectContaining({
-          title: "Registered episode",
-          sourceKind: "manual",
-          sourceKey: "manual-episode-1",
-        }),
-      );
-      expect(payload.id).toBe("episode-registered");
     });
   });
 
@@ -772,17 +715,26 @@ describe("MCP Tools Handlers", () => {
 
       const args = { path: "wiki/rule.md", fromToken: 0, readTokens: 100, minify: true };
       const response = await readFileTool.handler(args);
-      expect(readFileDomain).toHaveBeenCalledWith(expect.objectContaining({
-        path: "wiki/rule.md",
-        fromToken: 0,
-        readTokens: 100,
-        minify: true,
-      }));
+      expect(readFileDomain).toHaveBeenCalledWith(
+        expect.objectContaining({
+          path: "wiki/rule.md",
+          fromToken: 0,
+          readTokens: 100,
+          minify: true,
+        }),
+      );
       expect(JSON.parse(response.content[0].text)).toEqual(mockResult);
     });
   });
 
   describe("context_compile session ID resolution", () => {
+    const contextCompileHandlerContext = (
+      requestMeta: Record<string, unknown>,
+    ): ToolHandlerContext => ({
+      toolName: "context_compile",
+      requestMeta,
+    });
+
     beforeEach(() => {
       vi.mocked(compileContextPack).mockResolvedValue({
         pack: { rules: [], procedures: [] },
@@ -792,54 +744,71 @@ describe("MCP Tools Handlers", () => {
 
     test("resolves sessionId from requestMeta fields", async () => {
       // sessionId key
-      await contextCompileTool.handler({ goal: "g" }, { requestMeta: { sessionId: " s1 " } });
+      await contextCompileTool.handler(
+        { goal: "g" },
+        contextCompileHandlerContext({ sessionId: " s1 " }),
+      );
       expect(compileContextPack).toHaveBeenLastCalledWith(
         expect.any(Object),
-        expect.objectContaining({ sessionId: "s1" })
+        expect.objectContaining({ sessionId: "s1" }),
       );
 
       // threadId key
-      await contextCompileTool.handler({ goal: "g" }, { requestMeta: { threadId: " t1 " } });
+      await contextCompileTool.handler(
+        { goal: "g" },
+        contextCompileHandlerContext({ threadId: " t1 " }),
+      );
       expect(compileContextPack).toHaveBeenLastCalledWith(
         expect.any(Object),
-        expect.objectContaining({ sessionId: "t1" })
+        expect.objectContaining({ sessionId: "t1" }),
       );
 
       // conversationId key
-      await contextCompileTool.handler({ goal: "g" }, { requestMeta: { conversationId: " c1 " } });
+      await contextCompileTool.handler(
+        { goal: "g" },
+        contextCompileHandlerContext({ conversationId: " c1 " }),
+      );
       expect(compileContextPack).toHaveBeenLastCalledWith(
         expect.any(Object),
-        expect.objectContaining({ sessionId: "c1" })
+        expect.objectContaining({ sessionId: "c1" }),
       );
 
       // codexSessionId key
-      await contextCompileTool.handler({ goal: "g" }, { requestMeta: { codexSessionId: " cs1 " } });
+      await contextCompileTool.handler(
+        { goal: "g" },
+        contextCompileHandlerContext({ codexSessionId: " cs1 " }),
+      );
       expect(compileContextPack).toHaveBeenLastCalledWith(
         expect.any(Object),
-        expect.objectContaining({ sessionId: "cs1" })
+        expect.objectContaining({ sessionId: "cs1" }),
       );
 
       // fallback order
-      await contextCompileTool.handler({ goal: "g" }, { requestMeta: { threadId: "t", conversationId: "c" } });
+      await contextCompileTool.handler(
+        { goal: "g" },
+        contextCompileHandlerContext({ threadId: "t", conversationId: "c" }),
+      );
       expect(compileContextPack).toHaveBeenLastCalledWith(
         expect.any(Object),
-        expect.objectContaining({ sessionId: "t" })
+        expect.objectContaining({ sessionId: "t" }),
       );
 
       // non-string / empty fields fallback to undefined
-      await contextCompileTool.handler({ goal: "g" }, { requestMeta: { sessionId: 123, threadId: " " } });
+      await contextCompileTool.handler(
+        { goal: "g" },
+        contextCompileHandlerContext({ sessionId: 123, threadId: " " }),
+      );
       expect(compileContextPack).toHaveBeenLastCalledWith(
         expect.any(Object),
-        expect.objectContaining({ sessionId: undefined })
+        expect.objectContaining({ sessionId: undefined }),
       );
 
       // no requestMeta
       await contextCompileTool.handler({ goal: "g" }, undefined);
       expect(compileContextPack).toHaveBeenLastCalledWith(
         expect.any(Object),
-        expect.objectContaining({ sessionId: undefined })
+        expect.objectContaining({ sessionId: undefined }),
       );
     });
   });
 });
-

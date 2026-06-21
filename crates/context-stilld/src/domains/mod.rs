@@ -1,0 +1,10 @@
+pub mod admin_api_lifecycle;
+pub mod agent_log_sync;
+pub mod backup;
+pub mod bootstrap;
+pub mod cli;
+pub mod daemon;
+pub mod doctor;
+pub mod mcp_lifecycle;
+pub mod process_lifecycle;
+pub mod queue_lifecycle;

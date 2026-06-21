@@ -226,3 +226,16 @@ bun run docs:check-links
 | Embedding failures | Check daemon URL, CLI fallback paths, and `CONTEXT_STILL_EMBEDDING_DIMENSION` |
 | API returns unauthorized | Check `CONTEXT_STILL_ADMIN_API_KEY` and client header configuration |
 | Integration tests hit live DB | Stop immediately and set a `DATABASE_URL` whose database name includes `test` |
+
+## Rust Daemon Boundary Checks
+
+Use these when validating the in-progress Rust lifecycle host. They are additive checks; TypeScript commands remain the fallback until a boundary-specific smoke passes.
+
+```bash
+bun run verify:rust-daemon
+cargo run -q -p context-stilld -- bootstrap preflight --json
+cargo run -q -p context-stilld -- doctor summary --json
+cargo run -q -p context-stilld -- backup preflight --json
+```
+
+For lifecycle experiments, set `CONTEXT_STILL_APP_DATA_DIR` to a temporary directory and stop the process through the matching Rust command before removing that directory.

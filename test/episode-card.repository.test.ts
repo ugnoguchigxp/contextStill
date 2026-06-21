@@ -82,13 +82,14 @@ describe("episode-card.repository (PostgreSQL)", () => {
       }),
     };
 
-    vi.mocked(mockDb.transaction).mockImplementation(async (cb) => {
+    vi.mocked(mockDb.transaction).mockImplementation(async (cb: (tx: unknown) => unknown) => {
       return cb(mockTx as any);
     });
 
-    const mockReturning = vi.fn()
-      .mockResolvedValueOnce([dummyEpisode]) 
-      .mockResolvedValueOnce([dummyRef]);    
+    const mockReturning = vi
+      .fn()
+      .mockResolvedValueOnce([dummyEpisode])
+      .mockResolvedValueOnce([dummyRef]);
 
     mockTx.returning = mockReturning;
 
@@ -152,11 +153,14 @@ describe("episode-card.repository (PostgreSQL)", () => {
     expect(result).not.toBeNull();
     expect(result?.title).toBe("Test Episode");
 
-    vi.mocked(mockDb.select).mockImplementation(() => ({
-      from: vi.fn().mockReturnThis(),
-      where: vi.fn().mockReturnThis(),
-      limit: vi.fn().mockResolvedValue([]),
-    }) as any);
+    vi.mocked(mockDb.select).mockImplementation(
+      () =>
+        ({
+          from: vi.fn().mockReturnThis(),
+          where: vi.fn().mockReturnThis(),
+          limit: vi.fn().mockResolvedValue([]),
+        }) as any,
+    );
 
     const nullResult = await getEpisodeCard("non-existent");
     expect(nullResult).toBeNull();
