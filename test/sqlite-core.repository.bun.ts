@@ -68,6 +68,19 @@ describe("sqlite core repository", () => {
         .all();
       expect(drizzleRows).toContainEqual({ id: "k1", title: "Prefer SQLite" });
 
+      const leaseTable = sqlite.db
+        .query<{ name: string }, []>(
+          "select name from sqlite_master where type = 'table' and name = 'llm_provider_leases'",
+        )
+        .get();
+      const activeLeaseIndex = sqlite.db
+        .query<{ name: string }, []>(
+          "select name from sqlite_master where type = 'index' and name = 'llm_provider_leases_active_target_unique_idx'",
+        )
+        .get();
+      expect(leaseTable?.name).toBe("llm_provider_leases");
+      expect(activeLeaseIndex?.name).toBe("llm_provider_leases_active_target_unique_idx");
+
       const knowledgeHits = repo.vectorSearchKnowledge([1, 0, 0], 2);
       expect(knowledgeHits.map((hit) => hit.id)).toEqual(["k1", "k2"]);
       expect(knowledgeHits[0].score).toBeGreaterThan(knowledgeHits[1].score);

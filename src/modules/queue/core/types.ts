@@ -12,6 +12,7 @@ export type DistillationQueueStatus = (typeof distillationQueueStatusValues)[num
 
 export const queueTableNameByQueue: Record<DistillationQueueName, string> = {
   findingCandidate: "finding_candidate_queue",
+  episodeDistiller: "episode_distiller_queue",
   coveringEvidence: "covering_evidence_queue",
   deadZoneMergeReview: "dead_zone_merge_review_queue",
   finalizeDistille: "finalize_distille_queue",
@@ -22,6 +23,7 @@ export type QueueRetryMode = "default" | "cloud_api";
 export type FinalizeQueueJobType = "candidate_finalize" | "merge_activation_finalize";
 export type QueueBackendKind =
   | "finding_candidate_queue"
+  | "episode_distiller_queue"
   | "covering_evidence_queue"
   | "dead_zone_merge_review_queue"
   | "finalize_distille_queue"

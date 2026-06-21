@@ -54,6 +54,7 @@
     "eval:context": "bun run src/cli/eval-context.ts",
     "finalize-distille": "bun run src/cli/finalize-distille.ts",
     "queue:finding:once": "bun run src/cli/queue.ts --queue findingCandidate --once --limit 1",
+    "queue:episode-distiller:once": "bun run src/cli/queue.ts --queue episodeDistiller --once --limit 1",
     "queue:covering:once": "bun run src/cli/queue.ts --queue coveringEvidence --once --limit 1",
     "queue:merge-review:once": "bun run src/cli/queue.ts --queue deadZoneMergeReview --once --limit 1",
     "queue:finalize:once": "bun run src/cli/queue.ts --queue finalizeDistille --once --limit 1",

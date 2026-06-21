@@ -38,6 +38,7 @@ describe("queue repository stats", () => {
     vi.clearAllMocks();
     mocks.getQueueControlStates.mockResolvedValue({
       findingCandidate: { paused: false, updatedAt: null, updatedBy: null, reason: null },
+      episodeDistiller: { paused: false, updatedAt: null, updatedBy: null, reason: null },
       coveringEvidence: { paused: false, updatedAt: null, updatedBy: null, reason: null },
       deadZoneMergeReview: { paused: false, updatedAt: null, updatedBy: null, reason: null },
       finalizeDistille: { paused: false, updatedAt: null, updatedBy: null, reason: null },
@@ -48,10 +49,11 @@ describe("queue repository stats", () => {
   test("reports non-registered counts for covering queue stats", async () => {
     const rowsByQueue = [
       [aggregateRow({ status: "completed", count: 1, non_registered_count: 4 })],
-      [aggregateRow({ status: "completed", count: 2, non_registered_count: 2 })],
-      [aggregateRow({ status: "completed", count: 3, non_registered_count: 5 })],
-      [aggregateRow({ status: "completed", count: 4, non_registered_count: 7 })],
-      [aggregateRow({ status: "completed", count: 5, non_registered_count: 9 })],
+      [aggregateRow({ status: "completed", count: 2, non_registered_count: 8 })],
+      [aggregateRow({ status: "completed", count: 3, non_registered_count: 2 })],
+      [aggregateRow({ status: "completed", count: 4, non_registered_count: 5 })],
+      [aggregateRow({ status: "completed", count: 5, non_registered_count: 7 })],
+      [aggregateRow({ status: "completed", count: 6, non_registered_count: 9 })],
     ];
     mocks.execute.mockImplementation(async () => ({
       rows: rowsByQueue.shift() ?? [],

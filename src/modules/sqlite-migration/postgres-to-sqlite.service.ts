@@ -98,6 +98,7 @@ const migrationTables: MigrationTableSpec[] = [
   { table: "find_candidate_results" },
   { table: "cover_evidence_results" },
   { table: "finding_candidate_queue" },
+  { table: "episode_distiller_queue" },
   { table: "found_candidates" },
   { table: "covering_evidence_queue" },
   { table: "evidence_coverage_results" },

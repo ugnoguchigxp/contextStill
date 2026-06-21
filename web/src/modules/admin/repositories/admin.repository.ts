@@ -3388,6 +3388,7 @@ export type DistillationTargetState = {
 
 export type DistillationQueueName =
   | "findingCandidate"
+  | "episodeDistiller"
   | "coveringEvidence"
   | "deadZoneMergeReview"
   | "finalizeDistille"
@@ -3441,6 +3442,7 @@ export type QueueListItemV2 = {
   jobType?: "candidate_finalize" | "merge_activation_finalize";
   backendKind:
     | "finding_candidate_queue"
+    | "episode_distiller_queue"
     | "covering_evidence_queue"
     | "dead_zone_merge_review_queue"
     | "finalize_distille_queue"

@@ -1,8 +1,17 @@
 import { closeDbPool } from "../db/index.js";
-import { runQueueWorkerOnce } from "../modules/queue/core/index.js";
+import {
+  claimNextJobWithProviderLease,
+  countAvailableProviderPoolSlots,
+  enabledProviderPoolsForQueues,
+  priorityQueuesForProviderPool,
+  runQueueWorkerOnce,
+  unpooledQueues,
+} from "../modules/queue/core/index.js";
+import { ensureRuntimeSettingsLoaded } from "../modules/settings/settings.service.js";
 
 type QueueName =
   | "findingCandidate"
+  | "episodeDistiller"
   | "coveringEvidence"
   | "deadZoneMergeReview"
   | "finalizeDistille"
@@ -37,13 +46,14 @@ function parseArgs(args: string[]): CliOptions {
             })();
       if (
         raw !== "findingCandidate" &&
+        raw !== "episodeDistiller" &&
         raw !== "coveringEvidence" &&
         raw !== "deadZoneMergeReview" &&
         raw !== "finalizeDistille" &&
         raw !== "mergeActivationFinalize"
       ) {
         throw new Error(
-          "--queue must be findingCandidate|coveringEvidence|deadZoneMergeReview|finalizeDistille|mergeActivationFinalize",
+          "--queue must be findingCandidate|episodeDistiller|coveringEvidence|deadZoneMergeReview|finalizeDistille|mergeActivationFinalize",
         );
       }
       options.queue = raw;
@@ -89,15 +99,43 @@ function parseArgs(args: string[]): CliOptions {
 
 async function main(): Promise<void> {
   const options = parseArgs(process.argv.slice(2));
+  await ensureRuntimeSettingsLoaded();
   const workerBase = options.worker?.trim() || `queue:${options.queue}`;
-  const runs = await Promise.all(
-    Array.from({ length: options.limit }, (_, index) =>
-      runQueueWorkerOnce({
-        queueName: options.queue,
-        workerId: `${workerBase}:${index + 1}`,
-      }),
+  const runTasks: Array<ReturnType<typeof runQueueWorkerOnce>> = [];
+  const pools = enabledProviderPoolsForQueues([options.queue]);
+  for (const pool of pools) {
+    const freeSlots = await countAvailableProviderPoolSlots(pool);
+    for (let index = 0; index < Math.min(options.limit, freeSlots); index += 1) {
+      const assignment = await claimNextJobWithProviderLease({
+        pool,
+        priorityQueues: priorityQueuesForProviderPool({
+          poolId: pool.id,
+          allowedQueues: [options.queue],
+        }),
+        workerId: `${workerBase}:${pool.id}:${index + 1}`,
+      });
+      if (!assignment) break;
+      runTasks.push(
+        runQueueWorkerOnce({
+          queueName: assignment.queueName,
+          workerId: `${workerBase}:${pool.id}:${index + 1}`,
+          claimedJob: { id: assignment.id },
+          providerLease: assignment.providerLease,
+        }),
+      );
+    }
+  }
+  runTasks.push(
+    ...unpooledQueues([options.queue]).flatMap((queueName) =>
+      Array.from({ length: options.limit }, (_, index) =>
+        runQueueWorkerOnce({
+          queueName,
+          workerId: `${workerBase}:${index + 1}`,
+        }),
+      ),
     ),
   );
+  const runs = await Promise.all(runTasks);
   const processed = runs.filter((run) => !run.idle).length;
   const failed = runs.filter((run) => !run.ok).length;
   const result = {

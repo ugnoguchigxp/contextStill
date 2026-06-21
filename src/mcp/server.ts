@@ -1,3 +1,4 @@
+import type { Readable, Writable } from "node:stream";
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import {
@@ -16,6 +17,23 @@ import {
 import { runDoctor } from "../modules/doctor/doctor.service.js";
 import { mcpResourceUri, normalizeMcpResourceUri, projectIdentity } from "../project-identity.js";
 import { getCallableToolEntries, getExposedToolEntries } from "./tools/index.js";
+
+export type McpServerCloseReason =
+  | "mcp_transport_closed"
+  | "stdio_closed"
+  | "stdio_ended"
+  | "stdio_error"
+  | "runtime_close";
+
+export type McpServerRuntime = {
+  close: () => Promise<void>;
+  closed: Promise<{ reason: McpServerCloseReason; error?: Error }>;
+};
+
+export type RunMcpServerOptions = {
+  stdin?: Readable;
+  stdout?: Writable;
+};
 
 function toErrorResult(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
@@ -175,8 +193,57 @@ export function createMcpServer(): Server {
   return server;
 }
 
-export async function runMcpServer(): Promise<void> {
+export async function runMcpServer(options: RunMcpServerOptions = {}): Promise<McpServerRuntime> {
   const server = createMcpServer();
-  const transport = new StdioServerTransport();
+  const stdin = options.stdin ?? process.stdin;
+  const stdout = options.stdout ?? process.stdout;
+  const transport = new StdioServerTransport(stdin, stdout);
+
+  let closing = false;
+  let resolveClosed: (value: { reason: McpServerCloseReason; error?: Error }) => void = () => {};
+  const closed = new Promise<{ reason: McpServerCloseReason; error?: Error }>((resolve) => {
+    resolveClosed = resolve;
+  });
+
+  const removeStdioListeners = () => {
+    stdin.off("close", onStdioClose);
+    stdin.off("end", onStdioEnd);
+    stdin.off("error", onStdioError);
+  };
+
+  const closeRuntime = async (reason: McpServerCloseReason, error?: Error): Promise<void> => {
+    if (closing) return;
+    closing = true;
+    removeStdioListeners();
+    try {
+      await server.close();
+    } finally {
+      resolveClosed(error ? { reason, error } : { reason });
+    }
+  };
+
+  const onStdioClose = () => {
+    void closeRuntime("stdio_closed");
+  };
+  const onStdioEnd = () => {
+    void closeRuntime("stdio_ended");
+  };
+  const onStdioError = (error: Error) => {
+    void closeRuntime("stdio_error", error);
+  };
+
+  stdin.once("close", onStdioClose);
+  stdin.once("end", onStdioEnd);
+  stdin.once("error", onStdioError);
+
+  server.onclose = () => {
+    void closeRuntime("mcp_transport_closed");
+  };
+
   await server.connect(transport);
+
+  return {
+    close: () => closeRuntime("runtime_close"),
+    closed,
+  };
 }

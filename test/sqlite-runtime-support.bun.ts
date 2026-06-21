@@ -44,6 +44,8 @@ import {
   fetchEpisode,
   searchEpisodes,
 } from "../src/modules/episodic-memory/episode-card.service.js";
+import { enqueueEpisodeDistillerJob } from "../src/modules/episodeDistiller/repository.js";
+import { setEpisodeDistillerTestHooksForTests } from "../src/modules/episodeDistiller/worker.js";
 import { recordCompileRunKnowledgeFeedback } from "../src/modules/knowledge/knowledge-feedback.service.js";
 import { readVibeMemoryByTokenWindow } from "../src/modules/memoryReader/reader.service.js";
 import { retryQueueJob } from "../src/modules/queue/core/state.js";
@@ -76,6 +78,7 @@ describe("sqlite runtime support repositories", () => {
   });
 
   afterEach(async () => {
+    setEpisodeDistillerTestHooksForTests({});
     setQueueWorkerTestHooksForTests({});
     restoreEnv("CONTEXT_STILL_DB_BACKEND", originalBackend);
     restoreEnv("CONTEXT_STILL_SQLITE_CORE_PATH", originalSqlitePath);
@@ -457,6 +460,201 @@ describe("sqlite runtime support repositories", () => {
     expect(result.ok).toBe(true);
     expect(result.idle).toBe(true);
     expect(result.message).toBe("no runnable job");
+  });
+
+  test("distills vibe memory episodes from sqlite episodeDistiller queue idempotently", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const recorded = await recordVibeMemoryWithDiffEntries({
+      sessionId: "episode-distiller-session",
+      content:
+        "The implementation separated Episode generation from findCandidate and kept source refs for later review.",
+      memoryType: "chat",
+      metadata: {
+        projectName: "contextStill",
+        cwd: "/repo/contextStill",
+      },
+      agentDiffs: [
+        {
+          filePath: "src/modules/episodeDistiller/worker.ts",
+          diffHunk: "@@ added worker @@\n+processEpisodeDistillerJob()",
+          changeType: "modify",
+          language: "typescript",
+        },
+      ],
+    });
+
+    const job = await enqueueEpisodeDistillerJob({
+      sourceKey: recorded.memory.id,
+      metadata: { sourceType: "test" },
+    });
+    setEpisodeDistillerTestHooksForTests({
+      distillSegment: async () => [
+        {
+          title: "Episode distiller queue split",
+          context: "Episode generation moved out of findCandidate.",
+          intent: "Keep candidate extraction and task memory creation independent.",
+          keyDecisions: ["Use a separate episodeDistiller queue."],
+          failedApproach: "Creating one EpisodeCard directly from findCandidate.",
+          reusableLesson: "Keep EpisodeCard creation idempotent with source span based keys.",
+          usefulFutureTriggers: ["episode queue", "source refs"],
+          openLoops: ["Review quality scores after real LLM runs."],
+          generationKind: "task_episode",
+          outcomeKind: "success",
+          domains: ["episodic-memory"],
+          technologies: ["sqlite", "typescript"],
+          changeTypes: ["queue"],
+          tools: ["vitest"],
+          scores: {
+            reusability: 85,
+            decision_density: 80,
+            failure_value: 70,
+            causal_clarity: 90,
+            project_specificity: 50,
+            evidence_quality: 85,
+            compression_quality: 80,
+            staleness_risk: 20,
+          },
+        },
+      ],
+    });
+
+    const firstRun = await runQueueWorkerOnce({
+      queueName: "episodeDistiller",
+      workerId: "sqlite-episode-worker",
+    });
+
+    expect(firstRun.ok).toBe(true);
+    expect(firstRun.completedJobId).toBe(job.id);
+    const completedJob = sqlite.db
+      .query<{ status: string; last_outcome_kind: string }, [string]>(
+        "select status, last_outcome_kind from episode_distiller_queue where id = ?",
+      )
+      .get(job.id);
+    expect(completedJob).toEqual({
+      status: "completed",
+      last_outcome_kind: "episodes_distilled",
+    });
+
+    const episodes = await searchEpisodes({
+      query: "queue split",
+      technologies: ["sqlite"],
+      limit: 10,
+    });
+    expect(episodes).toHaveLength(1);
+    expect(episodes[0]?.refs[0]).toMatchObject({
+      refKind: "vibe_memory",
+      refValue: recorded.memory.id,
+    });
+    expect(episodes[0]?.metadata).toMatchObject({
+      source: "episodeDistiller",
+      episodeDistillation: expect.objectContaining({
+        generatingQueueName: "episodeDistiller",
+        parentVibeMemoryId: recorded.memory.id,
+      }),
+    });
+
+    await enqueueEpisodeDistillerJob({
+      sourceKey: recorded.memory.id,
+      metadata: { sourceType: "test-rerun" },
+    });
+    const secondRun = await runQueueWorkerOnce({
+      queueName: "episodeDistiller",
+      workerId: "sqlite-episode-worker",
+    });
+    expect(secondRun.ok).toBe(true);
+    expect(
+      await searchEpisodes({
+        query: "queue split",
+        technologies: ["sqlite"],
+        limit: 10,
+      }),
+    ).toHaveLength(1);
+  });
+
+  test("skips duplicate episodeDistiller generation kinds within one source segment", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const recorded = await recordVibeMemoryWithDiffEntries({
+      sessionId: "episode-distiller-duplicate-kind-session",
+      content:
+        "The worker received two task episode candidates for the same source span and should keep deterministic source keys.",
+      memoryType: "chat",
+      metadata: {
+        projectName: "contextStill",
+        cwd: "/repo/contextStill",
+      },
+      agentDiffs: [
+        {
+          filePath: "src/modules/episodeDistiller/worker.ts",
+          diffHunk: "@@ duplicate generation kind @@\n+generationKind",
+          changeType: "modify",
+          language: "typescript",
+        },
+      ],
+    });
+
+    const job = await enqueueEpisodeDistillerJob({
+      sourceKey: recorded.memory.id,
+      metadata: { sourceType: "duplicate-kind-test" },
+    });
+    const canonical = (title: string, reusableLesson: string) => ({
+      title,
+      context: "Two canonical episodes used the same source key inputs.",
+      intent: "Avoid silently overwriting or deduping distinct generated content.",
+      keyDecisions: ["Treat generationKind as unique per segment."],
+      failedApproach: "Saving both candidates with the same source fragment key.",
+      reusableLesson,
+      usefulFutureTriggers: ["episode distiller duplicate kind"],
+      openLoops: [],
+      generationKind: "task_episode",
+      outcomeKind: "mixed",
+      domains: ["episodic-memory"],
+      technologies: ["sqlite", "typescript"],
+      changeTypes: ["queue"],
+      tools: ["vitest"],
+      scores: {
+        reusability: 80,
+        decision_density: 70,
+        failure_value: 75,
+        causal_clarity: 80,
+        project_specificity: 55,
+        evidence_quality: 80,
+        compression_quality: 75,
+        staleness_risk: 20,
+      },
+    });
+    setEpisodeDistillerTestHooksForTests({
+      distillSegment: async () => [
+        canonical("Duplicate kind kept", "Keep one episode per generation kind and segment."),
+        canonical("Duplicate kind skipped", "Record skipped duplicates in queue metadata."),
+      ],
+    });
+
+    const run = await runQueueWorkerOnce({
+      queueName: "episodeDistiller",
+      workerId: "sqlite-episode-duplicate-worker",
+    });
+
+    expect(run.ok).toBe(true);
+    expect(run.completedJobId).toBe(job.id);
+    const row = sqlite.db
+      .query<{ metadata: string }, [string]>(
+        "select metadata from episode_distiller_queue where id = ?",
+      )
+      .get(job.id);
+    const metadata = JSON.parse(row?.metadata ?? "{}");
+    expect(metadata.episodeDistiller).toMatchObject({
+      generated: 1,
+      skipped: 1,
+      duplicateGenerationKindSkipped: 1,
+      skippedDuplicateGenerationKinds: [{ segment: 0, generationKind: "task_episode" }],
+    });
+    expect(
+      await searchEpisodes({
+        query: "Duplicate kind",
+        technologies: ["sqlite"],
+        limit: 10,
+      }),
+    ).toHaveLength(1);
   });
 
   test("persists covering retry options in sqlite", async () => {

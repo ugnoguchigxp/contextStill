@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { groupedConfig } from "../../config.js";
 import type { DistillationSearchProvider } from "../../config.types.js";
 import { readProjectEnv } from "../../project-identity.js";
@@ -6,6 +7,8 @@ import {
   type DistillationPriorityTargetKind,
   type RuntimeAgenticProviderName,
   type RuntimeProviderName,
+  type RuntimeProviderPool,
+  type RuntimeProviderPoolTarget,
   type RuntimeProviderSetting,
   type RuntimeSecretKey,
   type RuntimeSettingsEditable,
@@ -28,6 +31,7 @@ export const secretRowKeys: RuntimeSecretKey[] = [
 
 type BootstrapConfig = {
   general: RuntimeSettingsEditable["general"];
+  providerPools: RuntimeSettingsEditable["providerPools"];
   providers: RuntimeSettingsEditable["providers"];
   taskRouting: RuntimeSettingsEditable["taskRouting"];
   search: RuntimeSettingsEditable["search"];
@@ -58,6 +62,102 @@ function normalizeProviderList(values: unknown[]): RuntimeProviderName[] {
     deduped.add(normalized);
   }
   return [...deduped];
+}
+
+function normalizeProviderPoolTarget(
+  value: unknown,
+  localLlmModelIds: Set<string>,
+): RuntimeProviderPoolTarget | null {
+  const record = asRecord(value);
+  const provider = normalizeProviderName(record.provider);
+  if (!provider) return null;
+  if (provider === "local-llm") {
+    const localLlmModelId =
+      typeof record.localLlmModelId === "string" ? record.localLlmModelId.trim() : "";
+    return localLlmModelId && localLlmModelIds.has(localLlmModelId)
+      ? { provider, localLlmModelId }
+      : null;
+  }
+  if (provider === "azure-openai") {
+    const deploymentSlot = Number(record.deploymentSlot);
+    return Number.isInteger(deploymentSlot) && deploymentSlot >= 1
+      ? { provider, deploymentSlot }
+      : null;
+  }
+  const targetId = typeof record.targetId === "string" ? record.targetId.trim() : "";
+  return targetId ? { provider, targetId } : null;
+}
+
+function normalizeProviderPools(
+  settings: RuntimeSettingsEditable,
+  values: unknown,
+): RuntimeProviderPool[] {
+  const localLlmModelIds = new Set(
+    settings.providers["local-llm"].models
+      .map((model) => model.id)
+      .filter((id): id is string => Boolean(id)),
+  );
+  const rawPools = Array.isArray(values) ? values : [];
+  const pools: RuntimeProviderPool[] = [];
+  const seen = new Set<string>();
+
+  for (const value of rawPools) {
+    const record = asRecord(value);
+    const id = typeof record.id === "string" ? record.id.trim() : "";
+    if (!id || seen.has(id)) continue;
+    const targets = Array.isArray(record.targets)
+      ? record.targets
+          .map((target) => normalizeProviderPoolTarget(target, localLlmModelIds))
+          .filter((target): target is RuntimeProviderPoolTarget => Boolean(target))
+      : [];
+    if (targets.length === 0) continue;
+    const maxConcurrent = Math.max(
+      1,
+      Math.min(targets.length, Math.floor(Number(record.maxConcurrent) || targets.length)),
+    );
+    pools.push({
+      id,
+      label: typeof record.label === "string" && record.label.trim() ? record.label.trim() : id,
+      targets,
+      maxConcurrent,
+      staleLeaseSeconds: Math.max(
+        30,
+        Math.floor(Number(record.staleLeaseSeconds) || groupedConfig.distillation.lockTtlSeconds),
+      ),
+      enabled: record.enabled !== false,
+      lowPriorityAgingSeconds: Math.max(
+        60,
+        Math.floor(Number(record.lowPriorityAgingSeconds) || 30 * 60),
+      ),
+    });
+    seen.add(id);
+  }
+
+  if (pools.length === 0) {
+    const targets = settings.providers["local-llm"].models.map((model) => ({
+      provider: "local-llm" as const,
+      localLlmModelId:
+        model.id ??
+        stableLocalLlmModelId({
+          apiBaseUrl: model.apiBaseUrl,
+          apiPath: model.apiPath,
+          model: model.model,
+        }),
+    }));
+    if (targets.length > 0) {
+      pools.push({
+        id: "local-llm-default",
+        label: targets.length === 1 ? "Local LLM" : "Local LLM Pool",
+        targets,
+        maxConcurrent: targets.length,
+        staleLeaseSeconds: Math.max(30, groupedConfig.distillation.lockTtlSeconds),
+        enabled: settings.providers["local-llm"].enabled,
+        lowPriorityAgingSeconds: 30 * 60,
+      });
+    }
+  }
+
+  return pools;
 }
 
 const defaultDistillationTargetPriorityOrder: DistillationPriorityTargetKind[] = [
@@ -152,6 +252,19 @@ function localLlmModelName(index: number): string {
   return index === 0 ? "Primary" : `Local LLM ${index + 1}`;
 }
 
+export function stableLocalLlmModelId(input: {
+  apiBaseUrl: string;
+  apiPath?: string;
+  model: string;
+}): string {
+  const normalized = JSON.stringify({
+    apiBaseUrl: input.apiBaseUrl.trim().replace(/\/+$/, ""),
+    apiPath: input.apiPath?.trim() || "/v1/chat/completions",
+    model: input.model.trim(),
+  });
+  return `local-llm-${createHash("sha256").update(normalized).digest("hex").slice(0, 12)}`;
+}
+
 function normalizeLocalLlmModel(
   value: Record<string, unknown>,
   index: number,
@@ -174,7 +287,12 @@ function normalizeLocalLlmModel(
       : index === 0
         ? fallback.model
         : "";
+  const id =
+    typeof value.id === "string" && value.id.trim()
+      ? value.id.trim()
+      : stableLocalLlmModelId({ apiBaseUrl, apiPath, model });
   return {
+    id,
     name: name || localLlmModelName(index),
     apiBaseUrl,
     apiPath,
@@ -229,6 +347,28 @@ export const bootstrap: BootstrapConfig = {
       targetPriorityOrder: [...defaultDistillationTargetPriorityOrder],
     },
   },
+  providerPools: [
+    {
+      id: "local-llm-default",
+      label: "Local LLM",
+      targets: [
+        {
+          provider: "local-llm",
+          localLlmModelId: stableLocalLlmModelId({
+            apiBaseUrl: groupedConfig.localLlm.apiBaseUrl,
+            apiPath: groupedConfig.localLlm.apiPath,
+            model: groupedConfig.localLlm.model,
+          }),
+        },
+      ],
+      maxConcurrent: 1,
+      staleLeaseSeconds: Math.max(30, groupedConfig.distillation.lockTtlSeconds),
+      enabled: Boolean(
+        groupedConfig.localLlm.apiBaseUrl.trim() && groupedConfig.localLlm.model.trim(),
+      ),
+      lowPriorityAgingSeconds: 30 * 60,
+    },
+  ],
   providers: {
     openai: {
       enabled: true,
@@ -288,6 +428,11 @@ export const bootstrap: BootstrapConfig = {
       model: groupedConfig.localLlm.model,
       models: [
         {
+          id: stableLocalLlmModelId({
+            apiBaseUrl: groupedConfig.localLlm.apiBaseUrl,
+            apiPath: groupedConfig.localLlm.apiPath,
+            model: groupedConfig.localLlm.model,
+          }),
           name: "Primary",
           apiBaseUrl: groupedConfig.localLlm.apiBaseUrl,
           apiPath: groupedConfig.localLlm.apiPath,
@@ -321,6 +466,11 @@ export const bootstrap: BootstrapConfig = {
       model: groupedConfig.localLlm.model,
       fallback: [...localLlmAzureFallback],
     },
+    episodeDistiller: {
+      provider: "local-llm",
+      model: groupedConfig.localLlm.model,
+      fallback: [...localLlmAzureFallback],
+    },
     coverEvidence: {
       sourceSupport: {
         provider: "local-llm",
@@ -344,6 +494,11 @@ export const bootstrap: BootstrapConfig = {
       fallback: [],
     },
     finalizeDistille: {
+      provider: "local-llm",
+      model: groupedConfig.localLlm.model,
+      fallback: [...localLlmAzureFallback],
+    },
+    mergeActivationFinalize: {
       provider: "local-llm",
       model: groupedConfig.localLlm.model,
       fallback: [...localLlmAzureFallback],
@@ -433,6 +588,10 @@ export function cloneDefaultSettings(): RuntimeSettingsEditable {
         targetPriorityOrder: [...bootstrap.general.distillationPriority.targetPriorityOrder],
       },
     },
+    providerPools: bootstrap.providerPools.map((pool) => ({
+      ...pool,
+      targets: pool.targets.map((target) => ({ ...target })),
+    })),
     providers: {
       openai: { ...bootstrap.providers.openai },
       "azure-openai": {
@@ -473,6 +632,13 @@ export function cloneDefaultSettings(): RuntimeSettingsEditable {
           ? [...bootstrap.taskRouting.webSourceResearch.azureDeploymentSlots]
           : undefined,
       },
+      episodeDistiller: {
+        ...bootstrap.taskRouting.episodeDistiller,
+        fallback: [...bootstrap.taskRouting.episodeDistiller.fallback],
+        azureDeploymentSlots: bootstrap.taskRouting.episodeDistiller.azureDeploymentSlots
+          ? [...bootstrap.taskRouting.episodeDistiller.azureDeploymentSlots]
+          : undefined,
+      },
       coverEvidence: {
         sourceSupport: {
           ...bootstrap.taskRouting.coverEvidence.sourceSupport,
@@ -503,6 +669,13 @@ export function cloneDefaultSettings(): RuntimeSettingsEditable {
         fallback: [...bootstrap.taskRouting.finalizeDistille.fallback],
         azureDeploymentSlots: bootstrap.taskRouting.finalizeDistille.azureDeploymentSlots
           ? [...bootstrap.taskRouting.finalizeDistille.azureDeploymentSlots]
+          : undefined,
+      },
+      mergeActivationFinalize: {
+        ...bootstrap.taskRouting.mergeActivationFinalize,
+        fallback: [...bootstrap.taskRouting.mergeActivationFinalize.fallback],
+        azureDeploymentSlots: bootstrap.taskRouting.mergeActivationFinalize.azureDeploymentSlots
+          ? [...bootstrap.taskRouting.mergeActivationFinalize.azureDeploymentSlots]
           : undefined,
       },
       deadZoneMergeReview: {
@@ -647,9 +820,19 @@ function sanitizeRoute(
         configuredLocalLlmTarget?.routeValue ??
         resolveConfiguredRouteModel(settings, route.provider))
       : resolveConfiguredRouteModel(settings, route.provider);
+  const requestedProviderPoolId =
+    typeof route.providerPoolId === "string" && route.providerPoolId.trim()
+      ? route.providerPoolId.trim()
+      : undefined;
+  const defaultLocalPool = settings.providerPools.find((pool) => pool.id === "local-llm-default");
   return {
     provider: route.provider,
     model,
+    providerPoolId:
+      requestedProviderPoolId ??
+      (route.provider === "local-llm" && defaultLocalPool?.enabled
+        ? defaultLocalPool.id
+        : undefined),
     localLlmModel:
       route.provider === "local-llm" || route.fallback.includes("local-llm")
         ? (configuredLocalLlmTarget?.routeValue ??
@@ -675,6 +858,7 @@ function ensureLocalLlmAzureFallback(route: RuntimeSettingsRoute): RuntimeSettin
 function cloneRoute(route: RuntimeSettingsRoute): RuntimeSettingsRoute {
   return {
     ...route,
+    providerPoolId: route.providerPoolId,
     fallback: [...route.fallback],
     azureDeploymentSlots: route.azureDeploymentSlots ? [...route.azureDeploymentSlots] : undefined,
   };
@@ -694,6 +878,9 @@ function mergeRuntimeSettings(
         ...asRecord(asRecord(input.general).distillationPriority),
       },
     },
+    providerPools: Array.isArray(input.providerPools)
+      ? (input.providerPools as RuntimeProviderPool[])
+      : defaults.providerPools,
     providers: {
       ...defaults.providers,
       ...asRecord(input.providers),
@@ -741,6 +928,10 @@ function mergeRuntimeSettings(
         ...defaults.taskRouting.webSourceResearch,
         ...asRecord(asRecord(input.taskRouting).webSourceResearch),
       },
+      episodeDistiller: {
+        ...defaults.taskRouting.episodeDistiller,
+        ...asRecord(asRecord(input.taskRouting).episodeDistiller),
+      },
       coverEvidence: {
         ...defaults.taskRouting.coverEvidence,
         ...asRecord(asRecord(input.taskRouting).coverEvidence),
@@ -760,6 +951,10 @@ function mergeRuntimeSettings(
       finalizeDistille: {
         ...defaults.taskRouting.finalizeDistille,
         ...asRecord(asRecord(input.taskRouting).finalizeDistille),
+      },
+      mergeActivationFinalize: {
+        ...defaults.taskRouting.mergeActivationFinalize,
+        ...asRecord(asRecord(input.taskRouting).mergeActivationFinalize),
       },
       deadZoneMergeReview: {
         ...defaults.taskRouting.deadZoneMergeReview,
@@ -806,6 +1001,7 @@ function mergeRuntimeSettings(
 
   merged.providers["azure-openai"] = syncAzureOpenAiProvider(merged.providers["azure-openai"]);
   merged.providers["local-llm"] = syncLocalLlmProvider(merged.providers["local-llm"]);
+  merged.providerPools = normalizeProviderPools(merged, input.providerPools);
 
   merged.taskRouting.findCandidate.source = sanitizeRoute(
     merged,
@@ -818,6 +1014,10 @@ function mergeRuntimeSettings(
   );
   merged.taskRouting.webSourceResearch = ensureLocalLlmAzureFallback(
     merged.taskRouting.webSourceResearch,
+  );
+  merged.taskRouting.episodeDistiller = sanitizeRoute(merged, merged.taskRouting.episodeDistiller);
+  merged.taskRouting.episodeDistiller = ensureLocalLlmAzureFallback(
+    merged.taskRouting.episodeDistiller,
   );
   merged.taskRouting.coverEvidence.sourceSupport = sanitizeRoute(
     merged,
@@ -839,6 +1039,13 @@ function mergeRuntimeSettings(
   merged.taskRouting.finalizeDistille = sanitizeRoute(merged, merged.taskRouting.finalizeDistille);
   merged.taskRouting.finalizeDistille = ensureLocalLlmAzureFallback(
     merged.taskRouting.finalizeDistille,
+  );
+  merged.taskRouting.mergeActivationFinalize = sanitizeRoute(
+    merged,
+    merged.taskRouting.mergeActivationFinalize,
+  );
+  merged.taskRouting.mergeActivationFinalize = ensureLocalLlmAzureFallback(
+    merged.taskRouting.mergeActivationFinalize,
   );
   merged.taskRouting.deadZoneMergeReview = sanitizeRoute(
     merged,

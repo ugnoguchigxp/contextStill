@@ -5,6 +5,7 @@ import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { db } from "../../db/client.js";
 import {
   agentDiffEntries,
+  episodeDistillerQueue,
   findingCandidateQueue,
   syncStates,
   vibeMemories,
@@ -233,6 +234,7 @@ async function syncAllAgentLogsSqlite(params: {
     let insertedMemories = 0;
     let insertedDiffs = 0;
     const enqueuedFindingJobs: Array<{ id: string; sourceKey: string }> = [];
+    const enqueuedEpisodeJobs: Array<{ id: string; sourceKey: string }> = [];
 
     sqlite.db.query("BEGIN IMMEDIATE").run();
     try {
@@ -343,6 +345,68 @@ async function syncAllAgentLogsSqlite(params: {
             );
           enqueuedFindingJobs.push({ id: findingJobId, sourceKey: memoryId });
 
+          const episodeJobId = crypto.randomUUID();
+          sqlite.db
+            .query(
+              `
+              insert into episode_distiller_queue (
+                id, source_kind, source_key, source_uri,
+                distillation_version, payload, metadata, priority, provider_policy,
+                status, created_at, updated_at
+              ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+              on conflict(source_kind, source_key, distillation_version) do nothing
+            `,
+            )
+            .run(
+              episodeJobId,
+              "vibe_memory",
+              memoryId,
+              `vibe_memory:${memoryId}`,
+              APP_CONSTANTS.distillationTargetVersion,
+              JSON.stringify({
+                sourceType: "agent_log_sync",
+                sourceId: source.id,
+                memorySessionId,
+                chunkIndex,
+                dedupeKey,
+              }),
+              JSON.stringify({
+                sourceType: "agent_log_sync",
+                sourceId: source.id,
+                memorySessionId,
+                chunkIndex,
+                dedupeKey,
+                sessionTitle:
+                  typeof memoryMetadata.sessionTitle === "string"
+                    ? memoryMetadata.sessionTitle
+                    : undefined,
+                projectName:
+                  typeof memoryMetadata.projectName === "string"
+                    ? memoryMetadata.projectName
+                    : undefined,
+              }),
+              50,
+              "default",
+              "pending",
+              now,
+              now,
+            );
+          const episodeJob = sqlite.db
+            .query<{ id: string }, [string, string, string]>(
+              `
+              select id
+              from episode_distiller_queue
+              where source_kind = ?
+                and source_key = ?
+                and distillation_version = ?
+              limit 1
+            `,
+            )
+            .get("vibe_memory", memoryId, APP_CONSTANTS.distillationTargetVersion);
+          if (episodeJob?.id === episodeJobId) {
+            enqueuedEpisodeJobs.push({ id: episodeJobId, sourceKey: memoryId });
+          }
+
           for (const entry of diffEntries) {
             sqlite.db
               .query(
@@ -421,6 +485,18 @@ async function syncAllAgentLogsSqlite(params: {
           sourceKind: "vibe_memory",
           sourceKey: job.sourceKey,
           inputKind: "source_target",
+        },
+      });
+    }
+    for (const job of enqueuedEpisodeJobs) {
+      await appendQueueEvent({
+        queueName: "episodeDistiller",
+        queueJobId: job.id,
+        eventType: "enqueued",
+        message: "episode distiller enqueued from agent log sync",
+        metadata: {
+          sourceKind: "vibe_memory",
+          sourceKey: job.sourceKey,
         },
       });
     }
@@ -575,6 +651,7 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
       let insertedMemories = 0;
       let insertedDiffs = 0;
       const enqueuedFindingJobs: Array<{ id: string; sourceKey: string }> = [];
+      const enqueuedEpisodeJobs: Array<{ id: string; sourceKey: string }> = [];
 
       await db.transaction(async (tx) => {
         if (isFirst20Sync && shouldDeleteLegacyAntigravityVibeMemories()) {
@@ -693,6 +770,52 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
               enqueuedFindingJobs.push({ id: findingJob.id, sourceKey: inserted.id });
             }
 
+            const [episodeJob] = await tx
+              .insert(episodeDistillerQueue)
+              .values({
+                sourceKind: "vibe_memory",
+                sourceKey: inserted.id,
+                sourceUri: `vibe_memory:${inserted.id}`,
+                distillationVersion: APP_CONSTANTS.distillationTargetVersion,
+                payload: {
+                  sourceType: "agent_log_sync",
+                  sourceId: source.id,
+                  memorySessionId,
+                  chunkIndex,
+                  dedupeKey,
+                },
+                metadata: {
+                  sourceType: "agent_log_sync",
+                  sourceId: source.id,
+                  memorySessionId,
+                  chunkIndex,
+                  dedupeKey,
+                  sessionTitle:
+                    typeof memoryMetadata.sessionTitle === "string"
+                      ? memoryMetadata.sessionTitle
+                      : undefined,
+                  projectName:
+                    typeof memoryMetadata.projectName === "string"
+                      ? memoryMetadata.projectName
+                      : undefined,
+                },
+                priority: 50,
+                providerPolicy: "default",
+                status: "pending",
+                updatedAt: new Date(),
+              })
+              .onConflictDoNothing({
+                target: [
+                  episodeDistillerQueue.sourceKind,
+                  episodeDistillerQueue.sourceKey,
+                  episodeDistillerQueue.distillationVersion,
+                ],
+              })
+              .returning({ id: episodeDistillerQueue.id });
+            if (episodeJob) {
+              enqueuedEpisodeJobs.push({ id: episodeJob.id, sourceKey: inserted.id });
+            }
+
             if (diffEntries.length === 0) continue;
 
             const insertedEntries = await tx
@@ -755,6 +878,18 @@ export async function syncAllAgentLogs(): Promise<AgentLogSyncSummary> {
             sourceKind: "vibe_memory",
             sourceKey: job.sourceKey,
             inputKind: "source_target",
+          },
+        });
+      }
+      for (const job of enqueuedEpisodeJobs) {
+        await appendQueueEvent({
+          queueName: "episodeDistiller",
+          queueJobId: job.id,
+          eventType: "enqueued",
+          message: "episode distiller enqueued from agent log sync",
+          metadata: {
+            sourceKind: "vibe_memory",
+            sourceKey: job.sourceKey,
           },
         });
       }

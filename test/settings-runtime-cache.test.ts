@@ -109,6 +109,7 @@ describe("settings runtime cache", () => {
       model: "gemma-test",
       models: [
         {
+          id: "primary",
           name: "Primary",
           apiBaseUrl: "http://127.0.0.1:44448",
           apiPath: "/v1/chat/completions",
@@ -190,18 +191,21 @@ describe("settings runtime cache", () => {
       model: "local-primary",
       models: [
         {
+          id: "primary",
           name: "Primary",
           apiBaseUrl: "http://127.0.0.1:44448",
           apiPath: "/v1/chat/completions",
           model: "local-primary",
         },
         {
+          id: "coder",
           name: "Coder",
           apiBaseUrl: "http://127.0.0.1:44449",
           apiPath: "/v1/chat/completions",
           model: "local-coder",
         },
         {
+          id: "reasoner",
           name: "Reasoner",
           apiBaseUrl: "http://127.0.0.1:44450",
           apiPath: "/v1/chat/completions",
@@ -335,5 +339,78 @@ describe("settings runtime cache", () => {
       model: "gpt-5-4-mini",
       fallback: ["local-llm"],
     });
+  });
+
+  test("backfills Local LLM model ids and default provider pool", () => {
+    const row = {
+      id: "settings-row-provider-pool",
+      namespace: "runtime",
+      key: "runtime_settings",
+      value: {
+        ...settings,
+        providers: {
+          ...settings.providers,
+          "local-llm": {
+            enabled: true,
+            apiBaseUrl: "http://127.0.0.1:44448",
+            apiPath: "/v1/chat/completions",
+            model: "qwen-primary",
+            models: [
+              {
+                name: "Qwen A",
+                apiBaseUrl: "http://127.0.0.1:44448",
+                apiPath: "/v1/chat/completions",
+                model: "qwen-primary",
+              },
+              {
+                name: "Qwen B",
+                apiBaseUrl: "http://127.0.0.1:44449",
+                apiPath: "/v1/chat/completions",
+                model: "qwen-primary",
+              },
+            ],
+          },
+        },
+        taskRouting: {
+          ...settings.taskRouting,
+          coverEvidence: {
+            sourceSupport: { provider: "local-llm", fallback: [] },
+            externalEvidence: { provider: "local-llm", fallback: [] },
+            mcpEvidence: { provider: "local-llm", fallback: [] },
+          },
+          finalizeDistille: { provider: "local-llm", fallback: [] },
+        },
+      },
+      valueKind: "json",
+      secretRef: null,
+      isSecret: false,
+      description: null,
+      schemaVersion: 1,
+      updatedBy: null,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+
+    const parsed = parseDocumentValue(row);
+
+    expect(parsed.providers["local-llm"].models.map((model) => model.id)).toEqual([
+      expect.stringMatching(/^local-llm-[a-f0-9]{12}$/),
+      expect.stringMatching(/^local-llm-[a-f0-9]{12}$/),
+    ]);
+    expect(new Set(parsed.providers["local-llm"].models.map((model) => model.id)).size).toBe(2);
+    expect(parsed.providerPools).toHaveLength(1);
+    expect(parsed.providerPools[0]).toMatchObject({
+      id: "local-llm-default",
+      maxConcurrent: 2,
+      enabled: true,
+      targets: [
+        { provider: "local-llm", localLlmModelId: parsed.providers["local-llm"].models[0].id },
+        { provider: "local-llm", localLlmModelId: parsed.providers["local-llm"].models[1].id },
+      ],
+    });
+    expect(parsed.taskRouting.coverEvidence.externalEvidence.providerPoolId).toBe(
+      "local-llm-default",
+    );
+    expect(parsed.taskRouting.finalizeDistille.providerPoolId).toBe("local-llm-default");
   });
 });

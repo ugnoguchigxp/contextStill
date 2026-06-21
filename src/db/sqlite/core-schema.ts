@@ -462,6 +462,32 @@ CREATE TABLE IF NOT EXISTS llm_usage_logs (
 CREATE INDEX IF NOT EXISTS llm_usage_logs_created_at_idx ON llm_usage_logs(created_at);
 CREATE INDEX IF NOT EXISTS llm_usage_logs_provider_idx ON llm_usage_logs(provider);
 
+CREATE TABLE IF NOT EXISTS llm_provider_leases (
+  id TEXT PRIMARY KEY,
+  pool_id TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  queue_name TEXT NOT NULL,
+  queue_job_id TEXT NOT NULL,
+  worker_id TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  locked_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  heartbeat_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  expires_at TEXT NOT NULL,
+  released_at TEXT,
+  release_reason TEXT,
+  metadata TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS llm_provider_leases_active_target_unique_idx
+  ON llm_provider_leases(pool_id, target_id)
+  WHERE status = 'active';
+CREATE INDEX IF NOT EXISTS llm_provider_leases_pool_status_expires_idx
+  ON llm_provider_leases(pool_id, status, expires_at);
+CREATE INDEX IF NOT EXISTS llm_provider_leases_job_status_idx
+  ON llm_provider_leases(queue_name, queue_job_id, status);
+
 CREATE TABLE IF NOT EXISTS vibe_goals (
   id TEXT PRIMARY KEY,
   goal_uri TEXT NOT NULL UNIQUE,
@@ -792,6 +818,36 @@ CREATE TABLE IF NOT EXISTS finding_candidate_queue (
   created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
   updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
 ) STRICT;
+
+CREATE TABLE IF NOT EXISTS episode_distiller_queue (
+  id TEXT PRIMARY KEY,
+  source_kind TEXT NOT NULL DEFAULT 'vibe_memory',
+  source_key TEXT NOT NULL,
+  source_uri TEXT NOT NULL,
+  distillation_version TEXT NOT NULL DEFAULT 'v1',
+  status TEXT NOT NULL DEFAULT 'pending',
+  priority INTEGER NOT NULL DEFAULT 0,
+  attempt_count INTEGER NOT NULL DEFAULT 0,
+  max_attempts INTEGER NOT NULL DEFAULT 2,
+  payload TEXT NOT NULL DEFAULT '{}',
+  metadata TEXT NOT NULL DEFAULT '{}',
+  provider_policy TEXT,
+  locked_by TEXT,
+  locked_at TEXT,
+  heartbeat_at TEXT,
+  next_run_at TEXT,
+  completed_at TEXT,
+  last_error TEXT,
+  last_outcome_kind TEXT,
+  created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+  updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+) STRICT;
+
+CREATE UNIQUE INDEX IF NOT EXISTS episode_distiller_queue_unique_idx
+  ON episode_distiller_queue(source_kind, source_key, distillation_version);
+
+CREATE INDEX IF NOT EXISTS episode_distiller_queue_status_priority_created_at_idx
+  ON episode_distiller_queue(status, priority, created_at);
 
 CREATE TABLE IF NOT EXISTS covering_evidence_queue (
   id TEXT PRIMARY KEY,

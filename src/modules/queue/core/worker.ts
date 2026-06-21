@@ -16,6 +16,11 @@ import {
 import { asRecord } from "../../../shared/utils/normalize.js";
 import { type CoverEvidenceRunInput, runCoverEvidence } from "../../coverEvidence/domain.js";
 import type { CoverEvidenceResult } from "../../coverEvidence/types.js";
+import {
+  failEpisodeDistillerJob,
+  processEpisodeDistillerJob,
+} from "../../episodeDistiller/worker.js";
+import { runWithProviderLeaseRouteContext } from "../../settings/provider-lease-route-context.js";
 import { type FinalizeDistilleInput, runFinalizeDistille } from "../../finalizeDistille/domain.js";
 import { type FindCandidateResult, runFindCandidate } from "../../findCandidate/domain.js";
 import {
@@ -30,6 +35,11 @@ import { researchWebSourceToMarkdown } from "../../sources/web/source-research.s
 import { claimNextQueueJob } from "./claim.js";
 import { isQueuePaused } from "./control.js";
 import { appendQueueEvent } from "./events.js";
+import {
+  heartbeatProviderLease,
+  releaseProviderLease,
+  type ProviderLease,
+} from "./provider-lease.js";
 import { keepQueueJobWaitingForWorker, pauseQueueJob } from "./state.js";
 import { type DistillationQueueName, queueTableNameByQueue } from "./types.js";
 
@@ -878,7 +888,7 @@ async function runSourceTargetFindCandidate(params: {
       metadata: params.findingJob.metadata as Record<string, unknown>,
     },
     callerMode: "cli_text",
-    writeEpisode: sourceKind === "vibe_memory",
+    writeEpisode: false,
     signal: params.signal,
   });
 }
@@ -1537,11 +1547,17 @@ async function processFinalizeJob(jobId: string, signal?: AbortSignal): Promise<
 async function runWithHeartbeat<T>(params: {
   queueName: DistillationQueueName;
   jobId: string;
+  providerLease?: ProviderLease;
   run: () => Promise<T>;
 }): Promise<T> {
   const tableName = queueTableNameByQueue[params.queueName];
   const heartbeatMs = 30_000;
   const timer = setInterval(() => {
+    if (params.providerLease) {
+      void heartbeatProviderLease(params.providerLease.id).catch(() => {
+        // Provider lease heartbeat failure should not mask the active worker result.
+      });
+    }
     if (isSqliteBackend()) {
       void getSqliteCoreDatabase()
         .then((sqlite) => {
@@ -1633,8 +1649,10 @@ function isAbortError(error: unknown): boolean {
 export async function runQueueWorkerOnce(params: {
   queueName: DistillationQueueName;
   workerId: string;
+  claimedJob?: { id: string };
+  providerLease?: ProviderLease;
 }): Promise<QueueRunResult> {
-  if (await isQueuePaused(params.queueName)) {
+  if (!params.claimedJob && (await isQueuePaused(params.queueName))) {
     return {
       ok: true,
       queue: params.queueName,
@@ -1645,10 +1663,12 @@ export async function runQueueWorkerOnce(params: {
     };
   }
 
-  const claimed = await claimNextQueueJob({
-    queueName: params.queueName,
-    workerId: params.workerId,
-  });
+  const claimed =
+    params.claimedJob ??
+    (await claimNextQueueJob({
+      queueName: params.queueName,
+      workerId: params.workerId,
+    }));
   if (!claimed) {
     return {
       ok: true,
@@ -1677,47 +1697,73 @@ export async function runQueueWorkerOnce(params: {
     }
 
     let completedJobId: string | undefined = claimed.id;
+    let providerLeaseReleaseReason = "worker_failed";
     try {
       await runWithHeartbeat({
         queueName: params.queueName,
         jobId: claimed.id,
+        providerLease: params.providerLease,
         run: async () => {
-          if (params.queueName === "findingCandidate") {
-            await runWithTimeout({
-              timeoutMs: groupedConfig.distillation.findCandidateTimeoutMs,
-              signal: pauseController.signal,
-              run: (signal) => processFindingCandidate(claimed.id, signal),
-            });
-          } else if (params.queueName === "coveringEvidence") {
-            const coverResult = await runWithTimeout({
-              timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
-              signal: pauseController.signal,
-              run: (signal) => processCoveringJob(claimed.id, signal),
-            });
-            completedJobId = coverResult.terminal ? claimed.id : undefined;
-          } else if (params.queueName === "deadZoneMergeReview") {
-            await runWithTimeout({
-              timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
-              signal: pauseController.signal,
-              run: (signal) => processDeadZoneMergeReviewJob(claimed.id, signal),
-            });
-          } else if (params.queueName === "mergeActivationFinalize") {
-            await runWithTimeout({
-              timeoutMs: groupedConfig.distillation.timeoutMs,
-              signal: pauseController.signal,
-              run: (signal) => processMergeActivationFinalizeJob(claimed.id, signal),
-            });
-          } else {
-            await runWithTimeout({
-              timeoutMs: groupedConfig.distillation.timeoutMs,
-              signal: pauseController.signal,
-              run: (signal) => processFinalizeJob(claimed.id, signal),
-            });
-          }
+          await runWithProviderLeaseRouteContext(
+            params.providerLease
+              ? {
+                  poolId: params.providerLease.poolId,
+                  targetId: params.providerLease.targetId,
+                }
+              : null,
+            async () => {
+              if (params.queueName === "findingCandidate") {
+                await runWithTimeout({
+                  timeoutMs: groupedConfig.distillation.findCandidateTimeoutMs,
+                  signal: pauseController.signal,
+                  run: (signal) => processFindingCandidate(claimed.id, signal),
+                });
+              } else if (params.queueName === "episodeDistiller") {
+                await runWithTimeout({
+                  timeoutMs: groupedConfig.distillation.findCandidateTimeoutMs,
+                  signal: pauseController.signal,
+                  run: (signal) => processEpisodeDistillerJob(claimed.id, signal),
+                });
+              } else if (params.queueName === "coveringEvidence") {
+                const coverResult = await runWithTimeout({
+                  timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+                  signal: pauseController.signal,
+                  run: (signal) => processCoveringJob(claimed.id, signal),
+                });
+                completedJobId = coverResult.terminal ? claimed.id : undefined;
+              } else if (params.queueName === "deadZoneMergeReview") {
+                await runWithTimeout({
+                  timeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
+                  signal: pauseController.signal,
+                  run: (signal) => processDeadZoneMergeReviewJob(claimed.id, signal),
+                });
+              } else if (params.queueName === "mergeActivationFinalize") {
+                await runWithTimeout({
+                  timeoutMs: groupedConfig.distillation.timeoutMs,
+                  signal: pauseController.signal,
+                  run: (signal) => processMergeActivationFinalizeJob(claimed.id, signal),
+                });
+              } else {
+                await runWithTimeout({
+                  timeoutMs: groupedConfig.distillation.timeoutMs,
+                  signal: pauseController.signal,
+                  run: (signal) => processFinalizeJob(claimed.id, signal),
+                });
+              }
+            },
+          );
         },
       });
+      providerLeaseReleaseReason = "worker_finished";
     } finally {
       clearInterval(pausePollTimer);
+      if (params.providerLease) {
+        await releaseProviderLease(params.providerLease.id, providerLeaseReleaseReason).catch(
+          () => {
+            // Stale provider lease recovery is the fallback if release fails here.
+          },
+        );
+      }
     }
 
     return {
@@ -1814,6 +1860,8 @@ export async function runQueueWorkerOnce(params: {
         jobId: claimed.id,
         error: message,
       });
+    } else if (params.queueName === "episodeDistiller") {
+      await failEpisodeDistillerJob(claimed.id, message);
     } else if (params.queueName === "coveringEvidence") {
       const current = await getCoveringJobById(claimed.id);
       const currentAttempt = current?.attemptCount ?? 0;
@@ -1845,7 +1893,7 @@ export async function runQueueWorkerOnce(params: {
     await appendQueueEvent({
       queueName: params.queueName,
       queueJobId: claimed.id,
-      eventType: "paused",
+      eventType: "failed",
       message: "worker failed",
       metadata: {
         error: message,

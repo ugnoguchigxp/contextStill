@@ -1,19 +1,15 @@
 import { closeDbPool } from "./db/client.js";
-import { runMcpServer } from "./mcp/server.js";
+import { type McpServerRuntime, runMcpServer } from "./mcp/server.js";
 import { projectIdentity } from "./project-identity.js";
 
-runMcpServer().catch((error) => {
-  console.error(`[${projectIdentity.packageName}] failed to start MCP server:`, error);
-  process.exit(1);
-});
-
 let shuttingDown = false;
+let mcpRuntime: McpServerRuntime | null = null;
 
-const shutdown = async (signal: string) => {
+const shutdown = async (reason: string, exitCode = 0) => {
   if (shuttingDown) return;
   shuttingDown = true;
 
-  console.log(`\nReceived ${signal} in MCP server. Shutting down gracefully...`);
+  console.error(`\nReceived ${reason} in MCP server. Shutting down gracefully...`);
 
   const forceExitTimer = setTimeout(() => {
     console.error("MCP server graceful shutdown timed out. Forcing exit.");
@@ -21,11 +17,15 @@ const shutdown = async (signal: string) => {
   }, 10_000);
 
   try {
-    console.log("Closing MCP server database connection pool...");
+    if (mcpRuntime) {
+      console.error("Closing MCP stdio transport...");
+      await mcpRuntime.close();
+    }
+    console.error("Closing MCP server database connection pool...");
     await closeDbPool();
-    console.log("MCP server shutdown complete.");
+    console.error("MCP server shutdown complete.");
     clearTimeout(forceExitTimer);
-    process.exit(0);
+    process.exit(exitCode);
   } catch (error) {
     clearTimeout(forceExitTimer);
     console.error("Error during MCP server shutdown:", error);
@@ -35,3 +35,18 @@ const shutdown = async (signal: string) => {
 
 process.on("SIGINT", () => shutdown("SIGINT"));
 process.on("SIGTERM", () => shutdown("SIGTERM"));
+
+runMcpServer()
+  .then((runtime) => {
+    mcpRuntime = runtime;
+    runtime.closed.then(({ reason, error }) => {
+      if (error) {
+        console.error(`[${projectIdentity.packageName}] MCP stdio closed with error:`, error);
+      }
+      void shutdown(reason, error ? 1 : 0);
+    });
+  })
+  .catch((error) => {
+    console.error(`[${projectIdentity.packageName}] failed to start MCP server:`, error);
+    process.exit(1);
+  });

@@ -497,36 +497,8 @@ describe("runFindCandidate", () => {
     );
     expect(result.readRanges).toEqual([{ from: 0, toExclusive: 24 }]);
     expect(result.insertedIds).toEqual(["candidate-1"]);
-    expect(result.episodeId).toBe("episode-1");
-    expect(mocks.getEpisodeCardBySource).toHaveBeenCalledWith({
-      sourceKind: "vibe_memory",
-      sourceKey: "memory-1",
-    });
-    expect(mocks.createEpisodeCard).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: "Rust daemon migration workbook",
-        situation: expect.stringContaining("Title source: sessionTitle"),
-        observations: expect.stringContaining("Source excerpt:"),
-        action: expect.stringContaining("Reusable candidates:"),
-        outcome: expect.stringContaining("verify refs"),
-        sourceKind: "vibe_memory",
-        sourceKey: "memory-1",
-        status: "active",
-        refs: [
-          expect.objectContaining({
-            refKind: "vibe_memory",
-            refValue: "memory-1",
-          }),
-        ],
-        metadata: expect.objectContaining({
-          source: "findCandidate_vibe_memory",
-          insertedFindCandidateResultIds: ["candidate-1"],
-          displayTitle: "Rust daemon migration workbook",
-          displayTitleSource: "sessionTitle",
-          sessionId: "session-1",
-        }),
-      }),
-    );
+    expect(mocks.getEpisodeCardBySource).not.toHaveBeenCalled();
+    expect(mocks.createEpisodeCard).not.toHaveBeenCalled();
   });
 
   test("does not write a vibe memory episode for cli_text unless requested", async () => {
@@ -554,11 +526,11 @@ describe("runFindCandidate", () => {
       provider: "local-llm",
     });
 
-    expect(result.episodeId).toBeUndefined();
+    expect(result.candidates).toEqual([]);
     expect(mocks.createEpisodeCard).not.toHaveBeenCalled();
   });
 
-  test("writes a vibe memory episode for cli_text when requested", async () => {
+  test("does not write a vibe memory episode even when requested", async () => {
     mocks.getDistillationTargetStateById.mockResolvedValue({
       id: "target-vibe",
       targetKind: "vibe_memory",
@@ -584,16 +556,8 @@ describe("runFindCandidate", () => {
       writeEpisode: true,
     });
 
-    expect(result.episodeId).toBe("episode-1");
-    expect(mocks.createEpisodeCard).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: "Vibe memory episode",
-        action: "findCandidate found no reusable knowledge candidates from the read windows.",
-        sourceKind: "vibe_memory",
-        sourceKey: "memory-1",
-        outcomeKind: "unknown",
-      }),
-    );
+    expect(result.candidates).toEqual([]);
+    expect(mocks.createEpisodeCard).not.toHaveBeenCalled();
   });
 
   test("uses vibe memory title when no session title is available", async () => {
@@ -622,23 +586,17 @@ describe("runFindCandidate", () => {
       messages: [],
     });
 
-    await runFindCandidate({
+    const result = await runFindCandidate({
       targetStateId: "target-vibe",
       callerMode: "storage",
       provider: "local-llm",
     });
 
-    expect(mocks.createEpisodeCard).toHaveBeenCalledWith(
-      expect.objectContaining({
-        title: "Queue recovery investigation",
-        metadata: expect.objectContaining({
-          displayTitleSource: "vibeMemoryTitle",
-        }),
-      }),
-    );
+    expect(result.candidates).toEqual([]);
+    expect(mocks.createEpisodeCard).not.toHaveBeenCalled();
   });
 
-  test("reuses an existing vibe memory episode instead of duplicating it", async () => {
+  test("does not look up existing vibe memory episodes during findCandidate", async () => {
     mocks.getDistillationTargetStateById.mockResolvedValue({
       id: "target-vibe",
       targetKind: "vibe_memory",
@@ -664,11 +622,12 @@ describe("runFindCandidate", () => {
       provider: "local-llm",
     });
 
-    expect(result.episodeId).toBe("episode-existing");
+    expect(result.candidates).toEqual([]);
+    expect(mocks.getEpisodeCardBySource).not.toHaveBeenCalled();
     expect(mocks.createEpisodeCard).not.toHaveBeenCalled();
   });
 
-  test("reuses a concurrently created vibe memory episode after create conflict", async () => {
+  test("does not create vibe memory episodes from storage mode", async () => {
     mocks.getDistillationTargetStateById.mockResolvedValue({
       id: "target-vibe",
       targetKind: "vibe_memory",
@@ -697,9 +656,9 @@ describe("runFindCandidate", () => {
       provider: "local-llm",
     });
 
-    expect(result.episodeId).toBe("episode-concurrent");
-    expect(mocks.createEpisodeCard).toHaveBeenCalledTimes(1);
-    expect(mocks.getEpisodeCardBySource).toHaveBeenCalledTimes(2);
+    expect(result.candidates).toEqual([]);
+    expect(mocks.createEpisodeCard).not.toHaveBeenCalled();
+    expect(mocks.getEpisodeCardBySource).not.toHaveBeenCalled();
   });
 
   test("allows additional vibe memory reads after the deterministic first read", async () => {

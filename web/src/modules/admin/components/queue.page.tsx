@@ -13,6 +13,7 @@ import {
 } from "@tanstack/react-table";
 import {
   Activity,
+  BookOpenText,
   CircleCheck,
   Cpu,
   GitMerge,
@@ -47,6 +48,7 @@ import { CopyableIdField } from "./copyable-id-field";
 
 const QUEUE_TABS: Array<{ name: VisibleDistillationQueueName; label: string }> = [
   { name: "findingCandidate", label: "Finding" },
+  { name: "episodeDistiller", label: "Episodes" },
   { name: "coveringEvidence", label: "Covering" },
   { name: "deadZoneMergeReview", label: "Merge Review" },
   { name: "finalizeDistille", label: "Finalize" },
@@ -64,6 +66,7 @@ const STATUS_FILTERS: Array<DistillationQueueStatus | "all"> = [
 
 const queueLabel: Record<DistillationQueueName, string> = {
   findingCandidate: "Finding",
+  episodeDistiller: "Episodes",
   coveringEvidence: "Covering",
   deadZoneMergeReview: "Merge Review",
   finalizeDistille: "Finalize",
@@ -84,6 +87,12 @@ const queueCardVisuals: Record<
     iconColor: "text-blue-600",
     selectedBorder: "border-blue-300",
     selectedRing: "ring-blue-100",
+  },
+  episodeDistiller: {
+    Icon: BookOpenText,
+    iconColor: "text-violet-600",
+    selectedBorder: "border-violet-300",
+    selectedRing: "ring-violet-100",
   },
   coveringEvidence: {
     Icon: Mail,

@@ -29,6 +29,7 @@ describe("queue routes v2", () => {
     vi.mocked(repo.fetchQueueDashboardStats).mockResolvedValueOnce({
       queueControls: {
         findingCandidate: { paused: false, updatedAt: null, updatedBy: null, reason: null },
+        episodeDistiller: { paused: false, updatedAt: null, updatedBy: null, reason: null },
         coveringEvidence: { paused: false, updatedAt: null, updatedBy: null, reason: null },
         deadZoneMergeReview: { paused: false, updatedAt: null, updatedBy: null, reason: null },
         finalizeDistille: { paused: false, updatedAt: null, updatedBy: null, reason: null },
@@ -38,6 +39,14 @@ describe("queue routes v2", () => {
           counters: { pending: 1, running: 1, completed: 0, skipped: 0, failed: 0, paused: 0 },
           oldestPendingAt: null,
           running: 1,
+          failed: 0,
+          offline: 0,
+          nonRegistered: 0,
+        },
+        episodeDistiller: {
+          counters: { pending: 0, running: 0, completed: 0, skipped: 0, failed: 0, paused: 0 },
+          oldestPendingAt: null,
+          running: 0,
           failed: 0,
           offline: 0,
           nonRegistered: 0,

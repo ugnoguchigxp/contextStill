@@ -1,9 +1,14 @@
 import { groupedConfig } from "../config.js";
 import { closeDbPool } from "../db/index.js";
 import {
+  claimNextJobWithProviderLease,
+  countAvailableProviderPoolSlots,
   type DistillationQueueName,
   distillationQueueNames,
+  enabledProviderPoolsForQueues,
+  priorityQueuesForProviderPool,
   runQueueWorkerOnce,
+  unpooledQueues,
 } from "../modules/queue/core/index.js";
 import {
   ensureRuntimeSettingsLoaded,
@@ -108,35 +113,39 @@ async function refreshRuntimeSettings(force = false): Promise<void> {
   await runtimeSettingsRefreshPromise;
 }
 
-function queueTaskDelayMs(queueName: DistillationQueueName, idle: boolean): number {
-  if (idle) return groupedConfig.distillation.continuousIdleSleepMs;
-  if (queueName === "findingCandidate") {
-    return groupedConfig.distillation.findingQueueTaskIntervalSeconds * 1000;
-  }
-  if (queueName === "coveringEvidence") {
-    return groupedConfig.distillation.coveringQueueTaskIntervalSeconds * 1000;
-  }
-  return 0;
-}
-
-async function sleepForQueueDelay(queueName: DistillationQueueName, idle: boolean): Promise<void> {
-  const start = Date.now();
-  while (!stopping) {
-    await refreshRuntimeSettings();
-    const sleepMs = queueTaskDelayMs(queueName, idle);
-    const elapsed = Date.now() - start;
-    if (elapsed >= sleepMs) return;
-    await sleep(Math.max(1, Math.min(100, sleepMs - elapsed)));
-  }
-}
-
 async function runOnce(options: CliOptions) {
-  const runTasks = options.queueNames.flatMap((queueName) =>
-    Array.from({ length: options.limit }, (_, index) =>
-      runQueueWorkerOnce({
-        queueName,
-        workerId: `${options.worker}:${queueName}:${index + 1}`,
-      }),
+  await refreshRuntimeSettings(true);
+  const runTasks: Array<ReturnType<typeof runQueueWorkerOnce>> = [];
+  for (const pool of enabledProviderPoolsForQueues(options.queueNames)) {
+    const freeSlots = await countAvailableProviderPoolSlots(pool);
+    for (let index = 0; index < freeSlots; index += 1) {
+      const assignment = await claimNextJobWithProviderLease({
+        pool,
+        priorityQueues: priorityQueuesForProviderPool({
+          poolId: pool.id,
+          allowedQueues: options.queueNames,
+        }),
+        workerId: `${options.worker}:${pool.id}:${index + 1}`,
+      });
+      if (!assignment) break;
+      runTasks.push(
+        runQueueWorkerOnce({
+          queueName: assignment.queueName,
+          workerId: `${options.worker}:${pool.id}:${index + 1}`,
+          claimedJob: { id: assignment.id },
+          providerLease: assignment.providerLease,
+        }),
+      );
+    }
+  }
+  runTasks.push(
+    ...unpooledQueues(options.queueNames).flatMap((queueName) =>
+      Array.from({ length: options.limit }, (_, index) =>
+        runQueueWorkerOnce({
+          queueName,
+          workerId: `${options.worker}:${queueName}:${index + 1}`,
+        }),
+      ),
     ),
   );
   const runs = await Promise.all(runTasks);
@@ -157,32 +166,101 @@ async function runOnce(options: CliOptions) {
 
 let stopping = false;
 let activeLoopsPromise: Promise<unknown[]> | null = null;
+let schedulerWakeup = false;
+
+function triggerSchedulerWakeup(): void {
+  schedulerWakeup = true;
+}
+
+async function schedulerSleep(ms: number): Promise<void> {
+  const startedAt = Date.now();
+  while (!stopping && !schedulerWakeup && Date.now() - startedAt < ms) {
+    await sleep(Math.max(1, Math.min(100, ms - (Date.now() - startedAt))));
+  }
+  schedulerWakeup = false;
+}
 
 async function runContinuous(options: CliOptions): Promise<void> {
   await refreshRuntimeSettings(true);
-  const runLoop = async (queueName: DistillationQueueName): Promise<void> => {
-    let wasIdle = false;
+  const activeTasks = new Set<Promise<void>>();
+  const runLoop = async (): Promise<void> => {
+    const lastIdleByQueue = new Map<DistillationQueueName, boolean>();
     while (!stopping) {
       try {
-        const run = await runQueueWorkerOnce({
-          queueName,
-          workerId: `${options.worker}:${queueName}:1`,
-        });
-        if (!run.idle || !wasIdle || !run.ok) {
-          process.stdout.write(
-            `${JSON.stringify(
-              {
-                mode: "continuous",
-                queue: queueName,
-                run,
-              },
-              null,
-              2,
-            )}\n`,
-          );
+        await refreshRuntimeSettings();
+        let assigned = 0;
+        for (const pool of enabledProviderPoolsForQueues(options.queueNames)) {
+          const priorityQueues = priorityQueuesForProviderPool({
+            poolId: pool.id,
+            allowedQueues: options.queueNames,
+          });
+          let freeSlots = await countAvailableProviderPoolSlots(pool);
+          while (freeSlots > 0 && !stopping) {
+            const assignment = await claimNextJobWithProviderLease({
+              pool,
+              priorityQueues,
+              workerId: `${options.worker}:${pool.id}:${Date.now()}:${assigned + 1}`,
+            });
+            if (!assignment) break;
+            assigned += 1;
+            freeSlots -= 1;
+            const task = runQueueWorkerOnce({
+              queueName: assignment.queueName,
+              workerId: assignment.providerLease.workerId,
+              claimedJob: { id: assignment.id },
+              providerLease: assignment.providerLease,
+            })
+              .then((run) => {
+                process.stdout.write(
+                  `${JSON.stringify(
+                    {
+                      mode: "continuous",
+                      queue: assignment.queueName,
+                      providerPoolId: pool.id,
+                      providerTargetId: assignment.providerLease.targetId,
+                      run,
+                    },
+                    null,
+                    2,
+                  )}\n`,
+                );
+              })
+              .catch((error) => {
+                console.error(error instanceof Error ? error.message : String(error));
+              })
+              .finally(() => {
+                activeTasks.delete(task);
+                triggerSchedulerWakeup();
+              });
+            activeTasks.add(task);
+          }
         }
-        wasIdle = run.idle;
-        await sleepForQueueDelay(queueName, run.idle);
+        for (const queueName of unpooledQueues(options.queueNames)) {
+          const run = await runQueueWorkerOnce({
+            queueName,
+            workerId: `${options.worker}:${queueName}:1`,
+          });
+          const wasIdle = lastIdleByQueue.get(queueName) ?? false;
+          if (!run.idle || !wasIdle || !run.ok) {
+            process.stdout.write(
+              `${JSON.stringify(
+                {
+                  mode: "continuous",
+                  queue: queueName,
+                  run,
+                },
+                null,
+                2,
+              )}\n`,
+            );
+          }
+          lastIdleByQueue.set(queueName, run.idle);
+        }
+        await schedulerSleep(
+          assigned > 0
+            ? Math.min(100, groupedConfig.distillation.continuousIdleSleepMs)
+            : groupedConfig.distillation.continuousIdleSleepMs,
+        );
       } catch (error) {
         console.error(error instanceof Error ? error.message : String(error));
         const start = Date.now();
@@ -192,9 +270,12 @@ async function runContinuous(options: CliOptions): Promise<void> {
         }
       }
     }
+    if (activeTasks.size > 0) {
+      await Promise.allSettled([...activeTasks]);
+    }
   };
 
-  activeLoopsPromise = Promise.all(options.queueNames.map((queueName) => runLoop(queueName)));
+  activeLoopsPromise = Promise.all([runLoop()]);
   await activeLoopsPromise;
 }
 

@@ -11,7 +11,7 @@ import { deadZoneMergeReviewResultSchema } from "../../shared/schemas/landscape-
 import { appendQueueEvent } from "../queue/core/events.js";
 import {
   ensureRuntimeSettingsLoaded,
-  getRuntimeSettingsSnapshot,
+  resolveMergeActivationFinalizeRoute,
 } from "../settings/settings.service.js";
 import { getDeadZoneMergeReviewQueueRow } from "./deadzone-merge-review-queue.repository.js";
 import { DeadZoneMergeReviewQueueError } from "./deadzone-merge-review-queue.service.js";
@@ -133,7 +133,7 @@ export async function createMergeActivationFinalizeJob(
   }
 
   await ensureRuntimeSettingsLoaded();
-  const route = getRuntimeSettingsSnapshot().taskRouting.finalizeDistille;
+  const route = resolveMergeActivationFinalizeRoute();
   const resultHash = createHash("sha256").update(JSON.stringify(parsedResult.data)).digest("hex");
   const nowIso = new Date().toISOString();
   const inputSnapshot = {

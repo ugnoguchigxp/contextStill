@@ -14,7 +14,7 @@ Tauri 配布後の目標は、常駐 runtime から Node/Bun と UI 用 API 層�
 
 | Runtime surface | Residency | Owner | Allowed responsibilities | Not allowed |
 |---|---|---|---|---|
-| Resident Rust runtime | Always-on | `context-stilld` | process supervision, MCP stdio proxy, queue host, scheduler, state/log/readiness, SQLite writer guard, backup preflight | Product logic rewrite, full Hono admin API, UI session state |
+| Resident Rust runtime | Always-on | `context-stilld` | process supervision, daemon-owned MCP endpoint/session management, queue host, scheduler, state/log/readiness, SQLite writer guard, backup preflight | Product logic rewrite, full Hono admin API, UI session state, direct stdio MCP spawning |
 | UI-time Hono admin API | UI session only | Hono child process managed by Rust or a thin runner | UI data reads/writes, settings screens, operator actions, health/readiness endpoints | Resident runtime duties, durable long-running task ownership |
 | Thin Node/Bun runner | UI-time or one-shot only | Rust-managed sidecar | spawn Hono child, run one-shot scripts, capture stdout/stderr, wait readiness, return exit code | Importing full Hono API in a resident process, owning durable tasks |
 | One-shot TypeScript sidecars | Explicit command only | Rust-managed child process | migration, backfill, import/export, repair, smoke, dev/test support | Background worker semantics unless promoted to Rust-managed queue/task |
@@ -56,7 +56,7 @@ Long-running, non-idempotent, or DB-writing tasks must not be owned only by Hono
 
 未達:
 
-- Rust-managed MCP smoke。
+- Rust-managed daemon MCP smoke。
 - Rust-managed queue smoke。
 - one-shot child process の終了監視と exit reason 記録。
 - Hono admin API の readiness / port conflict / stop independence の実プロセス検証。
@@ -84,8 +84,8 @@ Long-running, non-idempotent, or DB-writing tasks must not be owned only by Hono
 Do not start with default switch. Implement in this order:
 
 1. Process state reconciliation and child exit tracking.
-2. MCP attachable transport / foreground proxy.
-3. Rust-managed MCP smoke.
+2. Daemon-owned MCP endpoint and session manager.
+3. Rust-managed daemon MCP smoke.
 4. Queue supervisor safe smoke.
 5. Agent log sync run-and-wait mode.
 6. UI-time Hono admin API readiness and stop independence.
@@ -152,67 +152,58 @@ Required tests:
 - `context-stilld status --json` never reports a dead pid as running.
 - `context-stilld <boundary> status --json` includes enough metadata to debug child lifecycle.
 
-## Phase 2: MCP Foreground Proxy
+## Phase 2: Daemon-Owned MCP Endpoint
 
 ### Goal
 
-Unblock Rust-managed MCP smoke without inventing a fake attach path to an already-started stdio child.
+Move MCP ownership into the resident daemon and remove the direct stdio child process path.
 
 ### Design Decision
 
-Add a foreground proxy command:
+This phase is superseded by [Daemon-Owned MCP Runtime Plan](daemon-owned-mcp-runtime-plan.md).
 
-```bash
-context-stilld mcp serve
-```
+Do not add `context-stilld mcp serve` as a foreground stdio proxy. That still leaves MCP availability tied to per-client stdio process lifecycle. The default runtime must be a daemon-owned local MCP endpoint, with active sessions, tool workers, cleanup, and stale-state reconciliation owned by `context-stilld`.
 
-This command is different from background `mcp start`.
-
-- `mcp serve` runs in the foreground and speaks MCP stdio to the client.
-- It spawns the existing TypeScript MCP process with piped stdin/stdout/stderr.
-- It byte-for-byte proxies stdin/stdout between client and TS child.
-- It writes child stderr to `logs/mcp.log`.
-- It records pid/state while running.
-- It exits with the child exit code.
-
-This keeps TypeScript MCP tool logic as source of truth while allowing MCP clients to use Rust as the executable entrypoint.
+Direct stdio MCP (`bun run src/index.ts`, `bun run start:mcp`, `StdioServerTransport`, stdio smoke) becomes a legacy migration target and must be deleted after the daemon endpoint passes smoke.
 
 ### Implementation Tasks
 
-- Add `McpAction::Serve`.
-- Add `ProcessSupervisor::spawn_piped` or a dedicated `stdio_proxy` helper.
-- Ensure stdout is not polluted by Rust logs in proxy mode.
-- Record state before proxy loop starts.
-- On EOF or signal, terminate child and update state.
-- Keep `mcp start|stop|status` for background lifecycle experiments, but do not use it for MCP client stdio smoke.
+- Add a loopback daemon MCP endpoint, for example `http://127.0.0.1:<daemon-port>/mcp`.
+- Add `context-stilld mcp endpoint --json`, `mcp status --json`, and `mcp sessions --json`.
+- Move MCP client registration to URL-based config instead of command-based stdio config.
+- Split TypeScript tool handlers from stdio transport so the daemon can call them through a daemon-managed worker or local RPC.
+- Add session cleanup: idle timeout, transport close, daemon shutdown, worker crash handling, close reasons.
+- Mark `context-stilld mcp start|stop` as deprecated if they only manage a stdio child.
+- Plan deletion of `src/index.ts`, stdio transport binding, `start:mcp`, and stdio smoke once daemon smoke is green.
 
 ### Verification
 
 Add:
 
 ```bash
-bun run mcp:smoke:sqlite:rust
+context-stilld mcp endpoint --json
+context-stilld mcp smoke --json
 ```
 
 Expected behavior:
 
-- Smoke uses `command: cargo`, args `["run", "-q", "-p", "context-stilld", "--", "mcp", "serve"]`.
-- Existing MCP tool inventory passes.
-- No orphan TS MCP process remains after smoke.
-- `logs/mcp.log` receives stderr only.
+- MCP client registration does not spawn `bun`.
+- Existing MCP tool inventory passes through the daemon endpoint.
+- `pgrep -af "bun run src/index.ts"` remains empty during normal MCP use.
+- `context-stilld mcp sessions --json` shows active sessions and close reasons.
 
 Also run:
 
 ```bash
 bun run verify:rust-daemon
-bun run mcp:smoke:sqlite
-bun run mcp:smoke:sqlite:rust
+context-stilld mcp smoke --json
 ```
 
 ### Done
 
-- Rust-managed MCP smoke passes locally and in CI.
-- TypeScript `bun run start:mcp` fallback still passes.
+- Daemon-owned MCP smoke passes locally and in CI.
+- Direct stdio MCP is no longer the default or documented client registration path.
+- stdio MCP deletion plan is linked and tracked.
 
 ## Phase 3: Queue Supervisor Safe Smoke
 

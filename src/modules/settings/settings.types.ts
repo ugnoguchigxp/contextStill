@@ -47,6 +47,7 @@ export type RuntimeSettingsRoute = {
   provider: RuntimeProviderSetting;
   model?: string;
   localLlmModel?: string;
+  providerPoolId?: string;
   fallback: RuntimeProviderName[];
   azureDeploymentSlots?: number[];
 };
@@ -72,10 +73,35 @@ export type AzureOpenAiDeploymentSettings = {
 };
 
 export type LocalLlmModelSettings = {
+  id?: string;
   name: string;
   apiBaseUrl: string;
   apiPath: string;
   model: string;
+};
+
+export type RuntimeProviderPoolTarget =
+  | {
+      provider: "local-llm";
+      localLlmModelId: string;
+    }
+  | {
+      provider: "azure-openai";
+      deploymentSlot: number;
+    }
+  | {
+      provider: "openai" | "bedrock" | "codex";
+      targetId: string;
+    };
+
+export type RuntimeProviderPool = {
+  id: string;
+  label: string;
+  targets: RuntimeProviderPoolTarget[];
+  maxConcurrent: number;
+  staleLeaseSeconds: number;
+  enabled: boolean;
+  lowPriorityAgingSeconds: number;
 };
 
 export const distillationPriorityTargetKindValues = [
@@ -93,6 +119,7 @@ export type RuntimeSettingsEditable = {
       targetPriorityOrder: DistillationPriorityTargetKind[];
     };
   };
+  providerPools: RuntimeProviderPool[];
   providers: {
     openai: {
       enabled: boolean;
@@ -132,6 +159,7 @@ export type RuntimeSettingsEditable = {
       throttling: FindCandidateThrottlingSettings;
     };
     webSourceResearch: RuntimeSettingsRoute;
+    episodeDistiller: RuntimeSettingsRoute;
     coverEvidence: {
       sourceSupport: RuntimeSettingsRoute;
       externalEvidence: RuntimeSettingsRoute;
@@ -139,6 +167,7 @@ export type RuntimeSettingsEditable = {
     };
     deadZoneMergeReview: RuntimeSettingsRoute;
     finalizeDistille: RuntimeSettingsRoute;
+    mergeActivationFinalize: RuntimeSettingsRoute;
     agenticCompile: {
       enabled: boolean;
       provider: RuntimeAgenticProviderName;
@@ -246,6 +275,7 @@ const azureOpenAiDeploymentSchema = z.object({
 });
 
 const localLlmModelSchema = z.object({
+  id: z.string().trim().min(1).max(120).optional(),
   name: z.string().trim().max(80).default(""),
   apiBaseUrl: z.string().trim().url().or(z.literal("")),
   apiPath: z.string().trim().min(1).default("/v1/chat/completions"),
@@ -256,8 +286,34 @@ const runtimeRouteSchema = z.object({
   provider: runtimeProviderSettingSchema,
   model: z.string().trim().min(1).optional(),
   localLlmModel: z.string().trim().min(1).optional(),
+  providerPoolId: z.string().trim().min(1).max(120).optional(),
   fallback: z.array(runtimeProviderSchema).max(8).default([]),
   azureDeploymentSlots: z.array(z.number().int().min(1)).optional(),
+});
+
+const runtimeProviderPoolTargetSchema = z.discriminatedUnion("provider", [
+  z.object({
+    provider: z.literal("local-llm"),
+    localLlmModelId: z.string().trim().min(1).max(120),
+  }),
+  z.object({
+    provider: z.literal("azure-openai"),
+    deploymentSlot: z.number().int().min(1),
+  }),
+  z.object({
+    provider: z.enum(["openai", "bedrock", "codex"] as const),
+    targetId: z.string().trim().min(1).max(120),
+  }),
+]);
+
+const runtimeProviderPoolSchema = z.object({
+  id: z.string().trim().min(1).max(120),
+  label: z.string().trim().min(1).max(120),
+  targets: z.array(runtimeProviderPoolTargetSchema).min(1).max(32),
+  maxConcurrent: z.number().int().min(1).max(64),
+  staleLeaseSeconds: z.number().int().min(30).max(604_800),
+  enabled: z.boolean().default(true),
+  lowPriorityAgingSeconds: z.number().int().min(60).max(604_800).default(1800),
 });
 
 export const runtimeSettingsEditableSchema = z.object({
@@ -266,6 +322,7 @@ export const runtimeSettingsEditableSchema = z.object({
       targetPriorityOrder: z.array(z.enum(distillationPriorityTargetKindValues)).min(1).max(4),
     }),
   }),
+  providerPools: z.array(runtimeProviderPoolSchema).default([]),
   providers: z.object({
     openai: z.object({
       enabled: z.boolean().default(true),
@@ -315,6 +372,7 @@ export const runtimeSettingsEditableSchema = z.object({
       }),
     }),
     webSourceResearch: runtimeRouteSchema,
+    episodeDistiller: runtimeRouteSchema,
     coverEvidence: z.object({
       sourceSupport: runtimeRouteSchema,
       externalEvidence: runtimeRouteSchema,
@@ -322,6 +380,7 @@ export const runtimeSettingsEditableSchema = z.object({
     }),
     deadZoneMergeReview: runtimeRouteSchema,
     finalizeDistille: runtimeRouteSchema,
+    mergeActivationFinalize: runtimeRouteSchema,
     agenticCompile: z.object({
       enabled: z.boolean().default(true),
       provider: z.enum(runtimeAgenticProviderNames),

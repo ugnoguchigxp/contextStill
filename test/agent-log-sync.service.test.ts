@@ -151,6 +151,7 @@ describe("Agent Log Sync Service", () => {
     chain.returning
       .mockResolvedValueOnce([{ id: "m1" }]) // Vibe 1
       .mockResolvedValueOnce([{ id: "q1" }]) // Finding job for Vibe 1
+      .mockResolvedValueOnce([{ id: "e1" }]) // Episode distiller job for Vibe 1
       .mockResolvedValueOnce([]); // Vibe 2 (dedupe)
 
     const summary = await syncAllAgentLogs();

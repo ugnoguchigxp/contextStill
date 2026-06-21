@@ -38,9 +38,12 @@ vi.mock("../src/modules/queue/core/events.js", () => ({
 // settings service モック
 const mockEnsureRuntimeSettingsLoaded = vi.fn();
 const mockGetRuntimeSettingsSnapshot = vi.fn();
+const mockResolveMergeActivationFinalizeRoute = vi.fn();
 vi.mock("../src/modules/settings/settings.service.js", () => ({
   ensureRuntimeSettingsLoaded: (...args: any[]) => mockEnsureRuntimeSettingsLoaded(...args),
   getRuntimeSettingsSnapshot: (...args: any[]) => mockGetRuntimeSettingsSnapshot(...args),
+  resolveMergeActivationFinalizeRoute: (...args: any[]) =>
+    mockResolveMergeActivationFinalizeRoute(...args),
 }));
 
 // knowledge repository モック
@@ -71,6 +74,11 @@ describe("merge-activation-finalize", () => {
           model: "gpt-4",
         },
       },
+    });
+    mockResolveMergeActivationFinalizeRoute.mockReturnValue({
+      provider: "openai",
+      model: "gpt-test",
+      fallback: [],
     });
   });
 
@@ -249,6 +257,11 @@ describe("merge-activation-finalize", () => {
             model: null,
           },
         },
+      });
+      mockResolveMergeActivationFinalizeRoute.mockReturnValue({
+        provider: "auto",
+        model: null,
+        fallback: [],
       });
 
       mockDbResults = [

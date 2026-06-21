@@ -258,6 +258,67 @@ export const findingCandidateQueue = pgTable(
   }),
 );
 
+export const episodeDistillerQueue = pgTable(
+  "episode_distiller_queue",
+  {
+    id: uuid("id").primaryKey().defaultRandom(),
+    sourceKind: text("source_kind").notNull().default("vibe_memory"),
+    sourceKey: text("source_key").notNull(),
+    sourceUri: text("source_uri").notNull(),
+    distillationVersion: text("distillation_version").notNull(),
+    payload: jsonb("payload").default({}).notNull(),
+    status: text("status").notNull().default("pending"),
+    priority: integer("priority").notNull().default(50),
+    attemptCount: integer("attempt_count").notNull().default(0),
+    maxAttempts: integer("max_attempts").notNull().default(2),
+    providerPolicy: text("provider_policy").default("default"),
+    nextRunAt: timestamp("next_run_at"),
+    lockedBy: text("locked_by"),
+    lockedAt: timestamp("locked_at"),
+    heartbeatAt: timestamp("heartbeat_at"),
+    lastError: text("last_error"),
+    lastOutcomeKind: text("last_outcome_kind"),
+    metadata: jsonb("metadata").default({}).notNull(),
+    createdAt: timestamp("created_at").defaultNow().notNull(),
+    updatedAt: timestamp("updated_at").defaultNow().notNull(),
+    completedAt: timestamp("completed_at"),
+  },
+  (table) => ({
+    queueUniqueIdx: uniqueIndex("episode_distiller_queue_unique_idx").on(
+      table.sourceKind,
+      table.sourceKey,
+      table.distillationVersion,
+    ),
+    statusPriorityCreatedAtIdx: index("episode_distiller_queue_status_priority_created_at_idx").on(
+      table.status,
+      table.priority,
+      table.createdAt,
+    ),
+    statusCheck: check(
+      "episode_distiller_queue_status_check",
+      sql`${table.status} IN (${sql.raw(toSqlList(distillationQueueStatusValues))})`,
+    ),
+    sourceKindCheck: check(
+      "episode_distiller_queue_source_kind_check",
+      sql`${table.sourceKind} = 'vibe_memory'`,
+    ),
+    payloadObjectCheck: check(
+      "episode_distiller_queue_payload_object_check",
+      sql`jsonb_typeof(${table.payload}) = 'object'`,
+    ),
+    metadataObjectCheck: check(
+      "episode_distiller_queue_metadata_object_check",
+      sql`jsonb_typeof(${table.metadata}) = 'object'`,
+    ),
+    providerPolicyCheck: check(
+      "episode_distiller_queue_provider_policy_check",
+      sql`${table.providerPolicy} IS NULL OR ${table.providerPolicy} IN (${sql.raw(
+        toSqlList(distillationQueueProviderPolicyValues),
+      )})`,
+    ),
+  }),
+);
+
 export const foundCandidates = pgTable(
   "found_candidates",
   {

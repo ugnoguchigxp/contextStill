@@ -66,6 +66,7 @@ export const distillationTargetKindValues = [
 ] as const;
 export const distillationQueueNameValues = [
   "findingCandidate",
+  "episodeDistiller",
   "coveringEvidence",
   "deadZoneMergeReview",
   "finalizeDistille",
@@ -100,6 +101,7 @@ export const evidenceCoverageStatusValues = [
 export const distillationQueueEventTypeValues = [
   "claimed",
   "completed",
+  "failed",
   "paused",
   "resumed",
   "retried",

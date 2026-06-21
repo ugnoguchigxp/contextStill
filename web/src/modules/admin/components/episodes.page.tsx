@@ -209,8 +209,22 @@ function evidenceVariant(value: EpisodeEvidenceStatus) {
   return "outline";
 }
 
+function recordValue(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 function EpisodeDetail({ episode }: { episode: EpisodeCard }) {
   const tz = useTimezone();
+  const distillation = recordValue(episode.metadata.episodeDistillation);
+  const scores = recordValue(distillation.scores);
+  const sourceFragmentKey =
+    typeof distillation.sourceFragmentKey === "string" ? distillation.sourceFragmentKey : "";
+  const sourceStartOffset =
+    typeof distillation.sourceStartOffset === "number" ? distillation.sourceStartOffset : null;
+  const sourceEndOffset =
+    typeof distillation.sourceEndOffset === "number" ? distillation.sourceEndOffset : null;
   const facts = [
     ["Episode Summary", episode.situation],
     ["Reusable Takeaway", episode.lesson],
@@ -271,6 +285,29 @@ function EpisodeDetail({ episode }: { episode: EpisodeCard }) {
             ))}
         </div>
       </div>
+      {sourceFragmentKey ? (
+        <div>
+          <p className="text-xs font-semibold uppercase text-muted-foreground">Distillation</p>
+          <div className="mt-2 space-y-2 text-sm">
+            <p className="break-words [overflow-wrap:anywhere]">{sourceFragmentKey}</p>
+            {sourceStartOffset !== null && sourceEndOffset !== null ? (
+              <p className="text-xs text-muted-foreground">
+                bytes:{sourceStartOffset}-{sourceEndOffset}
+              </p>
+            ) : null}
+            <div className="flex flex-wrap gap-1">
+              {Object.entries(scores)
+                .filter(([, value]) => typeof value === "number")
+                .slice(0, 8)
+                .map(([key, value]) => (
+                  <Badge key={key} variant="outline">
+                    {key}: {String(value)}
+                  </Badge>
+                ))}
+            </div>
+          </div>
+        </div>
+      ) : null}
       <div>
         <p className="text-xs font-semibold uppercase text-muted-foreground">Evidence</p>
         <div className="mt-2 space-y-2">

@@ -12,21 +12,12 @@ import {
 } from "../distillation/distillation-runtime.service.js";
 import type { DistillationToolCall } from "../distillation/distillation-tools.service.js";
 import { getDistillationTargetStateById } from "../distillationTarget/repository.js";
-import {
-  getVibeMemoryDescriptor,
-  readVibeMemoryByTokenWindow,
-  type VibeMemoryDescriptor,
-} from "../memoryReader/reader.service.js";
+import { readVibeMemoryByTokenWindow } from "../memoryReader/reader.service.js";
 import { readFileDomain } from "../readFile/domain.js";
 import {
   ensureRuntimeSettingsLoaded,
   resolveFindCandidateRoute,
 } from "../settings/settings.service.js";
-import type { EpisodeCardCreateInput } from "../../shared/schemas/episode-card.schema.js";
-import {
-  createEpisodeCard,
-  getEpisodeCardBySource,
-} from "../episodic-memory/episode-card.repository.js";
 import { parseStorageCandidatesFromLlmOutput } from "./parser.js";
 import {
   type CandidateKnowledgeType,
@@ -65,12 +56,10 @@ export type FindCandidateResult = {
   callerMode: FindCandidateCallerMode;
   candidates: CandidateRecord[];
   insertedIds?: string[];
-  episodeId?: string;
   readRanges: Array<{ from: number; toExclusive: number }>;
 };
 
 type FindCandidateTargetKind = FindCandidateResult["targetKind"];
-type ReadWindow = { from: number; toExclusive: number; content: string };
 type FindCandidateTarget = {
   id: string | null;
   targetKind: FindCandidateTargetKind;
@@ -343,217 +332,10 @@ function normalizeCandidateForPipeline(candidate: CandidateRecord): CandidateRec
   };
 }
 
-function compactText(value: string, maxLength: number): string {
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (normalized.length <= maxLength) return normalized;
-  return `${normalized.slice(0, Math.max(1, maxLength - 3)).trim()}...`;
-}
-
-function summarizeCandidateTitles(candidates: CandidateRecord[]): string {
-  const titles = candidates
-    .slice(0, 6)
-    .map((candidate, index) => `${index + 1}. ${candidate.title}`)
-    .join("\n");
-  return titles || "No reusable knowledge candidates were extracted.";
-}
-
-function summarizeCandidateLessons(candidates: CandidateRecord[]): string {
-  const summaries = candidates
-    .slice(0, 3)
-    .map((candidate) => candidate.sourceSummary || candidate.content || candidate.title)
-    .filter(Boolean);
-  if (summaries.length === 0) {
-    return "No reusable candidate was extracted; verify the raw vibe memory before using this episode as precedent.";
-  }
-  return compactText(summaries.join("\n\n"), 1200);
-}
-
-function asNonEmptyString(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const trimmed = value.trim();
-  return trimmed ? trimmed : undefined;
-}
-
 function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
-}
-
-function firstNonEmptyString(...values: unknown[]): string | undefined {
-  for (const value of values) {
-    const text = asNonEmptyString(value);
-    if (text) return text;
-  }
-  return undefined;
-}
-
-function resolveVibeMemoryEpisodeTitle(params: {
-  target: FindCandidateTarget;
-  descriptor: VibeMemoryDescriptor | null;
-  primaryCandidate?: CandidateRecord;
-}): { title: string; source: string } {
-  const metadata = {
-    ...asRecord(params.descriptor?.metadata),
-    ...asRecord(params.target.metadata),
-  };
-  const sessionTitle = firstNonEmptyString(
-    metadata.sessionTitle,
-    metadata.originalSessionTitle,
-    metadata.threadTitle,
-    metadata.conversationTitle,
-  );
-  if (sessionTitle) return { title: compactText(sessionTitle, 120), source: "sessionTitle" };
-
-  const memoryTitle = firstNonEmptyString(
-    metadata.vibeMemoryTitle,
-    metadata.memoryTitle,
-    metadata.sourceTitle,
-    metadata.title,
-    params.descriptor?.subject,
-  );
-  if (memoryTitle) return { title: compactText(memoryTitle, 120), source: "vibeMemoryTitle" };
-
-  const candidateTitle = asNonEmptyString(params.primaryCandidate?.title);
-  if (candidateTitle) return { title: compactText(candidateTitle, 120), source: "candidateTitle" };
-
-  return { title: "Vibe memory episode", source: "fallback" };
-}
-
-function formatReadRanges(readRanges: Array<{ from: number; toExclusive: number }>): string {
-  return readRanges.map((range) => `${range.from}-${range.toExclusive}`).join(", ");
-}
-
-function buildEpisodeSituation(params: {
-  title: string;
-  titleSource: string;
-  descriptor: VibeMemoryDescriptor | null;
-  target: FindCandidateTarget;
-}): string {
-  const parts = [
-    `Vibe memory session: ${params.title}.`,
-    `Title source: ${params.titleSource}.`,
-    params.descriptor?.sessionId ? `Session id: ${params.descriptor.sessionId}.` : undefined,
-    params.target.sourceUri ? `Source URI: ${params.target.sourceUri}.` : undefined,
-  ].filter((part): part is string => Boolean(part));
-  return compactText(parts.join("\n"), 1200);
-}
-
-function buildEpisodeObservations(params: {
-  readWindows: ReadWindow[];
-  sourceExcerpt: string;
-}): string {
-  const readRanges = params.readWindows.map(({ from, toExclusive }) => ({ from, toExclusive }));
-  const parts = [
-    `findCandidate read ${params.readWindows.length} window(s): ${formatReadRanges(readRanges)}.`,
-    params.sourceExcerpt ? `Source excerpt:\n${params.sourceExcerpt}` : undefined,
-  ].filter((part): part is string => Boolean(part));
-  return compactText(parts.join("\n\n"), 1200);
-}
-
-function buildEpisodeAction(candidates: CandidateRecord[]): string {
-  if (candidates.length === 0) {
-    return "findCandidate found no reusable knowledge candidates from the read windows.";
-  }
-  return compactText(`Reusable candidates:\n${summarizeCandidateTitles(candidates)}`, 1200);
-}
-
-function buildEpisodeOutcome(candidates: CandidateRecord[]): string {
-  if (candidates.length === 0) {
-    return "No reusable candidate was extracted; keep the refs as the raw source-of-truth before treating this episode as precedent.";
-  }
-  return `findCandidate extracted ${candidates.length} reusable candidate(s); verify refs before relying on this episode as precedent.`;
-}
-
-async function maybeCreateVibeMemoryEpisode(params: {
-  target: FindCandidateTarget;
-  candidates: CandidateRecord[];
-  readWindows: ReadWindow[];
-  insertedIds: string[];
-}): Promise<string | undefined> {
-  if (params.target.targetKind !== "vibe_memory") return undefined;
-  if (!params.target.targetKey.trim() || params.readWindows.length === 0) return undefined;
-
-  const existing = await getEpisodeCardBySource({
-    sourceKind: "vibe_memory",
-    sourceKey: params.target.targetKey,
-  });
-  if (existing) return existing.id;
-
-  const primaryCandidate = params.candidates[0];
-  const descriptor = await getVibeMemoryDescriptor(params.target.targetKey);
-  const resolvedTitle = resolveVibeMemoryEpisodeTitle({
-    target: params.target,
-    descriptor,
-    primaryCandidate,
-  });
-  const sourceExcerpt = compactText(
-    params.readWindows.map((window) => window.content).join("\n\n"),
-    1200,
-  );
-  const readRanges = params.readWindows.map(({ from, toExclusive }) => ({ from, toExclusive }));
-  const episodeInput: EpisodeCardCreateInput = {
-    title: resolvedTitle.title,
-    situation: buildEpisodeSituation({
-      title: resolvedTitle.title,
-      titleSource: resolvedTitle.source,
-      descriptor,
-      target: params.target,
-    }),
-    observations: buildEpisodeObservations({ readWindows: params.readWindows, sourceExcerpt }),
-    action: buildEpisodeAction(params.candidates),
-    outcome: compactText(buildEpisodeOutcome(params.candidates), 1200),
-    lesson: summarizeCandidateLessons(params.candidates),
-    applicability: {
-      targetKind: "vibe_memory",
-      candidateCount: params.candidates.length,
-    },
-    antiApplicability: {
-      requiresRawEvidenceCheck: true,
-    },
-    sourceKind: "vibe_memory",
-    sourceKey: params.target.targetKey,
-    outcomeKind: params.candidates.length > 0 ? "success" : "unknown",
-    confidence: params.candidates.length > 0 ? 65 : 45,
-    evidenceStatus: "partial",
-    status: "active",
-    metadata: {
-      source: "findCandidate_vibe_memory",
-      targetStateId: params.target.id,
-      targetKind: params.target.targetKind,
-      sourceUri: params.target.sourceUri,
-      candidateCount: params.candidates.length,
-      insertedFindCandidateResultIds: params.insertedIds,
-      readRanges,
-      displayTitle: resolvedTitle.title,
-      displayTitleSource: resolvedTitle.source,
-      ...(descriptor?.sessionId ? { sessionId: descriptor.sessionId } : {}),
-    },
-    refs: [
-      {
-        refKind: "vibe_memory",
-        refValue: params.target.targetKey,
-        locator:
-          readRanges.length > 0
-            ? `tokens:${readRanges[0]?.from}-${readRanges.at(-1)?.toExclusive}`
-            : undefined,
-        queryHint: resolvedTitle.title,
-        metadata: { readRanges },
-      },
-    ],
-  };
-
-  try {
-    const episode = await createEpisodeCard(episodeInput);
-    return episode.id;
-  } catch (error) {
-    const concurrentExisting = await getEpisodeCardBySource({
-      sourceKind: "vibe_memory",
-      sourceKey: params.target.targetKey,
-    });
-    if (concurrentExisting) return concurrentExisting.id;
-    throw error;
-  }
 }
 
 function buildInitialVibeMemoryToolCall(input: FindCandidateInput): DistillationToolCall {
@@ -653,10 +435,8 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
   });
   const toolDefinition = buildToolDefinitionForTarget(target.targetKind);
   const readLog: Array<{ from: number; toExclusive: number }> = [];
-  const readWindows: ReadWindow[] = [];
   const readLimit = maxReads(input);
   let reads = 0;
-  const shouldWriteEpisode = input.writeEpisode ?? callerMode === "storage";
   const targetReadPath =
     target.targetKind === "web_ingest" ? target.sourceUri.trim() : target.targetKey;
   if (
@@ -728,11 +508,6 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
     });
     reads += 1;
     readLog.push({ from: result.from, toExclusive: result.toExclusive });
-    readWindows.push({
-      from: result.from,
-      toExclusive: result.toExclusive,
-      content: result.content,
-    });
     return {
       callId: toolCall.id,
       name: toolCall.function.name,
@@ -878,15 +653,6 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
     await recordReaderUsed();
 
     if (callerMode === "cli_text") {
-      const episodeId = shouldWriteEpisode
-        ? await maybeCreateVibeMemoryEpisode({
-            target,
-            candidates,
-            readWindows,
-            insertedIds: [],
-          })
-        : undefined;
-
       await recordAuditLogSafe({
         eventType: auditEventTypes.findCandidateCompleted,
         actor: "system",
@@ -895,7 +661,6 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
           candidateCount: candidates.length,
           readCount: readLog.length,
           missingPolarityCount,
-          episodeId,
         },
       });
 
@@ -905,7 +670,6 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         targetKey: target.targetKey,
         callerMode,
         candidates,
-        episodeId,
         readRanges: readLog,
       };
     }
@@ -928,15 +692,6 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
       }
     }
 
-    const episodeId = shouldWriteEpisode
-      ? await maybeCreateVibeMemoryEpisode({
-          target,
-          candidates,
-          readWindows,
-          insertedIds,
-        })
-      : undefined;
-
     await recordAuditLogSafe({
       eventType: auditEventTypes.findCandidateCompleted,
       actor: "system",
@@ -945,7 +700,6 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         candidateCount: candidates.length,
         insertedCount: insertedIds.length,
         missingPolarityCount,
-        episodeId,
       },
     });
 
@@ -956,7 +710,6 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
       callerMode,
       candidates,
       insertedIds: target.id ? insertedIds : undefined,
-      episodeId,
       readRanges: readLog,
     };
   } catch (error) {

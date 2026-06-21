@@ -34,6 +34,7 @@ import {
   getRuntimeSettingsSnapshot,
   resolveCoverEvidenceRoutes,
   resolveDeadZoneMergeReviewRoute,
+  resolveEpisodeDistillerRoute,
   resolveFindCandidateRoute,
 } from "../../../src/modules/settings/settings.service.js";
 
@@ -236,6 +237,12 @@ function resolveQueueRuntimeModel(
     return { provider: row.provider ?? null, model: row.model.trim() };
   }
 
+  if (queueName === "episodeDistiller") {
+    const route = resolveEpisodeDistillerRoute();
+    const provider = route.provider;
+    return { provider, model: resolveRouteModel(provider, route.model, route.localLlmModel) };
+  }
+
   if (queueName === "findingCandidate") {
     const sourceKind = row.source_kind === "vibe_memory" ? "vibe_memory" : "wiki_file";
     const route = resolveFindCandidateRoute(sourceKind);
@@ -316,7 +323,7 @@ function buildDynamicOrderBy(
       sortColumn = sql`q.updated_at`;
       break;
     case "subjectTitle":
-      if (queueName === "findingCandidate") {
+      if (queueName === "findingCandidate" || queueName === "episodeDistiller") {
         sortColumn = sql`q.source_key`;
       } else if (queueName === "coveringEvidence") {
         sortColumn = sql`c.title`;
@@ -375,7 +382,7 @@ function buildSqliteOrderBy(
       sortColumn = "q.updated_at";
       break;
     case "subjectTitle":
-      if (queueName === "findingCandidate") {
+      if (queueName === "findingCandidate" || queueName === "episodeDistiller") {
         sortColumn = "q.source_key";
       } else if (queueName === "coveringEvidence") {
         sortColumn = "c.title";
@@ -447,6 +454,46 @@ async function querySqliteQueueRows(
           q.source_kind,
           null as provider_policy
         from finding_candidate_queue q
+        where (? is null or q.status = ?)
+          and (
+            ? is null
+            or lower(q.source_key) like ?
+            or lower(coalesce(q.source_uri, '')) like ?
+          )
+        order by ${orderBy}
+        limit ?
+        offset ?
+      `,
+      )
+      .all(...sqliteStatusPatternValues(statusFilter, pattern, 2), params.limit, params.offset);
+  }
+
+  if (queueName === "episodeDistiller") {
+    return sqlite.db
+      .query<QueueListRow, unknown[]>(
+        `
+        select
+          q.id,
+          q.status,
+          q.priority,
+          q.attempt_count,
+          q.source_key as subject_title,
+          q.source_kind || ' | ' || coalesce(q.source_uri, '') as subject_detail,
+          q.provider_policy as provider,
+          null as model,
+          q.last_error,
+          q.last_outcome_kind,
+          q.locked_by,
+          q.locked_at,
+          q.heartbeat_at,
+          q.created_at,
+          q.updated_at,
+          q.completed_at,
+          q.next_run_at,
+          cast(json_extract(q.metadata, '$.episodeDistiller.generated') as text) as metadata_summary,
+          q.source_kind,
+          q.provider_policy
+        from episode_distiller_queue q
         where (? is null or q.status = ?)
           and (
             ? is null
@@ -726,6 +773,25 @@ function countSqliteQueueRows(
     );
   }
 
+  if (queueName === "episodeDistiller") {
+    return sqliteCountFromRow(
+      sqlite.db
+        .query<{ count: number }, unknown[]>(
+          `
+          select count(*) as count
+          from episode_distiller_queue q
+          where (? is null or q.status = ?)
+            and (
+              ? is null
+              or lower(q.source_key) like ?
+              or lower(coalesce(q.source_uri, '')) like ?
+            )
+        `,
+        )
+        .get(...sqliteStatusPatternValues(statusFilter, pattern, 2)),
+    );
+  }
+
   if (queueName === "coveringEvidence") {
     return sqliteCountFromRow(
       sqlite.db
@@ -876,6 +942,44 @@ async function queryQueueRows(
         )
       order by
         ${buildDynamicOrderBy("findingCandidate", sortBy, sortDir)}
+      limit ${params.limit}
+      offset ${params.offset}
+    `);
+    return result.rows as unknown as QueueListRow[];
+  }
+
+  if (queueName === "episodeDistiller") {
+    const result = await db.execute(sql`
+      select
+        q.id,
+        q.status,
+        q.priority,
+        q.attempt_count,
+        q.source_key as subject_title,
+        concat(q.source_kind, ' | ', coalesce(q.source_uri, '')) as subject_detail,
+        q.provider_policy as provider,
+        null::text as model,
+        q.last_error,
+        q.last_outcome_kind,
+        q.locked_by,
+        q.locked_at,
+        q.heartbeat_at,
+        q.created_at,
+        q.updated_at,
+        q.completed_at,
+        q.next_run_at,
+        q.metadata->'episodeDistiller'->>'generated' as metadata_summary,
+        q.source_kind,
+        q.provider_policy
+      from episode_distiller_queue q
+      where (${statusFilter}::text is null or q.status = ${statusFilter})
+        and (
+          ${pattern}::text is null
+          or q.source_key ilike ${pattern}
+          or q.source_uri ilike ${pattern}
+        )
+      order by
+        ${buildDynamicOrderBy("episodeDistiller", sortBy, sortDir)}
       limit ${params.limit}
       offset ${params.offset}
     `);
@@ -1131,7 +1235,7 @@ async function countQueueRows(
   const tableName = queueTableNameByQueue[queueName];
 
   const column =
-    queueName === "findingCandidate"
+    queueName === "findingCandidate" || queueName === "episodeDistiller"
       ? sql`q.source_key || ' ' || coalesce(q.source_uri, '')`
       : queueName === "finalizeDistille" || queueName === "mergeActivationFinalize"
         ? sql`coalesce(q.subject_title, q.subject_detail, q.id::text)`
@@ -1140,7 +1244,7 @@ async function countQueueRows(
           : sql`coalesce(c.title, q.found_candidate_id::text)`;
 
   const joinSql =
-    queueName === "findingCandidate"
+    queueName === "findingCandidate" || queueName === "episodeDistiller"
       ? sql``
       : queueName === "finalizeDistille" || queueName === "mergeActivationFinalize"
         ? sql``

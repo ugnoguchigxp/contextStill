@@ -26,8 +26,10 @@ import {
   resolveBedrockCredentialStatus,
   resolveSecretValue,
 } from "./settings.runtime-cache.js";
+import { applyProviderLeaseRouteContext } from "./provider-lease-route-context.js";
 import {
   type DistillationPriorityTargetKind,
+  type RuntimeProviderPool,
   type RuntimeSecretKey,
   type RuntimeSettingsEditable,
   type RuntimeSettingsRoute,
@@ -243,9 +245,11 @@ export async function saveRuntimeSettings(
 export function resolveFindCandidateRoute(
   targetKind: "wiki_file" | "vibe_memory" | "web_ingest",
 ): RuntimeSettingsRoute {
-  return targetKind === "vibe_memory"
-    ? runtimeSettingsCache.settings.taskRouting.findCandidate.vibe
-    : runtimeSettingsCache.settings.taskRouting.findCandidate.source;
+  const route =
+    targetKind === "vibe_memory"
+      ? runtimeSettingsCache.settings.taskRouting.findCandidate.vibe
+      : runtimeSettingsCache.settings.taskRouting.findCandidate.source;
+  return applyProviderLeaseRouteContext(runtimeSettingsCache.settings, route);
 }
 
 export function resolveFindCandidateThrottlingSettings(): RuntimeSettingsEditable["taskRouting"]["findCandidate"]["throttling"] {
@@ -253,7 +257,17 @@ export function resolveFindCandidateThrottlingSettings(): RuntimeSettingsEditabl
 }
 
 export function resolveWebSourceResearchRoute(): RuntimeSettingsRoute {
-  return runtimeSettingsCache.settings.taskRouting.webSourceResearch;
+  return applyProviderLeaseRouteContext(
+    runtimeSettingsCache.settings,
+    runtimeSettingsCache.settings.taskRouting.webSourceResearch,
+  );
+}
+
+export function resolveEpisodeDistillerRoute(): RuntimeSettingsRoute {
+  return applyProviderLeaseRouteContext(
+    runtimeSettingsCache.settings,
+    runtimeSettingsCache.settings.taskRouting.episodeDistiller,
+  );
 }
 
 export function resolveDistillationTargetPriorityOrder(): DistillationPriorityTargetKind[] {
@@ -269,11 +283,47 @@ export function resolveCoverEvidenceRoutes(): {
   externalEvidence: RuntimeSettingsRoute;
   mcpEvidence: RuntimeSettingsRoute;
 } {
-  return runtimeSettingsCache.settings.taskRouting.coverEvidence;
+  const routes = runtimeSettingsCache.settings.taskRouting.coverEvidence;
+  return {
+    sourceSupport: applyProviderLeaseRouteContext(
+      runtimeSettingsCache.settings,
+      routes.sourceSupport,
+    ),
+    externalEvidence: applyProviderLeaseRouteContext(
+      runtimeSettingsCache.settings,
+      routes.externalEvidence,
+    ),
+    mcpEvidence: applyProviderLeaseRouteContext(runtimeSettingsCache.settings, routes.mcpEvidence),
+  };
 }
 
 export function resolveDeadZoneMergeReviewRoute(): RuntimeSettingsRoute {
-  return runtimeSettingsCache.settings.taskRouting.deadZoneMergeReview;
+  return applyProviderLeaseRouteContext(
+    runtimeSettingsCache.settings,
+    runtimeSettingsCache.settings.taskRouting.deadZoneMergeReview,
+  );
+}
+
+export function resolveFinalizeDistilleRoute(): RuntimeSettingsRoute {
+  return applyProviderLeaseRouteContext(
+    runtimeSettingsCache.settings,
+    runtimeSettingsCache.settings.taskRouting.finalizeDistille,
+  );
+}
+
+export function resolveMergeActivationFinalizeRoute(): RuntimeSettingsRoute {
+  return applyProviderLeaseRouteContext(
+    runtimeSettingsCache.settings,
+    runtimeSettingsCache.settings.taskRouting.mergeActivationFinalize,
+  );
+}
+
+export function resolveProviderPools(): RuntimeProviderPool[] {
+  return runtimeSettingsCache.settings.providerPools.map((pool) => ({
+    ...pool,
+    targets: pool.targets.map((target) => ({ ...target })),
+    maxConcurrent: Math.max(1, Math.min(pool.maxConcurrent, pool.targets.length)),
+  }));
 }
 
 export function resolveAgenticCompileRouting(): RuntimeSettingsEditable["taskRouting"]["agenticCompile"] {

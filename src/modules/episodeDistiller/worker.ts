@@ -1,0 +1,458 @@
+import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
+import type { EpisodeCard } from "../../shared/schemas/episode-card.schema.js";
+import {
+  createEpisodeCard,
+  getEpisodeCardBySource,
+} from "../episodic-memory/episode-card.repository.js";
+import {
+  type DistillationMessage,
+  resolveRouteModelForProvider,
+  runDistillationCompletion,
+} from "../distillation/distillation-runtime.service.js";
+import {
+  ensureRuntimeSettingsLoaded,
+  resolveEpisodeDistillerRoute,
+} from "../settings/settings.service.js";
+import { appendQueueEvent } from "../queue/core/events.js";
+import {
+  type EpisodeDistillerJob,
+  getEpisodeDistillerJobById,
+  markEpisodeDistillerCompleted,
+  markEpisodeDistillerFailed,
+} from "./repository.js";
+import {
+  canonicalEpisodeToCardInput,
+  type EpisodeDistillerCanonical,
+  episodeDistillerCanonicalArraySchema,
+} from "./schema.js";
+import { readEpisodeSourceDocument, type EpisodeSourceDocument } from "./source-reader.js";
+import {
+  EPISODE_DISTILLATION_VERSION,
+  episodeSourceFragmentKey,
+  type EpisodeGenerationKind,
+} from "./source-key.js";
+
+type Segment = {
+  text: string;
+  startOffset: number;
+  endOffset: number;
+  eventStart: string | null;
+  eventEnd: string | null;
+  eventIds: string[];
+};
+
+type EpisodeDistillerProcessResult = {
+  generated: number;
+  deduped: number;
+  skipped: number;
+  duplicateGenerationKindSkipped: number;
+  failedSegments: number;
+  episodeIds: string[];
+};
+
+type EpisodeDistillerTestHooks = {
+  distillSegment?: (params: {
+    segment: Segment;
+    document: EpisodeSourceDocument;
+    job: EpisodeDistillerJob;
+    signal?: AbortSignal;
+  }) => Promise<unknown>;
+};
+
+let testHooks: EpisodeDistillerTestHooks = {};
+
+export function setEpisodeDistillerTestHooksForTests(hooks: EpisodeDistillerTestHooks): void {
+  testHooks = hooks;
+}
+
+function textForByteRange(content: string, startOffset: number, endOffset: number): string {
+  return Buffer.from(content, "utf8").subarray(startOffset, endOffset).toString("utf8");
+}
+
+function metadataString(metadata: Record<string, unknown>, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const value = metadata[key];
+    if (typeof value === "string" && value.trim()) return value.trim();
+  }
+  return undefined;
+}
+
+function estimateTokenCount(text: string): number {
+  return Math.ceil(text.length / 4);
+}
+
+function splitLargeSegment(segment: Segment, maxBytes: number): Segment[] {
+  if (segment.endOffset - segment.startOffset <= maxBytes) return [segment];
+  const chunks: Segment[] = [];
+  let start = segment.startOffset;
+  const buffer = Buffer.from(segment.text, "utf8");
+  while (start < segment.endOffset) {
+    const relativeStart = start - segment.startOffset;
+    const relativeEnd = Math.min(buffer.byteLength, relativeStart + maxBytes);
+    const text = buffer.subarray(relativeStart, relativeEnd).toString("utf8");
+    const end = segment.startOffset + relativeEnd;
+    chunks.push({
+      text,
+      startOffset: start,
+      endOffset: end,
+      eventStart: segment.eventStart,
+      eventEnd: segment.eventEnd,
+      eventIds: segment.eventIds,
+    });
+    start = end;
+  }
+  return chunks;
+}
+
+function buildDeterministicSegments(document: EpisodeSourceDocument): Segment[] {
+  const maxTokens = 4000;
+  const maxBytes = maxTokens * 4;
+  const events = document.events;
+  if (events.length === 0) {
+    return [
+      {
+        text: document.content,
+        startOffset: 0,
+        endOffset: Buffer.byteLength(document.content, "utf8"),
+        eventStart: null,
+        eventEnd: null,
+        eventIds: [],
+      },
+    ];
+  }
+
+  const segments: Segment[] = [];
+  let current = [events[0]];
+  for (const event of events.slice(1)) {
+    const previous = current.at(-1);
+    const previousAt = previous ? Date.parse(previous.createdAt) : Number.NaN;
+    const currentAt = Date.parse(event.createdAt);
+    const gapMs =
+      Number.isFinite(previousAt) && Number.isFinite(currentAt) ? currentAt - previousAt : 0;
+    const currentFiles = new Set(current.map((item) => item.filePath).filter(Boolean));
+    const fileBoundary =
+      currentFiles.size > 0 && event.filePath ? !currentFiles.has(event.filePath) : false;
+    const startOffset = current[0]?.startOffset ?? 0;
+    const projectedBytes = event.endOffset - startOffset;
+    if (gapMs >= 30 * 60_000 || fileBoundary || projectedBytes > maxBytes) {
+      const first = current[0];
+      const last = current.at(-1);
+      if (first && last) {
+        segments.push({
+          text: textForByteRange(document.content, first.startOffset, last.endOffset),
+          startOffset: first.startOffset,
+          endOffset: last.endOffset,
+          eventStart: first.id,
+          eventEnd: last.id,
+          eventIds: current.map((item) => item.id),
+        });
+      }
+      current = [event];
+    } else {
+      current.push(event);
+    }
+  }
+
+  const first = current[0];
+  const last = current.at(-1);
+  if (first && last) {
+    segments.push({
+      text: textForByteRange(document.content, first.startOffset, last.endOffset),
+      startOffset: first.startOffset,
+      endOffset: last.endOffset,
+      eventStart: first.id,
+      eventEnd: last.id,
+      eventIds: current.map((item) => item.id),
+    });
+  }
+
+  return segments.flatMap((segment) => splitLargeSegment(segment, maxBytes));
+}
+
+function buildMessages(segment: Segment, document: EpisodeSourceDocument): DistillationMessage[] {
+  const metadata = document.metadata;
+  const cwd = metadataString(metadata, ["cwd", "repoPath", "workspacePath"]);
+  const project = metadataString(metadata, ["project", "projectName", "repoKey"]);
+  return [
+    {
+      role: "system",
+      content: [
+        "You are ContextStill episodeDistiller.",
+        "Create task-oriented EpisodeCards from source evidence.",
+        "Return only JSON. The JSON must be an array.",
+        "Do not promote rules or procedures. Capture causality, decisions, failures, reusable lessons, and open loops.",
+      ].join("\n"),
+    },
+    {
+      role: "user",
+      content: [
+        `Vibe memory id: ${document.vibeMemoryId}`,
+        `Session id: ${document.sessionId}`,
+        cwd ? `cwd: ${cwd}` : undefined,
+        project ? `project: ${project}` : undefined,
+        `Source byte range: ${segment.startOffset}-${segment.endOffset}`,
+        `Source events: ${segment.eventIds.join(", ") || "-"}`,
+        "",
+        "Return JSON array items with this shape:",
+        "{",
+        '  "title": "...",',
+        '  "context": "...",',
+        '  "intent": "...",',
+        '  "keyDecisions": ["..."],',
+        '  "failedApproach": "",',
+        '  "reusableLesson": "...",',
+        '  "usefulFutureTriggers": ["..."],',
+        '  "openLoops": ["..."],',
+        '  "generationKind": "task_episode|failure_episode|decision_episode",',
+        '  "outcomeKind": "success|failure|mixed|unknown",',
+        '  "domains": ["..."],',
+        '  "technologies": ["..."],',
+        '  "changeTypes": ["..."],',
+        '  "tools": ["..."],',
+        '  "scores": { "reusability": 0, "decision_density": 0, "failure_value": 0, "causal_clarity": 0, "project_specificity": 0, "evidence_quality": 0, "compression_quality": 0, "staleness_risk": 0 }',
+        "}",
+        "",
+        "Source segment:",
+        segment.text,
+      ]
+        .filter((line): line is string => line !== undefined)
+        .join("\n"),
+    },
+  ];
+}
+
+async function distillSegment(params: {
+  segment: Segment;
+  document: EpisodeSourceDocument;
+  job: EpisodeDistillerJob;
+  signal?: AbortSignal;
+}): Promise<unknown> {
+  if (testHooks.distillSegment) {
+    return testHooks.distillSegment(params);
+  }
+  await ensureRuntimeSettingsLoaded();
+  const route = resolveEpisodeDistillerRoute();
+  const provider = route.provider;
+  const model = resolveRouteModelForProvider({
+    provider,
+    routeModel: route.model,
+    localLlmModel: route.localLlmModel,
+  });
+  const completion = await runDistillationCompletion(
+    {
+      model,
+      messages: buildMessages(params.segment, params.document),
+      maxTokens: 4000,
+    },
+    {
+      providerSetting: provider,
+      fallbackOrder: route.fallback,
+      azureDeploymentSlots: route.azureDeploymentSlots,
+      localLlmModel: route.localLlmModel,
+      enableTools: false,
+      maxToolRounds: 0,
+      usageSource: "episode-distiller",
+      signal: params.signal,
+      blankResponseReminder: [
+        "空の応答です。Episode canonical form の JSON array だけを返してください。",
+      ],
+    },
+  );
+  return parseLlmJsonLike(completion.content)?.value;
+}
+
+async function distillSegmentWithRetry(params: {
+  segment: Segment;
+  document: EpisodeSourceDocument;
+  job: EpisodeDistillerJob;
+  signal?: AbortSignal;
+}) {
+  let lastError = "";
+  for (let attempt = 1; attempt <= 2; attempt += 1) {
+    try {
+      const output = await distillSegment(params);
+      return episodeDistillerCanonicalArraySchema.parse(output);
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : String(error);
+    }
+  }
+  throw new Error(lastError || "episode distiller parse failed");
+}
+
+async function createEpisodeIdempotently(input: Parameters<typeof createEpisodeCard>[0]): Promise<{
+  episode: EpisodeCard;
+  deduped: boolean;
+}> {
+  const existing = await getEpisodeCardBySource({
+    sourceKind: input.sourceKind,
+    sourceKey: input.sourceKey,
+  });
+  if (existing) return { episode: existing, deduped: true };
+  try {
+    return { episode: await createEpisodeCard(input), deduped: false };
+  } catch (error) {
+    const concurrentExisting = await getEpisodeCardBySource({
+      sourceKind: input.sourceKind,
+      sourceKey: input.sourceKey,
+    });
+    if (concurrentExisting) return { episode: concurrentExisting, deduped: true };
+    throw error;
+  }
+}
+
+export async function processEpisodeDistillerJob(
+  jobId: string,
+  signal?: AbortSignal,
+): Promise<EpisodeDistillerProcessResult> {
+  const job = await getEpisodeDistillerJobById(jobId);
+  if (!job) throw new Error(`episode distiller queue job not found: ${jobId}`);
+  if (job.sourceKind !== "vibe_memory") {
+    throw new Error(`unsupported episode source kind: ${job.sourceKind}`);
+  }
+  await appendQueueEvent({
+    queueName: "episodeDistiller",
+    queueJobId: job.id,
+    eventType: "claimed",
+    message: "episode distiller claimed",
+  });
+
+  const document = await readEpisodeSourceDocument(job.sourceKey);
+  const segments = buildDeterministicSegments(document);
+  const metadata = document.metadata;
+  const cwd = metadataString(metadata, ["cwd", "repoPath", "workspacePath"]);
+  const project = metadataString(metadata, ["project", "projectName", "repoKey"]);
+  let generated = 0;
+  let deduped = 0;
+  let skipped = 0;
+  let duplicateGenerationKindSkipped = 0;
+  let failedSegments = 0;
+  const episodeIds: string[] = [];
+  const segmentErrors: Array<{ segment: number; error: string }> = [];
+  const skippedDuplicateGenerationKinds: Array<{
+    segment: number;
+    generationKind: EpisodeGenerationKind;
+  }> = [];
+
+  for (const [segmentIndex, segment] of segments.entries()) {
+    if (signal?.aborted) throw new Error("episode distiller aborted");
+    if (estimateTokenCount(segment.text) <= 10) {
+      skipped += 1;
+      continue;
+    }
+    let canonicalEpisodes: EpisodeDistillerCanonical[];
+    try {
+      canonicalEpisodes = await distillSegmentWithRetry({ segment, document, job, signal });
+    } catch (error) {
+      failedSegments += 1;
+      segmentErrors.push({
+        segment: segmentIndex,
+        error: error instanceof Error ? error.message : String(error),
+      });
+      continue;
+    }
+    if (canonicalEpisodes.length === 0) {
+      skipped += 1;
+      continue;
+    }
+    const seenGenerationKinds = new Set<EpisodeGenerationKind>();
+    for (const canonical of canonicalEpisodes) {
+      const generationKind = canonical.generationKind as EpisodeGenerationKind;
+      if (seenGenerationKinds.has(generationKind)) {
+        skipped += 1;
+        duplicateGenerationKindSkipped += 1;
+        skippedDuplicateGenerationKinds.push({
+          segment: segmentIndex,
+          generationKind,
+        });
+        continue;
+      }
+      seenGenerationKinds.add(generationKind);
+      const sourceFragmentKey = episodeSourceFragmentKey({
+        parentSourceKind: "vibe_memory",
+        parentSourceKey: job.sourceKey,
+        sourceSpan: {
+          startOffset: segment.startOffset,
+          endOffset: segment.endOffset,
+        },
+        generationKind,
+        distillationVersion: EPISODE_DISTILLATION_VERSION,
+      });
+      const input = canonicalEpisodeToCardInput({
+        canonical,
+        sourceKey: sourceFragmentKey,
+        parentVibeMemoryId: job.sourceKey,
+        sourceFragmentKey,
+        sourceStartOffset: segment.startOffset,
+        sourceEndOffset: segment.endOffset,
+        eventStart: segment.eventStart,
+        eventEnd: segment.eventEnd,
+        readRanges: [{ from: segment.startOffset, toExclusive: segment.endOffset }],
+        sessionId: document.sessionId,
+        cwd,
+        project,
+        distillationVersion: EPISODE_DISTILLATION_VERSION,
+      });
+      const saved = await createEpisodeIdempotently(input);
+      episodeIds.push(saved.episode.id);
+      if (saved.deduped) deduped += 1;
+      else generated += 1;
+    }
+  }
+
+  const outcome = generated > 0 || deduped > 0 ? "episodes_distilled" : "no_episode";
+  await markEpisodeDistillerCompleted({
+    jobId: job.id,
+    status: outcome === "no_episode" ? "skipped" : "completed",
+    outcome,
+    metadata: {
+      episodeDistiller: {
+        generated,
+        deduped,
+        skipped,
+        duplicateGenerationKindSkipped,
+        failedSegments,
+        segmentCount: segments.length,
+        episodeIds,
+        segmentErrors,
+        skippedDuplicateGenerationKinds,
+        completedAt: new Date().toISOString(),
+      },
+    },
+  });
+  await appendQueueEvent({
+    queueName: "episodeDistiller",
+    queueJobId: job.id,
+    eventType: "completed",
+    message: "episode distiller completed",
+    metadata: {
+      generated,
+      deduped,
+      skipped,
+      duplicateGenerationKindSkipped,
+      failedSegments,
+      episodeIds,
+    },
+  });
+  return {
+    generated,
+    deduped,
+    skipped,
+    duplicateGenerationKindSkipped,
+    failedSegments,
+    episodeIds,
+  };
+}
+
+export async function failEpisodeDistillerJob(jobId: string, error: string): Promise<void> {
+  await markEpisodeDistillerFailed({
+    jobId,
+    error,
+    outcome: "failed",
+    metadata: {
+      episodeDistiller: {
+        failedAt: new Date().toISOString(),
+        error,
+      },
+    },
+  });
+}

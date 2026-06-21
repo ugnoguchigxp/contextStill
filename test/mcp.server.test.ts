@@ -1,5 +1,11 @@
+import { PassThrough } from "node:stream";
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { createMcpServer, listStaticResources, readStaticResource } from "../src/mcp/server.js";
+import {
+  createMcpServer,
+  listStaticResources,
+  readStaticResource,
+  runMcpServer,
+} from "../src/mcp/server.js";
 import * as repository from "../src/modules/context-compiler/context-compiler.repository.js";
 import * as doctorService from "../src/modules/doctor/doctor.service.js";
 
@@ -57,5 +63,16 @@ describe("MCP server", () => {
   test("createMcpServer returns a configured server", () => {
     const server = createMcpServer();
     expect(server).toBeDefined();
+  });
+
+  test("runMcpServer closes when stdin ends", async () => {
+    const stdin = new PassThrough();
+    const stdout = new PassThrough();
+    const runtime = await runMcpServer({ stdin, stdout });
+
+    stdin.emit("end");
+
+    await expect(runtime.closed).resolves.toMatchObject({ reason: "stdio_ended" });
+    await expect(runtime.close()).resolves.toBeUndefined();
   });
 });

@@ -58,6 +58,7 @@ Run commands from the repository root.
 | Command | Description |
 |---|---|
 | `bun run queue:finding:once` | Run one finding-candidate cycle |
+| `bun run queue:episode-distiller:once` | Run one episode-distiller cycle |
 | `bun run queue:covering:once` | Run one evidence-coverage cycle |
 | `bun run queue:merge-review:once` | Run one DeadZone merge-review cycle |
 | `bun run queue:finalize:once` | Run one finalization cycle |
