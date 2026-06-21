@@ -155,6 +155,16 @@ export const doctorReasonCatalog: Record<string, DoctorReasonCatalogEntry> = {
     impact: "判断が degraded/escalate になり、自律実行率が下がります。",
     action: "該当判断点に必要な Knowledge を追加または修正してください。",
   },
+  CONTEXT_DECISION_LOW_RELEVANCE_SELECTED_EVIDENCE: {
+    label: "Context decision に低関連 selected evidence がある",
+    severity: "warning",
+    area: "Knowledge",
+    description:
+      "topical relevance が低い Knowledge が context_decision の selected evidence に残っています。",
+    impact: "Decision confidence や agent message が判断対象と弱く関連する根拠に引きずられます。",
+    action:
+      "Decision detail の Ranking Trace を確認し、該当 Knowledge の relevance / role fit を見直してください。",
+  },
   CONTEXT_DECISION_GH_UNAVAILABLE: {
     label: "PR discard scanner の gh が利用不能",
     severity: "info",

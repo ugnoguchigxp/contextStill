@@ -76,6 +76,7 @@ export const doctorReportValidInput = {
     queuedEffectsCount: 0,
     degradedDecisionsCount: 0,
     requiredZeroEvidenceCount: 0,
+    lowRelevanceSelectedEvidenceCount: 0,
     ghAvailable: true,
     nextActions: [],
   },

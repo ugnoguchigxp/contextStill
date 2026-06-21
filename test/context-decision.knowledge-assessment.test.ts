@@ -102,7 +102,7 @@ describe("context decision knowledge assessment", () => {
       {
         queryRole: "counter_evidence" as const,
         hits: [counter, counter, counter, counter],
-        selectedKnowledgeIds: [],
+        selectedKnowledgeIds: [counter.id],
       },
       { queryRole: "risk" as const, hits: [], selectedKnowledgeIds: [] },
       { queryRole: "user_preference" as const, hits: [], selectedKnowledgeIds: [] },
@@ -110,7 +110,10 @@ describe("context decision knowledge assessment", () => {
       { queryRole: "alternative" as const, hits: [], selectedKnowledgeIds: [] },
     ];
     const assessment = assessContextDecisionKnowledge({
-      evidence: [{ knowledge: support, role: "selected_support" }],
+      evidence: [
+        { knowledge: support, role: "selected_support" },
+        { knowledge: counter, role: "counter_evidence" },
+      ],
       coverage,
       candidateTraces: buildContextDecisionCandidateTraces(coverage),
       relatedBadSignalCount: 0,

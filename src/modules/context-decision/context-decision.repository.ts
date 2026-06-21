@@ -761,6 +761,7 @@ export type ContextDecisionMetrics = {
   queuedEffectsCount: number;
   degradedDecisionsCount: number;
   requiredZeroEvidenceCount: number;
+  lowRelevanceSelectedEvidenceCount: number;
 };
 
 export type ContextDecisionMlTrainingRow = {
@@ -857,7 +858,12 @@ export async function getContextDecisionMetrics(): Promise<ContextDecisionMetric
            from context_decision_evidence e
            where e.decision_run_id = r.id
              and e.role = 'selected_support'
-         )) as required_zero_evidence_count
+         )) as required_zero_evidence_count,
+      (select count(*)::int
+       from context_decision_evidence e
+       where e.role in ('selected_support', 'counter_evidence', 'rejected_alternative')
+         and nullif(e.metadata->>'topicalRelevanceScore', '') is not null
+         and (e.metadata->>'topicalRelevanceScore')::numeric < 70) as low_relevance_selected_evidence_count
   `);
   const row = result.rows[0] as
     | {
@@ -870,6 +876,7 @@ export async function getContextDecisionMetrics(): Promise<ContextDecisionMetric
         queued_effects_count?: number | string;
         degraded_decisions_count?: number | string;
         required_zero_evidence_count?: number | string;
+        low_relevance_selected_evidence_count?: number | string;
       }
     | undefined;
   const totalDecisions = Number(row?.total_decisions ?? 0);
@@ -889,5 +896,6 @@ export async function getContextDecisionMetrics(): Promise<ContextDecisionMetric
     queuedEffectsCount: Number(row?.queued_effects_count ?? 0),
     degradedDecisionsCount: Number(row?.degraded_decisions_count ?? 0),
     requiredZeroEvidenceCount: Number(row?.required_zero_evidence_count ?? 0),
+    lowRelevanceSelectedEvidenceCount: Number(row?.low_relevance_selected_evidence_count ?? 0),
   };
 }

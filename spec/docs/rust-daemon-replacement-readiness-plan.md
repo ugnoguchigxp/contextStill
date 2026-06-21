@@ -6,6 +6,42 @@ Rust `context-stilld` を「既存 TypeScript daemon / worker entrypoint の受�
 
 この文書での「置き換え可能」は、Rust が product logic を全面移植することではない。Rust が runtime host として lifecycle、transport、状態記録、shutdown、smoke、rollback を満たし、TypeScript fallback を残したまま default を boundary 単位で切り替えられる状態を指す。
 
+## Packaged Desktop Runtime Boundary
+
+Tauri 配布後の目標は、常駐 runtime から Node/Bun と UI 用 API 層をできるだけ外すことである。
+
+ただし、TypeScript を完全排除することはこの計画の目的ではない。TypeScript は UI-time API や one-shot script sidecar として残せる。境界は「どの言語で書かれているか」ではなく、「常駐するか」「長時間・副作用ありタスクを所有するか」で決める。
+
+| Runtime surface | Residency | Owner | Allowed responsibilities | Not allowed |
+|---|---|---|---|---|
+| Resident Rust runtime | Always-on | `context-stilld` | process supervision, MCP stdio proxy, queue host, scheduler, state/log/readiness, SQLite writer guard, backup preflight | Product logic rewrite, full Hono admin API, UI session state |
+| UI-time Hono admin API | UI session only | Hono child process managed by Rust or a thin runner | UI data reads/writes, settings screens, operator actions, health/readiness endpoints | Resident runtime duties, durable long-running task ownership |
+| Thin Node/Bun runner | UI-time or one-shot only | Rust-managed sidecar | spawn Hono child, run one-shot scripts, capture stdout/stderr, wait readiness, return exit code | Importing full Hono API in a resident process, owning durable tasks |
+| One-shot TypeScript sidecars | Explicit command only | Rust-managed child process | migration, backfill, import/export, repair, smoke, dev/test support | Background worker semantics unless promoted to Rust-managed queue/task |
+| Dev/test scripts | Development only | Developer/CI | tests, fixtures, local verification | Packaged app runtime requirements |
+
+Important boundaries:
+
+- A Node/Bun process can be acceptable as a sidecar, but the full Hono admin API must not be part of the resident runtime.
+- If a thin Node/Bun runner is used, it should start Hono as a child process rather than importing `api/app.ts` into a resident process.
+- Closing the UI may stop the Hono API and thin runner, but must not stop Rust-owned queue work, MCP serving, scheduled sync, or durable sidecar tasks.
+- Repo-local env defaults are not sufficient for packaged mode. Desktop runtime mode must explicitly set writable state paths, SQLite paths, log paths, and local API origin.
+
+## Task Ownership Policy
+
+UI shutdown safety depends on task ownership.
+
+| Task kind | Owner | UI shutdown policy |
+|---|---|---|
+| Read-only UI API request | Hono API | May stop immediately after request ends |
+| Enqueue-only UI action | Hono API creates durable job; Rust/queue owns execution | UI may close after durable enqueue succeeds |
+| Queue worker task | Resident Rust runtime / TS worker child until migrated | Must continue after UI closes |
+| Agent log sync scheduled task | Resident Rust runtime | Must continue or record exit state after UI closes |
+| Migration/backfill/import/export | Rust-managed one-shot sidecar | UI close must not kill unless task is explicitly cancelable |
+| UI-bound preview/smoke | UI-time runner | May cancel on UI close if documented as cancelable |
+
+Long-running, non-idempotent, or DB-writing tasks must not be owned only by Hono request handlers or by the UI-time runner. They must either be durable queue jobs or Rust-managed child processes with pid/state/log/exit metadata.
+
 ## Current State
 
 実装済み:
@@ -26,6 +62,8 @@ Rust `context-stilld` を「既存 TypeScript daemon / worker entrypoint の受�
 - Hono admin API の readiness / port conflict / stop independence の実プロセス検証。
 - stale pid cleanup / orphan recovery / child exit reconciliation。
 - boundary ごとの default switch flag と rollback 手順。
+- packaged desktop runtime boundary の実装反映。
+- UI shutdown 時の task ownership / sidecar stop policy。
 
 ## Replacement-Ready Definition
 
@@ -50,10 +88,11 @@ Do not start with default switch. Implement in this order:
 3. Rust-managed MCP smoke.
 4. Queue supervisor safe smoke.
 5. Agent log sync run-and-wait mode.
-6. Hono admin API readiness and stop independence.
+6. UI-time Hono admin API readiness and stop independence.
 7. Backup writer coordination hardening.
-8. Boundary default flags and rollback docs.
-9. Per-boundary default switch.
+8. Thin runner / one-shot sidecar policy and packaged-mode env overrides.
+9. Boundary default flags and rollback docs.
+10. Per-boundary default switch.
 
 ## Phase 1: Process State Reconciliation
 
@@ -268,25 +307,32 @@ bun run verify:rust-daemon
 - One-shot sync completion is observable from Rust JSON.
 - Direct TypeScript `bun run sync:agent-logs` fallback remains.
 
-## Phase 5: Hono Admin API Readiness
+## Phase 5: UI-Time Hono Admin API Readiness
 
 ### Goal
 
-Prove Rust can manage Hono admin API for UI/operator sessions without affecting daemon-side MCP/queue/agent-log-sync.
+Prove Rust can manage Hono admin API for UI/operator sessions without making the full API part of the resident runtime and without affecting daemon-side MCP/queue/agent-log-sync.
 
 ### Design Decision
 
 `admin-api start` should not report ready only because spawn succeeded. It should wait for a health/readiness endpoint or port listener.
+
+Hono admin API is a UI-time process, not a resident daemon boundary. It may be started directly by Rust or through a thin Node/Bun runner, but the runner must not import the full Hono API into a resident process. If a runner is used, it should spawn the Hono API as a child process, capture stdout/stderr, wait for readiness, and terminate the child on UI close or idle timeout.
 
 ### Implementation Tasks
 
 - Define admin API readiness URL and timeout.
 - Add readiness polling after spawn.
 - Handle port conflict as structured error.
+- Add UI-time mode metadata to lifecycle JSON so the process is distinguishable from resident daemon boundaries.
 - Add stop independence test:
   - start MCP/queue mock states,
   - start/stop admin API,
   - assert MCP/queue state remains unchanged.
+- Add UI-close stop policy:
+  - stopping admin API must not kill Rust-owned queue/MCP/agent-log-sync state,
+  - stopping admin API may terminate only its own Hono child process,
+  - in-flight non-cancelable sidecar tasks must be preserved or rejected before stop.
 - Add real-process smoke if API can bind to a random test port.
 
 ### Verification
@@ -306,6 +352,7 @@ bun run rust:admin-api:smoke
 
 - Admin API readiness failure is visible as structured error.
 - Stopping admin API does not stop or mutate MCP/queue/agent-log-sync state.
+- Hono admin API is documented and tested as UI-time, not resident.
 
 ## Phase 6: Backup Writer Coordination
 
@@ -337,7 +384,70 @@ bun run verify:rust-daemon
 - Backup preflight can be used as a guard before TS backup.
 - No restore behavior is added.
 
-## Phase 7: Default Switch Flags
+## Phase 7: Thin Runner And One-Shot Sidecar Policy
+
+### Goal
+
+Allow TypeScript to remain useful for UI-time and one-shot work without making Node/Bun or the full Hono API resident runtime dependencies.
+
+### Design Decision
+
+A thin Node/Bun runner is allowed only as a managed sidecar. It can spawn Hono or one-shot scripts, but it must not become the owner of durable work.
+
+Recommended constraints:
+
+- Resident Rust runtime may start/stop the runner.
+- Runner must write stdout/stderr to managed logs or forward them to Rust.
+- Runner must return structured exit state.
+- Runner must not import `api/app.ts` in a resident process.
+- Runner must spawn Hono as a child process when UI API is needed.
+- Runner must treat migration/backfill/import/export as explicit one-shot tasks.
+- Runner must distinguish `ui-bound` tasks from `detached` tasks.
+
+### Implementation Tasks
+
+- Add sidecar task classification:
+  - `ui-bound`: may be canceled on UI close.
+  - `detached`: must continue after UI close or record controlled cancellation.
+- Add sidecar execution records with:
+  - task id,
+  - command/args,
+  - pid,
+  - log path,
+  - started/updated timestamps,
+  - exit code/signal,
+  - cancelability.
+- Add packaged-mode env override plan:
+  - app data dir,
+  - SQLite core path,
+  - logs/run/backup dirs,
+  - local API origin,
+  - bundled runner path.
+- Document that dev/test scripts are not packaged runtime requirements.
+
+### Verification
+
+Required tests:
+
+- UI-close stops Hono API child but does not mutate resident boundary states.
+- UI-close does not kill `detached` sidecar tasks.
+- `ui-bound` sidecar cancellation records controlled exit state.
+- runner startup failure preserves stderr and structured error.
+
+Commands:
+
+```bash
+cargo test --workspace
+bun run verify:rust-daemon
+```
+
+### Done
+
+- Thin runner is an optional sidecar execution surface, not a resident API host.
+- One-shot TypeScript scripts can remain TypeScript without weakening resident Rust runtime goals.
+- Task ownership is explicit enough to decide UI shutdown behavior.
+
+## Phase 8: Default Switch Flags
 
 ### Goal
 
@@ -358,12 +468,20 @@ CONTEXT_STILL_DAEMON_MANAGED_ADMIN_API=0|1
 
 Final names should be aligned with existing config conventions before implementation.
 
+These flags apply only to runtime-host boundaries. They do not make every TypeScript CLI a Rust implementation target.
+
 ### Implementation Tasks
 
 - Add config reader for runtime host flags.
 - Add docs for fallback command per boundary.
-- Make package scripts use Rust only when the relevant flag is enabled.
+- Make runtime-host package scripts use Rust only when the relevant flag is enabled.
 - Keep direct TS scripts available.
+- Add CLI classification docs:
+  - runtime-host,
+  - UI-time API,
+  - one-shot sidecar,
+  - product CLI,
+  - dev/test script.
 - Add rollback section to public operations docs.
 
 ### Verification
@@ -386,20 +504,24 @@ Required result:
 ### Done
 
 - A boundary can switch default to Rust and back without code changes.
+- Product/data CLI scripts remain TypeScript unless a separate parity plan exists.
 
-## Phase 8: Per-Boundary Default Switch
+## Phase 9: Per-Boundary Default Switch
 
 ### Goal
 
 Switch one boundary at a time after smoke evidence exists.
 
+For UI-time boundaries, "default switch" means the default management path used when that surface is requested. It does not mean the surface becomes resident.
+
 ### Switch Order
 
 1. Agent log sync one-shot wrapper.
-2. Admin API lifecycle.
+2. UI-time Admin API lifecycle.
 3. MCP foreground proxy.
 4. Queue supervisor.
 5. Backup preflight guard.
+6. Thin runner / sidecar execution policy.
 
 Queue is intentionally later because it mutates durable work queues.
 
@@ -413,6 +535,7 @@ Each default switch PR must include:
 - Rollback command.
 - Docs update.
 - No unrelated product logic migration.
+- Task ownership statement for UI shutdown behavior when applicable.
 
 ### Verification
 
@@ -430,6 +553,7 @@ Plus boundary focused gate:
 - Admin API: `bun run test:unit:api` and `bun run rust:admin-api:smoke`
 - Agent log sync: Rust run-and-wait unit/integration smoke
 - Backup: `bun run verify:sqlite`
+- Sidecar runner: UI-close / detached-task / stderr-capture smoke
 
 ## First Implementation Slice
 
@@ -452,6 +576,26 @@ Stop and ask for review if:
 - A task requires destructive backup restore behavior.
 - A task requires global Rust default switch.
 - A smoke would need to run against a non-test DB.
+- A task would make the full Hono admin API part of the resident runtime.
+- A UI-close path would kill a non-cancelable DB-writing or long-running task.
+- A thin runner would become the durable owner of queue/provider/migration work without pid/state/log/exit tracking.
+
+## Neutral Review Checklist
+
+Use this checklist before implementation and before each default switch PR.
+
+| Question | Expected answer |
+|---|---|
+| Does this reduce resident Node/Bun/API surface? | Yes, or the exception is documented as UI-time/one-shot |
+| Does a long-running task have a durable owner? | Yes: Rust runtime, queue, or managed child state |
+| Can UI close safely during this operation? | Yes, or the operation is explicitly non-cancelable and blocks/defers shutdown |
+| Is Hono admin API resident? | No |
+| Does the thin runner import full API modules while resident? | No |
+| Is TypeScript product logic being silently rewritten? | No |
+| Is rollback still one command or one config flag? | Yes |
+| Are packaged-mode paths explicit? | Yes: app data, SQLite, logs, run, backup, local API origin |
+
+If two or more expected answers fail, do not include the change in the daemon replacement track. Split it into a separate product CLI or data migration parity plan.
 
 ## Tracking Table
 
@@ -464,5 +608,6 @@ Stop and ask for review if:
 | RR-05 | Agent log sync run-and-wait | RR-01 | unit tests + `verify:rust-daemon` | not started |
 | RR-06 | Admin API readiness smoke | RR-01 | `rust:admin-api:smoke` | not started |
 | RR-07 | Backup idle guard | RR-01 | `verify:sqlite`, `verify:rust-daemon` | not started |
-| RR-08 | Default switch flags | RR-02 through RR-07 | boundary smoke pairs | not started |
-| RR-09 | Per-boundary default switch | RR-08 | focused gate per boundary | blocked by RR-08 |
+| RR-08 | Thin runner and sidecar policy | RR-01, RR-06 | UI-close / detached-task / stderr-capture smoke | not started |
+| RR-09 | Default switch flags | RR-02 through RR-08 | boundary smoke pairs | not started |
+| RR-10 | Per-boundary default switch | RR-09 | focused gate per boundary | blocked by RR-09 |

@@ -171,6 +171,16 @@ function traceRecord(trace: Record<string, unknown>, key: string): Record<string
   return isRecord(value) ? value : null;
 }
 
+function traceRecordArray(
+  trace: Record<string, unknown>,
+  key: string,
+): Array<Record<string, unknown>> {
+  const value = trace[key];
+  return Array.isArray(value)
+    ? value.filter((item): item is Record<string, unknown> => isRecord(item))
+    : [];
+}
+
 function signalVariant(
   label: string,
 ): "default" | "secondary" | "destructive" | "outline" | null | undefined {
@@ -213,6 +223,14 @@ function evidenceSignalLabels(item: ContextDecisionEvidence): string[] {
   if (health.dead === true) labels.push("dead community");
   if (health.stale === true) labels.push("stale community");
   if (health.thinEvidence === true) labels.push("thin evidence");
+  const topicalRelevanceScore = metadataNumber(item.metadata, "topicalRelevanceScore");
+  const roleFit = isRecord(item.metadata.roleFit)
+    ? metadataString(item.metadata.roleFit, "classification")
+    : null;
+  const selectionStage = metadataString(item.metadata, "selectionStage");
+  if (typeof topicalRelevanceScore === "number") labels.push(`relevance ${topicalRelevanceScore}`);
+  if (roleFit) labels.push(`role ${roleFit}`);
+  if (selectionStage) labels.push(selectionStage);
 
   return labels.slice(0, 6);
 }
@@ -573,6 +591,144 @@ function KnowledgeAssessmentPanel({ trace }: { trace: Record<string, unknown> })
           <code>keyword</code>
         )}
       </div>
+    </article>
+  );
+}
+
+function PrimaryEvidencePanel({ trace }: { trace: Record<string, unknown> }) {
+  const primaryEvidence = traceRecordArray(trace, "primaryEvidence");
+  if (primaryEvidence.length === 0) {
+    return (
+      <article className="compile-pack-item">
+        <div className="compile-pack-item-header">
+          <strong>Primary Evidence</strong>
+          <Badge variant="outline">not recorded</Badge>
+        </div>
+        <p className="compile-state-text">No first-class primary evidence was stored.</p>
+      </article>
+    );
+  }
+  return (
+    <article className="compile-pack-item">
+      <div className="compile-pack-item-header">
+        <strong>Primary Evidence</strong>
+        <Badge variant="secondary">{primaryEvidence.length}</Badge>
+      </div>
+      <div className="compile-pack-items" style={{ marginTop: 10 }}>
+        {primaryEvidence.slice(0, 4).map((item, index) => (
+          <div
+            key={`${item.title}:${index}`}
+            className="compile-pack-item"
+            style={{ padding: "10px 12px" }}
+          >
+            <div className="compile-pack-item-header">
+              <strong>{typeof item.title === "string" ? item.title : "Evidence"}</strong>
+              <div className="compile-pack-item-meta">
+                <Badge variant="outline">
+                  {typeof item.kind === "string" ? item.kind : "other"}
+                </Badge>
+                <Badge variant={item.strength === "verified" ? "secondary" : "outline"}>
+                  {typeof item.strength === "string" ? item.strength : "claimed"}
+                </Badge>
+              </div>
+            </div>
+            <p className="compile-state-text">
+              {typeof item.summary === "string" ? item.summary : "-"}
+            </p>
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function EpisodePrecedentsPanel({ trace }: { trace: Record<string, unknown> }) {
+  const precedents = traceRecordArray(trace, "episodePrecedents");
+  if (precedents.length === 0) {
+    return (
+      <article className="compile-pack-item">
+        <div className="compile-pack-item-header">
+          <strong>EpisodeCard Precedents</strong>
+          <Badge variant="outline">not recorded</Badge>
+        </div>
+        <p className="compile-state-text">No similar EpisodeCard precedents were stored.</p>
+      </article>
+    );
+  }
+  return (
+    <article className="compile-pack-item">
+      <div className="compile-pack-item-header">
+        <strong>EpisodeCard Precedents</strong>
+        <Badge variant="secondary">{precedents.length}</Badge>
+      </div>
+      <div className="compile-pack-items" style={{ marginTop: 10 }}>
+        {precedents.slice(0, 4).map((item) => (
+          <div
+            key={typeof item.episodeId === "string" ? item.episodeId : String(item.title)}
+            className="compile-pack-item"
+            style={{ padding: "10px 12px" }}
+          >
+            <div className="compile-pack-item-header">
+              <strong>{typeof item.title === "string" ? item.title : "Episode"}</strong>
+              <div className="compile-pack-item-meta">
+                <Badge variant={item.usedFor === "risk_cap" ? "destructive" : "outline"}>
+                  {typeof item.usedFor === "string" ? item.usedFor : "background"}
+                </Badge>
+                <Badge variant="outline">
+                  relevance{" "}
+                  {typeof item.topicalRelevanceScore === "number"
+                    ? Math.round(item.topicalRelevanceScore)
+                    : 0}
+                </Badge>
+              </div>
+            </div>
+            <p className="compile-state-text">
+              {typeof item.lesson === "string" && item.lesson
+                ? item.lesson
+                : typeof item.situation === "string"
+                  ? item.situation
+                  : "-"}
+            </p>
+          </div>
+        ))}
+      </div>
+    </article>
+  );
+}
+
+function RankingTraceSummaryPanel({ trace }: { trace: Record<string, unknown> }) {
+  const confidenceCaps = traceRecordArray(trace, "confidenceCaps");
+  const candidateTraces = traceRecordArray(trace, "candidateTraces");
+  const lowRelevanceSelected = candidateTraces.filter(
+    (item) =>
+      item.selected === true &&
+      typeof item.topicalRelevanceScore === "number" &&
+      item.topicalRelevanceScore < 70,
+  ).length;
+  return (
+    <article className="compile-pack-item">
+      <div className="compile-pack-item-header">
+        <strong>Selection Quality</strong>
+        <Badge variant={lowRelevanceSelected > 0 ? "destructive" : "secondary"}>
+          low relevance selected {lowRelevanceSelected}
+        </Badge>
+      </div>
+      <div className="compile-metric-grid" style={{ marginTop: 8 }}>
+        <Metric label="Direct Evidence" value={`${traceNumber(trace, "directEvidenceRatio")}%`} />
+        <Metric label="Role Fit" value={`${traceNumber(trace, "roleFitPassRate")}%`} />
+        <Metric label="Topical Avg" value={`${traceNumber(trace, "topicalRelevanceAverage")}%`} />
+        <Metric label="Episode Risk" value={traceNumber(trace, "episodePrecedentRisk")} />
+      </div>
+      {confidenceCaps.length > 0 ? (
+        <div className="compile-code-badge-list" style={{ marginTop: 10 }}>
+          {confidenceCaps.map((item) => (
+            <code key={`${item.key}:${item.cap}`}>
+              {typeof item.key === "string" ? item.key : "cap"}{" "}
+              {typeof item.cap === "number" ? item.cap : 0}
+            </code>
+          ))}
+        </div>
+      ) : null}
     </article>
   );
 }
@@ -1083,6 +1239,9 @@ function DecisionDetailPane({
                 </p>
               </article>
               <KnowledgeAssessmentPanel trace={detail.run.confidenceTrace} />
+              <PrimaryEvidencePanel trace={detail.run.confidenceTrace} />
+              <EpisodePrecedentsPanel trace={detail.run.confidenceTrace} />
+              <RankingTraceSummaryPanel trace={detail.run.confidenceTrace} />
               <DecisionSignalSummaryPanel trace={detail.run.confidenceTrace} />
               <ReliabilityGatePanel trace={detail.run.confidenceTrace} />
               <KnowledgePriorPanel

@@ -272,6 +272,7 @@ export const doctorReportSchema = z.object({
     queuedEffectsCount: z.number().int().nonnegative(),
     degradedDecisionsCount: z.number().int().nonnegative(),
     requiredZeroEvidenceCount: z.number().int().nonnegative(),
+    lowRelevanceSelectedEvidenceCount: z.number().int().nonnegative(),
     ghAvailable: z.boolean(),
     nextActions: z.array(z.string()),
   }),

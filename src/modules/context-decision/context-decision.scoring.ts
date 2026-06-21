@@ -1,15 +1,20 @@
 import type {
   ContextDecisionConfidenceTrace,
   ContextDecisionEvidenceRole,
+  ContextDecisionEpisodePrecedent,
   ContextDecisionInput,
+  ContextDecisionPrimaryEvidence,
+  ContextDecisionRoleFit,
 } from "../../shared/schemas/context-decision.schema.js";
 import type { KnowledgeSearchResult } from "../knowledge/knowledge.repository.js";
+import type { DecisionKnowledgeAnalysis } from "./context-decision.relevance.js";
 import type { DecisionSignalBundle } from "./context-decision.signals.js";
 
 export type DecisionEvidenceCandidate = {
   knowledge: KnowledgeSearchResult;
   role: ContextDecisionEvidenceRole;
   signals?: DecisionSignalBundle;
+  analysis?: DecisionKnowledgeAnalysis;
 };
 
 function clamp(value: number, min = 0, max = 100): number {
@@ -94,16 +99,53 @@ function scoreKnowledge(item: DecisionEvidenceCandidate): number {
   );
 }
 
+function strongestPrimaryEvidence(
+  primaryEvidence: ContextDecisionPrimaryEvidence[],
+): ContextDecisionPrimaryEvidence["strength"] | "none" {
+  const order: Array<ContextDecisionPrimaryEvidence["strength"]> = [
+    "verified",
+    "observed",
+    "claimed",
+    "inferred",
+  ];
+  for (const strength of order) {
+    if (primaryEvidence.some((item) => item.strength === strength)) return strength;
+  }
+  return "none";
+}
+
+function roleFitPass(role: ContextDecisionEvidenceRole, roleFit: ContextDecisionRoleFit): boolean {
+  if (role === "selected_support" || role === "user_preference") {
+    return roleFit.classification === "direct_support";
+  }
+  if (role === "risk_warning") {
+    return (
+      roleFit.classification === "direct_risk" ||
+      roleFit.classification === "verification_requirement"
+    );
+  }
+  if (role === "counter_evidence" || role === "rejected_alternative") {
+    return (
+      roleFit.classification === "counter_evidence" || roleFit.classification === "direct_risk"
+    );
+  }
+  return false;
+}
+
 export function scoreContextDecision(params: {
   input: ContextDecisionInput;
   evidence: DecisionEvidenceCandidate[];
   coverage: Array<{ queryRole: string; hitCount: number }>;
   relatedBadSignalCount: number;
+  primaryEvidence?: ContextDecisionPrimaryEvidence[];
+  episodePrecedents?: ContextDecisionEpisodePrecedent[];
 }): {
   confidence: number;
   status: "completed" | "degraded";
   trace: ContextDecisionConfidenceTrace;
 } {
+  const primaryEvidence = params.primaryEvidence ?? [];
+  const episodePrecedents = params.episodePrecedents ?? [];
   const selectedSupport = params.evidence.filter((item) => item.role === "selected_support");
   const counterEvidence = params.evidence.filter(
     (item) => item.role === "counter_evidence" || item.role === "rejected_alternative",
@@ -139,7 +181,7 @@ export function scoreContextDecision(params: {
   }
 
   const riskPenalty = Math.min(18, counterScore * 0.18);
-  const confidence = clamp(
+  const uncappedConfidence = clamp(
     supportScore * 0.45 +
       preferenceScore * 0.12 +
       coverageScore * 0.18 +
@@ -148,6 +190,79 @@ export function scoreContextDecision(params: {
       riskPenalty,
   );
   const status = selectedSupport.length === 0 || coverageScore < 45 ? "degraded" : "completed";
+  const topicalScores = params.evidence
+    .map((item) => item.analysis?.topicalRelevanceScore)
+    .filter((item): item is number => typeof item === "number");
+  const roleFits = params.evidence
+    .map((item) => ({ role: item.role, roleFit: item.analysis?.roleFit }))
+    .filter(
+      (item): item is { role: ContextDecisionEvidenceRole; roleFit: ContextDecisionRoleFit } =>
+        Boolean(item.roleFit),
+    );
+  const directKnowledgeCount = params.evidence.filter((item) => {
+    const analysis = item.analysis;
+    if (!analysis || analysis.topicalRelevanceScore < 70) return false;
+    return roleFitPass(item.role, analysis.roleFit);
+  }).length;
+  const strongPrimaryCount = primaryEvidence.filter(
+    (item) => item.strength === "verified" || item.strength === "observed",
+  ).length;
+  const directEvidenceRatio = clamp(
+    ((directKnowledgeCount + strongPrimaryCount) /
+      Math.max(1, params.evidence.length + primaryEvidence.length)) *
+      100,
+  );
+  const primaryEvidenceStrength = strongestPrimaryEvidence(primaryEvidence);
+  const roleFitPassRate =
+    roleFits.length === 0
+      ? 0
+      : clamp(
+          (roleFits.filter((item) => roleFitPass(item.role, item.roleFit)).length /
+            roleFits.length) *
+            100,
+        );
+  const topicalRelevanceAverage = clamp(average(topicalScores));
+  const episodePrecedentRisk = episodePrecedents.filter(
+    (item) => item.usedFor === "risk_cap",
+  ).length;
+  const confidenceCaps: NonNullable<ContextDecisionConfidenceTrace["confidenceCaps"]> = [];
+  const addCap = (key: string, cap: number, reason: string) => {
+    confidenceCaps.push({ key, cap, reason });
+  };
+  const hasEvidenceDirectnessContext =
+    primaryEvidence.length > 0 || params.evidence.some((item) => item.analysis);
+  if (
+    primaryEvidence.length > 0 &&
+    primaryEvidence.every((item) => item.strength === "claimed" || item.strength === "inferred")
+  ) {
+    addCap(
+      "primary_evidence_claimed_or_inferred",
+      55,
+      "Primary evidence is missing or only claimed/inferred.",
+    );
+  }
+  if (hasEvidenceDirectnessContext && directEvidenceRatio < 30) {
+    addCap("low_direct_evidence_ratio", 45, "Direct evidence ratio is below 30%.");
+  }
+  if (roleFits.length > 0 && roleFitPassRate < 50) {
+    addCap("low_role_fit_pass_rate", 60, "Role fit pass rate is below 50%.");
+  }
+  if (episodePrecedentRisk > 0) {
+    addCap(
+      "failure_episode_precedent",
+      65,
+      "High-relevance failure or mixed EpisodeCard precedent is present.",
+    );
+  }
+  if (status === "degraded") {
+    addCap("degraded_status", 70, "Decision scoring status is degraded.");
+  }
+  const confidenceCap = confidenceCaps.reduce<number | null>(
+    (current, item) => (current === null ? item.cap : Math.min(current, item.cap)),
+    null,
+  );
+  const confidence =
+    confidenceCap === null ? uncappedConfidence : Math.min(uncappedConfidence, confidenceCap);
   const trace = {
     supportScore,
     counterScore,
@@ -158,6 +273,14 @@ export function scoreContextDecision(params: {
     historicalFeedbackScore,
     finalConfidence: confidence,
     forcedRules,
+    primaryEvidence,
+    episodePrecedents,
+    directEvidenceRatio,
+    primaryEvidenceStrength,
+    episodePrecedentRisk,
+    topicalRelevanceAverage,
+    roleFitPassRate,
+    confidenceCaps,
   };
   return { confidence, status, trace };
 }

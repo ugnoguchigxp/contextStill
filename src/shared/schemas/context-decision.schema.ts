@@ -195,8 +195,59 @@ export type ContextDecisionCandidateTrace = {
   feedbackSignalScore: number;
   finalCandidateScore: number;
   selected: boolean;
+  selectionStage?:
+    | "retrieved"
+    | "relevance_filtered"
+    | "role_fit_classified"
+    | "selected"
+    | "suppressed";
+  topicalRelevanceScore?: number;
+  topicalRelevanceReason?: string;
+  roleFit?: ContextDecisionRoleFit;
   selectionReason: string | null;
   rejectionReason: string | null;
+};
+
+export type ContextDecisionPrimaryEvidence = {
+  kind:
+    | "git_status"
+    | "verification_result"
+    | "file_state"
+    | "db_row"
+    | "runtime_log"
+    | "user_instruction"
+    | "other";
+  title: string;
+  summary: string;
+  strength: "verified" | "observed" | "claimed" | "inferred";
+  sourceRef?: string;
+  metadata?: Record<string, unknown>;
+};
+
+export type ContextDecisionEpisodePrecedent = {
+  episodeId: string;
+  title: string;
+  situation: string;
+  action: string;
+  outcome: string;
+  lesson: string;
+  outcomeKind: "success" | "failure" | "mixed" | "unknown";
+  evidenceStatus: "verified" | "partial" | "unverified";
+  topicalRelevanceScore: number;
+  usedFor: "risk_cap" | "background" | "support_hint";
+  refs: string[];
+};
+
+export type ContextDecisionRoleFit = {
+  classification:
+    | "direct_support"
+    | "direct_risk"
+    | "counter_evidence"
+    | "verification_requirement"
+    | "procedural_background"
+    | "off_topic";
+  confidence: number;
+  reason: string;
 };
 
 export type ContextDecisionKnowledgePrior = {
@@ -250,6 +301,18 @@ export type ContextDecisionConfidenceTrace = {
   historicalFeedbackScore: number;
   finalConfidence: number;
   forcedRules: string[];
+  primaryEvidence?: ContextDecisionPrimaryEvidence[];
+  episodePrecedents?: ContextDecisionEpisodePrecedent[];
+  directEvidenceRatio?: number;
+  primaryEvidenceStrength?: ContextDecisionPrimaryEvidence["strength"] | "none";
+  episodePrecedentRisk?: number;
+  topicalRelevanceAverage?: number;
+  roleFitPassRate?: number;
+  confidenceCaps?: Array<{
+    key: string;
+    cap: number;
+    reason: string;
+  }>;
   signalStatus?: {
     status: "complete" | "partial" | "failed";
     evidenceCount: number;

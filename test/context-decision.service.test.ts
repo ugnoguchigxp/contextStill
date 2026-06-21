@@ -11,6 +11,7 @@ const mockInsertContextDecisionEvidenceRows = vi.fn();
 const mockInsertContextDecisionCoverageRows = vi.fn();
 const mockMarkContextDecisionRunFailed = vi.fn();
 const mockLoadDecisionSignalBundles = vi.fn();
+const mockSearchEpisodes = vi.fn();
 
 vi.mock("../src/modules/knowledge/knowledge.repository.js", () => ({
   searchKnowledge: (...args: any[]) => mockSearchKnowledge(...args),
@@ -31,6 +32,10 @@ vi.mock("../src/modules/context-decision/context-decision.repository.js", () => 
 
 vi.mock("../src/modules/context-decision/context-decision.signals.repository.js", () => ({
   loadDecisionSignalBundles: (...args: any[]) => mockLoadDecisionSignalBundles(...args),
+}));
+
+vi.mock("../src/modules/episodic-memory/episode-card.service.js", () => ({
+  searchEpisodes: (...args: any[]) => mockSearchEpisodes(...args),
 }));
 
 // settings.service.js のモック
@@ -58,7 +63,7 @@ function createDummyKnowledge(
     polarity: overrides.polarity ?? "positive",
     intentTags: overrides.intentTags ?? [],
     title: "Dummy Rule",
-    body: "This is a test rule body.",
+    body: "Proceed with the TypeScript implementation when verification evidence supports the current decision.",
     confidence: 90,
     importance: 80,
     score: 0.9,
@@ -77,6 +82,39 @@ function createDummyKnowledge(
     decayFactor: 1,
     applicabilityScore: 30,
     applicabilityMatches: { technologies: [], changeTypes: [], domains: [], general: true },
+    ...overrides,
+  };
+}
+
+function createDummyEpisode(overrides: Record<string, unknown> = {}) {
+  return {
+    id: "episode-1",
+    title: "Migration failure precedent",
+    situation: "A similar implementation failed verification.",
+    observations: "",
+    action: "The agent revised scope before continuing.",
+    outcome: "The risk was avoided.",
+    lesson: "Revise implementation when direct verification is missing.",
+    applicability: {},
+    antiApplicability: {},
+    domains: ["decision"],
+    technologies: ["typescript"],
+    changeTypes: ["implementation"],
+    tools: [],
+    repoPath: null,
+    repoKey: null,
+    sourceKind: "manual",
+    sourceKey: "episode-1",
+    outcomeKind: "failure",
+    confidence: 90,
+    evidenceStatus: "verified",
+    status: "active",
+    staleAt: null,
+    metadata: {},
+    createdAt: new Date("2026-06-20T00:00:00.000Z"),
+    updatedAt: new Date("2026-06-20T00:00:00.000Z"),
+    score: 15,
+    refs: [],
     ...overrides,
   };
 }
@@ -101,6 +139,7 @@ describe("context-decision.service", () => {
       reason: "test signals",
       bundles: new Map(),
     });
+    mockSearchEpisodes.mockResolvedValue([]);
     mockResolveAgenticCompileRouting.mockReturnValue({
       enabled: true,
       provider: "mock-llm",
@@ -115,7 +154,15 @@ describe("context-decision.service", () => {
     mockSearchKnowledge.mockImplementation(async (params: any) => {
       const q = params.query.toLowerCase();
       if (q.includes("safe to execute")) {
-        return [createDummyKnowledge({ id: "kb-support", title: "Standard Support Rule" })];
+        return [
+          createDummyKnowledge({
+            id: "kb-support",
+            title: "Standard Support Rule",
+            body: "Verify code implementation with TypeScript chore testing evidence, then safe execute and proceed.",
+            score: 1,
+            applicabilityScore: 100,
+          }),
+        ];
       }
       return [];
     });
@@ -164,8 +211,9 @@ describe("context-decision.service", () => {
     const result = await decideContext(input);
 
     expect(result.decision).toBe("revise_and_execute");
-    expect(result.confidence).toBe(68);
-    expect(result.agentMessage).toContain("決定は revise_and_execute です");
+    expect(result.confidence).toBe(55);
+    expect(result.agentMessage).toContain("判断は revise_and_execute です");
+    expect(result.agentMessage).toContain("根拠が限定的");
     const answerPrompt = mockLlmProvider.chat.mock.calls[1]?.[0]?.messages?.[1]?.content as string;
     expect(answerPrompt).toContain("Reliability Gate trace:");
     expect(answerPrompt).toContain("weak_coverage_requires_revision");
@@ -218,7 +266,15 @@ describe("context-decision.service", () => {
     mockSearchKnowledge.mockImplementation(async (params: any) => {
       const q = params.query.toLowerCase();
       if (q.includes("safe to execute")) {
-        return [createDummyKnowledge({ id: "kb-support", title: "Standard Support Rule" })];
+        return [
+          createDummyKnowledge({
+            id: "kb-support",
+            title: "Standard Support Rule",
+            body: "Verify code implementation with TypeScript chore testing evidence, then safe execute and proceed.",
+            score: 1,
+            applicabilityScore: 100,
+          }),
+        ];
       }
       return [];
     });
@@ -265,8 +321,9 @@ describe("context-decision.service", () => {
     const result = await decideContext(input);
 
     expect(result.decision).toBe("revise_and_execute");
-    expect(result.confidence).toBe(71); // scored.trace.finalConfidence
-    expect(result.agentMessage).toBe("決定は revise_and_execute です。");
+    expect(result.confidence).toBe(55); // capped by claimed/inferred primary evidence calibration
+    expect(result.agentMessage).toContain("判断は revise_and_execute です");
+    expect(result.agentMessage).toContain("根拠が限定的");
   });
 
   test("decideContext triggers override safety alignment when LLM overrides Knowledge Assessment but reasoning summary is missing required override explanation", async () => {
@@ -404,8 +461,9 @@ describe("context-decision.service", () => {
     const supportKnowledge = createDummyKnowledge({
       id: "kb-support",
       title: "Support rule",
-      body: "Proceed when implementation evidence is available.",
+      body: "Continue implementation decision with TypeScript implementation decision evidence, then safe execute and proceed.",
       score: 0.9,
+      applicabilityScore: 100,
     });
     const counterKnowledge = createDummyKnowledge({
       id: "kb-counter",
@@ -473,8 +531,9 @@ describe("context-decision.service", () => {
     const supportKnowledge = createDummyKnowledge({
       id: "kb-support",
       title: "Support rule",
-      body: "Proceed when implementation evidence is available.",
+      body: "Continue implementation decision with TypeScript implementation decision evidence, then safe execute and proceed.",
       score: 0.9,
+      applicabilityScore: 100,
     });
     const riskKnowledge = createDummyKnowledge({
       id: "kb-risk-positive",
@@ -579,7 +638,7 @@ describe("context-decision.service", () => {
       metadata: {},
     });
 
-    expect(result.decision).toBe("escalate");
+    expect(result.decision).toBe("revise_and_execute");
     const persistedEvidence = mockInsertContextDecisionEvidenceRows.mock.calls[0]?.[1] as Array<{
       knowledgeId: string | null;
       role: string;
@@ -596,8 +655,9 @@ describe("context-decision.service", () => {
     const supportKnowledge = createDummyKnowledge({
       id: "kb-support",
       title: "Support rule",
-      body: "Proceed when implementation evidence is available.",
+      body: "Continue implementation decision with TypeScript implementation decision evidence, then safe execute and proceed.",
       score: 0.9,
+      applicabilityScore: 100,
     });
     mockSearchKnowledge.mockImplementation(async (params: any) => {
       const q = params.query.toLowerCase();
@@ -692,6 +752,16 @@ describe("context-decision.service", () => {
       retrievalHints: {
         technologies: ["typescript"],
       },
+      metadata: {
+        primaryEvidence: [
+          {
+            kind: "verification_result",
+            title: "Failed verification",
+            summary: "The verification command failed before retrieval.",
+            strength: "observed",
+          },
+        ],
+      },
     };
 
     const result = await decideContext(input);
@@ -704,6 +774,15 @@ describe("context-decision.service", () => {
         status: "failed",
         confidenceTrace: expect.objectContaining({
           forcedRules: ["retrieval_or_decision_failure_escalate"],
+          primaryEvidence: [
+            expect.objectContaining({
+              title: "Failed verification",
+              strength: "observed",
+            }),
+          ],
+        }),
+        input: expect.objectContaining({
+          metadata: {},
         }),
       }),
     );
@@ -818,5 +897,190 @@ describe("context-decision.service", () => {
     expect(result.agentMessage).toContain("evidence insert failed");
     expect(mockInsertContextDecisionRun).toHaveBeenCalledTimes(1);
     expect(mockMarkContextDecisionRunFailed).toHaveBeenCalledTimes(1);
+  });
+
+  test("stores primary evidence in confidence trace and caps claimed-only confidence", async () => {
+    mockSearchKnowledge.mockImplementation(async (params: any) => {
+      const q = params.query.toLowerCase();
+      if (q.includes("safe to execute")) {
+        return [
+          createDummyKnowledge({
+            id: "kb-support",
+            title: "Implementation evidence support",
+            body: "Proceed with the implementation when direct verification evidence is present.",
+            score: 0.95,
+            applicabilityScore: 80,
+          }),
+        ];
+      }
+      return [];
+    });
+    mockResolveAgenticCompileRouting.mockReturnValueOnce({
+      enabled: false,
+      provider: "mock-llm",
+      timeoutMs: 5000,
+      fallback: "local-llm",
+      azureDeploymentSlots: [],
+    });
+
+    await decideContext({
+      decisionPoint: "continue implementation with claimed verification evidence",
+      retrievalHints: {
+        technologies: ["typescript"],
+        changeTypes: ["implementation"],
+        domains: ["decision"],
+      },
+      metadata: {
+        primaryEvidence: [
+          {
+            kind: "verification_result",
+            title: "Claimed verification",
+            summary: "User says tests passed, but no command output is attached.",
+            strength: "claimed",
+          },
+        ],
+      },
+    });
+
+    expect(mockInsertContextDecisionRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        confidence: expect.any(Number),
+        confidenceTrace: expect.objectContaining({
+          primaryEvidence: [
+            expect.objectContaining({
+              kind: "verification_result",
+              strength: "claimed",
+            }),
+          ],
+          confidenceCaps: expect.arrayContaining([
+            expect.objectContaining({
+              key: "primary_evidence_claimed_or_inferred",
+              cap: 55,
+            }),
+          ]),
+        }),
+      }),
+    );
+    const runParams = mockInsertContextDecisionRun.mock.calls[0]?.[0];
+    expect(runParams.confidence).toBeLessThanOrEqual(55);
+    expect(runParams.input.metadata.primaryEvidence).toBeUndefined();
+  });
+
+  test("keeps EpisodeCard precedents separate from Knowledge evidence and applies failure cap", async () => {
+    mockSearchEpisodes.mockResolvedValueOnce([createDummyEpisode()]);
+    mockSearchKnowledge.mockImplementation(async (params: any) => {
+      const q = params.query.toLowerCase();
+      if (q.includes("safe to execute")) {
+        return [
+          createDummyKnowledge({
+            id: "kb-support",
+            title: "Implementation support",
+            body: "Proceed with the implementation when verification evidence is present.",
+            score: 0.95,
+            applicabilityScore: 80,
+          }),
+        ];
+      }
+      return [];
+    });
+    mockResolveAgenticCompileRouting.mockReturnValueOnce({
+      enabled: false,
+      provider: "mock-llm",
+      timeoutMs: 5000,
+      fallback: "local-llm",
+      azureDeploymentSlots: [],
+    });
+
+    await decideContext({
+      decisionPoint: "continue implementation after similar verification failure",
+      retrievalHints: {
+        technologies: ["typescript"],
+        changeTypes: ["implementation"],
+        domains: ["decision"],
+      },
+      metadata: {
+        primaryEvidence: [
+          {
+            kind: "verification_result",
+            title: "Observed test run",
+            summary: "A local verification command was observed.",
+            strength: "observed",
+          },
+        ],
+      },
+    });
+
+    const runParams = mockInsertContextDecisionRun.mock.calls[0]?.[0];
+    expect(runParams.confidenceTrace.episodePrecedents).toEqual([
+      expect.objectContaining({
+        episodeId: "episode-1",
+        usedFor: "risk_cap",
+        evidenceStatus: "verified",
+      }),
+    ]);
+    expect(runParams.confidenceTrace.confidenceCaps).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({ key: "failure_episode_precedent", cap: 65 }),
+      ]),
+    );
+    const persistedEvidence = mockInsertContextDecisionEvidenceRows.mock.calls[0]?.[1] as Array<{
+      knowledgeId: string | null;
+    }>;
+    expect(persistedEvidence.some((item) => item.knowledgeId === "episode-1")).toBe(false);
+  });
+
+  test("filters low relevance support into ranking trace instead of selected support", async () => {
+    const unrelatedKnowledge = createDummyKnowledge({
+      id: "kb-unrelated",
+      title: "Dashboard editor cache rule",
+      body: "Cache regex editor state for dashboard previews.",
+      score: 0.25,
+      applicabilityScore: 0,
+    });
+    mockSearchKnowledge.mockImplementation(async (params: any) => {
+      const q = params.query.toLowerCase();
+      if (q.includes("safe to execute")) return [unrelatedKnowledge];
+      return [];
+    });
+    mockResolveAgenticCompileRouting.mockReturnValueOnce({
+      enabled: false,
+      provider: "mock-llm",
+      timeoutMs: 5000,
+      fallback: "local-llm",
+      azureDeploymentSlots: [],
+    });
+
+    await decideContext({
+      decisionPoint: "fix docs link failure from git status deletion",
+      retrievalHints: {
+        technologies: ["markdown"],
+        changeTypes: ["docs"],
+        domains: ["documentation"],
+      },
+      metadata: {},
+    });
+
+    const persistedEvidence = mockInsertContextDecisionEvidenceRows.mock.calls[0]?.[1] ?? [];
+    expect(persistedEvidence).not.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          knowledgeId: "kb-unrelated",
+          role: "selected_support",
+        }),
+      ]),
+    );
+    expect(mockInsertContextDecisionRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        confidenceTrace: expect.objectContaining({
+          candidateTraces: expect.arrayContaining([
+            expect.objectContaining({
+              knowledgeId: "kb-unrelated",
+              selectionStage: "relevance_filtered",
+              selected: false,
+            }),
+          ]),
+        }),
+      }),
+    );
   });
 });

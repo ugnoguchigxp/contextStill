@@ -19,6 +19,15 @@ export type ContextDecisionCandidateTrace = {
   feedbackSignalScore: number;
   finalCandidateScore: number;
   selected: boolean;
+  selectionStage?:
+    | "retrieved"
+    | "relevance_filtered"
+    | "role_fit_classified"
+    | "selected"
+    | "suppressed";
+  topicalRelevanceScore?: number;
+  topicalRelevanceReason?: string;
+  roleFit?: import("../../shared/schemas/context-decision.schema.js").ContextDecisionRoleFit;
   selectionReason: string | null;
   rejectionReason: string | null;
 };
@@ -111,13 +120,6 @@ function roleAttempted(
   return coverage.some((item) => item.queryRole === role);
 }
 
-function roleHits(
-  coverage: ContextDecisionCoverageAssessmentInput[],
-  role: ContextDecisionCoverageQueryRole,
-): KnowledgeSearchResult[] {
-  return coverage.filter((item) => item.queryRole === role).flatMap((item) => item.hits);
-}
-
 function strength(items: KnowledgeSearchResult[]): number {
   return clamp(average(items.map(finalCandidateScore)));
 }
@@ -151,14 +153,12 @@ export function assessContextDecisionKnowledge(params: {
   const support = roleSelected(params.evidence, "selected_support");
   const preferences = roleSelected(params.evidence, "user_preference");
   const risks = roleSelected(params.evidence, "risk_warning");
+  const selectedCounterEvidence = roleSelected(params.evidence, "counter_evidence");
   const supportStrength = strength(support);
   const preferenceAlignment = strength(preferences);
   const riskStrength = strength(risks);
   const selectedIds = new Set(params.evidence.map((item) => item.knowledge.id));
-  const counterOnlyHits = roleHits(params.coverage, "counter_evidence").filter(
-    (item) => !selectedIds.has(item.id),
-  );
-  const counterEvidenceStrength = strength(counterOnlyHits.slice(0, 3));
+  const counterEvidenceStrength = strength(selectedCounterEvidence.slice(0, 3));
   const selectedTraces = params.candidateTraces.filter((trace) =>
     selectedIds.has(trace.knowledgeId),
   );
@@ -181,7 +181,11 @@ export function assessContextDecisionKnowledge(params: {
   const outOfDistributionScore = clamp(
     100 - knowledgeCoverage * 0.55 - applicabilityScore * 0.25 - supportStrength * 0.2,
   );
-  const hasUsableEvidence = support.length > 0 || preferences.length > 0;
+  const hasUsableEvidence =
+    support.length > 0 ||
+    preferences.length > 0 ||
+    risks.length > 0 ||
+    selectedCounterEvidence.length > 0;
   const missingRequiredCoverage =
     !roleAttempted(params.coverage, "counter_evidence") ||
     !roleAttempted(params.coverage, "risk") ||
@@ -206,7 +210,7 @@ export function assessContextDecisionKnowledge(params: {
   if (support.length > 0) {
     meaningfulMetrics.push(metric("supportStrength", "Support", supportStrength));
   }
-  if (counterOnlyHits.length > 0) {
+  if (selectedCounterEvidence.length > 0) {
     meaningfulMetrics.push(metric("counterEvidenceStrength", "Counter", counterEvidenceStrength));
   }
   if (risks.length > 0) {
@@ -218,7 +222,7 @@ export function assessContextDecisionKnowledge(params: {
   if (selectedTraces.some((trace) => trace.facetScore > 0)) {
     meaningfulMetrics.push(metric("applicabilityScore", "Applicability", applicabilityScore));
   }
-  if (support.length > 0 && counterOnlyHits.length > 0) {
+  if (support.length > 0 && selectedCounterEvidence.length > 0) {
     meaningfulMetrics.push(metric("consensusScore", "Consensus", consensusScore));
     meaningfulMetrics.push(metric("conflictScore", "Conflict", conflictScore));
   }

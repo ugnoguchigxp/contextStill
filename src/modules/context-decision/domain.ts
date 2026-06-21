@@ -18,4 +18,7 @@ export type {
   ContextDecisionStatus,
   ContextDecisionValue,
   ContextDecisionConfidenceTrace,
+  ContextDecisionEpisodePrecedent,
+  ContextDecisionPrimaryEvidence,
+  ContextDecisionRoleFit,
 } from "../../shared/schemas/context-decision.schema.js";

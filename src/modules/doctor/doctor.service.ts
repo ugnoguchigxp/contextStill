@@ -132,6 +132,7 @@ function createUnavailableContextDecisionReport(): DoctorReport["contextDecision
     queuedEffectsCount: 0,
     degradedDecisionsCount: 0,
     requiredZeroEvidenceCount: 0,
+    lowRelevanceSelectedEvidenceCount: 0,
     ghAvailable: false,
     nextActions: ["Restore database connectivity before inspecting context_decision."],
   };

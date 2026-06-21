@@ -1012,5 +1012,12 @@ export async function getContextDecisionMetricsSqlite(): Promise<ContextDecision
             and e.role = 'selected_support'
         )
     `),
+    lowRelevanceSelectedEvidenceCount: count(`
+      select count(*) as count
+      from context_decision_evidence
+      where role in ('selected_support', 'counter_evidence', 'rejected_alternative')
+        and json_extract(metadata, '$.topicalRelevanceScore') is not null
+        and json_extract(metadata, '$.topicalRelevanceScore') < 70
+    `),
   };
 }

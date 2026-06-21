@@ -40,6 +40,7 @@ export async function inspectContextDecision(params: {
         queuedEffectsCount: 0,
         degradedDecisionsCount: 0,
         requiredZeroEvidenceCount: 0,
+        lowRelevanceSelectedEvidenceCount: 0,
         ghAvailable,
         nextActions: ["Run database migrations for context_decision tables."],
       },
@@ -55,6 +56,9 @@ export async function inspectContextDecision(params: {
   }
   if (metrics.requiredZeroEvidenceCount > 0) {
     reasons.push("CONTEXT_DECISION_REQUIRED_ZERO_EVIDENCE");
+  }
+  if (metrics.lowRelevanceSelectedEvidenceCount > 0) {
+    reasons.push("CONTEXT_DECISION_LOW_RELEVANCE_SELECTED_EVIDENCE");
   }
   if (!ghAvailable) {
     reasons.push("CONTEXT_DECISION_GH_UNAVAILABLE");
@@ -75,6 +79,7 @@ export async function inspectContextDecision(params: {
       queuedEffectsCount: metrics.queuedEffectsCount,
       degradedDecisionsCount: metrics.degradedDecisionsCount,
       requiredZeroEvidenceCount: metrics.requiredZeroEvidenceCount,
+      lowRelevanceSelectedEvidenceCount: metrics.lowRelevanceSelectedEvidenceCount,
       ghAvailable,
       nextActions: [
         ...(metrics.escalateRate >= 0.1 && metrics.totalDecisions > 0
@@ -90,6 +95,11 @@ export async function inspectContextDecision(params: {
         ...(metrics.requiredZeroEvidenceCount > 0
           ? [
               `Inspect required Knowledge decisions with zero support evidence (${metrics.requiredZeroEvidenceCount}).`,
+            ]
+          : []),
+        ...(metrics.lowRelevanceSelectedEvidenceCount > 0
+          ? [
+              `Inspect low-relevance selected context_decision evidence (${metrics.lowRelevanceSelectedEvidenceCount}).`,
             ]
           : []),
         ...(!ghAvailable ? ["Install/authenticate GitHub CLI for PR discard feedback scans."] : []),
