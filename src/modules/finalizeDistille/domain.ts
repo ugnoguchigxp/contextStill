@@ -35,7 +35,7 @@ import {
   restructureProcedureCandidate,
 } from "./anonymization.service.js";
 import { findSourceFragmentByReference, selectKnowledgeByFinalizeSourceUri } from "./repository.js";
-import { linkKnowledgeToSourceFragment } from "./source-link.repository.js";
+import { linkKnowledgeToOrigin, linkKnowledgeToSourceFragment } from "./source-link.repository.js";
 
 export type FinalizeDistilleInput = {
   coverEvidenceResultId: string;
@@ -121,6 +121,52 @@ async function linkResolvableSourceReferences(params: {
     linked += 1;
   }
   return linked;
+}
+
+function originKindForFinalizeContext(
+  context: FinalizeCandidateContext,
+):
+  | "vibe_memory"
+  | "episode_card"
+  | "agent_candidate"
+  | "landscape_review_item"
+  | "review_finding"
+  | "external_review_run"
+  | "review_correction" {
+  if (context.targetKind === "vibe_memory") return "vibe_memory";
+  if (context.sourceUri.startsWith("landscape://")) return "landscape_review_item";
+  if (context.sourceUri.startsWith("review:") || context.sourceUri.startsWith("manual_review:")) {
+    return "review_finding";
+  }
+  if (context.targetKind === "knowledge_candidate") return "agent_candidate";
+  if (context.targetKind === "web_ingest") return "external_review_run";
+  return "agent_candidate";
+}
+
+async function linkNegativeKnowledgeOrigin(params: {
+  knowledgeId: string;
+  candidateContext: FinalizeCandidateContext;
+  coverEvidenceResultId: string;
+  confidence: number;
+  enabled: boolean;
+}): Promise<void> {
+  if (!params.enabled) return;
+  const originUri = params.candidateContext.sourceUri.trim();
+  if (!originUri) return;
+  await linkKnowledgeToOrigin({
+    knowledgeId: params.knowledgeId,
+    originKind: originKindForFinalizeContext(params.candidateContext),
+    originUri,
+    originKey: params.candidateContext.targetKey || originUri,
+    confidence: params.confidence,
+    metadata: {
+      source: "finalizeDistille",
+      coverEvidenceResultId: params.coverEvidenceResultId,
+      findCandidateResultId: params.candidateContext.findCandidateResultId ?? null,
+      foundCandidateId: params.candidateContext.foundCandidateId || null,
+      targetKind: params.candidateContext.targetKind,
+    },
+  });
 }
 
 function rejectedResult(
@@ -403,8 +449,21 @@ export async function runFinalizeDistille(
     });
   }
 
+  const negativeEvent = result.toolEvents.find((e) => e.name === "negative_coverage" && e.ok);
+  const isNegativeKnowledge =
+    negativeEvent?.metadata && typeof negativeEvent.metadata === "object"
+      ? (negativeEvent.metadata as any).polarity === "negative"
+      : false;
+
   const existing = await selectKnowledgeByFinalizeSourceUri(sourceUri);
   if (existing) {
+    await linkNegativeKnowledgeOrigin({
+      knowledgeId: existing.id,
+      candidateContext,
+      coverEvidenceResultId,
+      confidence: unitConfidence(candidate.confidence),
+      enabled: isNegativeKnowledge,
+    });
     const sourceLinkCount = await linkResolvableSourceReferences({
       knowledgeId: existing.id,
       references: result.references,
@@ -468,7 +527,6 @@ export async function runFinalizeDistille(
 
   throwIfAborted(input.signal);
 
-  const negativeEvent = result.toolEvents.find((e) => e.name === "negative_coverage" && e.ok);
   const polarity =
     negativeEvent?.metadata && typeof negativeEvent.metadata === "object"
       ? (negativeEvent.metadata as any).polarity
@@ -492,6 +550,15 @@ export async function runFinalizeDistille(
     appliesTo: applicabilityFromCoverCandidate(candidate),
     metadata,
     embedding,
+  });
+
+  throwIfAborted(input.signal);
+  await linkNegativeKnowledgeOrigin({
+    knowledgeId,
+    candidateContext,
+    coverEvidenceResultId,
+    confidence: unitConfidence(candidate.confidence),
+    enabled: polarity === "negative",
   });
 
   throwIfAborted(input.signal);

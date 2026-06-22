@@ -447,6 +447,69 @@ describe("context-compiler repository", () => {
       expect(result?.knowledgeSignals[0]?.section).toBe("guardrails");
       expect(result?.knowledgeSignals[0]?.title).toBe("Guardrail Rule");
     });
+
+    test("exposes EpisodeCard selected items as episode signals without knowledge signals", async () => {
+      const mockRun = {
+        id: validPack.runId,
+        goal: validPack.goal,
+        retrievalMode: validPack.retrievalMode,
+        status: validPack.status,
+        degradedReasons: [],
+        durationMs: 100,
+        source: "ui",
+        createdAt: new Date("2026-05-15T00:00:00.000Z"),
+        tokenBudget: 5000,
+        input: { goal: validPack.goal, changeTypes: ["schema"] },
+        packSnapshot: {
+          ...validPack,
+          procedures: [
+            {
+              id: "episode_card:episode-1",
+              itemKind: "episode_card",
+              itemId: "episode-1",
+              section: "procedures",
+              title: "Past episode: SQLite migration recovery",
+              content: "Use when: precedent only.",
+              score: 0.72,
+              rankingReason: "supplemental EpisodeCard precedent",
+              sourceRefs: ["context-still://episodes/episode-1"],
+            },
+          ],
+        },
+      };
+      const mockItems = [
+        {
+          itemKind: "episode_card",
+          itemId: "episode-1",
+          section: "procedures",
+          score: 72,
+          rankingReason: "supplemental EpisodeCard precedent",
+          sourceRefs: ["context-still://episodes/episode-1"],
+        },
+      ];
+
+      (db.select as any)
+        .mockReturnValueOnce(createSelectChain({ limitResult: [mockRun] }))
+        .mockReturnValueOnce(createSelectChain({ orderByResult: mockItems }))
+        .mockReturnValueOnce(createSelectChain({ orderByResult: [] }))
+        .mockReturnValueOnce(createSelectChain({ orderByResult: [] }))
+        .mockReturnValueOnce(createSelectChain({ whereResult: [] }));
+
+      const result = await getCompileRunDetail(validPack.runId);
+
+      expect(result?.selectedItems).toEqual([
+        expect.objectContaining({ itemKind: "episode_card", itemId: "episode-1" }),
+      ]);
+      expect(result?.episodeSignals).toEqual([
+        {
+          episodeId: "episode-1",
+          title: "Past episode: SQLite migration recovery",
+          section: "procedures",
+          sourceRefs: ["context-still://episodes/episode-1"],
+        },
+      ]);
+      expect(result?.knowledgeSignals).toEqual([]);
+    });
   });
 
   describe("getCompileFreshnessMarkers", () => {

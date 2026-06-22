@@ -110,10 +110,10 @@
     "rust:queue:smoke": "bun scripts/rust-managed-queue-smoke.mjs",
     "rust:admin-api:smoke": "bun scripts/rust-admin-api-smoke.mjs",
     "rust:agent-log-sync:smoke": "bun scripts/rust-agent-log-sync-smoke.mjs",
-    "verify:mcp": "DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} bun run db:migrate && DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} bun run test:mcp:contract && DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} bun run mcp:smoke && DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} bun run doctor",
-    "verify:postgres": "bun run verify:mcp && bun run verify:queue:smoke",
+    "verify:mcp": "bun run rust:mcp:smoke && bun run mcp:smoke:sqlite",
+    "verify:postgres": "bun run test:mcp:contract && bun run verify:queue:smoke",
     "verify:queue:smoke": "DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} bun run db:migrate && DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} CONTEXT_STILL_RUN_DB_TESTS=1 bun test --timeout=30000 --max-concurrency=1 ./test/queue-smoke.operational.ts",
-    "verify:full": "bun run verify && bun run test:integration && bun run verify:mcp && bun run verify:queue:smoke",
+    "verify:full": "bun run verify && bun run verify:sqlite && bun run verify:rust-daemon",
     "test:mcp:contract": "DATABASE_URL=${CONTEXT_STILL_TEST_DATABASE_URL:-postgres://postgres:postgres@localhost:7889/context_still_test} CONTEXT_STILL_RUN_DB_TESTS=1 bun test --timeout=30000 --max-concurrency=1 test/mcp.contract.test.ts"
   },
   "dependencies": {

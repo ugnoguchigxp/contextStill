@@ -46,6 +46,7 @@ struct SurfaceOwnership {
 #[derive(Debug, Clone)]
 struct ResidentRuntimeState {
     owned_surfaces: SurfaceOwnership,
+    queue_last_checked_at: Option<Instant>,
     agent_log_sync_last_checked_at: Option<Instant>,
 }
 
@@ -53,6 +54,12 @@ impl ResidentRuntimeState {
     fn new<E: EnvProvider>(env: &E) -> Self {
         Self {
             owned_surfaces: SurfaceOwnership::default(),
+            queue_last_checked_at: if env_flag_default(env, "CONTEXT_STILL_QUEUE_RUN_AT_LOAD", true)
+            {
+                None
+            } else {
+                Some(Instant::now())
+            },
             agent_log_sync_last_checked_at: if env_flag_default(
                 env,
                 "CONTEXT_STILL_AGENT_LOG_SYNC_RUN_AT_LOAD",
@@ -108,9 +115,14 @@ pub fn run<E: EnvProvider, S: ProcessSupervisor>(
     })
     .map_err(|error| CliError::io(format!("failed to install signal handler: {error}")))?;
 
+    let reconcile_interval = Duration::from_secs(5);
+    let mut last_reconciled_at = Instant::now();
     while running.load(Ordering::SeqCst) {
-        thread::sleep(Duration::from_secs(5));
-        surfaces = ensure_surfaces(env, supervisor, &mut runtime_state)?;
+        thread::sleep(Duration::from_millis(250));
+        if last_reconciled_at.elapsed() >= reconcile_interval {
+            surfaces = ensure_surfaces(env, supervisor, &mut runtime_state)?;
+            last_reconciled_at = Instant::now();
+        }
     }
 
     let mut shutdown_surfaces =
@@ -133,23 +145,35 @@ fn ensure_surfaces<E: EnvProvider, S: ProcessSupervisor>(
     state: &mut ResidentRuntimeState,
 ) -> Result<Vec<ManagedSurfaceReport>, CliError> {
     let mut reports = Vec::new();
-    if env_flag_default(env, "CONTEXT_STILL_RESIDENT_MCP", true) {
+    let require_rust_only =
+        env_flag_default(env, "CONTEXT_STILL_RESIDENT_REQUIRE_RUST_ONLY", false);
+
+    if !env_flag_default(env, "CONTEXT_STILL_RESIDENT_MCP", true) {
+        reports.push(disabled_surface("mcp-server"));
+    } else if require_rust_only {
+        reports.push(blocked_temporary_sidecar("mcp-server"));
+    } else {
         let report = mcp_lifecycle::service::start_report(env, supervisor)?;
         reports.push(surface_report("mcp-server", true, report));
-    } else {
-        reports.push(disabled_surface("mcp-server"));
     }
 
-    if env_flag_default(env, "CONTEXT_STILL_RESIDENT_QUEUE", true) {
+    if !env_flag_default(env, "CONTEXT_STILL_RESIDENT_QUEUE", true) {
+        reports.push(disabled_surface("queue-supervisor"));
+    } else if require_rust_only {
+        reports.push(blocked_temporary_sidecar("queue-supervisor"));
+    } else if resident_queue_mode(env) == ResidentQueueMode::RustManagedOneShot {
+        reports.push(reconcile_queue_once(env, supervisor, state)?);
+    } else {
         let report = queue_lifecycle::service::start_report(env, supervisor)?;
         reports.push(surface_report("queue-supervisor", true, report));
-    } else {
-        reports.push(disabled_surface("queue-supervisor"));
     }
-    if env_flag_default(env, "CONTEXT_STILL_RESIDENT_AGENT_LOG_SYNC", true) {
-        reports.push(reconcile_agent_log_sync(env, supervisor, state)?);
-    } else {
+
+    if !env_flag_default(env, "CONTEXT_STILL_RESIDENT_AGENT_LOG_SYNC", true) {
         reports.push(disabled_surface("agent-log-sync"));
+    } else if require_rust_only {
+        reports.push(blocked_temporary_sidecar("agent-log-sync"));
+    } else {
+        reports.push(reconcile_agent_log_sync(env, supervisor, state)?);
     }
     state.owned_surfaces.merge_started(&reports);
     Ok(reports)
@@ -193,6 +217,67 @@ fn disabled_surface(name: &'static str) -> ManagedSurfaceReport {
         status: "disabled".to_string(),
         pid: None,
         message: format!("{name} disabled by resident runtime env"),
+    }
+}
+
+#[derive(Debug, Clone, Copy, Eq, PartialEq)]
+enum ResidentQueueMode {
+    RustManagedOneShot,
+    BunContinuous,
+}
+
+fn resident_queue_mode<E: EnvProvider>(env: &E) -> ResidentQueueMode {
+    match env.var("CONTEXT_STILL_RESIDENT_QUEUE_MODE").as_deref() {
+        Some("bun-continuous") | Some("legacy-bun-continuous") => ResidentQueueMode::BunContinuous,
+        _ => ResidentQueueMode::RustManagedOneShot,
+    }
+}
+
+fn reconcile_queue_once<E: EnvProvider, S: ProcessSupervisor>(
+    env: &E,
+    supervisor: &S,
+    state: &mut ResidentRuntimeState,
+) -> Result<ManagedSurfaceReport, CliError> {
+    let interval = Duration::from_millis(env_u64_default(
+        env,
+        "CONTEXT_STILL_RESIDENT_QUEUE_INTERVAL_MS",
+        5_000,
+    ));
+    if state
+        .queue_last_checked_at
+        .is_some_and(|last_checked| last_checked.elapsed() < interval)
+    {
+        return Ok(ManagedSurfaceReport {
+            name: "queue-supervisor",
+            enabled: true,
+            status: "scheduled".to_string(),
+            pid: None,
+            message: "queue-supervisor waiting for next Rust-managed one-shot tick".to_string(),
+        });
+    }
+
+    state.queue_last_checked_at = Some(Instant::now());
+    let report = queue_lifecycle::service::run_executor_once_report(
+        env,
+        supervisor,
+        Duration::from_millis(env_u64_default(
+            env,
+            "CONTEXT_STILL_RESIDENT_QUEUE_TIMEOUT_MS",
+            300_000,
+        )),
+    )?;
+    Ok(surface_report("queue-supervisor", true, report))
+}
+
+fn blocked_temporary_sidecar(name: &'static str) -> ManagedSurfaceReport {
+    ManagedSurfaceReport {
+        name,
+        enabled: false,
+        status: "blocked".to_string(),
+        pid: None,
+        message: format!(
+            "{name} requires a temporary Bun sidecar; Rust-only resident mode refused to start it"
+        ),
     }
 }
 
@@ -242,7 +327,7 @@ fn env_u64_default<E: EnvProvider>(env: &E, key: &str, default: u64) -> u64 {
 impl SurfaceOwnership {
     fn merge_started(&mut self, reports: &[ManagedSurfaceReport]) {
         for report in reports {
-            if report.status != "started" {
+            if !matches!(report.status.as_str(), "started" | "already_running") {
                 continue;
             }
             match report.name {

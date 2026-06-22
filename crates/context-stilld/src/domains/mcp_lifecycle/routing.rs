@@ -56,5 +56,6 @@ pub fn handle_command<E: EnvProvider, S: ProcessSupervisor>(
                 Ok(report.to_text())
             }
         }
+        McpAction::Serve => super::service::serve(env),
     }
 }

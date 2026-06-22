@@ -45,22 +45,21 @@ function sleep(ms) {
 }
 
 try {
-  const start = parseJson(cargo("queue", "start", "--json"), "queue start");
-  if (!["started", "already_running"].includes(start.status)) {
-    throw new Error(`unexpected queue start status: ${JSON.stringify(start)}`);
+  const run = parseJson(cargo("run", "--once", "--json"), "resident run once");
+  const queueSurface = run.surfaces?.find((surface) => surface.name === "queue-supervisor");
+  if (!queueSurface) {
+    throw new Error(`resident run did not report queue surface: ${JSON.stringify(run)}`);
+  }
+  if (queueSurface.status !== "scheduled") {
+    throw new Error(`unexpected Rust-managed queue surface: ${JSON.stringify(queueSurface)}`);
   }
 
-  let status;
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    status = parseJson(cargo("queue", "status", "--json"), "queue status");
-    if (status.status === "running") break;
-    sleep(250);
-  }
-  if (status?.status !== "running") {
-    throw new Error(`queue supervisor did not stay running: ${JSON.stringify(status)}`);
+  const status = parseJson(cargo("queue", "status", "--json"), "queue status");
+  if (status.status !== "scheduled") {
+    throw new Error(`queue supervisor should be Rust-scheduled, got: ${JSON.stringify(status)}`);
   }
 
-  console.log(JSON.stringify({ ok: true, pid: status.pid, appDataDir }, null, 2));
+  console.log(JSON.stringify({ ok: true, status: status.status, appDataDir }, null, 2));
 } finally {
   try {
     cargo("queue", "stop", "--json");

@@ -6,10 +6,11 @@ The default path is desktop/local:
 
 - SQLite local backend
 - local admin/control-plane runtime
-- MCP registration as an optional user action
+- resident `context-stilld run` ownership for daemon-side lifecycle work, with classified TypeScript sidecars during the Rust migration
+- streamable HTTP MCP registration as an optional user action
 - local-only minimal usage before LLM-assisted modes
 
-The Tauri shell is the desktop packaging target. Until that shell exists, use the local Bun/admin runtime as the development baseline for the same product path.
+The Tauri shell is the desktop packaging target. Until that shell exists, use the local Bun/admin runtime plus `context-stilld` lifecycle checks as the development baseline for the same product path.
 
 ## Requirements
 
@@ -88,6 +89,8 @@ Register it in an MCP client only when you want agent integration:
 
 Run `bun run setup:mcp-config` to update Codex and Antigravity config files. The direct stdio server is legacy only and should not be registered in new clients.
 
+The endpoint is currently a daemon-owned Bun HTTP worker. It is intentionally visible in `context-stilld runtime sidecars --json` as a temporary resident sidecar until the Rust MCP endpoint/session manager replaces it.
+
 After connection, call `initial_instructions` once per project session, `context_compile` before task work, `context_decision` before a blocking question/PR decision when autonomous progress may still be possible, and `compile_eval` after the task.
 
 ## First Review Loop
@@ -99,15 +102,27 @@ After connection, call `initial_instructions` once per project session, `context
 5. Use **Decision** to inspect Knowledge-backed autonomous decisions, evidence, coverage traces, and feedback.
 6. Use MCP tools when you want the agent workflow connected to the local knowledge base.
 
+## Resident Daemon Preview
+
+Install the resident daemon LaunchAgent on macOS when you want long-lived local ownership for MCP endpoint supervision, queue worker supervision, scheduled agent-log-sync, and runtime status:
+
+```bash
+bun run automation:context-stilld -- install
+bun run automation:context-stilld -- load
+bun run automation:context-stilld -- status
+cargo run -q -p context-stilld -- runtime sidecars --json
+```
+
+The Rust daemon owns the resident process boundary, but several durable surfaces still run as TypeScript/Bun sidecars. Treat `runtime sidecars --json` and `bun run verify:rust-daemon` as the current truth for migration status.
+
 ## Advanced Server Backend
 
-Use the server backend only when explicitly testing or operating PostgreSQL / pgvector compatibility:
+PostgreSQL / pgvector is legacy compatibility code. It is not maintained as a completion gate for the desktop/local path; use it only for explicit compatibility investigation.
 
 ```bash
 docker compose up -d
 cp .env.example .env
 bun run db:migrate
-bun run verify:postgres
 ```
 
 This path is advanced and opt-in. It is not required for desktop onboarding.

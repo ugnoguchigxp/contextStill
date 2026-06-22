@@ -40,6 +40,113 @@ function buildNegativeKnowledgeBody(distilled: {
     .join("\n");
 }
 
+function hasNonEmptyString(value: string | undefined): boolean {
+  return typeof value === "string" && value.trim().length > 0;
+}
+
+function distinctEvidenceCount(evidence: string[]): number {
+  return new Set(evidence.map((item) => item.trim()).filter(Boolean)).size;
+}
+
+function scoreNegativeCandidate(params: {
+  evidenceCount: number;
+  general: boolean;
+  hasTrigger: boolean;
+  hasFix: boolean;
+  hasVerification: boolean;
+  hasDecisionSignal: boolean;
+  hasHighRiskTag: boolean;
+}): { confidence: number; importance: number } {
+  let confidence = 62;
+  let importance = 58;
+
+  confidence += Math.min(params.evidenceCount, 3) * 6;
+  if (params.hasTrigger) confidence += 6;
+  if (params.hasFix) confidence += 6;
+  if (params.hasVerification) confidence += 4;
+  if (params.hasDecisionSignal) confidence += 2;
+  if (params.general) confidence -= 8;
+
+  importance += params.hasHighRiskTag ? 14 : 0;
+  importance += params.hasTrigger && params.hasFix ? 8 : 0;
+  importance += params.evidenceCount >= 2 ? 6 : 0;
+  if (params.general && !params.hasHighRiskTag) importance -= 6;
+
+  return {
+    confidence: Math.max(45, Math.min(90, confidence)),
+    importance: Math.max(45, Math.min(90, importance)),
+  };
+}
+
+function assessNegativeQuality(params: {
+  status: string;
+  polarity: "negative" | "neutral";
+  distilled: {
+    failure: string;
+    impact?: string;
+    trigger?: string;
+    fix?: string;
+    verification?: string;
+    decisionSignal?: string;
+  };
+  evidence: string[];
+  intentTags: string[];
+  general: boolean;
+}): {
+  ready: boolean;
+  reason: string | null;
+  confidence: number;
+  importance: number;
+  evidenceCount: number;
+} {
+  const evidenceCount = distinctEvidenceCount(params.evidence);
+  const hasTrigger = hasNonEmptyString(params.distilled.trigger);
+  const hasFix = hasNonEmptyString(params.distilled.fix);
+  const hasVerification = hasNonEmptyString(params.distilled.verification);
+  const hasDecisionSignal = hasNonEmptyString(params.distilled.decisionSignal);
+  const hasHighRiskTag = params.intentTags.some((tag) =>
+    ["regression", "security_risk", "data_integrity"].includes(tag),
+  );
+  const score = scoreNegativeCandidate({
+    evidenceCount,
+    general: params.general,
+    hasTrigger,
+    hasFix,
+    hasVerification,
+    hasDecisionSignal,
+    hasHighRiskTag,
+  });
+
+  if (params.status !== "ready") {
+    return { ready: false, reason: params.status, evidenceCount, ...score };
+  }
+  if (params.polarity !== "negative") {
+    return { ready: false, reason: "negative_polarity_required", evidenceCount, ...score };
+  }
+  if (!hasNonEmptyString(params.distilled.failure)) {
+    return { ready: false, reason: "negative_failure_required", evidenceCount, ...score };
+  }
+  if (!hasTrigger) {
+    return { ready: false, reason: "negative_trigger_required", evidenceCount, ...score };
+  }
+  if (!hasFix) {
+    return { ready: false, reason: "negative_fix_required", evidenceCount, ...score };
+  }
+  if (evidenceCount < 2 && !hasHighRiskTag) {
+    return { ready: false, reason: "negative_evidence_too_thin", evidenceCount, ...score };
+  }
+  if (params.general && !hasHighRiskTag && evidenceCount < 3) {
+    return {
+      ready: false,
+      reason: "negative_general_scope_requires_stronger_evidence",
+      evidenceCount,
+      ...score,
+    };
+  }
+
+  return { ready: true, reason: null, evidenceCount, ...score };
+}
+
 export async function runCoverNegativeEvidence(params: {
   id: string;
   candidate?: any;
@@ -105,29 +212,32 @@ export async function runCoverNegativeEvidence(params: {
     normalizeApplicability(row.origin),
     parsed.appliesTo,
   );
+  const quality = assessNegativeQuality({
+    status: parsed.status,
+    polarity: parsed.polarity,
+    distilled: parsed.distilled,
+    evidence: parsed.evidence,
+    intentTags: parsed.intentTags,
+    general: appliesTo?.general === true,
+  });
 
   // Map to CoverEvidenceResult format to keep compatibility with existing pipeline.
-  const missingRequiredApplicability =
-    parsed.status === "ready" && !hasRequiredApplicabilityFacets(appliesTo);
+  const missingRequiredApplicability = quality.ready && !hasRequiredApplicabilityFacets(appliesTo);
   const mappedStatus =
-    parsed.status === "ready" && !missingRequiredApplicability
-      ? "knowledge_ready"
-      : missingRequiredApplicability
-        ? "insufficient"
-        : parsed.status;
+    quality.ready && !missingRequiredApplicability ? "knowledge_ready" : "insufficient";
 
   const result: CoverEvidenceResult = {
     schemaVersion: 1,
     status: mappedStatus as any,
     stage: "final",
     candidate:
-      parsed.status === "ready" && !missingRequiredApplicability
+      quality.ready && !missingRequiredApplicability
         ? {
             type: "rule",
             title: row.title,
             body: buildNegativeKnowledgeBody(parsed.distilled),
-            confidence: 90,
-            importance: 80,
+            confidence: quality.confidence,
+            importance: quality.importance,
             ...applicabilityToCoverCandidateFields(appliesTo),
           }
         : null,
@@ -148,13 +258,20 @@ export async function runCoverNegativeEvidence(params: {
           ...(appliesTo ? { appliesTo } : {}),
           originRefs: parsed.originRefs,
           distilled: parsed.distilled,
+          quality: {
+            ready: quality.ready,
+            reason: quality.reason,
+            evidenceCount: quality.evidenceCount,
+            confidence: quality.confidence,
+            importance: quality.importance,
+          },
         },
       },
     ],
     reason: missingRequiredApplicability
       ? "applies_to_categories_required"
-      : parsed.status !== "ready"
-        ? parsed.status
+      : !quality.ready
+        ? quality.reason
         : null,
   };
 

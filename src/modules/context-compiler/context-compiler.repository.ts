@@ -503,11 +503,12 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
       : null;
 
   if (packSnapshot) {
-    const allItemIds = [
-      ...(packSnapshot.rules ?? []).map((item) => item.itemId),
-      ...(packSnapshot.procedures ?? []).map((item) => item.itemId),
-      ...(packSnapshot.guardrails ?? []).map((item) => item.itemId),
-    ].filter(Boolean);
+    const knowledgePackItems = [
+      ...(packSnapshot.rules ?? []),
+      ...(packSnapshot.procedures ?? []),
+      ...(packSnapshot.guardrails ?? []),
+    ].filter((item) => item.itemKind === "rule" || item.itemKind === "procedure");
+    const allItemIds = [...new Set(knowledgePackItems.map((item) => item.itemId).filter(Boolean))];
 
     const knowledgeRows =
       allItemIds.length > 0
@@ -533,25 +534,7 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
       });
     }
 
-    for (const item of packSnapshot.rules) {
-      const applies = appliesToByItemId.get(item.itemId);
-      item.changeTypes = item.changeTypes?.length ? item.changeTypes : (applies?.changeTypes ?? []);
-      item.technologies = item.technologies?.length
-        ? item.technologies
-        : (applies?.technologies ?? []);
-      item.domains = item.domains?.length ? item.domains : (applies?.domains ?? []);
-    }
-
-    for (const item of packSnapshot.procedures) {
-      const applies = appliesToByItemId.get(item.itemId);
-      item.changeTypes = item.changeTypes?.length ? item.changeTypes : (applies?.changeTypes ?? []);
-      item.technologies = item.technologies?.length
-        ? item.technologies
-        : (applies?.technologies ?? []);
-      item.domains = item.domains?.length ? item.domains : (applies?.domains ?? []);
-    }
-
-    for (const item of packSnapshot.guardrails) {
+    for (const item of knowledgePackItems) {
       const applies = appliesToByItemId.get(item.itemId);
       item.changeTypes = item.changeTypes?.length ? item.changeTypes : (applies?.changeTypes ?? []);
       item.technologies = item.technologies?.length
@@ -592,11 +575,13 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
   const selectedKnowledgeRows = [...selectedKnowledgeRowsMap.values()];
 
   const packTitleById = new Map<string, string>();
+  const packTitleByKey = new Map<string, string>();
   for (const item of [
     ...(packSnapshot?.rules ?? []),
     ...(packSnapshot?.procedures ?? []),
     ...(packSnapshot?.guardrails ?? []),
   ]) {
+    packTitleByKey.set(`${item.itemKind}:${item.itemId}`, item.title);
     if (item.itemKind !== "rule" && item.itemKind !== "procedure") continue;
     packTitleById.set(item.itemId, item.title);
   }
@@ -649,6 +634,16 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
       rankingReason: row.rankingReason,
       sourceRefs: normalizeStringArray(row.sourceRefs),
     })),
+    episodeSignals: itemRows
+      .filter((row) => row.itemKind === "episode_card")
+      .map((row) => ({
+        episodeId: row.itemId,
+        title:
+          packTitleByKey.get(`${row.itemKind}:${row.itemId}`) ??
+          `Episode ${row.itemId.slice(0, 8)}`,
+        section: "procedures" as const,
+        sourceRefs: normalizeStringArray(row.sourceRefs),
+      })),
     knowledgeFeedback: feedbackRows.map((row) => ({
       id: row.id,
       runId: row.runId,

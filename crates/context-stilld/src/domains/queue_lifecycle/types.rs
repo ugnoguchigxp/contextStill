@@ -1,0 +1,158 @@
+use serde::Serialize;
+
+use crate::domains::process_lifecycle::service::ManagedProcessSpec;
+
+pub(crate) const QUEUE_SUPERVISOR: ManagedProcessSpec = ManagedProcessSpec {
+    state_name: "queue-supervisor",
+    display_name: "queue-supervisor",
+    command: "bun",
+    args: &[
+        "run",
+        "src/cli/queue-supervisor.ts",
+        "--continuous",
+        "--limit",
+        "1",
+    ],
+    log_file: "queue-supervisor.log",
+};
+
+pub(crate) const QUEUE_EXECUTOR_ONCE: ManagedProcessSpec = ManagedProcessSpec {
+    state_name: "queue-supervisor",
+    display_name: "queue-supervisor",
+    command: "bun",
+    args: &[
+        "run",
+        "src/cli/queue-supervisor.ts",
+        "--once",
+        "--limit",
+        "1",
+        "--json",
+    ],
+    log_file: "queue-supervisor.log",
+};
+
+pub(crate) const QUEUE_TABLES: &[(&str, &str)] = &[
+    ("findingCandidate", "finding_candidate_queue"),
+    ("episodeDistiller", "episode_distiller_queue"),
+    ("coveringEvidence", "covering_evidence_queue"),
+    ("deadZoneMergeReview", "dead_zone_merge_review_queue"),
+    ("mergeActivationFinalize", "merge_activation_finalize_queue"),
+    ("finalizeDistille", "finalize_distille_queue"),
+];
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueInspectReport {
+    pub process: &'static str,
+    pub action: &'static str,
+    pub status: String,
+    pub worker_pid: Option<u32>,
+    pub sqlite_status: &'static str,
+    pub sqlite_core_path: String,
+    pub queues: Vec<QueueTableInspect>,
+    pub active_lease_count: u64,
+    pub active_target_ids: Vec<String>,
+    pub active_leases: Vec<ActiveProviderLease>,
+    pub last_heartbeat_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueTableInspect {
+    pub queue_name: &'static str,
+    pub table_name: &'static str,
+    pub table_status: &'static str,
+    pub status_counts: Vec<QueueStatusCount>,
+    pub oldest_pending_at: Option<String>,
+    pub running: u64,
+    pub last_heartbeat_at: Option<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueStatusCount {
+    pub status: String,
+    pub count: u64,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ActiveProviderLease {
+    pub pool_id: String,
+    pub target_id: String,
+    pub queue_name: String,
+    pub queue_job_id: String,
+    pub worker_id: String,
+    pub heartbeat_at: String,
+    pub expires_at: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimedQueueJob {
+    pub queue_name: String,
+    pub table_name: &'static str,
+    pub id: String,
+    pub worker_id: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ProviderPoolClaimConfig {
+    pub pool_id: String,
+    pub targets: Vec<String>,
+    pub max_concurrent: u64,
+    pub stale_lease_seconds: u64,
+    pub low_priority_aging_seconds: u64,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct ProviderQueueClaimSpec {
+    pub queue_name: String,
+    pub preferred_target_ids: Vec<String>,
+    pub route_target_column: Option<&'static str>,
+    pub route_target_preferences: Vec<RowTargetPreference>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct RowTargetPreference {
+    pub value: String,
+    pub preferred_target_ids: Vec<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClaimedProviderLeaseJob {
+    pub queue_name: String,
+    pub id: String,
+    pub provider_lease: ProviderLeaseAssignment,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ProviderLeaseAssignment {
+    pub id: String,
+    pub pool_id: String,
+    pub target_id: String,
+    pub queue_name: String,
+    pub queue_job_id: String,
+    pub worker_id: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueStateRow {
+    pub id: String,
+    pub status: String,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub(crate) struct RunnableProviderCandidate {
+    pub(crate) queue_name: String,
+    pub(crate) table_name: &'static str,
+    pub(crate) id: String,
+    pub(crate) queue_order: usize,
+    pub(crate) effective_priority: i64,
+    pub(crate) priority: i64,
+    pub(crate) created_at: String,
+    pub(crate) preferred_target_ids: Vec<String>,
+}

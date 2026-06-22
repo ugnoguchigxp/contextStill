@@ -123,6 +123,8 @@ fn resolve_process_status<S: ProcessSupervisor>(
             if supervisor.is_alive(pid) {
                 return state.status;
             }
+        } else if !state.status.is_empty() {
+            return state.status;
         }
         return "stopped".to_string();
     }

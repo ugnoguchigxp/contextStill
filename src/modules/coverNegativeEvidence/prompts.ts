@@ -38,5 +38,7 @@ JSON のキー名、enum 値、タグ、repo path、API 名、コマンド名、
 }
 
 status='ready' の場合、appliesTo.technologies、appliesTo.changeTypes、appliesTo.domains は non-empty で、candidate text または origin context に根拠が必要です。これらの applicability categories を決める根拠が足りない場合は、広いカテゴリを捏造せず status='insufficient' にしてください。
+status='ready' の場合、distilled.trigger と distilled.fix は必須です。単なる作業中の注意、局所的なコマンド事故、一回限りの検証メモ、または根拠が1文だけの広範囲 guardrail は ready にせず status='insufficient' または status='not_reusable' にしてください。
+appliesTo.general=true は、複数リポジトリ・複数技術で再利用する明示根拠が candidate text にある場合だけ使用してください。迷う場合は general=false として具体的な technologies/changeTypes/domains に閉じてください。
 JSON object 1 個だけを返してください。markdown code block syntax は含めないでください。`;
 }

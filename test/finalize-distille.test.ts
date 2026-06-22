@@ -8,6 +8,7 @@ const mocks = vi.hoisted(() => ({
   embedOne: vi.fn(),
   upsertKnowledgeFromSource: vi.fn(),
   linkKnowledgeToSourceFragment: vi.fn(),
+  linkKnowledgeToOrigin: vi.fn(),
   findSourceFragmentByReference: vi.fn(),
   selectKnowledgeByFinalizeSourceUri: vi.fn(),
   getLandscapeReviewLinkForFinalize: vi.fn(),
@@ -38,6 +39,7 @@ vi.mock("../src/modules/knowledge/knowledge.repository.js", () => ({
 
 vi.mock("../src/modules/finalizeDistille/source-link.repository.js", () => ({
   linkKnowledgeToSourceFragment: mocks.linkKnowledgeToSourceFragment,
+  linkKnowledgeToOrigin: mocks.linkKnowledgeToOrigin,
 }));
 
 vi.mock("../src/modules/finalizeDistille/repository.js", () => ({
@@ -334,6 +336,48 @@ describe("runFinalizeDistille", () => {
         },
       }),
     );
+    expect(mocks.linkKnowledgeToOrigin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        knowledgeId: "knowledge-1",
+        originKind: "agent_candidate",
+        originUri: "/wiki/pages/finalize.md",
+        originKey: "finalize.md",
+        confidence: expect.any(Number),
+        metadata: expect.objectContaining({
+          source: "finalizeDistille",
+          coverEvidenceResultId: "find-1",
+          targetKind: "wiki_file",
+        }),
+      }),
+    );
+  });
+
+  test("backfills negative origin link when finalize reuses existing knowledge", async () => {
+    mocks.selectKnowledgeByFinalizeSourceUri.mockResolvedValue({ id: "knowledge-existing" });
+    mocks.coverEvidenceResultFromRow.mockReturnValue({
+      ...readyResult(),
+      toolEvents: [
+        {
+          name: "negative_coverage",
+          ok: true,
+          metadata: {
+            polarity: "negative",
+            intentTags: ["failure_pattern"],
+          },
+        },
+      ],
+    });
+
+    const result = await runFinalizeDistille({ coverEvidenceResultId: "find-1", write: true });
+
+    expect(result.knowledgeId).toBe("knowledge-existing");
+    expect(mocks.linkKnowledgeToOrigin).toHaveBeenCalledWith(
+      expect.objectContaining({
+        knowledgeId: "knowledge-existing",
+        originUri: "/wiki/pages/finalize.md",
+      }),
+    );
+    expect(mocks.embedOne).not.toHaveBeenCalled();
   });
 
   test("rejects non-ready cover evidence without creating knowledge", async () => {

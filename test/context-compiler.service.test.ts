@@ -293,7 +293,16 @@ describe("Context Compiler Service", () => {
     );
     expect(pack.diagnostics.degradedReasons).not.toContain("NO_RELEVANT_CONTEXT");
     expect(pack.diagnostics.retrievalStats.episodes).toEqual(
-      expect.objectContaining({ hitCount: 1, selectedCount: 1, searchFailed: false }),
+      expect.objectContaining({
+        hitCount: 1,
+        selectedCount: 1,
+        searchFailed: false,
+        selectedIds: ["episode-1"],
+        selectedTitles: ["SQLite migration recovery"],
+        scopedHitCount: 1,
+        globalHitCount: 0,
+        usedFor: "compile_precedent",
+      }),
     );
     expect(recordKnowledgeCompileSelectionSafe).toHaveBeenCalledWith(
       expect.objectContaining({ selectedKnowledgeIds: [] }),
@@ -943,6 +952,17 @@ describe("Context Compiler Service", () => {
         section: "guardrails",
       }),
     ]);
+    expect(agenticRefine).toHaveBeenCalledWith(
+      expect.arrayContaining([
+        expect.objectContaining({
+          id: "k-negative",
+          polarity: "negative",
+          section: "guardrails",
+        }),
+      ]),
+      expect.anything(),
+      expect.anything(),
+    );
     expect(composeContextResponse).toHaveBeenCalledWith(
       expect.objectContaining({
         guardrails: expect.arrayContaining([

@@ -26,7 +26,8 @@ The default product path is desktop/local:
 
 - storage: SQLite in a local app data path
 - UI: local admin/control-plane experience, with Tauri packaging as the desktop target
-- MCP: optional agent integration enabled by the user
+- daemon: `context-stilld run` is the resident runtime owner; several durable workers still execute as classified TypeScript sidecars while the Rust migration continues
+- MCP: optional streamable HTTP agent integration enabled by the user
 - model usage: minimal local usage first, with local LLM and cloud-assisted modes as optional upgrades
 
 It is designed for teams and individuals who want an auditable loop:
@@ -100,7 +101,7 @@ CONTEXT_STILL_DB_BACKEND=sqlite bun run dev
 - UI: http://localhost:39171
 - API: same origin under `/api/*`
 
-The future Tauri shell should use the same SQLite-first defaults, desktop data paths, and doctor states. Until packaging exists, the local web/admin runtime is the development baseline for the desktop product path.
+The future Tauri shell should use the same SQLite-first defaults, desktop data paths, resident daemon boundary, and doctor states. Until packaging exists, the local Bun/admin runtime is the development baseline for the desktop product path.
 
 The interactive `startup` command currently follows the advanced server setup path. Use the explicit SQLite commands above for desktop/local development.
 
@@ -120,11 +121,11 @@ context-still separates the long-lived runtime from the admin UI surface:
 
 | Surface | Default lifetime | Responsibility |
 |---|---|---|
-| Daemon / worker runtime | Runs independently of the UI | MCP server management, CLI commands, queue workers, agent-log sync, automation, doctor, backup, bootstrap, and process supervision |
+| Daemon / worker runtime | Runs independently of the UI | MCP endpoint supervision, CLI commands, queue workers, agent-log sync scheduling, automation, doctor, backup, bootstrap, process supervision, and runtime sidecar visibility |
 | Hono API | Runs when the admin UI needs HTTP access | Admin UI facade for knowledge, sources, graph, queue controls, settings, context runs, decision history, and dashboards |
 | Tauri / web UI | Opened on demand | Knowledge maintenance, review, settings, diagnostics, and operator actions |
 
-The Hono API should stay a UI-facing facade. Durable background work and external agent integration belong to the daemon/CLI/MCP side, so closing the UI does not imply stopping log sync, queue supervision, MCP availability, or scheduled maintenance. If a future desktop build splits control APIs from admin APIs, daemon control should remain on the long-lived daemon side while the admin API can follow the UI lifecycle.
+The Hono API should stay a UI-facing facade. Durable background work and external agent integration belong to the daemon/CLI/MCP side, so closing the UI does not imply stopping log sync scheduling, queue supervision, MCP availability, or scheduled maintenance. The current Rust daemon is the resident owner, but the MCP endpoint, MCP tool handlers, queue worker, and agent-log-sync parser still run through classified TypeScript/Bun sidecars until their Rust parity gates pass.
 
 ## MCP Integration
 
@@ -147,7 +148,7 @@ For an MCP client, use:
 }
 ```
 
-`bun run setup:mcp-config` writes this URL-based registration for Codex and Antigravity. The old direct stdio context-still MCP server has been removed and must not be restored for client registration.
+`bun run setup:mcp-config` writes this URL-based registration for Codex and Antigravity. The old direct stdio context-still MCP server has been removed and must not be restored for client registration. The endpoint is owned by `context-stilld` as a Rust HTTP/session surface; non-migrated tool handlers may still run through short-lived one-shot dispatch.
 
 After connecting the MCP server, call `initial_instructions` once at the start of a project session. Use `context_compile` before task work, `context_decision` before asking the user or creating a PR when autonomous progress may still be possible, and `compile_eval` after task work. Register durable lessons with `register_candidates`; negative guardrails use `polarity: "negative"` plus explicit `technologies`, `changeTypes`, and `domains`.
 
@@ -155,7 +156,7 @@ MCP is an agent integration surface. It is not a hidden requirement for opening 
 
 ## Advanced Server Backend
 
-The PostgreSQL / pgvector backend is preserved for advanced server-style deployments and compatibility work. It is not required for the default desktop/local path.
+The PostgreSQL / pgvector backend is legacy compatibility code. It is not maintained as a completion gate and is not required for the default desktop/local path.
 
 Use it when you are explicitly testing or operating the server backend:
 
@@ -163,7 +164,6 @@ Use it when you are explicitly testing or operating the server backend:
 docker compose up -d
 cp .env.example .env
 bun run db:migrate
-bun run verify:postgres
 ```
 
 Server backend constraints are documented in [Architecture Overview](spec/docs/pub/architecture.md) and [Operations](spec/docs/pub/operations.md). Treat this path as opt-in until server productization, auth, multi-user operation, and remote DB latency assumptions are settled.
@@ -258,6 +258,12 @@ Run the desktop/local readiness gate before starting packaging or Tauri shell wo
 
 ```bash
 bun run verify:desktop-readiness
+```
+
+Run the Rust daemon boundary gate when changing resident runtime ownership, lifecycle commands, or sidecar classification:
+
+```bash
+bun run verify:rust-daemon
 ```
 
 Run the full release gate before tagging or cutting a release:

@@ -92,6 +92,18 @@ function renderPlist(): string {
     .replaceAll("{{RESIDENT_MCP}}", process.env.CONTEXT_STILL_RESIDENT_MCP ?? "1")
     .replaceAll("{{RESIDENT_QUEUE}}", process.env.CONTEXT_STILL_RESIDENT_QUEUE ?? "1")
     .replaceAll(
+      "{{RESIDENT_QUEUE_MODE}}",
+      process.env.CONTEXT_STILL_RESIDENT_QUEUE_MODE ?? "rust-managed-one-shot",
+    )
+    .replaceAll(
+      "{{RESIDENT_QUEUE_INTERVAL_MS}}",
+      process.env.CONTEXT_STILL_RESIDENT_QUEUE_INTERVAL_MS ?? "5000",
+    )
+    .replaceAll(
+      "{{RESIDENT_QUEUE_TIMEOUT_MS}}",
+      process.env.CONTEXT_STILL_RESIDENT_QUEUE_TIMEOUT_MS ?? "300000",
+    )
+    .replaceAll(
       "{{RESIDENT_AGENT_LOG_SYNC}}",
       process.env.CONTEXT_STILL_RESIDENT_AGENT_LOG_SYNC ?? "1",
     )
@@ -206,6 +218,8 @@ function runOnce(): void {
       CONTEXT_STILL_SQLITE_CORE_PATH:
         process.env.CONTEXT_STILL_SQLITE_CORE_PATH ??
         path.resolve(projectRoot, "data", "context-still-core.sqlite"),
+      CONTEXT_STILL_RESIDENT_QUEUE_MODE:
+        process.env.CONTEXT_STILL_RESIDENT_QUEUE_MODE ?? "rust-managed-one-shot",
     },
   });
   process.exitCode = result.status ?? 1;
@@ -222,6 +236,8 @@ function runContinuous(): void {
       CONTEXT_STILL_SQLITE_CORE_PATH:
         process.env.CONTEXT_STILL_SQLITE_CORE_PATH ??
         path.resolve(projectRoot, "data", "context-still-core.sqlite"),
+      CONTEXT_STILL_RESIDENT_QUEUE_MODE:
+        process.env.CONTEXT_STILL_RESIDENT_QUEUE_MODE ?? "rust-managed-one-shot",
     },
   });
   process.exitCode = result.status ?? 1;

@@ -497,11 +497,12 @@ export async function getCompileRunDetailSqlite(runId: string): Promise<CompileR
 
   const packSnapshot = parsePackSnapshot(run.pack_snapshot);
   if (packSnapshot && packSnapshot.runId === run.id) {
-    const allItemIds = [
-      ...(packSnapshot.rules ?? []).map((item) => item.itemId),
-      ...(packSnapshot.procedures ?? []).map((item) => item.itemId),
-      ...(packSnapshot.guardrails ?? []).map((item) => item.itemId),
-    ].filter(Boolean);
+    const knowledgePackItems = [
+      ...(packSnapshot.rules ?? []),
+      ...(packSnapshot.procedures ?? []),
+      ...(packSnapshot.guardrails ?? []),
+    ].filter((item) => item.itemKind === "rule" || item.itemKind === "procedure");
+    const allItemIds = [...new Set(knowledgePackItems.map((item) => item.itemId).filter(Boolean))];
 
     const knowledgeRows =
       allItemIds.length > 0
@@ -527,25 +528,7 @@ export async function getCompileRunDetailSqlite(runId: string): Promise<CompileR
       });
     }
 
-    for (const item of packSnapshot.rules) {
-      const applies = appliesToByItemId.get(item.itemId);
-      item.changeTypes = item.changeTypes?.length ? item.changeTypes : (applies?.changeTypes ?? []);
-      item.technologies = item.technologies?.length
-        ? item.technologies
-        : (applies?.technologies ?? []);
-      item.domains = item.domains?.length ? item.domains : (applies?.domains ?? []);
-    }
-
-    for (const item of packSnapshot.procedures) {
-      const applies = appliesToByItemId.get(item.itemId);
-      item.changeTypes = item.changeTypes?.length ? item.changeTypes : (applies?.changeTypes ?? []);
-      item.technologies = item.technologies?.length
-        ? item.technologies
-        : (applies?.technologies ?? []);
-      item.domains = item.domains?.length ? item.domains : (applies?.domains ?? []);
-    }
-
-    for (const item of packSnapshot.guardrails) {
+    for (const item of knowledgePackItems) {
       const applies = appliesToByItemId.get(item.itemId);
       item.changeTypes = item.changeTypes?.length ? item.changeTypes : (applies?.changeTypes ?? []);
       item.technologies = item.technologies?.length
@@ -586,11 +569,13 @@ export async function getCompileRunDetailSqlite(runId: string): Promise<CompileR
   const selectedKnowledgeRows = [...selectedKnowledgeRowsMap.values()];
 
   const packTitleById = new Map<string, string>();
+  const packTitleByKey = new Map<string, string>();
   for (const item of [
     ...(packSnapshot?.rules ?? []),
     ...(packSnapshot?.procedures ?? []),
     ...(packSnapshot?.guardrails ?? []),
   ]) {
+    packTitleByKey.set(`${item.itemKind}:${item.itemId}`, item.title);
     if (item.itemKind !== "rule" && item.itemKind !== "procedure") continue;
     packTitleById.set(item.itemId, item.title);
   }
@@ -640,6 +625,16 @@ export async function getCompileRunDetailSqlite(runId: string): Promise<CompileR
       rankingReason: row.ranking_reason,
       sourceRefs: normalizeStringArray(parseJson(row.source_refs)),
     })),
+    episodeSignals: itemRows
+      .filter((row) => row.item_kind === "episode_card")
+      .map((row) => ({
+        episodeId: row.item_id,
+        title:
+          packTitleByKey.get(`${row.item_kind}:${row.item_id}`) ??
+          `Episode ${row.item_id.slice(0, 8)}`,
+        section: "procedures" as const,
+        sourceRefs: normalizeStringArray(parseJson(row.source_refs)),
+      })),
     knowledgeFeedback: feedbackRows.map((row) => ({
       id: row.id ?? "",
       runId: row.run_id ?? runId,

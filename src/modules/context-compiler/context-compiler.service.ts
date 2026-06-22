@@ -264,6 +264,11 @@ type EpisodePrecedentRetrievalResult = {
     hitCount: number;
     selectedCount: number;
     searchFailed: boolean;
+    selectedIds?: string[];
+    selectedTitles?: string[];
+    scopedHitCount?: number;
+    globalHitCount?: number;
+    usedFor?: "compile_precedent";
     error?: string;
   };
 };
@@ -367,12 +372,19 @@ async function retrieveEpisodePrecedents(params: {
         : [];
     const items = [...scopedItems, ...globalItems];
     const selected = items.slice(0, CONTEXT_COMPILE_LIMITS.episodePrecedentLimit);
+    const selectedIds = selected.map((item) => item.id);
+    const selectedTitles = selected.map((item) => item.title);
     return {
       items: selected,
       stats: {
         hitCount: items.length,
         selectedCount: selected.length,
         searchFailed: false,
+        selectedIds,
+        selectedTitles,
+        scopedHitCount: scopedItems.length,
+        globalHitCount: globalItems.length,
+        ...(selected.length > 0 ? { usedFor: "compile_precedent" as const } : {}),
       },
     };
   } catch (error) {
@@ -1343,6 +1355,14 @@ export async function compileContextPack(
       content: item.content,
       score: item.score,
       sourceRefs: item.sourceRefs,
+      polarity:
+        item.polarity === "negative" || item.polarity === "neutral" ? item.polarity : "positive",
+      section:
+        item.polarity === "negative"
+          ? "guardrails"
+          : item.type === "procedure"
+            ? "procedures"
+            : "rules",
     })),
     input,
     retrievalMode,

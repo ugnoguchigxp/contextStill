@@ -47,6 +47,10 @@ const tasks = [
     command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "queue", "inspect", "--json"],
   },
   {
+    label: "context-stilld runtime sidecars",
+    command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "runtime", "sidecars", "--json"],
+  },
+  {
     label: "context-stilld mcp endpoint",
     command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "mcp", "endpoint", "--json"],
   },
@@ -111,6 +115,43 @@ function runTask(task) {
   });
 }
 
+function runCommand(command, options = {}) {
+  return new Promise((resolve) => {
+    const startedAt = performance.now();
+    const [bin, ...args] = command;
+    const child = spawn(bin, args, {
+      cwd: process.cwd(),
+      env: {
+        ...process.env,
+        CONTEXT_STILL_APP_DATA_DIR:
+          process.env.CONTEXT_STILL_APP_DATA_DIR ?? ".tmp/context-stilld-verify",
+        ...options.env,
+      },
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+    const stdout = [];
+    const stderr = [];
+    child.stdout.on("data", (chunk) => stdout.push(chunk));
+    child.stderr.on("data", (chunk) => stderr.push(chunk));
+    child.on("error", (error) => {
+      resolve({
+        code: 1,
+        duration: formatDuration(startedAt),
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: `${Buffer.concat(stderr).toString("utf8")}${error.message}\n`,
+      });
+    });
+    child.on("close", (code) => {
+      resolve({
+        code: code ?? 1,
+        duration: formatDuration(startedAt),
+        stdout: Buffer.concat(stdout).toString("utf8"),
+        stderr: Buffer.concat(stderr).toString("utf8"),
+      });
+    });
+  });
+}
+
 function printFailure(result) {
   console.error(`[verify:rust-daemon] ${result.task.label} failed (${result.duration})`);
   if (result.stdout.trim()) {
@@ -145,6 +186,75 @@ function assertJsonLine(result, expectedField) {
   return result;
 }
 
+async function runLiveOwnershipCheck() {
+  console.log("[verify:rust-daemon] live ownership check ...");
+  if (process.platform !== "darwin") {
+    console.error("Live ownership check currently supports macOS launchd only.");
+    process.exit(1);
+  }
+
+  const guiDomain = `gui/${process.getuid()}`;
+  const expectedDaemon = await runCommand([
+    "launchctl",
+    "print",
+    `${guiDomain}/com.context-still.daemon`,
+  ]);
+  if (expectedDaemon.code !== 0) {
+    console.error("[verify:rust-daemon] live ownership check failed");
+    console.error("Expected com.context-still.daemon to be loaded.");
+    if (expectedDaemon.stderr.trim()) {
+      console.error(expectedDaemon.stderr.trimEnd());
+    }
+    process.exit(1);
+  }
+
+  for (const label of ["com.context-still.queue-supervisor", "com.context-still.agent-log-sync"]) {
+    const legacy = await runCommand(["launchctl", "print", `${guiDomain}/${label}`]);
+    if (legacy.code === 0) {
+      console.error("[verify:rust-daemon] live ownership check failed");
+      console.error(`Legacy LaunchAgent ${label} is loaded; durable ownership is ambiguous.`);
+      if (legacy.stdout.trim()) {
+        console.error(legacy.stdout.trimEnd());
+      }
+      process.exit(1);
+    }
+  }
+
+  const status = assertJsonLine(
+    await runCommand(["cargo", "run", "-q", "-p", "context-stilld", "--", "status", "--json"]),
+    "runtimeHost",
+  );
+  if (status.code !== 0) {
+    console.error("[verify:rust-daemon] live ownership status JSON failed");
+    if (status.stderr.trim()) {
+      console.error(status.stderr.trimEnd());
+    }
+    process.exit(1);
+  }
+  const statusJson = JSON.parse(status.stdout);
+  if (statusJson.runtimeHost !== "rust-resident") {
+    console.error("[verify:rust-daemon] live ownership check failed");
+    console.error(`Expected runtimeHost=rust-resident, got ${statusJson.runtimeHost}`);
+    process.exit(1);
+  }
+
+  const processList = await runCommand(["ps", "axo", "pid=,command="]);
+  if (processList.code !== 0) {
+    console.error("[verify:rust-daemon] live ownership process inspection failed");
+    if (processList.stderr.trim()) console.error(processList.stderr.trimEnd());
+    process.exit(1);
+  }
+  for (const pattern of ["src/cli/queue-supervisor.ts --continuous", "src/mcp/http-server.ts"]) {
+    if (processList.stdout.includes(pattern)) {
+      console.error("[verify:rust-daemon] live ownership check failed");
+      console.error(`Unexpected daemon-era Bun process still running: ${pattern}`);
+      process.exit(1);
+    }
+  }
+
+  console.log(`[verify:rust-daemon] live ownership check ok (${expectedDaemon.duration})`);
+}
+
 for (const task of tasks) {
   let result = await runTask(task);
   if (task.label === "context-stilld paths" && result.code === 0) {
@@ -171,6 +281,9 @@ for (const task of tasks) {
   if (task.label === "context-stilld queue inspect" && result.code === 0) {
     result = assertJsonLine(result, "queues");
   }
+  if (task.label === "context-stilld runtime sidecars" && result.code === 0) {
+    result = assertJsonLine(result, "sidecars");
+  }
   if (task.label === "context-stilld mcp endpoint" && result.code === 0) {
     result = assertJsonLine(result, "url");
   }
@@ -188,4 +301,8 @@ for (const task of tasks) {
     process.exit(result.code);
   }
   console.log(`[verify:rust-daemon] ${task.label} ok (${result.duration})`);
+}
+
+if (process.env.CONTEXT_STILL_VERIFY_LIVE_OWNERSHIP === "1") {
+  await runLiveOwnershipCheck();
 }

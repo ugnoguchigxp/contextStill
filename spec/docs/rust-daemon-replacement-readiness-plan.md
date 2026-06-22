@@ -29,14 +29,22 @@ Completed:
 - agent-log-sync schedule is owned by the Rust resident daemon.
 - `queue inspect --json` reads live SQLite queue counts, active provider leases, active target ids, worker pid, and heartbeat from Rust.
 - `status --json` uses the resident daemon's effective SQLite path.
+- `runtime sidecars --json` exposes the remaining TypeScript sidecars, fallback classifications, runtime status, and removal task ids from Rust.
 - `verify:rust-daemon` includes `queue inspect`.
+- `verify:rust-daemon` includes `runtime sidecars`.
+- `verify:rust-daemon` has an opt-in live LaunchAgent ownership guard via `CONTEXT_STILL_VERIFY_LIVE_OWNERSHIP=1`.
+- Rust has internal SQLite queue claim and provider lease manager transactions with parity tests for priority ordering, running-job blocking, stale recovery, route-target preference, active target uniqueness, pool capacity, heartbeat, release, and `finalizeDistille` `next_run_at` behavior.
+- Rust has internal SQLite queue state transition APIs for pause, worker-unavailable wait, resume, retry, pause-running, and queue event append, with parity tests for lock clearing, retry metadata, queue event row shape, and `finalizeDistille` `next_run_at` behavior.
+- Rust daemon domain source is split by lifecycle responsibility so no `crates/context-stilld/src` Rust file exceeds the maintainability guard of roughly 600 lines.
+- `CONTEXT_STILL_RESIDENT_REQUIRE_RUST_ONLY=1` makes resident runtime fail closed by reporting temporary Bun MCP / queue / agent-log-sync surfaces as `blocked` instead of spawning them.
+- `context-stilld run` owns resident queue scheduling by default through `CONTEXT_STILL_RESIDENT_QUEUE_MODE=rust-managed-one-shot`; the queue business executor is now a short-lived Bun one-shot until R7 completes.
+- MCP endpoint and session state are Rust-owned; non-migrated MCP tool handlers are invoked through a short-lived TypeScript one-shot dispatch instead of a resident Bun HTTP server.
 
 Still not Rust-only:
 
-- MCP endpoint is still a Bun child process.
-- MCP tool implementation is still TypeScript.
-- Queue scheduler / provider lease manager is still TypeScript.
-- Queue executors are still TypeScript.
+- MCP tool implementation is still TypeScript one-shot dispatch until R3/R4 complete.
+- Queue scheduler is Rust-owned by default in resident runtime; provider lease and state parity APIs exist in Rust, while the TypeScript one-shot business executor still consumes its existing claim path until R5/R6 handoff is complete.
+- Queue state transitions and executors are still TypeScript by default; Rust currently has internal deterministic state-transition parity APIs, but the TypeScript executor has not been switched to consume them.
 - agent-log-sync parser and SQLite write logic are still TypeScript one-shot sidecar work.
 - Some doctor checks still delegate to TypeScript.
 - Fallback and legacy command paths are not yet classified tightly enough for final removal.
@@ -182,7 +190,7 @@ cargo test -p context-stilld mcp
 cargo run -q -p context-stilld -- mcp endpoint --json
 cargo run -q -p context-stilld -- mcp sessions --json
 cargo run -q -p context-stilld -- mcp smoke --json
-bun run test:mcp:contract
+bun run verify:mcp
 bun run verify:rust-daemon
 ps aux | rg 'src/mcp/http-server|context-stilld run'
 ```
@@ -225,7 +233,7 @@ Verification:
 ```bash
 cargo test -p context-stilld mcp
 cargo run -q -p context-stilld -- mcp smoke --json
-bun run test:mcp:contract
+bun run verify:mcp
 bun run verify:rust-daemon
 ```
 
@@ -253,14 +261,14 @@ Tasks:
 Completion criteria:
 
 - Migrated write tools are Rust-native and transactional.
-- Existing MCP contract tests remain green.
+- Existing SQLite MCP smoke and Rust MCP smoke remain green.
 - TS sidecar owner list no longer includes migrated tools.
 
 Verification:
 
 ```bash
 cargo test -p context-stilld mcp
-bun run test:mcp:contract
+bun run verify:mcp
 bun run verify:rust-daemon
 ```
 
@@ -507,13 +515,13 @@ Stop conditions:
 
 | ID | Task | Depends on | Gate | Status |
 |---|---|---|---|---|
-| R0 | Baseline ownership guard | current live state | `verify:rust-daemon`, optional live check | pending |
-| R1 | Sidecar registry and fallback classification | R0 | `runtime sidecars --json` | pending |
-| R2 | Rust MCP endpoint/session manager | R1 | MCP smoke + contract | pending |
-| R3 | Rust read-only MCP tool dispatch | R2 | MCP contract + owner inventory | pending |
-| R4 | Rust write MCP tool dispatch | R3 | transaction tests + MCP contract | pending |
-| R5 | Rust queue scheduler/provider leases | R1 | Rust queue tests + TS SQLite parity | pending |
-| R6 | Rust queue state machine/maintenance | R5 | queue state/event parity | pending |
+| R0 | Baseline ownership guard | current live state | `verify:rust-daemon`, optional live check | implemented |
+| R1 | Sidecar registry and fallback classification | R0 | `runtime sidecars --json` | implemented |
+| R2 | Rust MCP endpoint/session manager | R1 | Rust/SQLite MCP smoke | implemented |
+| R3 | Rust read-only MCP tool dispatch | R2 | Rust/SQLite MCP smoke + owner inventory | in progress |
+| R4 | Rust write MCP tool dispatch | R3 | SQLite transaction tests + Rust/SQLite MCP smoke | pending |
+| R5 | Rust queue scheduler/provider leases | R1 | Rust queue tests + TS SQLite parity | in progress |
+| R6 | Rust queue state machine/maintenance | R5 | queue state/event parity | in progress |
 | R7 | Rust queue executors | R6 | per-queue fixtures + smoke | pending |
 | R8 | Rust agent log sync parser/write | R1 | parser parity + sync smoke | pending |
 | R9 | Rust doctor/backup guard completion | R1, R5 | doctor/backup JSON gates | pending |
@@ -528,7 +536,7 @@ Stop conditions:
 | Daemon gate | `bun run verify:rust-daemon` | every default switch |
 | Queue parity | `bun test --timeout=30000 --max-concurrency=1 ./test/sqlite-runtime-support.bun.ts` | R5-R7 |
 | Queue smoke | `bun run rust:queue:smoke` | R5-R7 |
-| MCP contract | `bun run test:mcp:contract` | R2-R4 |
+| MCP smoke | `bun run verify:mcp` | R2-R4 |
 | MCP smoke | `cargo run -q -p context-stilld -- mcp smoke --json` | R2-R4 |
 | Agent sync parity | parser fixture tests plus `bun run rust:agent-log-sync:smoke` | R8 |
 | Backup guard | `cargo run -q -p context-stilld -- backup preflight --require-idle --json` | R9-R10 |
@@ -549,6 +557,6 @@ Stop and ask for review if:
 
 ## Next Task
 
-Start with R0 and R1.
+Continue with R3 and R5.
 
-R0 prevents regression of the ownership work already completed. R1 creates the map needed to delete resident TypeScript intentionally rather than discovering hidden Bun paths late in the migration.
+R0 now provides the optional live LaunchAgent ownership guard, R1 creates the map needed to delete resident TypeScript intentionally, and R2 moves the MCP endpoint/session owner into Rust. R3/R4 still need Rust-native tool dispatch to remove one-shot TypeScript tool execution. R5 has Rust claim / provider lease manager parity APIs, and R6 has deterministic state-transition plus queue-event parity APIs, but TS executor handoff is still pending.

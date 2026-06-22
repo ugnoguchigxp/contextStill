@@ -81,6 +81,8 @@ bun run automation:agent-log-sync -- status
 
 The LaunchAgent runs periodically. It is normal for status to show `loaded` but `not running` between intervals.
 
+When `context-stilld` resident automation is loaded, the resident daemon owns the schedule instead. Do not keep the legacy agent-log-sync LaunchAgent independently loaded alongside the resident daemon.
+
 ## Queue Supervisor
 
 One-time queue processing:
@@ -100,9 +102,12 @@ bun run automation:context-stilld -- install
 bun run automation:context-stilld -- load
 bun run automation:context-stilld -- status
 cargo run -q -p context-stilld -- queue inspect --json
+cargo run -q -p context-stilld -- runtime sidecars --json
 ```
 
-The resident daemon owns the queue worker process and scheduled agent-log-sync trigger. Queue logs are written under app data logs, and `queue inspect --json` reads live SQLite queue counts and provider leases from Rust. Queue/distillation surfaces are still an area where backend support must be explicit; keep server-only assumptions out of the default desktop path.
+The resident daemon owns the queue worker process and scheduled agent-log-sync trigger. Queue logs are written under app data logs, `queue inspect --json` reads live SQLite queue counts and provider leases from Rust, and `runtime sidecars --json` shows which TypeScript surfaces are still temporary resident work, UI-time work, manual one-shot work, or forbidden resident work. Queue/distillation surfaces are still an area where backend support must be explicit; keep server-only assumptions out of the default desktop path.
+
+To verify live LaunchAgent ownership without mutating the database, run `CONTEXT_STILL_VERIFY_LIVE_OWNERSHIP=1 bun run verify:rust-daemon`. The opt-in check requires `com.context-still.daemon` to be loaded and rejects legacy queue / agent-log-sync LaunchAgents if they are loaded independently.
 
 ## Candidate Registration Hooks
 
@@ -143,12 +148,11 @@ The scan writes `discarded_pr` system feedback only for strongly linked PRs conf
 
 ## Advanced Server Backend Operations
 
-Use this path only when explicitly operating PostgreSQL / pgvector compatibility or future server-style deployments:
+PostgreSQL / pgvector is legacy compatibility code. It is not maintained as a default operations gate; use this path only for explicit compatibility investigation:
 
 ```bash
 docker compose up -d
 bun run db:migrate
-bun run verify:postgres
 ```
 
 PostgreSQL backup defaults for `./scripts/backup-db.sh`:
@@ -220,8 +224,8 @@ bun run docs:check-links
 |---|---|
 | `context_compile` returns `No Content` | Run `doctor`, check active knowledge count, source import state, and tags |
 | Desktop doctor says `Needs setup` | Check SQLite backend selection, SQLite path, and missing required tables |
-| Queue not moving | Check `bun run automation:queue-supervisor -- status`, `logs/queue-supervisor.log`, and queue stats |
-| Agent logs stale | Run `bun run automation:agent-log-sync -- run-once` and inspect `logs/agent-log-sync.log` |
+| Queue not moving | Check `bun run automation:context-stilld -- status`, `cargo run -q -p context-stilld -- queue inspect --json`, `cargo run -q -p context-stilld -- runtime sidecars --json`, and queue stats |
+| Agent logs stale | Run `cargo run -q -p context-stilld -- agent-log-sync run --wait --json` or `bun run sync:agent-logs`, then inspect daemon/app-data logs |
 | Decision output is degraded | Inspect the Decision detail evidence/coverage tabs, then broaden `retrievalHints` or add missing Knowledge |
 | PR discard feedback is missing | Run `bun run decision:pr-discard-scan -- --dry-run` and confirm `gh pr view` can resolve the linked PR |
 | Embedding failures | Check daemon URL, CLI fallback paths, and `CONTEXT_STILL_EMBEDDING_DIMENSION` |
@@ -250,3 +254,5 @@ bun run rust:agent-log-sync:smoke
 ```
 
 For lifecycle experiments, set `CONTEXT_STILL_APP_DATA_DIR` to a temporary directory and stop the process through the matching Rust command before removing that directory. The Rust default flags are status-only until a boundary switch is explicitly made; rollback remains the direct TypeScript command for that boundary.
+
+For live macOS ownership checks, set `CONTEXT_STILL_VERIFY_LIVE_OWNERSHIP=1` when running `bun run verify:rust-daemon`. The check is intentionally opt-in because CI and fresh development shells may not have LaunchAgents loaded.

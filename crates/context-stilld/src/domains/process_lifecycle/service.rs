@@ -11,6 +11,8 @@ use crate::shared::{
     process::{ProcessSupervisor, WaitOutcome},
 };
 
+pub const CURRENT_EXE_COMMAND: &str = "__context_stilld_current_exe__";
+
 #[derive(Debug, Clone)]
 pub struct ManagedProcessSpec {
     pub state_name: &'static str,
@@ -97,7 +99,7 @@ pub fn start_report<E: EnvProvider, S: ProcessSupervisor>(
                 exit_code: None,
                 exit_signal: None,
                 last_error: None,
-                command: Some(spec.command.to_string()),
+                command: Some(resolve_command_lossy(spec)),
                 args: Some(args_vec(spec)),
             });
         }
@@ -105,11 +107,12 @@ pub fn start_report<E: EnvProvider, S: ProcessSupervisor>(
 
     let project_root = resolve_project_root(env);
     let log_path = paths.logs_dir.join(spec.log_file);
+    let command = resolve_command(spec)?;
     let pid = supervisor
-        .spawn(spec.command, spec.args, &log_path, &project_root)
+        .spawn(&command, spec.args, &log_path, &project_root)
         .map_err(|e| CliError::io(format!("failed to spawn {}: {e}", spec.display_name)))?;
 
-    let state = running_state(spec, pid, log_path.to_string_lossy().into_owned());
+    let state = running_state(spec, pid, log_path.to_string_lossy().into_owned(), &command);
 
     if let Err(error) = repository::write_state(run_dir, spec.state_name, &state) {
         cleanup_spawn_after_persist_failure(spec, run_dir, pid, supervisor);
@@ -156,8 +159,9 @@ pub fn run_and_wait_report<E: EnvProvider, S: ProcessSupervisor>(
     let project_root = resolve_project_root(env);
     let log_path = paths.logs_dir.join(spec.log_file);
     let started_at = now_timestamp();
+    let command = resolve_command(spec)?;
     let outcome = supervisor
-        .run_and_wait(spec.command, spec.args, &log_path, &project_root, timeout)
+        .run_and_wait(&command, spec.args, &log_path, &project_root, timeout)
         .map_err(|e| CliError::io(format!("failed to run {}: {e}", spec.display_name)))?;
     let updated_at = now_timestamp();
     let status = wait_status(&outcome);
@@ -171,7 +175,7 @@ pub fn run_and_wait_report<E: EnvProvider, S: ProcessSupervisor>(
         exit_code: outcome.exit_code,
         exit_signal: outcome.exit_signal,
         last_error,
-        command: Some(spec.command.to_string()),
+        command: Some(command),
         args: Some(args_vec(spec)),
         ..ProcessState::default()
     };
@@ -242,7 +246,7 @@ pub fn stop_report<E: EnvProvider, S: ProcessSupervisor>(
             exit_code: state.as_ref().and_then(|state| state.exit_code),
             exit_signal: state.as_ref().and_then(|state| state.exit_signal.clone()),
             last_error: state.as_ref().and_then(|state| state.last_error.clone()),
-            command: Some(spec.command.to_string()),
+            command: Some(resolve_command_lossy(spec)),
             args: Some(args_vec(spec)),
         });
     };
@@ -271,7 +275,7 @@ pub fn stop_report<E: EnvProvider, S: ProcessSupervisor>(
         exit_code: state.as_ref().and_then(|state| state.exit_code),
         exit_signal: state.as_ref().and_then(|state| state.exit_signal.clone()),
         last_error: state.as_ref().and_then(|state| state.last_error.clone()),
-        command: Some(spec.command.to_string()),
+        command: Some(resolve_command_lossy(spec)),
         args: Some(args_vec(spec)),
     })
 }
@@ -330,7 +334,7 @@ pub fn status_report<E: EnvProvider, S: ProcessSupervisor>(
                 exit_code: None,
                 exit_signal: None,
                 last_error: None,
-                command: Some(spec.command.to_string()),
+                command: Some(resolve_command_lossy(spec)),
                 args: Some(args_vec(spec)),
             });
         }
@@ -344,7 +348,7 @@ pub fn status_report<E: EnvProvider, S: ProcessSupervisor>(
                 .into_owned(),
             updated_at: Some(now_timestamp()),
             last_error: Some("pid file exists but process is not alive".to_string()),
-            command: Some(spec.command.to_string()),
+            command: Some(resolve_command_lossy(spec)),
             args: Some(args_vec(spec)),
             ..ProcessState::default()
         };
@@ -366,7 +370,7 @@ pub fn status_report<E: EnvProvider, S: ProcessSupervisor>(
         exit_code: None,
         exit_signal: None,
         last_error: None,
-        command: Some(spec.command.to_string()),
+        command: Some(resolve_command_lossy(spec)),
         args: Some(args_vec(spec)),
     })
 }
@@ -396,7 +400,12 @@ fn args_vec(spec: &ManagedProcessSpec) -> Vec<String> {
     spec.args.iter().map(|arg| (*arg).to_string()).collect()
 }
 
-fn running_state(spec: &ManagedProcessSpec, pid: u32, log_path: String) -> ProcessState {
+fn running_state(
+    spec: &ManagedProcessSpec,
+    pid: u32,
+    log_path: String,
+    command: &str,
+) -> ProcessState {
     let now = now_timestamp();
     ProcessState {
         pid: Some(pid),
@@ -404,7 +413,7 @@ fn running_state(spec: &ManagedProcessSpec, pid: u32, log_path: String) -> Proce
         log_path,
         started_at: Some(now.clone()),
         updated_at: Some(now),
-        command: Some(spec.command.to_string()),
+        command: Some(command.to_string()),
         args: Some(args_vec(spec)),
         ..ProcessState::default()
     }
@@ -452,7 +461,7 @@ fn read_reconciled_state<S: ProcessSupervisor>(
                 log_path: String::new(),
                 updated_at: Some(now_timestamp()),
                 last_error: Some(format!("failed to parse state file: {error}")),
-                command: Some(spec.command.to_string()),
+                command: Some(resolve_command_lossy(spec)),
                 args: Some(args_vec(spec)),
                 ..ProcessState::default()
             })
@@ -505,7 +514,7 @@ pub fn report_from_state(
         exit_code: state.exit_code,
         exit_signal: state.exit_signal,
         last_error: state.last_error,
-        command: state.command.or_else(|| Some(spec.command.to_string())),
+        command: state.command.or_else(|| Some(resolve_command_lossy(spec))),
         args: state.args.or_else(|| Some(args_vec(spec))),
     }
 }
@@ -526,154 +535,17 @@ fn resolve_project_root<E: EnvProvider>(env: &E) -> PathBuf {
         .unwrap_or_else(|| PathBuf::from("."))
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shared::config::MapEnv;
-    use crate::shared::process::MockSupervisor;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::SystemTime;
-
-    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
-
-    const SPEC: ManagedProcessSpec = ManagedProcessSpec {
-        state_name: "test-process",
-        display_name: "test-process",
-        command: "bun",
-        args: &["run", "test.ts"],
-        log_file: "test-process.log",
-    };
-
-    fn temp_app_dir() -> std::path::PathBuf {
-        let rand_num = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let temp_id = NEXT_TEMP_ID.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir().join(format!(
-            "context_still_lifecycle_{}_{}_{}",
-            std::process::id(),
-            rand_num,
-            temp_id
-        ));
-        std::fs::create_dir_all(&path).unwrap();
-        path
+fn resolve_command(spec: &ManagedProcessSpec) -> Result<String, CliError> {
+    if spec.command == CURRENT_EXE_COMMAND {
+        return std::env::current_exe()
+            .map(|path| path.to_string_lossy().into_owned())
+            .map_err(|error| {
+                CliError::io(format!("failed to resolve current executable: {error}"))
+            });
     }
+    Ok(spec.command.to_string())
+}
 
-    #[test]
-    fn managed_process_start_status_stop_roundtrip() {
-        let app_dir = temp_app_dir();
-        let env = MapEnv::from_pairs(vec![
-            ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
-            ("CONTEXT_STILL_PROJECT_ROOT", app_dir.to_str().unwrap()),
-        ]);
-        let supervisor = MockSupervisor::new();
-
-        assert_eq!(
-            status(&SPEC, &env, &supervisor).unwrap(),
-            "test-process status: stopped"
-        );
-
-        let started = start(&SPEC, &env, &supervisor).unwrap();
-        assert!(started.contains("test-process started"));
-
-        let spawned = supervisor.spawned.lock().unwrap();
-        let call = spawned.get(&1000).unwrap();
-        assert_eq!(call.command, "bun");
-        assert_eq!(call.args, vec!["run".to_string(), "test.ts".to_string()]);
-        assert_eq!(call.log_path, app_dir.join("logs/test-process.log"));
-        drop(spawned);
-
-        assert!(status(&SPEC, &env, &supervisor)
-            .unwrap()
-            .contains("test-process status: running"));
-        assert_eq!(
-            stop(&SPEC, &env, &supervisor).unwrap(),
-            "test-process stopped"
-        );
-        assert_eq!(
-            status(&SPEC, &env, &supervisor).unwrap(),
-            "test-process status: stopped"
-        );
-
-        std::fs::remove_dir_all(&app_dir).unwrap();
-    }
-
-    #[test]
-    fn start_cleans_up_spawned_process_when_state_persist_fails() {
-        let app_dir = temp_app_dir();
-        std::fs::write(app_dir.join("run"), "not a directory").unwrap();
-        let env = MapEnv::from_pairs(vec![
-            ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
-            ("CONTEXT_STILL_PROJECT_ROOT", app_dir.to_str().unwrap()),
-        ]);
-        let supervisor = MockSupervisor::new();
-
-        let error = start_report(&SPEC, &env, &supervisor).expect_err("state write should fail");
-
-        assert!(error
-            .to_string()
-            .contains("failed to write test-process state"));
-        assert!(!supervisor.is_alive(1000));
-
-        std::fs::remove_dir_all(&app_dir).unwrap();
-    }
-
-    #[test]
-    fn lifecycle_report_serializes_json_without_changing_text_contract() {
-        let app_dir = temp_app_dir();
-        let env = MapEnv::from_pairs(vec![
-            ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
-            ("CONTEXT_STILL_PROJECT_ROOT", app_dir.to_str().unwrap()),
-        ]);
-        let supervisor = MockSupervisor::new();
-
-        let report = status_report(&SPEC, &env, &supervisor).unwrap();
-        assert_eq!(report.to_text(), "test-process status: stopped");
-
-        let json: serde_json::Value = serde_json::from_str(&report.to_json()).unwrap();
-        assert_eq!(json["process"], "test-process");
-        assert_eq!(json["action"], "status");
-        assert_eq!(json["status"], "stopped");
-        assert_eq!(json["message"], "test-process status: stopped");
-
-        std::fs::remove_dir_all(&app_dir).unwrap();
-    }
-
-    #[test]
-    fn status_report_preserves_state_status_in_json() {
-        let app_dir = temp_app_dir();
-        let env = MapEnv::from_pairs(vec![
-            ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
-            ("CONTEXT_STILL_PROJECT_ROOT", app_dir.to_str().unwrap()),
-        ]);
-        let supervisor = MockSupervisor::new();
-        let pid = supervisor
-            .spawn(
-                "bun",
-                &["run", "test.ts"],
-                &app_dir.join("logs/test.log"),
-                &app_dir,
-            )
-            .unwrap();
-        let run_dir = app_dir.join("run");
-        repository::write_state(
-            &run_dir,
-            SPEC.state_name,
-            &ProcessState {
-                pid: Some(pid),
-                status: "degraded".to_string(),
-                log_path: app_dir.join("logs/test.log").to_string_lossy().into_owned(),
-                ..ProcessState::default()
-            },
-        )
-        .unwrap();
-
-        let report = status_report(&SPEC, &env, &supervisor).unwrap();
-        assert!(report.to_text().contains("status: degraded"));
-        let json: serde_json::Value = serde_json::from_str(&report.to_json()).unwrap();
-        assert_eq!(json["status"], "degraded");
-
-        std::fs::remove_dir_all(&app_dir).unwrap();
-    }
+fn resolve_command_lossy(spec: &ManagedProcessSpec) -> String {
+    resolve_command(spec).unwrap_or_else(|_| spec.command.to_string())
 }

@@ -9,3 +9,4 @@ pub mod mcp_lifecycle;
 pub mod process_lifecycle;
 pub mod queue_lifecycle;
 pub mod resident_runtime;
+pub mod runtime_sidecars;

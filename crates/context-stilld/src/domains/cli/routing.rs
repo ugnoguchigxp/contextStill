@@ -8,6 +8,7 @@ pub enum McpAction {
     Endpoint,
     Sessions,
     Smoke,
+    Serve,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -30,6 +31,11 @@ pub enum AdminApiAction {
     Start,
     Stop,
     Status,
+}
+
+#[derive(Debug, Eq, PartialEq, Clone)]
+pub enum RuntimeAction {
+    Sidecars,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -78,6 +84,10 @@ pub enum CliCommand {
         action: AdminApiAction,
         json: bool,
     },
+    Runtime {
+        action: RuntimeAction,
+        json: bool,
+    },
     Bootstrap {
         action: BootstrapAction,
         json: bool,
@@ -121,7 +131,7 @@ where
         "mcp" => {
             let action_str = args.next().ok_or_else(|| {
                 CliError::invalid_arguments(
-                    "mcp requires an action: start, stop, status, endpoint, sessions, or smoke",
+                    "mcp requires an action: start, stop, status, endpoint, sessions, smoke, or serve",
                 )
             })?;
             let action = match action_str.as_str() {
@@ -131,6 +141,7 @@ where
                 "endpoint" => McpAction::Endpoint,
                 "sessions" => McpAction::Sessions,
                 "smoke" => McpAction::Smoke,
+                "serve" => McpAction::Serve,
                 _ => {
                     return Err(CliError::invalid_arguments(format!(
                         "unknown mcp action: {action_str}"
@@ -200,6 +211,21 @@ where
                 }
             };
             Ok(CliCommand::AdminApi {
+                action,
+                json: parse_json_flag(args)?,
+            })
+        }
+        "runtime" => {
+            let action_str = required_action(&mut args, "runtime", "sidecars")?;
+            let action = match action_str.as_str() {
+                "sidecars" => RuntimeAction::Sidecars,
+                _ => {
+                    return Err(CliError::invalid_arguments(format!(
+                        "unknown runtime action: {action_str}"
+                    )))
+                }
+            };
+            Ok(CliCommand::Runtime {
                 action,
                 json: parse_json_flag(args)?,
             })
@@ -447,6 +473,18 @@ mod tests {
             parse_args(["queue", "inspect", "--json"]).expect("parsed"),
             CliCommand::Queue {
                 action: QueueAction::Inspect,
+                json: true,
+            },
+        );
+    }
+
+    #[test]
+    fn parses_runtime_sidecars_json() {
+        use super::RuntimeAction;
+        assert_eq!(
+            parse_args(["runtime", "sidecars", "--json"]).expect("parsed"),
+            CliCommand::Runtime {
+                action: RuntimeAction::Sidecars,
                 json: true,
             },
         );

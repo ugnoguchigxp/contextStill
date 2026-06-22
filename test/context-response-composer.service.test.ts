@@ -88,6 +88,40 @@ describe("context response composer", () => {
     expect(result.usedKnowledge[0]?.id).toBe("r1");
   });
 
+  test("keeps EpisodeCard precedents separate in fallback compose", async () => {
+    const result = await composeContextResponse({
+      input: {
+        goal: "SQLite migration の復旧方針を確認する",
+      },
+      retrievalMode: "task_context",
+      rules: [],
+      procedures: [
+        {
+          id: "episode_card:episode-1",
+          itemKind: "episode_card",
+          itemId: "episode-1",
+          section: "procedures",
+          title: "Past episode: SQLite migration recovery",
+          content:
+            "Use when: A similar past task may inform the current compile context.\nWorkflow:\n1. Reuse the old command.",
+          score: 0.7,
+          rankingReason: "supplemental EpisodeCard precedent",
+          sourceRefs: ["context-still://episodes/episode-1"],
+        },
+      ],
+    });
+
+    expect(result.agenticUsed).toBe(false);
+    expect(result.usedKnowledge).toEqual([]);
+    expect(result.markdown).toContain("過去事例として Past episode: SQLite migration recovery");
+    expect(result.markdown).toContain("現在のコードで適用可否を確認する");
+    expect(result.markdown).toContain(
+      "EpisodeCard precedent を現在の source truth や Knowledge rule として扱わない。",
+    );
+    expect(result.markdown).not.toContain("1. Past episode: SQLite migration recovery");
+    expect(result.markdown).not.toContain("Reuse the old command");
+  });
+
   test("does not switch to test headings just because goal contains specificity", async () => {
     const result = await composeContextResponse({
       input: {
@@ -446,6 +480,81 @@ describe("context response composer", () => {
     expect(systemPrompt).toContain("実行を後押しする根拠として使わず");
     expect(userPrompt).toContain("negative guardrails:");
     expect(userPrompt).toContain("Do not skip migration verification");
+  });
+
+  test("separates EpisodeCard precedents from knowledge candidates in composer prompt", async () => {
+    groupedConfig.agenticCompile.enabled = true;
+    mockProvider.chat
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          headings: {
+            focus: "実装フォーカス",
+            steps: "実装手順",
+            verification: "検証観点",
+            avoid: "注意点",
+          },
+          includeAvoidSection: false,
+          ruleQueryHints: [],
+          procedureQueryHints: [],
+          exclusionHints: [],
+          responseStyle: "narrative",
+          styleReason: "episode precedent available",
+          styleConfidence: 0.9,
+          candidateSufficiency: "enough",
+        }),
+      })
+      .mockResolvedValueOnce({
+        content: JSON.stringify({
+          markdown:
+            "## 実装フォーカス\n- SQLite schema migration では過去の類似ケースを参考にしつつ現在のコードを確認する。",
+          usedKnowledge: [{ id: "p1", confidence: 0.8 }],
+        }),
+      });
+
+    const result = await composeContextResponse({
+      input: {
+        goal: "SQLite schema migration の方針を決める",
+      },
+      retrievalMode: "task_context",
+      rules: [],
+      procedures: [
+        {
+          id: "knowledge:p1",
+          itemKind: "procedure",
+          itemId: "p1",
+          section: "procedures",
+          title: "Migration procedure",
+          content: "Workflow:\n1. schema を確認する。",
+          score: 0.8,
+          rankingReason: "ranked",
+          sourceRefs: [],
+        },
+        {
+          id: "episode_card:episode-1",
+          itemKind: "episode_card",
+          itemId: "episode-1",
+          section: "procedures",
+          title: "Past episode: SQLite migration recovery",
+          content:
+            "Use when: A similar past task may inform the current compile context; treat this as precedent, not primary evidence.",
+          score: 0.7,
+          rankingReason: "supplemental EpisodeCard precedent",
+          sourceRefs: ["context-still://episodes/episode-1"],
+        },
+      ],
+    });
+
+    expect(result.agenticUsed).toBe(true);
+    expect(result.usedKnowledge).toEqual([expect.objectContaining({ id: "p1" })]);
+    const composeRequest = mockProvider.chat.mock.calls[1]?.[0];
+    const systemPrompt = composeRequest?.messages?.[0]?.content ?? "";
+    const userPrompt = composeRequest?.messages?.[1]?.content ?? "";
+    expect(systemPrompt).toContain("`episode precedents` は過去の類似ケース");
+    expect(userPrompt).toContain("episode precedents:");
+    expect(userPrompt).toContain("Past episode: SQLite migration recovery");
+    const knowledgeSection = userPrompt.split("knowledge candidates:")[1] ?? "";
+    expect(knowledgeSection).toContain("Migration procedure");
+    expect(knowledgeSection).not.toContain("SQLite migration recovery");
   });
 
   test("falls back to plain markdown text when LLM outputs non-JSON content", async () => {

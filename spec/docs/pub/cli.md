@@ -9,6 +9,7 @@ Run commands from the repository root.
 | `bun run startup` | Interactive dry-run startup and health plan for the advanced server setup path |
 | `bun run startup -- --apply` | Apply advanced server startup changes after review |
 | `bun run init:project -- --json` | Initialize project state and print next actions |
+| `bun run setup:mcp-config` | Write URL-based MCP registration for Codex and Antigravity |
 | `bun run doctor` | Full health report |
 | `bun run db:migrate` | Apply database migrations |
 | `bun run db:seed` | Upsert seed knowledge |
@@ -37,6 +38,7 @@ Run commands from the repository root.
 | `cargo run -q -p context-stilld -- agent-log-sync run\|stop\|status` | Delegate agent log sync lifecycle |
 | `cargo run -q -p context-stilld -- agent-log-sync run --wait --json` | Run one-shot sync and record exit status |
 | `cargo run -q -p context-stilld -- admin-api start\|stop\|status` | Start/stop Hono admin API for UI/operator sessions only; start waits for readiness |
+| `cargo run -q -p context-stilld -- runtime sidecars --json` | List remaining TypeScript sidecars, fallback classifications, runtime status, and removal task ids |
 
 Focused pre-switch smoke scripts:
 
@@ -91,15 +93,15 @@ The `CONTEXT_STILL_DAEMON_MANAGED_MCP`, `CONTEXT_STILL_DAEMON_MANAGED_QUEUE`, `C
 | Command | Description |
 |---|---|
 | `bun run sync:agent-logs` | One-time Codex / Antigravity / Claude log sync |
-| `bun run automation:agent-log-sync -- install` | Install macOS LaunchAgent for log sync |
-| `bun run automation:agent-log-sync -- load` | Load the log sync LaunchAgent |
-| `bun run automation:agent-log-sync -- status` | Inspect log sync LaunchAgent state |
+| `bun run automation:agent-log-sync -- install` | Install legacy macOS LaunchAgent for standalone log sync |
+| `bun run automation:agent-log-sync -- load` | Load the standalone log sync LaunchAgent; do not keep it independently loaded with resident `context-stilld` |
+| `bun run automation:agent-log-sync -- status` | Inspect standalone log sync LaunchAgent state |
 | `bun run automation:context-stilld -- install` | Install macOS LaunchAgent for resident `context-stilld run` |
 | `bun run automation:context-stilld -- load` | Load resident daemon and unload legacy queue / agent-log-sync LaunchAgent owners |
 | `bun run automation:context-stilld -- status` | Inspect resident daemon LaunchAgent and legacy owner state |
-| `bun run automation:queue-supervisor -- install` | Install queue supervisor LaunchAgent |
-| `bun run automation:queue-supervisor -- load` | Load queue supervisor LaunchAgent |
-| `bun run automation:queue-supervisor -- status` | Inspect queue supervisor state |
+| `bun run automation:queue-supervisor -- install` | Install legacy queue supervisor LaunchAgent |
+| `bun run automation:queue-supervisor -- load` | Load legacy queue supervisor LaunchAgent; do not keep it independently loaded with resident `context-stilld` |
+| `bun run automation:queue-supervisor -- status` | Inspect legacy queue supervisor state |
 
 ## Landscape
 
@@ -127,9 +129,9 @@ The `CONTEXT_STILL_DAEMON_MANAGED_MCP`, `CONTEXT_STILL_DAEMON_MANAGED_QUEUE`, `C
 | `bun run verify:fast` | Alias for the daily fast quality gate |
 | `bun run verify:sqlite` | SQLite local backend verification |
 | `bun run verify:desktop-readiness` | Desktop/local readiness preflight |
-| `bun run verify:mcp` | MCP-specific contract tests plus daemon endpoint smoke |
+| `bun run verify:mcp` | Rust MCP endpoint smoke plus SQLite MCP smoke |
 | `bun run verify:queue:smoke` | Queue operational smoke against a test DB |
-| `bun run verify:full` | Release/full gate: fast verify, integration, MCP, and queue smoke |
+| `bun run verify:full` | Release/full gate: fast verify, SQLite verify, and Rust daemon verify |
 
 ## Examples
 

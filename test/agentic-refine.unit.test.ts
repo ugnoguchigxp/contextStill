@@ -191,6 +191,50 @@ describe("agentic-refine.service", () => {
       );
     });
 
+    it("passes negative guardrail metadata to the refine prompt", async () => {
+      mockFetch.mockResolvedValueOnce({
+        ok: true,
+        json: async () => ({
+          choices: [
+            {
+              message: {
+                content: JSON.stringify({
+                  selectedIds: ["neg-1"],
+                  reasoning: "negative guardrail applies",
+                }),
+              },
+            },
+          ],
+        }),
+      });
+      const guardedCandidates: AgenticCandidate[] = [
+        {
+          id: "neg-1",
+          type: "rule",
+          status: "active",
+          title: "Do not skip verification",
+          content: "Avoid proceeding before migration verification has run.",
+          score: 0.94,
+          sourceRefs: [],
+          polarity: "negative",
+          section: "guardrails",
+        },
+      ];
+
+      const result = await agenticRefine(guardedCandidates, input, "task_context");
+
+      expect(result.items.map((item) => item.id)).toEqual(["neg-1"]);
+      const body = JSON.parse(String(mockFetch.mock.calls[0]?.[1]?.body)) as {
+        messages: Array<{ role: string; content: string }>;
+      };
+      const systemPrompt = body.messages[0]?.content ?? "";
+      const userPrompt = body.messages[1]?.content ?? "";
+      expect(systemPrompt).toContain("`polarity=negative` または `section=guardrails`");
+      expect(systemPrompt).toContain("実行を後押しする support ではなく");
+      expect(userPrompt).toContain('"polarity": "negative"');
+      expect(userPrompt).toContain('"section": "guardrails"');
+    });
+
     it("handles HTTP error gracefully", async () => {
       mockFetch.mockResolvedValueOnce({
         ok: false,

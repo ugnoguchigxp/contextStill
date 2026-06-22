@@ -9,15 +9,15 @@ use serde::{Deserialize, Serialize};
 
 use crate::domains::{
     bootstrap::service::resolve_paths,
-    process_lifecycle::service::{self, LifecycleReport, ManagedProcessSpec},
+    process_lifecycle::service::{self, LifecycleReport, ManagedProcessSpec, CURRENT_EXE_COMMAND},
 };
 use crate::shared::{config::EnvProvider, errors::CliError, process::ProcessSupervisor};
 
 const MCP_ENDPOINT: ManagedProcessSpec = ManagedProcessSpec {
     state_name: "mcp-server",
     display_name: "mcp-endpoint",
-    command: "bun",
-    args: &["run", "src/mcp/http-server.ts"],
+    command: CURRENT_EXE_COMMAND,
+    args: &["mcp", "serve"],
     log_file: "mcp-endpoint.log",
 };
 
@@ -114,6 +114,11 @@ pub fn status_report<E: EnvProvider, S: ProcessSupervisor>(
     supervisor: &S,
 ) -> Result<LifecycleReport, CliError> {
     service::status_report(&MCP_ENDPOINT, env, supervisor)
+}
+
+pub fn serve<E: EnvProvider>(env: &E) -> Result<String, CliError> {
+    super::endpoint_server::serve(env)?;
+    Ok("mcp-endpoint stopped".to_string())
 }
 
 pub fn endpoint_report<E: EnvProvider>(env: &E) -> EndpointReport {
@@ -374,7 +379,7 @@ mod tests {
     }
 
     #[test]
-    fn mcp_lifecycle_spawns_http_endpoint_worker_not_stdio_server() {
+    fn mcp_lifecycle_spawns_rust_http_endpoint_worker() {
         let app_dir = temp_app_dir();
         let env = MapEnv::from_pairs(vec![
             ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
@@ -387,8 +392,10 @@ mod tests {
 
         let spawned = supervisor.spawned.lock().unwrap();
         let call = spawned.values().next().unwrap();
-        assert_eq!(call.command, "bun");
-        assert_eq!(call.args, vec!["run", "src/mcp/http-server.ts"]);
+        assert!(
+            call.command.ends_with("context_stilld") || call.command.contains("context_stilld")
+        );
+        assert_eq!(call.args, vec!["mcp", "serve"]);
 
         cleanup_temp_app_dir(&app_dir);
     }

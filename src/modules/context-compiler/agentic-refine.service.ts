@@ -21,6 +21,8 @@ export type AgenticCandidate = {
   content: string;
   score: number;
   sourceRefs: string[];
+  polarity?: "positive" | "negative" | "neutral";
+  section?: "rules" | "procedures" | "guardrails";
 };
 
 export type AgenticRefineResult = {
@@ -49,6 +51,8 @@ function buildSystemPrompt(input: CompileInput, retrievalMode: RetrievalMode): s
     "- **ノイズの排除**: 「UI関連だから」といった漠然とした理由は不採用です。確証がない知識は、エージェントの思考を汚染する「毒」となります。",
     "- **勇気ある空配列**: 確信が持てない場合は、迷わず `selectedIds` を空配列 `[]` にしてください。有用な情報がないと判断することは、誤った情報を与えるよりも遥かに「賢い判断」です。",
     "- 知識が一つも選別されない場合でも、関連するコード断片や警告があればそれらは返されます。確証がない知識を無理に選ぶより、空配列を優先してください。",
+    "- `polarity=negative` または `section=guardrails` の候補は、実行を後押しする support ではなく、避ける条件・先に確認する条件・修正してから進む条件として評価してください。",
+    "- 現在の goal に直接適用される negative guardrail は、positive support が少なくても選別対象に残してください。goal に関係しない negative guardrail は落として構いません。",
     "",
     "## タスク情報",
     `- goal: ${input.goal}`,
@@ -82,6 +86,14 @@ function buildUserPrompt(candidates: AgenticCandidate[]): string {
     title: item.title,
     content: item.content.slice(0, 500),
     score: Math.round(item.score * 1000) / 1000,
+    polarity: item.polarity ?? "positive",
+    section:
+      item.section ??
+      (item.polarity === "negative"
+        ? "guardrails"
+        : item.type === "procedure"
+          ? "procedures"
+          : "rules"),
   }));
   return `## Knowledge 候補一覧\n\n\`\`\`json\n${JSON.stringify(items, null, 2)}\n\`\`\``;
 }

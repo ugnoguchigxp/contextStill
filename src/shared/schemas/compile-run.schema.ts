@@ -94,6 +94,13 @@ export const compileRunKnowledgeSignalSchema = z.object({
   updatedAt: z.string().datetime().nullable(),
 });
 
+export const compileRunEpisodeSignalSchema = z.object({
+  episodeId: z.string(),
+  title: z.string(),
+  section: z.literal("procedures"),
+  sourceRefs: z.array(z.string()),
+});
+
 export const compileRunInputSnapshotSchema = z.record(z.string(), z.unknown());
 
 export const compileRunDetailSchema = z.object({
@@ -104,6 +111,7 @@ export const compileRunDetailSchema = z.object({
   pack: contextPackSchema.nullable(),
   outputMarkdown: z.string().nullable().optional(),
   selectedItems: z.array(compileRunSelectedItemSchema),
+  episodeSignals: z.array(compileRunEpisodeSignalSchema).default([]),
   knowledgeFeedback: z.array(compileRunKnowledgeFeedbackSchema).default([]),
   knowledgeSignals: z.array(compileRunKnowledgeSignalSchema).default([]),
   evaluations: z

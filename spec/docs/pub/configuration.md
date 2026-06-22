@@ -17,7 +17,7 @@ For the current Bun/admin development runtime, pass the backend explicitly:
 CONTEXT_STILL_DB_BACKEND=sqlite bun run dev
 ```
 
-Future Tauri packaging should resolve SQLite DB, logs, backups, runtime settings, and MCP registration metadata from app data paths instead of requiring terminal setup.
+Future Tauri packaging should resolve SQLite DB, logs, backups, runtime settings, daemon state, and MCP registration metadata from app data paths instead of requiring terminal setup.
 
 ## Product Modes
 
@@ -77,7 +77,7 @@ Embedding improves semantic search and distillation quality, but it should not b
 | `CONTEXT_STILL_DAEMON_MANAGED_AGENT_LOG_SYNC` | unset | Status-only flag indicating agent log sync is a Rust-default candidate |
 | `CONTEXT_STILL_DAEMON_MANAGED_ADMIN_API` | unset | Status-only flag indicating admin API is a Rust-default candidate |
 
-These variables are for development, packaging, and advanced runtime integration. They do not make Rust the default product runtime by themselves, and the `CONTEXT_STILL_DAEMON_MANAGED_*` flags are observable in `status --json` before any package script default switch is made.
+These variables are for development, packaging, and advanced runtime integration. `context-stilld run` is the resident owner when launched through the daemon automation, but the `CONTEXT_STILL_DAEMON_MANAGED_*` flags are status markers rather than hidden package-script switches. Use `context-stilld runtime sidecars --json` to see which surfaces are still TypeScript/Bun sidecars.
 
 ## Agent Log Sync
 
@@ -90,6 +90,9 @@ These variables are for development, packaging, and advanced runtime integration
 | `CONTEXT_STILL_ANTIGRAVITY_LOG_DIRS` | Additional Antigravity log roots |
 | `CONTEXT_STILL_CLAUDE_PROJECTS_DIR` | Claude projects directory |
 | `CONTEXT_STILL_RESIDENT_AGENT_LOG_SYNC` | `1` | Enables resident `context-stilld run` to own scheduled agent log sync |
+| `CONTEXT_STILL_RESIDENT_QUEUE_MODE` | `rust-managed-one-shot` | Resident queue mode; default Rust scheduler runs the queue executor as short-lived one-shot work |
+| `CONTEXT_STILL_RESIDENT_QUEUE_INTERVAL_MS` | `5000` | Minimum interval between Rust-managed queue one-shot ticks |
+| `CONTEXT_STILL_RESIDENT_QUEUE_TIMEOUT_MS` | `300000` | Timeout for each Rust-managed queue one-shot executor |
 | `CONTEXT_STILL_AGENT_LOG_SYNC_INTERVAL_SECONDS` | `3600` | Resident daemon / legacy LaunchAgent scheduled sync interval |
 | `CONTEXT_STILL_AGENT_LOG_SYNC_RUN_AT_LOAD` | `0` | Set `1` to run agent log sync immediately when resident daemon starts |
 | `CONTEXT_STILL_AGENT_LOG_SYNC_TIMEOUT_MS` | `300000` | Timeout for each resident-owned one-shot sync sidecar |

@@ -52,6 +52,16 @@ where
         CliCommand::AdminApi { action, json } => {
             domains::admin_api_lifecycle::routing::handle_command(action, json, env, supervisor)
         }
+        CliCommand::Runtime { action, json } => match action {
+            domains::cli::routing::RuntimeAction::Sidecars => {
+                let report = domains::runtime_sidecars::service::sidecars_report(env, supervisor);
+                if json {
+                    Ok(report.to_json())
+                } else {
+                    Ok(report.to_text())
+                }
+            }
+        },
         CliCommand::Bootstrap { action, json } => match action {
             domains::cli::routing::BootstrapAction::Preflight => {
                 let report = domains::bootstrap::service::preflight(env);
@@ -159,7 +169,7 @@ mod tests {
     }
 
     #[test]
-    fn resident_run_once_starts_mcp_and_queue_surfaces() {
+    fn resident_run_once_starts_mcp_and_runs_queue_tick() {
         use crate::shared::config::MapEnv;
         use crate::shared::process::MockSupervisor;
         use std::time::SystemTime;
@@ -183,23 +193,59 @@ mod tests {
         let report: serde_json::Value = serde_json::from_str(&output).expect("valid JSON");
         assert_eq!(report["action"], "run");
         assert_eq!(report["status"], "exited");
-        assert_eq!(report["surfaces"].as_array().unwrap().len(), 5);
+        assert_eq!(report["surfaces"].as_array().unwrap().len(), 4);
         assert_eq!(report["surfaces"][0]["name"], "mcp-server");
         assert_eq!(report["surfaces"][0]["status"], "started");
         assert_eq!(report["surfaces"][1]["name"], "queue-supervisor");
-        assert_eq!(report["surfaces"][1]["status"], "started");
+        assert_eq!(report["surfaces"][1]["status"], "scheduled");
         assert_eq!(report["surfaces"][2]["name"], "agent-log-sync");
         assert_eq!(report["surfaces"][2]["status"], "scheduled");
-        assert_eq!(report["surfaces"][3]["name"], "queue-supervisor");
+        assert_eq!(report["surfaces"][3]["name"], "mcp-server");
         assert_eq!(report["surfaces"][3]["status"], "stopped");
-        assert_eq!(report["surfaces"][4]["name"], "mcp-server");
-        assert_eq!(report["surfaces"][4]["status"], "stopped");
 
         let status_json = crate::run(["status", "--json"], &env, &supervisor).unwrap();
         let status: serde_json::Value = serde_json::from_str(&status_json).unwrap();
-        assert_eq!(status["residentSupervisor"], "stopped");
+        assert_eq!(status["residentSupervisor"], "exited");
         assert_eq!(status["mcpServer"], "stopped");
-        assert_eq!(status["queueSupervisor"], "stopped");
+        assert_eq!(status["queueSupervisor"], "scheduled");
+
+        std::fs::remove_dir_all(&app_dir).unwrap();
+    }
+
+    #[test]
+    fn resident_run_once_blocks_temporary_sidecars_when_rust_only_required() {
+        use crate::shared::config::MapEnv;
+        use crate::shared::process::MockSupervisor;
+        use std::time::SystemTime;
+
+        let rand_num = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let app_dir = std::env::temp_dir().join(format!(
+            "context_still_resident_rust_only_{}_{}",
+            std::process::id(),
+            rand_num
+        ));
+        let env = MapEnv::from_pairs(vec![
+            ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
+            ("CONTEXT_STILL_PROJECT_ROOT", app_dir.to_str().unwrap()),
+            ("CONTEXT_STILL_RESIDENT_REQUIRE_RUST_ONLY", "1"),
+        ]);
+        let supervisor = MockSupervisor::new();
+
+        let output = crate::run(["run", "--once", "--json"], &env, &supervisor).unwrap();
+        let report: serde_json::Value = serde_json::from_str(&output).expect("valid JSON");
+
+        assert_eq!(report["status"], "exited");
+        assert_eq!(report["surfaces"].as_array().unwrap().len(), 3);
+        assert_eq!(report["surfaces"][0]["name"], "mcp-server");
+        assert_eq!(report["surfaces"][0]["status"], "blocked");
+        assert_eq!(report["surfaces"][1]["name"], "queue-supervisor");
+        assert_eq!(report["surfaces"][1]["status"], "blocked");
+        assert_eq!(report["surfaces"][2]["name"], "agent-log-sync");
+        assert_eq!(report["surfaces"][2]["status"], "blocked");
+        assert!(supervisor.spawned.lock().unwrap().is_empty());
 
         std::fs::remove_dir_all(&app_dir).unwrap();
     }
@@ -429,6 +475,20 @@ mod tests {
         let json: serde_json::Value = serde_json::from_str(&output).expect("valid JSON");
         assert_eq!(json["server"], "context-still");
         assert_eq!(json["transport"], "streamable-http");
+
+        let output = crate::run(["runtime", "sidecars", "--json"], &env, &supervisor).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&output).expect("valid JSON");
+        assert_eq!(json["action"], "sidecars");
+        assert_eq!(json["runtimeHost"], "rust-resident");
+        assert!(!json["sidecars"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| { entry["id"] == "mcp-endpoint-bun-http-server" }));
+        assert!(json["sidecars"].as_array().unwrap().iter().any(|entry| {
+            entry["id"] == "mcp-tool-dispatch-typescript-one-shot"
+                && entry["classification"] == "manual-one-shot"
+        }));
 
         std::fs::remove_dir_all(&app_dir).unwrap();
     }

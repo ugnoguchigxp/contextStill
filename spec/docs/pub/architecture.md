@@ -14,17 +14,19 @@ The default product path is a desktop/local control plane for coding-agent memor
 
 The admin UI, CLI, MCP server, and automation workers are local control-plane surfaces. They are not a hosted multi-tenant SaaS architecture.
 
+The current resident runtime is `context-stilld run`. It owns the long-lived boundary and records runtime state, while selected durable surfaces still execute through classified TypeScript/Bun sidecars until their Rust parity gates pass.
+
 ## Runtime Boundary
 
 The runtime boundary is deliberately split so that UI maintenance does not define the lifetime of background work.
 
 | Surface | Lifetime | Responsibility |
 |---|---|---|
-| Daemon / worker runtime | Long-lived; may continue after the UI closes | MCP server management, CLI command execution, queue supervision, agent-log sync, automation, doctor, backup, bootstrap, and process supervision |
+| Daemon / worker runtime | Long-lived; may continue after the UI closes | MCP endpoint supervision, CLI command execution, queue supervision, agent-log sync scheduling, automation, doctor, backup, bootstrap, process supervision, and runtime sidecar visibility |
 | Hono API | UI-facing HTTP surface; can follow the admin UI lifecycle unless promoted to a daemon control API | Admin UI facade for knowledge, sources, graph, queue controls, settings, context runs, decision history, and dashboards |
 | Tauri / web UI | On-demand operator surface | Knowledge maintenance, review, settings, diagnostics, and explicit operator actions |
 
-Hono should not become the owner of durable runtime behavior by accident. If a future desktop/server build needs a long-lived control API, it should be modeled as daemon control surface separately from the admin UI facade. MCP and CLI remain daemon-side entrypoints and should not depend on the admin UI being open.
+Hono should not become the owner of durable runtime behavior by accident. If a future desktop/server build needs a long-lived control API, it should be modeled as daemon control surface separately from the admin UI facade. MCP and CLI remain daemon-side entrypoints and should not depend on the admin UI being open. During the Rust migration, sidecars are acceptable only when their owner, classification, runtime status, and removal task are visible from `context-stilld runtime sidecars --json`.
 
 ## Core Loop
 
@@ -53,6 +55,20 @@ sources + web + agent logs + candidates
 | Context decision | `src/modules/context-decision/`, `api/modules/context-decision/`, `web/src/modules/context-decision/` | Knowledge-backed autonomous decisions, audit traces, and feedback effects |
 | Knowledge graph | `src/modules/landscape/`, `api/modules/graph/` | Graph/replay diagnostics and review-item workflows |
 | Doctor | `src/modules/doctor/` | Health checks and desktop readiness summary |
+| Rust daemon boundary | `crates/context-stilld/` | Resident runtime ownership, lifecycle status, preflight checks, queue inspection, MCP endpoint inspection, and sidecar classification |
+
+## Runtime Sidecar Policy
+
+`context-stilld run` is the resident owner, but the Rust-only daemon migration is intentionally incremental.
+
+| Classification | Meaning | Current examples |
+|---|---|---|
+| `resident-owned-temporary` | Scheduled work owned by `context-stilld`, still implemented through TypeScript/Bun until a Rust parity task replaces it | queue executor one-shot, agent-log-sync one-shot parser/write |
+| `ui-time` | Child process allowed only for UI/operator sessions, not part of the resident Rust-only goal | Hono admin API |
+| `manual-one-shot` | Operator-run or Rust-endpoint-triggered one-shot commands that may remain TypeScript temporarily | MCP tool dispatch one-shot, import, export, migration, repair, backfill, smoke commands |
+| `forbidden-resident` | Legacy process owner that must not independently own durable work while `context-stilld` is resident owner | legacy queue and agent-log-sync LaunchAgents |
+
+Use `cargo run -q -p context-stilld -- runtime sidecars --json` to inspect the current registry.
 
 ## Backend Support Matrix
 
@@ -116,8 +132,8 @@ Candidates and review items remain separate from final knowledge. This separatio
 
 context-still uses queue workers instead of hidden background mutation:
 
-- `agent-log-sync` imports local agent logs on demand or through LaunchAgent / Task Scheduler.
-- `queue-supervisor` runs distillation stages continuously or on a schedule.
+- `agent-log-sync` imports local agent logs on demand; in resident mode, Rust owns the schedule and delegates parser/write work to a temporary TypeScript sidecar.
+- `queue-supervisor` runs distillation stages continuously or on a schedule; in resident mode, Rust owns the process boundary while the queue scheduler/executors remain TypeScript until Rust parity gates pass.
 - `doctor` reports DB, optional embedding/LLM, provider, sync, queue, landscape, and desktop readiness signals.
 
 ## Server Backend Constraints
@@ -138,4 +154,4 @@ Server backend compatibility tests should stay explicit, but desktop users shoul
 - Landscape diagnostics create reviewable artifacts; they do not directly mutate production ranking.
 - MCP tools and CLI commands are daemon-side entrypoints. REST API endpoints are primarily for the admin UI facade and should not be required for background work to continue.
 - `.env` is a development/advanced configuration surface, not a required desktop onboarding step.
-- `context-stilld` is an in-progress Rust boundary host for paths, preflight, lifecycle status, and delegated process supervision. It does not replace TypeScript product logic yet; TypeScript commands remain the fallback/source of truth until each boundary passes its own smoke gate.
+- `context-stilld` is an in-progress Rust resident boundary host for paths, preflight, lifecycle status, queue inspection, MCP endpoint inspection, runtime sidecar classification, and delegated process supervision. It does not replace TypeScript product logic yet; TypeScript commands remain the fallback/source of truth until each boundary passes its own smoke gate.

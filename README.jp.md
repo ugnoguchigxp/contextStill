@@ -26,7 +26,8 @@ context-still は、AI コーディングエージェントの記憶を扱う lo
 
 - storage: ローカル app data 配下の SQLite
 - UI: local admin / control-plane 体験。Tauri packaging を desktop target として扱う
-- MCP: ユーザーが有効化する任意の agent integration
+- daemon: `context-stilld run` が resident runtime owner。Rust 移行中のため、一部の durable worker は分類済み TypeScript sidecar として実行する
+- MCP: ユーザーが有効化する任意の streamable HTTP agent integration
 - model usage: minimal local usage を先に成立させ、local LLM / cloud-assisted mode は任意の拡張にする
 
 基本ループは次の通りです。
@@ -99,7 +100,7 @@ CONTEXT_STILL_DB_BACKEND=sqlite bun run dev
 - UI: http://localhost:39171
 - API: 同一 origin の `/api/*`
 
-将来の Tauri shell は、同じ SQLite-first default、desktop data path、doctor state を使います。packaging が入るまでは、local web/admin runtime が desktop product path の開発 baseline です。
+将来の Tauri shell は、同じ SQLite-first default、desktop data path、resident daemon boundary、doctor state を使います。packaging が入るまでは、local Bun/admin runtime が desktop product path の開発 baseline です。
 
 対話型の `startup` command は現時点では advanced server setup path です。desktop / local development では上記の明示的な SQLite commands を使ってください。
 
@@ -119,11 +120,11 @@ context-still は、常駐 runtime と管理 UI surface を分けて扱います
 
 | Surface | 既定の lifetime | 責務 |
 |---|---|---|
-| Daemon / worker runtime | UI とは独立して常駐 | MCP server 管理、CLI commands、queue workers、agent-log sync、automation、doctor、backup、bootstrap、process supervision |
+| Daemon / worker runtime | UI とは独立して常駐 | MCP endpoint supervision、CLI commands、queue workers、agent-log sync scheduling、automation、doctor、backup、bootstrap、process supervision、runtime sidecar visibility |
 | Hono API | 管理 UI が HTTP access を必要とする時に起動 | knowledge、sources、graph、queue controls、settings、context runs、decision history、dashboards の admin UI facade |
 | Tauri / web UI | 必要時に開く | knowledge maintenance、review、settings、diagnostics、operator actions |
 
-Hono API は UI 向け facade に留めます。継続的な background work と外部 agent integration は daemon / CLI / MCP 側の責務なので、UI を閉じても log sync、queue supervision、MCP availability、scheduled maintenance が止まる前提にはしません。将来 desktop build で control API と admin API を分ける場合も、daemon control は常駐 daemon 側に残し、admin API は UI lifecycle に追従できる形にします。
+Hono API は UI 向け facade に留めます。継続的な background work と外部 agent integration は daemon / CLI / MCP 側の責務なので、UI を閉じても log sync scheduling、queue supervision、MCP availability、scheduled maintenance が止まる前提にはしません。現時点の Rust daemon は resident owner ですが、MCP endpoint、MCP tool handlers、queue worker、agent-log-sync parser は Rust parity gate が通るまで分類済み TypeScript/Bun sidecar として残ります。
 
 ## MCP Integration
 
@@ -139,16 +140,14 @@ MCP client には次のように登録します。
 {
   "mcpServers": {
     "context-still": {
-      "command": "bun",
-      "args": ["run", "start:mcp"],
-      "cwd": "/path/to/contextStill",
-      "env": {
-        "CONTEXT_STILL_DB_BACKEND": "sqlite"
-      }
+      "url": "http://127.0.0.1:39172/mcp",
+      "enabled": true
     }
   }
 }
 ```
+
+`bun run setup:mcp-config` は Codex と Antigravity にこの URL 方式の登録を書き込みます。古い direct stdio MCP server は削除済みで、新規 client registration として復元しません。endpoint は現時点では daemon-owned Bun HTTP worker であり、Rust MCP endpoint が入るまでは `context-stilld runtime sidecars --json` で temporary resident sidecar として見えます。
 
 接続後は、project session 開始時に `initial_instructions` を一度だけ呼びます。作業前に `context_compile`、ユーザーへ質問する前や PR 作成前に自律継続できる余地がある場合は `context_decision`、作業後に `compile_eval` を使います。永続化したい知見は `register_candidates` で登録し、negative guardrail は `polarity: "negative"` と明示的な `technologies` / `changeTypes` / `domains` を指定します。
 
@@ -156,7 +155,7 @@ MCP は agent integration surface です。local app を開くことや既存 kn
 
 ## Advanced Server Backend
 
-PostgreSQL / pgvector backend は、advanced server-style deployment と compatibility work のために残します。既定の desktop / local path には不要です。
+PostgreSQL / pgvector backend は legacy compatibility code です。完了ゲートとしてはメンテナンスせず、既定の desktop / local path には不要です。
 
 明示的に server backend をテスト・運用する場合だけ使います。
 
@@ -164,7 +163,6 @@ PostgreSQL / pgvector backend は、advanced server-style deployment と compati
 docker compose up -d
 cp .env.example .env
 bun run db:migrate
-bun run verify:postgres
 ```
 
 server backend の制約は [Architecture Overview](spec/docs/pub/architecture.md) と [Operations](spec/docs/pub/operations.md) に記載しています。server productization、auth、multi-user operation、remote DB latency assumptions が固まるまでは opt-in path として扱います。
@@ -244,6 +242,12 @@ packaging や Tauri shell work の前に使う desktop/local readiness gate:
 
 ```bash
 bun run verify:desktop-readiness
+```
+
+resident runtime ownership、lifecycle commands、sidecar classification を変更した時に使う Rust daemon boundary gate:
+
+```bash
+bun run verify:rust-daemon
 ```
 
 tag / release 前の full gate:

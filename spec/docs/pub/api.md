@@ -77,6 +77,14 @@ If `CONTEXT_STILL_ADMIN_API_KEY` is configured, requests under `/api/*` must inc
 | `GET` | `/api/vibe-memory/:id` | Read memory |
 | `DELETE` | `/api/vibe-memory/:id` | Delete memory |
 
+## Episodes
+
+| Method | Endpoint | Description |
+|---|---|---|
+| `GET` | `/api/episodes` | Search EpisodeCards with optional `q`, `query`, `status`, `domains`, `technologies`, `changeTypes`, `tools`, `repoPath`, `repoKey`, `outcomeKinds`, and `limit` filters |
+| `POST` | `/api/episodes` | Register an EpisodeCard |
+| `GET` | `/api/episodes/:id` | Fetch one EpisodeCard |
+
 ## Graph and Landscape
 
 | Method | Endpoint | Description |
@@ -102,10 +110,11 @@ If `CONTEXT_STILL_ADMIN_API_KEY` is configured, requests under `/api/*` must inc
 | `GET` | `/api/queue` | List distillation targets |
 | `GET` | `/api/queue/stats` | Queue stats |
 | `GET` | `/api/queue/active` | Active target states |
-| `POST` | `/api/queue/:id/pause` | Pause target |
-| `POST` | `/api/queue/:id/resume` | Resume target |
-| `POST` | `/api/queue/:queue/:id/resume` | Resume target in a specific queue |
-| `POST` | `/api/queue/:id/retry` | Retry target |
+| `POST` | `/api/queue/:queue/pause` | Pause a queue lane |
+| `POST` | `/api/queue/:queue/resume` | Resume a queue lane |
+| `POST` | `/api/queue/:queue/:id/pause` | Pause a queue job |
+| `POST` | `/api/queue/:queue/:id/resume` | Resume a queue job |
+| `POST` | `/api/queue/:queue/:id/retry` | Retry a queue job |
 | `GET` | `/api/candidates` | List candidates |
 | `POST` | `/api/candidates/:id/premium-reprocess` | Reprocess candidate through premium coverage |
 | `GET` | `/api/audit-logs` | Audit log timeline |
@@ -117,6 +126,8 @@ If `CONTEXT_STILL_ADMIN_API_KEY` is configured, requests under `/api/*` must inc
 | `GET` | `/api/settings` | Runtime settings |
 | `PUT` | `/api/settings` | Update runtime settings |
 | `POST` | `/api/settings/providers/:provider/test` | Test provider |
+| `POST` | `/api/settings/providers/azure-openai/deployments/:deployment/test` | Test one Azure OpenAI deployment |
+| `POST` | `/api/settings/providers/local-llm/models/test` | Test one local LLM model |
 | `GET` | `/api/settings/providers/codex/auth/status` | Codex auth status |
 | `POST` | `/api/settings/providers/codex/auth/login-command` | Generate Codex login command |
 | `POST` | `/api/settings/reload-runtime-cache` | Reload runtime settings cache |

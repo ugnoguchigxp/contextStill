@@ -277,7 +277,9 @@ function routeModelForProvider(
 function buildFallbackCompose(params: ComposeInput, plan: ComposePlan): FallbackComposeResult {
   const { headings } = plan;
   const guardrails = params.guardrails ?? [];
-  const allItems = [...params.rules, ...params.procedures, ...guardrails];
+  const knowledgeProcedures = params.procedures.filter((item) => item.itemKind !== "episode_card");
+  const episodePrecedents = params.procedures.filter((item) => item.itemKind === "episode_card");
+  const allItems = [...params.rules, ...knowledgeProcedures, ...guardrails, ...episodePrecedents];
   if (allItems.length === 0) return { markdown: "No Content", usedKnowledge: [] };
   const usedKnowledgeIds = new Set<string>();
   const trackUsed = (item: ContextPackItem) => {
@@ -297,9 +299,9 @@ function buildFallbackCompose(params: ComposeInput, plan: ComposePlan): Fallback
   }
 
   const stepLines: string[] = ["", `## ${headings.steps}`, ""];
-  if (params.procedures.length > 0) {
+  if (knowledgeProcedures.length > 0) {
     let index = 1;
-    for (const procedure of params.procedures.slice(0, 3)) {
+    for (const procedure of knowledgeProcedures.slice(0, 3)) {
       const workflow = extractSectionLines(procedure.content, "Workflow");
       const detail = workflow[0] ? `（${workflow[0]}）` : "";
       stepLines.push(`${index}. ${procedure.title}${detail}`);
@@ -314,9 +316,16 @@ function buildFallbackCompose(params: ComposeInput, plan: ComposePlan): Fallback
       index += 1;
     }
   }
+  if (episodePrecedents.length > 0) {
+    for (const episode of episodePrecedents.slice(0, 2)) {
+      stepLines.push(
+        `- 過去事例として ${episode.title} を参照し、現在のコードで適用可否を確認する。`,
+      );
+    }
+  }
 
   const verificationLines: string[] = ["", `## ${headings.verification}`, ""];
-  const verificationCandidates = params.procedures
+  const verificationCandidates = knowledgeProcedures
     .flatMap((item) => extractSectionLines(item.content, "Verification"))
     .map((line) => normalizeLine(line))
     .filter(Boolean)
@@ -326,33 +335,48 @@ function buildFallbackCompose(params: ComposeInput, plan: ComposePlan): Fallback
       verificationLines.push(`- ${item}`);
     }
   } else {
-    for (const item of [...params.rules, ...params.procedures].slice(0, 2)) {
+    for (const item of [...params.rules, ...knowledgeProcedures].slice(0, 2)) {
       verificationLines.push(`- ${item.title} の要件が成立していることを確認する。`);
       trackUsed(item);
     }
+    if (episodePrecedents.length > 0) {
+      verificationLines.push(
+        "- EpisodeCard precedent をそのまま根拠にせず、現在のコード・DB状態で適用可否を確認する。",
+      );
+    }
   }
 
-  const avoidCandidates = [...guardrails, ...params.procedures]
+  const avoidCandidates = [...guardrails, ...knowledgeProcedures]
     .flatMap((item) => extractSectionLines(item.content, "Avoid"))
     .map((line) => normalizeLine(line))
     .filter(Boolean)
     .slice(0, 2);
   const avoidLines: string[] = [];
-  if (plan.includeAvoidSection || avoidCandidates.length > 0 || guardrails.length > 0) {
+  if (
+    plan.includeAvoidSection ||
+    avoidCandidates.length > 0 ||
+    guardrails.length > 0 ||
+    episodePrecedents.length > 0
+  ) {
     avoidLines.push("", `## ${headings.avoid}`, "");
     for (const guardrail of guardrails.slice(0, 3)) {
       avoidLines.push(`- ${guardrail.title}: ${firstSentence(guardrail.content, 140)}`);
       trackUsed(guardrail);
     }
+    if (episodePrecedents.length > 0) {
+      avoidLines.push(
+        "- EpisodeCard precedent を現在の source truth や Knowledge rule として扱わない。",
+      );
+    }
     if (avoidCandidates.length > 0) {
       for (const item of avoidCandidates) {
         avoidLines.push(`- ${item}`);
       }
-      for (const procedure of params.procedures.slice(0, 2)) {
+      for (const procedure of knowledgeProcedures.slice(0, 2)) {
         trackUsed(procedure);
       }
     } else {
-      for (const item of [...params.rules, ...params.procedures].slice(0, 2)) {
+      for (const item of [...params.rules, ...knowledgeProcedures].slice(0, 2)) {
         avoidLines.push(`- ${item.title} を適用する際の前提条件を明確にする。`);
         trackUsed(item);
       }
@@ -418,6 +442,7 @@ function buildComposerSystemPrompt(maxTokens: number, plan: ComposePlan): string
     "- `Rules` や `Procedures` の見出しは使わない。",
     "- `negative guardrails` は参考情報ではなく、実行可否・修正条件・確認条件を制約する negative evidence として扱う。",
     "- negative guardrails が現在の goal に適用される場合、実行を後押しする根拠として使わず、避けること・先に確認すること・修正してから進めることとして本文に反映する。",
+    "- `episode precedents` は過去の類似ケースであり、Knowledge rule や現在の source truth ではない。使う場合は現在のコード確認を前提にした参考 precedent として扱う。",
     "- 入力knowledgeに無い事実を追加しない。",
     `- markdown フィールドの本文は ${normalizedMaxTokens} トークン以内を目標に収める。`,
     `- ${normalizedMaxTokens} トークンを埋める必要はない。goal達成に必要な最小限だけ書く。`,
@@ -447,6 +472,7 @@ function selectPromptKnowledgeCandidates(
   params: ComposeInput,
   plan: ComposePlan,
 ): ContextPackItem[] {
+  const knowledgeProcedures = params.procedures.filter((item) => item.itemKind !== "episode_card");
   const ruleHintSet = normalizedHintSet(plan.ruleQueryHints);
   const procedureHintSet = normalizedHintSet(plan.procedureQueryHints);
   const exclusionHintSet = normalizedHintSet(plan.exclusionHints);
@@ -459,7 +485,7 @@ function selectPromptKnowledgeCandidates(
     return positive * 8 - negative * 4 + item.score;
   };
   const rankedRules = [...params.rules].sort((a, b) => scoreItem(b) - scoreItem(a));
-  const rankedProcedures = [...params.procedures].sort((a, b) => scoreItem(b) - scoreItem(a));
+  const rankedProcedures = [...knowledgeProcedures].sort((a, b) => scoreItem(b) - scoreItem(a));
   const rankedGuardrails = [...(params.guardrails ?? [])].sort(
     (a, b) => scoreItem(b) - scoreItem(a),
   );
@@ -480,8 +506,11 @@ function selectPromptKnowledgeCandidates(
 
 function buildPlanUserPrompt(params: ComposeInput): string {
   const topRules = params.rules.slice(0, 4).map((item) => item.title);
-  const topProcedures = params.procedures.slice(0, 4).map((item) => item.title);
+  const knowledgeProcedures = params.procedures.filter((item) => item.itemKind !== "episode_card");
+  const episodePrecedents = params.procedures.filter((item) => item.itemKind === "episode_card");
+  const topProcedures = knowledgeProcedures.slice(0, 4).map((item) => item.title);
   const topGuardrails = (params.guardrails ?? []).slice(0, 4).map((item) => item.title);
+  const topEpisodePrecedents = episodePrecedents.slice(0, 4).map((item) => item.title);
   const lines: string[] = [
     `goal: ${normalizeLine(params.input.goal)}`,
     `retrievalMode: ${params.retrievalMode}`,
@@ -496,14 +525,20 @@ function buildPlanUserPrompt(params: ComposeInput): string {
     lines.push(`domains: ${params.input.domains.join(", ")}`);
   }
   lines.push(`ruleCandidates: ${params.rules.length}`);
-  lines.push(`procedureCandidates: ${params.procedures.length}`);
+  lines.push(`procedureCandidates: ${knowledgeProcedures.length}`);
   lines.push(`guardrailCandidates: ${params.guardrails?.length ?? 0}`);
+  lines.push(`episodePrecedents: ${episodePrecedents.length}`);
   lines.push(`topRuleTitles: ${topRules.length > 0 ? topRules.join(" | ") : "(none)"}`);
   lines.push(
     `topProcedureTitles: ${topProcedures.length > 0 ? topProcedures.join(" | ") : "(none)"}`,
   );
   lines.push(
     `topGuardrailTitles: ${topGuardrails.length > 0 ? topGuardrails.join(" | ") : "(none)"}`,
+  );
+  lines.push(
+    `topEpisodePrecedents: ${
+      topEpisodePrecedents.length > 0 ? topEpisodePrecedents.join(" | ") : "(none)"
+    }`,
   );
   lines.push("", "output requirements:");
   lines.push("- JSON only");
@@ -515,6 +550,7 @@ function buildPlanUserPrompt(params: ComposeInput): string {
 
 function buildComposerUserPrompt(params: ComposeInput, plan: ComposePlan): string {
   const items = selectPromptKnowledgeCandidates(params, plan);
+  const episodePrecedents = params.procedures.filter((item) => item.itemKind === "episode_card");
   const lines: string[] = [
     `goal: ${normalizeLine(params.input.goal)}`,
     `retrievalMode: ${params.retrievalMode}`,
@@ -536,6 +572,17 @@ function buildComposerUserPrompt(params: ComposeInput, plan: ComposePlan): strin
       lines.push(`- id: ${item.itemId}`);
       lines.push(`  title: ${item.title}`);
       lines.push(`  summary: ${firstSentence(item.content, 180)}`);
+    }
+  }
+  if (episodePrecedents.length > 0) {
+    lines.push("", "episode precedents:");
+    for (const item of episodePrecedents.slice(0, 3)) {
+      lines.push(`- id: ${item.itemId}`);
+      lines.push(`  title: ${item.title}`);
+      lines.push(`  summary: ${firstSentence(item.content, 180)}`);
+      if (item.sourceRefs.length > 0) {
+        lines.push(`  sourceRefs: ${item.sourceRefs.slice(0, 3).join(" | ")}`);
+      }
     }
   }
   lines.push("", "knowledge candidates:");
@@ -784,7 +831,11 @@ export async function composeContextResponse(params: ComposeInput): Promise<Comp
   const plannerSystemPrompt = buildPlanSystemPrompt();
   const plannerUserPrompt = buildPlanUserPrompt(params);
   const selectableKnowledgeIds = new Set(
-    [...params.rules, ...params.procedures, ...(params.guardrails ?? [])]
+    [
+      ...params.rules,
+      ...params.procedures.filter((item) => item.itemKind !== "episode_card"),
+      ...(params.guardrails ?? []),
+    ]
       .map((item) => item.itemId.trim())
       .filter((itemId) => itemId.length > 0),
   );
