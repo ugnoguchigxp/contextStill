@@ -19,19 +19,21 @@ describe("MCP config snippet", () => {
     expect(snippet).not.toContain("src/index.ts");
   });
 
-  test("does not expose the deleted direct stdio MCP runtime through package scripts", () => {
+  test("does not expose deleted direct MCP runtimes through package scripts", () => {
     const packageJson = JSON.parse(
       fs.readFileSync(new URL("../package.json", import.meta.url), "utf8"),
     ) as { scripts?: Record<string, string> };
     const scripts = packageJson.scripts ?? {};
     const serializedScripts = JSON.stringify(scripts);
 
-    expect(scripts["start:mcp"]).toBe("bun run src/mcp/http-server.ts");
+    expect(scripts["start:mcp"]).toBe("cargo run -q -p context-stilld -- mcp start");
     expect(scripts).not.toHaveProperty("start:mcp:stdio");
     expect(serializedScripts).not.toContain("src/index.ts");
+    expect(serializedScripts).not.toContain("src/mcp/http-server.ts");
     expect(serializedScripts).not.toContain("src/mcp/stdio-server.ts");
     expect(serializedScripts).not.toContain("src/cli/mcp-smoke.ts");
     expect(fs.existsSync(new URL("../src/index.ts", import.meta.url))).toBe(false);
+    expect(fs.existsSync(new URL("../src/mcp/http-server.ts", import.meta.url))).toBe(false);
     expect(fs.existsSync(new URL("../src/mcp/stdio-server.ts", import.meta.url))).toBe(false);
     expect(fs.existsSync(new URL("../src/cli/mcp-smoke.ts", import.meta.url))).toBe(false);
   });

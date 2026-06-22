@@ -74,9 +74,6 @@ export async function inspectLaunchAgent(
 }
 
 function toWindowsTaskName(label: string): string | null {
-  if (label === "com.context-still.agent-log-sync") return "\\context-still\\agent-log-sync";
-  if (label === "com.context-still.queue-supervisor") return "\\context-still\\queue-supervisor";
-  if (label === "com.memory-router.agent-log-sync") return "\\memory-router\\agent-log-sync";
-  if (label === "com.memory-router.queue-supervisor") return "\\memory-router\\queue-supervisor";
+  if (label === "com.context-still.daemon") return "\\context-still\\daemon";
   return null;
 }

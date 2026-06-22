@@ -125,14 +125,14 @@ context-still separates the long-lived runtime from the admin UI surface:
 | Hono API | Runs when the admin UI needs HTTP access | Admin UI facade for knowledge, sources, graph, queue controls, settings, context runs, decision history, and dashboards |
 | Tauri / web UI | Opened on demand | Knowledge maintenance, review, settings, diagnostics, and operator actions |
 
-The Hono API should stay a UI-facing facade. Durable background work and external agent integration belong to the daemon/CLI/MCP side, so closing the UI does not imply stopping log sync scheduling, queue supervision, MCP availability, or scheduled maintenance. The current Rust daemon is the resident owner. MCP tool handlers and queue business execution still have classified manual TypeScript/Bun compatibility paths, while the MCP endpoint/session manager, queue scheduling/maintenance, and agent-log-sync parser/write path are Rust-owned.
+The Hono API should stay a UI-facing facade. Durable background work and external agent integration belong to the daemon/CLI/MCP side, so closing the UI does not imply stopping log sync scheduling, queue supervision, MCP availability, or scheduled maintenance. The current Rust daemon is the resident owner. MCP endpoint/session management, exposed MCP tool handlers, queue scheduling/maintenance, and agent-log-sync parser/write paths are Rust-owned. TypeScript/Bun remains available for UI-time Hono and explicit operator CLIs, not as a resident daemon dependency.
 
 ## MCP Integration
 
-Start the daemon-owned local MCP endpoint worker:
+Start the daemon-owned local MCP endpoint:
 
 ```bash
-bun run start:mcp
+cargo run -q -p context-stilld -- mcp start
 ```
 
 For an MCP client, use:
@@ -148,7 +148,7 @@ For an MCP client, use:
 }
 ```
 
-`bun run setup:mcp-config` writes this URL-based registration for Codex and Antigravity. The old direct stdio context-still MCP server has been removed and must not be restored for client registration. The endpoint is owned by `context-stilld` as a Rust HTTP/session surface; non-migrated tool handlers may still run through short-lived one-shot dispatch.
+`bun run setup:mcp-config` writes this URL-based registration for Codex and Antigravity. The old direct stdio context-still MCP server and TypeScript MCP HTTP worker have been removed and must not be restored for client registration. The endpoint and exposed tool handlers are owned by `context-stilld`.
 
 After connecting the MCP server, call `initial_instructions` once at the start of a project session. Use `context_compile` before task work, `context_decision` before asking the user or creating a PR when autonomous progress may still be possible, and `compile_eval` after task work. Register durable lessons with `register_candidates`; negative guardrails use `polarity: "negative"` plus explicit `technologies`, `changeTypes`, and `domains`.
 
@@ -199,13 +199,11 @@ bun run decision:pr-discard-scan -- --dry-run
 bun run decision:pr-discard-scan -- --apply
 ```
 
-Install local automation on macOS:
+Install the resident daemon automation on macOS:
 
 ```bash
-bun run automation:agent-log-sync -- install
-bun run automation:agent-log-sync -- load
-bun run automation:queue-supervisor -- install
-bun run automation:queue-supervisor -- load
+bun run automation:context-stilld -- install
+bun run automation:context-stilld -- load
 ```
 
 Install optional Git hooks that remind agents to evaluate compile output and register durable candidates:

@@ -61,6 +61,15 @@ where
                     Ok(report.to_text())
                 }
             }
+            domains::cli::routing::RuntimeAction::AssertRustOnly => {
+                let report =
+                    domains::runtime_sidecars::service::assert_rust_only_report(env, supervisor);
+                if json {
+                    Ok(report.to_json())
+                } else {
+                    Ok(report.to_text())
+                }
+            }
         },
         CliCommand::Bootstrap { action, json } => match action {
             domains::cli::routing::BootstrapAction::Preflight => {
@@ -306,8 +315,8 @@ mod tests {
         // 2. Simulate MCP endpoint degraded (via JSON state file)
         let mcp_pid = supervisor
             .spawn(
-                "bun",
-                &["run", "src/mcp/http-server.ts"],
+                "context-stilld",
+                &["mcp", "serve"],
                 &app_data_dir.join("logs/mcp.log"),
                 &app_data_dir,
             )
@@ -500,10 +509,18 @@ mod tests {
             .unwrap()
             .iter()
             .any(|entry| { entry["id"] == "mcp-endpoint-bun-http-server" }));
-        assert!(json["sidecars"].as_array().unwrap().iter().any(|entry| {
-            entry["id"] == "mcp-tool-dispatch-typescript-one-shot"
-                && entry["classification"] == "manual-one-shot"
-        }));
+        assert!(!json["sidecars"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|entry| { entry["id"] == "mcp-tool-dispatch-typescript-one-shot" }));
+
+        let output =
+            crate::run(["runtime", "assert-rust-only", "--json"], &env, &supervisor).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&output).expect("valid JSON");
+        assert_eq!(json["action"], "assertRustOnly");
+        assert_eq!(json["ok"], true);
+        assert_eq!(json["daemonDebtCount"], 0);
 
         std::fs::remove_dir_all(&app_dir).unwrap();
     }
@@ -550,7 +567,10 @@ mod tests {
         let doctor_json =
             crate::run(["doctor", "summary", "--json"], &env, &supervisor).expect("doctor");
         let doctor: serde_json::Value = serde_json::from_str(&doctor_json).unwrap();
-        assert_eq!(doctor["delegatedFullDoctor"], "bun run src/cli/doctor.ts");
+        assert_eq!(
+            doctor["readinessCheck"],
+            "context-stilld doctor summary --json"
+        );
 
         let backup_json =
             crate::run(["backup", "preflight", "--json"], &env, &supervisor).expect("backup");

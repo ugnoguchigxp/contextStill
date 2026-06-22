@@ -12,7 +12,7 @@ pub fn help_text() -> String {
         "  context-stilld queue start|stop|status|inspect [--json]",
         "  context-stilld agent-log-sync run|stop|status [--json]",
         "  context-stilld admin-api start|stop|status [--json]",
-        "  context-stilld runtime sidecars [--json]",
+        "  context-stilld runtime sidecars|assert-rust-only [--json]",
         "  context-stilld doctor [summary] [--json]",
         "  context-stilld backup preflight [--json]",
         "  context-stilld --version",

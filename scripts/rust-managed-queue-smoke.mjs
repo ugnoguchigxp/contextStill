@@ -11,7 +11,6 @@ const env = {
   CONTEXT_STILL_PROJECT_ROOT: root,
   CONTEXT_STILL_DB_BACKEND: "sqlite",
   CONTEXT_STILL_SQLITE_CORE_PATH: path.join(appDataDir, "queue-smoke.sqlite"),
-  CONTEXT_STILL_RESIDENT_QUEUE_MODE: "rust-managed-one-shot",
   CONTEXT_STILL_MCP_PORT: "0",
 };
 fs.closeSync(fs.openSync(env.CONTEXT_STILL_SQLITE_CORE_PATH, "w"));
@@ -43,10 +42,6 @@ function parseJson(text, label) {
   }
 }
 
-function sleep(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
 try {
   const run = parseJson(cargo("run", "--once", "--json"), "resident run once");
   const queueSurface = run.surfaces?.find((surface) => surface.name === "queue-supervisor");
@@ -56,10 +51,8 @@ try {
   if (queueSurface.status !== "scheduled") {
     throw new Error(`unexpected Rust-managed queue surface: ${JSON.stringify(queueSurface)}`);
   }
-  const queueLogPath = path.join(appDataDir, "logs", "queue-supervisor.log");
-  const queueLog = fs.readFileSync(queueLogPath, "utf8");
-  if (!queueLog.includes('"worker": "queue-supervisor"') || !queueLog.includes('"runs"')) {
-    throw new Error(`resident queue tick did not invoke executor; log:\n${queueLog}`);
+  if (!queueSurface.message?.includes("resident Rust-only mode active")) {
+    throw new Error(`resident queue did not stay Rust-only: ${JSON.stringify(queueSurface)}`);
   }
 
   const status = parseJson(cargo("queue", "status", "--json"), "queue status");
@@ -67,7 +60,18 @@ try {
     throw new Error(`queue supervisor should be Rust-scheduled, got: ${JSON.stringify(status)}`);
   }
 
-  console.log(JSON.stringify({ ok: true, status: status.status, appDataDir }, null, 2));
+  const rustOnly = parseJson(cargo("runtime", "assert-rust-only", "--json"), "runtime assert");
+  if (rustOnly.ok !== true) {
+    throw new Error(`runtime should be Rust-only: ${JSON.stringify(rustOnly)}`);
+  }
+
+  console.log(
+    JSON.stringify(
+      { ok: true, status: status.status, daemonDebtCount: rustOnly.daemonDebtCount, appDataDir },
+      null,
+      2,
+    ),
+  );
 } finally {
   try {
     cargo("queue", "stop", "--json");

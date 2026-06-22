@@ -71,17 +71,15 @@ One-time sync:
 bun run sync:agent-logs
 ```
 
-macOS LaunchAgent:
+Resident macOS LaunchAgent:
 
 ```bash
-bun run automation:agent-log-sync -- install
-bun run automation:agent-log-sync -- load
-bun run automation:agent-log-sync -- status
+bun run automation:context-stilld -- install
+bun run automation:context-stilld -- load
+bun run automation:context-stilld -- status
 ```
 
-The LaunchAgent runs periodically. It is normal for status to show `loaded` but `not running` between intervals.
-
-When `context-stilld` resident automation is loaded, the resident daemon owns the schedule instead. Do not keep the legacy agent-log-sync LaunchAgent independently loaded alongside the resident daemon.
+The resident daemon owns the log-sync schedule. Do not keep legacy standalone agent-log-sync LaunchAgents loaded alongside it.
 
 ## Queue Supervisor
 

@@ -1,33 +1,12 @@
 use serde::Serialize;
 
-use crate::domains::process_lifecycle::service::ManagedProcessSpec;
+use crate::domains::process_lifecycle::service::{ManagedProcessSpec, CURRENT_EXE_COMMAND};
 
 pub(crate) const QUEUE_SUPERVISOR: ManagedProcessSpec = ManagedProcessSpec {
     state_name: "queue-supervisor",
     display_name: "queue-supervisor",
-    command: "bun",
-    args: &[
-        "run",
-        "src/cli/queue-supervisor.ts",
-        "--continuous",
-        "--limit",
-        "1",
-    ],
-    log_file: "queue-supervisor.log",
-};
-
-pub(crate) const QUEUE_EXECUTOR_ONCE: ManagedProcessSpec = ManagedProcessSpec {
-    state_name: "queue-supervisor",
-    display_name: "queue-supervisor",
-    command: "bun",
-    args: &[
-        "run",
-        "src/cli/queue-supervisor.ts",
-        "--once",
-        "--limit",
-        "1",
-        "--json",
-    ],
+    command: CURRENT_EXE_COMMAND,
+    args: &["queue", "start"],
     log_file: "queue-supervisor.log",
 };
 

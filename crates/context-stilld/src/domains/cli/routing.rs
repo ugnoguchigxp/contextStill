@@ -36,6 +36,7 @@ pub enum AdminApiAction {
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum RuntimeAction {
     Sidecars,
+    AssertRustOnly,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -216,9 +217,10 @@ where
             })
         }
         "runtime" => {
-            let action_str = required_action(&mut args, "runtime", "sidecars")?;
+            let action_str = required_action(&mut args, "runtime", "sidecars or assert-rust-only")?;
             let action = match action_str.as_str() {
                 "sidecars" => RuntimeAction::Sidecars,
+                "assert-rust-only" => RuntimeAction::AssertRustOnly,
                 _ => {
                     return Err(CliError::invalid_arguments(format!(
                         "unknown runtime action: {action_str}"
@@ -485,6 +487,18 @@ mod tests {
             parse_args(["runtime", "sidecars", "--json"]).expect("parsed"),
             CliCommand::Runtime {
                 action: RuntimeAction::Sidecars,
+                json: true,
+            },
+        );
+    }
+
+    #[test]
+    fn parses_runtime_assert_rust_only_json() {
+        use super::RuntimeAction;
+        assert_eq!(
+            parse_args(["runtime", "assert-rust-only", "--json"]).expect("parsed"),
+            CliCommand::Runtime {
+                action: RuntimeAction::AssertRustOnly,
                 json: true,
             },
         );

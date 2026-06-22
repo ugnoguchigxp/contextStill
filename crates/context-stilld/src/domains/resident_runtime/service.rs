@@ -229,12 +229,10 @@ fn reconcile_queue<E: EnvProvider, S: ProcessSupervisor>(
 
 fn reconcile_queue_continuous<E: EnvProvider, S: ProcessSupervisor>(
     env: &E,
-    supervisor: &S,
+    _supervisor: &S,
 ) -> Result<ManagedSurfaceReport, CliError> {
     let maintenance = queue_lifecycle::service::run_maintenance_once_report(env)?;
-    if maintenance.status != "scheduled"
-        || env_flag_default(env, "CONTEXT_STILL_RESIDENT_REQUIRE_RUST_ONLY", false)
-    {
+    if maintenance.status != "scheduled" {
         return Ok(ManagedSurfaceReport {
             name: "queue-supervisor",
             enabled: true,
@@ -243,25 +241,15 @@ fn reconcile_queue_continuous<E: EnvProvider, S: ProcessSupervisor>(
             message: maintenance.message,
         });
     }
-
-    let report = match queue_lifecycle::service::start_executor_report(env, supervisor) {
-        Ok(report) => report,
-        Err(error) => {
-            return Ok(ManagedSurfaceReport {
-                name: "queue-supervisor",
-                enabled: true,
-                status: "failed".to_string(),
-                pid: None,
-                message: format!("queue-supervisor TS executor failed to start: {error}"),
-            });
-        }
-    };
-    Ok(surface_report("queue-supervisor", true, report))
+    Ok(rust_only_queue_report(
+        maintenance.status,
+        maintenance.message,
+    ))
 }
 
 fn reconcile_queue_once<E: EnvProvider, S: ProcessSupervisor>(
     env: &E,
-    supervisor: &S,
+    _supervisor: &S,
     state: &mut ResidentRuntimeState,
 ) -> Result<ManagedSurfaceReport, CliError> {
     let interval = Duration::from_millis(env_u64_default(
@@ -284,9 +272,7 @@ fn reconcile_queue_once<E: EnvProvider, S: ProcessSupervisor>(
 
     state.queue_last_checked_at = Some(Instant::now());
     let maintenance = queue_lifecycle::service::run_maintenance_once_report(env)?;
-    if maintenance.status != "scheduled"
-        || env_flag_default(env, "CONTEXT_STILL_RESIDENT_REQUIRE_RUST_ONLY", false)
-    {
+    if maintenance.status != "scheduled" {
         return Ok(ManagedSurfaceReport {
             name: "queue-supervisor",
             enabled: true,
@@ -295,34 +281,28 @@ fn reconcile_queue_once<E: EnvProvider, S: ProcessSupervisor>(
             message: maintenance.message,
         });
     }
-
-    let report = match queue_lifecycle::service::run_executor_once_report(
-        env,
-        supervisor,
-        Duration::from_millis(env_u64_default(
-            env,
-            "CONTEXT_STILL_RESIDENT_QUEUE_TIMEOUT_MS",
-            300_000,
-        )),
-    ) {
-        Ok(report) => report,
-        Err(error) => {
-            return Ok(ManagedSurfaceReport {
-                name: "queue-supervisor",
-                enabled: true,
-                status: "failed".to_string(),
-                pid: None,
-                message: format!("queue-supervisor TS executor fallback failed: {error}"),
-            });
-        }
-    };
-    Ok(surface_report("queue-supervisor", true, report))
+    Ok(rust_only_queue_report(
+        maintenance.status,
+        maintenance.message,
+    ))
 }
 
 fn queue_mode<E: EnvProvider>(env: &E) -> Option<String> {
     env.var("CONTEXT_STILL_RESIDENT_QUEUE_MODE")
         .map(|value| value.trim().to_string())
         .filter(|value| !value.is_empty())
+}
+
+fn rust_only_queue_report(status: String, maintenance_message: String) -> ManagedSurfaceReport {
+    ManagedSurfaceReport {
+        name: "queue-supervisor",
+        enabled: true,
+        status,
+        pid: None,
+        message: format!(
+            "{maintenance_message}; resident Rust-only mode active, TypeScript queue executor not started"
+        ),
+    }
 }
 
 fn reconcile_agent_log_sync<E: EnvProvider, S: ProcessSupervisor>(

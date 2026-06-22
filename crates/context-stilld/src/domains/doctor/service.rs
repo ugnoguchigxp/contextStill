@@ -14,7 +14,7 @@ pub struct DoctorSummary {
     pub server_warnings: Vec<String>,
     pub bootstrap: BootstrapPreflightReport,
     pub runtime: RuntimeStatus,
-    pub delegated_full_doctor: &'static str,
+    pub readiness_check: &'static str,
 }
 
 pub fn summary<E: EnvProvider, S: ProcessSupervisor>(env: &E, supervisor: &S) -> DoctorSummary {
@@ -34,7 +34,7 @@ pub fn summary<E: EnvProvider, S: ProcessSupervisor>(env: &E, supervisor: &S) ->
     }
 
     let overall_status = if desktop_blockers.is_empty() {
-        "needs_full_doctor"
+        "ok"
     } else {
         "needs_setup"
     };
@@ -45,7 +45,7 @@ pub fn summary<E: EnvProvider, S: ProcessSupervisor>(env: &E, supervisor: &S) ->
         server_warnings,
         bootstrap,
         runtime,
-        delegated_full_doctor: "bun run src/cli/doctor.ts",
+        readiness_check: "context-stilld doctor summary --json",
     }
 }
 
@@ -59,7 +59,7 @@ impl DoctorSummary {
             format!("overallStatus={}", self.overall_status),
             format!("desktopBlockers={}", self.desktop_blockers.join(" | ")),
             format!("serverWarnings={}", self.server_warnings.join(" | ")),
-            format!("delegatedFullDoctor={}", self.delegated_full_doctor),
+            format!("readinessCheck={}", self.readiness_check),
             self.runtime.to_text(),
         ]
         .join("\n")

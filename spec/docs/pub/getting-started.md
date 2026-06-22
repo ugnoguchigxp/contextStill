@@ -68,10 +68,10 @@ Minimal mode should not require external LLMs, external search APIs, or MCP regi
 
 ## MCP Integration
 
-Start the daemon-owned local MCP endpoint worker:
+Start the daemon-owned local MCP endpoint:
 
 ```bash
-bun run start:mcp
+cargo run -q -p context-stilld -- mcp start
 ```
 
 Register it in an MCP client only when you want agent integration:
@@ -87,7 +87,7 @@ Register it in an MCP client only when you want agent integration:
 }
 ```
 
-Run `bun run setup:mcp-config` to update Codex and Antigravity config files. The direct stdio server is legacy only and should not be registered in new clients.
+Run `bun run setup:mcp-config` to update Codex and Antigravity config files. The direct stdio server and TypeScript MCP HTTP worker are deleted legacy paths and should not be registered in new clients.
 
 The endpoint is owned by `context-stilld` as a Rust HTTP/session surface. Non-migrated tool handlers may still run through short-lived one-shot dispatch while R3/R4 continue.
 

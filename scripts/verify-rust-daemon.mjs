@@ -52,6 +52,20 @@ const tasks = [
     command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "runtime", "sidecars", "--json"],
   },
   {
+    label: "context-stilld runtime assert rust only",
+    command: [
+      "cargo",
+      "run",
+      "-q",
+      "-p",
+      "context-stilld",
+      "--",
+      "runtime",
+      "assert-rust-only",
+      "--json",
+    ],
+  },
+  {
     label: "context-stilld mcp endpoint",
     command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "mcp", "endpoint", "--json"],
   },
@@ -202,6 +216,20 @@ function assertRuntimeSidecars(result) {
   return result;
 }
 
+function assertRuntimeRustOnly(result) {
+  const checked = assertJsonLine(result, "ok");
+  if (checked.code !== 0) return checked;
+  const json = JSON.parse(result.stdout);
+  if (json.ok !== true) {
+    return {
+      ...result,
+      code: 1,
+      stderr: `${result.stderr}\nExpected runtime assert-rust-only ok=true, got ${json.ok}. daemonDebtCount=${json.daemonDebtCount}\n`,
+    };
+  }
+  return result;
+}
+
 async function runLiveOwnershipCheck() {
   console.log("[verify:rust-daemon] live ownership check ...");
   if (process.platform !== "darwin") {
@@ -260,7 +288,11 @@ async function runLiveOwnershipCheck() {
     if (processList.stderr.trim()) console.error(processList.stderr.trimEnd());
     process.exit(1);
   }
-  for (const pattern of ["src/mcp/http-server.ts"]) {
+  for (const pattern of [
+    "src/mcp/http-server.ts",
+    "src/cli/mcp-dispatch-once.ts",
+    "src/cli/queue-supervisor.ts --continuous",
+  ]) {
     if (processList.stdout.includes(pattern)) {
       console.error("[verify:rust-daemon] live ownership check failed");
       console.error(`Unexpected daemon-era Bun process still running: ${pattern}`);
@@ -286,7 +318,7 @@ for (const task of tasks) {
     result = assertJsonLine(result, "overallStatus");
   }
   if (task.label === "context-stilld doctor summary" && result.code === 0) {
-    result = assertJsonLine(result, "delegatedFullDoctor");
+    result = assertJsonLine(result, "readinessCheck");
   }
   if (task.label === "context-stilld backup preflight" && result.code === 0) {
     result = assertJsonLine(result, "delegatedBackupCommand");
@@ -299,6 +331,9 @@ for (const task of tasks) {
   }
   if (task.label === "context-stilld runtime sidecars" && result.code === 0) {
     result = assertRuntimeSidecars(result);
+  }
+  if (task.label === "context-stilld runtime assert rust only" && result.code === 0) {
+    result = assertRuntimeRustOnly(result);
   }
   if (task.label === "context-stilld mcp endpoint" && result.code === 0) {
     result = assertJsonLine(result, "url");

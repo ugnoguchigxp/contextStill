@@ -565,7 +565,7 @@ function nextActionsForDistillation(
     !hasRecentProgress(runs)
   ) {
     nextActions.push(
-      `${config.label} のqueueが進んでいません。Queue 管理画面で v2 queue 状態を確認し、LaunchAgent と ${config.logPath} を確認する`,
+      `${config.label} のqueueが進んでいません。Queue 管理画面で v2 queue 状態を確認し、resident daemon と ${config.logPath} を確認する`,
     );
   }
   if (queueHealth.blockedByHigherPriority && queueHealth.blockers) {

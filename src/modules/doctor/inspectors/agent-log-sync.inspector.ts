@@ -33,7 +33,7 @@ export async function inspectAgentLogSync({
   const antigravityExists = antigravityConfigured
     ? await pathExists(groupedConfig.antigravity.logDir)
     : false;
-  const launchAgent = await inspectLaunchAgent("com.context-still.agent-log-sync");
+  const launchAgent = await inspectLaunchAgent("com.context-still.daemon");
   const states: DoctorReport["agentLogSync"]["states"] = [];
 
   if (canQueryDb && syncStatesTableAvailable) {
@@ -102,9 +102,9 @@ export async function inspectAgentLogSync({
     nextActions.push("bun run sync:agent-logs を実行して Codex ログ同期を初期化する");
   }
   if (!launchAgent.installed) {
-    nextActions.push("bun run automation:agent-log-sync -- install で LaunchAgent を配置する");
+    nextActions.push("bun run automation:context-stilld -- install で resident daemon を配置する");
   } else if (!launchAgent.loaded) {
-    nextActions.push("bun run automation:agent-log-sync -- load で LaunchAgent を読み込む");
+    nextActions.push("bun run automation:context-stilld -- load で resident daemon を読み込む");
   }
 
   return {

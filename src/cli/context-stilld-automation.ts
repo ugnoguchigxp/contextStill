@@ -55,30 +55,39 @@ function sleepSync(ms: number): void {
 function terminateDetachedQueueSupervisors(): void {
   if (!isDarwin()) return;
   let killed = false;
-  try {
-    const output = execFileSync("pgrep", [
-      "-f",
-      "bun run src/cli/queue-supervisor.ts --continuous --limit 1",
-    ]);
-    for (const rawPid of output
-      .toString()
-      .split(/\s+/)
-      .map((value) => value.trim())
-      .filter(Boolean)) {
-      const pid = Number(rawPid);
-      if (Number.isInteger(pid) && pid > 0 && pid !== process.pid) {
-        try {
-          process.kill(pid, "SIGTERM");
-          killed = true;
-        } catch {
-          // Process may have exited between pgrep and kill.
+  const signalMatchingSupervisors = (signal: NodeJS.Signals): boolean => {
+    let signaled = false;
+    try {
+      const output = execFileSync("pgrep", [
+        "-f",
+        "bun run src/cli/queue-supervisor.ts --continuous --limit 1",
+      ]);
+      for (const rawPid of output
+        .toString()
+        .split(/\s+/)
+        .map((value) => value.trim())
+        .filter(Boolean)) {
+        const pid = Number(rawPid);
+        if (Number.isInteger(pid) && pid > 0 && pid !== process.pid) {
+          try {
+            process.kill(pid, signal);
+            signaled = true;
+          } catch {
+            // Process may have exited between pgrep and kill.
+          }
         }
       }
+    } catch {
+      // Detached queue supervisor children may legitimately be absent.
     }
-  } catch {
-    // Detached queue supervisor children may legitimately be absent.
-  }
+    return signaled;
+  };
+
+  killed = signalMatchingSupervisors("SIGTERM");
   if (killed) sleepSync(1000);
+  if (signalMatchingSupervisors("SIGKILL")) {
+    sleepSync(250);
+  }
 }
 
 function ensureContextStilldBinary(): string {

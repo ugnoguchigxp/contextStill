@@ -1,5 +1,3 @@
-use std::time::Duration;
-
 use crate::domains::{
     bootstrap::service::resolve_paths,
     daemon::repository::ProcessState,
@@ -21,12 +19,12 @@ pub use super::state::{
     pause_running_queue_jobs_for_connection, resume_queue_job_for_connection,
     retry_queue_job_for_connection,
 };
+use super::types::QUEUE_SUPERVISOR;
 pub use super::types::{
     ActiveProviderLease, ClaimedProviderLeaseJob, ClaimedQueueJob, ProviderLeaseAssignment,
     ProviderPoolClaimConfig, ProviderQueueClaimSpec, QueueInspectReport, QueueStateRow,
     QueueStatusCount, QueueTableInspect, RowTargetPreference,
 };
-use super::types::{QUEUE_EXECUTOR_ONCE, QUEUE_SUPERVISOR};
 
 pub fn start<E: EnvProvider, S: ProcessSupervisor>(
     env: &E,
@@ -66,41 +64,6 @@ pub fn start_report<E: EnvProvider, S: ProcessSupervisor>(
     ))
 }
 
-pub fn start_executor_report<E: EnvProvider, S: ProcessSupervisor>(
-    env: &E,
-    supervisor: &S,
-) -> Result<LifecycleReport, CliError> {
-    let maintenance = run_maintenance_once_report(env)?;
-    if maintenance.status != "scheduled" {
-        let paths = resolve_paths(env);
-        let state = ProcessState {
-            pid: None,
-            status: maintenance.status.clone(),
-            log_path: paths
-                .logs_dir
-                .join(QUEUE_SUPERVISOR.log_file)
-                .to_string_lossy()
-                .into_owned(),
-            started_at: None,
-            updated_at: Some(service::now_timestamp()),
-            last_error: None,
-            command: Some("context-stilld".to_string()),
-            args: Some(vec!["queue".to_string(), "start".to_string()]),
-            sqlite_core_path: Some(maintenance.sqlite_core_path.clone()),
-            ..ProcessState::default()
-        };
-        return Ok(service::report_from_state(
-            &QUEUE_SUPERVISOR,
-            "start",
-            maintenance.status,
-            maintenance.message,
-            state,
-        ));
-    }
-
-    service::start_report(&QUEUE_SUPERVISOR, env, supervisor)
-}
-
 pub fn stop<E: EnvProvider, S: ProcessSupervisor>(
     env: &E,
     supervisor: &S,
@@ -127,52 +90,4 @@ pub fn status_report<E: EnvProvider, S: ProcessSupervisor>(
     supervisor: &S,
 ) -> Result<LifecycleReport, CliError> {
     service::status_report(&QUEUE_SUPERVISOR, env, supervisor)
-}
-
-pub fn run_executor_once_report<E: EnvProvider, S: ProcessSupervisor>(
-    env: &E,
-    supervisor: &S,
-    timeout: Duration,
-) -> Result<LifecycleReport, CliError> {
-    let report = service::run_and_wait_report(&QUEUE_EXECUTOR_ONCE, env, supervisor, timeout)?;
-    if report.status != "exited" {
-        return Ok(report);
-    }
-
-    let paths = resolve_paths(env);
-    let state = ProcessState {
-        pid: None,
-        status: "scheduled".to_string(),
-        log_path: report.log_path.clone().unwrap_or_else(|| {
-            paths
-                .logs_dir
-                .join(QUEUE_EXECUTOR_ONCE.log_file)
-                .to_string_lossy()
-                .into_owned()
-        }),
-        started_at: report.started_at.clone(),
-        updated_at: Some(service::now_timestamp()),
-        exit_code: report.exit_code,
-        exit_signal: report.exit_signal.clone(),
-        last_error: None,
-        command: Some(QUEUE_EXECUTOR_ONCE.command.to_string()),
-        args: Some(
-            QUEUE_EXECUTOR_ONCE
-                .args
-                .iter()
-                .map(|arg| (*arg).to_string())
-                .collect(),
-        ),
-        ..ProcessState::default()
-    };
-    service::write_process_state(&QUEUE_SUPERVISOR, &paths.run_dir, &state)?;
-
-    Ok(service::report_from_state(
-        &QUEUE_SUPERVISOR,
-        "run",
-        "scheduled",
-        "queue-supervisor Rust-managed one-shot tick completed; waiting for next scheduled run"
-            .to_string(),
-        state,
-    ))
 }

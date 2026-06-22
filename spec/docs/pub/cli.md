@@ -83,7 +83,6 @@ The `CONTEXT_STILL_DAEMON_MANAGED_MCP`, `CONTEXT_STILL_DAEMON_MANAGED_QUEUE`, `C
 | `bun run queue:merge-review:once` | Run one DeadZone merge-review cycle |
 | `bun run queue:finalize:once` | Run one finalization cycle |
 | `bun run queue:merge-activation-finalize:once` | Run one merge-activation finalization cycle |
-| `bun run queue:supervisor` | Run the queue supervisor continuously |
 | `bun run queue:migrate:dry-run` | Preview queue migration mapping |
 | `bun run queue:migrate:write` | Write queue migration mapping rows |
 | `bun run distill:reprocess-rejected` | Reprocess rejected candidates where eligible |
@@ -93,15 +92,9 @@ The `CONTEXT_STILL_DAEMON_MANAGED_MCP`, `CONTEXT_STILL_DAEMON_MANAGED_QUEUE`, `C
 | Command | Description |
 |---|---|
 | `bun run sync:agent-logs` | One-time Codex / Antigravity / Claude log sync |
-| `bun run automation:agent-log-sync -- install` | Install legacy macOS LaunchAgent for standalone log sync |
-| `bun run automation:agent-log-sync -- load` | Load the standalone log sync LaunchAgent; do not keep it independently loaded with resident `context-stilld` |
-| `bun run automation:agent-log-sync -- status` | Inspect standalone log sync LaunchAgent state |
 | `bun run automation:context-stilld -- install` | Install macOS LaunchAgent for resident `context-stilld run` |
 | `bun run automation:context-stilld -- load` | Load resident daemon and unload legacy queue / agent-log-sync LaunchAgent owners |
 | `bun run automation:context-stilld -- status` | Inspect resident daemon LaunchAgent and legacy owner state |
-| `bun run automation:queue-supervisor -- install` | Install legacy queue supervisor LaunchAgent |
-| `bun run automation:queue-supervisor -- load` | Load legacy queue supervisor LaunchAgent; do not keep it independently loaded with resident `context-stilld` |
-| `bun run automation:queue-supervisor -- status` | Inspect legacy queue supervisor state |
 
 ## Landscape
 
@@ -119,7 +112,7 @@ The `CONTEXT_STILL_DAEMON_MANAGED_MCP`, `CONTEXT_STILL_DAEMON_MANAGED_QUEUE`, `C
 |---|---|
 | `bun run dev` | Start Vite dev server with API |
 | `bun run start:api` | Start API server |
-| `bun run start:mcp` | Start the local streamable HTTP MCP endpoint worker |
+| `cargo run -q -p context-stilld -- mcp start` | Start the local streamable HTTP MCP endpoint |
 | `bun run typecheck` | TypeScript check |
 | `bun run lint` | Biome lint |
 | `bun run format:check` | Biome format check |

@@ -124,14 +124,14 @@ context-still は、常駐 runtime と管理 UI surface を分けて扱います
 | Hono API | 管理 UI が HTTP access を必要とする時に起動 | knowledge、sources、graph、queue controls、settings、context runs、decision history、dashboards の admin UI facade |
 | Tauri / web UI | 必要時に開く | knowledge maintenance、review、settings、diagnostics、operator actions |
 
-Hono API は UI 向け facade に留めます。継続的な background work と外部 agent integration は daemon / CLI / MCP 側の責務なので、UI を閉じても log sync scheduling、queue supervision、MCP availability、scheduled maintenance が止まる前提にはしません。現時点の Rust daemon は resident owner です。MCP tool handlers と queue business execution には manual TypeScript/Bun 互換経路が残りますが、MCP endpoint/session manager、queue scheduling/maintenance、agent-log-sync parser/write path は Rust owner です。
+Hono API は UI 向け facade に留めます。継続的な background work と外部 agent integration は daemon / CLI / MCP 側の責務なので、UI を閉じても log sync scheduling、queue supervision、MCP availability、scheduled maintenance が止まる前提にはしません。現時点の Rust daemon は resident owner です。MCP endpoint/session manager、exposed MCP tool handlers、queue scheduling/maintenance、agent-log-sync parser/write path は Rust owner です。TypeScript/Bun は UI-time Hono と明示的な operator CLI 用に残し、resident daemon dependency にはしません。
 
 ## MCP Integration
 
-MCP server だけを起動:
+daemon-owned MCP endpoint を起動:
 
 ```bash
-CONTEXT_STILL_DB_BACKEND=sqlite bun run start:mcp
+cargo run -q -p context-stilld -- mcp start
 ```
 
 MCP client には次のように登録します。
@@ -147,7 +147,7 @@ MCP client には次のように登録します。
 }
 ```
 
-`bun run setup:mcp-config` は Codex と Antigravity にこの URL 方式の登録を書き込みます。古い direct stdio MCP server は削除済みで、新規 client registration として復元しません。endpoint は `context-stilld` が Rust HTTP/session surface として所有します。未移行の tool handler は、短命の one-shot dispatch 経由で実行される場合があります。
+`bun run setup:mcp-config` は Codex と Antigravity にこの URL 方式の登録を書き込みます。古い direct stdio MCP server と TypeScript MCP HTTP worker は削除済みで、新規 client registration として復元しません。endpoint と exposed tool handlers は `context-stilld` が所有します。
 
 接続後は、project session 開始時に `initial_instructions` を一度だけ呼びます。作業前に `context_compile`、ユーザーへ質問する前や PR 作成前に自律継続できる余地がある場合は `context_decision`、作業後に `compile_eval` を使います。永続化したい知見は `register_candidates` で登録し、negative guardrail は `polarity: "negative"` と明示的な `technologies` / `changeTypes` / `domains` を指定します。
 
@@ -198,13 +198,11 @@ bun run decision:pr-discard-scan -- --dry-run
 bun run decision:pr-discard-scan -- --apply
 ```
 
-macOS の local automation を install:
+macOS の resident daemon automation を install:
 
 ```bash
-bun run automation:agent-log-sync -- install
-bun run automation:agent-log-sync -- load
-bun run automation:queue-supervisor -- install
-bun run automation:queue-supervisor -- load
+bun run automation:context-stilld -- install
+bun run automation:context-stilld -- load
 ```
 
 compile evaluation と candidate 登録を促す任意の Git hooks:

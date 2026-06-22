@@ -9,8 +9,8 @@ export async function inspectVibeDistillation(
 ): Promise<DoctorReport["vibeDistillation"]> {
   return inspectDistillationRunHealth(options, {
     label: "vibe distillation",
-    launchAgentLabel: "com.context-still.queue-supervisor",
-    setupScript: "bun run automation:queue-supervisor --",
+    launchAgentLabel: "com.context-still.daemon",
+    setupScript: "bun run automation:context-stilld --",
     runCommand: "bun run queue:finding:once",
     logPath: "logs/queue-supervisor.log",
     targetKind: "vibe_memory",

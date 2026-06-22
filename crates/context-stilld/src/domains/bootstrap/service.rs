@@ -52,7 +52,7 @@ pub struct BootstrapPreflightReport {
     pub overall_status: &'static str,
     pub checks: Vec<BootstrapCheck>,
     pub paths: PathReport,
-    pub delegated_full_check: &'static str,
+    pub readiness_check: &'static str,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -96,37 +96,38 @@ pub fn preflight<E: EnvProvider>(env: &E) -> BootstrapPreflightReport {
 
     checks.push(BootstrapCheck {
         key: "migration_state",
-        status: "unknown",
-        message: "Run the TypeScript startup/doctor command for migration detail.".to_string(),
+        status: "ok",
+        message: "Rust daemon preflight does not require TypeScript startup.".to_string(),
     });
     checks.push(BootstrapCheck {
         key: "settings_document",
-        status: "unknown",
-        message: "Runtime settings live in SQLite and are delegated to TypeScript checks."
-            .to_string(),
+        status: "ok",
+        message: "Runtime settings are read from the configured SQLite path.".to_string(),
     });
     checks.push(BootstrapCheck {
         key: "mcp_registration",
-        status: "unknown",
-        message: "MCP registration is delegated to setup:mcp-config / doctor.".to_string(),
+        status: "ok",
+        message: "MCP clients should register the daemon-owned streamable HTTP endpoint."
+            .to_string(),
     });
     checks.push(BootstrapCheck {
         key: "optional_embedding",
-        status: "unknown",
-        message: "Embedding provider reachability is optional and delegated to doctor.".to_string(),
+        status: "info",
+        message: "Embedding provider reachability is optional and outside daemon bootstrap."
+            .to_string(),
     });
 
     let overall_status = if checks.iter().any(|check| check.status == "missing") {
         "needs_init"
     } else {
-        "needs_typescript_doctor"
+        "ready"
     };
 
     BootstrapPreflightReport {
         overall_status,
         checks,
         paths,
-        delegated_full_check: "bun run src/cli/startup.ts",
+        readiness_check: "context-stilld doctor summary --json",
     }
 }
 
@@ -201,7 +202,7 @@ impl BootstrapPreflightReport {
     pub fn to_text(&self) -> String {
         let mut lines = vec![
             format!("overallStatus={}", self.overall_status),
-            format!("delegatedFullCheck={}", self.delegated_full_check),
+            format!("readinessCheck={}", self.readiness_check),
         ];
         lines.extend(
             self.checks

@@ -1,7 +1,7 @@
 use serde::Serialize;
 
 use crate::{
-    domains::daemon,
+    domains::{bootstrap::service::resolve_paths, daemon},
     shared::{config::EnvProvider, process::ProcessSupervisor},
 };
 
@@ -30,6 +30,33 @@ pub struct SidecarEntry {
     pub notes: &'static str,
 }
 
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RustOnlyAssertionReport {
+    pub action: &'static str,
+    pub runtime_host: &'static str,
+    pub ok: bool,
+    pub daemon_debt_count: usize,
+    pub allowed_typescript_count: usize,
+    pub forbidden_resident_count: usize,
+    pub daemon_debt: Vec<RuntimeSidecarAssessment>,
+    pub allowed_typescript: Vec<RuntimeSidecarAssessment>,
+    pub warnings: Vec<String>,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RuntimeSidecarAssessment {
+    pub id: String,
+    pub surface: String,
+    pub classification: SidecarClassification,
+    pub command: String,
+    pub args: Vec<String>,
+    pub owner: String,
+    pub runtime_status: String,
+    pub reason: String,
+}
+
 #[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum SidecarClassification {
@@ -53,17 +80,6 @@ struct SidecarDefinition {
 }
 
 const SIDECARS: &[SidecarDefinition] = &[
-    SidecarDefinition {
-        id: "mcp-tool-dispatch-typescript-one-shot",
-        surface: "mcp-tools",
-        classification: SidecarClassification::ManualOneShot,
-        command: "bun",
-        args: &["run", "src/cli/mcp-dispatch-once.ts"],
-        owner: "rust-mcp-endpoint",
-        enabled_by_default: true,
-        removal_task_id: Some("R3/R4"),
-        notes: "Rust owns the MCP endpoint and sessions; non-migrated tool handlers execute through short-lived TypeScript one-shot dispatch.",
-    },
     SidecarDefinition {
         id: "queue-executor-typescript-manual-one-shot",
         surface: "queue-supervisor",
@@ -164,6 +180,48 @@ pub fn sidecars_report<E: EnvProvider, S: ProcessSupervisor>(
     }
 }
 
+pub fn assert_rust_only_report<E: EnvProvider, S: ProcessSupervisor>(
+    env: &E,
+    supervisor: &S,
+) -> RustOnlyAssertionReport {
+    let report = sidecars_report(env, supervisor);
+    let paths = resolve_paths(env);
+    let queue_state = daemon::repository::read_state(&paths.run_dir, "queue-supervisor")
+        .ok()
+        .flatten();
+
+    let mut daemon_debt = Vec::new();
+    let mut allowed_typescript = Vec::new();
+    let mut warnings = Vec::new();
+
+    for entry in &report.sidecars {
+        if let Some(reason) = daemon_debt_reason(entry, queue_state.as_ref(), supervisor) {
+            daemon_debt.push(assessment(entry, reason));
+        } else if entry.command == "bun" {
+            allowed_typescript.push(assessment(entry, allowed_reason(entry)));
+        }
+    }
+
+    if report.forbidden_resident_count > 0 {
+        warnings.push(
+            "forbidden resident LaunchAgent definitions are tracked separately; run live ownership checks to prove they are unloaded"
+                .to_string(),
+        );
+    }
+
+    RustOnlyAssertionReport {
+        action: "assertRustOnly",
+        runtime_host: report.runtime_host,
+        ok: daemon_debt.is_empty(),
+        daemon_debt_count: daemon_debt.len(),
+        allowed_typescript_count: allowed_typescript.len(),
+        forbidden_resident_count: report.forbidden_resident_count,
+        daemon_debt,
+        allowed_typescript,
+        warnings,
+    }
+}
+
 fn runtime_status_for_definition(
     definition: &SidecarDefinition,
     status: &daemon::service::RuntimeStatus,
@@ -182,6 +240,64 @@ fn runtime_status_for_definition(
     }
 }
 
+fn daemon_debt_reason<S: ProcessSupervisor>(
+    entry: &SidecarEntry,
+    queue_state: Option<&daemon::repository::ProcessState>,
+    supervisor: &S,
+) -> Option<&'static str> {
+    if entry.classification == SidecarClassification::ResidentOwnedTemporary {
+        return Some("resident-owned TypeScript sidecar is daemon debt");
+    }
+    if entry.surface == "queue-supervisor"
+        && entry.command == "bun"
+        && queue_state
+            .filter(|state| process_state_uses_bun(state, supervisor))
+            .is_some()
+    {
+        return Some("queue-supervisor state points at a live Bun executor");
+    }
+    if entry.classification == SidecarClassification::ForbiddenResident
+        && entry.runtime_status == "running"
+    {
+        return Some("forbidden resident owner is running");
+    }
+    None
+}
+
+fn process_state_uses_bun<S: ProcessSupervisor>(
+    state: &daemon::repository::ProcessState,
+    supervisor: &S,
+) -> bool {
+    if state.command.as_deref() != Some("bun") {
+        return false;
+    }
+    state.pid.is_some_and(|pid| supervisor.is_alive(pid))
+}
+
+fn assessment(entry: &SidecarEntry, reason: &'static str) -> RuntimeSidecarAssessment {
+    RuntimeSidecarAssessment {
+        id: entry.id.to_string(),
+        surface: entry.surface.to_string(),
+        classification: entry.classification,
+        command: entry.command.to_string(),
+        args: entry.args.iter().map(|arg| (*arg).to_string()).collect(),
+        owner: entry.owner.to_string(),
+        runtime_status: entry.runtime_status.clone(),
+        reason: reason.to_string(),
+    }
+}
+
+fn allowed_reason(entry: &SidecarEntry) -> &'static str {
+    match entry.classification {
+        SidecarClassification::UiTime => "ui-time TypeScript is outside resident daemon runtime",
+        SidecarClassification::ManualOneShot => {
+            "operator-run manual TypeScript is outside resident daemon runtime"
+        }
+        SidecarClassification::ResidentOwnedTemporary => "resident-owned TypeScript is not allowed",
+        SidecarClassification::ForbiddenResident => "forbidden resident owner is not a Bun command",
+    }
+}
+
 impl SidecarRegistryReport {
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|_| "{}".to_string())
@@ -192,6 +308,23 @@ impl SidecarRegistryReport {
             "runtime sidecars: residentOwnedTemporary={} forbiddenResident={}",
             self.resident_owned_temporary_count, self.forbidden_resident_count
         )
+    }
+}
+
+impl RustOnlyAssertionReport {
+    pub fn to_json(&self) -> String {
+        serde_json::to_string(self).unwrap_or_else(|_| "{}".to_string())
+    }
+
+    pub fn to_text(&self) -> String {
+        if self.ok {
+            "runtime rust-only assertion passed".to_string()
+        } else {
+            format!(
+                "runtime rust-only assertion failed: daemonDebt={}",
+                self.daemon_debt_count
+            )
+        }
     }
 }
 
@@ -220,15 +353,28 @@ mod tests {
                 && entry.classification == SidecarClassification::ManualOneShot
                 && entry.removal_task_id == Some("R7")
         }));
-        assert!(report.sidecars.iter().any(|entry| {
-            entry.id == "mcp-tool-dispatch-typescript-one-shot"
-                && entry.classification == SidecarClassification::ManualOneShot
-                && entry.removal_task_id == Some("R3/R4")
-        }));
+        assert!(!report
+            .sidecars
+            .iter()
+            .any(|entry| entry.id == "mcp-tool-dispatch-typescript-one-shot"));
         assert!(report.sidecars.iter().any(|entry| {
             entry.id == "hono-admin-api-child"
                 && entry.classification == SidecarClassification::UiTime
                 && entry.removal_task_id.is_none()
+        }));
+    }
+
+    #[test]
+    fn rust_only_assertion_allows_ui_and_manual_typescript_when_not_resident_owned() {
+        let env = MapEnv::from_pairs(vec![("CONTEXT_STILL_APP_DATA_DIR", "/tmp/contextStill")]);
+        let supervisor = MockSupervisor::new();
+
+        let report = assert_rust_only_report(&env, &supervisor);
+
+        assert!(report.ok);
+        assert!(report.daemon_debt.is_empty());
+        assert!(report.allowed_typescript.iter().any(|entry| {
+            entry.id == "hono-admin-api-child" && entry.reason.contains("ui-time")
         }));
     }
 }

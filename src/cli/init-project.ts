@@ -94,7 +94,7 @@ const initProjectLocaleText: Record<SupportedLocale, InitProjectLocaleText> = {
       "bun run doctor でシステム健全性を確認する",
       "mcpConfigSnippet を MCP クライアント設定へ貼り付ける",
       "Admin UI で新規 draft knowledge を review し、必要なものだけ active に昇格する",
-      "通常運用では import:sources と queue:supervisor を定期実行する",
+      "通常運用では import:sources と resident context-stilld daemon を使う",
     ],
     nextActionsSmokeFailed: [
       "bun run import:sources -- <wiki root>",
@@ -122,7 +122,7 @@ const initProjectLocaleText: Record<SupportedLocale, InitProjectLocaleText> = {
       "Run bun run doctor to confirm system health",
       "Paste mcpConfigSnippet into your MCP client config",
       "Review new draft knowledge in Admin UI and promote only required items",
-      "In normal operations, run import:sources and queue:supervisor periodically",
+      "In normal operations, use import:sources and the resident context-stilld daemon",
     ],
     nextActionsSmokeFailed: [
       "bun run import:sources -- <wiki root>",
