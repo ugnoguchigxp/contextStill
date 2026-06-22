@@ -2,7 +2,6 @@ import { z } from "zod";
 
 export const episodeCardStatusSchema = z.enum(["draft", "active", "deprecated"]);
 export const episodeOutcomeKindSchema = z.enum(["success", "failure", "mixed", "unknown"]);
-export const episodeEvidenceStatusSchema = z.enum(["verified", "partial", "unverified"]);
 export const episodeSourceKindSchema = z.enum([
   "vibe_memory",
   "compile_run",
@@ -69,8 +68,10 @@ export const episodeCardCreateSchema = z.object({
   sourceKind: episodeSourceKindSchema,
   sourceKey: z.string().trim().min(1),
   outcomeKind: episodeOutcomeKindSchema.default("unknown"),
+  importance: z.number().int().min(0).max(100).default(50),
   confidence: z.number().int().min(0).max(100).default(50),
-  evidenceStatus: episodeEvidenceStatusSchema.default("unverified"),
+  compileUseCount: z.number().int().min(0).default(0),
+  decisionUseCount: z.number().int().min(0).default(0),
   status: episodeCardStatusSchema.default("active"),
   staleAt: z.coerce.date().nullable().optional(),
   metadata: metadataSchema,
@@ -88,7 +89,6 @@ export const episodeCardSearchInputSchema = z.object({
   repoPath: z.string().trim().min(1).optional(),
   repoKey: z.string().trim().min(1).optional(),
   outcomeKinds: z.array(episodeOutcomeKindSchema).optional(),
-  evidenceStatuses: z.array(episodeEvidenceStatusSchema).optional(),
   limit: z.number().int().positive().max(100).default(10),
   includeDraft: z.boolean().default(false),
 });
@@ -114,7 +114,6 @@ export const episodeCardSchema = episodeCardCreateSchema.omit({ refs: true }).ex
 
 export type EpisodeCardStatus = z.infer<typeof episodeCardStatusSchema>;
 export type EpisodeOutcomeKind = z.infer<typeof episodeOutcomeKindSchema>;
-export type EpisodeEvidenceStatus = z.infer<typeof episodeEvidenceStatusSchema>;
 export type EpisodeSourceKind = z.infer<typeof episodeSourceKindSchema>;
 export type EpisodeRefKind = z.infer<typeof episodeRefKindSchema>;
 export type EpisodeRefInput = z.input<typeof episodeRefInputSchema>;

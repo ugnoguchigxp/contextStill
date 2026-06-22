@@ -13,7 +13,7 @@ import {
   contextDecisionInputSchema,
   contextDecisionValueSchema,
 } from "../../shared/schemas/context-decision.schema.js";
-import { searchEpisodes } from "../episodic-memory/episode-card.service.js";
+import { recordEpisodeUsage, searchEpisodes } from "../episodic-memory/episode-card.service.js";
 import type { KnowledgeSearchResult } from "../knowledge/knowledge.repository.js";
 import { searchKnowledge } from "../knowledge/knowledge.repository.js";
 import { getAgenticLlmProviders } from "../llm/agentic-llm.service.js";
@@ -1073,6 +1073,12 @@ export async function decideContext(input: unknown): Promise<ContextDecisionResu
   const parsed = contextDecisionInputSchema.parse(input);
   const primaryEvidence = extractDecisionPrimaryEvidence(parsed);
   const episodePrecedents = await retrieveDecisionEpisodePrecedents(parsed);
+  if (episodePrecedents.length > 0) {
+    await recordEpisodeUsage({
+      usageKind: "decision",
+      episodeIds: episodePrecedents.map((episode) => episode.episodeId),
+    });
+  }
   const coverageQueries = buildDecisionCoverageQueries(parsed);
   let coverageResults: Array<(typeof coverageQueries)[number] & { hits: KnowledgeSearchResult[] }>;
   try {

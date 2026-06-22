@@ -18,7 +18,6 @@ CREATE TABLE "episode_cards" (
   "source_key" text NOT NULL,
   "outcome_kind" text DEFAULT 'unknown' NOT NULL,
   "confidence" integer DEFAULT 50 NOT NULL,
-  "evidence_status" text DEFAULT 'unverified' NOT NULL,
   "status" text DEFAULT 'active' NOT NULL,
   "stale_at" timestamp,
   "embedding" vector(384),
@@ -27,7 +26,6 @@ CREATE TABLE "episode_cards" (
   "updated_at" timestamp DEFAULT now() NOT NULL,
   CONSTRAINT "episode_cards_status_check" CHECK ("episode_cards"."status" IN ('draft', 'active', 'deprecated')),
   CONSTRAINT "episode_cards_outcome_kind_check" CHECK ("episode_cards"."outcome_kind" IN ('success', 'failure', 'mixed', 'unknown')),
-  CONSTRAINT "episode_cards_evidence_status_check" CHECK ("episode_cards"."evidence_status" IN ('verified', 'partial', 'unverified')),
   CONSTRAINT "episode_cards_source_kind_check" CHECK ("episode_cards"."source_kind" IN ('vibe_memory', 'compile_run', 'decision_run', 'audit_log', 'manual')),
   CONSTRAINT "episode_cards_confidence_range_check" CHECK ("episode_cards"."confidence" >= 0 and "episode_cards"."confidence" <= 100),
   CONSTRAINT "episode_cards_applicability_object_check" CHECK (jsonb_typeof("episode_cards"."applicability") = 'object'),
@@ -74,8 +72,6 @@ CREATE INDEX "episode_cards_repo_key_idx" ON "episode_cards" USING btree ("repo_
 CREATE INDEX "episode_cards_repo_path_idx" ON "episode_cards" USING btree ("repo_path");
 --> statement-breakpoint
 CREATE INDEX "episode_cards_outcome_kind_idx" ON "episode_cards" USING btree ("outcome_kind");
---> statement-breakpoint
-CREATE INDEX "episode_cards_evidence_status_idx" ON "episode_cards" USING btree ("evidence_status");
 --> statement-breakpoint
 CREATE INDEX "episode_cards_created_at_idx" ON "episode_cards" USING btree ("created_at");
 --> statement-breakpoint

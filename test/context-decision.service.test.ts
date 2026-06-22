@@ -12,6 +12,7 @@ const mockInsertContextDecisionCoverageRows = vi.fn();
 const mockMarkContextDecisionRunFailed = vi.fn();
 const mockLoadDecisionSignalBundles = vi.fn();
 const mockSearchEpisodes = vi.fn();
+const mockRecordEpisodeUsage = vi.fn();
 
 vi.mock("../src/modules/knowledge/knowledge.repository.js", () => ({
   searchKnowledge: (...args: any[]) => mockSearchKnowledge(...args),
@@ -36,6 +37,7 @@ vi.mock("../src/modules/context-decision/context-decision.signals.repository.js"
 
 vi.mock("../src/modules/episodic-memory/episode-card.service.js", () => ({
   searchEpisodes: (...args: any[]) => mockSearchEpisodes(...args),
+  recordEpisodeUsage: (...args: any[]) => mockRecordEpisodeUsage(...args),
 }));
 
 // settings.service.js のモック
@@ -106,8 +108,10 @@ function createDummyEpisode(overrides: Record<string, unknown> = {}) {
     sourceKind: "manual",
     sourceKey: "episode-1",
     outcomeKind: "failure",
+    importance: 80,
     confidence: 90,
-    evidenceStatus: "verified",
+    compileUseCount: 0,
+    decisionUseCount: 0,
     status: "active",
     staleAt: null,
     metadata: {},
@@ -140,6 +144,7 @@ describe("context-decision.service", () => {
       bundles: new Map(),
     });
     mockSearchEpisodes.mockResolvedValue([]);
+    mockRecordEpisodeUsage.mockResolvedValue(undefined);
     mockResolveAgenticCompileRouting.mockReturnValue({
       enabled: true,
       provider: "mock-llm",
@@ -1015,9 +1020,14 @@ describe("context-decision.service", () => {
       expect.objectContaining({
         episodeId: "episode-1",
         usedFor: "risk_cap",
-        evidenceStatus: "verified",
+        importance: 80,
+        confidence: 90,
       }),
     ]);
+    expect(mockRecordEpisodeUsage).toHaveBeenCalledWith({
+      usageKind: "decision",
+      episodeIds: ["episode-1"],
+    });
     expect(runParams.confidenceTrace.confidenceCaps).toEqual(
       expect.arrayContaining([
         expect.objectContaining({ key: "failure_episode_precedent", cap: 65 }),

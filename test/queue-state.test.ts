@@ -132,7 +132,7 @@ describe("queue state transitions", () => {
       | undefined;
     const rendered = sqlQuery?.queryChunks?.map(chunkText).join("");
     expect(rendered).toContain("status = 'pending'");
-    expect(rendered).toContain("next_run_at = null");
+    expect(rendered).toContain("next_run_at = now() + interval '30 seconds'");
   });
 
   test("resumeQueueJob sets status back to pending for finalizeDistille", async () => {

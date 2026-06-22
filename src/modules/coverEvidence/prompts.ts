@@ -14,6 +14,14 @@ function compactJson(value: unknown): string {
   return JSON.stringify(value);
 }
 
+function japaneseKnowledgeInstructions(): string[] {
+  return [
+    "日本語で運用されている文脈では、knowledge_ready の title と body を日本語で整形することを優先してください。",
+    "入力や利用者の文脈が英語の場合は英語のままでも構いません。",
+    "コード、コマンド、API名、エラー名、固定見出し（Use when:, Workflow:, Verification:, Avoid:）は原文のまま残して構いません。",
+  ];
+}
+
 function compactReferences(references: CoverEvidenceReference[]): Array<{
   kind: CoverEvidenceReference["kind"];
   uri: string;
@@ -129,6 +137,7 @@ export function externalEvidenceFinalSystemPrompt(webEvidenceTokenBudget = 15_00
     "内部実装、repo運用、coding agent 作業手順は公開Webだけでは直接検証できない場合があります。その場合、source evidence が十分なら knowledge_ready にしてください。",
     "knowledge_ready のタイトルと本文は、汎用的に使える知識として体裁を整えてください。",
     "search snippet は根拠にしないでください。",
+    ...japaneseKnowledgeInstructions(),
     "最終判定はJSONではなくラベル形式だけで返してください。",
     "出力はこの形だけです。",
     "1行目: タイトル",
@@ -196,6 +205,7 @@ export function valueAssessmentSystemPrompt(): string {
     "rule は持続的な制約・方針・不変条件・意思決定です。単独の判断や禁止事項は rule にしてください。",
     "procedure は順序付き作業、コマンドフロー、検証/復旧/レビュー手順です。2 step 以上の workflow と確認方法が source evidence から言える場合だけ procedure にしてください。",
     "procedure body は Markdown で Use when:, Workflow:, Verification:, Avoid: を含めてください。構成できない場合は rule か insufficient にしてください。",
+    ...japaneseKnowledgeInstructions(),
     "knowledge_ready の title/body は、汎用的に使える知識として体裁を整えてください。",
     "source evidence で支えられない場合は status=insufficient、reason=unsupported_by_source にしてください。",
     `importance が ${groupedConfig.distillation.lowImportanceRejectThreshold} 以下なら status は insufficient、reason は low_importance にしてください。`,
@@ -235,6 +245,7 @@ export function applicabilityRefinementSystemPrompt(): string {
     "あなたは coverEvidence の applicability 補完器です。",
     "目的は technologies / changeTypes / domains の3カテゴリを埋めることです。",
     "source evidence と candidate から根拠のある値だけを返してください。",
+    ...japaneseKnowledgeInstructions(),
     "title/body を返す場合は、汎用的に使える知識として体裁を整えてください。",
     "knowledge_ready を返す場合、3カテゴリそれぞれ最低 1 件を必ず返してください。",
     "technologies/changeTypes/domains の値は、可能な限り lowercase kebab-case の ASCII tag で返してください（例: release-management, feature-flag）。",

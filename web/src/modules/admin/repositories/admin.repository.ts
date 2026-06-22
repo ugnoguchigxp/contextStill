@@ -22,7 +22,7 @@ export type KnowledgeItem = {
   decayFactor: number;
   lastVerifiedAt: string | null;
   updatedAt: string;
-  polarity: "positive" | "negative" | "neutral";
+  polarity: "positive" | "negative";
   intentTags: string[];
 };
 
@@ -50,7 +50,7 @@ export type KnowledgeListRequest = {
   minQuality?: number;
   sortBy?: string;
   sortDir?: "asc" | "desc";
-  polarities?: Array<"positive" | "negative" | "neutral">;
+  polarities?: Array<"positive" | "negative">;
   intentTags?: string[];
 };
 
@@ -117,7 +117,6 @@ export type AgentDiffEntry = {
 
 export type EpisodeCardStatus = "draft" | "active" | "deprecated";
 export type EpisodeOutcomeKind = "success" | "failure" | "mixed" | "unknown";
-export type EpisodeEvidenceStatus = "verified" | "partial" | "unverified";
 export type EpisodeSourceKind =
   | "vibe_memory"
   | "compile_run"
@@ -166,8 +165,10 @@ export type EpisodeCard = {
   sourceKind: EpisodeSourceKind;
   sourceKey: string;
   outcomeKind: EpisodeOutcomeKind;
+  importance: number;
   confidence: number;
-  evidenceStatus: EpisodeEvidenceStatus;
+  compileUseCount: number;
+  decisionUseCount: number;
   status: EpisodeCardStatus;
   staleAt?: string | null;
   metadata: Record<string, unknown>;
@@ -195,8 +196,10 @@ export type EpisodeCardCreateInput = {
   sourceKind: EpisodeSourceKind;
   sourceKey: string;
   outcomeKind?: EpisodeOutcomeKind;
+  importance?: number;
   confidence?: number;
-  evidenceStatus?: EpisodeEvidenceStatus;
+  compileUseCount?: number;
+  decisionUseCount?: number;
   status?: EpisodeCardStatus;
   metadata?: Record<string, unknown>;
   refs?: EpisodeRefInput[];
@@ -233,7 +236,7 @@ export type KnowledgeWriteInput = {
   changeTypes?: string[];
   domains?: string[];
   metadata?: Record<string, unknown>;
-  polarity?: "positive" | "negative" | "neutral";
+  polarity?: "positive" | "negative";
   intentTags?: string[];
 };
 

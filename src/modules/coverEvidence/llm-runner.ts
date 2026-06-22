@@ -1,5 +1,4 @@
 import { groupedConfig } from "../../config.js";
-import { estimateTextTokens } from "../llm/token-estimator.js";
 import {
   type DistillationChatClient,
   type DistillationProviderSetting,
@@ -20,6 +19,7 @@ import {
   validateCandidateQualityForStorage,
 } from "../distillation/procedure-quality.js";
 import type { CandidateKnowledgeType } from "../findCandidate/repository.js";
+import { estimateTextTokens } from "../llm/token-estimator.js";
 import {
   type CoverEvidenceSourceContext,
   isAbortError,

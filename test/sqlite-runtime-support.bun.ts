@@ -49,6 +49,7 @@ import { setEpisodeDistillerTestHooksForTests } from "../src/modules/episodeDist
 import { recordCompileRunKnowledgeFeedback } from "../src/modules/knowledge/knowledge-feedback.service.js";
 import { readVibeMemoryByTokenWindow } from "../src/modules/memoryReader/reader.service.js";
 import { retryQueueJob } from "../src/modules/queue/core/state.js";
+import { claimNextJobWithProviderLease } from "../src/modules/queue/core/provider-lease.js";
 import {
   runQueueWorkerOnce,
   setQueueWorkerTestHooksForTests,
@@ -59,6 +60,10 @@ import {
   listSettingsRows,
   upsertSettingsRow,
 } from "../src/modules/settings/settings.repository.js";
+import {
+  getRuntimeSettingsSnapshot,
+  saveRuntimeSettings,
+} from "../src/modules/settings/settings.service.js";
 import {
   recordVibeMemoryWithDiffEntries,
   retrieveVibeMemoryContext,
@@ -119,7 +124,6 @@ describe("sqlite runtime support repositories", () => {
       sourceKind: "manual",
       sourceKey: "sqlite-runtime-support-episode",
       outcomeKind: "success",
-      evidenceStatus: "verified",
       confidence: 90,
       domains: ["episodic-memory"],
       technologies: ["sqlite", "typescript"],
@@ -505,7 +509,9 @@ describe("sqlite runtime support repositories", () => {
           changeTypes: ["queue"],
           tools: ["vitest"],
           scores: {
-            reusability: 85,
+            importance: 88,
+            confidence: 82,
+            reusability: 0.85,
             decision_density: 80,
             failure_value: 70,
             causal_clarity: 90,
@@ -550,8 +556,21 @@ describe("sqlite runtime support repositories", () => {
       episodeDistillation: expect.objectContaining({
         generatingQueueName: "episodeDistiller",
         parentVibeMemoryId: recorded.memory.id,
+        scores: expect.objectContaining({ importance: 88, confidence: 82, reusability: 85 }),
       }),
     });
+    const episodeRow = sqlite.db
+      .query<{ situation: string; action: string; outcome: string }, [string]>(
+        "select situation, action, outcome from episode_cards where id = ?",
+      )
+      .get(episodes[0]?.id ?? "");
+    expect(episodeRow?.situation).toContain("意図:");
+    expect(episodeRow?.situation).not.toContain("Intent:");
+    expect(episodeRow?.action).toContain("失敗した、または避けたアプローチ:");
+    expect(episodeRow?.action).toContain("source 時点の未解決事項:");
+    expect(episodeRow?.action).not.toContain("Failed approach:");
+    expect(episodeRow?.action).not.toContain("Open loops:");
+    expect(episodeRow?.outcome).toContain("から蒸留された Episode");
 
     await enqueueEpisodeDistillerJob({
       sourceKey: recorded.memory.id,
@@ -612,6 +631,8 @@ describe("sqlite runtime support repositories", () => {
       changeTypes: ["queue"],
       tools: ["vitest"],
       scores: {
+        importance: 82,
+        confidence: 78,
         reusability: 80,
         decision_density: 70,
         failure_value: 75,
@@ -655,6 +676,196 @@ describe("sqlite runtime support repositories", () => {
         limit: 10,
       }),
     ).toHaveLength(1);
+  });
+
+  test("keeps episodeDistiller jobs retryable when all segments fail", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const recorded = await recordVibeMemoryWithDiffEntries({
+      sessionId: "episode-distiller-all-failed-session",
+      content: "The local LLM route rejected the configured model before any episode was saved.",
+      memoryType: "chat",
+      metadata: {
+        projectName: "contextStill",
+        cwd: "/repo/contextStill",
+      },
+      agentDiffs: [
+        {
+          filePath: "src/modules/episodeDistiller/worker.ts",
+          diffHunk: "@@ provider error @@\n+local-llm HTTP 404",
+          changeType: "modify",
+          language: "typescript",
+        },
+      ],
+    });
+    const job = await enqueueEpisodeDistillerJob({
+      sourceKey: recorded.memory.id,
+      metadata: { sourceType: "all-failed-test" },
+    });
+    setEpisodeDistillerTestHooksForTests({
+      distillSegment: async () => {
+        throw new Error('local-llm HTTP 404: {"detail":"Unsupported model: missing-model"}');
+      },
+    });
+
+    const run = await runQueueWorkerOnce({
+      queueName: "episodeDistiller",
+      workerId: "sqlite-episode-unavailable-worker",
+    });
+
+    expect(run.ok).toBe(false);
+    expect(run.message).toContain("worker_unavailable:");
+    const row = sqlite.db
+      .query<
+        { status: string; last_outcome_kind: string; last_error: string; next_run_at: string },
+        [string]
+      >(
+        "select status, last_outcome_kind, last_error, next_run_at from episode_distiller_queue where id = ?",
+      )
+      .get(job.id);
+    expect(row).toMatchObject({
+      status: "pending",
+      last_outcome_kind: "worker_unavailable",
+    });
+    expect(row?.last_error).toContain("Unsupported model");
+    expect(row?.next_run_at).toBeTruthy();
+  });
+
+  test("does not immediately stale-recover fresh provider leases", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const first = await recordVibeMemoryWithDiffEntries({
+      sessionId: "episode-distiller-provider-lease-session-1",
+      content: "First provider lease candidate.",
+      memoryType: "chat",
+      metadata: { projectName: "contextStill", cwd: "/repo/contextStill" },
+      agentDiffs: [
+        {
+          filePath: "src/modules/queue/core/provider-lease.ts",
+          diffHunk: "@@ first @@\n+lease",
+          changeType: "modify",
+          language: "typescript",
+        },
+      ],
+    });
+    const second = await recordVibeMemoryWithDiffEntries({
+      sessionId: "episode-distiller-provider-lease-session-2",
+      content: "Second provider lease candidate.",
+      memoryType: "chat",
+      metadata: { projectName: "contextStill", cwd: "/repo/contextStill" },
+      agentDiffs: [
+        {
+          filePath: "src/modules/queue/core/provider-lease.ts",
+          diffHunk: "@@ second @@\n+lease",
+          changeType: "modify",
+          language: "typescript",
+        },
+      ],
+    });
+    await enqueueEpisodeDistillerJob({ sourceKey: first.memory.id });
+    await enqueueEpisodeDistillerJob({ sourceKey: second.memory.id });
+    const pool = {
+      id: "local-llm-default",
+      label: "Local LLM",
+      enabled: true,
+      maxConcurrent: 1,
+      staleLeaseSeconds: 120,
+      lowPriorityAgingSeconds: 1800,
+      targets: [{ provider: "local-llm" as const, localLlmModelId: "local-a" }],
+    };
+
+    const claimed = await claimNextJobWithProviderLease({
+      pool,
+      priorityQueues: ["episodeDistiller"],
+      workerId: "sqlite-provider-lease-worker-1",
+    });
+    const blocked = await claimNextJobWithProviderLease({
+      pool,
+      priorityQueues: ["episodeDistiller"],
+      workerId: "sqlite-provider-lease-worker-2",
+    });
+
+    expect(claimed?.queueName).toBe("episodeDistiller");
+    expect(blocked).toBeNull();
+    const leaseCounts = sqlite.db
+      .query<{ status: string; count: number }, []>(
+        "select status, count(*) as count from llm_provider_leases group by status",
+      )
+      .all();
+    expect(leaseCounts).toEqual([{ status: "active", count: 1 }]);
+  });
+
+  test("prefers the route local LLM target when claiming provider-pool jobs", async () => {
+    const settings = structuredClone(getRuntimeSettingsSnapshot());
+    const badTarget = {
+      id: "local-bad",
+      name: "Bad local model",
+      apiBaseUrl: "http://127.0.0.1:44448",
+      apiPath: "/v1/chat/completions",
+      model: "bad-model",
+    };
+    const goodTarget = {
+      id: "local-good",
+      name: "Good local model",
+      apiBaseUrl: "http://127.0.0.1:44449",
+      apiPath: "/v1/chat/completions",
+      model: "good-model",
+    };
+    const goodRouteTarget = JSON.stringify({
+      apiBaseUrl: goodTarget.apiBaseUrl,
+      apiPath: goodTarget.apiPath,
+      model: goodTarget.model,
+    });
+    settings.providers["local-llm"] = {
+      enabled: true,
+      apiBaseUrl: badTarget.apiBaseUrl,
+      apiPath: badTarget.apiPath,
+      model: badTarget.model,
+      models: [badTarget, goodTarget],
+    };
+    settings.providerPools = [
+      {
+        id: "local-llm-default",
+        label: "Local LLM",
+        enabled: true,
+        maxConcurrent: 1,
+        staleLeaseSeconds: 120,
+        lowPriorityAgingSeconds: 1800,
+        targets: [
+          { provider: "local-llm", localLlmModelId: badTarget.id },
+          { provider: "local-llm", localLlmModelId: goodTarget.id },
+        ],
+      },
+    ];
+    settings.taskRouting.episodeDistiller = {
+      provider: "local-llm",
+      model: goodRouteTarget,
+      localLlmModel: goodRouteTarget,
+      providerPoolId: "local-llm-default",
+      fallback: [],
+    };
+    await saveRuntimeSettings({ settings, updatedBy: "sqlite-runtime-test" });
+    const recorded = await recordVibeMemoryWithDiffEntries({
+      sessionId: "episode-distiller-provider-target-session",
+      content: "Provider lease should match the episodeDistiller route target.",
+      memoryType: "chat",
+      metadata: { projectName: "contextStill", cwd: "/repo/contextStill" },
+      agentDiffs: [
+        {
+          filePath: "src/modules/queue/core/provider-lease.ts",
+          diffHunk: "@@ target preference @@\n+preferredTargetIds",
+          changeType: "modify",
+          language: "typescript",
+        },
+      ],
+    });
+    await enqueueEpisodeDistillerJob({ sourceKey: recorded.memory.id });
+
+    const claimed = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[0],
+      priorityQueues: ["episodeDistiller"],
+      workerId: "sqlite-provider-target-worker",
+    });
+
+    expect(claimed?.providerLease.targetId).toBe(goodTarget.id);
   });
 
   test("persists covering retry options in sqlite", async () => {

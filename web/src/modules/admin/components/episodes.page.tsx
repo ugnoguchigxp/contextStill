@@ -24,7 +24,6 @@ import {
   type EpisodeCard,
   type EpisodeCardCreateInput,
   type EpisodeCardStatus,
-  type EpisodeEvidenceStatus,
   type EpisodeOutcomeKind,
   type EpisodeRef,
   type EpisodeRefInput,
@@ -45,7 +44,8 @@ type EpisodeFormState = {
   summary: string;
   takeaway: string;
   outcomeKind: EpisodeOutcomeKind;
-  evidenceStatus: EpisodeEvidenceStatus;
+  importance: number;
+  confidence: number;
   status: EpisodeCardStatus;
   domainsCsv: string;
   technologiesCsv: string;
@@ -82,7 +82,8 @@ const emptyForm = (): EpisodeFormState => ({
   summary: "",
   takeaway: "",
   outcomeKind: "unknown",
-  evidenceStatus: "unverified",
+  importance: 50,
+  confidence: 50,
   status: "active",
   domainsCsv: "",
   technologiesCsv: "",
@@ -100,13 +101,17 @@ const tableCellClass = "px-3 py-2 align-top whitespace-normal";
 function EpisodeColumnGroup() {
   return (
     <colgroup>
-      <col className="w-[30%]" />
-      <col className="w-[13%]" />
-      <col className="w-[12%]" />
-      <col className="w-[12%]" />
-      <col className="w-[12%]" />
+      <col className="w-[22%]" />
       <col className="w-[11%]" />
-      <col className="w-[10%]" />
+      <col className="w-[7%]" />
+      <col className="w-[5%]" />
+      <col className="w-[8%]" />
+      <col className="w-[9%]" />
+      <col className="w-[9%]" />
+      <col className="w-[9%]" />
+      <col className="w-[7%]" />
+      <col className="w-[6%]" />
+      <col className="w-[7%]" />
     </colgroup>
   );
 }
@@ -118,7 +123,7 @@ function csv(value: string): string[] {
     .filter(Boolean);
 }
 
-function parseEvidenceRefs(state: EpisodeFormState): EpisodeRefInput[] {
+function parseSourceRefs(state: EpisodeFormState): EpisodeRefInput[] {
   return state.refsText
     .split("\n")
     .map((line) => line.trim())
@@ -146,14 +151,15 @@ function toCreateInput(state: EpisodeFormState): EpisodeCardCreateInput {
     situation: state.summary.trim(),
     lesson: state.takeaway.trim(),
     outcomeKind: state.outcomeKind,
-    evidenceStatus: state.evidenceStatus,
+    importance: state.importance,
+    confidence: state.confidence,
     status: state.status,
     domains: csv(state.domainsCsv),
     technologies: csv(state.technologiesCsv),
     changeTypes: csv(state.changeTypesCsv),
     tools: csv(state.toolsCsv),
     metadata: { source: "admin_ui_manual", uiSchemaVersion: "episode-card.v2" },
-    refs: parseEvidenceRefs(state),
+    refs: parseSourceRefs(state),
   };
 }
 
@@ -168,7 +174,7 @@ function extractRunId(value: string): string {
   return runMatch?.[1] ?? value;
 }
 
-function evidenceHref(ref: EpisodeRef): string {
+function sourceRefHref(ref: EpisodeRef): string {
   const value = ref.refValue;
   const encoded = encodeURIComponent(value);
   if (ref.refKind === "vibe_memory") {
@@ -193,7 +199,7 @@ function evidenceHref(ref: EpisodeRef): string {
   return `/audit?q=${encoded}`;
 }
 
-function evidenceTarget(ref: EpisodeRef): "_blank" | undefined {
+function sourceRefTarget(ref: EpisodeRef): "_blank" | undefined {
   return ref.refKind === "file" && /^https?:\/\//i.test(ref.refValue) ? "_blank" : undefined;
 }
 
@@ -203,16 +209,51 @@ function statusVariant(value: EpisodeCardStatus) {
   return "secondary";
 }
 
-function evidenceVariant(value: EpisodeEvidenceStatus) {
-  if (value === "verified") return "success";
-  if (value === "partial") return "warning";
-  return "outline";
-}
-
 function recordValue(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" && !Array.isArray(value)
     ? (value as Record<string, unknown>)
     : {};
+}
+
+function FacetBadges({
+  items,
+  limit = 3,
+  empty = "-",
+}: {
+  items: string[];
+  limit?: number;
+  empty?: string;
+}) {
+  const visible = items.slice(0, limit);
+  const hiddenCount = Math.max(0, items.length - visible.length);
+  if (visible.length === 0) {
+    return <span className="text-xs text-muted-foreground">{empty}</span>;
+  }
+  return (
+    <div className="flex min-w-0 flex-wrap gap-1">
+      {visible.map((item) => (
+        <Badge key={item} variant="outline" className="max-w-full truncate text-[10px]">
+          {item}
+        </Badge>
+      ))}
+      {hiddenCount > 0 ? (
+        <Badge variant="secondary" className="text-[10px]">
+          +{hiddenCount}
+        </Badge>
+      ) : null}
+    </div>
+  );
+}
+
+function FacetGroup({ label, items }: { label: string; items: string[] }) {
+  return (
+    <div className="min-w-0">
+      <p className="text-xs font-semibold uppercase text-muted-foreground">{label}</p>
+      <div className="mt-2">
+        <FacetBadges items={items} limit={12} empty="None" />
+      </div>
+    </div>
+  );
 }
 
 function EpisodeDetail({ episode }: { episode: EpisodeCard }) {
@@ -239,9 +280,11 @@ function EpisodeDetail({ episode }: { episode: EpisodeCard }) {
     <section className="space-y-4">
       <div className="flex flex-wrap items-center gap-2">
         <Badge variant={statusVariant(episode.status)}>{episode.status}</Badge>
-        <Badge variant={evidenceVariant(episode.evidenceStatus)}>{episode.evidenceStatus}</Badge>
         <Badge variant="outline">{episode.outcomeKind}</Badge>
+        <Badge variant="secondary">importance {episode.importance}</Badge>
         <Badge variant="secondary">confidence {episode.confidence}</Badge>
+        <Badge variant="outline">compile uses {episode.compileUseCount}</Badge>
+        <Badge variant="outline">decision uses {episode.decisionUseCount}</Badge>
       </div>
       <div className="space-y-3">
         {facts.map(([label, value]) => (
@@ -273,17 +316,11 @@ function EpisodeDetail({ episode }: { episode: EpisodeCard }) {
           <p className="text-sm">{tzFormatDateTime(episode.createdAt, tz)}</p>
         </div>
       </div>
-      <div>
-        <p className="text-xs font-semibold uppercase text-muted-foreground">Facets</p>
-        <div className="mt-2 flex flex-wrap gap-1">
-          {[...episode.domains, ...episode.technologies, ...episode.changeTypes, ...episode.tools]
-            .slice(0, 24)
-            .map((tag) => (
-              <Badge key={tag} variant="outline">
-                {tag}
-              </Badge>
-            ))}
-        </div>
+      <div className="grid gap-3 md:grid-cols-2 lg:grid-cols-4">
+        <FacetGroup label="Technologies" items={episode.technologies} />
+        <FacetGroup label="Domains" items={episode.domains} />
+        <FacetGroup label="Change types" items={episode.changeTypes} />
+        <FacetGroup label="Tools" items={episode.tools} />
       </div>
       {sourceFragmentKey ? (
         <div>
@@ -309,15 +346,15 @@ function EpisodeDetail({ episode }: { episode: EpisodeCard }) {
         </div>
       ) : null}
       <div>
-        <p className="text-xs font-semibold uppercase text-muted-foreground">Evidence</p>
+        <p className="text-xs font-semibold uppercase text-muted-foreground">Source refs</p>
         <div className="mt-2 space-y-2">
           {episode.refs.length > 0 ? (
             episode.refs.map((ref) => (
               <a
                 key={ref.id}
-                href={evidenceHref(ref)}
-                target={evidenceTarget(ref)}
-                rel={evidenceTarget(ref) ? "noreferrer" : undefined}
+                href={sourceRefHref(ref)}
+                target={sourceRefTarget(ref)}
+                rel={sourceRefTarget(ref) ? "noreferrer" : undefined}
                 className="flex items-start justify-between gap-3 rounded-md border px-3 py-2 text-sm hover:bg-muted/50"
               >
                 <span className="min-w-0">
@@ -335,7 +372,7 @@ function EpisodeDetail({ episode }: { episode: EpisodeCard }) {
               </a>
             ))
           ) : (
-            <p className="text-sm text-muted-foreground">No evidence refs</p>
+            <p className="text-sm text-muted-foreground">No source refs</p>
           )}
         </div>
       </div>
@@ -432,21 +469,29 @@ function CreateEpisodeCard({
           </Select>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="episode-evidence-status">Evidence state</Label>
-          <Select
-            id="episode-evidence-status"
-            value={form.evidenceStatus}
-            onChange={(event) =>
-              onFieldChange("evidenceStatus", event.target.value as EpisodeEvidenceStatus)
-            }
-          >
-            {(["unverified", "partial", "verified"] as EpisodeEvidenceStatus[]).map((status) => (
-              <option key={status} value={status}>
-                {status}
-              </option>
-            ))}
-          </Select>
+          <Label htmlFor="episode-importance">Importance</Label>
+          <Input
+            id="episode-importance"
+            type="number"
+            min={0}
+            max={100}
+            value={form.importance}
+            onChange={(event) => onFieldChange("importance", Number(event.target.value))}
+          />
         </div>
+        <div className="space-y-2">
+          <Label htmlFor="episode-confidence">Confidence</Label>
+          <Input
+            id="episode-confidence"
+            type="number"
+            min={0}
+            max={100}
+            value={form.confidence}
+            onChange={(event) => onFieldChange("confidence", Number(event.target.value))}
+          />
+        </div>
+      </div>
+      <div className="grid gap-3 md:grid-cols-2">
         <div className="space-y-2">
           <Label htmlFor="episode-card-status">Card state</Label>
           <Select
@@ -516,18 +561,18 @@ function CreateEpisodeCard({
           </Select>
         </div>
         <div className="space-y-2">
-          <Label htmlFor="episode-evidence-refs">Evidence refs</Label>
+          <Label htmlFor="episode-source-refs">Source refs</Label>
           <Textarea
-            id="episode-evidence-refs"
+            id="episode-source-refs"
             value={form.refsText}
             onChange={(event) => onFieldChange("refsText", event.target.value)}
-            placeholder="one evidence ref per line, or kind:value"
+            placeholder="one source ref per line, or kind:value"
             rows={4}
           />
         </div>
       </div>
       <div className="space-y-2">
-        <Label htmlFor="episode-query-hint">Evidence query hint</Label>
+        <Label htmlFor="episode-query-hint">Source query hint</Label>
         <Input
           id="episode-query-hint"
           value={form.queryHint}
@@ -538,7 +583,7 @@ function CreateEpisodeCard({
       {error ? <p className="text-sm text-destructive">{String(error)}</p> : null}
       {!hasRequiredForm ? (
         <p className="text-xs text-muted-foreground">
-          Title, origin key, summary, takeaway, and at least one evidence ref are required.
+          Title, origin key, summary, takeaway, and at least one source ref are required.
         </p>
       ) : null}
       <div className="flex justify-end">
@@ -646,7 +691,7 @@ export function EpisodesPage() {
   const items = episodesQuery.data ?? [];
   const selectedEpisode =
     selectedEpisodeQuery.data ?? items.find((episode) => episode.id === selectedId);
-  const parsedRefs = useMemo(() => parseEvidenceRefs(form), [form]);
+  const parsedRefs = useMemo(() => parseSourceRefs(form), [form]);
   const hasRequiredForm = Boolean(
     form.title.trim() &&
       form.sourceKey.trim() &&
@@ -657,7 +702,6 @@ export function EpisodesPage() {
   const stats = useMemo(
     () => ({
       total: items.length,
-      verified: items.filter((item) => item.evidenceStatus === "verified").length,
       withRefs: items.filter((item) => item.refs.length > 0).length,
     }),
     [items],
@@ -699,15 +743,6 @@ export function EpisodesPage() {
               <p className="break-words text-[11px] text-muted-foreground [overflow-wrap:anywhere]">
                 {textPreview(episode.situation, 130)}
               </p>
-              <div className="flex flex-wrap gap-1">
-                {[...episode.domains, ...episode.technologies, ...episode.changeTypes]
-                  .slice(0, 5)
-                  .map((tag) => (
-                    <Badge key={`${episode.id}:${tag}`} variant="outline" className="text-[10px]">
-                      {tag}
-                    </Badge>
-                  ))}
-              </div>
             </div>
           );
         },
@@ -740,15 +775,13 @@ export function EpisodesPage() {
         ),
       },
       {
-        accessorKey: "evidenceStatus",
-        header: "Evidence",
+        id: "sourceRefs",
+        accessorFn: (episode) => episode.refs.length,
+        header: "Refs",
         cell: ({ row }) => (
-          <div className="min-w-0 space-y-1">
-            <Badge variant={evidenceVariant(row.original.evidenceStatus)} className="text-[10px]">
-              {row.original.evidenceStatus}
-            </Badge>
-            <p className="text-[11px] text-muted-foreground">{row.original.refs.length} refs</p>
-          </div>
+          <span className="font-mono text-xs text-muted-foreground">
+            {row.original.refs.length}
+          </span>
         ),
       },
       {
@@ -761,10 +794,42 @@ export function EpisodesPage() {
         ),
       },
       {
-        accessorKey: "confidence",
-        header: "Confidence",
+        id: "technologies",
+        accessorFn: (episode) => episode.technologies.join(" "),
+        header: "Tech",
+        cell: ({ row }) => <FacetBadges items={row.original.technologies} limit={2} />,
+      },
+      {
+        id: "domains",
+        accessorFn: (episode) => episode.domains.join(" "),
+        header: "Domain",
+        cell: ({ row }) => <FacetBadges items={row.original.domains} limit={2} />,
+      },
+      {
+        id: "changeTypes",
+        accessorFn: (episode) => episode.changeTypes.join(" "),
+        header: "Change",
+        cell: ({ row }) => <FacetBadges items={row.original.changeTypes} limit={2} />,
+      },
+      {
+        id: "quality",
+        accessorFn: (episode) => episode.importance + episode.confidence,
+        header: "Quality",
         cell: ({ row }) => (
-          <span className="font-mono text-xs text-muted-foreground">{row.original.confidence}</span>
+          <div className="space-y-1 font-mono text-[11px] text-muted-foreground">
+            <div>I:{row.original.importance}</div>
+            <div>C:{row.original.confidence}</div>
+          </div>
+        ),
+      },
+      {
+        id: "uses",
+        accessorFn: (episode) => episode.compileUseCount + episode.decisionUseCount,
+        header: "Uses",
+        cell: ({ row }) => (
+          <span className="font-mono text-[11px] text-muted-foreground">
+            C:{row.original.compileUseCount} / D:{row.original.decisionUseCount}
+          </span>
         ),
       },
       {
@@ -855,8 +920,7 @@ export function EpisodesPage() {
           </div>
           <div className="mt-2 flex min-w-0 flex-wrap items-center gap-2 text-[11px]">
             <Badge variant="outline">{stats.total} cards</Badge>
-            <Badge variant="success">{stats.verified} verified</Badge>
-            <Badge variant="secondary">{stats.withRefs} with evidence</Badge>
+            <Badge variant="secondary">{stats.withRefs} with refs</Badge>
             <Badge variant="outline">limit 100</Badge>
           </div>
         </CardHeader>
@@ -939,7 +1003,7 @@ export function EpisodesPage() {
           disabled={episodesQuery.isFetching}
           summaryItems={[
             `Showing ${pageStart} to ${pageEnd} of ${total} episodes | Page ${currentPage} / ${displayTotalPages}`,
-            `verified ${stats.verified} | with refs ${stats.withRefs}`,
+            `with refs ${stats.withRefs}`,
           ]}
         />
         {selectedId ? (

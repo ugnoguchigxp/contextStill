@@ -202,12 +202,13 @@ export function toDecisionEpisodePrecedent(
   episode: EpisodeCard,
 ): ContextDecisionEpisodePrecedent {
   const topicalRelevanceScore = scoreEpisodeTopicalRelevance(input, episode);
+  const reliablePrecedent = episode.confidence >= 50;
   const usedFor: ContextDecisionEpisodePrecedent["usedFor"] =
     topicalRelevanceScore >= 70 &&
-    episode.evidenceStatus !== "unverified" &&
+    reliablePrecedent &&
     (episode.outcomeKind === "failure" || episode.outcomeKind === "mixed")
       ? "risk_cap"
-      : episode.outcomeKind === "success" && episode.evidenceStatus !== "unverified"
+      : episode.outcomeKind === "success" && reliablePrecedent
         ? "support_hint"
         : "background";
   return {
@@ -218,7 +219,8 @@ export function toDecisionEpisodePrecedent(
     outcome: episode.outcome,
     lesson: episode.lesson,
     outcomeKind: episode.outcomeKind,
-    evidenceStatus: episode.evidenceStatus,
+    importance: episode.importance,
+    confidence: episode.confidence,
     topicalRelevanceScore,
     usedFor,
     refs: [

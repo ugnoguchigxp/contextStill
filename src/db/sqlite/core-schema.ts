@@ -381,8 +381,10 @@ CREATE TABLE IF NOT EXISTS episode_cards (
   source_kind TEXT NOT NULL,
   source_key TEXT NOT NULL,
   outcome_kind TEXT NOT NULL DEFAULT 'unknown',
+  importance INTEGER NOT NULL DEFAULT 50,
   confidence INTEGER NOT NULL DEFAULT 50,
-  evidence_status TEXT NOT NULL DEFAULT 'unverified',
+  compile_use_count INTEGER NOT NULL DEFAULT 0,
+  decision_use_count INTEGER NOT NULL DEFAULT 0,
   status TEXT NOT NULL DEFAULT 'active',
   stale_at TEXT,
   embedding TEXT,
@@ -397,7 +399,6 @@ CREATE INDEX IF NOT EXISTS episode_cards_status_idx ON episode_cards(status);
 CREATE INDEX IF NOT EXISTS episode_cards_repo_key_idx ON episode_cards(repo_key);
 CREATE INDEX IF NOT EXISTS episode_cards_repo_path_idx ON episode_cards(repo_path);
 CREATE INDEX IF NOT EXISTS episode_cards_outcome_kind_idx ON episode_cards(outcome_kind);
-CREATE INDEX IF NOT EXISTS episode_cards_evidence_status_idx ON episode_cards(evidence_status);
 CREATE INDEX IF NOT EXISTS episode_cards_created_at_idx ON episode_cards(created_at);
 
 CREATE VIRTUAL TABLE IF NOT EXISTS episode_cards_fts USING fts5(

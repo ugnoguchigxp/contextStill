@@ -21,7 +21,7 @@ import type {
 import type { KnowledgeItem, KnowledgeStatus } from "../../shared/schemas/knowledge.schema.js";
 import { asRecord, asStringArray, normalizeFacetArray } from "../../shared/utils/normalize.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
-import { searchEpisodes } from "../episodic-memory/episode-card.service.js";
+import { recordEpisodeUsage, searchEpisodes } from "../episodic-memory/episode-card.service.js";
 import { normalizeKnowledgeApplicability } from "../knowledge/applicability.service.js";
 import { recordCompileRunKnowledgeUsageSignals } from "../knowledge/knowledge-feedback.service.js";
 import { recordKnowledgeCompileSelectionSafe } from "../knowledge/knowledge-value.service.js";
@@ -286,12 +286,9 @@ function episodeSourceRefs(episode: EpisodeCard): string[] {
 function normalizeEpisodeScore(episode: EpisodeCard, index: number): number {
   const searchScore = Math.max(0, Number(episode.score ?? 0));
   const confidenceScore = Math.min(1, Math.max(0, episode.confidence / 100));
-  const evidenceBoost =
-    episode.evidenceStatus === "verified" ? 0.12 : episode.evidenceStatus === "partial" ? 0.06 : 0;
-  return Math.min(
-    0.75,
-    0.35 + Math.min(0.18, searchScore / 100) + confidenceScore * 0.1 + evidenceBoost - index * 0.03,
-  );
+  const importanceScore = Math.min(1, Math.max(0, episode.importance / 100));
+  const qualityBoost = importanceScore * 0.09 + confidenceScore * 0.05;
+  return Math.min(0.75, 0.35 + Math.min(0.18, searchScore / 100) + qualityBoost - index * 0.03);
 }
 
 function compactEpisodeText(value: string, maxLength = 220): string {
@@ -327,7 +324,7 @@ function episodeToPackItem(episode: EpisodeCard, index: number): ContextPackItem
     title: `Past episode: ${episode.title}`,
     content,
     score: normalizeEpisodeScore(episode, index),
-    rankingReason: `supplemental EpisodeCard precedent (${episode.evidenceStatus}, ${episode.outcomeKind})`,
+    rankingReason: `supplemental EpisodeCard precedent (importance ${episode.importance}, confidence ${episode.confidence}, ${episode.outcomeKind})`,
     sourceRefs,
     changeTypes: episode.changeTypes,
     technologies: episode.technologies,
@@ -350,7 +347,6 @@ async function retrieveEpisodePrecedents(params: {
         params.technologies.length > 0 ? params.technologies : params.input.technologies,
       changeTypes: params.changeTypes.length > 0 ? params.changeTypes : params.input.changeTypes,
       domains: params.domains.length > 0 ? params.domains : params.input.domains,
-      evidenceStatuses: ["verified", "partial"],
       status: "active",
       limit: 5,
     };
@@ -1391,6 +1387,12 @@ export async function compileContextPack(
     });
   });
   const episodePackItems = episodePrecedents.items.map(episodeToPackItem);
+  if (episodePrecedents.items.length > 0) {
+    await recordEpisodeUsage({
+      usageKind: "compile",
+      episodeIds: episodePrecedents.items.map((episode) => episode.id),
+    });
+  }
   const packItems = [...knowledgePackItems, ...episodePackItems];
 
   const budgetedRules = applySectionTokenBudget(

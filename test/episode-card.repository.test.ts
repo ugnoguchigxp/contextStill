@@ -54,7 +54,6 @@ describe("episode-card.repository (PostgreSQL)", () => {
     sourceKey: "key",
     outcomeKind: "success",
     confidence: 90,
-    evidenceStatus: "verified",
     status: "active",
     staleAt: null,
     metadata: {},
@@ -112,7 +111,6 @@ describe("episode-card.repository (PostgreSQL)", () => {
       sourceKey: "key",
       outcomeKind: "success",
       confidence: 90,
-      evidenceStatus: "verified",
       status: "active",
       refs: [
         {
@@ -219,7 +217,6 @@ describe("episode-card.repository (PostgreSQL)", () => {
       repoPath: "/repo",
       repoKey: "key",
       outcomeKinds: ["success"],
-      evidenceStatuses: ["verified"],
       domains: ["test-domain"],
       technologies: ["vitest"],
       changeTypes: ["test-change"],

@@ -5,6 +5,9 @@ pub enum McpAction {
     Start,
     Stop,
     Status,
+    Endpoint,
+    Sessions,
+    Smoke,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -105,12 +108,17 @@ where
         }),
         "mcp" => {
             let action_str = args.next().ok_or_else(|| {
-                CliError::invalid_arguments("mcp requires an action: start, stop, or status")
+                CliError::invalid_arguments(
+                    "mcp requires an action: start, stop, status, endpoint, sessions, or smoke",
+                )
             })?;
             let action = match action_str.as_str() {
                 "start" => McpAction::Start,
                 "stop" => McpAction::Stop,
                 "status" => McpAction::Status,
+                "endpoint" => McpAction::Endpoint,
+                "sessions" => McpAction::Sessions,
+                "smoke" => McpAction::Smoke,
                 _ => {
                     return Err(CliError::invalid_arguments(format!(
                         "unknown mcp action: {action_str}"

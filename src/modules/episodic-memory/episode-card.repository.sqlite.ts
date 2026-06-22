@@ -32,8 +32,10 @@ type SqliteEpisodeCardRow = {
   source_kind: string;
   source_key: string;
   outcome_kind: string;
+  importance: number;
   confidence: number;
-  evidence_status: string;
+  compile_use_count: number;
+  decision_use_count: number;
   status: string;
   stale_at: string | null;
   metadata: string;
@@ -168,8 +170,10 @@ function mapEpisode(
     sourceKind: row.source_kind,
     sourceKey: row.source_key,
     outcomeKind: row.outcome_kind,
+    importance: row.importance,
     confidence: row.confidence,
-    evidenceStatus: row.evidence_status,
+    compileUseCount: row.compile_use_count,
+    decisionUseCount: row.decision_use_count,
     status: row.status,
     staleAt: toDate(row.stale_at),
     metadata: asRecord(parseJson(row.metadata)),
@@ -224,7 +228,6 @@ function normalizeSearchInput(rawInput: EpisodeCardSearchInput) {
     changeTypes: uniqueFacets(input.changeTypes),
     tools: uniqueFacets(input.tools),
     outcomeKinds: input.outcomeKinds ?? [],
-    evidenceStatuses: input.evidenceStatuses ?? [],
   };
 }
 
@@ -233,12 +236,6 @@ function matchesSearchInput(episode: EpisodeCard, input: ReturnType<typeof norma
   if (input.repoPath && episode.repoPath !== input.repoPath) return false;
   if (input.repoKey && episode.repoKey !== input.repoKey) return false;
   if (input.outcomeKinds.length > 0 && !input.outcomeKinds.includes(episode.outcomeKind)) {
-    return false;
-  }
-  if (
-    input.evidenceStatuses.length > 0 &&
-    !input.evidenceStatuses.includes(episode.evidenceStatus)
-  ) {
     return false;
   }
   if (!intersects(input.domains, episode.domains)) return false;
@@ -259,10 +256,9 @@ function scoreEpisode(
     overlapCount(input.technologies, episode.technologies) * 3 +
     overlapCount(input.changeTypes, episode.changeTypes) * 3 +
     overlapCount(input.tools, episode.tools) * 2;
-  const evidenceBoost =
-    episode.evidenceStatus === "verified" ? 2 : episode.evidenceStatus === "partial" ? 1 : 0;
+  const qualityBoost = (episode.importance * 0.6 + episode.confidence * 0.4) / 100;
   const outcomeBoost = episode.outcomeKind === "unknown" ? 0 : 1;
-  return queryScore + facetScore + evidenceBoost + outcomeBoost + episode.confidence / 100;
+  return queryScore + facetScore + qualityBoost + outcomeBoost;
 }
 
 async function refsByEpisodeIds(ids: string[]): Promise<Map<string, SqliteEpisodeRefRow[]>> {
@@ -298,9 +294,10 @@ export async function createEpisodeCardSqlite(
         insert into episode_cards (
           id, title, situation, observations, action, outcome, lesson,
           applicability, anti_applicability, domains, technologies, change_types, tools,
-          repo_path, repo_key, source_kind, source_key, outcome_kind, confidence,
-          evidence_status, status, stale_at, metadata, created_at, updated_at
-        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          repo_path, repo_key, source_kind, source_key, outcome_kind, importance, confidence,
+          compile_use_count, decision_use_count, status, stale_at, metadata,
+          created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `,
       )
       .run(
@@ -322,8 +319,10 @@ export async function createEpisodeCardSqlite(
         input.sourceKind,
         input.sourceKey,
         input.outcomeKind,
+        input.importance,
         input.confidence,
-        input.evidenceStatus,
+        input.compileUseCount,
+        input.decisionUseCount,
         input.status,
         input.staleAt ? new Date(input.staleAt).toISOString() : null,
         json(redactSecretRecord(input.metadata)),
@@ -447,4 +446,20 @@ export async function searchEpisodeCardsSqlite(
     )
     .slice(0, input.limit)
     .map(({ episode, score }) => ({ ...episode, score }));
+}
+
+export async function incrementEpisodeUsageCountsSqlite(params: {
+  episodeIds: string[];
+  usageKind: "compile" | "decision";
+}): Promise<void> {
+  const episodeIds = [...new Set(params.episodeIds.map((id) => id.trim()).filter(Boolean))];
+  if (episodeIds.length === 0) return;
+  const sqlite = await getSqliteCoreDatabase();
+  const column = params.usageKind === "compile" ? "compile_use_count" : "decision_use_count";
+  const placeholders = episodeIds.map(() => "?").join(", ");
+  sqlite.db
+    .query(
+      `update episode_cards set ${column} = ${column} + 1, updated_at = ? where id in (${placeholders})`,
+    )
+    .run(nowIso(), ...episodeIds);
 }

@@ -2,6 +2,7 @@ import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import pg from "pg";
+import { buildMcpConfigSnippet } from "../../cli/onboarding/mcp-config.js";
 import { detectDockerComposeRunner } from "../../cli/onboarding/checks.js";
 import { type SetupCommandResult, runSetupCommand } from "../../cli/onboarding/command-runner.js";
 import { closeDbPool } from "../../db/index.js";
@@ -379,17 +380,7 @@ export async function runStartupSeq(
   }
 
   const allPassed = steps.every((s) => s.status !== "failed");
-  const mcpSnippet = `
-{
-  "mcpServers": {
-    "context-still": {
-      "command": "bun",
-      "args": ["run", "start:mcp"],
-      "cwd": "${cwd}"
-    }
-  }
-}
-`;
+  const mcpSnippet = buildMcpConfigSnippet(cwd);
 
   return {
     ok: allPassed && (options.dryRun || isDoctorOk),

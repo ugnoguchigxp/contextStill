@@ -128,10 +128,10 @@ The Hono API should stay a UI-facing facade. Durable background work and externa
 
 ## MCP Integration
 
-Start only the MCP server:
+Start the daemon-owned local MCP endpoint worker:
 
 ```bash
-CONTEXT_STILL_DB_BACKEND=sqlite bun run start:mcp
+bun run start:mcp
 ```
 
 For an MCP client, use:
@@ -140,16 +140,14 @@ For an MCP client, use:
 {
   "mcpServers": {
     "context-still": {
-      "command": "bun",
-      "args": ["run", "start:mcp"],
-      "cwd": "/path/to/contextStill",
-      "env": {
-        "CONTEXT_STILL_DB_BACKEND": "sqlite"
-      }
+      "url": "http://127.0.0.1:39172/mcp",
+      "enabled": true
     }
   }
 }
 ```
+
+`bun run setup:mcp-config` writes this URL-based registration for Codex and Antigravity. The old direct stdio context-still MCP server has been removed and must not be restored for client registration.
 
 After connecting the MCP server, call `initial_instructions` once at the start of a project session. Use `context_compile` before task work, `context_decision` before asking the user or creating a PR when autonomous progress may still be possible, and `compile_eval` after task work. Register durable lessons with `register_candidates`; negative guardrails use `polarity: "negative"` plus explicit `technologies`, `changeTypes`, and `domains`.
 

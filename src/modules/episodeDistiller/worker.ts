@@ -177,10 +177,16 @@ function buildMessages(segment: Segment, document: EpisodeSourceDocument): Disti
     {
       role: "system",
       content: [
-        "You are ContextStill episodeDistiller.",
-        "Create task-oriented EpisodeCards from source evidence.",
-        "Return only JSON. The JSON must be an array.",
-        "Do not promote rules or procedures. Capture causality, decisions, failures, reusable lessons, and open loops.",
+        "あなたは ContextStill の episodeDistiller です。",
+        "source evidence から、将来の作業判断に再利用できる task-oriented EpisodeCard だけを作ります。",
+        "出力は JSON array のみ。JSON 以外の説明文や Markdown は返さないでください。",
+        "JSON のキー名、enum 値、ファイルパス、コマンド名、API 名、固有名詞は指定どおり保持してください。それ以外の自然文は必ず日本語で書いてください。",
+        "差分ファイル単位の細切れ Episode を避け、同じ目的・原因・判断に属する内容は 1 件に統合してください。",
+        "原則として 1 segment から 1 件だけ作ります。明確に異なる decision/failure/task が同時にある場合だけ最大 2 件までにしてください。",
+        "rules/procedures の昇格はしません。因果関係、判断、失敗、再利用できる教訓、当時の未解決事項だけを記録してください。",
+        "openLoops は現在も未解決と断定しないでください。source 時点の未解決事項として、日本語で控えめに書いてください。",
+        "scores.importance は将来の作業判断で再利用する価値、scores.confidence はこの EpisodeCard の要約・教訓が source segment から妥当に読める確度として、0-100 の整数で別々に採点してください。",
+        "単一 segment 由来で追加検証がない場合、scores.confidence は最大 80 を目安にしてください。複数の独立した根拠が segment 内にある場合だけ 90 以上を使えます。",
       ].join("\n"),
     },
     {
@@ -193,7 +199,7 @@ function buildMessages(segment: Segment, document: EpisodeSourceDocument): Disti
         `Source byte range: ${segment.startOffset}-${segment.endOffset}`,
         `Source events: ${segment.eventIds.join(", ") || "-"}`,
         "",
-        "Return JSON array items with this shape:",
+        "次の shape の JSON array を返してください。値の自然文は日本語で書いてください:",
         "{",
         '  "title": "...",',
         '  "context": "...",',
@@ -209,7 +215,7 @@ function buildMessages(segment: Segment, document: EpisodeSourceDocument): Disti
         '  "technologies": ["..."],',
         '  "changeTypes": ["..."],',
         '  "tools": ["..."],',
-        '  "scores": { "reusability": 0, "decision_density": 0, "failure_value": 0, "causal_clarity": 0, "project_specificity": 0, "evidence_quality": 0, "compression_quality": 0, "staleness_risk": 0 }',
+        '  "scores": { "importance": 0, "confidence": 0, "reusability": 0, "decision_density": 0, "failure_value": 0, "causal_clarity": 0, "project_specificity": 0, "evidence_quality": 0, "compression_quality": 0, "staleness_risk": 0 }',
         "}",
         "",
         "Source segment:",
@@ -397,6 +403,23 @@ export async function processEpisodeDistillerJob(
       if (saved.deduped) deduped += 1;
       else generated += 1;
     }
+  }
+
+  if (
+    generated === 0 &&
+    deduped === 0 &&
+    failedSegments > 0 &&
+    failedSegments === segments.length
+  ) {
+    const sampleErrors = segmentErrors
+      .slice(0, 3)
+      .map((item) => `segment ${item.segment}: ${item.error}`)
+      .join(" | ");
+    throw new Error(
+      `episode distiller failed all segments (${failedSegments}/${segments.length})${
+        sampleErrors ? `: ${sampleErrors}` : ""
+      }`,
+    );
   }
 
   const outcome = generated > 0 || deduped > 0 ? "episodes_distilled" : "no_episode";

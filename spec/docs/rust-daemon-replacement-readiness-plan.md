@@ -73,7 +73,7 @@ Long-running, non-idempotent, or DB-writing tasks must not be owned only by Hono
 |---|---|
 | TypeScript fallback remains | Direct `bun run ...` fallback command still works and is documented |
 | Rust start/stop/status works | Rust command starts the intended process, reports pid/status/log path, and stops it |
-| Readiness is observable | Start command does not report ready until the child is reachable or explicitly running in foreground proxy mode |
+| Readiness is observable | Start command does not report ready until the daemon endpoint is reachable and tool inventory can be listed |
 | Exit state is recorded | Normal exit, non-zero exit, signal stop, and stale pid are represented in state JSON |
 | Smoke passes | Boundary-specific Rust-managed smoke runs in CI/local without external LLM requirements |
 | Rollback is documented | One command or env flag restores TypeScript default |
@@ -164,7 +164,7 @@ This phase is superseded by [Daemon-Owned MCP Runtime Plan](daemon-owned-mcp-run
 
 Do not add `context-stilld mcp serve` as a foreground stdio proxy. That still leaves MCP availability tied to per-client stdio process lifecycle. The default runtime must be a daemon-owned local MCP endpoint, with active sessions, tool workers, cleanup, and stale-state reconciliation owned by `context-stilld`.
 
-Direct stdio MCP (`bun run src/index.ts`, `bun run start:mcp`, `StdioServerTransport`, stdio smoke) becomes a legacy migration target and must be deleted after the daemon endpoint passes smoke.
+Direct stdio context-still MCP has been deleted. Do not restore `src/index.ts`, a stdio transport binding, command-based client registration, or stdio smoke as compatibility fallbacks.
 
 ### Implementation Tasks
 
@@ -173,8 +173,8 @@ Direct stdio MCP (`bun run src/index.ts`, `bun run start:mcp`, `StdioServerTrans
 - Move MCP client registration to URL-based config instead of command-based stdio config.
 - Split TypeScript tool handlers from stdio transport so the daemon can call them through a daemon-managed worker or local RPC.
 - Add session cleanup: idle timeout, transport close, daemon shutdown, worker crash handling, close reasons.
-- Mark `context-stilld mcp start|stop` as deprecated if they only manage a stdio child.
-- Plan deletion of `src/index.ts`, stdio transport binding, `start:mcp`, and stdio smoke once daemon smoke is green.
+- Keep `context-stilld mcp start|stop` limited to the daemon-owned endpoint worker; they must not manage or restore a stdio MCP child.
+- Keep stdio context-still MCP deleted: no `src/index.ts`, no stdio transport binding, no stdio smoke.
 
 ### Verification
 
@@ -202,8 +202,8 @@ context-stilld mcp smoke --json
 ### Done
 
 - Daemon-owned MCP smoke passes locally and in CI.
-- Direct stdio MCP is no longer the default or documented client registration path.
-- stdio MCP deletion plan is linked and tracked.
+- Direct stdio context-still MCP is no longer present.
+- URL-based daemon endpoint smoke is the MCP verification path.
 
 ## Phase 3: Queue Supervisor Safe Smoke
 
@@ -509,7 +509,7 @@ For UI-time boundaries, "default switch" means the default management path used 
 
 1. Agent log sync one-shot wrapper.
 2. UI-time Admin API lifecycle.
-3. MCP foreground proxy.
+3. Daemon-owned MCP endpoint.
 4. Queue supervisor.
 5. Backup preflight guard.
 6. Thin runner / sidecar execution policy.
@@ -539,7 +539,7 @@ bun run verify:rust-daemon
 
 Plus boundary focused gate:
 
-- MCP: `bun run mcp:smoke:sqlite` and `bun run mcp:smoke:sqlite:rust`
+- MCP: `context-stilld mcp smoke --json` and no direct stdio MCP process remains
 - Queue: `bun run verify:queue:smoke` and `bun run rust:queue:smoke`
 - Admin API: `bun run test:unit:api` and `bun run rust:admin-api:smoke`
 - Agent log sync: Rust run-and-wait unit/integration smoke
@@ -551,17 +551,18 @@ Plus boundary focused gate:
 Start here:
 
 1. Add lifecycle state reconciliation and exit metadata.
-2. Add `context-stilld mcp serve`.
-3. Add `mcp:smoke:sqlite:rust`.
-4. Wire `verify:rust-daemon` to include the Rust MCP smoke only after it is deterministic.
+2. Add daemon-owned MCP endpoint and session registry.
+3. Add `context-stilld mcp smoke --json`.
+4. Wire `verify:rust-daemon` to include the daemon MCP smoke only after it is deterministic.
+5. Delete direct stdio MCP surfaces after the daemon endpoint becomes the default registration path.
 
-This slice resolves the main current blocker: Rust-managed MCP cannot be proven while the only Rust mode is background stdio child start with stdout/stderr redirected to logs.
+This slice resolves the main current blocker: Rust-managed MCP cannot be proven while the only Rust mode is background stdio child start with stdout/stderr redirected to logs. The desired endpoint is not a stdio proxy; stdio is a legacy migration target.
 
 ## Stop Conditions
 
 Stop and ask for review if:
 
-- A task requires deleting a TypeScript fallback.
+- A task requires deleting TypeScript product logic without a parity plan.
 - A task requires changing MCP tool schemas or tool names.
 - A task requires changing queue job completion semantics.
 - A task requires destructive backup restore behavior.
@@ -582,6 +583,7 @@ Use this checklist before implementation and before each default switch PR.
 | Can UI close safely during this operation? | Yes, or the operation is explicitly non-cancelable and blocks/defers shutdown |
 | Is Hono admin API resident? | No |
 | Does the thin runner import full API modules while resident? | No |
+| Does MCP depend on direct stdio child processes? | No |
 | Is TypeScript product logic being silently rewritten? | No |
 | Is rollback still one command or one config flag? | Yes |
 | Are packaged-mode paths explicit? | Yes: app data, SQLite, logs, run, backup, local API origin |
@@ -593,12 +595,12 @@ If two or more expected answers fail, do not include the change in the daemon re
 | ID | Task | Depends on | Gate | Status |
 |---|---|---|---|---|
 | RR-01 | Process state reconciliation | current lifecycle wrapper | `cargo test`, `verify:rust-daemon` | not started |
-| RR-02 | MCP foreground proxy | RR-01 | `mcp:smoke:sqlite:rust` | not started |
-| RR-03 | Rust-managed MCP smoke | RR-02 | `verify:rust-daemon` includes smoke | blocked by RR-02 |
+| RR-02 | Daemon-owned MCP endpoint and session registry | RR-01 | `context-stilld mcp endpoint --json` | not started |
+| RR-03 | Daemon MCP smoke and stdio legacy warnings | RR-02 | `context-stilld mcp smoke --json` + config migration warning tests | blocked by RR-02 |
 | RR-04 | Rust-managed queue smoke | RR-01 | `rust:queue:smoke` | not started |
 | RR-05 | Agent log sync run-and-wait | RR-01 | unit tests + `verify:rust-daemon` | not started |
 | RR-06 | Admin API readiness smoke | RR-01 | `rust:admin-api:smoke` | not started |
 | RR-07 | Backup idle guard | RR-01 | `verify:sqlite`, `verify:rust-daemon` | not started |
 | RR-08 | Thin runner and sidecar policy | RR-01, RR-06 | UI-close / detached-task / stderr-capture smoke | not started |
-| RR-09 | Default switch flags | RR-02 through RR-08 | boundary smoke pairs | not started |
+| RR-09 | Default switch flags and stdio deletion gates | RR-02 through RR-08 | boundary smoke pairs + no production stdio MCP references | not started |
 | RR-10 | Per-boundary default switch | RR-09 | focused gate per boundary | blocked by RR-09 |

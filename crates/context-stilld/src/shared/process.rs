@@ -34,8 +34,10 @@ impl ProcessSupervisor for OsSupervisor {
         let child = std::process::Command::new(command)
             .args(args)
             .current_dir(cwd)
+            .stdin(Stdio::null())
             .stdout(Stdio::from(log_file.try_clone()?))
             .stderr(Stdio::from(log_file))
+            .with_detached_process_group()
             .spawn()?;
 
         Ok(child.id())
@@ -82,12 +84,31 @@ impl ProcessSupervisor for OsSupervisor {
             }
         } else if let Ok(status) = std::process::Command::new("kill")
             .args(["-0", &pid.to_string()])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
             .status()
         {
             status.success()
         } else {
             false
         }
+    }
+}
+
+trait DetachedProcessGroup {
+    fn with_detached_process_group(&mut self) -> &mut Self;
+}
+
+impl DetachedProcessGroup for std::process::Command {
+    #[cfg(unix)]
+    fn with_detached_process_group(&mut self) -> &mut Self {
+        use std::os::unix::process::CommandExt;
+        self.process_group(0)
+    }
+
+    #[cfg(not(unix))]
+    fn with_detached_process_group(&mut self) -> &mut Self {
+        self
     }
 }
 

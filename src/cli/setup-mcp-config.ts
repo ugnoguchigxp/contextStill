@@ -11,11 +11,8 @@ type Options = {
   antigravityConfigs: string[];
   antigravityPermissionConfigs: string[];
   cwd: string;
-  command: string;
-  databaseUrl: string;
+  endpointUrl: string;
 };
-
-const defaultDatabaseUrl = `postgres://postgres:postgres@localhost:7889/${projectIdentity.databaseName}`;
 
 function expandHome(input: string): string {
   if (input === "~") return os.homedir();
@@ -23,35 +20,10 @@ function expandHome(input: string): string {
   return input;
 }
 
-function readEnvFileValue(envPath: string, key: string): string | undefined {
-  if (!fs.existsSync(envPath)) return undefined;
-  const lines = fs.readFileSync(envPath, "utf8").split(/\r?\n/);
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!trimmed || trimmed.startsWith("#")) continue;
-    const match = trimmed.match(/^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/);
-    if (!match || match[1] !== key) continue;
-    const value = match[2].trim();
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      return value.slice(1, -1);
-    }
-    return value;
-  }
-  return undefined;
-}
-
-function findBunCommand(): string {
-  const candidates = [
-    process.env.BUN_PATH,
-    process.env.BUN_INSTALL ? path.join(process.env.BUN_INSTALL, "bin", "bun") : undefined,
-    path.join(os.homedir(), ".bun/bin/bun"),
-    "bun",
-  ].filter((item): item is string => Boolean(item));
-
-  return candidates.find((candidate) => candidate === "bun" || fs.existsSync(candidate)) ?? "bun";
+function defaultMcpEndpointUrl(): string {
+  const host = process.env.CONTEXT_STILL_MCP_HOST || "127.0.0.1";
+  const port = process.env.CONTEXT_STILL_MCP_PORT || "39172";
+  return `http://${host}:${port}/mcp`;
 }
 
 function defaultOptions(): Options {
@@ -66,11 +38,7 @@ function defaultOptions(): Options {
     ],
     antigravityPermissionConfigs: [path.join(os.homedir(), ".gemini/config/config.json")],
     cwd,
-    command: findBunCommand(),
-    databaseUrl:
-      process.env.DATABASE_URL ??
-      readEnvFileValue(path.join(cwd, ".env"), "DATABASE_URL") ??
-      defaultDatabaseUrl,
+    endpointUrl: process.env.CONTEXT_STILL_MCP_ENDPOINT_URL ?? defaultMcpEndpointUrl(),
   };
 }
 
@@ -90,9 +58,11 @@ function parseArgs(argv: string[]): Options {
     } else if (arg === "--cwd") {
       options.cwd = path.resolve(next());
     } else if (arg === "--command") {
-      options.command = next();
+      next();
     } else if (arg === "--database-url") {
-      options.databaseUrl = next();
+      next();
+    } else if (arg === "--endpoint-url") {
+      options.endpointUrl = next();
     } else if (arg === "--codex-config") {
       options.codexConfig = next();
     } else if (arg === "--antigravity-config") {
@@ -121,8 +91,9 @@ Updates Codex and Antigravity MCP configuration for ${projectIdentity.packageNam
 Options:
   --dry-run                              Print planned changes without writing files
   --cwd <path>                           Project cwd for the MCP server
-  --command <path>                       Bun command path
-  --database-url <url>                   DATABASE_URL passed to the MCP server
+  --endpoint-url <url>                   Daemon-owned streamable HTTP MCP endpoint URL
+  --command <path>                       Legacy only; ignored for URL-based MCP registration
+  --database-url <url>                   Legacy only; ignored for URL-based MCP registration
   --codex-config <path>                  Codex config.toml path
   --antigravity-config <path>            Additional Antigravity mcp_config.json path
   --antigravity-permission-config <path> Additional Antigravity config.json permission path
@@ -174,13 +145,8 @@ function upsertCodexConfig(content: string, options: Options): string {
   const block = [
     "",
     `[mcp_servers.${projectIdentity.packageName}]`,
-    `command = ${escapeTomlString(options.command)}`,
-    'args = [ "run", "src/index.ts" ]',
-    `cwd = ${escapeTomlString(options.cwd)}`,
+    `url = ${escapeTomlString(options.endpointUrl)}`,
     "enabled = true",
-    "",
-    `[mcp_servers.${projectIdentity.packageName}.env]`,
-    `DATABASE_URL = ${escapeTomlString(options.databaseUrl)}`,
     "",
   ].join("\n");
 
@@ -206,12 +172,8 @@ function upsertAntigravityMcpConfig(config: JsonObject, options: Options): JsonO
 
   delete mcpServers[projectIdentity.legacyPackageName];
   mcpServers[projectIdentity.packageName] = {
-    command: options.command,
-    args: ["run", "src/index.ts"],
-    cwd: options.cwd,
-    env: {
-      DATABASE_URL: options.databaseUrl,
-    },
+    url: options.endpointUrl,
+    enabled: true,
   };
 
   return {
@@ -302,10 +264,8 @@ function main(): void {
         dryRun: options.dryRun,
         server: {
           name: projectIdentity.packageName,
-          command: options.command,
-          args: ["run", "src/index.ts"],
-          cwd: options.cwd,
-          databaseUrl: options.databaseUrl,
+          url: options.endpointUrl,
+          transport: "streamable-http",
         },
         codex,
         antigravity,
@@ -317,4 +277,6 @@ function main(): void {
   );
 }
 
-main();
+if (import.meta.main) {
+  main();
+}

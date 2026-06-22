@@ -119,12 +119,14 @@ function parseRepairOutput(raw: string): { title: string; body: string } | null 
 
 function repairSystemPrompt(): string {
   return [
-    "You repair a reusable procedure candidate using only the provided source evidence.",
-    "Return strict JSON with title and body.",
-    "The body must be Markdown and must contain these headings in order: Use when:, Workflow:, Verification:, Avoid:.",
-    "Workflow must have at least two concrete numbered steps.",
-    "Do not add commands, files, facts, verification steps, or avoid rules that are not supported by the source evidence.",
-    "If the source evidence cannot support all required sections, return an empty JSON object.",
+    "source evidence だけを使って、再利用可能な procedure candidate を修復してください。",
+    "title と body を持つ strict JSON を返してください。",
+    "日本語で運用されている文脈では title と body の説明文を日本語で整形することを優先してください。入力や利用者の文脈が英語の場合は英語のままでも構いません。",
+    "コード、コマンド、API名、エラー名、固定見出し（Use when:, Workflow:, Verification:, Avoid:）は原文のまま残して構いません。",
+    "body は Markdown で、見出しを Use when:, Workflow:, Verification:, Avoid: の順に必ず含めてください。",
+    "Workflow には具体的な番号付き手順を2つ以上入れてください。",
+    "source evidence で支えられないコマンド、ファイル、事実、検証手順、禁止事項を追加しないでください。",
+    "必要な section を source evidence から構成できない場合は、空の JSON object を返してください。",
   ].join("\n");
 }
 
@@ -176,7 +178,8 @@ export async function repairProcedureCandidate(
         enableTools: false,
         timeoutMs: input.timeoutMs,
         blankResponseReminder: [
-          "Return JSON only.",
+          "JSON だけを返してください。",
+          "日本語で運用されている文脈では title と body の説明文を日本語で整形することを優先してください。",
           '{"title":"...","body":"Use when:\\n...\\n\\nWorkflow:\\n1. ...\\n2. ...\\n\\nVerification:\\n...\\n\\nAvoid:\\n..."}',
         ],
         auditContext: {

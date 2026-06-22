@@ -3,7 +3,10 @@ import { resolveDatabaseBackendConfig } from "../../../db/backend.js";
 import type {
   RuntimeProviderPool,
   RuntimeProviderPoolTarget,
+  RuntimeSettingsEditable,
+  RuntimeSettingsRoute,
 } from "../../settings/settings.types.js";
+import { getRuntimeSettingsSnapshot } from "../../settings/settings.service.js";
 import { isQueuePaused } from "./control.js";
 import type { DistillationQueueName } from "./types.js";
 import { queueTableNameByQueue } from "./types.js";
@@ -48,13 +51,104 @@ function targetId(target: RuntimeProviderPoolTarget): string {
   return target.targetId;
 }
 
+function parseLocalLlmRouteTarget(
+  value: string | undefined,
+): { apiBaseUrl: string; apiPath?: string; model: string } | null {
+  if (!value?.trim()) return null;
+  try {
+    const parsed = JSON.parse(value) as Partial<{
+      apiBaseUrl: string;
+      apiPath: string;
+      model: string;
+    }>;
+    if (typeof parsed.apiBaseUrl === "string" && typeof parsed.model === "string") {
+      const apiBaseUrl = parsed.apiBaseUrl.trim().replace(/\/+$/, "");
+      const apiPath =
+        typeof parsed.apiPath === "string" && parsed.apiPath.trim()
+          ? parsed.apiPath.trim()
+          : undefined;
+      const model = parsed.model.trim();
+      if (apiBaseUrl && model) return { apiBaseUrl, apiPath, model };
+    }
+  } catch {
+    // Legacy route values are plain model names.
+  }
+  return null;
+}
+
+function queueRoutes(
+  settings: RuntimeSettingsEditable,
+  queueName: DistillationQueueName,
+): RuntimeSettingsRoute[] {
+  if (queueName === "findingCandidate") {
+    return [settings.taskRouting.findCandidate.source, settings.taskRouting.findCandidate.vibe];
+  }
+  if (queueName === "episodeDistiller") return [settings.taskRouting.episodeDistiller];
+  if (queueName === "coveringEvidence") {
+    return [
+      settings.taskRouting.coverEvidence.sourceSupport,
+      settings.taskRouting.coverEvidence.externalEvidence,
+      settings.taskRouting.coverEvidence.mcpEvidence,
+    ];
+  }
+  if (queueName === "deadZoneMergeReview") return [settings.taskRouting.deadZoneMergeReview];
+  if (queueName === "mergeActivationFinalize") {
+    return [settings.taskRouting.mergeActivationFinalize];
+  }
+  return [settings.taskRouting.finalizeDistille];
+}
+
+function preferredTargetIdsForQueue(params: {
+  settings: RuntimeSettingsEditable;
+  queueName: DistillationQueueName;
+  poolId: string;
+}): Set<string> {
+  const preferred = new Set<string>();
+  for (const route of queueRoutes(params.settings, params.queueName)) {
+    if (route.providerPoolId !== params.poolId) continue;
+    if (route.provider === "local-llm") {
+      const routeTarget = parseLocalLlmRouteTarget(route.localLlmModel ?? route.model);
+      const matched = routeTarget
+        ? params.settings.providers["local-llm"].models.find(
+            (model) =>
+              model.apiBaseUrl.trim().replace(/\/+$/, "") === routeTarget.apiBaseUrl &&
+              (!routeTarget.apiPath || model.apiPath === routeTarget.apiPath) &&
+              model.model === routeTarget.model,
+          )
+        : params.settings.providers["local-llm"].models.find(
+            (model) => model.model === route.model || model.model === route.localLlmModel,
+          );
+      if (matched?.id) preferred.add(matched.id);
+    } else if (route.provider === "azure-openai") {
+      for (const slot of route.azureDeploymentSlots ?? []) preferred.add(String(slot));
+    }
+  }
+  return preferred;
+}
+
+function sortTargetsForQueue(
+  targets: RuntimeProviderPoolTarget[],
+  preferredTargetIds: Set<string>,
+): RuntimeProviderPoolTarget[] {
+  return [...targets].sort((a, b) => {
+    const aPreferred = preferredTargetIds.has(targetId(a));
+    const bPreferred = preferredTargetIds.has(targetId(b));
+    if (aPreferred !== bPreferred) return aPreferred ? -1 : 1;
+    return 0;
+  });
+}
+
 function activePoolCapacity(pool: RuntimeProviderPool): number {
   return Math.max(1, Math.min(pool.maxConcurrent, pool.targets.length));
 }
 
-function staleCutoffIso(pool: RuntimeProviderPool): string {
+function sqliteTimestamp(date: Date): string {
+  return date.toISOString().replace("T", " ").slice(0, 19);
+}
+
+function staleCutoffTimestamp(pool: RuntimeProviderPool): string {
   const seconds = Math.max(30, Math.floor(pool.staleLeaseSeconds));
-  return new Date(Date.now() - seconds * 1000).toISOString();
+  return sqliteTimestamp(new Date(Date.now() - seconds * 1000));
 }
 
 function recoverStaleQueueJobsSql(queueName: DistillationQueueName, tableName: string): string {
@@ -119,7 +213,7 @@ export async function recoverStaleProviderLeases(pool: RuntimeProviderPool): Pro
         and coalesce(heartbeat_at, locked_at, updated_at) < ?
     `,
     )
-    .run(pool.id, staleCutoffIso(pool));
+    .run(pool.id, staleCutoffTimestamp(pool));
   return Number(result.changes ?? 0);
 }
 
@@ -185,7 +279,7 @@ export async function claimNextJobWithProviderLease(params: {
     30,
     Math.min(120, Math.floor(groupedConfig.distillation.lockTtlSeconds)),
   );
-  const queueStaleCutoff = new Date(Date.now() - queueStaleSeconds * 1000).toISOString();
+  const queueStaleCutoff = sqliteTimestamp(new Date(Date.now() - queueStaleSeconds * 1000));
   const nowMs = Date.now();
   const agingSeconds = Math.max(60, Math.floor(params.pool.lowPriorityAgingSeconds));
   const pausedQueues = new Set<DistillationQueueName>();
@@ -211,7 +305,7 @@ export async function claimNextJobWithProviderLease(params: {
           and coalesce(heartbeat_at, locked_at, updated_at) < ?
       `,
       )
-      .run(params.pool.id, staleCutoffIso(params.pool));
+      .run(params.pool.id, staleCutoffTimestamp(params.pool));
 
     const activeLeaseCount =
       sqlite.db
@@ -233,14 +327,13 @@ export async function claimNextJobWithProviderLease(params: {
           .all(params.pool.id) ?? []
       ).map((row) => row.target_id),
     );
-    const selectedTarget = params.pool.targets.find(
+    const freeTargets = params.pool.targets.filter(
       (target) => !activeTargets.has(targetId(target)),
     );
-    if (!selectedTarget) {
+    if (freeTargets.length === 0) {
       sqlite.db.query("COMMIT").run();
       return null;
     }
-    const selectedTargetId = targetId(selectedTarget);
 
     const candidates: RunnableCandidate[] = [];
     for (const [queueOrder, queueName] of params.priorityQueues.entries()) {
@@ -276,6 +369,20 @@ export async function claimNextJobWithProviderLease(params: {
       sqlite.db.query("COMMIT").run();
       return null;
     }
+    const settings = getRuntimeSettingsSnapshot();
+    const selectedTarget = sortTargetsForQueue(
+      freeTargets,
+      preferredTargetIdsForQueue({
+        settings,
+        queueName: picked.queueName,
+        poolId: params.pool.id,
+      }),
+    )[0];
+    if (!selectedTarget) {
+      sqlite.db.query("COMMIT").run();
+      return null;
+    }
+    const selectedTargetId = targetId(selectedTarget);
 
     sqlite.db
       .query(

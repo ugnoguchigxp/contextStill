@@ -53,6 +53,7 @@ import { AdminSortableTableHead } from "./admin-sortable-table-head";
 import { CopyableIdField } from "./copyable-id-field";
 
 const knowledgeTypes: KnowledgeType[] = ["rule", "procedure"];
+const knowledgePolarities = ["positive", "negative"] as const;
 
 const emptyForm: KnowledgeWriteInput = {
   type: "rule",
@@ -167,9 +168,9 @@ export function KnowledgePage() {
   const [changeTypesInput, setChangeTypesInput] = useState("");
   const [domainsInput, setDomainsInput] = useState("");
   const [intentTagsInput, setIntentTagsInput] = useState("");
-  const [polarityFilter, setPolarityFilter] = useState<"all" | "positive" | "negative" | "neutral">(
-    "all",
-  );
+  const [polarityFilter, setPolarityFilter] = useState<
+    "all" | (typeof knowledgePolarities)[number]
+  >("all");
   const [intentTagsSearchInput, setIntentTagsSearchInput] = useState("");
   const [submittedIntentTags, setSubmittedIntentTags] = useState("");
   const [error, setError] = useState<string | null>(null);
@@ -595,13 +596,6 @@ export function KnowledgePage() {
                   <Badge variant="destructive" className="text-[10px] uppercase font-bold">
                     negative
                   </Badge>
-                ) : item.polarity === "neutral" ? (
-                  <Badge
-                    variant="outline"
-                    className="text-[10px] uppercase font-bold border-amber-500 text-amber-500"
-                  >
-                    neutral
-                  </Badge>
                 ) : (
                   <Badge variant="success" className="text-[10px] uppercase font-bold">
                     positive
@@ -955,7 +949,9 @@ export function KnowledgePage() {
             labelClassName="sr-only"
             className="w-[112px]"
             onChange={(event) => {
-              const nextPolarity = event.target.value as any;
+              const nextPolarity = event.target.value as
+                | "all"
+                | (typeof knowledgePolarities)[number];
               setPolarityFilter(nextPolarity);
               setBulkSelection(null);
               resetToFirstPage();
@@ -964,7 +960,6 @@ export function KnowledgePage() {
             <option value="all">Polarity</option>
             <option value="positive">Positive</option>
             <option value="negative">Negative</option>
-            <option value="neutral">Neutral</option>
           </AdminFilterChipSelect>
 
           <AdminFilterChipSelect
@@ -1247,9 +1242,14 @@ export function KnowledgePage() {
               <Select
                 id="knowledge-polarity"
                 value={form.polarity}
-                onChange={(event) => setForm({ ...form, polarity: event.target.value as any })}
+                onChange={(event) =>
+                  setForm({
+                    ...form,
+                    polarity: event.target.value as (typeof knowledgePolarities)[number],
+                  })
+                }
               >
-                {["positive", "negative", "neutral"].map((polarity) => (
+                {knowledgePolarities.map((polarity) => (
                   <option key={polarity} value={polarity}>
                     {polarity}
                   </option>

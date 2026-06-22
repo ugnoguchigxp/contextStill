@@ -1,6 +1,6 @@
 import { QueryClient, QueryClientProvider, useMutation, useQuery } from "@tanstack/react-query";
 /** @vitest-environment jsdom */
-import { fireEvent, render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import React from "react";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { KnowledgePage } from "../../../web/src/modules/admin/components/knowledge.page";
@@ -414,6 +414,28 @@ describe("KnowledgePage", () => {
     if (qualitySelect) {
       fireEvent.change(qualitySelect, { target: { value: "50" } });
     }
+  });
+
+  it("does not offer neutral polarity in filters or the edit form", () => {
+    render(
+      <QueryClientProvider client={queryClient}>
+        <KnowledgePage />
+      </QueryClientProvider>,
+    );
+
+    const polarityFilter = screen.getByLabelText("Polarity filter");
+    expect(within(polarityFilter).getByRole("option", { name: "Positive" })).toBeInTheDocument();
+    expect(within(polarityFilter).getByRole("option", { name: "Negative" })).toBeInTheDocument();
+    expect(
+      within(polarityFilter).queryByRole("option", { name: "Neutral" }),
+    ).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Create New"));
+
+    const formPolarity = screen.getByLabelText("Polarity");
+    expect(within(formPolarity).getByRole("option", { name: "positive" })).toBeInTheDocument();
+    expect(within(formPolarity).getByRole("option", { name: "negative" })).toBeInTheDocument();
+    expect(within(formPolarity).queryByRole("option", { name: "neutral" })).not.toBeInTheDocument();
   });
 
   it("handles bulk active status update", () => {

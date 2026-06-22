@@ -1,4 +1,4 @@
-import { and, desc, eq, inArray } from "drizzle-orm";
+import { and, desc, eq, inArray, sql } from "drizzle-orm";
 import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { getDefaultDbSession } from "../../db/session.js";
 import { episodeCards, episodeRefs } from "../../db/schema.js";
@@ -114,8 +114,10 @@ function mapEpisode(row: EpisodeCardRow, refs: EpisodeRefRow[], score?: number):
     sourceKind: row.sourceKind,
     sourceKey: row.sourceKey,
     outcomeKind: row.outcomeKind,
+    importance: row.importance,
     confidence: row.confidence,
-    evidenceStatus: row.evidenceStatus,
+    compileUseCount: row.compileUseCount,
+    decisionUseCount: row.decisionUseCount,
     status: row.status,
     staleAt: row.staleAt,
     metadata: asRecord(row.metadata),
@@ -158,12 +160,6 @@ function matchesSearchInput(episode: EpisodeCard, input: ReturnType<typeof norma
   if (input.outcomeKinds.length > 0 && !input.outcomeKinds.includes(episode.outcomeKind)) {
     return false;
   }
-  if (
-    input.evidenceStatuses.length > 0 &&
-    !input.evidenceStatuses.includes(episode.evidenceStatus)
-  ) {
-    return false;
-  }
   if (!intersects(input.domains, episode.domains)) return false;
   if (!intersects(input.technologies, episode.technologies)) return false;
   if (!intersects(input.changeTypes, episode.changeTypes)) return false;
@@ -182,10 +178,9 @@ function scoreEpisode(
     overlapCount(input.technologies, episode.technologies) * 3 +
     overlapCount(input.changeTypes, episode.changeTypes) * 3 +
     overlapCount(input.tools, episode.tools) * 2;
-  const evidenceBoost =
-    episode.evidenceStatus === "verified" ? 2 : episode.evidenceStatus === "partial" ? 1 : 0;
+  const qualityBoost = (episode.importance * 0.6 + episode.confidence * 0.4) / 100;
   const outcomeBoost = episode.outcomeKind === "unknown" ? 0 : 1;
-  return queryScore + facetScore + evidenceBoost + outcomeBoost + episode.confidence / 100;
+  return queryScore + facetScore + qualityBoost + outcomeBoost;
 }
 
 function normalizeSearchInput(rawInput: EpisodeCardSearchInput) {
@@ -207,7 +202,6 @@ function normalizeSearchInput(rawInput: EpisodeCardSearchInput) {
     changeTypes: uniqueFacets(input.changeTypes),
     tools: uniqueFacets(input.tools),
     outcomeKinds: input.outcomeKinds ?? [],
-    evidenceStatuses: input.evidenceStatuses ?? [],
   };
 }
 
@@ -252,8 +246,10 @@ export async function createEpisodeCard(rawInput: EpisodeCardCreateInput): Promi
         sourceKind: input.sourceKind,
         sourceKey: input.sourceKey,
         outcomeKind: input.outcomeKind,
+        importance: input.importance,
         confidence: input.confidence,
-        evidenceStatus: input.evidenceStatus,
+        compileUseCount: input.compileUseCount,
+        decisionUseCount: input.decisionUseCount,
         status: input.status,
         staleAt: input.staleAt ?? null,
         metadata: redactSecretRecord(input.metadata),
@@ -348,4 +344,26 @@ export async function searchEpisodeCards(rawInput: EpisodeCardSearchInput): Prom
     )
     .slice(0, input.limit)
     .map(({ episode, score }) => ({ ...episode, score }));
+}
+
+export async function incrementEpisodeUsageCounts(params: {
+  episodeIds: string[];
+  usageKind: "compile" | "decision";
+}): Promise<void> {
+  const episodeIds = [...new Set(params.episodeIds.map((id) => id.trim()).filter(Boolean))];
+  if (episodeIds.length === 0) return;
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    await sqlite.incrementEpisodeUsageCountsSqlite({ ...params, episodeIds });
+    return;
+  }
+  const column =
+    params.usageKind === "compile" ? episodeCards.compileUseCount : episodeCards.decisionUseCount;
+  await db
+    .update(episodeCards)
+    .set({
+      [params.usageKind === "compile" ? "compileUseCount" : "decisionUseCount"]: sql`${column} + 1`,
+      updatedAt: new Date(),
+    })
+    .where(inArray(episodeCards.id, episodeIds));
 }

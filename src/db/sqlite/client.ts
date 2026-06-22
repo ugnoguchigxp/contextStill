@@ -21,6 +21,10 @@ type BunSqliteDatabase = {
   close(): void;
 };
 
+type SqliteTableInfoRow = {
+  name: string;
+};
+
 export type SqliteVectorCapability = {
   available: boolean;
   extensionPath: string | null;
@@ -58,11 +62,43 @@ export async function openSqliteCoreDatabase(input: {
       vectorDimension: input.vectorDimension ?? groupedConfig.embedding.dimension,
     }),
   );
+  migrateSqliteCoreSchema(db);
   if (vector.available) {
     createVecVirtualTables(db, input.vectorDimension ?? groupedConfig.embedding.dimension);
   }
 
   return { db, orm: createSqliteDrizzle(db), path: input.path, vector };
+}
+
+function hasColumn(db: BunSqliteDatabase, tableName: string, columnName: string): boolean {
+  return db
+    .query<SqliteTableInfoRow, []>(`PRAGMA table_info(${tableName})`)
+    .all()
+    .some((row) => row.name === columnName);
+}
+
+function migrateSqliteCoreSchema(db: BunSqliteDatabase): void {
+  if (!hasColumn(db, "episode_cards", "importance")) {
+    db.exec(`
+DELETE FROM episode_retrieval_feedback;
+DELETE FROM episode_refs;
+DELETE FROM episode_cards;
+DELETE FROM episode_cards_fts;
+ALTER TABLE episode_cards ADD COLUMN importance INTEGER NOT NULL DEFAULT 50;
+`);
+  }
+  if (!hasColumn(db, "episode_cards", "compile_use_count")) {
+    db.exec("ALTER TABLE episode_cards ADD COLUMN compile_use_count INTEGER NOT NULL DEFAULT 0;");
+  }
+  if (!hasColumn(db, "episode_cards", "decision_use_count")) {
+    db.exec("ALTER TABLE episode_cards ADD COLUMN decision_use_count INTEGER NOT NULL DEFAULT 0;");
+  }
+  if (hasColumn(db, "episode_cards", "evidence_status")) {
+    db.exec(`
+DROP INDEX IF EXISTS episode_cards_evidence_status_idx;
+ALTER TABLE episode_cards DROP COLUMN evidence_status;
+`);
+  }
 }
 
 function disabledVectorCapability(): SqliteVectorCapability {

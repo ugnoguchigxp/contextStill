@@ -4,6 +4,7 @@ import { parseCoverEvidenceResult } from "../src/modules/coverEvidence/parser.js
 import {
   applicabilityRefinementSystemPrompt,
   externalEvidenceFinalSystemPrompt,
+  valueAssessmentSystemPrompt,
 } from "../src/modules/coverEvidence/prompts.js";
 import { buildCoverEvidenceSearchQuery } from "../src/modules/coverEvidence/search-query.service.js";
 
@@ -649,6 +650,18 @@ describe("coverEvidence prompts", () => {
     expect(applicabilityRefinementSystemPrompt()).toContain("lowercase kebab-case の ASCII tag");
   });
 
+  test("nudges reusable knowledge title and body toward Japanese in Japanese contexts", () => {
+    expect(externalEvidenceFinalSystemPrompt()).toContain(
+      "日本語で運用されている文脈では、knowledge_ready の title と body を日本語",
+    );
+    expect(valueAssessmentSystemPrompt()).toContain(
+      "入力や利用者の文脈が英語の場合は英語のままでも構いません",
+    );
+    expect(applicabilityRefinementSystemPrompt()).toContain(
+      "入力や利用者の文脈が英語の場合は英語のままでも構いません",
+    );
+  });
+
   test("instructs simple title body and final metadata output", () => {
     const prompt = externalEvidenceFinalSystemPrompt();
 
@@ -1110,6 +1123,7 @@ describe("runCoverEvidence", () => {
       messages: Array<{ role: string; content: string }>;
     };
     expect(request.messages[0]?.content).toContain("source evidence と fetch_content evidence");
+    expect(request.messages[0]?.content).toContain("日本語で運用されている文脈");
     expect(request.messages[0]?.content).toContain("Use when:");
     expect(request.messages[0]?.content).toContain("Workflow:");
     expect(request.messages[0]?.content).toContain("domains");

@@ -24,7 +24,6 @@ export const knowledgeOriginLinkKindValues = [
 
 export const episodeCardStatusValues = ["draft", "active", "deprecated"] as const;
 export const episodeOutcomeKindValues = ["success", "failure", "mixed", "unknown"] as const;
-export const episodeEvidenceStatusValues = ["verified", "partial", "unverified"] as const;
 export const episodeSourceKindValues = [
   "vibe_memory",
   "compile_run",

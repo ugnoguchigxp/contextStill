@@ -32,10 +32,6 @@ const listEpisodesQuerySchema = z.object({
     csvArray,
     z.array(z.enum(["success", "failure", "mixed", "unknown"])).optional(),
   ),
-  evidenceStatuses: z.preprocess(
-    csvArray,
-    z.array(z.enum(["verified", "partial", "unverified"])).optional(),
-  ),
   limit: z.coerce.number().int().positive().max(100).default(20),
   includeDraft: z.coerce.boolean().default(false),
 });
@@ -57,7 +53,6 @@ export const episodesRouter = new Hono()
       repoPath: query.repoPath,
       repoKey: query.repoKey,
       outcomeKinds: query.outcomeKinds,
-      evidenceStatuses: query.evidenceStatuses,
       limit: query.limit,
       includeDraft: query.includeDraft,
     });

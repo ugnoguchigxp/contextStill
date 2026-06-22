@@ -67,10 +67,10 @@ Minimal mode should not require external LLMs, external search APIs, or MCP regi
 
 ## MCP Integration
 
-Start the MCP server:
+Start the daemon-owned local MCP endpoint worker:
 
 ```bash
-CONTEXT_STILL_DB_BACKEND=sqlite bun run start:mcp
+bun run start:mcp
 ```
 
 Register it in an MCP client only when you want agent integration:
@@ -79,16 +79,14 @@ Register it in an MCP client only when you want agent integration:
 {
   "mcpServers": {
     "context-still": {
-      "command": "bun",
-      "args": ["run", "start:mcp"],
-      "cwd": "/path/to/contextStill",
-      "env": {
-        "CONTEXT_STILL_DB_BACKEND": "sqlite"
-      }
+      "url": "http://127.0.0.1:39172/mcp",
+      "enabled": true
     }
   }
 }
 ```
+
+Run `bun run setup:mcp-config` to update Codex and Antigravity config files. The direct stdio server is legacy only and should not be registered in new clients.
 
 After connection, call `initial_instructions` once per project session, `context_compile` before task work, `context_decision` before a blocking question/PR decision when autonomous progress may still be possible, and `compile_eval` after the task.
 

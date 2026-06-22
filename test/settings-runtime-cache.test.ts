@@ -372,7 +372,20 @@ describe("settings runtime cache", () => {
           },
         },
         taskRouting: {
-          ...settings.taskRouting,
+          webSourceResearch: {
+            provider: "local-llm",
+            model: JSON.stringify({
+              apiBaseUrl: "http://127.0.0.1:44449",
+              apiPath: "/v1/chat/completions",
+              model: "qwen-primary",
+            }),
+            localLlmModel: JSON.stringify({
+              apiBaseUrl: "http://127.0.0.1:44449",
+              apiPath: "/v1/chat/completions",
+              model: "qwen-primary",
+            }),
+            fallback: [],
+          },
           coverEvidence: {
             sourceSupport: { provider: "local-llm", fallback: [] },
             externalEvidence: { provider: "local-llm", fallback: [] },
@@ -411,6 +424,13 @@ describe("settings runtime cache", () => {
     expect(parsed.taskRouting.coverEvidence.externalEvidence.providerPoolId).toBe(
       "local-llm-default",
     );
+    expect(parsed.taskRouting.episodeDistiller.model).toBe(
+      parsed.taskRouting.webSourceResearch.model,
+    );
+    expect(parsed.taskRouting.episodeDistiller.localLlmModel).toBe(
+      parsed.taskRouting.webSourceResearch.localLlmModel,
+    );
+    expect(parsed.taskRouting.episodeDistiller.providerPoolId).toBe("local-llm-default");
     expect(parsed.taskRouting.finalizeDistille.providerPoolId).toBe("local-llm-default");
   });
 });

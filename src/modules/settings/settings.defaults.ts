@@ -864,10 +864,16 @@ function cloneRoute(route: RuntimeSettingsRoute): RuntimeSettingsRoute {
   };
 }
 
+function hasRouteConfig(value: unknown): boolean {
+  return Object.keys(asRecord(value)).length > 0;
+}
+
 function mergeRuntimeSettings(
   defaults: RuntimeSettingsEditable,
   input: Record<string, unknown>,
 ): RuntimeSettingsEditable {
+  const rawTaskRouting = asRecord(input.taskRouting);
+  const hasEpisodeDistillerRoute = hasRouteConfig(rawTaskRouting.episodeDistiller);
   const merged: RuntimeSettingsEditable = {
     ...defaults,
     general: {
@@ -930,7 +936,7 @@ function mergeRuntimeSettings(
       },
       episodeDistiller: {
         ...defaults.taskRouting.episodeDistiller,
-        ...asRecord(asRecord(input.taskRouting).episodeDistiller),
+        ...asRecord(rawTaskRouting.episodeDistiller),
       },
       coverEvidence: {
         ...defaults.taskRouting.coverEvidence,
@@ -1002,6 +1008,10 @@ function mergeRuntimeSettings(
   merged.providers["azure-openai"] = syncAzureOpenAiProvider(merged.providers["azure-openai"]);
   merged.providers["local-llm"] = syncLocalLlmProvider(merged.providers["local-llm"]);
   merged.providerPools = normalizeProviderPools(merged, input.providerPools);
+
+  if (!hasEpisodeDistillerRoute) {
+    merged.taskRouting.episodeDistiller = cloneRoute(merged.taskRouting.webSourceResearch);
+  }
 
   merged.taskRouting.findCandidate.source = sanitizeRoute(
     merged,

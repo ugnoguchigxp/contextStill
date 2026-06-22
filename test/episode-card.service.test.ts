@@ -113,7 +113,7 @@ describe("episode-card service", () => {
         sourceKind: "compile_run",
         sourceKey: "550e8400-e29b-41d4-a716-446655440000",
         outcomeKind: "success",
-        evidenceStatus: "verified",
+        importance: 82,
         confidence: 93,
         technologies: ["typescript"],
         changeTypes: ["feature"],
@@ -193,38 +193,6 @@ describe("episode-card service", () => {
 
       vi.mocked(getCompileRunDetail).mockResolvedValue(makeDetail(null, "unknown-status") as never);
       expect((await buildEpisodeInputFromCompileRun("x"))?.outcomeKind).toBe("unknown");
-    });
-  });
-
-  describe("inferEvidenceStatus branches", () => {
-    const makeDetail = (latestOutcome: string | null, status: string) => ({
-      ...baseCompileDetail,
-      run: {
-        ...baseCompileDetail.run,
-        status,
-        evalSummary: {
-          ...baseCompileDetail.run.evalSummary,
-          latestOutcome,
-        },
-      },
-    });
-
-    test("useful maps to verified", async () => {
-      vi.mocked(getCompileRunDetail).mockResolvedValue(makeDetail("useful", "failed") as never);
-      expect((await buildEpisodeInputFromCompileRun("x"))?.evidenceStatus).toBe("verified");
-    });
-
-    test("partial or non-failed status maps to partial", async () => {
-      vi.mocked(getCompileRunDetail).mockResolvedValue(makeDetail("partial", "failed") as never);
-      expect((await buildEpisodeInputFromCompileRun("x"))?.evidenceStatus).toBe("partial");
-
-      vi.mocked(getCompileRunDetail).mockResolvedValue(makeDetail(null, "ok") as never);
-      expect((await buildEpisodeInputFromCompileRun("x"))?.evidenceStatus).toBe("partial");
-    });
-
-    test("other case (null outcome and failed status) maps to unverified", async () => {
-      vi.mocked(getCompileRunDetail).mockResolvedValue(makeDetail(null, "failed") as never);
-      expect((await buildEpisodeInputFromCompileRun("x"))?.evidenceStatus).toBe("unverified");
     });
   });
 

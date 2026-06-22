@@ -51,7 +51,6 @@ describe("episode-card.repository.sqlite", () => {
     source_key: "key",
     outcome_kind: "success",
     confidence: 90,
-    evidence_status: "verified",
     status: "active",
     stale_at: null,
     metadata: "{}",
@@ -105,7 +104,6 @@ describe("episode-card.repository.sqlite", () => {
       sourceKey: "key",
       outcomeKind: "success",
       confidence: 90,
-      evidenceStatus: "verified",
       status: "active",
       refs: [
         {
@@ -160,7 +158,6 @@ describe("episode-card.repository.sqlite", () => {
         sourceKey: "key",
         outcomeKind: "success",
         confidence: 90,
-        evidenceStatus: "verified",
         status: "active",
         refs: [],
         metadata: {},
@@ -248,7 +245,6 @@ describe("episode-card.repository.sqlite", () => {
       repoPath: "/repo",
       repoKey: "key",
       outcomeKinds: ["success"],
-      evidenceStatuses: ["verified"],
       domains: ["test-domain"],
       technologies: ["vitest"],
       changeTypes: ["test-change"],

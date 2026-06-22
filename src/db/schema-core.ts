@@ -16,7 +16,6 @@ import { groupedConfig } from "../config.js";
 import {
   auditLogActorValues,
   episodeCardStatusValues,
-  episodeEvidenceStatusValues,
   episodeOutcomeKindValues,
   episodeRefKindValues,
   episodeRetrievalRunKindValues,
@@ -221,8 +220,10 @@ export const episodeCards = pgTable(
     sourceKind: text("source_kind").notNull(),
     sourceKey: text("source_key").notNull(),
     outcomeKind: text("outcome_kind").notNull().default("unknown"),
+    importance: integer("importance").default(50).notNull(),
     confidence: integer("confidence").default(50).notNull(),
-    evidenceStatus: text("evidence_status").notNull().default("unverified"),
+    compileUseCount: integer("compile_use_count").default(0).notNull(),
+    decisionUseCount: integer("decision_use_count").default(0).notNull(),
     status: text("status").notNull().default("active"),
     staleAt: timestamp("stale_at"),
     embedding: vector("embedding", { dimensions: groupedConfig.embedding.dimension }),
@@ -239,7 +240,6 @@ export const episodeCards = pgTable(
     repoKeyIdx: index("episode_cards_repo_key_idx").on(table.repoKey),
     repoPathIdx: index("episode_cards_repo_path_idx").on(table.repoPath),
     outcomeKindIdx: index("episode_cards_outcome_kind_idx").on(table.outcomeKind),
-    evidenceStatusIdx: index("episode_cards_evidence_status_idx").on(table.evidenceStatus),
     createdAtIdx: index("episode_cards_created_at_idx").on(table.createdAt),
     textFtsIdx: index("episode_cards_text_fts_idx").using(
       "gin",
@@ -257,10 +257,6 @@ export const episodeCards = pgTable(
       "episode_cards_outcome_kind_check",
       sql`${table.outcomeKind} IN (${sql.raw(toSqlList(episodeOutcomeKindValues))})`,
     ),
-    evidenceStatusCheck: check(
-      "episode_cards_evidence_status_check",
-      sql`${table.evidenceStatus} IN (${sql.raw(toSqlList(episodeEvidenceStatusValues))})`,
-    ),
     sourceKindCheck: check(
       "episode_cards_source_kind_check",
       sql`${table.sourceKind} IN (${sql.raw(toSqlList(episodeSourceKindValues))})`,
@@ -268,6 +264,18 @@ export const episodeCards = pgTable(
     confidenceRangeCheck: check(
       "episode_cards_confidence_range_check",
       sql`${table.confidence} >= 0 and ${table.confidence} <= 100`,
+    ),
+    importanceRangeCheck: check(
+      "episode_cards_importance_range_check",
+      sql`${table.importance} >= 0 and ${table.importance} <= 100`,
+    ),
+    compileUseCountRangeCheck: check(
+      "episode_cards_compile_use_count_range_check",
+      sql`${table.compileUseCount} >= 0`,
+    ),
+    decisionUseCountRangeCheck: check(
+      "episode_cards_decision_use_count_range_check",
+      sql`${table.decisionUseCount} >= 0`,
     ),
     applicabilityObjectCheck: check(
       "episode_cards_applicability_object_check",

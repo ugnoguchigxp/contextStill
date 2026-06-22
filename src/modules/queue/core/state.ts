@@ -84,7 +84,11 @@ export async function keepQueueJobWaitingForWorker(params: {
       queueName: params.queueName,
       setSql: `
         status = 'pending',
-        ${params.queueName === "finalizeDistille" ? "" : "next_run_at = null,"}
+        ${
+          params.queueName === "finalizeDistille"
+            ? ""
+            : "next_run_at = datetime('now', '+30 seconds'),"
+        }
         last_error = ?,
         last_outcome_kind = 'worker_unavailable',
         locked_by = null,
@@ -118,7 +122,7 @@ export async function keepQueueJobWaitingForWorker(params: {
           update ${sql.raw(tableName)}
           set
             status = 'pending',
-            next_run_at = null,
+            next_run_at = now() + interval '30 seconds',
             last_error = ${params.reason},
             last_outcome_kind = 'worker_unavailable',
             locked_by = null,

@@ -751,8 +751,8 @@ export function QueuePage() {
           </div>
 
           <div className="min-h-0 space-y-4 overflow-y-auto">
-            <section className="space-y-2">
-              <div className="grid grid-cols-1 gap-2.5 lg:grid-cols-4">
+            <section aria-label="Queue lanes" className="space-y-2 overflow-x-auto pb-1">
+              <div className="grid min-w-[860px] grid-cols-5 gap-2">
                 {QUEUE_TABS.map((tab) => {
                   const snapshot = queueStats?.[tab.name];
                   const pending = snapshot?.counters.pending ?? 0;
@@ -770,82 +770,126 @@ export function QueuePage() {
                   const visuals = queueCardVisuals[tab.name];
                   const selected = queue === tab.name;
                   return (
-                    <button
+                    <div
                       key={tab.name}
-                      type="button"
-                      aria-label={tab.label}
-                      aria-pressed={selected}
-                      onClick={() => {
-                        setQueue(tab.name);
-                        setPage(1);
-                      }}
-                      className={`rounded-xl border bg-white px-4 py-3.5 text-left transition ${
+                      className={`relative rounded-lg border bg-white px-3 py-3 transition ${
                         selected
                           ? `${visuals.selectedBorder} ring-2 ${visuals.selectedRing} shadow-sm`
                           : "border-slate-200 hover:border-slate-300"
                       }`}
                     >
-                      <div className="mb-3 flex items-center gap-2">
-                        <visuals.Icon className={`h-5 w-5 ${visuals.iconColor}`} />
-                        <span className="text-sm font-semibold text-slate-900">{tab.label}</span>
+                      <button
+                        type="button"
+                        aria-label={tab.label}
+                        aria-pressed={selected}
+                        onClick={() => {
+                          setQueue(tab.name);
+                          setPage(1);
+                        }}
+                        className="absolute inset-0 z-10 cursor-pointer rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-200"
+                      />
+                      <div className="pointer-events-none relative z-20 flex items-start gap-2">
+                        <div className="min-w-0 flex-1 text-left">
+                          <div className="flex items-start justify-between gap-2">
+                            <div className="min-w-0">
+                              <div className="mb-2 flex min-w-0 items-center gap-1.5">
+                                <visuals.Icon className={`h-4 w-4 shrink-0 ${visuals.iconColor}`} />
+                                <span
+                                  className="truncate whitespace-nowrap text-[13px] font-semibold text-slate-900"
+                                  title={tab.label}
+                                >
+                                  {tab.label}
+                                </span>
+                              </div>
+                              <p className="text-base font-semibold leading-none tracking-tight text-slate-900">
+                                {formatCount(pending)}
+                                <span className="ml-1 text-[11px] font-medium text-slate-500">
+                                  件
+                                </span>
+                              </p>
+                            </div>
+                            <Badge
+                              variant="outline"
+                              className={`shrink-0 px-1.5 py-0 text-[10px] ${
+                                llmStatus === "Paused"
+                                  ? "border-violet-300 bg-violet-50 text-violet-700"
+                                  : llmStatus === "Active"
+                                    ? "border-emerald-300 bg-emerald-50 text-emerald-700"
+                                    : llmStatus === "Offline"
+                                      ? "border-rose-300 bg-rose-50 text-rose-700"
+                                      : "border-sky-300 bg-sky-50 text-sky-700"
+                              }`}
+                            >
+                              {llmStatus}
+                            </Badge>
+                          </div>
+                        </div>
+
+                        <div className="pointer-events-auto flex shrink-0 flex-col items-end pt-7">
+                          <Button
+                            type="button"
+                            variant="outline"
+                            size="icon-xs"
+                            aria-label={lanePaused ? "再開" : "一時停止"}
+                            title={lanePaused ? "再開" : "一時停止"}
+                            disabled={actioning === laneActionKey}
+                            onClick={(event) => {
+                              event.stopPropagation();
+                              onLaneControl(tab.name, lanePaused);
+                            }}
+                          >
+                            {actioning === laneActionKey ? (
+                              <RefreshCw size={12} className="animate-spin" />
+                            ) : lanePaused ? (
+                              <Play size={12} />
+                            ) : (
+                              <Pause size={12} />
+                            )}
+                          </Button>
+                        </div>
                       </div>
 
-                      <div className="mb-3 flex items-center gap-2">
-                        <p className="text-xl font-semibold leading-none tracking-tight text-slate-900">
-                          {formatCount(pending)}
-                          <span className="ml-1 text-xs font-medium text-slate-500">件</span>
-                        </p>
-                        <Badge
-                          variant="outline"
-                          className={
-                            llmStatus === "Paused"
-                              ? "border-violet-300 bg-violet-50 text-violet-700"
-                              : llmStatus === "Active"
-                                ? "border-emerald-300 bg-emerald-50 text-emerald-700"
-                                : llmStatus === "Offline"
-                                  ? "border-rose-300 bg-rose-50 text-rose-700"
-                                  : "border-sky-300 bg-sky-50 text-sky-700"
-                          }
-                        >
-                          {llmStatus}
-                        </Badge>
-                        <Button
-                          type="button"
-                          variant="outline"
-                          size="sm"
-                          className="h-7 px-2.5 text-[11px]"
-                          disabled={actioning === laneActionKey}
-                          onClick={(event) => {
-                            event.stopPropagation();
-                            onLaneControl(tab.name, lanePaused);
-                          }}
-                        >
-                          {actioning === laneActionKey ? (
-                            <RefreshCw size={12} className="mr-1 animate-spin" />
-                          ) : lanePaused ? (
-                            <Play size={12} className="mr-1" />
-                          ) : (
-                            <Pause size={12} className="mr-1" />
-                          )}
-                          {lanePaused ? "再開" : "一時停止"}
-                        </Button>
-                      </div>
-
-                      <div className="grid grid-cols-[1fr_auto] gap-x-4 text-xs text-slate-600">
-                        <div className="space-y-1 border-r border-slate-200 pr-4">
-                          <div>完了</div>
-                          <div>失敗</div>
-                          <div>一時停止</div>
-                          {showsNonRegistered ? <div>非登録</div> : null}
+                      <div
+                        className={`mt-3 grid gap-1 border-t border-slate-100 pt-2 ${
+                          showsNonRegistered ? "grid-cols-4" : "grid-cols-3"
+                        }`}
+                      >
+                        <div className="min-w-0 text-center">
+                          <div className="whitespace-nowrap text-[10px] font-medium leading-none text-slate-500">
+                            完了
+                          </div>
+                          <div className="mt-1 truncate text-[12px] font-semibold leading-none tabular-nums text-slate-800">
+                            {formatCount(completed)}
+                          </div>
                         </div>
-                        <div className="space-y-1 text-right font-medium text-slate-800">
-                          <div>{formatCount(completed)}</div>
-                          <div>{formatCount(failed)}</div>
-                          <div>{formatCount(paused)}</div>
-                          {showsNonRegistered ? <div>{formatCount(nonRegistered)}</div> : null}
+                        <div className="min-w-0 text-center">
+                          <div className="whitespace-nowrap text-[10px] font-medium leading-none text-slate-500">
+                            失敗
+                          </div>
+                          <div className="mt-1 truncate text-[12px] font-semibold leading-none tabular-nums text-slate-800">
+                            {formatCount(failed)}
+                          </div>
                         </div>
+                        <div className="min-w-0 text-center">
+                          <div className="whitespace-nowrap text-[10px] font-medium leading-none text-slate-500">
+                            一時停止
+                          </div>
+                          <div className="mt-1 truncate text-[12px] font-semibold leading-none tabular-nums text-slate-800">
+                            {formatCount(paused)}
+                          </div>
+                        </div>
+                        {showsNonRegistered ? (
+                          <div className="min-w-0 text-center">
+                            <div className="whitespace-nowrap text-[10px] font-medium leading-none text-slate-500">
+                              非登録
+                            </div>
+                            <div className="mt-1 truncate text-[12px] font-semibold leading-none tabular-nums text-slate-800">
+                              {formatCount(nonRegistered)}
+                            </div>
+                          </div>
+                        ) : null}
                       </div>
-                    </button>
+                    </div>
                   );
                 })}
               </div>

@@ -6,13 +6,13 @@ MCP の所有権を stdio child process から常駐 `context-stilld` daemon へ
 
 過去の direct stdio MCP は、MCP client の再起動・切断・親プロセス不整合時に `bun run src/index.ts` が残留しやすい。stdio 側の graceful shutdown は防御策にはなるが、ゾンビプロセスを完全には防げない。MCP は常駐 daemon が接続、tool execution、worker、状態、cleanup を一元管理するべき runtime boundary である。
 
-この計画では stdio MCP server を legacy path として扱い、互換 shim も含めて削除対象にする。
+この計画では stdio MCP server を削除対象にし、互換 shim を復元しない。
 
 ## Decisions
 
 - MCP server runtime は `context-stilld` が所有する。
 - MCP client registration は command/stdin/stdout 型ではなく、daemon の local MCP endpoint を指す。
-- `bun run src/index.ts` direct stdio MCP は deprecated にし、移行完了後に削除する。
+- `bun run src/index.ts` direct stdio MCP は削除し、復元しない。
 - `StdioServerTransport` / `StdioClientTransport` を本番 runtime path から外す。
 - TypeScript tool logic は短期的には残せるが、stdio process としてではなく daemon-managed worker / local RPC として扱う。
 - cleanup コマンドで残骸を掃除する運用は mainline にしない。接続破棄、idle timeout、worker stop は daemon の責務にする。
@@ -44,13 +44,13 @@ These surfaces must be treated as migration targets, not long-term architecture:
 
 | Surface | Current role | Target |
 |---|---|---|
-| `src/index.ts` | stdio MCP server entrypoint | Delete after daemon endpoint becomes default |
-| `src/mcp/server.ts` transport binding | MCP SDK `StdioServerTransport` wrapper | Split tool registry from transport; remove stdio binding |
-| `bun run start:mcp` | direct stdio server start | Remove or replace with daemon status/help command |
+| `src/index.ts` | deleted stdio MCP server entrypoint | Do not restore |
+| `src/mcp/server.ts` transport binding | transport-neutral tool/resource registry | Keep transport-neutral |
+| `bun run start:mcp:stdio` | deleted direct stdio server start | Do not restore |
 | `src/cli/setup-mcp-config.ts` | writes command-based MCP config | write daemon URL-based MCP config |
 | `src/cli/onboarding/mcp-config.ts` | prints command-based MCP config | print daemon URL-based MCP config |
-| `src/cli/mcp-smoke.ts` | stdio client smoke | replace with daemon endpoint smoke |
-| `context-stilld mcp start` | starts background stdio child | remove or redefine as daemon endpoint readiness check |
+| `src/cli/mcp-smoke.ts` | deleted stdio client smoke | Use daemon endpoint smoke |
+| `context-stilld mcp start` | starts managed endpoint worker | keep only as legacy lifecycle helper; clients must not use command registration |
 | `context-stilld mcp serve` plan | foreground stdio proxy | reject; superseded by daemon-owned endpoint |
 
 ## Command Model
@@ -74,16 +74,14 @@ context-stilld mcp smoke --json
 
 `mcp endpoint` returns the local endpoint URL, readiness state, auth/token state if any, and active session counts.
 
-### Deprecate Then Delete
+### Deleted / Forbidden
 
 ```bash
-bun run start:mcp
-context-stilld mcp start
-context-stilld mcp stop
+bun run start:mcp:stdio
 context-stilld mcp serve
 ```
 
-`start/stop` are misleading when MCP is a daemon-owned resident capability. Starting/stopping MCP separately should become enabling/disabling the daemon endpoint, not spawning a stdio child.
+`context-stilld mcp start|stop` may manage only the daemon endpoint worker. They must not spawn a stdio MCP child.
 
 ## Daemon Endpoint
 
@@ -157,16 +155,16 @@ Cleanup rules:
 
 - Add this plan.
 - Update `rust-daemon-replacement-readiness-plan.md` to supersede MCP stdio proxy.
-- Mark direct stdio MCP as legacy in public docs.
-- Add diagnostics that warn when MCP config still points at `bun run src/index.ts` or `bun run start:mcp`.
+- Remove direct stdio MCP from public docs.
+- Add diagnostics that warn when MCP config still uses command-based registration.
 
 Verification:
 
 ```bash
-rg -n "src/index\\.ts|start:mcp|Stdio(Server|Client)Transport" README.md spec docs src crates package.json
+rg -n "src/index\\.ts|start:mcp:stdio|StdioServerTransport|mcp-smoke" README.md spec docs src crates package.json
 ```
 
-Expected result: all remaining occurrences are either legacy warnings, tests scheduled for deletion, or fallback-only references.
+Expected result: no production context-still MCP runtime references.
 
 ### Phase 2: Add Daemon MCP Endpoint Skeleton
 
@@ -219,7 +217,7 @@ Delete or repurpose:
 
 - `src/index.ts`
 - stdio-specific code in `src/mcp/server.ts`
-- `start:mcp`
+- `start:mcp:stdio`
 - stdio MCP smoke path
 - `context-stilld mcp serve`
 - `context-stilld mcp start|stop` if they only manage stdio child processes
@@ -229,7 +227,7 @@ Keep only transport-neutral tool modules and daemon-owned endpoint tests.
 Verification:
 
 ```bash
-rg -n "StdioServerTransport|StdioClientTransport|start:mcp|src/index\\.ts|mcp serve"
+rg -n "StdioServerTransport|start:mcp:stdio|src/index\\.ts|mcp serve|mcp-smoke"
 bun run verify
 bun run verify:rust-daemon
 context-stilld mcp smoke --json
@@ -245,8 +243,8 @@ The `rg` command should return no production runtime references.
 - `context-stilld mcp sessions --json` shows active sessions and close reasons.
 - Stopping `context-stilld` closes MCP sessions and tool workers.
 - Restarting `context-stilld` restores endpoint availability without user editing MCP config.
-- All command-based stdio MCP docs are removed or explicitly marked legacy before deletion.
-- `StdioServerTransport` and `StdioClientTransport` are absent from production runtime code after Phase 5.
+- All command-based context-still MCP docs are removed.
+- `StdioServerTransport` is absent from production context-still MCP runtime code.
 
 ## Rollback
 

@@ -6,6 +6,23 @@ context-still exposes a compact MCP surface for coding agents. The tools are des
 initial_instructions -> context_compile -> context_decision as a pre-question gate when a blocker-derived decision would stop progress -> work or stop on reject -> context_decision_feedback when the decision outcome is known -> compile_eval -> register_candidates
 ```
 
+## Client Registration
+
+Register the daemon-owned streamable HTTP endpoint in MCP clients:
+
+```json
+{
+  "mcpServers": {
+    "context-still": {
+      "url": "http://127.0.0.1:39172/mcp",
+      "enabled": true
+    }
+  }
+}
+```
+
+Use `bun run setup:mcp-config` to update Codex and Antigravity configs. Command-based context-still MCP registration has been removed and must not be restored.
+
 ## Tool Inventory
 
 | Tool                        | Primary use                                                                                           |
@@ -284,9 +301,8 @@ Generic MCP client configuration:
 {
   "mcpServers": {
     "context-still": {
-      "command": "bun",
-      "args": ["run", "start:mcp"],
-      "cwd": "/path/to/contextStill"
+      "url": "http://127.0.0.1:39172/mcp",
+      "enabled": true
     }
   }
 }

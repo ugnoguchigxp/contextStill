@@ -38,6 +38,18 @@ const tasks = [
     label: "context-stilld queue status",
     command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "queue", "status", "--json"],
   },
+  {
+    label: "context-stilld mcp endpoint",
+    command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "mcp", "endpoint", "--json"],
+  },
+  {
+    label: "context-stilld mcp sessions",
+    command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "mcp", "sessions", "--json"],
+  },
+  {
+    label: "context-stilld mcp smoke",
+    command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "mcp", "smoke", "--json"],
+  },
   { label: "typescript unit tests", command: ["bun", "run", "test:unit"] },
 ];
 
@@ -137,6 +149,15 @@ for (const task of tasks) {
   }
   if (task.label === "context-stilld queue status" && result.code === 0) {
     result = assertJsonLine(result, "process");
+  }
+  if (task.label === "context-stilld mcp endpoint" && result.code === 0) {
+    result = assertJsonLine(result, "url");
+  }
+  if (task.label === "context-stilld mcp sessions" && result.code === 0) {
+    result = assertJsonLine(result, "activeSessionCount");
+  }
+  if (task.label === "context-stilld mcp smoke" && result.code === 0) {
+    result = assertJsonLine(result, "ok");
   }
   if (result.code !== 0) {
     printFailure(result);

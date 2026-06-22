@@ -232,7 +232,8 @@ export type ContextDecisionEpisodePrecedent = {
   outcome: string;
   lesson: string;
   outcomeKind: "success" | "failure" | "mixed" | "unknown";
-  evidenceStatus: "verified" | "partial" | "unverified";
+  importance: number;
+  confidence: number;
   topicalRelevanceScore: number;
   usedFor: "risk_cap" | "background" | "support_hint";
   refs: string[];

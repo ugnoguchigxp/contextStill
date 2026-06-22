@@ -12,6 +12,7 @@ import {
   createEpisodeCard,
   getEpisodeCardBySource,
   getEpisodeCard,
+  incrementEpisodeUsageCounts,
   searchEpisodeCards,
 } from "./episode-card.repository.js";
 
@@ -53,6 +54,13 @@ export async function searchEpisodes(input: EpisodeCardSearchInput) {
   return searchEpisodeCards(input);
 }
 
+export async function recordEpisodeUsage(input: {
+  episodeIds: string[];
+  usageKind: "compile" | "decision";
+}) {
+  return incrementEpisodeUsageCounts(input);
+}
+
 export function parseEpisodeRetrievalFeedback(input: EpisodeRetrievalFeedbackInput) {
   return episodeRetrievalFeedbackInputSchema.parse(input);
 }
@@ -87,19 +95,26 @@ function inferOutcomeKind(detail: CompileRunDetail): EpisodeCardCreateInput["out
   return "unknown";
 }
 
-function inferEvidenceStatus(detail: CompileRunDetail): EpisodeCardCreateInput["evidenceStatus"] {
-  const latestOutcome = detail.run.evalSummary.latestOutcome;
-  if (latestOutcome === "useful") return "verified";
-  if (latestOutcome === "partial" || detail.run.status !== "failed") return "partial";
-  return "unverified";
-}
-
 function inferConfidence(detail: CompileRunDetail): number {
   const latestAvg = detail.run.evalSummary.latestAvg;
   if (typeof latestAvg === "number") return Math.min(100, Math.max(0, Math.round(latestAvg)));
   if (detail.run.status === "ok") return 70;
   if (detail.run.status === "degraded") return 55;
   return 35;
+}
+
+function inferImportance(detail: CompileRunDetail): number {
+  const selectedCount = detail.selectedItems.length;
+  const latestOutcome = detail.run.evalSummary.latestOutcome;
+  const base =
+    latestOutcome === "useful"
+      ? 80
+      : latestOutcome === "partial"
+        ? 65
+        : detail.run.status === "ok"
+          ? 60
+          : 45;
+  return Math.min(95, base + Math.min(10, selectedCount * 2));
 }
 
 function selectedItemSummary(detail: CompileRunDetail): string {
@@ -195,8 +210,8 @@ function compileRunToEpisodeInput(detail: CompileRunDetail): EpisodeCardCreateIn
     sourceKind: "compile_run",
     sourceKey: detail.run.id,
     outcomeKind: inferOutcomeKind(detail),
+    importance: inferImportance(detail),
     confidence: inferConfidence(detail),
-    evidenceStatus: inferEvidenceStatus(detail),
     status: "active",
     metadata: {
       source: "compile_run_backfill",

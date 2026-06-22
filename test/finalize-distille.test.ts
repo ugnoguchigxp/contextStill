@@ -182,6 +182,30 @@ describe("runFinalizeDistille", () => {
     );
   });
 
+  test("embeds the finalized Japanese knowledge text", async () => {
+    mocks.coverEvidenceResultFromRow.mockReturnValue({
+      ...readyResult(),
+      candidate: {
+        ...readyResult().candidate,
+        title: "coverEvidence の保存前に根拠を確認する",
+        body: "coverEvidence の結果を保存する前に、source reference と evidence status が再利用可能な根拠として残っていることを確認する。",
+        technologies: ["typescript"],
+        changeTypes: ["verification"],
+        domains: ["distillation"],
+      },
+    });
+
+    await runFinalizeDistille({ coverEvidenceResultId: "find-1", write: true });
+
+    expect(mocks.embedOne).toHaveBeenCalledWith(
+      [
+        "coverEvidence の保存前に根拠を確認する",
+        "coverEvidence の結果を保存する前に、source reference と evidence status が再利用可能な根拠として残っていることを確認する。",
+      ].join("\n"),
+      "passage",
+    );
+  });
+
   test("anonymizes project-local identifiers before storing draft knowledge", async () => {
     mocks.coverEvidenceResultFromRow.mockReturnValue({
       ...readyResult(),

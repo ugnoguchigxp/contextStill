@@ -282,6 +282,10 @@ describe("runCoverEvidence", () => {
         }),
       ]),
     );
+    const repairRequest = mocks.runDistillationCompletion.mock.calls[3]?.[0] as {
+      messages: Array<{ role: string; content: string }>;
+    };
+    expect(repairRequest.messages[0]?.content).toContain("日本語で運用されている文脈");
   });
 
   test("keeps explicit rule candidates when value assessment misclassifies them as procedures", async () => {

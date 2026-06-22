@@ -12,7 +12,10 @@ import {
 } from "../src/modules/context-compiler/context-compiler.repository.js";
 import { compileContextPack } from "../src/modules/context-compiler/context-compiler.service.js";
 import { composeContextResponse } from "../src/modules/context-compiler/context-response-composer.service.js";
-import { searchEpisodes } from "../src/modules/episodic-memory/episode-card.service.js";
+import {
+  recordEpisodeUsage,
+  searchEpisodes,
+} from "../src/modules/episodic-memory/episode-card.service.js";
 import { recordCompileRunKnowledgeUsageSignals } from "../src/modules/knowledge/knowledge-feedback.service.js";
 import { recordKnowledgeCompileSelectionSafe } from "../src/modules/knowledge/knowledge-value.service.js";
 import { retrieveKnowledge } from "../src/modules/knowledge/knowledge.service.js";
@@ -100,6 +103,7 @@ describe("Context Compiler Service", () => {
       },
     } as any);
     vi.mocked(searchEpisodes).mockResolvedValue([]);
+    vi.mocked(recordEpisodeUsage).mockResolvedValue(undefined);
   });
 
   afterAll(() => {
@@ -236,8 +240,10 @@ describe("Context Compiler Service", () => {
         sourceKind: "manual",
         sourceKey: "episode-1",
         outcomeKind: "success",
+        importance: 90,
         confidence: 92,
-        evidenceStatus: "verified",
+        compileUseCount: 0,
+        decisionUseCount: 0,
         status: "active",
         staleAt: null,
         metadata: {},
@@ -292,6 +298,10 @@ describe("Context Compiler Service", () => {
     expect(recordKnowledgeCompileSelectionSafe).toHaveBeenCalledWith(
       expect.objectContaining({ selectedKnowledgeIds: [] }),
     );
+    expect(recordEpisodeUsage).toHaveBeenCalledWith({
+      usageKind: "compile",
+      episodeIds: ["episode-1"],
+    });
   });
 
   test("keeps source-only misses non-blocking when knowledge context is usable", async () => {

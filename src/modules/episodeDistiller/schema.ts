@@ -2,15 +2,27 @@ import { z } from "zod";
 import type { EpisodeCardCreateInput } from "../../shared/schemas/episode-card.schema.js";
 import type { EpisodeGenerationKind } from "./source-key.js";
 
+const episodeDistillerScoreValueSchema = z.coerce
+  .number()
+  .finite()
+  .transform((value) => {
+    const scaled = value > 0 && value <= 1 ? value * 100 : value;
+    return Math.round(Math.max(0, Math.min(100, scaled)));
+  })
+  .pipe(z.number().int().min(0).max(100))
+  .default(50);
+
 export const episodeDistillerScoreSchema = z.object({
-  reusability: z.number().int().min(0).max(100).default(50),
-  decision_density: z.number().int().min(0).max(100).default(50),
-  failure_value: z.number().int().min(0).max(100).default(50),
-  causal_clarity: z.number().int().min(0).max(100).default(50),
-  project_specificity: z.number().int().min(0).max(100).default(50),
-  evidence_quality: z.number().int().min(0).max(100).default(50),
-  compression_quality: z.number().int().min(0).max(100).default(50),
-  staleness_risk: z.number().int().min(0).max(100).default(50),
+  importance: episodeDistillerScoreValueSchema,
+  confidence: episodeDistillerScoreValueSchema,
+  reusability: episodeDistillerScoreValueSchema,
+  decision_density: episodeDistillerScoreValueSchema,
+  failure_value: episodeDistillerScoreValueSchema,
+  causal_clarity: episodeDistillerScoreValueSchema,
+  project_specificity: episodeDistillerScoreValueSchema,
+  evidence_quality: episodeDistillerScoreValueSchema,
+  compression_quality: episodeDistillerScoreValueSchema,
+  staleness_risk: episodeDistillerScoreValueSchema,
 });
 
 export const episodeDistillerCanonicalSchema = z.object({
@@ -86,15 +98,19 @@ export function canonicalEpisodeToCardInput(params: {
 
   return {
     title: canonical.title,
-    situation: [canonical.context, canonical.intent].filter(Boolean).join("\n\nIntent:\n"),
-    observations: joinList(canonical.keyDecisions, "No key decisions were identified."),
+    situation: [canonical.context, canonical.intent].filter(Boolean).join("\n\n意図:\n"),
+    observations: joinList(canonical.keyDecisions, "主要な判断は特定されませんでした。"),
     action: [
-      canonical.failedApproach ? `Failed approach:\n${canonical.failedApproach}` : "",
-      canonical.openLoops.length > 0 ? `Open loops:\n${joinList(canonical.openLoops)}` : "",
+      canonical.failedApproach
+        ? `失敗した、または避けたアプローチ:\n${canonical.failedApproach}`
+        : "",
+      canonical.openLoops.length > 0
+        ? `source 時点の未解決事項:\n${joinList(canonical.openLoops)}`
+        : "",
     ]
       .filter(Boolean)
       .join("\n\n"),
-    outcome: `Episode distilled from vibe memory segment ${params.sourceFragmentKey}.`,
+    outcome: `vibe memory segment ${params.sourceFragmentKey} から蒸留された Episode。`,
     lesson: canonical.reusableLesson,
     applicability: {
       sourceFragmentKey: params.sourceFragmentKey,
@@ -113,8 +129,8 @@ export function canonicalEpisodeToCardInput(params: {
     sourceKind: "vibe_memory",
     sourceKey: params.sourceKey,
     outcomeKind: canonical.outcomeKind,
-    confidence: Math.max(30, Math.min(95, canonical.scores.evidence_quality)),
-    evidenceStatus: canonical.scores.evidence_quality >= 75 ? "partial" : "unverified",
+    importance: canonical.scores.importance,
+    confidence: canonical.scores.confidence,
     status: "active",
     metadata,
     refs: [

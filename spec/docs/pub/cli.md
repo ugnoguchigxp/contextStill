@@ -26,7 +26,11 @@ Run commands from the repository root.
 | `cargo run -q -p context-stilld -- bootstrap init --json` | Explicitly create app data/logs/run/backup directories |
 | `cargo run -q -p context-stilld -- doctor summary --json` | Desktop-focused summary that delegates full detail to `bun run doctor` |
 | `cargo run -q -p context-stilld -- backup preflight --json` | Check SQLite path and active managed writers before TypeScript backup |
-| `cargo run -q -p context-stilld -- mcp start\|stop\|status` | Delegate MCP lifecycle to the existing TypeScript MCP process |
+| `cargo run -q -p context-stilld -- mcp endpoint --json` | Print the daemon-owned streamable HTTP MCP endpoint URL and readiness |
+| `cargo run -q -p context-stilld -- mcp status --json` | Report the managed MCP endpoint worker state |
+| `cargo run -q -p context-stilld -- mcp sessions --json` | List daemon-visible MCP sessions and close reasons |
+| `cargo run -q -p context-stilld -- mcp smoke --json` | Check endpoint readiness and exposed tool inventory |
+| `cargo run -q -p context-stilld -- mcp start\|stop` | Legacy endpoint-worker lifecycle helper; clients should use URL registration, not command spawning |
 | `cargo run -q -p context-stilld -- queue start\|stop\|status` | Delegate queue supervisor lifecycle without changing queue semantics |
 | `cargo run -q -p context-stilld -- agent-log-sync run\|stop\|status` | Delegate agent log sync lifecycle |
 | `cargo run -q -p context-stilld -- admin-api start\|stop\|status` | Start/stop Hono admin API for UI/operator sessions only |
@@ -96,7 +100,7 @@ Run commands from the repository root.
 |---|---|
 | `bun run dev` | Start Vite dev server with API |
 | `bun run start:api` | Start API server |
-| `bun run start:mcp` | Start MCP server |
+| `bun run start:mcp` | Start the local streamable HTTP MCP endpoint worker |
 | `bun run typecheck` | TypeScript check |
 | `bun run lint` | Biome lint |
 | `bun run format:check` | Biome format check |
@@ -106,7 +110,7 @@ Run commands from the repository root.
 | `bun run verify:fast` | Alias for the daily fast quality gate |
 | `bun run verify:sqlite` | SQLite local backend verification |
 | `bun run verify:desktop-readiness` | Desktop/local readiness preflight |
-| `bun run verify:mcp` | MCP-specific verification against a test DB |
+| `bun run verify:mcp` | MCP-specific contract tests plus daemon endpoint smoke |
 | `bun run verify:queue:smoke` | Queue operational smoke against a test DB |
 | `bun run verify:full` | Release/full gate: fast verify, integration, MCP, and queue smoke |
 

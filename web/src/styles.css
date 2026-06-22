@@ -140,6 +140,7 @@
   justify-content: space-between;
   gap: 1rem;
   flex-shrink: 0;
+  overflow-x: hidden;
   border-bottom: 1px solid rgba(15, 23, 42, 0.1);
   background: rgba(255, 255, 255, 0.88);
   padding: 0.75rem 1.5rem;
@@ -148,13 +149,18 @@
 
 .brand-block {
   display: grid;
+  flex: 0 1 auto;
   gap: 0.1rem;
-  min-width: 210px;
+  min-width: 0;
+  overflow: hidden;
 }
 
 .brand-title {
+  overflow: hidden;
   font-weight: 700;
   letter-spacing: 0;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .brand-subtitle {
@@ -164,12 +170,17 @@
 
 .nav-links {
   display: flex;
-  flex-wrap: wrap;
+  flex: 1 1 auto;
+  flex-wrap: nowrap;
   justify-content: flex-end;
   gap: 0.35rem;
+  min-width: 0;
+  overflow-x: hidden;
+  white-space: nowrap;
 }
 
 .nav-link {
+  flex: 0 0 auto;
   border-radius: 0.45rem;
   color: #475569;
   font-size: 0.875rem;
@@ -2366,14 +2377,9 @@
 }
 
 @media (max-width: 980px) {
-  .app-nav,
   .page-heading {
     align-items: flex-start;
     flex-direction: column;
-  }
-
-  .nav-links {
-    justify-content: flex-start;
   }
 
   .metric-grid,

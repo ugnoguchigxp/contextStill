@@ -327,10 +327,13 @@ describe("QueuePage v2", () => {
       await vi.advanceTimersByTimeAsync(0);
     });
 
-    expect(screen.getByRole("button", { name: "Finding" })).toHaveTextContent("Ready");
-    expect(screen.getByRole("button", { name: "Covering" })).toHaveTextContent("Active");
-    expect(screen.getByRole("button", { name: "Covering" })).toHaveTextContent("非登録");
-    expect(screen.getByRole("button", { name: "Covering" })).toHaveTextContent("2");
+    const queueLanes = screen.getByLabelText("Queue lanes");
+    expect(screen.getByRole("button", { name: "Finding" })).toBeInTheDocument();
+    expect(queueLanes).toHaveTextContent("Ready");
+    expect(queueLanes).toHaveTextContent("Active");
+    expect(queueLanes).toHaveTextContent("非登録");
+    expect(queueLanes).toHaveTextContent("2");
+    expect(queueLanes.firstElementChild).toHaveClass("grid-cols-5");
     expect(screen.queryByRole("button", { name: "Premium" })).not.toBeInTheDocument();
     expect(screen.getAllByText("非登録")).toHaveLength(1);
     expect(screen.queryByText("待機中")).not.toBeInTheDocument();

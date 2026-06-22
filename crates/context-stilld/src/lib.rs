@@ -183,11 +183,11 @@ mod tests {
             .unwrap();
         repository::write_pid(&run_dir, "admin-api", hono_pid).unwrap();
 
-        // 2. Simulate MCP server degraded (via JSON state file)
+        // 2. Simulate MCP endpoint degraded (via JSON state file)
         let mcp_pid = supervisor
             .spawn(
                 "bun",
-                &["run", "src/index.ts"],
+                &["run", "src/mcp/http-server.ts"],
                 &app_data_dir.join("logs/mcp.log"),
                 &app_data_dir,
             )
@@ -249,21 +249,30 @@ mod tests {
 
         // status
         let res = crate::run(["mcp", "status"], &env, &supervisor).unwrap();
-        assert_eq!(res, "mcp-server status: stopped");
+        assert_eq!(res, "mcp-endpoint status: stopped");
 
-        // start
+        // start delegates to the daemon-owned streamable HTTP endpoint worker
         let start_res = crate::run(["mcp", "start"], &env, &supervisor).unwrap();
-        assert!(start_res.contains("mcp-server started"));
+        assert!(start_res.contains("mcp-endpoint started"));
 
         let res = crate::run(["mcp", "status"], &env, &supervisor).unwrap();
-        assert!(res.contains("mcp-server status: running"));
+        assert!(res.contains("mcp-endpoint status: running"));
+
+        let endpoint_json = crate::run(["mcp", "endpoint", "--json"], &env, &supervisor).unwrap();
+        let endpoint: serde_json::Value = serde_json::from_str(&endpoint_json).unwrap();
+        assert_eq!(endpoint["url"], "http://127.0.0.1:39172/mcp");
+        assert_eq!(endpoint["transport"], "streamable-http");
+
+        let sessions_json = crate::run(["mcp", "sessions", "--json"], &env, &supervisor).unwrap();
+        let sessions: serde_json::Value = serde_json::from_str(&sessions_json).unwrap();
+        assert_eq!(sessions["activeSessionCount"], 0);
 
         // stop
         let stop_res = crate::run(["mcp", "stop"], &env, &supervisor).unwrap();
-        assert_eq!(stop_res, "mcp-server stopped");
+        assert_eq!(stop_res, "mcp-endpoint stopped");
 
         let res = crate::run(["mcp", "status"], &env, &supervisor).unwrap();
-        assert_eq!(res, "mcp-server status: stopped");
+        assert_eq!(res, "mcp-endpoint status: stopped");
 
         std::fs::remove_dir_all(&app_dir).unwrap();
     }
@@ -351,6 +360,11 @@ mod tests {
         let output = crate::run(["mcp", "status", "--json"], &env, &supervisor).unwrap();
         let json: serde_json::Value = serde_json::from_str(&output).expect("valid JSON");
         assert_eq!(json["process"], "mcp-server");
+
+        let output = crate::run(["mcp", "endpoint", "--json"], &env, &supervisor).unwrap();
+        let json: serde_json::Value = serde_json::from_str(&output).expect("valid JSON");
+        assert_eq!(json["server"], "context-still");
+        assert_eq!(json["transport"], "streamable-http");
 
         std::fs::remove_dir_all(&app_dir).unwrap();
     }
