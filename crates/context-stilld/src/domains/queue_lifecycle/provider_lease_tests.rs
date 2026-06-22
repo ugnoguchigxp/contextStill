@@ -66,6 +66,101 @@ fn rust_provider_claim_picks_route_preferred_target_and_inserts_lease() {
 }
 
 #[test]
+fn rust_provider_claim_accepts_iso8601_next_run_at() {
+    let app_dir = temp_app_dir("provider_claim_iso8601_next_run_at");
+    let sqlite_path = app_dir.join("queue.sqlite");
+    let mut connection = Connection::open(&sqlite_path).unwrap();
+    create_provider_claim_queue_table(&connection, "finding_candidate_queue");
+    create_provider_lease_table(&connection);
+    connection
+        .execute_batch(
+            r#"
+            insert into finding_candidate_queue (
+              id, status, priority, created_at, updated_at, next_run_at, source_kind
+            ) values (
+              'job-iso-ready', 'pending', 10, '2026-06-22 01:00:00', '2026-06-22 01:00:00',
+              strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 minute'), 'source'
+            );
+            "#,
+        )
+        .unwrap();
+
+    let claimed = claim_next_job_with_provider_lease_for_connection(
+        &mut connection,
+        &provider_pool(),
+        &[finding_candidate_spec()],
+        "worker-iso",
+        "lease-iso",
+        90,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(claimed.id, "job-iso-ready");
+    assert_eq!(claimed.provider_lease.target_id, "local-a");
+
+    std::fs::remove_dir_all(&app_dir).unwrap();
+}
+
+#[test]
+fn rust_provider_claim_keeps_queue_order_ahead_of_older_higher_priority_episode_jobs() {
+    let app_dir = temp_app_dir("provider_claim_queue_order");
+    let sqlite_path = app_dir.join("queue.sqlite");
+    let mut connection = Connection::open(&sqlite_path).unwrap();
+    create_provider_claim_queue_table(&connection, "finding_candidate_queue");
+    create_provider_claim_queue_table(&connection, "episode_distiller_queue");
+    create_provider_lease_table(&connection);
+    connection
+        .execute_batch(
+            r#"
+            insert into finding_candidate_queue (
+              id, status, priority, created_at, updated_at, next_run_at, source_kind
+            ) values (
+              'job-finding', 'pending', 50,
+              datetime(CURRENT_TIMESTAMP, '-1 hour'),
+              datetime(CURRENT_TIMESTAMP, '-1 hour'),
+              null, 'source'
+            );
+            insert into episode_distiller_queue (
+              id, status, priority, created_at, updated_at, next_run_at, provider_policy
+            ) values (
+              'job-episode', 'pending', 95,
+              datetime(CURRENT_TIMESTAMP, '-24 hours'),
+              datetime(CURRENT_TIMESTAMP, '-24 hours'),
+              null, 'default'
+            );
+            "#,
+        )
+        .unwrap();
+    let mut pool = provider_pool();
+    pool.targets = vec!["local-a".to_string()];
+    pool.max_concurrent = 1;
+    pool.low_priority_aging_seconds = 60;
+    let episode_spec = super::types::ProviderQueueClaimSpec {
+        queue_name: "episodeDistiller".to_string(),
+        preferred_target_ids: vec!["local-a".to_string()],
+        route_target_column: None,
+        route_target_preferences: Vec::new(),
+    };
+
+    let claimed = claim_next_job_with_provider_lease_for_connection(
+        &mut connection,
+        &pool,
+        &[finding_candidate_spec(), episode_spec],
+        "worker-queue-order",
+        "lease-queue-order",
+        90,
+    )
+    .unwrap()
+    .unwrap();
+
+    assert_eq!(claimed.queue_name, "findingCandidate");
+    assert_eq!(claimed.id, "job-finding");
+
+    std::fs::remove_dir_all(&app_dir).unwrap();
+}
+
+#[test]
 fn rust_provider_claim_waits_for_route_target_instead_of_using_other_free_target() {
     let app_dir = temp_app_dir("provider_claim_wait_target");
     let sqlite_path = app_dir.join("queue.sqlite");

@@ -24,13 +24,19 @@ import {
   useCompileRunDetail,
   useCompileRunRankingTrace,
   useCompileRuns,
+  useDeprecateEpisodeMutation,
   useDeprecateKnowledgeMutation,
+  useRunEpisodeFeedbackMutation,
   useRunKnowledgeFeedbackMutation,
 } from "../hooks/context-compiler.hooks";
 import type {
   CompilePackItem,
   CompileResponse,
   CompileRunDetail,
+  CompileRunEpisodeFeedbackResult,
+  CompileRunEpisodeFeedbackWriteItem,
+  CompileRunEpisodeSignal,
+  CompileRunEpisodeVerdict,
   CompileRunKnowledgeFeedbackResult,
   CompileRunKnowledgeFeedbackWriteItem,
   CompileRunKnowledgeSignal,
@@ -59,7 +65,8 @@ type SourceFilter = "all" | CompileRunSource;
 type RunDetailTab = "overview" | "ranking";
 
 type DeprecateTarget = {
-  knowledgeId: string;
+  targetKind: "knowledge" | "episode";
+  id: string;
   title: string;
   itemKind: string;
 };
@@ -178,18 +185,24 @@ function PackSection({
   title,
   items,
   signals,
+  episodeSignals,
   onFeedback,
+  onEpisodeFeedback,
   onRequestDeprecate,
   feedbackPending,
+  episodeFeedbackPending,
   deprecatePending,
   deprecatedIds,
 }: {
   title: string;
   items: CompilePackItem[];
   signals: CompileRunKnowledgeSignal[];
+  episodeSignals: CompileRunEpisodeSignal[];
   onFeedback: (knowledgeId: string, verdict: CompileRunKnowledgeVerdict) => Promise<void>;
+  onEpisodeFeedback: (episodeId: string, verdict: CompileRunEpisodeVerdict) => Promise<void>;
   onRequestDeprecate: (target: DeprecateTarget) => void;
   feedbackPending: boolean;
+  episodeFeedbackPending: boolean;
   deprecatePending: boolean;
   deprecatedIds: Set<string>;
 }) {
@@ -204,7 +217,12 @@ function PackSection({
       ) : (
         <div className="compile-pack-items">
           {items.map((item) => {
+            const isEpisode = item.itemKind === "episode_card" || item.itemKind === "episode";
             const sig = signals.find((s) => s.knowledgeId === item.itemId);
+            const episodeSig = episodeSignals.find((s) => s.episodeId === item.itemId);
+            const effectiveVerdict = isEpisode
+              ? episodeSig?.effectiveVerdict
+              : sig?.effectiveVerdict;
             const isDeprecated = deprecatedIds.has(item.itemId);
             return (
               <article key={item.id} className="compile-pack-item" style={{ padding: "16px" }}>
@@ -317,62 +335,136 @@ function PackSection({
                       ) : null}
                     </>
                   ) : null}
+                  {isEpisode ? (
+                    <>
+                      <div
+                        className="compile-pack-item-meta"
+                        style={{
+                          display: "flex",
+                          gap: "8px",
+                          alignItems: "center",
+                          flexWrap: "wrap",
+                          marginBottom: "8px",
+                        }}
+                      >
+                        <Badge variant={feedbackVariant(episodeSig?.effectiveVerdict ?? null)}>
+                          {episodeSig?.effectiveVerdict
+                            ? verdictLabel(episodeSig.effectiveVerdict)
+                            : "No signal"}
+                        </Badge>
+                        <span className="text-xs text-muted-foreground">{item.rankingReason}</span>
+                      </div>
+                      {episodeSig?.effectiveReason ? (
+                        <p className="text-xs text-muted-foreground" style={{ margin: "4px 0" }}>
+                          Signal: {episodeSig.effectiveReason}
+                        </p>
+                      ) : null}
+                    </>
+                  ) : null}
 
                   <div
                     className="compile-feedback-actions"
-                    style={{ display: "flex", gap: "8px", marginTop: sig ? "8px" : "0" }}
+                    style={{
+                      display: "flex",
+                      gap: "8px",
+                      marginTop: sig || isEpisode ? "8px" : "0",
+                    }}
                   >
                     <Button
                       type="button"
                       size="sm"
-                      variant={sig?.effectiveVerdict === "used" ? "default" : "outline"}
-                      onClick={() => void onFeedback(sig?.knowledgeId ?? item.itemId, "used")}
-                      disabled={feedbackPending}
+                      variant={effectiveVerdict === "used" ? "default" : "outline"}
+                      onClick={() =>
+                        isEpisode
+                          ? void onEpisodeFeedback(item.itemId, "used")
+                          : void onFeedback(sig?.knowledgeId ?? item.itemId, "used")
+                      }
+                      disabled={isEpisode ? episodeFeedbackPending : feedbackPending}
                     >
                       Used
                     </Button>
                     <Button
                       type="button"
                       size="sm"
-                      variant={sig?.effectiveVerdict === "not_used" ? "default" : "outline"}
-                      onClick={() => void onFeedback(sig?.knowledgeId ?? item.itemId, "not_used")}
-                      disabled={feedbackPending}
+                      variant={effectiveVerdict === "not_used" ? "default" : "outline"}
+                      onClick={() =>
+                        isEpisode
+                          ? void onEpisodeFeedback(item.itemId, "not_used")
+                          : void onFeedback(sig?.knowledgeId ?? item.itemId, "not_used")
+                      }
+                      disabled={isEpisode ? episodeFeedbackPending : feedbackPending}
                     >
                       Not used
                     </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={sig?.effectiveVerdict === "off_topic" ? "default" : "outline"}
-                      onClick={() => void onFeedback(sig?.knowledgeId ?? item.itemId, "off_topic")}
-                      disabled={feedbackPending}
-                    >
-                      Off-topic
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant={sig?.effectiveVerdict === "wrong" ? "default" : "outline"}
-                      onClick={() => void onFeedback(sig?.knowledgeId ?? item.itemId, "wrong")}
-                      disabled={feedbackPending}
-                    >
-                      Wrong
-                    </Button>
-                    <Button
-                      type="button"
-                      size="sm"
-                      variant="destructive"
-                      onClick={() =>
-                        onRequestDeprecate({
-                          knowledgeId: item.itemId,
-                          title: item.title,
-                          itemKind: item.itemKind,
-                        })
-                      }
-                      disabled={deprecatePending || isDeprecated}
-                    >
-                      Deprecate
-                    </Button>
+                    {isEpisode ? (
+                      <>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={effectiveVerdict === "wrong" ? "default" : "outline"}
+                          onClick={() => void onEpisodeFeedback(item.itemId, "wrong")}
+                          disabled={episodeFeedbackPending}
+                        >
+                          Wrong
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="destructive"
+                          onClick={() =>
+                            onRequestDeprecate({
+                              targetKind: "episode",
+                              id: item.itemId,
+                              title: item.title,
+                              itemKind: item.itemKind,
+                            })
+                          }
+                          disabled={deprecatePending || isDeprecated}
+                        >
+                          Deprecate
+                        </Button>
+                      </>
+                    ) : null}
+                    {!isEpisode ? (
+                      <>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={sig?.effectiveVerdict === "off_topic" ? "default" : "outline"}
+                          onClick={() =>
+                            void onFeedback(sig?.knowledgeId ?? item.itemId, "off_topic")
+                          }
+                          disabled={feedbackPending}
+                        >
+                          Off-topic
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant={sig?.effectiveVerdict === "wrong" ? "default" : "outline"}
+                          onClick={() => void onFeedback(sig?.knowledgeId ?? item.itemId, "wrong")}
+                          disabled={feedbackPending}
+                        >
+                          Wrong
+                        </Button>
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="destructive"
+                          onClick={() =>
+                            onRequestDeprecate({
+                              targetKind: "knowledge",
+                              id: item.itemId,
+                              title: item.title,
+                              itemKind: item.itemKind,
+                            })
+                          }
+                          disabled={deprecatePending || isDeprecated}
+                        >
+                          Deprecate
+                        </Button>
+                      </>
+                    ) : null}
                   </div>
                 </div>
               </article>
@@ -384,7 +476,7 @@ function PackSection({
   );
 }
 
-function DeprecateKnowledgeModal({
+function DeprecateItemModal({
   target,
   pending,
   onCancel,
@@ -396,22 +488,22 @@ function DeprecateKnowledgeModal({
   onConfirm: () => Promise<void>;
 }) {
   if (!target) return null;
+  const targetLabel = target.targetKind === "episode" ? "episode" : "knowledge";
   return (
     <div className="compile-modal-backdrop" role="presentation">
-      <dialog aria-labelledby="deprecate-knowledge-title" className="compile-danger-modal" open>
+      <dialog aria-labelledby="deprecate-item-title" className="compile-danger-modal" open>
         <div className="compile-danger-modal-header">
           <Badge variant="destructive">danger</Badge>
-          <h3 id="deprecate-knowledge-title">Deprecate selected knowledge?</h3>
+          <h3 id="deprecate-item-title">Deprecate selected {targetLabel}?</h3>
         </div>
         <p>
-          This will remove the knowledge from active context selection. Use this only when the
-          knowledge is too project-specific, obsolete, duplicated, or harmful to future context
-          quality.
+          This will remove the item from active context selection. Use this only when it is too
+          project-specific, obsolete, duplicated, or harmful to future context quality.
         </p>
         <div className="compile-danger-modal-target">
           <span>{target.itemKind}</span>
           <strong>{target.title}</strong>
-          <code>{target.knowledgeId}</code>
+          <code>{target.id}</code>
         </div>
         <div className="compile-danger-modal-actions">
           <Button type="button" variant="outline" onClick={onCancel} disabled={pending}>
@@ -423,7 +515,7 @@ function DeprecateKnowledgeModal({
             onClick={() => void onConfirm()}
             disabled={pending}
           >
-            {pending ? "Deprecating..." : "Deprecate knowledge"}
+            {pending ? "Deprecating..." : `Deprecate ${targetLabel}`}
           </Button>
         </div>
       </dialog>
@@ -724,8 +816,11 @@ function RunDetailPane({
   isLoading,
   error,
   onSubmitKnowledgeFeedback,
+  onSubmitEpisodeFeedback,
   onDeprecateKnowledge,
+  onDeprecateEpisode,
   feedbackPending,
+  episodeFeedbackPending,
   deprecatePending,
 }: {
   detail: CompileRunDetail | undefined;
@@ -738,8 +833,14 @@ function RunDetailPane({
     runId: string,
     items: CompileRunKnowledgeFeedbackWriteItem[],
   ) => Promise<CompileRunKnowledgeFeedbackResult>;
+  onSubmitEpisodeFeedback: (
+    runId: string,
+    items: CompileRunEpisodeFeedbackWriteItem[],
+  ) => Promise<CompileRunEpisodeFeedbackResult>;
   onDeprecateKnowledge: (runId: string, knowledgeId: string) => Promise<void>;
+  onDeprecateEpisode: (runId: string, episodeId: string) => Promise<void>;
   feedbackPending: boolean;
+  episodeFeedbackPending: boolean;
   deprecatePending: boolean;
 }) {
   const tz = useTimezone();
@@ -784,6 +885,7 @@ function RunDetailPane({
   const domains = stringArrayValue(input.domains);
   const outputMarkdown = detail.outputMarkdown?.trim() || "No Content";
   const knowledgeSignals = detail.knowledgeSignals ?? [];
+  const episodeSignals = detail.episodeSignals ?? [];
   const evaluations = detail.evaluations ?? [];
 
   const applyKnowledgeFeedback = async (
@@ -802,20 +904,35 @@ function RunDetailPane({
     }
   };
 
+  const applyEpisodeFeedback = async (episodeId: string, verdict: CompileRunEpisodeVerdict) => {
+    try {
+      const result = await onSubmitEpisodeFeedback(detail.run.id, [{ episodeId, verdict }]);
+      setFeedbackMessage(`episode saved=${result.savedCount}`);
+    } catch (submitError) {
+      setFeedbackMessage(
+        submitError instanceof Error ? submitError.message : "Failed to save episode feedback",
+      );
+    }
+  };
+
   const confirmDeprecateKnowledge = async () => {
     if (!deprecateTarget) return;
     try {
-      await onDeprecateKnowledge(detail.run.id, deprecateTarget.knowledgeId);
+      if (deprecateTarget.targetKind === "episode") {
+        await onDeprecateEpisode(detail.run.id, deprecateTarget.id);
+      } else {
+        await onDeprecateKnowledge(detail.run.id, deprecateTarget.id);
+      }
       setDeprecatedIds((current) => {
         const next = new Set(current);
-        next.add(deprecateTarget.knowledgeId);
+        next.add(deprecateTarget.id);
         return next;
       });
-      setFeedbackMessage(`Deprecated knowledge: ${deprecateTarget.title}`);
+      setFeedbackMessage(`Deprecated ${deprecateTarget.targetKind}: ${deprecateTarget.title}`);
       setDeprecateTarget(null);
     } catch (submitError) {
       setFeedbackMessage(
-        submitError instanceof Error ? submitError.message : "Failed to deprecate knowledge",
+        submitError instanceof Error ? submitError.message : "Failed to deprecate item",
       );
     }
   };
@@ -1036,9 +1153,12 @@ function RunDetailPane({
               title="Rules"
               items={detail.pack.rules}
               signals={knowledgeSignals}
+              episodeSignals={episodeSignals}
               onFeedback={applyKnowledgeFeedback}
+              onEpisodeFeedback={applyEpisodeFeedback}
               onRequestDeprecate={setDeprecateTarget}
               feedbackPending={feedbackPending}
+              episodeFeedbackPending={episodeFeedbackPending}
               deprecatePending={deprecatePending}
               deprecatedIds={deprecatedIds}
             />
@@ -1046,9 +1166,12 @@ function RunDetailPane({
               title="Procedures"
               items={detail.pack.procedures}
               signals={knowledgeSignals}
+              episodeSignals={episodeSignals}
               onFeedback={applyKnowledgeFeedback}
+              onEpisodeFeedback={applyEpisodeFeedback}
               onRequestDeprecate={setDeprecateTarget}
               feedbackPending={feedbackPending}
+              episodeFeedbackPending={episodeFeedbackPending}
               deprecatePending={deprecatePending}
               deprecatedIds={deprecatedIds}
             />
@@ -1056,9 +1179,12 @@ function RunDetailPane({
               title="Guardrails"
               items={detail.pack.guardrails ?? []}
               signals={knowledgeSignals}
+              episodeSignals={episodeSignals}
               onFeedback={applyKnowledgeFeedback}
+              onEpisodeFeedback={applyEpisodeFeedback}
               onRequestDeprecate={setDeprecateTarget}
               feedbackPending={feedbackPending}
+              episodeFeedbackPending={episodeFeedbackPending}
               deprecatePending={deprecatePending}
               deprecatedIds={deprecatedIds}
             />
@@ -1109,7 +1235,7 @@ function RunDetailPane({
           </div>
           <SourceRefsList refs={detail.pack?.sourceRefs ?? []} />
         </section>
-        <DeprecateKnowledgeModal
+        <DeprecateItemModal
           target={deprecateTarget}
           pending={deprecatePending}
           onCancel={() => setDeprecateTarget(null)}
@@ -1131,7 +1257,9 @@ export function ContextCompilerPage() {
   const [statusFilter, setStatusFilter] = useState<StatusFilter>("all");
   const compile = useCompilePack();
   const runKnowledgeFeedback = useRunKnowledgeFeedbackMutation();
+  const runEpisodeFeedback = useRunEpisodeFeedbackMutation();
   const deprecateKnowledge = useDeprecateKnowledgeMutation();
+  const deprecateEpisode = useDeprecateEpisodeMutation();
   const runs = useCompileRuns(50);
   const detail = useCompileRunDetail(mode === "detail" ? activeRunId : null);
   const rankingTrace = useCompileRunRankingTrace(mode === "detail" ? activeRunId : null);
@@ -1202,9 +1330,16 @@ export function ContextCompilerPage() {
             isLoading={detail.isLoading}
             error={detail.error}
             feedbackPending={runKnowledgeFeedback.isPending}
-            deprecatePending={deprecateKnowledge.isPending}
+            episodeFeedbackPending={runEpisodeFeedback.isPending}
+            deprecatePending={deprecateKnowledge.isPending || deprecateEpisode.isPending}
             onSubmitKnowledgeFeedback={(runId, items) =>
               runKnowledgeFeedback.mutateAsync({
+                runId,
+                items,
+              })
+            }
+            onSubmitEpisodeFeedback={(runId, items) =>
+              runEpisodeFeedback.mutateAsync({
                 runId,
                 items,
               })
@@ -1213,6 +1348,12 @@ export function ContextCompilerPage() {
               deprecateKnowledge.mutateAsync({
                 runId,
                 knowledgeId,
+              })
+            }
+            onDeprecateEpisode={(runId, episodeId) =>
+              deprecateEpisode.mutateAsync({
+                runId,
+                episodeId,
               })
             }
           />

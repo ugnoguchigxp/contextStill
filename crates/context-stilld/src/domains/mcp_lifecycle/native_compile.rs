@@ -1,13 +1,16 @@
 use std::collections::hash_map::DefaultHasher;
+use std::collections::HashSet;
+use std::env;
 use std::hash::{Hash, Hasher};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
+use reqwest::blocking::Client;
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
 use super::native_common::{
     now_iso, open_database, pseudo_uuid, request_session_id, score_text, single_line, string_arg,
-    string_array_arg, table_exists, tool_error, truncate_chars,
+    string_array_arg, table_exists, tool_error,
 };
 use super::native_tools::NativeToolContext;
 
@@ -36,13 +39,27 @@ pub(crate) fn context_compile(params: &Value, context: &NativeToolContext) -> Va
     let knowledge = search_knowledge_items(&connection, &search_text, 8);
     let episodes = search_episode_cards(&connection, &search_text, 3);
     let run_id = pseudo_uuid();
-    let degraded_reasons = degraded_reasons(&connection);
+    let mut degraded_reasons = degraded_reasons(&connection);
+    let composed = compose_context_response(&connection, &goal, &knowledge, &episodes);
+    if let Some(reason) = composed.error.as_ref() {
+        degraded_reasons.push(reason.clone());
+    }
     let status = if degraded_reasons.is_empty() {
         "ok"
     } else {
         "degraded"
     };
-    let markdown = render_markdown(&run_id, &goal, &knowledge, &episodes);
+    let markdown = composed.markdown;
+    let used_knowledge = composed
+        .used_knowledge
+        .iter()
+        .map(UsedKnowledge::to_json)
+        .collect::<Vec<_>>();
+    let used_episodes = composed
+        .used_episodes
+        .iter()
+        .map(UsedEpisode::to_json)
+        .collect::<Vec<_>>();
     let pack = json!({
         "runId": run_id,
         "goal": goal,
@@ -53,7 +70,14 @@ pub(crate) fn context_compile(params: &Value, context: &NativeToolContext) -> Va
             "engine": "rust-native",
             "degradedReasons": degraded_reasons,
             "selectedKnowledge": knowledge.len(),
-            "selectedEpisodes": episodes.len()
+            "selectedEpisodes": episodes.len(),
+            "responseComposer": {
+                "used": composed.agentic_used,
+                "markdownKind": if markdown == "No Content" { "no-content" } else { "narrative" },
+                "error": composed.error,
+                "usedKnowledge": used_knowledge,
+                "usedEpisodes": used_episodes
+            }
         },
         "outputMarkdown": markdown
     });
@@ -78,6 +102,24 @@ pub(crate) fn context_compile(params: &Value, context: &NativeToolContext) -> Va
         return tool_error(&error);
     }
     if let Err(error) = insert_compile_items(&connection, &run_id, &knowledge, &episodes) {
+        return tool_error(&error);
+    }
+    if let Err(error) = insert_knowledge_usage_events(
+        &connection,
+        &run_id,
+        &knowledge,
+        &composed.used_knowledge,
+        composed.agentic_used,
+    ) {
+        return tool_error(&error);
+    }
+    if let Err(error) = insert_episode_retrieval_feedback(
+        &connection,
+        &run_id,
+        &episodes,
+        &composed.used_episodes,
+        composed.agentic_used,
+    ) {
         return tool_error(&error);
     }
     if markdown == "No Content" {
@@ -246,55 +288,1326 @@ fn search_episode_cards(connection: &Connection, query: &str, limit: usize) -> V
     items
 }
 
-fn render_markdown(
-    run_id: &str,
+#[derive(Debug)]
+struct ComposeResult {
+    markdown: String,
+    agentic_used: bool,
+    error: Option<String>,
+    used_knowledge: Vec<UsedKnowledge>,
+    used_episodes: Vec<UsedEpisode>,
+}
+
+#[derive(Debug, Clone)]
+struct UsedKnowledge {
+    id: String,
+    confidence: f64,
+    evidence: Option<String>,
+    output_section: Option<String>,
+    reason: Option<String>,
+}
+
+impl UsedKnowledge {
+    fn to_json(&self) -> Value {
+        json!({
+            "id": self.id,
+            "confidence": self.confidence,
+            "evidence": self.evidence,
+            "outputSection": self.output_section,
+            "reason": self.reason
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct UsedEpisode {
+    id: String,
+    confidence: f64,
+    evidence: Option<String>,
+    output_section: Option<String>,
+    reason: Option<String>,
+}
+
+impl UsedEpisode {
+    fn to_json(&self) -> Value {
+        json!({
+            "id": self.id,
+            "confidence": self.confidence,
+            "evidence": self.evidence,
+            "outputSection": self.output_section,
+            "reason": self.reason
+        })
+    }
+}
+
+#[derive(Debug, Clone)]
+struct ComposePlan {
+    focus: String,
+    steps: String,
+    verification: String,
+    avoid: String,
+    include_avoid_section: bool,
+    response_style: String,
+}
+
+impl Default for ComposePlan {
+    fn default() -> Self {
+        Self {
+            focus: "実装フォーカス".to_string(),
+            steps: "実装手順".to_string(),
+            verification: "検証観点".to_string(),
+            avoid: "注意点".to_string(),
+            include_avoid_section: false,
+            response_style: "narrative".to_string(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct RuntimeSettings {
+    agentic_enabled: bool,
+    provider: String,
+    fallback: Vec<String>,
+    timeout_ms: u64,
+    max_tokens: i64,
+    azure: Option<AzureSettings>,
+    local: Option<LocalLlmSettings>,
+    openai: Option<OpenAiSettings>,
+    local_llm_model: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+struct AzureSettings {
+    api_key: String,
+    api_base_url: String,
+    api_path: String,
+    api_version: String,
+    model: String,
+}
+
+#[derive(Debug, Clone)]
+struct LocalLlmSettings {
+    api_key: String,
+    api_base_url: String,
+    api_path: String,
+    model: String,
+}
+
+#[derive(Debug, Clone)]
+struct OpenAiSettings {
+    api_key: String,
+    api_base_url: String,
+    model: String,
+}
+
+fn compose_context_response(
+    connection: &Connection,
+    goal: &str,
+    knowledge: &[PackKnowledge],
+    episodes: &[PackEpisode],
+) -> ComposeResult {
+    if knowledge.is_empty() && episodes.is_empty() {
+        return ComposeResult {
+            markdown: "No Content".to_string(),
+            agentic_used: false,
+            error: None,
+            used_knowledge: Vec::new(),
+            used_episodes: Vec::new(),
+        };
+    }
+    let fallback_used_knowledge =
+        fallback_used_knowledge(knowledge, episodes, &ComposePlan::default());
+    let fallback_used_episodes = fallback_used_episodes(episodes);
+    let fallback = build_fallback_compose(goal, knowledge, episodes, &ComposePlan::default());
+    let settings = match load_runtime_settings(connection) {
+        Some(settings) if settings.agentic_enabled => settings,
+        _ => {
+            return ComposeResult {
+                markdown: fallback,
+                agentic_used: false,
+                error: None,
+                used_knowledge: fallback_used_knowledge,
+                used_episodes: fallback_used_episodes,
+            }
+        }
+    };
+    let route = provider_route(&settings);
+    if route.is_empty() {
+        return ComposeResult {
+            markdown: fallback,
+            agentic_used: false,
+            error: Some("CONTEXT_RESPONSE_COMPOSER_NO_CONFIGURED_PROVIDER".to_string()),
+            used_knowledge: fallback_used_knowledge,
+            used_episodes: fallback_used_episodes,
+        };
+    }
+
+    let client = match Client::builder()
+        .timeout(Duration::from_millis(settings.timeout_ms.max(1000)))
+        .build()
+    {
+        Ok(client) => client,
+        Err(error) => {
+            return ComposeResult {
+                markdown: fallback,
+                agentic_used: false,
+                error: Some(format!("CONTEXT_RESPONSE_COMPOSE_FAILED: {error}")),
+                used_knowledge: fallback_used_knowledge,
+                used_episodes: fallback_used_episodes,
+            }
+        }
+    };
+    let default_plan = ComposePlan::default();
+    let mut errors = Vec::new();
+    for provider in route {
+        let plan = match chat_json(
+            &client,
+            &settings,
+            &provider,
+            &build_plan_system_prompt(),
+            &build_plan_user_prompt(goal, knowledge, episodes),
+            planner_max_tokens(settings.max_tokens),
+        ) {
+            Ok(raw) => parse_compose_plan(&raw).unwrap_or_else(|| default_plan.clone()),
+            Err(error) => {
+                errors.push(format!("{provider}:CONTEXT_RESPONSE_PLAN_FAILED: {error}"));
+                default_plan.clone()
+            }
+        };
+        let system_prompt = build_composer_system_prompt(settings.max_tokens, &plan);
+        let user_prompt = build_composer_user_prompt(goal, knowledge, episodes, &plan);
+        match chat_json(
+            &client,
+            &settings,
+            &provider,
+            &system_prompt,
+            &user_prompt,
+            max_tokens_with_json_headroom(settings.max_tokens),
+        ) {
+            Ok(raw) => match parse_composer_payload(&raw, knowledge, episodes) {
+                Some((markdown, used_knowledge, used_episodes)) => {
+                    if markdown == "No Content" {
+                        return ComposeResult {
+                            markdown,
+                            agentic_used: true,
+                            error: None,
+                            used_knowledge: Vec::new(),
+                            used_episodes: Vec::new(),
+                        };
+                    }
+                    if looks_goal_aligned(&markdown, goal) {
+                        return ComposeResult {
+                            markdown,
+                            agentic_used: true,
+                            error: None,
+                            used_knowledge,
+                            used_episodes,
+                        };
+                    }
+                    errors.push(format!("{provider}:COMPOSER_GOAL_ALIGNMENT_FAILED"));
+                    continue;
+                }
+                None => {
+                    errors.push(format!("{provider}:COMPOSER_JSON_PARSE_FAILED"));
+                    continue;
+                }
+            },
+            Err(error) => {
+                errors.push(format!(
+                    "{provider}:CONTEXT_RESPONSE_COMPOSE_FAILED: {error}"
+                ));
+                continue;
+            }
+        }
+    }
+    ComposeResult {
+        markdown: fallback,
+        agentic_used: false,
+        error: Some(format!(
+            "CONTEXT_RESPONSE_COMPOSE_FAILED: {}",
+            errors.join(" | ")
+        )),
+        used_knowledge: fallback_used_knowledge,
+        used_episodes: fallback_used_episodes,
+    }
+}
+
+fn build_fallback_compose(
+    goal: &str,
+    knowledge: &[PackKnowledge],
+    episodes: &[PackEpisode],
+    plan: &ComposePlan,
+) -> String {
+    let rules = knowledge
+        .iter()
+        .filter(|item| item.kind != "procedure" && item.polarity != "negative")
+        .collect::<Vec<_>>();
+    let procedures = knowledge
+        .iter()
+        .filter(|item| item.kind == "procedure" && item.polarity != "negative")
+        .collect::<Vec<_>>();
+    let guardrails = knowledge
+        .iter()
+        .filter(|item| item.polarity == "negative")
+        .collect::<Vec<_>>();
+
+    let mut lines = vec![
+        format!("## {}", plan.focus),
+        String::new(),
+        format!("- {}", single_line(goal, 220)),
+    ];
+    for rule in rules.iter().take(2) {
+        lines.push(format!(
+            "- {} を考慮して取り組む。",
+            single_line(&rule.title, 120)
+        ));
+    }
+
+    lines.push(String::new());
+    lines.push(format!("## {}", plan.steps));
+    lines.push(String::new());
+    if !procedures.is_empty() {
+        for (index, item) in procedures.iter().take(3).enumerate() {
+            let workflow = section_lines(&item.body, "Workflow");
+            let detail = workflow
+                .first()
+                .map(|line| format!("（{}）", single_line(line, 140)))
+                .unwrap_or_default();
+            lines.push(format!(
+                "{}. {}{}",
+                index + 1,
+                single_line(&item.title, 120),
+                detail
+            ));
+        }
+    } else {
+        for (index, rule) in rules.iter().take(3).enumerate() {
+            lines.push(format!(
+                "{}. {} を反映する。",
+                index + 1,
+                single_line(&rule.title, 120)
+            ));
+        }
+    }
+    for episode in episodes.iter().take(2) {
+        lines.push(format!(
+            "- 過去事例として {} を参照し、現在のコードで適用可否を確認する。",
+            single_line(&episode.title, 120)
+        ));
+    }
+
+    lines.push(String::new());
+    lines.push(format!("## {}", plan.verification));
+    lines.push(String::new());
+    let verification = procedures
+        .iter()
+        .flat_map(|item| section_lines(&item.body, "Verification"))
+        .take(3)
+        .collect::<Vec<_>>();
+    if verification.is_empty() {
+        for item in rules.iter().chain(procedures.iter()).take(2) {
+            lines.push(format!(
+                "- {} の要件が成立していることを確認する。",
+                single_line(&item.title, 120)
+            ));
+        }
+        if !episodes.is_empty() {
+            lines.push(
+                "- EpisodeCard precedent をそのまま根拠にせず、現在のコード・DB状態で適用可否を確認する。"
+                    .to_string(),
+            );
+        }
+    } else {
+        for item in verification {
+            lines.push(format!("- {}", single_line(&item, 180)));
+        }
+    }
+
+    let avoid = guardrails
+        .iter()
+        .flat_map(|item| section_lines(&item.body, "Avoid"))
+        .chain(
+            procedures
+                .iter()
+                .flat_map(|item| section_lines(&item.body, "Avoid")),
+        )
+        .take(3)
+        .collect::<Vec<_>>();
+    if plan.include_avoid_section
+        || !guardrails.is_empty()
+        || !avoid.is_empty()
+        || !episodes.is_empty()
+    {
+        lines.push(String::new());
+        lines.push(format!("## {}", plan.avoid));
+        lines.push(String::new());
+        for guardrail in guardrails.iter().take(3) {
+            lines.push(format!(
+                "- {}: {}",
+                single_line(&guardrail.title, 100),
+                first_sentence(&guardrail.body, 160)
+            ));
+        }
+        for item in avoid {
+            lines.push(format!("- {}", single_line(&item, 180)));
+        }
+        if !episodes.is_empty() {
+            lines.push(
+                "- EpisodeCard precedent を現在の source truth や Knowledge rule として扱わない。"
+                    .to_string(),
+            );
+        }
+    }
+    lines.join("\n").trim().to_string()
+}
+
+fn fallback_used_knowledge(
+    knowledge: &[PackKnowledge],
+    episodes: &[PackEpisode],
+    plan: &ComposePlan,
+) -> Vec<UsedKnowledge> {
+    let rules = knowledge
+        .iter()
+        .filter(|item| item.kind != "procedure" && item.polarity != "negative")
+        .collect::<Vec<_>>();
+    let procedures = knowledge
+        .iter()
+        .filter(|item| item.kind == "procedure" && item.polarity != "negative")
+        .collect::<Vec<_>>();
+    let guardrails = knowledge
+        .iter()
+        .filter(|item| item.polarity == "negative")
+        .collect::<Vec<_>>();
+    let mut used_ids = Vec::<String>::new();
+    let mut push = |item: &PackKnowledge| {
+        if !used_ids.iter().any(|id| id == &item.id) {
+            used_ids.push(item.id.clone());
+        }
+    };
+
+    for item in rules.iter().take(2) {
+        push(item);
+    }
+    if !procedures.is_empty() {
+        for item in procedures.iter().take(3) {
+            push(item);
+        }
+    } else {
+        for item in rules.iter().take(3) {
+            push(item);
+        }
+    }
+    for item in rules.iter().chain(procedures.iter()).take(2) {
+        push(item);
+    }
+    if plan.include_avoid_section || !guardrails.is_empty() || !episodes.is_empty() {
+        for item in guardrails.iter().take(3) {
+            push(item);
+        }
+        for item in procedures.iter().take(2) {
+            push(item);
+        }
+    }
+
+    used_ids
+        .into_iter()
+        .map(|id| UsedKnowledge {
+            id,
+            confidence: 0.35,
+            evidence: None,
+            output_section: None,
+            reason: Some("fallback_compose_reference".to_string()),
+        })
+        .collect()
+}
+
+fn fallback_used_episodes(episodes: &[PackEpisode]) -> Vec<UsedEpisode> {
+    episodes
+        .iter()
+        .take(2)
+        .map(|episode| UsedEpisode {
+            id: episode.id.clone(),
+            confidence: 0.35,
+            evidence: None,
+            output_section: None,
+            reason: Some("fallback_compose_reference".to_string()),
+        })
+        .collect()
+}
+
+fn build_plan_system_prompt() -> String {
+    [
+        "あなたは context_compile の返答構成プランナーです。",
+        "goal と候補要約だけを使って、次ラウンドで使う返答構成・出力形式・検索ヒントを JSON で設計してください。",
+        "",
+        "JSON 形式:",
+        "{ \"headings\": { \"focus\": \"...\", \"steps\": \"...\", \"verification\": \"...\", \"avoid\": \"...\" }, \"includeAvoidSection\": true, \"ruleQueryHints\": [\"...\"], \"procedureQueryHints\": [\"...\"], \"exclusionHints\": [\"...\"], \"responseStyle\": \"skill|narrative\", \"styleReason\": \"...\", \"styleConfidence\": 0.0, \"candidateSufficiency\": \"enough|limited|insufficient\" }",
+        "",
+        "必須ルール:",
+        "- 回答は JSON のみ。Markdown や説明文は返さない。",
+        "- 見出しは goal に合わせて自然な日本語で作る。",
+        "- ruleQueryHints / procedureQueryHints は、候補検索・選別で使える短い語句を2-6件に絞る。",
+        "- Goal が再利用可能な手順を求め、候補が十分な場合は responseStyle=skill を優先する。",
+        "- 候補が不足している場合は responseStyle=narrative を選ぶ。",
+        "- 過剰な一般論は避け、goal達成に必要な最小限へ絞る。",
+    ]
+    .join("\n")
+}
+
+fn build_composer_system_prompt(max_tokens: i64, plan: &ComposePlan) -> String {
+    let heading_rule = if plan.response_style == "skill" {
+        "- 見出しは `## Use when` / `## Workflow` / `## Verification` / `## Avoid` をこの順で必ず出す。".to_string()
+    } else if plan.include_avoid_section {
+        format!(
+            "- 見出しは `{}` / `{}` / `{}` / `{}` をこの順で必ず出す。",
+            plan.focus, plan.steps, plan.verification, plan.avoid
+        )
+    } else {
+        format!(
+            "- 見出しは `{}` / `{}` / `{}` をこの順で必ず出す。必要な場合のみ `{}` を追加。",
+            plan.focus, plan.steps, plan.verification, plan.avoid
+        )
+    };
+    let style_rule = if plan.response_style == "skill" {
+        "- 出力は再利用可能な手順書として書き、Workflow は番号付き手順で具体化する。"
+    } else {
+        "- 出力は実装・調査判断に使える narrative コンテキストとして要点をまとめる。"
+    };
+    [
+        "あなたは context_compile の最終コンテキスト編集者です。",
+        "入力された knowledge 候補をそのまま列挙せず、現在の goal に直結する指示へ統合してください。回答はJSONのみ返してください。",
+        "",
+        "JSON 形式:",
+        "{ \"markdown\": \"...\", \"usedKnowledge\": [{ \"id\": \"knowledge-id\", \"confidence\": 0.0, \"evidence\": \"...\", \"outputSection\": \"...\", \"reason\": \"...\" }], \"usedEpisodes\": [{ \"id\": \"episode-id\", \"confidence\": 0.0, \"evidence\": \"...\", \"outputSection\": \"...\", \"reason\": \"...\" }] }",
+        "",
+        "必須ルール:",
+        "- 出力は日本語 Markdown。",
+        &heading_rule,
+        style_rule,
+        "- `Rules` や `Procedures` の見出しは使わない。",
+        "- `negative guardrails` は参考情報ではなく、実行可否・修正条件・確認条件を制約する negative evidence として扱う。",
+        "- `episode precedents` は過去の類似ケースであり、Knowledge rule や現在の source truth ではない。",
+        "- 入力knowledgeに無い事実を追加しない。",
+        &format!("- markdown フィールドの本文は {} トークン以内を目標に収める。", max_tokens.max(128)),
+        "- JSON は必ず完結させる。",
+        "- goal と直接関係する指示が作れない場合は、`{\"markdown\":\"No Content\",\"usedKnowledge\":[],\"usedEpisodes\":[]}` を返す。",
+        "- ノイズを避け、受け手が次に行う行動へ変換する。",
+    ]
+    .join("\n")
+}
+
+fn build_plan_user_prompt(
     goal: &str,
     knowledge: &[PackKnowledge],
     episodes: &[PackEpisode],
 ) -> String {
-    if knowledge.is_empty() && episodes.is_empty() {
-        return "No Content".to_string();
-    }
+    let rules = knowledge
+        .iter()
+        .filter(|item| item.kind != "procedure" && item.polarity != "negative")
+        .collect::<Vec<_>>();
+    let procedures = knowledge
+        .iter()
+        .filter(|item| item.kind == "procedure" && item.polarity != "negative")
+        .collect::<Vec<_>>();
+    let guardrails = knowledge
+        .iter()
+        .filter(|item| item.polarity == "negative")
+        .collect::<Vec<_>>();
     let mut lines = vec![
-        "# Context Pack".to_string(),
-        format!("- runId: `{run_id}`"),
-        format!("- goal: {}", truncate_chars(goal, 220)),
+        format!("goal: {}", single_line(goal, 240)),
+        "retrievalMode: sqlite_text".to_string(),
+        format!("ruleCandidates: {}", rules.len()),
+        format!("procedureCandidates: {}", procedures.len()),
+        format!("guardrailCandidates: {}", guardrails.len()),
+        format!("episodePrecedents: {}", episodes.len()),
+        format!(
+            "topRuleTitles: {}",
+            joined_titles(&rules.into_iter().take(4).collect::<Vec<_>>())
+        ),
+        format!(
+            "topProcedureTitles: {}",
+            joined_titles(&procedures.into_iter().take(4).collect::<Vec<_>>())
+        ),
+        format!(
+            "topGuardrailTitles: {}",
+            joined_titles(&guardrails.into_iter().take(4).collect::<Vec<_>>())
+        ),
+        format!(
+            "topEpisodePrecedents: {}",
+            episodes
+                .iter()
+                .take(4)
+                .map(|item| single_line(&item.title, 80))
+                .collect::<Vec<_>>()
+                .join(" | ")
+        ),
+        String::new(),
+        "output requirements:".to_string(),
+        "- JSON only".to_string(),
+        "- sections should feel natural for this goal".to_string(),
+        "- include concise query hints".to_string(),
+        "- decide responseStyle from goal + candidate sufficiency".to_string(),
     ];
-    if !knowledge.is_empty() {
-        lines.push("\n## Knowledge".to_string());
-        for item in knowledge {
-            lines.push(format!(
-                "- [{}] {} ({}, score {})",
-                item.id,
-                single_line(&item.title, 120),
-                item.polarity,
-                item.score
-            ));
-            lines.push(format!("  {}", single_line(&item.body, 320)));
+    if lines[8].ends_with(": ") {
+        lines[8].push_str("(none)");
+    }
+    lines.join("\n")
+}
+
+fn build_composer_user_prompt(
+    goal: &str,
+    knowledge: &[PackKnowledge],
+    episodes: &[PackEpisode],
+    plan: &ComposePlan,
+) -> String {
+    let items = select_prompt_knowledge_candidates(knowledge, plan);
+    let guardrails = knowledge
+        .iter()
+        .filter(|item| item.polarity == "negative")
+        .collect::<Vec<_>>();
+    let mut lines = vec![
+        format!("goal: {}", single_line(goal, 240)),
+        "retrievalMode: sqlite_text".to_string(),
+        format!(
+            "compositionPlan: {}",
+            json!({
+                "headings": {
+                    "focus": plan.focus,
+                    "steps": plan.steps,
+                    "verification": plan.verification,
+                    "avoid": plan.avoid
+                },
+                "includeAvoidSection": plan.include_avoid_section,
+                "responseStyle": plan.response_style
+            })
+        ),
+    ];
+    if !guardrails.is_empty() {
+        lines.push(String::new());
+        lines.push("negative guardrails:".to_string());
+        for item in guardrails.iter().take(4) {
+            lines.push(format!("- id: {}", item.id));
+            lines.push(format!("  title: {}", single_line(&item.title, 120)));
+            lines.push(format!("  summary: {}", first_sentence(&item.body, 180)));
         }
     }
     if !episodes.is_empty() {
-        lines.push("\n## Episodes".to_string());
-        for item in episodes {
-            lines.push(format!(
-                "- [{}] {} (score {})",
-                item.id,
-                single_line(&item.title, 120),
-                item.score
-            ));
-            let detail = if item.lesson.trim().is_empty() {
+        lines.push(String::new());
+        lines.push("episode precedents:".to_string());
+        for item in episodes.iter().take(3) {
+            lines.push(format!("- id: {}", item.id));
+            lines.push(format!("  title: {}", single_line(&item.title, 120)));
+            let summary = if item.lesson.trim().is_empty() {
                 &item.situation
             } else {
                 &item.lesson
             };
-            lines.push(format!("  {}", single_line(detail, 260)));
+            lines.push(format!("  summary: {}", first_sentence(summary, 180)));
         }
     }
-    lines.push("\n## Verification".to_string());
-    lines.push(
-        "- Treat this as Rust-native MCP context; no TypeScript sidecar was spawned.".to_string(),
-    );
+    lines.push(String::new());
+    lines.push("knowledge candidates:".to_string());
+    for item in items {
+        lines.push(format!("- id: {}", item.id));
+        lines.push(format!("  kind: {}", item.kind));
+        lines.push(format!("  title: {}", single_line(&item.title, 120)));
+        lines.push(format!("  summary: {}", first_sentence(&item.body, 160)));
+    }
     lines.join("\n")
+}
+
+fn load_runtime_settings(connection: &Connection) -> Option<RuntimeSettings> {
+    if !table_exists(connection, "settings") {
+        return None;
+    }
+    let value = query_setting_value(connection, "runtime", "settings.v1")
+        .or_else(|| query_setting_value(connection, "runtime", "runtime_settings"))?;
+    let document = serde_json::from_str::<Value>(&value).ok()?;
+    let settings = document.get("settings").unwrap_or(&document);
+    let task_routing = settings.get("taskRouting")?;
+    let agentic = task_routing.get("agenticCompile")?;
+    let providers = settings.get("providers").unwrap_or(&Value::Null);
+
+    let provider = string_value(agentic.get("provider")).unwrap_or_default();
+    let fallback = agentic
+        .get("fallback")
+        .and_then(Value::as_array)
+        .map(|values| {
+            values
+                .iter()
+                .filter_map(|value| string_value(Some(value)))
+                .filter(|value| !value.is_empty())
+                .collect::<Vec<_>>()
+        })
+        .unwrap_or_default();
+    let local_llm_model = string_value(agentic.get("localLlmModel"))
+        .or_else(|| string_value(agentic.get("model")))
+        .filter(|value| !value.is_empty());
+    Some(RuntimeSettings {
+        agentic_enabled: agentic
+            .get("enabled")
+            .and_then(Value::as_bool)
+            .unwrap_or(false),
+        provider,
+        fallback,
+        timeout_ms: agentic
+            .get("timeoutMs")
+            .and_then(Value::as_u64)
+            .unwrap_or(10_000),
+        max_tokens: agentic
+            .get("maxTokens")
+            .and_then(Value::as_i64)
+            .unwrap_or(2048),
+        azure: load_azure_settings(connection, providers.get("azure-openai")),
+        local: load_local_settings(connection, providers.get("local-llm")),
+        openai: load_openai_settings(connection, providers.get("openai")),
+        local_llm_model,
+    })
+}
+
+fn load_azure_settings(connection: &Connection, value: Option<&Value>) -> Option<AzureSettings> {
+    let provider = value?;
+    if !provider
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let deployments = provider.get("deployments").and_then(Value::as_array);
+    let deployment = deployments
+        .and_then(|values| {
+            values.iter().find(|entry| {
+                string_value(entry.get("apiBaseUrl")).is_some_and(|value| !value.is_empty())
+                    && string_value(entry.get("model")).is_some_and(|value| !value.is_empty())
+            })
+        })
+        .unwrap_or(provider);
+    let api_key = query_secret_value(connection, "azureOpenAiApiKey")
+        .or_else(|| env::var("AZURE_OPENAI_API_KEY").ok())
+        .unwrap_or_default();
+    let api_base_url = string_value(deployment.get("apiBaseUrl"))?;
+    let model = string_value(deployment.get("model"))?;
+    Some(AzureSettings {
+        api_key,
+        api_base_url: trim_trailing_slashes(&api_base_url),
+        api_path: string_value(deployment.get("apiPath"))
+            .or_else(|| string_value(provider.get("apiPath")))
+            .unwrap_or_else(|| "/openai/deployments".to_string()),
+        api_version: string_value(deployment.get("apiVersion"))
+            .or_else(|| string_value(provider.get("apiVersion")))
+            .unwrap_or_else(|| "2025-04-01-preview".to_string()),
+        model,
+    })
+}
+
+fn load_local_settings(connection: &Connection, value: Option<&Value>) -> Option<LocalLlmSettings> {
+    let provider = value?;
+    if !provider
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let models = provider.get("models").and_then(Value::as_array);
+    let model_config = models
+        .and_then(|values| {
+            values.iter().find(|entry| {
+                string_value(entry.get("apiBaseUrl")).is_some_and(|value| !value.is_empty())
+                    && string_value(entry.get("model")).is_some_and(|value| !value.is_empty())
+            })
+        })
+        .unwrap_or(provider);
+    let api_base_url = string_value(model_config.get("apiBaseUrl"))?;
+    let model = string_value(model_config.get("model"))?;
+    Some(LocalLlmSettings {
+        api_key: query_secret_value(connection, "localLlmApiKey")
+            .or_else(|| env::var("LOCAL_LLM_API_KEY").ok())
+            .unwrap_or_default(),
+        api_base_url: trim_trailing_slashes(&api_base_url),
+        api_path: string_value(model_config.get("apiPath"))
+            .or_else(|| string_value(provider.get("apiPath")))
+            .unwrap_or_else(|| "/v1/chat/completions".to_string()),
+        model,
+    })
+}
+
+fn load_openai_settings(connection: &Connection, value: Option<&Value>) -> Option<OpenAiSettings> {
+    let provider = value?;
+    if !provider
+        .get("enabled")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+    {
+        return None;
+    }
+    let api_base_url = string_value(provider.get("apiBaseUrl"))?;
+    let model = string_value(provider.get("model"))?;
+    Some(OpenAiSettings {
+        api_key: query_secret_value(connection, "openaiApiKey")
+            .or_else(|| env::var("OPENAI_API_KEY").ok())
+            .unwrap_or_default(),
+        api_base_url: trim_trailing_slashes(&api_base_url),
+        model,
+    })
+}
+
+fn query_setting_value(connection: &Connection, namespace: &str, key: &str) -> Option<String> {
+    connection
+        .query_row(
+            "select value from settings where namespace = ?1 and key = ?2 limit 1",
+            (namespace, key),
+            |row| row.get::<_, String>(0),
+        )
+        .ok()
+}
+
+fn query_secret_value(connection: &Connection, key: &str) -> Option<String> {
+    let value = query_setting_value(connection, "runtime.secret", key)?;
+    let parsed = serde_json::from_str::<Value>(&value).ok()?;
+    string_value(parsed.get("value")).filter(|value| !value.is_empty())
+}
+
+fn provider_route(settings: &RuntimeSettings) -> Vec<String> {
+    let mut seen = HashSet::new();
+    let mut route = Vec::new();
+    for provider in std::iter::once(&settings.provider).chain(settings.fallback.iter()) {
+        let normalized = provider.trim();
+        if normalized.is_empty() || normalized == "auto" || !seen.insert(normalized.to_string()) {
+            continue;
+        }
+        let configured = match normalized {
+            "azure-openai" => settings.azure.as_ref().is_some_and(|item| {
+                !item.api_key.trim().is_empty()
+                    && !item.api_base_url.trim().is_empty()
+                    && !item.model.trim().is_empty()
+            }),
+            "local-llm" => settings.local.as_ref().is_some_and(|item| {
+                !item.api_base_url.trim().is_empty() && !item.model.trim().is_empty()
+            }),
+            "openai" => settings.openai.as_ref().is_some_and(|item| {
+                !item.api_key.trim().is_empty()
+                    && !item.api_base_url.trim().is_empty()
+                    && !item.model.trim().is_empty()
+            }),
+            _ => false,
+        };
+        if configured {
+            route.push(normalized.to_string());
+        }
+    }
+    route
+}
+
+fn chat_json(
+    client: &Client,
+    settings: &RuntimeSettings,
+    provider: &str,
+    system_prompt: &str,
+    user_prompt: &str,
+    max_tokens: i64,
+) -> Result<String, String> {
+    match provider {
+        "azure-openai" => chat_azure(
+            client,
+            settings.azure.as_ref(),
+            system_prompt,
+            user_prompt,
+            max_tokens,
+        ),
+        "local-llm" => chat_local(client, settings, system_prompt, user_prompt, max_tokens),
+        "openai" => chat_openai(
+            client,
+            settings.openai.as_ref(),
+            system_prompt,
+            user_prompt,
+            max_tokens,
+        ),
+        other => Err(format!(
+            "{other} is not supported by Rust context_compile composer"
+        )),
+    }
+}
+
+fn chat_azure(
+    client: &Client,
+    settings: Option<&AzureSettings>,
+    system_prompt: &str,
+    user_prompt: &str,
+    max_tokens: i64,
+) -> Result<String, String> {
+    let settings = settings.ok_or_else(|| "azure-openai is not configured".to_string())?;
+    let api_path = settings.api_path.trim_end_matches('/');
+    let url = format!(
+        "{}/{}/{}/chat/completions?api-version={}",
+        settings.api_base_url,
+        api_path.trim_start_matches('/'),
+        url_encode(&settings.model),
+        url_encode(&settings.api_version)
+    );
+    let response = client
+        .post(url)
+        .header("api-key", settings.api_key.trim())
+        .json(&json!({
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0,
+            "max_completion_tokens": max_tokens,
+            "response_format": {"type": "json_object"}
+        }))
+        .send()
+        .map_err(|error| error.to_string())?;
+    parse_chat_response(response, "Azure OpenAI")
+}
+
+fn chat_local(
+    client: &Client,
+    settings: &RuntimeSettings,
+    system_prompt: &str,
+    user_prompt: &str,
+    max_tokens: i64,
+) -> Result<String, String> {
+    let local = settings
+        .local
+        .as_ref()
+        .ok_or_else(|| "local-llm is not configured".to_string())?;
+    let url = format!(
+        "{}/{}",
+        local.api_base_url,
+        local.api_path.trim_start_matches('/')
+    );
+    let model = settings
+        .local_llm_model
+        .as_deref()
+        .filter(|value| !value.trim().is_empty())
+        .unwrap_or(&local.model);
+    let mut request = client.post(url).header("content-type", "application/json");
+    if !local.api_key.trim().is_empty() {
+        request = request.header("authorization", format!("Bearer {}", local.api_key.trim()));
+    }
+    let response = request
+        .json(&json!({
+            "model": model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "stream": false,
+            "temperature": 0,
+            "max_tokens": max_tokens,
+            "response_format": {"type": "json_object"}
+        }))
+        .send()
+        .map_err(|error| error.to_string())?;
+    parse_chat_response(response, "local-llm")
+}
+
+fn chat_openai(
+    client: &Client,
+    settings: Option<&OpenAiSettings>,
+    system_prompt: &str,
+    user_prompt: &str,
+    max_tokens: i64,
+) -> Result<String, String> {
+    let settings = settings.ok_or_else(|| "OpenAI is not configured".to_string())?;
+    let response = client
+        .post(format!("{}/chat/completions", settings.api_base_url))
+        .bearer_auth(settings.api_key.trim())
+        .json(&json!({
+            "model": settings.model,
+            "messages": [
+                {"role": "system", "content": system_prompt},
+                {"role": "user", "content": user_prompt}
+            ],
+            "temperature": 0,
+            "max_completion_tokens": max_tokens,
+            "response_format": {"type": "json_object"}
+        }))
+        .send()
+        .map_err(|error| error.to_string())?;
+    parse_chat_response(response, "OpenAI")
+}
+
+fn parse_chat_response(
+    response: reqwest::blocking::Response,
+    label: &str,
+) -> Result<String, String> {
+    let status = response.status();
+    if !status.is_success() {
+        let body = response.text().unwrap_or_default();
+        return Err(format!(
+            "{label} HTTP {status}: {}",
+            single_line(&body, 500)
+        ));
+    }
+    let payload = response
+        .json::<Value>()
+        .map_err(|error| error.to_string())?;
+    let content = payload
+        .get("choices")
+        .and_then(Value::as_array)
+        .and_then(|choices| choices.first())
+        .and_then(|choice| choice.get("message"))
+        .and_then(|message| message.get("content"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .ok_or_else(|| format!("{label} returned empty response"))?;
+    Ok(content.to_string())
+}
+
+fn parse_compose_plan(raw: &str) -> Option<ComposePlan> {
+    let normalized = normalize_composer_output(raw);
+    let parsed = serde_json::from_str::<Value>(&normalized).ok()?;
+    let headings = parsed.get("headings").unwrap_or(&Value::Null);
+    let default = ComposePlan::default();
+    let response_style = match parsed.get("responseStyle").and_then(Value::as_str) {
+        Some("skill") => "skill",
+        _ => "narrative",
+    };
+    let candidate_sufficiency = parsed
+        .get("candidateSufficiency")
+        .and_then(Value::as_str)
+        .unwrap_or("limited");
+    let confidence = parsed
+        .get("styleConfidence")
+        .and_then(Value::as_f64)
+        .unwrap_or(0.5);
+    let response_style =
+        if response_style == "skill" && confidence >= 0.7 && candidate_sufficiency == "enough" {
+            "skill"
+        } else {
+            "narrative"
+        };
+    Some(ComposePlan {
+        focus: sanitize_heading(headings.get("focus"), &default.focus),
+        steps: sanitize_heading(headings.get("steps"), &default.steps),
+        verification: sanitize_heading(headings.get("verification"), &default.verification),
+        avoid: sanitize_heading(headings.get("avoid"), &default.avoid),
+        include_avoid_section: parsed
+            .get("includeAvoidSection")
+            .and_then(Value::as_bool)
+            .unwrap_or(default.include_avoid_section),
+        response_style: response_style.to_string(),
+    })
+}
+
+fn parse_composer_payload(
+    raw: &str,
+    selectable_knowledge: &[PackKnowledge],
+    selectable_episodes: &[PackEpisode],
+) -> Option<(String, Vec<UsedKnowledge>, Vec<UsedEpisode>)> {
+    let normalized = normalize_composer_output(raw);
+    if normalized == "No Content" {
+        return Some((normalized, Vec::new(), Vec::new()));
+    }
+    match serde_json::from_str::<Value>(&normalized) {
+        Ok(parsed) => {
+            let markdown = parsed
+                .get("markdown")
+                .and_then(Value::as_str)
+                .map(normalize_composer_output)?;
+            let used_knowledge =
+                parse_used_knowledge_array(parsed.get("usedKnowledge"), selectable_knowledge);
+            let used_episodes =
+                parse_used_episode_array(parsed.get("usedEpisodes"), selectable_episodes);
+            Some((markdown, used_knowledge, used_episodes))
+        }
+        Err(_) if !looks_like_json_payload(&normalized) => {
+            Some((normalized, Vec::new(), Vec::new()))
+        }
+        Err(_) => None,
+    }
+}
+
+fn parse_used_knowledge_array(
+    value: Option<&Value>,
+    selectable_knowledge: &[PackKnowledge],
+) -> Vec<UsedKnowledge> {
+    let selectable = selectable_knowledge
+        .iter()
+        .map(|item| item.id.as_str())
+        .collect::<HashSet<_>>();
+    let Some(values) = value.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    for item in values {
+        let Some(record) = item.as_object() else {
+            continue;
+        };
+        let Some(id) = record
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|id| selectable.contains(id))
+        else {
+            continue;
+        };
+        if !seen.insert(id.to_string()) {
+            continue;
+        }
+        let confidence = record
+            .get("confidence")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.5)
+            .clamp(0.0, 1.0);
+        result.push(UsedKnowledge {
+            id: id.to_string(),
+            confidence,
+            evidence: record
+                .get("evidence")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| single_line(value, 240)),
+            output_section: record
+                .get("outputSection")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| single_line(value, 120)),
+            reason: record
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| single_line(value, 160)),
+        });
+    }
+    result
+}
+
+fn parse_used_episode_array(
+    value: Option<&Value>,
+    selectable_episodes: &[PackEpisode],
+) -> Vec<UsedEpisode> {
+    let selectable = selectable_episodes
+        .iter()
+        .map(|item| item.id.as_str())
+        .collect::<HashSet<_>>();
+    let Some(values) = value.and_then(Value::as_array) else {
+        return Vec::new();
+    };
+    let mut seen = HashSet::new();
+    let mut result = Vec::new();
+    for item in values {
+        let Some(record) = item.as_object() else {
+            continue;
+        };
+        let Some(id) = record
+            .get("id")
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|id| selectable.contains(id))
+        else {
+            continue;
+        };
+        if !seen.insert(id.to_string()) {
+            continue;
+        }
+        let confidence = record
+            .get("confidence")
+            .and_then(Value::as_f64)
+            .unwrap_or(0.5)
+            .clamp(0.0, 1.0);
+        result.push(UsedEpisode {
+            id: id.to_string(),
+            confidence,
+            evidence: record
+                .get("evidence")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| single_line(value, 240)),
+            output_section: record
+                .get("outputSection")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| single_line(value, 120)),
+            reason: record
+                .get("reason")
+                .and_then(Value::as_str)
+                .map(str::trim)
+                .filter(|value| !value.is_empty())
+                .map(|value| single_line(value, 160)),
+        });
+    }
+    result
+}
+
+fn normalize_composer_output(raw: &str) -> String {
+    let trimmed = raw.trim();
+    if trimmed.is_empty() || trimmed.eq_ignore_ascii_case("no content") {
+        return "No Content".to_string();
+    }
+    let without_fence = trimmed
+        .strip_prefix("```json\n")
+        .or_else(|| trimmed.strip_prefix("```markdown\n"))
+        .or_else(|| trimmed.strip_prefix("```md\n"))
+        .or_else(|| trimmed.strip_prefix("```text\n"))
+        .or_else(|| trimmed.strip_prefix("```\n"))
+        .and_then(|value| value.strip_suffix("\n```"))
+        .unwrap_or(trimmed)
+        .trim();
+    if without_fence.is_empty() || without_fence.eq_ignore_ascii_case("no content") {
+        "No Content".to_string()
+    } else {
+        without_fence.to_string()
+    }
+}
+
+fn select_prompt_knowledge_candidates<'a>(
+    knowledge: &'a [PackKnowledge],
+    _plan: &ComposePlan,
+) -> Vec<&'a PackKnowledge> {
+    let mut items = knowledge.iter().collect::<Vec<_>>();
+    items.sort_by(|left, right| right.score.cmp(&left.score));
+    items.truncate(8);
+    items
+}
+
+fn section_lines(content: &str, label: &str) -> Vec<String> {
+    let mut in_section = false;
+    let mut captured = Vec::new();
+    let target = format!("{}:", label.to_lowercase());
+    for raw_line in content.lines() {
+        let line = raw_line.trim();
+        if line.is_empty() {
+            continue;
+        }
+        if line
+            .chars()
+            .next()
+            .is_some_and(|character| character.is_ascii_alphabetic())
+            && line.contains(':')
+        {
+            in_section = line.to_lowercase().starts_with(&target);
+            continue;
+        }
+        if !in_section {
+            continue;
+        }
+        let cleaned = line
+            .trim_start_matches(|character: char| {
+                character.is_ascii_digit()
+                    || character == '.'
+                    || character == '-'
+                    || character == '・'
+                    || character == '•'
+                    || character.is_whitespace()
+            })
+            .trim();
+        if !cleaned.is_empty() {
+            captured.push(cleaned.to_string());
+        }
+    }
+    captured
+}
+
+fn first_sentence(text: &str, max_chars: usize) -> String {
+    let normalized = single_line(text, max_chars.saturating_mul(2));
+    if normalized.is_empty() {
+        return normalized;
+    }
+    let sentence_end = normalized
+        .char_indices()
+        .find_map(|(index, character)| {
+            matches!(character, '。' | '.' | '!' | '?').then_some(index + character.len_utf8())
+        })
+        .unwrap_or(normalized.len());
+    single_line(&normalized[..sentence_end], max_chars)
+}
+
+fn joined_titles(items: &[&PackKnowledge]) -> String {
+    let joined = items
+        .iter()
+        .map(|item| single_line(&item.title, 80))
+        .collect::<Vec<_>>()
+        .join(" | ");
+    if joined.is_empty() {
+        "(none)".to_string()
+    } else {
+        joined
+    }
+}
+
+fn sanitize_heading(value: Option<&Value>, fallback: &str) -> String {
+    string_value(value)
+        .map(|value| {
+            value
+                .trim_start_matches('#')
+                .trim()
+                .chars()
+                .take(32)
+                .collect::<String>()
+        })
+        .filter(|value| !value.is_empty())
+        .unwrap_or_else(|| fallback.to_string())
+}
+
+fn string_value(value: Option<&Value>) -> Option<String> {
+    value
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .map(ToOwned::to_owned)
+}
+
+fn trim_trailing_slashes(value: &str) -> String {
+    value.trim().trim_end_matches('/').to_string()
+}
+
+fn url_encode(value: &str) -> String {
+    value
+        .bytes()
+        .flat_map(|byte| match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                vec![byte as char]
+            }
+            _ => format!("%{byte:02X}").chars().collect(),
+        })
+        .collect()
+}
+
+fn looks_like_json_payload(value: &str) -> bool {
+    let normalized = normalize_composer_output(value);
+    normalized.starts_with('{') || normalized.starts_with('[')
+}
+
+fn looks_goal_aligned(markdown: &str, goal: &str) -> bool {
+    if markdown == "No Content" {
+        return false;
+    }
+    let goal_tokens = goal
+        .split(|character: char| {
+            !character.is_ascii_alphanumeric() && character != '-' && character != '_'
+        })
+        .filter(|token| token.len() >= 3)
+        .filter(|token| !matches!(*token, "with" | "from" | "into" | "that" | "this"))
+        .map(str::to_lowercase)
+        .collect::<Vec<_>>();
+    if goal_tokens.is_empty() {
+        return true;
+    }
+    let text = markdown.to_lowercase();
+    goal_tokens.iter().any(|token| text.contains(token))
+}
+
+fn max_tokens_with_json_headroom(markdown_target_tokens: i64) -> i64 {
+    let normalized = markdown_target_tokens.max(128);
+    (normalized + 512)
+        .max(((normalized as f64) * 1.15).ceil() as i64)
+        .min(16_384)
+}
+
+fn planner_max_tokens(markdown_target_tokens: i64) -> i64 {
+    let normalized = markdown_target_tokens.max(128);
+    2048.min(384.max((normalized as f64 * 0.35).floor() as i64))
 }
 
 struct CompileRunInsert<'a> {
@@ -318,7 +1631,7 @@ fn insert_compile_run(params: CompileRunInsert<'_>) -> Result<(), String> {
             insert into context_compile_runs (
               id, goal, intent, session_id, repo_path, input, retrieval_mode, status,
               degraded_reasons, token_budget, duration_ms, source, pack_snapshot, created_at
-            ) values (?1, ?2, 'mcp_context_compile', ?3, ?4, ?5, 'sqlite_text', ?6, '[]', 0, ?7, 'mcp-rust', ?8, ?9)
+            ) values (?1, ?2, 'mcp_context_compile', ?3, ?4, ?5, 'sqlite_text', ?6, '[]', 0, ?7, 'mcp', ?8, ?9)
             "#,
             (
                 params.run_id,
@@ -363,10 +1676,15 @@ fn insert_compile_items(
                 r#"
                 insert into context_pack_items (
                   run_id, item_kind, item_id, section, score, ranking_reason, source_refs
-                ) values (?1, 'knowledge', ?2, ?3, ?4, 'rust_native_text_score', ?5)
+                ) values (?1, ?2, ?3, ?4, ?5, 'rust_native_text_score', ?6)
                 "#,
                 (
                     run_id,
+                    if item.kind == "procedure" {
+                        "procedure"
+                    } else {
+                        "rule"
+                    },
                     &item.id,
                     if item.kind == "procedure" {
                         "procedures"
@@ -390,6 +1708,147 @@ fn insert_compile_items(
                 (run_id, &item.id, item.score as f64),
             )
             .map_err(|error| format!("failed to insert episode pack item: {error}"))?;
+    }
+    Ok(())
+}
+
+fn insert_knowledge_usage_events(
+    connection: &Connection,
+    run_id: &str,
+    knowledge: &[PackKnowledge],
+    used_knowledge: &[UsedKnowledge],
+    agentic_used: bool,
+) -> Result<(), String> {
+    if !table_exists(connection, "knowledge_usage_events") || knowledge.is_empty() {
+        return Ok(());
+    }
+    let used_by_id = used_knowledge
+        .iter()
+        .map(|item| (item.id.as_str(), item))
+        .collect::<std::collections::HashMap<_, _>>();
+    let actor = if agentic_used { "agent" } else { "system" };
+    let now = now_iso();
+    let _ = connection.execute(
+        "delete from knowledge_usage_events where run_id = ?1",
+        [run_id],
+    );
+    for (index, item) in knowledge.iter().enumerate() {
+        let used = used_by_id.get(item.id.as_str());
+        let verdict = if used.is_some() { "used" } else { "not_used" };
+        let reason = used
+            .and_then(|used| used.reason.as_deref())
+            .unwrap_or(if used.is_some() {
+                "used_by_response_composer"
+            } else {
+                "selected_but_not_referenced"
+            });
+        let metadata = match used {
+            Some(used) => json!({
+                "source": "response_composer",
+                "signalSource": "context_response_composer",
+                "confidence": used.confidence,
+                "evidence": used.evidence,
+                "outputSection": used.output_section,
+                "selectedRank": index + 1
+            }),
+            None => json!({
+                "source": "response_composer",
+                "signalSource": "context_response_composer",
+                "selectedRank": index + 1
+            }),
+        };
+        connection
+            .execute(
+                r#"
+                insert into knowledge_usage_events (
+                  id, run_id, knowledge_id, verdict, actor, reason, metadata, created_at, updated_at
+                ) values (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?8)
+                "#,
+                (
+                    pseudo_uuid(),
+                    run_id,
+                    &item.id,
+                    verdict,
+                    actor,
+                    single_line(reason, 160),
+                    metadata.to_string(),
+                    &now,
+                ),
+            )
+            .map_err(|error| format!("failed to insert knowledge usage event: {error}"))?;
+    }
+    Ok(())
+}
+
+fn insert_episode_retrieval_feedback(
+    connection: &Connection,
+    run_id: &str,
+    episodes: &[PackEpisode],
+    used_episodes: &[UsedEpisode],
+    agentic_used: bool,
+) -> Result<(), String> {
+    if !table_exists(connection, "episode_retrieval_feedback") || episodes.is_empty() {
+        return Ok(());
+    }
+    let used_by_id = used_episodes
+        .iter()
+        .map(|item| (item.id.as_str(), item))
+        .collect::<std::collections::HashMap<_, _>>();
+    let actor = if agentic_used { "agent" } else { "system" };
+    let now = now_iso();
+    let _ = connection.execute(
+        "delete from episode_retrieval_feedback where run_id = ?1 and run_kind = 'compile'",
+        [run_id],
+    );
+    for (index, item) in episodes.iter().enumerate() {
+        let used = used_by_id.get(item.id.as_str());
+        let verdict = if used.is_some() {
+            "used"
+        } else {
+            "not_relevant"
+        };
+        let reason = used
+            .and_then(|used| used.reason.as_deref())
+            .unwrap_or(if used.is_some() {
+                "used_by_response_composer"
+            } else {
+                "selected_but_not_referenced"
+            });
+        let metadata = match used {
+            Some(used) => json!({
+                "actor": actor,
+                "source": "response_composer",
+                "signalSource": "context_response_composer",
+                "confidence": used.confidence,
+                "evidence": used.evidence,
+                "outputSection": used.output_section,
+                "selectedRank": index + 1
+            }),
+            None => json!({
+                "actor": actor,
+                "source": "response_composer",
+                "signalSource": "context_response_composer",
+                "selectedRank": index + 1
+            }),
+        };
+        connection
+            .execute(
+                r#"
+                insert into episode_retrieval_feedback (
+                  id, episode_card_id, run_kind, run_id, used_for, verdict, reason, metadata, created_at
+                ) values (?1, ?2, 'compile', ?3, 'compile', ?4, ?5, ?6, ?7)
+                "#,
+                (
+                    pseudo_uuid(),
+                    &item.id,
+                    run_id,
+                    verdict,
+                    single_line(reason, 160),
+                    metadata.to_string(),
+                    &now,
+                ),
+            )
+            .map_err(|error| format!("failed to insert episode retrieval feedback: {error}"))?;
     }
     Ok(())
 }
@@ -442,4 +1901,309 @@ fn goal_hash(goal: &str) -> String {
     let mut hasher = DefaultHasher::new();
     goal.hash(&mut hasher);
     format!("{:016x}", hasher.finish())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::SystemTime;
+
+    use rusqlite::Connection;
+    use serde_json::json;
+
+    use super::*;
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
+
+    fn temp_db_path() -> PathBuf {
+        let nanos = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let id = NEXT_TEMP_ID.fetch_add(1, Ordering::SeqCst);
+        std::env::temp_dir().join(format!("context_still_native_compile_{nanos}_{id}.sqlite"))
+    }
+
+    fn create_minimal_compile_schema(connection: &Connection) {
+        connection
+            .execute_batch(
+                r#"
+                create table knowledge_items (
+                  id text primary key,
+                  type text not null,
+                  status text not null,
+                  scope text not null default 'repo',
+                  polarity text not null default 'positive',
+                  title text not null,
+                  body text not null,
+                  intent_tags text not null default '[]',
+                  applies_to text not null default '{}',
+                  importance real not null default 70,
+                  dynamic_score real not null default 0,
+                  created_at text not null default CURRENT_TIMESTAMP,
+                  updated_at text not null default CURRENT_TIMESTAMP
+                );
+                create table context_compile_runs (
+                  id text primary key,
+                  goal text not null,
+                  intent text not null,
+                  session_id text,
+                  repo_path text,
+                  input text not null default '{}',
+                  retrieval_mode text not null,
+                  status text not null,
+                  degraded_reasons text not null default '[]',
+                  token_budget integer not null default 0,
+                  duration_ms integer not null default 0,
+                  source text not null default 'unknown',
+                  pack_snapshot text,
+                  created_at text not null default CURRENT_TIMESTAMP
+                );
+                create table context_pack_items (
+                  id integer primary key autoincrement,
+                  run_id text not null,
+                  item_kind text not null,
+                  item_id text not null,
+                  section text not null,
+                  score real not null default 0,
+                  ranking_reason text not null default '',
+                  source_refs text not null default '[]',
+                  created_at text not null default CURRENT_TIMESTAMP
+                );
+                create table knowledge_usage_events (
+                  id text primary key,
+                  run_id text not null,
+                  knowledge_id text not null,
+                  verdict text not null,
+                  actor text not null,
+                  reason text,
+                  metadata text not null default '{}',
+                  created_at text not null default CURRENT_TIMESTAMP,
+                  updated_at text not null default CURRENT_TIMESTAMP
+                );
+                create table episode_cards (
+                  id text primary key,
+                  title text not null,
+                  situation text not null,
+                  lesson text not null default '',
+                  importance integer not null default 50,
+                  status text not null default 'active',
+                  updated_at text not null default CURRENT_TIMESTAMP
+                );
+                create table episode_retrieval_feedback (
+                  id text primary key,
+                  episode_card_id text not null,
+                  run_kind text not null,
+                  run_id text not null,
+                  used_for text not null,
+                  verdict text not null,
+                  reason text,
+                  metadata text not null default '{}',
+                  created_at text not null default CURRENT_TIMESTAMP
+                );
+                create table settings (
+                  id text primary key,
+                  namespace text not null,
+                  key text not null,
+                  value text not null default '{}',
+                  value_kind text not null default 'json',
+                  secret_ref text,
+                  is_secret integer not null default 0,
+                  description text,
+                  schema_version integer not null default 1,
+                  created_at text not null default CURRENT_TIMESTAMP,
+                  updated_at text not null default CURRENT_TIMESTAMP,
+                  updated_by text,
+                  unique(namespace, key)
+                );
+                "#,
+            )
+            .unwrap();
+    }
+
+    fn sample_knowledge() -> Vec<PackKnowledge> {
+        vec![
+            PackKnowledge {
+                id: "rule-1".to_string(),
+                kind: "rule".to_string(),
+                title: "Rust native context_compile must preserve TS composer behavior".to_string(),
+                body: "Use when: migrating context_compile to Rust.\nVerification:\n- Output is composed markdown, not a raw context pack.".to_string(),
+                polarity: "positive".to_string(),
+                score: 10,
+                source_refs: vec![],
+            },
+            PackKnowledge {
+                id: "procedure-1".to_string(),
+                kind: "procedure".to_string(),
+                title: "Route context_compile through the configured composer".to_string(),
+                body: "Workflow:\n1. Load runtime settings from SQLite.\n2. Use taskRouting.agenticCompile.\nVerification:\n- The result has task-focused headings.\nAvoid:\n- Do not expose ranking metadata as the user-facing answer.".to_string(),
+                polarity: "positive".to_string(),
+                score: 9,
+                source_refs: vec![],
+            },
+        ]
+    }
+
+    #[test]
+    fn fallback_compose_does_not_render_raw_context_pack() {
+        let markdown = build_fallback_compose(
+            "Rust composer fallback should follow TS output contract",
+            &sample_knowledge(),
+            &[],
+            &ComposePlan::default(),
+        );
+
+        assert!(markdown.contains("## 実装フォーカス"));
+        assert!(markdown.contains("## 実装手順"));
+        assert!(markdown.contains("## 検証観点"));
+        assert!(!markdown.contains("# Context Pack"));
+        assert!(!markdown.contains("runId"));
+        assert!(!markdown.contains("score"));
+        assert!(!markdown.contains("[rule-1]"));
+    }
+
+    #[test]
+    fn context_compile_disabled_agentic_settings_returns_composed_fallback() {
+        let db_path = temp_db_path();
+        let connection = Connection::open(&db_path).unwrap();
+        create_minimal_compile_schema(&connection);
+        connection
+            .execute(
+                "insert into knowledge_items (id, type, status, title, body) values (?1, ?2, 'active', ?3, ?4)",
+                (
+                    "procedure-1",
+                    "procedure",
+                    "Rust composer fallback route",
+                    "Workflow:\n1. Load runtime settings.\n2. Compose user-facing markdown.\nVerification:\n- No raw Context Pack is returned.",
+                ),
+            )
+            .unwrap();
+        connection
+            .execute(
+                "insert into episode_cards (id, title, situation, lesson, importance) values (?1, ?2, ?3, ?4, 80)",
+                (
+                    "episode-1",
+                    "Rust composer fallback route precedent",
+                    "Rust context_compile was moved to native daemon.",
+                    "Keep MCP context_compile persistence in Rust, including audit signals.",
+                ),
+            )
+            .unwrap();
+        let settings = json!({
+            "settings": {
+                "providers": {
+                    "openai": {"enabled": false, "apiBaseUrl": "https://api.openai.com/v1", "model": "gpt-test"},
+                    "azure-openai": {"enabled": false, "apiBaseUrl": "", "apiPath": "/openai/deployments", "apiVersion": "2025-04-01-preview", "model": ""},
+                    "local-llm": {"enabled": false, "apiBaseUrl": "http://127.0.0.1:4444", "apiPath": "/v1/chat/completions", "model": "local-test", "models": []}
+                },
+                "taskRouting": {
+                    "agenticCompile": {
+                        "enabled": false,
+                        "provider": "local-llm",
+                        "model": "local-test",
+                        "fallback": [],
+                        "timeoutMs": 1000,
+                        "maxTokens": 512
+                    }
+                }
+            }
+        });
+        connection
+            .execute(
+                "insert into settings (id, namespace, key, value) values ('settings-1', 'runtime', 'settings.v1', ?1)",
+                [settings.to_string()],
+            )
+            .unwrap();
+        drop(connection);
+
+        let context = NativeToolContext {
+            project_root: std::env::temp_dir(),
+            sqlite_core_path: db_path.clone(),
+        };
+        let result = context_compile(
+            &json!({"arguments": {"goal": "Rust composer fallback route"}}),
+            &context,
+        );
+        let text = result["content"][0]["text"].as_str().unwrap();
+
+        assert!(text.contains("## 実装フォーカス"));
+        assert!(text.contains("## 実装手順"));
+        assert!(!text.contains("# Context Pack"));
+        assert!(!text.contains("runId"));
+        assert!(!text.contains("score"));
+        assert!(!result
+            .get("isError")
+            .and_then(serde_json::Value::as_bool)
+            .unwrap_or(false));
+
+        let connection = Connection::open(&db_path).unwrap();
+        let usage_rows = connection
+            .query_row(
+                "select count(*), sum(case when verdict = 'used' then 1 else 0 end) from knowledge_usage_events",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(usage_rows, (1, 1));
+        let episode_usage_rows = connection
+            .query_row(
+                "select count(*), sum(case when verdict = 'used' then 1 else 0 end) from episode_retrieval_feedback",
+                [],
+                |row| Ok((row.get::<_, i64>(0)?, row.get::<_, i64>(1)?)),
+            )
+            .unwrap();
+        assert_eq!(episode_usage_rows, (1, 1));
+        let pack_kind = connection
+            .query_row(
+                "select item_kind from context_pack_items where run_id = (select id from context_compile_runs limit 1) limit 1",
+                [],
+                |row| row.get::<_, String>(0),
+            )
+            .unwrap();
+        assert_eq!(pack_kind, "procedure");
+
+        let _ = std::fs::remove_file(db_path);
+    }
+
+    #[test]
+    fn parses_agentic_used_knowledge_from_composer_json() {
+        let episodes = vec![PackEpisode {
+            id: "episode-1".to_string(),
+            title: "Rust native episode".to_string(),
+            situation: "Rust-native compile uses episode precedent.".to_string(),
+            lesson: "Persist episode retrieval feedback from composer output.".to_string(),
+            score: 8,
+        }];
+        let parsed = parse_composer_payload(
+            r###"{"markdown":"## 実装フォーカス\n- Rust context_compile","usedKnowledge":[{"id":"rule-1","confidence":0.82,"evidence":"applied","outputSection":"実装フォーカス","reason":"directly relevant"},{"id":"unknown","confidence":1}],"usedEpisodes":[{"id":"episode-1","confidence":0.7,"reason":"precedent applied"},{"id":"missing","confidence":1}]}"###,
+            &sample_knowledge(),
+            &episodes,
+        )
+        .unwrap();
+
+        assert_eq!(parsed.1.len(), 1);
+        assert_eq!(parsed.1[0].id, "rule-1");
+        assert_eq!(parsed.1[0].confidence, 0.82);
+        assert_eq!(parsed.1[0].reason.as_deref(), Some("directly relevant"));
+        assert_eq!(parsed.2.len(), 1);
+        assert_eq!(parsed.2[0].id, "episode-1");
+        assert_eq!(parsed.2[0].reason.as_deref(), Some("precedent applied"));
+    }
+
+    #[test]
+    fn goal_alignment_rejects_unrelated_markdown_without_relabeling_it_as_no_content() {
+        let parsed = parse_composer_payload(
+            r###"{"markdown":"## unrelated\n- This only discusses release notes.","usedKnowledge":[],"usedEpisodes":[]}"###,
+            &sample_knowledge(),
+            &[],
+        )
+        .unwrap();
+
+        assert_ne!(parsed.0, "No Content");
+        assert!(!looks_goal_aligned(
+            &parsed.0,
+            "Rust native context_compile composer persistence",
+        ));
+    }
 }

@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import type { CompileEvalRecord, CompileEvalSummary } from "./context-compile-eval.repository.js";
+import { normalizeDate } from "./context-compiler.repository.utils.js";
 
 type SqliteCompileEvalRow = {
   id: string;
@@ -38,8 +39,7 @@ function normalizeSource(value: unknown): CompileEvalRecord["source"] {
 }
 
 function toDate(value: string): Date {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? new Date(0) : date;
+  return normalizeDate(value);
 }
 
 function mapRow(row: SqliteCompileEvalRow): CompileEvalRecord {

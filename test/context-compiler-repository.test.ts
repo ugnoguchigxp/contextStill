@@ -39,30 +39,42 @@ const validPack: ContextPack = {
 };
 
 function createSelectChain<T>(input: { limitResult?: T; orderByResult?: T; whereResult?: T }) {
+  let terminal: "limit" | "orderBy" | "where" | null = null;
+  const resolveTerminal = () => {
+    if (terminal === "limit") return input.limitResult;
+    if (terminal === "orderBy") return input.orderByResult;
+    if (terminal === "where") return input.whereResult;
+    return undefined;
+  };
   const chain = {
     from: vi.fn(),
     where: vi.fn(),
     orderBy: vi.fn(),
     limit: vi.fn(),
+    then: vi.fn((resolve: (value: T | undefined) => unknown) => resolve(resolveTerminal())),
   };
   chain.from.mockReturnValue(chain);
-  chain.where.mockReturnValue(chain);
-  chain.orderBy.mockReturnValue(chain);
-  if (input.limitResult !== undefined) {
-    chain.limit.mockResolvedValue(input.limitResult);
-  }
-  if (input.orderByResult !== undefined) {
-    chain.orderBy.mockResolvedValue(input.orderByResult);
-  }
-  if (input.whereResult !== undefined) {
-    chain.where.mockResolvedValue(input.whereResult);
-  }
+  chain.where.mockImplementation(() => {
+    terminal = "where";
+    return chain;
+  });
+  chain.orderBy.mockImplementation(() => {
+    terminal = "orderBy";
+    return chain;
+  });
+  chain.limit.mockImplementation(() => {
+    terminal = "limit";
+    return Promise.resolve(input.limitResult);
+  });
   return chain;
 }
 
 describe("context-compiler repository", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    (db.select as any).mockReturnValue(
+      createSelectChain({ limitResult: [], orderByResult: [], whereResult: [] }),
+    );
   });
 
   describe("insertCompileRun", () => {
@@ -506,6 +518,10 @@ describe("context-compiler repository", () => {
           title: "Past episode: SQLite migration recovery",
           section: "procedures",
           sourceRefs: ["context-still://episodes/episode-1"],
+          effectiveVerdict: null,
+          effectiveActor: null,
+          effectiveReason: null,
+          updatedAt: null,
         },
       ]);
       expect(result?.knowledgeSignals).toEqual([]);

@@ -28,6 +28,7 @@ export const episodeRetrievalUsedForSchema = z.enum([
 export const episodeRetrievalVerdictSchema = z.enum([
   "used",
   "not_relevant",
+  "wrong",
   "needs_raw_check",
   "stale",
 ]);

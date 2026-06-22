@@ -43,6 +43,7 @@ export const compileRunSelectedItemSchema = z.object({
 });
 
 export const knowledgeUsageVerdictSchema = z.enum(["used", "not_used", "off_topic", "wrong"]);
+export const episodeUsageVerdictSchema = z.enum(["used", "not_used", "wrong"]);
 
 export const compileRunKnowledgeFeedbackSchema = z.object({
   id: z.string().uuid(),
@@ -76,6 +77,24 @@ export const compileRunKnowledgeFeedbackResultSchema = z.object({
   affectedKnowledgeIds: z.array(z.string().uuid()),
 });
 
+export const compileRunEpisodeFeedbackWriteSchema = z.object({
+  items: z
+    .array(
+      z.object({
+        episodeId: z.string().trim().min(1),
+        verdict: episodeUsageVerdictSchema,
+        reason: z.string().trim().max(160).optional(),
+      }),
+    )
+    .min(1)
+    .max(100),
+});
+
+export const compileRunEpisodeFeedbackResultSchema = z.object({
+  savedCount: z.number().int().nonnegative(),
+  affectedEpisodeIds: z.array(z.string()),
+});
+
 export const compileRunKnowledgeSignalSchema = z.object({
   knowledgeId: z.string(),
   rawId: z.string(),
@@ -99,6 +118,10 @@ export const compileRunEpisodeSignalSchema = z.object({
   title: z.string(),
   section: z.literal("procedures"),
   sourceRefs: z.array(z.string()),
+  effectiveVerdict: episodeUsageVerdictSchema.nullable().default(null),
+  effectiveActor: z.enum(["agent", "user", "system"]).nullable().default(null),
+  effectiveReason: z.string().nullable().default(null),
+  updatedAt: z.string().datetime().nullable().default(null),
 });
 
 export const compileRunInputSnapshotSchema = z.record(z.string(), z.unknown());
@@ -204,6 +227,7 @@ export const compileRunRankingTraceSchema = z.object({
 
 export type CompileRunSource = z.infer<typeof compileRunSourceSchema>;
 export type CompileRunSelectedItem = z.infer<typeof compileRunSelectedItemSchema>;
+export type CompileRunEpisodeFeedbackResult = z.infer<typeof compileRunEpisodeFeedbackResultSchema>;
 export type CompileRunKnowledgeFeedbackResult = z.infer<
   typeof compileRunKnowledgeFeedbackResultSchema
 >;

@@ -108,7 +108,7 @@ fn pick_next_sql(queue_name: &str, table_name: &str) -> String {
     let next_run_condition = if queue_name == "finalizeDistille" {
         ""
     } else {
-        "and (next_run_at is null or next_run_at <= CURRENT_TIMESTAMP)"
+        "and (next_run_at is null or datetime(next_run_at) <= CURRENT_TIMESTAMP)"
     };
     format!(
         "
@@ -166,6 +166,39 @@ mod tests {
             )
             .unwrap();
         assert_eq!(row, ("running".to_string(), "worker-1".to_string()));
+
+        std::fs::remove_dir_all(&app_dir).unwrap();
+    }
+
+    #[test]
+    fn rust_claim_accepts_iso8601_next_run_at() {
+        let app_dir = temp_app_dir("claim_iso8601_next_run_at");
+        let sqlite_path = app_dir.join("queue.sqlite");
+        let mut connection = Connection::open(&sqlite_path).unwrap();
+        create_claim_queue_table(&connection, "finding_candidate_queue");
+        connection
+            .execute_batch(
+                r#"
+                insert into finding_candidate_queue (
+                  id, status, priority, created_at, updated_at, next_run_at
+                ) values (
+                  'job-iso-ready', 'pending', 10, '2026-06-22 01:00:00', '2026-06-22 01:00:00',
+                  strftime('%Y-%m-%dT%H:%M:%fZ', 'now', '-1 minute')
+                );
+                "#,
+            )
+            .unwrap();
+
+        let claimed = claim_next_queue_job_for_connection(
+            &mut connection,
+            "findingCandidate",
+            "worker-iso",
+            90,
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(claimed.id, "job-iso-ready");
 
         std::fs::remove_dir_all(&app_dir).unwrap();
     }

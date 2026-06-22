@@ -7,6 +7,7 @@ export const retrievalModeSchema = z.enum([
   "architecture_context",
   "procedure_context",
   "learning_context",
+  "sqlite_text",
 ]);
 
 export const compileInputSchema = z.object({

@@ -2,6 +2,7 @@ import {
   type EpisodeCard,
   type EpisodeCardCreateInput,
   type EpisodeCardSearchInput,
+  type EpisodeCardStatus,
   episodeCardCreateSchema,
   episodeCardSchema,
   episodeCardSearchInputSchema,
@@ -460,4 +461,15 @@ export async function incrementEpisodeUsageCountsSqlite(params: {
       `update episode_cards set ${column} = ${column} + 1, updated_at = ? where id in (${placeholders})`,
     )
     .run(nowIso(), ...episodeIds);
+}
+
+export async function updateEpisodeCardStatusSqlite(params: {
+  episodeId: string;
+  status: EpisodeCardStatus;
+}): Promise<EpisodeCard | null> {
+  const sqlite = await getSqliteCoreDatabase();
+  sqlite.db
+    .query("update episode_cards set status = ?, updated_at = ? where id = ?")
+    .run(params.status, nowIso(), params.episodeId);
+  return getEpisodeCardSqlite(params.episodeId);
 }

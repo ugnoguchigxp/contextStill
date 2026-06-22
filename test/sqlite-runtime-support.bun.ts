@@ -12,6 +12,8 @@ import {
   fetchQueueDashboardStats,
   listQueueItems,
 } from "../api/modules/queue/queue.repository.js";
+import { repairEpisodeCardQuality } from "../src/cli/repair-episode-card-quality.js";
+import { resetLowQualityEpisodeCards } from "../src/cli/reset-low-quality-episode-cards.js";
 import { openSqliteCoreDatabase } from "../src/db/sqlite/client.js";
 import { resetRuntimeSqliteCoreDatabaseForTests } from "../src/db/sqlite/runtime.js";
 import { getRuntimeSqliteCoreDatabase } from "../src/db/sqlite/runtime.js";
@@ -30,7 +32,9 @@ import {
   getCompileRunRankingTrace,
   insertCompileRun,
   listRecentCompileRuns,
+  saveRunEpisodeFeedback,
 } from "../src/modules/context-compiler/context-compiler.repository.js";
+import { deprecateRunEpisodeForRepository } from "../api/modules/context-compiler/context-compiler.repository.js";
 import {
   getContextDecisionDetail,
   getContextDecisionMetrics,
@@ -45,8 +49,6 @@ import {
   requeueEpisodeDistillerRepairCandidates,
 } from "../src/modules/episodeDistiller/repository.js";
 import { setEpisodeDistillerTestHooksForTests } from "../src/modules/episodeDistiller/worker.js";
-import { repairEpisodeCardQuality } from "../src/cli/repair-episode-card-quality.js";
-import { resetLowQualityEpisodeCards } from "../src/cli/reset-low-quality-episode-cards.js";
 import {
   createEpisode,
   fetchEpisode,
@@ -471,6 +473,280 @@ describe("sqlite runtime support repositories", () => {
     expect(trace?.items[0]?.feedback.verdict).toBe("used");
     expect(trace?.feedbackSummary.used).toBe(1);
     expect(trace?.feedbackSummary.noSignal).toBe(0);
+  });
+
+  test("reads rust-native sqlite_text compile run detail and ranking trace", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const now = new Date("2026-06-20T00:10:00.000Z").toISOString();
+    const runCreatedAt = "unix-ms:1782133114211";
+    const expectedRunCreatedAt = new Date(1782133114211).toISOString();
+    const knowledgeId = "550e8400-e29b-41d4-a716-446655440011";
+    const episodeId = "550e8400-e29b-41d4-a716-446655440013";
+
+    sqlite.db
+      .query(
+        `
+        insert into knowledge_items (
+          id, type, status, scope, polarity, intent_tags, title, body, applies_to,
+          confidence, importance, metadata, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        knowledgeId,
+        "rule",
+        "active",
+        "repo",
+        "positive",
+        "[]",
+        "Rust native compile rule",
+        "Use when reading Rust-native compile history.",
+        "{}",
+        80,
+        80,
+        "{}",
+        now,
+        now,
+      );
+    sqlite.db
+      .query(
+        `
+        insert into episode_cards (
+          id, title, situation, source_kind, source_key, outcome_kind, status,
+          created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        episodeId,
+        "Rust native episode",
+        "Rust-native compile wrote an episode precedent.",
+        "manual",
+        "rust-native-episode",
+        "success",
+        "active",
+        now,
+        now,
+      );
+
+    const runId = await insertCompileRun({
+      goal: "rust native sqlite_text detail",
+      intent: "mcp_context_compile",
+      input: { goal: "rust native sqlite_text detail" },
+      retrievalMode: "sqlite_text",
+      status: "ok",
+      degradedReasons: [],
+      tokenBudget: 0,
+      durationMs: 12,
+      source: "mcp",
+    });
+
+    const pack = {
+      runId,
+      goal: "rust native sqlite_text detail",
+      rules: [
+        {
+          id: knowledgeId,
+          type: "rule",
+          title: "Rust native compile rule",
+          body: "Use when reading Rust-native compile history.",
+          polarity: "positive",
+          score: 0.9,
+          sourceRefs: [],
+        },
+      ],
+      procedures: [],
+      episodes: [
+        {
+          id: episodeId,
+          title: "Rust native episode",
+          situation: "Rust-native compile wrote an episode precedent.",
+          lesson: "Normalize Rust-native pack snapshots before rendering detail.",
+          score: 8,
+        },
+      ],
+      outputMarkdown: "# Context Pack\n\nRust-native compile output.",
+      diagnostics: {
+        engine: "rust-native",
+        degradedReasons: [],
+        selectedKnowledge: 1,
+        selectedEpisodes: 1,
+      },
+    };
+
+    sqlite.db
+      .query(
+        "update context_compile_runs set pack_snapshot = ?, created_at = ?, source = ? where id = ?",
+      )
+      .run(JSON.stringify(pack), runCreatedAt, "mcp-rust", runId);
+    sqlite.db
+      .query(
+        `
+        insert into context_pack_items (
+          run_id, item_kind, item_id, section, score, ranking_reason, source_refs, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(runId, "knowledge", knowledgeId, "rules", 0.9, "rust_native_text_score", "[]", now);
+    sqlite.db
+      .query(
+        `
+        insert into context_pack_items (
+          run_id, item_kind, item_id, section, score, ranking_reason, source_refs, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(runId, "episode", episodeId, "episodes", 0.8, "rust_native_episode_score", "[]", now);
+    sqlite.db
+      .query(
+        `
+        insert into knowledge_usage_events (
+          id, run_id, knowledge_id, verdict, actor, reason, metadata, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "550e8400-e29b-41d4-a716-446655440014",
+        runId,
+        knowledgeId,
+        "used",
+        "agent",
+        "Composer used this rule.",
+        "{}",
+        now,
+        now,
+      );
+    sqlite.db
+      .query(
+        `
+        insert into episode_retrieval_feedback (
+          id, episode_card_id, run_kind, run_id, used_for, verdict, reason, metadata, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "550e8400-e29b-41d4-a716-446655440015",
+        episodeId,
+        "compile",
+        runId,
+        "compile",
+        "not_relevant",
+        "Episode was selected but not used.",
+        JSON.stringify({ actor: "user" }),
+        now,
+      );
+    sqlite.db
+      .query(
+        `
+        insert into context_compile_candidate_traces (
+          run_id, item_kind, item_id, final_rank, final_score, selected, agentic_decision,
+          ranking_reason, created_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(runId, "rule", knowledgeId, 1, 0.9, 1, "accepted", "selected", now);
+    sqlite.db
+      .query(
+        `
+        insert into context_compile_evals (
+          id, run_id, session_id, score, outcome, title, body, source, metadata,
+          relevance, actionability, coverage, clarity, specificity, created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "550e8400-e29b-41d4-a716-446655440012",
+        runId,
+        null,
+        88,
+        "useful",
+        "rust eval",
+        "eval body",
+        "mcp",
+        "{}",
+        88,
+        88,
+        88,
+        88,
+        88,
+        runCreatedAt,
+        runCreatedAt,
+      );
+
+    const detail = await getCompileRunDetail(runId);
+    expect(detail?.run.retrievalMode).toBe("sqlite_text");
+    expect(detail?.run.source).toBe("mcp");
+    expect(detail?.run.createdAt).toBe(expectedRunCreatedAt);
+    expect(detail?.run.evalSummary.latestEvaluatedAt).toBe(expectedRunCreatedAt);
+    expect(detail?.pack?.retrievalMode).toBe("sqlite_text");
+    expect(detail?.pack?.rules[0]?.itemKind).toBe("rule");
+    expect(detail?.pack?.procedures[0]?.itemKind).toBe("episode_card");
+    expect(detail?.outputMarkdown).toContain("Rust-native compile output");
+    expect(detail?.snapshotAvailable).toBe(true);
+    expect(detail?.evaluations[0]?.createdAt).toBe(expectedRunCreatedAt);
+    expect(detail?.knowledgeSignals[0]).toMatchObject({
+      knowledgeId,
+      itemKind: "rule",
+      effectiveVerdict: "used",
+      effectiveActor: "agent",
+    });
+    expect(detail?.episodeSignals[0]).toMatchObject({
+      episodeId,
+      effectiveVerdict: "not_used",
+      effectiveActor: "user",
+      effectiveReason: "Episode was selected but not used.",
+    });
+    const episodeFeedback = await saveRunEpisodeFeedback({
+      runId,
+      items: [{ episodeId, verdict: "wrong", reason: "Wrong precedent for this run." }],
+    });
+    expect(episodeFeedback.savedCount).toBe(1);
+    const detailAfterEpisodeFeedback = await getCompileRunDetail(runId);
+    expect(detailAfterEpisodeFeedback?.episodeSignals[0]).toMatchObject({
+      episodeId,
+      effectiveVerdict: "wrong",
+      effectiveActor: "user",
+      effectiveReason: "Wrong precedent for this run.",
+    });
+    await deprecateRunEpisodeForRepository({ runId, episodeId });
+    expect(
+      sqlite.db
+        .query<{ status: string }, [string]>("select status from episode_cards where id = ?")
+        .get(episodeId)?.status,
+    ).toBe("deprecated");
+    sqlite.db
+      .query(
+        `
+        insert into episode_cards (
+          id, title, situation, source_kind, source_key, outcome_kind, status,
+          created_at, updated_at
+        ) values (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `,
+      )
+      .run(
+        "550e8400-e29b-41d4-a716-446655440016",
+        "Unselected episode",
+        "This episode is not selected by the run.",
+        "manual",
+        "unselected-rust-native-episode",
+        "unknown",
+        "active",
+        now,
+        now,
+      );
+    await expect(
+      deprecateRunEpisodeForRepository({
+        runId,
+        episodeId: "550e8400-e29b-41d4-a716-446655440016",
+      }),
+    ).rejects.toThrow("Episode ID is not in selected items for this run");
+
+    const trace = await getCompileRunRankingTrace(runId);
+    expect(trace?.run.retrievalMode).toBe("sqlite_text");
+    expect(trace?.run.createdAt).toBe(expectedRunCreatedAt);
+    expect(trace?.items[0]?.itemId).toBe(knowledgeId);
+    expect(trace?.items[0]?.packed).toBe(true);
+    expect(trace?.items[0]?.feedback.verdict).toBe("used");
   });
 
   test("inspects sqlite core database without requiring postgres-only tables", async () => {
@@ -1411,6 +1687,94 @@ describe("sqlite runtime support repositories", () => {
     expect(claimed?.providerLease.targetId).toBe(goodTarget.id);
   });
 
+  test("keeps provider-pool queue order ahead of older higher-priority episode jobs", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const settings = structuredClone(getRuntimeSettingsSnapshot());
+    const sharedTarget = {
+      id: "local-shared-priority",
+      name: "Shared priority local model",
+      apiBaseUrl: "http://127.0.0.1:44450",
+      apiPath: "/v1/chat/completions",
+      model: "shared-priority-model",
+    };
+    const routeTarget = JSON.stringify({
+      apiBaseUrl: sharedTarget.apiBaseUrl,
+      apiPath: sharedTarget.apiPath,
+      model: sharedTarget.model,
+    });
+    settings.providers["local-llm"] = {
+      enabled: true,
+      apiBaseUrl: sharedTarget.apiBaseUrl,
+      apiPath: sharedTarget.apiPath,
+      model: sharedTarget.model,
+      models: [sharedTarget],
+    };
+    settings.providerPools = [
+      {
+        id: "local-llm-default",
+        label: "Local LLM",
+        enabled: true,
+        maxConcurrent: 1,
+        staleLeaseSeconds: 120,
+        lowPriorityAgingSeconds: 60,
+        targets: [{ provider: "local-llm", localLlmModelId: sharedTarget.id }],
+      },
+    ];
+    settings.taskRouting.findCandidate.source = {
+      provider: "local-llm",
+      model: routeTarget,
+      localLlmModel: routeTarget,
+      providerPoolId: "local-llm-default",
+      fallback: [],
+    };
+    settings.taskRouting.findCandidate.vibe = {
+      provider: "local-llm",
+      model: routeTarget,
+      localLlmModel: routeTarget,
+      providerPoolId: "local-llm-default",
+      fallback: [],
+    };
+    settings.taskRouting.episodeDistiller = {
+      provider: "local-llm",
+      model: routeTarget,
+      localLlmModel: routeTarget,
+      providerPoolId: "local-llm-default",
+      fallback: [],
+    };
+    await saveRuntimeSettings({ settings, updatedBy: "sqlite-runtime-test" });
+    sqlite.db
+      .query(
+        `
+        insert into finding_candidate_queue (
+          id, input_kind, source_kind, source_key, source_uri, distillation_version,
+          status, priority, payload, metadata, created_at, updated_at
+        ) values (
+          'finding-queue-order', 'source_target', 'wiki_file', 'finding-queue-order',
+          'file://finding-queue-order', 'v-test', 'pending', 50, '{}', '{}',
+          datetime(CURRENT_TIMESTAMP, '-1 hour'), datetime(CURRENT_TIMESTAMP, '-1 hour')
+        );
+        insert into episode_distiller_queue (
+          id, source_kind, source_key, source_uri, distillation_version,
+          status, priority, payload, metadata, provider_policy, created_at, updated_at
+        ) values (
+          'episode-queue-order', 'vibe_memory', 'episode-queue-order',
+          'vibe://episode-queue-order', 'v-test', 'pending', 95, '{}', '{}', 'default',
+          datetime(CURRENT_TIMESTAMP, '-24 hours'), datetime(CURRENT_TIMESTAMP, '-24 hours')
+        );
+      `,
+      )
+      .run();
+
+    const claimed = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[0],
+      priorityQueues: ["findingCandidate", "episodeDistiller"],
+      workerId: "sqlite-provider-queue-order-worker",
+    });
+
+    expect(claimed?.queueName).toBe("findingCandidate");
+    expect(claimed?.id).toBe("finding-queue-order");
+  });
+
   test("waits for the route local LLM target instead of claiming another pool target", async () => {
     const sqlite = await getRuntimeSqliteCoreDatabase();
     const settings = structuredClone(getRuntimeSettingsSnapshot());
@@ -1716,18 +2080,19 @@ describe("sqlite runtime support repositories", () => {
     };
     await saveRuntimeSettings({ settings, updatedBy: "sqlite-runtime-test" });
 
+    const isoReadyAt = new Date(Date.now() - 60_000).toISOString();
     sqlite.db
       .query(
         `
         insert into covering_evidence_queue (
-          id, found_candidate_id, status, priority, payload, metadata, created_at, updated_at
+          id, found_candidate_id, status, priority, payload, metadata, next_run_at, created_at, updated_at
         ) values (
-          'covering-different-provider', 'candidate-different-provider', 'pending', 50, '{}', '{}',
+          'covering-different-provider', 'candidate-different-provider', 'pending', 50, '{}', '{}', ?,
           '2026-06-22 01:00:00', '2026-06-22 01:00:00'
         );
         `,
       )
-      .run();
+      .run(isoReadyAt);
     sqlite.db
       .query(
         `

@@ -66,6 +66,41 @@ pub fn start_report<E: EnvProvider, S: ProcessSupervisor>(
     ))
 }
 
+pub fn start_executor_report<E: EnvProvider, S: ProcessSupervisor>(
+    env: &E,
+    supervisor: &S,
+) -> Result<LifecycleReport, CliError> {
+    let maintenance = run_maintenance_once_report(env)?;
+    if maintenance.status != "scheduled" {
+        let paths = resolve_paths(env);
+        let state = ProcessState {
+            pid: None,
+            status: maintenance.status.clone(),
+            log_path: paths
+                .logs_dir
+                .join(QUEUE_SUPERVISOR.log_file)
+                .to_string_lossy()
+                .into_owned(),
+            started_at: None,
+            updated_at: Some(service::now_timestamp()),
+            last_error: None,
+            command: Some("context-stilld".to_string()),
+            args: Some(vec!["queue".to_string(), "start".to_string()]),
+            sqlite_core_path: Some(maintenance.sqlite_core_path.clone()),
+            ..ProcessState::default()
+        };
+        return Ok(service::report_from_state(
+            &QUEUE_SUPERVISOR,
+            "start",
+            maintenance.status,
+            maintenance.message,
+            state,
+        ));
+    }
+
+    service::start_report(&QUEUE_SUPERVISOR, env, supervisor)
+}
+
 pub fn stop<E: EnvProvider, S: ProcessSupervisor>(
     env: &E,
     supervisor: &S,

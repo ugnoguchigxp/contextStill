@@ -320,7 +320,7 @@ fn runnable_provider_candidates(
             let created_at_unix_seconds = row.get::<_, Option<i64>>(3)?.unwrap_or(0);
             let route_key = row.get::<_, Option<String>>(4)?;
             let waiting_seconds = (now_unix_seconds - created_at_unix_seconds).max(0);
-            let effective_priority = queue_order as i64 - (waiting_seconds / aging_seconds);
+            let effective_priority = -(waiting_seconds / aging_seconds);
             Ok(RunnableProviderCandidate {
                 queue_name: queue_spec.queue_name.clone(),
                 table_name,
@@ -358,7 +358,7 @@ fn runnable_provider_sql(
     let next_run_condition = if queue_name == "finalizeDistille" {
         ""
     } else {
-        "and (next_run_at is null or next_run_at <= CURRENT_TIMESTAMP)"
+        "and (next_run_at is null or datetime(next_run_at) <= CURRENT_TIMESTAMP)"
     };
     let route_projection = route_target_column
         .map(|column| format!("{column} as route_key"))
@@ -413,9 +413,9 @@ fn compare_provider_candidates(
     a: &RunnableProviderCandidate,
     b: &RunnableProviderCandidate,
 ) -> Ordering {
-    a.effective_priority
-        .cmp(&b.effective_priority)
-        .then_with(|| a.queue_order.cmp(&b.queue_order))
+    a.queue_order
+        .cmp(&b.queue_order)
+        .then_with(|| a.effective_priority.cmp(&b.effective_priority))
         .then_with(|| b.priority.cmp(&a.priority))
         .then_with(|| a.created_at.cmp(&b.created_at))
         .then_with(|| a.id.cmp(&b.id))

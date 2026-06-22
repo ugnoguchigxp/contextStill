@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import {
+  type CompileRunEpisodeFeedbackResult,
   type CompileRunDetail,
   type CompileRunRankingTrace,
   compileRunDetailSchema,
@@ -95,6 +96,14 @@ type SqliteKnowledgeUsageEventRow = {
   created_at: string;
 };
 
+type SqliteEpisodeRetrievalFeedbackRow = {
+  episode_card_id: string;
+  verdict: string;
+  reason: string | null;
+  metadata?: string;
+  created_at: string;
+};
+
 async function getSqliteCoreDatabase() {
   const { getRuntimeSqliteCoreDatabase } = await import("../../db/sqlite/runtime.js");
   return getRuntimeSqliteCoreDatabase();
@@ -113,9 +122,105 @@ function parseJson(value: string | null | undefined): unknown {
   }
 }
 
-function parsePackSnapshot(value: string | null): ContextPack | null {
-  const parsed = contextPackSchema.safeParse(parseJson(value));
+function asString(value: unknown, fallback = ""): string {
+  return typeof value === "string" && value.trim() ? value : fallback;
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  return typeof value === "number" && Number.isFinite(value) ? value : fallback;
+}
+
+function normalizeRustNativePackSnapshot(raw: unknown, run: SqliteRunRow): ContextPack | null {
+  const record = asRecord(raw);
+  const outputMarkdown = asString(record.outputMarkdown);
+  const rawDiagnostics = asRecord(record.diagnostics);
+  const degradedReasons = normalizeStringArray(rawDiagnostics.degradedReasons).length
+    ? normalizeStringArray(rawDiagnostics.degradedReasons)
+    : normalizeStringArray(parseJson(run.degraded_reasons));
+
+  const toKnowledgeItem = (value: unknown, fallbackKind: "rule" | "procedure") => {
+    const item = asRecord(value);
+    const itemId = asString(item.id);
+    if (!itemId) return null;
+    const itemKind =
+      item.type === "procedure" ? "procedure" : item.type === "rule" ? "rule" : fallbackKind;
+    const section: "rules" | "procedures" = itemKind === "procedure" ? "procedures" : "rules";
+    return {
+      id: `${itemKind}:${itemId}`,
+      itemKind,
+      itemId,
+      section,
+      title: asString(item.title, `Knowledge ${itemId.slice(0, 8)}`),
+      content: asString(item.body),
+      score: asNumber(item.score),
+      rankingReason: "rust_native_text_score",
+      sourceRefs: normalizeStringArray(item.sourceRefs),
+    };
+  };
+
+  const rules: ContextPack["rules"] = [];
+  for (const value of Array.isArray(record.rules) ? record.rules : []) {
+    const item = toKnowledgeItem(value, "rule");
+    if (item) rules.push(item);
+  }
+
+  const procedures: ContextPack["procedures"] = [];
+  for (const value of Array.isArray(record.procedures) ? record.procedures : []) {
+    const item = toKnowledgeItem(value, "procedure");
+    if (item) procedures.push(item);
+  }
+  for (const value of Array.isArray(record.episodes) ? record.episodes : []) {
+    const item = asRecord(value);
+    const itemId = asString(item.id);
+    if (!itemId) continue;
+    procedures.push({
+      id: `episode_card:${itemId}`,
+      itemKind: "episode_card",
+      itemId,
+      section: "procedures",
+      title: asString(item.title, `Episode ${itemId.slice(0, 8)}`),
+      content: asString(item.lesson, asString(item.situation)),
+      score: asNumber(item.score),
+      rankingReason: "rust_native_text_score",
+      sourceRefs: [],
+    });
+  }
+
+  if (!outputMarkdown && rules.length === 0 && procedures.length === 0) return null;
+
+  const parsed = contextPackSchema.safeParse({
+    runId: asString(record.runId, run.id),
+    goal: asString(record.goal, run.goal),
+    retrievalMode: run.retrieval_mode,
+    status: normalizeRunStatus(run.status),
+    minimalTasks: [],
+    rules,
+    procedures,
+    guardrails: [],
+    warnings: [],
+    sourceRefs: [...new Set([...rules, ...procedures].flatMap((item) => item.sourceRefs))],
+    diagnostics: {
+      degradedReasons,
+      retrievalStats: {
+        engine: asString(rawDiagnostics.engine, "rust-native"),
+        selectedKnowledge: rawDiagnostics.selectedKnowledge ?? rules.length,
+        selectedEpisodes: rawDiagnostics.selectedEpisodes ?? 0,
+        responseComposer: {
+          markdownKind:
+            outputMarkdown && outputMarkdown !== "No Content" ? "narrative" : "no-content",
+          ...(outputMarkdown ? { outputMarkdown } : {}),
+        },
+      },
+    },
+  });
   return parsed.success ? parsed.data : null;
+}
+
+function parsePackSnapshot(value: string | null, run?: SqliteRunRow): ContextPack | null {
+  const raw = parseJson(value);
+  const parsed = contextPackSchema.safeParse(raw);
+  if (!run) return null;
+  return parsed.success ? parsed.data : normalizeRustNativePackSnapshot(raw, run);
 }
 
 async function mapRunSummary(row: SqliteRunRow): Promise<CompileRunSummary> {
@@ -155,11 +260,38 @@ function mapPackItem(row: SqlitePackItemRow) {
   };
 }
 
+function normalizePackKnowledgeItemKind(
+  itemKind: string,
+  section: string,
+): "rule" | "procedure" | null {
+  if (itemKind === "rule" || itemKind === "procedure") return itemKind;
+  if (itemKind !== "knowledge") return null;
+  return section === "procedures" ? "procedure" : "rule";
+}
+
 function normalizeKnowledgeStatus(value: string): "active" | "draft" | "deprecated" {
   if (value === "active" || value === "draft" || value === "deprecated") {
     return value;
   }
   return "active";
+}
+
+function isEpisodePackItemKind(itemKind: string): boolean {
+  return itemKind === "episode_card" || itemKind === "episode";
+}
+
+function normalizeEpisodeVerdict(value: string): "used" | "not_used" | "wrong" | null {
+  if (value === "used") return "used";
+  if (value === "not_used" || value === "not_relevant") return "not_used";
+  if (value === "wrong") return "wrong";
+  return null;
+}
+
+function episodeStorageVerdict(
+  value: "used" | "not_used" | "wrong",
+): "used" | "not_relevant" | "wrong" {
+  if (value === "not_used") return "not_relevant";
+  return value;
 }
 
 export async function insertCompileRunSqlite(params: {
@@ -407,7 +539,7 @@ export async function getCompileRunByIdSqlite(runId: string): Promise<{
     id: row.id,
     sessionId: row.session_id,
     createdAt: normalizeDate(row.created_at),
-    outputMarkdown: extractOutputMarkdown(parsePackSnapshot(row.pack_snapshot)),
+    outputMarkdown: extractOutputMarkdown(parsePackSnapshot(row.pack_snapshot, row)),
   };
 }
 
@@ -429,7 +561,7 @@ export async function listCompileRunOutputsByIdsSqlite(
       {
         createdAt: normalizeDate(row.created_at),
         goal: row.goal,
-        outputMarkdown: extractOutputMarkdown(parsePackSnapshot(row.pack_snapshot)),
+        outputMarkdown: extractOutputMarkdown(parsePackSnapshot(row.pack_snapshot, row)),
       },
     ]),
   );
@@ -493,9 +625,17 @@ export async function getCompileRunDetailSqlite(runId: string): Promise<CompileR
        ORDER BY updated_at DESC, created_at DESC`,
     )
     .all(runId);
+  const episodeFeedbackRows = sqlite.db
+    .query<SqliteEpisodeRetrievalFeedbackRow, [string]>(
+      `SELECT episode_card_id, verdict, reason, metadata, created_at
+       FROM episode_retrieval_feedback
+       WHERE run_id = ? AND run_kind = 'compile'
+       ORDER BY created_at DESC, id DESC`,
+    )
+    .all(runId);
   const evalRows = await listCompileEvalsByRunId(runId);
 
-  const packSnapshot = parsePackSnapshot(run.pack_snapshot);
+  const packSnapshot = parsePackSnapshot(run.pack_snapshot, run);
   if (packSnapshot && packSnapshot.runId === run.id) {
     const knowledgePackItems = [
       ...(packSnapshot.rules ?? []),
@@ -551,11 +691,12 @@ export async function getCompileRunDetailSqlite(runId: string): Promise<CompileR
     }
   >();
   for (const row of itemRows) {
-    if (row.item_kind !== "rule" && row.item_kind !== "procedure") continue;
+    const itemKind = normalizePackKnowledgeItemKind(row.item_kind, row.section);
+    if (!itemKind) continue;
     if (selectedKnowledgeRowsMap.has(row.item_id)) continue;
     selectedKnowledgeRowsMap.set(row.item_id, {
       knowledgeId: row.item_id,
-      itemKind: row.item_kind,
+      itemKind,
       section:
         row.section === "guardrails"
           ? "guardrails"
@@ -600,6 +741,27 @@ export async function getCompileRunDetailSqlite(runId: string): Promise<CompileR
       updatedAt: row.updated_at ? normalizeDate(row.updated_at).toISOString() : null,
     });
   }
+  const latestEpisodeFeedbackById = new Map<
+    string,
+    {
+      verdict: "used" | "not_used" | "wrong";
+      actor: "agent" | "user" | "system";
+      reason: string | null;
+      updatedAt: string;
+    }
+  >();
+  for (const row of episodeFeedbackRows) {
+    if (latestEpisodeFeedbackById.has(row.episode_card_id)) continue;
+    const verdict = normalizeEpisodeVerdict(row.verdict);
+    if (!verdict) continue;
+    const metadata = asRecord(parseJson(row.metadata));
+    latestEpisodeFeedbackById.set(row.episode_card_id, {
+      verdict,
+      actor: normalizeFeedbackActor(metadata.actor),
+      reason: normalizeNullableString(row.reason),
+      updatedAt: normalizeDate(row.created_at).toISOString(),
+    });
+  }
 
   const detail = {
     run: {
@@ -626,15 +788,23 @@ export async function getCompileRunDetailSqlite(runId: string): Promise<CompileR
       sourceRefs: normalizeStringArray(parseJson(row.source_refs)),
     })),
     episodeSignals: itemRows
-      .filter((row) => row.item_kind === "episode_card")
-      .map((row) => ({
-        episodeId: row.item_id,
-        title:
-          packTitleByKey.get(`${row.item_kind}:${row.item_id}`) ??
-          `Episode ${row.item_id.slice(0, 8)}`,
-        section: "procedures" as const,
-        sourceRefs: normalizeStringArray(parseJson(row.source_refs)),
-      })),
+      .filter((row) => isEpisodePackItemKind(row.item_kind))
+      .map((row) => {
+        const feedback = latestEpisodeFeedbackById.get(row.item_id);
+        return {
+          episodeId: row.item_id,
+          title:
+            packTitleByKey.get(`episode_card:${row.item_id}`) ??
+            packTitleByKey.get(`${row.item_kind}:${row.item_id}`) ??
+            `Episode ${row.item_id.slice(0, 8)}`,
+          section: "procedures" as const,
+          sourceRefs: normalizeStringArray(parseJson(row.source_refs)),
+          effectiveVerdict: feedback?.verdict ?? null,
+          effectiveActor: feedback?.actor ?? null,
+          effectiveReason: feedback?.reason ?? null,
+          updatedAt: feedback?.updatedAt ?? null,
+        };
+      }),
     knowledgeFeedback: feedbackRows.map((row) => ({
       id: row.id ?? "",
       runId: row.run_id ?? runId,
@@ -792,13 +962,13 @@ export async function getCompileRunRankingTraceSqlite(
     .all(runId);
   const packByKey = new Map(
     packRows.map((row) => [
-      `${row.item_kind}:${row.item_id}`,
+      `${normalizePackKnowledgeItemKind(row.item_kind, row.section) ?? row.item_kind}:${row.item_id}`,
       { sourceRefs: normalizeStringArray(parseJson(row.source_refs)) },
     ]),
   );
 
   const packPositionByKey = new Map<string, number>();
-  const parsedPack = parsePackSnapshot(run.pack_snapshot);
+  const parsedPack = parsePackSnapshot(run.pack_snapshot, run);
   if (parsedPack) {
     let packPosition = 1;
     for (const item of [...parsedPack.rules, ...parsedPack.procedures, ...parsedPack.guardrails]) {
@@ -808,8 +978,9 @@ export async function getCompileRunRankingTraceSqlite(
     }
   } else {
     for (const [index, row] of packRows.entries()) {
-      if (row.item_kind !== "rule" && row.item_kind !== "procedure") continue;
-      packPositionByKey.set(`${row.item_kind}:${row.item_id}`, index + 1);
+      const itemKind = normalizePackKnowledgeItemKind(row.item_kind, row.section);
+      if (!itemKind) continue;
+      packPositionByKey.set(`${itemKind}:${row.item_id}`, index + 1);
     }
   }
 
@@ -956,6 +1127,82 @@ export async function getCompileRunRankingTraceSqlite(
     },
     items: sortedItems,
   });
+}
+
+export async function saveRunEpisodeFeedbackSqlite(params: {
+  runId: string;
+  items: Array<{ episodeId: string; verdict: "used" | "not_used" | "wrong"; reason?: string }>;
+}): Promise<CompileRunEpisodeFeedbackResult> {
+  const sqlite = await getSqliteCoreDatabase();
+  const run = sqlite.db
+    .query<{ id: string }, [string]>("SELECT id FROM context_compile_runs WHERE id = ? LIMIT 1")
+    .get(params.runId);
+  if (!run) {
+    throw Object.assign(new Error("Compile run not found."), { statusCode: 404 });
+  }
+
+  const selectableRows = sqlite.db
+    .query<{ item_id: string }, [string]>(
+      `SELECT item_id
+       FROM context_pack_items
+       WHERE run_id = ? AND item_kind IN ('episode_card', 'episode')`,
+    )
+    .all(params.runId);
+  const selectableEpisodeIds = new Set(selectableRows.map((row) => row.item_id));
+  const seen = new Set<string>();
+  const normalizedItems = params.items.map((item) => {
+    const episodeId = item.episodeId.trim();
+    if (seen.has(episodeId)) {
+      throw Object.assign(new Error(`Duplicate episodeId in request: ${episodeId}`), {
+        statusCode: 400,
+      });
+    }
+    seen.add(episodeId);
+    if (!selectableEpisodeIds.has(episodeId)) {
+      throw Object.assign(
+        new Error(`Episode IDs are not in selected items for this run: ${episodeId}`),
+        {
+          statusCode: 400,
+        },
+      );
+    }
+    return {
+      episodeId,
+      verdict: item.verdict,
+      reason: typeof item.reason === "string" && item.reason.trim() ? item.reason.trim() : null,
+    };
+  });
+
+  const nowIso = new Date().toISOString();
+  sqlite.db.query("BEGIN IMMEDIATE").run();
+  try {
+    for (const item of normalizedItems) {
+      sqlite.db
+        .query(
+          `INSERT INTO episode_retrieval_feedback (
+            id, episode_card_id, run_kind, run_id, used_for, verdict, reason, metadata, created_at
+          ) VALUES (?, ?, 'compile', ?, 'compile', ?, ?, ?, ?)`,
+        )
+        .run(
+          randomUUID(),
+          item.episodeId,
+          params.runId,
+          episodeStorageVerdict(item.verdict),
+          item.reason,
+          JSON.stringify({ actor: "user" }),
+          nowIso,
+        );
+    }
+    sqlite.db.query("COMMIT").run();
+  } catch (error) {
+    sqlite.db.query("ROLLBACK").run();
+    throw error;
+  }
+
+  return {
+    savedCount: normalizedItems.length,
+    affectedEpisodeIds: normalizedItems.map((item) => item.episodeId),
+  };
 }
 
 export async function upsertContextCompileTaskTraceSqlite(input: {

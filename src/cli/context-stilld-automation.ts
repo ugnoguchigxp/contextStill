@@ -48,6 +48,39 @@ function launchctl(...args: string[]): void {
   execFileSync("launchctl", args, { stdio: "inherit" });
 }
 
+function sleepSync(ms: number): void {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function terminateDetachedQueueSupervisors(): void {
+  if (!isDarwin()) return;
+  let killed = false;
+  try {
+    const output = execFileSync("pgrep", [
+      "-f",
+      "bun run src/cli/queue-supervisor.ts --continuous --limit 1",
+    ]);
+    for (const rawPid of output
+      .toString()
+      .split(/\s+/)
+      .map((value) => value.trim())
+      .filter(Boolean)) {
+      const pid = Number(rawPid);
+      if (Number.isInteger(pid) && pid > 0 && pid !== process.pid) {
+        try {
+          process.kill(pid, "SIGTERM");
+          killed = true;
+        } catch {
+          // Process may have exited between pgrep and kill.
+        }
+      }
+    }
+  } catch {
+    // Detached queue supervisor children may legitimately be absent.
+  }
+  if (killed) sleepSync(1000);
+}
+
 function ensureContextStilldBinary(): string {
   const configured = process.env.CONTEXT_STILLD_PATH;
   if (configured) {
@@ -93,7 +126,7 @@ function renderPlist(): string {
     .replaceAll("{{RESIDENT_QUEUE}}", process.env.CONTEXT_STILL_RESIDENT_QUEUE ?? "1")
     .replaceAll(
       "{{RESIDENT_QUEUE_MODE}}",
-      process.env.CONTEXT_STILL_RESIDENT_QUEUE_MODE ?? "rust-managed-one-shot",
+      process.env.CONTEXT_STILL_RESIDENT_QUEUE_MODE ?? "continuous",
     )
     .replaceAll(
       "{{RESIDENT_QUEUE_INTERVAL_MS}}",
@@ -142,8 +175,9 @@ function loadJob(): void {
   const target = path.resolve(launchAgentsDir, plist);
   if (!existsSync(target)) install();
   const uid = getUid();
-  unloadLegacyQueueOwners();
   launchctlQuiet("bootout", `gui/${uid}`, target);
+  unloadLegacyQueueOwners();
+  terminateDetachedQueueSupervisors();
   launchctl("bootstrap", `gui/${uid}`, target);
   console.log(`loaded: ${label}`);
   console.log(`unloaded legacy queue owner: ${legacyQueueLabel}`);
@@ -156,6 +190,7 @@ function unloadJob(): void {
   const uid = getUid();
   launchctlQuiet("bootout", `gui/${uid}`, target);
   launchctlQuiet("bootout", `gui/${uid}/${label}`);
+  terminateDetachedQueueSupervisors();
   console.log(`unloaded: ${label}`);
 }
 
@@ -215,7 +250,7 @@ function runOnce(): void {
         process.env.CONTEXT_STILL_SQLITE_CORE_PATH ??
         path.resolve(projectRoot, "data", "context-still-core.sqlite"),
       CONTEXT_STILL_RESIDENT_QUEUE_MODE:
-        process.env.CONTEXT_STILL_RESIDENT_QUEUE_MODE ?? "rust-managed-one-shot",
+        process.env.CONTEXT_STILL_RESIDENT_QUEUE_MODE ?? "continuous",
     },
   });
   process.exitCode = result.status ?? 1;
@@ -233,7 +268,7 @@ function runContinuous(): void {
         process.env.CONTEXT_STILL_SQLITE_CORE_PATH ??
         path.resolve(projectRoot, "data", "context-still-core.sqlite"),
       CONTEXT_STILL_RESIDENT_QUEUE_MODE:
-        process.env.CONTEXT_STILL_RESIDENT_QUEUE_MODE ?? "rust-managed-one-shot",
+        process.env.CONTEXT_STILL_RESIDENT_QUEUE_MODE ?? "continuous",
     },
   });
   process.exitCode = result.status ?? 1;

@@ -163,7 +163,7 @@ fn ensure_surfaces<E: EnvProvider, S: ProcessSupervisor>(
     if !env_flag_default(env, "CONTEXT_STILL_RESIDENT_QUEUE", true) {
         reports.push(disabled_surface("queue-supervisor"));
     } else {
-        reports.push(reconcile_queue_once(env, supervisor, state)?);
+        reports.push(reconcile_queue(env, supervisor, state)?);
     }
 
     if !env_flag_default(env, "CONTEXT_STILL_RESIDENT_AGENT_LOG_SYNC", true) {
@@ -214,6 +214,49 @@ fn disabled_surface(name: &'static str) -> ManagedSurfaceReport {
         pid: None,
         message: format!("{name} disabled by resident runtime env"),
     }
+}
+
+fn reconcile_queue<E: EnvProvider, S: ProcessSupervisor>(
+    env: &E,
+    supervisor: &S,
+    state: &mut ResidentRuntimeState,
+) -> Result<ManagedSurfaceReport, CliError> {
+    match queue_mode(env).as_deref() {
+        Some("rust-managed-one-shot") => reconcile_queue_once(env, supervisor, state),
+        _ => reconcile_queue_continuous(env, supervisor),
+    }
+}
+
+fn reconcile_queue_continuous<E: EnvProvider, S: ProcessSupervisor>(
+    env: &E,
+    supervisor: &S,
+) -> Result<ManagedSurfaceReport, CliError> {
+    let maintenance = queue_lifecycle::service::run_maintenance_once_report(env)?;
+    if maintenance.status != "scheduled"
+        || env_flag_default(env, "CONTEXT_STILL_RESIDENT_REQUIRE_RUST_ONLY", false)
+    {
+        return Ok(ManagedSurfaceReport {
+            name: "queue-supervisor",
+            enabled: true,
+            status: maintenance.status,
+            pid: None,
+            message: maintenance.message,
+        });
+    }
+
+    let report = match queue_lifecycle::service::start_executor_report(env, supervisor) {
+        Ok(report) => report,
+        Err(error) => {
+            return Ok(ManagedSurfaceReport {
+                name: "queue-supervisor",
+                enabled: true,
+                status: "failed".to_string(),
+                pid: None,
+                message: format!("queue-supervisor TS executor failed to start: {error}"),
+            });
+        }
+    };
+    Ok(surface_report("queue-supervisor", true, report))
 }
 
 fn reconcile_queue_once<E: EnvProvider, S: ProcessSupervisor>(
@@ -274,6 +317,12 @@ fn reconcile_queue_once<E: EnvProvider, S: ProcessSupervisor>(
         }
     };
     Ok(surface_report("queue-supervisor", true, report))
+}
+
+fn queue_mode<E: EnvProvider>(env: &E) -> Option<String> {
+    env.var("CONTEXT_STILL_RESIDENT_QUEUE_MODE")
+        .map(|value| value.trim().to_string())
+        .filter(|value| !value.is_empty())
 }
 
 fn reconcile_agent_log_sync<E: EnvProvider, S: ProcessSupervisor>(

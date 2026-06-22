@@ -11,6 +11,10 @@ async function getSqliteCoreDatabase() {
   return getRuntimeSqliteCoreDatabase();
 }
 
+function sqliteTimestamp(date: Date): string {
+  return date.toISOString().replace("T", " ").slice(0, 19);
+}
+
 export async function claimNextQueueJob(params: {
   queueName: DistillationQueueName;
   workerId: string;
@@ -25,7 +29,7 @@ export async function claimNextQueueJob(params: {
       30,
       Math.min(120, Math.floor(groupedConfig.distillation.lockTtlSeconds)),
     );
-    const staleCutoff = new Date(Date.now() - staleSeconds * 1000).toISOString();
+    const staleCutoff = sqliteTimestamp(new Date(Date.now() - staleSeconds * 1000));
     sqlite.db.query("BEGIN IMMEDIATE").run();
     try {
       sqlite.db
@@ -72,7 +76,7 @@ export async function claimNextQueueJob(params: {
                 select id
                 from ${tableName}
                 where status in ('pending', 'paused')
-                  and (next_run_at is null or next_run_at <= CURRENT_TIMESTAMP)
+                  and (next_run_at is null or datetime(next_run_at) <= CURRENT_TIMESTAMP)
                 order by priority desc, created_at asc, id asc
                 limit 1
               `,

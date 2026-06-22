@@ -50,6 +50,7 @@ export const episodeRetrievalUsedForValues = [
 export const episodeRetrievalVerdictValues = [
   "used",
   "not_relevant",
+  "wrong",
   "needs_raw_check",
   "stale",
 ] as const;

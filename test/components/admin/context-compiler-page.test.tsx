@@ -10,7 +10,9 @@ vi.mock("../../../web/src/modules/context-compiler/hooks/context-compiler.hooks"
   useCompileRunDetail: vi.fn(),
   useCompileRunRankingTrace: vi.fn(),
   useCompileRuns: vi.fn(),
+  useDeprecateEpisodeMutation: vi.fn(),
   useDeprecateKnowledgeMutation: vi.fn(),
+  useRunEpisodeFeedbackMutation: vi.fn(),
   useRunKnowledgeFeedbackMutation: vi.fn(),
 }));
 
@@ -142,10 +144,20 @@ function setupHooks() {
     mutateAsync: vi.fn(),
   } as unknown as ReturnType<typeof hooks.useRunKnowledgeFeedbackMutation>);
 
+  mockedHooks.useRunEpisodeFeedbackMutation.mockReturnValue({
+    isPending: false,
+    mutateAsync: vi.fn(),
+  } as unknown as ReturnType<typeof hooks.useRunEpisodeFeedbackMutation>);
+
   mockedHooks.useDeprecateKnowledgeMutation.mockReturnValue({
     isPending: false,
     mutateAsync: vi.fn().mockResolvedValue(undefined),
   } as unknown as ReturnType<typeof hooks.useDeprecateKnowledgeMutation>);
+
+  mockedHooks.useDeprecateEpisodeMutation.mockReturnValue({
+    isPending: false,
+    mutateAsync: vi.fn().mockResolvedValue(undefined),
+  } as unknown as ReturnType<typeof hooks.useDeprecateEpisodeMutation>);
 }
 
 describe("ContextCompilerPage", () => {

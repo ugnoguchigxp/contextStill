@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { resolveDatabaseBackendConfig } from "../../db/backend.js";
 import { getDefaultDbSession } from "../../db/session.js";
@@ -5,11 +6,13 @@ import {
   contextCompileCandidateTraces,
   contextCompileRuns,
   contextPackItems,
+  episodeRetrievalFeedback,
   knowledgeItems,
   knowledgeUsageEvents,
   sources,
 } from "../../db/schema.js";
 import {
+  type CompileRunEpisodeFeedbackResult,
   type CompileRunDetail,
   type CompileRunRankingTrace,
   type CompileRunSelectedItem,
@@ -235,6 +238,24 @@ function normalizeKnowledgeStatus(value: string): "active" | "draft" | "deprecat
     return value;
   }
   return "active";
+}
+
+function isEpisodePackItemKind(itemKind: string): boolean {
+  return itemKind === "episode_card" || itemKind === "episode";
+}
+
+function normalizeEpisodeVerdict(value: string): "used" | "not_used" | "wrong" | null {
+  if (value === "used") return "used";
+  if (value === "not_used" || value === "not_relevant") return "not_used";
+  if (value === "wrong") return "wrong";
+  return null;
+}
+
+function episodeStorageVerdict(
+  value: "used" | "not_used" | "wrong",
+): "used" | "not_relevant" | "wrong" {
+  if (value === "not_used") return "not_relevant";
+  return value;
 }
 
 export async function listRecentCompileRuns(limit = 20): Promise<CompileRunSummary[]> {
@@ -494,6 +515,22 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
     .from(knowledgeUsageEvents)
     .where(eq(knowledgeUsageEvents.runId, runId))
     .orderBy(desc(knowledgeUsageEvents.updatedAt), desc(knowledgeUsageEvents.createdAt));
+  const episodeFeedbackRows = await db
+    .select({
+      episodeCardId: episodeRetrievalFeedback.episodeCardId,
+      verdict: episodeRetrievalFeedback.verdict,
+      reason: episodeRetrievalFeedback.reason,
+      metadata: episodeRetrievalFeedback.metadata,
+      createdAt: episodeRetrievalFeedback.createdAt,
+    })
+    .from(episodeRetrievalFeedback)
+    .where(
+      and(
+        eq(episodeRetrievalFeedback.runId, runId),
+        eq(episodeRetrievalFeedback.runKind, "compile"),
+      ),
+    )
+    .orderBy(desc(episodeRetrievalFeedback.createdAt));
   const evalRows = await listCompileEvalsByRunId(runId);
 
   const parsedPackSnapshot = contextPackSchema.safeParse(run.packSnapshot);
@@ -606,6 +643,27 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
       updatedAt: row.updatedAt ? normalizeDate(row.updatedAt).toISOString() : null,
     });
   }
+  const latestEpisodeFeedbackById = new Map<
+    string,
+    {
+      verdict: "used" | "not_used" | "wrong";
+      actor: "agent" | "user" | "system";
+      reason: string | null;
+      updatedAt: string;
+    }
+  >();
+  for (const row of episodeFeedbackRows) {
+    if (latestEpisodeFeedbackById.has(row.episodeCardId)) continue;
+    const verdict = normalizeEpisodeVerdict(row.verdict);
+    if (!verdict) continue;
+    const metadata = asRecord(row.metadata);
+    latestEpisodeFeedbackById.set(row.episodeCardId, {
+      verdict,
+      actor: normalizeFeedbackActor(metadata.actor),
+      reason: normalizeNullableString(row.reason),
+      updatedAt: normalizeDate(row.createdAt).toISOString(),
+    });
+  }
 
   const detail = {
     run: {
@@ -635,15 +693,23 @@ export async function getCompileRunDetail(runId: string): Promise<CompileRunDeta
       sourceRefs: normalizeStringArray(row.sourceRefs),
     })),
     episodeSignals: itemRows
-      .filter((row) => row.itemKind === "episode_card")
-      .map((row) => ({
-        episodeId: row.itemId,
-        title:
-          packTitleByKey.get(`${row.itemKind}:${row.itemId}`) ??
-          `Episode ${row.itemId.slice(0, 8)}`,
-        section: "procedures" as const,
-        sourceRefs: normalizeStringArray(row.sourceRefs),
-      })),
+      .filter((row) => isEpisodePackItemKind(row.itemKind))
+      .map((row) => {
+        const feedback = latestEpisodeFeedbackById.get(row.itemId);
+        return {
+          episodeId: row.itemId,
+          title:
+            packTitleByKey.get(`episode_card:${row.itemId}`) ??
+            packTitleByKey.get(`${row.itemKind}:${row.itemId}`) ??
+            `Episode ${row.itemId.slice(0, 8)}`,
+          section: "procedures" as const,
+          sourceRefs: normalizeStringArray(row.sourceRefs),
+          effectiveVerdict: feedback?.verdict ?? null,
+          effectiveActor: feedback?.actor ?? null,
+          effectiveReason: feedback?.reason ?? null,
+          updatedAt: feedback?.updatedAt ?? null,
+        };
+      }),
     knowledgeFeedback: feedbackRows.map((row) => ({
       id: row.id,
       runId: row.runId,
@@ -989,6 +1055,79 @@ export async function getCompileRunRankingTrace(
     },
     items: sortedItems,
   });
+}
+
+export async function saveRunEpisodeFeedback(params: {
+  runId: string;
+  items: Array<{ episodeId: string; verdict: "used" | "not_used" | "wrong"; reason?: string }>;
+}): Promise<CompileRunEpisodeFeedbackResult> {
+  if (isSqliteBackend()) {
+    const sqlite = await sqliteRepository();
+    return sqlite.saveRunEpisodeFeedbackSqlite(params);
+  }
+
+  const [run] = await db
+    .select({ id: contextCompileRuns.id })
+    .from(contextCompileRuns)
+    .where(eq(contextCompileRuns.id, params.runId))
+    .limit(1);
+  if (!run) {
+    throw Object.assign(new Error("Compile run not found."), { statusCode: 404 });
+  }
+
+  const selectableRows = await db
+    .select({ itemId: contextPackItems.itemId })
+    .from(contextPackItems)
+    .where(
+      and(
+        eq(contextPackItems.runId, params.runId),
+        inArray(contextPackItems.itemKind, ["episode_card", "episode"]),
+      ),
+    );
+  const selectableEpisodeIds = new Set(selectableRows.map((row) => row.itemId));
+  const seen = new Set<string>();
+  const normalizedItems = params.items.map((item) => {
+    const episodeId = item.episodeId.trim();
+    if (seen.has(episodeId)) {
+      throw Object.assign(new Error(`Duplicate episodeId in request: ${episodeId}`), {
+        statusCode: 400,
+      });
+    }
+    seen.add(episodeId);
+    if (!selectableEpisodeIds.has(episodeId)) {
+      throw Object.assign(
+        new Error(`Episode IDs are not in selected items for this run: ${episodeId}`),
+        { statusCode: 400 },
+      );
+    }
+    return {
+      episodeId,
+      verdict: item.verdict,
+      reason: typeof item.reason === "string" && item.reason.trim() ? item.reason.trim() : null,
+    };
+  });
+
+  const now = new Date();
+  if (normalizedItems.length > 0) {
+    await db.insert(episodeRetrievalFeedback).values(
+      normalizedItems.map((item) => ({
+        id: randomUUID(),
+        episodeCardId: item.episodeId,
+        runKind: "compile",
+        runId: params.runId,
+        usedFor: "compile",
+        verdict: episodeStorageVerdict(item.verdict),
+        reason: item.reason,
+        metadata: { actor: "user" },
+        createdAt: now,
+      })),
+    );
+  }
+
+  return {
+    savedCount: normalizedItems.length,
+    affectedEpisodeIds: normalizedItems.map((item) => item.episodeId),
+  };
 }
 
 export async function getLatestCompileRunSnapshot(): Promise<CompileRunSnapshot | null> {

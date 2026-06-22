@@ -260,7 +260,7 @@ async function runLiveOwnershipCheck() {
     if (processList.stderr.trim()) console.error(processList.stderr.trimEnd());
     process.exit(1);
   }
-  for (const pattern of ["src/cli/queue-supervisor.ts --continuous", "src/mcp/http-server.ts"]) {
+  for (const pattern of ["src/mcp/http-server.ts"]) {
     if (processList.stdout.includes(pattern)) {
       console.error("[verify:rust-daemon] live ownership check failed");
       console.error(`Unexpected daemon-era Bun process still running: ${pattern}`);

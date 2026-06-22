@@ -147,3 +147,46 @@ fn status_report_preserves_state_status_in_json() {
 
     std::fs::remove_dir_all(&app_dir).unwrap();
 }
+
+#[test]
+fn start_repairs_pid_file_running_state_when_state_lost_pid() {
+    let app_dir = temp_app_dir();
+    let env = MapEnv::from_pairs(vec![
+        ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
+        ("CONTEXT_STILL_PROJECT_ROOT", app_dir.to_str().unwrap()),
+    ]);
+    let supervisor = MockSupervisor::new();
+    let pid = supervisor
+        .spawn(
+            "bun",
+            &["run", "test.ts"],
+            &app_dir.join("logs/test.log"),
+            &app_dir,
+        )
+        .unwrap();
+    let run_dir = app_dir.join("run");
+    repository::write_pid(&run_dir, SPEC.state_name, pid).unwrap();
+    repository::write_state(
+        &run_dir,
+        SPEC.state_name,
+        &ProcessState {
+            pid: None,
+            status: "scheduled".to_string(),
+            log_path: app_dir.join("logs/test.log").to_string_lossy().into_owned(),
+            ..ProcessState::default()
+        },
+    )
+    .unwrap();
+
+    let report = start_report(&SPEC, &env, &supervisor).unwrap();
+
+    assert_eq!(report.status, "already_running");
+    assert_eq!(report.pid, Some(pid));
+    let state = repository::read_state(&run_dir, SPEC.state_name)
+        .unwrap()
+        .unwrap();
+    assert_eq!(state.pid, Some(pid));
+    assert_eq!(state.status, "running");
+
+    std::fs::remove_dir_all(&app_dir).unwrap();
+}

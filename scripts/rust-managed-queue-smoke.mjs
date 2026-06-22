@@ -11,6 +11,7 @@ const env = {
   CONTEXT_STILL_PROJECT_ROOT: root,
   CONTEXT_STILL_DB_BACKEND: "sqlite",
   CONTEXT_STILL_SQLITE_CORE_PATH: path.join(appDataDir, "queue-smoke.sqlite"),
+  CONTEXT_STILL_RESIDENT_QUEUE_MODE: "rust-managed-one-shot",
   CONTEXT_STILL_MCP_PORT: "0",
 };
 fs.closeSync(fs.openSync(env.CONTEXT_STILL_SQLITE_CORE_PATH, "w"));

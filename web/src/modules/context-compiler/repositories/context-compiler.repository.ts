@@ -1,5 +1,6 @@
 export type CompileRunSource = "ui" | "mcp" | "cli" | "unknown";
 export type CompileRunKnowledgeVerdict = "used" | "not_used" | "off_topic" | "wrong";
+export type CompileRunEpisodeVerdict = "used" | "not_used" | "wrong";
 
 export type CompileRequest = {
   goal: string;
@@ -105,6 +106,17 @@ export type CompileRunKnowledgeSignal = {
   updatedAt: string | null;
 };
 
+export type CompileRunEpisodeSignal = {
+  episodeId: string;
+  title: string;
+  section: "procedures";
+  sourceRefs: string[];
+  effectiveVerdict: CompileRunEpisodeVerdict | null;
+  effectiveActor: "agent" | "user" | "system" | null;
+  effectiveReason: string | null;
+  updatedAt: string | null;
+};
+
 export type CompileRunDetail = {
   run: CompileRunSummary & {
     tokenBudget: number;
@@ -113,6 +125,7 @@ export type CompileRunDetail = {
   pack: CompilePack | null;
   outputMarkdown?: string | null;
   selectedItems: CompileRunSelectedItem[];
+  episodeSignals: CompileRunEpisodeSignal[];
   knowledgeFeedback: CompileRunKnowledgeFeedback[];
   knowledgeSignals: CompileRunKnowledgeSignal[];
   evaluations: Array<{
@@ -205,12 +218,23 @@ export type CompileRunKnowledgeFeedbackWriteItem = {
   reason?: string;
 };
 
+export type CompileRunEpisodeFeedbackWriteItem = {
+  episodeId: string;
+  verdict: CompileRunEpisodeVerdict;
+  reason?: string;
+};
+
 export type CompileRunKnowledgeFeedbackResult = {
   savedCount: number;
   updatedCount: number;
   queueCreatedCount: number;
   queueDismissedCount: number;
   affectedKnowledgeIds: string[];
+};
+
+export type CompileRunEpisodeFeedbackResult = {
+  savedCount: number;
+  affectedEpisodeIds: string[];
 };
 
 export async function compilePack(input: CompileRequest): Promise<CompileResponse> {
@@ -271,6 +295,22 @@ export async function submitRunKnowledgeFeedback(
   return json.feedback;
 }
 
+export async function submitRunEpisodeFeedback(
+  runId: string,
+  items: CompileRunEpisodeFeedbackWriteItem[],
+): Promise<CompileRunEpisodeFeedbackResult> {
+  const response = await fetch(`/api/context/runs/${encodeURIComponent(runId)}/episode-feedback`, {
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ items }),
+  });
+  if (!response.ok) {
+    throw new Error(`Save episode feedback failed: ${response.status}`);
+  }
+  const json = (await response.json()) as { feedback: CompileRunEpisodeFeedbackResult };
+  return json.feedback;
+}
+
 export async function deprecateKnowledgeItem(knowledgeId: string): Promise<void> {
   const response = await fetch(`/api/knowledge/${encodeURIComponent(knowledgeId)}`, {
     method: "PUT",
@@ -279,5 +319,18 @@ export async function deprecateKnowledgeItem(knowledgeId: string): Promise<void>
   });
   if (!response.ok) {
     throw new Error(`Deprecate knowledge failed: ${response.status}`);
+  }
+}
+
+export async function deprecateRunEpisode(runId: string, episodeId: string): Promise<void> {
+  const response = await fetch(
+    `/api/context/runs/${encodeURIComponent(runId)}/episodes/${encodeURIComponent(episodeId)}/deprecate`,
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+    },
+  );
+  if (!response.ok) {
+    throw new Error(`Deprecate episode failed: ${response.status}`);
   }
 }

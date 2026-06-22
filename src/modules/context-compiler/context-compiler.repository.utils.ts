@@ -15,6 +15,7 @@ export function normalizeRunStatus(value: unknown): "ok" | "degraded" | "failed"
 }
 
 export function normalizeCompileRunSource(value: unknown): CompileRunSource {
+  if (value === "mcp-rust" || value === "rust-mcp-native") return "mcp";
   const parsed = compileRunSourceSchema.safeParse(value);
   return parsed.success ? parsed.data : "unknown";
 }
@@ -22,6 +23,11 @@ export function normalizeCompileRunSource(value: unknown): CompileRunSource {
 export function normalizeDate(value: unknown): Date {
   if (value instanceof Date) return value;
   if (typeof value === "string") {
+    const unixMs = value.match(/^unix-ms:(\d+)$/);
+    if (unixMs) {
+      const parsedMillis = Number(unixMs[1]);
+      if (Number.isSafeInteger(parsedMillis)) return new Date(parsedMillis);
+    }
     const parsed = new Date(value);
     if (!Number.isNaN(parsed.getTime())) return parsed;
   }
@@ -90,7 +96,9 @@ export function extractCompileRunSignals(packSnapshot: unknown): {
   const outputMarkdown =
     typeof responseComposer.outputMarkdown === "string"
       ? responseComposer.outputMarkdown.trim()
-      : "";
+      : typeof pack.outputMarkdown === "string"
+        ? pack.outputMarkdown.trim()
+        : "";
   return {
     selectedItemCount: rules + procedures,
     outputMarkdownKind: outputMarkdown && outputMarkdown !== "No Content" ? "narrative" : null,

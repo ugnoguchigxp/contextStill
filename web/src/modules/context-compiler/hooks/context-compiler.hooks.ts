@@ -1,12 +1,15 @@
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   type CompileRequest,
+  type CompileRunEpisodeFeedbackWriteItem,
   type CompileRunKnowledgeFeedbackWriteItem,
   compilePack,
   deprecateKnowledgeItem,
+  deprecateRunEpisode,
   fetchRecentRuns,
   fetchRunDetail,
   fetchRunRankingTrace,
+  submitRunEpisodeFeedback,
   submitRunKnowledgeFeedback,
 } from "../repositories/context-compiler.repository";
 
@@ -57,6 +60,17 @@ export function useRunKnowledgeFeedbackMutation() {
   });
 }
 
+export function useRunEpisodeFeedbackMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { runId: string; items: CompileRunEpisodeFeedbackWriteItem[] }) =>
+      submitRunEpisodeFeedback(input.runId, input.items),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: ["compile-run-detail", variables.runId] });
+    },
+  });
+}
+
 export function useDeprecateKnowledgeMutation() {
   const queryClient = useQueryClient();
   return useMutation({
@@ -69,6 +83,17 @@ export function useDeprecateKnowledgeMutation() {
       });
       await queryClient.invalidateQueries({ queryKey: ["knowledge"] });
       await queryClient.invalidateQueries({ queryKey: ["graph"] });
+    },
+  });
+}
+
+export function useDeprecateEpisodeMutation() {
+  const queryClient = useQueryClient();
+  return useMutation({
+    mutationFn: (input: { runId: string; episodeId: string }) =>
+      deprecateRunEpisode(input.runId, input.episodeId),
+    onSuccess: async (_data, variables) => {
+      await queryClient.invalidateQueries({ queryKey: ["compile-run-detail", variables.runId] });
     },
   });
 }

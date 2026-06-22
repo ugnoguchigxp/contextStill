@@ -80,6 +80,26 @@ pub fn start_report<E: EnvProvider, S: ProcessSupervisor>(
 
     if let Ok(Some(pid)) = repository::read_pid(run_dir, spec.state_name) {
         if supervisor.is_alive(pid) {
+            let log_path = paths
+                .logs_dir
+                .join(spec.log_file)
+                .to_string_lossy()
+                .into_owned();
+            let command = resolve_command_lossy(spec);
+            let state = ProcessState {
+                pid: Some(pid),
+                status: "running".to_string(),
+                log_path: log_path.clone(),
+                started_at: None,
+                updated_at: Some(now_timestamp()),
+                exit_code: None,
+                exit_signal: None,
+                last_error: None,
+                command: Some(command.clone()),
+                args: Some(args_vec(spec)),
+                ..ProcessState::default()
+            };
+            let _ = repository::write_state(run_dir, spec.state_name, &state);
             let message = format!("{} already running (pid={})", spec.display_name, pid);
             return Ok(LifecycleReport {
                 process: spec.state_name,
@@ -87,19 +107,13 @@ pub fn start_report<E: EnvProvider, S: ProcessSupervisor>(
                 status: "already_running".to_string(),
                 message,
                 pid: Some(pid),
-                log_path: Some(
-                    paths
-                        .logs_dir
-                        .join(spec.log_file)
-                        .to_string_lossy()
-                        .into_owned(),
-                ),
+                log_path: Some(log_path),
                 started_at: None,
-                updated_at: Some(now_timestamp()),
+                updated_at: state.updated_at,
                 exit_code: None,
                 exit_signal: None,
                 last_error: None,
-                command: Some(resolve_command_lossy(spec)),
+                command: Some(command),
                 args: Some(args_vec(spec)),
             });
         }

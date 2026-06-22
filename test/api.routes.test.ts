@@ -89,11 +89,20 @@ vi.mock("../api/modules/context-compiler/context-compiler.service.js", () => ({
   runKnowledgeFeedbackParamSchema: z.object({
     id: z.string().uuid(),
   }),
+  runEpisodeFeedbackParamSchema: z.object({
+    id: z.string().uuid(),
+  }),
+  runEpisodeDeprecateParamSchema: z.object({
+    id: z.string().uuid(),
+    episodeId: z.string().min(1),
+  }),
   listRunsForApi: vi.fn(),
   listRunsQuerySchema: z.object({
     limit: z.coerce.number().int().min(1).max(100).default(20),
   }),
   saveRunKnowledgeFeedbackForApi: vi.fn(),
+  saveRunEpisodeFeedbackForApi: vi.fn(),
+  deprecateRunEpisodeForApi: vi.fn(),
 }));
 
 const validRunRankingTrace = {

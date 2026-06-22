@@ -216,7 +216,7 @@ function runnableSql(queueName: DistillationQueueName, tableName: string): strin
   const nextRunCondition =
     queueName === "finalizeDistille"
       ? ""
-      : "and (next_run_at is null or next_run_at <= CURRENT_TIMESTAMP)";
+      : "and (next_run_at is null or datetime(next_run_at) <= CURRENT_TIMESTAMP)";
   const extraColumns =
     queueName === "findingCandidate"
       ? ", source_kind"
@@ -234,8 +234,8 @@ function runnableSql(queueName: DistillationQueueName, tableName: string): strin
 }
 
 function sortCandidates(a: RunnableCandidate, b: RunnableCandidate): number {
-  if (a.effectivePriority !== b.effectivePriority) return a.effectivePriority - b.effectivePriority;
   if (a.queueOrder !== b.queueOrder) return a.queueOrder - b.queueOrder;
+  if (a.effectivePriority !== b.effectivePriority) return a.effectivePriority - b.effectivePriority;
   if (a.priority !== b.priority) return b.priority - a.priority;
   if (a.createdAtMs !== b.createdAtMs) return a.createdAtMs - b.createdAtMs;
   return a.id.localeCompare(b.id);
@@ -406,7 +406,7 @@ export async function claimNextJobWithProviderLease(params: {
           tableName,
           id: row.id,
           queueOrder,
-          effectivePriority: queueOrder - Math.floor(waitingSeconds / agingSeconds),
+          effectivePriority: -Math.floor(waitingSeconds / agingSeconds),
           priority: Number(row.priority ?? 0),
           createdAtMs,
           preferredTargetIds,
