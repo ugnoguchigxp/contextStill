@@ -1,8 +1,25 @@
+use std::path::PathBuf;
+
 use serde_json::{json, Value};
 
-pub(crate) fn handle_native_dispatch(method: &str, params: &Value) -> Option<Value> {
+use super::native_handlers;
+use super::native_resources;
+
+#[derive(Debug, Clone)]
+pub(crate) struct NativeToolContext {
+    pub(crate) project_root: PathBuf,
+    pub(crate) sqlite_core_path: PathBuf,
+}
+
+pub(crate) fn handle_native_dispatch(
+    method: &str,
+    params: &Value,
+    context: &NativeToolContext,
+) -> Option<Value> {
     match method {
         "tools/list" => Some(json!({ "tools": exposed_tools() })),
+        "resources/list" => Some(native_resources::list_resources()),
+        "resources/read" => Some(native_resources::read_resource(params, context)),
         "tools/call" => {
             let name = params
                 .get("name")
@@ -10,6 +27,21 @@ pub(crate) fn handle_native_dispatch(method: &str, params: &Value) -> Option<Val
                 .unwrap_or_default();
             match name {
                 "initial_instructions" => Some(initial_instructions_result()),
+                "context_compile" => Some(native_handlers::context_compile(params, context)),
+                "doctor" => Some(native_handlers::doctor(context)),
+                "compile_eval" => Some(native_handlers::compile_eval(params, context)),
+                "context_decision" => Some(native_handlers::context_decision(params, context)),
+                "context_decision_feedback" => {
+                    Some(native_handlers::context_decision_feedback(params, context))
+                }
+                "search_knowledge" => Some(native_handlers::search_knowledge(params, context)),
+                "register_candidates" => {
+                    Some(native_handlers::register_candidates(params, context))
+                }
+                "search_memory" => Some(native_handlers::search_memory(params, context)),
+                "fetch_memory" => Some(native_handlers::fetch_memory(params, context)),
+                "search_episodes" => Some(native_handlers::search_episodes(params, context)),
+                "fetch_episode" => Some(native_handlers::fetch_episode(params, context)),
                 _ => None,
             }
         }
@@ -23,8 +55,8 @@ pub(crate) fn exposed_tool_count() -> usize {
 
 pub(crate) fn tool_owner_inventory() -> Value {
     json!({
-        "rustNative": ["initial_instructions"],
-        "tsSidecar": [
+        "rustNative": [
+            "initial_instructions",
             "context_compile",
             "compile_eval",
             "context_decision",
@@ -37,10 +69,11 @@ pub(crate) fn tool_owner_inventory() -> Value {
             "fetch_episode",
             "doctor"
         ],
+        "tsSidecar": [],
         "disabled": [],
         "counts": {
-            "rustNative": 1,
-            "tsSidecar": 11,
+            "rustNative": 12,
+            "tsSidecar": 0,
             "disabled": 0
         }
     })

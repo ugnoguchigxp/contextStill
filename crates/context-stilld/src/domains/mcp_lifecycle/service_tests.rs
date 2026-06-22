@@ -1,3 +1,4 @@
+use super::native_tools::tool_owner_inventory;
 use super::service::*;
 use crate::shared::config::MapEnv;
 use crate::shared::process::MockSupervisor;
@@ -99,4 +100,27 @@ fn sessions_report_reads_daemon_session_state() {
     assert_eq!(report.sessions[0].session_id, "s1");
 
     cleanup_temp_app_dir(&app_dir);
+}
+
+#[test]
+fn tool_owner_inventory_tracks_rust_native_migration() {
+    let inventory = tool_owner_inventory();
+
+    assert_eq!(inventory["counts"]["rustNative"], 12);
+    assert_eq!(inventory["counts"]["tsSidecar"], 0);
+    assert!(inventory["rustNative"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool == "compile_eval"));
+    assert!(inventory["rustNative"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool == "doctor"));
+    assert!(inventory["rustNative"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|tool| tool == "search_knowledge"));
 }

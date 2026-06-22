@@ -23,13 +23,49 @@ const localLlmModelTestBodySchema = z.object({
   model: z.string().trim().min(1),
 });
 
+function settingsValidationIssues(error: z.ZodError): Array<{
+  path: string;
+  code: string;
+  message: string;
+}> {
+  return error.issues.map((issue) => ({
+    path: issue.path.map(String).join(".") || "(root)",
+    code: issue.code,
+    message: issue.message,
+  }));
+}
+
+function logSettingsUpdateRejected(
+  reason: "invalid_json" | "validation_failed",
+  details: Record<string, unknown>,
+): void {
+  console.error("[settings] update rejected", JSON.stringify({ reason, ...details }));
+}
+
 export const settingsRouter = new Hono()
   .get("/", async (c) => {
     const result = await getSettingsForApi();
     return c.json(result);
   })
-  .put("/", zValidator("json", settingsUpdateRequestSchema), async (c) => {
-    const result = await updateSettingsForApi(c.req.valid("json"));
+  .put("/", async (c) => {
+    let payload: unknown;
+    try {
+      payload = await c.req.json();
+    } catch (error) {
+      logSettingsUpdateRejected("invalid_json", {
+        message: error instanceof Error ? error.message : String(error),
+      });
+      return c.json({ error: "Invalid JSON payload." }, 400);
+    }
+
+    const parsed = settingsUpdateRequestSchema.safeParse(payload);
+    if (!parsed.success) {
+      const issues = settingsValidationIssues(parsed.error);
+      logSettingsUpdateRejected("validation_failed", { issueCount: issues.length, issues });
+      return c.json({ error: "Invalid settings payload.", issues }, 400);
+    }
+
+    const result = await updateSettingsForApi(parsed.data);
     return c.json(result);
   })
   .post(

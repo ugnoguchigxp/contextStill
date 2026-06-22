@@ -455,10 +455,54 @@ export const runtimeSecretUpdateSchema = z
     message: "value または clear=true のどちらかが必要です",
   });
 
-export const settingsUpdateRequestSchema = z.object({
-  settings: runtimeSettingsEditableSchema,
-  secrets: z.record(runtimeSecretUpdateSchema).optional(),
-  updatedBy: z.string().trim().max(120).optional(),
-});
+function objectRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : null;
+}
+
+function cloneRouteInput(value: unknown): unknown {
+  const route = objectRecord(value);
+  if (!route) return value;
+  return {
+    ...route,
+    fallback: Array.isArray(route.fallback) ? [...route.fallback] : route.fallback,
+    azureDeploymentSlots: Array.isArray(route.azureDeploymentSlots)
+      ? [...route.azureDeploymentSlots]
+      : route.azureDeploymentSlots,
+  };
+}
+
+function backfillRuntimeSettingsUpdateInput(value: unknown): unknown {
+  const input = objectRecord(value);
+  const settings = objectRecord(input?.settings);
+  const taskRouting = objectRecord(settings?.taskRouting);
+  if (!input || !settings || !taskRouting) return value;
+
+  const nextTaskRouting = { ...taskRouting };
+  if (!objectRecord(nextTaskRouting.episodeDistiller)) {
+    nextTaskRouting.episodeDistiller = cloneRouteInput(nextTaskRouting.webSourceResearch);
+  }
+  if (!objectRecord(nextTaskRouting.mergeActivationFinalize)) {
+    nextTaskRouting.mergeActivationFinalize = cloneRouteInput(nextTaskRouting.finalizeDistille);
+  }
+
+  return {
+    ...input,
+    settings: {
+      ...settings,
+      taskRouting: nextTaskRouting,
+    },
+  };
+}
+
+export const settingsUpdateRequestSchema = z.preprocess(
+  backfillRuntimeSettingsUpdateInput,
+  z.object({
+    settings: runtimeSettingsEditableSchema,
+    secrets: z.record(runtimeSecretUpdateSchema).optional(),
+    updatedBy: z.string().trim().max(120).optional(),
+  }),
+);
 
 export type RuntimeSettingsUpdateRequest = z.infer<typeof settingsUpdateRequestSchema>;

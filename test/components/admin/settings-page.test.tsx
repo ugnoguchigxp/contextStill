@@ -76,6 +76,17 @@ function buildSettingsView(): RuntimeSettingsView {
         targetPriorityOrder: ["knowledge_candidate", "web_ingest", "wiki_file", "vibe_memory"],
       },
     },
+    providerPools: [
+      {
+        id: "local-llm-default",
+        label: "Local LLM pool",
+        targets: [{ provider: "local-llm", localLlmModelId: "local-primary" }],
+        maxConcurrent: 1,
+        staleLeaseSeconds: 600,
+        enabled: true,
+        lowPriorityAgingSeconds: 1800,
+      },
+    ],
     providers: {
       openai: {
         enabled: true,
@@ -158,33 +169,51 @@ function buildSettingsView(): RuntimeSettingsView {
       webSourceResearch: {
         provider: "local-llm",
         model: "gemma-4-e4b-it",
+        providerPoolId: "local-llm-default",
+        fallback: ["azure-openai"],
+      },
+      episodeDistiller: {
+        provider: "local-llm",
+        model: "gemma-4-e4b-it",
+        providerPoolId: "local-llm-default",
         fallback: ["azure-openai"],
       },
       coverEvidence: {
         sourceSupport: {
           provider: "local-llm",
           model: "gemma-4-e4b-it",
+          providerPoolId: "local-llm-default",
           fallback: ["azure-openai"],
         },
         externalEvidence: {
           provider: "local-llm",
           model: "gemma-4-e4b-it",
+          providerPoolId: "local-llm-default",
           fallback: ["azure-openai"],
         },
         mcpEvidence: {
           provider: "local-llm",
           model: "gemma-4-e4b-it",
+          providerPoolId: "local-llm-default",
           fallback: ["azure-openai"],
         },
       },
       finalizeDistille: {
         provider: "local-llm",
         model: "gemma-4-e4b-it",
+        providerPoolId: "local-llm-default",
+        fallback: ["azure-openai"],
+      },
+      mergeActivationFinalize: {
+        provider: "local-llm",
+        model: "gemma-4-e4b-it",
+        providerPoolId: "local-llm-default",
         fallback: ["azure-openai"],
       },
       deadZoneMergeReview: {
         provider: "local-llm",
         model: "gemma-4-e4b-it",
+        providerPoolId: "local-llm-default",
         fallback: [],
       },
       agenticCompile: {

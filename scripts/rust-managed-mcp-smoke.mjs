@@ -63,7 +63,7 @@ try {
   if (!Number.isInteger(smoke.toolCount) || smoke.toolCount <= 0) {
     throw new Error(`MCP smoke reported no tools: ${JSON.stringify(smoke)}`);
   }
-  if (smoke.toolOwners?.counts?.rustNative !== 1 || smoke.toolOwners?.counts?.tsSidecar !== 11) {
+  if (smoke.toolOwners?.counts?.rustNative !== 12 || smoke.toolOwners?.counts?.tsSidecar !== 0) {
     throw new Error(
       `MCP smoke reported unexpected tool owners: ${JSON.stringify(smoke.toolOwners)}`,
     );

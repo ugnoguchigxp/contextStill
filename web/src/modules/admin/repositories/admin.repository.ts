@@ -2169,6 +2169,7 @@ export type RuntimeSettingsRoute = {
   provider: RuntimeProviderSetting;
   model?: string;
   localLlmModel?: string;
+  providerPoolId?: string;
   fallback: RuntimeProviderName[];
   azureDeploymentSlots?: number[];
 };
@@ -2194,10 +2195,35 @@ export type AzureOpenAiDeploymentSettings = {
 };
 
 export type LocalLlmModelSettings = {
+  id?: string;
   name: string;
   apiBaseUrl: string;
   apiPath: string;
   model: string;
+};
+
+export type RuntimeProviderPoolTarget =
+  | {
+      provider: "local-llm";
+      localLlmModelId: string;
+    }
+  | {
+      provider: "azure-openai";
+      deploymentSlot: number;
+    }
+  | {
+      provider: "openai" | "bedrock" | "codex";
+      targetId: string;
+    };
+
+export type RuntimeProviderPool = {
+  id: string;
+  label: string;
+  targets: RuntimeProviderPoolTarget[];
+  maxConcurrent: number;
+  staleLeaseSeconds: number;
+  enabled: boolean;
+  lowPriorityAgingSeconds: number;
 };
 
 export type DistillationPriorityTargetKind =
@@ -2212,6 +2238,7 @@ export type RuntimeSettingsEditable = {
       targetPriorityOrder: DistillationPriorityTargetKind[];
     };
   };
+  providerPools: RuntimeProviderPool[];
   providers: {
     openai: {
       enabled: boolean;
@@ -2251,6 +2278,7 @@ export type RuntimeSettingsEditable = {
       throttling: FindCandidateThrottlingSettings;
     };
     webSourceResearch: RuntimeSettingsRoute;
+    episodeDistiller: RuntimeSettingsRoute;
     coverEvidence: {
       sourceSupport: RuntimeSettingsRoute;
       externalEvidence: RuntimeSettingsRoute;
@@ -2258,6 +2286,7 @@ export type RuntimeSettingsEditable = {
     };
     deadZoneMergeReview: RuntimeSettingsRoute;
     finalizeDistille: RuntimeSettingsRoute;
+    mergeActivationFinalize: RuntimeSettingsRoute;
     agenticCompile: {
       enabled: boolean;
       provider: RuntimeProviderName;

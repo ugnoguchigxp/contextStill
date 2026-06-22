@@ -1638,6 +1638,135 @@ describe("sqlite runtime support repositories", () => {
     expect(secondClaim?.providerLease.targetId).toBe(vibeTarget.id);
   });
 
+  test("claims different queues concurrently when task routes use different provider targets", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const settings = structuredClone(getRuntimeSettingsSnapshot());
+    const episodeTarget = {
+      id: "local-episode-route",
+      name: "Episode route local model",
+      apiBaseUrl: "http://127.0.0.1:44454",
+      apiPath: "/v1/chat/completions",
+      model: "qwen-test",
+    };
+    const coveringTarget = {
+      id: "local-covering-route",
+      name: "Covering route local model",
+      apiBaseUrl: "http://127.0.0.1:44455",
+      apiPath: "/v1/chat/completions",
+      model: "qwen-test",
+    };
+    const episodeRouteTarget = JSON.stringify({
+      apiBaseUrl: episodeTarget.apiBaseUrl,
+      apiPath: episodeTarget.apiPath,
+      model: episodeTarget.model,
+    });
+    const coveringRouteTarget = JSON.stringify({
+      apiBaseUrl: coveringTarget.apiBaseUrl,
+      apiPath: coveringTarget.apiPath,
+      model: coveringTarget.model,
+    });
+    settings.providers["local-llm"] = {
+      enabled: true,
+      apiBaseUrl: episodeTarget.apiBaseUrl,
+      apiPath: episodeTarget.apiPath,
+      model: episodeTarget.model,
+      models: [episodeTarget, coveringTarget],
+    };
+    settings.providerPools = [
+      {
+        id: "local-llm-default",
+        label: "Local LLM",
+        enabled: true,
+        maxConcurrent: 2,
+        staleLeaseSeconds: 120,
+        lowPriorityAgingSeconds: 1800,
+        targets: [
+          { provider: "local-llm", localLlmModelId: episodeTarget.id },
+          { provider: "local-llm", localLlmModelId: coveringTarget.id },
+        ],
+      },
+    ];
+    settings.taskRouting.episodeDistiller = {
+      provider: "local-llm",
+      model: episodeRouteTarget,
+      localLlmModel: episodeRouteTarget,
+      providerPoolId: "local-llm-default",
+      fallback: [],
+    };
+    settings.taskRouting.coverEvidence.sourceSupport = {
+      provider: "local-llm",
+      model: coveringRouteTarget,
+      localLlmModel: coveringRouteTarget,
+      providerPoolId: "local-llm-default",
+      fallback: [],
+    };
+    settings.taskRouting.coverEvidence.externalEvidence = {
+      provider: "local-llm",
+      model: coveringRouteTarget,
+      localLlmModel: coveringRouteTarget,
+      providerPoolId: "local-llm-default",
+      fallback: [],
+    };
+    settings.taskRouting.coverEvidence.mcpEvidence = {
+      provider: "local-llm",
+      model: coveringRouteTarget,
+      localLlmModel: coveringRouteTarget,
+      providerPoolId: "local-llm-default",
+      fallback: [],
+    };
+    await saveRuntimeSettings({ settings, updatedBy: "sqlite-runtime-test" });
+
+    sqlite.db
+      .query(
+        `
+        insert into covering_evidence_queue (
+          id, found_candidate_id, status, priority, payload, metadata, created_at, updated_at
+        ) values (
+          'covering-different-provider', 'candidate-different-provider', 'pending', 50, '{}', '{}',
+          '2026-06-22 01:00:00', '2026-06-22 01:00:00'
+        );
+        `,
+      )
+      .run();
+    sqlite.db
+      .query(
+        `
+        insert into episode_distiller_queue (
+          id, source_kind, source_key, source_uri, distillation_version,
+          status, priority, payload, metadata, created_at, updated_at
+        ) values (
+          'episode-different-provider', 'vibe_memory', 'episode-source-different-provider',
+          'vibe-memory://episode-source-different-provider', 'v-test',
+          'pending', 50, '{}', '{}', '2026-06-22 01:00:01', '2026-06-22 01:00:01'
+        );
+        `,
+      )
+      .run();
+
+    const firstClaim = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[0],
+      priorityQueues: ["coveringEvidence", "episodeDistiller"],
+      workerId: "sqlite-provider-different-queue-worker-1",
+    });
+    const secondClaim = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[0],
+      priorityQueues: ["coveringEvidence", "episodeDistiller"],
+      workerId: "sqlite-provider-different-queue-worker-2",
+    });
+
+    expect(firstClaim?.id).toBe("covering-different-provider");
+    expect(firstClaim?.providerLease.targetId).toBe(coveringTarget.id);
+    expect(secondClaim?.id).toBe("episode-different-provider");
+    expect(secondClaim?.providerLease.targetId).toBe(episodeTarget.id);
+    const activeLeases = sqlite.db
+      .query<{ target_id: string }, []>(
+        "select target_id from llm_provider_leases where status = 'active' order by target_id",
+      )
+      .all()
+      .map((row) => row.target_id);
+    expect(activeLeases).toEqual([coveringTarget.id, episodeTarget.id].sort());
+  });
+
   test("keeps same-route findingCandidate work waiting even when another pool target is free", async () => {
     const settings = structuredClone(getRuntimeSettingsSnapshot());
     const preferredTarget = {

@@ -1,9 +1,11 @@
+use std::io;
+use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
-use std::time::SystemTime;
+use std::time::{Duration, SystemTime};
 
 use crate::domains::{mcp_lifecycle, resident_runtime};
 use crate::shared::config::MapEnv;
-use crate::shared::process::{MockSupervisor, ProcessSupervisor};
+use crate::shared::process::{MockSupervisor, ProcessSupervisor, WaitOutcome};
 use rusqlite::Connection;
 
 static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
@@ -128,6 +130,74 @@ fn resident_run_once_invokes_queue_executor_for_pending_sqlite_jobs() {
                     "--json".to_string(),
                 ]
     }));
+
+    std::fs::remove_dir_all(&app_dir).unwrap();
+}
+
+#[test]
+fn resident_run_once_reports_queue_executor_spawn_failure_without_failing_daemon() {
+    struct FailingRunSupervisor;
+
+    impl ProcessSupervisor for FailingRunSupervisor {
+        fn spawn(
+            &self,
+            _command: &str,
+            _args: &[&str],
+            _log_path: &Path,
+            _cwd: &Path,
+        ) -> io::Result<u32> {
+            Ok(1000)
+        }
+
+        fn run_and_wait(
+            &self,
+            _command: &str,
+            _args: &[&str],
+            _log_path: &Path,
+            _cwd: &Path,
+            _timeout: Duration,
+        ) -> io::Result<WaitOutcome> {
+            Err(io::Error::new(
+                io::ErrorKind::NotFound,
+                "simulated executor spawn failure",
+            ))
+        }
+
+        fn kill(&self, _pid: u32, _signal: &str) -> io::Result<()> {
+            Ok(())
+        }
+
+        fn is_alive(&self, _pid: u32) -> bool {
+            false
+        }
+    }
+
+    let app_dir = temp_app_dir();
+    let sqlite_path = app_dir.join("queue.sqlite");
+    Connection::open(&sqlite_path).unwrap();
+    let env = MapEnv::from_pairs(vec![
+        ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
+        ("CONTEXT_STILL_PROJECT_ROOT", app_dir.to_str().unwrap()),
+        (
+            "CONTEXT_STILL_SQLITE_CORE_PATH",
+            sqlite_path.to_str().unwrap(),
+        ),
+        ("CONTEXT_STILL_RESIDENT_MCP", "0"),
+        ("CONTEXT_STILL_RESIDENT_AGENT_LOG_SYNC", "0"),
+    ]);
+
+    let report = resident_runtime::service::run(&env, &FailingRunSupervisor, true).unwrap();
+    let queue_surface = report
+        .surfaces
+        .iter()
+        .find(|surface| surface.name == "queue-supervisor")
+        .expect("queue surface");
+
+    assert_eq!(report.status, "exited");
+    assert_eq!(queue_surface.status, "failed");
+    assert!(queue_surface
+        .message
+        .contains("TS executor fallback failed"));
 
     std::fs::remove_dir_all(&app_dir).unwrap();
 }

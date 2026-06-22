@@ -19,13 +19,15 @@ use crate::{
     VERSION,
 };
 
-use super::dispatch::{dispatch_json, DispatchConfig};
+use super::dispatch::DispatchConfig;
 use super::endpoint_sessions::{
     active_session_count, close_session, create_session, is_active_session, new_state,
     now_timestamp, persist_sessions, prune_sessions, touch_session, SessionPruneConfig,
     SharedServerState,
 };
-use super::native_tools::{exposed_tool_count, handle_native_dispatch, tool_owner_inventory};
+use super::native_tools::{
+    exposed_tool_count, handle_native_dispatch, tool_owner_inventory, NativeToolContext,
+};
 
 pub struct RunningEndpoint {
     running: Arc<AtomicBool>,
@@ -137,6 +139,7 @@ fn accept_loop(
 }
 
 fn dispatch_config<E: EnvProvider>(env: &E) -> DispatchConfig {
+    let paths = resolve_paths(env);
     DispatchConfig {
         project_root: env
             .var("CONTEXT_STILL_PROJECT_ROOT")
@@ -144,19 +147,8 @@ fn dispatch_config<E: EnvProvider>(env: &E) -> DispatchConfig {
             .unwrap_or_else(|| {
                 std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."))
             }),
-        timeout: Duration::from_millis(env_u64_default(
-            env,
-            "CONTEXT_STILL_MCP_DISPATCH_TIMEOUT_MS",
-            300_000,
-        )),
+        sqlite_core_path: paths.sqlite_core_path,
     }
-}
-
-fn env_u64_default<E: EnvProvider>(env: &E, key: &str, default: u64) -> u64 {
-    env.var(key)
-        .and_then(|value| value.parse::<u64>().ok())
-        .filter(|value| *value > 0)
-        .unwrap_or(default)
 }
 
 fn endpoint_config<E: EnvProvider>(env: &E) -> Result<EndpointConfig, CliError> {
@@ -383,26 +375,44 @@ fn handle_mcp_post(
     }
 
     touch_session(&state, &session_id, 1);
-    let result = match method.as_str() {
-        "tools/list" => Ok(
-            handle_native_dispatch("tools/list", &json!({})).unwrap_or_else(|| {
-                json!({
-                    "tools": []
-                })
-            }),
-        ),
+    let result: Result<Value, String> = match method.as_str() {
+        "tools/list" => {
+            Ok(
+                handle_native_dispatch("tools/list", &json!({}), &native_context(&dispatch))
+                    .unwrap_or_else(|| {
+                        json!({
+                            "tools": []
+                        })
+                    }),
+            )
+        }
         "tools/call" => {
             let params = body.get("params").cloned().unwrap_or_else(|| json!({}));
-            handle_native_dispatch("tools/call", &params)
-                .map(Ok)
-                .unwrap_or_else(|| dispatch_json(&method, params, &dispatch))
+            Ok(handle_native_dispatch("tools/call", &params, &native_context(&dispatch))
+                .unwrap_or_else(|| {
+                    let name = params
+                        .get("name")
+                        .and_then(Value::as_str)
+                        .unwrap_or("<missing>");
+                    json!({
+                        "content": [{ "type": "text", "text": format!("[TOOL_ERROR] Unknown MCP tool: {name}") }],
+                        "isError": true
+                    })
+                }))
         }
-        "resources/list" => dispatch_json(&method, json!({}), &dispatch),
-        "resources/read" => dispatch_json(
-            &method,
-            body.get("params").cloned().unwrap_or_else(|| json!({})),
-            &dispatch,
-        ),
+        "resources/list" => {
+            Ok(
+                handle_native_dispatch("resources/list", &json!({}), &native_context(&dispatch))
+                    .unwrap_or_else(|| json!({"resources": []})),
+            )
+        }
+        "resources/read" => {
+            let params = body.get("params").cloned().unwrap_or_else(|| json!({}));
+            Ok(
+                handle_native_dispatch("resources/read", &params, &native_context(&dispatch))
+                    .unwrap_or_else(|| json!({"contents": []})),
+            )
+        }
         _ => Ok(json!({
             "content": [{ "type": "text", "text": format!("[TOOL_ERROR] Unknown MCP method: {method}") }],
             "isError": true,
@@ -413,6 +423,13 @@ fn handle_mcp_post(
     match result {
         Ok(result) => rpc_response(200, id, result),
         Err(error) => rpc_error(500, id, -32603, &error),
+    }
+}
+
+fn native_context(dispatch: &DispatchConfig) -> NativeToolContext {
+    NativeToolContext {
+        project_root: dispatch.project_root.clone(),
+        sqlite_core_path: dispatch.sqlite_core_path.clone(),
     }
 }
 

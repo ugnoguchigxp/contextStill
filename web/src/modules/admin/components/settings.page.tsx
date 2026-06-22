@@ -116,6 +116,17 @@ function normalizeAzureDeploymentSlots(values: number[] | undefined): number[] {
   return [...deduped];
 }
 
+function cloneRuntimeSettingsRoute(route: RuntimeSettingsRoute): RuntimeSettingsRoute {
+  return {
+    provider: route.provider,
+    model: route.model,
+    localLlmModel: route.localLlmModel,
+    providerPoolId: route.providerPoolId,
+    fallback: [...route.fallback],
+    azureDeploymentSlots: route.azureDeploymentSlots ? [...route.azureDeploymentSlots] : undefined,
+  };
+}
+
 function getConfiguredModelByProvider(
   settings: RuntimeSettingsEditable,
 ): Record<RuntimeProviderName, string> {
@@ -425,6 +436,7 @@ function routeWithPrimaryEndpoint(
     ...route,
     provider: option.provider,
     model: option.model ?? resolveConfiguredRouteModel(settings, option.provider),
+    providerPoolId: option.provider === "local-llm" ? route.providerPoolId : undefined,
     localLlmModel:
       option.provider === "local-llm"
         ? option.localLlmModel
@@ -620,6 +632,10 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
         targetPriorityOrder: [...view.general.distillationPriority.targetPriorityOrder],
       },
     },
+    providerPools: view.providerPools.map((pool) => ({
+      ...pool,
+      targets: pool.targets.map((target) => ({ ...target })),
+    })),
     providers: {
       openai: {
         enabled: view.providers.openai.enabled,
@@ -654,24 +670,8 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
     },
     taskRouting: {
       findCandidate: {
-        source: {
-          provider: view.taskRouting.findCandidate.source.provider,
-          model: view.taskRouting.findCandidate.source.model,
-          localLlmModel: view.taskRouting.findCandidate.source.localLlmModel,
-          fallback: [...view.taskRouting.findCandidate.source.fallback],
-          azureDeploymentSlots: view.taskRouting.findCandidate.source.azureDeploymentSlots
-            ? [...view.taskRouting.findCandidate.source.azureDeploymentSlots]
-            : undefined,
-        },
-        vibe: {
-          provider: view.taskRouting.findCandidate.vibe.provider,
-          model: view.taskRouting.findCandidate.vibe.model,
-          localLlmModel: view.taskRouting.findCandidate.vibe.localLlmModel,
-          fallback: [...view.taskRouting.findCandidate.vibe.fallback],
-          azureDeploymentSlots: view.taskRouting.findCandidate.vibe.azureDeploymentSlots
-            ? [...view.taskRouting.findCandidate.vibe.azureDeploymentSlots]
-            : undefined,
-        },
+        source: cloneRuntimeSettingsRoute(view.taskRouting.findCandidate.source),
+        vibe: cloneRuntimeSettingsRoute(view.taskRouting.findCandidate.vibe),
         throttling: {
           backgroundEnabled: view.taskRouting.findCandidate.throttling.backgroundEnabled,
           interactiveWindowSeconds:
@@ -686,62 +686,18 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
           jitterSeconds: view.taskRouting.findCandidate.throttling.jitterSeconds,
         },
       },
-      webSourceResearch: {
-        provider: view.taskRouting.webSourceResearch.provider,
-        model: view.taskRouting.webSourceResearch.model,
-        localLlmModel: view.taskRouting.webSourceResearch.localLlmModel,
-        fallback: [...view.taskRouting.webSourceResearch.fallback],
-        azureDeploymentSlots: view.taskRouting.webSourceResearch.azureDeploymentSlots
-          ? [...view.taskRouting.webSourceResearch.azureDeploymentSlots]
-          : undefined,
-      },
+      webSourceResearch: cloneRuntimeSettingsRoute(view.taskRouting.webSourceResearch),
+      episodeDistiller: cloneRuntimeSettingsRoute(view.taskRouting.episodeDistiller),
       coverEvidence: {
-        sourceSupport: {
-          provider: view.taskRouting.coverEvidence.sourceSupport.provider,
-          model: view.taskRouting.coverEvidence.sourceSupport.model,
-          localLlmModel: view.taskRouting.coverEvidence.sourceSupport.localLlmModel,
-          fallback: [...view.taskRouting.coverEvidence.sourceSupport.fallback],
-          azureDeploymentSlots: view.taskRouting.coverEvidence.sourceSupport.azureDeploymentSlots
-            ? [...view.taskRouting.coverEvidence.sourceSupport.azureDeploymentSlots]
-            : undefined,
-        },
-        externalEvidence: {
-          provider: view.taskRouting.coverEvidence.externalEvidence.provider,
-          model: view.taskRouting.coverEvidence.externalEvidence.model,
-          localLlmModel: view.taskRouting.coverEvidence.externalEvidence.localLlmModel,
-          fallback: [...view.taskRouting.coverEvidence.externalEvidence.fallback],
-          azureDeploymentSlots: view.taskRouting.coverEvidence.externalEvidence.azureDeploymentSlots
-            ? [...view.taskRouting.coverEvidence.externalEvidence.azureDeploymentSlots]
-            : undefined,
-        },
-        mcpEvidence: {
-          provider: view.taskRouting.coverEvidence.mcpEvidence.provider,
-          model: view.taskRouting.coverEvidence.mcpEvidence.model,
-          localLlmModel: view.taskRouting.coverEvidence.mcpEvidence.localLlmModel,
-          fallback: [...view.taskRouting.coverEvidence.mcpEvidence.fallback],
-          azureDeploymentSlots: view.taskRouting.coverEvidence.mcpEvidence.azureDeploymentSlots
-            ? [...view.taskRouting.coverEvidence.mcpEvidence.azureDeploymentSlots]
-            : undefined,
-        },
+        sourceSupport: cloneRuntimeSettingsRoute(view.taskRouting.coverEvidence.sourceSupport),
+        externalEvidence: cloneRuntimeSettingsRoute(
+          view.taskRouting.coverEvidence.externalEvidence,
+        ),
+        mcpEvidence: cloneRuntimeSettingsRoute(view.taskRouting.coverEvidence.mcpEvidence),
       },
-      finalizeDistille: {
-        provider: view.taskRouting.finalizeDistille.provider,
-        model: view.taskRouting.finalizeDistille.model,
-        localLlmModel: view.taskRouting.finalizeDistille.localLlmModel,
-        fallback: [...view.taskRouting.finalizeDistille.fallback],
-        azureDeploymentSlots: view.taskRouting.finalizeDistille.azureDeploymentSlots
-          ? [...view.taskRouting.finalizeDistille.azureDeploymentSlots]
-          : undefined,
-      },
-      deadZoneMergeReview: {
-        provider: view.taskRouting.deadZoneMergeReview.provider,
-        model: view.taskRouting.deadZoneMergeReview.model,
-        localLlmModel: view.taskRouting.deadZoneMergeReview.localLlmModel,
-        fallback: [...view.taskRouting.deadZoneMergeReview.fallback],
-        azureDeploymentSlots: view.taskRouting.deadZoneMergeReview.azureDeploymentSlots
-          ? [...view.taskRouting.deadZoneMergeReview.azureDeploymentSlots]
-          : undefined,
-      },
+      finalizeDistille: cloneRuntimeSettingsRoute(view.taskRouting.finalizeDistille),
+      mergeActivationFinalize: cloneRuntimeSettingsRoute(view.taskRouting.mergeActivationFinalize),
+      deadZoneMergeReview: cloneRuntimeSettingsRoute(view.taskRouting.deadZoneMergeReview),
       agenticCompile: {
         enabled: view.taskRouting.agenticCompile.enabled,
         provider: view.taskRouting.agenticCompile.provider,
@@ -2491,6 +2447,21 @@ export function SettingsPage() {
                       }
                     />
                     <RouteEditor
+                      label="episodeDistiller"
+                      description="Episode card generation from completed compile and vibe-memory runs."
+                      settings={draft}
+                      route={draft.taskRouting.episodeDistiller}
+                      onChange={(next) =>
+                        patchDraft((current) => ({
+                          ...current,
+                          taskRouting: {
+                            ...current.taskRouting,
+                            episodeDistiller: next,
+                          },
+                        }))
+                      }
+                    />
+                    <RouteEditor
                       label="coverEvidence"
                       description="Shared route for source support, external evidence, and MCP evidence."
                       settings={draft}
@@ -2535,6 +2506,21 @@ export function SettingsPage() {
                           taskRouting: {
                             ...current.taskRouting,
                             finalizeDistille: next,
+                          },
+                        }))
+                      }
+                    />
+                    <RouteEditor
+                      label="mergeActivationFinalize"
+                      description="Final activation pass for accepted merge candidates."
+                      settings={draft}
+                      route={draft.taskRouting.mergeActivationFinalize}
+                      onChange={(next) =>
+                        patchDraft((current) => ({
+                          ...current,
+                          taskRouting: {
+                            ...current.taskRouting,
+                            mergeActivationFinalize: next,
                           },
                         }))
                       }

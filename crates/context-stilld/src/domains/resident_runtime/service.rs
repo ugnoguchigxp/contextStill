@@ -253,7 +253,7 @@ fn reconcile_queue_once<E: EnvProvider, S: ProcessSupervisor>(
         });
     }
 
-    let report = queue_lifecycle::service::run_executor_once_report(
+    let report = match queue_lifecycle::service::run_executor_once_report(
         env,
         supervisor,
         Duration::from_millis(env_u64_default(
@@ -261,7 +261,18 @@ fn reconcile_queue_once<E: EnvProvider, S: ProcessSupervisor>(
             "CONTEXT_STILL_RESIDENT_QUEUE_TIMEOUT_MS",
             300_000,
         )),
-    )?;
+    ) {
+        Ok(report) => report,
+        Err(error) => {
+            return Ok(ManagedSurfaceReport {
+                name: "queue-supervisor",
+                enabled: true,
+                status: "failed".to_string(),
+                pid: None,
+                message: format!("queue-supervisor TS executor fallback failed: {error}"),
+            });
+        }
+    };
     Ok(surface_report("queue-supervisor", true, report))
 }
 

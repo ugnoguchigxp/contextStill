@@ -48,6 +48,7 @@ import {
 import { vibeMemoryRouter } from "../api/modules/vibe-memory/vibe-memory.routes.js";
 import { groupedConfig } from "../src/config.js";
 import { requestCoverEvidenceReprocess } from "../src/modules/coverEvidence/reprocess-candidate.service.js";
+import { cloneDefaultSettings } from "../src/modules/settings/settings.defaults.js";
 import { recordVibeMemoryWithDiffEntries } from "../src/modules/vibe-memory/vibe-memory.service.js";
 import { compileRunDetailSchema } from "../src/shared/schemas/compile-run.schema.js";
 import { type ContextPack, contextPackSchema } from "../src/shared/schemas/context-pack.schema.js";
@@ -435,14 +436,49 @@ describe("API route contract tests", () => {
 
   test("PUT /api/settings rejects invalid payload", async () => {
     const app = buildApp();
+    const consoleErrorSpy = vi.spyOn(console, "error").mockImplementation(() => {});
+    try {
+      const response = await app.request("/api/settings", {
+        method: "PUT",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ settings: {} }),
+      });
+
+      expect(response.status).toBe(400);
+      expect(consoleErrorSpy).toHaveBeenCalledWith(
+        "[settings] update rejected",
+        expect.stringContaining("validation_failed"),
+      );
+      expect(updateSettingsForApi).not.toHaveBeenCalled();
+    } finally {
+      consoleErrorSpy.mockRestore();
+    }
+  });
+
+  test("PUT /api/settings backfills legacy task routing fields", async () => {
+    const app = buildApp();
+    const settings = cloneDefaultSettings() as any;
+    delete settings.taskRouting.episodeDistiller;
+    delete settings.taskRouting.mergeActivationFinalize;
+
     const response = await app.request("/api/settings", {
       method: "PUT",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ settings: {} }),
+      body: JSON.stringify({ settings, updatedBy: "api-routes-test" }),
     });
 
-    expect(response.status).toBe(400);
-    expect(updateSettingsForApi).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(updateSettingsForApi).toHaveBeenCalledWith(
+      expect.objectContaining({
+        settings: expect.objectContaining({
+          taskRouting: expect.objectContaining({
+            episodeDistiller: expect.objectContaining(settings.taskRouting.webSourceResearch),
+            mergeActivationFinalize: expect.objectContaining(settings.taskRouting.finalizeDistille),
+          }),
+        }),
+        updatedBy: "api-routes-test",
+      }),
+    );
   });
 
   test("POST /api/settings/providers/:provider/test returns provider health", async () => {
