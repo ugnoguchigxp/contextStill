@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, test, vi } from "vitest";
 import { runCoverEvidence } from "../src/modules/coverEvidence/domain.js";
 import { runCoverNegativeEvidence } from "../src/modules/coverNegativeEvidence/domain.js";
 import { parseNegativeEvidenceResult } from "../src/modules/coverNegativeEvidence/parser.js";
+import { buildNegativeEvidencePrompt } from "../src/modules/coverNegativeEvidence/prompts.js";
 import { getFindCandidateResultById } from "../src/modules/findCandidate/repository.js";
 
 vi.mock("../src/modules/findCandidate/repository.js", () => ({
@@ -35,6 +36,17 @@ vi.mock("../src/modules/coverEvidence/provider-policy.js", () => ({
 describe("cover-negative-evidence", () => {
   beforeEach(() => {
     vi.clearAllMocks();
+  });
+
+  test("requires distilled natural language to be Japanese", () => {
+    const prompt = buildNegativeEvidencePrompt({
+      title: "Avoid stale status",
+      content: "Failure: stale status was trusted.",
+    });
+
+    expect(prompt).toContain("自然文は必ず日本語");
+    expect(prompt).toContain("入力が英語でも");
+    expect(prompt).toContain("日本語へ言い換えてください");
   });
 
   test("parses appliesTo facets from negative evidence JSON", () => {
@@ -207,8 +219,9 @@ describe("cover-negative-evidence", () => {
       }),
     );
     expect(result.result.candidate?.body).toContain(
-      "Failure: Hardcoded API host in production config",
+      "避けること: Hardcoded API host in production config",
     );
+    expect(result.result.candidate?.body).toContain("推奨対応: Use environment variables");
     expect(result.result.toolEvents[0].name).toBe("negative_coverage");
     expect((result.result.toolEvents[0].metadata as any).polarity).toBe("negative");
     expect((result.result.toolEvents[0].metadata as any).intentTags).toContain("security_risk");

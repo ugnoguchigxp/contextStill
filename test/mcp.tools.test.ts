@@ -372,6 +372,18 @@ describe("MCP Tools Handlers", () => {
   });
 
   describe("register_candidate", () => {
+    test("tool descriptions require Japanese natural language in Japanese-operated contexts", () => {
+      const properties = registerCandidateTool.inputSchema.properties as Record<
+        string,
+        { description?: string }
+      >;
+
+      expect(registerCandidateTool.description).toContain("natural language in Japanese");
+      expect(properties.body?.description).toContain("section bodies in Japanese");
+      expect(properties.avoid?.description).toContain("natural language in Japanese");
+      expect(properties.prefer?.description).toContain("natural language in Japanese");
+    });
+
     test("registers a lightweight candidate without synchronous knowledge persistence", async () => {
       vi.mocked(registerCandidate).mockResolvedValue({
         targetStateId: "target-id",
@@ -484,6 +496,23 @@ describe("MCP Tools Handlers", () => {
   });
 
   describe("register_candidates", () => {
+    test("bulk tool descriptions require Japanese candidate natural language", () => {
+      const properties = registerCandidatesTool.inputSchema.properties as Record<
+        string,
+        { items?: unknown }
+      >;
+      const itemSchema = properties.items?.items as
+        | { properties?: Record<string, { description?: string }> }
+        | undefined;
+
+      expect(registerCandidatesTool.description).toContain("natural language in Japanese");
+      expect(itemSchema?.properties?.body?.description).toContain(
+        "section bodies should be Japanese",
+      );
+      expect(itemSchema?.properties?.avoid?.description).toContain("natural language in Japanese");
+      expect(itemSchema?.properties?.prefer?.description).toContain("natural language in Japanese");
+    });
+
     test("registers multiple candidates", async () => {
       vi.mocked(registerCandidatesBulk).mockResolvedValue({
         status: "bulk_candidates_registered",

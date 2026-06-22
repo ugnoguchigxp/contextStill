@@ -16,9 +16,10 @@ function compactJson(value: unknown): string {
 
 function japaneseKnowledgeInstructions(): string[] {
   return [
-    "日本語で運用されている文脈では、knowledge_ready の title と body を日本語で整形することを優先してください。",
-    "入力や利用者の文脈が英語の場合は英語のままでも構いません。",
+    "日本語で運用されている文脈では、knowledge_ready の title と body の自然文を必ず日本語で書いてください。",
+    "入力や source evidence が英語の場合も、識別子、API名、コマンド、URL、エラー名、固定見出し以外の説明文は日本語へ言い換えてください。",
     "コード、コマンド、API名、エラー名、固定見出し（Use when:, Workflow:, Verification:, Avoid:）は原文のまま残して構いません。",
+    "procedure body の Use when / Workflow / Verification / Avoid 各セクション本文は日本語で書いてください。",
   ];
 }
 

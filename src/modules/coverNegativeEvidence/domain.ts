@@ -20,6 +20,26 @@ import {
 import { parseNegativeEvidenceResult } from "./parser.js";
 import { buildNegativeEvidencePrompt } from "./prompts.js";
 
+function buildNegativeKnowledgeBody(distilled: {
+  failure: string;
+  impact?: string;
+  trigger?: string;
+  fix?: string;
+  verification?: string;
+  decisionSignal?: string;
+}): string {
+  return [
+    `避けること: ${distilled.failure}`,
+    distilled.impact ? `影響: ${distilled.impact}` : null,
+    distilled.trigger ? `発生条件: ${distilled.trigger}` : null,
+    distilled.fix ? `推奨対応: ${distilled.fix}` : null,
+    distilled.verification ? `確認方法: ${distilled.verification}` : null,
+    distilled.decisionSignal ? `判断シグナル: ${distilled.decisionSignal}` : null,
+  ]
+    .filter((line): line is string => Boolean(line))
+    .join("\n");
+}
+
 export async function runCoverNegativeEvidence(params: {
   id: string;
   candidate?: any;
@@ -66,7 +86,11 @@ export async function runCoverNegativeEvidence(params: {
     );
   const response = await chat({
     messages: [
-      { role: "system", content: "You are a professional software engineering assistant." },
+      {
+        role: "system",
+        content:
+          "あなたは professional software engineering assistant です。JSON のキー名や固定 enum 以外の自然文は日本語で返してください。",
+      },
       { role: "user", content: prompt },
     ],
     model,
@@ -101,7 +125,7 @@ export async function runCoverNegativeEvidence(params: {
         ? {
             type: "rule",
             title: row.title,
-            body: `Failure: ${parsed.distilled.failure}\n${parsed.distilled.impact ? `Impact: ${parsed.distilled.impact}\n` : ""}${parsed.distilled.trigger ? `Trigger: ${parsed.distilled.trigger}\n` : ""}${parsed.distilled.fix ? `Fix: ${parsed.distilled.fix}\n` : ""}${parsed.distilled.verification ? `Verification: ${parsed.distilled.verification}\n` : ""}${parsed.distilled.decisionSignal ? `Decision signal: ${parsed.distilled.decisionSignal}\n` : ""}`,
+            body: buildNegativeKnowledgeBody(parsed.distilled),
             confidence: 90,
             importance: 80,
             ...applicabilityToCoverCandidateFields(appliesTo),

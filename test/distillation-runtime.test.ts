@@ -334,7 +334,7 @@ describe("distillation runtime", () => {
     expect(prompt).toContain("search query は短く安定");
     expect(prompt).toContain("tool call JSON");
     expect(prompt).toContain("title/body に search_web や fetch_content");
-    expect(prompt).toContain("可能な限り日本語");
+    expect(prompt).toContain("title と body の自然文は必ず日本語");
     expect(prompt).not.toMatch(/\bfact\b/i);
     expect(prompt).not.toMatch(/\blesson\b/i);
   });
@@ -358,6 +358,7 @@ describe("distillation runtime", () => {
     expect(procedureVerificationPrompt).toContain("SKILL.md");
     expect(procedureVerificationPrompt).toContain("System Context");
     expect(procedureVerificationPrompt).toContain("description に相当する使用条件");
+    expect(procedureVerificationPrompt).toContain("各見出しの本文は日本語");
     expect(procedureVerificationPrompt).toContain("YAML frontmatter");
     expect(procedureVerificationPrompt).toContain("Use when:");
     expect(procedureVerificationPrompt).toContain("Workflow:");

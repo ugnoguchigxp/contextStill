@@ -169,6 +169,7 @@ describeDb("mcp contract", () => {
     expect(text).toContain("各 runId ごと");
     expect(text).toContain("Use when:");
     expect(text).toContain("SKILL.md 相当");
+    expect(text).toContain("title / body / avoid / prefer の自然文は日本語");
     expect(text).toContain("プロジェクト依存の記述を除いて");
     expect(text).toContain("design.md");
   });

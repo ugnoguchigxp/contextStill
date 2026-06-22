@@ -121,9 +121,10 @@ function repairSystemPrompt(): string {
   return [
     "source evidence だけを使って、再利用可能な procedure candidate を修復してください。",
     "title と body を持つ strict JSON を返してください。",
-    "日本語で運用されている文脈では title と body の説明文を日本語で整形することを優先してください。入力や利用者の文脈が英語の場合は英語のままでも構いません。",
+    "日本語で運用されている文脈では title と body の自然文を必ず日本語で書いてください。入力が英語でも、識別子、API名、コマンド、エラー名、固定見出し以外の説明文は日本語へ言い換えてください。",
     "コード、コマンド、API名、エラー名、固定見出し（Use when:, Workflow:, Verification:, Avoid:）は原文のまま残して構いません。",
     "body は Markdown で、見出しを Use when:, Workflow:, Verification:, Avoid: の順に必ず含めてください。",
+    "Use when / Workflow / Verification / Avoid の各セクション本文は日本語で書いてください。",
     "Workflow には具体的な番号付き手順を2つ以上入れてください。",
     "source evidence で支えられないコマンド、ファイル、事実、検証手順、禁止事項を追加しないでください。",
     "必要な section を source evidence から構成できない場合は、空の JSON object を返してください。",
@@ -179,7 +180,7 @@ export async function repairProcedureCandidate(
         timeoutMs: input.timeoutMs,
         blankResponseReminder: [
           "JSON だけを返してください。",
-          "日本語で運用されている文脈では title と body の説明文を日本語で整形することを優先してください。",
+          "title と body の自然文は日本語で書いてください。固定見出しだけ Use when: / Workflow: / Verification: / Avoid: のまま残してください。",
           '{"title":"...","body":"Use when:\\n...\\n\\nWorkflow:\\n1. ...\\n2. ...\\n\\nVerification:\\n...\\n\\nAvoid:\\n..."}',
         ],
         auditContext: {

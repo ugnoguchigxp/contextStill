@@ -2,38 +2,41 @@ export function buildNegativeEvidencePrompt(params: {
   title: string;
   content: string;
 }) {
-  return `You are analyzing a review correction candidate representing a failure pattern, regression, or architecture/security risk (Negative Knowledge).
-Please assess whether this correction is a valid reusable rule/guardrail (status='ready') or if it is insufficient, a false positive, or too specific to be reusable.
+  return `あなたは failure pattern、regression、architecture/security risk を表す review correction candidate（Negative Knowledge）を分析します。
+この correction が再利用可能な rule/guardrail として有効なら status='ready'、不十分・誤検知・再利用不能なら該当 status にしてください。
 
 Candidate Title: ${params.title}
 Candidate Body:
 ${params.content}
 
-Analyze the candidate and output a JSON response in the following schema:
+JSON のキー名、enum 値、タグ、repo path、API 名、コマンド名、エラー名、固有名詞は指定どおり保持してください。
+それ以外の distilled と evidence の自然文は必ず日本語で書いてください。入力が英語でも、保存される failure / impact / trigger / fix / verification / decisionSignal の説明文は日本語へ言い換えてください。
+
+次の schema の JSON response だけを返してください:
 {
   "status": "ready" | "insufficient" | "false_positive" | "not_reusable",
   "polarity": "negative" | "neutral",
-  "intentTags": string[], // normalized tags like "guardrail", "failure_pattern", "regression", "security_risk" etc.
+  "intentTags": string[], // "guardrail", "failure_pattern", "regression", "security_risk" などの normalized tags
   "appliesTo": {
-    "technologies": string[], // concrete stacks, runtimes, libraries, or languages where this rule applies
-    "changeTypes": string[], // concrete change categories like "implementation", "configuration", "testing", "diagnosis"
-    "domains": string[], // concrete product or engineering domains like "queue", "security", "database"
-    "repoPath": string | null, // optional repository path if explicitly known
-    "repoKey": string | null, // optional repository key if explicitly known
-    "general": boolean | null // true only when the rule is intentionally cross-repository
+    "technologies": string[], // この rule が適用される concrete stack, runtime, library, language
+    "changeTypes": string[], // "implementation", "configuration", "testing", "diagnosis" などの concrete change categories
+    "domains": string[], // "queue", "security", "database" などの concrete product/engineering domains
+    "repoPath": string | null, // 明示されている場合のみ
+    "repoKey": string | null, // 明示されている場合のみ
+    "general": boolean | null // 意図的に cross-repository な rule の場合だけ true
   },
   "distilled": {
-    "failure": string, // description of the failure/risk to avoid
-    "impact": string | null, // optional impact
-    "trigger": string | null, // optional trigger/context where this risk applies
-    "fix": string | null, // optional recommended fix/avoidance guidance
-    "verification": string | null, // optional verification method to check for this failure
-    "decisionSignal": string | null // optional decision signal
+    "failure": string, // 避けるべき失敗・リスクの説明。自然文は日本語。
+    "impact": string | null, // 影響。自然文は日本語。
+    "trigger": string | null, // このリスクが発生する条件・文脈。自然文は日本語。
+    "fix": string | null, // 推奨される回避策・修正方針。自然文は日本語。
+    "verification": string | null, // この失敗を確認する方法。自然文は日本語。
+    "decisionSignal": string | null // 判断シグナル。自然文は日本語。
   },
-  "evidence": string[], // key snippets from the candidate supporting this
-  "originRefs": string[] // references from origin
+  "evidence": string[], // candidate 内の根拠 snippet。自然文は日本語へ要約。
+  "originRefs": string[] // origin 由来の references
 }
 
-For status='ready', appliesTo.technologies, appliesTo.changeTypes, and appliesTo.domains must be non-empty and grounded in the candidate text or origin context. If the candidate does not provide enough evidence to determine these applicability categories, use status='insufficient' instead of inventing broad categories.
-Format the response strictly as a single JSON object. Do not include markdown code block syntax around the JSON.`;
+status='ready' の場合、appliesTo.technologies、appliesTo.changeTypes、appliesTo.domains は non-empty で、candidate text または origin context に根拠が必要です。これらの applicability categories を決める根拠が足りない場合は、広いカテゴリを捏造せず status='insufficient' にしてください。
+JSON object 1 個だけを返してください。markdown code block syntax は含めないでください。`;
 }

@@ -30,8 +30,8 @@ function commonSystemLines(
     "持続的な rule / procedure がない場合は候補なしを返す。",
     "tool call JSON、tool 名、検索クエリ、URL だけの断片は knowledge ではない。title/body に search_web や fetch_content だけを書かない。",
     "body は最小 24文字の情報がないと取り扱わないので、次回の coding agent が判断または実行できる具体的な制約・手順をちゃんと作文しろ。十分に書けない場合は候補なしにする。",
-    "title と body は可能な限り日本語で記述する。",
-    "ただし識別子、API 名、コマンド、URL、エラーメッセージなどは必要に応じて原文を保持してよい。",
+    "日本語で運用されている文脈では、title と body の自然文は必ず日本語で記述する。",
+    "入力や source evidence が英語の場合も、識別子、API 名、コマンド、URL、エラーメッセージ以外の説明文は日本語へ言い換える。",
   ];
 
   if (options.includeExternalVerification) {
@@ -135,7 +135,7 @@ export function buildDistillationVerificationSystemPrompt(
     "自然言語で返す場合は `TYPE: rule`、`TITLE: ...`、`BODY: ...` のラベル付きテキストにする。",
     "`TYPE / TITLE / BODY` のような見出し行だけを出さない。",
     "最終 knowledge に必要な情報は type / title / body / confidence / importance のみ。",
-    "title と body は可能な限り日本語で記述する。ただし識別子、API 名、コマンド、URL、エラーメッセージは原文を保持してよい。",
+    "日本語で運用されている文脈では、title と body の自然文は必ず日本語で記述する。入力や source evidence が英語の場合も、識別子、API 名、コマンド、URL、エラーメッセージ以外の説明文は日本語へ言い換える。",
     "",
     ...typeSpecificVerificationLines(type),
     ...(extraLines.length > 0 ? ["", ...extraLines] : []),

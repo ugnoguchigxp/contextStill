@@ -133,7 +133,7 @@ export const searchKnowledgeTool: ToolEntry = {
 export const registerCandidateTool: ToolEntry = {
   name: "register_candidate",
   description:
-    "Register a lightweight rule/procedure candidate for later distillation. No embedding or knowledge draft is created synchronously.",
+    "Register a lightweight rule/procedure candidate for later distillation. No embedding or knowledge draft is created synchronously. In Japanese-operated contexts, write title/body/avoid/prefer natural language in Japanese except identifiers, commands, API names, URLs, and error messages.",
   inputSchema: {
     type: "object",
     properties: {
@@ -141,7 +141,7 @@ export const registerCandidateTool: ToolEntry = {
       body: {
         type: "string",
         description:
-          "Candidate body. For procedures, prefer Use when / Workflow / Verification / Avoid sections.",
+          "Candidate body. In Japanese-operated contexts, natural language must be Japanese. For procedures, keep Use when / Workflow / Verification / Avoid headings, but write section bodies in Japanese.",
       },
       text: {
         type: "string",
@@ -151,12 +151,12 @@ export const registerCandidateTool: ToolEntry = {
       avoid: {
         type: "string",
         description:
-          "For polarity=negative when body/text is omitted: decision, implementation, or operation to avoid.",
+          "For polarity=negative when body/text is omitted: decision, implementation, or operation to avoid. In Japanese-operated contexts, write natural language in Japanese.",
       },
       prefer: {
         type: "string",
         description:
-          "For polarity=negative when body/text is omitted: safer decision, implementation, or operation to prefer.",
+          "For polarity=negative when body/text is omitted: safer decision, implementation, or operation to prefer. In Japanese-operated contexts, write natural language in Japanese.",
       },
       type: { type: "string", enum: ["rule", "procedure"] },
       polarity: { type: "string", enum: ["positive", "negative", "neutral"] },
@@ -184,7 +184,7 @@ export const registerCandidateTool: ToolEntry = {
 export const registerCandidatesTool: ToolEntry = {
   name: "register_candidates",
   description:
-    "Bulk-register lightweight rule/procedure candidates for later distillation. Use when multiple durable lessons should be registered from the same task.",
+    "Bulk-register lightweight rule/procedure candidates for later distillation. Use when multiple durable lessons should be registered from the same task. In Japanese-operated contexts, write title/body/avoid/prefer natural language in Japanese except identifiers, commands, API names, URLs, and error messages.",
   inputSchema: {
     type: "object",
     additionalProperties: false,
@@ -194,11 +194,27 @@ export const registerCandidatesTool: ToolEntry = {
         items: {
           type: "object",
           properties: {
-            title: { type: "string" },
-            body: { type: "string" },
+            title: {
+              type: "string",
+              description:
+                "Clear candidate title. Use Japanese natural language in Japanese-operated contexts.",
+            },
+            body: {
+              type: "string",
+              description:
+                "Candidate body. Use Japanese natural language in Japanese-operated contexts. Procedure headings stay Use when / Workflow / Verification / Avoid, but section bodies should be Japanese.",
+            },
             text: { type: "string" },
-            avoid: { type: "string" },
-            prefer: { type: "string" },
+            avoid: {
+              type: "string",
+              description:
+                "Negative candidate failure, decision, implementation, or operation to avoid. Use Japanese natural language in Japanese-operated contexts.",
+            },
+            prefer: {
+              type: "string",
+              description:
+                "Negative candidate safer decision, implementation, or operation to prefer. Use Japanese natural language in Japanese-operated contexts.",
+            },
             type: { type: "string", enum: ["rule", "procedure"] },
             polarity: { type: "string", enum: ["positive", "negative", "neutral"] },
             confidence: { type: "number", minimum: 0, maximum: 100 },

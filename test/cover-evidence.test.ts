@@ -652,14 +652,10 @@ describe("coverEvidence prompts", () => {
 
   test("nudges reusable knowledge title and body toward Japanese in Japanese contexts", () => {
     expect(externalEvidenceFinalSystemPrompt()).toContain(
-      "日本語で運用されている文脈では、knowledge_ready の title と body を日本語",
+      "knowledge_ready の title と body の自然文を必ず日本語",
     );
-    expect(valueAssessmentSystemPrompt()).toContain(
-      "入力や利用者の文脈が英語の場合は英語のままでも構いません",
-    );
-    expect(applicabilityRefinementSystemPrompt()).toContain(
-      "入力や利用者の文脈が英語の場合は英語のままでも構いません",
-    );
+    expect(valueAssessmentSystemPrompt()).toContain("入力や source evidence が英語の場合も");
+    expect(applicabilityRefinementSystemPrompt()).toContain("説明文は日本語へ言い換えてください");
   });
 
   test("instructs simple title body and final metadata output", () => {

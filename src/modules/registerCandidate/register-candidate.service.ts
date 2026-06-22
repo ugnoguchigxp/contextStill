@@ -118,7 +118,7 @@ function normalizeInput(input: RegisterCandidateInput): {
     parsedCandidate?.content ??
     input.text ??
     (polarity === "negative" && input.avoid && input.prefer
-      ? `Avoid: ${input.avoid}\nPrefer: ${input.prefer}`
+      ? `避けること: ${input.avoid}\n推奨: ${input.prefer}`
       : "");
   const title = input.title ?? parsedCandidate?.title ?? inferTitleFromText(body);
   const type = polarity === "negative" && originalType === "procedure" ? "rule" : originalType;

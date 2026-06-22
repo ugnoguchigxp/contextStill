@@ -95,8 +95,8 @@ register_candidate({
 `polarity: "negative"` かつ `body` / `text` がない場合だけ、`avoid` / `prefer` から body を生成する。
 
 ```text
-Avoid: <avoid>
-Prefer: <prefer>
+避けること: <avoid>
+推奨: <prefer>
 ```
 
 この形式により、negative knowledge の意味を簡潔に保つ。review correction の詳細ログではなく、将来の判断で使える最小の反証知識として保存する。
@@ -116,7 +116,7 @@ Prefer: <prefer>
    - `general: true` の場合でも `domains` / `changeTypes` は必須にし、LLM が無条件の禁止事項として誤用しないようにする。
 
 3. `register-candidate.service.ts` の normalize 処理を更新する。
-   - negative minimal input を `Avoid:` / `Prefer:` body に変換する。
+   - negative minimal input を `避けること:` / `推奨:` body に変換する。
    - negative の `type` は `"rule"` に正規化する。
    - negative の applicability は既存の `appliesTo` 正規化 helper に寄せ、SQLite 直接登録 path と Postgres queue path の両方で同じ `appliesTo` を保存する。
    - 既存 SQLite / Postgres 登録経路は変更しない。
@@ -127,7 +127,7 @@ Prefer: <prefer>
 
 5. tests を更新する。
    - negative candidate が `avoid` / `prefer` と `technologies` / `changeTypes` / `domains` で登録できる。
-   - generated body が `Avoid:` / `Prefer:` になる。
+   - generated body が `避けること:` / `推奨:` になる。
    - positive candidate は従来通り `body` または `text` 必須。
    - positive candidate に `avoid` / `prefer` を渡すと error。
    - negative candidate で `avoid` または `prefer` が欠けると error。

@@ -362,7 +362,7 @@ Do not run on production database.
     expect(candidateChain.values).toHaveBeenCalledWith(
       expect.objectContaining({
         content:
-          "Avoid: Assuming queue count proves worker progress.\nPrefer: Check worker events and persisted queue state together.",
+          "避けること: Assuming queue count proves worker progress.\n推奨: Check worker events and persisted queue state together.",
       }),
     );
   });
