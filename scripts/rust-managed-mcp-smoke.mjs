@@ -64,7 +64,9 @@ try {
     throw new Error(`MCP smoke reported no tools: ${JSON.stringify(smoke)}`);
   }
   if (smoke.toolOwners?.counts?.rustNative !== 1 || smoke.toolOwners?.counts?.tsSidecar !== 11) {
-    throw new Error(`MCP smoke reported unexpected tool owners: ${JSON.stringify(smoke.toolOwners)}`);
+    throw new Error(
+      `MCP smoke reported unexpected tool owners: ${JSON.stringify(smoke.toolOwners)}`,
+    );
   }
 
   const sessions = parseJson(cargo("mcp", "sessions", "--json"), "mcp sessions");

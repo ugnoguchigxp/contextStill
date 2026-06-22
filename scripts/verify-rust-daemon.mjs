@@ -15,6 +15,7 @@ const tasks = [
   {
     label: "context-stilld resident run once",
     command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "run", "--once", "--json"],
+    env: { CONTEXT_STILL_MCP_PORT: "0" },
   },
   {
     label: "context-stilld bootstrap preflight",
@@ -87,6 +88,7 @@ function runTask(task) {
         ...process.env,
         CONTEXT_STILL_APP_DATA_DIR:
           process.env.CONTEXT_STILL_APP_DATA_DIR ?? ".tmp/context-stilld-verify",
+        ...task.env,
       },
       stdio: ["inherit", "pipe", "pipe"],
     });

@@ -11,6 +11,7 @@ const env = {
   CONTEXT_STILL_PROJECT_ROOT: root,
   CONTEXT_STILL_DB_BACKEND: "sqlite",
   CONTEXT_STILL_SQLITE_CORE_PATH: path.join(appDataDir, "queue-smoke.sqlite"),
+  CONTEXT_STILL_MCP_PORT: "0",
 };
 fs.closeSync(fs.openSync(env.CONTEXT_STILL_SQLITE_CORE_PATH, "w"));
 
@@ -53,6 +54,11 @@ try {
   }
   if (queueSurface.status !== "scheduled") {
     throw new Error(`unexpected Rust-managed queue surface: ${JSON.stringify(queueSurface)}`);
+  }
+  const queueLogPath = path.join(appDataDir, "logs", "queue-supervisor.log");
+  const queueLog = fs.readFileSync(queueLogPath, "utf8");
+  if (!queueLog.includes('"worker": "queue-supervisor"') || !queueLog.includes('"runs"')) {
+    throw new Error(`resident queue tick did not invoke executor; log:\n${queueLog}`);
   }
 
   const status = parseJson(cargo("queue", "status", "--json"), "queue status");

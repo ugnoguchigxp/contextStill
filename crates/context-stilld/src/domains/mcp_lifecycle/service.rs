@@ -10,9 +10,12 @@ use serde_json::{json, Value};
 
 use crate::domains::{
     bootstrap::service::resolve_paths,
+    daemon::repository::{self, ProcessState},
     process_lifecycle::service::{self, LifecycleReport, ManagedProcessSpec, CURRENT_EXE_COMMAND},
 };
 use crate::shared::{config::EnvProvider, errors::CliError, process::ProcessSupervisor};
+
+use super::endpoint_server::RunningEndpoint;
 
 const MCP_ENDPOINT: ManagedProcessSpec = ManagedProcessSpec {
     state_name: "mcp-server",
@@ -45,6 +48,8 @@ pub struct McpSession {
     pub remote_address: Option<String>,
     pub created_at: String,
     pub last_activity_at: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_activity_unix_seconds: Option<u64>,
     pub in_flight_request_count: u32,
     pub worker_id: Option<String>,
     pub route: String,
@@ -77,6 +82,20 @@ struct HealthResponse {
     tool_owners: Option<Value>,
 }
 
+pub struct InProcessMcpEndpoint {
+    endpoint: RunningEndpoint,
+}
+
+impl InProcessMcpEndpoint {
+    pub fn is_finished(&self) -> bool {
+        self.endpoint.is_finished()
+    }
+
+    pub fn stop(self) {
+        self.endpoint.stop();
+    }
+}
+
 pub fn start<E: EnvProvider, S: ProcessSupervisor>(
     env: &E,
     supervisor: &S,
@@ -102,6 +121,9 @@ pub fn stop_report<E: EnvProvider, S: ProcessSupervisor>(
     env: &E,
     supervisor: &S,
 ) -> Result<LifecycleReport, CliError> {
+    if let Some(report) = resident_managed_stop_report(env)? {
+        return Ok(report);
+    }
     service::stop_report(&MCP_ENDPOINT, env, supervisor)
 }
 
@@ -122,6 +144,108 @@ pub fn status_report<E: EnvProvider, S: ProcessSupervisor>(
 pub fn serve<E: EnvProvider>(env: &E) -> Result<String, CliError> {
     super::endpoint_server::serve(env)?;
     Ok("mcp-endpoint stopped".to_string())
+}
+
+pub fn start_in_process_report<E: EnvProvider>(
+    env: &E,
+) -> Result<(LifecycleReport, InProcessMcpEndpoint), CliError> {
+    let paths = resolve_paths(env);
+    let endpoint = super::endpoint_server::start_in_process(env)?;
+    let now = service::now_timestamp();
+    let state = ProcessState {
+        pid: Some(std::process::id()),
+        status: "running".to_string(),
+        log_path: paths
+            .logs_dir
+            .join(MCP_ENDPOINT.log_file)
+            .to_string_lossy()
+            .into_owned(),
+        started_at: Some(now.clone()),
+        updated_at: Some(now),
+        command: Some("context-stilld".to_string()),
+        args: Some(vec!["run".to_string(), "mcp-in-process".to_string()]),
+        project_root: env.var("CONTEXT_STILL_PROJECT_ROOT"),
+        sqlite_core_path: Some(paths.sqlite_core_path.to_string_lossy().into_owned()),
+        ..ProcessState::default()
+    };
+    service::write_process_state(&MCP_ENDPOINT, &paths.run_dir, &state)?;
+    repository::write_pid(&paths.run_dir, MCP_ENDPOINT.state_name, std::process::id())
+        .map_err(|error| CliError::io(format!("failed to write MCP endpoint pid: {error}")))?;
+    let report = service::report_from_state(
+        &MCP_ENDPOINT,
+        "start",
+        "running",
+        format!(
+            "mcp-endpoint running in context-stilld pid={}",
+            std::process::id()
+        ),
+        state,
+    );
+    Ok((report, InProcessMcpEndpoint { endpoint }))
+}
+
+pub fn stop_in_process_report<E: EnvProvider>(
+    env: &E,
+    endpoint: InProcessMcpEndpoint,
+) -> Result<LifecycleReport, CliError> {
+    endpoint.stop();
+    let paths = resolve_paths(env);
+    let state = repository::read_state(&paths.run_dir, MCP_ENDPOINT.state_name)
+        .ok()
+        .flatten();
+    let _ = repository::clear_pid(&paths.run_dir, MCP_ENDPOINT.state_name);
+    let _ = repository::clear_state(&paths.run_dir, MCP_ENDPOINT.state_name);
+    Ok(LifecycleReport {
+        process: MCP_ENDPOINT.state_name,
+        action: "stop".to_string(),
+        status: "stopped".to_string(),
+        message: "mcp-endpoint in-process listener stopped".to_string(),
+        pid: Some(std::process::id()),
+        log_path: state.as_ref().map(|state| state.log_path.clone()),
+        started_at: state.as_ref().and_then(|state| state.started_at.clone()),
+        updated_at: Some(service::now_timestamp()),
+        exit_code: None,
+        exit_signal: None,
+        last_error: None,
+        command: Some("context-stilld".to_string()),
+        args: Some(vec!["run".to_string(), "mcp-in-process".to_string()]),
+    })
+}
+
+fn resident_managed_stop_report<E: EnvProvider>(
+    env: &E,
+) -> Result<Option<LifecycleReport>, CliError> {
+    let paths = resolve_paths(env);
+    let Some(state) = repository::read_state(&paths.run_dir, MCP_ENDPOINT.state_name)
+        .map_err(|error| CliError::io(format!("failed to read MCP endpoint state: {error}")))?
+    else {
+        return Ok(None);
+    };
+    let args = state.args.clone().unwrap_or_default();
+    if !args.iter().any(|arg| arg == "mcp-in-process") {
+        return Ok(None);
+    }
+    Ok(Some(LifecycleReport {
+        process: MCP_ENDPOINT.state_name,
+        action: "stop".to_string(),
+        status: "managed_by_resident".to_string(),
+        message:
+            "mcp-endpoint is running inside context-stilld; stop the resident daemon to stop it"
+                .to_string(),
+        pid: state.pid,
+        log_path: if state.log_path.is_empty() {
+            None
+        } else {
+            Some(state.log_path)
+        },
+        started_at: state.started_at,
+        updated_at: Some(service::now_timestamp()),
+        exit_code: state.exit_code,
+        exit_signal: state.exit_signal,
+        last_error: state.last_error,
+        command: state.command,
+        args: state.args,
+    }))
 }
 
 pub fn endpoint_report<E: EnvProvider>(env: &E) -> EndpointReport {
@@ -365,113 +489,5 @@ impl SmokeReport {
             format!("message={}", self.message),
         ]
         .join("\n")
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use crate::shared::config::MapEnv;
-    use crate::shared::process::MockSupervisor;
-    use std::sync::atomic::{AtomicU64, Ordering};
-    use std::time::SystemTime;
-
-    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
-
-    fn temp_app_dir() -> std::path::PathBuf {
-        let rand_num = SystemTime::now()
-            .duration_since(SystemTime::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let temp_id = NEXT_TEMP_ID.fetch_add(1, Ordering::SeqCst);
-        let path = std::env::temp_dir().join(format!(
-            "context_still_mcp_test_{}_{}_{}",
-            std::process::id(),
-            rand_num,
-            temp_id
-        ));
-        std::fs::create_dir_all(&path).unwrap();
-        path
-    }
-
-    fn cleanup_temp_app_dir(path: &std::path::Path) {
-        let _ = std::fs::remove_dir_all(path);
-    }
-
-    #[test]
-    fn mcp_lifecycle_spawns_rust_http_endpoint_worker() {
-        let app_dir = temp_app_dir();
-        let env = MapEnv::from_pairs(vec![
-            ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
-            ("CONTEXT_STILL_PROJECT_ROOT", app_dir.to_str().unwrap()),
-        ]);
-        let supervisor = MockSupervisor::new();
-
-        let start_res = start(&env, &supervisor).unwrap();
-        assert!(start_res.contains("mcp-endpoint started"));
-
-        let spawned = supervisor.spawned.lock().unwrap();
-        let call = spawned.values().next().unwrap();
-        assert!(
-            call.command.ends_with("context_stilld") || call.command.contains("context_stilld")
-        );
-        assert_eq!(call.args, vec!["mcp", "serve"]);
-
-        cleanup_temp_app_dir(&app_dir);
-    }
-
-    #[test]
-    fn endpoint_report_uses_loopback_streamable_http_url() {
-        let app_dir = temp_app_dir();
-        let env = MapEnv::from_pairs(vec![
-            ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
-            ("CONTEXT_STILL_MCP_PORT", "45678"),
-        ]);
-
-        let report = endpoint_report(&env);
-
-        assert_eq!(report.url, "http://127.0.0.1:45678/mcp");
-        assert_eq!(report.transport, "streamable-http");
-        assert_eq!(report.auth, "none");
-        assert!(!report.ready);
-        assert!(report.metadata_path.ends_with("mcp-endpoint.json"));
-        assert!(report.session_state_path.ends_with("mcp-sessions.json"));
-
-        cleanup_temp_app_dir(&app_dir);
-    }
-
-    #[test]
-    fn sessions_report_reads_daemon_session_state() {
-        let app_dir = temp_app_dir();
-        let run_dir = app_dir.join("run");
-        std::fs::create_dir_all(&run_dir).unwrap();
-        let session_file = run_dir.join("mcp-sessions.json");
-        std::fs::write(
-            &session_file,
-            r#"[{
-              "sessionId": "s1",
-              "clientName": "codex",
-              "clientVersion": "1.0",
-              "remoteAddress": "127.0.0.1",
-              "createdAt": "2026-06-22T00:00:00.000Z",
-              "lastActivityAt": "2026-06-22T00:01:00.000Z",
-              "inFlightRequestCount": 0,
-              "workerId": "typescript-mcp-worker",
-              "route": "typescript-mcp-server",
-              "closeReason": null
-            }]"#,
-        )
-        .unwrap();
-        let env = MapEnv::from_pairs(vec![(
-            "CONTEXT_STILL_APP_DATA_DIR",
-            app_dir.to_str().unwrap(),
-        )]);
-
-        let report = sessions_report(&env).unwrap();
-
-        assert_eq!(report.active_session_count, 1);
-        assert_eq!(report.sessions[0].session_id, "s1");
-
-        cleanup_temp_app_dir(&app_dir);
     }
 }

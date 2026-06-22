@@ -11,7 +11,7 @@ use crate::domains::{
     agent_log_sync,
     bootstrap::service::resolve_paths,
     daemon::repository::{self, ProcessState},
-    mcp_lifecycle, process_lifecycle, queue_lifecycle,
+    mcp_lifecycle, queue_lifecycle,
 };
 use crate::shared::{config::EnvProvider, errors::CliError, process::ProcessSupervisor};
 
@@ -39,13 +39,12 @@ pub struct ManagedSurfaceReport {
 
 #[derive(Debug, Default, Clone, Eq, PartialEq)]
 struct SurfaceOwnership {
-    mcp: bool,
     queue: bool,
 }
 
-#[derive(Debug, Clone)]
 struct ResidentRuntimeState {
     owned_surfaces: SurfaceOwnership,
+    mcp_endpoint: Option<mcp_lifecycle::service::InProcessMcpEndpoint>,
     queue_last_checked_at: Option<Instant>,
     agent_log_sync_last_checked_at: Option<Instant>,
 }
@@ -54,6 +53,7 @@ impl ResidentRuntimeState {
     fn new<E: EnvProvider>(env: &E) -> Self {
         Self {
             owned_surfaces: SurfaceOwnership::default(),
+            mcp_endpoint: None,
             queue_last_checked_at: if env_flag_default(env, "CONTEXT_STILL_QUEUE_RUN_AT_LOAD", true)
             {
                 None
@@ -94,8 +94,7 @@ pub fn run<E: EnvProvider, S: ProcessSupervisor>(
     let pid = std::process::id();
 
     if once {
-        let mut shutdown_surfaces =
-            stop_owned_surfaces(env, supervisor, &runtime_state.owned_surfaces)?;
+        let mut shutdown_surfaces = stop_owned_surfaces(env, supervisor, &mut runtime_state)?;
         surfaces.append(&mut shutdown_surfaces);
         write_resident_state(env, "exited")?;
         return Ok(ResidentRunReport {
@@ -125,8 +124,7 @@ pub fn run<E: EnvProvider, S: ProcessSupervisor>(
         }
     }
 
-    let mut shutdown_surfaces =
-        stop_owned_surfaces(env, supervisor, &runtime_state.owned_surfaces)?;
+    let mut shutdown_surfaces = stop_owned_surfaces(env, supervisor, &mut runtime_state)?;
     surfaces.append(&mut shutdown_surfaces);
     write_resident_state(env, "stopped")?;
 
@@ -147,8 +145,18 @@ fn ensure_surfaces<E: EnvProvider, S: ProcessSupervisor>(
     let mut reports = Vec::new();
     if !env_flag_default(env, "CONTEXT_STILL_RESIDENT_MCP", true) {
         reports.push(disabled_surface("mcp-server"));
+    } else if state
+        .mcp_endpoint
+        .as_ref()
+        .is_some_and(|endpoint| !endpoint.is_finished())
+    {
+        let report = mcp_lifecycle::service::status_report(env, supervisor)?;
+        reports.push(surface_report("mcp-server", true, report));
     } else {
-        let report = mcp_lifecycle::service::start_report(env, supervisor)?;
+        state.mcp_endpoint = None;
+        let _ = mcp_lifecycle::service::stop_report(env, supervisor);
+        let (report, endpoint) = mcp_lifecycle::service::start_in_process_report(env)?;
+        state.mcp_endpoint = Some(endpoint);
         reports.push(surface_report("mcp-server", true, report));
     }
 
@@ -170,15 +178,15 @@ fn ensure_surfaces<E: EnvProvider, S: ProcessSupervisor>(
 fn stop_owned_surfaces<E: EnvProvider, S: ProcessSupervisor>(
     env: &E,
     supervisor: &S,
-    ownership: &SurfaceOwnership,
+    state: &mut ResidentRuntimeState,
 ) -> Result<Vec<ManagedSurfaceReport>, CliError> {
     let mut reports = Vec::new();
-    if ownership.queue && env_flag_default(env, "CONTEXT_STILL_RESIDENT_QUEUE", true) {
+    if state.owned_surfaces.queue && env_flag_default(env, "CONTEXT_STILL_RESIDENT_QUEUE", true) {
         let report = queue_lifecycle::service::stop_report(env, supervisor)?;
         reports.push(surface_report("queue-supervisor", true, report));
     }
-    if ownership.mcp && env_flag_default(env, "CONTEXT_STILL_RESIDENT_MCP", true) {
-        let report = mcp_lifecycle::service::stop_report(env, supervisor)?;
+    if let Some(endpoint) = state.mcp_endpoint.take() {
+        let report = mcp_lifecycle::service::stop_in_process_report(env, endpoint)?;
         reports.push(surface_report("mcp-server", true, report));
     }
     Ok(reports)
@@ -187,7 +195,7 @@ fn stop_owned_surfaces<E: EnvProvider, S: ProcessSupervisor>(
 fn surface_report(
     name: &'static str,
     enabled: bool,
-    report: process_lifecycle::service::LifecycleReport,
+    report: crate::domains::process_lifecycle::service::LifecycleReport,
 ) -> ManagedSurfaceReport {
     ManagedSurfaceReport {
         name,
@@ -210,7 +218,7 @@ fn disabled_surface(name: &'static str) -> ManagedSurfaceReport {
 
 fn reconcile_queue_once<E: EnvProvider, S: ProcessSupervisor>(
     env: &E,
-    _supervisor: &S,
+    supervisor: &S,
     state: &mut ResidentRuntimeState,
 ) -> Result<ManagedSurfaceReport, CliError> {
     let interval = Duration::from_millis(env_u64_default(
@@ -232,14 +240,29 @@ fn reconcile_queue_once<E: EnvProvider, S: ProcessSupervisor>(
     }
 
     state.queue_last_checked_at = Some(Instant::now());
-    let report = queue_lifecycle::service::run_maintenance_once_report(env)?;
-    Ok(ManagedSurfaceReport {
-        name: "queue-supervisor",
-        enabled: true,
-        status: report.status,
-        pid: None,
-        message: report.message,
-    })
+    let maintenance = queue_lifecycle::service::run_maintenance_once_report(env)?;
+    if maintenance.status != "scheduled"
+        || env_flag_default(env, "CONTEXT_STILL_RESIDENT_REQUIRE_RUST_ONLY", false)
+    {
+        return Ok(ManagedSurfaceReport {
+            name: "queue-supervisor",
+            enabled: true,
+            status: maintenance.status,
+            pid: None,
+            message: maintenance.message,
+        });
+    }
+
+    let report = queue_lifecycle::service::run_executor_once_report(
+        env,
+        supervisor,
+        Duration::from_millis(env_u64_default(
+            env,
+            "CONTEXT_STILL_RESIDENT_QUEUE_TIMEOUT_MS",
+            300_000,
+        )),
+    )?;
+    Ok(surface_report("queue-supervisor", true, report))
 }
 
 fn reconcile_agent_log_sync<E: EnvProvider, S: ProcessSupervisor>(
@@ -291,10 +314,8 @@ impl SurfaceOwnership {
             if report.status != "started" {
                 continue;
             }
-            match report.name {
-                "mcp-server" => self.mcp = true,
-                "queue-supervisor" => self.queue = true,
-                _ => {}
+            if report.name == "queue-supervisor" {
+                self.queue = true;
             }
         }
     }
@@ -302,7 +323,7 @@ impl SurfaceOwnership {
 
 fn write_resident_state<E: EnvProvider>(env: &E, status: &str) -> Result<(), CliError> {
     let paths = resolve_paths(env);
-    let now = process_lifecycle::service::now_timestamp();
+    let now = crate::domains::process_lifecycle::service::now_timestamp();
     let running = status == "running";
     let state = ProcessState {
         pid: running.then_some(std::process::id()),

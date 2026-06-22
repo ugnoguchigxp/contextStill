@@ -2,12 +2,13 @@ use std::{
     collections::BTreeMap,
     io::{Read, Write},
     net::{TcpListener, TcpStream},
+    path::PathBuf,
     sync::{
-        atomic::{AtomicBool, AtomicU64, Ordering},
-        Arc, Mutex,
+        atomic::{AtomicBool, Ordering},
+        Arc,
     },
-    thread,
-    time::{Duration, SystemTime, UNIX_EPOCH},
+    thread::{self, JoinHandle},
+    time::Duration,
 };
 
 use serde_json::{json, Value};
@@ -19,10 +20,34 @@ use crate::{
 };
 
 use super::dispatch::{dispatch_json, DispatchConfig};
+use super::endpoint_sessions::{
+    active_session_count, close_session, create_session, is_active_session, new_state,
+    now_timestamp, persist_sessions, prune_sessions, touch_session, SessionPruneConfig,
+    SharedServerState,
+};
 use super::native_tools::{exposed_tool_count, handle_native_dispatch, tool_owner_inventory};
-use super::service::McpSession;
 
-static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(0);
+pub struct RunningEndpoint {
+    running: Arc<AtomicBool>,
+    join_handle: Option<JoinHandle<()>>,
+    endpoint_path: PathBuf,
+}
+
+impl RunningEndpoint {
+    pub fn is_finished(&self) -> bool {
+        self.join_handle
+            .as_ref()
+            .is_some_and(|handle| handle.is_finished())
+    }
+
+    pub fn stop(mut self) {
+        self.running.store(false, Ordering::SeqCst);
+        if let Some(handle) = self.join_handle.take() {
+            let _ = handle.join();
+        }
+        let _ = std::fs::remove_file(&self.endpoint_path);
+    }
+}
 
 #[derive(Debug, Clone)]
 struct EndpointConfig {
@@ -39,13 +64,21 @@ struct HttpRequest {
     body: String,
 }
 
-#[derive(Debug)]
-struct ServerState {
-    sessions: Vec<McpSession>,
-    sessions_path: std::path::PathBuf,
+pub fn serve<E: EnvProvider>(env: &E) -> Result<(), CliError> {
+    let endpoint = start_in_process(env)?;
+    let signal_running = Arc::clone(&endpoint.running);
+    ctrlc::set_handler(move || {
+        signal_running.store(false, Ordering::SeqCst);
+    })
+    .map_err(|error| CliError::io(format!("failed to install MCP signal handler: {error}")))?;
+    while endpoint.running.load(Ordering::SeqCst) {
+        thread::sleep(Duration::from_millis(100));
+    }
+    endpoint.stop();
+    Ok(())
 }
 
-pub fn serve<E: EnvProvider>(env: &E) -> Result<(), CliError> {
+pub fn start_in_process<E: EnvProvider>(env: &E) -> Result<RunningEndpoint, CliError> {
     let paths = resolve_paths(env);
     let endpoint = endpoint_config(env)?;
     let dispatch = Arc::new(dispatch_config(env));
@@ -54,10 +87,7 @@ pub fn serve<E: EnvProvider>(env: &E) -> Result<(), CliError> {
 
     let endpoint_path = paths.run_dir.join("mcp-endpoint.json");
     let sessions_path = paths.run_dir.join("mcp-sessions.json");
-    let state = Arc::new(Mutex::new(ServerState {
-        sessions: Vec::new(),
-        sessions_path: sessions_path.clone(),
-    }));
+    let state = new_state(sessions_path.clone(), SessionPruneConfig::from_env(env));
     persist_sessions(&state)?;
     persist_endpoint(&endpoint_path, &endpoint, &sessions_path)?;
 
@@ -68,13 +98,28 @@ pub fn serve<E: EnvProvider>(env: &E) -> Result<(), CliError> {
         .map_err(|error| CliError::io(format!("failed to configure MCP listener: {error}")))?;
 
     let running = Arc::new(AtomicBool::new(true));
-    let signal_running = Arc::clone(&running);
-    ctrlc::set_handler(move || {
-        signal_running.store(false, Ordering::SeqCst);
-    })
-    .map_err(|error| CliError::io(format!("failed to install MCP signal handler: {error}")))?;
+    let thread_running = Arc::clone(&running);
+    let thread_endpoint_path = endpoint_path.clone();
+    let join_handle = thread::spawn(move || {
+        accept_loop(listener, state, dispatch, thread_running);
+        let _ = std::fs::remove_file(thread_endpoint_path);
+    });
 
+    Ok(RunningEndpoint {
+        running,
+        join_handle: Some(join_handle),
+        endpoint_path,
+    })
+}
+
+fn accept_loop(
+    listener: TcpListener,
+    state: SharedServerState,
+    dispatch: Arc<DispatchConfig>,
+    running: Arc<AtomicBool>,
+) {
     while running.load(Ordering::SeqCst) {
+        prune_sessions(&state, false);
         match listener.accept() {
             Ok((stream, _)) => {
                 let state = Arc::clone(&state);
@@ -86,12 +131,9 @@ pub fn serve<E: EnvProvider>(env: &E) -> Result<(), CliError> {
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
                 thread::sleep(Duration::from_millis(50));
             }
-            Err(error) => return Err(CliError::io(format!("MCP listener failed: {error}"))),
+            Err(_) => return,
         }
     }
-
-    let _ = std::fs::remove_file(endpoint_path);
-    Ok(())
 }
 
 fn dispatch_config<E: EnvProvider>(env: &E) -> DispatchConfig {
@@ -155,17 +197,9 @@ fn persist_endpoint(
     .map_err(|error| CliError::io(format!("failed to write MCP endpoint metadata: {error}")))
 }
 
-fn persist_sessions(state: &Arc<Mutex<ServerState>>) -> Result<(), CliError> {
-    let state = state.lock().unwrap();
-    let content = serde_json::to_string_pretty(&state.sessions)
-        .map_err(|error| CliError::io(format!("failed to serialize MCP sessions: {error}")))?;
-    std::fs::write(&state.sessions_path, format!("{content}\n"))
-        .map_err(|error| CliError::io(format!("failed to write MCP sessions: {error}")))
-}
-
 fn handle_stream(
     mut stream: TcpStream,
-    state: Arc<Mutex<ServerState>>,
+    state: SharedServerState,
     dispatch: Arc<DispatchConfig>,
 ) -> Result<(), CliError> {
     stream
@@ -250,10 +284,11 @@ fn find_header_end(buffer: &[u8]) -> Option<usize> {
 
 fn handle_request(
     request: HttpRequest,
-    state: Arc<Mutex<ServerState>>,
+    state: SharedServerState,
     dispatch: Arc<DispatchConfig>,
 ) -> String {
     if request.path == "/mcp/health" && request.method == "GET" {
+        prune_sessions(&state, false);
         let active_session_count = active_session_count(&state);
         let tool_count = exposed_tool_count();
         let tool_owners = tool_owner_inventory();
@@ -297,9 +332,10 @@ fn handle_request(
 
 fn handle_mcp_post(
     request: HttpRequest,
-    state: Arc<Mutex<ServerState>>,
+    state: SharedServerState,
     dispatch: Arc<DispatchConfig>,
 ) -> String {
+    prune_sessions(&state, false);
     let body = match serde_json::from_str::<Value>(&request.body) {
         Ok(body) => body,
         Err(error) => return rpc_error(400, None, -32700, &format!("Parse error: {error}")),
@@ -380,93 +416,15 @@ fn handle_mcp_post(
     }
 }
 
-fn handle_mcp_delete(request: HttpRequest, state: Arc<Mutex<ServerState>>) -> String {
+fn handle_mcp_delete(request: HttpRequest, state: SharedServerState) -> String {
     let Some(session_id) = session_id(&request) else {
         return rpc_error(404, None, -32000, "MCP session not found");
     };
-    let mut state_guard = state.lock().unwrap();
-    let Some(session) = state_guard
-        .sessions
-        .iter_mut()
-        .find(|session| session.session_id == session_id && session.close_reason.is_none())
-    else {
+    if !close_session(&state, &session_id) {
         return rpc_error(404, None, -32000, "MCP session not found");
-    };
-    session.close_reason = Some("client_disconnect".to_string());
-    session.last_activity_at = now_timestamp();
-    session.in_flight_request_count = 0;
-    drop(state_guard);
-    let _ = persist_sessions(&state);
-    json_response(200, json!({ "ok": true, "sessionId": session_id }), &[])
-}
-
-fn create_session(state: &Arc<Mutex<ServerState>>, body: &Value, remote: Option<String>) -> String {
-    let session_id = format!(
-        "rust-mcp-{}-{}",
-        std::process::id(),
-        NEXT_SESSION_ID.fetch_add(1, Ordering::SeqCst)
-    );
-    let now = now_timestamp();
-    let client_info = body
-        .get("params")
-        .and_then(|params| params.get("clientInfo"))
-        .cloned()
-        .unwrap_or_else(|| json!({}));
-    let session = McpSession {
-        session_id: session_id.clone(),
-        client_name: client_info
-            .get("name")
-            .and_then(Value::as_str)
-            .map(ToString::to_string),
-        client_version: client_info
-            .get("version")
-            .and_then(Value::as_str)
-            .map(ToString::to_string),
-        remote_address: remote,
-        created_at: now.clone(),
-        last_activity_at: now,
-        in_flight_request_count: 0,
-        worker_id: Some(format!("rust-mcp-worker-{}", std::process::id())),
-        route: "rust-mcp-server".to_string(),
-        close_reason: None,
-    };
-    state.lock().unwrap().sessions.push(session);
-    let _ = persist_sessions(state);
-    session_id
-}
-
-fn active_session_count(state: &Arc<Mutex<ServerState>>) -> usize {
-    state
-        .lock()
-        .unwrap()
-        .sessions
-        .iter()
-        .filter(|session| session.close_reason.is_none())
-        .count()
-}
-
-fn is_active_session(state: &Arc<Mutex<ServerState>>, session_id: &str) -> bool {
-    state
-        .lock()
-        .unwrap()
-        .sessions
-        .iter()
-        .any(|session| session.session_id == session_id && session.close_reason.is_none())
-}
-
-fn touch_session(state: &Arc<Mutex<ServerState>>, session_id: &str, delta: i32) {
-    if let Some(session) = state
-        .lock()
-        .unwrap()
-        .sessions
-        .iter_mut()
-        .find(|session| session.session_id == session_id)
-    {
-        session.last_activity_at = now_timestamp();
-        session.in_flight_request_count =
-            (session.in_flight_request_count as i32 + delta).max(0) as u32;
     }
-    let _ = persist_sessions(state);
+    prune_sessions(&state, true);
+    json_response(200, json!({ "ok": true, "sessionId": session_id }), &[])
 }
 
 fn session_id(request: &HttpRequest) -> Option<String> {
@@ -532,12 +490,4 @@ fn json_response(status: u16, value: Value, headers: &[(&str, String)]) -> Strin
 fn empty_response(status: u16) -> String {
     let reason = if status == 202 { "Accepted" } else { "OK" };
     format!("HTTP/1.1 {status} {reason}\r\ncontent-length: 0\r\nconnection: close\r\n\r\n")
-}
-
-fn now_timestamp() -> String {
-    let millis = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .unwrap_or_default()
-        .as_millis();
-    format!("unix-ms:{millis}")
 }

@@ -186,6 +186,7 @@ mod tests {
         let env = MapEnv::from_pairs(vec![
             ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
             ("CONTEXT_STILL_PROJECT_ROOT", app_dir.to_str().unwrap()),
+            ("CONTEXT_STILL_MCP_PORT", "0"),
         ]);
         let supervisor = MockSupervisor::new();
 
@@ -195,7 +196,7 @@ mod tests {
         assert_eq!(report["status"], "exited");
         assert_eq!(report["surfaces"].as_array().unwrap().len(), 4);
         assert_eq!(report["surfaces"][0]["name"], "mcp-server");
-        assert_eq!(report["surfaces"][0]["status"], "started");
+        assert_eq!(report["surfaces"][0]["status"], "running");
         assert_eq!(report["surfaces"][1]["name"], "queue-supervisor");
         assert_eq!(report["surfaces"][1]["status"], "missing_sqlite");
         assert_eq!(report["surfaces"][2]["name"], "agent-log-sync");
@@ -230,6 +231,7 @@ mod tests {
         let env = MapEnv::from_pairs(vec![
             ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
             ("CONTEXT_STILL_PROJECT_ROOT", app_dir.to_str().unwrap()),
+            ("CONTEXT_STILL_MCP_PORT", "0"),
             ("CONTEXT_STILL_RESIDENT_REQUIRE_RUST_ONLY", "1"),
         ]);
         let supervisor = MockSupervisor::new();
@@ -240,14 +242,14 @@ mod tests {
         assert_eq!(report["status"], "exited");
         assert_eq!(report["surfaces"].as_array().unwrap().len(), 4);
         assert_eq!(report["surfaces"][0]["name"], "mcp-server");
-        assert_eq!(report["surfaces"][0]["status"], "started");
+        assert_eq!(report["surfaces"][0]["status"], "running");
         assert_eq!(report["surfaces"][1]["name"], "queue-supervisor");
         assert_eq!(report["surfaces"][1]["status"], "missing_sqlite");
         assert_eq!(report["surfaces"][2]["name"], "agent-log-sync");
         assert_eq!(report["surfaces"][2]["status"], "scheduled");
         assert_eq!(report["surfaces"][3]["name"], "mcp-server");
         assert_eq!(report["surfaces"][3]["status"], "stopped");
-        assert!(supervisor
+        assert!(!supervisor
             .spawned
             .lock()
             .unwrap()
