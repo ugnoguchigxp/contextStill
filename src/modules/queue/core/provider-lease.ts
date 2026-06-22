@@ -1,12 +1,12 @@
 import { groupedConfig } from "../../../config.js";
 import { resolveDatabaseBackendConfig } from "../../../db/backend.js";
+import { getRuntimeSettingsSnapshot } from "../../settings/settings.service.js";
 import type {
   RuntimeProviderPool,
   RuntimeProviderPoolTarget,
   RuntimeSettingsEditable,
   RuntimeSettingsRoute,
 } from "../../settings/settings.types.js";
-import { getRuntimeSettingsSnapshot } from "../../settings/settings.service.js";
 import { isQueuePaused } from "./control.js";
 import type { DistillationQueueName } from "./types.js";
 import { queueTableNameByQueue } from "./types.js";
@@ -34,6 +34,15 @@ type RunnableCandidate = {
   effectivePriority: number;
   priority: number;
   createdAtMs: number;
+  preferredTargetIds: Set<string>;
+};
+
+type RunnableQueueRow = {
+  id: string;
+  priority: number;
+  created_at: string;
+  source_kind?: string | null;
+  provider_policy?: string | null;
 };
 
 async function getSqliteCoreDatabase() {
@@ -98,13 +107,40 @@ function queueRoutes(
   return [settings.taskRouting.finalizeDistille];
 }
 
+function routeForFindingCandidateRow(
+  settings: RuntimeSettingsEditable,
+  row: RunnableQueueRow,
+): RuntimeSettingsRoute {
+  return row.source_kind === "vibe_memory"
+    ? settings.taskRouting.findCandidate.vibe
+    : settings.taskRouting.findCandidate.source;
+}
+
+function candidateRoutes(params: {
+  settings: RuntimeSettingsEditable;
+  queueName: DistillationQueueName;
+  row: RunnableQueueRow;
+}): RuntimeSettingsRoute[] {
+  if (params.queueName === "findingCandidate") {
+    return [routeForFindingCandidateRow(params.settings, params.row)];
+  }
+  return queueRoutes(params.settings, params.queueName);
+}
+
 function preferredTargetIdsForQueue(params: {
   settings: RuntimeSettingsEditable;
   queueName: DistillationQueueName;
   poolId: string;
+  row?: RunnableQueueRow;
 }): Set<string> {
   const preferred = new Set<string>();
-  for (const route of queueRoutes(params.settings, params.queueName)) {
+  for (const route of params.row
+    ? candidateRoutes({
+        settings: params.settings,
+        queueName: params.queueName,
+        row: params.row,
+      })
+    : queueRoutes(params.settings, params.queueName)) {
     if (route.providerPoolId !== params.poolId) continue;
     if (route.provider === "local-llm") {
       const routeTarget = parseLocalLlmRouteTarget(route.localLlmModel ?? route.model);
@@ -181,8 +217,14 @@ function runnableSql(queueName: DistillationQueueName, tableName: string): strin
     queueName === "finalizeDistille"
       ? ""
       : "and (next_run_at is null or next_run_at <= CURRENT_TIMESTAMP)";
+  const extraColumns =
+    queueName === "findingCandidate"
+      ? ", source_kind"
+      : queueName === "coveringEvidence"
+        ? ", provider_policy"
+        : "";
   return `
-    select id, priority, created_at
+    select id, priority, created_at${extraColumns}
     from ${tableName}
     where status in ('pending', 'paused')
       ${nextRunCondition}
@@ -343,23 +385,22 @@ export async function claimNextJobWithProviderLease(params: {
       return null;
     }
 
+    const settings = getRuntimeSettingsSnapshot();
     const candidates: RunnableCandidate[] = [];
     for (const [queueOrder, queueName] of params.priorityQueues.entries()) {
       if (pausedQueues.has(queueName)) continue;
       const tableName = queueTableNameByQueue[queueName];
       sqlite.db.query(recoverStaleQueueJobsSql(queueName, tableName)).run(queueStaleCutoff);
-      const running = sqlite.db
-        .query<{ id: string }, []>(`select id from ${tableName} where status = 'running' limit 1`)
-        .get();
-      if (running) continue;
-      const rows = sqlite.db
-        .query<{ id: string; priority: number; created_at: string }, []>(
-          runnableSql(queueName, tableName),
-        )
-        .all();
+      const rows = sqlite.db.query<RunnableQueueRow, []>(runnableSql(queueName, tableName)).all();
       for (const row of rows) {
         const createdAtMs = rowCreatedAtMs(row.created_at);
         const waitingSeconds = Math.max(0, Math.floor((nowMs - createdAtMs) / 1000));
+        const preferredTargetIds = preferredTargetIdsForQueue({
+          settings,
+          queueName,
+          poolId: params.pool.id,
+          row,
+        });
         candidates.push({
           queueName,
           tableName,
@@ -368,24 +409,21 @@ export async function claimNextJobWithProviderLease(params: {
           effectivePriority: queueOrder - Math.floor(waitingSeconds / agingSeconds),
           priority: Number(row.priority ?? 0),
           createdAtMs,
+          preferredTargetIds,
         });
       }
     }
 
-    const picked = candidates.sort(sortCandidates)[0];
-    if (!picked) {
-      sqlite.db.query("COMMIT").run();
-      return null;
+    let picked: RunnableCandidate | null = null;
+    let selectedTarget: RuntimeProviderPoolTarget | undefined;
+    for (const candidate of candidates.sort(sortCandidates)) {
+      const eligibleTargets = eligibleTargetsForQueue(freeTargets, candidate.preferredTargetIds);
+      selectedTarget = sortTargetsForQueue(eligibleTargets, candidate.preferredTargetIds)[0];
+      if (!selectedTarget) continue;
+      picked = candidate;
+      break;
     }
-    const settings = getRuntimeSettingsSnapshot();
-    const preferredTargetIds = preferredTargetIdsForQueue({
-      settings,
-      queueName: picked.queueName,
-      poolId: params.pool.id,
-    });
-    const eligibleTargets = eligibleTargetsForQueue(freeTargets, preferredTargetIds);
-    const selectedTarget = sortTargetsForQueue(eligibleTargets, preferredTargetIds)[0];
-    if (!selectedTarget) {
+    if (!picked || !selectedTarget) {
       sqlite.db.query("COMMIT").run();
       return null;
     }

@@ -199,7 +199,7 @@ Candidate item fields:
 | `text`         | conditional                     | Raw note or JSON-like candidate text alternative to `body`.                 |
 | `type`         |                              no | `rule` or `procedure`; negative candidates are normalized to `rule`.        |
 | `polarity`     |                              no | `positive`, `negative`, or `neutral`; omitted defaults to positive behavior. |
-| `avoid`        | negative without `body`/`text`  | Failure, decision, implementation, or operation to avoid.                   |
+| `avoid`        | negative without `body`/`text`; optional for procedures | Failure, decision, implementation, or operation to avoid. For non-negative `type: "procedure"`, it may populate a missing `Avoid:` section. |
 | `prefer`       | negative without `body`/`text`  | Safer decision, implementation, or operation to prefer.                     |
 | `technologies` | negative                        | Non-empty applicability tags for concrete stacks, runtimes, languages, or libraries. |
 | `changeTypes`  | negative                        | Non-empty applicability tags for change categories such as `implementation`, `testing`, or `diagnosis`. |

@@ -305,7 +305,7 @@ describe("settings runtime cache", () => {
     });
   });
 
-  test("normalizes Find Candidate routing to one queue processing route", () => {
+  test("preserves separate Find Candidate source and vibe processing routes", () => {
     const row = {
       id: "settings-row-2",
       namespace: "runtime",
@@ -333,11 +333,15 @@ describe("settings runtime cache", () => {
 
     const parsed = parseDocumentValue(row);
 
-    expect(parsed.taskRouting.findCandidate.vibe).toEqual(parsed.taskRouting.findCandidate.source);
     expect(parsed.taskRouting.findCandidate.source).toMatchObject({
       provider: "azure-openai",
       model: "gpt-5-4-mini",
       fallback: ["local-llm"],
+    });
+    expect(parsed.taskRouting.findCandidate.vibe).toMatchObject({
+      provider: "bedrock",
+      model: undefined,
+      fallback: [],
     });
   });
 

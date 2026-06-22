@@ -75,9 +75,6 @@ function DecisionRunListItem({
       <div className="compile-run-foot">
         <time>{tzFormatDate(run.createdAt, tz)}</time>
       </div>
-      <span className="compile-run-score" title="Decision confidence">
-        {run.confidence}
-      </span>
     </button>
   );
 }

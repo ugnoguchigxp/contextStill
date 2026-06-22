@@ -51,6 +51,10 @@ pub enum BackupAction {
 pub enum CliCommand {
     Help,
     Version,
+    Run {
+        json: bool,
+        once: bool,
+    },
     Paths {
         json: bool,
     },
@@ -100,6 +104,13 @@ where
     match command.as_str() {
         "-h" | "--help" | "help" => Ok(CliCommand::Help),
         "-V" | "--version" | "version" => Ok(CliCommand::Version),
+        "run" => {
+            let options = parse_run_options(args)?;
+            Ok(CliCommand::Run {
+                json: options.json,
+                once: options.once,
+            })
+        }
         "paths" => Ok(CliCommand::Paths {
             json: parse_json_flag(args)?,
         }),
@@ -252,6 +263,34 @@ where
             "unknown command: {command}"
         ))),
     }
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct RunOptions {
+    json: bool,
+    once: bool,
+}
+
+fn parse_run_options<I>(args: I) -> Result<RunOptions, CliError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut options = RunOptions {
+        json: false,
+        once: false,
+    };
+    for arg in args {
+        match arg.as_str() {
+            "--json" => options.json = true,
+            "--once" => options.once = true,
+            _ => {
+                return Err(CliError::invalid_arguments(format!(
+                    "unknown argument: {arg}"
+                )))
+            }
+        }
+    }
+    Ok(options)
 }
 
 fn required_action<I>(args: &mut I, command: &str, expected: &str) -> Result<String, CliError>

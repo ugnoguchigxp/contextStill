@@ -8,3 +8,4 @@ pub mod doctor;
 pub mod mcp_lifecycle;
 pub mod process_lifecycle;
 pub mod queue_lifecycle;
+pub mod resident_runtime;

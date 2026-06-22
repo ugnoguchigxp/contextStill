@@ -30,6 +30,8 @@ export const episodeDistillerCanonicalSchema = z.object({
   context: z.string().trim().min(1),
   intent: z.string().trim().min(1),
   keyDecisions: z.array(z.string().trim().min(1)).default([]),
+  actionTaken: z.string().trim().min(1),
+  outcome: z.string().trim().min(1),
   failedApproach: z.string().trim().default(""),
   reusableLesson: z.string().trim().min(1),
   usefulFutureTriggers: z.array(z.string().trim().min(1)).default([]),
@@ -59,6 +61,48 @@ function joinList(values: string[], fallback = ""): string {
   return items.map((value) => `- ${value}`).join("\n");
 }
 
+function qualityValueScore(scores: EpisodeDistillerCanonical["scores"]): number {
+  return Math.round(
+    scores.importance * 0.22 +
+      scores.confidence * 0.18 +
+      scores.reusability * 0.14 +
+      scores.decision_density * 0.1 +
+      scores.failure_value * 0.1 +
+      scores.causal_clarity * 0.1 +
+      scores.project_specificity * 0.06 +
+      scores.evidence_quality * 0.05 +
+      scores.compression_quality * 0.05,
+  );
+}
+
+export function calibrateEpisodeCanonical(
+  canonical: EpisodeDistillerCanonical,
+): EpisodeDistillerCanonical {
+  const scores = canonical.scores;
+  const actionTaken = canonical.actionTaken.trim();
+  const failedApproach = canonical.failedApproach.trim();
+  const lowActionSignal = !actionTaken && !failedApproach;
+  const smallChangeSignal =
+    canonical.generationKind === "task_episode" &&
+    scores.failure_value <= 10 &&
+    scores.decision_density <= 70 &&
+    scores.reusability <= 70;
+  const valueScore = qualityValueScore(scores);
+  let importanceCap = Math.min(100, valueScore + 10);
+  if (lowActionSignal) importanceCap = Math.min(importanceCap, 65);
+  if (smallChangeSignal) importanceCap = Math.min(importanceCap, 75);
+  return {
+    ...canonical,
+    actionTaken,
+    failedApproach,
+    scores: {
+      ...scores,
+      confidence: Math.min(scores.confidence, 80),
+      importance: Math.min(scores.importance, importanceCap),
+    },
+  };
+}
+
 export function canonicalEpisodeToCardInput(params: {
   canonical: EpisodeDistillerCanonical;
   sourceKey: string;
@@ -74,7 +118,7 @@ export function canonicalEpisodeToCardInput(params: {
   project?: string;
   distillationVersion: string;
 }): EpisodeCardCreateInput {
-  const canonical = params.canonical;
+  const canonical = calibrateEpisodeCanonical(params.canonical);
   const metadata = {
     source: "episodeDistiller",
     episodeDistillation: {
@@ -98,19 +142,17 @@ export function canonicalEpisodeToCardInput(params: {
 
   return {
     title: canonical.title,
-    situation: [canonical.context, canonical.intent].filter(Boolean).join("\n\nIntent:\n"),
+    situation: canonical.context,
     observations: joinList(canonical.keyDecisions, "主要な判断は特定されませんでした。"),
     action: [
+      canonical.actionTaken,
       canonical.failedApproach
         ? `失敗した、または避けたアプローチ:\n${canonical.failedApproach}`
-        : "",
-      canonical.openLoops.length > 0
-        ? `source 時点の未解決事項:\n${joinList(canonical.openLoops)}`
         : "",
     ]
       .filter(Boolean)
       .join("\n\n"),
-    outcome: `vibe memory segment ${params.sourceFragmentKey} から蒸留された Episode。`,
+    outcome: canonical.outcome,
     lesson: canonical.reusableLesson,
     applicability: {
       sourceFragmentKey: params.sourceFragmentKey,
@@ -119,6 +161,7 @@ export function canonicalEpisodeToCardInput(params: {
     antiApplicability: {
       requiresRawEvidenceCheck: true,
       stalenessRisk: canonical.scores.staleness_risk,
+      openLoops: canonical.openLoops,
     },
     domains: uniqueStrings(canonical.domains),
     technologies: uniqueStrings(canonical.technologies),

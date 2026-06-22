@@ -11,16 +11,6 @@ import {
   useCreateContextDecisionMutation,
 } from "../../../web/src/modules/context-decision/hooks/context-decision.hooks";
 
-// Recharts のモック
-vi.mock("recharts", () => ({
-  ResponsiveContainer: ({ children }: any) => <div>{children}</div>,
-  RadarChart: ({ children }: any) => <div>{children}</div>,
-  PolarGrid: () => null,
-  PolarAngleAxis: () => null,
-  PolarRadiusAxis: () => null,
-  Radar: () => null,
-}));
-
 // hooks のモック
 vi.mock("../../../web/src/modules/context-decision/hooks/context-decision.hooks", () => ({
   useCreateContextDecisionMutation: vi.fn(),
@@ -315,6 +305,7 @@ describe("ContextDecisionPage", () => {
     // 見出しの確認
     expect(screen.getByText("Context Decision Control Plane")).toBeInTheDocument();
     expect(screen.getByText("Decision Request")).toBeInTheDocument();
+    expect(screen.queryByTitle("Decision confidence")).not.toBeInTheDocument();
 
     // フォームにサンプルを挿入
     const exampleButton = screen.getByText("Example");
@@ -371,6 +362,11 @@ describe("ContextDecisionPage", () => {
     });
     expect(screen.getByText("Do build")).toBeInTheDocument();
     expect(screen.getByText("Always build on green")).toBeInTheDocument();
+    expect(screen.getByText("Decision Rationale")).toBeInTheDocument();
+    expect(screen.getByText("Knowledge Evidence")).toBeInTheDocument();
+    expect(screen.getByText("Used as support")).toBeInTheDocument();
+    expect(screen.getByText("Used as risk")).toBeInTheDocument();
+    expect(screen.getByText("Counter evidence")).toBeInTheDocument();
     expect(screen.getByText("Knowledge Prior")).toBeInTheDocument();
     expect(screen.getByText("Outcome Predictor")).toBeInTheDocument();
     expect(screen.getByText("Knowledge Assessment")).toBeInTheDocument();
@@ -378,10 +374,11 @@ describe("ContextDecisionPage", () => {
     expect(screen.getByText("signals loaded")).toBeInTheDocument();
     expect(screen.getByText("Reliability Gate")).toBeInTheDocument();
     expect(screen.getByText("weak_coverage_requires_revision")).toBeInTheDocument();
-    expect(screen.getAllByText("Risk Evidence").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Check risk before build").length).toBeGreaterThan(0);
-    expect(screen.getByText("Counter Evidence")).toBeInTheDocument();
     expect(screen.getAllByText("Counter build case").length).toBeGreaterThan(0);
+    expect(screen.getAllByText("Compile history").length).toBeGreaterThan(0);
+    expect(screen.getByText("Used 2")).toBeInTheDocument();
+    expect(screen.getByText("Not used 0")).toBeInTheDocument();
     expect(screen.getByText("compile used 2")).toBeInTheDocument();
     expect(screen.getByText("landscape over_selected_not_used")).toBeInTheDocument();
     expect(screen.getByText("community Decision Review")).toBeInTheDocument();
@@ -389,7 +386,6 @@ describe("ContextDecisionPage", () => {
     expect(screen.getByText("Feedback Effects")).toBeInTheDocument();
     expect(screen.getByText("Bad feedback penalty")).toBeInTheDocument();
     expect(screen.getByText("-6")).toBeInTheDocument();
-    expect(screen.getAllByText("selected_support").length).toBeGreaterThan(0);
 
     // フィードバックの送信
     const goodButton = screen.getByText("Good");

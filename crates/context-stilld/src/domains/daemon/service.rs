@@ -16,6 +16,7 @@ use super::repository;
 pub struct RuntimeStatus {
     pub runtime_host: &'static str,
     pub version: &'static str,
+    pub resident_supervisor: String,
     pub hono_admin_api: String,
     pub mcp_server: String,
     pub queue_supervisor: String,
@@ -45,21 +46,23 @@ pub fn status_with_supervisor<E: EnvProvider, S: ProcessSupervisor>(
     let paths = resolve_paths(env);
     let run_dir = &paths.run_dir;
 
+    let resident_supervisor = resolve_process_status(run_dir, "context-stilld", supervisor);
     let hono_admin_api = resolve_process_status(run_dir, "admin-api", supervisor);
     let mcp_server = resolve_process_status(run_dir, "mcp-server", supervisor);
     let queue_supervisor = resolve_process_status(run_dir, "queue-supervisor", supervisor);
     let agent_log_sync = resolve_process_status(run_dir, "agent-log-sync", supervisor);
 
     RuntimeStatus {
-        runtime_host: "rust-skeleton",
+        runtime_host: "rust-resident",
         version: repository::runtime_version(),
+        resident_supervisor,
         hono_admin_api,
         mcp_server,
         queue_supervisor,
         agent_log_sync,
         managed_default_flags: ManagedDefaultFlags {
-            mcp: env_flag(env, "CONTEXT_STILL_DAEMON_MANAGED_MCP"),
-            queue: env_flag(env, "CONTEXT_STILL_DAEMON_MANAGED_QUEUE"),
+            mcp: env_flag_default(env, "CONTEXT_STILL_RESIDENT_MCP", true),
+            queue: env_flag_default(env, "CONTEXT_STILL_RESIDENT_QUEUE", true),
             agent_log_sync: env_flag(env, "CONTEXT_STILL_DAEMON_MANAGED_AGENT_LOG_SYNC"),
             admin_api: env_flag(env, "CONTEXT_STILL_DAEMON_MANAGED_ADMIN_API"),
         },
@@ -72,6 +75,15 @@ fn env_flag<E: EnvProvider>(env: &E, key: &str) -> bool {
         env.var(key).as_deref(),
         Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("on")
     )
+}
+
+fn env_flag_default<E: EnvProvider>(env: &E, key: &str, default: bool) -> bool {
+    match env.var(key).as_deref() {
+        Some("0") | Some("false") | Some("FALSE") | Some("no") | Some("off") => false,
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("on") => true,
+        Some(_) => default,
+        None => default,
+    }
 }
 
 fn resolve_process_status<S: ProcessSupervisor>(
@@ -106,6 +118,7 @@ impl RuntimeStatus {
         [
             format!("runtimeHost={}", self.runtime_host),
             format!("version={}", self.version),
+            format!("residentSupervisor={}", self.resident_supervisor),
             format!("honoAdminApi={}", self.hono_admin_api),
             format!("mcpServer={}", self.mcp_server),
             format!("queueSupervisor={}", self.queue_supervisor),

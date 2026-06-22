@@ -3,6 +3,7 @@ pub fn help_text() -> String {
         "context-stilld",
         "",
         "Usage:",
+        "  context-stilld run [--json] [--once]",
         "  context-stilld paths [--json]",
         "  context-stilld status [--json]",
         "  context-stilld bootstrap preflight|init [--json]",
@@ -15,7 +16,7 @@ pub fn help_text() -> String {
         "  context-stilld backup preflight [--json]",
         "  context-stilld --version",
         "",
-        "Rust supervises/delegates lifecycle boundaries; TypeScript remains the source of truth for product logic.",
+        "Rust owns resident lifecycle boundaries and migrates daemon runtime surfaces toward Rust-native implementations.",
     ]
     .join("\n")
 }

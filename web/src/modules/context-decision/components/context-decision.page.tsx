@@ -8,14 +8,6 @@ import { formatDate as tzFormatDate, useTimezone } from "@/lib/timezone";
 import { Settings2 } from "lucide-react";
 import { type FormEvent, useEffect, useMemo, useState } from "react";
 import {
-  PolarAngleAxis,
-  PolarGrid,
-  PolarRadiusAxis,
-  Radar,
-  RadarChart,
-  ResponsiveContainer,
-} from "recharts";
-import {
   useContextDecisionDetail,
   useContextDecisionFeedbackMutation,
   useContextDecisionRuns,
@@ -26,9 +18,9 @@ import type {
   ContextDecisionKnowledgeAssessment,
   ContextDecisionKnowledgePrior,
   ContextDecisionMlSignal,
+  ContextDecisionReliabilityGate,
   ContextDecisionRequest,
   ContextDecisionResult,
-  ContextDecisionReliabilityGate,
   ContextDecisionRunDetail,
   ContextDecisionRunSummary,
 } from "../repositories/context-decision.repository";
@@ -192,10 +184,113 @@ function signalVariant(
   ) {
     return "destructive";
   }
+  if (label.includes("not-used") || label.includes("not used")) {
+    return "outline";
+  }
   if (label.includes("strong") || label.includes("useful") || label.includes("used")) {
     return "secondary";
   }
   return "outline";
+}
+
+type CompileSignalStats = {
+  used: number;
+  notUsed: number;
+  wrong: number;
+  offTopic: number;
+  suppressed: number;
+  selected: number;
+};
+
+function compileSignalStats(item: ContextDecisionEvidence): CompileSignalStats {
+  const signals = isRecord(item.metadata.signals) ? item.metadata.signals : {};
+  const compile = isRecord(signals.compile) ? signals.compile : {};
+  return {
+    used: metadataNumber(compile, "usedCount") ?? 0,
+    notUsed: metadataNumber(compile, "notUsedCount") ?? 0,
+    wrong: metadataNumber(compile, "wrongCount") ?? 0,
+    offTopic: metadataNumber(compile, "offTopicCount") ?? 0,
+    suppressed: metadataNumber(compile, "suppressedCount") ?? 0,
+    selected: metadataNumber(compile, "compileSelectCount") ?? 0,
+  };
+}
+
+function roleTitle(role: ContextDecisionEvidence["role"]): string {
+  if (role === "selected_support") return "Used as support";
+  if (role === "user_preference") return "User preference";
+  if (role === "risk_warning") return "Used as risk";
+  if (role === "counter_evidence") return "Counter evidence";
+  if (role === "rejected_alternative") return "Rejected / not used";
+  return "Missing counter evidence";
+}
+
+function roleBadgeVariant(
+  role: ContextDecisionEvidence["role"],
+): "default" | "secondary" | "destructive" | "outline" | null | undefined {
+  if (role === "selected_support" || role === "user_preference") return "secondary";
+  if (role === "risk_warning") return "destructive";
+  return "outline";
+}
+
+function CompileHistoryBar({ item }: { item: ContextDecisionEvidence }) {
+  const stats = compileSignalStats(item);
+  const entries = [
+    { label: "Used", value: stats.used, color: "#16a34a" },
+    { label: "Not used", value: stats.notUsed, color: "#9ca3af" },
+    { label: "Wrong", value: stats.wrong, color: "#dc2626" },
+    { label: "Off-topic", value: stats.offTopic, color: "#d97706" },
+  ];
+  const total = entries.reduce((sum, entry) => sum + entry.value, 0);
+  const hasCompileHistory = total > 0 || stats.suppressed > 0 || stats.selected > 0;
+
+  return (
+    <div style={{ marginTop: 12 }}>
+      <div className="compile-pack-item-header">
+        <strong style={{ fontSize: 12 }}>Compile history</strong>
+        {stats.selected > 0 ? <Badge variant="outline">selected {stats.selected}</Badge> : null}
+      </div>
+      {total > 0 ? (
+        <div
+          aria-label={`Compile history: Used ${stats.used}, Not used ${stats.notUsed}, Wrong ${stats.wrong}, Off-topic ${stats.offTopic}`}
+          style={{
+            display: "flex",
+            height: 10,
+            overflow: "hidden",
+            borderRadius: 999,
+            background: "#e5e7eb",
+            marginTop: 8,
+          }}
+        >
+          {entries
+            .filter((entry) => entry.value > 0)
+            .map((entry) => (
+              <div
+                key={entry.label}
+                title={`${entry.label} ${entry.value}`}
+                style={{
+                  width: `${Math.max(6, (entry.value / total) * 100)}%`,
+                  background: entry.color,
+                }}
+              />
+            ))}
+        </div>
+      ) : (
+        <p className="compile-state-text" style={{ marginTop: 8 }}>
+          No compile usage history recorded.
+        </p>
+      )}
+      {hasCompileHistory ? (
+        <div className="compile-code-badge-list" style={{ marginTop: 8 }}>
+          {entries.map((entry) => (
+            <code key={entry.label}>
+              {entry.label} {entry.value}
+            </code>
+          ))}
+          {stats.suppressed > 0 ? <code>Suppressed {stats.suppressed}</code> : null}
+        </div>
+      ) : null}
+    </div>
+  );
 }
 
 function evidenceSignalLabels(item: ContextDecisionEvidence): string[] {
@@ -428,6 +523,114 @@ function asReliabilityGate(value: unknown): ContextDecisionReliabilityGate | nul
       knowledgeCoverage: toNumber(evidenceCoverage, "knowledgeCoverage"),
     },
   };
+}
+
+function traceStringArray(trace: Record<string, unknown>, key: string): string[] {
+  const value = trace[key];
+  return Array.isArray(value)
+    ? value.filter((item): item is string => typeof item === "string")
+    : [];
+}
+
+function decisionStateVariant(
+  value: string,
+): "default" | "secondary" | "destructive" | "outline" | null | undefined {
+  if (
+    value.includes("blocked") ||
+    value.includes("risk") ||
+    value.includes("constrained") ||
+    value.includes("failed") ||
+    value.includes("weak")
+  ) {
+    return "destructive";
+  }
+  if (value.includes("passed") || value.includes("strong") || value.includes("clear")) {
+    return "secondary";
+  }
+  return "outline";
+}
+
+function DecisionRationalePanel({
+  detail,
+  selectedSupportCount,
+  counterCount,
+  riskCount,
+  totalHits,
+}: {
+  detail: ContextDecisionRunDetail;
+  selectedSupportCount: number;
+  counterCount: number;
+  riskCount: number;
+  totalHits: number;
+}) {
+  const trace = detail.run.confidenceTrace;
+  const assessment = asKnowledgeAssessment(trace.knowledgeAssessment);
+  const gate = asReliabilityGate(trace.reliabilityGate);
+  const confidenceCaps = traceRecordArray(trace, "confidenceCaps");
+  const forcedRules = traceStringArray(trace, "forcedRules");
+  const signalStatus = traceRecord(trace, "signalStatus");
+  const primaryStrength = traceString(trace, "primaryEvidenceStrength") ?? "unknown";
+  const signalState = typeof signalStatus?.status === "string" ? signalStatus.status : "unknown";
+  const riskState = riskCount > 0 || counterCount > 0 ? "risk present" : "risk clear";
+  const gateState = gate?.status ?? "not recorded";
+  const evidenceState =
+    selectedSupportCount > 0
+      ? primaryStrength === "verified" || primaryStrength === "observed"
+        ? "evidence strong"
+        : "evidence partial"
+      : "evidence weak";
+  const rationaleRows = [
+    assessment
+      ? `Knowledge Assessment recommends ${assessment.recommendedDirection} because ${assessment.reason}`
+      : "Knowledge Assessment was not recorded for this run.",
+    gate
+      ? gate.status === "constrained"
+        ? `Reliability Gate changed ${gate.originalDecision} -> ${gate.finalDecision}.`
+        : `Reliability Gate passed with final decision ${gate.finalDecision}.`
+      : "Reliability Gate was not recorded.",
+    counterCount > 0 || riskCount > 0
+      ? `${counterCount} counter item(s) and ${riskCount} risk item(s) were selected as decision constraints.`
+      : "No selected counter or risk evidence is attached to this decision.",
+    confidenceCaps.length > 0
+      ? `Confidence was capped by ${confidenceCaps
+          .map((item) => (typeof item.key === "string" ? item.key : "cap"))
+          .join(", ")}.`
+      : forcedRules.length > 0
+        ? `Forced rule(s): ${forcedRules.join(", ")}.`
+        : "No confidence cap or forced rule was applied.",
+  ];
+
+  return (
+    <section className="compile-pack-section">
+      <div className="compile-pack-section-header">
+        <h3>Decision Rationale</h3>
+        <Badge variant={gate?.status === "constrained" ? "destructive" : "secondary"}>
+          {detail.run.decision}
+        </Badge>
+      </div>
+      <div className="compile-pack-item">
+        <div className="compile-code-badge-list">
+          {[gateState, evidenceState, riskState, `signals ${signalState}`].map((item) => (
+            <Badge key={item} variant={decisionStateVariant(item)}>
+              {item}
+            </Badge>
+          ))}
+        </div>
+        <ul className="compile-source-list" style={{ marginTop: 12 }}>
+          {rationaleRows.map((row) => (
+            <li key={row}>{row}</li>
+          ))}
+        </ul>
+      </div>
+      <div className="compile-metric-grid">
+        <Metric label="Queries" value={detail.coverage.length} />
+        <Metric label="Candidates Found" value={totalHits} />
+        <Metric label="Support Used" value={selectedSupportCount} />
+        <Metric label="Counter / Risk" value={`${counterCount} / ${riskCount}`} />
+        <Metric label="Final Gate" value={gate?.finalDecision ?? detail.run.decision} />
+      </div>
+    </section>
+  );
 }
 
 function ReliabilityGatePanel({ trace }: { trace: Record<string, unknown> }) {
@@ -852,71 +1055,137 @@ function OutcomePredictorPanel({ trace }: { trace: Record<string, unknown> }) {
   );
 }
 
-function DecisionScoreRadar({ trace }: { trace: Record<string, unknown> }) {
-  const data = [
-    {
-      subject: `Support ${traceNumber(trace, "supportScore")}`,
-      value: traceNumber(trace, "supportScore"),
-    },
-    {
-      subject: `Counter ${traceNumber(trace, "counterScore")}`,
-      value: traceNumber(trace, "counterScore"),
-    },
-    {
-      subject: `Preference ${traceNumber(trace, "preferenceScore")}`,
-      value: traceNumber(trace, "preferenceScore"),
-    },
-    {
-      subject: `Coverage ${traceNumber(trace, "coverageScore")}`,
-      value: traceNumber(trace, "coverageScore"),
-    },
-    {
-      subject: `Verification ${traceNumber(trace, "verificationScore")}`,
-      value: traceNumber(trace, "verificationScore"),
-    },
-    {
-      subject: `History ${traceNumber(trace, "historicalFeedbackScore")}`,
-      value: traceNumber(trace, "historicalFeedbackScore"),
-    },
+function KnowledgeEvidencePanel({
+  evidence,
+  effects,
+}: {
+  evidence: ContextDecisionEvidence[];
+  effects: ContextDecisionRunDetail["effects"];
+}) {
+  const evidenceByRole = groupByRole(evidence);
+  const roleOrder: ContextDecisionEvidence["role"][] = [
+    "selected_support",
+    "user_preference",
+    "risk_warning",
+    "counter_evidence",
+    "rejected_alternative",
+    "missing_counter_evidence",
   ];
-
+  const orderedRoles = roleOrder.filter((role) => (evidenceByRole[role] ?? []).length > 0);
   return (
-    <div
-      style={{
-        width: "100%",
-        height: 260,
-        padding: 8,
-        border: "1px solid rgba(0,0,0,0.06)",
-        borderRadius: 8,
-        background: "rgba(0,0,0,0.01)",
-      }}
-    >
-      <ResponsiveContainer width="100%" height="100%">
-        <RadarChart data={data} margin={{ top: 16, right: 42, bottom: 16, left: 42 }}>
-          <PolarGrid stroke="rgba(0,0,0,0.08)" gridType="polygon" />
-          <PolarAngleAxis
-            dataKey="subject"
-            tick={{ fill: "#4b5563", fontSize: 11, fontWeight: 600 }}
-          />
-          <PolarRadiusAxis
-            angle={90}
-            domain={[0, 100]}
-            ticks={[0, 25, 50, 75, 100]}
-            tick={{ fill: "#6b7280", fontSize: 10 }}
-            axisLine={false}
-          />
-          <Radar
-            name="Decision score"
-            dataKey="value"
-            stroke="#2563eb"
-            fill="#2563eb"
-            fillOpacity={0.16}
-            strokeWidth={2}
-            dot={{ r: 3, fill: "#60a5fa", stroke: "#fff", strokeWidth: 1 }}
-          />
-        </RadarChart>
-      </ResponsiveContainer>
-    </div>
+    <section className="compile-pack-section">
+      <div className="compile-pack-section-header">
+        <h3>Knowledge Evidence</h3>
+        <Badge variant="outline">{evidence.length}</Badge>
+      </div>
+      {evidence.length === 0 ? (
+        <p className="compile-state-text">No evidence recorded for this decision.</p>
+      ) : (
+        <div className="compile-pack-items">
+          {orderedRoles.map((role) => {
+            const items = evidenceByRole[role] ?? [];
+            return (
+              <section key={role} className="compile-pack-section">
+                <div className="compile-pack-section-header">
+                  <h3>{roleTitle(role)}</h3>
+                  <Badge variant={roleBadgeVariant(role)}>{items.length}</Badge>
+                </div>
+                <div className="compile-pack-items">
+                  {items.map((item) => {
+                    const summary = splitEvidenceSummary(item.summary);
+                    const knowledgeStatus = metadataString(item.metadata, "status");
+                    const knowledgeType = metadataString(item.metadata, "type");
+                    const relatedEffect = effects.find(
+                      (effect) => effect.knowledgeId === item.knowledgeId,
+                    );
+                    const signalLabels = evidenceSignalLabels(item);
+                    const topicalRelevanceScore = metadataNumber(
+                      item.metadata,
+                      "topicalRelevanceScore",
+                    );
+                    const roleFit = isRecord(item.metadata.roleFit)
+                      ? metadataString(item.metadata.roleFit, "classification")
+                      : null;
+                    return (
+                      <article key={item.id} className="compile-pack-item" style={{ padding: 16 }}>
+                        <div className="compile-pack-item-header">
+                          <strong>{summary.title}</strong>
+                          <div className="compile-pack-item-meta">
+                            <Badge variant={roleBadgeVariant(item.role)}>
+                              {evidenceUsageLabel(item.role)}
+                            </Badge>
+                            <Badge variant="outline">{item.weightAtDecision}% weight</Badge>
+                            {knowledgeType ? (
+                              <Badge variant="secondary">{knowledgeType}</Badge>
+                            ) : null}
+                            {knowledgeStatus === "deprecated" ? (
+                              <Badge variant="destructive">deprecated</Badge>
+                            ) : knowledgeStatus ? (
+                              <Badge variant="outline">{knowledgeStatus}</Badge>
+                            ) : null}
+                            {relatedEffect?.effect === "penalize" ? (
+                              <Badge variant="destructive">negative feedback</Badge>
+                            ) : relatedEffect?.effect === "boost" ? (
+                              <Badge variant="secondary">positive feedback</Badge>
+                            ) : null}
+                          </div>
+                        </div>
+
+                        <p
+                          className="compile-pack-item-id"
+                          style={{
+                            fontSize: 11,
+                            color: "#6b7280",
+                            fontFamily: "monospace",
+                            margin: "2px 0 6px 0",
+                          }}
+                        >
+                          id: {item.knowledgeId ?? "none"}
+                        </p>
+
+                        <p
+                          className="compile-pack-item-content"
+                          style={{
+                            whiteSpace: "pre-wrap",
+                            fontSize: 14,
+                            lineHeight: 1.6,
+                            color: "#374151",
+                          }}
+                        >
+                          {summary.body}
+                        </p>
+
+                        <div className="compile-code-badge-list" style={{ marginTop: 10 }}>
+                          {typeof topicalRelevanceScore === "number" ? (
+                            <code>Relevance {topicalRelevanceScore}</code>
+                          ) : null}
+                          {roleFit ? <code>Role fit {roleFit}</code> : null}
+                          {signalLabels.map((label) => (
+                            <Badge key={`${item.id}:${label}`} variant={signalVariant(label)}>
+                              {label}
+                            </Badge>
+                          ))}
+                        </div>
+
+                        <CompileHistoryBar item={item} />
+
+                        {item.sourceRefs.length > 0 ? (
+                          <ul className="compile-source-list">
+                            {item.sourceRefs.map((ref) => (
+                              <li key={ref}>{ref}</li>
+                            ))}
+                          </ul>
+                        ) : null}
+                      </article>
+                    );
+                  })}
+                </div>
+              </section>
+            );
+          })}
+        </div>
+      )}
+    </section>
   );
 }
 
@@ -1048,7 +1317,6 @@ function DecisionDetailPane({
   onFeedback: (decisionId: string, value: "good" | "bad") => void;
 }) {
   const tz = useTimezone();
-  const evidenceByRole = useMemo(() => groupByRole(detail?.evidence ?? []), [detail?.evidence]);
   const selectedEvidence = (detail?.evidence ?? []).filter(
     (item) => item.role === "selected_support" || item.role === "user_preference",
   );
@@ -1127,6 +1395,14 @@ function DecisionDetailPane({
           </div>
         </section>
 
+        <DecisionRationalePanel
+          detail={detail}
+          selectedSupportCount={selectedEvidence.length}
+          counterCount={counterEvidence.length}
+          riskCount={riskEvidence.length}
+          totalHits={totalHits}
+        />
+
         <section className="compile-pack-section">
           <div className="compile-pack-section-header">
             <h3>Decision Summary</h3>
@@ -1134,7 +1410,7 @@ function DecisionDetailPane({
           </div>
           <div className="compile-metric-grid">
             <Metric label="Decision" value={detail.run.decision} />
-            <Metric label="Confidence" value={`${detail.run.confidence}%`} />
+            <Metric label="Trace Confidence" value={`${detail.run.confidence}%`} />
             <Metric label="Evidence" value={detail.evidence.length} />
             <Metric label="Coverage Hits" value={totalHits} />
           </div>
@@ -1146,56 +1422,12 @@ function DecisionDetailPane({
           </div>
         </section>
 
-        {riskEvidence.length > 0 ? (
-          <section className="compile-pack-section">
-            <div className="compile-pack-section-header">
-              <h3>Risk Evidence</h3>
-              <Badge variant="destructive">{riskEvidence.length}</Badge>
-            </div>
-            <div className="compile-pack-items">
-              {riskEvidence.slice(0, 4).map((item) => {
-                const summary = splitEvidenceSummary(item.summary);
-                return (
-                  <article key={item.id} className="compile-pack-item">
-                    <div className="compile-pack-item-header">
-                      <strong>{summary.title}</strong>
-                      <Badge variant="destructive">{item.weightAtDecision}% confidence</Badge>
-                    </div>
-                    <p className="compile-pack-item-content">{summary.body}</p>
-                  </article>
-                );
-              })}
-            </div>
-          </section>
-        ) : null}
-
-        {counterEvidence.length > 0 ? (
-          <section className="compile-pack-section">
-            <div className="compile-pack-section-header">
-              <h3>Counter Evidence</h3>
-              <Badge variant="secondary">{counterEvidence.length}</Badge>
-            </div>
-            <div className="compile-pack-items">
-              {counterEvidence.slice(0, 4).map((item) => {
-                const summary = splitEvidenceSummary(item.summary);
-                return (
-                  <article key={item.id} className="compile-pack-item">
-                    <div className="compile-pack-item-header">
-                      <strong>{summary.title}</strong>
-                      <Badge variant="secondary">{item.weightAtDecision}% confidence</Badge>
-                    </div>
-                    <p className="compile-pack-item-content">{summary.body}</p>
-                  </article>
-                );
-              })}
-            </div>
-          </section>
-        ) : null}
+        <KnowledgeEvidencePanel evidence={detail.evidence} effects={detail.effects} />
 
         <section className="compile-pack-section">
           <div className="compile-pack-section-header">
-            <h3>Ranking Trace</h3>
-            <Badge variant="outline">{selectedEvidence.length} used</Badge>
+            <h3>Decision Trace</h3>
+            <Badge variant="outline">{selectedEvidence.length} support used</Badge>
           </div>
           <div
             style={{
@@ -1205,7 +1437,6 @@ function DecisionDetailPane({
               alignItems: "start",
             }}
           >
-            <DecisionScoreRadar trace={detail.run.confidenceTrace} />
             <div className="compile-pack-items">
               <div
                 style={{
@@ -1340,109 +1571,6 @@ function DecisionDetailPane({
               })}
             </div>
           ) : null}
-        </section>
-
-        <section className="compile-pack-section">
-          <div className="compile-pack-section-header">
-            <h3>Knowledge Used</h3>
-            <Badge variant="outline">{detail.evidence.length}</Badge>
-          </div>
-          {detail.evidence.length === 0 ? (
-            <p className="compile-state-text">No evidence recorded for this decision.</p>
-          ) : (
-            <div className="compile-pack-items">
-              {Object.entries(evidenceByRole).map(([role, items]) => (
-                <section key={role} className="compile-pack-section">
-                  <div className="compile-pack-section-header">
-                    <h3>{role}</h3>
-                    <Badge variant="secondary">{items.length}</Badge>
-                  </div>
-                  <div className="compile-pack-items">
-                    {items.map((item) => {
-                      const summary = splitEvidenceSummary(item.summary);
-                      const knowledgeStatus = metadataString(item.metadata, "status");
-                      const knowledgeType = metadataString(item.metadata, "type");
-                      const relatedEffect = detail.effects.find(
-                        (effect) => effect.knowledgeId === item.knowledgeId,
-                      );
-                      const signalLabels = evidenceSignalLabels(item);
-                      return (
-                        <article
-                          key={item.id}
-                          className="compile-pack-item"
-                          style={{ padding: 16 }}
-                        >
-                          <div className="compile-pack-item-header">
-                            <strong>{summary.title}</strong>
-                            <div className="compile-pack-item-meta">
-                              <Badge
-                                variant={
-                                  evidenceUsageLabel(item.role) === "used" ? "secondary" : "outline"
-                                }
-                              >
-                                {evidenceUsageLabel(item.role)}
-                              </Badge>
-                              {knowledgeType ? (
-                                <Badge variant="secondary">{knowledgeType}</Badge>
-                              ) : null}
-                              {knowledgeStatus === "deprecated" ? (
-                                <Badge variant="destructive">deprecated</Badge>
-                              ) : knowledgeStatus ? (
-                                <Badge variant="outline">{knowledgeStatus}</Badge>
-                              ) : null}
-                              {relatedEffect?.effect === "penalize" ? (
-                                <Badge variant="destructive">wrong / off-topic signal</Badge>
-                              ) : relatedEffect?.effect === "boost" ? (
-                                <Badge variant="secondary">positive signal</Badge>
-                              ) : null}
-                              {signalLabels.map((label) => (
-                                <Badge key={`${item.id}:${label}`} variant={signalVariant(label)}>
-                                  {label}
-                                </Badge>
-                              ))}
-                              <Badge variant="outline">{item.weightAtDecision}% confidence</Badge>
-                            </div>
-                          </div>
-
-                          <p
-                            className="compile-pack-item-id"
-                            style={{
-                              fontSize: 11,
-                              color: "#6b7280",
-                              fontFamily: "monospace",
-                              margin: "2px 0 6px 0",
-                            }}
-                          >
-                            id: {item.knowledgeId ?? "none"}
-                          </p>
-
-                          <p
-                            className="compile-pack-item-content"
-                            style={{
-                              whiteSpace: "pre-wrap",
-                              fontSize: 14,
-                              lineHeight: 1.6,
-                              color: "#374151",
-                            }}
-                          >
-                            {summary.body}
-                          </p>
-
-                          {item.sourceRefs.length > 0 ? (
-                            <ul className="compile-source-list">
-                              {item.sourceRefs.map((ref) => (
-                                <li key={ref}>{ref}</li>
-                              ))}
-                            </ul>
-                          ) : null}
-                        </article>
-                      );
-                    })}
-                  </div>
-                </section>
-              ))}
-            </div>
-          )}
         </section>
 
         <section className="compile-pack-section">

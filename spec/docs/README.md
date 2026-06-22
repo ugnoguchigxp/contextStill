@@ -10,7 +10,7 @@
 | [Cover Evidence External Evidence リファクタリング計画](cover-evidence-external-evidence-refactor-plan.md) | source-first gate、最大 5 URL x 3000 token の fetch excerpt、prompt injection guard により coverEvidence の外部 evidence path を縮小する実装計画 |
 | [Decision Signal Integration 実装計画](decision-signal-integration-implementation-plan.md) | `context_decision` を 90 点以上の品質へ引き上げるため、compile、graph、community、landscape、attractor 指標を統合する実装計画 |
 | [Desktop Readiness And Doctor States](desktop-readiness-and-doctor-states.md) | Tauri shell 実装前に固定する desktop data path、first-run state、doctor 表示、desktop readiness smoke の設計メモ |
+| [EpisodeCard 品質改善 実装計画](episode-card-quality-improvement-implementation-plan.md) | `episodeDistiller` の保存マッピング、canonical schema、スコア校正、既存データ補正により EpisodeCard の読みやすさとフィールド責務を改善する実装計画 |
 | Episode Distiller Queue 実装計画 (未配置) | `vibe memory` を共通ソースに、`findCandidate` の knowledge 候補抽出と `episodeDistiller` の複数 Episode 生成を分離する実装計画 |
-| [Negative Knowledge Registration 実装計画](negative-knowledge-registration-implementation-plan.md) | `register_review_corrections` を削除し、`register_candidate(s)` の `polarity: "negative"` と必須 applicability で negative knowledge を登録する実装計画 |
 | [Rust Daemon Replacement Readiness Implementation Plan](rust-daemon-replacement-readiness-plan.md) | Rust daemon を lifecycle host から boundary ごとに置き換え可能な runtime へ進めるための実装順序、検証ゲート、default switch 条件 |
 | Shared LLM Provider Pool Queue Scheduling 実装計画 (未配置) | 複数 queue が少数の共有 LLM endpoint を非プリエンプティブ優先度つきで使うための Provider Pool、lease、scheduler リファクタリング計画 |

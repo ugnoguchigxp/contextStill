@@ -206,6 +206,7 @@ describe("MCP Tools Handlers", () => {
       });
       expect(payload.items[0].id).toBe("episode-1");
       expect(payload.items[0].refs[0].refKind).toBe("file");
+      expect(payload.items[0]).not.toHaveProperty("evidenceStatus");
     });
   });
 
@@ -245,6 +246,7 @@ describe("MCP Tools Handlers", () => {
       const response = await fetchEpisodeTool.handler({ id: "episode-1" });
       const payload = JSON.parse(response.content[0].text);
       expect(payload.id).toBe("episode-1");
+      expect(payload).not.toHaveProperty("evidenceStatus");
     });
 
     test("returns an error when missing", async () => {
@@ -509,6 +511,7 @@ describe("MCP Tools Handlers", () => {
       expect(itemSchema?.properties?.body?.description).toContain(
         "section bodies should be Japanese",
       );
+      expect(itemSchema?.properties?.avoid?.description).toContain("missing Avoid section");
       expect(itemSchema?.properties?.avoid?.description).toContain("natural language in Japanese");
       expect(itemSchema?.properties?.prefer?.description).toContain("natural language in Japanese");
     });

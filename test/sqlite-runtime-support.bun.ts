@@ -12,9 +12,9 @@ import {
   fetchQueueDashboardStats,
   listQueueItems,
 } from "../api/modules/queue/queue.repository.js";
+import { openSqliteCoreDatabase } from "../src/db/sqlite/client.js";
 import { resetRuntimeSqliteCoreDatabaseForTests } from "../src/db/sqlite/runtime.js";
 import { getRuntimeSqliteCoreDatabase } from "../src/db/sqlite/runtime.js";
-import { openSqliteCoreDatabase } from "../src/db/sqlite/client.js";
 import {
   cleanupExpiredAuditLogs,
   listAuditLogs,
@@ -41,23 +41,25 @@ import {
 } from "../src/modules/context-decision/context-decision.repository.js";
 import { inspectDatabase } from "../src/modules/doctor/inspectors/database.inspector.js";
 import {
-  createEpisode,
-  fetchEpisode,
-  searchEpisodes,
-} from "../src/modules/episodic-memory/episode-card.service.js";
-import {
   enqueueEpisodeDistillerJob,
   requeueEpisodeDistillerRepairCandidates,
 } from "../src/modules/episodeDistiller/repository.js";
 import { setEpisodeDistillerTestHooksForTests } from "../src/modules/episodeDistiller/worker.js";
+import { repairEpisodeCardQuality } from "../src/cli/repair-episode-card-quality.js";
+import {
+  createEpisode,
+  fetchEpisode,
+  searchEpisodes,
+} from "../src/modules/episodic-memory/episode-card.service.js";
 import { recordCompileRunKnowledgeFeedback } from "../src/modules/knowledge/knowledge-feedback.service.js";
 import { readVibeMemoryByTokenWindow } from "../src/modules/memoryReader/reader.service.js";
-import { retryQueueJob } from "../src/modules/queue/core/state.js";
 import {
   claimNextJobWithProviderLease,
   releaseProviderLease,
 } from "../src/modules/queue/core/provider-lease.js";
+import { retryQueueJob } from "../src/modules/queue/core/state.js";
 import {
+  enqueueFindingJob,
   runQueueWorkerOnce,
   setQueueWorkerTestHooksForTests,
 } from "../src/modules/queue/core/worker.js";
@@ -629,6 +631,8 @@ describe("sqlite runtime support repositories", () => {
           context: "Episode generation moved out of findCandidate.",
           intent: "Keep candidate extraction and task memory creation independent.",
           keyDecisions: ["Use a separate episodeDistiller queue."],
+          actionTaken: "Implemented episodeDistiller queue persistence and source-span refs.",
+          outcome: "Episode generation was split from findCandidate and saved with source refs.",
           failedApproach: "Creating one EpisodeCard directly from findCandidate.",
           reusableLesson: "Keep EpisodeCard creation idempotent with source span based keys.",
           usefulFutureTriggers: ["episode queue", "source refs"],
@@ -687,7 +691,7 @@ describe("sqlite runtime support repositories", () => {
       episodeDistillation: expect.objectContaining({
         generatingQueueName: "episodeDistiller",
         parentVibeMemoryId: recorded.memory.id,
-        scores: expect.objectContaining({ importance: 88, confidence: 82, reusability: 85 }),
+        scores: expect.objectContaining({ importance: 88, confidence: 80, reusability: 85 }),
         valueReview: expect.objectContaining({
           publish: true,
           reasons: [],
@@ -695,18 +699,34 @@ describe("sqlite runtime support repositories", () => {
       }),
     });
     const episodeRow = sqlite.db
-      .query<{ status: string; situation: string; action: string; outcome: string }, [string]>(
-        "select status, situation, action, outcome from episode_cards where id = ?",
+      .query<
+        {
+          status: string;
+          situation: string;
+          action: string;
+          outcome: string;
+          anti_applicability: string;
+        },
+        [string]
+      >(
+        "select status, situation, action, outcome, anti_applicability from episode_cards where id = ?",
       )
       .get(episodes[0]?.id ?? "");
     expect(episodeRow?.status).toBe("active");
-    expect(episodeRow?.situation).toContain("Intent:");
+    expect(episodeRow?.situation).toBe("Episode generation moved out of findCandidate.");
+    expect(episodeRow?.situation).not.toContain("Intent:");
     expect(episodeRow?.situation).not.toContain("意図:");
+    expect(episodeRow?.action).toContain("Implemented episodeDistiller queue persistence");
     expect(episodeRow?.action).toContain("失敗した、または避けたアプローチ:");
-    expect(episodeRow?.action).toContain("source 時点の未解決事項:");
+    expect(episodeRow?.action).not.toContain("source 時点の未解決事項:");
     expect(episodeRow?.action).not.toContain("Failed approach:");
     expect(episodeRow?.action).not.toContain("Open loops:");
-    expect(episodeRow?.outcome).toContain("から蒸留された Episode");
+    expect(episodeRow?.outcome).toBe(
+      "Episode generation was split from findCandidate and saved with source refs.",
+    );
+    expect(JSON.parse(episodeRow?.anti_applicability ?? "{}")).toMatchObject({
+      openLoops: ["Review quality scores after real LLM runs."],
+    });
     const completedMetadataRow = sqlite.db
       .query<{ metadata: string }, [string]>(
         "select metadata from episode_distiller_queue where id = ?",
@@ -808,6 +828,8 @@ describe("sqlite runtime support repositories", () => {
           context: "The source only says that work happened.",
           intent: "Avoid publishing a generic memory.",
           keyDecisions: [],
+          actionTaken: "Only generic work was observed.",
+          outcome: "No reusable task memory was confirmed from the source.",
           failedApproach: "",
           reusableLesson: "Remember that some work happened.",
           usefulFutureTriggers: ["generic work"],
@@ -882,6 +904,118 @@ describe("sqlite runtime support repositories", () => {
     ).toHaveLength(0);
   });
 
+  test("repairs legacy episodeDistiller card quality fields idempotently", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const episode = await createEpisode({
+      title: "Legacy quality repair episode",
+      situation: "Legacy context.\n\nIntent:\nKeep intent out of situation.",
+      observations: "- Keep refs",
+      action:
+        "失敗した、または避けたアプローチ:\nLegacy failed approach.\n\nsource 時点の未解決事項:\n- Verify later.",
+      outcome:
+        "vibe memory segment vibe_memory:legacy:episode:task:episode-distiller-v1 から蒸留された Episode。",
+      lesson: "Keep persisted card fields task-readable.",
+      applicability: {},
+      antiApplicability: { requiresRawEvidenceCheck: true, stalenessRisk: 20 },
+      domains: ["episodic-memory"],
+      technologies: ["sqlite"],
+      changeTypes: ["repair"],
+      tools: [],
+      repoPath: "/repo/contextStill",
+      repoKey: "contextStill",
+      sourceKind: "vibe_memory",
+      sourceKey: "vibe_memory:legacy-quality-repair:episode:task:episode-distiller-v1",
+      outcomeKind: "success",
+      importance: 75,
+      confidence: 80,
+      status: "active",
+      metadata: {
+        source: "episodeDistiller",
+        episodeDistillation: {
+          version: "episode-distiller-v1",
+          canonical: {
+            title: "Legacy quality repair episode",
+            context: "Legacy context.",
+            intent: "Keep intent out of situation.",
+            keyDecisions: ["Keep refs"],
+            failedApproach: "Legacy failed approach.",
+            reusableLesson: "Keep persisted card fields task-readable.",
+            usefulFutureTriggers: ["episode repair"],
+            openLoops: ["Verify later."],
+            generationKind: "task_episode",
+            outcomeKind: "success",
+            domains: ["episodic-memory"],
+            technologies: ["sqlite"],
+            changeTypes: ["repair"],
+            tools: [],
+            scores: {
+              importance: 75,
+              confidence: 80,
+              reusability: 70,
+              decision_density: 70,
+              failure_value: 0,
+              causal_clarity: 80,
+              project_specificity: 80,
+              evidence_quality: 80,
+              compression_quality: 80,
+              staleness_risk: 20,
+            },
+          },
+        },
+      },
+      refs: [],
+    });
+
+    const dryRun = await repairEpisodeCardQuality({
+      write: false,
+      backup: false,
+      limit: 100,
+      json: true,
+    });
+    expect(dryRun.items.map((item) => item.id)).toContain(episode.id);
+
+    const write = await repairEpisodeCardQuality({
+      write: true,
+      backup: false,
+      limit: 100,
+      json: true,
+    });
+    expect(write.items.map((item) => item.id)).toContain(episode.id);
+
+    const row = sqlite.db
+      .query<
+        {
+          situation: string;
+          action: string;
+          outcome: string;
+          anti_applicability: string;
+          metadata: string;
+        },
+        [string]
+      >(
+        "select situation, action, outcome, anti_applicability, metadata from episode_cards where id = ?",
+      )
+      .get(episode.id);
+    expect(row?.situation).toBe("Legacy context.");
+    expect(row?.action).toBe("Legacy failed approach.");
+    expect(row?.outcome).toContain("追加確認事項が残った");
+    expect(JSON.parse(row?.anti_applicability ?? "{}")).toMatchObject({
+      openLoops: ["Verify later."],
+    });
+    expect(JSON.parse(row?.metadata ?? "{}").episodeDistillation.canonical).toMatchObject({
+      actionTaken: "Legacy failed approach.",
+      outcome: expect.stringContaining("追加確認事項が残った"),
+    });
+
+    const secondDryRun = await repairEpisodeCardQuality({
+      write: false,
+      backup: false,
+      limit: 100,
+      json: true,
+    });
+    expect(secondDryRun.items.map((item) => item.id)).not.toContain(episode.id);
+  });
+
   test("skips duplicate episodeDistiller generation kinds within one source segment", async () => {
     const sqlite = await getRuntimeSqliteCoreDatabase();
     const recorded = await recordVibeMemoryWithDiffEntries({
@@ -912,6 +1046,8 @@ describe("sqlite runtime support repositories", () => {
       context: "Two canonical episodes used the same source key inputs.",
       intent: "Avoid silently overwriting or deduping distinct generated content.",
       keyDecisions: ["Treat generationKind as unique per segment."],
+      actionTaken: "Recorded only the first generated task episode for the source span.",
+      outcome: "One duplicate generation kind was saved and the second was skipped.",
       failedApproach: "Saving both candidates with the same source fragment key.",
       reusableLesson,
       usefulFutureTriggers: ["episode distiller duplicate kind"],
@@ -1289,6 +1425,205 @@ describe("sqlite runtime support repositories", () => {
     });
 
     expect(secondClaim?.providerLease.targetId).toBe(preferredTarget.id);
+  });
+
+  test("claims another findingCandidate route while the same queue is already running", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const settings = structuredClone(getRuntimeSettingsSnapshot());
+    const sourceTarget = {
+      id: "local-source-route",
+      name: "Source route local model",
+      apiBaseUrl: "http://127.0.0.1:44450",
+      apiPath: "/v1/chat/completions",
+      model: "qwen-test",
+    };
+    const vibeTarget = {
+      id: "local-vibe-route",
+      name: "Vibe route local model",
+      apiBaseUrl: "http://127.0.0.1:44451",
+      apiPath: "/v1/chat/completions",
+      model: "qwen-test",
+    };
+    const sourceRouteTarget = JSON.stringify({
+      apiBaseUrl: sourceTarget.apiBaseUrl,
+      apiPath: sourceTarget.apiPath,
+      model: sourceTarget.model,
+    });
+    const vibeRouteTarget = JSON.stringify({
+      apiBaseUrl: vibeTarget.apiBaseUrl,
+      apiPath: vibeTarget.apiPath,
+      model: vibeTarget.model,
+    });
+    settings.providers["local-llm"] = {
+      enabled: true,
+      apiBaseUrl: sourceTarget.apiBaseUrl,
+      apiPath: sourceTarget.apiPath,
+      model: sourceTarget.model,
+      models: [sourceTarget, vibeTarget],
+    };
+    settings.providerPools = [
+      {
+        id: "local-llm-default",
+        label: "Local LLM",
+        enabled: true,
+        maxConcurrent: 2,
+        staleLeaseSeconds: 120,
+        lowPriorityAgingSeconds: 1800,
+        targets: [
+          { provider: "local-llm", localLlmModelId: sourceTarget.id },
+          { provider: "local-llm", localLlmModelId: vibeTarget.id },
+        ],
+      },
+    ];
+    settings.taskRouting.findCandidate.source = {
+      provider: "local-llm",
+      model: sourceRouteTarget,
+      localLlmModel: sourceRouteTarget,
+      providerPoolId: "local-llm-default",
+      fallback: [],
+    };
+    settings.taskRouting.findCandidate.vibe = {
+      provider: "local-llm",
+      model: vibeRouteTarget,
+      localLlmModel: vibeRouteTarget,
+      providerPoolId: "local-llm-default",
+      fallback: [],
+    };
+    await saveRuntimeSettings({ settings, updatedBy: "sqlite-runtime-test" });
+    const now = new Date("2026-06-20T00:00:00.000Z").toISOString();
+    sqlite.db
+      .query(
+        `
+        insert into finding_candidate_queue (
+          id, input_kind, source_kind, source_key, source_uri, distillation_version,
+          status, priority, payload, metadata, created_at, updated_at
+        ) values
+          ('finding-source-route', 'source_target', 'wiki_file', 'source-route', 'file://source-route', 'v-test',
+            'pending', 50, '{}', '{}', ?, ?),
+          ('finding-vibe-route', 'source_target', 'vibe_memory', 'vibe-route', 'vibe://vibe-route', 'v-test',
+            'pending', 50, '{}', '{}', datetime(?, '+1 second'), datetime(?, '+1 second'))
+      `,
+      )
+      .run(now, now, now, now);
+
+    const firstClaim = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[0],
+      priorityQueues: ["findingCandidate"],
+      workerId: "sqlite-provider-route-worker-1",
+    });
+    const secondClaim = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[0],
+      priorityQueues: ["findingCandidate"],
+      workerId: "sqlite-provider-route-worker-2",
+    });
+
+    expect(firstClaim?.id).toBe("finding-source-route");
+    expect(firstClaim?.providerLease.targetId).toBe(sourceTarget.id);
+    expect(secondClaim?.id).toBe("finding-vibe-route");
+    expect(secondClaim?.providerLease.targetId).toBe(vibeTarget.id);
+  });
+
+  test("keeps same-route findingCandidate work waiting even when another pool target is free", async () => {
+    const settings = structuredClone(getRuntimeSettingsSnapshot());
+    const preferredTarget = {
+      id: "local-preferred-route",
+      name: "Preferred route local model",
+      apiBaseUrl: "http://127.0.0.1:44452",
+      apiPath: "/v1/chat/completions",
+      model: "qwen-test",
+    };
+    const standbyTarget = {
+      id: "local-standby-route",
+      name: "Standby route local model",
+      apiBaseUrl: "http://127.0.0.1:44453",
+      apiPath: "/v1/chat/completions",
+      model: "qwen-test",
+    };
+    const preferredRouteTarget = JSON.stringify({
+      apiBaseUrl: preferredTarget.apiBaseUrl,
+      apiPath: preferredTarget.apiPath,
+      model: preferredTarget.model,
+    });
+    settings.providers["local-llm"] = {
+      enabled: true,
+      apiBaseUrl: preferredTarget.apiBaseUrl,
+      apiPath: preferredTarget.apiPath,
+      model: preferredTarget.model,
+      models: [preferredTarget, standbyTarget],
+    };
+    settings.providerPools = [
+      {
+        id: "local-llm-default",
+        label: "Local LLM",
+        enabled: true,
+        maxConcurrent: 2,
+        staleLeaseSeconds: 120,
+        lowPriorityAgingSeconds: 1800,
+        targets: [
+          { provider: "local-llm", localLlmModelId: preferredTarget.id },
+          { provider: "local-llm", localLlmModelId: standbyTarget.id },
+        ],
+      },
+    ];
+    settings.taskRouting.findCandidate.source = {
+      provider: "local-llm",
+      model: preferredRouteTarget,
+      localLlmModel: preferredRouteTarget,
+      providerPoolId: "local-llm-default",
+      fallback: [],
+    };
+    settings.taskRouting.findCandidate.vibe = {
+      provider: "local-llm",
+      model: preferredRouteTarget,
+      localLlmModel: preferredRouteTarget,
+      providerPoolId: "local-llm-default",
+      fallback: [],
+    };
+    await saveRuntimeSettings({ settings, updatedBy: "sqlite-runtime-test" });
+    const queued = await recordVibeMemoryWithDiffEntries({
+      sessionId: "finding-same-route-wait-session-1",
+      content: "First same-route finding candidate.",
+      memoryType: "chat",
+      metadata: { projectName: "contextStill", cwd: "/repo/contextStill" },
+      agentDiffs: [],
+    });
+    const waiting = await recordVibeMemoryWithDiffEntries({
+      sessionId: "finding-same-route-wait-session-2",
+      content: "Second same-route finding candidate.",
+      memoryType: "chat",
+      metadata: { projectName: "contextStill", cwd: "/repo/contextStill" },
+      agentDiffs: [],
+    });
+    const firstJob = await enqueueFindingJob({
+      inputKind: "source_target",
+      sourceKind: "vibe_memory",
+      sourceKey: queued.memory.id,
+      sourceUri: `vibe-memory://${queued.memory.id}`,
+      priority: 50,
+    });
+    await enqueueFindingJob({
+      inputKind: "source_target",
+      sourceKind: "vibe_memory",
+      sourceKey: waiting.memory.id,
+      sourceUri: `vibe-memory://${waiting.memory.id}`,
+      priority: 50,
+    });
+
+    const firstClaim = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[0],
+      priorityQueues: ["findingCandidate"],
+      workerId: "sqlite-provider-same-route-worker-1",
+    });
+    const blockedClaim = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[0],
+      priorityQueues: ["findingCandidate"],
+      workerId: "sqlite-provider-same-route-worker-2",
+    });
+
+    expect(firstJob).not.toBeNull();
+    expect(firstClaim?.id).toBeTruthy();
+    expect(firstClaim?.providerLease.targetId).toBe(preferredTarget.id);
+    expect(blockedClaim).toBeNull();
   });
 
   test("persists covering retry options in sqlite", async () => {

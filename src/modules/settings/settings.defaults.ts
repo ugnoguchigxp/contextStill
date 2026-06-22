@@ -1019,7 +1019,10 @@ function mergeRuntimeSettings(
     merged,
     merged.taskRouting.findCandidate.source,
   );
-  merged.taskRouting.findCandidate.vibe = cloneRoute(merged.taskRouting.findCandidate.source);
+  merged.taskRouting.findCandidate.vibe = sanitizeRoute(
+    merged,
+    merged.taskRouting.findCandidate.vibe,
+  );
   merged.taskRouting.webSourceResearch = sanitizeRoute(
     merged,
     merged.taskRouting.webSourceResearch,

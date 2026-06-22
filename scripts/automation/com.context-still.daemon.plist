@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.context-still.daemon</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>{{CONTEXT_STILLD_PATH}}</string>
+        <string>run</string>
+    </array>
+    <key>WorkingDirectory</key>
+    <string>{{PROJECT_ROOT}}</string>
+    <key>KeepAlive</key>
+    <true/>
+    <key>StandardOutPath</key>
+    <string>{{PROJECT_ROOT}}/logs/context-stilld.log</string>
+    <key>StandardErrorPath</key>
+    <string>{{PROJECT_ROOT}}/logs/context-stilld.log</string>
+    <key>RunAtLoad</key>
+    <true/>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>{{PATH}}</string>
+        <key>CONTEXT_STILL_PROJECT_ROOT</key>
+        <string>{{PROJECT_ROOT}}</string>
+        <key>CONTEXT_STILL_APP_DATA_DIR</key>
+        <string>{{APP_DATA_DIR}}</string>
+        <key>CONTEXT_STILL_DB_BACKEND</key>
+        <string>{{DB_BACKEND}}</string>
+        <key>CONTEXT_STILL_SQLITE_CORE_PATH</key>
+        <string>{{SQLITE_CORE_PATH}}</string>
+        <key>CONTEXT_STILL_RESIDENT_MCP</key>
+        <string>{{RESIDENT_MCP}}</string>
+        <key>CONTEXT_STILL_RESIDENT_QUEUE</key>
+        <string>{{RESIDENT_QUEUE}}</string>
+    </dict>
+</dict>
+</plist>

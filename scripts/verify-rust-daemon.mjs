@@ -13,6 +13,10 @@ const tasks = [
     command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "status", "--json"],
   },
   {
+    label: "context-stilld resident run once",
+    command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "run", "--once", "--json"],
+  },
+  {
     label: "context-stilld bootstrap preflight",
     command: [
       "cargo",
@@ -144,6 +148,9 @@ for (const task of tasks) {
   }
   if (task.label === "context-stilld status" && result.code === 0) {
     result = assertJsonLine(result, "runtimeHost");
+  }
+  if (task.label === "context-stilld resident run once" && result.code === 0) {
+    result = assertJsonLine(result, "surfaces");
   }
   if (task.label === "context-stilld bootstrap preflight" && result.code === 0) {
     result = assertJsonLine(result, "overallStatus");

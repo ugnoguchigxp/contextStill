@@ -16,6 +16,14 @@ where
     match parse_args(args)? {
         CliCommand::Help => Ok(domains::cli::service::help_text()),
         CliCommand::Version => Ok(VERSION.to_string()),
+        CliCommand::Run { json, once } => {
+            let report = domains::resident_runtime::service::run(env, supervisor, once)?;
+            if json {
+                Ok(report.to_json())
+            } else {
+                Ok(report.to_text())
+            }
+        }
         CliCommand::Paths { json } => {
             let report = domains::bootstrap::service::resolve_paths(env);
             if json {
@@ -115,7 +123,7 @@ mod tests {
     }
 
     #[test]
-    fn status_json_keeps_runtime_unmanaged_at_skeleton_stage() {
+    fn status_json_reports_resident_runtime_contract() {
         let output = run_test_cmd(
             ["status", "--json"],
             vec![("CONTEXT_STILL_APP_DATA_DIR", "/tmp/contextStill")],
@@ -124,13 +132,14 @@ mod tests {
 
         let json: serde_json::Value = serde_json::from_str(&output).expect("valid JSON");
 
-        assert_eq!(json["runtimeHost"], "rust-skeleton");
+        assert_eq!(json["runtimeHost"], "rust-resident");
+        assert_eq!(json["residentSupervisor"], "stopped");
         assert_eq!(json["honoAdminApi"], "stopped");
         assert_eq!(json["mcpServer"], "stopped");
         assert_eq!(json["queueSupervisor"], "stopped");
         assert_eq!(json["agentLogSync"], "stopped");
-        assert_eq!(json["managedDefaultFlags"]["mcp"], false);
-        assert_eq!(json["managedDefaultFlags"]["queue"], false);
+        assert_eq!(json["managedDefaultFlags"]["mcp"], true);
+        assert_eq!(json["managedDefaultFlags"]["queue"], true);
         assert_eq!(json["managedDefaultFlags"]["agentLogSync"], false);
         assert_eq!(json["managedDefaultFlags"]["adminApi"], false);
         assert!(json["version"].is_string());
@@ -146,7 +155,51 @@ mod tests {
         );
 
         let obj = json.as_object().expect("JSON must be an object");
-        assert_eq!(obj.len(), 8);
+        assert_eq!(obj.len(), 9);
+    }
+
+    #[test]
+    fn resident_run_once_starts_mcp_and_queue_surfaces() {
+        use crate::shared::config::MapEnv;
+        use crate::shared::process::MockSupervisor;
+        use std::time::SystemTime;
+
+        let rand_num = SystemTime::now()
+            .duration_since(SystemTime::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let app_dir = std::env::temp_dir().join(format!(
+            "context_still_resident_run_{}_{}",
+            std::process::id(),
+            rand_num
+        ));
+        let env = MapEnv::from_pairs(vec![
+            ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
+            ("CONTEXT_STILL_PROJECT_ROOT", app_dir.to_str().unwrap()),
+        ]);
+        let supervisor = MockSupervisor::new();
+
+        let output = crate::run(["run", "--once", "--json"], &env, &supervisor).unwrap();
+        let report: serde_json::Value = serde_json::from_str(&output).expect("valid JSON");
+        assert_eq!(report["action"], "run");
+        assert_eq!(report["status"], "exited");
+        assert_eq!(report["surfaces"].as_array().unwrap().len(), 4);
+        assert_eq!(report["surfaces"][0]["name"], "mcp-server");
+        assert_eq!(report["surfaces"][0]["status"], "started");
+        assert_eq!(report["surfaces"][1]["name"], "queue-supervisor");
+        assert_eq!(report["surfaces"][1]["status"], "started");
+        assert_eq!(report["surfaces"][2]["name"], "queue-supervisor");
+        assert_eq!(report["surfaces"][2]["status"], "stopped");
+        assert_eq!(report["surfaces"][3]["name"], "mcp-server");
+        assert_eq!(report["surfaces"][3]["status"], "stopped");
+
+        let status_json = crate::run(["status", "--json"], &env, &supervisor).unwrap();
+        let status: serde_json::Value = serde_json::from_str(&status_json).unwrap();
+        assert_eq!(status["residentSupervisor"], "stopped");
+        assert_eq!(status["mcpServer"], "stopped");
+        assert_eq!(status["queueSupervisor"], "stopped");
+
+        std::fs::remove_dir_all(&app_dir).unwrap();
     }
 
     #[test]
@@ -224,6 +277,7 @@ mod tests {
 
         let status = crate::domains::daemon::service::status_with_supervisor(&env, &supervisor);
 
+        assert_eq!(status.resident_supervisor, "stopped");
         assert_eq!(status.hono_admin_api, "running");
         assert_eq!(status.mcp_server, "degraded");
         assert_eq!(status.queue_supervisor, "stopped");
