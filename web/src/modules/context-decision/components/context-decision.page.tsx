@@ -472,6 +472,7 @@ function asReliabilityGate(value: unknown): ContextDecisionReliabilityGate | nul
   const riskEvidence = isRecord(value.riskEvidence) ? value.riskEvidence : {};
   const badFeedback = isRecord(value.badFeedback) ? value.badFeedback : {};
   const evidenceCoverage = isRecord(value.evidenceCoverage) ? value.evidenceCoverage : {};
+  const operationalImpact = isRecord(value.operationalImpact) ? value.operationalImpact : null;
   const appliedRules = Array.isArray(value.appliedRules)
     ? value.appliedRules
         .filter((item): item is Record<string, unknown> => isRecord(item))
@@ -485,7 +486,7 @@ function asReliabilityGate(value: unknown): ContextDecisionReliabilityGate | nul
     const raw = record[key];
     return typeof raw === "number" && Number.isFinite(raw) ? Math.round(raw) : 0;
   };
-  return {
+  const gate: ContextDecisionReliabilityGate = {
     status: value.status,
     originalDecision:
       typeof value.originalDecision === "string"
@@ -523,6 +524,37 @@ function asReliabilityGate(value: unknown): ContextDecisionReliabilityGate | nul
       knowledgeCoverage: toNumber(evidenceCoverage, "knowledgeCoverage"),
     },
   };
+  if (operationalImpact) {
+    const operationType =
+      operationalImpact.operationType === "process_restart" ||
+      operationalImpact.operationType === "destructive_change" ||
+      operationalImpact.operationType === "unknown"
+        ? operationalImpact.operationType
+        : "unknown";
+    const level =
+      operationalImpact.level === "low" ||
+      operationalImpact.level === "medium" ||
+      operationalImpact.level === "high" ||
+      operationalImpact.level === "unknown"
+        ? operationalImpact.level
+        : "unknown";
+    const optionalNumber = (key: string) => {
+      const raw = operationalImpact[key];
+      return typeof raw === "number" && Number.isFinite(raw) ? Math.round(raw) : null;
+    };
+    gate.operationalImpact = {
+      operationType,
+      level,
+      activeLeaseCount: optionalNumber("activeLeaseCount"),
+      impactedUserEstimate: optionalNumber("impactedUserEstimate"),
+      reason:
+        typeof operationalImpact.reason === "string"
+          ? operationalImpact.reason
+          : "No impact reason recorded.",
+      autonomousGoRecommended: operationalImpact.autonomousGoRecommended === true,
+    };
+  }
+  return gate;
 }
 
 function traceStringArray(trace: Record<string, unknown>, key: string): string[] {
@@ -540,11 +572,18 @@ function decisionStateVariant(
     value.includes("risk") ||
     value.includes("constrained") ||
     value.includes("failed") ||
-    value.includes("weak")
+    value.includes("weak") ||
+    value.includes("high")
   ) {
     return "destructive";
   }
-  if (value.includes("passed") || value.includes("strong") || value.includes("clear")) {
+  if (
+    value.includes("passed") ||
+    value.includes("strong") ||
+    value.includes("clear") ||
+    value.includes("low") ||
+    value.includes("medium")
+  ) {
     return "secondary";
   }
   return "outline";
@@ -573,6 +612,7 @@ function DecisionRationalePanel({
   const signalState = typeof signalStatus?.status === "string" ? signalStatus.status : "unknown";
   const riskState = riskCount > 0 || counterCount > 0 ? "risk present" : "risk clear";
   const gateState = gate?.status ?? "not recorded";
+  const impact = gate?.operationalImpact;
   const evidenceState =
     selectedSupportCount > 0
       ? primaryStrength === "verified" || primaryStrength === "observed"
@@ -588,6 +628,9 @@ function DecisionRationalePanel({
         ? `Reliability Gate changed ${gate.originalDecision} -> ${gate.finalDecision}.`
         : `Reliability Gate passed with final decision ${gate.finalDecision}.`
       : "Reliability Gate was not recorded.",
+    impact
+      ? `Operational impact was estimated as ${impact.level} for ${impact.operationType}; active leases=${impact.activeLeaseCount ?? "unknown"}, impacted users=${impact.impactedUserEstimate ?? "unknown"}. ${impact.reason}`
+      : "Operational impact estimate was not recorded.",
     counterCount > 0 || riskCount > 0
       ? `${counterCount} counter item(s) and ${riskCount} risk item(s) were selected as decision constraints.`
       : "No selected counter or risk evidence is attached to this decision.",
@@ -610,11 +653,19 @@ function DecisionRationalePanel({
       </div>
       <div className="compile-pack-item">
         <div className="compile-code-badge-list">
-          {[gateState, evidenceState, riskState, `signals ${signalState}`].map((item) => (
-            <Badge key={item} variant={decisionStateVariant(item)}>
-              {item}
-            </Badge>
-          ))}
+          {[
+            gateState,
+            evidenceState,
+            riskState,
+            `signals ${signalState}`,
+            impact ? `impact ${impact.level}` : null,
+          ]
+            .filter((item): item is string => Boolean(item))
+            .map((item) => (
+              <Badge key={item} variant={decisionStateVariant(item)}>
+                {item}
+              </Badge>
+            ))}
         </div>
         <ul className="compile-source-list" style={{ marginTop: 12 }}>
           {rationaleRows.map((row) => (
@@ -628,6 +679,7 @@ function DecisionRationalePanel({
         <Metric label="Support Used" value={selectedSupportCount} />
         <Metric label="Counter / Risk" value={`${counterCount} / ${riskCount}`} />
         <Metric label="Final Gate" value={gate?.finalDecision ?? detail.run.decision} />
+        <Metric label="Impact" value={impact?.level ?? "not recorded"} />
       </div>
     </section>
   );
@@ -668,6 +720,37 @@ function ReliabilityGatePanel({ trace }: { trace: Record<string, unknown> }) {
         <Metric label="Coverage" value={`${gate.evidenceCoverage.knowledgeCoverage}%`} />
         <Metric label="Strong Bad Feedback" value={gate.badFeedback.strongCount} />
       </div>
+      {gate.operationalImpact ? (
+        <div className="compile-pack-item" style={{ marginTop: 10, padding: "10px 12px" }}>
+          <div className="compile-pack-item-header">
+            <strong>Operational Impact</strong>
+            <div className="compile-pack-item-meta">
+              <Badge variant="outline">{gate.operationalImpact.operationType}</Badge>
+              <Badge variant={decisionStateVariant(gate.operationalImpact.level)}>
+                {gate.operationalImpact.level}
+              </Badge>
+              {gate.operationalImpact.autonomousGoRecommended ? (
+                <Badge variant="secondary">autonomous GO</Badge>
+              ) : (
+                <Badge variant="destructive">NO-GO</Badge>
+              )}
+            </div>
+          </div>
+          <div className="compile-metric-grid" style={{ marginTop: 8 }}>
+            <Metric
+              label="Active Leases"
+              value={gate.operationalImpact.activeLeaseCount ?? "unknown"}
+            />
+            <Metric
+              label="Impacted Users"
+              value={gate.operationalImpact.impactedUserEstimate ?? "unknown"}
+            />
+          </div>
+          <p className="compile-state-text" style={{ marginTop: 8 }}>
+            {gate.operationalImpact.reason}
+          </p>
+        </div>
+      ) : null}
       {gate.appliedRules.length > 0 ? (
         <div className="compile-pack-items" style={{ marginTop: 10 }}>
           {gate.appliedRules.map((rule) => (

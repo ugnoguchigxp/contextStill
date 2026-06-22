@@ -172,6 +172,15 @@ const mockDetail = {
           riskEvidenceCount: 1,
           knowledgeCoverage: 48,
         },
+        operationalImpact: {
+          operationType: "process_restart",
+          level: "medium",
+          activeLeaseCount: 1,
+          impactedUserEstimate: 0,
+          reason:
+            "Process restart/reload impact estimate: activeLeaseCount=1, impactedUserEstimate=0.",
+          autonomousGoRecommended: true,
+        },
       },
     },
     guardrails: { riskEvidenceCount: 1 },
@@ -373,6 +382,10 @@ describe("ContextDecisionPage", () => {
     expect(screen.getByText("Decision Signals")).toBeInTheDocument();
     expect(screen.getByText("signals loaded")).toBeInTheDocument();
     expect(screen.getByText("Reliability Gate")).toBeInTheDocument();
+    expect(screen.getByText("Operational Impact")).toBeInTheDocument();
+    expect(screen.getByText("process_restart")).toBeInTheDocument();
+    expect(screen.getByText("autonomous GO")).toBeInTheDocument();
+    expect(screen.getByText("Impact")).toBeInTheDocument();
     expect(screen.getByText("weak_coverage_requires_revision")).toBeInTheDocument();
     expect(screen.getAllByText("Check risk before build").length).toBeGreaterThan(0);
     expect(screen.getAllByText("Counter build case").length).toBeGreaterThan(0);

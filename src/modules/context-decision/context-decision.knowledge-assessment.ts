@@ -199,9 +199,9 @@ export function assessContextDecisionKnowledge(params: {
   const recommendedDirection: ContextDecisionKnowledgeAssessment["recommendedDirection"] =
     status === "no_evidence"
       ? "escalate"
-      : conflictScore >= 70 || riskStrength >= 80
+      : riskStrength >= 90
         ? "reject"
-        : conflictScore >= 42 || riskStrength >= 82 || outOfDistributionScore >= 70
+        : conflictScore >= 42 || riskStrength >= 70 || outOfDistributionScore >= 70
           ? "revise_and_execute"
           : "execute";
   const meaningfulMetrics: NonNullable<ContextDecisionKnowledgeAssessment["meaningfulMetrics"]> = [

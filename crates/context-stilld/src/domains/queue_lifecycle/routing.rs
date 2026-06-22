@@ -7,11 +7,29 @@ pub fn handle_command<E: EnvProvider, S: ProcessSupervisor>(
     env: &E,
     supervisor: &S,
 ) -> Result<String, CliError> {
-    let report = match action {
-        QueueAction::Start => super::service::start_report(env, supervisor)?,
-        QueueAction::Stop => super::service::stop_report(env, supervisor)?,
-        QueueAction::Status => super::service::status_report(env, supervisor)?,
-    };
+    match action {
+        QueueAction::Start => {
+            render_lifecycle(super::service::start_report(env, supervisor)?, json)
+        }
+        QueueAction::Stop => render_lifecycle(super::service::stop_report(env, supervisor)?, json),
+        QueueAction::Status => {
+            render_lifecycle(super::service::status_report(env, supervisor)?, json)
+        }
+        QueueAction::Inspect => {
+            let report = super::service::inspect_report(env, supervisor)?;
+            if json {
+                Ok(report.to_json())
+            } else {
+                Ok(report.to_text())
+            }
+        }
+    }
+}
+
+fn render_lifecycle(
+    report: crate::domains::process_lifecycle::service::LifecycleReport,
+    json: bool,
+) -> Result<String, CliError> {
     if json {
         Ok(report.to_json())
     } else {

@@ -112,7 +112,7 @@ describe("context decision reliability gate", () => {
     ];
     const result = applyContextDecisionReliabilityGate({
       judgment: judgment("execute"),
-      knowledgeAssessment: assessment({ riskStrength: 85, recommendedDirection: "reject" }),
+      knowledgeAssessment: assessment({ riskStrength: 92, recommendedDirection: "reject" }),
       evidence: riskEvidence,
       relatedBadSignalSummary: noBadFeedback,
     });
@@ -166,7 +166,7 @@ describe("context decision reliability gate", () => {
     expect(result.gate.badFeedback.count).toBe(1);
   });
 
-  test("compile wrong signal blocks execute even when LLM selects execute", () => {
+  test("compile wrong signal revises execute instead of hard rejecting", () => {
     const result = applyContextDecisionReliabilityGate({
       judgment: judgment("execute"),
       knowledgeAssessment: assessment(),
@@ -192,13 +192,13 @@ describe("context decision reliability gate", () => {
       relatedBadSignalSummary: noBadFeedback,
     });
 
-    expect(result.judgment.decision).toBe("reject");
+    expect(result.judgment.decision).toBe("revise_and_execute");
     expect(result.gate.appliedRules.map((item) => item.key)).toContain(
-      "compile_wrong_blocks_execute",
+      "compile_wrong_requires_revision",
     );
   });
 
-  test("negative attractor blocks execute and thin community caps confidence", () => {
+  test("negative attractor revises execute and thin community caps confidence", () => {
     const result = applyContextDecisionReliabilityGate({
       judgment: judgment("execute"),
       knowledgeAssessment: assessment(),
@@ -234,8 +234,157 @@ describe("context decision reliability gate", () => {
     });
 
     const ruleKeys = result.gate.appliedRules.map((item) => item.key);
-    expect(result.judgment.decision).toBe("reject");
-    expect(ruleKeys).toContain("negative_attractor_blocks_execute");
+    expect(result.judgment.decision).toBe("revise_and_execute");
+    expect(ruleKeys).toContain("negative_attractor_requires_revision");
     expect(ruleKeys).toContain("thin_community_caps_confidence");
+  });
+
+  test("softens LLM reject to revise when risk is not obviously blocking", () => {
+    const result = applyContextDecisionReliabilityGate({
+      judgment: judgment("reject"),
+      knowledgeAssessment: assessment({
+        riskStrength: 20,
+        recommendedDirection: "revise_and_execute",
+      }),
+      evidence: [
+        {
+          knowledge: knowledge({ title: "Mixed quality support" }),
+          role: "selected_support",
+        },
+      ],
+      relatedBadSignalSummary: noBadFeedback,
+    });
+
+    expect(result.judgment.decision).toBe("revise_and_execute");
+    expect(result.judgment.rejectedActions).toEqual([]);
+    expect(result.gate.appliedRules.map((item) => item.key)).toContain(
+      "non_obvious_risk_reject_softened_to_revision",
+    );
+  });
+
+  test("turns restart reject into autonomous GO when operational impact is bounded", () => {
+    const result = applyContextDecisionReliabilityGate({
+      judgment: judgment("reject"),
+      knowledgeAssessment: assessment({
+        riskStrength: 100,
+        recommendedDirection: "reject",
+      }),
+      evidence: [
+        {
+          knowledge: knowledge({ title: "Restart guardrail", polarity: "negative" }),
+          role: "risk_warning",
+        },
+      ],
+      relatedBadSignalSummary: noBadFeedback,
+      decisionPoint:
+        "com.context-still.queue-supervisor LaunchAgent を unload/load してよいか判断する",
+      metadata: {
+        runtimeEvidence: {
+          activeLeaseCount: 1,
+          impactedUserEstimate: 0,
+          runningQueue: "episodeDistiller",
+          pendingEpisodeDistiller: 2099,
+        },
+      },
+    });
+
+    expect(result.judgment.decision).toBe("revise_and_execute");
+    expect(result.judgment.rejectedActions).toEqual([]);
+    expect(result.gate.operationalImpact).toMatchObject({
+      operationType: "process_restart",
+      level: "medium",
+      autonomousGoRecommended: true,
+      activeLeaseCount: 1,
+      impactedUserEstimate: 0,
+    });
+    expect(result.gate.appliedRules.map((item) => item.key)).toContain(
+      "bounded_operational_impact_supports_autonomous_go",
+    );
+  });
+
+  test("keeps restart impact unknown when no live impact metadata is available", () => {
+    const result = applyContextDecisionReliabilityGate({
+      judgment: judgment("reject"),
+      knowledgeAssessment: assessment({
+        riskStrength: 100,
+        recommendedDirection: "reject",
+      }),
+      evidence: [
+        {
+          knowledge: knowledge({ title: "Restart guardrail", polarity: "negative" }),
+          role: "risk_warning",
+        },
+      ],
+      relatedBadSignalSummary: noBadFeedback,
+      decisionPoint: "restart the queue supervisor",
+      metadata: {},
+    });
+
+    expect(result.judgment.decision).toBe("reject");
+    expect(result.gate.operationalImpact).toMatchObject({
+      operationType: "process_restart",
+      level: "unknown",
+      autonomousGoRecommended: false,
+    });
+    expect(result.gate.appliedRules.map((item) => item.key)).not.toContain(
+      "bounded_operational_impact_supports_autonomous_go",
+    );
+  });
+
+  test("does not override signal-load failure escalation with operational impact", () => {
+    const result = applyContextDecisionReliabilityGate({
+      judgment: judgment("execute"),
+      knowledgeAssessment: assessment(),
+      evidence: [{ knowledge: knowledge({ title: "Support" }), role: "selected_support" }],
+      relatedBadSignalSummary: noBadFeedback,
+      decisionPoint: "restart the queue supervisor",
+      metadata: {
+        runtimeEvidence: {
+          activeLeaseCount: 0,
+          impactedUserEstimate: 0,
+        },
+      },
+      signalLoadStatus: "failed",
+      signalLoadReason: "db unavailable",
+    });
+
+    expect(result.judgment.decision).toBe("escalate");
+    expect(result.gate.appliedRules.map((item) => item.key)).toContain(
+      "decision_signal_load_failure_blocks_execution",
+    );
+    expect(result.gate.appliedRules.map((item) => item.key)).not.toContain(
+      "bounded_operational_impact_supports_autonomous_go",
+    );
+  });
+
+  test("keeps destructive operations rejected even with process metadata", () => {
+    const result = applyContextDecisionReliabilityGate({
+      judgment: judgment("reject"),
+      knowledgeAssessment: assessment({
+        riskStrength: 100,
+        recommendedDirection: "reject",
+      }),
+      evidence: [
+        {
+          knowledge: knowledge({ title: "Destructive guardrail", polarity: "negative" }),
+          role: "risk_warning",
+        },
+      ],
+      relatedBadSignalSummary: noBadFeedback,
+      decisionPoint: "run git clean -fd and restart the worker",
+      metadata: {
+        runtimeEvidence: {
+          activeLeaseCount: 0,
+          impactedUserEstimate: 0,
+        },
+      },
+    });
+
+    expect(result.judgment.decision).toBe("reject");
+    expect(result.gate.operationalImpact).toMatchObject({
+      operationType: "destructive_change",
+      level: "high",
+      autonomousGoRecommended: false,
+    });
   });
 });

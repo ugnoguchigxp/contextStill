@@ -267,6 +267,78 @@ describe("context-decision.service", () => {
     expect(mockInsertContextDecisionRun).toHaveBeenCalled();
   });
 
+  test("fallback answer records operational impact and autonomous GO rationale", async () => {
+    mockSearchKnowledge.mockImplementation(async (params: any) => {
+      const q = params.query.toLowerCase();
+      if (q.includes("safe to execute")) {
+        return [
+          createDummyKnowledge({
+            id: "kb-support-restart",
+            title: "Restart support",
+            body: "Process restarts can proceed when runtime impact is bounded and verification is available.",
+            score: 1,
+            applicabilityScore: 80,
+          }),
+        ];
+      }
+      if (q.includes("risk warning guardrail")) {
+        return [
+          createDummyKnowledge({
+            id: "kb-risk-restart",
+            title: "Restart guardrail",
+            body: "Check active work and user impact before restarting long-running services.",
+            polarity: "negative",
+            score: 1,
+            applicabilityScore: 80,
+            confidence: 98,
+            importance: 98,
+          }),
+        ];
+      }
+      return [];
+    });
+    mockGetAgenticLlmProviders.mockResolvedValue([]);
+
+    const result = await decideContext({
+      decisionPoint:
+        "com.context-still.queue-supervisor LaunchAgent を unload/load してよいか判断する",
+      retrievalHints: {
+        technologies: ["LaunchAgent", "queue"],
+        changeTypes: ["runtime"],
+        domains: ["decision"],
+      },
+      metadata: {
+        runtimeEvidence: {
+          activeLeaseCount: 1,
+          impactedUserEstimate: 0,
+          runningQueue: "episodeDistiller",
+          pendingEpisodeDistiller: 2099,
+        },
+      },
+    });
+
+    expect(result.decision).toBe("revise_and_execute");
+    expect(result.agentMessage).toContain("GO with safeguards");
+    expect(result.agentMessage).toContain("影響見積り");
+    expect(result.agentMessage).toContain("activeLeaseCount=1");
+    expect(result.agentMessage).toContain("impactedUserEstimate=0");
+    expect(mockInsertContextDecisionRun).toHaveBeenCalledWith(
+      expect.objectContaining({
+        decision: "revise_and_execute",
+        agentMessage: expect.stringContaining("GO with safeguards"),
+        confidenceTrace: expect.objectContaining({
+          reliabilityGate: expect.objectContaining({
+            operationalImpact: expect.objectContaining({
+              operationType: "process_restart",
+              level: "medium",
+              autonomousGoRecommended: true,
+            }),
+          }),
+        }),
+      }),
+    );
+  });
+
   test("decideContext handles LLM repair flow when JSON is malformed", async () => {
     mockSearchKnowledge.mockImplementation(async (params: any) => {
       const q = params.query.toLowerCase();
@@ -576,7 +648,7 @@ describe("context-decision.service", () => {
         }),
       })
       .mockResolvedValueOnce({
-        content: "判断は reject です。risk guardrail を解消してください。",
+        content: "判断は revise_and_execute です。risk guardrail を確認してから進めます。",
       });
     mockGetAgenticLlmProviders.mockResolvedValue([{ isConfigured: () => true, chat }]);
 
@@ -590,7 +662,7 @@ describe("context-decision.service", () => {
       metadata: {},
     });
 
-    expect(result.decision).toBe("reject");
+    expect(result.decision).toBe("revise_and_execute");
     expect(mockInsertContextDecisionEvidenceRows).toHaveBeenCalledWith(
       "decision-run-id-123",
       expect.arrayContaining([

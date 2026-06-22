@@ -173,6 +173,7 @@ pub fn run_and_wait_report<E: EnvProvider, S: ProcessSupervisor>(
         last_error,
         command: Some(spec.command.to_string()),
         args: Some(args_vec(spec)),
+        ..ProcessState::default()
     };
 
     write_process_state(spec, run_dir, &state)?;

@@ -1,5 +1,5 @@
 use serde::Serialize;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 use crate::{
     domains::bootstrap::service::{resolve_paths, PathReport},
@@ -55,7 +55,7 @@ pub fn status_with_supervisor<E: EnvProvider, S: ProcessSupervisor>(
     RuntimeStatus {
         runtime_host: "rust-resident",
         version: repository::runtime_version(),
-        resident_supervisor,
+        resident_supervisor: resident_supervisor.clone(),
         hono_admin_api,
         mcp_server,
         queue_supervisor,
@@ -63,11 +63,38 @@ pub fn status_with_supervisor<E: EnvProvider, S: ProcessSupervisor>(
         managed_default_flags: ManagedDefaultFlags {
             mcp: env_flag_default(env, "CONTEXT_STILL_RESIDENT_MCP", true),
             queue: env_flag_default(env, "CONTEXT_STILL_RESIDENT_QUEUE", true),
-            agent_log_sync: env_flag(env, "CONTEXT_STILL_DAEMON_MANAGED_AGENT_LOG_SYNC"),
+            agent_log_sync: env_flag_default(env, "CONTEXT_STILL_RESIDENT_AGENT_LOG_SYNC", true),
             admin_api: env_flag(env, "CONTEXT_STILL_DAEMON_MANAGED_ADMIN_API"),
         },
-        paths,
+        paths: paths_with_resident_sqlite_path(env, paths, &resident_supervisor, supervisor),
     }
+}
+
+fn paths_with_resident_sqlite_path<E: EnvProvider, S: ProcessSupervisor>(
+    env: &E,
+    mut paths: PathReport,
+    resident_supervisor_status: &str,
+    supervisor: &S,
+) -> PathReport {
+    if env.var("CONTEXT_STILL_SQLITE_CORE_PATH").is_some() {
+        return paths;
+    }
+    if resident_supervisor_status != "running" {
+        return paths;
+    }
+    let Ok(Some(state)) = repository::read_state(&paths.run_dir, "context-stilld") else {
+        return paths;
+    };
+    let Some(pid) = state.pid else {
+        return paths;
+    };
+    if !supervisor.is_alive(pid) {
+        return paths;
+    }
+    if let Some(sqlite_core_path) = state.sqlite_core_path {
+        paths.sqlite_core_path = PathBuf::from(sqlite_core_path);
+    }
+    paths
 }
 
 fn env_flag<E: EnvProvider>(env: &E, key: &str) -> bool {

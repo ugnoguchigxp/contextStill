@@ -290,6 +290,14 @@ export type ContextDecisionReliabilityGate = {
     riskEvidenceCount: number;
     knowledgeCoverage: number;
   };
+  operationalImpact?: {
+    operationType: "process_restart" | "destructive_change" | "unknown";
+    level: "low" | "medium" | "high" | "unknown";
+    activeLeaseCount: number | null;
+    impactedUserEstimate: number | null;
+    reason: string;
+    autonomousGoRecommended: boolean;
+  };
 };
 
 export type ContextDecisionConfidenceTrace = {

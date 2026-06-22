@@ -153,7 +153,7 @@ describe("context decision calibration fixtures", () => {
     );
   });
 
-  test("negative attractor reject blocks execute", () => {
+  test("negative attractor revises execute instead of hard rejecting", () => {
     const gated = finalDecision({
       evidence: [
         {
@@ -177,9 +177,9 @@ describe("context decision calibration fixtures", () => {
       ],
     });
 
-    expect(gated.judgment.decision).toBe("reject");
+    expect(gated.judgment.decision).toBe("revise_and_execute");
     expect(gated.gate.appliedRules.map((item) => item.key)).toContain(
-      "negative_attractor_blocks_execute",
+      "negative_attractor_requires_revision",
     );
   });
 

@@ -30,6 +30,10 @@ pub struct ProcessState {
     pub command: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub args: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub project_root: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sqlite_core_path: Option<String>,
 }
 
 pub fn write_state(run_dir: &Path, name: &str, state: &ProcessState) -> io::Result<()> {

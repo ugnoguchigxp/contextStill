@@ -35,6 +35,12 @@
         <string>{{RESIDENT_MCP}}</string>
         <key>CONTEXT_STILL_RESIDENT_QUEUE</key>
         <string>{{RESIDENT_QUEUE}}</string>
+        <key>CONTEXT_STILL_RESIDENT_AGENT_LOG_SYNC</key>
+        <string>{{RESIDENT_AGENT_LOG_SYNC}}</string>
+        <key>CONTEXT_STILL_AGENT_LOG_SYNC_INTERVAL_SECONDS</key>
+        <string>{{AGENT_LOG_SYNC_INTERVAL_SECONDS}}</string>
+        <key>CONTEXT_STILL_AGENT_LOG_SYNC_RUN_AT_LOAD</key>
+        <string>{{AGENT_LOG_SYNC_RUN_AT_LOAD}}</string>
     </dict>
 </dict>
 </plist>

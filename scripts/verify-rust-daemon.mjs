@@ -43,6 +43,10 @@ const tasks = [
     command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "queue", "status", "--json"],
   },
   {
+    label: "context-stilld queue inspect",
+    command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "queue", "inspect", "--json"],
+  },
+  {
     label: "context-stilld mcp endpoint",
     command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "mcp", "endpoint", "--json"],
   },
@@ -163,6 +167,9 @@ for (const task of tasks) {
   }
   if (task.label === "context-stilld queue status" && result.code === 0) {
     result = assertJsonLine(result, "process");
+  }
+  if (task.label === "context-stilld queue inspect" && result.code === 0) {
+    result = assertJsonLine(result, "queues");
   }
   if (task.label === "context-stilld mcp endpoint" && result.code === 0) {
     result = assertJsonLine(result, "url");

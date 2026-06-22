@@ -33,6 +33,7 @@ Run commands from the repository root.
 | `cargo run -q -p context-stilld -- mcp smoke --json` | Check endpoint readiness and exposed tool inventory |
 | `cargo run -q -p context-stilld -- mcp start\|stop` | Legacy endpoint-worker lifecycle helper; clients should use URL registration, not command spawning |
 | `cargo run -q -p context-stilld -- queue start\|stop\|status` | Delegate queue supervisor lifecycle without changing queue semantics |
+| `cargo run -q -p context-stilld -- queue inspect --json` | Read live SQLite queue counts, active provider leases, active target ids, worker pid, and last heartbeat |
 | `cargo run -q -p context-stilld -- agent-log-sync run\|stop\|status` | Delegate agent log sync lifecycle |
 | `cargo run -q -p context-stilld -- agent-log-sync run --wait --json` | Run one-shot sync and record exit status |
 | `cargo run -q -p context-stilld -- admin-api start\|stop\|status` | Start/stop Hono admin API for UI/operator sessions only; start waits for readiness |
@@ -93,6 +94,9 @@ The `CONTEXT_STILL_DAEMON_MANAGED_MCP`, `CONTEXT_STILL_DAEMON_MANAGED_QUEUE`, `C
 | `bun run automation:agent-log-sync -- install` | Install macOS LaunchAgent for log sync |
 | `bun run automation:agent-log-sync -- load` | Load the log sync LaunchAgent |
 | `bun run automation:agent-log-sync -- status` | Inspect log sync LaunchAgent state |
+| `bun run automation:context-stilld -- install` | Install macOS LaunchAgent for resident `context-stilld run` |
+| `bun run automation:context-stilld -- load` | Load resident daemon and unload legacy queue / agent-log-sync LaunchAgent owners |
+| `bun run automation:context-stilld -- status` | Inspect resident daemon LaunchAgent and legacy owner state |
 | `bun run automation:queue-supervisor -- install` | Install queue supervisor LaunchAgent |
 | `bun run automation:queue-supervisor -- load` | Load queue supervisor LaunchAgent |
 | `bun run automation:queue-supervisor -- status` | Inspect queue supervisor state |

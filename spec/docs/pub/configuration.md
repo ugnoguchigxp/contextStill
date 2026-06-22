@@ -89,7 +89,10 @@ These variables are for development, packaging, and advanced runtime integration
 | `CONTEXT_STILL_ANTIGRAVITY_LOG_DIR` | Primary Antigravity log directory |
 | `CONTEXT_STILL_ANTIGRAVITY_LOG_DIRS` | Additional Antigravity log roots |
 | `CONTEXT_STILL_CLAUDE_PROJECTS_DIR` | Claude projects directory |
-| `CONTEXT_STILL_AGENT_LOG_SYNC_INTERVAL_SECONDS` | LaunchAgent / scheduled sync interval |
+| `CONTEXT_STILL_RESIDENT_AGENT_LOG_SYNC` | `1` | Enables resident `context-stilld run` to own scheduled agent log sync |
+| `CONTEXT_STILL_AGENT_LOG_SYNC_INTERVAL_SECONDS` | `3600` | Resident daemon / legacy LaunchAgent scheduled sync interval |
+| `CONTEXT_STILL_AGENT_LOG_SYNC_RUN_AT_LOAD` | `0` | Set `1` to run agent log sync immediately when resident daemon starts |
+| `CONTEXT_STILL_AGENT_LOG_SYNC_TIMEOUT_MS` | `300000` | Timeout for each resident-owned one-shot sync sidecar |
 | `CONTEXT_STILL_AGENT_LOG_INITIAL_LOOKBACK_HOURS` | Initial import lookback window |
 | `CONTEXT_STILL_AGENT_LOG_MIN_DISTILLABLE_CHARS` | Minimum agent-log chunk size to save for distillation; default `2000` |
 

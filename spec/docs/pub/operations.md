@@ -96,12 +96,13 @@ bun run queue:merge-activation-finalize:once
 Continuous supervisor:
 
 ```bash
-bun run automation:queue-supervisor -- install
-bun run automation:queue-supervisor -- load
-bun run automation:queue-supervisor -- status
+bun run automation:context-stilld -- install
+bun run automation:context-stilld -- load
+bun run automation:context-stilld -- status
+cargo run -q -p context-stilld -- queue inspect --json
 ```
 
-Queue logs are written under `logs/`. Queue/distillation surfaces are still an area where backend support must be explicit; keep server-only assumptions out of the default desktop path.
+The resident daemon owns the queue worker process and scheduled agent-log-sync trigger. Queue logs are written under app data logs, and `queue inspect --json` reads live SQLite queue counts and provider leases from Rust. Queue/distillation surfaces are still an area where backend support must be explicit; keep server-only assumptions out of the default desktop path.
 
 ## Candidate Registration Hooks
 

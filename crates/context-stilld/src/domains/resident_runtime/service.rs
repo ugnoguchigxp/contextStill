@@ -3,11 +3,12 @@ use std::sync::{
     Arc,
 };
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde::Serialize;
 
 use crate::domains::{
+    agent_log_sync,
     bootstrap::service::resolve_paths,
     daemon::repository::{self, ProcessState},
     mcp_lifecycle, process_lifecycle, queue_lifecycle,
@@ -42,6 +43,29 @@ struct SurfaceOwnership {
     queue: bool,
 }
 
+#[derive(Debug, Clone)]
+struct ResidentRuntimeState {
+    owned_surfaces: SurfaceOwnership,
+    agent_log_sync_last_checked_at: Option<Instant>,
+}
+
+impl ResidentRuntimeState {
+    fn new<E: EnvProvider>(env: &E) -> Self {
+        Self {
+            owned_surfaces: SurfaceOwnership::default(),
+            agent_log_sync_last_checked_at: if env_flag_default(
+                env,
+                "CONTEXT_STILL_AGENT_LOG_SYNC_RUN_AT_LOAD",
+                false,
+            ) {
+                None
+            } else {
+                Some(Instant::now())
+            },
+        }
+    }
+}
+
 impl ResidentRunReport {
     pub fn to_json(&self) -> String {
         serde_json::to_string(self).unwrap_or_else(|_| "{}".to_string())
@@ -58,12 +82,13 @@ pub fn run<E: EnvProvider, S: ProcessSupervisor>(
     once: bool,
 ) -> Result<ResidentRunReport, CliError> {
     write_resident_state(env, "running")?;
-    let mut surfaces = ensure_surfaces(env, supervisor)?;
-    let mut ownership = SurfaceOwnership::from_reports(&surfaces);
+    let mut runtime_state = ResidentRuntimeState::new(env);
+    let mut surfaces = ensure_surfaces(env, supervisor, &mut runtime_state)?;
     let pid = std::process::id();
 
     if once {
-        let mut shutdown_surfaces = stop_owned_surfaces(env, supervisor, &ownership)?;
+        let mut shutdown_surfaces =
+            stop_owned_surfaces(env, supervisor, &runtime_state.owned_surfaces)?;
         surfaces.append(&mut shutdown_surfaces);
         write_resident_state(env, "exited")?;
         return Ok(ResidentRunReport {
@@ -85,11 +110,11 @@ pub fn run<E: EnvProvider, S: ProcessSupervisor>(
 
     while running.load(Ordering::SeqCst) {
         thread::sleep(Duration::from_secs(5));
-        surfaces = ensure_surfaces(env, supervisor)?;
-        ownership.merge_started(&surfaces);
+        surfaces = ensure_surfaces(env, supervisor, &mut runtime_state)?;
     }
 
-    let mut shutdown_surfaces = stop_owned_surfaces(env, supervisor, &ownership)?;
+    let mut shutdown_surfaces =
+        stop_owned_surfaces(env, supervisor, &runtime_state.owned_surfaces)?;
     surfaces.append(&mut shutdown_surfaces);
     write_resident_state(env, "stopped")?;
 
@@ -105,6 +130,7 @@ pub fn run<E: EnvProvider, S: ProcessSupervisor>(
 fn ensure_surfaces<E: EnvProvider, S: ProcessSupervisor>(
     env: &E,
     supervisor: &S,
+    state: &mut ResidentRuntimeState,
 ) -> Result<Vec<ManagedSurfaceReport>, CliError> {
     let mut reports = Vec::new();
     if env_flag_default(env, "CONTEXT_STILL_RESIDENT_MCP", true) {
@@ -120,6 +146,12 @@ fn ensure_surfaces<E: EnvProvider, S: ProcessSupervisor>(
     } else {
         reports.push(disabled_surface("queue-supervisor"));
     }
+    if env_flag_default(env, "CONTEXT_STILL_RESIDENT_AGENT_LOG_SYNC", true) {
+        reports.push(reconcile_agent_log_sync(env, supervisor, state)?);
+    } else {
+        reports.push(disabled_surface("agent-log-sync"));
+    }
+    state.owned_surfaces.merge_started(&reports);
     Ok(reports)
 }
 
@@ -164,13 +196,50 @@ fn disabled_surface(name: &'static str) -> ManagedSurfaceReport {
     }
 }
 
-impl SurfaceOwnership {
-    fn from_reports(reports: &[ManagedSurfaceReport]) -> Self {
-        let mut ownership = Self::default();
-        ownership.merge_started(reports);
-        ownership
+fn reconcile_agent_log_sync<E: EnvProvider, S: ProcessSupervisor>(
+    env: &E,
+    supervisor: &S,
+    state: &mut ResidentRuntimeState,
+) -> Result<ManagedSurfaceReport, CliError> {
+    let interval = Duration::from_secs(env_u64_default(
+        env,
+        "CONTEXT_STILL_AGENT_LOG_SYNC_INTERVAL_SECONDS",
+        3600,
+    ));
+    if state
+        .agent_log_sync_last_checked_at
+        .is_some_and(|last_checked| last_checked.elapsed() < interval)
+    {
+        return Ok(ManagedSurfaceReport {
+            name: "agent-log-sync",
+            enabled: true,
+            status: "scheduled".to_string(),
+            pid: None,
+            message: "agent-log-sync waiting for next scheduled run".to_string(),
+        });
     }
 
+    state.agent_log_sync_last_checked_at = Some(Instant::now());
+    let report = agent_log_sync::service::run_and_wait_report(
+        env,
+        supervisor,
+        Duration::from_millis(env_u64_default(
+            env,
+            "CONTEXT_STILL_AGENT_LOG_SYNC_TIMEOUT_MS",
+            300_000,
+        )),
+    )?;
+    Ok(surface_report("agent-log-sync", true, report))
+}
+
+fn env_u64_default<E: EnvProvider>(env: &E, key: &str, default: u64) -> u64 {
+    env.var(key)
+        .and_then(|value| value.parse::<u64>().ok())
+        .filter(|value| *value > 0)
+        .unwrap_or(default)
+}
+
+impl SurfaceOwnership {
     fn merge_started(&mut self, reports: &[ManagedSurfaceReport]) {
         for report in reports {
             if report.status != "started" {
@@ -201,6 +270,8 @@ fn write_resident_state<E: EnvProvider>(env: &E, status: &str) -> Result<(), Cli
         updated_at: Some(now),
         command: Some("context-stilld".to_string()),
         args: Some(vec!["run".to_string()]),
+        project_root: env.var("CONTEXT_STILL_PROJECT_ROOT"),
+        sqlite_core_path: Some(paths.sqlite_core_path.to_string_lossy().into_owned()),
         ..ProcessState::default()
     };
     repository::write_state(&paths.run_dir, RESIDENT_STATE_NAME, &state).map_err(|error| {

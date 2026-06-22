@@ -46,6 +46,7 @@ import {
 } from "../src/modules/episodeDistiller/repository.js";
 import { setEpisodeDistillerTestHooksForTests } from "../src/modules/episodeDistiller/worker.js";
 import { repairEpisodeCardQuality } from "../src/cli/repair-episode-card-quality.js";
+import { resetLowQualityEpisodeCards } from "../src/cli/reset-low-quality-episode-cards.js";
 import {
   createEpisode,
   fetchEpisode,
@@ -1012,6 +1013,120 @@ describe("sqlite runtime support repositories", () => {
       backup: false,
       limit: 100,
       json: true,
+    });
+    expect(secondDryRun.items.map((item) => item.id)).not.toContain(episode.id);
+  });
+
+  test("resets low-quality episodeDistiller cards and requeues their source jobs", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const job = await enqueueEpisodeDistillerJob({
+      sourceKey: "low-quality-reset-memory",
+      priority: 10,
+      metadata: { episodeDistiller: { episodeIds: [] } },
+    });
+    sqlite.db
+      .query(
+        `
+        update episode_distiller_queue
+        set status = 'completed',
+            completed_at = CURRENT_TIMESTAMP,
+            last_outcome_kind = 'episodes_distilled'
+        where id = ?
+      `,
+      )
+      .run(job.id);
+    const episode = await createEpisode({
+      title: "Low quality reset episode",
+      situation: "The legacy card was structurally repaired but still lacks an action.",
+      observations: "- The job has source refs",
+      action: "主要な実施内容は source metadata からは特定できません。",
+      outcome:
+        "Low quality reset episode は source 時点で主要な判断や修正が進んだが、追加確認事項が残った。",
+      lesson: "Low quality generated cards should be re-distilled from source refs.",
+      applicability: {},
+      antiApplicability: { requiresRawEvidenceCheck: true },
+      domains: ["episodic-memory"],
+      technologies: ["sqlite"],
+      changeTypes: ["repair"],
+      tools: [],
+      repoPath: "/repo/contextStill",
+      repoKey: "contextStill",
+      sourceKind: "vibe_memory",
+      sourceKey: "vibe_memory:low-quality-reset-memory:episode:test:episode-distiller-v1",
+      outcomeKind: "mixed",
+      importance: 75,
+      confidence: 80,
+      status: "active",
+      metadata: {
+        source: "episodeDistiller",
+        episodeDistillation: {
+          version: "episode-distiller-v1",
+        },
+      },
+      refs: [
+        {
+          refKind: "vibe_memory",
+          refValue: "low-quality-reset-memory",
+          locator: "bytes:0-100",
+          queryHint: "Low quality reset episode",
+        },
+      ],
+    });
+
+    const dryRun = await resetLowQualityEpisodeCards({
+      write: false,
+      backup: false,
+      limit: 100,
+      json: true,
+      reason: "test reset",
+    });
+    expect(dryRun.items.map((item) => item.id)).toContain(episode.id);
+    expect(dryRun.jobs.map((item) => item.id)).toContain(job.id);
+
+    const write = await resetLowQualityEpisodeCards({
+      write: true,
+      backup: false,
+      limit: 100,
+      json: true,
+      reason: "test reset",
+    });
+    expect(write.deletedEpisodes).toBe(1);
+    expect(write.requeuedJobs).toBe(1);
+
+    expect(await fetchEpisode(episode.id)).toBeNull();
+    expect(
+      sqlite.db
+        .query<{ count: number }, [string]>(
+          "select count(*) as count from episode_cards_fts where id = ?",
+        )
+        .get(episode.id)?.count,
+    ).toBe(0);
+    const jobRow = sqlite.db
+      .query<
+        { status: string; priority: number; last_outcome_kind: string; metadata: string },
+        [string]
+      >(
+        "select status, priority, last_outcome_kind, metadata from episode_distiller_queue where id = ?",
+      )
+      .get(job.id);
+    expect(jobRow?.status).toBe("pending");
+    expect(jobRow?.priority).toBe(95);
+    expect(jobRow?.last_outcome_kind).toBe("episode_quality_reset_requeued");
+    expect(JSON.parse(jobRow?.metadata ?? "{}")).toMatchObject({
+      episodeDistillerQualityReset: {
+        reason: "test reset",
+        previousStatus: "completed",
+        deletedEpisodeIds: [episode.id],
+        targetQualityScore: 85,
+      },
+    });
+
+    const secondDryRun = await resetLowQualityEpisodeCards({
+      write: false,
+      backup: false,
+      limit: 100,
+      json: true,
+      reason: "test reset",
     });
     expect(secondDryRun.items.map((item) => item.id)).not.toContain(episode.id);
   });

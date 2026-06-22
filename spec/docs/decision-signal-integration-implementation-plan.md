@@ -207,7 +207,7 @@ type DecisionSignalBundle = {
   - minimal safe execute
   - risky reject
   - counter evidence revise
-  - negative attractor reject
+  - negative attractor revise
   - strong attractor execute
   - over selected not used revise
   - stale/thin community cap
@@ -322,10 +322,11 @@ type DecisionSignalBundle = {
 
 追加 rule:
 
-- `compile_wrong_blocks_execute`
+- `compile_wrong_requires_revision`
 - `compile_off_topic_requires_revision`
-- `negative_attractor_blocks_execute`
-- `wrong_review_required_blocks_execute`
+- `negative_attractor_requires_revision`
+- `wrong_review_required_requires_revision`
+- `dead_community_requires_revision`
 - `over_selected_not_used_requires_revision`
 - `thin_community_caps_confidence`
 - `stale_community_caps_confidence`

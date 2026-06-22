@@ -368,6 +368,10 @@ function fallbackAgentMessage(params: {
     riskItems.length > 0
       ? `一方で、${riskItems.join("、")} はリスク確認用のKnowledgeとして扱います。`
       : "";
+  const impact = params.reliabilityGate?.operationalImpact;
+  const impactLine = impact
+    ? `影響見積りは operation=${impact.operationType}、level=${impact.level}、activeLeaseCount=${impact.activeLeaseCount ?? "unknown"}、impactedUserEstimate=${impact.impactedUserEstimate ?? "unknown"} です。${impact.reason}`
+    : "";
   const reliabilityGate =
     params.reliabilityGate?.status === "constrained"
       ? `Reliability Gate は ${params.reliabilityGate.appliedRules
@@ -381,22 +385,22 @@ function fallbackAgentMessage(params: {
       ? "この判断は根拠が限定的なため、断定ではなく条件付きの判断として扱います。"
       : "";
   if (params.decision === "escalate") {
-    return `判断は escalate です。自律実行に必要な根拠が不足しているため、ユーザー確認に進むべき状態です。${weakEvidenceNotice}${basis}${risk}${reliabilityGate} confidenceは${params.confidence}%で、support hitsは${params.supportHits}、counter evidence hitsは${params.counterHits}、risk hitsは${params.riskHits}です。`;
+    return `判断は escalate です。自律実行に必要な根拠または影響見積りが不足しているため、この判断では GO を出しません。${weakEvidenceNotice}${impactLine}${basis}${risk}${reliabilityGate} confidenceは${params.confidence}%で、support hitsは${params.supportHits}、counter evidence hitsは${params.counterHits}、risk hitsは${params.riskHits}です。`;
   }
   if (
     params.decision === "reject" ||
     params.decision === "discard" ||
     params.decision === "rollback"
   ) {
-    return `判断は ${params.decision} です。このまま実行せず、選定Knowledgeと反証・リスクを確認するべき状態です。${weakEvidenceNotice}${basis}${risk}${reliabilityGate} Knowledge検索ではsupport hitsが${params.supportHits}件、counter evidence hitsが${params.counterHits}件、risk hitsが${params.riskHits}件で、confidenceは${params.confidence}%です。statusは${params.status}です。`;
+    return `判断は ${params.decision} です。NO-GOです。対象アクションは明確な危険または直接禁止に該当するため、このまま実行しません。${weakEvidenceNotice}${impactLine}${basis}${risk}${reliabilityGate} Knowledge検索ではsupport hitsが${params.supportHits}件、counter evidence hitsが${params.counterHits}件、risk hitsが${params.riskHits}件で、confidenceは${params.confidence}%です。statusは${params.status}です。`;
   }
   if (params.decision === "revise_and_execute") {
-    return `判断は revise_and_execute です。実行前に範囲や検証条件を絞ってから進めるべき状態です。${weakEvidenceNotice}${basis}${risk}${reliabilityGate} Knowledge検索ではsupport hitsが${params.supportHits}件、counter evidence hitsが${params.counterHits}件、risk hitsが${params.riskHits}件で、confidenceは${params.confidence}%です。statusは${params.status}です。`;
+    return `判断は revise_and_execute です。GO with safeguards です。ユーザー確認に倒さず、影響範囲を絞り、検証条件を満たしたうえで自律的に進めます。${weakEvidenceNotice}${impactLine}${basis}${risk}${reliabilityGate} Knowledge検索ではsupport hitsが${params.supportHits}件、counter evidence hitsが${params.counterHits}件、risk hitsが${params.riskHits}件で、confidenceは${params.confidence}%です。statusは${params.status}です。`;
   }
   if (params.confidence < 50 || params.status === "degraded") {
-    return `判断は ${params.decision} です。ただし根拠は限定的です。${basis}${risk}${reliabilityGate} Knowledge検索ではsupport hitsが${params.supportHits}件、counter evidence hitsが${params.counterHits}件、risk hitsが${params.riskHits}件で、confidenceは${params.confidence}%です。statusは${params.status}です。`;
+    return `判断は ${params.decision} です。GOです。ただし根拠は限定的なので、検証可能な範囲で自律実行します。${impactLine}${basis}${risk}${reliabilityGate} Knowledge検索ではsupport hitsが${params.supportHits}件、counter evidence hitsが${params.counterHits}件、risk hitsが${params.riskHits}件で、confidenceは${params.confidence}%です。statusは${params.status}です。`;
   }
-  return `判断は ${params.decision} です。${basis}${risk}${reliabilityGate} Knowledge検索ではsupport hitsが${params.supportHits}件、counter evidence hitsが${params.counterHits}件、risk hitsが${params.riskHits}件で、confidenceは${params.confidence}%です。statusは${params.status}で、この範囲では自律的に次へ進めます。`;
+  return `判断は ${params.decision} です。GOです。${impactLine}${basis}${risk}${reliabilityGate} Knowledge検索ではsupport hitsが${params.supportHits}件、counter evidence hitsが${params.counterHits}件、risk hitsが${params.riskHits}件で、confidenceは${params.confidence}%です。statusは${params.status}で、この範囲では自律的に次へ進めます。`;
 }
 
 function normalizeAgentMessage(content: string, fallback: string): string {
@@ -586,10 +590,15 @@ async function structuredLlmJudgment(params: {
     "Knowledge Assessment is the primary evidence assessment.",
     "Knowledge Priors are reference-only context for the LLM; do not treat them as scores or authority.",
     "The Outcome Predictor is advisory and may be ignored.",
+    "Your job is to choose GO or NO-GO autonomously, not to turn uncertainty into a user-confirmation request.",
+    "Estimate operational impact from metadata such as active leases, running jobs, active users, connected clients, and pending queue counts.",
     "Classify each Knowledge excerpt by meaning before using it: execution_support, prohibition_or_constraint, risk_warning, verification_requirement, or unrelated.",
     "Knowledge with role=risk_warning or polarity=negative is negative evidence, not reference-only context.",
     "Knowledge with role=counter_evidence is first-class contradictory evidence and must be weighed explicitly.",
     "When negative evidence applies to the proposed action, it must weigh against execute and toward reject, revise_and_execute, rollback, discard, or escalate.",
+    "Prefer revise_and_execute over reject for ordinary uncertainty, stale evidence, low confidence, counter evidence, or quality-signal problems.",
+    "Use reject only for obvious blocking danger, directly forbidden actions, destructive or irreversible operations without required safeguards, or evidence that execution is clearly unsafe.",
+    "A service/process restart with bounded user impact is usually revise_and_execute or execute, not reject.",
     "A prohibition_or_constraint excerpt is not support for executing the proposed action, even when it appears in a support list.",
     "Do not rely on exact wording such as Never or Do not; classify by whether the excerpt permits, forbids, constrains, or verifies the proposed action.",
     "If support excerpts are mostly prohibitions or constraints that apply to the proposed action, reject or revise instead of execute.",
@@ -645,9 +654,13 @@ async function structuredLlmJudgment(params: {
     "",
     "Knowledge interpretation task:",
     "- First classify the selected excerpts by meaning, regardless of their current list label.",
+    "- Make an explicit GO/NO-GO judgment from the available metadata instead of defaulting to user confirmation.",
+    "- For runtime restarts, estimate active user/client impact and active in-flight work; bounded impact should usually be GO with safeguards.",
     "- Treat excerpts that forbid, block, require confirmation, require backup, require dry run, require environment confirmation, or require rollback planning as prohibition_or_constraint or risk_warning.",
     "- Count only excerpts that positively permit or recommend the proposed action under the current conditions as execution_support.",
     "- If a prohibition_or_constraint applies to the proposed action and required conditions are absent, it weighs against execute.",
+    "- Prefer revise_and_execute when the agent can continue safely after narrowing scope, adding verification, or avoiding the risky sub-action.",
+    "- Return reject only when execution itself is clearly unsafe or directly forbidden, not merely because evidence is weak or mixed.",
     "- If you choose a final decision different from Knowledge Assessment recommendedDirection, reasoningSummary must include: Knowledge Assessment override: <reason>.",
     "- Include evidenceInterpretation with a compact classification summary for the selected Knowledge excerpts.",
     "",
@@ -828,7 +841,11 @@ async function composeAgentMessage(params: {
     "Classify Knowledge excerpts by meaning before citing them: execution support, prohibition/constraint, risk warning, verification requirement, or unrelated.",
     "Knowledge with role=risk_warning or polarity=negative is negative evidence, not reference-only context.",
     "Knowledge with role=counter_evidence is first-class contradictory evidence.",
+    "Decision should help the agent avoid unnecessary user confirmation by making a GO/NO-GO judgment from evidence.",
+    "When metadata contains runtime impact evidence, mention the estimated active user/client or active-work impact if it affects the decision.",
     "When negative evidence applies, describe it as a reason to reject, revise, roll back, discard, or escalate rather than as a neutral caution.",
+    "Prefer revise_and_execute for non-dangerous uncertainty or quality problems so the agent can keep moving with narrower scope or verification.",
+    "Reserve reject for obvious blocking danger, directly forbidden actions, or destructive/irreversible operations without required safeguards.",
     "If the Reliability Gate constrained the decision, treat that final decision as authoritative and explain the gate reason in plain language.",
     "Do not present prohibition or constraint Knowledge as the reason an execute decision is safe; mention it only as a caution or reason to reject/revise.",
     "Do not rely on exact wording such as Never or Do not; infer whether the excerpt permits, forbids, constrains, or verifies the proposed action.",
@@ -868,9 +885,15 @@ async function composeAgentMessage(params: {
     "",
     "Answer requirements:",
     "- Start with the decision.",
+    "- Frame the result as GO/NO-GO from the evidence, not as a default request to ask the user.",
+    "- Explicitly state why this was GO, GO with safeguards, or NO-GO.",
+    "- If operational impact evidence is present in the Reliability Gate trace, include the impact level, active work/client estimate, and why that impact is acceptable or blocking.",
+    "- For GO with safeguards, state the concrete safeguard or stop condition that lets the agent continue autonomously.",
     "- Give concrete reasoning only from Knowledge titles and bodies that actually support the final decision after semantic classification.",
     "- Mention when the basis is a procedure, best-practice rule, or repeated prior tendency.",
     "- Treat risk, prohibition, and constraint Knowledge as cautions, guardrail context, or reasons to reject/revise, not as the main reason to execute.",
+    "- Prefer revise_and_execute over reject when the remaining safe path is to narrow scope, verify first, or avoid only the risky sub-action.",
+    "- Use reject only when the target action itself must stop because the risk is obvious and blocking.",
     "- If Reliability Gate status is constrained, explicitly mention the constraint reason before describing what to do next.",
     "- If the decision is reject, discard, rollback, or escalate, do not say the agent can proceed.",
     "- If the decision is revise_and_execute, state what must be revised before execution.",
@@ -1361,6 +1384,8 @@ export async function decideContext(input: unknown): Promise<ContextDecisionResu
       knowledgeAssessment,
       evidence: evidenceWithSignals,
       relatedBadSignalSummary,
+      decisionPoint: parsed.decisionPoint,
+      metadata: parsed.metadata,
       signalLoadStatus: signalResult.status,
       signalLoadReason: signalResult.reason,
     });

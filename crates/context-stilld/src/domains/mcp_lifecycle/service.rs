@@ -348,20 +348,29 @@ mod tests {
     use super::*;
     use crate::shared::config::MapEnv;
     use crate::shared::process::MockSupervisor;
+    use std::sync::atomic::{AtomicU64, Ordering};
     use std::time::SystemTime;
+
+    static NEXT_TEMP_ID: AtomicU64 = AtomicU64::new(0);
 
     fn temp_app_dir() -> std::path::PathBuf {
         let rand_num = SystemTime::now()
             .duration_since(SystemTime::UNIX_EPOCH)
             .unwrap()
             .as_nanos();
+        let temp_id = NEXT_TEMP_ID.fetch_add(1, Ordering::SeqCst);
         let path = std::env::temp_dir().join(format!(
-            "context_still_mcp_test_{}_{}",
+            "context_still_mcp_test_{}_{}_{}",
             std::process::id(),
-            rand_num
+            rand_num,
+            temp_id
         ));
         std::fs::create_dir_all(&path).unwrap();
         path
+    }
+
+    fn cleanup_temp_app_dir(path: &std::path::Path) {
+        let _ = std::fs::remove_dir_all(path);
     }
 
     #[test]
@@ -381,7 +390,7 @@ mod tests {
         assert_eq!(call.command, "bun");
         assert_eq!(call.args, vec!["run", "src/mcp/http-server.ts"]);
 
-        std::fs::remove_dir_all(&app_dir).unwrap();
+        cleanup_temp_app_dir(&app_dir);
     }
 
     #[test]
@@ -401,7 +410,7 @@ mod tests {
         assert!(report.metadata_path.ends_with("mcp-endpoint.json"));
         assert!(report.session_state_path.ends_with("mcp-sessions.json"));
 
-        std::fs::remove_dir_all(&app_dir).unwrap();
+        cleanup_temp_app_dir(&app_dir);
     }
 
     #[test]
@@ -436,6 +445,6 @@ mod tests {
         assert_eq!(report.active_session_count, 1);
         assert_eq!(report.sessions[0].session_id, "s1");
 
-        std::fs::remove_dir_all(&app_dir).unwrap();
+        cleanup_temp_app_dir(&app_dir);
     }
 }

@@ -14,6 +14,10 @@ const legacyQueuePlist = "com.context-still.queue-supervisor.plist";
 const legacyQueueLabel = "com.context-still.queue-supervisor";
 const legacyMemoryRouterQueuePlist = "com.memory-router.queue-supervisor.plist";
 const legacyMemoryRouterQueueLabel = "com.memory-router.queue-supervisor";
+const legacyAgentLogSyncPlist = "com.context-still.agent-log-sync.plist";
+const legacyAgentLogSyncLabel = "com.context-still.agent-log-sync";
+const legacyMemoryRouterAgentLogSyncPlist = "com.memory-router.agent-log-sync.plist";
+const legacyMemoryRouterAgentLogSyncLabel = "com.memory-router.agent-log-sync";
 
 function isDarwin(): boolean {
   return process.platform === "darwin";
@@ -86,7 +90,19 @@ function renderPlist(): string {
     .replaceAll("{{DB_BACKEND}}", process.env.CONTEXT_STILL_DB_BACKEND ?? "sqlite")
     .replaceAll("{{SQLITE_CORE_PATH}}", sqliteCorePath)
     .replaceAll("{{RESIDENT_MCP}}", process.env.CONTEXT_STILL_RESIDENT_MCP ?? "1")
-    .replaceAll("{{RESIDENT_QUEUE}}", process.env.CONTEXT_STILL_RESIDENT_QUEUE ?? "1");
+    .replaceAll("{{RESIDENT_QUEUE}}", process.env.CONTEXT_STILL_RESIDENT_QUEUE ?? "1")
+    .replaceAll(
+      "{{RESIDENT_AGENT_LOG_SYNC}}",
+      process.env.CONTEXT_STILL_RESIDENT_AGENT_LOG_SYNC ?? "1",
+    )
+    .replaceAll(
+      "{{AGENT_LOG_SYNC_INTERVAL_SECONDS}}",
+      process.env.CONTEXT_STILL_AGENT_LOG_SYNC_INTERVAL_SECONDS ?? "3600",
+    )
+    .replaceAll(
+      "{{AGENT_LOG_SYNC_RUN_AT_LOAD}}",
+      process.env.CONTEXT_STILL_AGENT_LOG_SYNC_RUN_AT_LOAD ?? "0",
+    );
 }
 
 function install(): void {
@@ -103,6 +119,8 @@ function unloadLegacyQueueOwners(): void {
   for (const item of [
     [legacyQueuePlist, legacyQueueLabel],
     [legacyMemoryRouterQueuePlist, legacyMemoryRouterQueueLabel],
+    [legacyAgentLogSyncPlist, legacyAgentLogSyncLabel],
+    [legacyMemoryRouterAgentLogSyncPlist, legacyMemoryRouterAgentLogSyncLabel],
   ] as const) {
     const [legacyPlist, legacyLabel] = item;
     const target = path.resolve(launchAgentsDir, legacyPlist);
@@ -121,6 +139,7 @@ function loadJob(): void {
   launchctl("bootstrap", `gui/${uid}`, target);
   console.log(`loaded: ${label}`);
   console.log(`unloaded legacy queue owner: ${legacyQueueLabel}`);
+  console.log(`unloaded legacy agent-log-sync owner: ${legacyAgentLogSyncLabel}`);
 }
 
 function unloadJob(): void {
@@ -158,7 +177,12 @@ function status(): void {
     }
   }
 
-  for (const legacyLabel of [legacyQueueLabel, legacyMemoryRouterQueueLabel]) {
+  for (const legacyLabel of [
+    legacyQueueLabel,
+    legacyMemoryRouterQueueLabel,
+    legacyAgentLogSyncLabel,
+    legacyMemoryRouterAgentLogSyncLabel,
+  ]) {
     try {
       execFileSync("launchctl", ["print", `gui/${getUid()}/${legacyLabel}`], {
         encoding: "utf8",

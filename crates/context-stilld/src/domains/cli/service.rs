@@ -9,7 +9,7 @@ pub fn help_text() -> String {
         "  context-stilld bootstrap preflight|init [--json]",
         "  context-stilld mcp status|endpoint|sessions|smoke [--json]",
         "  context-stilld mcp start|stop [--json]  # legacy endpoint-worker lifecycle",
-        "  context-stilld queue start|stop|status [--json]",
+        "  context-stilld queue start|stop|status|inspect [--json]",
         "  context-stilld agent-log-sync run|stop|status [--json]",
         "  context-stilld admin-api start|stop|status [--json]",
         "  context-stilld doctor [summary] [--json]",

@@ -159,6 +159,7 @@ function status(): void {
   try {
     const output = execFileSync("launchctl", ["print", `gui/${uid}/${label}`], {
       encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
     });
     console.log(`${label}: loaded`);
     console.log(output);

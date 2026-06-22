@@ -15,6 +15,7 @@ pub enum QueueAction {
     Start,
     Stop,
     Status,
+    Inspect,
 }
 
 #[derive(Debug, Eq, PartialEq, Clone)]
@@ -142,11 +143,13 @@ where
             })
         }
         "queue" => {
-            let action_str = required_action(&mut args, "queue", "start, stop, or status")?;
+            let action_str =
+                required_action(&mut args, "queue", "start, stop, status, or inspect")?;
             let action = match action_str.as_str() {
                 "start" => QueueAction::Start,
                 "stop" => QueueAction::Stop,
                 "status" => QueueAction::Status,
+                "inspect" => QueueAction::Inspect,
                 _ => {
                     return Err(CliError::invalid_arguments(format!(
                         "unknown queue action: {action_str}"
@@ -432,6 +435,18 @@ mod tests {
             parse_args(["mcp", "status", "--json"]).expect("parsed"),
             CliCommand::Mcp {
                 action: McpAction::Status,
+                json: true,
+            },
+        );
+    }
+
+    #[test]
+    fn parses_queue_inspect_json() {
+        use super::QueueAction;
+        assert_eq!(
+            parse_args(["queue", "inspect", "--json"]).expect("parsed"),
+            CliCommand::Queue {
+                action: QueueAction::Inspect,
                 json: true,
             },
         );
