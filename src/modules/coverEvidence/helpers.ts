@@ -258,6 +258,9 @@ export function referencesFromToolEvents(
     .flatMap((event): CoverEvidenceReference[] => {
       const metadata = event.metadata ?? {};
       if (event.name === "fetch_content") {
+        if (metadata.guardDecision === "deny" || event.error === "prompt_injection_blocked") {
+          return [];
+        }
         if (Array.isArray(metadata.selectedUrls)) {
           return metadata.selectedUrls
             .filter((uri): uri is string => typeof uri === "string" && uri.trim().length > 0)

@@ -1,3 +1,4 @@
+import { groupedConfig } from "../../config.js";
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
 import { auditEventTypes, recordAuditLogSafe } from "../audit/audit-log.service.js";
 import { executeMcpEvidenceTool } from "./mcp-evidence-tools.service.js";
@@ -196,6 +197,24 @@ function searchCacheKey(auditContext?: Record<string, unknown>): string {
   return `${domain}:${id}:${stage}`;
 }
 
+function isCoverEvidenceAuditContext(auditContext?: Record<string, unknown>): boolean {
+  return auditContext?.domain === "coverEvidence";
+}
+
+function fetchContentOptionsForAuditContext(auditContext?: Record<string, unknown>): {
+  forceRefreshEvidence: boolean;
+  maxTokensPerSite?: number;
+  guardExternalEvidence?: boolean;
+} {
+  const forceRefreshEvidence = Boolean(auditContext?.forceRefreshEvidence);
+  if (!isCoverEvidenceAuditContext(auditContext)) return { forceRefreshEvidence };
+  return {
+    forceRefreshEvidence,
+    maxTokensPerSite: groupedConfig.distillationTools.coverEvidenceFetchMaxTokensPerSite,
+    guardExternalEvidence: true,
+  };
+}
+
 function extractSearchResultUrls(content: string): string[] {
   const parsed = parseLlmJsonLike(content)?.value;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return [];
@@ -254,7 +273,7 @@ async function fetchContentBySelection(params: {
     const url = urls[index - 1];
     if (!url) continue;
     const fetched = await fetchContent(url, {
-      forceRefreshEvidence: Boolean(params.auditContext?.forceRefreshEvidence),
+      ...fetchContentOptionsForAuditContext(params.auditContext),
     });
     results.push({
       index,
@@ -389,7 +408,7 @@ const distillationToolHandlers: Record<
       return fetchContentBySelection({ selection: rawUrl, auditContext });
     }
     return fetchContent(args.url, {
-      forceRefreshEvidence: Boolean(auditContext?.forceRefreshEvidence),
+      ...fetchContentOptionsForAuditContext(auditContext),
     });
   },
   context7: (args) => executeMcpEvidenceTool("context7", args),

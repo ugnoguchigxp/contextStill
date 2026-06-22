@@ -782,6 +782,8 @@ function settingsViewToEditable(view: RuntimeSettingsView): RuntimeSettingsEdita
       coverEvidenceTimeoutMs: view.distillationRuntime.coverEvidenceTimeoutMs,
       coverEvidenceSearchMaxCalls: view.distillationRuntime.coverEvidenceSearchMaxCalls,
       coverEvidenceFetchMaxCalls: view.distillationRuntime.coverEvidenceFetchMaxCalls,
+      coverEvidenceFetchMaxTokensPerSite:
+        view.distillationRuntime.coverEvidenceFetchMaxTokensPerSite,
       toolTimeoutMs: view.distillationRuntime.toolTimeoutMs,
       toolResultMaxChars: view.distillationRuntime.toolResultMaxChars,
       failureRetryDelaySeconds: view.distillationRuntime.failureRetryDelaySeconds,
@@ -2931,6 +2933,12 @@ export function SettingsPage() {
                           settingKey: "coverEvidenceFetchMaxCalls",
                           min: 0,
                           max: 16,
+                        })}
+                        {renderDistillationRuntimeNumberField({
+                          label: "Cover Evidence Fetch Tokens Per Site",
+                          settingKey: "coverEvidenceFetchMaxTokensPerSite",
+                          min: 128,
+                          max: 50000,
                         })}
                       </div>
                     </div>

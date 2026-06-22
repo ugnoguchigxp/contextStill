@@ -22,9 +22,14 @@ import {
   mergeReferences,
   normalizeProcedureBodyQuality,
   referencesFromDuplicateRefs,
+  requiresExternalEvidence,
   sourceContextForPrompts,
 } from "./helpers.js";
-import { appendOptionalMcpEvidence, runExternalEvidence } from "./llm-runner.js";
+import {
+  appendOptionalMcpEvidence,
+  runExternalEvidence,
+  runValueAssessment,
+} from "./llm-runner.js";
 import { parseCoverEvidenceResult } from "./parser.js";
 import { resolveCoverEvidenceRouteByPolicy } from "./provider-policy.js";
 import {
@@ -427,35 +432,65 @@ export async function runCoverEvidence(
               reason: dedupe.status,
             });
           } else {
-            result = await runExternalEvidence({
-              id,
-              candidate,
-              sourceReferences: sourceRead.references,
-              sourceContentExcerpt: sourceRead.assessmentContent,
-              sourceContext,
-              candidateTypeHint: originHints.type,
-              provider: externalEvidenceProvider,
-              model: externalEvidenceModel,
-              fallbackOrder: externalEvidenceFallbackOrder,
-              azureDeploymentSlots: externalEvidenceAzureDeploymentSlots,
-              localLlmModel: externalEvidenceLocalLlmModel,
-              forceRefreshEvidence: input.forceRefreshEvidence,
-              chatClient: input.chatClient,
-              toolExecutor: input.toolExecutor,
-              signal: input.signal,
+            const needsExternalEvidence = requiresExternalEvidence(candidate);
+            sourceSupportDiagnostics.push({
+              name: "source_first_route",
+              ok: true,
+              metadata: {
+                route: needsExternalEvidence ? "needs_external" : "source_only",
+                reason: needsExternalEvidence
+                  ? "requires_external_evidence"
+                  : "no_external_evidence_signal",
+              },
             });
-            result = await appendOptionalMcpEvidence({
-              id,
-              result,
-              provider: mcpEvidenceProvider,
-              model: mcpEvidenceModel,
-              fallbackOrder: mcpEvidenceFallbackOrder,
-              azureDeploymentSlots: mcpEvidenceAzureDeploymentSlots,
-              localLlmModel: mcpEvidenceLocalLlmModel,
-              chatClient: input.chatClient,
-              toolExecutor: input.toolExecutor,
-              signal: input.signal,
-            });
+            if (!needsExternalEvidence) {
+              result = await runValueAssessment({
+                id,
+                candidate,
+                sourceReferences: sourceRead.references,
+                sourceContentExcerpt:
+                  sourceRead.valueAssessmentContent || sourceRead.assessmentContent,
+                sourceContext,
+                candidateTypeHint: originHints.type,
+                provider: sourceSupportProvider,
+                model: sourceSupportModel,
+                fallbackOrder: sourceSupportFallbackOrder,
+                azureDeploymentSlots: sourceSupportAzureDeploymentSlots,
+                localLlmModel: sourceSupportLocalLlmModel,
+                chatClient: input.chatClient,
+                signal: input.signal,
+              });
+            } else {
+              result = await runExternalEvidence({
+                id,
+                candidate,
+                sourceReferences: sourceRead.references,
+                sourceContentExcerpt: sourceRead.assessmentContent,
+                sourceContext,
+                candidateTypeHint: originHints.type,
+                provider: externalEvidenceProvider,
+                model: externalEvidenceModel,
+                fallbackOrder: externalEvidenceFallbackOrder,
+                azureDeploymentSlots: externalEvidenceAzureDeploymentSlots,
+                localLlmModel: externalEvidenceLocalLlmModel,
+                forceRefreshEvidence: input.forceRefreshEvidence,
+                chatClient: input.chatClient,
+                toolExecutor: input.toolExecutor,
+                signal: input.signal,
+              });
+              result = await appendOptionalMcpEvidence({
+                id,
+                result,
+                provider: mcpEvidenceProvider,
+                model: mcpEvidenceModel,
+                fallbackOrder: mcpEvidenceFallbackOrder,
+                azureDeploymentSlots: mcpEvidenceAzureDeploymentSlots,
+                localLlmModel: mcpEvidenceLocalLlmModel,
+                chatClient: input.chatClient,
+                toolExecutor: input.toolExecutor,
+                signal: input.signal,
+              });
+            }
           }
           if (result) {
             result = prependToolEvents(result, sourceSupportDiagnostics);

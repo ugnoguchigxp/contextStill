@@ -138,6 +138,14 @@ function sortTargetsForQueue(
   });
 }
 
+function eligibleTargetsForQueue(
+  targets: RuntimeProviderPoolTarget[],
+  preferredTargetIds: Set<string>,
+): RuntimeProviderPoolTarget[] {
+  if (preferredTargetIds.size === 0) return targets;
+  return targets.filter((target) => preferredTargetIds.has(targetId(target)));
+}
+
 function activePoolCapacity(pool: RuntimeProviderPool): number {
   return Math.max(1, Math.min(pool.maxConcurrent, pool.targets.length));
 }
@@ -370,14 +378,13 @@ export async function claimNextJobWithProviderLease(params: {
       return null;
     }
     const settings = getRuntimeSettingsSnapshot();
-    const selectedTarget = sortTargetsForQueue(
-      freeTargets,
-      preferredTargetIdsForQueue({
-        settings,
-        queueName: picked.queueName,
-        poolId: params.pool.id,
-      }),
-    )[0];
+    const preferredTargetIds = preferredTargetIdsForQueue({
+      settings,
+      queueName: picked.queueName,
+      poolId: params.pool.id,
+    });
+    const eligibleTargets = eligibleTargetsForQueue(freeTargets, preferredTargetIds);
+    const selectedTarget = sortTargetsForQueue(eligibleTargets, preferredTargetIds)[0];
     if (!selectedTarget) {
       sqlite.db.query("COMMIT").run();
       return null;

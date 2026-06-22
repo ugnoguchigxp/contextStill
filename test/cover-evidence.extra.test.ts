@@ -153,6 +153,14 @@ function mockExternalEvidenceRounds(finalOutput: string, extraOutputs: string[] 
   }
 }
 
+function mockSourceValueAssessment(finalOutput: string, extraOutputs: string[] = []) {
+  mocks.runDistillationCompletion.mockReset();
+  mocks.runDistillationCompletion.mockResolvedValueOnce(completion(finalOutput));
+  for (const output of extraOutputs) {
+    mocks.runDistillationCompletion.mockResolvedValueOnce(completion(output));
+  }
+}
+
 describe("runCoverEvidence", () => {
   beforeEach(() => {
     vi.resetAllMocks();
@@ -172,7 +180,7 @@ describe("runCoverEvidence", () => {
       id: "cover-1",
       ...result,
     }));
-    mockExternalEvidenceRounds(defaultExternalFinalOutput());
+    mockSourceValueAssessment(defaultExternalFinalOutput());
     mocks.executeDistillationToolCall.mockImplementation(async (toolCall) => {
       if (toolCall.function.name === "search_web") {
         return {
@@ -231,7 +239,7 @@ describe("runCoverEvidence", () => {
       toExclusive: 180,
       returnedTokens: 180,
     });
-    mockExternalEvidenceRounds(
+    mockSourceValueAssessment(
       JSON.stringify({
         schemaVersion: 1,
         status: "knowledge_ready",
@@ -282,7 +290,7 @@ describe("runCoverEvidence", () => {
         }),
       ]),
     );
-    const repairRequest = mocks.runDistillationCompletion.mock.calls[3]?.[0] as {
+    const repairRequest = mocks.runDistillationCompletion.mock.calls[1]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
     expect(repairRequest.messages[0]?.content).toContain("日本語で運用されている文脈");
@@ -303,7 +311,7 @@ describe("runCoverEvidence", () => {
         },
       }),
     );
-    mockExternalEvidenceRounds(
+    mockSourceValueAssessment(
       JSON.stringify({
         schemaVersion: 1,
         status: "knowledge_ready",
@@ -355,7 +363,7 @@ describe("runCoverEvidence", () => {
   });
 
   test("demotes one-line procedure misclassifications to rules", async () => {
-    mockExternalEvidenceRounds(
+    mockSourceValueAssessment(
       JSON.stringify({
         schemaVersion: 1,
         status: "knowledge_ready",
@@ -446,6 +454,28 @@ describe("runCoverEvidence", () => {
     );
   });
 
+  test("uses source-only assessment without search or fetch when external evidence is not required", async () => {
+    const result = await runCoverEvidence({ id: "find-1", forceRefreshEvidence: true });
+
+    expect(result.result.status).toBe("knowledge_ready");
+    expect(mocks.executeDistillationToolCall).not.toHaveBeenCalled();
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(1);
+    expect(mocks.runDistillationCompletion.mock.calls[0]?.[1]).toEqual(
+      expect.objectContaining({
+        usageSource: "cover-evidence:value-assessment",
+      }),
+    );
+    expect(result.result.toolEvents).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          name: "source_first_route",
+          ok: true,
+          metadata: expect.objectContaining({ route: "source_only" }),
+        }),
+      ]),
+    );
+  });
+
   test("reruns retryable existing cover evidence instead of returning the checkpoint", async () => {
     mocks.selectCoverEvidenceResultById.mockResolvedValue({
       id: "find-1",
@@ -477,7 +507,7 @@ describe("runCoverEvidence", () => {
   });
 
   test("rejects source-backed candidates with low value assessment importance", async () => {
-    mockExternalEvidenceRounds(
+    mockSourceValueAssessment(
       JSON.stringify({
         schemaVersion: 1,
         status: "knowledge_ready",
@@ -619,12 +649,20 @@ describe("runCoverEvidence", () => {
       messages: Array<{ role: string; content: string }>;
     };
     expect(finalRequest.messages[0]?.content).toContain(
-      "source evidence と fetch_content evidence",
+      "source evidence と guarded fetch_content evidence",
     );
+    expect(finalRequest.messages[0]?.content).toContain("未信頼な補助根拠");
     expect(finalRequest.messages[0]?.content).toContain("汎用的に使える知識として体裁");
   });
 
-  test("fetches multiple web sources and passes roughly 15k tokens of web evidence", async () => {
+  test("fetches at most five web sources and passes guarded web evidence", async () => {
+    mocks.getFindCandidateResultById.mockResolvedValue(
+      candidateRow({
+        title: "Use current coverEvidence API docs from https://example.com/docs",
+        content:
+          "Use current coverEvidence API docs from https://example.com/docs before preserving provider behavior claims.",
+      }),
+    );
     mocks.runDistillationCompletion.mockReset();
     mocks.runDistillationCompletion
       .mockResolvedValueOnce(completion("| coverEvidence | testing |"))
@@ -667,21 +705,28 @@ describe("runCoverEvidence", () => {
     const fetchCalls = mocks.executeDistillationToolCall.mock.calls.filter(
       (call) => call[0]?.function?.name === "fetch_content",
     );
-    expect(fetchCalls).toHaveLength(8);
-    expect(fetchCalls.map((call) => JSON.parse(call[0].function.arguments).url)).toContain(
+    expect(fetchCalls).toHaveLength(5);
+    expect(fetchCalls.map((call) => JSON.parse(call[0].function.arguments).url)).not.toContain(
       "https://example.com/docs/8",
     );
     const finalRequest = mocks.runDistillationCompletion.mock.calls[2]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
     const webEvidence =
-      finalRequest.messages[1]?.content.split("fetch_content evidence:\n")[1] ?? "";
+      finalRequest.messages[1]?.content.split("UNTRUSTED WEB EVIDENCE:\n")[1] ?? "";
     expect(webEvidence.length).toBeGreaterThan(12_000);
     expect(estimateTextTokens(webEvidence)).toBeLessThanOrEqual(15_000);
     expect(finalRequest.messages[0]?.content).toContain("最大約 15000 token");
   });
 
   test("expands sparse fetch selection with top search results", async () => {
+    mocks.getFindCandidateResultById.mockResolvedValue(
+      candidateRow({
+        title: "Use current API docs from https://example.com/expand",
+        content:
+          "Use current API docs from https://example.com/expand before preserving provider behavior claims.",
+      }),
+    );
     mocks.runDistillationCompletion.mockReset();
     mocks.runDistillationCompletion
       .mockResolvedValueOnce(completion("| coverEvidence | testing |"))
@@ -741,7 +786,8 @@ describe("runCoverEvidence", () => {
     mocks.getFindCandidateResultById.mockResolvedValue(
       candidateRow({
         title: "Use Number.isNaN for CLI numeric validation",
-        content: "CLI numeric validation should use Number.isNaN after parsing input.",
+        content:
+          "CLI numeric validation should use current Number.isNaN API docs after parsing input.",
       }),
     );
     mocks.readFileDomain.mockResolvedValue({
@@ -811,7 +857,8 @@ describe("runCoverEvidence", () => {
     mocks.getFindCandidateResultById.mockResolvedValue(
       candidateRow({
         title: "Run focused tests before the full suite",
-        content: "Rule: Run focused tests for the changed area before running the full test suite.",
+        content:
+          "Rule: Use current test runner docs before preserving the full-suite fallback guidance.",
         origin: {
           candidateType: "rule",
           technologies: ["general"],
@@ -855,7 +902,7 @@ describe("runCoverEvidence", () => {
       candidateRow({
         title: "Pin related files before implementation",
         content:
-          "Rule: Keep related files and established implementation patterns fixed before changing code.",
+          "Rule: Use current implementation docs before keeping related files and established implementation patterns fixed.",
         origin: {
           candidateType: "rule",
           technologies: ["llm-workflow"],

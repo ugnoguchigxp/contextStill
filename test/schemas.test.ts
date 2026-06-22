@@ -109,6 +109,19 @@ describe("Shared Schemas", () => {
         avoid: "A",
       }).success,
     ).toBe(false);
+    expect(
+      registerCandidateInputSchema.parse({
+        title: "Procedure",
+        body: "Use when:\n- Need a workflow.\n\nWorkflow:\n1. Do one.\n2. Do two.\n\nVerification:\n- Confirm it.",
+        type: "procedure",
+        avoid: "Skipping the verification step.",
+      }),
+    ).toEqual(
+      expect.objectContaining({
+        type: "procedure",
+        avoid: "Skipping the verification step.",
+      }),
+    );
   });
 
   test("registerCandidatesToolInputSchema requires strict wrapper", () => {

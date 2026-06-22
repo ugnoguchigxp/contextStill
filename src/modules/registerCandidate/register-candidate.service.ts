@@ -90,6 +90,23 @@ function inferTitleFromText(value: string): string {
     .trim();
 }
 
+function hasProcedureAvoidSection(body: string): boolean {
+  return /^Avoid:\s*$/im.test(body) || /^Avoid:\s+\S/im.test(body);
+}
+
+function bodyWithProcedureAvoidSection(params: {
+  body: string;
+  type: CandidateKnowledgeType;
+  polarity: CandidateKnowledgePolarity;
+  avoid?: string;
+}): string {
+  if (params.polarity === "negative" || params.type !== "procedure" || !params.avoid) {
+    return params.body;
+  }
+  if (hasProcedureAvoidSection(params.body)) return params.body;
+  return `${params.body.trimEnd()}\n\nAvoid:\n- ${params.avoid}`;
+}
+
 function normalizeInput(input: RegisterCandidateInput): {
   title: string;
   body: string;
@@ -113,15 +130,21 @@ function normalizeInput(input: RegisterCandidateInput): {
   const originalType = input.type ?? parsedCandidate?.type ?? "rule";
   const rawPolarity = input.polarity ?? parsedCandidate?.polarity ?? "positive";
   const polarity: CandidateKnowledgePolarity = rawPolarity === "negative" ? "negative" : "positive";
-  const body =
+  const rawBody =
     input.body ??
     parsedCandidate?.content ??
     input.text ??
     (polarity === "negative" && input.avoid && input.prefer
       ? `避けること: ${input.avoid}\n推奨: ${input.prefer}`
       : "");
-  const title = input.title ?? parsedCandidate?.title ?? inferTitleFromText(body);
   const type = polarity === "negative" && originalType === "procedure" ? "rule" : originalType;
+  const body = bodyWithProcedureAvoidSection({
+    body: rawBody,
+    type,
+    polarity,
+    avoid: input.avoid,
+  });
+  const title = input.title ?? parsedCandidate?.title ?? inferTitleFromText(body);
   const intentTags = input.intentTags ?? [];
   const applicability = normalizeApplicability(input) ?? {};
   if (type === "procedure" && !hasSkillLikeProcedureBody(body)) {

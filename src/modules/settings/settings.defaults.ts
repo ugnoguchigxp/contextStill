@@ -539,6 +539,8 @@ export const bootstrap: BootstrapConfig = {
     coverEvidenceTimeoutMs: groupedConfig.distillation.coverEvidenceTimeoutMs,
     coverEvidenceSearchMaxCalls: groupedConfig.distillationTools.coverEvidenceSearchMaxCalls,
     coverEvidenceFetchMaxCalls: groupedConfig.distillationTools.coverEvidenceFetchMaxCalls,
+    coverEvidenceFetchMaxTokensPerSite:
+      groupedConfig.distillationTools.coverEvidenceFetchMaxTokensPerSite,
     toolTimeoutMs: groupedConfig.distillationTools.timeoutMs,
     toolResultMaxChars: groupedConfig.distillationTools.resultMaxChars,
     failureRetryDelaySeconds: groupedConfig.distillationTools.failureRetryDelaySeconds,

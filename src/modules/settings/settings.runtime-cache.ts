@@ -242,6 +242,8 @@ export function applyRuntimeSettingsToProcess(
     settings.distillationRuntime.coverEvidenceSearchMaxCalls;
   groupedConfig.distillationTools.coverEvidenceFetchMaxCalls =
     settings.distillationRuntime.coverEvidenceFetchMaxCalls;
+  groupedConfig.distillationTools.coverEvidenceFetchMaxTokensPerSite =
+    settings.distillationRuntime.coverEvidenceFetchMaxTokensPerSite;
   groupedConfig.distillationTools.resultMaxChars = settings.distillationRuntime.toolResultMaxChars;
   groupedConfig.distillationTools.failureRetryDelaySeconds =
     settings.distillationRuntime.failureRetryDelaySeconds;

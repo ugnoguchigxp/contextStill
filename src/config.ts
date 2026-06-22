@@ -241,6 +241,8 @@ export const groupedConfig: GroupedConfig = {
     findCandidateMaxToolCalls: APP_CONSTANTS.distillationFindCandidateToolMaxCalls,
     coverEvidenceSearchMaxCalls: APP_CONSTANTS.distillationCoverEvidenceSearchMaxCalls,
     coverEvidenceFetchMaxCalls: APP_CONSTANTS.distillationCoverEvidenceFetchMaxCalls,
+    coverEvidenceFetchMaxTokensPerSite:
+      APP_CONSTANTS.distillationCoverEvidenceFetchMaxTokensPerSite,
     timeoutMs: APP_CONSTANTS.distillationToolTimeoutMs,
     resultMaxChars: APP_CONSTANTS.distillationToolResultMaxChars,
     searchResultCount: APP_CONSTANTS.distillationSearchResultCount,

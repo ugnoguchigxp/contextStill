@@ -133,6 +133,7 @@ export const registerCandidateInputSchema = z
   .superRefine((value, context) => {
     const isNegative = value.polarity === "negative";
     if (!isNegative) {
+      const isProcedureAvoid = value.type === "procedure" && value.avoid !== undefined;
       if (!value.body && !value.text) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
@@ -140,11 +141,11 @@ export const registerCandidateInputSchema = z
           message: "body or text is required",
         });
       }
-      if (value.avoid !== undefined) {
+      if (value.avoid !== undefined && !isProcedureAvoid) {
         context.addIssue({
           code: z.ZodIssueCode.custom,
           path: ["avoid"],
-          message: "avoid is only supported when polarity is negative",
+          message: "avoid is only supported for negative candidates or procedure Avoid sections",
         });
       }
       if (value.prefer !== undefined) {

@@ -367,6 +367,41 @@ Do not run on production database.
     );
   });
 
+  test("uses avoid field as procedure Avoid section for positive candidates", async () => {
+    const targetChain = makeChain([{ id: "target-1" }]);
+    const candidateChain = makeChain([{ id: "candidate-1" }]);
+    mockInsert.mockReturnValueOnce(targetChain).mockReturnValueOnce(candidateChain);
+
+    const result = await registerCandidate(
+      {
+        title: "Procedure with avoid field",
+        body: [
+          "Use when:",
+          "- A reusable workflow is needed.",
+          "",
+          "Workflow:",
+          "1. Inspect the input.",
+          "2. Apply the workflow.",
+          "",
+          "Verification:",
+          "- Confirm the output.",
+        ].join("\n"),
+        type: "procedure",
+        avoid: "Skipping verification.",
+        metadata: {},
+      },
+      { strictProcedureSections: true },
+    );
+
+    expect(result.type).toBe("procedure");
+    expect(result.warnings).not.toContain("procedure_candidate_missing_skill_like_sections");
+    expect(candidateChain.values).toHaveBeenCalledWith(
+      expect.objectContaining({
+        content: expect.stringContaining("Avoid:\n- Skipping verification."),
+      }),
+    );
+  });
+
   test("rejects negative candidates without applicability", async () => {
     await expect(
       registerCandidate({

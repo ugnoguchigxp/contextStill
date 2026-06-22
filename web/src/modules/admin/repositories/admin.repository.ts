@@ -2296,6 +2296,7 @@ export type RuntimeSettingsEditable = {
     coverEvidenceTimeoutMs: number;
     coverEvidenceSearchMaxCalls: number;
     coverEvidenceFetchMaxCalls: number;
+    coverEvidenceFetchMaxTokensPerSite: number;
     toolTimeoutMs: number;
     toolResultMaxChars: number;
     failureRetryDelaySeconds: number;

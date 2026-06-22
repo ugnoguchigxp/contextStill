@@ -53,7 +53,10 @@ import { setEpisodeDistillerTestHooksForTests } from "../src/modules/episodeDist
 import { recordCompileRunKnowledgeFeedback } from "../src/modules/knowledge/knowledge-feedback.service.js";
 import { readVibeMemoryByTokenWindow } from "../src/modules/memoryReader/reader.service.js";
 import { retryQueueJob } from "../src/modules/queue/core/state.js";
-import { claimNextJobWithProviderLease } from "../src/modules/queue/core/provider-lease.js";
+import {
+  claimNextJobWithProviderLease,
+  releaseProviderLease,
+} from "../src/modules/queue/core/provider-lease.js";
 import {
   runQueueWorkerOnce,
   setQueueWorkerTestHooksForTests,
@@ -1155,6 +1158,137 @@ describe("sqlite runtime support repositories", () => {
     });
 
     expect(claimed?.providerLease.targetId).toBe(goodTarget.id);
+  });
+
+  test("waits for the route local LLM target instead of claiming another pool target", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const settings = structuredClone(getRuntimeSettingsSnapshot());
+    const fallbackTarget = {
+      id: "local-fallback",
+      name: "Fallback local model",
+      apiBaseUrl: "http://127.0.0.1:44448",
+      apiPath: "/v1/chat/completions",
+      model: "fallback-model",
+    };
+    const preferredTarget = {
+      id: "local-preferred",
+      name: "Preferred local model",
+      apiBaseUrl: "http://127.0.0.1:44449",
+      apiPath: "/v1/chat/completions",
+      model: "preferred-model",
+    };
+    const preferredRouteTarget = JSON.stringify({
+      apiBaseUrl: preferredTarget.apiBaseUrl,
+      apiPath: preferredTarget.apiPath,
+      model: preferredTarget.model,
+    });
+    settings.providers["local-llm"] = {
+      enabled: true,
+      apiBaseUrl: fallbackTarget.apiBaseUrl,
+      apiPath: fallbackTarget.apiPath,
+      model: fallbackTarget.model,
+      models: [fallbackTarget, preferredTarget],
+    };
+    settings.providerPools = [
+      {
+        id: "local-llm-default",
+        label: "Local LLM",
+        enabled: true,
+        maxConcurrent: 2,
+        staleLeaseSeconds: 120,
+        lowPriorityAgingSeconds: 1800,
+        targets: [
+          { provider: "local-llm", localLlmModelId: fallbackTarget.id },
+          { provider: "local-llm", localLlmModelId: preferredTarget.id },
+        ],
+      },
+    ];
+    settings.taskRouting.episodeDistiller = {
+      provider: "local-llm",
+      model: preferredRouteTarget,
+      localLlmModel: preferredRouteTarget,
+      providerPoolId: "local-llm-default",
+      fallback: [],
+    };
+    await saveRuntimeSettings({ settings, updatedBy: "sqlite-runtime-test" });
+
+    const firstMemory = await recordVibeMemoryWithDiffEntries({
+      sessionId: "episode-distiller-wait-preferred-session-1",
+      content: "First preferred target claim.",
+      memoryType: "chat",
+      metadata: { projectName: "contextStill", cwd: "/repo/contextStill" },
+      agentDiffs: [
+        {
+          filePath: "src/modules/queue/core/provider-lease.ts",
+          diffHunk: "@@ wait preferred first @@\n+claim",
+          changeType: "modify",
+          language: "typescript",
+        },
+      ],
+    });
+    const secondMemory = await recordVibeMemoryWithDiffEntries({
+      sessionId: "episode-distiller-wait-preferred-session-2",
+      content: "Second preferred target claim should wait.",
+      memoryType: "chat",
+      metadata: { projectName: "contextStill", cwd: "/repo/contextStill" },
+      agentDiffs: [
+        {
+          filePath: "src/modules/queue/core/provider-lease.ts",
+          diffHunk: "@@ wait preferred second @@\n+wait",
+          changeType: "modify",
+          language: "typescript",
+        },
+      ],
+    });
+    await enqueueEpisodeDistillerJob({ sourceKey: firstMemory.memory.id });
+    await enqueueEpisodeDistillerJob({ sourceKey: secondMemory.memory.id });
+
+    const firstClaim = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[0],
+      priorityQueues: ["episodeDistiller"],
+      workerId: "sqlite-provider-preferred-worker-1",
+    });
+    const blockedClaim = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[0],
+      priorityQueues: ["episodeDistiller"],
+      workerId: "sqlite-provider-preferred-worker-2",
+    });
+
+    expect(firstClaim?.providerLease.targetId).toBe(preferredTarget.id);
+    expect(blockedClaim).toBeNull();
+    const fallbackLeaseCount = sqlite.db
+      .query<{ count: number }, [string]>(
+        "select count(*) as count from llm_provider_leases where target_id = ? and status = 'active'",
+      )
+      .get(fallbackTarget.id);
+    expect(fallbackLeaseCount?.count ?? 0).toBe(0);
+
+    if (!firstClaim) {
+      throw new Error("Expected first claim to be available");
+    }
+    await releaseProviderLease(firstClaim.providerLease.id, "test_finished");
+    sqlite.db
+      .query(
+        `
+        update episode_distiller_queue
+        set status = 'completed',
+            locked_by = null,
+            locked_at = null,
+            heartbeat_at = null,
+            completed_at = CURRENT_TIMESTAMP,
+            updated_at = CURRENT_TIMESTAMP
+        where id = ?
+      `,
+      )
+      .run(firstClaim.id);
+
+    const secondClaim = await claimNextJobWithProviderLease({
+      pool: settings.providerPools[0],
+      priorityQueues: ["episodeDistiller"],
+      workerId: "sqlite-provider-preferred-worker-3",
+    });
+
+    expect(secondClaim?.providerLease.targetId).toBe(preferredTarget.id);
   });
 
   test("persists covering retry options in sqlite", async () => {

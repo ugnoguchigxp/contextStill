@@ -90,6 +90,7 @@ export type GroupedConfig = {
     findCandidateMaxToolCalls: number;
     coverEvidenceSearchMaxCalls: number;
     coverEvidenceFetchMaxCalls: number;
+    coverEvidenceFetchMaxTokensPerSite: number;
     timeoutMs: number;
     resultMaxChars: number;
     searchResultCount: number;

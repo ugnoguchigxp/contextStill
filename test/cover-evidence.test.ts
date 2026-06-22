@@ -158,6 +158,14 @@ function mockExternalEvidenceRounds(finalOutput: string, extraOutputs: string[] 
   }
 }
 
+function mockSourceValueAssessment(finalOutput: string, extraOutputs: string[] = []) {
+  mocks.runDistillationCompletion.mockReset();
+  mocks.runDistillationCompletion.mockResolvedValueOnce(completion(finalOutput));
+  for (const output of extraOutputs) {
+    mocks.runDistillationCompletion.mockResolvedValueOnce(completion(output));
+  }
+}
+
 describe("coverEvidence parser", () => {
   test("parses a knowledge-ready result", () => {
     const parsed = parseCoverEvidenceResult(
@@ -689,7 +697,7 @@ describe("runCoverEvidence", () => {
       id: "cover-1",
       ...result,
     }));
-    mockExternalEvidenceRounds(defaultExternalFinalOutput());
+    mockSourceValueAssessment(defaultExternalFinalOutput());
     mocks.executeDistillationToolCall.mockImplementation(async (toolCall) => {
       if (toolCall.function.name === "search_web") {
         return {
@@ -848,7 +856,7 @@ describe("runCoverEvidence", () => {
 
     const result = await runCoverEvidence({ id: "find-1" });
 
-    expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(3);
+    expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(1);
     expect(result.result.status).toBe("knowledge_ready");
     expect(result.result.toolEvents).toEqual(
       expect.arrayContaining([
@@ -865,7 +873,8 @@ describe("runCoverEvidence", () => {
     const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
-    expect(request.messages[0]?.content).toContain("検索語だけ");
+    expect(request.messages[0]?.content).toContain("knowledge value 判定器");
+    expect(request.messages[1]?.content).toContain("source evidence excerpt:");
   });
 
   test("uses primary source evidence even when legacy sourceSummary exists", async () => {
@@ -889,10 +898,10 @@ describe("runCoverEvidence", () => {
 
     await runCoverEvidence({ id: "find-1" });
 
-    const request = mocks.runDistillationCompletion.mock.calls[2]?.[0] as {
+    const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
-    expect(request.messages[1]?.content).toContain("source evidence:");
+    expect(request.messages[1]?.content).toContain("source evidence excerpt:");
     expect(request.messages[1]?.content).not.toContain("source summary:");
     expect(request.messages[1]?.content).toContain(sourceSummary);
     expect(request.messages[1]?.content).toContain("raw-source-filler");
@@ -992,7 +1001,7 @@ describe("runCoverEvidence", () => {
         },
       }),
     );
-    mockExternalEvidenceRounds(
+    mockSourceValueAssessment(
       JSON.stringify({
         schemaVersion: 1,
         status: "knowledge_ready",
@@ -1020,15 +1029,15 @@ describe("runCoverEvidence", () => {
       repoPath: "/Users/y.noguchi/Code/memoryRouter",
       repoKey: "memoryRouter",
     });
-    const request = mocks.runDistillationCompletion.mock.calls[2]?.[0] as {
+    const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
-    expect(mocks.runDistillationCompletion.mock.calls[2]?.[1]).toEqual(
+    expect(mocks.runDistillationCompletion.mock.calls[0]?.[1]).toEqual(
       expect.objectContaining({
-        usageSource: "cover-evidence:external-final",
+        usageSource: "cover-evidence:value-assessment",
       }),
     );
-    expect(request.messages[1]?.content).toContain('"technologies": [');
+    expect(request.messages[1]?.content).toContain('"technologies":["typescript"]');
     expect(request.messages[1]?.content).toContain('"candidate-registration"');
     expect(request.messages[1]?.content).toContain('"/Users/y.noguchi/Code/memoryRouter"');
   });
@@ -1053,7 +1062,7 @@ describe("runCoverEvidence", () => {
       toExclusive: 120,
       returnedTokens: 120,
     });
-    mockExternalEvidenceRounds(
+    mockSourceValueAssessment(
       JSON.stringify({
         schemaVersion: 1,
         status: "knowledge_ready",
@@ -1099,10 +1108,10 @@ describe("runCoverEvidence", () => {
         }),
       }),
     );
-    const request = mocks.runDistillationCompletion.mock.calls[2]?.[0] as {
+    const request = mocks.runDistillationCompletion.mock.calls[0]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
-    expect(request.messages[0]?.content).toContain("source evidence と fetch_content evidence");
+    expect(request.messages[0]?.content).toContain("source evidence に支えられるか");
     expect(request.messages[0]?.content).toContain("日本語で運用されている文脈");
     expect(request.messages[0]?.content).toContain("Use when:");
     expect(request.messages[0]?.content).toContain("Workflow:");
@@ -1110,7 +1119,7 @@ describe("runCoverEvidence", () => {
   });
 
   test("rejects procedure candidates that are not written as reusable steps", async () => {
-    mockExternalEvidenceRounds(
+    mockSourceValueAssessment(
       JSON.stringify({
         schemaVersion: 1,
         status: "knowledge_ready",
@@ -1146,7 +1155,7 @@ describe("runCoverEvidence", () => {
   });
 
   test("demotes repair-failed procedures when the original body is a valid rule", async () => {
-    mockExternalEvidenceRounds(
+    mockSourceValueAssessment(
       JSON.stringify({
         schemaVersion: 1,
         status: "knowledge_ready",

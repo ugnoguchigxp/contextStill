@@ -151,7 +151,7 @@ export const registerCandidateTool: ToolEntry = {
       avoid: {
         type: "string",
         description:
-          "For polarity=negative when body/text is omitted: decision, implementation, or operation to avoid. In Japanese-operated contexts, write natural language in Japanese.",
+          "For polarity=negative when body/text is omitted: decision, implementation, or operation to avoid. For type=procedure with non-negative polarity, this may populate a missing Avoid section. In Japanese-operated contexts, write natural language in Japanese.",
       },
       prefer: {
         type: "string",

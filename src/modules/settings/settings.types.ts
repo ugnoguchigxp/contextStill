@@ -206,6 +206,7 @@ export type RuntimeSettingsEditable = {
     coverEvidenceTimeoutMs: number;
     coverEvidenceSearchMaxCalls: number;
     coverEvidenceFetchMaxCalls: number;
+    coverEvidenceFetchMaxTokensPerSite: number;
     toolTimeoutMs: number;
     toolResultMaxChars: number;
     failureRetryDelaySeconds: number;
@@ -419,6 +420,7 @@ export const runtimeSettingsEditableSchema = z.object({
     coverEvidenceTimeoutMs: z.number().int().min(1000).max(3_600_000),
     coverEvidenceSearchMaxCalls: z.number().int().min(0).max(16),
     coverEvidenceFetchMaxCalls: z.number().int().min(0).max(16),
+    coverEvidenceFetchMaxTokensPerSite: z.number().int().min(128).max(50_000),
     toolTimeoutMs: z.number().int().min(1000).max(120_000),
     toolResultMaxChars: z.number().int().min(512).max(200_000),
     failureRetryDelaySeconds: z.number().int().min(1).max(604_800),
