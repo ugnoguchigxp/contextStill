@@ -213,7 +213,7 @@ mod tests {
     }
 
     #[test]
-    fn resident_run_once_blocks_temporary_sidecars_when_rust_only_required() {
+    fn resident_run_once_allows_rust_surfaces_when_rust_only_required() {
         use crate::shared::config::MapEnv;
         use crate::shared::process::MockSupervisor;
         use std::time::SystemTime;
@@ -238,14 +238,27 @@ mod tests {
         let report: serde_json::Value = serde_json::from_str(&output).expect("valid JSON");
 
         assert_eq!(report["status"], "exited");
-        assert_eq!(report["surfaces"].as_array().unwrap().len(), 3);
+        assert_eq!(report["surfaces"].as_array().unwrap().len(), 4);
         assert_eq!(report["surfaces"][0]["name"], "mcp-server");
-        assert_eq!(report["surfaces"][0]["status"], "blocked");
+        assert_eq!(report["surfaces"][0]["status"], "started");
         assert_eq!(report["surfaces"][1]["name"], "queue-supervisor");
         assert_eq!(report["surfaces"][1]["status"], "blocked");
         assert_eq!(report["surfaces"][2]["name"], "agent-log-sync");
-        assert_eq!(report["surfaces"][2]["status"], "blocked");
-        assert!(supervisor.spawned.lock().unwrap().is_empty());
+        assert_eq!(report["surfaces"][2]["status"], "scheduled");
+        assert_eq!(report["surfaces"][3]["name"], "mcp-server");
+        assert_eq!(report["surfaces"][3]["status"], "stopped");
+        assert!(supervisor
+            .spawned
+            .lock()
+            .unwrap()
+            .values()
+            .any(|call| call.args == vec!["mcp", "serve"]));
+        assert!(supervisor
+            .spawned
+            .lock()
+            .unwrap()
+            .values()
+            .all(|call| call.command != "bun"));
 
         std::fs::remove_dir_all(&app_dir).unwrap();
     }
@@ -428,13 +441,13 @@ mod tests {
         );
         assert!(crate::run(["agent-log-sync", "run"], &env, &supervisor)
             .unwrap()
-            .contains("agent-log-sync started"));
+            .contains("agent-log-sync completed in Rust"));
 
         let status_json = crate::run(["status", "--json"], &env, &supervisor).unwrap();
         let status: serde_json::Value = serde_json::from_str(&status_json).unwrap();
         assert_eq!(status["queueSupervisor"], "running");
         assert_eq!(status["honoAdminApi"], "running");
-        assert_eq!(status["agentLogSync"], "running");
+        assert_eq!(status["agentLogSync"], "exited");
 
         std::fs::remove_dir_all(&app_dir).unwrap();
     }

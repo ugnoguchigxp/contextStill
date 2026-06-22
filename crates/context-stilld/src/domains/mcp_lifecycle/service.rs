@@ -6,6 +6,7 @@ use std::{
 };
 
 use serde::{Deserialize, Serialize};
+use serde_json::{json, Value};
 
 use crate::domains::{
     bootstrap::service::resolve_paths,
@@ -64,6 +65,7 @@ pub struct SmokeReport {
     pub ok: bool,
     pub endpoint: EndpointReport,
     pub tool_count: usize,
+    pub tool_owners: Value,
     pub message: String,
 }
 
@@ -72,6 +74,7 @@ pub struct SmokeReport {
 struct HealthResponse {
     ok: bool,
     tool_count: Option<usize>,
+    tool_owners: Option<Value>,
 }
 
 pub fn start<E: EnvProvider, S: ProcessSupervisor>(
@@ -175,21 +178,37 @@ pub fn smoke_report<E: EnvProvider>(env: &E) -> SmokeReport {
             ok: true,
             endpoint,
             tool_count: health.tool_count.unwrap_or(0),
+            tool_owners: health.tool_owners.unwrap_or_else(default_tool_owners),
             message: "MCP endpoint health check passed; tool list is available.".to_string(),
         },
         Ok(_) => SmokeReport {
             ok: false,
             endpoint,
             tool_count: 0,
+            tool_owners: default_tool_owners(),
             message: "MCP endpoint responded but is not ready.".to_string(),
         },
         Err(error) => SmokeReport {
             ok: false,
             endpoint,
             tool_count: 0,
+            tool_owners: default_tool_owners(),
             message: format!("MCP endpoint is not reachable: {error}"),
         },
     }
+}
+
+fn default_tool_owners() -> Value {
+    json!({
+        "rustNative": [],
+        "tsSidecar": [],
+        "disabled": [],
+        "counts": {
+            "rustNative": 0,
+            "tsSidecar": 0,
+            "disabled": 0
+        }
+    })
 }
 
 fn endpoint_url<E: EnvProvider>(env: &E) -> String {
@@ -342,6 +361,7 @@ impl SmokeReport {
             format!("ok={}", self.ok),
             format!("url={}", self.endpoint.url),
             format!("toolCount={}", self.tool_count),
+            format!("toolOwners={}", self.tool_owners),
             format!("message={}", self.message),
         ]
         .join("\n")

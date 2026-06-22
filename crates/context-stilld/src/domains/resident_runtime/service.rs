@@ -150,8 +150,6 @@ fn ensure_surfaces<E: EnvProvider, S: ProcessSupervisor>(
 
     if !env_flag_default(env, "CONTEXT_STILL_RESIDENT_MCP", true) {
         reports.push(disabled_surface("mcp-server"));
-    } else if require_rust_only {
-        reports.push(blocked_temporary_sidecar("mcp-server"));
     } else {
         let report = mcp_lifecycle::service::start_report(env, supervisor)?;
         reports.push(surface_report("mcp-server", true, report));
@@ -170,8 +168,6 @@ fn ensure_surfaces<E: EnvProvider, S: ProcessSupervisor>(
 
     if !env_flag_default(env, "CONTEXT_STILL_RESIDENT_AGENT_LOG_SYNC", true) {
         reports.push(disabled_surface("agent-log-sync"));
-    } else if require_rust_only {
-        reports.push(blocked_temporary_sidecar("agent-log-sync"));
     } else {
         reports.push(reconcile_agent_log_sync(env, supervisor, state)?);
     }

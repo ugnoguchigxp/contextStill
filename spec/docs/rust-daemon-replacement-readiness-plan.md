@@ -36,16 +36,16 @@ Completed:
 - Rust has internal SQLite queue claim and provider lease manager transactions with parity tests for priority ordering, running-job blocking, stale recovery, route-target preference, active target uniqueness, pool capacity, heartbeat, release, and `finalizeDistille` `next_run_at` behavior.
 - Rust has internal SQLite queue state transition APIs for pause, worker-unavailable wait, resume, retry, pause-running, and queue event append, with parity tests for lock clearing, retry metadata, queue event row shape, and `finalizeDistille` `next_run_at` behavior.
 - Rust daemon domain source is split by lifecycle responsibility so no `crates/context-stilld/src` Rust file exceeds the maintainability guard of roughly 600 lines.
-- `CONTEXT_STILL_RESIDENT_REQUIRE_RUST_ONLY=1` makes resident runtime fail closed by reporting temporary Bun MCP / queue / agent-log-sync surfaces as `blocked` instead of spawning them.
+- `CONTEXT_STILL_RESIDENT_REQUIRE_RUST_ONLY=1` makes resident runtime fail closed by reporting the temporary Bun queue executor as `blocked`; Rust MCP endpoint/session state and Rust agent-log-sync still run.
 - `context-stilld run` owns resident queue scheduling by default through `CONTEXT_STILL_RESIDENT_QUEUE_MODE=rust-managed-one-shot`; the queue business executor is now a short-lived Bun one-shot until R7 completes.
-- MCP endpoint and session state are Rust-owned; non-migrated MCP tool handlers are invoked through a short-lived TypeScript one-shot dispatch instead of a resident Bun HTTP server.
+- MCP endpoint, session state, `tools/list`, and `initial_instructions` are Rust-owned; non-migrated MCP tool handlers are invoked through a short-lived TypeScript one-shot dispatch instead of a resident Bun HTTP server.
+- agent-log-sync parser/write now runs in Rust against SQLite; `context-stilld run` no longer executes `src/cli/sync-agent-logs.ts`.
 
 Still not Rust-only:
 
-- MCP tool implementation is still TypeScript one-shot dispatch until R3/R4 complete.
+- Most MCP tool implementations still use TypeScript one-shot dispatch until R3/R4 complete; `tools/list` and `initial_instructions` are Rust-native.
 - Queue scheduler is Rust-owned by default in resident runtime; provider lease and state parity APIs exist in Rust, while the TypeScript one-shot business executor still consumes its existing claim path until R5/R6 handoff is complete.
 - Queue state transitions and executors are still TypeScript by default; Rust currently has internal deterministic state-transition parity APIs, but the TypeScript executor has not been switched to consume them.
-- agent-log-sync parser and SQLite write logic are still TypeScript one-shot sidecar work.
 - Some doctor checks still delegate to TypeScript.
 - Fallback and legacy command paths are not yet classified tightly enough for final removal.
 
@@ -134,7 +134,6 @@ context-stilld runtime sidecars --json
   - MCP endpoint Bun child;
   - MCP tool worker / TypeScript handler path;
   - queue worker Bun child;
-  - agent-log-sync one-shot sidecar;
   - Hono admin API child.
 - Add removal task id for every `resident-owned-temporary` entry.
 
@@ -210,7 +209,7 @@ Tasks:
 
 - Split tool metadata/schema contracts from TypeScript handlers.
 - Implement Rust-native handlers for:
-  - initial instructions;
+  - initial instructions; **implemented**
   - status / paths / doctor summary;
   - queue inspect;
   - MCP endpoint/session inspection;
@@ -219,14 +218,14 @@ Tasks:
   - `rust-native`;
   - `ts-sidecar`;
   - `disabled`.
-- Expose tool owner in `mcp smoke --json` or a debug command.
+- Expose tool owner in `mcp smoke --json` or a debug command. **implemented for smoke health inventory**
 - Keep non-migrated tools behind explicit TS sidecar dispatch.
 
 Completion criteria:
 
 - Rust serves tool list/schema for migrated tools.
-- Migrated read-only tools do not invoke Bun.
-- Tool owner inventory shows a shrinking TS set.
+- Migrated read-only tools do not invoke Bun. `initial_instructions` now resolves in Rust.
+- Tool owner inventory shows a shrinking TS set. `mcp smoke --json` reports `rustNative=1`, `tsSidecar=11`.
 
 Verification:
 
@@ -523,7 +522,7 @@ Stop conditions:
 | R5 | Rust queue scheduler/provider leases | R1 | Rust queue tests + TS SQLite parity | in progress |
 | R6 | Rust queue state machine/maintenance | R5 | queue state/event parity | in progress |
 | R7 | Rust queue executors | R6 | per-queue fixtures + smoke | pending |
-| R8 | Rust agent log sync parser/write | R1 | parser parity + sync smoke | pending |
+| R8 | Rust agent log sync parser/write | R1 | parser parity + sync smoke | implemented |
 | R9 | Rust doctor/backup guard completion | R1, R5 | doctor/backup JSON gates | pending |
 | R10 | Default switch and legacy removal | R2-R9 | full verify + live process tree | pending |
 
@@ -559,4 +558,4 @@ Stop and ask for review if:
 
 Continue with R3 and R5.
 
-R0 now provides the optional live LaunchAgent ownership guard, R1 creates the map needed to delete resident TypeScript intentionally, and R2 moves the MCP endpoint/session owner into Rust. R3/R4 still need Rust-native tool dispatch to remove one-shot TypeScript tool execution. R5 has Rust claim / provider lease manager parity APIs, and R6 has deterministic state-transition plus queue-event parity APIs, but TS executor handoff is still pending.
+R0 now provides the optional live LaunchAgent ownership guard, R1 creates the map needed to delete resident TypeScript intentionally, and R2 moves the MCP endpoint/session owner into Rust. R3 has Rust-native `tools/list`, `initial_instructions`, and smoke-visible owner inventory; the remaining read-only tool handlers still need to move before the one-shot TypeScript tool dispatch can shrink materially. R5 has Rust claim / provider lease manager parity APIs, and R6 has deterministic state-transition plus queue-event parity APIs, but TS executor handoff is still pending.

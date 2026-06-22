@@ -89,7 +89,7 @@ Register it in an MCP client only when you want agent integration:
 
 Run `bun run setup:mcp-config` to update Codex and Antigravity config files. The direct stdio server is legacy only and should not be registered in new clients.
 
-The endpoint is currently a daemon-owned Bun HTTP worker. It is intentionally visible in `context-stilld runtime sidecars --json` as a temporary resident sidecar until the Rust MCP endpoint/session manager replaces it.
+The endpoint is owned by `context-stilld` as a Rust HTTP/session surface. Non-migrated tool handlers may still run through short-lived one-shot dispatch while R3/R4 continue.
 
 After connection, call `initial_instructions` once per project session, `context_compile` before task work, `context_decision` before a blocking question/PR decision when autonomous progress may still be possible, and `compile_eval` after the task.
 

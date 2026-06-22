@@ -63,7 +63,7 @@ sources + web + agent logs + candidates
 
 | Classification | Meaning | Current examples |
 |---|---|---|
-| `resident-owned-temporary` | Scheduled work owned by `context-stilld`, still implemented through TypeScript/Bun until a Rust parity task replaces it | queue executor one-shot, agent-log-sync one-shot parser/write |
+| `resident-owned-temporary` | Scheduled work owned by `context-stilld`, still implemented through TypeScript/Bun until a Rust parity task replaces it | queue executor one-shot |
 | `ui-time` | Child process allowed only for UI/operator sessions, not part of the resident Rust-only goal | Hono admin API |
 | `manual-one-shot` | Operator-run or Rust-endpoint-triggered one-shot commands that may remain TypeScript temporarily | MCP tool dispatch one-shot, import, export, migration, repair, backfill, smoke commands |
 | `forbidden-resident` | Legacy process owner that must not independently own durable work while `context-stilld` is resident owner | legacy queue and agent-log-sync LaunchAgents |
@@ -132,7 +132,7 @@ Candidates and review items remain separate from final knowledge. This separatio
 
 context-still uses queue workers instead of hidden background mutation:
 
-- `agent-log-sync` imports local agent logs on demand; in resident mode, Rust owns the schedule and delegates parser/write work to a temporary TypeScript sidecar.
+- `agent-log-sync` imports local agent logs on demand; in resident mode, Rust owns both the schedule and the SQLite parser/write path.
 - `queue-supervisor` runs distillation stages continuously or on a schedule; in resident mode, Rust owns the process boundary while the queue scheduler/executors remain TypeScript until Rust parity gates pass.
 - `doctor` reports DB, optional embedding/LLM, provider, sync, queue, landscape, and desktop readiness signals.
 

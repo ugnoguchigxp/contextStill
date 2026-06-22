@@ -125,7 +125,7 @@ context-still separates the long-lived runtime from the admin UI surface:
 | Hono API | Runs when the admin UI needs HTTP access | Admin UI facade for knowledge, sources, graph, queue controls, settings, context runs, decision history, and dashboards |
 | Tauri / web UI | Opened on demand | Knowledge maintenance, review, settings, diagnostics, and operator actions |
 
-The Hono API should stay a UI-facing facade. Durable background work and external agent integration belong to the daemon/CLI/MCP side, so closing the UI does not imply stopping log sync scheduling, queue supervision, MCP availability, or scheduled maintenance. The current Rust daemon is the resident owner, but the MCP endpoint, MCP tool handlers, queue worker, and agent-log-sync parser still run through classified TypeScript/Bun sidecars until their Rust parity gates pass.
+The Hono API should stay a UI-facing facade. Durable background work and external agent integration belong to the daemon/CLI/MCP side, so closing the UI does not imply stopping log sync scheduling, queue supervision, MCP availability, or scheduled maintenance. The current Rust daemon is the resident owner. MCP tool handlers and queue business execution still have classified short-lived TypeScript/Bun compatibility paths, while the MCP endpoint/session manager and agent-log-sync parser/write path are Rust-owned.
 
 ## MCP Integration
 

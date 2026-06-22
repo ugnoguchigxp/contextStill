@@ -19,6 +19,7 @@ use crate::{
 };
 
 use super::dispatch::{dispatch_json, DispatchConfig};
+use super::native_tools::{exposed_tool_count, handle_native_dispatch, tool_owner_inventory};
 use super::service::McpSession;
 
 static NEXT_SESSION_ID: AtomicU64 = AtomicU64::new(0);
@@ -254,15 +255,8 @@ fn handle_request(
 ) -> String {
     if request.path == "/mcp/health" && request.method == "GET" {
         let active_session_count = active_session_count(&state);
-        let tool_count = dispatch_json("tools/list", json!({}), &dispatch)
-            .ok()
-            .and_then(|value| {
-                value
-                    .get("tools")
-                    .and_then(|tools| tools.as_array())
-                    .map(Vec::len)
-            })
-            .unwrap_or(0);
+        let tool_count = exposed_tool_count();
+        let tool_owners = tool_owner_inventory();
         return json_response(
             200,
             json!({
@@ -270,6 +264,7 @@ fn handle_request(
                 "server": "context-still",
                 "transport": "streamable-http",
                 "toolCount": tool_count,
+                "toolOwners": tool_owners,
                 "activeSessionCount": active_session_count,
             }),
             &[],
@@ -353,8 +348,21 @@ fn handle_mcp_post(
 
     touch_session(&state, &session_id, 1);
     let result = match method.as_str() {
-        "tools/list" | "resources/list" => dispatch_json(&method, json!({}), &dispatch),
-        "tools/call" | "resources/read" => dispatch_json(
+        "tools/list" => Ok(
+            handle_native_dispatch("tools/list", &json!({})).unwrap_or_else(|| {
+                json!({
+                    "tools": []
+                })
+            }),
+        ),
+        "tools/call" => {
+            let params = body.get("params").cloned().unwrap_or_else(|| json!({}));
+            handle_native_dispatch("tools/call", &params)
+                .map(Ok)
+                .unwrap_or_else(|| dispatch_json(&method, params, &dispatch))
+        }
+        "resources/list" => dispatch_json(&method, json!({}), &dispatch),
+        "resources/read" => dispatch_json(
             &method,
             body.get("params").cloned().unwrap_or_else(|| json!({})),
             &dispatch,

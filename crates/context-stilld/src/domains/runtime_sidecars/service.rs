@@ -83,17 +83,6 @@ const SIDECARS: &[SidecarDefinition] = &[
         notes: "Rust owns resident queue scheduling; queue business execution still runs through a short-lived Bun one-shot executor until R7 is complete.",
     },
     SidecarDefinition {
-        id: "agent-log-sync-typescript-one-shot",
-        surface: "agent-log-sync",
-        classification: SidecarClassification::ResidentOwnedTemporary,
-        command: "bun",
-        args: &["run", "src/cli/sync-agent-logs.ts"],
-        owner: "context-stilld-scheduler",
-        enabled_by_default: true,
-        removal_task_id: Some("R8"),
-        notes: "Rust owns the schedule, but parser and SQLite writes still run through a Bun one-shot sidecar.",
-    },
-    SidecarDefinition {
         id: "hono-admin-api-child",
         surface: "admin-api",
         classification: SidecarClassification::UiTime,
@@ -220,7 +209,7 @@ mod tests {
 
         assert_eq!(report.action, "sidecars");
         assert_eq!(report.runtime_host, "rust-resident");
-        assert_eq!(report.resident_owned_temporary_count, 2);
+        assert_eq!(report.resident_owned_temporary_count, 1);
         assert_eq!(report.forbidden_resident_count, 2);
         assert!(report.sidecars.iter().all(|entry| {
             entry.classification != SidecarClassification::ResidentOwnedTemporary

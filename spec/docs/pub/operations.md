@@ -105,7 +105,7 @@ cargo run -q -p context-stilld -- queue inspect --json
 cargo run -q -p context-stilld -- runtime sidecars --json
 ```
 
-The resident daemon owns the queue worker process and scheduled agent-log-sync trigger. Queue logs are written under app data logs, `queue inspect --json` reads live SQLite queue counts and provider leases from Rust, and `runtime sidecars --json` shows which TypeScript surfaces are still temporary resident work, UI-time work, manual one-shot work, or forbidden resident work. Queue/distillation surfaces are still an area where backend support must be explicit; keep server-only assumptions out of the default desktop path.
+The resident daemon owns the queue worker process and scheduled agent-log-sync trigger. Queue logs are written under app data logs, `queue inspect --json` reads live SQLite queue counts and provider leases from Rust, and `runtime sidecars --json` shows which TypeScript surfaces are still temporary resident work, UI-time work, manual one-shot work, or forbidden resident work. agent-log-sync parser/write now runs in Rust; queue business execution is the remaining resident-owned temporary TypeScript path. Queue/distillation surfaces are still an area where backend support must be explicit; keep server-only assumptions out of the default desktop path.
 
 To verify live LaunchAgent ownership without mutating the database, run `CONTEXT_STILL_VERIFY_LIVE_OWNERSHIP=1 bun run verify:rust-daemon`. The opt-in check requires `com.context-still.daemon` to be loaded and rejects legacy queue / agent-log-sync LaunchAgents if they are loaded independently.
 

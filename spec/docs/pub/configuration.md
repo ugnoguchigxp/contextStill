@@ -95,7 +95,7 @@ These variables are for development, packaging, and advanced runtime integration
 | `CONTEXT_STILL_RESIDENT_QUEUE_TIMEOUT_MS` | `300000` | Timeout for each Rust-managed queue one-shot executor |
 | `CONTEXT_STILL_AGENT_LOG_SYNC_INTERVAL_SECONDS` | `3600` | Resident daemon / legacy LaunchAgent scheduled sync interval |
 | `CONTEXT_STILL_AGENT_LOG_SYNC_RUN_AT_LOAD` | `0` | Set `1` to run agent log sync immediately when resident daemon starts |
-| `CONTEXT_STILL_AGENT_LOG_SYNC_TIMEOUT_MS` | `300000` | Timeout for each resident-owned one-shot sync sidecar |
+| `CONTEXT_STILL_AGENT_LOG_SYNC_TIMEOUT_MS` | `300000` | Timeout for each resident-owned Rust agent-log-sync run |
 | `CONTEXT_STILL_AGENT_LOG_INITIAL_LOOKBACK_HOURS` | Initial import lookback window |
 | `CONTEXT_STILL_AGENT_LOG_MIN_DISTILLABLE_CHARS` | Minimum agent-log chunk size to save for distillation; default `2000` |
 
