@@ -10,12 +10,26 @@ pub fn runtime_version() -> &'static str {
     VERSION
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, Eq, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "camelCase")]
 pub struct ProcessState {
     pub pid: Option<u32>,
     pub status: String,
     pub log_path: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub started_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub updated_at: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_code: Option<i32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub exit_signal: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub last_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub command: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub args: Option<Vec<String>>,
 }
 
 pub fn write_state(run_dir: &Path, name: &str, state: &ProcessState) -> io::Result<()> {
@@ -130,6 +144,7 @@ mod tests {
             pid: Some(5678),
             status: "running".to_string(),
             log_path: "/var/log/queue.log".to_string(),
+            ..ProcessState::default()
         };
         write_state(&run_dir, name, &state).unwrap();
 

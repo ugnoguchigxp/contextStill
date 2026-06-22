@@ -20,7 +20,6 @@ import {
 } from "../settings/settings.service.js";
 import { parseStorageCandidatesFromLlmOutput } from "./parser.js";
 import {
-  type CandidateKnowledgeType,
   type CandidateOrigin,
   type CandidateRecord,
   insertFindCandidateResult,
@@ -111,6 +110,26 @@ function candidateOutputMaxTokens(): number {
   return Math.max(4096, groupedConfig.vibeDistillation.maxOutputTokens);
 }
 
+function isToolLoopMaxRoundsError(error: unknown): boolean {
+  return (
+    error instanceof Error && error.message.includes("distillation tool loop exceeded max rounds")
+  );
+}
+
+function normalizeFindCandidateFailure(params: {
+  error: unknown;
+  readCount: number;
+  readLimit: number;
+}): Error {
+  if (isToolLoopMaxRoundsError(params.error) && params.readCount > 0) {
+    return new Error(
+      `findCandidate evidence_not_found: exhausted ${params.readCount}/${params.readLimit} reader tool calls without producing a final candidate response`,
+      { cause: params.error },
+    );
+  }
+  return params.error instanceof Error ? params.error : new Error(String(params.error));
+}
+
 async function defaultFindCandidateRoute(targetKind: FindCandidateTargetKind): Promise<{
   provider: DistillationProviderSetting;
   model: string;
@@ -187,9 +206,10 @@ function commonCandidateRules(): string[] {
     "- 複数の有用知識がある場合は候補を分割して複数出す",
     "- type は必ず rule または procedure にする",
     "- polarity は必ず positive または negative のどちらかにする",
+    "- type または polarity を判断できない場合、その候補は出さない",
     "- positive は「行うべき・有効だった・採用しやすい知識」、negative は「避けるべき・失敗した・採用すると危険な知識」として使う",
     "- 失敗事例、レビュー指摘、禁止事項、誤った実装方針、再発防止の判断基準は、内容が再利用可能なら negative の rule 候補として出す",
-    "- negative 候補は procedure にせず、原則 rule として「何を避けるか / どの条件で危険か / どう確認するか」を書く",
+    "- negative 候補は procedure にせず、必ず rule として「何を避けるか / どの条件で危険か / どう確認するか」を書く",
     "- rule は持続的な制約・方針・不変条件・意思決定",
     "- procedure は順序付き作業、コマンドフロー、検証/復旧/レビューの再利用可能な手順",
     "- 単独の判断、制約、使うべき API/コマンド、避けるべき実装方針は procedure ではなく rule",
@@ -198,15 +218,13 @@ function commonCandidateRules(): string[] {
     "- Workflow: には 2 step 以上の具体的な手順を書き、Verification: には成功確認、Avoid: には避けることを書く",
     "- source content からこの skill 形式を構成できない場合は、procedure ではなく rule にするか候補にしない",
     "- 候補の title/content は、汎用的に使える知識として体裁を整える",
-    "- 各候補には sourceSummary を含め、候補を支える source content の該当部分を 1000 文字以内で要約する",
-    "- sourceSummary は source から確認できる根拠だけにし、推測や候補 content の言い換えで水増ししない",
     "- 候補件数は内容に応じて決める。件数合わせはしない",
     "最終出力は JSON のみで返してください。",
     "候補がある場合は単体オブジェクトまたは配列のどちらでも構いません。",
-    '{"type":"rule|procedure","polarity":"positive|negative","title":"...","content":"...","sourceSummary":"..."}',
-    '[{"type":"rule|procedure","polarity":"positive|negative","title":"...","content":"...","sourceSummary":"..."}]',
+    '{"type":"rule|procedure","polarity":"positive|negative","title":"...","content":"..."}',
+    '[{"type":"rule|procedure","polarity":"positive|negative","title":"...","content":"..."}]',
     "候補がない場合は [] を返してください。",
-    "type/polarity/title/content/sourceSummary 以外の field は省略してください。",
+    "type/polarity/title/content 以外の field は省略してください。",
   ];
 }
 
@@ -320,15 +338,8 @@ function buildInitialUserMessages(targetKind: FindCandidateTargetKind): Distilla
 }
 
 function normalizeCandidateForPipeline(candidate: CandidateRecord): CandidateRecord {
-  const polarity = candidate.polarity === "negative" ? "negative" : "positive";
-  const originalType = candidate.type;
-  const type: CandidateKnowledgeType =
-    polarity === "negative" && originalType === "procedure" ? "rule" : (originalType ?? "rule");
   return {
     ...candidate,
-    type,
-    polarity,
-    ...(originalType && originalType !== type ? { originalType } : {}),
   };
 }
 
@@ -374,11 +385,10 @@ export function formatCliTextCandidates(candidates: CandidateRecord[]): string {
   return candidates
     .map((candidate) =>
       [
-        ...(candidate.type ? [`TYPE: ${candidate.type}`] : []),
-        ...(candidate.polarity ? [`POLARITY: ${candidate.polarity}`] : []),
+        `TYPE: ${candidate.type}`,
+        `POLARITY: ${candidate.polarity}`,
         `TITLE: ${candidate.title}`,
         `CONTENT:\n${candidate.content}`,
-        ...(candidate.sourceSummary ? [`SOURCE_SUMMARY:\n${candidate.sourceSummary}`] : []),
       ].join("\n"),
     )
     .join("\n---\n");
@@ -647,7 +657,6 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
     }
     llmOutput = completion.content.trim();
     const parsedCandidates = parseStorageCandidatesFromLlmOutput(llmOutput);
-    const missingPolarityCount = parsedCandidates.filter((candidate) => !candidate.polarity).length;
     candidates = parsedCandidates.map(normalizeCandidateForPipeline);
 
     await recordReaderUsed();
@@ -660,7 +669,6 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
           targetStateId: target.id,
           candidateCount: candidates.length,
           readCount: readLog.length,
-          missingPolarityCount,
         },
       });
 
@@ -699,7 +707,6 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         targetStateId: target.id,
         candidateCount: candidates.length,
         insertedCount: insertedIds.length,
-        missingPolarityCount,
       },
     });
 
@@ -713,15 +720,20 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
       readRanges: readLog,
     };
   } catch (error) {
+    const normalizedError = normalizeFindCandidateFailure({
+      error,
+      readCount: readLog.length,
+      readLimit,
+    });
     await recordAuditLogSafe({
       eventType: auditEventTypes.findCandidateFailed,
       actor: "system",
       payload: {
         targetStateId: target.id,
-        error: error instanceof Error ? error.message : String(error),
+        error: normalizedError.message,
       },
     });
-    throw error;
+    throw normalizedError;
   }
 }
 

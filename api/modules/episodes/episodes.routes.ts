@@ -8,6 +8,10 @@ import {
 } from "../../../src/modules/episodic-memory/episode-card.service.js";
 import { episodeCardCreateSchema } from "../../../src/shared/schemas/episode-card.schema.js";
 
+const episodeApiCreateSchema = episodeCardCreateSchema
+  .omit({ status: true })
+  .extend({ status: z.never().optional() });
+
 function csvArray(value: unknown): string[] | undefined {
   if (Array.isArray(value)) return value.filter((item): item is string => typeof item === "string");
   if (typeof value !== "string") return undefined;
@@ -21,7 +25,7 @@ function csvArray(value: unknown): string[] | undefined {
 const listEpisodesQuerySchema = z.object({
   q: z.string().trim().optional(),
   query: z.string().trim().optional(),
-  status: z.enum(["draft", "active", "deprecated"]).optional(),
+  status: z.enum(["active", "deprecated"]).optional(),
   domains: z.preprocess(csvArray, z.array(z.string()).optional()),
   technologies: z.preprocess(csvArray, z.array(z.string()).optional()),
   changeTypes: z.preprocess(csvArray, z.array(z.string()).optional()),
@@ -33,11 +37,10 @@ const listEpisodesQuerySchema = z.object({
     z.array(z.enum(["success", "failure", "mixed", "unknown"])).optional(),
   ),
   limit: z.coerce.number().int().positive().max(100).default(20),
-  includeDraft: z.coerce.boolean().default(false),
 });
 
 export const episodesRouter = new Hono()
-  .post("/", zValidator("json", episodeCardCreateSchema), async (c) => {
+  .post("/", zValidator("json", episodeApiCreateSchema), async (c) => {
     const episode = await registerEpisode(c.req.valid("json"));
     return c.json({ episode }, 201);
   })
@@ -54,7 +57,6 @@ export const episodesRouter = new Hono()
       repoKey: query.repoKey,
       outcomeKinds: query.outcomeKinds,
       limit: query.limit,
-      includeDraft: query.includeDraft,
     });
     return c.json({ items });
   })

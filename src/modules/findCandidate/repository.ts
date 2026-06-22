@@ -15,30 +15,20 @@ export type CandidateKnowledgeType = "rule" | "procedure";
 export type CandidateKnowledgePolarity = "positive" | "negative" | "neutral";
 
 export type CandidateRecord = {
-  type?: CandidateKnowledgeType;
-  originalType?: CandidateKnowledgeType;
-  polarity?: CandidateKnowledgePolarity;
+  type: CandidateKnowledgeType;
+  polarity: Exclude<CandidateKnowledgePolarity, "neutral">;
   title: string;
   content: string;
-  sourceSummary?: string;
 };
 
 export type CandidateOrigin = {
   candidateType?: CandidateKnowledgeType;
   polarity?: CandidateKnowledgePolarity;
-  sourceSummary?: string;
   readRanges: Array<{
     from: number;
     toExclusive: number;
   }>;
 };
-
-const MAX_SOURCE_SUMMARY_CHARS = 1000;
-
-function normalizeSourceSummary(value: string | undefined): string | undefined {
-  const summary = value?.replace(/\s+/g, " ").trim();
-  return summary ? summary.slice(0, MAX_SOURCE_SUMMARY_CHARS) : undefined;
-}
 
 export async function getFindCandidateResultById(
   id: string,
@@ -110,7 +100,6 @@ export async function insertFindCandidateResult(params: {
   candidate: CandidateRecord;
   origin: CandidateOrigin;
 }): Promise<FindCandidateBaseRow> {
-  const sourceSummary = normalizeSourceSummary(params.candidate.sourceSummary);
   const [row] = await db
     .insert(findCandidateResults)
     .values({
@@ -120,12 +109,8 @@ export async function insertFindCandidateResult(params: {
       content: params.candidate.content,
       origin: {
         ...params.origin,
-        ...(params.candidate.type ? { candidateType: params.candidate.type } : {}),
-        ...(params.candidate.originalType
-          ? { originalCandidateType: params.candidate.originalType }
-          : {}),
-        ...(params.candidate.polarity ? { polarity: params.candidate.polarity } : {}),
-        ...(sourceSummary ? { sourceSummary } : {}),
+        candidateType: params.candidate.type,
+        polarity: params.candidate.polarity,
       },
       status: "selected",
       updatedAt: new Date(),

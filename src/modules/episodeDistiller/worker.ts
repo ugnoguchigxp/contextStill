@@ -1,5 +1,8 @@
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
-import type { EpisodeCard } from "../../shared/schemas/episode-card.schema.js";
+import type {
+  EpisodeCard,
+  EpisodeCardCreateInput,
+} from "../../shared/schemas/episode-card.schema.js";
 import {
   createEpisodeCard,
   getEpisodeCardBySource,
@@ -45,10 +48,28 @@ type EpisodeDistillerProcessResult = {
   generated: number;
   deduped: number;
   skipped: number;
+  valueSkipped: number;
   duplicateGenerationKindSkipped: number;
   failedSegments: number;
   episodeIds: string[];
 };
+
+type EpisodeValueReview = {
+  publish: boolean;
+  score: number;
+  reasons: string[];
+};
+
+type PendingEpisode = {
+  input: EpisodeCardCreateInput;
+};
+
+const MIN_EPISODE_VALUE_SCORE = 60;
+const MIN_EPISODE_IMPORTANCE = 55;
+const MIN_EPISODE_CONFIDENCE = 55;
+const MIN_EPISODE_REUSABLE_SIGNAL = 50;
+const MIN_EPISODE_EVIDENCE_QUALITY = 50;
+const MIN_EPISODE_COMPRESSION_QUALITY = 45;
 
 type EpisodeDistillerTestHooks = {
   distillSegment?: (params: {
@@ -77,8 +98,52 @@ function metadataString(metadata: Record<string, unknown>, keys: string[]): stri
   return undefined;
 }
 
+function recordFromUnknown(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : {};
+}
+
 function estimateTokenCount(text: string): number {
   return Math.ceil(text.length / 4);
+}
+
+function reviewEpisodeValue(canonical: EpisodeDistillerCanonical): EpisodeValueReview {
+  const scores = canonical.scores;
+  const reusableSignal = Math.max(
+    scores.reusability,
+    scores.decision_density,
+    scores.failure_value,
+  );
+  const score = Math.round(
+    scores.importance * 0.22 +
+      scores.confidence * 0.18 +
+      scores.reusability * 0.14 +
+      scores.decision_density * 0.1 +
+      scores.failure_value * 0.1 +
+      scores.causal_clarity * 0.1 +
+      scores.project_specificity * 0.06 +
+      scores.evidence_quality * 0.05 +
+      scores.compression_quality * 0.05,
+  );
+  const reasons: string[] = [];
+  if (score < MIN_EPISODE_VALUE_SCORE) reasons.push("value_score_below_60");
+  if (scores.importance < MIN_EPISODE_IMPORTANCE) reasons.push("importance_below_55");
+  if (scores.confidence < MIN_EPISODE_CONFIDENCE) reasons.push("confidence_below_55");
+  if (reusableSignal < MIN_EPISODE_REUSABLE_SIGNAL) {
+    reasons.push("reusable_signal_below_50");
+  }
+  if (scores.evidence_quality < MIN_EPISODE_EVIDENCE_QUALITY) {
+    reasons.push("evidence_quality_below_50");
+  }
+  if (scores.compression_quality < MIN_EPISODE_COMPRESSION_QUALITY) {
+    reasons.push("compression_quality_below_45");
+  }
+  return {
+    publish: reasons.length === 0,
+    score,
+    reasons,
+  };
 }
 
 function splitLargeSegment(segment: Segment, maxBytes: number): Segment[] {
@@ -330,13 +395,21 @@ export async function processEpisodeDistillerJob(
   let generated = 0;
   let deduped = 0;
   let skipped = 0;
+  let valueSkipped = 0;
   let duplicateGenerationKindSkipped = 0;
   let failedSegments = 0;
   const episodeIds: string[] = [];
+  const pendingEpisodes: PendingEpisode[] = [];
   const segmentErrors: Array<{ segment: number; error: string }> = [];
   const skippedDuplicateGenerationKinds: Array<{
     segment: number;
     generationKind: EpisodeGenerationKind;
+  }> = [];
+  const skippedValueReviews: Array<{
+    segment: number;
+    generationKind: EpisodeGenerationKind;
+    title: string;
+    valueReview: EpisodeValueReview;
   }> = [];
 
   for (const [segmentIndex, segment] of segments.entries()) {
@@ -373,6 +446,18 @@ export async function processEpisodeDistillerJob(
         continue;
       }
       seenGenerationKinds.add(generationKind);
+      const valueReview = reviewEpisodeValue(canonical);
+      if (!valueReview.publish) {
+        skipped += 1;
+        valueSkipped += 1;
+        skippedValueReviews.push({
+          segment: segmentIndex,
+          generationKind,
+          title: canonical.title,
+          valueReview,
+        });
+        continue;
+      }
       const sourceFragmentKey = episodeSourceFragmentKey({
         parentSourceKind: "vibe_memory",
         parentSourceKey: job.sourceKey,
@@ -398,10 +483,15 @@ export async function processEpisodeDistillerJob(
         project,
         distillationVersion: EPISODE_DISTILLATION_VERSION,
       });
-      const saved = await createEpisodeIdempotently(input);
-      episodeIds.push(saved.episode.id);
-      if (saved.deduped) deduped += 1;
-      else generated += 1;
+      const inputMetadata = recordFromUnknown(input.metadata);
+      input.metadata = {
+        ...inputMetadata,
+        episodeDistillation: {
+          ...recordFromUnknown(inputMetadata.episodeDistillation),
+          valueReview,
+        },
+      };
+      pendingEpisodes.push({ input });
     }
   }
 
@@ -422,22 +512,37 @@ export async function processEpisodeDistillerJob(
     );
   }
 
-  const outcome = generated > 0 || deduped > 0 ? "episodes_distilled" : "no_episode";
+  for (const pending of pendingEpisodes) {
+    const saved = await createEpisodeIdempotently(pending.input);
+    episodeIds.push(saved.episode.id);
+    if (saved.deduped) deduped += 1;
+    else generated += 1;
+  }
+
+  const outcome =
+    generated > 0 || deduped > 0
+      ? "episodes_distilled"
+      : valueSkipped > 0
+        ? "low_value_skipped"
+        : "no_episode";
   await markEpisodeDistillerCompleted({
     jobId: job.id,
-    status: outcome === "no_episode" ? "skipped" : "completed",
+    status: outcome === "episodes_distilled" ? "completed" : "skipped",
     outcome,
     metadata: {
       episodeDistiller: {
         generated,
         deduped,
         skipped,
+        valueSkipped,
         duplicateGenerationKindSkipped,
         failedSegments,
         segmentCount: segments.length,
         episodeIds,
+        acceptedCandidateCount: pendingEpisodes.length,
         segmentErrors,
         skippedDuplicateGenerationKinds,
+        skippedValueReviews,
         completedAt: new Date().toISOString(),
       },
     },
@@ -451,15 +556,18 @@ export async function processEpisodeDistillerJob(
       generated,
       deduped,
       skipped,
+      valueSkipped,
       duplicateGenerationKindSkipped,
       failedSegments,
       episodeIds,
+      acceptedCandidateCount: pendingEpisodes.length,
     },
   });
   return {
     generated,
     deduped,
     skipped,
+    valueSkipped,
     duplicateGenerationKindSkipped,
     failedSegments,
     episodeIds,

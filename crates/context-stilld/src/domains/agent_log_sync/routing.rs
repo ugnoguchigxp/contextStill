@@ -1,5 +1,6 @@
 use crate::domains::cli::routing::AgentLogSyncAction;
 use crate::shared::{config::EnvProvider, errors::CliError, process::ProcessSupervisor};
+use std::time::Duration;
 
 pub fn handle_command<E: EnvProvider, S: ProcessSupervisor>(
     action: AgentLogSyncAction,
@@ -8,7 +9,17 @@ pub fn handle_command<E: EnvProvider, S: ProcessSupervisor>(
     supervisor: &S,
 ) -> Result<String, CliError> {
     let report = match action {
-        AgentLogSyncAction::Run => super::service::run_report(env, supervisor)?,
+        AgentLogSyncAction::Run { wait, timeout_ms } => {
+            if wait {
+                super::service::run_and_wait_report(
+                    env,
+                    supervisor,
+                    Duration::from_millis(timeout_ms),
+                )?
+            } else {
+                super::service::run_report(env, supervisor)?
+            }
+        }
         AgentLogSyncAction::Stop => super::service::stop_report(env, supervisor)?,
         AgentLogSyncAction::Status => super::service::status_report(env, supervisor)?,
     };

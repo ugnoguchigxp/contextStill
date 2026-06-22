@@ -100,7 +100,12 @@ describe("findCandidate repository", () => {
       const result = await insertFindCandidateResult({
         targetStateId: "t-1",
         candidateIndex: 1,
-        candidate: { title: "New Candidate", content: "Body Content", type: "rule" },
+        candidate: {
+          title: "New Candidate",
+          content: "Body Content",
+          type: "rule",
+          polarity: "positive",
+        },
         origin: { readRanges: [] },
       });
 
@@ -115,7 +120,12 @@ describe("findCandidate repository", () => {
         insertFindCandidateResult({
           targetStateId: "t-1",
           candidateIndex: 1,
-          candidate: { title: "New Candidate", content: "Body Content", type: "rule" },
+          candidate: {
+            title: "New Candidate",
+            content: "Body Content",
+            type: "rule",
+            polarity: "positive",
+          },
           origin: { readRanges: [] },
         }),
       ).rejects.toThrow("failed to save find_candidate_results row");

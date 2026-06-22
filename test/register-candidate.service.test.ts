@@ -157,6 +157,7 @@ Do not run on production database.
   {
     "title": "Parsed JSON Title",
     "type": "rule",
+    "polarity": "positive",
     "content": "This is content from parsed JSON."
   }
 ]
@@ -181,11 +182,13 @@ Do not run on production database.
   {
     "title": "First Candidate Title",
     "type": "rule",
+    "polarity": "positive",
     "content": "This is the first candidate content."
   },
   {
     "title": "Second Candidate Title",
     "type": "rule",
+    "polarity": "positive",
     "content": "This is the second candidate content."
   }
 ]

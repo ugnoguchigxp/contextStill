@@ -1,6 +1,6 @@
 import { z } from "zod";
 
-export const episodeCardStatusSchema = z.enum(["draft", "active", "deprecated"]);
+export const episodeCardStatusSchema = z.enum(["active", "deprecated"]);
 export const episodeOutcomeKindSchema = z.enum(["success", "failure", "mixed", "unknown"]);
 export const episodeSourceKindSchema = z.enum([
   "vibe_memory",
@@ -90,7 +90,6 @@ export const episodeCardSearchInputSchema = z.object({
   repoKey: z.string().trim().min(1).optional(),
   outcomeKinds: z.array(episodeOutcomeKindSchema).optional(),
   limit: z.number().int().positive().max(100).default(10),
-  includeDraft: z.boolean().default(false),
 });
 
 export const episodeRetrievalFeedbackInputSchema = z.object({

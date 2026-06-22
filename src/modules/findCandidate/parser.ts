@@ -1,11 +1,10 @@
 import { parseLlmJsonLike } from "../../lib/llm-output-parser.js";
+import { hasSkillLikeProcedureBody } from "../distillation/procedure-quality.js";
 import type {
   CandidateKnowledgePolarity,
   CandidateKnowledgeType,
   CandidateRecord,
 } from "./repository.js";
-
-const MAX_SOURCE_SUMMARY_CHARS = 1000;
 
 function toCandidateType(value: unknown): CandidateKnowledgeType | undefined {
   if (typeof value !== "string") return undefined;
@@ -14,19 +13,15 @@ function toCandidateType(value: unknown): CandidateKnowledgeType | undefined {
   return undefined;
 }
 
-function toCandidatePolarity(value: unknown): CandidateKnowledgePolarity | undefined {
+function toCandidatePolarity(
+  value: unknown,
+): Exclude<CandidateKnowledgePolarity, "neutral"> | undefined {
   if (typeof value !== "string") return undefined;
   const normalized = value.trim().toLowerCase();
-  if (normalized === "positive" || normalized === "negative" || normalized === "neutral") {
+  if (normalized === "positive" || normalized === "negative") {
     return normalized;
   }
   return undefined;
-}
-
-function normalizeSourceSummary(value: unknown): string | undefined {
-  if (typeof value !== "string") return undefined;
-  const summary = value.replace(/\s+/g, " ").trim();
-  return summary ? summary.slice(0, MAX_SOURCE_SUMMARY_CHARS) : undefined;
 }
 
 function toCandidateRecord(value: unknown): CandidateRecord | null {
@@ -40,13 +35,10 @@ function toCandidateRecord(value: unknown): CandidateRecord | null {
     content?: unknown;
     body?: unknown;
     description?: unknown;
-    sourceSummary?: unknown;
-    source_summary?: unknown;
-    sourceEvidenceSummary?: unknown;
-    evidenceSummary?: unknown;
   };
   const type = toCandidateType(record.type ?? record.candidateType);
   const polarity = toCandidatePolarity(record.polarity);
+  if (!type || !polarity) return null;
   const title =
     typeof record.title === "string"
       ? record.title.trim()
@@ -64,18 +56,13 @@ function toCandidateRecord(value: unknown): CandidateRecord | null {
   const normalizedTitle = title || content.slice(0, 80).replace(/\s+/g, " ").trim();
   const normalizedContent = content || title;
   if (!normalizedTitle || !normalizedContent) return null;
-  const sourceSummary = normalizeSourceSummary(
-    record.sourceSummary ??
-      record.source_summary ??
-      record.sourceEvidenceSummary ??
-      record.evidenceSummary,
-  );
+  if (polarity === "negative" && type === "procedure") return null;
+  if (type === "procedure" && !hasSkillLikeProcedureBody(normalizedContent)) return null;
   return {
-    ...(type ? { type } : {}),
-    ...(polarity ? { polarity } : {}),
+    type,
+    polarity,
     title: normalizedTitle,
     content: normalizedContent,
-    ...(sourceSummary ? { sourceSummary } : {}),
   };
 }
 
@@ -109,7 +96,7 @@ function parsePlainTextCandidates(llmOutput: string): CandidateRecord[] {
       const fields: Record<string, string[]> = {};
       let currentField: string | null = null;
       for (const line of block.split(/\r?\n/)) {
-        const match = line.match(/^(TYPE|POLARITY|TITLE|CONTENT|SOURCE_SUMMARY):\s*(.*)$/i);
+        const match = line.match(/^(TYPE|POLARITY|TITLE|CONTENT):\s*(.*)$/i);
         if (match) {
           currentField = match[1].toUpperCase();
           fields[currentField] = [match[2] ?? ""];
@@ -121,16 +108,16 @@ function parsePlainTextCandidates(llmOutput: string): CandidateRecord[] {
       }
       const title = fields.TITLE?.join("\n").trim() ?? "";
       const content = fields.CONTENT?.join("\n").trim() ?? "";
-      const sourceSummary = normalizeSourceSummary(fields.SOURCE_SUMMARY?.join("\n"));
       const type = toCandidateType(fields.TYPE?.join("\n"));
       const polarity = toCandidatePolarity(fields.POLARITY?.join("\n"));
-      if (!title || !content) return null;
+      if (!type || !polarity || !title || !content) return null;
+      if (polarity === "negative" && type === "procedure") return null;
+      if (type === "procedure" && !hasSkillLikeProcedureBody(content)) return null;
       return {
-        ...(type ? { type } : {}),
-        ...(polarity ? { polarity } : {}),
+        type,
+        polarity,
         title,
         content,
-        ...(sourceSummary ? { sourceSummary } : {}),
       };
     })
     .filter((candidate): candidate is CandidateRecord => Boolean(candidate));

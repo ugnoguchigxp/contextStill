@@ -6,8 +6,8 @@ import {
 
 const searchEpisodesArgsSchema = z.object({
   query: z.string().trim().optional(),
-  status: z.enum(["draft", "active", "deprecated"]).optional(),
-  statuses: z.array(z.enum(["draft", "active", "deprecated"])).optional(),
+  status: z.enum(["active", "deprecated"]).optional(),
+  statuses: z.array(z.enum(["active", "deprecated"])).optional(),
   domains: z.array(z.string()).optional(),
   technologies: z.array(z.string()).optional(),
   changeTypes: z.array(z.string()).optional(),
@@ -16,7 +16,6 @@ const searchEpisodesArgsSchema = z.object({
   repoKey: z.string().trim().optional(),
   outcomeKinds: z.array(z.enum(["success", "failure", "mixed", "unknown"])).optional(),
   limit: z.number().int().positive().max(100).optional(),
-  includeDraft: z.boolean().optional(),
 });
 
 const fetchEpisodeArgsSchema = z.object({
@@ -32,12 +31,12 @@ export const searchEpisodesTool = {
       query: { type: "string", description: "Search text for title, situation, lesson, refs." },
       status: {
         type: "string",
-        enum: ["draft", "active", "deprecated"],
+        enum: ["active", "deprecated"],
         description: "Single status filter. Defaults to active.",
       },
       statuses: {
         type: "array",
-        items: { type: "string", enum: ["draft", "active", "deprecated"] },
+        items: { type: "string", enum: ["active", "deprecated"] },
         description: "Multiple status filters.",
       },
       domains: { type: "array", items: { type: "string" } },
@@ -51,7 +50,6 @@ export const searchEpisodesTool = {
         items: { type: "string", enum: ["success", "failure", "mixed", "unknown"] },
       },
       limit: { type: "number", default: 10, description: "Maximum results, up to 100." },
-      includeDraft: { type: "boolean", default: false },
     },
   },
   async handler(args: unknown) {

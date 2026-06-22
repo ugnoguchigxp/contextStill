@@ -7,7 +7,7 @@ import type { CoverEvidenceCandidateInput } from "./types.js";
 export type CoverEvidenceSourceRead = {
   primaryContent: string | null;
   assessmentContent: string;
-  assessmentSource: "primary" | "source_summary";
+  assessmentSource: "primary";
   content: string;
   valueAssessmentContent: string;
   references: CoverEvidenceReference[];
@@ -61,58 +61,16 @@ function readRangesFromOrigin(origin: unknown): Array<{ from: number; toExclusiv
   return [{ from: 0, toExclusive: groupedConfig.readFile.defaultTokens }];
 }
 
-const MAX_ORIGIN_SOURCE_SUMMARY_CHARS = 1000;
-
-function sourceSummaryFromOrigin(origin: unknown): string | undefined {
-  const record = asRecord(origin);
-  const value =
-    record.sourceSummary ??
-    record.source_summary ??
-    record.sourceEvidenceSummary ??
-    record.evidenceSummary;
-  if (typeof value !== "string") return undefined;
-  const summary = value.replace(/\s+/g, " ").trim();
-  return summary ? summary.slice(0, MAX_ORIGIN_SOURCE_SUMMARY_CHARS) : undefined;
-}
-
-function sourceSummaryFallback(params: {
-  row: CoverEvidenceCandidateInput;
-  sourceSummary: string;
-  readRanges?: Array<{ from: number; toExclusive: number }>;
-}): CoverEvidenceSourceRead {
-  return {
-    primaryContent: null,
-    assessmentContent: params.sourceSummary,
-    assessmentSource: "source_summary",
-    content: "",
-    valueAssessmentContent: params.sourceSummary,
-    references: [
-      {
-        kind: "source",
-        uri: params.row.sourceUri,
-        locator: "sourceSummary",
-        note: "candidate source summary fallback",
-        evidenceRole: "source_summary",
-      },
-    ],
-    readRanges:
-      params.readRanges && params.readRanges.length > 0
-        ? params.readRanges
-        : [{ from: 0, toExclusive: params.sourceSummary.length }],
-  };
-}
-
 export async function readSourceEvidenceForCandidate(
   row: CoverEvidenceCandidateInput,
 ): Promise<CoverEvidenceSourceRead> {
-  const valueAssessmentContent = sourceSummaryFromOrigin(row.origin);
   if (row.targetKind === "knowledge_candidate") {
     return {
       primaryContent: row.content,
-      assessmentContent: valueAssessmentContent ?? row.content,
-      assessmentSource: valueAssessmentContent ? "source_summary" : "primary",
+      assessmentContent: row.content,
+      assessmentSource: "primary",
       content: row.content,
-      valueAssessmentContent: valueAssessmentContent ?? row.content,
+      valueAssessmentContent: row.content,
       references: [
         {
           kind: "source",
@@ -131,58 +89,40 @@ export async function readSourceEvidenceForCandidate(
   const references: CoverEvidenceReference[] = [];
   const readRanges: Array<{ from: number; toExclusive: number }> = [];
 
-  try {
-    for (const range of ranges) {
-      const readTokens = Math.max(1, range.toExclusive - range.from);
-      const read =
-        row.targetKind === "wiki_file" || row.targetKind === "web_ingest"
-          ? await readFileDomain({
-              path: row.targetKind === "web_ingest" ? row.sourceUri : row.targetKey,
-              fromToken: range.from,
-              readTokens,
-              minify: true,
-            })
-          : await readVibeMemoryByTokenWindow({
-              vibeMemoryId: row.targetKey,
-              fromToken: range.from,
-              readTokens,
-              mode: "compressed",
-            });
-      contentParts.push(read.content);
-      readRanges.push({ from: read.from, toExclusive: read.toExclusive });
-      references.push({
-        kind: "source",
-        uri: row.sourceUri,
-        locator: `tokens:${read.from}-${read.toExclusive}`,
-        note: "candidate origin read range",
-        evidenceRole: "supports_candidate",
-      });
-    }
-  } catch (error) {
-    if (valueAssessmentContent) {
-      return sourceSummaryFallback({
-        row,
-        sourceSummary: valueAssessmentContent,
-        readRanges: ranges,
-      });
-    }
-    throw error;
+  for (const range of ranges) {
+    const readTokens = Math.max(1, range.toExclusive - range.from);
+    const read =
+      row.targetKind === "wiki_file" || row.targetKind === "web_ingest"
+        ? await readFileDomain({
+            path: row.targetKind === "web_ingest" ? row.sourceUri : row.targetKey,
+            fromToken: range.from,
+            readTokens,
+            minify: true,
+          })
+        : await readVibeMemoryByTokenWindow({
+            vibeMemoryId: row.targetKey,
+            fromToken: range.from,
+            readTokens,
+            mode: "compressed",
+          });
+    contentParts.push(read.content);
+    readRanges.push({ from: read.from, toExclusive: read.toExclusive });
+    references.push({
+      kind: "source",
+      uri: row.sourceUri,
+      locator: `tokens:${read.from}-${read.toExclusive}`,
+      note: "candidate origin read range",
+      evidenceRole: "supports_candidate",
+    });
   }
 
   const content = contentParts.join("\n\n---\n\n").trim();
-  if (!content && valueAssessmentContent) {
-    return sourceSummaryFallback({
-      row,
-      sourceSummary: valueAssessmentContent,
-      readRanges,
-    });
-  }
   return {
     primaryContent: content,
-    assessmentContent: valueAssessmentContent ?? content,
-    assessmentSource: valueAssessmentContent ? "source_summary" : "primary",
+    assessmentContent: content,
+    assessmentSource: "primary",
     content,
-    valueAssessmentContent: valueAssessmentContent ?? content,
+    valueAssessmentContent: content,
     references,
     readRanges,
   };

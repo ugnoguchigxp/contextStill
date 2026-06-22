@@ -36,6 +36,21 @@ const mocks = vi.hoisted(() => ({
   recordAuditLogSafe: vi.fn(),
 }));
 
+const validProcedureBody = [
+  "Use when:",
+  "- Finalizing implementation changes.",
+  "",
+  "Workflow:",
+  "1. Run smoke tests.",
+  "2. Inspect returned evidence.",
+  "",
+  "Verification:",
+  "- The smoke command passes.",
+  "",
+  "Avoid:",
+  "- Finalizing without verification.",
+].join("\n");
+
 vi.mock("../src/modules/distillationTarget/repository.js", () => ({
   getDistillationTargetStateById: mocks.getDistillationTargetStateById,
 }));
@@ -120,10 +135,9 @@ describe("runFindCandidate", () => {
           candidates: [
             {
               type: "procedure",
+              polarity: "positive",
               title: "Run smoke tests before finalizing changes",
-              content: "Run smoke tests before finalizing implementation changes.",
-              sourceSummary:
-                "The source says to run smoke tests before finalizing implementation changes.",
+              content: validProcedureBody,
             },
           ],
         }),
@@ -190,14 +204,12 @@ describe("runFindCandidate", () => {
         candidate: expect.objectContaining({
           type: "procedure",
           polarity: "positive",
-          sourceSummary:
-            "The source says to run smoke tests before finalizing implementation changes.",
         }),
       }),
     );
   });
 
-  test("normalizes negative procedure candidates to rules before storage", async () => {
+  test("rejects negative procedure candidates before storage", async () => {
     mocks.runDistillationCompletion.mockImplementation(async (_request, options) => {
       await options.toolExecutor({
         id: "tool-1",
@@ -213,8 +225,7 @@ describe("runFindCandidate", () => {
               type: "procedure",
               polarity: "negative",
               title: "Do not skip queue event checks",
-              content: "Skipping queue event checks can hide stale worker state.",
-              sourceSummary: "The source describes a stale worker diagnosis failure.",
+              content: validProcedureBody,
             },
           ],
         }),
@@ -223,21 +234,14 @@ describe("runFindCandidate", () => {
       };
     });
 
-    await runFindCandidate({
+    const result = await runFindCandidate({
       targetStateId: "target-1",
       callerMode: "storage",
       provider: "local-llm",
     });
 
-    expect(mocks.insertFindCandidateResult).toHaveBeenCalledWith(
-      expect.objectContaining({
-        candidate: expect.objectContaining({
-          type: "rule",
-          originalType: "procedure",
-          polarity: "negative",
-        }),
-      }),
-    );
+    expect(result.candidates).toEqual([]);
+    expect(mocks.insertFindCandidateResult).not.toHaveBeenCalled();
   });
 
   test("uses configured findCandidate timeout and tool-call limit", async () => {
@@ -255,6 +259,45 @@ describe("runFindCandidate", () => {
       expect.objectContaining({
         maxToolRounds: 12,
         timeoutMs: 123_000,
+      }),
+    );
+  });
+
+  test("reports exhausted reader evidence instead of leaking the runtime tool-loop error", async () => {
+    groupedConfig.distillationTools.findCandidateMaxToolCalls = 8;
+    mocks.runDistillationCompletion.mockImplementation(async (_request, options) => {
+      for (let index = 0; index < 8; index += 1) {
+        await options.toolExecutor(
+          {
+            id: `tool-${index + 1}`,
+            function: {
+              name: "read_file",
+              arguments: JSON.stringify({ fromToken: index * 20, readTokens: 20 }),
+            },
+          },
+          {},
+        );
+      }
+      throw new Error("distillation tool loop exceeded max rounds (8)");
+    });
+
+    await expect(
+      runFindCandidate({
+        targetStateId: "target-1",
+        callerMode: "storage",
+        provider: "local-llm",
+      }),
+    ).rejects.toThrow(
+      "findCandidate evidence_not_found: exhausted 8/8 reader tool calls without producing a final candidate response",
+    );
+
+    expect(mocks.recordAuditLogSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "FIND_CANDIDATE_FAILED",
+        payload: expect.objectContaining({
+          error:
+            "findCandidate evidence_not_found: exhausted 8/8 reader tool calls without producing a final candidate response",
+        }),
       }),
     );
   });
@@ -348,10 +391,9 @@ describe("runFindCandidate", () => {
         candidates: [
           {
             type: "procedure",
+            polarity: "positive",
             title: "Run smoke tests before finalizing changes",
-            content: "Run smoke tests before finalizing implementation changes.",
-            sourceSummary:
-              "The source says to run smoke tests before finalizing implementation changes.",
+            content: validProcedureBody,
           },
         ],
       }),
@@ -441,7 +483,8 @@ describe("runFindCandidate", () => {
       content: JSON.stringify({
         candidates: [
           {
-            type: "procedure",
+            type: "rule",
+            polarity: "positive",
             title: "Check live distillation state before changing code",
             content:
               "When memoryRouter distillation appears stalled, inspect launchd, logs, queue, and DB state before changing code.",
@@ -716,11 +759,13 @@ describe("runFindCandidate", () => {
 describe("parseStorageCandidatesFromLlmOutput", () => {
   test("repairs a truncated candidates container from local LLM output", () => {
     const candidates = parseStorageCandidatesFromLlmOutput(
-      '{"candidates":[{"title":"Keep verification concrete","content":"Run the smoke command and preserve returned evidence."}',
+      '{"candidates":[{"type":"rule","polarity":"positive","title":"Keep verification concrete","content":"Run the smoke command and preserve returned evidence."}',
     );
 
     expect(candidates).toEqual([
       {
+        type: "rule",
+        polarity: "positive",
         title: "Keep verification concrete",
         content: "Run the smoke command and preserve returned evidence.",
       },
@@ -735,9 +780,7 @@ describe("parseStorageCandidatesFromLlmOutput", () => {
             type: "procedure",
             polarity: "positive",
             title: "Run focused verify before finalizing",
-            content: "Run the focused test, inspect the returned evidence, then finalize.",
-            sourceSummary:
-              "The source describes running a focused test, inspecting evidence, and finalizing.",
+            content: validProcedureBody,
           },
         ],
       }),
@@ -748,11 +791,38 @@ describe("parseStorageCandidatesFromLlmOutput", () => {
         type: "procedure",
         polarity: "positive",
         title: "Run focused verify before finalizing",
-        content: "Run the focused test, inspect the returned evidence, then finalize.",
-        sourceSummary:
-          "The source describes running a focused test, inspecting evidence, and finalizing.",
+        content: validProcedureBody,
       },
     ]);
+  });
+
+  test("drops procedure candidates with empty required skill-like sections", () => {
+    const candidates = parseStorageCandidatesFromLlmOutput(
+      JSON.stringify({
+        candidates: [
+          {
+            type: "procedure",
+            polarity: "positive",
+            title: "Run focused verify before finalizing",
+            content: [
+              "Use when:",
+              "- Finalizing implementation changes.",
+              "",
+              "Workflow:",
+              "1. Run smoke tests.",
+              "2. Inspect returned evidence.",
+              "",
+              "Verification:",
+              "",
+              "Avoid:",
+              "",
+            ].join("\n"),
+          },
+        ],
+      }),
+    );
+
+    expect(candidates).toEqual([]);
   });
 
   test("keeps negative polarity hints when the LLM provides them", () => {
@@ -765,8 +835,6 @@ describe("parseStorageCandidatesFromLlmOutput", () => {
             title: "Do not trust stale queue status alone",
             content:
               "Queue diagnosis must not treat an old status row as current truth without checking recent events.",
-            sourceSummary:
-              "The source describes a queue diagnosis mistake caused by relying on stale status.",
           },
         ],
       }),
@@ -779,30 +847,36 @@ describe("parseStorageCandidatesFromLlmOutput", () => {
         title: "Do not trust stale queue status alone",
         content:
           "Queue diagnosis must not treat an old status row as current truth without checking recent events.",
-        sourceSummary:
-          "The source describes a queue diagnosis mistake caused by relying on stale status.",
       },
     ]);
   });
 
-  test("caps candidate sourceSummary from JSON output", () => {
+  test("ignores sourceSummary from JSON output", () => {
     const candidates = parseStorageCandidatesFromLlmOutput(
       JSON.stringify({
         type: "rule",
+        polarity: "positive",
         title: "Keep summaries short",
         content: "findCandidate should store concise source summaries.",
         sourceSummary: `start ${"x".repeat(1500)}`,
       }),
     );
 
-    expect(candidates[0]?.sourceSummary).toHaveLength(1000);
-    expect(candidates[0]?.sourceSummary?.startsWith("start ")).toBe(true);
+    expect(candidates).toEqual([
+      {
+        type: "rule",
+        polarity: "positive",
+        title: "Keep summaries short",
+        content: "findCandidate should store concise source summaries.",
+      },
+    ]);
   });
 
   test("accepts a flat single-candidate JSON object", () => {
     const candidates = parseStorageCandidatesFromLlmOutput(
       JSON.stringify({
         type: "rule",
+        polarity: "positive",
         title: "Prefer flat output",
         body: "Local LLM output should stay flat and omit non-essential fields.",
       }),
@@ -811,6 +885,7 @@ describe("parseStorageCandidatesFromLlmOutput", () => {
     expect(candidates).toEqual([
       {
         type: "rule",
+        polarity: "positive",
         title: "Prefer flat output",
         content: "Local LLM output should stay flat and omit non-essential fields.",
       },
@@ -821,25 +896,76 @@ describe("parseStorageCandidatesFromLlmOutput", () => {
     const candidates = parseStorageCandidatesFromLlmOutput(
       [
         "TYPE: procedure",
-        "POLARITY: negative",
+        "POLARITY: positive",
         "TITLE: Verify pipeline before finalize",
         "CONTENT:",
-        "1. Run typecheck.",
-        "2. Run focused tests.",
-        "3. Confirm evidence payload before finalize.",
-        "SOURCE_SUMMARY:",
-        "The source describes typecheck, focused tests, and evidence confirmation.",
+        validProcedureBody,
       ].join("\n"),
     );
     expect(candidates).toEqual([
       {
         type: "procedure",
-        polarity: "negative",
+        polarity: "positive",
         title: "Verify pipeline before finalize",
-        content:
-          "1. Run typecheck.\n2. Run focused tests.\n3. Confirm evidence payload before finalize.",
-        sourceSummary: "The source describes typecheck, focused tests, and evidence confirmation.",
+        content: validProcedureBody,
       },
     ]);
+  });
+
+  test("drops candidates without type or polarity", () => {
+    const candidates = parseStorageCandidatesFromLlmOutput(
+      JSON.stringify({
+        candidates: [
+          {
+            type: "rule",
+            title: "Missing polarity",
+            content: "This candidate has no polarity.",
+          },
+          {
+            polarity: "positive",
+            title: "Missing type",
+            content: "This candidate has no type.",
+          },
+        ],
+      }),
+    );
+
+    expect(candidates).toEqual([]);
+  });
+
+  test("drops neutral and negative procedure candidates", () => {
+    const candidates = parseStorageCandidatesFromLlmOutput(
+      JSON.stringify({
+        candidates: [
+          {
+            type: "rule",
+            polarity: "neutral",
+            title: "Neutral candidate",
+            content: "Neutral candidates are outside the findCandidate contract.",
+          },
+          {
+            type: "procedure",
+            polarity: "negative",
+            title: "Negative procedure",
+            content: validProcedureBody,
+          },
+        ],
+      }),
+    );
+
+    expect(candidates).toEqual([]);
+  });
+
+  test("drops procedure candidates without skill-like sections", () => {
+    const candidates = parseStorageCandidatesFromLlmOutput(
+      JSON.stringify({
+        type: "procedure",
+        polarity: "positive",
+        title: "Loose procedure",
+        content: "First run tests, then inspect output.",
+      }),
+    );
+
+    expect(candidates).toEqual([]);
   });
 });

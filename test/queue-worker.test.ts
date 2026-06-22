@@ -315,7 +315,7 @@ describe("runQueueWorkerOnce", () => {
     expect((update?.values.nextRunAt as Date).getTime()).toBeGreaterThanOrEqual(before + 29_000);
   });
 
-  test("passes found candidate source summary and metadata read ranges into covering evidence", async () => {
+  test("passes metadata read ranges into covering evidence without source summary", async () => {
     mocks.selectRows = [
       [
         {
@@ -383,7 +383,6 @@ describe("runQueueWorkerOnce", () => {
           targetKey: "memory-1",
           sourceUri: "vibe_memory:memory-1",
           origin: expect.objectContaining({
-            sourceSummary: "Summarized source evidence from finding.",
             readRanges: [{ from: 120, toExclusive: 240 }],
           }),
         }),
@@ -734,7 +733,6 @@ describe("runQueueWorkerOnce", () => {
           title: "Do not trust stale queue status alone",
           content:
             "Queue diagnosis must not treat an old status row as current truth without checking recent events.",
-          sourceSummary: "The source describes stale queue status causing a bad diagnosis.",
         },
       ],
       readRanges: [{ from: 0, toExclusive: 80 }],

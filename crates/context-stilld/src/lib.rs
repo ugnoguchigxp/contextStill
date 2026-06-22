@@ -129,6 +129,10 @@ mod tests {
         assert_eq!(json["mcpServer"], "stopped");
         assert_eq!(json["queueSupervisor"], "stopped");
         assert_eq!(json["agentLogSync"], "stopped");
+        assert_eq!(json["managedDefaultFlags"]["mcp"], false);
+        assert_eq!(json["managedDefaultFlags"]["queue"], false);
+        assert_eq!(json["managedDefaultFlags"]["agentLogSync"], false);
+        assert_eq!(json["managedDefaultFlags"]["adminApi"], false);
         assert!(json["version"].is_string());
 
         let paths = &json["paths"];
@@ -142,7 +146,7 @@ mod tests {
         );
 
         let obj = json.as_object().expect("JSON must be an object");
-        assert_eq!(obj.len(), 7);
+        assert_eq!(obj.len(), 8);
     }
 
     #[test]
@@ -200,6 +204,7 @@ mod tests {
                 .to_str()
                 .unwrap()
                 .to_string(),
+            ..ProcessState::default()
         };
         repository::write_state(&run_dir, "mcp-server", &mcp_state).unwrap();
 
@@ -213,6 +218,7 @@ mod tests {
                 .to_str()
                 .unwrap()
                 .to_string(),
+            ..ProcessState::default()
         };
         repository::write_state(&run_dir, "queue-supervisor", &queue_state).unwrap();
 
@@ -244,6 +250,7 @@ mod tests {
         let env = MapEnv::from_pairs(vec![
             ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
             ("CONTEXT_STILL_PROJECT_ROOT", app_dir.to_str().unwrap()),
+            ("CONTEXT_STILL_ADMIN_API_SKIP_READINESS", "1"),
         ]);
         let supervisor = MockSupervisor::new();
 
@@ -295,6 +302,7 @@ mod tests {
         let env = MapEnv::from_pairs(vec![
             ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
             ("CONTEXT_STILL_PROJECT_ROOT", app_dir.to_str().unwrap()),
+            ("CONTEXT_STILL_ADMIN_API_SKIP_READINESS", "1"),
         ]);
         let supervisor = MockSupervisor::new();
 

@@ -1,5 +1,8 @@
 import { beforeEach, describe, expect, test, vi } from "vitest";
-import { fetchQueueDashboardStats } from "../api/modules/queue/queue.repository.js";
+import {
+  fetchQueueDashboardStats,
+  normalizeQueueLastError,
+} from "../api/modules/queue/queue.repository.js";
 
 const mocks = vi.hoisted(() => ({
   execute: vi.fn(),
@@ -67,5 +70,21 @@ describe("queue repository stats", () => {
     expect("mergeActivationFinalize" in stats.queues).toBe(false);
     expect("mergeActivationFinalize" in stats.queueControls).toBe(false);
     expect(stats.totals.nonRegistered).toBe(2);
+  });
+});
+
+describe("queue repository error labels", () => {
+  test("normalizes legacy findingCandidate tool-loop failures to evidence exhaustion", () => {
+    expect(
+      normalizeQueueLastError("findingCandidate", "distillation tool loop exceeded max rounds (8)"),
+    ).toBe(
+      "findCandidate evidence_not_found: exhausted 8/8 reader tool calls without producing a final candidate response",
+    );
+  });
+
+  test("keeps non-finding queue errors unchanged", () => {
+    expect(
+      normalizeQueueLastError("coveringEvidence", "distillation tool loop exceeded max rounds (8)"),
+    ).toBe("distillation tool loop exceeded max rounds (8)");
   });
 });

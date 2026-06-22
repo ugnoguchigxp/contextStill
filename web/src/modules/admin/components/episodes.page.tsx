@@ -46,7 +46,6 @@ type EpisodeFormState = {
   outcomeKind: EpisodeOutcomeKind;
   importance: number;
   confidence: number;
-  status: EpisodeCardStatus;
   domainsCsv: string;
   technologiesCsv: string;
   changeTypesCsv: string;
@@ -56,7 +55,7 @@ type EpisodeFormState = {
   queryHint: string;
 };
 
-type EpisodeStatusFilter = "active_draft" | EpisodeCardStatus;
+type EpisodeStatusFilter = "active" | "deprecated";
 
 const sourceKinds: EpisodeSourceKind[] = [
   "manual",
@@ -84,7 +83,6 @@ const emptyForm = (): EpisodeFormState => ({
   outcomeKind: "unknown",
   importance: 50,
   confidence: 50,
-  status: "active",
   domainsCsv: "",
   technologiesCsv: "",
   changeTypesCsv: "",
@@ -153,7 +151,6 @@ function toCreateInput(state: EpisodeFormState): EpisodeCardCreateInput {
     outcomeKind: state.outcomeKind,
     importance: state.importance,
     confidence: state.confidence,
-    status: state.status,
     domains: csv(state.domainsCsv),
     technologies: csv(state.technologiesCsv),
     changeTypes: csv(state.changeTypesCsv),
@@ -205,7 +202,6 @@ function sourceRefTarget(ref: EpisodeRef): "_blank" | undefined {
 
 function statusVariant(value: EpisodeCardStatus) {
   if (value === "active") return "success";
-  if (value === "draft") return "warning";
   return "secondary";
 }
 
@@ -493,22 +489,6 @@ function CreateEpisodeCard({
       </div>
       <div className="grid gap-3 md:grid-cols-2">
         <div className="space-y-2">
-          <Label htmlFor="episode-card-status">Card state</Label>
-          <Select
-            id="episode-card-status"
-            value={form.status}
-            onChange={(event) => onFieldChange("status", event.target.value as EpisodeCardStatus)}
-          >
-            {(["active", "draft", "deprecated"] as EpisodeCardStatus[]).map((status) => (
-              <option key={status} value={status}>
-                {status}
-              </option>
-            ))}
-          </Select>
-        </div>
-      </div>
-      <div className="grid gap-3 md:grid-cols-2">
-        <div className="space-y-2">
           <Label htmlFor="episode-domains">Domains</Label>
           <Input
             id="episode-domains"
@@ -644,7 +624,7 @@ export function EpisodesPage() {
   const queryClient = useQueryClient();
   const tz = useTimezone();
   const [queryText, setQueryText] = useState("");
-  const [statusFilter, setStatusFilter] = useState<EpisodeStatusFilter>("active_draft");
+  const [statusFilter, setStatusFilter] = useState<EpisodeStatusFilter>("active");
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [isCreateOpen, setIsCreateOpen] = useState(false);
   const [form, setForm] = useState<EpisodeFormState>(() => emptyForm());
@@ -665,8 +645,7 @@ export function EpisodesPage() {
     queryFn: () =>
       fetchEpisodes({
         query: queryText || undefined,
-        status: statusFilter === "active_draft" ? undefined : statusFilter,
-        includeDraft: statusFilter === "active_draft",
+        status: statusFilter,
         limit: 100,
       }),
   });
@@ -898,9 +877,7 @@ export function EpisodesPage() {
                 resetToFirstPage();
               }}
             >
-              <option value="active_draft">active + draft</option>
               <option value="active">active</option>
-              <option value="draft">draft</option>
               <option value="deprecated">deprecated</option>
             </Select>
             <Button

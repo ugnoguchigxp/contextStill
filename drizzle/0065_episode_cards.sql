@@ -24,7 +24,7 @@ CREATE TABLE "episode_cards" (
   "metadata" jsonb DEFAULT '{}'::jsonb NOT NULL,
   "created_at" timestamp DEFAULT now() NOT NULL,
   "updated_at" timestamp DEFAULT now() NOT NULL,
-  CONSTRAINT "episode_cards_status_check" CHECK ("episode_cards"."status" IN ('draft', 'active', 'deprecated')),
+  CONSTRAINT "episode_cards_status_check" CHECK ("episode_cards"."status" IN ('active', 'deprecated')),
   CONSTRAINT "episode_cards_outcome_kind_check" CHECK ("episode_cards"."outcome_kind" IN ('success', 'failure', 'mixed', 'unknown')),
   CONSTRAINT "episode_cards_source_kind_check" CHECK ("episode_cards"."source_kind" IN ('vibe_memory', 'compile_run', 'decision_run', 'audit_log', 'manual')),
   CONSTRAINT "episode_cards_confidence_range_check" CHECK ("episode_cards"."confidence" >= 0 and "episode_cards"."confidence" <= 100),

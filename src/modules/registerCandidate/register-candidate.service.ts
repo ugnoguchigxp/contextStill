@@ -275,7 +275,6 @@ export async function registerCandidate(
       type: normalized.type,
       polarity: normalized.polarity,
       ...(hasApplicability ? { appliesTo: normalized.applicability } : {}),
-      sourceSummary: undefined,
       origin: compactOrigin(parsed, normalized),
       legacyTargetStateId: target.id,
       legacyFindCandidateResultId: candidate.id,

@@ -64,6 +64,22 @@ function workflowSection(body: string): string {
   return body.slice(workflowStart, verificationStart);
 }
 
+function sectionContent(body: string, heading: string, nextHeading?: string): string {
+  const start = sectionIndex(body, heading);
+  if (start < 0) return "";
+  const contentStart = body.indexOf(":", start) + 1;
+  if (contentStart <= 0) return "";
+  const nextStart = nextHeading ? sectionIndex(body, nextHeading) : -1;
+  const contentEnd = nextStart > contentStart ? nextStart : body.length;
+  return body.slice(contentStart, contentEnd);
+}
+
+function hasSectionContent(body: string, heading: string, nextHeading?: string): boolean {
+  return sectionContent(body, heading, nextHeading)
+    .split("\n")
+    .some((line) => line.replace(/^\s*(?:[-*]|\d+[.)])\s*/, "").trim().length > 0);
+}
+
 function countWorkflowSteps(body: string): number {
   return workflowSection(body)
     .split("\n")
@@ -80,7 +96,10 @@ export function hasSkillLikeProcedureBody(body: string): boolean {
     workflow > useWhen &&
     verification > workflow &&
     avoid > verification &&
-    countWorkflowSteps(body) >= 2
+    hasSectionContent(body, "Use when", "Workflow") &&
+    countWorkflowSteps(body) >= 2 &&
+    hasSectionContent(body, "Verification", "Avoid") &&
+    hasSectionContent(body, "Avoid")
   );
 }
 

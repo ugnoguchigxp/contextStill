@@ -49,21 +49,24 @@ Long-running, non-idempotent, or DB-writing tasks must not be owned only by Hono
 - Rust workspace と `context-stilld` binary。
 - `paths`, `status`, `bootstrap preflight/init`, `doctor summary`, `backup preflight`。
 - `mcp`, `queue`, `agent-log-sync`, `admin-api` の `start|stop|status` lifecycle wrapper。
-- pid/state/log path 管理。
+- pid/state/log path 管理と lifecycle exit metadata。
 - lifecycle JSON output。
+- Rust-managed MCP / queue / admin API / agent-log-sync focused smoke。
+- `agent-log-sync run --wait --json`。
+- admin API readiness polling。
+- backup preflight active writer guard and `--require-idle`。
+- boundary default flag observability in `status --json`。
 - `verify:rust-daemon`。
 - CI の Rust daemon gate。
 
 未達:
 
-- Rust-managed daemon MCP smoke。
-- Rust-managed queue smoke。
-- one-shot child process の終了監視と exit reason 記録。
-- Hono admin API の readiness / port conflict / stop independence の実プロセス検証。
-- stale pid cleanup / orphan recovery / child exit reconciliation。
-- boundary ごとの default switch flag と rollback 手順。
+- boundary ごとの package script default switch。
+- default switch 後の rollback 手順の公開 runbook。
+- Hono admin API の port conflict 専用 structured error test。
+- UI shutdown 時の task ownership / sidecar stop policy の完全実装。
+- thin runner / one-shot sidecar execution registry。
 - packaged desktop runtime boundary の実装反映。
-- UI shutdown 時の task ownership / sidecar stop policy。
 
 ## Replacement-Ready Definition
 
@@ -146,11 +149,13 @@ Required tests:
 - stale pid resolves to `stale` or `stopped` according to documented rule.
 - malformed state file returns non-zero structured error or degraded state, not panic.
 - stopped process does not remain `running` in JSON.
+- one-shot wait records `exited` / `failed`, exit code, signal, and timeout reason.
 
 ### Done
 
 - `context-stilld status --json` never reports a dead pid as running.
 - `context-stilld <boundary> status --json` includes enough metadata to debug child lifecycle.
+- `ProcessState` records command, args, started/updated timestamps, exit code/signal, and last error when known.
 
 ## Phase 2: Daemon-Owned MCP Endpoint
 
@@ -246,7 +251,7 @@ bun run rust:queue:smoke
 bun run verify:rust-daemon
 ```
 
-Add `rust:queue:smoke` to `package.json` only after the script is deterministic.
+`rust:queue:smoke` is deterministic and uses a temporary SQLite DB path whose filename includes `smoke`.
 
 ### Done
 
@@ -290,6 +295,7 @@ Commands:
 
 ```bash
 cargo test --workspace
+bun run rust:agent-log-sync:smoke
 bun run verify:rust-daemon
 ```
 
@@ -330,13 +336,8 @@ Hono admin API is a UI-time process, not a resident daemon boundary. It may be s
 
 ```bash
 bun run test:unit:api
-bun run verify:rust-daemon
-```
-
-Future focused gate:
-
-```bash
 bun run rust:admin-api:smoke
+bun run verify:rust-daemon
 ```
 
 ### Done
@@ -373,6 +374,7 @@ bun run verify:rust-daemon
 ### Done
 
 - Backup preflight can be used as a guard before TS backup.
+- `context-stilld backup preflight --require-idle --json` exits non-zero when managed writers are active.
 - No restore behavior is added.
 
 ## Phase 7: Thin Runner And One-Shot Sidecar Policy
@@ -457,7 +459,7 @@ CONTEXT_STILL_DAEMON_MANAGED_AGENT_LOG_SYNC=0|1
 CONTEXT_STILL_DAEMON_MANAGED_ADMIN_API=0|1
 ```
 
-Final names should be aligned with existing config conventions before implementation.
+These names are implemented as observable flags in `context-stilld status --json`. They do not change package script defaults yet.
 
 These flags apply only to runtime-host boundaries. They do not make every TypeScript CLI a Rust implementation target.
 
@@ -480,7 +482,7 @@ These flags apply only to runtime-host boundaries. They do not make every TypeSc
 For each boundary:
 
 ```bash
-# Rust path
+# Rust path, not the package default yet
 CONTEXT_STILL_DAEMON_MANAGED_<BOUNDARY>=1 bun run <boundary script>
 
 # Rollback path
@@ -492,9 +494,11 @@ Required result:
 - Both paths pass their smoke.
 - Current default remains TypeScript until the boundary-specific smoke is green in CI.
 
-### Done
+### Done Before Default Switch
 
-- A boundary can switch default to Rust and back without code changes.
+- Flag state is visible from `context-stilld status --json`.
+- Direct TS scripts remain available as rollback/fallback paths.
+- Boundary default script switching is still intentionally pending.
 - Product/data CLI scripts remain TypeScript unless a separate parity plan exists.
 
 ## Phase 9: Per-Boundary Default Switch
@@ -542,7 +546,7 @@ Plus boundary focused gate:
 - MCP: `context-stilld mcp smoke --json` and no direct stdio MCP process remains
 - Queue: `bun run verify:queue:smoke` and `bun run rust:queue:smoke`
 - Admin API: `bun run test:unit:api` and `bun run rust:admin-api:smoke`
-- Agent log sync: Rust run-and-wait unit/integration smoke
+- Agent log sync: `bun run rust:agent-log-sync:smoke`
 - Backup: `bun run verify:sqlite`
 - Sidecar runner: UI-close / detached-task / stderr-capture smoke
 
@@ -594,13 +598,13 @@ If two or more expected answers fail, do not include the change in the daemon re
 
 | ID | Task | Depends on | Gate | Status |
 |---|---|---|---|---|
-| RR-01 | Process state reconciliation | current lifecycle wrapper | `cargo test`, `verify:rust-daemon` | not started |
-| RR-02 | Daemon-owned MCP endpoint and session registry | RR-01 | `context-stilld mcp endpoint --json` | not started |
-| RR-03 | Daemon MCP smoke and stdio legacy warnings | RR-02 | `context-stilld mcp smoke --json` + config migration warning tests | blocked by RR-02 |
-| RR-04 | Rust-managed queue smoke | RR-01 | `rust:queue:smoke` | not started |
-| RR-05 | Agent log sync run-and-wait | RR-01 | unit tests + `verify:rust-daemon` | not started |
-| RR-06 | Admin API readiness smoke | RR-01 | `rust:admin-api:smoke` | not started |
-| RR-07 | Backup idle guard | RR-01 | `verify:sqlite`, `verify:rust-daemon` | not started |
-| RR-08 | Thin runner and sidecar policy | RR-01, RR-06 | UI-close / detached-task / stderr-capture smoke | not started |
-| RR-09 | Default switch flags and stdio deletion gates | RR-02 through RR-08 | boundary smoke pairs + no production stdio MCP references | not started |
+| RR-01 | Process state reconciliation | current lifecycle wrapper | `cargo test`, `verify:rust-daemon` | implemented |
+| RR-02 | Daemon-owned MCP endpoint and session registry | RR-01 | `context-stilld mcp endpoint --json` | implemented as managed HTTP endpoint worker |
+| RR-03 | Daemon MCP smoke and stdio legacy warnings | RR-02 | `context-stilld mcp smoke --json` + managed smoke | implemented |
+| RR-04 | Rust-managed queue smoke | RR-01 | `rust:queue:smoke` | implemented |
+| RR-05 | Agent log sync run-and-wait | RR-01 | unit tests + `verify:rust-daemon` | implemented |
+| RR-06 | Admin API readiness smoke | RR-01 | `rust:admin-api:smoke` | implemented |
+| RR-07 | Backup idle guard | RR-01 | `verify:sqlite`, `verify:rust-daemon` | implemented |
+| RR-08 | Thin runner and sidecar policy | RR-01, RR-06 | UI-close / detached-task / stderr-capture smoke | partially implemented; registry pending |
+| RR-09 | Default switch flags and stdio deletion gates | RR-02 through RR-08 | boundary smoke pairs + no production stdio MCP references | flag observability implemented; script default switch pending |
 | RR-10 | Per-boundary default switch | RR-09 | focused gate per boundary | blocked by RR-09 |

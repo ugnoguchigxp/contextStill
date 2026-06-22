@@ -190,9 +190,7 @@ function normalizeSearchInput(rawInput: EpisodeCardSearchInput) {
       ? input.statuses
       : input.status
         ? [input.status]
-        : input.includeDraft
-          ? ["active", "draft"]
-          : ["active"];
+        : ["active"];
   return {
     ...input,
     query: input.query?.trim(),

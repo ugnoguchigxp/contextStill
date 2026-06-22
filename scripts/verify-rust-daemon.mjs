@@ -50,6 +50,13 @@ const tasks = [
     label: "context-stilld mcp smoke",
     command: ["cargo", "run", "-q", "-p", "context-stilld", "--", "mcp", "smoke", "--json"],
   },
+  { label: "rust managed mcp smoke", command: ["bun", "scripts/rust-managed-mcp-smoke.mjs"] },
+  { label: "rust managed queue smoke", command: ["bun", "scripts/rust-managed-queue-smoke.mjs"] },
+  { label: "rust admin api smoke", command: ["bun", "scripts/rust-admin-api-smoke.mjs"] },
+  {
+    label: "rust agent log sync smoke",
+    command: ["bun", "scripts/rust-agent-log-sync-smoke.mjs"],
+  },
   { label: "typescript unit tests", command: ["bun", "run", "test:unit"] },
 ];
 
@@ -157,6 +164,9 @@ for (const task of tasks) {
     result = assertJsonLine(result, "activeSessionCount");
   }
   if (task.label === "context-stilld mcp smoke" && result.code === 0) {
+    result = assertJsonLine(result, "ok");
+  }
+  if (task.label.startsWith("rust ") && result.code === 0) {
     result = assertJsonLine(result, "ok");
   }
   if (result.code !== 0) {

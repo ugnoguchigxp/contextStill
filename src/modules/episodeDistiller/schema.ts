@@ -98,7 +98,7 @@ export function canonicalEpisodeToCardInput(params: {
 
   return {
     title: canonical.title,
-    situation: [canonical.context, canonical.intent].filter(Boolean).join("\n\n意図:\n"),
+    situation: [canonical.context, canonical.intent].filter(Boolean).join("\n\nIntent:\n"),
     observations: joinList(canonical.keyDecisions, "主要な判断は特定されませんでした。"),
     action: [
       canonical.failedApproach

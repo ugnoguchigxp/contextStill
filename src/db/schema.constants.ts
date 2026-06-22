@@ -22,7 +22,7 @@ export const knowledgeOriginLinkKindValues = [
   "review_correction",
 ] as const;
 
-export const episodeCardStatusValues = ["draft", "active", "deprecated"] as const;
+export const episodeCardStatusValues = ["active", "deprecated"] as const;
 export const episodeOutcomeKindValues = ["success", "failure", "mixed", "unknown"] as const;
 export const episodeSourceKindValues = [
   "vibe_memory",

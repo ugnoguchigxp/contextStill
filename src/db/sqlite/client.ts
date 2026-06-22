@@ -78,14 +78,9 @@ function hasColumn(db: BunSqliteDatabase, tableName: string, columnName: string)
 }
 
 function migrateSqliteCoreSchema(db: BunSqliteDatabase): void {
+  db.exec("UPDATE episode_cards SET status = 'active' WHERE status = 'draft';");
   if (!hasColumn(db, "episode_cards", "importance")) {
-    db.exec(`
-DELETE FROM episode_retrieval_feedback;
-DELETE FROM episode_refs;
-DELETE FROM episode_cards;
-DELETE FROM episode_cards_fts;
-ALTER TABLE episode_cards ADD COLUMN importance INTEGER NOT NULL DEFAULT 50;
-`);
+    db.exec("ALTER TABLE episode_cards ADD COLUMN importance INTEGER NOT NULL DEFAULT 50;");
   }
   if (!hasColumn(db, "episode_cards", "compile_use_count")) {
     db.exec("ALTER TABLE episode_cards ADD COLUMN compile_use_count INTEGER NOT NULL DEFAULT 0;");

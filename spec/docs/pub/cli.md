@@ -26,6 +26,7 @@ Run commands from the repository root.
 | `cargo run -q -p context-stilld -- bootstrap init --json` | Explicitly create app data/logs/run/backup directories |
 | `cargo run -q -p context-stilld -- doctor summary --json` | Desktop-focused summary that delegates full detail to `bun run doctor` |
 | `cargo run -q -p context-stilld -- backup preflight --json` | Check SQLite path and active managed writers before TypeScript backup |
+| `cargo run -q -p context-stilld -- backup preflight --require-idle --json` | Fail if Rust-managed writer processes are active |
 | `cargo run -q -p context-stilld -- mcp endpoint --json` | Print the daemon-owned streamable HTTP MCP endpoint URL and readiness |
 | `cargo run -q -p context-stilld -- mcp status --json` | Report the managed MCP endpoint worker state |
 | `cargo run -q -p context-stilld -- mcp sessions --json` | List daemon-visible MCP sessions and close reasons |
@@ -33,7 +34,19 @@ Run commands from the repository root.
 | `cargo run -q -p context-stilld -- mcp start\|stop` | Legacy endpoint-worker lifecycle helper; clients should use URL registration, not command spawning |
 | `cargo run -q -p context-stilld -- queue start\|stop\|status` | Delegate queue supervisor lifecycle without changing queue semantics |
 | `cargo run -q -p context-stilld -- agent-log-sync run\|stop\|status` | Delegate agent log sync lifecycle |
-| `cargo run -q -p context-stilld -- admin-api start\|stop\|status` | Start/stop Hono admin API for UI/operator sessions only |
+| `cargo run -q -p context-stilld -- agent-log-sync run --wait --json` | Run one-shot sync and record exit status |
+| `cargo run -q -p context-stilld -- admin-api start\|stop\|status` | Start/stop Hono admin API for UI/operator sessions only; start waits for readiness |
+
+Focused pre-switch smoke scripts:
+
+```bash
+bun run rust:mcp:smoke
+bun run rust:queue:smoke
+bun run rust:admin-api:smoke
+bun run rust:agent-log-sync:smoke
+```
+
+The `CONTEXT_STILL_DAEMON_MANAGED_MCP`, `CONTEXT_STILL_DAEMON_MANAGED_QUEUE`, `CONTEXT_STILL_DAEMON_MANAGED_AGENT_LOG_SYNC`, and `CONTEXT_STILL_DAEMON_MANAGED_ADMIN_API` flags are currently observable in `status --json`; they do not change package script defaults yet.
 
 ## Compile and Knowledge
 

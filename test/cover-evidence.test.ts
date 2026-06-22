@@ -872,7 +872,7 @@ describe("runCoverEvidence", () => {
     expect(request.messages[0]?.content).toContain("検索語だけ");
   });
 
-  test("uses findCandidate sourceSummary for final value assessment prompt", async () => {
+  test("uses primary source evidence even when legacy sourceSummary exists", async () => {
     const sourceSummary =
       "Run smoke tests before finalizing coverEvidence; verify source references and evidence status.";
     mocks.getFindCandidateResultById.mockResolvedValue(
@@ -896,8 +896,10 @@ describe("runCoverEvidence", () => {
     const request = mocks.runDistillationCompletion.mock.calls[2]?.[0] as {
       messages: Array<{ role: string; content: string }>;
     };
+    expect(request.messages[1]?.content).toContain("source evidence:");
+    expect(request.messages[1]?.content).not.toContain("source summary:");
     expect(request.messages[1]?.content).toContain(sourceSummary);
-    expect(request.messages[1]?.content).not.toContain("raw-source-filler");
+    expect(request.messages[1]?.content).toContain("raw-source-filler");
   });
 
   test("keeps empty source reads as terminal source_support failures", async () => {
@@ -917,7 +919,7 @@ describe("runCoverEvidence", () => {
     expect(mocks.runDistillationCompletion).not.toHaveBeenCalled();
   });
 
-  test("uses source summary fallback when the original vibe memory source is unavailable", async () => {
+  test("does not use legacy sourceSummary fallback when the original vibe memory source is unavailable", async () => {
     mocks.getFindCandidateResultById.mockResolvedValue(
       candidateRow({
         targetKind: "vibe_memory",
@@ -934,33 +936,15 @@ describe("runCoverEvidence", () => {
 
     const result = await runCoverEvidence({ id: "find-1" });
 
-    expect(result.result.status).toBe("knowledge_ready");
+    expect(result.result.status).toBe("tool_failed");
+    expect(result.result.stage).toBe("source_support");
+    expect(result.result.reason).toBe("source_read_failed");
     expect(mocks.readVibeMemoryByTokenWindow).toHaveBeenCalledWith(
       expect.objectContaining({
         vibeMemoryId: "missing-memory",
       }),
     );
-    expect(mocks.runDistillationCompletion).toHaveBeenCalledTimes(3);
-    expect(result.result.references).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          evidenceRole: "source_summary",
-          locator: "sourceSummary",
-        }),
-      ]),
-    );
-    expect(result.result.toolEvents).toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          name: "source_summary_context",
-          ok: true,
-        }),
-      ]),
-    );
-    const request = mocks.runDistillationCompletion.mock.calls[2]?.[0] as {
-      messages: Array<{ role: string; content: string }>;
-    };
-    expect(request.messages[1]?.content).toContain("source summary:");
+    expect(mocks.runDistillationCompletion).not.toHaveBeenCalled();
   });
 
   test("does not use candidate content as source evidence when vibe memory is unavailable", async () => {

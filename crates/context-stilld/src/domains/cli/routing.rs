@@ -19,7 +19,7 @@ pub enum QueueAction {
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum AgentLogSyncAction {
-    Run,
+    Run { wait: bool, timeout_ms: u64 },
     Stop,
     Status,
 }
@@ -44,7 +44,7 @@ pub enum DoctorAction {
 
 #[derive(Debug, Eq, PartialEq, Clone)]
 pub enum BackupAction {
-    Preflight,
+    Preflight { require_idle: bool },
 }
 
 #[derive(Debug, Eq, PartialEq)]
@@ -150,7 +150,16 @@ where
         "agent-log-sync" => {
             let action_str = required_action(&mut args, "agent-log-sync", "run, stop, or status")?;
             let action = match action_str.as_str() {
-                "run" => AgentLogSyncAction::Run,
+                "run" => {
+                    let options = parse_wait_options(args)?;
+                    return Ok(CliCommand::AgentLogSync {
+                        action: AgentLogSyncAction::Run {
+                            wait: options.wait,
+                            timeout_ms: options.timeout_ms,
+                        },
+                        json: options.json,
+                    });
+                }
                 "stop" => AgentLogSyncAction::Stop,
                 "status" => AgentLogSyncAction::Status,
                 _ => {
@@ -226,17 +235,17 @@ where
         }
         "backup" => {
             let action_str = required_action(&mut args, "backup", "preflight")?;
-            let action = match action_str.as_str() {
-                "preflight" => BackupAction::Preflight,
-                _ => {
-                    return Err(CliError::invalid_arguments(format!(
-                        "unknown backup action: {action_str}"
-                    )))
-                }
-            };
+            if action_str != "preflight" {
+                return Err(CliError::invalid_arguments(format!(
+                    "unknown backup action: {action_str}"
+                )));
+            }
+            let options = parse_backup_options(args)?;
             Ok(CliCommand::Backup {
-                action,
-                json: parse_json_flag(args)?,
+                action: BackupAction::Preflight {
+                    require_idle: options.require_idle,
+                },
+                json: options.json,
             })
         }
         _ => Err(CliError::invalid_arguments(format!(
@@ -275,6 +284,79 @@ where
         }
     }
     Ok(json)
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct WaitOptions {
+    json: bool,
+    wait: bool,
+    timeout_ms: u64,
+}
+
+fn parse_wait_options<I>(args: I) -> Result<WaitOptions, CliError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut options = WaitOptions {
+        json: false,
+        wait: false,
+        timeout_ms: 60_000,
+    };
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
+        match arg.as_str() {
+            "--json" => options.json = true,
+            "--wait" => options.wait = true,
+            "--timeout-ms" => {
+                let value = args.next().ok_or_else(|| {
+                    CliError::invalid_arguments("--timeout-ms requires a numeric value")
+                })?;
+                options.timeout_ms = value.parse::<u64>().map_err(|error| {
+                    CliError::invalid_arguments(format!("invalid --timeout-ms value: {error}"))
+                })?;
+            }
+            _ if arg.starts_with("--timeout-ms=") => {
+                let value = arg.trim_start_matches("--timeout-ms=");
+                options.timeout_ms = value.parse::<u64>().map_err(|error| {
+                    CliError::invalid_arguments(format!("invalid --timeout-ms value: {error}"))
+                })?;
+            }
+            _ => {
+                return Err(CliError::invalid_arguments(format!(
+                    "unknown argument: {arg}"
+                )))
+            }
+        }
+    }
+    Ok(options)
+}
+
+#[derive(Debug, Eq, PartialEq)]
+struct BackupOptions {
+    json: bool,
+    require_idle: bool,
+}
+
+fn parse_backup_options<I>(args: I) -> Result<BackupOptions, CliError>
+where
+    I: IntoIterator<Item = String>,
+{
+    let mut options = BackupOptions {
+        json: false,
+        require_idle: false,
+    };
+    for arg in args {
+        match arg.as_str() {
+            "--json" => options.json = true,
+            "--require-idle" => options.require_idle = true,
+            _ => {
+                return Err(CliError::invalid_arguments(format!(
+                    "unknown argument: {arg}"
+                )))
+            }
+        }
+    }
+    Ok(options)
 }
 
 #[cfg(test)]

@@ -156,6 +156,21 @@ function toIsoTimestamp(value: Date | string | number | null): string | null {
   return Number.isNaN(parsed.getTime()) ? null : parsed.toISOString();
 }
 
+export function normalizeQueueLastError(
+  queueName: DistillationQueueName,
+  lastError: string | null,
+): string | null {
+  if (!lastError) return null;
+  if (queueName !== "findingCandidate") return lastError;
+  const maxRounds = lastError.match(/distillation tool loop exceeded max rounds \((\d+)\)/);
+  if (!maxRounds) return lastError;
+  const count = Number(maxRounds[1]);
+  if (!Number.isInteger(count) || count <= 0) {
+    return "findCandidate evidence_not_found: reader tool calls were exhausted without producing a final candidate response";
+  }
+  return `findCandidate evidence_not_found: exhausted ${count}/${count} reader tool calls without producing a final candidate response`;
+}
+
 function normalizeRow(queueName: DistillationQueueName, row: QueueListRow): QueueListItem {
   const backendQueueName = distillationQueueNames.includes(row.queue_name as DistillationQueueName)
     ? (row.queue_name as DistillationQueueName)
@@ -195,7 +210,7 @@ function normalizeRow(queueName: DistillationQueueName, row: QueueListRow): Queu
     subjectDetail: row.subject_detail ?? "-",
     provider: resolved.provider,
     model: resolved.model,
-    lastError: row.last_error ?? null,
+    lastError: normalizeQueueLastError(backendQueueName, row.last_error ?? null),
     lastOutcomeKind: row.last_outcome_kind ?? null,
     lockedBy: row.locked_by ?? null,
     lockedAt: toIsoTimestamp(row.locked_at),

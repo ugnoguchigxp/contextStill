@@ -1,5 +1,6 @@
 use std::io;
 use std::path::Path;
+use std::time::{Duration, Instant};
 
 #[cfg(test)]
 use std::collections::HashMap;
@@ -14,8 +15,24 @@ pub fn path_to_string(path: &Path) -> String {
 
 pub trait ProcessSupervisor {
     fn spawn(&self, command: &str, args: &[&str], log_path: &Path, cwd: &Path) -> io::Result<u32>;
+    fn run_and_wait(
+        &self,
+        command: &str,
+        args: &[&str],
+        log_path: &Path,
+        cwd: &Path,
+        timeout: Duration,
+    ) -> io::Result<WaitOutcome>;
     fn kill(&self, pid: u32, signal: &str) -> io::Result<()>;
     fn is_alive(&self, pid: u32) -> bool;
+}
+
+#[derive(Debug, Clone, Eq, PartialEq)]
+pub struct WaitOutcome {
+    pub pid: u32,
+    pub exit_code: Option<i32>,
+    pub exit_signal: Option<String>,
+    pub timed_out: bool,
 }
 
 pub struct OsSupervisor;
@@ -41,6 +58,55 @@ impl ProcessSupervisor for OsSupervisor {
             .spawn()?;
 
         Ok(child.id())
+    }
+
+    fn run_and_wait(
+        &self,
+        command: &str,
+        args: &[&str],
+        log_path: &Path,
+        cwd: &Path,
+        timeout: Duration,
+    ) -> io::Result<WaitOutcome> {
+        use std::fs::File;
+        use std::process::Stdio;
+
+        if let Some(parent) = log_path.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+
+        let log_file = File::options().create(true).append(true).open(log_path)?;
+        let mut child = std::process::Command::new(command)
+            .args(args)
+            .current_dir(cwd)
+            .stdin(Stdio::null())
+            .stdout(Stdio::from(log_file.try_clone()?))
+            .stderr(Stdio::from(log_file))
+            .spawn()?;
+        let pid = child.id();
+        let deadline = Instant::now() + timeout;
+
+        loop {
+            if let Some(status) = child.try_wait()? {
+                return Ok(WaitOutcome {
+                    pid,
+                    exit_code: status.code(),
+                    exit_signal: exit_signal(&status),
+                    timed_out: false,
+                });
+            }
+            if Instant::now() >= deadline {
+                let _ = child.kill();
+                let status = child.wait()?;
+                return Ok(WaitOutcome {
+                    pid,
+                    exit_code: status.code(),
+                    exit_signal: exit_signal(&status),
+                    timed_out: true,
+                });
+            }
+            std::thread::sleep(Duration::from_millis(50));
+        }
     }
 
     fn kill(&self, pid: u32, signal: &str) -> io::Result<()> {
@@ -95,6 +161,17 @@ impl ProcessSupervisor for OsSupervisor {
     }
 }
 
+#[cfg(unix)]
+fn exit_signal(status: &std::process::ExitStatus) -> Option<String> {
+    use std::os::unix::process::ExitStatusExt;
+    status.signal().map(|signal| format!("SIG{signal}"))
+}
+
+#[cfg(not(unix))]
+fn exit_signal(_status: &std::process::ExitStatus) -> Option<String> {
+    None
+}
+
 trait DetachedProcessGroup {
     fn with_detached_process_group(&mut self) -> &mut Self;
 }
@@ -126,6 +203,7 @@ pub struct MockSupervisor {
     pub spawned: Mutex<HashMap<u32, MockSpawnCall>>,
     pub alive: Mutex<HashMap<u32, bool>>,
     pub next_pid: Mutex<u32>,
+    pub wait_outcomes: Mutex<Vec<WaitOutcome>>,
 }
 
 #[cfg(test)]
@@ -135,7 +213,12 @@ impl MockSupervisor {
             spawned: Mutex::new(HashMap::new()),
             alive: Mutex::new(HashMap::new()),
             next_pid: Mutex::new(1000),
+            wait_outcomes: Mutex::new(Vec::new()),
         }
+    }
+
+    pub fn push_wait_outcome(&self, outcome: WaitOutcome) {
+        self.wait_outcomes.lock().unwrap().push(outcome);
     }
 }
 
@@ -164,6 +247,30 @@ impl ProcessSupervisor for MockSupervisor {
         self.alive.lock().unwrap().insert(pid, true);
 
         Ok(pid)
+    }
+
+    fn run_and_wait(
+        &self,
+        command: &str,
+        args: &[&str],
+        log_path: &Path,
+        cwd: &Path,
+        _timeout: Duration,
+    ) -> io::Result<WaitOutcome> {
+        let pid = self.spawn(command, args, log_path, cwd)?;
+        self.alive.lock().unwrap().insert(pid, false);
+        let mut outcomes = self.wait_outcomes.lock().unwrap();
+        if outcomes.is_empty() {
+            return Ok(WaitOutcome {
+                pid,
+                exit_code: Some(0),
+                exit_signal: None,
+                timed_out: false,
+            });
+        }
+        let mut outcome = outcomes.remove(0);
+        outcome.pid = pid;
+        Ok(outcome)
     }
 
     fn kill(&self, pid: u32, _signal: &str) -> io::Result<()> {
@@ -207,5 +314,30 @@ mod tests {
         drop(spawned);
         supervisor.kill(pid, "SIGTERM").unwrap();
         assert!(!supervisor.is_alive(pid));
+    }
+
+    #[test]
+    fn test_mock_supervisor_run_and_wait() {
+        let supervisor = MockSupervisor::new();
+        supervisor.push_wait_outcome(WaitOutcome {
+            pid: 0,
+            exit_code: Some(2),
+            exit_signal: None,
+            timed_out: false,
+        });
+
+        let outcome = supervisor
+            .run_and_wait(
+                "bun",
+                &["run", "one-shot.ts"],
+                Path::new("/tmp/test.log"),
+                Path::new("/tmp"),
+                Duration::from_secs(1),
+            )
+            .unwrap();
+
+        assert_eq!(outcome.pid, 1000);
+        assert_eq!(outcome.exit_code, Some(2));
+        assert!(!supervisor.is_alive(outcome.pid));
     }
 }

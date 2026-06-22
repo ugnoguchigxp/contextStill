@@ -70,8 +70,14 @@ Embedding improves semantic search and distillation quality, but it should not b
 | `CONTEXT_STILL_APP_DATA_DIR` | OS-specific app data directory | Overrides the app data root used by `context-stilld` path, preflight, pid, log, and backup state |
 | `CONTEXT_STILL_SQLITE_CORE_PATH` | `appDataDir/context-still-core.sqlite` | Overrides the SQLite core database path reported by Rust preflight/backup checks |
 | `CONTEXT_STILL_PROJECT_ROOT` | current working directory | Project root used when Rust delegates TypeScript child processes |
+| `CONTEXT_STILL_MCP_HOST` / `CONTEXT_STILL_MCP_PORT` | `127.0.0.1` / `39172` | Managed MCP endpoint host and port |
+| `CONTEXT_STILL_ADMIN_API_READY_URL` | derived from `PORT` or `39170` | Admin API readiness URL used by `context-stilld admin-api start` |
+| `CONTEXT_STILL_DAEMON_MANAGED_MCP` | unset | Status-only flag indicating MCP is a Rust-default candidate |
+| `CONTEXT_STILL_DAEMON_MANAGED_QUEUE` | unset | Status-only flag indicating queue is a Rust-default candidate |
+| `CONTEXT_STILL_DAEMON_MANAGED_AGENT_LOG_SYNC` | unset | Status-only flag indicating agent log sync is a Rust-default candidate |
+| `CONTEXT_STILL_DAEMON_MANAGED_ADMIN_API` | unset | Status-only flag indicating admin API is a Rust-default candidate |
 
-These variables are for development, packaging, and advanced runtime integration. They do not make Rust the default product runtime by themselves.
+These variables are for development, packaging, and advanced runtime integration. They do not make Rust the default product runtime by themselves, and the `CONTEXT_STILL_DAEMON_MANAGED_*` flags are observable in `status --json` before any package script default switch is made.
 
 ## Agent Log Sync
 

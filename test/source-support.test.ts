@@ -59,36 +59,25 @@ describe("readSourceEvidenceForCandidate", () => {
     ).rejects.toThrow("vibe memory not found");
   });
 
-  test("uses source summary fallback as non-primary evidence when original source is unavailable", async () => {
+  test("ignores legacy source summary when original source is unavailable", async () => {
     mocks.readVibeMemoryByTokenWindow.mockRejectedValue(new Error("vibe memory not found"));
 
-    const result = await readSourceEvidenceForCandidate({
-      id: "find-1",
-      targetStateId: "target-1",
-      title: "Candidate",
-      content: "Run focused tests before finalize when source references need checking.",
-      origin: {
-        sourceSummary:
-          "The source says focused tests should run before finalize and source references should be checked.",
-        readRanges: [{ from: 0, toExclusive: 80 }],
-      },
-      status: "selected",
-      targetKind: "vibe_memory",
-      targetKey: "missing-memory",
-      sourceUri: "vibe_memory:missing-memory",
-    } satisfies CoverEvidenceCandidateInput);
-
-    expect(result.primaryContent).toBeNull();
-    expect(result.content).toBe("");
-    expect(result.assessmentContent).toContain("focused tests");
-    expect(result.valueAssessmentContent).toBe(result.assessmentContent);
-    expect(result.assessmentSource).toBe("source_summary");
-    expect(result.references).toEqual([
-      expect.objectContaining({
-        uri: "vibe_memory:missing-memory",
-        locator: "sourceSummary",
-        evidenceRole: "source_summary",
-      }),
-    ]);
+    await expect(
+      readSourceEvidenceForCandidate({
+        id: "find-1",
+        targetStateId: "target-1",
+        title: "Candidate",
+        content: "Run focused tests before finalize when source references need checking.",
+        origin: {
+          sourceSummary:
+            "The source says focused tests should run before finalize and source references should be checked.",
+          readRanges: [{ from: 0, toExclusive: 80 }],
+        },
+        status: "selected",
+        targetKind: "vibe_memory",
+        targetKey: "missing-memory",
+        sourceUri: "vibe_memory:missing-memory",
+      } satisfies CoverEvidenceCandidateInput),
+    ).rejects.toThrow("vibe memory not found");
   });
 });

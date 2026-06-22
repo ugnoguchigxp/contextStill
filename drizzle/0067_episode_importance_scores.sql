@@ -1,6 +1,3 @@
-DELETE FROM "episode_retrieval_feedback";--> statement-breakpoint
-DELETE FROM "episode_refs";--> statement-breakpoint
-DELETE FROM "episode_cards";--> statement-breakpoint
 ALTER TABLE "episode_cards" ADD COLUMN "importance" integer DEFAULT 50 NOT NULL;--> statement-breakpoint
 ALTER TABLE "episode_cards" ADD COLUMN "compile_use_count" integer DEFAULT 0 NOT NULL;--> statement-breakpoint
 ALTER TABLE "episode_cards" ADD COLUMN "decision_use_count" integer DEFAULT 0 NOT NULL;--> statement-breakpoint

@@ -376,23 +376,14 @@ export async function runCoverEvidence(
               sourceContent: sourceRead.primaryContent ?? "",
             })
           : ({
-              ok: true,
-              confidence: 55,
+              ok: false,
+              reason: "unsupported_by_source",
+              confidence: 0,
               overlapRatio: 0,
               matchedTokenCount: 0,
               checkedTokenCount: 0,
             } satisfies SourceSupportResult);
         const sourceSupportDiagnostics: CoverEvidenceToolEvent[] = [];
-        if (!hasPrimaryEvidence) {
-          sourceSupportDiagnostics.push({
-            name: "source_summary_context",
-            ok: true,
-            metadata: {
-              assessmentSource: sourceRead.assessmentSource,
-              strictSourceSupportSkipped: true,
-            },
-          });
-        }
         if (
           !support.ok &&
           !shouldVerifySourceSupportWithLlm(support, sourceRead.primaryContent ?? "")

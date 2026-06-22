@@ -14,6 +14,7 @@ import {
 } from "../api/modules/queue/queue.repository.js";
 import { resetRuntimeSqliteCoreDatabaseForTests } from "../src/db/sqlite/runtime.js";
 import { getRuntimeSqliteCoreDatabase } from "../src/db/sqlite/runtime.js";
+import { openSqliteCoreDatabase } from "../src/db/sqlite/client.js";
 import {
   cleanupExpiredAuditLogs,
   listAuditLogs,
@@ -44,7 +45,10 @@ import {
   fetchEpisode,
   searchEpisodes,
 } from "../src/modules/episodic-memory/episode-card.service.js";
-import { enqueueEpisodeDistillerJob } from "../src/modules/episodeDistiller/repository.js";
+import {
+  enqueueEpisodeDistillerJob,
+  requeueEpisodeDistillerRepairCandidates,
+} from "../src/modules/episodeDistiller/repository.js";
 import { setEpisodeDistillerTestHooksForTests } from "../src/modules/episodeDistiller/worker.js";
 import { recordCompileRunKnowledgeFeedback } from "../src/modules/knowledge/knowledge-feedback.service.js";
 import { readVibeMemoryByTokenWindow } from "../src/modules/memoryReader/reader.service.js";
@@ -112,6 +116,130 @@ describe("sqlite runtime support repositories", () => {
 
     await deleteSettingsRow("runtime", "sqlite-test");
     expect(await findSettingsRow("runtime", "sqlite-test")).toBeNull();
+  });
+
+  test("preserves legacy sqlite episode cards while adding current score columns", async () => {
+    const sqliteModule = await import("bun:sqlite");
+    const dbPath = path.join(tempDir, "legacy-episode-cards.sqlite");
+    const legacyDb = new sqliteModule.Database(dbPath, { create: true });
+    legacyDb.exec(`
+      PRAGMA foreign_keys = ON;
+      CREATE TABLE episode_cards (
+        id TEXT PRIMARY KEY,
+        title TEXT NOT NULL,
+        situation TEXT NOT NULL,
+        observations TEXT NOT NULL DEFAULT '',
+        action TEXT NOT NULL DEFAULT '',
+        outcome TEXT NOT NULL DEFAULT '',
+        lesson TEXT NOT NULL DEFAULT '',
+        applicability TEXT NOT NULL DEFAULT '{}',
+        anti_applicability TEXT NOT NULL DEFAULT '{}',
+        domains TEXT NOT NULL DEFAULT '[]',
+        technologies TEXT NOT NULL DEFAULT '[]',
+        change_types TEXT NOT NULL DEFAULT '[]',
+        tools TEXT NOT NULL DEFAULT '[]',
+        repo_path TEXT,
+        repo_key TEXT,
+        source_kind TEXT NOT NULL,
+        source_key TEXT NOT NULL,
+        outcome_kind TEXT NOT NULL DEFAULT 'unknown',
+        confidence INTEGER NOT NULL DEFAULT 50,
+        evidence_status TEXT,
+        status TEXT NOT NULL DEFAULT 'active',
+        stale_at TEXT,
+        embedding TEXT,
+        metadata TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+      ) STRICT;
+      CREATE UNIQUE INDEX episode_cards_source_unique_idx
+        ON episode_cards(source_kind, source_key);
+      CREATE VIRTUAL TABLE episode_cards_fts USING fts5(
+        id UNINDEXED,
+        title,
+        situation,
+        observations,
+        action,
+        outcome,
+        lesson
+      );
+      CREATE TABLE episode_refs (
+        id TEXT PRIMARY KEY,
+        episode_card_id TEXT NOT NULL,
+        ref_kind TEXT NOT NULL,
+        ref_value TEXT NOT NULL,
+        locator TEXT,
+        query_hint TEXT,
+        metadata TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (episode_card_id) REFERENCES episode_cards(id) ON DELETE CASCADE
+      ) STRICT;
+      CREATE TABLE episode_retrieval_feedback (
+        id TEXT PRIMARY KEY,
+        episode_card_id TEXT NOT NULL,
+        run_kind TEXT NOT NULL,
+        run_id TEXT NOT NULL,
+        used_for TEXT NOT NULL,
+        verdict TEXT NOT NULL,
+        reason TEXT,
+        metadata TEXT NOT NULL DEFAULT '{}',
+        created_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        FOREIGN KEY (episode_card_id) REFERENCES episode_cards(id) ON DELETE CASCADE
+      ) STRICT;
+      INSERT INTO episode_cards (
+        id, title, situation, source_kind, source_key, outcome_kind, confidence, status, evidence_status
+      ) VALUES (
+        'legacy-episode', 'Legacy episode', 'Created before score columns',
+        'vibe_memory', 'legacy-source', 'success', 77, 'draft', 'verified'
+      );
+      INSERT INTO episode_cards_fts(rowid, id, title, situation, observations, action, outcome, lesson)
+      VALUES (1, 'legacy-episode', 'Legacy episode', 'Created before score columns', '', '', '', '');
+      INSERT INTO episode_refs (id, episode_card_id, ref_kind, ref_value)
+      VALUES ('legacy-ref', 'legacy-episode', 'vibe_memory', 'legacy-source');
+    `);
+    legacyDb.close();
+
+    const opened = await openSqliteCoreDatabase({
+      path: dbPath,
+      loadVectorExtension: false,
+    });
+    try {
+      const row = opened.db
+        .query<
+          {
+            id: string;
+            status: string;
+            importance: number;
+            compile_use_count: number;
+            decision_use_count: number;
+          },
+          []
+        >(
+          "select id, status, importance, compile_use_count, decision_use_count from episode_cards where id = 'legacy-episode'",
+        )
+        .get();
+      expect(row).toEqual({
+        id: "legacy-episode",
+        status: "active",
+        importance: 50,
+        compile_use_count: 0,
+        decision_use_count: 0,
+      });
+      expect(
+        opened.db
+          .query<{ has_evidence_status: number }, []>(
+            "select count(*) as has_evidence_status from pragma_table_info('episode_cards') where name = 'evidence_status'",
+          )
+          .get()?.has_evidence_status,
+      ).toBe(0);
+      expect(
+        opened.db
+          .query<{ ref_count: number }, []>("select count(*) as ref_count from episode_refs")
+          .get()?.ref_count,
+      ).toBe(1);
+    } finally {
+      opened.db.close();
+    }
   });
 
   test("persists and searches episode cards in sqlite", async () => {
@@ -557,20 +685,75 @@ describe("sqlite runtime support repositories", () => {
         generatingQueueName: "episodeDistiller",
         parentVibeMemoryId: recorded.memory.id,
         scores: expect.objectContaining({ importance: 88, confidence: 82, reusability: 85 }),
+        valueReview: expect.objectContaining({
+          publish: true,
+          reasons: [],
+        }),
       }),
     });
     const episodeRow = sqlite.db
-      .query<{ situation: string; action: string; outcome: string }, [string]>(
-        "select situation, action, outcome from episode_cards where id = ?",
+      .query<{ status: string; situation: string; action: string; outcome: string }, [string]>(
+        "select status, situation, action, outcome from episode_cards where id = ?",
       )
       .get(episodes[0]?.id ?? "");
-    expect(episodeRow?.situation).toContain("意図:");
-    expect(episodeRow?.situation).not.toContain("Intent:");
+    expect(episodeRow?.status).toBe("active");
+    expect(episodeRow?.situation).toContain("Intent:");
+    expect(episodeRow?.situation).not.toContain("意図:");
     expect(episodeRow?.action).toContain("失敗した、または避けたアプローチ:");
     expect(episodeRow?.action).toContain("source 時点の未解決事項:");
     expect(episodeRow?.action).not.toContain("Failed approach:");
     expect(episodeRow?.action).not.toContain("Open loops:");
     expect(episodeRow?.outcome).toContain("から蒸留された Episode");
+    const completedMetadataRow = sqlite.db
+      .query<{ metadata: string }, [string]>(
+        "select metadata from episode_distiller_queue where id = ?",
+      )
+      .get(job.id);
+    const completedMetadata = JSON.parse(completedMetadataRow?.metadata ?? "{}");
+    expect(completedMetadata.episodeDistiller).toMatchObject({
+      generated: 1,
+      valueSkipped: 0,
+      acceptedCandidateCount: 1,
+    });
+
+    sqlite.db
+      .query("delete from episode_refs where episode_card_id = ?")
+      .run(episodes[0]?.id ?? "");
+    sqlite.db.query("delete from episode_cards_fts where id = ?").run(episodes[0]?.id ?? "");
+    sqlite.db.query("delete from episode_cards where id = ?").run(episodes[0]?.id ?? "");
+    const repairDryRun = await requeueEpisodeDistillerRepairCandidates({ limit: 10 });
+    expect(repairDryRun.write).toBe(false);
+    expect(repairDryRun.items.map((item) => item.id)).toContain(job.id);
+    expect(repairDryRun.items.find((item) => item.id === job.id)?.reason).toBe(
+      "missing_episode_cards",
+    );
+
+    const repairWrite = await requeueEpisodeDistillerRepairCandidates({ limit: 10, write: true });
+    expect(repairWrite.requeued).toBeGreaterThanOrEqual(1);
+    expect(
+      sqlite.db
+        .query<{ status: string; last_outcome_kind: string }, [string]>(
+          "select status, last_outcome_kind from episode_distiller_queue where id = ?",
+        )
+        .get(job.id),
+    ).toEqual({
+      status: "pending",
+      last_outcome_kind: "episode_repair_requeued",
+    });
+
+    const repairRun = await runQueueWorkerOnce({
+      queueName: "episodeDistiller",
+      workerId: "sqlite-episode-repair-worker",
+    });
+    expect(repairRun.ok).toBe(true);
+    expect(repairRun.completedJobId).toBe(job.id);
+    expect(
+      await searchEpisodes({
+        query: "queue split",
+        technologies: ["sqlite"],
+        limit: 10,
+      }),
+    ).toHaveLength(1);
 
     await enqueueEpisodeDistillerJob({
       sourceKey: recorded.memory.id,
@@ -588,6 +771,112 @@ describe("sqlite runtime support repositories", () => {
         limit: 10,
       }),
     ).toHaveLength(1);
+  });
+
+  test("skips low-value episodeDistiller candidates without creating EpisodeCards", async () => {
+    const sqlite = await getRuntimeSqliteCoreDatabase();
+    const recorded = await recordVibeMemoryWithDiffEntries({
+      sessionId: "episode-distiller-low-value-session",
+      content:
+        "A short source fragment only repeated that work happened without decisions, evidence, or reusable lessons.",
+      memoryType: "chat",
+      metadata: {
+        projectName: "contextStill",
+        cwd: "/repo/contextStill",
+      },
+      agentDiffs: [
+        {
+          filePath: "src/modules/episodeDistiller/worker.ts",
+          diffHunk: "@@ low value @@\n+no reusable detail",
+          changeType: "modify",
+          language: "typescript",
+        },
+      ],
+    });
+
+    const job = await enqueueEpisodeDistillerJob({
+      sourceKey: recorded.memory.id,
+      metadata: { sourceType: "low-value-test" },
+    });
+    setEpisodeDistillerTestHooksForTests({
+      distillSegment: async () => [
+        {
+          title: "Low value generated episode",
+          context: "The source only says that work happened.",
+          intent: "Avoid publishing a generic memory.",
+          keyDecisions: [],
+          failedApproach: "",
+          reusableLesson: "Remember that some work happened.",
+          usefulFutureTriggers: ["generic work"],
+          openLoops: [],
+          generationKind: "task_episode",
+          outcomeKind: "unknown",
+          domains: ["episodic-memory"],
+          technologies: ["sqlite"],
+          changeTypes: ["queue"],
+          tools: [],
+          scores: {
+            importance: 35,
+            confidence: 45,
+            reusability: 20,
+            decision_density: 15,
+            failure_value: 10,
+            causal_clarity: 25,
+            project_specificity: 20,
+            evidence_quality: 35,
+            compression_quality: 40,
+            staleness_risk: 20,
+          },
+        },
+      ],
+    });
+
+    const run = await runQueueWorkerOnce({
+      queueName: "episodeDistiller",
+      workerId: "sqlite-episode-low-value-worker",
+    });
+
+    expect(run.ok).toBe(true);
+    expect(
+      sqlite.db
+        .query<{ status: string; last_outcome_kind: string; metadata: string }, [string]>(
+          "select status, last_outcome_kind, metadata from episode_distiller_queue where id = ?",
+        )
+        .get(job.id),
+    ).toMatchObject({
+      status: "skipped",
+      last_outcome_kind: "low_value_skipped",
+    });
+    const row = sqlite.db
+      .query<{ metadata: string }, [string]>(
+        "select metadata from episode_distiller_queue where id = ?",
+      )
+      .get(job.id);
+    const metadata = JSON.parse(row?.metadata ?? "{}");
+    expect(metadata.episodeDistiller).toMatchObject({
+      generated: 0,
+      valueSkipped: 1,
+      acceptedCandidateCount: 0,
+      skippedValueReviews: [
+        expect.objectContaining({
+          title: "Low value generated episode",
+          valueReview: expect.objectContaining({
+            publish: false,
+            reasons: expect.arrayContaining([
+              "value_score_below_60",
+              "importance_below_55",
+              "confidence_below_55",
+            ]),
+          }),
+        }),
+      ],
+    });
+    expect(
+      await searchEpisodes({
+        query: "Low value generated episode",
+        limit: 10,
+      }),
+    ).toHaveLength(0);
   });
 
   test("skips duplicate episodeDistiller generation kinds within one source segment", async () => {

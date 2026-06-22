@@ -316,7 +316,6 @@ async function retrieveDecisionEpisodePrecedents(
       changeTypes: input.retrievalHints.changeTypes,
       domains: input.retrievalHints.domains,
       limit: 4,
-      includeDraft: false,
     });
     return episodes
       .map((episode) => toDecisionEpisodePrecedent(input, episode))

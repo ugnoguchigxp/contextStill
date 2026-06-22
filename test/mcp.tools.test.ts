@@ -136,6 +136,18 @@ describe("MCP Tools Handlers", () => {
   });
 
   describe("search_episodes", () => {
+    test("does not expose draft search controls", async () => {
+      const properties = searchEpisodesTool.inputSchema.properties as Record<string, unknown>;
+      expect(properties).not.toHaveProperty("includeDraft");
+      expect(properties.status).toMatchObject({
+        enum: ["active", "deprecated"],
+      });
+      expect(properties.statuses).toMatchObject({
+        items: { enum: ["active", "deprecated"] },
+      });
+      await expect(searchEpisodesTool.handler({ status: "draft" })).rejects.toThrow();
+    });
+
     test("calls searchEpisodes and returns compact JSON", async () => {
       vi.mocked(searchEpisodes).mockResolvedValue([
         {

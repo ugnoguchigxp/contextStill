@@ -20,25 +20,25 @@ import {
   failEpisodeDistillerJob,
   processEpisodeDistillerJob,
 } from "../../episodeDistiller/worker.js";
-import { runWithProviderLeaseRouteContext } from "../../settings/provider-lease-route-context.js";
 import { type FinalizeDistilleInput, runFinalizeDistille } from "../../finalizeDistille/domain.js";
 import { type FindCandidateResult, runFindCandidate } from "../../findCandidate/domain.js";
 import {
+  type KnowledgeApplicability,
   applicabilityFromCoverCandidate,
   applicabilityToCoverCandidateFields,
-  type KnowledgeApplicability,
   normalizeApplicability,
 } from "../../knowledge/applicability.js";
 import { processDeadZoneMergeReviewJob } from "../../landscape/deadzone-merge-review-queue.service.js";
 import { processMergeActivationFinalizeJob } from "../../landscape/merge-activation-finalize.worker.js";
+import { runWithProviderLeaseRouteContext } from "../../settings/provider-lease-route-context.js";
 import { researchWebSourceToMarkdown } from "../../sources/web/source-research.service.js";
 import { claimNextQueueJob } from "./claim.js";
 import { isQueuePaused } from "./control.js";
 import { appendQueueEvent } from "./events.js";
 import {
+  type ProviderLease,
   heartbeatProviderLease,
   releaseProviderLease,
-  type ProviderLease,
 } from "./provider-lease.js";
 import { keepQueueJobWaitingForWorker, pauseQueueJob } from "./state.js";
 import { type DistillationQueueName, queueTableNameByQueue } from "./types.js";
@@ -62,7 +62,6 @@ type ProvidedCandidatePayload = {
   polarity?: "positive" | "negative";
   intentTags?: string[];
   applicability?: KnowledgeApplicability;
-  sourceSummary?: string;
   origin?: Record<string, unknown>;
 };
 
@@ -513,10 +512,6 @@ function coverEvidenceOrigin(params: {
   const metadata = asRecord(params.candidate.metadata);
   const originReadRanges = Array.isArray(origin.readRanges) ? origin.readRanges : undefined;
   const metadataReadRanges = Array.isArray(metadata.readRanges) ? metadata.readRanges : undefined;
-  const sourceSummary =
-    asNonEmptyString(origin.sourceSummary) ??
-    asNonEmptyString(origin.source_summary) ??
-    asNonEmptyString(params.candidate.sourceSummary);
 
   return {
     ...origin,
@@ -535,7 +530,6 @@ function coverEvidenceOrigin(params: {
       params.findingJob.sourceUri,
     ...(originReadRanges ? { readRanges: originReadRanges } : {}),
     ...(!originReadRanges && metadataReadRanges ? { readRanges: metadataReadRanges } : {}),
-    ...(sourceSummary ? { sourceSummary } : {}),
   };
 }
 
@@ -575,7 +569,6 @@ function parseProvidedCandidatePayload(value: unknown): ProvidedCandidatePayload
   const polarityRaw = asNonEmptyString(record.polarity);
   const intentTags = parseStringArray(record.intentTags);
   const applicability = normalizeApplicability(record) ?? {};
-  const sourceSummary = asNonEmptyString(record.sourceSummary) ?? undefined;
   const origin = asRecord(record.origin);
   return {
     title,
@@ -585,7 +578,6 @@ function parseProvidedCandidatePayload(value: unknown): ProvidedCandidatePayload
       polarityRaw === "negative" ? "negative" : polarityRaw === "positive" ? "positive" : undefined,
     ...(intentTags.length > 0 ? { intentTags } : {}),
     ...(Object.keys(applicability).length > 0 ? { applicability } : {}),
-    sourceSummary,
     origin,
   };
 }
@@ -757,7 +749,6 @@ async function upsertFoundCandidateRow(params: {
   title: string;
   content: string;
   type?: "rule" | "procedure";
-  sourceSummary?: string;
   origin?: Record<string, unknown>;
   metadata?: Record<string, unknown>;
 }): Promise<string> {
@@ -795,7 +786,7 @@ async function upsertFoundCandidateRow(params: {
           params.type ?? null,
           params.title,
           params.content,
-          params.sourceSummary ?? null,
+          null,
           JSON.stringify(params.origin ?? {}),
           JSON.stringify(params.metadata ?? {}),
           now,
@@ -819,7 +810,7 @@ async function upsertFoundCandidateRow(params: {
         params.type ?? null,
         params.title,
         params.content,
-        params.sourceSummary ?? null,
+        null,
         JSON.stringify(params.origin ?? {}),
         JSON.stringify(params.metadata ?? {}),
         now,
@@ -836,7 +827,7 @@ async function upsertFoundCandidateRow(params: {
       type: params.type ?? null,
       title: params.title,
       content: params.content,
-      sourceSummary: params.sourceSummary ?? null,
+      sourceSummary: null,
       origin: params.origin ?? {},
       metadata: params.metadata ?? {},
       updatedAt: new Date(),
@@ -847,7 +838,7 @@ async function upsertFoundCandidateRow(params: {
         type: params.type ?? null,
         title: params.title,
         content: params.content,
-        sourceSummary: params.sourceSummary ?? null,
+        sourceSummary: null,
         origin: params.origin ?? {},
         metadata: params.metadata ?? {},
         updatedAt: new Date(),
@@ -915,7 +906,6 @@ async function processFindingCandidate(jobId: string, signal?: AbortSignal): Pro
       title: payload.title,
       content: payload.body,
       type: payload.type,
-      sourceSummary: payload.sourceSummary,
       origin: {
         ...(payload.origin ?? {}),
         queueVersion: "v2",
@@ -971,21 +961,19 @@ async function processFindingCandidate(jobId: string, signal?: AbortSignal): Pro
       type: candidate.type,
       title: candidate.title,
       content: candidate.content,
-      sourceSummary: candidate.sourceSummary,
       origin: {
         queueVersion: "v2",
         sourceKind: job.sourceKind,
         sourceKey: job.sourceKey,
         sourceUri: job.sourceUri,
-        ...(candidate.originalType ? { originalCandidateType: candidate.originalType } : {}),
-        ...(candidate.polarity ? { polarity: candidate.polarity } : {}),
+        polarity: candidate.polarity,
       },
       metadata: {
         sourceKind: job.sourceKind,
         sourceKey: job.sourceKey,
         sourceUri: job.sourceUri,
         readRanges: findResult.readRanges,
-        ...(candidate.polarity ? { polarity: candidate.polarity } : {}),
+        polarity: candidate.polarity,
       },
     });
     foundCandidateIds.push(foundCandidateId);

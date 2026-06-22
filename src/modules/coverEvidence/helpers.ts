@@ -27,9 +27,8 @@ export type CoverEvidenceSourceContext = {
   targetKey: string;
   sourceUri: string;
   readRanges: Array<{ from: number; toExclusive: number }>;
-  assessmentSource?: "primary" | "source_summary";
+  assessmentSource?: "primary";
   hasPrimaryEvidence?: boolean;
-  sourceSummary?: string;
 };
 
 export type CandidateOriginHints = Partial<
@@ -76,17 +75,9 @@ export function applicabilityInstructions(): string[] {
 export function sourceContextForPrompts(params: {
   row: CoverEvidenceCandidateInput;
   readRanges: Array<{ from: number; toExclusive: number }>;
-  assessmentSource?: "primary" | "source_summary";
+  assessmentSource?: "primary";
   hasPrimaryEvidence?: boolean;
 }): CoverEvidenceSourceContext {
-  const originRecord =
-    params.row.origin && typeof params.row.origin === "object" && !Array.isArray(params.row.origin)
-      ? (params.row.origin as Record<string, unknown>)
-      : null;
-  const sourceSummary =
-    typeof originRecord?.sourceSummary === "string" && originRecord.sourceSummary.trim().length > 0
-      ? originRecord.sourceSummary.trim()
-      : undefined;
   return {
     targetKind: params.row.targetKind,
     targetKey: params.row.targetKey,
@@ -96,7 +87,6 @@ export function sourceContextForPrompts(params: {
     ...(params.hasPrimaryEvidence !== undefined
       ? { hasPrimaryEvidence: params.hasPrimaryEvidence }
       : {}),
-    ...(sourceSummary ? { sourceSummary } : {}),
   };
 }
 

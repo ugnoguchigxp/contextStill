@@ -461,6 +461,26 @@ describe("API route contract tests", () => {
     );
   });
 
+  test("POST /api/episodes rejects draft status", async () => {
+    const testApp = buildApp();
+    const response = await testApp.request("/api/episodes", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        title: "Draft episode",
+        situation: "Draft should not be a public Episode state.",
+        lesson: "Episode API should publish active records only.",
+        sourceKind: "manual",
+        sourceKey: "manual-draft-source",
+        status: "draft",
+        refs: [{ refKind: "vibe_memory", refValue: "memory-1" }],
+      }),
+    });
+
+    expect(response.status).toBe(400);
+    expect(registerEpisode).not.toHaveBeenCalled();
+  });
+
   test("GET /api/vibe-memory/context rejects removed Goal Room query params", async () => {
     const app = buildApp();
     const response = await app.request("/api/vibe-memory/context?goalId=legacy-goal");

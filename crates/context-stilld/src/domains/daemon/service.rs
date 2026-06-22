@@ -20,7 +20,17 @@ pub struct RuntimeStatus {
     pub mcp_server: String,
     pub queue_supervisor: String,
     pub agent_log_sync: String,
+    pub managed_default_flags: ManagedDefaultFlags,
     pub paths: PathReport,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ManagedDefaultFlags {
+    pub mcp: bool,
+    pub queue: bool,
+    pub agent_log_sync: bool,
+    pub admin_api: bool,
 }
 
 pub fn status<E: EnvProvider>(env: &E) -> RuntimeStatus {
@@ -47,8 +57,21 @@ pub fn status_with_supervisor<E: EnvProvider, S: ProcessSupervisor>(
         mcp_server,
         queue_supervisor,
         agent_log_sync,
+        managed_default_flags: ManagedDefaultFlags {
+            mcp: env_flag(env, "CONTEXT_STILL_DAEMON_MANAGED_MCP"),
+            queue: env_flag(env, "CONTEXT_STILL_DAEMON_MANAGED_QUEUE"),
+            agent_log_sync: env_flag(env, "CONTEXT_STILL_DAEMON_MANAGED_AGENT_LOG_SYNC"),
+            admin_api: env_flag(env, "CONTEXT_STILL_DAEMON_MANAGED_ADMIN_API"),
+        },
         paths,
     }
+}
+
+fn env_flag<E: EnvProvider>(env: &E, key: &str) -> bool {
+    matches!(
+        env.var(key).as_deref(),
+        Some("1") | Some("true") | Some("TRUE") | Some("yes") | Some("on")
+    )
 }
 
 fn resolve_process_status<S: ProcessSupervisor>(
@@ -87,6 +110,13 @@ impl RuntimeStatus {
             format!("mcpServer={}", self.mcp_server),
             format!("queueSupervisor={}", self.queue_supervisor),
             format!("agentLogSync={}", self.agent_log_sync),
+            format!(
+                "managedDefaultFlags=mcp:{} queue:{} agentLogSync:{} adminApi:{}",
+                self.managed_default_flags.mcp,
+                self.managed_default_flags.queue,
+                self.managed_default_flags.agent_log_sync,
+                self.managed_default_flags.admin_api
+            ),
             self.paths.to_text(),
         ]
         .join("\n")

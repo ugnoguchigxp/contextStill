@@ -115,7 +115,7 @@ export type AgentDiffEntry = {
   updatedAt: string;
 };
 
-export type EpisodeCardStatus = "draft" | "active" | "deprecated";
+export type EpisodeCardStatus = "active" | "deprecated";
 export type EpisodeOutcomeKind = "success" | "failure" | "mixed" | "unknown";
 export type EpisodeSourceKind =
   | "vibe_memory"
@@ -207,8 +207,7 @@ export type EpisodeCardCreateInput = {
 
 export type EpisodeListRequest = {
   query?: string;
-  status?: EpisodeCardStatus;
-  includeDraft?: boolean;
+  status?: "active" | "deprecated";
   limit?: number;
   technologies?: string[];
   changeTypes?: string[];
@@ -2702,7 +2701,6 @@ export async function fetchEpisodes(input: EpisodeListRequest = {}): Promise<Epi
   query.set("limit", String(input.limit ?? 50));
   if (input.query?.trim()) query.set("q", input.query.trim());
   if (input.status) query.set("status", input.status);
-  if (input.includeDraft) query.set("includeDraft", "true");
   if (input.technologies?.length) query.set("technologies", input.technologies.join(","));
   if (input.changeTypes?.length) query.set("changeTypes", input.changeTypes.join(","));
   if (input.domains?.length) query.set("domains", input.domains.join(","));

@@ -236,6 +236,16 @@ bun run verify:rust-daemon
 cargo run -q -p context-stilld -- bootstrap preflight --json
 cargo run -q -p context-stilld -- doctor summary --json
 cargo run -q -p context-stilld -- backup preflight --json
+cargo run -q -p context-stilld -- backup preflight --require-idle --json
 ```
 
-For lifecycle experiments, set `CONTEXT_STILL_APP_DATA_DIR` to a temporary directory and stop the process through the matching Rust command before removing that directory.
+Focused boundary smokes:
+
+```bash
+bun run rust:mcp:smoke
+bun run rust:queue:smoke
+bun run rust:admin-api:smoke
+bun run rust:agent-log-sync:smoke
+```
+
+For lifecycle experiments, set `CONTEXT_STILL_APP_DATA_DIR` to a temporary directory and stop the process through the matching Rust command before removing that directory. The Rust default flags are status-only until a boundary switch is explicitly made; rollback remains the direct TypeScript command for that boundary.
