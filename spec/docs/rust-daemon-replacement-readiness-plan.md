@@ -36,15 +36,15 @@ Completed:
 - Rust has internal SQLite queue claim and provider lease manager transactions with parity tests for priority ordering, running-job blocking, stale recovery, route-target preference, active target uniqueness, pool capacity, heartbeat, release, and `finalizeDistille` `next_run_at` behavior.
 - Rust has internal SQLite queue state transition APIs for pause, worker-unavailable wait, resume, retry, pause-running, and queue event append, with parity tests for lock clearing, retry metadata, queue event row shape, and `finalizeDistille` `next_run_at` behavior.
 - Rust daemon domain source is split by lifecycle responsibility so no `crates/context-stilld/src` Rust file exceeds the maintainability guard of roughly 600 lines.
-- `CONTEXT_STILL_RESIDENT_REQUIRE_RUST_ONLY=1` makes resident runtime fail closed by reporting the temporary Bun queue executor as `blocked`; Rust MCP endpoint/session state and Rust agent-log-sync still run.
-- `context-stilld run` owns resident queue scheduling by default through `CONTEXT_STILL_RESIDENT_QUEUE_MODE=rust-managed-one-shot`; the queue business executor is now a short-lived Bun one-shot until R7 completes.
+- `CONTEXT_STILL_RESIDENT_REQUIRE_RUST_ONLY=1` is compatible with the default resident runtime because MCP endpoint/session state, queue scheduling/maintenance, and agent-log-sync all run in Rust.
+- `context-stilld run` owns resident queue scheduling and SQLite queue maintenance in Rust; the TypeScript queue business executor is no longer resident-owned and remains manual fallback until R7 completes.
 - MCP endpoint, session state, `tools/list`, and `initial_instructions` are Rust-owned; non-migrated MCP tool handlers are invoked through a short-lived TypeScript one-shot dispatch instead of a resident Bun HTTP server.
 - agent-log-sync parser/write now runs in Rust against SQLite; `context-stilld run` no longer executes `src/cli/sync-agent-logs.ts`.
 
 Still not Rust-only:
 
 - Most MCP tool implementations still use TypeScript one-shot dispatch until R3/R4 complete; `tools/list` and `initial_instructions` are Rust-native.
-- Queue scheduler is Rust-owned by default in resident runtime; provider lease and state parity APIs exist in Rust, while the TypeScript one-shot business executor still consumes its existing claim path until R5/R6 handoff is complete.
+- Queue scheduler and stale-state maintenance are Rust-owned by default in resident runtime; the TypeScript business executor is manual fallback until R7 completes.
 - Queue state transitions and executors are still TypeScript by default; Rust currently has internal deterministic state-transition parity APIs, but the TypeScript executor has not been switched to consume them.
 - Some doctor checks still delegate to TypeScript.
 - Fallback and legacy command paths are not yet classified tightly enough for final removal.

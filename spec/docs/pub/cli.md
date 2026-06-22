@@ -33,7 +33,7 @@ Run commands from the repository root.
 | `cargo run -q -p context-stilld -- mcp sessions --json` | List daemon-visible MCP sessions and close reasons |
 | `cargo run -q -p context-stilld -- mcp smoke --json` | Check endpoint readiness and exposed tool inventory |
 | `cargo run -q -p context-stilld -- mcp start\|stop` | Legacy endpoint-worker lifecycle helper; clients should use URL registration, not command spawning |
-| `cargo run -q -p context-stilld -- queue start\|stop\|status` | Delegate queue supervisor lifecycle without changing queue semantics |
+| `cargo run -q -p context-stilld -- queue start\|stop\|status` | Run Rust queue maintenance, stop stale managed state, or report queue scheduler status |
 | `cargo run -q -p context-stilld -- queue inspect --json` | Read live SQLite queue counts, active provider leases, active target ids, worker pid, and last heartbeat |
 | `cargo run -q -p context-stilld -- agent-log-sync run\|stop\|status` | Delegate agent log sync lifecycle |
 | `cargo run -q -p context-stilld -- agent-log-sync run --wait --json` | Run one-shot sync and record exit status |

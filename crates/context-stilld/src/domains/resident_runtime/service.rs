@@ -145,9 +145,6 @@ fn ensure_surfaces<E: EnvProvider, S: ProcessSupervisor>(
     state: &mut ResidentRuntimeState,
 ) -> Result<Vec<ManagedSurfaceReport>, CliError> {
     let mut reports = Vec::new();
-    let require_rust_only =
-        env_flag_default(env, "CONTEXT_STILL_RESIDENT_REQUIRE_RUST_ONLY", false);
-
     if !env_flag_default(env, "CONTEXT_STILL_RESIDENT_MCP", true) {
         reports.push(disabled_surface("mcp-server"));
     } else {
@@ -157,13 +154,8 @@ fn ensure_surfaces<E: EnvProvider, S: ProcessSupervisor>(
 
     if !env_flag_default(env, "CONTEXT_STILL_RESIDENT_QUEUE", true) {
         reports.push(disabled_surface("queue-supervisor"));
-    } else if require_rust_only {
-        reports.push(blocked_temporary_sidecar("queue-supervisor"));
-    } else if resident_queue_mode(env) == ResidentQueueMode::RustManagedOneShot {
-        reports.push(reconcile_queue_once(env, supervisor, state)?);
     } else {
-        let report = queue_lifecycle::service::start_report(env, supervisor)?;
-        reports.push(surface_report("queue-supervisor", true, report));
+        reports.push(reconcile_queue_once(env, supervisor, state)?);
     }
 
     if !env_flag_default(env, "CONTEXT_STILL_RESIDENT_AGENT_LOG_SYNC", true) {
@@ -216,22 +208,9 @@ fn disabled_surface(name: &'static str) -> ManagedSurfaceReport {
     }
 }
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq)]
-enum ResidentQueueMode {
-    RustManagedOneShot,
-    BunContinuous,
-}
-
-fn resident_queue_mode<E: EnvProvider>(env: &E) -> ResidentQueueMode {
-    match env.var("CONTEXT_STILL_RESIDENT_QUEUE_MODE").as_deref() {
-        Some("bun-continuous") | Some("legacy-bun-continuous") => ResidentQueueMode::BunContinuous,
-        _ => ResidentQueueMode::RustManagedOneShot,
-    }
-}
-
 fn reconcile_queue_once<E: EnvProvider, S: ProcessSupervisor>(
     env: &E,
-    supervisor: &S,
+    _supervisor: &S,
     state: &mut ResidentRuntimeState,
 ) -> Result<ManagedSurfaceReport, CliError> {
     let interval = Duration::from_millis(env_u64_default(
@@ -253,28 +232,14 @@ fn reconcile_queue_once<E: EnvProvider, S: ProcessSupervisor>(
     }
 
     state.queue_last_checked_at = Some(Instant::now());
-    let report = queue_lifecycle::service::run_executor_once_report(
-        env,
-        supervisor,
-        Duration::from_millis(env_u64_default(
-            env,
-            "CONTEXT_STILL_RESIDENT_QUEUE_TIMEOUT_MS",
-            300_000,
-        )),
-    )?;
-    Ok(surface_report("queue-supervisor", true, report))
-}
-
-fn blocked_temporary_sidecar(name: &'static str) -> ManagedSurfaceReport {
-    ManagedSurfaceReport {
-        name,
-        enabled: false,
-        status: "blocked".to_string(),
+    let report = queue_lifecycle::service::run_maintenance_once_report(env)?;
+    Ok(ManagedSurfaceReport {
+        name: "queue-supervisor",
+        enabled: true,
+        status: report.status,
         pid: None,
-        message: format!(
-            "{name} requires a temporary Bun sidecar; Rust-only resident mode refused to start it"
-        ),
-    }
+        message: report.message,
+    })
 }
 
 fn reconcile_agent_log_sync<E: EnvProvider, S: ProcessSupervisor>(
@@ -323,7 +288,7 @@ fn env_u64_default<E: EnvProvider>(env: &E, key: &str, default: u64) -> u64 {
 impl SurfaceOwnership {
     fn merge_started(&mut self, reports: &[ManagedSurfaceReport]) {
         for report in reports {
-            if !matches!(report.status.as_str(), "started" | "already_running") {
+            if report.status != "started" {
                 continue;
             }
             match report.name {

@@ -65,9 +65,9 @@ const SIDECARS: &[SidecarDefinition] = &[
         notes: "Rust owns the MCP endpoint and sessions; non-migrated tool handlers execute through short-lived TypeScript one-shot dispatch.",
     },
     SidecarDefinition {
-        id: "queue-executor-bun-one-shot",
+        id: "queue-executor-typescript-manual-one-shot",
         surface: "queue-supervisor",
-        classification: SidecarClassification::ResidentOwnedTemporary,
+        classification: SidecarClassification::ManualOneShot,
         command: "bun",
         args: &[
             "run",
@@ -77,10 +77,10 @@ const SIDECARS: &[SidecarDefinition] = &[
             "1",
             "--json",
         ],
-        owner: "context-stilld",
-        enabled_by_default: true,
-        removal_task_id: Some("R5/R6/R7"),
-        notes: "Rust owns resident queue scheduling; queue business execution still runs through a short-lived Bun one-shot executor until R7 is complete.",
+        owner: "operator",
+        enabled_by_default: false,
+        removal_task_id: Some("R7"),
+        notes: "Resident queue scheduling and maintenance are Rust-owned; the TypeScript queue business executor is manual fallback until Rust executors are complete.",
     },
     SidecarDefinition {
         id: "hono-admin-api-child",
@@ -209,16 +209,16 @@ mod tests {
 
         assert_eq!(report.action, "sidecars");
         assert_eq!(report.runtime_host, "rust-resident");
-        assert_eq!(report.resident_owned_temporary_count, 1);
+        assert_eq!(report.resident_owned_temporary_count, 0);
         assert_eq!(report.forbidden_resident_count, 2);
         assert!(report.sidecars.iter().all(|entry| {
             entry.classification != SidecarClassification::ResidentOwnedTemporary
                 || entry.removal_task_id.is_some()
         }));
         assert!(report.sidecars.iter().any(|entry| {
-            entry.id == "queue-executor-bun-one-shot"
-                && entry.classification == SidecarClassification::ResidentOwnedTemporary
-                && entry.removal_task_id == Some("R5/R6/R7")
+            entry.id == "queue-executor-typescript-manual-one-shot"
+                && entry.classification == SidecarClassification::ManualOneShot
+                && entry.removal_task_id == Some("R7")
         }));
         assert!(report.sidecars.iter().any(|entry| {
             entry.id == "mcp-tool-dispatch-typescript-one-shot"

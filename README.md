@@ -121,11 +121,11 @@ context-still separates the long-lived runtime from the admin UI surface:
 
 | Surface | Default lifetime | Responsibility |
 |---|---|---|
-| Daemon / worker runtime | Runs independently of the UI | MCP endpoint supervision, CLI commands, queue workers, agent-log sync scheduling, automation, doctor, backup, bootstrap, process supervision, and runtime sidecar visibility |
+| Daemon / worker runtime | Runs independently of the UI | MCP endpoint supervision, CLI commands, queue scheduling/maintenance, agent-log sync scheduling, automation, doctor, backup, bootstrap, process supervision, and runtime sidecar visibility |
 | Hono API | Runs when the admin UI needs HTTP access | Admin UI facade for knowledge, sources, graph, queue controls, settings, context runs, decision history, and dashboards |
 | Tauri / web UI | Opened on demand | Knowledge maintenance, review, settings, diagnostics, and operator actions |
 
-The Hono API should stay a UI-facing facade. Durable background work and external agent integration belong to the daemon/CLI/MCP side, so closing the UI does not imply stopping log sync scheduling, queue supervision, MCP availability, or scheduled maintenance. The current Rust daemon is the resident owner. MCP tool handlers and queue business execution still have classified short-lived TypeScript/Bun compatibility paths, while the MCP endpoint/session manager and agent-log-sync parser/write path are Rust-owned.
+The Hono API should stay a UI-facing facade. Durable background work and external agent integration belong to the daemon/CLI/MCP side, so closing the UI does not imply stopping log sync scheduling, queue supervision, MCP availability, or scheduled maintenance. The current Rust daemon is the resident owner. MCP tool handlers and queue business execution still have classified manual TypeScript/Bun compatibility paths, while the MCP endpoint/session manager, queue scheduling/maintenance, and agent-log-sync parser/write path are Rust-owned.
 
 ## MCP Integration
 

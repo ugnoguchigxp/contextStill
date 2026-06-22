@@ -24,7 +24,7 @@ fn temp_app_dir() -> std::path::PathBuf {
 }
 
 #[test]
-fn resident_run_once_stops_already_running_owned_mcp_surface() {
+fn resident_run_once_leaves_already_running_mcp_surface_alive() {
     let app_dir = temp_app_dir();
     let env = MapEnv::from_pairs(vec![
         ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
@@ -47,8 +47,8 @@ fn resident_run_once_stops_already_running_owned_mcp_surface() {
     assert!(report
         .surfaces
         .iter()
-        .any(|surface| surface.name == "mcp-server" && surface.status == "stopped"));
-    assert!(!supervisor.is_alive(pid));
+        .all(|surface| !(surface.name == "mcp-server" && surface.status == "stopped")));
+    assert!(supervisor.is_alive(pid));
 
     std::fs::remove_dir_all(&app_dir).unwrap();
 }

@@ -2,6 +2,7 @@ mod claim;
 mod common;
 mod events;
 mod inspect;
+mod maintenance;
 mod provider_lease;
 #[cfg(test)]
 mod provider_lease_tests;

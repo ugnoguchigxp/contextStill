@@ -120,11 +120,11 @@ context-still は、常駐 runtime と管理 UI surface を分けて扱います
 
 | Surface | 既定の lifetime | 責務 |
 |---|---|---|
-| Daemon / worker runtime | UI とは独立して常駐 | MCP endpoint supervision、CLI commands、queue workers、agent-log sync scheduling、automation、doctor、backup、bootstrap、process supervision、runtime sidecar visibility |
+| Daemon / worker runtime | UI とは独立して常駐 | MCP endpoint supervision、CLI commands、queue scheduling/maintenance、agent-log sync scheduling、automation、doctor、backup、bootstrap、process supervision、runtime sidecar visibility |
 | Hono API | 管理 UI が HTTP access を必要とする時に起動 | knowledge、sources、graph、queue controls、settings、context runs、decision history、dashboards の admin UI facade |
 | Tauri / web UI | 必要時に開く | knowledge maintenance、review、settings、diagnostics、operator actions |
 
-Hono API は UI 向け facade に留めます。継続的な background work と外部 agent integration は daemon / CLI / MCP 側の責務なので、UI を閉じても log sync scheduling、queue supervision、MCP availability、scheduled maintenance が止まる前提にはしません。現時点の Rust daemon は resident owner です。MCP tool handlers と queue business execution には短命な TypeScript/Bun 互換経路が残りますが、MCP endpoint/session manager と agent-log-sync parser/write path は Rust owner です。
+Hono API は UI 向け facade に留めます。継続的な background work と外部 agent integration は daemon / CLI / MCP 側の責務なので、UI を閉じても log sync scheduling、queue supervision、MCP availability、scheduled maintenance が止まる前提にはしません。現時点の Rust daemon は resident owner です。MCP tool handlers と queue business execution には manual TypeScript/Bun 互換経路が残りますが、MCP endpoint/session manager、queue scheduling/maintenance、agent-log-sync parser/write path は Rust owner です。
 
 ## MCP Integration
 

@@ -100,10 +100,6 @@ function renderPlist(): string {
       process.env.CONTEXT_STILL_RESIDENT_QUEUE_INTERVAL_MS ?? "5000",
     )
     .replaceAll(
-      "{{RESIDENT_QUEUE_TIMEOUT_MS}}",
-      process.env.CONTEXT_STILL_RESIDENT_QUEUE_TIMEOUT_MS ?? "300000",
-    )
-    .replaceAll(
       "{{RESIDENT_AGENT_LOG_SYNC}}",
       process.env.CONTEXT_STILL_RESIDENT_AGENT_LOG_SYNC ?? "1",
     )

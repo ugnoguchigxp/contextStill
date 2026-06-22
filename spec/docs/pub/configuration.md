@@ -90,9 +90,9 @@ These variables are for development, packaging, and advanced runtime integration
 | `CONTEXT_STILL_ANTIGRAVITY_LOG_DIRS` | Additional Antigravity log roots |
 | `CONTEXT_STILL_CLAUDE_PROJECTS_DIR` | Claude projects directory |
 | `CONTEXT_STILL_RESIDENT_AGENT_LOG_SYNC` | `1` | Enables resident `context-stilld run` to own scheduled agent log sync |
-| `CONTEXT_STILL_RESIDENT_QUEUE_MODE` | `rust-managed-one-shot` | Resident queue mode; default Rust scheduler runs the queue executor as short-lived one-shot work |
-| `CONTEXT_STILL_RESIDENT_QUEUE_INTERVAL_MS` | `5000` | Minimum interval between Rust-managed queue one-shot ticks |
-| `CONTEXT_STILL_RESIDENT_QUEUE_TIMEOUT_MS` | `300000` | Timeout for each Rust-managed queue one-shot executor |
+| `CONTEXT_STILL_RESIDENT_QUEUE_MODE` | `rust-managed-one-shot` | Legacy value retained for compatibility; resident queue scheduling is Rust maintenance and no longer starts Bun continuous mode |
+| `CONTEXT_STILL_RESIDENT_QUEUE_INTERVAL_MS` | `5000` | Minimum interval between Rust-managed queue maintenance ticks |
+| `CONTEXT_STILL_QUEUE_STALE_SECONDS` | `120` | Stale threshold for Rust queue maintenance to recover active leases and running jobs |
 | `CONTEXT_STILL_AGENT_LOG_SYNC_INTERVAL_SECONDS` | `3600` | Resident daemon / legacy LaunchAgent scheduled sync interval |
 | `CONTEXT_STILL_AGENT_LOG_SYNC_RUN_AT_LOAD` | `0` | Set `1` to run agent log sync immediately when resident daemon starts |
 | `CONTEXT_STILL_AGENT_LOG_SYNC_TIMEOUT_MS` | `300000` | Timeout for each resident-owned Rust agent-log-sync run |

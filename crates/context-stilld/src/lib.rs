@@ -197,7 +197,7 @@ mod tests {
         assert_eq!(report["surfaces"][0]["name"], "mcp-server");
         assert_eq!(report["surfaces"][0]["status"], "started");
         assert_eq!(report["surfaces"][1]["name"], "queue-supervisor");
-        assert_eq!(report["surfaces"][1]["status"], "scheduled");
+        assert_eq!(report["surfaces"][1]["status"], "missing_sqlite");
         assert_eq!(report["surfaces"][2]["name"], "agent-log-sync");
         assert_eq!(report["surfaces"][2]["status"], "scheduled");
         assert_eq!(report["surfaces"][3]["name"], "mcp-server");
@@ -207,7 +207,7 @@ mod tests {
         let status: serde_json::Value = serde_json::from_str(&status_json).unwrap();
         assert_eq!(status["residentSupervisor"], "exited");
         assert_eq!(status["mcpServer"], "stopped");
-        assert_eq!(status["queueSupervisor"], "scheduled");
+        assert_eq!(status["queueSupervisor"], "stopped");
 
         std::fs::remove_dir_all(&app_dir).unwrap();
     }
@@ -242,7 +242,7 @@ mod tests {
         assert_eq!(report["surfaces"][0]["name"], "mcp-server");
         assert_eq!(report["surfaces"][0]["status"], "started");
         assert_eq!(report["surfaces"][1]["name"], "queue-supervisor");
-        assert_eq!(report["surfaces"][1]["status"], "blocked");
+        assert_eq!(report["surfaces"][1]["status"], "missing_sqlite");
         assert_eq!(report["surfaces"][2]["name"], "agent-log-sync");
         assert_eq!(report["surfaces"][2]["status"], "scheduled");
         assert_eq!(report["surfaces"][3]["name"], "mcp-server");
@@ -427,7 +427,7 @@ mod tests {
         );
         assert!(crate::run(["queue", "start"], &env, &supervisor)
             .unwrap()
-            .contains("queue-supervisor started"));
+            .contains("queue-supervisor Rust maintenance"));
         assert_eq!(
             crate::run(["admin-api", "status"], &env, &supervisor).unwrap(),
             "admin-api status: stopped"
@@ -445,7 +445,7 @@ mod tests {
 
         let status_json = crate::run(["status", "--json"], &env, &supervisor).unwrap();
         let status: serde_json::Value = serde_json::from_str(&status_json).unwrap();
-        assert_eq!(status["queueSupervisor"], "running");
+        assert_eq!(status["queueSupervisor"], "stopped");
         assert_eq!(status["honoAdminApi"], "running");
         assert_eq!(status["agentLogSync"], "exited");
 

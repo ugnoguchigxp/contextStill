@@ -12,6 +12,7 @@ const env = {
   CONTEXT_STILL_DB_BACKEND: "sqlite",
   CONTEXT_STILL_SQLITE_CORE_PATH: path.join(appDataDir, "queue-smoke.sqlite"),
 };
+fs.closeSync(fs.openSync(env.CONTEXT_STILL_SQLITE_CORE_PATH, "w"));
 
 function run(args) {
   const result = spawnSync(args[0], args.slice(1), {

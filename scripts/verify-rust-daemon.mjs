@@ -186,6 +186,20 @@ function assertJsonLine(result, expectedField) {
   return result;
 }
 
+function assertRuntimeSidecars(result) {
+  const checked = assertJsonLine(result, "sidecars");
+  if (checked.code !== 0) return checked;
+  const json = JSON.parse(result.stdout);
+  if (json.residentOwnedTemporaryCount !== 0) {
+    return {
+      ...result,
+      code: 1,
+      stderr: `${result.stderr}\nExpected residentOwnedTemporaryCount=0, got ${json.residentOwnedTemporaryCount}\n`,
+    };
+  }
+  return result;
+}
+
 async function runLiveOwnershipCheck() {
   console.log("[verify:rust-daemon] live ownership check ...");
   if (process.platform !== "darwin") {
@@ -282,7 +296,7 @@ for (const task of tasks) {
     result = assertJsonLine(result, "queues");
   }
   if (task.label === "context-stilld runtime sidecars" && result.code === 0) {
-    result = assertJsonLine(result, "sidecars");
+    result = assertRuntimeSidecars(result);
   }
   if (task.label === "context-stilld mcp endpoint" && result.code === 0) {
     result = assertJsonLine(result, "url");
