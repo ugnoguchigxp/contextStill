@@ -16,8 +16,8 @@ use crate::shared::{
 
 use super::service::status_report;
 use super::types::{
-    ActiveProviderLease, EpisodeDistillerProgressInspect, QueueInspectReport, QueueStatusCount,
-    QueueTableInspect, QUEUE_SUPERVISOR, QUEUE_TABLES,
+    ActiveProviderLease, EpisodeDistillerProgressInspect, QueueFeatureFlagsInspect,
+    QueueInspectReport, QueueStatusCount, QueueTableInspect, QUEUE_SUPERVISOR, QUEUE_TABLES,
 };
 
 pub fn inspect_report<E: EnvProvider, S: ProcessSupervisor>(
@@ -46,6 +46,7 @@ pub fn inspect_report<E: EnvProvider, S: ProcessSupervisor>(
             active_target_ids: Vec::new(),
             active_leases: Vec::new(),
             last_heartbeat_at: None,
+            feature_flags: queue_feature_flags(env),
         });
     }
 
@@ -112,7 +113,24 @@ pub fn inspect_report<E: EnvProvider, S: ProcessSupervisor>(
         active_target_ids,
         active_leases,
         last_heartbeat_at,
+        feature_flags: queue_feature_flags(env),
     })
+}
+
+fn queue_feature_flags<E: EnvProvider>(env: &E) -> QueueFeatureFlagsInspect {
+    QueueFeatureFlagsInspect {
+        internal_chunked_distillation: env_bool(env, "CONTEXT_STILL_INTERNAL_CHUNKED_DISTILLATION")
+            .unwrap_or_else(|| env_bool(env, "INTERNAL_CHUNKED_DISTILLATION").unwrap_or(false)),
+    }
+}
+
+fn env_bool<E: EnvProvider>(env: &E, name: &str) -> Option<bool> {
+    let value = env.var(name)?;
+    match value.trim().to_ascii_lowercase().as_str() {
+        "1" | "true" | "yes" | "on" => Some(true),
+        "0" | "false" | "no" | "off" | "" => Some(false),
+        _ => None,
+    }
 }
 
 fn effective_sqlite_core_path<E: EnvProvider, S: ProcessSupervisor>(
@@ -223,6 +241,9 @@ fn inspect_episode_distiller_progress(
     let metadata: Value = serde_json::from_str(&raw_metadata).unwrap_or(Value::Null);
     let current_segment = metadata_u64_at(&metadata, "/episodeDistiller/currentSegment");
     let segment_count = metadata_u64_at(&metadata, "/episodeDistiller/segmentCount");
+    let pipeline_version = metadata_string_at(&metadata, "/episodeDistiller/pipelineVersion");
+    let source_window_count = metadata_u64_at(&metadata, "/episodeDistiller/sourceWindowCount");
+    let semantic_chunk_count = metadata_u64_at(&metadata, "/episodeDistiller/semanticChunkCount");
     let last_segment_started_at =
         metadata_string_at(&metadata, "/episodeDistiller/lastSegmentStartedAt");
     let last_segment_completed_at =
@@ -253,6 +274,9 @@ fn inspect_episode_distiller_progress(
         running_job_id,
         current_segment,
         segment_count,
+        pipeline_version,
+        source_window_count,
+        semantic_chunk_count,
         last_segment_started_at,
         last_segment_completed_at,
         last_episode_created_at,
@@ -603,6 +627,9 @@ mod tests {
               '2026-06-22T01:09:00.000Z',
               '{{
                 "episodeDistiller": {{
+                  "pipelineVersion": "internal-chunked-v1",
+                  "sourceWindowCount": 3,
+                  "semanticChunkCount": 4,
                   "currentSegment": 2,
                   "segmentCount": 5,
                   "lastSegmentStartedAt": "{old_output}",
@@ -637,12 +664,54 @@ mod tests {
         assert_eq!(progress.running_job_id, "episode-job-1");
         assert_eq!(progress.current_segment, Some(2));
         assert_eq!(progress.segment_count, Some(5));
+        assert_eq!(
+            progress.pipeline_version.as_deref(),
+            Some("internal-chunked-v1")
+        );
+        assert_eq!(progress.source_window_count, Some(3));
+        assert_eq!(progress.semantic_chunk_count, Some(4));
         assert_eq!(progress.saved_episode_count, 2);
         assert_eq!(
             progress.output_watchdog_status.as_deref(),
             Some("force_stop_candidate")
         );
         assert!(progress.output_gap_seconds.unwrap() >= 20 * 60);
+
+        std::fs::remove_dir_all(&app_dir).unwrap();
+    }
+
+    #[test]
+    fn inspect_reports_internal_chunked_distillation_feature_flag() {
+        let app_dir = temp_app_dir("feature_flags");
+        let sqlite_path = app_dir.join("queue.sqlite");
+        let connection = Connection::open(&sqlite_path).unwrap();
+        connection
+            .execute_batch(
+                r#"
+            create table finding_candidate_queue (
+              id text primary key,
+              status text not null,
+              created_at text not null,
+              heartbeat_at text
+            );
+            "#,
+            )
+            .unwrap();
+        drop(connection);
+
+        let env = MapEnv::from_pairs(vec![
+            ("CONTEXT_STILL_APP_DATA_DIR", app_dir.to_str().unwrap()),
+            (
+                "CONTEXT_STILL_SQLITE_CORE_PATH",
+                sqlite_path.to_str().unwrap(),
+            ),
+            ("CONTEXT_STILL_INTERNAL_CHUNKED_DISTILLATION", "true"),
+        ]);
+        let supervisor = MockSupervisor::new();
+
+        let report = inspect_report(&env, &supervisor).unwrap();
+
+        assert!(report.feature_flags.internal_chunked_distillation);
 
         std::fs::remove_dir_all(&app_dir).unwrap();
     }

@@ -284,7 +284,10 @@ describe("runFindCandidate", () => {
             id: `tool-${index + 1}`,
             function: {
               name: "read_file",
-              arguments: JSON.stringify({ fromToken: index * 20, readTokens: 20 }),
+              arguments: JSON.stringify({
+                fromToken: index * 20,
+                readTokens: 20,
+              }),
             },
           },
           {},
@@ -825,6 +828,97 @@ describe("runFindCandidate", () => {
     );
   });
 
+  test("reads multiple vibe memory windows before internal chunked candidate generation", async () => {
+    groupedConfig.distillation.internalChunkedDistillationEnabled = true;
+    mocks.getDistillationTargetStateById.mockResolvedValue({
+      id: "target-vibe",
+      targetKind: "vibe_memory",
+      targetKey: "memory-1",
+    });
+    mocks.readVibeMemoryByTokenWindow
+      .mockResolvedValueOnce({
+        content: "The first queue phase selected a worker and left an active lease.",
+        totalTokens: 100,
+        from: 0,
+        toExclusive: 50,
+        returnedTokens: 50,
+      })
+      .mockResolvedValueOnce({
+        content: "The later phase proved that the lease was stale and required requeue.",
+        totalTokens: 100,
+        from: 50,
+        toExclusive: 100,
+        returnedTokens: 50,
+      });
+    mocks.runDistillationCompletion.mockImplementation(async (_request, options) => {
+      if (options.usageSource === "find-candidate:semantic-chunk") {
+        return { content: "[]", toolEvents: [], messages: [] };
+      }
+      return {
+        content: JSON.stringify({
+          candidates: [
+            {
+              type: "rule",
+              polarity: "negative",
+              title: "Stale leases must be verified",
+              content:
+                "When a later queue phase proves an active lease is stale, requeue instead of treating the first worker claim as progress.",
+            },
+          ],
+        }),
+        toolEvents: [],
+        messages: [],
+      };
+    });
+
+    const result = await runFindCandidate({
+      targetStateId: "target-vibe",
+      callerMode: "storage",
+      provider: "local-llm",
+      readTokens: 50,
+      maxReads: 2,
+    });
+
+    expect(mocks.readVibeMemoryByTokenWindow).toHaveBeenCalledTimes(2);
+    expect(mocks.readVibeMemoryByTokenWindow).toHaveBeenNthCalledWith(1, {
+      vibeMemoryId: "memory-1",
+      fromToken: 0,
+      readTokens: 50,
+      mode: "compressed",
+    });
+    expect(mocks.readVibeMemoryByTokenWindow).toHaveBeenNthCalledWith(2, {
+      vibeMemoryId: "memory-1",
+      fromToken: 50,
+      readTokens: 50,
+      mode: "compressed",
+    });
+    expect(result.readRanges).toEqual([
+      { from: 0, toExclusive: 50 },
+      { from: 50, toExclusive: 100 },
+    ]);
+    expect(result.candidates).toEqual([
+      expect.objectContaining({
+        title: "Stale leases must be verified",
+        polarity: "negative",
+      }),
+    ]);
+    expect(mocks.recordAuditLogSafe).toHaveBeenCalledWith(
+      expect.objectContaining({
+        eventType: "FIND_CANDIDATE_COMPLETED",
+        payload: expect.objectContaining({
+          findCandidate: expect.objectContaining({
+            pipelineVersion: "internal-chunked-v1",
+            readWindowCount: 2,
+            readRanges: [
+              { from: 0, toExclusive: 50 },
+              { from: 50, toExclusive: 100 },
+            ],
+          }),
+        }),
+      }),
+    );
+  });
+
   test("allows additional vibe memory reads after the deterministic first read", async () => {
     mocks.getDistillationTargetStateById.mockResolvedValue({
       id: "target-vibe",
@@ -851,7 +945,11 @@ describe("runFindCandidate", () => {
         id: "tool-2",
         function: {
           name: "memory_reader",
-          arguments: JSON.stringify({ fromToken: "50", readTokens: "50", mode: "compressed" }),
+          arguments: JSON.stringify({
+            fromToken: "50",
+            readTokens: "50",
+            mode: "compressed",
+          }),
         },
       });
       return {

@@ -78,6 +78,13 @@ type FindCandidateTarget = {
   metadata: Record<string, unknown>;
 };
 
+type ReaderWindowMetadata = {
+  totalTokens: number;
+  from: number;
+  toExclusive: number;
+  returnedTokens: number;
+};
+
 function parseToolArgs(raw: string): Record<string, unknown> {
   const parsed = parseLlmJsonLike(raw)?.value;
   if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return {};
@@ -119,6 +126,30 @@ function readTokens(input: FindCandidateInput): number {
 
 function candidateOutputMaxTokens(): number {
   return Math.max(4096, groupedConfig.vibeDistillation.maxOutputTokens);
+}
+
+function readerWindowMetadata(value: unknown): ReaderWindowMetadata | null {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return null;
+  const metadata = value as Record<string, unknown>;
+  const totalTokens = asInt(metadata.totalTokens, -1);
+  const from = asInt(metadata.from, -1);
+  const toExclusive = asInt(metadata.toExclusive, -1);
+  const returnedTokens = asInt(metadata.returnedTokens, -1);
+  if (totalTokens < 0 || from < 0 || toExclusive < from || returnedTokens < 0) return null;
+  return { totalTokens, from, toExclusive, returnedTokens };
+}
+
+function joinVibeMemoryWindowsForChunking(
+  windows: Array<{ content: string; metadata: ReaderWindowMetadata }>,
+): string {
+  return windows
+    .map((window, index) =>
+      [
+        `[memory_reader window ${index + 1}: tokens ${window.metadata.from}-${window.metadata.toExclusive}]`,
+        window.content,
+      ].join("\n"),
+    )
+    .join("\n\n");
 }
 
 function isToolLoopMaxRoundsError(error: unknown): boolean {
@@ -172,9 +203,18 @@ function buildToolDefinitionForTarget(
         parameters: {
           type: "object",
           properties: {
-            fromToken: { type: "number", description: "Start token offset (0-based)." },
-            readTokens: { type: "number", description: "Token length to read." },
-            minify: { type: "boolean", description: "Whether to use compressed text." },
+            fromToken: {
+              type: "number",
+              description: "Start token offset (0-based).",
+            },
+            readTokens: {
+              type: "number",
+              description: "Token length to read.",
+            },
+            minify: {
+              type: "boolean",
+              description: "Whether to use compressed text.",
+            },
           },
           required: [],
           additionalProperties: false,
@@ -192,7 +232,10 @@ function buildToolDefinitionForTarget(
       parameters: {
         type: "object",
         properties: {
-          fromToken: { type: "number", description: "Start token offset (0-based)." },
+          fromToken: {
+            type: "number",
+            description: "Start token offset (0-based).",
+          },
           readTokens: { type: "number", description: "Token length to read." },
           mode: {
             type: "string",
@@ -476,7 +519,10 @@ function buildCandidateGenerationMessages(params: {
   chunkText: string;
 }): DistillationMessage[] {
   return [
-    { role: "system", content: systemPromptForTarget(params.target.targetKind) },
+    {
+      role: "system",
+      content: systemPromptForTarget(params.target.targetKind),
+    },
     {
       role: "user",
       content: [
@@ -533,7 +579,10 @@ async function createFindCandidateSemanticChunks(params: {
       },
     );
     const parsed = parseLlmJsonLike(completion.content)?.value;
-    const validated = validateSemanticChunks({ windows: params.windows, chunks: parsed });
+    const validated = validateSemanticChunks({
+      windows: params.windows,
+      chunks: parsed,
+    });
     return validated.length > 0
       ? validated
       : deterministicSemanticChunksFromWindows(params.windows);
@@ -552,6 +601,8 @@ async function runChunkedVibeMemoryFindCandidate(params: {
   azureDeploymentSlots?: number[];
   localLlmModel?: string;
   signal?: AbortSignal;
+  readWindowCount?: number;
+  readRanges?: Array<{ from: number; toExclusive: number }>;
 }): Promise<{
   candidates: CandidateRecord[];
   parseDiagnostics: StorageCandidateParseDiagnostics;
@@ -636,8 +687,11 @@ async function runChunkedVibeMemoryFindCandidate(params: {
     llmOutput: outputs.join("\n"),
     metadata: {
       pipelineVersion: "internal-chunked-v1",
+      stage: "findCandidate",
       sourceWindowCount: windows.length,
       semanticChunkCount: chunks.length,
+      readWindowCount: params.readWindowCount ?? 1,
+      readRanges: params.readRanges ?? [],
       generatedCandidateCount: candidates.length,
       dedupedCandidateCount: deduped.length,
     },
@@ -787,6 +841,12 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         name: toolCall.function.name,
         ok: true,
         content: result.content,
+        metadata: {
+          totalTokens: result.totalTokens,
+          from: result.from,
+          toExclusive: result.toExclusive,
+          returnedTokens: result.returnedTokens,
+        },
       };
     }
 
@@ -818,6 +878,12 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
       name: toolCall.function.name,
       ok: true,
       content: result.content,
+      metadata: {
+        totalTokens: result.totalTokens,
+        from: result.from,
+        toExclusive: result.toExclusive,
+        returnedTokens: result.returnedTokens,
+      },
     };
   };
 
@@ -888,7 +954,10 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
           content: readerAfterInitialReadPrompt(initialToolResult.name),
         },
       );
-      await recordReaderUsed({ initialRead: true, reader: initialToolResult.name });
+      await recordReaderUsed({
+        initialRead: true,
+        reader: initialToolResult.name,
+      });
     }
 
     if (target.targetKind === "vibe_memory") {
@@ -898,15 +967,58 @@ export async function runFindCandidate(input: FindCandidateInput): Promise<FindC
         throw new Error(initialToolResult.error ?? "initial memory_reader failed");
       }
       if (groupedConfig.distillation.internalChunkedDistillationEnabled) {
+        const windowMetadata = readerWindowMetadata(initialToolResult.metadata);
+        const chunkWindows =
+          windowMetadata !== null
+            ? [{ content: initialToolResult.content, metadata: windowMetadata }]
+            : [];
+        while (chunkWindows.length > 0 && reads < readLimit) {
+          const previous = chunkWindows[chunkWindows.length - 1]?.metadata;
+          if (
+            !previous ||
+            previous.returnedTokens <= 0 ||
+            previous.toExclusive >= previous.totalTokens
+          ) {
+            break;
+          }
+          const nextToolCall: DistillationToolCall = {
+            id: `chunk-memory-reader-${chunkWindows.length + 1}`,
+            type: "function",
+            function: {
+              name: "memory_reader",
+              arguments: JSON.stringify({
+                fromToken: previous.toExclusive,
+                readTokens: readTokens(input),
+                mode: input.memoryReaderMode ?? "compressed",
+              }),
+            },
+          };
+          const nextToolResult = await toolExecutor(nextToolCall);
+          if (!nextToolResult.ok) {
+            throw new Error(nextToolResult.error ?? "chunk memory_reader failed");
+          }
+          const nextMetadata = readerWindowMetadata(nextToolResult.metadata);
+          if (!nextMetadata || nextMetadata.toExclusive <= previous.toExclusive) break;
+          chunkWindows.push({
+            content: nextToolResult.content,
+            metadata: nextMetadata,
+          });
+        }
+        const chunkedContent =
+          chunkWindows.length > 0
+            ? joinVibeMemoryWindowsForChunking(chunkWindows)
+            : initialToolResult.content;
         const chunked = await runChunkedVibeMemoryFindCandidate({
           target,
-          content: initialToolResult.content,
+          content: chunkedContent,
           model,
           provider,
           fallbackOrder,
           azureDeploymentSlots,
           localLlmModel,
           signal: input.signal,
+          readWindowCount: Math.max(1, chunkWindows.length),
+          readRanges: readLog,
         });
         llmOutput = chunked.llmOutput;
         candidates = chunked.candidates;

@@ -38,6 +38,13 @@ pub struct QueueInspectReport {
     pub active_target_ids: Vec<String>,
     pub active_leases: Vec<ActiveProviderLease>,
     pub last_heartbeat_at: Option<String>,
+    pub feature_flags: QueueFeatureFlagsInspect,
+}
+
+#[derive(Debug, Clone, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct QueueFeatureFlagsInspect {
+    pub internal_chunked_distillation: bool,
 }
 
 #[derive(Debug, Clone, Eq, PartialEq, Serialize)]
@@ -61,6 +68,9 @@ pub struct EpisodeDistillerProgressInspect {
     pub running_job_id: String,
     pub current_segment: Option<u64>,
     pub segment_count: Option<u64>,
+    pub pipeline_version: Option<String>,
+    pub source_window_count: Option<u64>,
+    pub semantic_chunk_count: Option<u64>,
     pub last_segment_started_at: Option<String>,
     pub last_segment_completed_at: Option<String>,
     pub last_episode_created_at: Option<String>,

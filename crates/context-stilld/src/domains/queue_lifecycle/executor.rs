@@ -185,6 +185,14 @@ pub fn run_executor_tick_report<E: EnvProvider>(
                     )?;
                     failed += 1;
                 }
+                EpisodeExecutionStatus::Retrying => {
+                    release_provider_lease_for_connection(
+                        &connection,
+                        &job.provider_lease.id,
+                        "provider_unavailable_retry",
+                    )?;
+                    failed += 1;
+                }
             }
             continue;
         }
